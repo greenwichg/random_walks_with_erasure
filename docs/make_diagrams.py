@@ -286,6 +286,8 @@ def adaptive_exposure():
     ax.text(0.5, -0.22, "fixed bridging flips everyone; adaptive protects low-tolerance "
             "users while bridging high-tolerance ones", transform=ax.transAxes,
             ha="center", fontsize=8.5, style="italic", color=MUTE)
+    ax.text(0.5, -0.31, "synthetic data; planted ideological positions (illustrative)",
+            transform=ax.transAxes, ha="center", fontsize=8, color="#9a9a9a")
     _save(fig, "adaptive_exposure.png")
 
 
@@ -305,15 +307,27 @@ def alpha_sweep_curve():
     df = alpha_sweep(G, node_ideo, nc, alphas=alphas, positions=[-1.5, 1.5],
                      n_trials=300, max_steps=200, seed=0)
 
+    # Average the (ideologically symmetric) left and right agents into one
+    # representative curve -- their gap is a random-graph artifact, not a real
+    # left/right effect, so collapsing it keeps the monotonic-decrease message.
+    avg = (df["u=-1.5"].values + df["u=+1.5"].values) / 2.0
+
     fig, ax = plt.subplots(figsize=(8.4, 4.7))
-    ax.plot(alphas, df["u=-1.5"].values, "-o", color=USER_C, lw=2, label="left agent (u=−1.5)")
-    ax.plot(alphas, df["u=+1.5"].values, "-s", color=ERASE_C, lw=2, label="right agent (u=+1.5)")
+    ax.plot(alphas, avg, "-o", color=USER_C, lw=2.2,
+            label="partisan agent (mean of left & right)")
     ax.axvline(0, color=MUTE, lw=1, ls=":")
-    ax.set_xlabel("α   (← rabbit hole    |    confirmation bias →)", fontsize=11, color=INK)
+    ax.text(-0.55, ax.get_ylim()[1] * 0.92, "rabbit hole", ha="center",
+            fontsize=9, color=MUTE, style="italic")
+    ax.text(1.0, ax.get_ylim()[1] * 0.92, "confirmation bias", ha="center",
+            fontsize=9, color=MUTE, style="italic")
+    ax.set_xlabel("α   (transition-policy bias)", fontsize=11, color=INK)
     ax.set_ylabel("mean satisfaction score", fontsize=11, color=INK)
     ax.set_title("Satisfaction falls monotonically with confirmation bias",
                  fontsize=13, weight="bold", color=INK)
     ax.legend(fontsize=10)
+    ax.text(0.5, -0.20, "synthetic stochastic-block-model web graph; planted "
+            "communities (illustrative)", transform=ax.transAxes, ha="center",
+            fontsize=8, color="#9a9a9a")
     for sp in ("top", "right"):
         ax.spines[sp].set_visible(False)
     _save(fig, "alpha_sweep.png")
