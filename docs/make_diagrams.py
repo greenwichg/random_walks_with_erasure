@@ -231,6 +231,94 @@ def quadrant_scatter():
     _save(fig, "quadrant_scatter.png")
 
 
+# --------------------------------------------------------------------------- #
+# Extension 1 (satisfaction.py): adaptive exposure calibrates the dose per user
+# --------------------------------------------------------------------------- #
+def adaptive_exposure():
+    import numpy as np
+    from rwe import (FeedbackGraph, RWEB, AdaptiveRWEB, WebGraph,
+                     SatisfactionModel, data)
+
+    d = data.synthetic_political(n_users=400, n_items=120, seed=1)
+    g = FeedbackGraph(d["matrix"])
+    upos, ipos = d["user_positions"], d["item_positions"]
+    center = float(np.median(upos))
+    users = np.arange(g.m)
+    web = WebGraph(g, ipos)
+    web.detect_communities(knn=5, seed=0)
+    exposure = SatisfactionModel(web, upos, n_walks=25, walk_length=40,
+                                 seed=0).exposure(users)
+    med = np.median(exposure)
+    masks = {"low-tolerance\nusers": exposure <= med, "high-tolerance\nusers": exposure > med}
+
+    def opp(recs, mask):
+        fr = []
+        for r, u in zip(recs[mask], users[mask]):
+            it = r[r >= 0]
+            if it.size:
+                fr.append((np.sign(ipos[it] - center) == -np.sign(upos[u] - center)).mean())
+        return float(np.mean(fr))
+
+    fixed = RWEB(g, upos, ipos, epsilon=0.9).recommend(users, top_k=10)
+    adapt = AdaptiveRWEB(g, upos, ipos, exposure=exposure).recommend(users, top_k=10)
+    labels = list(masks)
+    fixed_v = [opp(fixed, masks[k]) for k in labels]
+    adapt_v = [opp(adapt, masks[k]) for k in labels]
+
+    fig, ax = plt.subplots(figsize=(8.4, 4.7))
+    x = np.arange(2)
+    w = 0.36
+    ax.bar(x - w / 2, fixed_v, w, color=ERASE_C, label="fixed RWE-B (ε=0.9)")
+    ax.bar(x + w / 2, adapt_v, w, color=KEEP_C, label="AdaptiveRWEB (satisfaction-driven)")
+    for xi, v in zip(x - w / 2, fixed_v):
+        ax.text(xi, v + 0.02, f"{v:.2f}", ha="center", fontsize=10, color=ERASE_C)
+    for xi, v in zip(x + w / 2, adapt_v):
+        ax.text(xi, v + 0.02, f"{v:.2f}", ha="center", fontsize=10, color=KEEP_C)
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, fontsize=11, color=INK)
+    ax.set_ylabel("opposite-content fraction in top-10", fontsize=11, color=INK)
+    ax.set_ylim(0, 1.32)
+    ax.legend(fontsize=9, loc="upper center", ncol=2, frameon=False)
+    ax.set_title("Adaptive exposure calibrates the dose per user",
+                 fontsize=13, weight="bold", color=INK)
+    for sp in ("top", "right"):
+        ax.spines[sp].set_visible(False)
+    ax.text(0.5, -0.22, "fixed bridging flips everyone; adaptive protects low-tolerance "
+            "users while bridging high-tolerance ones", transform=ax.transAxes,
+            ha="center", fontsize=8.5, style="italic", color=MUTE)
+    _save(fig, "adaptive_exposure.png")
+
+
+# --------------------------------------------------------------------------- #
+# Extension 2 (agent_sim.py): satisfaction falls as confirmation bias rises
+# --------------------------------------------------------------------------- #
+def alpha_sweep_curve():
+    import numpy as np
+    from rwe.agent_sim import (make_synthetic_web_graph, detect_communities,
+                               assign_community_ideology, alpha_sweep)
+
+    G, latent = make_synthetic_web_graph(block_ideologies=(-1.5, 0.0, 1.5),
+                                         block_size=30, seed=0)
+    nc = detect_communities(G, method="louvain", seed=0)
+    node_ideo, _ = assign_community_ideology(latent, nc)
+    alphas = [-1.0, -0.5, 0.0, 0.5, 1.0, 2.0]
+    df = alpha_sweep(G, node_ideo, nc, alphas=alphas, positions=[-1.5, 1.5],
+                     n_trials=300, max_steps=200, seed=0)
+
+    fig, ax = plt.subplots(figsize=(8.4, 4.7))
+    ax.plot(alphas, df["u=-1.5"].values, "-o", color=USER_C, lw=2, label="left agent (u=−1.5)")
+    ax.plot(alphas, df["u=+1.5"].values, "-s", color=ERASE_C, lw=2, label="right agent (u=+1.5)")
+    ax.axvline(0, color=MUTE, lw=1, ls=":")
+    ax.set_xlabel("α   (← rabbit hole    |    confirmation bias →)", fontsize=11, color=INK)
+    ax.set_ylabel("mean satisfaction score", fontsize=11, color=INK)
+    ax.set_title("Satisfaction falls monotonically with confirmation bias",
+                 fontsize=13, weight="bold", color=INK)
+    ax.legend(fontsize=10)
+    for sp in ("top", "right"):
+        ax.spines[sp].set_visible(False)
+    _save(fig, "alpha_sweep.png")
+
+
 def _save(fig, name):
     OUT.mkdir(parents=True, exist_ok=True)
     path = OUT / name
@@ -244,3 +332,5 @@ if __name__ == "__main__":
     rwe_flow()
     ideology_scale()
     quadrant_scatter()
+    adaptive_exposure()
+    alpha_sweep_curve()

@@ -333,10 +333,28 @@ def build():
     ], code_note="ideology.py · RWE · RWED/RWEB · RWE(item_erasure=…)",
         notes="The four contributions, each realised in the rwe/ package.")
 
+    slide(prs, "Beyond the paper — adaptive exposure", [
+        ("Our extension: tailor how much opposing content each user sees.", 0),
+        ("Satisfaction score = pages read in the first opposing community before exiting.", 0),
+        ("Higher tolerance → more opposing content surfaced (AdaptiveRWEB).", 0),
+    ], image="adaptive_exposure.png", bullets_height=1.4,
+        code_note="rwe/satisfaction.py: WebGraph · SatisfactionModel · AdaptiveRWEB",
+        notes="A fixed aggressive strategy flips every user; the adaptive version "
+              "protects low-tolerance users while still bridging high-tolerance ones.")
+
+    slide(prs, "Beyond the paper — agent browsing simulation", [
+        ("Agent-based model on a networkx web graph (Louvain/Leiden communities).", 0),
+        ("State machine: own side → first opposite page → track → exit.", 0),
+        ("Tunable α: confirmation bias (α>0) vs \"rabbit hole\" (α<0); Monte-Carlo scores.", 0),
+    ], image="alpha_sweep.png", bullets_height=1.4,
+        code_note="rwe/agent_sim.py: NewsfeedSimulator · monte_carlo · alpha_sweep",
+        notes="α-sweep validation: mean satisfaction falls monotonically as "
+              "confirmation bias rises.")
+
     slide(prs, "This implementation", [
         ("Full paper in rwe/ (graph, RWE, ideology, baselines, metrics) + 2 extensions.", 0),
         ("63 tests — including the worked erasure example reproduced to the decimal.", 0),
-        ("5 diagrams, a beginner guide (GUIDE.md), and a slide-by-slide map (docs/TALK.md).", 0),
+        ("7 diagrams, a beginner guide (GUIDE.md) and a verification report (TALK.md).", 0),
         ("Run:  pip install -e .   ·   pytest -q   ·   python examples/demo_synthetic.py", 0),
     ], code_note="github: greenwichg/random_walks_with_erasure",
         notes="What this repository adds on top of the paper.")
