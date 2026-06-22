@@ -7,6 +7,10 @@ A clean, tested Python implementation of
 > Bibek Paudel and Abraham Bernstein. *The Web Conference (WWW '21).*
 > [arXiv:2102.09635](https://arxiv.org/abs/2102.09635)
 
+> 🔰 **New here?** Read [`GUIDE.md`](GUIDE.md) — a from-scratch, beginner-friendly
+> walkthrough of what this project is, why it exists, and how it was built. This
+> README is the technical reference.
+
 RWE is a modified random-walk exploration of the bipartite user–item feedback
 graph in which the mass reaching certain nodes is systematically *erased* and
 sent back to the walk's origin. By shaping an **erasure matrix `Q`**, the same
