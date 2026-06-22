@@ -13,7 +13,9 @@ A clean, tested Python implementation of
 >
 > 🎞️ **Comparing against the talk?** [`docs/TALK.md`](docs/TALK.md) is a
 > slide-by-slide walkthrough of Bibek Paudel's WWW'21 presentation (all 29
-> slides), each mapped to the code that implements it.
+> slides), each mapped to the code that implements it. There is also an
+> editable slide deck, [`docs/RWE_talk.pptx`](docs/RWE_talk.pptx) (regenerate
+> with `python docs/make_deck.py`).
 
 RWE is a modified random-walk exploration of the bipartite user–item feedback
 graph in which the mass reaching certain nodes is systematically *erased* and
