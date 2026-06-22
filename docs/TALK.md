@@ -8,10 +8,10 @@ For each slide this records **what is on the slide**, the **speaker's notes**
 (from the talk narration), and **→ In this project** — how that point maps to
 this repository, so the slides double as an implementation checklist.
 
-> **Status:** slides 1–22 of the deck (introduction, ideology detection, the
-> datasets/results, the diversification strategies, the RWE algorithm with its
-> worked long-tail example, the experimental setup, and Result I). Remaining
-> slides — Results II–IV and the conclusion — will be appended as they are added.
+> **Status:** complete — slides 1–27, covering the full talk (introduction,
+> ideology detection, datasets, the diversification strategies, the RWE
+> algorithm with its worked example, and Results I–IV). A closing summary is at
+> the end.
 >
 > *(The deck re-shows the "Normative goals" slide (= Slide 15) and the "Our
 > Approach" slide (= Slides 6/14) as section transitions; they are not
@@ -556,5 +556,108 @@ data and are not reproducible here).
 
 ---
 
-*More slides to follow: Results II–IV (the ideological-diversity scatter/shift
-measures and the weighted measures) and the conclusion.*
+## Slide 23 — Distribution of recommended ideologies (US-RT)
+
+**On the slide.** Four density plots of the **elites' ideological positions in
+the top-10 recommendations** (the paper's Figure 6), for Collaborative
+Filtering, RP³_β, P³, and RWE (bridging), coloured by user group
+(Left / Center / Right). The three baselines are **bimodal / polarized** (mass
+piled at ≈ −2 and ≈ +2, little in the middle); **RWE shifts mass toward the
+centre** and is markedly less polarized.
+
+**→ In this project.** The "are these distributions different?" question is
+`metrics.ks_statistic` (KS test between recommenders' recommended-position
+distributions), and `metrics.recommended_positions` returns the raw values to
+histogram. The directional conclusion (RWE less polarized, more central)
+reproduces — it is the same effect the `quadrant_scatter.png` diagram shows.
+*(We don't auto-render this exact density plot; it would be a small addition on
+top of `recommended_positions`.)*
+
+---
+
+## Slide 24 — "Result II: Ideological Diversity" (US-URL)
+
+**On the slide.** 2-D histograms with **Rec-pos** (mean recommended position) on
+the y-axis, for P³, RP³_β and RWE. Top row vs **User pos `θ_u`**, bottom row vs
+**Train-pos**. Baselines sit on the diagonal (recommendations track the user's /
+training side); **RWE spreads off-diagonal** (mass in the opposite quadrants and
+near the centre, highlighted box).
+
+**→ In this project.** This is exactly the **`quadrant_scatter.png`** diagram
+(`docs/make_diagrams.py`), built from real `P3` vs `RWE-B` output via
+`metrics.mean_recommended_position`: the baseline tracks the diagonal, RWE-B
+moves to the opposite quadrant. We render the *User-pos* version; the *Train-pos*
+row is the same code with the per-user mean training position as the x-axis.
+
+---
+
+## Slide 25 — "Result III: Ideological Shift"
+
+**On the slide.** Two shift definitions:
+
+- **`User-Shift = Pos(Recs) − Pos(u)`**
+- **`Train-Shift = Pos(Recs) − Pos(Train)`**
+
+and 2-D histograms of shift vs position. All methods show a negative slope (left
+users shifted right, right users shifted left); **RWE has the strongest,
+cleanest shift toward the opposite side.**
+
+**→ In this project — exact match.** `metrics.ideological_shift(recs,
+item_positions, reference)` *is* `Pos(Recs) − reference`: pass the user position
+for **User-Shift**, the mean training-item position for **Train-Shift**.
+`metrics.directed_shift` aggregates it as "shift toward the opposite side"
+(verified: a left user given right-side items yields `+`, a right user given
+left-side items yields `−`).
+
+---
+
+## Slides 26–27 — "Result IV: Weighted Ideological Diversity"
+
+**On the slides.** Two **desirable properties** — recommendations should (1)
+*lean toward the centre relative to the user's position* and (2) *span a wider
+range for users at the extremes* — and a results table with measures **UW**
+(weighted by the user's position) and **TW** (weighted by the average training
+position). RWE-B is shown at three erasure exponents `v ∈ {5.0, 2.0, 0.5}`.
+**Lower is better, except for `UW-Range`, `AUC`, `HR@10`.**
+
+**→ In this project — full mapping.** Every row of the Result IV table is a
+metric in `rwe/metrics.py`, and the two properties are exactly the ones the
+implementation encodes (property 1 → shift/position toward centre; property 2 →
+range weighted by extremity). The erasure exponent `v` is the `v=` parameter of
+`RWE`/`RWED`/`RWEB`.
+
+| Result IV row | In this project | Direction |
+|---------------|-----------------|-----------|
+| `UW-Recs` / `TW-Recs` | `metrics.weighted_position` (ref = user / training) | lower better ✓ |
+| `UW-Shift` / `TW-Shift` | `metrics.weighted_shift` (ref = user / training) | lower better — mine is `−weighted_shift` (I use higher-better) |
+| `UW-Range` | `metrics.weighted_range` (ref = user) | higher better ✓ |
+| `AUC` | `metrics.auc` | higher better ✓ |
+| `HR@10` | `metrics.hit_rate_at_k` | higher better ✓ |
+| `v = 5.0 / 2.0 / 0.5` | `RWEB(..., v=…)` | — |
+
+`examples/demo_synthetic.py` prints `uw_recs`, `uw_shift`, `uw_range` (via
+`experiment.evaluate(..., user_positions=…)`), and reproduces the slide's
+finding directionally: **RWE-B has the lowest `uw_recs` (most central), the
+strongest bridging `uw_shift`, and the highest `uw_range` (widest for extremes)**
+— while keeping accuracy (`auc`/`hit_rate`) on par with the baselines.
+
+*(Sign note: the slide reports `UW-Shift`/`TW-Shift` as negative "lower-is-
+better"; `metrics.weighted_shift` reports the same quantity negated, as
+"higher-is-better". Negate to match the slide's column.)*
+
+---
+
+## Closing summary (talk conclusion)
+
+The talk concludes with the three contributions, all realised in this repo:
+
+1. **A probabilistic model to estimate ideological positions** of users, elites
+   *and* content from event-specific social signals → `rwe/ideology.py`.
+2. **A personalized-ranking method (RWE)** with two diversification strategies
+   (long-tail and political bridging) → `rwe/random_walk.py` (`RWED`, `RWEB`).
+3. **A general framework** for diversifying recommendations — any property on
+   items or user-item pairs → the `RWE(item_erasure=…)` interface.
+
+Beyond the paper, this project adds two extensions (`rwe/satisfaction.py`,
+`rwe/agent_sim.py`), a beginner guide (`GUIDE.md`), five diagrams, and 63 tests.
+See [`README.md`](../README.md) for the full equation-to-code map.

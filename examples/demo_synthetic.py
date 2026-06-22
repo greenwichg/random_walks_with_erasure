@@ -72,12 +72,12 @@ def part2_recommendation():
                                top_k=10, diversity_k=20,
                                item_positions=item_pos_hat,
                                user_positions=theta_hat)
-    cols = ["auc", "hit_rate@10", "precision@10", "mean_rank",
-            "gini_div@20", "avg_deg@20", "rec_range@10", "shift@10", "w_range_uw"]
+    cols = ["auc", "hit_rate@10", "precision@10", "rec_range@10",
+            "shift@10", "uw_recs", "uw_shift", "uw_range"]
     print(table[cols].round(3).to_string())
-    print("\n  RWE-B yields the widest ideological spread (rec_range@10) and the")
-    print("  largest shift toward the opposite side (shift@10, Result III/IV);")
-    print("  RWE-D promotes long-tail items (low avg_deg, higher gini_div).\n")
+    print("\n  RWE-B yields the widest ideological spread (rec_range@10, uw_range)")
+    print("  and the largest shift toward the opposite side (shift@10 / uw_shift,")
+    print("  Results III/IV); RWE-D promotes long-tail items (not shown here).\n")
 
     # Kolmogorov-Smirnov: are RWE-B's recommended ideologies distributed
     # differently from the most accurate baseline? (paper's Result III)

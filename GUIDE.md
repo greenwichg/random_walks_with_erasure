@@ -379,7 +379,7 @@ python examples/demo_movielens.py       # long-tail diversity benchmark
 python examples/demo_satisfaction.py    # adaptive per-user exposure
 python examples/demo_agent_sim.py       # agent-based browsing simulation
 
-# 3. Run the test suite (should print "62 passed")
+# 3. Run the test suite (should print "63 passed")
 pytest -q
 ```
 
@@ -405,7 +405,7 @@ print(RWED(graph, beta=0.5).recommend([0], top_k=2)) # long-tail-diversified
 
 ## 8. How we know it actually works
 
-We don't just *hope* the code is right — **62 automated tests** check it, and
+We don't just *hope* the code is right — **63 automated tests** check it, and
 they're the kind that would fail loudly if the logic broke. A few examples:
 
 - **The math is internally consistent:** the fast closed-form RWE gives the same
@@ -436,7 +436,7 @@ Run `pytest -q` any time to confirm everything still passes.
 | `rwe/satisfaction.py` | **Extension 1:** adaptive per-user exposure. |
 | `rwe/agent_sim.py` | **Extension 2:** networkx agent browsing simulation. |
 | `examples/demo_*.py` | Four runnable, self-contained demos. |
-| `tests/test_*.py` | 62 automated correctness checks. |
+| `tests/test_*.py` | 63 automated correctness checks. |
 | `docs/make_diagrams.py` | Regenerates the diagrams in this guide (into `docs/images/`). |
 | `README.md` | Reference docs (API, equations, usage). |
 | `GUIDE.md` | This beginner walkthrough. |

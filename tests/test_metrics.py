@@ -107,3 +107,13 @@ def test_weighted_range_emphasizes_extreme_users():
     narrow_then_wide = np.array([[2, 2], [0, 3]])  # extreme: range 0; mild: range 4
     assert (metrics.weighted_range(wide_then_narrow, _POS, ref)
             > metrics.weighted_range(narrow_then_wide, _POS, ref))
+
+
+def test_weighted_position_rewards_central_recs_for_extremes():
+    # UW-Recs/TW-Recs: lower = recs lean toward the centre (better).
+    ref = np.array([-2.0, -0.5])            # extreme vs mild user (centre = 0)
+    # extreme user gets central recs (mean 0), mild user gets extreme recs (mean +2)
+    extreme_central = np.array([[1, 2], [3, 3]])   # _POS=[-2,-1,1,2] -> means 0 and +2
+    extreme_extreme = np.array([[0, 0], [1, 2]])   # extreme -> mean -2; mild -> mean 0
+    assert (metrics.weighted_position(extreme_central, _POS, ref)
+            < metrics.weighted_position(extreme_extreme, _POS, ref))

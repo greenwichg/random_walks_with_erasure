@@ -136,7 +136,7 @@ on items and the erasure matrices are expressed over the `n` item columns.
 | eqs. 6–8 — elite-only ideal point | `IdeologyModel.fit(R)` |
 | eqs. 9–11 — joint ideal point | `IdeologyModel.fit(R, S)` |
 | RecRange@k, KS (§7.5) | `metrics.rec_range_at_k`, `metrics.ks_statistic` |
-| Shift, weighted diversity (App. A.1) | `metrics.directed_shift`, `metrics.weighted_shift`, `metrics.weighted_range` |
+| Shift, weighted diversity (App. A.1) | `metrics.directed_shift`, `metrics.weighted_position` (UW/TW-Recs), `metrics.weighted_shift` (UW/TW-Shift), `metrics.weighted_range` (UW-Range) |
 
 ## Extension: satisfaction-driven adaptive exposure
 

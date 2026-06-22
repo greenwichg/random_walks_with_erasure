@@ -293,3 +293,24 @@ def weighted_range(recommendations: np.ndarray, item_positions,
             num += w[i] * rng
             den += w[i]
     return float(num / den) if den > 0 else float("nan")
+
+
+def weighted_position(recommendations: np.ndarray, item_positions,
+                      reference_positions, center: float = 0.0) -> float:
+    """Position-weighted recommendation extremity -- the ``UW-Recs`` / ``TW-Recs``
+    measure (Result IV).
+
+    Mean distance of a user's recommended items from the ``center``, weighted by
+    ``|reference - center|`` so that *extreme* users count more.  **Lower is
+    better** -- it rewards recommendations that *lean toward the centre* relative
+    to the user's own (UW) or training (TW) position.  ``UW`` vs ``TW`` via the
+    reference argument.
+    """
+    ref = np.asarray(reference_positions, dtype=float)
+    mean_pos = mean_recommended_position(recommendations, item_positions)
+    w = np.abs(ref - center)
+    mask = ~np.isnan(mean_pos)
+    den = float(np.sum(w[mask]))
+    if den <= 0:
+        return float("nan")
+    return float(np.sum(w[mask] * np.abs(mean_pos[mask] - center)) / den)

@@ -70,9 +70,11 @@ def evaluate(recommender, train_graph: FeedbackGraph, test_pos, top_k: int = 10,
             ref = np.asarray(user_positions)[eval_users]
             result["shift@%d" % top_k] = metrics.directed_shift(
                 recs_topk, item_positions, ref)
-            result["w_shift_uw"] = metrics.weighted_shift(
+            result["uw_recs"] = metrics.weighted_position(
                 recs_topk, item_positions, ref)
-            result["w_range_uw"] = metrics.weighted_range(
+            result["uw_shift"] = metrics.weighted_shift(
+                recs_topk, item_positions, ref)
+            result["uw_range"] = metrics.weighted_range(
                 recs_topk, item_positions, ref)
     return result
 
