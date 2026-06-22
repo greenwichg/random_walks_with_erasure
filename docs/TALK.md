@@ -8,11 +8,15 @@ For each slide this records **what is on the slide**, the **speaker's notes**
 (from the talk narration), and **→ In this project** — how that point maps to
 this repository, so the slides double as an implementation checklist.
 
-> **Status:** slides 1–15 of the deck (introduction, ideology detection, the
-> datasets and estimated-position results, and the normative goals for
-> diversification). Remaining slides — the RWE algorithm and erasure matrix, the
-> worked diversification example, and the experimental results (Results I–IV) —
-> will be appended as they are added.
+> **Status:** slides 1–17 of the deck (introduction, ideology detection, the
+> datasets/estimated-position results, the diversification strategies and the
+> RWE algorithm setup). Remaining slides — the worked long-tail erasure example
+> and the experimental results (Results I–IV) — will be appended as they are
+> added.
+>
+> *(The deck re-shows the "Normative goals" slide (= Slide 15) and the "Our
+> Approach" slide (= Slides 6/14) as section transitions; they are not
+> re-listed below.)*
 
 ---
 
@@ -362,6 +366,86 @@ what we call bridges, which are essentially weak ties for diversification."
 
 ---
 
-*More slides to follow: the RWE algorithm and erasure matrix, the worked
-long-tail / bridging diversification example, and the experimental results
-(Results I–IV).*
+## Slide 16 — "Diversification strategies"
+
+**On the slide.**
+
+- The **erase matrix `Q`** on the user-item graph *prefers certain random walks
+  over others*.
+  - **Example I — Bridging:** prefer walks to items whose ideological positions
+    are *to the left for right-leaning users* and *to the right for left-leaning
+    users*.
+  - **Example II — Long-tail:** prefer walks to *low-degree* items.
+  - **Example III — Contrarian:** prefer walks to items whose positions are
+    *opposite* of the user.
+- A **generalized framework** for diversifying personalization: usable for
+  long-tail, political-content, *or any other property defined on items or
+  user-item pairs*.
+
+**Key point.** `Q` is the single knob. Different choices of `Q` give different
+diversification strategies, and the framework is open-ended.
+
+**→ In this project.** `Q` is the `item_erasure` argument of
+`rwe/random_walk.py::RWE`, which accepts a per-item vector, a per-user matrix,
+*or a callable* — i.e. any property on items or user-item pairs.
+
+| Slide | In this project |
+|-------|-----------------|
+| Example I — Bridging | `RWEB` (opposite-side weak-tie bridges) |
+| Example II — Long-tail | `RWED` (degree-based `Q`, eq. 4) |
+| Example III — Contrarian | one expression on the `RWE` base — no new class needed |
+| Generalized framework | `RWE(item_erasure=…)` accepts vector / matrix / callable |
+
+The contrarian example is literally a few lines, confirming the "any property"
+claim (here it lifts opposite-content from 9% under plain `P3` to ~81%):
+
+```python
+# Example III: erase ideologically *similar* items, keep *opposite* ones.
+sim = 1 - np.abs(item_pos[None, :] - user_pos[uids][:, None]) / pos_range
+contrarian = RWE(graph, item_erasure=lambda uids: sim)   # Q = similarity
+```
+
+---
+
+## Slide 17 — "Random Walks with Erasure (RWE)"
+
+**On the slide.**
+
+- Bi-partite graph with **m users, n items**.
+- **k-step** transition probabilities specified by **`Pᵏ`**.
+- **Erase matrix `Q ∈ [0, 1)^{(m+n)×(m+n)}`**.
+- **Sample multiple rounds** of k-step random walks.
+- **Initial-state probabilities are modified in each round, based on `Q`.**
+
+**Key point.** RWE = repeated k-step walks where, each round, the mass *erased*
+according to `Q` becomes the next round's starting mass — so `Q` reshapes where
+the walk concentrates.
+
+**Speaker notes.** "First we do a normal k-step random walk … additionally we
+have the erase matrix Q … we sample multiple rounds of k-step random walks, but
+at each round the initial-state probabilities are modified based on Q."
+
+**→ In this project.** Implemented exactly, in `rwe/graph.py` + `rwe/random_walk.py`:
+
+| Slide element | Code |
+|---------------|------|
+| bipartite `m × n` graph | `FeedbackGraph` (adjacency `A^G`, eq. 1) |
+| `Pᵏ` k-step transition | `graph.item_distribution(users, k)` (`P = D⁻¹A^G`) |
+| `Q ∈ [0, 1)` | erasure clipped to `[0, 1−ε)` (`random_walk.py:169,172`) |
+| multiple rounds, init-state modified by `Q` | `RWE.score_iterative` (start mass ← erased mass each round) |
+
+Two faithful-implementation notes:
+
+1. **`Q` is `(m+n)×(m+n)` on the slide; we store the item slice.** Because `k` is
+   odd, a walk from a user lands on **item** nodes, so only the item-destination
+   erasures ever act — the code computes those `(users × items)` entries.
+2. **We also derived the closed form** of the "multiple rounds" loop
+   (`score = p·(1−q)/(1−Σpq)`), so production scoring needs no iteration; the
+   `score_iterative` round-by-round version is kept and **tested to match** the
+   closed form, mirroring the slide's description.
+
+---
+
+*More slides to follow: the worked long-tail erasure example (start node →
+3 hops → degree-based erasure → re-walk → final scores) and the experimental
+results (Results I–IV).*
