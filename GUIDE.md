@@ -103,14 +103,9 @@ they didn't touch is a 0.
 
 Picture two columns of dots:
 
-```
-   USERS            ITEMS
-   -----            -----
-   Alice  ───────►  Article 1
-     │     ┌──────► Article 2
-     └─────┤
-   Bob  ───┴──────► Article 3
-```
+<p align="center">
+  <img src="docs/images/bipartite_graph.png" width="540" alt="Bipartite feedback graph: users on the left, items on the right, a line where a user liked an item">
+</p>
 
 A line means "this user liked this item." Because lines only ever go between the
 two columns (never user-to-user or item-to-item), this is called a **bipartite
@@ -142,6 +137,10 @@ After the walk reaches an item, we **erase** a fraction `q` of the probability
 that landed there and send it back to the starting user, who walks again. Repeat
 until the leftover is tiny.
 
+<p align="center">
+  <img src="docs/images/rwe_flow.png" width="760" alt="Random walk with erasure: probability flows from you (S) to pages; a high-tax popular page sends most of its mass back to be erased while a low-tax bridge page keeps most of its mass and is recommended">
+</p>
+
 - If `q` is large for an item, that item is **suppressed** (taxed heavily).
 - If `q` is small, that item is **kept** (recommended).
 
@@ -161,11 +160,9 @@ We place everyone on a single number line, e.g. from −2 (far left) to +2 (far
 right), with 0 in the middle. A user at −1 is left-leaning; an article at +1.5 is
 strongly right-leaning.
 
-```
-   ◄───────────────┼───────────────►
-  -2      -1       0      +1      +2
-        u1(left)        u2 u3 u4 (right)
-```
+<p align="center">
+  <img src="docs/images/ideology_scale.png" width="640" alt="One-dimensional ideology scale from -2 to +2 with u1 left-leaning and u2,u3,u4 right-leaning, and an arc showing RWE-B bridging from the left user to the opposite side">
+</p>
 
 We don't get these numbers for free — we **learn** them from behavior (who
 shares/retweets whom). That's the job of `rwe/ideology.py`.
@@ -425,6 +422,7 @@ Run `pytest -q` any time to confirm everything still passes.
 | `rwe/agent_sim.py` | **Extension 2:** networkx agent browsing simulation. |
 | `examples/demo_*.py` | Four runnable, self-contained demos. |
 | `tests/test_*.py` | 58 automated correctness checks. |
+| `docs/make_diagrams.py` | Regenerates the diagrams in this guide (into `docs/images/`). |
 | `README.md` | Reference docs (API, equations, usage). |
 | `GUIDE.md` | This beginner walkthrough. |
 
