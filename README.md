@@ -118,7 +118,7 @@ on items and the erasure matrices are expressed over the `n` item columns.
 | `rwe/random_walk.py` | §4–5 | `P3`, `RP3Beta` baselines; `RWE` (eq. 3, closed-form + iterative); `RWED` (eq. 4); `RWEB` (eq. 5). |
 | `rwe/ideology.py` | §6 | Joint / elite-only ideal-point model (eqs. 6–11), Adam-optimised. |
 | `rwe/baselines.py` | §7.3 | Item-based CF (`ItemKNN`) and BPR matrix factorisation (`BPRMF`). |
-| `rwe/metrics.py` | §7.3, §7.5 | AUC, Mean Rank, Hit-Rate, Precision; Gini-diversity, Avg-degree, Personalization, Surprisal; RecRange, KS test. |
+| `rwe/metrics.py` | §7.3, §7.5, App. A.1 | AUC, Mean Rank, Hit-Rate, Precision; Gini-diversity, Avg-degree, Personalization, Surprisal; RecRange, KS test; ideological shift + position-weighted (UW/TW) diversity. |
 | `rwe/data.py` | §7.1 | Interaction loaders, MovieLens-1M loader, train/test split, synthetic generators. |
 | `rwe/experiment.py` | §7 | Evaluation runner and hyper-parameter grid search. |
 | `rwe/satisfaction.py` | *extension* | Webpage graph, community detection, satisfaction score, `AdaptiveRWEB`. |
@@ -136,6 +136,7 @@ on items and the erasure matrices are expressed over the `n` item columns.
 | eqs. 6–8 — elite-only ideal point | `IdeologyModel.fit(R)` |
 | eqs. 9–11 — joint ideal point | `IdeologyModel.fit(R, S)` |
 | RecRange@k, KS (§7.5) | `metrics.rec_range_at_k`, `metrics.ks_statistic` |
+| Shift, weighted diversity (App. A.1) | `metrics.directed_shift`, `metrics.weighted_shift`, `metrics.weighted_range` |
 
 ## Extension: satisfaction-driven adaptive exposure
 
@@ -272,6 +273,13 @@ the entire pipeline is runnable out of the box.
   all-pairs gradients vary widely in scale across parameter blocks), which is
   more robust than a single fixed step size while implementing the same
   alternating-update objective of eqs. (8)/(11).
+- **Shift / weighted diversity (App. A.1).** The exact appendix normalisation is
+  not in the main paper, so `directed_shift`, `weighted_shift` and
+  `weighted_range` follow the two properties stated in the WWW'21 talk
+  (Results III/IV): recommendations should pull a user toward the *opposite*
+  side (signed shift), and bridging/range should count more for *extreme* users
+  (weighting by `|position − center|`). `UW` uses the user's own position as the
+  reference, `TW` the mean training-item position.
 
 ## License
 

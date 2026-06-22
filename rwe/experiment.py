@@ -17,7 +17,8 @@ from .graph import FeedbackGraph
 
 
 def evaluate(recommender, train_graph: FeedbackGraph, test_pos, top_k: int = 10,
-             diversity_k: int = 20, item_positions=None, n_users_total=None) -> dict:
+             diversity_k: int = 20, item_positions=None, user_positions=None,
+             n_users_total=None) -> dict:
     """Evaluate one recommender against a held-out test set.
 
     Parameters
@@ -31,6 +32,10 @@ def evaluate(recommender, train_graph: FeedbackGraph, test_pos, top_k: int = 10,
         Per-user list of held-out item-index arrays.
     item_positions:
         Optional ideological positions per item (enables ``RecRange``).
+    user_positions:
+        Optional ideological positions per user; together with ``item_positions``
+        this enables the ``shift`` and position-weighted diversity measures
+        (talk Results III/IV).
     """
     eval_users = np.array([u for u in range(train_graph.m)
                            if len(test_pos[u]) > 0], dtype=int)
@@ -61,6 +66,14 @@ def evaluate(recommender, train_graph: FeedbackGraph, test_pos, top_k: int = 10,
     if item_positions is not None:
         result["rec_range@%d" % top_k] = metrics.rec_range_at_k(
             recs_topk, item_positions)
+        if user_positions is not None:
+            ref = np.asarray(user_positions)[eval_users]
+            result["shift@%d" % top_k] = metrics.directed_shift(
+                recs_topk, item_positions, ref)
+            result["w_shift_uw"] = metrics.weighted_shift(
+                recs_topk, item_positions, ref)
+            result["w_range_uw"] = metrics.weighted_range(
+                recs_topk, item_positions, ref)
     return result
 
 

@@ -240,6 +240,21 @@ Numbers that tell us whether recommendations are good. Two families:
   `average_item_degree`, `personalization`, `surprisal`, and — for viewpoints —
   `rec_range_at_k` (how wide a span of opinions is in your top-10?) and
   `ks_statistic` (are two methods' viewpoint distributions really different?).
+- **Bridging** (do recommendations move you toward the *other* side?):
+  `directed_shift` and the position-weighted `weighted_shift` / `weighted_range`
+  (from the talk's Results III & IV). A positive shift means a left-leaning user
+  is being shown right-of-them content, and vice-versa.
+
+The picture below shows why this matters. Each dot is a user: the horizontal
+axis is their own ideology, the vertical axis is the average ideology of what
+they were recommended. A plain baseline (left) keeps everyone on their **own
+side** — the dots lie on the diagonal. Our bridging method (right) pulls them to
+the **opposite** side — left-leaning users (blue) end up in the top-left, right
+-leaning users (red) in the bottom-right.
+
+<p align="center">
+  <img src="docs/images/quadrant_scatter.png" width="760" alt="Two scatter plots of user ideology (x) vs mean recommended ideology (y): the baseline keeps users on the diagonal (own side); RWE-B moves them to the opposite quadrant">
+</p>
 
 ### `data.py` — get data in and make fair test sets
 
@@ -364,7 +379,7 @@ python examples/demo_movielens.py       # long-tail diversity benchmark
 python examples/demo_satisfaction.py    # adaptive per-user exposure
 python examples/demo_agent_sim.py       # agent-based browsing simulation
 
-# 3. Run the test suite (should print "58 passed")
+# 3. Run the test suite (should print "62 passed")
 pytest -q
 ```
 
@@ -390,7 +405,7 @@ print(RWED(graph, beta=0.5).recommend([0], top_k=2)) # long-tail-diversified
 
 ## 8. How we know it actually works
 
-We don't just *hope* the code is right — **58 automated tests** check it, and
+We don't just *hope* the code is right — **62 automated tests** check it, and
 they're the kind that would fail loudly if the logic broke. A few examples:
 
 - **The math is internally consistent:** the fast closed-form RWE gives the same
@@ -421,7 +436,7 @@ Run `pytest -q` any time to confirm everything still passes.
 | `rwe/satisfaction.py` | **Extension 1:** adaptive per-user exposure. |
 | `rwe/agent_sim.py` | **Extension 2:** networkx agent browsing simulation. |
 | `examples/demo_*.py` | Four runnable, self-contained demos. |
-| `tests/test_*.py` | 58 automated correctness checks. |
+| `tests/test_*.py` | 62 automated correctness checks. |
 | `docs/make_diagrams.py` | Regenerates the diagrams in this guide (into `docs/images/`). |
 | `README.md` | Reference docs (API, equations, usage). |
 | `GUIDE.md` | This beginner walkthrough. |

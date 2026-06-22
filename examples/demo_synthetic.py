@@ -70,11 +70,13 @@ def part2_recommendation():
     }
     table = experiment.compare(recommenders, g, test_pos,
                                top_k=10, diversity_k=20,
-                               item_positions=item_pos_hat)
+                               item_positions=item_pos_hat,
+                               user_positions=theta_hat)
     cols = ["auc", "hit_rate@10", "precision@10", "mean_rank",
-            "gini_div@20", "avg_deg@20", "rec_range@10"]
+            "gini_div@20", "avg_deg@20", "rec_range@10", "shift@10", "w_range_uw"]
     print(table[cols].round(3).to_string())
-    print("\n  RWE-B yields the widest ideological spread (rec_range@10);")
+    print("\n  RWE-B yields the widest ideological spread (rec_range@10) and the")
+    print("  largest shift toward the opposite side (shift@10, Result III/IV);")
     print("  RWE-D promotes long-tail items (low avg_deg, higher gini_div).\n")
 
     # Kolmogorov-Smirnov: are RWE-B's recommended ideologies distributed

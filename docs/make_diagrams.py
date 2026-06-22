@@ -188,6 +188,49 @@ def ideology_scale():
     _save(fig, "ideology_scale.png")
 
 
+def quadrant_scatter():
+    """Result II: user position (x) vs mean recommended position (y), per user.
+
+    Generated from real recommender output: a baseline keeps users in their own
+    quadrant (dots track the diagonal), while RWE-B pulls them toward the centre
+    / opposite side (dots flatten toward y=0).
+    """
+    import numpy as np
+    from rwe import FeedbackGraph, P3, RWEB, data, metrics
+
+    d = data.synthetic_political(n_users=300, n_items=100, seed=2)
+    g = FeedbackGraph(d["matrix"])
+    upos, ipos = d["user_positions"], d["item_positions"]
+    users = np.arange(g.m)
+    panels = [
+        ("Baseline (P3)", P3(g).recommend(users, top_k=10),
+         "recommendations stay on the\nuser's own side (along y = x)"),
+        ("RWE-B (bridging)", RWEB(g, upos, ipos, epsilon=0.8).recommend(users, top_k=10),
+         "recommendations pulled toward\nthe centre / opposite side"),
+    ]
+
+    fig, axes = plt.subplots(1, 2, figsize=(10.5, 5.2), sharex=True, sharey=True)
+    colors = [USER_C if u < 0 else ERASE_C for u in upos]
+    for ax, (title, recs, note) in zip(axes, panels):
+        y = metrics.mean_recommended_position(recs, ipos)
+        ax.axhline(0, color=MUTE, lw=1)
+        ax.axvline(0, color=MUTE, lw=1)
+        ax.plot([-2.2, 2.2], [-2.2, 2.2], ls="--", color="#c2c2c2", lw=1, zorder=1)
+        ax.scatter(upos, y, c=colors, s=20, alpha=0.7, zorder=3, edgecolors="none")
+        ax.set_title(title, fontsize=12, weight="bold", color=INK)
+        ax.set_xlabel("user ideological position", fontsize=10, color=INK)
+        ax.set_xlim(-2.3, 2.3)
+        ax.set_ylim(-2.3, 2.3)
+        ax.set_aspect("equal")
+        ax.text(0, -2.05, note, ha="center", va="bottom", fontsize=8.5,
+                style="italic", color=MUTE)
+    axes[0].set_ylabel("mean position of\nrecommended items", fontsize=10, color=INK)
+    fig.suptitle("Result II: where recommendations sit vs the user's own side",
+                 fontsize=13.5, weight="bold", color=INK)
+    fig.tight_layout(rect=(0, 0, 1, 0.96))
+    _save(fig, "quadrant_scatter.png")
+
+
 def _save(fig, name):
     OUT.mkdir(parents=True, exist_ok=True)
     path = OUT / name
@@ -200,3 +243,4 @@ if __name__ == "__main__":
     bipartite_graph()
     rwe_flow()
     ideology_scale()
+    quadrant_scatter()

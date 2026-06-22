@@ -66,3 +66,44 @@ def test_ks_statistic_distinguishes_distributions():
 def test_personalization_disjoint_lists():
     recs = np.array([[0, 1], [2, 3]])  # no overlap -> max personalization
     assert np.isclose(metrics.personalization(recs, n_items=4), 1.0)
+
+
+# --- ideological shift & weighted diversity (Appendix A.1) ----------------
+# item positions: items 0,1 are left (-2,-1); items 2,3 are right (+1,+2).
+_POS = np.array([-2.0, -1.0, 1.0, 2.0])
+
+
+def test_ideological_shift_signed():
+    # left user gets right-side items (+1,+2); right user gets left-side items.
+    recs = np.array([[2, 3], [0, 1]])
+    ref = np.array([-1.5, 1.5])           # users' own positions
+    shift = metrics.ideological_shift(recs, _POS, ref)
+    assert np.allclose(shift, [1.5 - (-1.5), -1.5 - 1.5])   # [+3.0, -3.0]
+
+
+def test_directed_shift_rewards_bridging():
+    ref = np.array([-1.5, 1.5])
+    bridging = np.array([[2, 3], [0, 1]])   # each user pushed to the other side
+    same_side = np.array([[0, 1], [2, 3]])  # each user kept on their own side
+    assert metrics.directed_shift(bridging, _POS, ref) > 0
+    assert (metrics.directed_shift(bridging, _POS, ref)
+            > metrics.directed_shift(same_side, _POS, ref))
+
+
+def test_weighted_shift_emphasizes_extreme_users():
+    # Two left users: one extreme (-2), one mild (-0.5).
+    ref = np.array([-2.0, -0.5])
+    # Scenario A: bridge the EXTREME user strongly (+3) and the mild one weakly.
+    recs_a = np.array([[3, 3], [2, 2]])     # extreme -> +2 (shift +4); mild -> +1 (shift +1.5)
+    # Scenario B: bridge the MILD user strongly instead.
+    recs_b = np.array([[2, 2], [3, 3]])     # extreme -> +1 (shift +3);   mild -> +2 (shift +2.5)
+    # Unweighted directed shift is identical-ish; weighting by |ref| rewards A.
+    assert metrics.weighted_shift(recs_a, _POS, ref) > metrics.weighted_shift(recs_b, _POS, ref)
+
+
+def test_weighted_range_emphasizes_extreme_users():
+    ref = np.array([-2.0, -0.5])            # extreme vs mild user
+    wide_then_narrow = np.array([[0, 3], [2, 2]])  # extreme: range 4; mild: range 0
+    narrow_then_wide = np.array([[2, 2], [0, 3]])  # extreme: range 0; mild: range 4
+    assert (metrics.weighted_range(wide_then_narrow, _POS, ref)
+            > metrics.weighted_range(narrow_then_wide, _POS, ref))

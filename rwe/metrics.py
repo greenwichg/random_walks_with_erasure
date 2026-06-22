@@ -200,3 +200,96 @@ def ks_statistic(recommendations_a: np.ndarray, recommendations_b: np.ndarray,
         return float("nan"), float("nan")
     res = ks_2samp(a, b)
     return float(res.statistic), float(res.pvalue)
+
+
+# --------------------------------------------------------------------------- #
+# Ideological shift and position-weighted diversity (paper Appendix A.1)
+#
+# These reproduce the "shift" and weighted-diversity measures described in the
+# WWW'21 talk (Results III and IV).  The exact appendix normalisation is not in
+# the main paper, so the definitions below follow the two stated desirable
+# properties: (1) recommendations should pull a user toward the *opposite* side
+# (positive shift for left users, negative for right), and (2) the more extreme
+# the user, the more their bridging / range should count.
+# --------------------------------------------------------------------------- #
+def mean_recommended_position(recommendations: np.ndarray, item_positions) -> np.ndarray:
+    """Per-user mean ideological position of recommended items (``nan`` if none)."""
+    item_positions = np.asarray(item_positions, dtype=float)
+    out = np.full(recommendations.shape[0], np.nan)
+    for i, row in enumerate(recommendations):
+        items = row[row >= 0]
+        if items.size:
+            out[i] = float(item_positions[items].mean())
+    return out
+
+
+def ideological_shift(recommendations: np.ndarray, item_positions,
+                      reference_positions) -> np.ndarray:
+    """Per-user signed shift = ``mean(recommended positions) - reference``.
+
+    ``reference_positions`` is a per-user array (aligned with the rows of
+    ``recommendations``): pass the user's own ideology ``theta`` to measure the
+    shift away from the *user*, or the mean position of the user's training
+    items to measure the shift away from their *history* (talk, Result III).
+    A left user (negative reference) shifted toward the right yields a positive
+    value.  Returns ``nan`` where a user has no recommendations.
+    """
+    ref = np.asarray(reference_positions, dtype=float)
+    return mean_recommended_position(recommendations, item_positions) - ref
+
+
+def directed_shift(recommendations: np.ndarray, item_positions,
+                   reference_positions, center: float = 0.0) -> float:
+    """Mean shift *toward the opposite side*, averaged over users (Result III).
+
+    Reports ``mean( -sign(reference - center) * shift )`` so that a positive
+    value means recommendations pull users *across* the centre (good bridging),
+    regardless of which side they start on.  Higher is better.
+    """
+    ref = np.asarray(reference_positions, dtype=float)
+    shift = ideological_shift(recommendations, item_positions, ref)
+    vals = (-np.sign(ref - center)) * shift
+    vals = vals[~np.isnan(vals)]
+    return float(vals.mean()) if vals.size else float("nan")
+
+
+def weighted_shift(recommendations: np.ndarray, item_positions,
+                   reference_positions, center: float = 0.0) -> float:
+    """Position-weighted directional shift -- the ``UW``/``TW`` measure (Result IV).
+
+    Like :func:`directed_shift`, but each user is weighted by
+    ``|reference - center|`` so that bridging *extreme* users counts more.
+    Pass ``reference_positions = user ideology`` for the user-weighted (**UW**)
+    variant, or the mean training-item position for the training-weighted
+    (**TW**) variant.  Higher is better.
+    """
+    ref = np.asarray(reference_positions, dtype=float)
+    shift = ideological_shift(recommendations, item_positions, ref)
+    direction = -np.sign(ref - center)
+    w = np.abs(ref - center)
+    mask = ~np.isnan(shift)
+    den = float(np.sum(w[mask]))
+    if den <= 0:
+        return float("nan")
+    return float(np.sum(w[mask] * direction[mask] * shift[mask]) / den)
+
+
+def weighted_range(recommendations: np.ndarray, item_positions,
+                   reference_positions, center: float = 0.0) -> float:
+    """Position-weighted top-k ideological range -- the ``UW``/``TW`` measure (Result IV).
+
+    Weights each user's recommendation range (``max - min`` position) by
+    ``|reference - center|``, so a *wider* range for *extreme* users counts
+    more.  ``UW`` vs ``TW`` via the reference argument.  Higher is better.
+    """
+    item_positions = np.asarray(item_positions, dtype=float)
+    ref = np.asarray(reference_positions, dtype=float)
+    w = np.abs(ref - center)
+    num = den = 0.0
+    for i, row in enumerate(recommendations):
+        items = row[row >= 0]
+        if items.size:
+            rng = float(item_positions[items].max() - item_positions[items].min())
+            num += w[i] * rng
+            den += w[i]
+    return float(num / den) if den > 0 else float("nan")
