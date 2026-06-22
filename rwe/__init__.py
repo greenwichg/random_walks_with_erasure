@@ -24,9 +24,9 @@ from .random_walk import P3, RP3Beta, RWE, RWED, RWEB
 from .ideology import IdeologyModel, IdeologyResult
 from .baselines import ItemKNN, BPRMF
 from .satisfaction import (WebGraph, SatisfactionModel, AdaptiveRWEB,
-                           detect_communities, community_viewpoints,
-                           satisfaction_score)
-from . import data, metrics, experiment
+                           community_viewpoints, satisfaction_score)
+from .agent_sim import NewsfeedSimulator
+from . import data, metrics, experiment, agent_sim
 
 __version__ = "0.1.0"
 
@@ -36,6 +36,7 @@ __all__ = [
     "IdeologyModel", "IdeologyResult",
     "ItemKNN", "BPRMF",
     "WebGraph", "SatisfactionModel", "AdaptiveRWEB",
-    "detect_communities", "community_viewpoints", "satisfaction_score",
-    "data", "metrics", "experiment",
+    "community_viewpoints", "satisfaction_score",
+    "NewsfeedSimulator",
+    "data", "metrics", "experiment", "agent_sim",
 ]

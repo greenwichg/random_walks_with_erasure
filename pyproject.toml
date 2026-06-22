@@ -14,10 +14,12 @@ dependencies = [
     "numpy>=1.23",
     "scipy>=1.9",
     "pandas>=1.5",
+    "networkx>=3.0",
 ]
 
 [project.optional-dependencies]
 test = ["pytest>=7.0"]
+leiden = ["leidenalg>=0.9", "python-igraph>=0.10"]
 
 [tool.setuptools.packages.find]
 include = ["rwe*"]

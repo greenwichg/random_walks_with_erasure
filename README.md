@@ -66,6 +66,7 @@ python examples/demo_synthetic.py          # full pipeline on synthetic data
 python examples/demo_movielens.py          # long-tail benchmark (synthetic fallback)
 python examples/demo_movielens.py --ratings /path/to/ml-1m/ratings.dat
 python examples/demo_satisfaction.py       # satisfaction-driven adaptive exposure
+python examples/demo_agent_sim.py          # agent-based newsfeed browsing simulation
 ```
 
 `demo_synthetic.py` reproduces the paper's three headline results on data with a
@@ -117,6 +118,7 @@ on items and the erasure matrices are expressed over the `n` item columns.
 | `rwe/data.py` | §7.1 | Interaction loaders, MovieLens-1M loader, train/test split, synthetic generators. |
 | `rwe/experiment.py` | §7 | Evaluation runner and hyper-parameter grid search. |
 | `rwe/satisfaction.py` | *extension* | Webpage graph, community detection, satisfaction score, `AdaptiveRWEB`. |
+| `rwe/agent_sim.py` | *extension* | Agent-based newsfeed browsing simulation (networkx + Louvain/Leiden). |
 
 ## Equation → code map
 
@@ -182,6 +184,60 @@ far" idea of Section 5.2, made per-user.
 > weak inter-community ties remain traversable — matching the paper's
 > dense-clusters-plus-weak-ties picture. The score→exposure→content direction
 > (more dwell ⇒ more exposure) is a modelling choice and is configurable.
+
+## Extension: agent-based newsfeed browsing simulation
+
+`rwe/agent_sim.py` is a second, **agent-based** take on the satisfaction score
+(also *our* extension). Where `satisfaction.py` works on the co-occurrence
+projection, this module operates directly on a **networkx web graph** (nodes =
+webpages, edges = hyperlinks) with **Louvain/Leiden** communities, an explicit
+session **state machine**, and a tunable, ideology-biased **transition policy**.
+
+**Model.** Each agent `i` has a fixed ideology `u_i`; each page's ideology `w`
+is the mean ideology of its community. A page is *opposite* iff
+`sign(u_i) != sign(w)` **and** `|w| > epsilon` (a deadband excluding centrist
+pages). The walk follows
+
+```
+P(next = j | current = i) ∝ exp(-alpha * |w_j - u_i|) * edge_weight(i, j)
+```
+
+with `alpha = 0` a pure (topology-only) walk, `alpha > 0` a confirmation-bias
+walk (drifts back to the agent's side), and `alpha < 0` a "rabbit hole" walk.
+
+**Satisfaction score.** A session runs the state machine
+`own-side -> trigger -> tracking -> finalized`: counting starts at the first
+opposite page and increments per page while the agent stays in that opposing
+community, stopping the instant it leaves. `monte_carlo` returns the full score
+*distribution* per agent.
+
+```python
+from rwe.agent_sim import (make_synthetic_web_graph, detect_communities,
+                           assign_community_ideology, NewsfeedSimulator,
+                           run_independent_agents)
+
+G, latent = make_synthetic_web_graph(block_ideologies=(-1.5, 0.0, 1.5), seed=0)
+node_comm = detect_communities(G, method="louvain")        # or "leiden"
+node_ideo, comm_ideo = assign_community_ideology(latent, node_comm)
+
+sim = NewsfeedSimulator(G, node_ideo, node_comm, epsilon=0.5, alpha=0.0)
+agents = run_independent_agents(sim, positions=[-1.5, 1.5], n_trials=400)
+print(agents[-1.5].summary())           # mean / std / median / trigger_rate
+```
+
+**Validation — alpha sweep.** Mean satisfaction falls monotonically as
+confirmation bias rises (synthetic 3-block graph, `demo_agent_sim.py`):
+
+| alpha | -1.0 | -0.5 | 0.0 | 0.5 | 1.0 | 2.0 |
+|---|---|---|---|---|---|---|
+| left agent (u=-1.5) | 96.2 | 38.6 | 13.2 | 3.9 | 0.9 | 0.06 |
+
+The score then feeds an exposure policy (`exposure_policy` ->
+`next_session_opposite_fraction`) that sets how much opposing content to seed in
+the next session. Two agent modes are supported: **independent agents** (users
+at distinct nearby ideologies) and **cluster agents** (one per community
+centroid). Communities can be found with Louvain (default) or, with the optional
+`rwe[leiden]` extra, Leiden.
 
 ## Datasets
 
