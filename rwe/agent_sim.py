@@ -158,6 +158,39 @@ def is_opposite(u_i: float, w: float, epsilon: float) -> bool:
     return (np.sign(u_i) != np.sign(w)) and (abs(w) > epsilon)
 
 
+@dataclass
+class SessionLog:
+    """Record of exactly which pages a user accessed in one session.
+
+    ``pages`` is the ordered trajectory of webpages the user visited (this is
+    the "which webpage did the user access" answer); the parallel arrays give,
+    per visited page, its ideology, community, the state machine's label
+    (``own`` / ``trigger`` / ``tracking`` / ``exited``) and whether that page
+    counted toward the satisfaction ``score``.  ``trigger_index`` is the index
+    into ``pages`` where opposing-viewpoint exposure began (``None`` if never).
+    """
+
+    pages: list
+    ideologies: list
+    communities: list
+    states: list
+    counted: list
+    score: int
+    trigger_index: int | None
+
+    def to_frame(self):
+        """Return the per-page session log as a ``pandas.DataFrame``."""
+        import pandas as pd
+        return pd.DataFrame({
+            "step": range(len(self.pages)),
+            "page": self.pages,
+            "ideology": self.ideologies,
+            "community": self.communities,
+            "state": self.states,
+            "counted": self.counted,
+        })
+
+
 class NewsfeedSimulator:
     """Simulate browsing sessions and score opposing-viewpoint exposure.
 
@@ -218,31 +251,71 @@ class NewsfeedSimulator:
         return [self.nodes[i] for i in idx]
 
     # -- session state machine ------------------------------------------
-    def simulate_session(self, u_i: float, start, max_steps: int = 200, rng=None) -> int:
-        """Run one session and return its satisfaction score.
-
-        State machine: ``own-side`` -> (trigger) -> ``tracking`` -> finalised.
-        """
-        rng = rng or self.rng
-        cur = self._index[start]
-        state = "own"
-        score = 0
-        track_comm = None
+    def _walk_indices(self, start_idx: int, u_i: float, max_steps: int, rng):
+        """Yield visited node indices in order (the agent's trajectory)."""
+        cur = start_idx
         for _ in range(max_steps):
-            w, c = self.w[cur], self.comm[cur]
+            yield cur
+            nxt = self._next_node(cur, u_i, rng)
+            if nxt is None:
+                return
+            cur = nxt
+
+    def _run_state_machine(self, u_i: float, index_iter):
+        """Score a trajectory of visited node indices and record a session log.
+
+        The trajectory may come from the simulated walk *or* from real logged
+        browsing data -- the scoring (own-side -> trigger -> tracking ->
+        finalised) is identical either way.
+        """
+        state, score, track_comm, trigger_index = "own", 0, None, None
+        pages, ideo, comm, states, counted = [], [], [], [], []
+        for step, cur in enumerate(index_iter):
+            w, c = float(self.w[cur]), int(self.comm[cur])
+            label, did_count = "own", False
             if state == "own":
                 if is_opposite(u_i, w, self.epsilon):
                     state, track_comm, score = "tracking", c, 1
+                    label, did_count, trigger_index = "trigger", True, step
             elif state == "tracking":
                 if c == track_comm:
                     score += 1
+                    label, did_count = "tracking", True
                 else:
-                    break               # left the opposing community -> stop
-            nxt = self._next_node(cur, u_i, rng)
-            if nxt is None:
+                    label = "exited"        # left the opposing community -> stop
+            pages.append(self.nodes[cur]); ideo.append(w); comm.append(c)
+            states.append(label); counted.append(did_count)
+            if label == "exited":
                 break
-            cur = nxt
-        return score
+        log = SessionLog(pages=pages, ideologies=ideo, communities=comm,
+                         states=states, counted=counted, score=score,
+                         trigger_index=trigger_index)
+        return score, log
+
+    def simulate_session(self, u_i: float, start, max_steps: int = 200, rng=None,
+                         return_log: bool = False):
+        """Run one simulated session.
+
+        Returns the satisfaction ``score`` (default) or, with
+        ``return_log=True``, a :class:`SessionLog` recording every page the user
+        accessed and how each contributed to the score.
+        """
+        rng = rng or self.rng
+        score, log = self._run_state_machine(
+            u_i, self._walk_indices(self._index[start], u_i, max_steps, rng))
+        return log if return_log else score
+
+    def score_trajectory(self, u_i: float, pages, return_log: bool = False):
+        """Score an externally-supplied trajectory of accessed pages.
+
+        Use this with **real** browsing data: ``pages`` is the ordered list of
+        webpage node ids the user actually visited (e.g. from newsfeed
+        impression / click logs).  The same state machine that scores simulated
+        walks computes the satisfaction score over the real trajectory.
+        """
+        score, log = self._run_state_machine(
+            u_i, (self._index[p] for p in pages))
+        return log if return_log else score
 
     # -- STEP 4: Monte Carlo --------------------------------------------
     def monte_carlo(self, u_i: float, n_trials: int = 200, start_nodes=None,

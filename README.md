@@ -239,6 +239,14 @@ at distinct nearby ideologies) and **cluster agents** (one per community
 centroid). Communities can be found with Louvain (default) or, with the optional
 `rwe[leiden]` extra, Leiden.
 
+**Which pages did the user access?** `simulate_session(..., return_log=True)`
+returns a `SessionLog` — the ordered trajectory of visited pages plus each
+page's ideology, community, state (`own`/`trigger`/`tracking`/`exited`) and
+whether it counted toward the score (`log.to_frame()` for a table). Because the
+scoring state machine is independent of where the trajectory comes from,
+`score_trajectory(u_i, pages)` scores an **externally supplied** list of pages —
+use it with real newsfeed impression/click logs instead of the simulated walk.
+
 ## Datasets
 
 The paper's Twitter datasets (UK2016 / US2016 / DE2017) are not redistributable.

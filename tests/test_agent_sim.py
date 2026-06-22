@@ -49,6 +49,30 @@ def test_deadband_page_does_not_trigger():
     assert sim.simulate_session(u_i=-1.5, start=0, max_steps=10) == 0
 
 
+# --- session log: which pages were accessed -------------------------------
+def test_session_log_records_trajectory_and_states():
+    sim = _path_sim([-1.5, -1.5, 1.5, 1.5, 1.5, -1.5],
+                    [0, 0, 1, 1, 1, 0], epsilon=0.5)
+    log = sim.simulate_session(u_i=-1.5, start=0, max_steps=10, return_log=True)
+    assert log.pages == [0, 1, 2, 3, 4, 5]            # the visited trajectory
+    assert log.states == ["own", "own", "trigger", "tracking", "tracking", "exited"]
+    assert log.counted == [False, False, True, True, True, False]
+    assert log.score == 3
+    assert log.trigger_index == 2
+    # return_log=False still gives the same integer score.
+    assert sim.simulate_session(u_i=-1.5, start=0, max_steps=10) == log.score
+    assert len(log.to_frame()) == 6
+
+
+def test_score_trajectory_matches_simulation_and_handles_real_lists():
+    sim = _path_sim([-1.5, -1.5, 1.5, 1.5, 1.5, -1.5],
+                    [0, 0, 1, 1, 1, 0], epsilon=0.5)
+    # Scoring an externally-supplied trajectory (e.g. real click logs).
+    assert sim.score_trajectory(-1.5, [0, 1, 2, 3, 4, 5]) == 3
+    log = sim.score_trajectory(-1.5, [2, 3, 4], return_log=True)
+    assert log.score == 3 and log.trigger_index == 0   # starts already opposing
+
+
 # --- transition policy ----------------------------------------------------
 def _star_sim(alpha):
     # node 0 links to node 1 (close to u_i=-1.5) and node 2 (far), equal weights.
