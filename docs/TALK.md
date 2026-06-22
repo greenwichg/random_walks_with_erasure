@@ -8,10 +8,11 @@ For each slide this records **what is on the slide**, the **speaker's notes**
 (from the talk narration), and **→ In this project** — how that point maps to
 this repository, so the slides double as an implementation checklist.
 
-> **Status:** slides 1–10 of the deck (the introduction / motivation and the
-> ideology-detection method). Remaining slides — the RWE algorithm and erasure
-> matrix, the diversification strategies, and the experimental results
-> (Results I–IV) — will be appended as they are added.
+> **Status:** slides 1–15 of the deck (introduction, ideology detection, the
+> datasets and estimated-position results, and the normative goals for
+> diversification). Remaining slides — the RWE algorithm and erasure matrix, the
+> worked diversification example, and the experimental results (Results I–IV) —
+> will be appended as they are added.
 
 ---
 
@@ -249,6 +250,118 @@ Verified empirically: the model recovers planted positions (|corr| > 0.8) and
 
 ---
 
-*More slides to follow: the RWE algorithm and erasure matrix, the long-tail and
-bridging diversification strategies, and the experimental results
+## Slide 11 — "Datasets on specific political events"
+
+**On the slide.** Datasets of Twitter discussions around three events:
+
+- **Brexit referendum (2016)** · **US presidential elections (2016)** ·
+  **German federal elections (2017)**.
+
+For each, two feedback graphs: **elite-endorsement** (based on **retweets**, RT)
+and **content-endorsement** (based on **URL shares**, URL).
+
+**Key point.** Positions are learned per-event from real Twitter behaviour, with
+two complementary signals (who you retweet, what links you share).
+
+**→ In this project.** `rwe/data.py` documents exactly these datasets
+(`UK2016 / US2016 / DE2017`) and the RT (elite) / URL (content) split. The raw
+Twitter data is **not redistributable**, so the repo ships generic loaders
+(`load_csv`, `from_interactions`) plus synthetic generators
+(`synthetic_political`, `synthetic_ideology`) that reproduce the same two-graph
+structure, so the whole pipeline runs out of the box. *(This is the one place
+the project necessarily substitutes synthetic data for the paper's private
+datasets.)*
+
+---
+
+## Slide 12 — "Estimated positions: UK"
+
+**On the slide.** A dot plot of UK politicians (conservatives = red, labour =
+green, libdems = cyan, others = purple) along the −2…+2 scale, with notes:
+
+- Most **Conservative** politicians on the **right**, most **Labour** on the **left**.
+- **Nick Hurd** and **Ed Vaizey** (Conservative) and the **SNP** supported the
+  *Remain* campaign — and are estimated on the **left** (highlighted boxes).
+- **Ideological positions can be specific to issues/events; pre-existing labels
+  can be unreliable.**
+
+**Key point.** This is the headline ideology-detection result (the paper's
+Figure 4): the method recovers left/right correctly *and* captures
+event-specific exceptions that fixed party labels would get wrong.
+
+**→ In this project.** This is an *evaluation result* on the private UK dataset,
+so the exact figure can't be regenerated here. The model that produces it
+(`IdeologyModel`) is implemented and validated on **synthetic** data, where it
+recovers planted positions (|corr| > 0.8) and joint learning beats elite-only —
+and the "issue-specific, not fixed labels" behaviour is the direct consequence
+of learning from endorsement behaviour (verified for the Figure 1 example).
+
+---
+
+## Slide 13 — "Estimated positions: Germany and US"
+
+**On the slide.** Two more dot plots:
+
+- **Germany** (paper's Figure 5): parties ALDE, CSU, Green, AfD, FDP, Linke
+  separate cleanly (e.g. *Linke/Green* left, *AfD* far right).
+- **US** (paper's Figure 3): media and figures span *HillaryClinton / MSNBC /
+  thinkprogress* on the left to *tedcruz / GOP / realDonaldTrump* on the right.
+
+**Key point.** The method generalises across countries and across both
+politicians and media outlets.
+
+**→ In this project.** As with Slide 12, these are results on private datasets;
+the implementation is validated on synthetic data instead. (Same `IdeologyModel`,
+no special-casing per country.)
+
+---
+
+## Slide 14 — "Our Approach" (recap)
+
+**On the slide.** The three-step "Our Approach" figure from Slide 6 is shown
+again, marking the transition: step 1 (identify positions) has just been
+demonstrated working, so the talk now turns to steps 2–3 (diversification
+strategy + RWE).
+
+**→ In this project.** See Slide 6 — steps map to `ideology.py`, `RWED`/`RWEB`,
+and `RWE`.
+
+---
+
+## Slide 15 — "Normative goals for diversification"
+
+**On the slide.** What a good diversified recommender should do:
+
+- **Personalized:** high accuracy.
+- **Diverse:** according to the chosen diversification strategy.
+- For **long-tail**: expose users to more **low-degree** items.
+- For **bridging**: recommendations should
+  - expose users to viewpoints from the **other side**,
+  - but **not be very different / polarizing**, and
+  - use **weak ties** for diversification (**bridges**).
+
+A scale shows items and a highlighted (circled) user on the spectrum.
+
+**Key point.** Diversity is not "show the opposite extreme" — it is calibrated:
+accurate, strategy-specific, and (for politics) *reachable* opposite-side content
+via weak ties, not jarring opposite extremes.
+
+**Speaker notes.** "It should be accurate and it should be diverse … for long-tail
+diversity the users should be exposed to more low-degree items … for political
+ideology we define a bridging strategy in which we'd like to expose users to
+viewpoints from the other side, but that should not be very polarizing … we use
+what we call bridges, which are essentially weak ties for diversification."
+
+**→ In this project.** Every goal is realised and measured:
+
+| Goal | Code | Measured by |
+|------|------|-------------|
+| Personalized / accurate | all recommenders | `auc`, `hit_rate`, `precision`, `mean_rank` |
+| Long-tail (low-degree) | `RWED` (degree-based `Q`, eq. 4) | `average_item_degree`, `gini_diversity`, `surprisal` |
+| Bridging (other side, not too far, weak ties) | `RWEB` (opposite-side bridges within `max_distance`) | `rec_range`, `directed_shift`, `weighted_shift/range`, `ks_statistic` |
+
+---
+
+*More slides to follow: the RWE algorithm and erasure matrix, the worked
+long-tail / bridging diversification example, and the experimental results
 (Results I–IV).*
