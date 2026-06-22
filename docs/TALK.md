@@ -8,11 +8,10 @@ For each slide this records **what is on the slide**, the **speaker's notes**
 (from the talk narration), and **→ In this project** — how that point maps to
 this repository, so the slides double as an implementation checklist.
 
-> **Status:** slides 1–17 of the deck (introduction, ideology detection, the
-> datasets/estimated-position results, the diversification strategies and the
-> RWE algorithm setup). Remaining slides — the worked long-tail erasure example
-> and the experimental results (Results I–IV) — will be appended as they are
-> added.
+> **Status:** slides 1–22 of the deck (introduction, ideology detection, the
+> datasets/results, the diversification strategies, the RWE algorithm with its
+> worked long-tail example, the experimental setup, and Result I). Remaining
+> slides — Results II–IV and the conclusion — will be appended as they are added.
 >
 > *(The deck re-shows the "Normative goals" slide (= Slide 15) and the "Our
 > Approach" slide (= Slides 6/14) as section transitions; they are not
@@ -446,6 +445,116 @@ Two faithful-implementation notes:
 
 ---
 
-*More slides to follow: the worked long-tail erasure example (start node →
-3 hops → degree-based erasure → re-walk → final scores) and the experimental
-results (Results I–IV).*
+## Slides 18–19 — "Diversification Strategy: Long-tail" (worked example)
+
+**On the slides.** A 3-round walk on a small user-item graph, starting from user
+`u₄` with mass 1:
+
+- The 3-hop landing distribution is `P³_{u₄,i*} = [0.16, 0.16, 0.66]`.
+- The erasure is `Q_{·,i*} = 1 − [1/3, 1/2, 1/2] = [0.66, 0.5, 0.5]` (item `i₁`
+  has degree 3, `i₂`/`i₃` degree 2 — so popular `i₁` is taxed most).
+- **Erased** mass `= P³ ∘ Q`; the **new initial-state probability** is
+  `(P³ ∘ Q)·𝟙 ∘ I_{·,u₄}` (all erased mass returned to `u₄`); the **modified
+  transition** is `v_{s,0} P³ ∘ (1 − Q)`.
+- The boxed start masses fall `1 → 0.51 → 0.26` across rounds, and the final
+  score is `w_s = Σ_{i=0}^{m} v_{s,i} Pᵏ ∘ (1 − Q)`.
+
+**Key point.** A plain random walk would score `i₁` and `i₂` equally; the
+degree-based erasure suppresses the high-degree node and lifts the low-degree
+ones — long-tail diversification, computed by re-walking the erased mass.
+
+**→ In this project — reproduced numerically.** This is exactly `RWED` (β=1) run
+through `RWE.score_iterative`. Feeding the slide's `P³` and degrees into the
+code's update rule reproduces the slide:
+
+| Quantity | Slide | This project |
+|----------|-------|--------------|
+| `Q = 1 − 1/deg` | `[0.66, 0.5, 0.5]` | `[0.67, 0.5, 0.5]` (RWED, eq. 4) |
+| Erased, round 1 | `[0.10, 0.08, 0.33]` | `[0.11, 0.08, 0.33]` |
+| Start mass `1 → … → …` | `1 → 0.51 → 0.26` | `1 → 0.52 → 0.27` |
+| Final score | `w_s = Σ v_{s,i} Pᵏ∘(1−Q)` | `score_iterative` (== closed form) |
+
+(The 0.51-vs-0.52 difference is just the slide rounding `1/3 ≈ 0.66`.) The
+update `reached = start·P³; erased = reached·Q; acc += reached·(1−Q);
+start ← erased.sum()` in `rwe/random_walk.py::score_iterative` *is* the slide's
+recurrence, and the derived closed form `p·(1−q)/(1−Σpq)` is the value the
+"Score" column converges to.
+
+---
+
+## Slide 20 — "Experimental Evaluation"
+
+**On the slide.** Three evaluation questions:
+
+1. Can our **joint-learning framework** accurately identify ideological positions?
+2. Can RWE generate **accurate and diverse long-tail** recommendations?
+3. Can RWE generate **accurate and ideologically diverse** recommendations?
+
+**→ In this project.** All three axes are implemented and exercised by the demos:
+
+| Question | Code | Evidence |
+|----------|------|----------|
+| 1 — ideology | `IdeologyModel.fit(R, S)` | recovers planted positions; joint > elite-only |
+| 2 — long-tail | `RWED` + accuracy/long-tail metrics | `demo_movielens.py` |
+| 3 — ideological diversity | `RWEB` + `rec_range`/`shift`/`ks_statistic` | `demo_synthetic.py` |
+
+---
+
+## Slide 21 — "Datasets and Baselines"
+
+**On the slide.** The dataset statistics (Table 5) and the baseline set:
+
+- **Elite-endorsement:** UK-RT (10 547 / 2 439 / 71 310), US-RT (7 913 / 968 /
+  71 310), DE-RT (5 305 / 837 / 23 561).
+- **Content-endorsement:** UK-URL (10 547 / 1 244 / 37 036), US-URL (7 913 /
+  698 / 30 801), DE-URL (5 305 / 424 / 8 212).
+- **Benchmarks:** ML-1M (6 040 / 3 706 / 998 087), Yelp (6 945 / 11 274 /
+  316 162).
+- **Baselines:** state-of-the-art recommenders from a recent evaluation study
+  (RecSys 2019) — **Collaborative Filtering**, **Matrix Factorization**,
+  **graph-based P³**, and **long-tail-diversifying RP³_β**.
+
+**→ In this project.** All four baselines are implemented:
+
+| Slide baseline | Code |
+|----------------|------|
+| Collaborative Filtering | `rwe/baselines.py::ItemKNN` |
+| Matrix Factorization | `rwe/baselines.py::BPRMF` |
+| Graph-based P³ | `rwe/random_walk.py::P3` |
+| Long-tail-diversifying RP³_β | `rwe/random_walk.py::RP3Beta` |
+
+The datasets are documented in `rwe/data.py` (UK/US/DE × RT/URL, plus ML-1M /
+Yelp loaders); the Twitter data is not redistributable, so synthetic generators
+stand in for the pipeline. *(The exact Table-5 sizes are recorded here for
+reference but not shipped as data.)*
+
+---
+
+## Slide 22 — "Result I: Ideological Range of top-10 items"
+
+**On the slide.** A table of the average ideological spread of the top-10
+recommendations (the paper's Table 7), RWE-B vs RP³_β vs P3:
+
+| Dataset | RWE-B | RP³_β | P3 |
+|---------|-------|-------|----|
+| US-RT | **1.71*** | 1.61 | 1.43 |
+| US-URL | **2.15*** | 1.73 | 2.0 |
+| UK-RT | **2.83*** | 2.45 | 2.58 |
+| UK-URL | **2.02*** | 1.87 | 1.93 |
+| DE-RT | **3.14*** | 2.61 | 2.98 |
+| DE-URL | 1.53 | **1.69*** | 1.47 |
+
+**Key point.** RWE-B produces the widest ideological range (most viewpoint-spread
+recommendations) on all but the smallest dataset.
+
+**→ In this project.** This measure is `metrics.rec_range_at_k` (mean over users
+of `max(pos) − min(pos)` in the top-k), surfaced as `rec_range@10` in
+`experiment.evaluate`. On synthetic political data the directional result
+reproduces: `demo_synthetic.py` shows **RWE-B with the largest `rec_range@10`**
+among the recommenders (the exact per-dataset numbers are on the private Twitter
+data and are not reproducible here).
+
+---
+
+*More slides to follow: Results II–IV (the ideological-diversity scatter/shift
+measures and the weighted measures) and the conclusion.*
