@@ -11,11 +11,11 @@ A clean, tested Python implementation of
 > walkthrough of what this project is, why it exists, and how it was built. This
 > README is the technical reference.
 >
-> 🎞️ **Comparing against the talk?** [`docs/TALK.md`](docs/TALK.md) is a
-> slide-by-slide walkthrough of Bibek Paudel's WWW'21 presentation (all 29
-> slides), each mapped to the code that implements it. There is also an
-> editable slide deck, [`docs/RWE_talk.pptx`](docs/RWE_talk.pptx) (regenerate
-> with `python docs/make_deck.py`).
+> 🎞️ **Comparing against the talk?** [`docs/RWE_talk.pptx`](docs/RWE_talk.pptx)
+> is an editable slide deck recreating Bibek Paudel's WWW'21 presentation with a
+> code-mapping on each slide (regenerate with `python docs/make_deck.py`), and
+> [`docs/TALK.md`](docs/TALK.md) is the concise **verification report** —
+> slide → code, with the honest caveats.
 
 RWE is a modified random-walk exploration of the bipartite user–item feedback
 graph in which the mass reaching certain nodes is systematically *erased* and
