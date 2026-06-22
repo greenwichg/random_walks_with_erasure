@@ -8,9 +8,10 @@ For each slide this records **what is on the slide**, the **speaker's notes**
 (from the talk narration), and **→ In this project** — how that point maps to
 this repository, so the slides double as an implementation checklist.
 
-> **Status:** slides 1–5 of the deck (the introduction / motivation). Remaining
-> slides — ideology detection, the RWE algorithm, diversification strategies and
-> the experimental results — will be appended as they are added.
+> **Status:** slides 1–10 of the deck (the introduction / motivation and the
+> ideology-detection method). Remaining slides — the RWE algorithm and erasure
+> matrix, the diversification strategies, and the experimental results
+> (Results I–IV) — will be appended as they are added.
 
 ---
 
@@ -121,6 +122,133 @@ Telegraph example here is Table 1 of the paper.)
 
 ---
 
-*More slides to follow: ideology detection, the RWE algorithm and erasure
-matrix, the long-tail and bridging diversification strategies, and the
-experimental results (Results I–IV).*
+## Slide 6 — "Our Approach"
+
+**On the slide.** Three numbered steps:
+
+1. **Identify ideological positions** of *both political elites AND political
+   content* using social media discussions about specific political events.
+2. **Choose a diversification strategy** — simply recommending content from
+   different political sides may not work.
+3. **Random-Walk with Erasure (RWE)** — recommend diverse content using *weak
+   ties*, based on the diversification strategy and the identified positions.
+
+**Key point.** The method has three parts: *learn positions → pick a strategy →
+run RWE*. Crucially, positions are learned for **content too**, not just elites,
+and naive "mix both sides" recommendation is rejected in favour of **weak-tie**
+bridging.
+
+**→ In this project.** The three steps are the three pillars of the codebase:
+(1) `rwe/ideology.py` (`IdeologyModel` → `φ` for elites, `ψ` for content);
+(2) the diversification strategies `rwe/random_walk.py::RWED` / `RWEB` plus the
+generalised erasure matrix `Q`; (3) `RWE`/`RWEB` themselves. `GUIDE.md` is
+organised around the same three steps.
+
+---
+
+## Slide 7 — "Ideological positions of Users, Elites, Content"
+
+**On the slide.** Two bullets and the 1-D scale, plus an annotated tweet:
+
+- Users **U** endorse elites **E** → endorsement graph **R**.
+- Users **U** endorse content **I** → endorsement graph **S**.
+- The number line places `u1` on the left and `u2, u3, u4` on the right (the
+  paper's Figure 1).
+- A retweet is dissected into three roles: the **User** (the retweeter, *Stefan
+  Rahmstorf*), the **Elite** (the original author, *@PIK_Klima*), and the
+  **Content** (the URL, *www1.wdr.de/…*).
+
+**Key point.** Every retweet yields two signals — a *user→elite* endorsement
+(graph **R**) and a *user→content* endorsement (graph **S**) — and the goal is to
+place users, elites and content on one shared 1-D ideological scale.
+
+**Speaker notes.** "A tweet shared by a user … originally posted by the account
+we refer to as the elite … the URL in the post is the content. This gives rise
+to two kinds of graphs — the user-elite endorsement graph and the user-content
+endorsement graph — and in the end we put all of them on this one-dimensional
+scale."
+
+**→ In this project.** `IdeologyModel.fit(R, S)` consumes exactly these two
+graphs (`R` = retweet/elite-endorsement, `S` = URL/content-share, documented in
+`rwe/data.py`). The 1-D scale is the `ideology_scale.png` diagram in `GUIDE.md`,
+and we separately verified that our code reproduces every relationship the paper
+states about this Figure 1 (leaning, distances, similarities, bridges).
+
+---
+
+## Slide 8 — "Identify ideological positions of users and items" (build 1)
+
+**On the slide.** An animation of the **user-content endorsement graph**: users
+*Anne, Bert, Alice, Party* on the left linked to content items on the right.
+
+**Key point.** Learning works on this bipartite endorsement graph: users who
+endorse the same content are pulled close together, and a user is assumed to sit
+near the content they endorse.
+
+**Speaker notes.** "Based on content endorsement we want to minimize the distance
+between similar users, and we assume that a user and content have similar
+ideological positions … smaller [distance] in this ideological space."
+
+**→ In this project.** This bipartite endorsement graph is the input matrix the
+model fits (`S` for content, `R` for elites); the same bipartite structure is
+`rwe/graph.py::FeedbackGraph`.
+
+---
+
+## Slide 9 — "Identify ideological positions of users and items" (build 2: the models)
+
+**On the slide.** The two spatial-following (ideal-point) models:
+
+- **Content endorsement:** `p(S_{u,c}=1 | θ_u, ψ_c, α_u, γ_c) =
+  1 / exp(−‖θ_u − ψ_c‖² + α_u + γ_c)`
+- **Elite endorsement:** `p(R_{u,e}=1 | θ_u, φ_e, α_u, β_e) =
+  1 / exp(−‖θ_u − φ_e‖² + α_u + β_e)`
+
+**Key point.** The probability that a user endorses an item *decreases with the
+squared ideological distance* between them (plus per-node bias terms). Closer in
+ideology ⇒ more likely to endorse.
+
+**→ In this project.** These are `Pi_R` and `Pi_S` in `rwe/ideology.py`
+(`Pi = -(theta - phi/psi)**2 + alpha + beta/gamma`), matching paper eqs. 6 and 9.
+*(The slide writes `1/exp(·)`; the `log(1 + exp(Π))` term in the joint objective
+on the next slide confirms it is the logistic `σ(Π)`, which is what the code
+uses. The bias subscripts on the slide, e.g. `α_c`, read as minor typos — the
+user bias is `α_u`.)*
+
+---
+
+## Slide 10 — "Identify ideological positions of users and items" (build 3: joint learning)
+
+**On the slide.** Both models plus the **joint learning** objective:
+
+```
+arg min  p(θ, φ, ψ, α, β, γ | R, S)  ∝
+ θ,φ,ψ,α,β,γ
+        μ · Σ_(u,e)∈U×E [ a_{u,e} Π_{u,e} − log(1 + exp(Π_{u,e})) ]
+          + Σ_(u,c)∈U×C [ b_{u,c} Π_{u,c} − log(1 + exp(Π_{u,c})) ]
+          − (λ/2)‖θ‖₂ − (λ/2)‖φ‖₂ − (λ/2)‖ψ‖₂
+```
+
+and the conclusion **`⟹ sim(u, c)` — similarity of political stance of `u` and
+`c`**, with users/items collapsed onto the shared horizontal axis.
+
+**Key point.** The elite and content models are **learned jointly** (sharing the
+user positions `θ` and biases `α`), trading them off with `μ` and regularising
+the positions with `λ`. The output is a similarity between any user and any item.
+
+**Speaker notes.** "We use a joint learning framework using both content and
+elite endorsement graphs, and in the end we get the similarity scores between
+different entities like users and content."
+
+**→ In this project.** The objective is `IdeologyModel._objective`
+(`mu*(A*Pi_R − logaddexp(0, Pi_R)).sum() + (B*Pi_S − logaddexp(0, Pi_S)).sum() −
+0.5*lam*(θ@θ + φ@φ + ψ@ψ)`), i.e. paper eq. 11 exactly; `fit(R, S)` performs the
+joint optimisation (Adam). The resulting `sim(u, i)` is `RWEB.similarity`.
+Verified empirically: the model recovers planted positions (|corr| > 0.8) and
+**joint learning beats elite-only** (`examples/demo_synthetic.py`).
+
+---
+
+*More slides to follow: the RWE algorithm and erasure matrix, the long-tail and
+bridging diversification strategies, and the experimental results
+(Results I–IV).*
