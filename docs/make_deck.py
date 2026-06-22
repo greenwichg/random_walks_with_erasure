@@ -351,10 +351,19 @@ def build():
         notes="α-sweep validation: mean satisfaction falls monotonically as "
               "confirmation bias rises.")
 
+    slide(prs, "Beyond the paper — does bridging backfire?", [
+        ("Risk: naive opposite-view exposure can INCREASE polarization (Bail et al. 2018).", 0),
+        ("Simulation: users assimilate nearby views but reject (backfire on) far ones.", 0),
+        ("Bounded bridging → opinions converge (depolarize); opposite-blast → diverge.", 0),
+    ], image="opinion_dynamics.png", bullets_height=1.4,
+        code_note="rwe/opinion_dynamics.py: assimilation–contrast model · compare_policies",
+        notes="Same goal (expose to opposite views), opposite outcome depending on HOW: "
+              "bounded 'not too far' bridging lowers polarization; naive opposite-blast raises it.")
+
     slide(prs, "This implementation", [
         ("Full paper in rwe/ (graph, RWE, ideology, baselines, metrics) + 2 extensions.", 0),
-        ("63 tests — including the worked erasure example reproduced to the decimal.", 0),
-        ("7 diagrams, a beginner guide (GUIDE.md) and a verification report (TALK.md).", 0),
+        ("71 tests — including the worked erasure example reproduced to the decimal.", 0),
+        ("8 diagrams, a beginner guide (GUIDE.md) and a verification report (TALK.md).", 0),
         ("Run:  pip install -e .   ·   pytest -q   ·   python examples/demo_synthetic.py", 0),
     ], code_note="github: greenwichg/random_walks_with_erasure",
         notes="What this repository adds on top of the paper.")

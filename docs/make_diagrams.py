@@ -333,6 +333,44 @@ def alpha_sweep_curve():
     _save(fig, "alpha_sweep.png")
 
 
+# --------------------------------------------------------------------------- #
+# Polarization outcome: does opposite-view exposure help or hurt? (opinion_dynamics.py)
+# --------------------------------------------------------------------------- #
+def opinion_dynamics():
+    import numpy as np
+    from rwe import opinion_dynamics as od
+
+    theta0 = od.initial_population(n_users=400, seed=0)
+    hist = od.compare_policies(theta0, n_rounds=40, seed=0)
+    rounds = list(range(len(next(iter(hist.values())))))
+    colors = {"echo chamber": "#b08a3e", "naive opposite-blast": ERASE_C,
+              "RWE-B bridging": KEEP_C, "adaptive (satisfaction)": USER_C}
+    styles = {"echo chamber": "--", "naive opposite-blast": "-",
+              "RWE-B bridging": "-", "adaptive (satisfaction)": "--"}
+
+    fig, ax = plt.subplots(figsize=(8.8, 4.9))
+    for name, h in hist.items():
+        ax.plot(rounds, h, styles[name], color=colors[name], lw=2.3, label=name)
+    ax.axhline(hist["RWE-B bridging"][0], color=MUTE, lw=1, ls=":")
+    ax.text(len(rounds) * 0.62, hist["RWE-B bridging"][0] + 0.05, "start",
+            fontsize=8.5, color=MUTE)
+    ax.set_xlabel("round (repeated exposure)", fontsize=11, color=INK)
+    ax.set_ylabel("population polarization (std of positions)", fontsize=11, color=INK)
+    ax.set_title("Bounded bridging lowers polarization; naive opposite-blast raises it",
+                 fontsize=12.5, weight="bold", color=INK)
+    ax.legend(fontsize=9, loc="center right", framealpha=0.95)
+    ax.annotate("diverging\n(polarizing)", xy=(len(rounds) * 0.5, 2.2),
+                fontsize=9, color=ERASE_C, ha="center", style="italic")
+    ax.annotate("converging\n(depolarizing)", xy=(len(rounds) * 0.5, 0.45),
+                fontsize=9, color="#2E6B3E", ha="center", style="italic")
+    ax.text(0.5, -0.20, "stylized assimilation–contrast model (Social Judgment "
+            "Theory); illustrative direction, not magnitude", transform=ax.transAxes,
+            ha="center", fontsize=8, color="#9a9a9a")
+    for sp in ("top", "right"):
+        ax.spines[sp].set_visible(False)
+    _save(fig, "opinion_dynamics.png")
+
+
 def _save(fig, name):
     OUT.mkdir(parents=True, exist_ok=True)
     path = OUT / name
@@ -348,3 +386,4 @@ if __name__ == "__main__":
     quadrant_scatter()
     adaptive_exposure()
     alpha_sweep_curve()
+    opinion_dynamics()

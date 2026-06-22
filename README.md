@@ -129,6 +129,7 @@ on items and the erasure matrices are expressed over the `n` item columns.
 | `rwe/experiment.py` | §7 | Evaluation runner and hyper-parameter grid search. |
 | `rwe/satisfaction.py` | *extension* | Webpage graph, community detection, satisfaction score, `AdaptiveRWEB`. |
 | `rwe/agent_sim.py` | *extension* | Agent-based newsfeed browsing simulation (networkx + Louvain/Leiden). |
+| `rwe/opinion_dynamics.py` | *extension* | Polarization simulation: does opposite-view exposure converge or diverge opinions? |
 
 ## Equation → code map
 
