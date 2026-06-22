@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rwe"
+version = "0.1.0"
+description = "Random Walks with Erasure: diversifying personalized recommendations on social and information networks"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Implementation of Paudel & Bernstein (WWW'21)" }]
+dependencies = [
+    "numpy>=1.23",
+    "scipy>=1.9",
+    "pandas>=1.5",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7.0"]
+
+[tool.setuptools.packages.find]
+include = ["rwe*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
