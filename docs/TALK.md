@@ -8,10 +8,9 @@ For each slide this records **what is on the slide**, the **speaker's notes**
 (from the talk narration), and **→ In this project** — how that point maps to
 this repository, so the slides double as an implementation checklist.
 
-> **Status:** complete — slides 1–27, covering the full talk (introduction,
+> **Status:** complete — all slides 1–29, covering the full talk (introduction,
 > ideology detection, datasets, the diversification strategies, the RWE
-> algorithm with its worked example, and Results I–IV). A closing summary is at
-> the end.
+> algorithm with its worked example, Results I–IV, and the conclusion).
 >
 > *(The deck re-shows the "Normative goals" slide (= Slide 15) and the "Our
 > Approach" slide (= Slides 6/14) as section transitions; they are not
@@ -647,16 +646,51 @@ better"; `metrics.weighted_shift` reports the same quantity negated, as
 
 ---
 
-## Closing summary (talk conclusion)
+## Slide 28 — "Contributions and Main Results"
 
-The talk concludes with the three contributions, all realised in this repo:
+**On the slide.** The contributions:
 
-1. **A probabilistic model to estimate ideological positions** of users, elites
-   *and* content from event-specific social signals → `rwe/ideology.py`.
-2. **A personalized-ranking method (RWE)** with two diversification strategies
-   (long-tail and political bridging) → `rwe/random_walk.py` (`RWED`, `RWEB`).
-3. **A general framework** for diversifying recommendations — any property on
-   items or user-item pairs → the `RWE(item_erasure=…)` interface.
+- A **probabilistic model** to estimate ideological positions.
+- **Personalized ranking based on RWE.**
+- **Diversification strategies** — for *long-tail* diversity and for *political
+  content* diversity (*bridging viewpoints*).
+- A **general framework** to diversify personalized ranking.
+
+**→ In this project — every contribution is realised:**
+
+| Contribution | Code |
+|--------------|------|
+| Probabilistic ideology model | `rwe/ideology.py::IdeologyModel` (joint elite + content, eqs. 6/9/11) |
+| Personalized ranking based on RWE | `rwe/random_walk.py::RWE` (closed form + `score_iterative`) |
+| Long-tail diversity strategy | `rwe/random_walk.py::RWED` (degree erasure, eq. 4) |
+| Political content diversity (bridging) | `rwe/random_walk.py::RWEB` (weak-tie opposite-side bridges, eq. 5) |
+| General framework | `RWE(item_erasure=…)` — any property on items / user-item pairs |
+
+---
+
+## Slide 29 — "Thanks!"
+
+**On the slide.** Acknowledgement of the **Hasler Foundation**'s support, and
+contact details (**Twitter `@biasedcoin`**, **email `bibekp@stanford.edu`**).
+The two density plots are the **Result II train-pos** comparison: P³ keeps
+recommendations on the diagonal (the user's own side), while RWE spreads them
+off it.
+
+**→ In this project.** That final comparison is the same one our
+`docs/images/quadrant_scatter.png` shows (its *train-pos* variant is the same
+code with the per-user mean training position on the x-axis).
+
+---
+
+## Verification complete
+
+All 29 slides have been checked against the implementation. **The algorithm and
+framework match the talk faithfully and completely** — including the worked
+erasure example reproduced to the decimal (Slides 18–19) and every formula and
+metric mapped to code. The only items that cannot be matched are the **result
+tables/figures computed on the paper's private Twitter datasets**, which are
+instead validated *directionally* on synthetic data (a data-availability limit,
+not an implementation gap).
 
 Beyond the paper, this project adds two extensions (`rwe/satisfaction.py`,
 `rwe/agent_sim.py`), a beginner guide (`GUIDE.md`), five diagrams, and 63 tests.

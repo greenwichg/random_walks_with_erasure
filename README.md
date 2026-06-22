@@ -10,6 +10,10 @@ A clean, tested Python implementation of
 > 🔰 **New here?** Read [`GUIDE.md`](GUIDE.md) — a from-scratch, beginner-friendly
 > walkthrough of what this project is, why it exists, and how it was built. This
 > README is the technical reference.
+>
+> 🎞️ **Comparing against the talk?** [`docs/TALK.md`](docs/TALK.md) is a
+> slide-by-slide walkthrough of Bibek Paudel's WWW'21 presentation (all 29
+> slides), each mapped to the code that implements it.
 
 RWE is a modified random-walk exploration of the bipartite user–item feedback
 graph in which the mass reaching certain nodes is systematically *erased* and
