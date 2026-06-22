@@ -20,6 +20,12 @@ The package also implements the paper's **political ideology detection** (a
 joint ideal-point model over endorsement and content-share graphs), the
 recommendation **baselines**, and the full suite of **evaluation metrics**.
 
+It additionally provides a **satisfaction-driven adaptive exposure** extension
+(`rwe/satisfaction.py`, *not part of the original paper*) that calibrates how
+much opposing content each user sees, based on how long they dwell in
+opposing-viewpoint communities while browsing — see
+[Extension](#extension-satisfaction-driven-adaptive-exposure) below.
+
 ---
 
 ## Installation
@@ -59,6 +65,7 @@ recs = RWEB(g, user_positions=res.theta, item_positions=res.phi,
 python examples/demo_synthetic.py          # full pipeline on synthetic data
 python examples/demo_movielens.py          # long-tail benchmark (synthetic fallback)
 python examples/demo_movielens.py --ratings /path/to/ml-1m/ratings.dat
+python examples/demo_satisfaction.py       # satisfaction-driven adaptive exposure
 ```
 
 `demo_synthetic.py` reproduces the paper's three headline results on data with a
@@ -109,6 +116,7 @@ on items and the erasure matrices are expressed over the `n` item columns.
 | `rwe/metrics.py` | §7.3, §7.5 | AUC, Mean Rank, Hit-Rate, Precision; Gini-diversity, Avg-degree, Personalization, Surprisal; RecRange, KS test. |
 | `rwe/data.py` | §7.1 | Interaction loaders, MovieLens-1M loader, train/test split, synthetic generators. |
 | `rwe/experiment.py` | §7 | Evaluation runner and hyper-parameter grid search. |
+| `rwe/satisfaction.py` | *extension* | Webpage graph, community detection, satisfaction score, `AdaptiveRWEB`. |
 
 ## Equation → code map
 
@@ -122,6 +130,58 @@ on items and the erasure matrices are expressed over the `n` item columns.
 | eqs. 6–8 — elite-only ideal point | `IdeologyModel.fit(R)` |
 | eqs. 9–11 — joint ideal point | `IdeologyModel.fit(R, S)` |
 | RecRange@k, KS (§7.5) | `metrics.rec_range_at_k`, `metrics.ks_statistic` |
+
+## Extension: satisfaction-driven adaptive exposure
+
+`rwe/satisfaction.py` adds a feedback loop on top of RWE-B (this is *our*
+extension, not from the paper). Instead of exposing the same amount of opposing
+content to everyone, it tailors the dose to each user's demonstrated tolerance.
+
+**Pipeline**
+
+1. **Webpage graph & communities.** Project the bipartite feedback graph onto an
+   item–item *webpage* graph (pages linked when co-consumed). Detect communities
+   with label propagation on a k-NN-sparsified copy (`WebGraph.detect_communities`)
+   — dense clusters of pages that share a viewpoint — and label each community by
+   its dominant ideology (`community_viewpoints`).
+2. **Satisfaction score.** Simulate a user's browsing as a random walk on the
+   *full* webpage graph from their own content (`WebGraph.simulate_walk`). The
+   **satisfaction score** is the number of pages traversed inside the *first
+   opposing community* entered, counted until the walk leaves it
+   (`satisfaction_score`); `SatisfactionModel` averages this over several walks.
+3. **Adaptive exposure.** Map the score to an exposure level in `[0, 1]`
+   (`SatisfactionModel.exposure`) that sets each user's same-side erasure in
+   `AdaptiveRWEB`: higher exposure → more opposing content surfaced.
+
+```python
+from rwe import WebGraph, SatisfactionModel, AdaptiveRWEB
+
+web = WebGraph(feedback_graph, item_positions)
+web.detect_communities(knn=5)
+exposure = SatisfactionModel(web, user_positions).exposure(range(feedback_graph.m))
+recs = AdaptiveRWEB(feedback_graph, user_positions, item_positions,
+                    exposure=exposure).recommend(range(feedback_graph.m), top_k=10)
+```
+
+**Why adapt?** A fixed, aggressive bridging strategy flips *every* user — including
+those who immediately bounce out of opposing communities — to almost entirely
+opposing content. `demo_satisfaction.py` shows the contrast (synthetic data):
+
+| opposite-content fraction | low-tolerance users | high-tolerance users |
+|---|---|---|
+| fixed RWE-B (ε=0.9) | 0.97 | 0.99 |
+| AdaptiveRWEB (satisfaction) | 0.00 | 0.17 |
+
+Low-tolerance users are protected from being overwhelmed while high-tolerance
+users are still bridged toward opposing viewpoints — the "different but not too
+far" idea of Section 5.2, made per-user.
+
+> **Design notes.** Communities are detected structurally on a k-NN-sparsified
+> co-occurrence graph (the raw projection is too dense and collapses label
+> propagation to one community), while the surfer walk uses the *full* graph so
+> weak inter-community ties remain traversable — matching the paper's
+> dense-clusters-plus-weak-ties picture. The score→exposure→content direction
+> (more dwell ⇒ more exposure) is a modelling choice and is configurable.
 
 ## Datasets
 

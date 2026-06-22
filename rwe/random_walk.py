@@ -236,7 +236,10 @@ class RWEB(RWE):
         One-dimensional ideological positions for users (``theta``) and items
         (``phi`` / ``psi``), shapes ``(m,)`` and ``(n,)``.
     epsilon:
-        Erasure applied to non-bridge items (paper uses ``0.9``).
+        Erasure applied to non-bridge items (paper uses ``0.9``).  May be a
+        scalar or a per-user ``(m,)`` array -- the latter lets a higher-level
+        policy tune each user's exposure to opposing content individually (see
+        :mod:`rwe.satisfaction`).
     center:
         Reference point splitting "left" from "right".  Defaults to the median
         of ``user_positions``.
@@ -247,16 +250,22 @@ class RWEB(RWE):
     """
 
     def __init__(self, graph: FeedbackGraph, user_positions, item_positions,
-                 epsilon: float = 0.9, center: float | None = None,
+                 epsilon=0.9, center: float | None = None,
                  max_distance: float | None = None, v: float = 1.0, **kwargs):
         self.user_positions = np.asarray(user_positions, dtype=float)
         self.item_positions = np.asarray(item_positions, dtype=float)
-        self.epsilon = epsilon
+        self.epsilon = np.asarray(epsilon, dtype=float)
         all_pos = np.concatenate([self.user_positions, self.item_positions])
         self._range = max(all_pos.max() - all_pos.min(), _EPS)
         self.center = float(np.median(self.user_positions)) if center is None else center
         self.max_distance = max_distance
         super().__init__(graph, item_erasure=self._compute, v=v, **kwargs)
+
+    def _epsilon_for(self, user_ids: np.ndarray) -> np.ndarray:
+        """Per-user non-bridge erasure as a column vector ``(b, 1)``."""
+        if self.epsilon.ndim == 0:
+            return np.full((len(user_ids), 1), float(self.epsilon))
+        return self.epsilon[user_ids][:, None]
 
     def similarity(self, user_ids: np.ndarray) -> np.ndarray:
         """``sim(u, i) = 1 - |pos_i - theta_u| / (max_p - min_p)`` (Section 5.2)."""
@@ -277,6 +286,6 @@ class RWEB(RWE):
         user_ids = np.asarray(user_ids, dtype=int)
         bridge = self.is_bridge(user_ids)
         sim = self.similarity(user_ids)
-        Q = np.full(bridge.shape, self.epsilon, dtype=float)
+        Q = np.broadcast_to(self._epsilon_for(user_ids), bridge.shape).copy()
         Q[bridge] = sim[bridge]
         return Q

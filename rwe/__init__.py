@@ -23,6 +23,9 @@ from .graph import FeedbackGraph
 from .random_walk import P3, RP3Beta, RWE, RWED, RWEB
 from .ideology import IdeologyModel, IdeologyResult
 from .baselines import ItemKNN, BPRMF
+from .satisfaction import (WebGraph, SatisfactionModel, AdaptiveRWEB,
+                           detect_communities, community_viewpoints,
+                           satisfaction_score)
 from . import data, metrics, experiment
 
 __version__ = "0.1.0"
@@ -32,5 +35,7 @@ __all__ = [
     "P3", "RP3Beta", "RWE", "RWED", "RWEB",
     "IdeologyModel", "IdeologyResult",
     "ItemKNN", "BPRMF",
+    "WebGraph", "SatisfactionModel", "AdaptiveRWEB",
+    "detect_communities", "community_viewpoints", "satisfaction_score",
     "data", "metrics", "experiment",
 ]
