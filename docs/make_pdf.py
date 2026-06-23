@@ -76,7 +76,8 @@ def _draw_slide(slide, sw, sh):
                          else "#333333")
                 ax.text(left + 0.1, y, text, fontsize=size, color=color or "#333333",
                         weight="bold" if run.font.bold else "normal", va="top", zorder=3)
-                y += size / 72 * 1.45
+                gap = p.space_after.pt if p.space_after is not None else 0
+                y += size / 72 * 1.2 + gap / 72
     return fig
 
 

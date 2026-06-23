@@ -59,13 +59,13 @@ def _title(slide, text):
     rule.shadow.inherit = False
 
 
-def _bullets(slide, bullets, top, height, width=SW - 1.2, left=0.6, size=19):
+def _bullets(slide, bullets, top, height, width=SW - 1.2, left=0.6, size=19, gap=7):
     box = slide.shapes.add_textbox(Inches(left), Inches(top), Inches(width), Inches(height))
     tf = box.text_frame
     tf.word_wrap = True
     for i, (text, level) in enumerate(bullets):
         p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
-        p.space_after = Pt(7)
+        p.space_after = Pt(gap)
         prefix = "•  " if level == 0 else "       –  "
         r = p.add_run()
         r.text = prefix + text
@@ -115,9 +115,20 @@ def slide(prs, title, bullets, image=None, image_box=(3.35, 6.4),
           code_note=None, notes=None, bullets_top=1.55, bullets_height=4.6):
     s = prs.slides.add_slide(prs.slide_layouts[6])
     _title(s, title)
-    _bullets(s, bullets, bullets_top, bullets_height)
     if image:
+        # Image fills the lower half; keep the few bullets compact up top.
+        _bullets(s, bullets, bullets_top, bullets_height)
         _image_fit(s, image, image_box[0], image_box[1])
+    else:
+        # Text-only slide: enlarge + space the bullets and vertically centre the
+        # block in the body region so a short list reads as airy, not unfinished.
+        size, gap = 21, 14
+        body_top = 1.6
+        body_bottom = 6.35 if code_note else 6.95
+        per_line = size / 72 * 1.5 + gap / 72          # ~per-bullet height (in)
+        block_h = len(bullets) * per_line
+        top = max(body_top, body_top + (body_bottom - body_top - block_h) / 2)
+        _bullets(s, bullets, top, body_bottom - top, size=size, gap=gap)
     if code_note:
         _code_note(s, code_note)
     if notes:
