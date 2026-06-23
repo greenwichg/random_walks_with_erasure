@@ -30,6 +30,8 @@ KEEP_C = "#55A868"     # green  (kept / recommended)
 ERASE_C = "#C44E52"    # red    (erased / suppressed)
 INK = "#2b2b2b"
 MUTE = "#8a8a8a"
+CAP = "#3a3a3a"   # explanatory caption under a chart (dark, legible)
+SUB = "#666666"   # data-provenance footnote (medium gray, still readable)
 
 
 # --------------------------------------------------------------------------- #
@@ -61,7 +63,7 @@ def bipartite_graph():
     ax.text(ux, 4.2, "USERS", ha="center", fontsize=12, weight="bold", color=USER_C)
     ax.text(ix, 4.2, "ITEMS", ha="center", fontsize=12, weight="bold", color=ITEM_C)
     ax.text(1.5, -0.25, "a line = “this user liked this item” (implicit feedback)",
-            ha="center", fontsize=10, style="italic", color=MUTE)
+            ha="center", fontsize=11, style="italic", color=CAP)
     ax.set_title("The bipartite feedback graph", fontsize=14, weight="bold", color=INK)
 
     ax.set_xlim(-1.6, 4.6)
@@ -223,8 +225,8 @@ def quadrant_scatter():
         ax.set_xlim(-2.3, 2.3)
         ax.set_ylim(-2.3, 2.3)
         ax.set_aspect("equal")
-        ax.text(0, -2.05, note, ha="center", va="bottom", fontsize=8.5,
-                style="italic", color=MUTE)
+        ax.text(0, -2.05, note, ha="center", va="bottom", fontsize=9.8,
+                style="italic", color=CAP)
     axes[0].set_ylabel("mean position of\nrecommended items", fontsize=10, color=INK)
     fig.suptitle("Result II: where recommendations sit vs the user's own side",
                  fontsize=13.5, weight="bold", color=INK)
@@ -284,11 +286,11 @@ def adaptive_exposure():
                  fontsize=13, weight="bold", color=INK)
     for sp in ("top", "right"):
         ax.spines[sp].set_visible(False)
-    ax.text(0.5, -0.22, "fixed bridging flips everyone; adaptive protects low-tolerance "
+    ax.text(0.5, -0.23, "fixed bridging flips everyone; adaptive protects low-tolerance "
             "users while bridging high-tolerance ones", transform=ax.transAxes,
-            ha="center", fontsize=8.5, style="italic", color=MUTE)
-    ax.text(0.5, -0.31, "synthetic data; planted ideological positions (illustrative)",
-            transform=ax.transAxes, ha="center", fontsize=8, color="#9a9a9a")
+            ha="center", fontsize=10.5, style="italic", color=CAP)
+    ax.text(0.5, -0.33, "synthetic data; planted ideological positions (illustrative)",
+            transform=ax.transAxes, ha="center", fontsize=9, color=SUB)
     _save(fig, "adaptive_exposure.png")
 
 
@@ -328,7 +330,7 @@ def alpha_sweep_curve():
     ax.legend(fontsize=10)
     ax.text(0.5, -0.20, "synthetic stochastic-block-model web graph; planted "
             "communities (illustrative)", transform=ax.transAxes, ha="center",
-            fontsize=8, color="#9a9a9a")
+            fontsize=9, color=SUB)
     for sp in ("top", "right"):
         ax.spines[sp].set_visible(False)
     _save(fig, "alpha_sweep.png")
@@ -366,7 +368,7 @@ def opinion_dynamics():
                 fontsize=9, color="#2E6B3E", ha="center", style="italic")
     ax.text(0.5, -0.20, "stylized assimilation–contrast model (Social Judgment "
             "Theory); illustrative direction, not magnitude", transform=ax.transAxes,
-            ha="center", fontsize=8, color="#9a9a9a")
+            ha="center", fontsize=9, color=SUB)
     for sp in ("top", "right"):
         ax.spines[sp].set_visible(False)
     _save(fig, "opinion_dynamics.png")
@@ -403,7 +405,7 @@ def guardrails_diagram():
                  fontsize=13.5, weight="bold", color=INK)
     fig.text(0.5, 0.005, "an un-guarded aggressive dose backfires (red); the "
              "guardrails pull the dose into the safe, depolarizing zone — stylized model",
-             ha="center", fontsize=8, color="#9a9a9a")
+             ha="center", fontsize=9, color=SUB)
     fig.tight_layout(rect=(0, 0.03, 1, 0.93))
     _save(fig, "guardrails.png")
 
