@@ -51,6 +51,9 @@ def main() -> None:
     ap.add_argument("--lean-csv", default=None,
                     help="outlet,lean table (int -2..2 or L..R label); "
                          "defaults to the bundled illustrative table")
+    ap.add_argument("--positions-csv", default=None,
+                    help="news_id,position file that sets item_positions directly "
+                         "(e.g. from examples/classify_lean.py); overrides outlet lean")
     ap.add_argument("--no-impressions", action="store_true",
                     help="use history only (ignore positive impression clicks)")
     ap.add_argument("--min-user-clicks", type=int, default=1)
@@ -72,6 +75,7 @@ def main() -> None:
 
     lean = load_lean_table(args.lean_csv) if args.lean_csv else None
     d = load_mind(args.mind_dir, source_map=args.source_map, lean=lean,
+                  positions_map=args.positions_csv,
                   include_impressions=not args.no_impressions,
                   min_user_clicks=args.min_user_clicks,
                   min_item_clicks=args.min_item_clicks)

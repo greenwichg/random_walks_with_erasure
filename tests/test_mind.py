@@ -149,6 +149,22 @@ def test_sample_users(mind):
     assert mind.sample_users(99).n_users == mind.n_users  # n >= n_users -> unchanged
 
 
+def test_positions_csv_overrides_outlet_lean(tmp_path):
+    p = tmp_path / "pos.csv"
+    p.write_text("news_id,position\nN1,1.5\nN3,-1.5\n")
+    # even with a source map (Fox=+2 for N1), the positions CSV wins
+    d = load_mind(FIX, source_map=FIX / "source_map.tsv", positions_map=str(p))
+    pos = {nid: d.item_positions[i] for i, nid in enumerate(d.dataset.item_ids)}
+    assert pos["N1"] == 1.5 and pos["N3"] == -1.5        # overrides outlet lean
+    assert np.isnan(pos["N2"])                           # not in CSV -> NaN
+
+
+def test_positions_map_dict():
+    d = load_mind(FIX, positions_map={"N1": 2.0, "N2": -2.0})
+    pos = {nid: d.item_positions[i] for i, nid in enumerate(d.dataset.item_ids)}
+    assert pos["N1"] == 2.0 and pos["N2"] == -2.0 and np.isnan(pos["N4"])
+
+
 def test_recommender_inputs_drops_unknown_and_empty():
     rows = [0, 0, 1, 1, 2, 2]
     cols = [0, 1, 4, 5, 2, 3]                            # u2 only clicks NaN-pos items

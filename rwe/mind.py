@@ -202,6 +202,32 @@ def load_lean_table(path) -> dict:
     return table
 
 
+def _load_positions_map(spec):
+    """``news_id -> position`` from a dict or a 2-column ``news_id,position`` file.
+
+    Lets an external per-article signal (e.g. a text political-lean classifier,
+    see ``examples/classify_lean.py``) set ``item_positions`` directly, bypassing
+    both the outlet-lean join and the co-click ideal-point fit.
+    """
+    if spec is None:
+        return None
+    if isinstance(spec, dict):
+        return {k: float(v) for k, v in spec.items()}
+    out = {}
+    with open(spec, encoding="utf-8") as f:
+        for line in f:
+            line = line.rstrip("\n")
+            if not line or line.lower().startswith(("news", "id", "#", "item")):
+                continue
+            parts = line.split("\t") if "\t" in line else line.split(",")
+            if len(parts) >= 2:
+                try:
+                    out[parts[0].strip()] = float(parts[1])
+                except ValueError:
+                    pass
+    return out
+
+
 def _is_political(subcategory: str, title: str, terms, title_terms=None) -> bool:
     sub = subcategory.lower()
     if any(t in sub for t in terms):
@@ -422,7 +448,7 @@ class IdeologyFit:
 # --------------------------------------------------------------------------- #
 # Entry point
 # --------------------------------------------------------------------------- #
-def load_mind(mind_dir, *, source_map=None, lean=None,
+def load_mind(mind_dir, *, source_map=None, lean=None, positions_map=None,
               political_terms=DEFAULT_POLITICAL_TERMS, title_terms=None,
               include_impressions=True, min_user_clicks=1, min_item_clicks=1) -> MINDData:
     """Ingest a MIND directory containing ``news.tsv`` and ``behaviors.tsv``.
@@ -438,6 +464,10 @@ def load_mind(mind_dir, *, source_map=None, lean=None,
     lean:
         Optional outlet -> position dict (normalised keys).  Defaults to
         :data:`DEFAULT_LEAN` (illustrative -- replace for a paper).
+    positions_map:
+        Optional ``news_id -> position`` mapping (dict or 2-column file) that sets
+        ``item_positions`` directly, overriding the outlet-lean join.  Use it to
+        plug in a text political-lean classifier (``examples/classify_lean.py``).
     political_terms / title_terms:
         Sub-category (and optional title) substrings marking political articles.
     include_impressions:
@@ -448,6 +478,7 @@ def load_mind(mind_dir, *, source_map=None, lean=None,
     mind_dir = Path(mind_dir)
     lean = DEFAULT_LEAN if lean is None else lean
     smap = _load_source_map(source_map)
+    pmap = _load_positions_map(positions_map)
 
     news = _read_news(mind_dir / "news.tsv")
     users, items = _read_clicks(mind_dir / "behaviors.tsv", include_impressions)
@@ -466,7 +497,10 @@ def load_mind(mind_dir, *, source_map=None, lean=None,
         titles.append(title)
         outlets.append(outlet)
         political.append(_is_political(sub, title, political_terms, title_terms))
-        positions.append(lean.get(_norm(outlet), np.nan) if outlet else np.nan)
+        if pmap is not None:                       # external per-article positions
+            positions.append(pmap.get(nid, np.nan))
+        else:                                      # outlet-lean join
+            positions.append(lean.get(_norm(outlet), np.nan) if outlet else np.nan)
 
     return MINDData(
         dataset=ds,
