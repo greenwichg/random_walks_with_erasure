@@ -26,7 +26,8 @@ from .baselines import ItemKNN, BPRMF
 from .satisfaction import (WebGraph, SatisfactionModel, AdaptiveRWEB,
                            community_viewpoints, satisfaction_score)
 from .agent_sim import NewsfeedSimulator
-from . import data, metrics, experiment, agent_sim, opinion_dynamics, guardrails
+from .mind import load_mind, MINDData
+from . import data, metrics, experiment, agent_sim, opinion_dynamics, guardrails, mind
 
 __version__ = "0.1.0"
 
@@ -38,5 +39,7 @@ __all__ = [
     "WebGraph", "SatisfactionModel", "AdaptiveRWEB",
     "community_viewpoints", "satisfaction_score",
     "NewsfeedSimulator",
+    "load_mind", "MINDData",
     "data", "metrics", "experiment", "agent_sim", "opinion_dynamics", "guardrails",
+    "mind",
 ]
