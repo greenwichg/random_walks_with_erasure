@@ -4,6 +4,11 @@ A concrete path from *this repo* to a submittable workshop paper. Read
 `NOVELTY_CHECK.md` first — it establishes that the contribution must be
 **empirical/integrative on real data**, not a new mechanism.
 
+> **Update — first real-data run is done.** MIND-small numbers (RQ2/RQ3 +
+> bounded-bridging sweep) are written up in `RESULTS.md`; the ideological axis
+> comes from a text classifier (`examples/classify_lean.py`) and should be
+> quality-checked with `examples/validate_lean.py` before RQ3 is trusted.
+
 ---
 
 ## 0. Reframe the contribution (the honest version)
