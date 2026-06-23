@@ -228,7 +228,7 @@ def build():
         ("Elite:    p(R=1) = σ( −‖θ_u − φ_e‖² + α_u + β_e )", 0),
         ("Content:  p(S=1) = σ( −‖θ_u − ψ_c‖² + α_u + γ_c )", 0),
         ("Closer ideology ⇒ more likely to endorse.", 1),
-        ("Joint objective: maximise  μ·Σ_R[·] + Σ_S[·]  −  (λ/2)(‖θ‖+‖φ‖+‖ψ‖)", 0),
+        ("Joint objective: maximise  μ·Σ_R[·] + Σ_S[·]  −  (λ/2)(‖θ‖²+‖φ‖²+‖ψ‖²)", 0),
         ("⟹ sim(u, c): similarity of political stance.", 0),
     ], code_note="ideology.py: Pi_R / Pi_S (eqs 6/9), _objective (eq 11); sim = RWEB.similarity",
         notes="Endorsement probability decreases with squared ideological "
