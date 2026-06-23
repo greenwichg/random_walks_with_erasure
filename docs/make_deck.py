@@ -152,20 +152,23 @@ def title_slide(prs):
     r2.text = "Diversifying Personalized Ranking"
     r2.font.size = Pt(26)
     r2.font.color.rgb = INK
-    sub = s.shapes.add_textbox(Inches(0.9), Inches(4.2), Inches(SW - 1.8), Inches(2.0))
+    sub = s.shapes.add_textbox(Inches(0.9), Inches(4.2), Inches(SW - 1.8), Inches(2.3))
     tf2 = sub.text_frame
     tf2.word_wrap = True
-    for txt, sz, col in [
-        ("Paper: Bibek Paudel (Stanford) · Abraham Bernstein (UZH) — WWW 2021", 18, MUTE),
-        ("A slide-by-slide walkthrough mapped to this implementation.", 16, MUTE),
-        ("Deck recreated from the talk; diagrams + code-mapping by the project.", 13, RULE),
-    ]:
-        p = tf2.paragraphs[0] if txt.startswith("Paper") else tf2.add_paragraph()
+    for i, (txt, sz, col, bold) in enumerate([
+        ("Paper: Bibek Paudel (Stanford) · Abraham Bernstein (UZH) — WWW 2021", 18, MUTE, False),
+        ("Implementation, diagrams & deck:  Sai Sanath Erram · Amrita Vishwa Vidyapeetham",
+         17, INK, True),
+        ("A slide-by-slide walkthrough mapped to this implementation.", 16, MUTE, False),
+        ("Deck recreated from the talk; diagrams + code-mapping by the project.", 13, RULE, False),
+    ]):
+        p = tf2.paragraphs[0] if i == 0 else tf2.add_paragraph()
         p.space_after = Pt(6)
         r = p.add_run()
         r.text = txt
         r.font.size = Pt(sz)
         r.font.color.rgb = col
+        r.font.bold = bold
     s.notes_slide.notes_text_frame.text = (
         "Implementation of Paudel & Bernstein, WWW 2021. This deck recreates the "
         "talk and maps every part to the rwe/ codebase.")
@@ -392,7 +395,7 @@ def build():
     slide(prs, "Thanks", [
         ("Paper: Paudel & Bernstein, \"Random Walks with Erasure\", WWW 2021.", 0),
         ("Original talk: Bibek Paudel — @biasedcoin · bibekp@stanford.edu.", 0),
-        ("This deck, diagrams and code-mapping: the implementation project.", 0),
+        ("Implementation & deck: Sai Sanath Erram, Amrita Vishwa Vidyapeetham.", 0),
     ], notes="Acknowledging the Hasler Foundation's support of the original work.")
 
     prs.save(str(OUT))
