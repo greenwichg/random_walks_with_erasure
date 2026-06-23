@@ -395,7 +395,8 @@ def build():
     slide(prs, "Thanks", [
         ("Paper: Paudel & Bernstein, \"Random Walks with Erasure\", WWW 2021.", 0),
         ("Original talk: Bibek Paudel — @biasedcoin · bibekp@stanford.edu.", 0),
-        ("Implementation & deck: Sai Sanath Erram, Amrita Vishwa Vidyapeetham.", 0),
+        ("Implementation & deck: Sai Sanath Erram, Amrita Vishwa Vidyapeetham", 0),
+        ("erram.sanath@gmail.com", 1),
     ], notes="Acknowledging the Hasler Foundation's support of the original work.")
 
     prs.save(str(OUT))
