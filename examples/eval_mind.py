@@ -11,8 +11,11 @@ End-to-end::
     python examples/ingest_mind.py --mind-dir data/MINDsmall_train \
         --political-only --ideology --min-user-clicks 5 --min-item-clicks 5 \
         --out mind_ideo.npz
-    # 2. evaluate
+    # 2. evaluate (full baselines + RWE-D/RWE-B -> RQ2 & RQ3 tables)
     python examples/eval_mind.py --npz mind_ideo.npz --out-csv results.csv
+    # 3. (optional) bounded-bridging sweep: vary RWE-B's 'not too far' bound
+    python examples/eval_mind.py --npz mind_ideo.npz --out-csv sweep.csv \
+        --sweep-max-distance 3,2,1.5,1,0.5
 
 The ``.npz`` must carry item ideological positions (from ``--ideology`` or an
 outlet-lean join); items with an unknown position and then click-less users are
@@ -28,6 +31,41 @@ import argparse
 from rwe import (FeedbackGraph, P3, RP3Beta, RWED, RWEB, ItemKNN, BPRMF,
                  data, experiment)
 from rwe.mind import MINDData
+
+
+def _run_sweep(g, theta, item_pos, test_pos, args):
+    """RWE-B bounded-bridging sweep over ``max_distance`` (and optionally epsilon).
+
+    Tests the bounded-bridging hypothesis (rwe/opinion_dynamics.py): tightening
+    the 'not too far' bound should keep the bridging shift high (``uw_shift``)
+    while pulling recommendations back toward the centre (``uw_recs`` down),
+    rather than blasting users to the opposite extreme (the ``d=inf`` row).
+    """
+    dists = sorted((float(x) for x in args.sweep_max_distance.split(",")), reverse=True)
+    dist_grid = [None] + dists                       # unbounded first, then tightening
+    eps_grid = ([float(x) for x in args.sweep_epsilon.split(",")]
+                if args.sweep_epsilon else [args.epsilon])
+    recs = {"P3 (ref)": P3(g)}
+    for eps in eps_grid:
+        for dd in dist_grid:
+            tag = "inf" if dd is None else f"{dd:g}"
+            label = f"RWE-B d={tag}" + (f" e={eps:g}" if len(eps_grid) > 1 else "")
+            recs[label] = RWEB(g, theta, item_pos, epsilon=eps, max_distance=dd)
+
+    table = experiment.compare(recs, g, test_pos, top_k=args.top_k,
+                               diversity_k=args.diversity_k, item_positions=item_pos,
+                               user_positions=theta, n_users_total=g.m)
+    k = args.top_k
+    cols = [c for c in (f"hit_rate@{k}", "auc", f"rec_range@{k}", f"shift@{k}",
+                        "uw_shift", "uw_recs") if c in table.columns]
+    print("RWE-B bounded-bridging sweep  (uw_shift high = still bridging; "
+          "uw_recs low = recs land nearer the centre)")
+    print(table[cols].round(3).to_string(), "\n")
+    table.to_csv(args.out_csv)
+    print(f"wrote full sweep table → {args.out_csv}")
+    print("\nHypothesis (opinion_dynamics.py): tightening d keeps uw_shift up while "
+          "pulling uw_recs down — bounded bridging lands users nearer the centre "
+          "rather than the opposite extreme (the d=inf row).")
 
 
 def main():
@@ -47,6 +85,12 @@ def main():
     ap.add_argument("--rp3-beta", type=float, default=0.5)
     ap.add_argument("--itemknn-k", type=int, default=200)
     ap.add_argument("--no-bprmf", action="store_true", help="skip the (slow) BPRMF baseline")
+    ap.add_argument("--sweep-max-distance", default=None,
+                    help="comma-separated RWE-B 'not too far' bounds to sweep, e.g. "
+                         "'2,1.5,1,0.5' -> an RWE-B-only bounded-bridging table")
+    ap.add_argument("--sweep-epsilon", default=None,
+                    help="comma-separated RWE-B epsilons to cross with the sweep "
+                         "(default: just --epsilon)")
     args = ap.parse_args()
 
     d = MINDData.load(args.npz)
@@ -59,6 +103,10 @@ def main():
 
     train, test_pos = data.train_test_split(dataset, test_frac=args.test_frac, seed=args.seed)
     g = FeedbackGraph(train)
+
+    if args.sweep_max_distance:
+        _run_sweep(g, theta, item_pos, test_pos, args)
+        return
 
     recs = {
         "ItemKNN": ItemKNN(g, k_neighbors=args.itemknn_k),
