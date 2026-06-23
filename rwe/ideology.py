@@ -40,11 +40,12 @@ from dataclasses import dataclass
 
 import numpy as np
 import scipy.sparse as sp
+from scipy.special import expit
 
 
 def _sigmoid(x: np.ndarray) -> np.ndarray:
-    return np.where(x >= 0, 1.0 / (1.0 + np.exp(-x)),
-                    np.exp(x) / (1.0 + np.exp(x)))
+    # SciPy's expit is a fast, numerically-stable logistic sigmoid (C-level).
+    return expit(x)
 
 
 class _Adam:
@@ -98,15 +99,20 @@ class IdeologyModel:
         Trade-off weight on the elite-endorsement graph in the joint model.
     seed:
         RNG seed for the (small random) initialisation.
+    eval_every:
+        Compute and record the objective every ``eval_every`` sweeps (plus the
+        first and last) instead of every sweep -- a pure speed knob; it does not
+        affect the fitted positions.
     """
 
     def __init__(self, n_iter: int = 300, lr: float = 0.05, lam: float = 0.1,
-                 mu: float = 1.0, seed: int = 0):
+                 mu: float = 1.0, seed: int = 0, eval_every: int = 10):
         self.n_iter = n_iter
         self.lr = lr
         self.lam = lam
         self.mu = mu
         self.seed = seed
+        self.eval_every = eval_every    # objective-logging stride (perf; see fit)
 
     @staticmethod
     def _as_confidence(M):
@@ -156,7 +162,7 @@ class IdeologyModel:
             opt["gamma"] = _Adam(gamma.shape, self.lr)
 
         history = []
-        for _ in range(self.n_iter):
+        for i in range(self.n_iter):
             # --- elite-endorsement graph R -------------------------------
             diff_R = theta[:, None] - phi[None, :]          # (m, n_e)
             Pi_R = -(diff_R ** 2) + alpha[:, None] + beta[None, :]
@@ -187,8 +193,12 @@ class IdeologyModel:
                 psi = opt["psi"].step(psi, g_psi)
                 gamma = opt["gamma"].step(gamma, g_gamma)
 
-            history.append(self._objective(A, theta, phi, alpha, beta,
-                                           B, psi, gamma))
+            # The objective needs a second forward pass (logaddexp), so log it
+            # only every ``eval_every`` steps (plus the first and last) -- this
+            # roughly halves the per-iteration cost on large fits.
+            if i == 0 or (i + 1) % self.eval_every == 0 or i == self.n_iter - 1:
+                history.append(self._objective(A, theta, phi, alpha, beta,
+                                               B, psi, gamma))
 
         # Standardise positions onto a common, comparable scale.
         scale = theta.std() or 1.0
