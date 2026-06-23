@@ -28,6 +28,19 @@ def test_mean_rank():
     assert np.isclose(metrics.mean_rank(scores, test_pos, train_pos), 2.0)
 
 
+def test_ndcg_at_k():
+    recs = np.array([[10, 11, 12], [20, 21, 22]])
+    test_pos = [np.array([10, 11]), np.array([22])]
+    # user 0: both hits at ranks 0,1 -> perfect NDCG=1; user 1: one hit at rank 2
+    # -> DCG=1/log2(4)=0.5, ideal=1 -> 0.5.  mean = 0.75.
+    assert np.isclose(metrics.ndcg_at_k(recs, test_pos, k=3), 0.75)
+
+
+def test_catalog_coverage():
+    recs = np.array([[0, 1, -1], [1, 2, -1]])  # unique items {0,1,2} of 5
+    assert np.isclose(metrics.catalog_coverage(recs, n_items=5), 0.6)
+
+
 def test_gini_diversity_extremes():
     n_items = 5
     # All recommendations on a single item -> least diverse -> low GiniD.

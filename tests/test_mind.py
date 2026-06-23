@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 import scipy.sparse as sp
 
-from rwe import FeedbackGraph, RWEB
+from rwe import FeedbackGraph, RWEB, P3, data, experiment
 from rwe.data import Dataset
 from rwe.mind import (DEFAULT_LEAN, MINDData, load_mind, load_lean_table, _norm)
 
@@ -139,6 +139,30 @@ def test_fit_ideology_on_fixture_plugs_into_rweb(mind):
 def test_fit_ideology_max_cells_guard(mind):
     with pytest.raises(ValueError):
         mind.fit_ideology(max_cells=1)                   # refuses a too-large dense fit
+
+
+def test_recommender_inputs_drops_unknown_and_empty():
+    rows = [0, 0, 1, 1, 2, 2]
+    cols = [0, 1, 4, 5, 2, 3]                            # u2 only clicks NaN-pos items
+    A = sp.csr_matrix((np.ones(6), (rows, cols)), shape=(3, 6))
+    d = _mind_from(A, leans=[-2, -1, np.nan, np.nan, 1, 2])
+    ds, theta, item_pos = d.recommender_inputs()
+    assert ds.n_items == 4                               # the 2 NaN-position items dropped
+    assert ds.n_users == 2                               # u2 left click-less -> dropped
+    assert np.all(np.isfinite(item_pos)) and np.all(np.isfinite(theta))
+    assert len(theta) == ds.n_users and len(item_pos) == ds.n_items
+
+
+def test_compare_table_has_accuracy_div_and_ideology_columns(mind):
+    ds, theta, item_pos = mind.political_subset(require_lean=True).recommender_inputs()
+    train, test_pos = data.train_test_split(ds, test_frac=0.3, seed=0)
+    g = FeedbackGraph(train)
+    table = experiment.compare(
+        {"P3": P3(g), "RWE-B": RWEB(g, theta, item_pos, epsilon=0.9)},
+        g, test_pos, top_k=2, diversity_k=2,
+        item_positions=item_pos, user_positions=theta, n_users_total=g.m)
+    for col in ("ndcg@2", "coverage@2", "rec_range@2", "shift@2", "uw_shift"):
+        assert col in table.columns
 
 
 def test_with_ideology_save_load_user_positions(mind, tmp_path):

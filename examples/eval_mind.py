@@ -1,0 +1,98 @@
+"""RQ2/RQ3 evaluation driver on an ingested MIND ``.npz`` (see docs/PAPER_PLAN.md).
+
+Takes a file produced by ``examples/ingest_mind.py``, runs the baselines
+(ItemKNN / BPRMF / P3 / RP3-beta) and RWE-D / RWE-B, and prints + saves the
+accuracy, long-tail-diversity (RQ2) and ideological-diversity (RQ3) tables — so
+the moment you point it at MINDsmall, the paper's results tables fall out.
+
+End-to-end::
+
+    # 1. ingest MIND with click-behaviour positions (no outlet labels needed)
+    python examples/ingest_mind.py --mind-dir data/MINDsmall_train \
+        --political-only --ideology --min-user-clicks 5 --min-item-clicks 5 \
+        --out mind_ideo.npz
+    # 2. evaluate
+    python examples/eval_mind.py --npz mind_ideo.npz --out-csv results.csv
+
+The ``.npz`` must carry item ideological positions (from ``--ideology`` or an
+outlet-lean join); items with an unknown position and then click-less users are
+dropped so RWE-B and the ideological metrics are well-defined.
+
+Note: ItemKNN builds a dense item-item similarity and BPRMF is pure-Python SGD,
+so start with a filtered MINDsmall political subset (``--min-*-clicks``) and use
+``--no-bprmf`` for a quick first pass.
+"""
+
+import argparse
+
+from rwe import (FeedbackGraph, P3, RP3Beta, RWED, RWEB, ItemKNN, BPRMF,
+                 data, experiment)
+from rwe.mind import MINDData
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--npz", required=True, help="ingested MIND .npz (from ingest_mind.py)")
+    ap.add_argument("--out-csv", default="eval_mind.csv")
+    ap.add_argument("--top-k", type=int, default=10)
+    ap.add_argument("--diversity-k", type=int, default=20)
+    ap.add_argument("--test-frac", type=float, default=0.3)
+    ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--epsilon", type=float, default=0.9, help="RWE-B non-bridge erasure")
+    ap.add_argument("--rweb-max-distance", type=float, default=None,
+                    help="RWE-B 'not too far' bound (None = unbounded)")
+    ap.add_argument("--rwed-beta", type=float, default=0.5)
+    ap.add_argument("--rwed-v", type=float, default=0.7)
+    ap.add_argument("--rp3-beta", type=float, default=0.5)
+    ap.add_argument("--itemknn-k", type=int, default=200)
+    ap.add_argument("--no-bprmf", action="store_true", help="skip the (slow) BPRMF baseline")
+    args = ap.parse_args()
+
+    d = MINDData.load(args.npz)
+    dataset, theta, item_pos = d.recommender_inputs()
+    if dataset.n_items < d.n_items:
+        print(f"[note] kept {dataset.n_items}/{d.n_items} items with a known position")
+    print(f"users={dataset.n_users}  items={dataset.n_items}  "
+          f"clicks={dataset.matrix.nnz}  "
+          f"position range=[{item_pos.min():.2f}, {item_pos.max():.2f}]\n")
+
+    train, test_pos = data.train_test_split(dataset, test_frac=args.test_frac, seed=args.seed)
+    g = FeedbackGraph(train)
+
+    recs = {
+        "ItemKNN": ItemKNN(g, k_neighbors=args.itemknn_k),
+        "P3": P3(g),
+        "RP3-beta": RP3Beta(g, beta=args.rp3_beta),
+        "RWE-D": RWED(g, beta=args.rwed_beta, v=args.rwed_v),
+        "RWE-B": RWEB(g, theta, item_pos, epsilon=args.epsilon,
+                      max_distance=args.rweb_max_distance),
+    }
+    if not args.no_bprmf:
+        recs["BPRMF"] = BPRMF(g, seed=args.seed)
+
+    table = experiment.compare(recs, g, test_pos, top_k=args.top_k,
+                               diversity_k=args.diversity_k, item_positions=item_pos,
+                               user_positions=theta, n_users_total=g.m)
+
+    k, dk = args.top_k, args.diversity_k
+    rq2 = ["auc", f"hit_rate@{k}", f"ndcg@{k}", "mean_rank", f"gini_div@{dk}",
+           f"coverage@{dk}", f"avg_deg@{dk}", f"surprisal@{dk}", f"personalization@{dk}"]
+    rq3 = [f"rec_range@{k}", f"shift@{k}", "uw_recs", "uw_shift", "uw_range"]
+    rq2 = [c for c in rq2 if c in table.columns]
+    rq3 = [c for c in rq3 if c in table.columns]
+
+    print("RQ2 — accuracy + long-tail diversity")
+    print(table[rq2].round(3).to_string(), "\n")
+    print("RQ3 — ideological diversity (RecRange / directed shift; UW-weighted)")
+    print(table[rq3].round(3).to_string(), "\n")
+
+    table.to_csv(args.out_csv)
+    print(f"wrote full table → {args.out_csv}")
+    print("\nExpected pattern (paper Results II–IV): RWE-D lifts long-tail diversity "
+          "(higher gini/coverage/surprisal, lower avg_deg) at ~equal accuracy; RWE-B "
+          "widens rec_range and the (UW) shift, bridging users across the centre.")
+
+
+if __name__ == "__main__":
+    main()

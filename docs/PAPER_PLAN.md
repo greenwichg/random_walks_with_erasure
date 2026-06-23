@@ -120,8 +120,10 @@ What transfers from this repo with ~no change: the method code, `metrics.py`, th
    MIND URLs are MSN URLs without the publisher); **(2)** `--ideology` /
    `MINDData.fit_ideology`, which learns user+item positions from **clicks alone —
    no outlet labels needed**, plus a `lean_corr` check against any leans you do
-   have. So the external-data dependency is now optional. Next: run `RWEB` on a
-   MINDsmall ingest to produce the first real RecRange/shift numbers.
+   have. So the external-data dependency is now optional. **Eval driver ready:**
+   `examples/eval_mind.py` takes an ingested `.npz`, runs the baselines + RWE-D/RWE-B
+   and prints/saves the RQ2 (accuracy + long-tail) and RQ3 (ideological) tables. Next:
+   download MINDsmall, ingest (`--ideology`), and run it to get the first real numbers.
 3. **Add the calibrated-rec baseline** (Steck) and the **fixed-ε** baseline for RQ4a.
 4. **Get a backfire anchor** (Bail et al. data or adopt Chen 2021) for RQ4b — this is
    the credibility linchpin.

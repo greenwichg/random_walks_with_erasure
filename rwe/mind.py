@@ -336,6 +336,29 @@ class MINDData:
         return replace(self, item_positions=fit.item_positions,
                        user_positions=fit.user_positions)
 
+    def recommender_inputs(self, user_fill: float = 0.0):
+        """Prep for evaluation: ``(Dataset, user_positions, item_positions)``.
+
+        Drops items whose ideological position is unknown (``NaN``) and then users
+        left with no clicks, so :class:`rwe.RWEB` and the ideological metrics are
+        well-defined.  Uses the stored ``user_positions`` (e.g. from
+        :meth:`fit_ideology`) when present, else the click-mean proxy
+        :meth:`user_positions_from_clicks`.
+        """
+        item_pos = np.asarray(self.item_positions, dtype=float)
+        theta = (self.user_positions if self.user_positions is not None
+                 else self.user_positions_from_clicks(fill=user_fill))
+        theta = np.nan_to_num(np.asarray(theta, dtype=float), nan=user_fill)
+        A = self.dataset.matrix.tocsr()
+        item_ids = self.dataset.item_ids
+        finite = np.isfinite(item_pos)
+        if not finite.all():
+            cols = np.flatnonzero(finite)
+            A, item_pos, item_ids = A[:, cols], item_pos[cols], item_ids[cols]
+        keep = np.asarray(A.sum(axis=1)).ravel() > 0
+        A, theta, user_ids = A[keep].tocsr(), theta[keep], self.dataset.user_ids[keep]
+        return Dataset(A, user_ids, item_ids), theta, item_pos
+
     def save(self, path) -> None:
         """Save to a ``.npz`` (matrix + aligned metadata, incl. user positions)."""
         A = self.dataset.matrix.tocsr()

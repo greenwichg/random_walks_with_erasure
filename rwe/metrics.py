@@ -2,11 +2,11 @@
 
 Accuracy
     :func:`auc`, :func:`mean_rank`, :func:`hit_rate_at_k`,
-    :func:`precision_at_k`.
+    :func:`precision_at_k`, :func:`ndcg_at_k`.
 
 Long-tail diversity
-    :func:`gini_diversity`, :func:`average_item_degree`,
-    :func:`personalization`, :func:`surprisal`.
+    :func:`gini_diversity`, :func:`catalog_coverage`,
+    :func:`average_item_degree`, :func:`personalization`, :func:`surprisal`.
 
 Ideological diversity
     :func:`rec_range_at_k`, :func:`ks_statistic`.
@@ -101,6 +101,21 @@ def precision_at_k(recommendations: np.ndarray, test_pos, k: int | None = None) 
     return float(np.mean(vals)) if vals else float("nan")
 
 
+def ndcg_at_k(recommendations: np.ndarray, test_pos, k: int | None = None) -> float:
+    """Mean NDCG@k over users with held-out items (binary relevance)."""
+    k = k or recommendations.shape[1]
+    vals = []
+    for row in range(recommendations.shape[0]):
+        pos = set(int(x) for x in np.asarray(test_pos[row]))
+        if not pos:
+            continue
+        recs = [int(x) for x in recommendations[row][:k] if x >= 0]
+        dcg = sum(1.0 / np.log2(rank + 2) for rank, it in enumerate(recs) if it in pos)
+        ideal = sum(1.0 / np.log2(rank + 2) for rank in range(min(len(pos), k)))
+        vals.append(dcg / ideal if ideal > 0 else 0.0)
+    return float(np.mean(vals)) if vals else float("nan")
+
+
 # --------------------------------------------------------------------------- #
 # Long-tail diversity
 # --------------------------------------------------------------------------- #
@@ -124,6 +139,12 @@ def gini_diversity(recommendations: np.ndarray, n_items: int) -> float:
     idx = np.arange(1, n + 1)
     gini = (2.0 * np.sum(idx * counts) / (n * total)) - (n + 1.0) / n
     return float(1.0 - gini)
+
+
+def catalog_coverage(recommendations: np.ndarray, n_items: int) -> float:
+    """Catalog coverage: fraction of items that appear in *some* user's list."""
+    flat = recommendations[recommendations >= 0]
+    return float(np.unique(flat).size / n_items) if n_items else float("nan")
 
 
 def average_item_degree(recommendations: np.ndarray, item_degrees) -> float:

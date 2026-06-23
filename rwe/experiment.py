@@ -50,8 +50,10 @@ def evaluate(recommender, train_graph: FeedbackGraph, test_pos, top_k: int = 10,
 
     result = {
         "hit_rate@%d" % top_k: metrics.hit_rate_at_k(recs_topk, test_sub),
+        "ndcg@%d" % top_k: metrics.ndcg_at_k(recs_topk, test_sub, top_k),
         "precision@%d" % top_k: metrics.precision_at_k(recs_topk, test_sub, top_k),
         "gini_div@%d" % diversity_k: metrics.gini_diversity(recs_div, train_graph.n),
+        "coverage@%d" % diversity_k: metrics.catalog_coverage(recs_div, train_graph.n),
         "avg_deg@%d" % diversity_k: metrics.average_item_degree(
             recs_div, train_graph.item_degrees),
         "personalization@%d" % diversity_k: metrics.personalization(
