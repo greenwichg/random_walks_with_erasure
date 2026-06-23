@@ -436,6 +436,7 @@ Run `pytest -q` any time to confirm everything still passes.
 | `rwe/satisfaction.py` | **Extension 1:** adaptive per-user exposure. |
 | `rwe/agent_sim.py` | **Extension 2:** networkx agent browsing simulation. |
 | `rwe/opinion_dynamics.py` | **Extension 3:** does opposite-view exposure raise or lower polarization? |
+| `rwe/guardrails.py` | **Extension 4:** closed-loop monitors that cut the dose when backfire is detected. |
 | `examples/demo_*.py` | Four runnable, self-contained demos. |
 | `tests/test_*.py` | 63 automated correctness checks. |
 | `docs/make_diagrams.py` | Regenerates the diagrams in this guide (into `docs/images/`). |

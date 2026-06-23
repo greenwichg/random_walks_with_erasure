@@ -371,6 +371,42 @@ def opinion_dynamics():
     _save(fig, "opinion_dynamics.png")
 
 
+# --------------------------------------------------------------------------- #
+# Closed-loop guardrails: detect backfire (drift / engagement) and cut the dose
+# --------------------------------------------------------------------------- #
+def guardrails_diagram():
+    import numpy as np  # noqa: F401
+    from rwe import guardrails as gr, opinion_dynamics as od
+
+    theta0 = od.initial_population(n_users=400, seed=0)
+    res = gr.compare_guardrails(theta0, n_rounds=40)
+    rounds = list(range(len(next(iter(res.values()))["polarization"])))
+    colors = {"no guardrail": ERASE_C, "backfire monitor (drift)": KEEP_C,
+              "engagement early-warning": USER_C}
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11.2, 4.7))
+    for name, r in res.items():
+        ax1.plot(rounds, r["polarization"], color=colors[name], lw=2.3, label=name)
+        ax2.plot(rounds, r["dose"], color=colors[name], lw=2.3, label=name)
+    ax1.set_title("Polarization outcome", fontsize=12, weight="bold", color=INK)
+    ax1.set_xlabel("round", fontsize=10, color=INK)
+    ax1.set_ylabel("polarization (std of positions)", fontsize=10, color=INK)
+    ax1.legend(fontsize=8.3, loc="center right")
+    ax2.set_title("Dose (the guardrail's action)", fontsize=12, weight="bold", color=INK)
+    ax2.set_xlabel("round", fontsize=10, color=INK)
+    ax2.set_ylabel("mean opposite-content dose", fontsize=10, color=INK)
+    for ax in (ax1, ax2):
+        for sp in ("top", "right"):
+            ax.spines[sp].set_visible(False)
+    fig.suptitle("Closed-loop guardrails detect backfire and cut the dose",
+                 fontsize=13.5, weight="bold", color=INK)
+    fig.text(0.5, 0.005, "an un-guarded aggressive dose backfires (red); the "
+             "guardrails pull the dose into the safe, depolarizing zone — stylized model",
+             ha="center", fontsize=8, color="#9a9a9a")
+    fig.tight_layout(rect=(0, 0.03, 1, 0.93))
+    _save(fig, "guardrails.png")
+
+
 def _save(fig, name):
     OUT.mkdir(parents=True, exist_ok=True)
     path = OUT / name
@@ -387,3 +423,4 @@ if __name__ == "__main__":
     adaptive_exposure()
     alpha_sweep_curve()
     opinion_dynamics()
+    guardrails_diagram()

@@ -130,6 +130,7 @@ on items and the erasure matrices are expressed over the `n` item columns.
 | `rwe/satisfaction.py` | *extension* | Webpage graph, community detection, satisfaction score, `AdaptiveRWEB`. |
 | `rwe/agent_sim.py` | *extension* | Agent-based newsfeed browsing simulation (networkx + Louvain/Leiden). |
 | `rwe/opinion_dynamics.py` | *extension* | Polarization simulation: does opposite-view exposure converge or diverge opinions? |
+| `rwe/guardrails.py` | *extension* | Closed-loop backfire/engagement monitors that cut the dose when exposure starts to polarize. |
 
 ## Equation → code map
 
