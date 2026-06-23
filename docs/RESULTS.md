@@ -2,8 +2,11 @@
 
 First real-data run of the pipeline in `docs/PAPER_PLAN.md`. All numbers are from
 `examples/eval_mind.py` on **MIND-small**; reproduce with the Colab notebook
-(`notebooks/run_mind_eval.ipynb`). This is **one dataset, one 15k-user sample, one
-seed** — directional evidence, not a final table. Read the limitations at the end.
+(`notebooks/run_mind_eval.ipynb`). The point estimates below are **single-seed** on
+one 15k-user sample — directional evidence. `eval_mind.py --seeds N` now reports
+**mean ± std + a Wilcoxon signed-rank p** vs a reference (use ≥7 seeds so the test
+can reach p<0.05); **re-run with `--seeds 7` and replace the tables below with the
+error-bar / significance versions** before submitting. Read the limitations at the end.
 
 ## Setup
 
@@ -101,8 +104,10 @@ outcome, not a measured opinion change.
    axis — it also appears on the topic axis. So the sweep is a robust *mechanism*,
    not by itself proof of *ideological* depolarization; the depolarization link is
    the simulation.
-3. **Scope.** One dataset, one 15k-user sample, one seed, US-2019 news. No
-   significance tests or multi-seed error bars yet. Add them before a submission.
+3. **Scope.** One dataset, one 15k-user sample, US-2019 news. The tables above are
+   single-seed point estimates; `eval_mind.py --seeds 7` adds mean ± std + Wilcoxon
+   p (capability added) — **run it and paste the error-bar versions here**. Still a
+   single dataset.
 4. **Reproducibility / accuracy of base RWE** is on synthetic + this MIND run; the
    paper's private Twitter numbers are not reproduced.
 
