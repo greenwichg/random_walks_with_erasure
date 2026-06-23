@@ -360,9 +360,19 @@ def build():
         notes="Same goal (expose to opposite views), opposite outcome depending on HOW: "
               "bounded 'not too far' bridging lowers polarization; naive opposite-blast raises it.")
 
+    slide(prs, "Beyond the paper — guardrails that catch backfire", [
+        ("Don't just bound the dose — MONITOR each user and cut it if backfire starts.", 0),
+        ("Backfire monitor (ideology drift) + engagement early-warning (satisfaction).", 0),
+        ("Un-guarded aggressive dose polarizes; guardrails detect it and depolarize.", 0),
+    ], image="guardrails.png", bullets_height=1.4,
+        code_note="rwe/guardrails.py: BackfireMonitor · EngagementGuardrail · compare_guardrails",
+        notes="Closed-loop controllers watch a signal (ideology drift / satisfaction) and "
+              "cut the per-user dose when it trends toward backfire — the 'measure it' "
+              "safeguard turned into code.")
+
     slide(prs, "This implementation", [
-        ("Full paper in rwe/ (graph, RWE, ideology, baselines, metrics) + 2 extensions.", 0),
-        ("71 tests — including the worked erasure example reproduced to the decimal.", 0),
+        ("Full paper in rwe/ (graph, RWE, ideology, baselines, metrics) + 4 extensions.", 0),
+        ("79 tests — including the worked erasure example reproduced to the decimal.", 0),
         ("8 diagrams, a beginner guide (GUIDE.md) and a verification report (TALK.md).", 0),
         ("Run:  pip install -e .   ·   pytest -q   ·   python examples/demo_synthetic.py", 0),
     ], code_note="github: greenwichg/random_walks_with_erasure",
