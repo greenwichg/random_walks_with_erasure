@@ -9,11 +9,24 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import scipy.sparse as sp
 
 from rwe import FeedbackGraph, RWEB
+from rwe.data import Dataset
 from rwe.mind import (DEFAULT_LEAN, MINDData, load_mind, load_lean_table, _norm)
 
 FIX = Path(__file__).parent / "fixtures" / "mind_demo"
+
+
+def _mind_from(matrix, leans, political=None):
+    """Build a minimal MINDData around a click matrix + planted item leans."""
+    m, n = matrix.shape
+    obj = lambda: np.array([""] * n, dtype=object)
+    ds = Dataset(matrix=matrix.tocsr(),
+                 user_ids=np.array([f"u{i}" for i in range(m)]),
+                 item_ids=np.array([f"i{j}" for j in range(n)]))
+    pol = np.ones(n, bool) if political is None else np.asarray(political)
+    return MINDData(ds, obj(), obj(), obj(), obj(), pol, np.asarray(leans, float))
 
 
 @pytest.fixture
@@ -94,6 +107,48 @@ def test_lean_table_and_norm(tmp_path):
     table = load_lean_table(p)
     assert table[_norm("Fox News")] == 2
     assert table[_norm("CNN")] == -1
+
+
+def test_fit_ideology_recovers_axis_from_clicks():
+    # Block-separable clicks: left users click left items, right users right items.
+    rows = [0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5]
+    cols = [0, 1, 0, 1, 0, 1, 2, 3, 2, 3, 2, 3]          # items: L1 L2 | R1 R2
+    A = sp.csr_matrix((np.ones(12), (rows, cols)), shape=(6, 4))
+    d = _mind_from(A, leans=[-2, -1, 1, 2])              # planted L..R leans
+    fit = d.fit_ideology(n_iter=600, seed=0)
+    # the latent axis recovered from clicks alone aligns with the planted leans
+    assert fit.lean_corr is not None and fit.lean_corr > 0.5
+    theta = fit.user_positions
+    assert theta[:3].mean() < theta[3:].mean()           # left users left of right users
+
+
+def test_fit_ideology_on_fixture_plugs_into_rweb(mind):
+    sub = mind.political_subset(require_lean=False)       # no outlet labels needed
+    fit = sub.fit_ideology(n_iter=200, seed=0)
+    assert fit.user_positions.shape == (sub.n_users,)
+    assert fit.item_positions.shape == (sub.n_items,)
+    assert np.all(np.isfinite(fit.user_positions))
+    d2 = sub.with_ideology(fit)
+    assert d2.user_positions is not None
+    g = FeedbackGraph(d2.dataset.matrix)
+    recs = RWEB(g, d2.user_positions, d2.item_positions,
+                epsilon=0.9).recommend(range(d2.n_users), top_k=2)
+    assert recs.shape == (d2.n_users, 2)
+
+
+def test_fit_ideology_max_cells_guard(mind):
+    with pytest.raises(ValueError):
+        mind.fit_ideology(max_cells=1)                   # refuses a too-large dense fit
+
+
+def test_with_ideology_save_load_user_positions(mind, tmp_path):
+    sub = mind.political_subset(require_lean=True)
+    d = sub.with_ideology(sub.fit_ideology(n_iter=50, seed=0))
+    p = tmp_path / "m.npz"
+    d.save(p)
+    d2 = MINDData.load(p)
+    assert d2.user_positions is not None
+    np.testing.assert_allclose(d2.user_positions, d.user_positions)
 
 
 def test_save_load_roundtrip(mind, tmp_path):

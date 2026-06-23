@@ -116,9 +116,12 @@ What transfers from this repo with ~no change: the method code, `metrics.py`, th
    *Status: the loader exists* — `rwe/mind.py` (`load_mind`, `MINDData`) +
    `examples/ingest_mind.py` parse a MIND release into a click `Dataset` + a
    political mask + outlet-lean `item_positions`, ready for `FeedbackGraph`/`RWEB`.
-   Supply a `--source-map` (news-id → outlet) for the lean join, since MIND URLs
-   are MSN URLs without the publisher. Next: get a real source map + AllSides/MBFC
-   lean table and run `RWEB` to produce the first real RecRange/shift numbers.
+   Two positioning paths: **(1)** outlet-lean join (supply `--source-map`, since
+   MIND URLs are MSN URLs without the publisher); **(2)** `--ideology` /
+   `MINDData.fit_ideology`, which learns user+item positions from **clicks alone —
+   no outlet labels needed**, plus a `lean_corr` check against any leans you do
+   have. So the external-data dependency is now optional. Next: run `RWEB` on a
+   MINDsmall ingest to produce the first real RecRange/shift numbers.
 3. **Add the calibrated-rec baseline** (Steck) and the **fixed-ε** baseline for RQ4a.
 4. **Get a backfire anchor** (Bail et al. data or adopt Chen 2021) for RQ4b — this is
    the credibility linchpin.

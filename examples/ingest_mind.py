@@ -9,21 +9,29 @@ Click matrix + political mask only (works from MIND alone)::
 
     python examples/ingest_mind.py --mind-dir data/MINDsmall_train --out mind.npz
 
-Add ideological positions via an outlet-lean join (MIND lacks the publisher, so
-supply a news-id -> outlet map; lean defaults to the bundled illustrative table)::
+Option 1 -- outlet-lean join (MIND lacks the publisher, so supply a news-id ->
+outlet map; lean defaults to the bundled illustrative table)::
 
     python examples/ingest_mind.py --mind-dir data/MINDsmall_train \
         --source-map data/news_source.tsv --lean-csv allsides.csv \
         --political-only --min-user-clicks 5 --min-item-clicks 5 --out mind_pol.npz
 
+Option 2 -- position purely from click behaviour, no outlet map needed
+(``--ideology`` fits rwe.IdeologyModel and stores BOTH user and item positions)::
+
+    python examples/ingest_mind.py --mind-dir data/MINDsmall_train \
+        --political-only --ideology --min-user-clicks 5 --min-item-clicks 5 \
+        --out mind_ideo.npz
+
 Then downstream::
 
     from rwe import FeedbackGraph, RWEB
     from rwe.mind import MINDData
-    d = MINDData.load("mind_pol.npz")
+    d = MINDData.load("mind_ideo.npz")
     g = FeedbackGraph(d.dataset.matrix)
-    recs = RWEB(g, d.user_positions_from_clicks(fill=0.0), d.item_positions,
-                epsilon=0.9).recommend(range(d.n_users), top_k=10)
+    theta = d.user_positions if d.user_positions is not None \
+        else d.user_positions_from_clicks(fill=0.0)        # ideology vs lean-mean proxy
+    recs = RWEB(g, theta, d.item_positions, epsilon=0.9).recommend(range(d.n_users), top_k=10)
 """
 
 import argparse
@@ -48,7 +56,13 @@ def main() -> None:
     ap.add_argument("--min-user-clicks", type=int, default=1)
     ap.add_argument("--min-item-clicks", type=int, default=1)
     ap.add_argument("--political-only", action="store_true",
-                    help="restrict the saved data to political items with a known lean")
+                    help="restrict the saved data to political items "
+                         "(with a known lean, unless --ideology is set)")
+    ap.add_argument("--ideology", action="store_true",
+                    help="estimate user+item positions from click behaviour via "
+                         "IdeologyModel -- no outlet source map needed")
+    ap.add_argument("--ideology-iters", type=int, default=300,
+                    help="gradient-ascent sweeps for --ideology (default 300)")
     args = ap.parse_args()
 
     lean = load_lean_table(args.lean_csv) if args.lean_csv else None
@@ -59,15 +73,21 @@ def main() -> None:
 
     print("Ingested MIND:")
     print(json.dumps(d.summary(), indent=2))
-    if d.summary()["items_with_lean"] == 0:
+    if d.summary()["items_with_lean"] == 0 and not args.ideology:
         print("\n[note] No item leans resolved. MIND URLs are MSN URLs with no "
               "publisher; pass --source-map (news_id->outlet) to enable the join, "
-              "or fit rwe.IdeologyModel on the click graph instead.")
+              "or pass --ideology to position from click behaviour instead.")
 
     if args.political_only:
-        d = d.political_subset(require_lean=True)
-        print("\nAfter political_subset(require_lean=True):")
+        d = d.political_subset(require_lean=not args.ideology)
+        print(f"\nAfter political_subset(require_lean={not args.ideology}):")
         print(json.dumps(d.summary(), indent=2))
+
+    if args.ideology:
+        fit = d.fit_ideology(n_iter=args.ideology_iters, seed=0)
+        d = d.with_ideology(fit)
+        print("\nFit ideology from click behaviour (standardised latent scale): "
+              f"items={d.n_items}, users={d.n_users}, lean_corr={fit.lean_corr}")
 
     d.save(args.out)
     print(f"\nwrote {args.out}")

@@ -19,8 +19,10 @@ file*. So the outlet-lean join needs a ``source_map`` (news-id -> outlet) that y
 supply -- e.g. from an augmented MIND release, from the EB-NeRD dataset (which does
 carry publishers), or by resolving the MSN "provider" yourself. Without it, the
 click matrix and the political mask still work (both come from MIND alone), but
-``item_positions`` will be ``NaN``. As a data-driven alternative to outlet lean,
-fit :class:`rwe.IdeologyModel` on the click graph instead.
+``item_positions`` will be ``NaN``. As a data-driven alternative that needs **no
+outlet labels at all**, call :meth:`MINDData.fit_ideology` -- it fits
+:class:`rwe.IdeologyModel` on the click matrix to place users *and* articles on a
+shared latent left--right axis.
 
 The bundled :data:`DEFAULT_LEAN` table is **illustrative** (≈50 major US outlets,
 AllSides/MBFC-style, as of ~2024). Media-bias ratings are contested and change over
@@ -32,7 +34,7 @@ that source.**
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -40,6 +42,7 @@ import numpy as np
 import scipy.sparse as sp
 
 from .data import Dataset, from_interactions
+from .ideology import IdeologyModel, IdeologyResult
 
 # Sub-category substrings that mark a MIND article as political (lower-cased).
 DEFAULT_POLITICAL_TERMS = ("politic", "election")
@@ -227,6 +230,7 @@ class MINDData:
     outlets: np.ndarray
     political: np.ndarray            # bool mask
     item_positions: np.ndarray       # float in [-2, 2]; NaN if outlet/lean unknown
+    user_positions: np.ndarray | None = None   # set by fit_ideology / with_ideology
 
     @property
     def n_users(self) -> int:
@@ -277,32 +281,100 @@ class MINDData:
         cols = np.flatnonzero(mask)
         A = self.dataset.matrix.tocsr()[:, cols]
         user_ids = self.dataset.user_ids
+        keep = np.ones(A.shape[0], dtype=bool)
         if drop_empty_users:
             keep = np.asarray(A.sum(axis=1)).ravel() > 0
             A, user_ids = A[keep], user_ids[keep]
+        up = self.user_positions[keep] if self.user_positions is not None else None
         ds = Dataset(matrix=A.tocsr(), user_ids=user_ids,
                      item_ids=self.dataset.item_ids[cols])
         return MINDData(ds, self.categories[cols], self.subcategories[cols],
                         self.titles[cols], self.outlets[cols],
-                        self.political[cols], self.item_positions[cols])
+                        self.political[cols], self.item_positions[cols], up)
+
+    def fit_ideology(self, *, model=None, orient_by_lean=True, max_cells=5e7,
+                     **fit_kwargs) -> "IdeologyFit":
+        """Estimate latent 1-D positions from click behaviour alone (no outlets).
+
+        Fits the elite-only ideal-point model (:class:`rwe.IdeologyModel`) on the
+        ``users × articles`` click matrix: users get ``theta``, articles get
+        ``phi`` on a shared, standardised latent scale. The recovered axis is
+        whatever drives co-clicking; on a **political subset** that is usually
+        ideology — but verify. If some items already carry an outlet lean,
+        ``lean_corr`` reports how well the learned axis matches it, and the axis
+        is sign-flipped to agree (otherwise the global sign is arbitrary).
+
+        Typically called on ``political_subset(require_lean=False)`` and after
+        ``min_*_clicks`` filtering — the model is dense ``O(users × items)`` per
+        iteration. ``fit_kwargs`` (``n_iter``, ``lr``, ``lam``, ``mu``, ``seed``)
+        pass through to :class:`rwe.IdeologyModel`.
+        """
+        m, n = self.dataset.matrix.shape
+        if m * n > max_cells:
+            raise ValueError(
+                f"click matrix is {m}×{n} = {m * n:.0f} cells (> max_cells="
+                f"{max_cells:.0f}); the ideal-point model is dense. Filter first "
+                "(political_subset, min_user_clicks/min_item_clicks) or raise max_cells.")
+        mdl = model or IdeologyModel(**fit_kwargs)
+        res = mdl.fit(self.dataset.matrix)        # elite-only: phi == item positions
+        theta, item_pos = res.theta, res.phi
+        lean_corr = None
+        known = ~np.isnan(self.item_positions)
+        if orient_by_lean and known.sum() >= 3:
+            a, b = item_pos[known], self.item_positions[known]
+            if a.std() > 0 and b.std() > 0:
+                c = float(np.corrcoef(a, b)[0, 1])
+                if not np.isnan(c):
+                    if c < 0:                      # align latent axis with L..R lean
+                        theta, item_pos, c = -theta, -item_pos, -c
+                    lean_corr = c
+        return IdeologyFit(user_positions=theta, item_positions=item_pos,
+                           lean_corr=lean_corr, result=res)
+
+    def with_ideology(self, fit: "IdeologyFit") -> "MINDData":
+        """Return a copy whose user/item positions come from a :meth:`fit_ideology`."""
+        return replace(self, item_positions=fit.item_positions,
+                       user_positions=fit.user_positions)
 
     def save(self, path) -> None:
-        """Save to a ``.npz`` (matrix + aligned metadata)."""
+        """Save to a ``.npz`` (matrix + aligned metadata, incl. user positions)."""
         A = self.dataset.matrix.tocsr()
+        has_up = self.user_positions is not None
         np.savez(path, data=A.data, indices=A.indices, indptr=A.indptr,
                  shape=A.shape, user_ids=self.dataset.user_ids,
                  item_ids=self.dataset.item_ids, categories=self.categories,
                  subcategories=self.subcategories, titles=self.titles,
                  outlets=self.outlets, political=self.political,
-                 item_positions=self.item_positions)
+                 item_positions=self.item_positions,
+                 user_positions=self.user_positions if has_up else np.zeros(0),
+                 has_user_positions=np.array([has_up]))
 
     @classmethod
     def load(cls, path) -> "MINDData":
         z = np.load(path, allow_pickle=True)
         A = sp.csr_matrix((z["data"], z["indices"], z["indptr"]), shape=tuple(z["shape"]))
         ds = Dataset(matrix=A, user_ids=z["user_ids"], item_ids=z["item_ids"])
+        up = (z["user_positions"] if "has_user_positions" in z
+              and bool(z["has_user_positions"][0]) else None)
         return cls(ds, z["categories"], z["subcategories"], z["titles"],
-                   z["outlets"], z["political"], z["item_positions"])
+                   z["outlets"], z["political"], z["item_positions"], up)
+
+
+@dataclass
+class IdeologyFit:
+    """Output of :meth:`MINDData.fit_ideology`.
+
+    ``user_positions`` (``theta``) and ``item_positions`` (``phi``) are on a shared
+    standardised latent scale. ``lean_corr`` is the correlation of the learned item
+    axis with any known outlet leans (``None`` if no leans were available); a value
+    near ±1 is reassurance that the latent axis really is ideological. ``result`` is
+    the full :class:`rwe.IdeologyResult` (``alpha``/``beta``/objective ``history``).
+    """
+
+    user_positions: np.ndarray
+    item_positions: np.ndarray
+    lean_corr: float | None
+    result: IdeologyResult
 
 
 # --------------------------------------------------------------------------- #
