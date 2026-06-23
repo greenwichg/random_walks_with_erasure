@@ -359,6 +359,25 @@ class MINDData:
         A, theta, user_ids = A[keep].tocsr(), theta[keep], self.dataset.user_ids[keep]
         return Dataset(A, user_ids, item_ids), theta, item_pos
 
+    def sample_users(self, n: int, seed: int = 0) -> "MINDData":
+        """Randomly keep ``n`` users (and drop items left click-less).
+
+        Caps the cost of the dense :meth:`fit_ideology` / the baselines on large
+        logs; returns ``self`` unchanged when ``n >= n_users``.
+        """
+        if n >= self.n_users:
+            return self
+        rng = np.random.default_rng(seed)
+        rows = np.sort(rng.choice(self.n_users, size=n, replace=False))
+        A = self.dataset.matrix.tocsr()[rows]
+        up = self.user_positions[rows] if self.user_positions is not None else None
+        cols = np.flatnonzero(np.asarray(A.sum(axis=0)).ravel() > 0)
+        A = A[:, cols].tocsr()
+        ds = Dataset(A, self.dataset.user_ids[rows], self.dataset.item_ids[cols])
+        return MINDData(ds, self.categories[cols], self.subcategories[cols],
+                        self.titles[cols], self.outlets[cols], self.political[cols],
+                        self.item_positions[cols], up)
+
     def save(self, path) -> None:
         """Save to a ``.npz`` (matrix + aligned metadata, incl. user positions)."""
         A = self.dataset.matrix.tocsr()

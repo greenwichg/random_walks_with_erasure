@@ -63,6 +63,11 @@ def main() -> None:
                          "IdeologyModel -- no outlet source map needed")
     ap.add_argument("--ideology-iters", type=int, default=300,
                     help="gradient-ascent sweeps for --ideology (default 300)")
+    ap.add_argument("--sample-users", type=int, default=None,
+                    help="randomly keep this many users (caps the dense --ideology fit)")
+    ap.add_argument("--max-cells", type=float, default=5e7,
+                    help="max users*items allowed for the dense --ideology fit (default 5e7)")
+    ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
 
     lean = load_lean_table(args.lean_csv) if args.lean_csv else None
@@ -70,6 +75,8 @@ def main() -> None:
                   include_impressions=not args.no_impressions,
                   min_user_clicks=args.min_user_clicks,
                   min_item_clicks=args.min_item_clicks)
+    if args.sample_users:
+        d = d.sample_users(args.sample_users, seed=args.seed)
 
     print("Ingested MIND:")
     print(json.dumps(d.summary(), indent=2))
@@ -84,7 +91,8 @@ def main() -> None:
         print(json.dumps(d.summary(), indent=2))
 
     if args.ideology:
-        fit = d.fit_ideology(n_iter=args.ideology_iters, seed=0)
+        fit = d.fit_ideology(n_iter=args.ideology_iters, seed=args.seed,
+                             max_cells=args.max_cells)
         d = d.with_ideology(fit)
         print("\nFit ideology from click behaviour (standardised latent scale): "
               f"items={d.n_items}, users={d.n_users}, lean_corr={fit.lean_corr}")

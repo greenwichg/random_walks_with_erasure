@@ -141,6 +141,14 @@ def test_fit_ideology_max_cells_guard(mind):
         mind.fit_ideology(max_cells=1)                   # refuses a too-large dense fit
 
 
+def test_sample_users(mind):
+    s = mind.sample_users(2, seed=0)
+    assert s.n_users == 2
+    assert 0 < s.n_items <= mind.n_items                 # click-less items dropped
+    assert set(s.dataset.user_ids) <= set(mind.dataset.user_ids)
+    assert mind.sample_users(99).n_users == mind.n_users  # n >= n_users -> unchanged
+
+
 def test_recommender_inputs_drops_unknown_and_empty():
     rows = [0, 0, 1, 1, 2, 2]
     cols = [0, 1, 4, 5, 2, 3]                            # u2 only clicks NaN-pos items
