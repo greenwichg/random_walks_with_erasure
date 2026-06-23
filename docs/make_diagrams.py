@@ -74,35 +74,38 @@ def bipartite_graph():
 # 2. Random walk with erasure (the "tax" mechanism)
 # --------------------------------------------------------------------------- #
 def rwe_flow():
-    fig, ax = plt.subplots(figsize=(10.5, 5.6))
+    fig, ax = plt.subplots(figsize=(11.4, 5.8))
 
     # Origin user.
-    sx, sy = 1.2, 3.0
+    sx, sy = 1.05, 3.0
     ax.add_patch(Circle((sx, sy), 0.5, color=USER_C, zorder=5))
     ax.text(sx, sy, "S\n(you)", ha="center", va="center", color="white",
             fontsize=11, weight="bold", zorder=6)
 
     # Two representative landing pages with different tax (erasure) levels.
-    # rad sign routes each erase-arrow outward (top bows up, bottom bows down)
-    # so the red return arrows stay clear of the black forward arrows.
+    # Each erased arrow leaves the page's *outer* corner and bows outward (top
+    # up, bottom down), well clear of the incoming walk arrow and the box.
     items = [
-        dict(y=4.6, q=0.9, title="Popular / same-side page",
-             note="high tax  q = 0.9", color=ERASE_C, rad=0.42),
-        dict(y=1.4, q=0.2, title="Niche / opposite-side bridge",
-             note="low tax  q = 0.2", color=KEEP_C, rad=-0.42),
+        dict(y=4.7, q=0.9, title="Popular / same-side page",
+             note="high tax  q = 0.9", color=ERASE_C, side=+1, rad=0.5),
+        dict(y=1.3, q=0.2, title="Niche / opposite-side bridge",
+             note="low tax  q = 0.2", color=KEEP_C, side=-1, rad=-0.5),
     ]
-    bxl, bxr = 4.1, 6.4          # page box left / right
-    rec_l, rec_r = 8.9, 10.7     # recommendation box left / right
+    bxl, bxr = 5.0, 7.4          # page box left / right (more gap from S)
+    rec_l, rec_r = 9.5, 11.2     # recommendation box left / right
+
+    def lw(frac):               # capped thickness encoding (no blobs)
+        return 1.2 + 3.2 * frac
 
     # Recommendation zone.
-    ax.add_patch(FancyBboxPatch((rec_l, 0.7), rec_r - rec_l, 4.6,
+    ax.add_patch(FancyBboxPatch((rec_l, 0.55), rec_r - rec_l, 4.9,
                                 boxstyle="round,pad=0.05", fc="#eef5ee",
                                 ec=KEEP_C, lw=1.5, zorder=1))
-    ax.text((rec_l + rec_r) / 2, 4.95, "Recommend-\nation list", ha="center",
+    ax.text((rec_l + rec_r) / 2, 5.0, "Recommend-\nation list", ha="center",
             va="center", fontsize=10, color=KEEP_C, weight="bold")
 
     for it in items:
-        iy = it["y"]
+        iy, side = it["y"], it["side"]
         ax.add_patch(FancyBboxPatch((bxl, iy - 0.45), bxr - bxl, 0.9,
                                     boxstyle="round,pad=0.03", fc="white",
                                     ec=it["color"], lw=2, zorder=3))
@@ -111,43 +114,41 @@ def rwe_flow():
         ax.text((bxl + bxr) / 2, iy - 0.22, it["note"], ha="center",
                 va="center", fontsize=8.5, color=it["color"], style="italic")
 
-        # forward walk (solid black): S -> page upper-left corner
-        ax.add_patch(FancyArrowPatch((sx + 0.45, sy + (0.3 if iy > sy else -0.3)),
-                                     (bxl - 0.05, iy + 0.2),
-                                     arrowstyle="-|>", mutation_scale=15,
-                                     color=INK, lw=1.7, zorder=2))
+        # forward walk (solid black): S -> page LEFT-CENTER (one clean arrow)
+        ax.add_patch(FancyArrowPatch((sx + 0.46, sy + 0.18 * side),
+                                     (bxl - 0.06, iy), arrowstyle="-|>",
+                                     mutation_scale=15, color=INK, lw=1.6, zorder=2))
 
         # kept (green): page -> rec list, thickness ~ kept fraction (1-q)
-        keep = 1.0 - it["q"]
-        ax.add_patch(FancyArrowPatch((bxr + 0.05, iy), (rec_l - 0.05, iy),
+        ax.add_patch(FancyArrowPatch((bxr + 0.06, iy), (rec_l - 0.06, iy),
                                      arrowstyle="-|>", mutation_scale=15,
-                                     color=KEEP_C, lw=1.0 + 5 * keep, zorder=2))
-        ax.text((bxr + rec_l) / 2, iy + 0.3, "(1−q)·p kept", ha="center",
+                                     color=KEEP_C, lw=lw(1.0 - it["q"]), zorder=2))
+        ax.text((bxr + rec_l) / 2, iy + 0.32, "(1−q)·p kept", ha="center",
                 fontsize=8.2, color=KEEP_C)
 
-        # erased (red dashed): page lower-left -> S, bowed outward,
+        # erased (red dashed): page OUTER corner -> S, bowed outward,
         # thickness ~ erased fraction q
-        ax.add_patch(FancyArrowPatch((bxl - 0.05, iy - 0.2),
-                                     (sx + 0.05, sy + (0.45 if iy > sy else -0.45)),
-                                     arrowstyle="-|>", mutation_scale=14,
-                                     color=ERASE_C, lw=1.0 + 5 * it["q"],
+        ax.add_patch(FancyArrowPatch((bxl + 0.15, iy + 0.42 * side),
+                                     (sx + 0.12, sy + 0.42 * side),
+                                     arrowstyle="-|>", mutation_scale=13,
+                                     color=ERASE_C, lw=lw(it["q"]),
                                      ls=(0, (6, 4)),
                                      connectionstyle=f"arc3,rad={it['rad']}",
                                      zorder=2))
 
-    ax.text(2.95, 3.0, "walk\n(3 hops)\nprob p", ha="center", va="center",
-            fontsize=8.5, color=INK)
-    ax.text(3.2, 0.15, "erased mass  q·p  returns to S and re-walks",
-            ha="center", fontsize=9, color=ERASE_C, style="italic")
-    ax.text(5.3, -0.5,
+    ax.text(2.95, 3.0, "walk · 3 hops · prob p", ha="center", va="center",
+            fontsize=8.5, color=INK, rotation=0)
+    ax.text(3.0, 6.05, "erased  q·p  →  back to S", ha="center", fontsize=8.5,
+            color=ERASE_C, style="italic")
+    ax.text(5.6, -0.55,
             "score(item) = p(1−q) / (1 − Σ pq)        "
             "high tax → suppressed,    low tax → recommended",
             ha="center", fontsize=10.5, color=INK)
     ax.set_title("Random Walk with Erasure: a “tax” that steers recommendations",
                  fontsize=13.5, weight="bold", color=INK)
 
-    ax.set_xlim(0, 11)
-    ax.set_ylim(-0.8, 6.0)
+    ax.set_xlim(0, 11.6)
+    ax.set_ylim(-0.85, 6.4)
     ax.axis("off")
     _save(fig, "rwe_flow.png")
 
