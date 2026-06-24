@@ -1,623 +1,600 @@
-# The Math Behind Every Piece — Derivations & Notation
+# The Math Behind Every Piece — Explained from Scratch
 
-This is the **deep math companion** to the project. Where [`GUIDE.md`](../GUIDE.md)
-tells the *story* in plain words and [`README.md`](../README.md) is the *API*
-reference, this file derives **every formula we actually implement** and points
-each one at the exact code that computes it.
+This is the **math companion** to the project. [`GUIDE.md`](../GUIDE.md) tells the
+*story* in plain words; [`README.md`](../README.md) is the *API*; this file walks
+through **every formula we implement** — but *slowly*, assuming **no maths
+background beyond high school**. Each formula comes with a plain-English
+translation and a symbol-by-symbol reading. Start with the cheat-sheet in §0 and
+refer back to it whenever a symbol looks scary.
 
-**Source-of-truth rule.** The tested code in `rwe/` is authoritative. Every
-equation below was checked against the implementation it cites (file · symbol),
-and the worked numbers in §6 are *printed by the real code*, not hand arithmetic.
-If a formula here ever disagrees with the code, the code is right and this file
-is the bug.
+**Source-of-truth rule.** The tested code in `rwe/` is the real definition; every
+formula here was checked against the code it cites, and the worked numbers in §7
+are *printed by the code itself*. If a formula here ever disagrees with the code,
+the code wins.
 
 ### Contents
 
-1. [Notation](#1-notation)
-2. [The feedback graph and the random walk](#2-the-feedback-graph-and-the-random-walk) — eqs (1)–(2)
+0. [How to read the symbols (cheat-sheet)](#0-how-to-read-the-symbols-cheat-sheet)
+1. [Notation for this project](#1-notation-for-this-project)
+2. [The graph and the random walk](#2-the-graph-and-the-random-walk)
 3. [Baselines: P³ and RP³-β](#3-baselines-p³-and-rp³-β)
-4. [Random Walk with Erasure — the closed form](#4-random-walk-with-erasure--the-closed-form) — eq (3)
-5. [RWE-D: long-tail erasure](#5-rwe-d-long-tail-erasure) — eq (4)
-6. [RWE-B: bridging erasure](#6-rwe-b-bridging-erasure) — eq (5)
-7. [A fully worked numeric example](#7-a-fully-worked-numeric-example)
-8. [The ideology model (ideal points)](#8-the-ideology-model-ideal-points) — eqs (6)–(11)
-9. [Text-grounded ideological positions](#9-text-grounded-ideological-positions)
-10. [Evaluation metrics](#10-evaluation-metrics)
-11. [The opinion-dynamics simulation](#11-the-opinion-dynamics-simulation)
+4. [Random Walk with Erasure — the key formula](#4-random-walk-with-erasure--the-key-formula)
+5. [RWE-D: spreading to the long tail](#5-rwe-d-spreading-to-the-long-tail)
+6. [RWE-B: bridging to the other side](#6-rwe-b-bridging-to-the-other-side)
+7. [A fully worked number example](#7-a-fully-worked-number-example)
+8. [The ideology model (placing people on a line)](#8-the-ideology-model-placing-people-on-a-line)
+9. [Reading lean from text](#9-reading-lean-from-text)
+10. [The evaluation metrics](#10-the-evaluation-metrics)
+11. [The opinion-change simulation](#11-the-opinion-change-simulation)
 12. [The satisfaction extension](#12-the-satisfaction-extension)
-13. [Map: math → code](#13-map-math--code)
+13. [Map: formula → code](#13-map-formula--code)
 
-Equation numbers (6), (9), (11)… refer to Paudel & Bernstein, *"Random Walks with
-Erasure: Diversifying Personalized Recommendations on Social and Information
-Networks,"* WWW '21.
+Equation numbers like (6), (11) refer to Paudel & Bernstein, *"Random Walks with
+Erasure,"* WWW '21.
 
 ---
 
-## 1. Notation
+## 0. How to read the symbols (cheat-sheet)
 
-| symbol | meaning | code |
+Keep this handy. None of the maths below is harder than these pieces.
+
+| symbol | say it as | what it means |
 |---|---|---|
-| $m,\ n$ | number of users, items | `FeedbackGraph.m`, `.n` |
-| $A \in \{0,1\}^{m\times n}$ | user–item feedback matrix | `FeedbackGraph.A` |
-| $A^G \in \{0,1\}^{(m+n)\times(m+n)}$ | bipartite adjacency, eq (1) | `FeedbackGraph.A_G` |
-| $D$ | diagonal degree matrix, $D_{ii}=\sum_j A^G_{ij}$ | `FeedbackGraph.degree` |
-| $P = D^{-1}A^G$ | row-stochastic transition matrix, eq (2) | `FeedbackGraph.P` |
-| $v_s$ | one-hot start vector at node $s$ | (built in `k_step_distribution`) |
-| $k$ | walk length (**odd**, so the walk ends on items) | `BaseRecommender.k` |
-| $p = (v_s P^k)_{\text{items}}$ | landing distribution over items, $\sum_j p_j = 1$ | `item_distribution` |
-| $q = Q[s,:]$ | per-item erasure probabilities, $q_j \in [0,1)$ | `_item_erasure` |
-| $\deg_j$ | item $j$'s degree (popularity) | `item_degrees` |
-| $\theta_u$ | user $u$'s ideological position | `IdeologyResult.theta` |
-| $\phi_e,\ \psi_i$ | elite / content positions | `.phi`, `.psi` |
-| $\odot$ | element-wise (Hadamard) product | — |
+| $\sum_{j} x_j$ | "sum over $j$" | add up $x$ for every $j$ (a loop that totals things) |
+| $\dfrac{a}{b}$ | "a over b" | divide $a$ by $b$ |
+| $x^2$,&nbsp; $\sqrt{x}$ | "x squared", "root x" | multiply $x$ by itself; the reverse of squaring |
+| $(a-b)^2$ | "squared distance" | how far apart two numbers are, made positive by squaring |
+| $\lvert x\rvert$ | "absolute value of x" | distance from zero — drop any minus sign ($\lvert-3\rvert=3$) |
+| $x \odot y$ | "element-wise product" | two equal-length lists → list of pairwise products $[x_1y_1,\,x_2y_2,\dots]$ |
+| $x \cdot y$ | "dot product" | multiply matching entries **and add them up** → one number |
+| $\sigma(z)$ | "sigmoid of z" | a squashing curve that turns any number into a probability in $(0,1)$ |
+| $\theta,\phi,\psi,\alpha,\dots$ | greek letters | just *names* for numbers we are solving for |
+| $x_u$ | "x sub u" | the value of $x$ belonging to user $u$ |
+| $z \in [0,1)$ | "z is in 0 to 1" | $z$ is a number from $0$ up to (but not including) $1$ |
+| $\text{mean}(\dots)$ | "the average" | add the things up, divide by how many there are |
+| $\text{sign}(x)$ | "sign of x" | $+1$ if $x>0$, $-1$ if $x<0$ |
+| $a \propto b$ | "a proportional to b" | $a$ equals $b$ times some constant (so they rank the same) |
+| $\nabla$ | "gradient" | the direction to nudge a number to make a score go up (used in training) |
 
-Indices: user $u$ is node $u$; item $i$ is node $m+i$ in the joint $(m+n)$ space.
+That's the whole toolkit. Everything else is built from these.
 
 ---
 
-## 2. The feedback graph and the random walk
+## 1. Notation for this project
 
-We observe implicit feedback (a click, a read). Stack it as the binary matrix
-$A$, then embed it as an **undirected bipartite graph** on $m+n$ nodes (eq 1):
+| symbol | meaning | in the code |
+|---|---|---|
+| $m,\ n$ | how many users, how many items | `FeedbackGraph.m`, `.n` |
+| $A$ | the clicks table: $A_{ui}=1$ if user $u$ clicked item $i$, else $0$ | `FeedbackGraph.A` |
+| $P$ | the "step" table: chance of walking from one node to a neighbour | `FeedbackGraph.P` |
+| $k$ | how many steps the walker takes (we use $3$, must be odd) | `BaseRecommender.k` |
+| $p$ | the walker's landing chances over items (a list that adds to $1$) | `item_distribution` |
+| $q$ | the erasure ("tax") on each item, a number in $[0,1)$ | `_item_erasure` |
+| $\text{deg}_j$ | item $j$'s **degree** = how many users clicked it (its popularity) | `item_degrees` |
+| $\theta_u$ | user $u$'s political position on a left↔right line | `IdeologyResult.theta` |
+| $\phi_e,\ \psi_i$ | an elite's / an article's position on that same line | `.phi`, `.psi` |
+
+---
+
+## 2. The graph and the random walk
+
+**The picture.** Draw every user and every item as a dot. Draw a line between a
+user and an item whenever that user clicked that item. This dots-and-lines
+picture is a **graph** (think of a subway map). Users only connect to items and
+items only connect to users — lines always cross between the two groups (this is
+called *bipartite*).
+
+**The walker.** Imagine a tiny walker that starts on *you* and, each step, hops to
+a random neighbour: you → one of your items → another user who liked it → one of
+*their* items, and so on. The table $P$ just records these hop chances: from a dot
+with $4$ lines, each neighbour gets chance $\tfrac14$. Formally $P = D^{-1}A^G$
+(eq 2) — "$D^{-1}$" just means *divide each row by how many neighbours it has* so
+the chances add to $1$. (`FeedbackGraph` builds $A^G$, the full dot-to-dot table
+eq 1, and $P$.)
+
+**Where it lands.** Start the walker on user $s$ and take $k$ steps. The list of
+landing chances over all dots is written
 
 $$
-A^G = \begin{bmatrix} \mathbf{0}_{m\times m} & A \\ A^{\top} & \mathbf{0}_{n\times n} \end{bmatrix}.
+v_s P^k \qquad\text{(start on }s\text{, take }k\text{ steps).}
 $$
 
-The zero diagonal blocks say *users never link to users and items never link to
-items directly* — every edge crosses sides. Row-normalising gives a Markov
-chain (eq 2):
+Because lines always cross sides, after an **odd** number of steps the walker is
+always on an *item*. That is why $k=3$: it's the first odd number that reaches
+*new* items (step 1 only reaches items you already clicked). We pull out just the
+item part and call it $p$ — a list of "how likely the walker is to land here,"
+adding up to $1$. Code: `k_step_distribution` does the $k$ hops; `item_distribution`
+keeps the item part.
 
-$$
-P = D^{-1} A^G, \qquad D_{ii} = \sum_j A^G_{ij},
-$$
-
-so $P_{ab}$ is the probability a walker at $a$ steps to a uniformly-random
-neighbour $b$. Starting from a one-hot user vector $v_s$ and taking $k$ steps,
-
-$$
-v_s P^k
-$$
-
-is the distribution over all nodes after $k$ random steps. Because the graph is
-bipartite, the walker alternates sides every step: from a **user** node, an
-**odd** $k$ lands the mass entirely on **item** nodes. That is why every
-recommender uses $k=3$ (`k` must be odd — `BaseRecommender.__init__` raises
-otherwise), and why we slice out the item block:
-
-$$
-p \;=\; \big(v_s P^k\big)\big|_{\text{items } m..m+n}, \qquad \textstyle\sum_j p_j = 1 .
-$$
-
-`FeedbackGraph.k_step_distribution` does exactly this iteration ($k$ sparse
-mat-vecs), and `item_distribution` returns the item slice $p$.
-
-> **Why $P^3$ and not $P^1$?** $P^1$ from a user can only reach items the user
-> *already* clicked (one hop). $P^3$ = user → item → other users who liked it →
-> *their* items: the first step at which genuinely new, taste-related items
-> appear. This is the standard collaborative-filtering random walk.
+> **Why 3 steps and not 1?** One step from you reaches only items *you already
+> clicked*. Three steps — you → your item → other fans → *their* items — is the
+> first point where genuinely new, taste-related items show up. This is the
+> classic "people like you also liked…" idea.
 
 ---
 
 ## 3. Baselines: P³ and RP³-β
 
-**P³** (`class P3`) ranks items by the raw landing mass $p_j$. Popular items
-have high degree, so the walk piles up on them — this is the accuracy-strong,
-diversity-poor baseline.
+These are the two simple recommenders we compare against.
 
-**RP³-β** (`class RP3Beta`) divides the mass by a power of item degree:
+**P³** (`class P3`): just recommend the items with the highest landing chance
+$p_j$. Simple and accurate, but popular items hog the walker, so it's
+repetitive.
+
+**RP³-β** (`class RP3Beta`): take P³'s score and **divide by popularity** to give
+small items a chance:
 
 $$
-\text{score}^{\text{RP3}}_j \;=\; \frac{p_j}{\deg_j^{\,\beta}} .
+\text{score}^{\text{RP3}}_j \;=\; \frac{p_j}{\text{deg}_j^{\,\beta}} .
 $$
 
-$\beta=0$ recovers P³; larger $\beta$ promotes low-degree (long-tail) items.
-Implemented as `p * deg**(-beta)` with $\deg=0$ guarded to 1. This is the
-classic re-ranking baseline RWE-D is measured against — and, as §5 shows, RWE-D
-with $v=1$ is *mathematically identical* to it.
+**In plain words:** divide each item's score by its popularity raised to the
+power $\beta$. With $\beta=0$ nothing changes (you get P³); bigger $\beta$ pushes
+popular items down and rare ("long-tail") items up. Code: `p * deg**(-beta)`.
 
 ---
 
-## 4. Random Walk with Erasure — the closed form
+## 4. Random Walk with Erasure — the key formula
 
-This is the heart of the method, and the one derivation worth doing slowly.
+This is the heart of the project. It's one idea and one formula — worth going
+slowly.
 
-**The process (eq 3).** Run the walk and get the landing distribution $p$. Now
-*erase* a fraction of the mass at each item: item $j$ keeps $p_j(1-q_j)$ and
-returns $p_j q_j$ to the origin $s$. The returned mass **re-walks the same
-$P^k$**, lands again, is erased again, and so on. The recommendation score is
-the **total retained mass** an item accumulates over all passes.
+**The idea (a tax that recycles).** Run the walk and get the landing chances $p$.
+Now put a **tax** $q_j$ on each item: item $j$ *keeps* a fraction $1-q_j$ of the
+mass that lands on it, and the *taxed* fraction $q_j$ is sent back to the start
+and **walks again**. The walked-again mass lands, gets taxed again, walks again…
+forever. An item's final score is **all the mass it ever keeps**, across every
+pass.
 
-**Claim.** Let $c = \sum_j p_j q_j = p\cdot q$ be the fraction of mass erased on
-one pass ($0 \le c < 1$). Then the accumulated score is
+A heavily-taxed item (high $q$) keeps little and donates a lot; a lightly-taxed
+item keeps almost everything. Choosing *which* items to tax is the whole trick
+(§5 and §6 make two different choices).
 
-$$
-\boxed{\ \text{score}(s,\cdot) \;=\; \frac{p \odot (1-q)}{\,1 - \sum_j p_j q_j\,} \;=\; \frac{p\odot(1-q)}{1-c}\ }
-$$
-
-**Derivation.** Track the mass injected at $s$ at the start of pass $t$; call its
-total $\sigma_t$, with $\sigma_0 = 1$. On pass $t$:
-
-- the walk spreads it to items as $\sigma_t\, p$ (since $p$ is the unit-mass landing distribution);
-- item $j$ **retains** $\sigma_t\, p_j (1-q_j)$, which we add to its score;
-- the **erased** mass $\sum_j \sigma_t\, p_j q_j = \sigma_t\, c$ returns to $s$ and becomes the next pass's injection:
+**The formula (eq 3).** Let $c = p \cdot q$ be the total fraction taxed away on
+one pass (a single number; the "$\cdot$" is the dot product from §0). Then the
+score works out to a clean closed form:
 
 $$
-\sigma_{t+1} = c\,\sigma_t \quad\Longrightarrow\quad \sigma_t = c^{\,t}.
+\text{score} \;=\; \frac{p \odot (1-q)}{1 - c}, \qquad c = \textstyle\sum_j p_j q_j .
 $$
 
-Summing the retained mass over every pass and using the geometric series
-$\sum_{t\ge 0} c^t = \frac{1}{1-c}$ (valid because $c<1$):
+**Reading it.**
+- $p \odot (1-q)$ — top line: what each item *keeps* on the first pass (its landing
+  chance times its un-taxed fraction).
+- $1 - c$ — bottom line: **one** number, the same for every item.
+
+**Why that bottom line appears (the only derivation here, done gently).** Follow a
+single unit of mass:
+
+- Pass 1: it spreads as $p$. Items keep $p\odot(1-q)$. The taxed part that comes
+  back totals $c$.
+- Pass 2: that returning $c$ re-walks, so items keep $c \times p\odot(1-q)$, and
+  $c\times c = c^2$ comes back.
+- Pass 3: items keep $c^2 \times p\odot(1-q)$, and so on.
+
+Add up what items keep over **all** passes:
 
 $$
-\text{score} \;=\; \sum_{t=0}^{\infty} \sigma_t\, p\odot(1-q)
-\;=\; p\odot(1-q)\sum_{t=0}^{\infty} c^{\,t}
-\;=\; \frac{p\odot(1-q)}{1-c}. \qquad\blacksquare
+p\odot(1-q)\,\big(1 + c + c^2 + c^3 + \cdots\big).
 $$
 
-**Reading the formula.**
-- **Numerator** $p\odot(1-q)$: the retained mass at each item — the walk's
-  relevance signal, *taxed* per item by $q_j$.
-- **Denominator** $1-c$: a single per-user constant (the geometric-series sum).
-  It is the *same* for every item $j$, so **it does not change the ranking** —
-  but we keep it so the returned scores equal the converged power iteration.
+That bracket is a shrinking sum (since $c<1$, e.g. $1+\tfrac12+\tfrac14+\cdots=2$).
+The standard result is $1+c+c^2+\cdots = \dfrac{1}{1-c}$. Substituting gives the
+formula above. **Done.**
 
-The denominator's invariance is why erasure is a pure *re-ranking* knob: it
-reshapes *which* items win without re-running the walk. The shape of $q$ is the
-entire design space — §5 picks two shapes for two goals.
-
-**Verification in code.** `BaseRecommender._score_batch` computes the closed form
-directly:
+**The one thing to remember:** the bottom line $1-c$ is the *same* for every item,
+so it **does not change the ranking** — it just rescales. So erasure is a pure
+*re-ranking* knob: change the tax $q$, change which items win, without re-running
+the walk. Code (`BaseRecommender._score_batch`) is literally:
 
 ```python
 erased   = p * q
 retained = p - erased
 c        = erased.sum(axis=1, keepdims=True)
-return retained / np.clip(1.0 - c, _EPS, None)
+return retained / (1.0 - c)
 ```
 
-and `RWE.score_iterative` runs the *actual* pass-by-pass loop above. A test
-(`tests/test_random_walk.py`) asserts the two agree — and §7 shows them matching
-to machine precision.
+and `RWE.score_iterative` runs the slow pass-by-pass loop; a test checks they
+match (and §7 shows them agreeing to the last decimal).
 
 ---
 
-## 5. RWE-D: long-tail erasure
+## 5. RWE-D: spreading to the long tail
 
-**Goal:** suppress popular items so the tail surfaces. Make the erasure depend
-only on the **destination item's degree** (eq 4):
-
-$$
-q^D_j \;=\; 1 - \deg_j^{-\beta}, \qquad \beta \ge 0 .
-$$
-
-A blockbuster ($\deg_j$ large) has $q^D_j \to 1$ — almost all its mass is erased
-and recycled. A niche item ($\deg_j = 1$) has $q^D_j = 0$ — nothing erased. Plug
-into the closed form: the retained mass is
+**Goal:** stop popular items from dominating. So **tax an item by how popular it
+is** (eq 4):
 
 $$
-p_j\,(1-q^D_j) \;=\; p_j\,\deg_j^{-\beta},
+q^D_j \;=\; 1 - \text{deg}_j^{-\beta}.
 $$
 
-so up to the per-user constant $1/(1-c)$,
+**In plain words:** a blockbuster (huge degree) gets taxed almost fully ($q$ near
+$1$) so most of its mass is recycled to others; a niche item (degree $1$) gets
+taxed $0$ and keeps everything. Put this tax into the keep-amount $p_j(1-q^D_j)$
+and it simplifies to $p_j \cdot \text{deg}_j^{-\beta}$ — which (ignoring the
+constant bottom line) is **exactly RP³-β** from §3.
 
-$$
-\text{score}^{\text{RWE-D}}_j \;\propto\; \frac{p_j}{\deg_j^{\beta}} \;=\; \text{score}^{\text{RP3}}_j .
-$$
-
-**RWE-D with $v=1$ is exactly RP³-β.** That is not a bug — it's the sanity
-anchor: the erasure framework *contains* the known baseline as a special case.
-The generalisation is the exponent $v$ on the whole erasure matrix,
-$Q \mapsto Q^{\odot v}$ (`RWE.v`), which lets RWE-D deviate from RP³-β during the
-paper's grid search ($v\neq 1$ bends the degree response non-linearly). Code:
-`class RWED` builds `q_d = 1 - safe_deg**(-beta)` and hands it to the generic
-`RWE`.
+So **RWE-D is RP³-β in disguise** — that's a deliberate sanity check: the erasure
+framework *contains* the known method as a special case. The extra knob $v$ (the
+exponent `RWE.v`, applied as $q\mapsto q^{v}$) lets RWE-D bend away from RP³-β when
+the paper's grid search wants it to. Code: `class RWED`.
 
 ---
 
-## 6. RWE-B: bridging erasure
+## 6. RWE-B: bridging to the other side
 
-**Goal:** show a left-leaning user good *right*-leaning items (and vice versa) —
-but only ones that are *"different, not too far."* Here the erasure depends on
-**ideological position**, not degree.
+**Goal:** show a left-leaning reader some *good* right-leaning articles (and vice
+versa) — but only ones that are *different, not too far*. Now the tax depends on
+**political position**, not popularity.
 
-Let $\theta_u$ be the user's position and $\mathrm{pos}_i$ the item's (an elite
-$\phi$ or content $\psi$ position, §8, or a text-lean score, §9). Define a
-population **center** $\kappa$ (default: median of $\theta$). Two ingredients:
+Each user has a position $\theta_u$ and each item a position $\text{pos}_i$ on a
+left↔right line (from §8 or §9). Pick a **center** $\kappa$ (the middle of the
+crowd). Two ingredients:
 
-**(a) Similarity** — a normalised closeness on the 1-D axis (Section 5.2):
-
-$$
-\mathrm{sim}(u,i) \;=\; 1 - \frac{|\mathrm{pos}_i - \theta_u|}{\mathrm{pos}_{\max}-\mathrm{pos}_{\min}} \;\in\; [0,1].
-$$
-
-**(b) The bridge test** — item $i$ is a *bridge* for user $u$ iff it is on the
-**opposite side** of the center *and* within a distance bound $d$:
+**(a) Closeness.** How near an item sits to the user, scaled to $[0,1]$:
 
 $$
-\mathrm{bridge}(u,i) \;\Longleftrightarrow\; \underbrace{(\theta_u-\kappa)(\mathrm{pos}_i-\kappa) < 0}_{\text{opposite sides}} \ \wedge\ \underbrace{|\mathrm{pos}_i-\theta_u|\le d}_{\text{not too far}} .
+\text{sim}(u,i) \;=\; 1 - \frac{\lvert\text{pos}_i - \theta_u\rvert}{\text{(widest gap on the line)}} .
 $$
 
-Then the erasure matrix (eq 5) is
+$1$ = same spot, $0$ = opposite ends. (The denominator is just the full width of
+the line, so the fraction is between $0$ and $1$.)
+
+**(b) The "bridge" test.** An item is a **bridge** for a user if **both** of these
+are true:
+
+1. **Opposite sides of the center:** $(\theta_u-\kappa)\,(\text{pos}_i-\kappa) < 0$.
+   This product is negative only when one of them is left of center and the other
+   is right of it — a neat trick for "on opposite sides."
+2. **Not too far apart:** $\lvert\text{pos}_i-\theta_u\rvert \le d$, i.e. the gap
+   between them is within the distance bound $d$.
+
+**The tax (eq 5):**
 
 $$
-q^B_{u,i} \;=\; \begin{cases} \mathrm{sim}(u,i) & \text{if } i \text{ is a bridge for } u,\\[2pt] \varepsilon & \text{otherwise,} \end{cases}
+q^B_{u,i} \;=\; \begin{cases} \text{sim}(u,i) & \text{if } i \text{ is a bridge for } u,\\ \varepsilon & \text{otherwise (}\varepsilon = 0.9\text{, a big tax).} \end{cases}
 $$
 
-with $\varepsilon$ a high constant (paper uses $0.9$). **Why this surfaces
-bridges:** recall retained mass $\propto p_{ij}(1-q^B_{u,i})$.
+**Why this surfaces bridges.** Remember an item keeps a fraction $1-q$:
+- **Non-bridges** (same side, or too far): taxed $\varepsilon=0.9$, so they keep
+  only $10\%$ — pushed *down*.
+- **Bridges** (opposite side, close): taxed by $\text{sim}$, which is *small* for
+  the nearest opposite items, so $1-q$ is *large* — they keep most of their mass
+  and rise to the *top*.
 
-- **Non-bridge items** (same-side, or too far): $q=\varepsilon=0.9 \Rightarrow$
-  keep only $10\%$ of their mass — heavily suppressed.
-- **Bridge items** (opposite-side, close): $q=\mathrm{sim}$, which is *small*
-  for the closest opposite items, so $1-q$ is large — they keep most of their
-  mass and rise to the top.
+So RWE-B promotes exactly the *opposite-side-but-nearby* items — the gentle
+cross-cutting reads. Code: `RWEB.similarity`, `.is_bridge`, `._compute`.
 
-So RWE-B promotes exactly the opposite-side-but-near items, the "weak ties"
-that broaden a user without whiplash. Code: `class RWEB` — `similarity`,
-`is_bridge`, and `_compute` assemble $q^B$.
+**The control knob $d$ (the project's main extension).** `max_distance` $=d$ caps
+how far across the aisle a bridge may sit:
+- $d=\infty$ (no cap): *any* opposite item qualifies → the walk can land on the
+  far **opposite extreme** (the "naive opposite-blast" that §11 shows *backfires*).
+- small $d$: only items *just* past the center qualify → recommendations sit
+  **near the middle** (the calming regime).
 
-**The bound $d$ is the control knob (the project's main extension).**
-`max_distance = d` caps how far across the aisle a bridge may sit:
-
-- $d=\infty$ (default): *any* opposite-side item qualifies → the walk can land
-  on the opposite **extreme** ("naive opposite-blast," which §11 shows
-  *backfires*).
-- small $d$: only items *just* across the center qualify → recommendations sit
-  **near the center** (the depolarising regime).
-
-Sweeping $d$ traces a clean monotone curve from opposite-extreme to centre
-exposure at near-constant accuracy (`docs/RESULTS.md`); $d\approx 1.5\text{–}2$
-is the moderated-bridging sweet spot. `AdaptiveRWEB` (§12) instead tunes the
-*per-user* $\varepsilon$ from a measured satisfaction signal.
+Turning $d$ down slides the recommendations from "opposite extreme" to "near
+center" smoothly, with almost no accuracy cost (see `docs/RESULTS.md`);
+$d\approx 1.5\text{–}2$ is the sweet spot.
 
 ---
 
-## 7. A fully worked numeric example
+## 7. A fully worked number example
 
-A 3-user × 4-item graph, computed by `rwe/` end-to-end (script:
-`scratchpad/worked_example.py`; every number below is printed by the code).
+A tiny 3-user × 4-item case, with **every number printed by the real code**
+(script: `scratchpad/worked_example.py`).
 
 ```
-users' clicks:  u0 → {item0, item1}
-                u1 → {item0, item2}
-                u2 → {item0, item3}
-item degrees:   [3, 1, 1, 1]      # item0 is the "hit", items1–3 are tail
+who clicked what:   user0 → {item0, item1}
+                    user1 → {item0, item2}
+                    user2 → {item0, item3}
+popularity (degree): item0=3 (the hit),  item1=item2=item3=1 (tail)
 ```
 
-**Step 1 — the walk** ($k=3$, user $u_0$):
+**Step 1 — the walk** (3 steps from user 0). Landing chances over the 4 items:
 
 $$
-p = v_{u_0}P^3\big|_{\text{items}} = [\,0.5000,\ 0.3333,\ 0.0833,\ 0.0833\,], \quad \textstyle\sum_j p_j = 1.
+p = [\,0.5000,\ 0.3333,\ 0.0833,\ 0.0833\,], \qquad \text{(they add to }1).
 $$
 
-Item 0 (everyone's hit) collects half the mass; the user's own niche item 1
-gets a third.
+The hit (item 0) grabs half; the user's own niche item 1 grabs a third.
 
-**Step 2 — RWE-D erasure** ($\beta=0.5$, $q^D_j = 1-\deg_j^{-1/2}$):
+**Step 2 — the RWE-D tax** ($\beta=0.5$, so $q^D_j = 1 - 1/\sqrt{\text{deg}_j}$):
 
 $$
 q = [\,0.4226,\ 0,\ 0,\ 0\,].
 $$
 
-Only the popular item is taxed ($1-3^{-1/2}=0.4226$); the degree-1 tail items
-are untouched.
+Only the popular item is taxed ($1-1/\sqrt3 = 0.4226$); the degree-1 tail items
+are taxed $0$.
 
-**Step 3 — closed form.** Erased fraction $c = p\cdot q = 0.5(0.4226)=0.2113$:
+**Step 3 — the formula.** Taxed-away fraction
+$c = p\cdot q = 0.5\times0.4226 = 0.2113$, then
+$\text{score} = \dfrac{p\odot(1-q)}{1-c}$:
 
 $$
-\text{score} = \frac{p\odot(1-q)}{1-c} = [\,0.3660,\ 0.4226,\ 0.1057,\ 0.1057\,].
+\text{score} = [\,0.3660,\ 0.4226,\ 0.1057,\ 0.1057\,].
 $$
 
-**Verification — closed form vs. the actual erasure loop:**
+**Check — the formula vs. the slow loop agree exactly:**
 
 ```
-RWED.scores():          [0.3660  0.4226  0.1057  0.1057]
-RWED.score_iterative(): [0.3660  0.4226  0.1057  0.1057]
-closed == iterative?    True
+RWED.scores()          = [0.3660  0.4226  0.1057  0.1057]
+RWED.score_iterative() = [0.3660  0.4226  0.1057  0.1057]
+identical?  True
 ```
 
-**What erasure did.** P³ ranks by raw mass, so the hit wins:
-$p_0/p_2 = 0.5/0.0833 = 6.0$. After RWE-D the hit is *demoted below the user's
-own niche item* ($0.366 < 0.4226$) and its edge over the tail shrinks:
-$\text{score}_0/\text{score}_2 = 3.46$. Same walk, same relevance signal —
-popularity simply taxed away. (At recommendation time the already-seen items 0,1
-are excluded; the four-item scores are shown here to expose the *mechanism*.)
+**What the tax did.** Under plain P³ the hit wins easily: its score is $6\times$
+the tail's. After RWE-D the hit is **pushed below the user's own niche item 1**
+($0.366 < 0.423$) and its lead over the tail shrinks to $3.46\times$. Same walk,
+same relevance — popularity simply taxed down. (At recommendation time the
+already-seen items 0 and 1 are hidden; we show all four scores here just to see
+the mechanism.)
 
 ---
 
-## 8. The ideology model (ideal points)
+## 8. The ideology model (placing people on a line)
 
-To place users and items on a left↔right axis from behaviour alone, we fit a
-**spatial / ideal-point logistic model** (Section 6, `rwe/ideology.py`).
+> **This is the most advanced section. You can skim the algebra** — the picture in
+> the first paragraph is the real takeaway.
 
-**Model.** A user $u$ endorses an elite $e$ (e.g. follows a politician) with
-probability that *decreases in squared ideological distance* (eq 6):
+**The picture.** We want to put every user and article on a single left↔right line
+using behaviour alone (who follows/shares whom). The rule we assume: **people
+endorse things close to them**. So if we *see* a lot of endorsing between a user
+and an elite, they're probably *near* each other on the line. We slide everyone
+along the line until the pattern of "who endorses whom" is best explained by
+closeness. The output is a position number for each person and item. (Section 6,
+`rwe/ideology.py`.)
 
-$$
-\Pi^R_{u,e} = -\lVert\theta_u-\phi_e\rVert^2 + \alpha_u + \beta_e, \qquad \Pr(R_{u,e}=1)=\sigma(\Pi^R_{u,e}),
-$$
-
-where $\sigma$ is the logistic sigmoid, $\alpha_u,\beta_e$ are popularity/activity
-biases, and $\theta_u,\phi_e\in\mathbb{R}$ are the **ideal points** we want. The
-joint model adds a content-share graph $S$ with content positions $\psi_i$ (eq 9):
-
-$$
-\Pi^S_{u,i} = -\lVert\theta_u-\psi_i\rVert^2 + \alpha_u + \gamma_i .
-$$
-
-**Objective (eq 11).** Maximise the confidence-weighted Bernoulli log-likelihood
-of both graphs with L2 regularisation on positions ($\mu$ weights the elite
-graph):
+**The rule, as a formula (eq 6).** The chance user $u$ endorses elite $e$ goes
+*down* as the squared distance between their positions goes *up*:
 
 $$
-\mathcal{L} = \mu\!\!\sum_{u,e}\!\big[a_{u,e}\Pi^R_{u,e} - \log(1+e^{\Pi^R_{u,e}})\big] + \sum_{u,i}\!\big[b_{u,i}\Pi^S_{u,i} - \log(1+e^{\Pi^S_{u,i}})\big] - \tfrac{\lambda}{2}\big(\lVert\theta\rVert^2+\lVert\phi\rVert^2+\lVert\psi\rVert^2\big).
+\Pi^R_{u,e} = -(\theta_u-\phi_e)^2 + \alpha_u + \beta_e, \qquad \Pr(\text{endorse}) = \sigma(\Pi^R_{u,e}).
 $$
 
-The $a_{u,e}$ are confidence weights (non-zero entries of $R$); passing $S=\text{None}$
-gives the elite-only model of Section 6.1. Note the biases $\alpha,\beta,\gamma$
-are **not** regularised — only the positions are.
+**Reading it:** $(\theta_u-\phi_e)^2$ is their squared distance (the minus sign
+makes "far apart" mean "unlikely"); $\alpha_u,\beta_e$ are just "how active/popular"
+fudge factors; $\sigma$ (sigmoid, §0) turns the result into a probability. The
+joint model adds the same rule for users sharing articles, giving each article a
+position $\psi_i$ (eq 9).
 
-**Gradients (what the code actually ascends).** For the logistic term,
-$\partial/\partial\Pi\,[a\Pi-\log(1+e^\Pi)] = a-\sigma(\Pi)$, the **residual**
-$\text{err}=a-\sigma(\Pi)$. With $\partial\Pi^R_{u,e}/\partial\theta_u=-2(\theta_u-\phi_e)$
-and the symmetric term for $\phi$:
+**What "fitting" means.** We score how well current positions explain the data
+with one number $\mathcal{L}$ (the *log-likelihood*, eq 11): it is high when
+endorsements we actually saw were predicted as likely. We also subtract a small
+penalty $\tfrac{\lambda}{2}(\dots)$ that keeps positions from flying off to huge
+values (this is *regularization* — it just says "stay modest"). Then we **nudge
+all the positions uphill** on $\mathcal{L}$, over and over, until it stops
+improving.
+
+**The nudges (gradients — safe to skip).** "Uphill" is computed from the
+**prediction error**
+$\text{err} = (\text{did it happen?}) - (\text{predicted chance})$. For example
+the nudge to a user's position is
 
 $$
-\begin{aligned}
-\nabla_{\theta_u}\mathcal{L} &= \mu\sum_e \text{err}^R_{u,e}\,\big(-2(\theta_u-\phi_e)\big) + \sum_i \text{err}^S_{u,i}\,\big(-2(\theta_u-\psi_i)\big) - \lambda\theta_u,\\
-\nabla_{\phi_e}\mathcal{L} &= \mu\sum_u \text{err}^R_{u,e}\,\big(2(\theta_u-\phi_e)\big) - \lambda\phi_e,\\
-\nabla_{\alpha_u}\mathcal{L} &= \mu\sum_e \text{err}^R_{u,e} + \sum_i \text{err}^S_{u,i},\qquad \nabla_{\beta_e}\mathcal{L} = \mu\sum_u \text{err}^R_{u,e},
-\end{aligned}
+\nabla_{\theta_u} = \sum_{e} \text{err}_{u,e}\cdot\big(-2(\theta_u-\phi_e)\big) \;-\; \lambda\,\theta_u,
 $$
 
-and analogously $\nabla_{\psi_i},\nabla_{\gamma_i}$ for the content graph. These
-are exactly the lines `g_theta`, `g_phi`, … in `IdeologyModel.fit`.
+i.e. *error × direction-to-the-elite*, summed over elites, minus the stay-modest
+pull. Each position type ($\theta,\phi,\psi$ and the fudge factors) has a matching
+nudge — these are exactly the `g_theta`, `g_phi`, … lines in `IdeologyModel.fit`.
+We apply them with **Adam**, a standard "smart step-size" updater that scales each
+nudge so blocks of very different sizes all learn at a sensible pace.
 
-**Optimiser.** Each parameter block is ascended with its own **Adam** step
-(`class _Adam`) — the blocks' gradients live on very different scales ($\theta$
-sums over items, $\beta$ over users), so a single fixed rate is fragile. Adam's
-per-coordinate adaptive step (1st/2nd-moment estimates $\hat m,\hat v$,
-$\theta \leftarrow \theta + \mathrm{lr}\,\hat m/(\sqrt{\hat v}+\epsilon)$) fixes
-that. The objective itself is logged only every `eval_every` sweeps (it needs an
-extra `logaddexp` forward pass) — a pure speed knob, no effect on the fit.
+**Two clean-ups after fitting.** The line has no built-in zero, scale, or
+direction, so afterwards we (1) **standardize** $\theta$ to mean $0$ and spread
+$1$ (and move $\phi,\psi$ the same way) and (2) optionally **flip** the whole line
+so a known person lands on the left. Without these, the raw numbers would be
+arbitrary from run to run.
 
-**Identifiability fixes (post-processing).** The likelihood is invariant to (i) a
-global shift/scale of the axis and (ii) a global **sign flip** ($\theta,\phi,\psi \mapsto -\theta,-\phi,-\psi$ leaves every $\lVert\theta-\phi\rVert^2$ unchanged).
-So after fitting we **standardise** $\theta$ to zero-mean/unit-variance (moving
-$\phi,\psi$ by the same shift/scale to stay comparable), and optionally flip the
-sign so a known `anchor` user sits on the left. Without these two steps the
-numbers would be arbitrary run-to-run.
-
-> **Caveat that matters for results.** On MIND, fitting this model to *co-click*
-> behaviour recovered a **topical** axis, not a left↔right one (both poles were
-> 2019 political news, split by topic). That is why the headline results use the
-> **text-lean** axis of §9 instead. See `docs/RESULTS.md` for the axis-quality
-> number (Spearman ≈ 0.27).
+> **Important caveat (it shaped our results).** On the MIND news data, fitting
+> this to *co-click* behaviour gave a **topic** axis, not a left↔right one (both
+> ends were 2019 political news, split by subject). That's why our headline
+> results use the **text-based** lean of §9 instead. The axis-quality number
+> (correlation ≈ 0.27 with human labels) is in `docs/RESULTS.md`.
 
 ---
 
-## 9. Text-grounded ideological positions
+## 9. Reading lean from text
 
-When behaviour gives a topical axis, score each article's lean from its **text**
-instead (`examples/classify_lean.py`). Run a pretrained political-bias classifier
-(`bucketresearch/politicalBiasBERT`, labels LEFT/CENTER/RIGHT) over the
-title+abstract to get class probabilities $\Pr = [\Pr_L,\Pr_C,\Pr_R]$, then take
-the **softmax-expected position** against label anchors $\ell = [-1,0,+1]$:
+When behaviour gives a topic axis instead of left↔right, we read each article's
+lean straight from its **words** (`examples/classify_lean.py`). A pretrained
+text classifier reads the title + abstract and outputs three probabilities —
+$\Pr_L$ (left), $\Pr_C$ (center), $\Pr_R$ (right). We turn those into one position
+number by a weighted average, with left $=-1$, center $=0$, right $=+1$:
 
 $$
-\mathrm{pos}_i \;=\; s \cdot \big(\Pr_i \cdot \ell\big) \;=\; s\,\big(-\Pr_L + \Pr_R\big) \;\in\; [-s,\,s],
+\text{pos}_i \;=\; s\,\big(-1\cdot\Pr_L + 0\cdot\Pr_C + 1\cdot\Pr_R\big) \;=\; s\,(\Pr_R - \Pr_L).
 $$
 
-with scale $s=2$ to match the outlet-lean range $[-2,2]$. A confidently-left
-headline $\to -2$, confidently-right $\to +2$, mixed/centre $\to 0$. This
-$\mathrm{pos}_i$ is the $\mathrm{pos}$ used by RWE-B (§6) and the UW metrics (§10).
-`_positions_from_probs` is a one-liner: `scale * (probs @ label_positions)`.
-
-> Always verify the model's `id2label` order matches `--label-positions` before
-> trusting the sign — the script prints it for exactly this reason.
+**In plain words:** if the model is sure it's right-wing, $\Pr_R\approx1$ and
+$\text{pos}\approx +s$; sure it's left-wing → $-s$; mixed/centered → near $0$. The
+scale $s=2$ stretches it to the range $[-2, 2]$ to match the other axis. Code is
+one line: `scale * (probs @ label_positions)`. (Always check the model's label
+order matches $[-1,0,1]$ — the script prints it for you.)
 
 ---
 
-## 10. Evaluation metrics
+## 10. The evaluation metrics
 
-All in `rwe/metrics.py`. `recommendations` is an $(m,\text{top-}k)$ array of
-ranked item ids ($-1$ pads empty slots); `score_rows` is the dense $(m,n)$ score
-matrix.
+How we score a recommender. All in `rwe/metrics.py`. The recommendations are a
+table of each user's ranked item ids.
 
-### Accuracy
+### Is it accurate?
 
-**AUC** (`auc`) — per user, the probability a held-out positive outranks a random
-non-interacted item, via the Mann–Whitney $U$ statistic. With candidate ranks
-$r$ (1 = lowest score), $n_+$ positives, $n_-$ negatives:
-
-$$
-\text{AUC}_u = \frac{\big(\sum_{j\in\text{pos}} r_j\big) - \tfrac{n_+(n_++1)}{2}}{n_+\,n_-}, \qquad \text{AUC}=\operatorname*{mean}_u \text{AUC}_u .
-$$
-
-Subtracting $\tfrac{n_+(n_++1)}{2}$ removes the positives' "self-ranking"; the
-denominator is the number of pos–neg pairs. $0.5$ = random, $1$ = perfect.
-Training items are excluded from the candidate set.
-
-**Mean rank** (`mean_rank`) — mean 1-indexed rank of held-out items among
-candidates (lower is better).
-
-**Hit@k** (`hit_rate_at_k`) — recall-style: $\operatorname{mean}_u \tfrac{|\text{top-}k\,\cap\,\text{test}|}{|\text{test}|}$.
-
-**Precision@k** (`precision_at_k`) — $\operatorname{mean}_u \tfrac{|\text{top-}k\,\cap\,\text{test}|}{k}$.
-
-**NDCG@k** (`ndcg_at_k`) — binary-relevance ranking quality with log discount.
-With a hit at 0-indexed rank $r$ contributing $1/\log_2(r+2)$:
+**AUC** (`auc`) — *"if I pick one item the user really liked and one random item
+they didn't, how often do we rank the liked one higher?"* $0.5$ = coin-flip,
+$1$ = perfect. The formula (Mann–Whitney $U$) for one user, with $R_+$ = sum of
+the ranks of the liked items, $n_+$ liked and $n_-$ not:
 
 $$
-\text{NDCG}_u@k = \frac{\sum_{r:\,\text{rec}_r\in\text{test}} \frac{1}{\log_2(r+2)}}{\sum_{r=0}^{\min(|\text{test}|,k)-1}\frac{1}{\log_2(r+2)}} .
+\text{AUC}_u = \frac{R_+ - \tfrac{n_+(n_++1)}{2}}{n_+\,n_-}, \qquad \text{AUC} = \text{mean over users}.
 $$
 
-The denominator (IDCG) is the best achievable DCG, so $\text{NDCG}\in[0,1]$.
+(The subtraction removes the liked items' ranks *among themselves*; the bottom is
+the number of liked-vs-unliked pairs.) Items the user trained on are excluded.
 
-### Long-tail diversity
+**Hit@k** (`hit_rate_at_k`) — of the user's held-out liked items, what fraction
+show up in their top $k$? (a recall.)
 
-**Gini diversity** (`gini_diversity`) — $1-\text{Gini}$ of the
-recommendation-frequency distribution. With counts $x_{(1)}\le\dots\le x_{(n)}$
-sorted ascending, total $T=\sum x$:
+**Precision@k** (`precision_at_k`) — of the $k$ items we showed, what fraction
+were liked?
+
+**NDCG@k** (`ndcg_at_k`) — like Hit@k but **rewards putting hits near the top**. A
+hit at position $r$ (counting from $0$) is worth $1/\log_2(r+2)$ — position $1$ is
+worth $1$, position $2$ about $0.63$, and so on — then we divide by the best
+possible total so the score sits in $[0,1]$.
+
+### Is it diverse (does it use the whole catalog)?
+
+**Gini diversity** (`gini_diversity`) — measures how *evenly* recommendations are
+spread over all items. The Gini number is $0$ when every item is shown equally
+(maximally fair/diverse) and near $1$ when a few items hog everything; we report
+$1-\text{Gini}$ so **higher = more diverse**. (Formula: sort the per-item show-counts
+$x_{(1)}\le\dots\le x_{(n)}$, total $T$, then
+$\text{Gini} = \frac{2\sum_j j\,x_{(j)}}{n\,T} - \frac{n+1}{n}$.)
+
+**Catalog coverage** (`catalog_coverage`) — what fraction of all items get shown to
+*somebody*.
+
+**Average item degree** (`average_item_degree`) — average popularity of the items we
+recommend; **lower = more long-tail**.
+
+**Personalization** (`personalization`) — how *different* users' lists are from each
+other. We measure the overlap between two lists with
+$\lvert A\cap B\rvert / \sqrt{\lvert A\rvert\,\lvert B\rvert}$ (a "cosine"),
+average it over user pairs, and
+report $1$ minus that — higher means more personalized.
+
+**Surprisal** (`surprisal`) — average "novelty,"
+$\text{mean}\big[-\log_2(\text{deg}_i / m)\big]$: rarer items (small degree
+relative to the $m$ users) score higher.
+
+### Does it bridge politically? (RQ3)
+
+Let $\bar r_u$ = the *average position* of the items we recommend to user $u$, let
+$\rho_u$ = the user's own position $\theta_u$, and $\kappa$ = the center.
+
+**RecRange@k** (`rec_range_at_k`) — width of a user's recommendation list on the
+line: $\max(\text{positions}) - \min(\text{positions})$, averaged over users.
+
+**Directed shift** (`directed_shift`) — *"on average, did we push people toward the
+other side?"*
 
 $$
-\text{Gini} = \frac{2\sum_{j=1}^{n} j\,x_{(j)}}{n\,T} - \frac{n+1}{n}, \qquad \text{div} = 1-\text{Gini}.
+\text{dshift} = \text{mean over users of}\ \big[-\text{sign}(\rho_u-\kappa)\cdot(\bar r_u-\rho_u)\big].
 $$
 
-Gini $=0$ when every item is recommended equally (max diversity), so $1-\text{Gini}$
-is *higher = more even spread = more diverse*.
+The $-\text{sign}(\rho_u-\kappa)$ flips left vs. right so that **crossing toward the
+center counts as positive for everyone**. Higher = more bridging.
 
-**Catalog coverage** (`catalog_coverage`) — fraction of the catalog that appears
-in *some* user's list: $|\bigcup_u \text{top-}k_u|/n$.
-
-**Average item degree** (`average_item_degree`) — mean training popularity of
-recommended items; *lower = more long-tail*.
-
-**Personalization** (`personalization`) — $1-$ mean pairwise cosine between
-users' top-$k$ sets, where the cosine of two sets is
-$|A\cap B|/\sqrt{|A|\,|B|}$. Higher = users get more *different* lists.
-
-**Surprisal** (`surprisal`) — mean self-information of recommended items,
-$\operatorname{mean}\big[-\log_2(\deg_i/m)\big]$; higher = rarer/more novel.
-
-### Ideological diversity (RQ3)
-
-Let $\bar{r}_u = \operatorname{mean}$ position of user $u$'s recommended items,
-a reference $\rho_u$ (the user's own $\theta_u$, for the **UW** family), and
-center $\kappa$.
-
-**RecRange@k** (`rec_range_at_k`) — mean top-$k$ spread $\max_i\mathrm{pos}_i - \min_i\mathrm{pos}_i$ per user.
-
-**Directed shift** (`directed_shift`) — mean shift *toward the opposite side*:
+**UW-shift** (`weighted_shift`) — our headline bridging score: the same directed
+shift, but **weighting extreme users more** (bridging a die-hard matters more than
+nudging a moderate). With weight $w_u = \lvert\rho_u-\kappa\rvert$:
 
 $$
-\text{dshift} = \operatorname*{mean}_u\Big[\, -\operatorname{sign}(\rho_u-\kappa)\,(\bar r_u-\rho_u)\,\Big].
+\text{UW-shift} = \frac{\sum_u w_u\,[-\text{sign}(\rho_u-\kappa)]\,(\bar r_u-\rho_u)}{\sum_u w_u}.
 $$
 
-The $-\operatorname{sign}(\rho_u-\kappa)$ flips the sign per side so that
-*crossing the centre* is positive **for both left and right users**. Higher = more
-bridging.
+**UW-recs** (`weighted_position`) — *where do the recommendations actually land?*
+The extremity-weighted distance of the average recommendation from the center,
+$\dfrac{\sum_u w_u\,\lvert\bar r_u-\kappa\rvert}{\sum_u w_u}$. **Lower is better:** low
+means bridged reads sit *near the center*; high means they sit at the *opposite
+extreme* (the backfire danger). This is the number the $d$-knob (§6) drives from
+$0.77$ down to $0.27$.
 
-**UW-shift** (`weighted_shift`) — the headline bridging measure: directed shift
-weighted by extremity $w_u=|\rho_u-\kappa|$, so bridging an *extreme* user counts
-more:
+**UW-range** (`weighted_range`) — the same extremity-weighted idea applied to
+RecRange.
 
-$$
-\text{UW-shift} = \frac{\sum_u w_u\,\big[-\operatorname{sign}(\rho_u-\kappa)\big]\,(\bar r_u-\rho_u)}{\sum_u w_u}.
-$$
-
-**UW-range** (`weighted_range`) — extremity-weighted RecRange (same weights).
-
-**UW-recs** (`weighted_position`) — extremity-weighted **distance of the
-recommendations from the centre**, $\dfrac{\sum_u w_u\,|\bar r_u-\kappa|}{\sum_u w_u}$.
-**Lower is better**: it is *low* when bridged recommendations land *near the
-centre* and *high* when they land at the opposite *extreme*. This is the metric
-that exposes the backfire regime — it is what the $d$-sweep drives from .77→.27.
-
-**KS statistic** (`ks_statistic`) — Kolmogorov–Smirnov distance between two
-recommenders' recommended-position distributions (how differently they spread
-users ideologically).
-
-> **UW vs TW.** Passing $\rho_u=\theta_u$ gives the *user-weighted* (UW) variant;
-> passing the mean position of the user's training items gives *training-weighted*
-> (TW). The appendix normalisation isn't in the paper's main text, so these
-> follow its two stated desiderata (cross-centre shift; weight extreme users
-> more) — see the comment block above `mean_recommended_position`.
+> "UW" = *user-weighted* (weights use the user's own position). Feeding the user's
+> *history* position instead gives the "TW" (training-weighted) twin. The exact
+> weighting isn't spelled out in the paper's main text, so we follow its two
+> stated goals: reward crossing the center, and count extreme users more.
 
 ---
 
-## 11. The opinion-dynamics simulation
+## 11. The opinion-change simulation
 
-The metrics above measure *where recommendations land*. To argue that landing
-near-centre actually **depolarises** (and the opposite extreme **backfires**), we
-simulate opinion change under **assimilation–contrast / Social Judgment Theory**
-(`rwe/opinion_dynamics.py`).
+The §10 metrics tell us *where recommendations land*. To argue that landing
+*near the center* actually **calms** people (and the *opposite extreme*
+**backfires**), we simulate how opinions move (`rwe/opinion_dynamics.py`), using a
+classic psychology model (*assimilation–contrast / Social Judgment Theory*).
 
-**Update rule.** Show user $\theta$ content at position $\mathrm{shown}$; let
-$d=\mathrm{shown}-\theta$. With acceptance latitude $L_a$, rejection latitude
-$L_r$, and step sizes $\mu_a,\mu_b$:
+**The update rule.** Show a user at position $\theta$ some content at position
+$\text{shown}$; let $d = \text{shown}-\theta$ be the gap. Then:
 
-$$
-\theta' = \mathrm{clip}\!\Big(\theta + \underbrace{\mu_a\,d\,\mathbf{1}[\,|d|\le L_a]}_{\text{assimilate (toward)}} \ \underbrace{-\,\mu_b\,d\,\mathbf{1}[\,|d|\ge L_r]}_{\text{backfire (away)}},\ -B,\ B\Big).
-$$
+- **Close content** ($\lvert d\rvert \le L_a$): the user moves a little **toward** it
+  — they're persuaded. Move $= +\mu_a\, d$.
+- **Far content** ($\lvert d\rvert \ge L_r$): the user moves **away**, deeper into
+  their own side — the **backfire effect**. Move $= -\mu_b\, d$.
+- **In between:** ignored.
 
-- **Close** content ($|d|\le L_a$): the user moves *toward* it — persuasion.
-- **Far** content ($|d|\ge L_r$): the user moves *away*, toward their own pole —
-  the **backfire effect** (Bail et al. 2018).
-- **In between**: ignored (latitude of non-commitment).
+($L_a$ = how close before they listen; $L_r$ = how far before they recoil; the
+$\mu$'s are small step sizes.) In code, `update()`.
 
-**Exposure policies** (what `shown` is, given $\theta$):
+**The policies we compare** (what `shown` is, given the user's $\theta$):
 
-| policy | shown | effect |
+| policy | what it shows | result |
 |---|---|---|
-| echo chamber | $1.3\,\theta$ | same side, more extreme → diverges |
-| naive opposite-blast | $-\operatorname{sign}(\theta)\,B$ | far pole → triggers backfire |
-| RWE-B bridging | $\theta-\operatorname{sign}(\theta)\,0.9 L_a$ | opposite side *within* $L_a$ → converges |
-| adaptive (satisfaction) | step $=0.9 L_a\cdot\mathrm{clip}(1-\lvert\theta\rvert/B,0.15,1)$ | shrinks stretch for extremists → never backfires |
+| echo chamber | same side, a bit more extreme | drives people apart |
+| naive opposite-blast | the far opposite pole | triggers backfire |
+| RWE-B bridging | opposite side but *within* listening range $L_a$ | brings people together |
+| adaptive (satisfaction) | bridging that reaches *less* for extreme users | never backfires |
 
-**Outcome measure.** Population **polarization** $= \operatorname{std}(\theta)$,
-tracked over rounds (`polarization`, `run`, `compare_policies`). The result:
-bounded bridging *reduces* the std while the naive blast *increases* it — same
-goal, opposite outcome depending on *how far* you reach. This is the simulated
-half of the contribution; the real-data half (§6, §10) is that the bound $d$ lets
-RWE-B *choose* which regime it operates in.
+**The outcome we track:** **polarization** = the spread (standard deviation) of
+everyone's positions. Bounded bridging *shrinks* the spread; the naive blast
+*grows* it — **same goal, opposite result, depending on how far you reach.** That
+simulated result, plus the real-data knob $d$ from §6, is the project's argument.
 
 ---
 
 ## 12. The satisfaction extension
 
-Rather than a single global bound, infer **per-user** tolerance for opposing
-content from simulated browsing (`rwe/satisfaction.py`).
+Instead of one global bound $d$, this extension learns **per-user** how much
+opposing content each person can take (`rwe/satisfaction.py`). The chain:
 
-1. **Webpage graph** (`WebGraph`): project the bipartite graph to item–item
-   co-occurrence $C = A^{\top}A$ (zero diagonal); row-normalise to a surfer
-   chain $T=D^{-1}C$.
-2. **Communities** (`detect_communities`): asynchronous **label propagation**
-   (Raghavan et al.) on a kNN-sparsified $C$ — each node repeatedly adopts the
-   weighted-most-frequent neighbour label until stable. Each community's
-   **viewpoint** is its mean item position (`community_viewpoints`).
-3. **Satisfaction score** (`satisfaction_score`): simulate a surfer walk from the
-   user's own pages; count the length of the contiguous run spent inside the
-   **first opposing-viewpoint community** entered, until the walk leaves it.
-   Long dwell = comfortable with the other side.
-4. **Exposure** (`SatisfactionModel.exposure`): min–max normalise scores to
-   $[0,1]$.
-5. **Adaptive erasure** (`AdaptiveRWEB`): map exposure linearly to the per-user
-   non-bridge erasure,
+1. **Build a page-to-page graph:** two articles are linked if the same people read
+   both ($C = A^{\top}A$ — "co-reading counts").
+2. **Find communities:** group articles that are read together (a standard
+   *label-propagation* algorithm), and label each group by its average position
+   (its viewpoint).
+3. **Measure satisfaction:** simulate a reader wandering this page graph from their
+   own articles; **count how long they linger inside the first opposing-viewpoint
+   group** before leaving. Long stay = comfortable with the other side.
+4. **Turn that into a dial** in $[0,1]$ (`exposure`).
+5. **Set each user's tax personally:**
 
 $$
-\varepsilon_u = \varepsilon_{\text{low}} + \text{exposure}_u\,(\varepsilon_{\text{high}}-\varepsilon_{\text{low}}),
+\varepsilon_u \;=\; \varepsilon_{\text{low}} + \text{exposure}_u\,(\varepsilon_{\text{high}}-\varepsilon_{\text{low}}).
 $$
 
-so tolerant users (high exposure) get same-side content suppressed *harder* →
-more opposing items surfaced; sensitive users get a gentler dose. This is the
-per-user realisation of "different, but not too far."
+**In plain words:** people who tolerate the other side (high exposure) get their
+*own-side* content taxed *harder*, so more opposing reads surface; sensitive
+people get a gentler dose. It's "different, but not too far" tuned per person.
+Code: `SatisfactionModel`, `AdaptiveRWEB`.
 
 ---
 
-## 13. Map: math → code
+## 13. Map: formula → code
 
-| math | symbol / eq | file · object |
+| idea | where in this doc | file · object |
 |---|---|---|
-| bipartite adjacency, transition | (1), (2) | `rwe/graph.py` · `FeedbackGraph.A_G`, `.P` |
-| $k$-step walk $v_sP^k$ | §2 | `rwe/graph.py` · `k_step_distribution`, `item_distribution` |
+| step table + walk | §2 | `rwe/graph.py` · `FeedbackGraph.P`, `k_step_distribution` |
 | P³, RP³-β | §3 | `rwe/random_walk.py` · `P3`, `RP3Beta` |
-| **erasure closed form** | (3), §4 | `rwe/random_walk.py` · `BaseRecommender._score_batch` (`RWE.score_iterative` = the loop) |
-| RWE-D $q^D=1-\deg^{-\beta}$ | (4), §5 | `rwe/random_walk.py` · `RWED` |
-| RWE-B sim / bridge / bound | (5), §6 | `rwe/random_walk.py` · `RWEB.similarity`, `.is_bridge`, `._compute` |
-| ideal-point logit, objective, gradients | (6),(9),(11), §8 | `rwe/ideology.py` · `IdeologyModel.fit`, `._objective` |
-| Adam ascent | §8 | `rwe/ideology.py` · `_Adam` |
-| text-lean position | §9 | `examples/classify_lean.py` · `_positions_from_probs` |
-| accuracy / diversity / UW metrics | §10 | `rwe/metrics.py` |
-| assimilation–contrast update | §11 | `rwe/opinion_dynamics.py` · `update`, `POLICIES` |
-| satisfaction → per-user $\varepsilon$ | §12 | `rwe/satisfaction.py` · `SatisfactionModel`, `AdaptiveRWEB` |
+| **erasure formula** | §4 | `rwe/random_walk.py` · `_score_batch` (slow check: `score_iterative`) |
+| RWE-D (tax by popularity) | §5 | `rwe/random_walk.py` · `RWED` |
+| RWE-B (tax by position) + bound $d$ | §6 | `rwe/random_walk.py` · `RWEB.similarity`, `.is_bridge`, `._compute` |
+| ideology model + nudges | §8 | `rwe/ideology.py` · `IdeologyModel.fit` |
+| text lean | §9 | `examples/classify_lean.py` · `_positions_from_probs` |
+| all metrics | §10 | `rwe/metrics.py` |
+| opinion-change rule | §11 | `rwe/opinion_dynamics.py` · `update`, `POLICIES` |
+| per-user satisfaction → tax | §12 | `rwe/satisfaction.py` · `SatisfactionModel`, `AdaptiveRWEB` |
 
-For where these numbers land on real data, see [`RESULTS.md`](RESULTS.md); for
-the plain-language version, [`GUIDE.md`](../GUIDE.md); for the writeup,
-[`PAPER.md`](PAPER.md).
+For real-data numbers see [`RESULTS.md`](RESULTS.md); for the plain-language tour
+see [`GUIDE.md`](../GUIDE.md); for the writeup see [`PAPER.md`](PAPER.md).
 
 ---
 
-*Generated for the random-walks-with-erasure project. Equations verified against
-the cited code; §7 figures printed by `rwe/` directly.*
+*Every formula here was checked against the cited code; the §7 numbers are printed
+by `rwe/` directly. Written to be readable without a maths background — if any part
+still feels too dense, that's a bug in this file, not in you.*
