@@ -442,6 +442,7 @@ Run `pytest -q` any time to confirm everything still passes.
 | `docs/make_diagrams.py` | Regenerates the diagrams in this guide (into `docs/images/`). |
 | `README.md` | Reference docs (API, equations, usage). |
 | `GUIDE.md` | This beginner walkthrough. |
+| `docs/MATH.md` | **The deep math:** every formula derived step by step and mapped to the code. |
 
 ---
 
