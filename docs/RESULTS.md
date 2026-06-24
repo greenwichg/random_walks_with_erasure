@@ -102,8 +102,10 @@ outcome, not a measured opinion change.
 1. **The ideological axis is a noisy proxy.** The text classifier (trained on full
    articles, applied to headlines) scored **743 / 1019 political articles
    near-centre**; the extremes mix partisan framing with opinion-vs-news framing.
-   Quantify it before trusting RQ3: `examples/validate_lean.py` (gold labels or a
-   second model) reports the agreement number — do this and report it.
+   Validated against a 40-headline independent-rater set (`validate_lean.py`):
+   **Spearman r = 0.27, Pearson 0.30, 75 % sign-agreement on the non-neutral
+   items** — a *weak-but-positive* ideology proxy. So RQ3 reads are suggestive;
+   a larger multi-rater gold set or true outlet-lean labels would firm it up.
 2. **The `uw_recs ↓` effect is partly geometric.** A smaller bound mechanically
    forces opposite-side items closer to the user (hence the centre) on *any* 1-D
    axis — it also appears on the topic axis. So the sweep is a robust *mechanism*,
