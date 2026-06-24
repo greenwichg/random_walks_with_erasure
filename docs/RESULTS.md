@@ -2,11 +2,10 @@
 
 First real-data run of the pipeline in `docs/PAPER_PLAN.md`. All numbers are from
 `examples/eval_mind.py` on **MIND-small**; reproduce with the Colab notebook
-(`notebooks/run_mind_eval.ipynb`). The RQ2/RQ3 tables are **mean ± std over 7
-seeds** with a Wilcoxon signed-rank `p` vs P3; the bounded-bridging **sweep below is
-still single-seed** (re-run it with `--seeds 7 --sweep-max-distance …` for error
-bars). Read the limitations at the end — chiefly that the ideological axis is a
-noisy proxy.
+(`notebooks/run_mind_eval.ipynb`). All tables — RQ2, RQ3, and the bounded-bridging
+sweep — are **mean ± std over 7 seeds**, with a Wilcoxon signed-rank `p` vs P3 on the
+main comparison. Read the limitations at the end — chiefly that the ideological axis
+is a noisy proxy.
 
 ## Setup
 
@@ -61,26 +60,27 @@ the opposite **extreme** — `uw_recs` .768, the highest). That over-shoot is th
 
 ## Bounded bridging — the `max_distance` sweep
 
-`examples/eval_mind.py --sweep-max-distance 3,2,1.5,1,0.5`:
+`eval_mind.py --seeds 7 --sweep-max-distance 3,2,1.5,1,0.5` (mean ± std over 7 seeds):
 
 | `d` | hit@10 | auc | uw_shift | **uw_recs ↓** |
 |---|---|---|---|---|
-| ∞ | .137 | .753 | 1.047 | **.771** |
-| 3 | .137 | .753 | 1.047 | **.770** |
-| 2 | .148 | .757 | .744 | **.476** |
-| 1.5 | .158 | .761 | .550 | **.331** |
-| 1 | .177 | .767 | .411 | **.260** |
-| 0.5 | .191 | .770 | .352 | **.266** |
-| *P3* | .194 | .771 | .349 | .268 |
+| ∞ | .139±.004 | .753±.002 | 1.044±.007 | **.768±.007** |
+| 3 | .139±.004 | .753±.002 | 1.044±.007 | **.767±.007** |
+| 2 | .151±.004 | .756±.002 | .742±.006 | **.475±.006** |
+| 1.5 | .162±.003 | .760±.002 | .551±.004 | **.334±.004** |
+| 1 | .180±.004 | .766±.002 | .404±.004 | **.268±.005** |
+| 0.5 | .194±.003 | .769±.002 | .343±.005 | **.276±.006** |
+| *P3* | .196±.003 | .771±.001 | .339±.005 | .278±.006 |
 
-**Tightening the "not too far" bound monotonically pulls `uw_recs` from .77 → .26**
-— recommendations move from the opposite *extreme* toward the *centre* — while
-accuracy rises toward P3. The bridging magnitude (`uw_shift`) softens with it: by
-`d ≲ 1` RWE-B ≈ P3 (bridging gone). The **moderated-bridging window is `d ≈ 1.5–2`**
-(still bridges above P3, recs pulled centre-ward, accuracy preserved). The bound
-`d` is a clean **control knob** between opposite-extreme exposure and near-centre
-exposure. The same monotone curve also appears on the co-click axis, i.e. the
-effect is robust (and partly geometric — see caveats).
+**Tightening the "not too far" bound monotonically pulls `uw_recs` from .77 → .27**
+(each step ≫ the ±.005 std) — recommendations move from the opposite *extreme*
+toward the *centre* — while accuracy rises toward P3. The bridging magnitude
+(`uw_shift`) softens with it: by `d ≲ 1` RWE-B ≈ P3 (bridging gone). The
+**moderated-bridging window is `d ≈ 1.5–2`** (still bridges above P3, recs pulled
+centre-ward, accuracy preserved). The bound `d` is a clean **control knob** between
+opposite-extreme exposure and near-centre exposure. The same monotone curve also
+appears on the co-click axis, i.e. the effect is robust (and partly geometric — see
+caveats).
 
 ## The simulation link (what makes it a *depolarization* claim)
 
@@ -109,11 +109,11 @@ outcome, not a measured opinion change.
    axis — it also appears on the topic axis. So the sweep is a robust *mechanism*,
    not by itself proof of *ideological* depolarization; the depolarization link is
    the simulation.
-3. **Significance is across seeds, not observations.** RQ2/RQ3 are 7-seed mean ± std
-   and every vs-P3 difference is consistent across all 7 splits (Wilcoxon `p = 0.016`,
-   the n=7 floor) — i.e. the gaps are *stable*, but this is not a per-user test.
-   A per-user paired test (and a 2nd dataset) would strengthen it further. The
-   bounded-bridging **sweep is still single-seed**.
+3. **Significance is across seeds, not observations.** All tables are 7-seed mean ±
+   std and every vs-P3 difference is consistent across all 7 splits (Wilcoxon
+   `p = 0.016`, the n=7 floor) — i.e. the gaps are *stable*, but this is not a
+   per-user test. A per-user paired test (and a 2nd dataset) would strengthen it
+   further.
 4. **Reproducibility / accuracy of base RWE** is on synthetic + this MIND run; the
    paper's private Twitter numbers are not reproduced.
 
