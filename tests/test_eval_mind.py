@@ -36,3 +36,32 @@ def test_wilcoxon_detects_consistent_difference():
 def test_wilcoxon_identical_is_nan():
     pv = em._wilcoxon_vs_ref(np.ones((6, 2, 1)), ["X", "P3"], ["m"], "P3", ["m"])
     assert np.isnan(pv.loc["X", "m"])
+
+
+class _DS:
+    """Minimal stand-in for rwe.data.Dataset (only what _alignment_report uses)."""
+
+    def __init__(self, M):
+        import scipy.sparse as sp
+        self.matrix = sp.csr_matrix(np.asarray(M, dtype=float))
+        self.n_users, self.n_items = self.matrix.shape
+
+
+def test_alignment_report_perfect_when_theta_matches_clicks():
+    # 2 left users click left items (pos -1), 2 right users click right (pos +1)
+    M = [[1, 1, 0, 0], [1, 0, 0, 0], [0, 0, 1, 1], [0, 0, 0, 1]]
+    item_pos = np.array([-1.0, -1.0, 1.0, 1.0])
+    theta = np.array([-1.0, -1.0, 1.0, 1.0])          # = mean clicked-item lean
+    st = em._alignment_report(_DS(M), theta, item_pos, verbose=False)
+    assert st["n"] == 4
+    assert st["pearson"] > 0.9
+    assert st["expected_side"] == 1.0
+
+
+def test_alignment_report_flags_a_sign_flipped_axis():
+    M = [[1, 1, 0, 0], [1, 0, 0, 0], [0, 0, 1, 1], [0, 0, 0, 1]]
+    item_pos = np.array([-1.0, -1.0, 1.0, 1.0])
+    theta = np.array([1.0, 1.0, -1.0, -1.0])          # sign-flipped vs clicks
+    st = em._alignment_report(_DS(M), theta, item_pos, verbose=False)
+    assert st["pearson"] < 0                          # negative corr betrays the flip
+    assert st["expected_side"] == 0.0
