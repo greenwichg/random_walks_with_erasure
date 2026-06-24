@@ -91,6 +91,10 @@ score `score(i) = p_i(1−q_i) / (1 − Σ_j p_j q_j)`. Two strategies instantia
 `d = ∞` recovers unbounded bridging; small `d` admits only opposite-side items
 *close to* the user (hence near the centre, for an extreme user).
 
+![**Figure 1.** The RWE "tax" mechanism: a `k`-hop walk reaches items; an erasure
+`q` is removed each round and restarts, so high-tax items are suppressed and low-tax
+"bridge" items surface.](images/rwe_flow.png)
+
 ## 4. Method: three extensions (one evaluated on real data)
 
 On top of base RWE we implement three extensions; this paper evaluates the second on
@@ -156,6 +160,11 @@ recommendations on the opposite side rather than widening the range, and unbound
 it overshoots to the opposite **extreme** (UW-recs .768, the highest) — the "naive
 opposite-blast" failure mode.
 
+![**Figure 2.** Accuracy vs long-tail diversity (left) and vs ideological bridging
+(right) on MIND (7 seeds, mean ± std). RWE-D sits in the high-diversity region at AUC
+parity with RP³-β; RWE-B achieves by far the largest bridging shift at competitive
+accuracy.](images/paper_tradeoff.png)
+
 ### 6.3 RQ3 — How far? The bounded-bridging sweep
 
 7-seed mean ± std as the bound `d` tightens:
@@ -175,6 +184,11 @@ while accuracy *rises* toward P3. The bridging magnitude softens with it, and by
 `d ≲ 1` RWE-B collapses to ≈ P3. The **moderated-bridging window is `d ≈ 1.5–2`**:
 still clearly bridging, recs pulled centre-ward, accuracy preserved.
 
+![**Figure 3.** The bounded-bridging sweep (MIND, 7 seeds). As `d` tightens
+(left → right), UW-recs falls from the opposite extreme toward the centre and the
+bridging shift softens (left), while accuracy rises toward P3 (right). The shaded
+band marks the moderated-bridging window `d ≈ 1.5–2`.](images/paper_sweep.png)
+
 ### 6.4 The opinion-dynamics link
 
 In an assimilation–contrast simulation (Social Judgment Theory; cf. Chen et al.
@@ -185,6 +199,10 @@ centre, we read `d` as the **control between the backfire and depolarizing regim
 bounded RWE-B produces the near-centre exposure the model predicts is depolarizing,
 at no accuracy cost. **[note]** This is a *combination* of real-data control and a
 simulated outcome — not a measured opinion change in real users.
+
+![**Figure 4.** Opinion-dynamics simulation (assimilation–contrast): bounded /
+adaptive bridging lowers population polarization, while a naive opposite-blast raises
+it.](images/opinion_dynamics.png)
 
 ## 7. Ethics and limitations
 
