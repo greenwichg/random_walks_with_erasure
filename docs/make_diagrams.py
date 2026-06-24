@@ -410,6 +410,121 @@ def guardrails_diagram():
     _save(fig, "guardrails.png")
 
 
+# --------------------------------------------------------------------------- #
+# MATH.md §6: the RWE-B bridge test on the 1-D ideology line
+# --------------------------------------------------------------------------- #
+def rweb_bridge_zone():
+    """The two-part bridge test (MATH.md §6) drawn on the ideology line.
+
+    For a left-leaning user, an item is a *bridge* only if it is (1) on the
+    opposite side of the centre **and** (2) within the distance bound ``d``.
+    Items that fail either test are suppressed -- including a close same-side
+    item (fails test 1) and a far opposite item (fails test 2).
+    """
+    theta, center, d = -0.9, 0.0, 1.4
+    right_edge = theta + d            # 0.5: far edge of the "not too far" reach
+
+    fig, ax = plt.subplots(figsize=(9.4, 3.7))
+    ax.axhline(0, color=INK, lw=1.5, zorder=2)
+    for x in range(-2, 3):
+        ax.plot([x, x], [-0.05, 0.05], color=INK, lw=1.1, zorder=2)
+        ax.text(x, -0.19, str(x), ha="center", fontsize=9.5, color=INK)
+
+    # Bridge zone = opposite side (x > centre) AND within d  ->  (centre, theta+d].
+    ax.axvspan(center, right_edge, ymin=0.32, ymax=0.80, color=KEEP_C,
+               alpha=0.20, zorder=1)
+    ax.text((center + right_edge) / 2, 0.60, "BRIDGE\nZONE", ha="center",
+            va="center", fontsize=9.5, color="#2E6B3E", weight="bold", zorder=3)
+
+    # Centre line.
+    ax.plot([center, center], [-0.12, 1.02], color=MUTE, lw=1.2, ls="--", zorder=1)
+    ax.text(center, 1.06, "centre κ", ha="center", fontsize=9.5, color=MUTE)
+
+    # The user.
+    ax.add_patch(Circle((theta, 0), 0.055, color=USER_C, zorder=5))
+    ax.text(theta, 0.12, "you (θ)", ha="center", va="bottom", fontsize=10,
+            color=USER_C, weight="bold")
+
+    # Distance-bound bracket: theta .. theta+d.
+    ax.annotate("", xy=(right_edge, 0.40), xytext=(theta, 0.40),
+                arrowprops=dict(arrowstyle="<->", color=INK, lw=1.3), zorder=4)
+    ax.text((theta + right_edge) / 2, 0.45, "within d  (“not too far”)",
+            ha="center", fontsize=9, color=INK)
+
+    # Three example items, labelled below the line.
+    items = [(-0.45, MUTE, "same side\n→ suppressed"),
+             (0.32, KEEP_C, "bridge\n→ surfaced ✓"),
+             (1.45, ERASE_C, "opposite but too\nfar → suppressed")]
+    for x, c, lab in items:
+        ax.add_patch(Circle((x, 0), 0.055, color=c, zorder=5))
+        ax.text(x, -0.30, lab, ha="center", va="top", fontsize=8.7, color=c)
+
+    ax.text(-1.95, 0.78, "user’s side", ha="center", fontsize=9, color=MUTE,
+            style="italic")
+    ax.text(1.95, 0.78, "opposite side", ha="center", fontsize=9, color=MUTE,
+            style="italic")
+
+    ax.set_title("RWE-B bridge test: opposite side of the centre, but within distance d",
+                 fontsize=12.5, weight="bold", color=INK)
+    ax.set_xlim(-2.5, 2.5)
+    ax.set_ylim(-0.62, 1.18)
+    ax.axis("off")
+    _save(fig, "rweb_bridge_zone.png")
+
+
+# --------------------------------------------------------------------------- #
+# MATH.md §7: the worked long-tail example, computed by the real recommenders
+# --------------------------------------------------------------------------- #
+def worked_example():
+    """The §7 long-tail example, computed by ``rwe/`` (not hand numbers).
+
+    item0 is clicked by everyone (the hit); items1-3 are niche. Plain P3 ranks
+    the hit first; RWE-D's erasure moves recommendation weight off the hit onto
+    the user's own niche item1 (and the tail), flipping the top pick. Both score
+    vectors sum to 1, so the two bars are directly comparable distributions.
+    """
+    import numpy as np
+    from rwe import FeedbackGraph, P3, RWED
+
+    A = np.array([[1, 1, 0, 0], [1, 0, 1, 0], [1, 0, 0, 1]], dtype=float)
+    g = FeedbackGraph(A)
+    p3 = P3(g).scores([0])[0]                 # = landing chances p
+    rwed = RWED(g, beta=0.5).scores([0])[0]   # erasure score (sums to 1)
+
+    items = ["item 0\n(the hit)", "item 1\n(niche)", "item 2", "item 3"]
+    x = np.arange(4)
+    w = 0.38
+    fig, ax = plt.subplots(figsize=(8.8, 4.8))
+    ax.bar(x - w / 2, p3, w, color=MUTE, label="P³ (plain walk)")
+    ax.bar(x + w / 2, rwed, w, color=KEEP_C, label="RWE-D (erasure)")
+    for xi, v in zip(x - w / 2, p3):
+        ax.text(xi, v + 0.009, f"{v:.2f}", ha="center", fontsize=9, color=INK)
+    for xi, v in zip(x + w / 2, rwed):
+        ax.text(xi, v + 0.009, f"{v:.2f}", ha="center", fontsize=9, color="#2E6B3E")
+
+    ax.annotate("popular → demoted", xy=(w / 2, rwed[0]), xytext=(0.55, 0.545),
+                fontsize=9.5, color=ERASE_C,
+                arrowprops=dict(arrowstyle="->", color=ERASE_C, lw=1.2))
+    ax.annotate("niche → promoted\n(new top pick)", xy=(1 + w / 2, rwed[1]),
+                xytext=(1.55, 0.52), fontsize=9.5, color="#2E6B3E",
+                arrowprops=dict(arrowstyle="->", color="#2E6B3E", lw=1.2))
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(items, fontsize=10, color=INK)
+    ax.set_ylabel("recommendation weight  (each set of bars sums to 1)",
+                  fontsize=10.5, color=INK)
+    ax.set_ylim(0, 0.63)
+    ax.legend(fontsize=9.5, loc="upper right", frameon=False)
+    ax.set_title("Erasure moves weight from the popular hit to the long tail",
+                 fontsize=13, weight="bold", color=INK)
+    for sp in ("top", "right"):
+        ax.spines[sp].set_visible(False)
+    ax.text(0.5, -0.20, "exact §7 example, computed by rwe/ (P³ vs RWE-D, β = 0.5); "
+            "the top pick flips from item 0 to item 1", transform=ax.transAxes,
+            ha="center", fontsize=9.5, style="italic", color=CAP)
+    _save(fig, "worked_example.png")
+
+
 def _save(fig, name):
     OUT.mkdir(parents=True, exist_ok=True)
     path = OUT / name
@@ -427,3 +542,5 @@ if __name__ == "__main__":
     alpha_sweep_curve()
     opinion_dynamics()
     guardrails_diagram()
+    rweb_bridge_zone()
+    worked_example()

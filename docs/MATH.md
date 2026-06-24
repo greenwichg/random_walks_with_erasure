@@ -84,6 +84,12 @@ picture is a **graph** (think of a subway map). Users only connect to items and
 items only connect to users — lines always cross between the two groups (this is
 called *bipartite*).
 
+![The bipartite user–item feedback graph](images/bipartite_graph.png)
+
+*Figure — users (left) and items (right); a line means "this user clicked this
+item." The walker travels along these lines. Lines only ever cross between the
+two sides, never within a side.*
+
 **The walker.** Imagine a tiny walker that starts on *you* and, each step, hops to
 a random neighbour: you → one of your items → another user who liked it → one of
 *their* items, and so on. The table $P$ just records these hop chances: from a dot
@@ -149,6 +155,13 @@ pass.
 A heavily-taxed item (high $q$) keeps little and donates a lot; a lightly-taxed
 item keeps almost everything. Choosing *which* items to tax is the whole trick
 (§5 and §6 make two different choices).
+
+![The random-walk-with-erasure tax mechanism](images/rwe_flow.png)
+
+*Figure — the walk lands mass on items (black arrows); each item keeps the
+un-taxed part (green, sent to the recommendation list) and sends the taxed part
+back to you (red, dashed) to walk again. High tax → suppressed; low tax →
+recommended.*
 
 **The formula (eq 3).** Let $c = p \cdot q$ be the total fraction taxed away on
 one pass (a single number; the "$\cdot$" is the dot product from §0). Then the
@@ -249,6 +262,13 @@ are true:
 2. **Not too far apart:** $\lvert\text{pos}_i-\theta_u\rvert \le d$, i.e. the gap
    between them is within the distance bound $d$.
 
+![The RWE-B bridge test on the ideology line](images/rweb_bridge_zone.png)
+
+*Figure — for a left-leaning reader (blue), the **bridge zone** (green) is the
+slice that is both past the centre **and** within distance $d$. A close
+same-side item fails test 1; a far opposite item fails test 2; only the item
+inside the zone is surfaced.*
+
 **The tax (eq 5):**
 
 $$
@@ -275,6 +295,13 @@ how far across the aisle a bridge may sit:
 Turning $d$ down slides the recommendations from "opposite extreme" to "near
 center" smoothly, with almost no accuracy cost (see `docs/RESULTS.md`);
 $d\approx 1.5\text{–}2$ is the sweet spot.
+
+![Bounded-bridging sweep over the bound d](images/paper_sweep.png)
+
+*Figure — real MIND data (7 seeds): tightening the bound $d$ (left → right) pulls
+recommendations from the opposite extreme toward the centre (left panel) while
+accuracy climbs back toward the P3 baseline (right panel). The shaded band is the
+$d\approx 1.5\text{–}2$ sweet spot.*
 
 ---
 
@@ -330,6 +357,13 @@ same relevance — popularity simply taxed down. (At recommendation time the
 already-seen items 0 and 1 are hidden; we show all four scores here just to see
 the mechanism.)
 
+![P³ vs RWE-D recommendation weights for the worked example](images/worked_example.png)
+
+*Figure — both bars are recommendation-weight distributions (each set sums to 1).
+Erasure moves weight off the popular hit (item 0, down) onto the user's own niche
+pick (item 1, up) and the tail — flipping the top recommendation from item 0 to
+item 1. These are the exact numbers above, drawn by `rwe/`.*
+
 ---
 
 ## 8. The ideology model (placing people on a line)
@@ -344,6 +378,12 @@ and an elite, they're probably *near* each other on the line. We slide everyone
 along the line until the pattern of "who endorses whom" is best explained by
 closeness. The output is a position number for each person and item. (Section 6,
 `rwe/ideology.py`.)
+
+![The one-dimensional left–right ideology line](images/ideology_scale.png)
+
+*Figure — everyone (users and items) ends up as a point on one left↔right line.
+The green arc is RWE-B reaching a left user across the centre to a nearby
+opposite-side "bridge" (§6).*
 
 **The rule, as a formula (eq 6).** The chance user $u$ endorses elite $e$ goes
 *down* as the squared distance between their positions goes *up*:
@@ -472,6 +512,14 @@ relative to the $m$ users) score higher.
 
 ### Does it bridge politically? (RQ3)
 
+![User position vs. recommended position, baseline vs. RWE-B](images/quadrant_scatter.png)
+
+*Figure — each dot is a user: their own position (across) vs. the average
+position of what they're recommended (up). A baseline (left) keeps people on
+their own side (dots hug the diagonal); RWE-B (right) pulls them toward the
+centre/opposite side (dots flatten toward the middle). The metrics below put
+numbers on this.*
+
 Let $\bar r_u$ = the *average position* of the items we recommend to user $u$, let
 $\rho_u$ = the user's own position $\theta_u$, and $\kappa$ = the center.
 
@@ -546,6 +594,13 @@ everyone's positions. Bounded bridging *shrinks* the spread; the naive blast
 *grows* it — **same goal, opposite result, depending on how far you reach.** That
 simulated result, plus the real-data knob $d$ from §6, is the project's argument.
 
+![Polarization over rounds, by exposure policy](images/opinion_dynamics.png)
+
+*Figure — population polarization over repeated exposure. The naive
+opposite-blast (red) drives people apart (backfire); bounded RWE-B bridging
+(green) and the adaptive policy (blue) bring them together. Direction is the
+point here, not exact magnitude.*
+
 ---
 
 ## 12. The satisfaction extension
@@ -572,6 +627,12 @@ $$
 *own-side* content taxed *harder*, so more opposing reads surface; sensitive
 people get a gentler dose. It's "different, but not too far" tuned per person.
 Code: `SatisfactionModel`, `AdaptiveRWEB`.
+
+![Adaptive per-user exposure vs. a fixed bridging dose](images/adaptive_exposure.png)
+
+*Figure — a fixed bridging dose flips everyone the same amount (red); the
+adaptive policy (green) gives high-tolerance users more opposing content while
+protecting low-tolerance users from too much.*
 
 ---
 
