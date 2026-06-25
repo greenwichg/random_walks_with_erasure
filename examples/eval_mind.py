@@ -126,17 +126,22 @@ def _print_pvalues(pv, ref, seeds):
     print(disp.to_string(), "\n")
 
 
-def _alignment_report(dataset, theta, item_pos, center: float = 0.0,
+def _alignment_report(dataset, theta, item_pos, center: float | None = None,
                       verbose: bool = True) -> dict:
     """Axis sanity check: do users sit on the same oriented scale as their items?
 
     Reports the correlation between each user's position and the mean lean of the
-    items they clicked, and the share of users on their *expected* (same-sign)
-    side of ``center``.  Returns the computed numbers (so it is testable).
+    items they clicked, and the share of users on their *expected* side.  Returns
+    the computed numbers (so it is testable).
 
-    For a clicks-derived axis (``user_positions_from_clicks``) these are near
-    ``+1`` / ``100%`` by construction -- a sanity check that the axis is not
-    sign-flipped.  For an ``--ideology`` axis they are an independent validation.
+    ``center=None`` (default) splits each axis at its own **median** for the
+    expected-side share, so a skewed/offset axis can't artificially depress it
+    (we test orientation agreement, not the absolute zero); pass an explicit
+    ``center`` (e.g. ``0.0``) to split at a fixed ideological centre instead.
+
+    For a clicks-derived axis (``user_positions_from_clicks``) the correlation is
+    near ``+1`` by construction -- a sanity check that the axis is not
+    sign-flipped.  For an ``--ideology`` axis it is an independent validation.
     """
     from scipy.stats import pearsonr, spearmanr
 
@@ -161,25 +166,34 @@ def _alignment_report(dataset, theta, item_pos, center: float = 0.0,
             return float("nan")
 
     r, rho = _corr(pearsonr), _corr(spearmanr)
-    su, sc = np.sign(a - center), np.sign(b - center)
+    # Expected-side: split each axis at its own median (offset/skew-robust) unless
+    # an explicit centre is given -- this tests orientation agreement, not the
+    # absolute zero, so a right-skewed item axis can't depress the share.
+    if center is None:
+        cu = float(np.median(a)) if a.size else 0.0
+        cc = float(np.median(b)) if b.size else 0.0
+    else:
+        cu = cc = center
+    su, sc = np.sign(a - cu), np.sign(b - cc)
     sided = su != 0
     expected = float(np.mean(su[sided] == sc[sided])) if sided.any() else float("nan")
-    left = float(np.mean(item_pos < center)) if item_pos.size else float("nan")
-    right = float(np.mean(item_pos > center)) if item_pos.size else float("nan")
+    izero = center if center is not None else 0.0       # show item skew about 0
+    left = float(np.mean(item_pos < izero)) if item_pos.size else float("nan")
+    right = float(np.mean(item_pos > izero)) if item_pos.size else float("nan")
     stats = dict(n=int(a.size), pearson=r, spearman=rho,
                  expected_side=expected, left_frac=left, right_frac=right)
 
     if verbose:
+        split = "median split" if center is None else f"centre={center:g}"
         print("AXIS ALIGNMENT  (are users on the same oriented scale as their items?)")
         print(f"  user position vs mean clicked-item lean:  "
               f"Pearson r={r:+.2f}  Spearman ρ={rho:+.2f}   (n={stats['n']} users)")
-        print(f"  users on their 'expected' side (θ sign = clicked-items' sign):  "
-              f"{expected * 100:.1f}%   (centre={center:g})")
+        print(f"  users on their 'expected' side ({split}):  {expected * 100:.1f}%")
         print(f"  item axis spread:  {left * 100:.0f}% left / {right * 100:.0f}% "
-              f"right of centre")
-        print("  note: ≈+1 and ≈100% are expected when user positions come from "
-              "clicks (a sanity check the axis isn't sign-flipped); an independent "
-              "check only when θ comes from --ideology.\n")
+              f"right of 0")
+        print("  note: r≈+1 is expected when user positions come from clicks (a "
+              "sanity check the axis isn't sign-flipped); r is the independent, "
+              "offset-robust signal when θ comes from --ideology.\n")
     return stats
 
 

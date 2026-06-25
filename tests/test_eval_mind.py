@@ -65,3 +65,15 @@ def test_alignment_report_flags_a_sign_flipped_axis():
     st = em._alignment_report(_DS(M), theta, item_pos, verbose=False)
     assert st["pearson"] < 0                          # negative corr betrays the flip
     assert st["expected_side"] == 0.0
+
+
+def test_alignment_report_median_center_is_offset_robust():
+    # right-skewed item axis (all positive) but theta balanced and well-ordered:
+    # a fixed centre=0 mislabels half the users; the median split recovers them.
+    M = np.eye(4)                                     # each user clicks one item
+    item_pos = np.array([0.2, 0.4, 1.2, 1.6])         # all on the right of 0
+    theta = np.array([-1.0, -0.5, 0.5, 1.0])          # balanced, same ranking
+    st_med = em._alignment_report(_DS(M), theta, item_pos, verbose=False)
+    st_zero = em._alignment_report(_DS(M), theta, item_pos, center=0.0, verbose=False)
+    assert st_med["expected_side"] == 1.0             # median split: all consistent
+    assert st_med["expected_side"] > st_zero["expected_side"]   # fixes the offset artifact
