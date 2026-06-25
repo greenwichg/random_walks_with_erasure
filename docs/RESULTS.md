@@ -4,8 +4,9 @@ First real-data run of the pipeline in `docs/PAPER_PLAN.md`. All numbers are fro
 `examples/eval_mind.py` on **MIND-small**; reproduce with the Colab notebook
 (`notebooks/run_mind_eval.ipynb`). All tables — RQ2, RQ3, and the bounded-bridging
 sweep — are **mean ± std over 7 seeds**, with a Wilcoxon signed-rank `p` vs P3 on the
-main comparison. Read the limitations at the end — chiefly that the ideological axis
-is a noisy proxy.
+main comparison. These tables were **independently re-run end-to-end (2026-06-25)
+from the Colab notebook and reproduce to the printed precision**. Read the
+limitations at the end — chiefly that the ideological axis is a noisy proxy.
 
 ## Setup
 
@@ -106,6 +107,17 @@ outcome, not a measured opinion change.
    **Spearman r = 0.27, Pearson 0.30, 75 % sign-agreement on the non-neutral
    items** — a *weak-but-positive* ideology proxy. So RQ3 reads are suggestive;
    a larger multi-rater gold set or true outlet-lean labels would firm it up.
+   An automatic **axis-alignment check** (`eval_mind.py`, printed each run)
+   confirms users and items share one *correctly-oriented* scale: on the
+   **text-lean axis** each user's position correlates Pearson **r = +1.00** with
+   the mean lean of their clicked articles and **100 %** of users sit on their
+   expected side (item spread 44 % left / 56 % right). That is a *sanity check*
+   (user positions **are** the click-mean, so it only proves the axis is not
+   sign-flipped). On the **co-click `--ideology` axis** the same check is an
+   *independent* signal and gives only **r = +0.37** — corroborating, with a
+   number, that the co-click axis is topical rather than ideological (cf. the
+   Spearman 0.27 vs human labels). So the axis is well-*oriented* but
+   weakly-*resolved*: a noisy proxy, not a misaligned one.
 2. **The `uw_recs ↓` effect is partly geometric.** A smaller bound mechanically
    forces opposite-side items closer to the user (hence the centre) on *any* 1-D
    axis — it also appears on the topic axis. So the sweep is a robust *mechanism*,
@@ -129,4 +141,4 @@ examples/eval_mind.py [--sweep-max-distance ...]
 examples/validate_lean.py               # axis-quality number
 ```
 
-_Last updated: 2026-06-23._
+_Last updated: 2026-06-25 (tables independently reproduced; axis-alignment check added)._
