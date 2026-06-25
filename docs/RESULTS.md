@@ -139,6 +139,7 @@ examples/classify_lean.py               # text lean -> news_id,position
 examples/ingest_mind.py --positions-csv # -> mind_text.npz
 examples/eval_mind.py [--sweep-max-distance ...]
 examples/validate_lean.py               # axis-quality number
+examples/plot_axis.py --npz mind_text.npz  # users + items on the L<->R scale
 ```
 
 _Last updated: 2026-06-25 (tables independently reproduced; axis-alignment check added)._
