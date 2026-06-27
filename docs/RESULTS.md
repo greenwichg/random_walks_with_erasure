@@ -21,6 +21,15 @@ limitations at the end — chiefly that the ideological axis is a noisy proxy.
 - **Protocol:** 70/30 per-user split; top-10 ranking; diversity@20; baselines
   ItemKNN / P3 / RP³-β plus RWE-D and RWE-B (`ε=0.9`).
 
+![Users and items on the text-lean left↔right scale (real MIND data)](images/axis_realdata.png)
+
+*The populated axis (`examples/plot_axis.py` on `mind_text.npz`): article positions
+(top) and user positions θ (bottom) on one shared left↔right scale — left-leaning
+(blue) on the left, right-leaning (red) on the right. This is the **visual of the
+alignment check** below (Pearson r = +1.00; 44 % / 56 % of articles left / right of
+centre). Users skew further right (32 % / 68 %) than the article pool, consistent
+with right-leaning articles drawing proportionally more clicks (θ is the click-mean).*
+
 ## RQ2 — long-tail diversity (RWE-D)
 
 Mean ± std over **7 seeds** (re-drawn train/test splits); all differences vs P3 are

@@ -453,6 +453,14 @@ scale $s=2$ stretches it to the range $[-2, 2]$ to match the other axis. Code is
 one line: `scale * (probs @ label_positions)`. (Always check the model's label
 order matches $[-1,0,1]$ — the script prints it for you.)
 
+![Real text-lean distribution of users and items](images/axis_realdata.png)
+
+*Figure — the positions this formula actually produces on MIND: article leans
+(top) and user θ (bottom, the click-mean) on the shared left↔right scale, left
+(blue) vs. right (red). This real distribution is what the §6 bridging and §10
+RQ3 metrics are measured against (drawn by `examples/plot_axis.py` on the
+ingested data — not a mock-up).*
+
 ---
 
 ## 10. The evaluation metrics
