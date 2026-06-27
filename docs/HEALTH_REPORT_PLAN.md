@@ -124,9 +124,20 @@ the idea itself. (See `NOVELTY_CHECK.md` for the framing discipline.)
 
 ## Status & next step
 
-Planning only. When green-lit, the next step is to **spec the v1 metric formulas
-precisely** (exact entropy/HHI normalisation, the percentile reference set, the
-min-clicks floor, the political-subset boundary) — still before code — then a thin
-`examples/health_report.py` aggregation layer over `MINDData`.
+**v1 spec'd and implemented** in `examples/health_report.py` — the exact formulas
+(entropy/HHI normalisation, percentile reference set, min-clicks floor,
+political-subset boundary) are frozen in its module docstring and covered by
+`tests/test_health_report.py`. It computes the topic / source / viewpoint / echo
+profile + percentile scores + insight & blind-spot lines from an ingested `.npz`,
+with **no new models**:
+
+```
+python examples/health_report.py --npz mind_text.npz --sample 3
+```
+
+Still deferred to **v2** (need new classifiers or labels): reporting-vs-opinion,
+emotional exposure, a stronger lean axis, and a user-facing rendering. The
+composite "Overall" is shown only as an explicitly *illustrative* unweighted
+average, per the scoring caution above.
 
 _Last updated: 2026-06-27._
