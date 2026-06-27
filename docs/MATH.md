@@ -50,6 +50,10 @@ Keep this handy. None of the maths below is harder than these pieces.
 | $\sigma(z)$ | "sigmoid of z" | a squashing curve that turns any number into a probability in $(0,1)$ |
 | $\theta,\phi,\psi,\alpha,\dots$ | greek letters | just *names* for numbers we are solving for |
 | $x_u$ | "x sub u" | the value of $x$ belonging to user $u$ |
+| $\bar{x}$ | "x bar" | the **average** of the $x$ values |
+| $x^{-a}$,&nbsp; $x^{0.5}$ | "x to the minus a / to the half" | $x^{-a}=1/x^{a}$ (reciprocal power); $x^{0.5}=\sqrt{x}$ |
+| $A^{\top}$ | "A transpose" | flip a table's rows and columns ($A^{\top}A$ counts co-occurrences) |
+| $x \mapsto y$ | "x maps to y" | a rule turning $x$ into $y$ (e.g. $q\mapsto q^{v}$ raises each $q$ to the power $v$) |
 | $z \in [0,1)$ | "z is in 0 to 1" | $z$ is a number from $0$ up to (but not including) $1$ |
 | $\text{mean}(\dots)$ | "the average" | add the things up, divide by how many there are |
 | $\text{sign}(x)$ | "sign of x" | $+1$ if $x>0$, $-1$ if $x<0$ |
@@ -472,7 +476,8 @@ table of each user's ranked item ids.
 
 **AUC** (`auc`) — *"if I pick one item the user really liked and one random item
 they didn't, how often do we rank the liked one higher?"* $0.5$ = coin-flip,
-$1$ = perfect. The formula (Mann–Whitney $U$) for one user, with $R_+$ = sum of
+$1$ = perfect. The formula (Mann–Whitney $U$; *a detail — skip if you like, the
+sentence above is the point*) for one user, with $R_+$ = sum of
 the ranks of the liked items, $n_+$ liked and $n_-$ not:
 
 $$
@@ -546,7 +551,8 @@ center counts as positive for everyone**. Higher = more bridging.
 
 **UW-shift** (`weighted_shift`) — our headline bridging score: the same directed
 shift, but **weighting extreme users more** (bridging a die-hard matters more than
-nudging a moderate). With weight $w_u = \lvert\rho_u-\kappa\rvert$:
+nudging a moderate). The bold idea is the point; the formula below is a detail you
+can skim. With weight $w_u = \lvert\rho_u-\kappa\rvert$:
 
 $$
 \text{UW-shift} = \frac{\sum_u w_u\,[-\text{sign}(\rho_u-\kappa)]\,(\bar r_u-\rho_u)}{\sum_u w_u}.
