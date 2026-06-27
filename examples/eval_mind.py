@@ -35,7 +35,7 @@ import numpy as np
 import pandas as pd
 
 from rwe import (FeedbackGraph, P3, RP3Beta, RWED, RWEB, ItemKNN, BPRMF,
-                 data, experiment)
+                 data, experiment, metrics)
 from rwe.mind import MINDData
 
 
@@ -124,6 +124,68 @@ def _print_pvalues(pv, ref, seeds):
         disp[c] = [("*" if (x == x and x < 0.05) else " ")
                    + (f"{x:.3f}" if x == x else " -- ") for x in pv[c]]
     print(disp.to_string(), "\n")
+
+
+def _fmt_p(p) -> str:
+    if p != p:
+        return "  --   "
+    star = "*" if p < 0.05 else " "
+    return star + (f"{p:.1e}" if p < 1e-3 else f"{p:.3f}")
+
+
+def _per_user_significance(dataset, item_pos, theta, args):
+    """Per-user PAIRED Wilcoxon (n = users, not seeds) vs ``--sig-ref`` on the
+    decomposable accuracy metrics (auc / hit@k / ndcg@k), for one split.
+
+    This complements the across-seed test: it asks whether a method beats the
+    reference *consistently across thousands of users* on a single split, a far
+    stronger n than the 7-seed signed-rank test.
+    """
+    from scipy.stats import wilcoxon
+
+    seed = 0
+    train, test_pos = data.train_test_split(dataset, test_frac=args.test_frac, seed=seed)
+    g = FeedbackGraph(train)
+    users = np.arange(g.m)
+    train_pos = [g.seen_items(u) for u in users]
+    k = args.top_k
+    per = {}
+    for name, model in _recommenders(g, theta, item_pos, args, seed).items():
+        S = model.scores(users)
+        R = model.recommend(users, top_k=k)
+        per[name] = {"auc": metrics.auc_per_user(S, test_pos, train_pos),
+                     f"hit@{k}": metrics.hit_rate_per_user(R, test_pos),
+                     f"ndcg@{k}": metrics.ndcg_per_user(R, test_pos, k)}
+
+    ref = args.sig_ref
+    if ref not in per:
+        print(f"[per-user-sig] reference '{ref}' not among methods; skipping.")
+        return
+    cols = ["auc", f"hit@{k}", f"ndcg@{k}"]
+    table, ns = {}, []
+    for name in per:
+        if name == ref:
+            continue
+        row = {}
+        for c in cols:
+            a, b = per[name][c], per[ref][c]
+            ok = np.isfinite(a) & np.isfinite(b)
+            a, b = a[ok], b[ok]
+            ns.append(a.size)
+            if a.size < 10 or np.allclose(a, b):
+                row[c] = _fmt_p(float("nan"))
+            else:
+                try:
+                    row[c] = _fmt_p(float(wilcoxon(a, b).pvalue))
+                except Exception:
+                    row[c] = _fmt_p(float("nan"))
+        table[name] = row
+    n_used = int(np.median(ns)) if ns else 0
+    print(f"Per-user PAIRED Wilcoxon vs {ref}  (n ≈ {n_used} users, seed {seed}; "
+          "* = p<0.05):")
+    print(pd.DataFrame(table).T[cols].to_string(), "\n")
+    print("This is significance across users on one split (n in the thousands), not "
+          "across 7 seeds — a stronger test for the accuracy metrics.")
 
 
 def _alignment_report(dataset, theta, item_pos, center: float | None = None,
@@ -218,6 +280,8 @@ def main():
     ap.add_argument("--no-bprmf", action="store_true", help="skip the (slow) BPRMF baseline")
     ap.add_argument("--no-align", action="store_true",
                     help="skip the user/item axis-alignment sanity check")
+    ap.add_argument("--per-user-sig", action="store_true",
+                    help="per-user PAIRED Wilcoxon vs --sig-ref (n=users) on auc/hit/ndcg")
     ap.add_argument("--sweep-max-distance", default=None,
                     help="comma-separated RWE-B bounds to sweep, e.g. '3,2,1.5,1,0.5'")
     ap.add_argument("--sweep-epsilon", default=None,
@@ -233,6 +297,9 @@ def main():
           f"  seeds={args.seeds}\n")
     if not args.no_align:
         _alignment_report(dataset, theta, item_pos)
+    if args.per_user_sig:
+        _per_user_significance(dataset, item_pos, theta, args)
+        return
     multiseed = args.seeds > 1
     tag = f"  ({args.seeds} seeds, mean ± std)" if multiseed else ""
 

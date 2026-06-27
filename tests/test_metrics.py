@@ -130,3 +130,26 @@ def test_weighted_position_rewards_central_recs_for_extremes():
     extreme_extreme = np.array([[0, 0], [1, 2]])   # extreme -> mean -2; mild -> mean 0
     assert (metrics.weighted_position(extreme_central, _POS, ref)
             < metrics.weighted_position(extreme_extreme, _POS, ref))
+
+
+def test_per_user_means_match_aggregates():
+    rng = np.random.default_rng(0)
+    scores = rng.random((6, 10))
+    test_pos = [[0], [1], [], [2, 3], [5], [8]]
+    train_pos = [[9]] * 6
+    pu = metrics.auc_per_user(scores, test_pos, train_pos)
+    assert pu.shape == (6,) and np.isnan(pu[2])                 # user 2 has no test
+    assert np.isclose(metrics.auc(scores, test_pos, train_pos), np.nanmean(pu))
+
+    recs = np.array([[0, 1, 2], [3, 4, -1], [-1, -1, -1], [5, 6, 7]])
+    tp = [[0, 9], [4], [7], [5]]
+    assert np.isclose(metrics.hit_rate_at_k(recs, tp),
+                      np.nanmean(metrics.hit_rate_per_user(recs, tp)))
+    assert np.isclose(metrics.ndcg_at_k(recs, tp, 3),
+                      np.nanmean(metrics.ndcg_per_user(recs, tp, 3)))
+
+
+def test_per_user_all_undefined_is_nan():
+    recs = np.array([[-1, -1]])
+    assert np.isnan(metrics.hit_rate_at_k(recs, [[]]))          # no test items anywhere
+    assert np.all(np.isnan(metrics.hit_rate_per_user(recs, [[]])))

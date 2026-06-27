@@ -26,14 +26,11 @@ from scipy.stats import ks_2samp, rankdata
 # --------------------------------------------------------------------------- #
 # Accuracy
 # --------------------------------------------------------------------------- #
-def auc(score_rows: np.ndarray, test_pos, train_pos) -> float:
-    """Mean per-user implicit AUC.
-
-    For each user the candidate set excludes training items; AUC is the
-    probability that a held-out positive item is ranked above a random
-    non-interacted item (Mann-Whitney U statistic).
-    """
-    vals = []
+def auc_per_user(score_rows: np.ndarray, test_pos, train_pos) -> np.ndarray:
+    """Per-user implicit AUC, ``nan`` where undefined (no test items, or no
+    candidates).  :func:`auc` is the (nan-)mean of this; the array enables a
+    *per-user* paired significance test (vs the across-seed one)."""
+    out = np.full(score_rows.shape[0], np.nan)
     n_items = score_rows.shape[1]
     for row in range(score_rows.shape[0]):
         pos = np.asarray(test_pos[row], dtype=int)
@@ -50,9 +47,19 @@ def auc(score_rows: np.ndarray, test_pos, train_pos) -> float:
         n_pos, n_neg = pos_local.size, cand.size - pos_local.size
         if n_pos == 0 or n_neg == 0:
             continue
-        rank_sum = ranks[pos_local].sum()
-        vals.append((rank_sum - n_pos * (n_pos + 1) / 2.0) / (n_pos * n_neg))
-    return float(np.mean(vals)) if vals else float("nan")
+        out[row] = (ranks[pos_local].sum() - n_pos * (n_pos + 1) / 2.0) / (n_pos * n_neg)
+    return out
+
+
+def auc(score_rows: np.ndarray, test_pos, train_pos) -> float:
+    """Mean per-user implicit AUC.
+
+    For each user the candidate set excludes training items; AUC is the
+    probability that a held-out positive item is ranked above a random
+    non-interacted item (Mann-Whitney U statistic).
+    """
+    v = auc_per_user(score_rows, test_pos, train_pos)
+    return float(np.nanmean(v)) if np.isfinite(v).any() else float("nan")
 
 
 def mean_rank(score_rows: np.ndarray, test_pos, train_pos) -> float:
@@ -76,16 +83,22 @@ def mean_rank(score_rows: np.ndarray, test_pos, train_pos) -> float:
     return float(np.mean(vals)) if vals else float("nan")
 
 
-def hit_rate_at_k(recommendations: np.ndarray, test_pos) -> float:
-    """Recall-style hit rate: mean over users of ``|topk ∩ test| / |test|``."""
-    vals = []
+def hit_rate_per_user(recommendations: np.ndarray, test_pos) -> np.ndarray:
+    """Per-user recall ``|topk ∩ test| / |test|`` (``nan`` if no test items)."""
+    out = np.full(recommendations.shape[0], np.nan)
     for row in range(recommendations.shape[0]):
         pos = set(int(x) for x in np.asarray(test_pos[row]))
         if not pos:
             continue
         recs = [int(x) for x in recommendations[row] if x >= 0]
-        vals.append(len(pos & set(recs)) / len(pos))
-    return float(np.mean(vals)) if vals else float("nan")
+        out[row] = len(pos & set(recs)) / len(pos)
+    return out
+
+
+def hit_rate_at_k(recommendations: np.ndarray, test_pos) -> float:
+    """Recall-style hit rate: mean over users of ``|topk ∩ test| / |test|``."""
+    v = hit_rate_per_user(recommendations, test_pos)
+    return float(np.nanmean(v)) if np.isfinite(v).any() else float("nan")
 
 
 def precision_at_k(recommendations: np.ndarray, test_pos, k: int | None = None) -> float:
@@ -101,10 +114,10 @@ def precision_at_k(recommendations: np.ndarray, test_pos, k: int | None = None) 
     return float(np.mean(vals)) if vals else float("nan")
 
 
-def ndcg_at_k(recommendations: np.ndarray, test_pos, k: int | None = None) -> float:
-    """Mean NDCG@k over users with held-out items (binary relevance)."""
+def ndcg_per_user(recommendations: np.ndarray, test_pos, k: int | None = None) -> np.ndarray:
+    """Per-user NDCG@k (binary relevance; ``nan`` if no test items)."""
     k = k or recommendations.shape[1]
-    vals = []
+    out = np.full(recommendations.shape[0], np.nan)
     for row in range(recommendations.shape[0]):
         pos = set(int(x) for x in np.asarray(test_pos[row]))
         if not pos:
@@ -112,8 +125,14 @@ def ndcg_at_k(recommendations: np.ndarray, test_pos, k: int | None = None) -> fl
         recs = [int(x) for x in recommendations[row][:k] if x >= 0]
         dcg = sum(1.0 / np.log2(rank + 2) for rank, it in enumerate(recs) if it in pos)
         ideal = sum(1.0 / np.log2(rank + 2) for rank in range(min(len(pos), k)))
-        vals.append(dcg / ideal if ideal > 0 else 0.0)
-    return float(np.mean(vals)) if vals else float("nan")
+        out[row] = dcg / ideal if ideal > 0 else 0.0
+    return out
+
+
+def ndcg_at_k(recommendations: np.ndarray, test_pos, k: int | None = None) -> float:
+    """Mean NDCG@k over users with held-out items (binary relevance)."""
+    v = ndcg_per_user(recommendations, test_pos, k)
+    return float(np.nanmean(v)) if np.isfinite(v).any() else float("nan")
 
 
 # --------------------------------------------------------------------------- #
