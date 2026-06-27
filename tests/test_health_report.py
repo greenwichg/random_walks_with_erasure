@@ -84,6 +84,33 @@ def test_load_item_csv_aligns_to_item_ids(tmp_path):
     assert arr[0] == 0.9 and np.isnan(arr[1]) and arr[2] == 0.1
 
 
+def test_read_impressions_splits_shown_vs_clicked():
+    fix = ROOT / "tests" / "fixtures" / "mind_demo"
+    shown, clicked = hr._read_impressions(str(fix / "behaviors.tsv"))
+    assert "N7" in shown["U1"] and "N7" in clicked["U1"]        # N7-1 (clicked)
+    assert "N4" in shown["U1"] and "N4" not in clicked["U1"]    # N4-0 (shown, not clicked)
+
+
+def test_selective_exposure_and_political_share(tmp_path):
+    from rwe import load_mind
+    fix = ROOT / "tests" / "fixtures" / "mind_demo"
+    ids = [l.split("\t")[0] for l in open(fix / "news.tsv")]
+    lean = tmp_path / "lean.csv"
+    lean.write_text("news_id,position\n" + "\n".join(
+        f"{i},{p}" for i, p in zip(ids, np.linspace(-1.8, 1.8, len(ids)))))
+    d = load_mind(str(fix), positions_map=str(lean))
+    uidx = {u: i for i, u in enumerate(np.asarray(d.dataset.user_ids).tolist())}
+
+    sel = hr.selective_exposure_array(d, str(fix / "behaviors.tsv"))
+    # U1 (left) was shown one opposite-side (right) article, N7, and clicked it -> 1.0
+    assert sel[uidx["U1"]] == 1.0
+
+    pop = hr.compute(d, min_clicks=1, min_political=1, selective=sel)
+    rep = hr.user_report(pop, d, uidx["U1"])
+    assert rep["scores"]["Open-Mindedness"] is not None
+    assert rep["political_share"] is not None and 0.0 <= rep["political_share"] <= 1.0
+
+
 def test_enrichment_populates_reporting_and_attention(tmp_path):
     from rwe import load_mind
     fix = ROOT / "tests" / "fixtures" / "mind_demo"

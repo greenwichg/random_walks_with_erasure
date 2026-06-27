@@ -35,8 +35,11 @@ and emotional tone. It's the *auditing* side of the project's diversification wo
   sub-scores. Treat it as a rough roll-up, not a measurement — weighting the
   dimensions against each other is a value judgment we deliberately don't make.
 - **Reliability floor:** users below `--min-clicks` get no scores. The political
-  metrics (Viewpoint, Echo) need `--min-political` political clicks, and are
-  computed over the **political subset** only; topic and source use **all** clicks.
+  metrics (Viewpoint, Echo, Open-Mindedness) need `--min-political` political
+  clicks and use the **political subset** only; topic and source use **all** clicks.
+- **Political-engagement share** is shown as *context, not a score* — what fraction
+  of your reading is political at all. It keeps the viewpoint scores honest: a
+  5%-political reader and an 80%-political reader are very different people.
 
 ## Quick reference
 
@@ -49,8 +52,9 @@ and emotional tone. It's the *auditing* side of the project's diversification wo
 | Reporting Ratio | reporting vs opinion/editorial | more straight reporting | classifier † |
 | Emotional Balance | calm vs charged tone | calmer reading | classifier †‡ |
 | Attention Profile | mix of fear/outrage/analysis/positive | *(descriptive, not scored)* | classifier †‡ |
+| Open-Mindedness | clicking the other side when shown | more cross-cutting clicks | impressions ◆ |
 
-† needs the GPU classifier run · ‡ **experimental** (see the caveats below)
+† needs the GPU classifier run · ‡ **experimental** · ◆ needs `--behaviors` (MIND impressions)
 
 ---
 
@@ -92,6 +96,21 @@ percentile of `1 − echo`.
 **Read it:** **higher = LESS echo-chambered** (more balanced). A low score flags a
 one-sided diet. *(The name reads backwards to some — high is good here.)*
 **Limit:** same political-subset and noisy-axis caveats as Viewpoint Balance.
+
+### Open-Mindedness ◆
+**Answers:** when the feed actually *shows* you the other side, do you click it?
+**How:** of the **opposite-side** articles in your impressions (what the feed put
+in front of you), the fraction you clicked — a cross-cutting click-through rate,
+reported as a percentile. Needs `--behaviors` (the MIND impressions); `n/a` if you
+were never shown opposite-side political articles.
+**Read it:** high = you engage the other side when offered; low = you skip it even
+when it's right in front of you.
+**Why it's distinct:** this is the report's one **agency** signal — it separates
+*"the algorithm didn't show me the other side"* from *"I chose not to read it,"*
+the supply-vs-demand split at the heart of bridging recommenders. Every other
+score describes your *diet*; this describes your *choice*.
+**Limit:** needs impressions; rests on the noisy lean axis; only defined for users
+actually shown opposite-side political articles.
 
 ### Reporting Ratio †
 **Answers:** how much of your reading is straight reporting vs opinion/editorial?
@@ -144,6 +163,8 @@ outcome. Avoid medicalised or prescriptive language in anything user-facing.
 | Source Diversity | `examples/health_report.py` · `hhi` / `effective_number` / `top_n_share` |
 | Viewpoint Balance | `examples/health_report.py` · `cross_cutting_share` |
 | Echo Chamber Score | `examples/health_report.py` · `echo_score` |
+| Open-Mindedness | `examples/health_report.py` · `selective_exposure_array` (`--behaviors`) |
+| Political-engagement share | `examples/health_report.py` · `compute` (political mask) |
 | Reporting Ratio | `examples/classify_register.py` → `compute(register=…)` |
 | Emotional Balance / Attention | `examples/classify_emotion.py` → `compute(emotion=…)` |
 | scores → percentiles | `examples/health_report.py` · `percentiles` |

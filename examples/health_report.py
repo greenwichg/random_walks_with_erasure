@@ -26,12 +26,19 @@ For a user u, over their clicked items (shares sum to 1):
   (higher = more diverse / more cross-cutting / less echo).  The composite
   "Overall" is an *unweighted, illustrative* average of the v1 percentiles only.
 
-Boundaries:  topic & source over ALL clicks;  viewpoint/echo over the political
-subset.  Users with < ``--min-clicks`` clicks get no scores; viewpoint needs
-≥ ``--min-political`` political clicks.  Reporting-ratio and emotional exposure
-populate **only** when you pass ``--register-csv`` / ``--emotion-csv`` (from
-``classify_register.py`` / ``classify_emotion.py``); the emotion signal is
-**experimental** (headline-only, fuzzy taxonomy -- see the plan).
+* Open-Mindedness (with ``--behaviors``): cross-cutting click-through — of the
+  *opposite-side* articles the feed actually showed a user (MIND impressions),
+  the fraction they clicked.  An *agency* signal (do you read the other side when
+  offered?), distinct from what ended up in the diet.  Percentile.
+* Political share (always): fraction of a user's clicks that are political — shown
+  as context for the viewpoint scores, not itself a score.
+
+Boundaries:  topic & source over ALL clicks;  viewpoint/echo/open-mindedness over
+the political subset.  Users with < ``--min-clicks`` clicks get no scores;
+viewpoint needs ≥ ``--min-political`` political clicks.  Reporting-ratio and
+emotional exposure populate **only** with ``--register-csv`` / ``--emotion-csv``
+(from ``classify_register.py`` / ``classify_emotion.py``); Open-Mindedness only
+with ``--behaviors``.  The emotion signal is **experimental** (headline-only).
 ==============================================================================
 """
 
@@ -144,7 +151,7 @@ def _row_shares(M):
 
 
 def compute(mind: MINDData, min_clicks: int = 5, min_political: int = 3,
-            top_n: int = 4, register=None, emotion=None) -> dict:
+            top_n: int = 4, register=None, emotion=None, selective=None) -> dict:
     """Per-user raw metrics + population percentiles + the aux matrices.
 
     ``register`` (per-column P(reporting)) and ``emotion`` (dict label->per-column
@@ -181,6 +188,12 @@ def compute(mind: MINDData, min_clicks: int = 5, min_political: int = 3,
     enough = n_clicks >= min_clicks
     for arr in (topic, eff_src, topn):
         arr[~enough] = np.nan
+
+    # Share of a user's reading that is political at all (context, not a score).
+    pol_clicks = np.asarray(A @ pol.astype(float)).ravel()
+    political_share = np.divide(pol_clicks, n_clicks, where=n_clicks > 0,
+                                out=np.full(n_users, np.nan))
+    political_share[~enough] = np.nan
 
     # Viewpoint metrics over each user's political clicks.
     cross = np.full(n_users, np.nan)
@@ -227,14 +240,22 @@ def compute(mind: MINDData, min_clicks: int = 5, min_political: int = 3,
         attn[bad] = np.nan
         balance_pct = percentiles(balance)
 
+    # Selective exposure (cross-cutting click-through), if impressions were passed.
+    selective_pct = None
+    if selective is not None:
+        sel = np.asarray(selective, dtype=float).copy()
+        sel[~enough] = np.nan
+        selective_pct = percentiles(sel)
+
     return dict(
-        n_clicks=n_clicks, n_pol=n_pol,
+        n_clicks=n_clicks, n_pol=n_pol, political_share=political_share,
         topic=topic, eff_src=eff_src, topn=topn, cross=cross, echo=echo,
         mean_lean=mean_lean,
         topic_pct=percentiles(topic), source_pct=percentiles(eff_src),
         viewpoint_pct=percentiles(cross), echo_pct=percentiles(-echo),  # less echo = higher
         reporting=reporting, reporting_pct=reporting_pct,
         balance=balance, balance_pct=balance_pct, attn=attn, emo_labels=emo_labels,
+        selective_pct=selective_pct,
         UC=UC, UO=UO, cat_u=cat_u, out_u=out_u,
         catalog_cat_share=shares(np.bincount(_onehot(cats)[0].indices, minlength=n_cat)),
         top_n=top_n,
@@ -264,7 +285,8 @@ def user_report(pop: dict, mind: MINDData, u: int) -> dict:
               "Reporting Ratio": _sc("reporting_pct"),
               "Emotional Balance": _sc("balance_pct"),
               "Echo Chamber Score": _sc("echo_pct"),
-              "Viewpoint Balance": _sc("viewpoint_pct")}
+              "Viewpoint Balance": _sc("viewpoint_pct"),
+              "Open-Mindedness": _sc("selective_pct")}
     have = [v for v in scores.values() if v is not None]
     overall = round(float(np.mean(have))) if have else None
 
@@ -272,9 +294,13 @@ def user_report(pop: dict, mind: MINDData, u: int) -> dict:
     if pop.get("attn") is not None and np.all(np.isfinite(pop["attn"][u])):
         attention = {l: float(pop["attn"][u][i]) for i, l in enumerate(pop["emo_labels"])}
 
+    ps = pop.get("political_share")
+    political_share = (float(ps[u]) if ps is not None and np.isfinite(ps[u]) else None)
+
     return dict(
         user=int(u), n_clicks=int(pop["n_clicks"][u]), n_political=int(pop["n_pol"][u]),
         scores=scores, overall=overall, attention=attention,
+        political_share=political_share,
         top_categories=top_cats, blind_spots=gaps[:2], top_publishers=top_pubs,
         top_n_share=float(pop["topn"][u]) if np.isfinite(pop["topn"][u]) else None,
         effective_sources=float(pop["eff_src"][u]) if np.isfinite(pop["eff_src"][u]) else None,
@@ -321,6 +347,8 @@ def format_report(rep: dict) -> str:
     if np.isfinite(lo):
         L.append(f"Viewpoint mix: left {lo * 100:.0f}% · centre {ce * 100:.0f}% · "
                  f"right {ri * 100:.0f}%")
+    if rep.get("political_share") is not None:
+        L.append(f"Political reading: {rep['political_share'] * 100:.0f}% of your clicks")
     if rep.get("attention"):
         L.append("Attention profile (experimental):  " + "  ".join(
             f"{k} {v * 100:.0f}%" for k, v in rep["attention"].items()))
@@ -394,6 +422,8 @@ def render_html(reports, out: str | None = None,
                   f'<div class="vplab">left {lo * 100:.0f}% · centre {ce * 100:.0f}% · '
                   f'right {ri * 100:.0f}%</div></div>')
         topics = ", ".join(f"{c} {s * 100:.0f}%" for c, s in r["top_categories"])
+        pol = (f' · <span style="color:var(--mute)">{r["political_share"] * 100:.0f}% '
+               f'political</span>' if r.get("political_share") is not None else "")
         if r.get("attention"):
             parts = " · ".join(f"{k} {v * 100:.0f}%" for k, v in r["attention"].items())
             attn_html = (f'<div class="attn"><b>Attention profile</b> '
@@ -405,7 +435,7 @@ def render_html(reports, out: str | None = None,
             f'<div class="card"><div class="head"><div><h2>Reader #{r["user"]}</h2>'
             f'<div class="sub">{r["n_clicks"]} articles · {r["n_political"]} political</div>'
             f'</div>{overall}</div><div class="scores">{bars}</div>{insight}{blind}{vp}'
-            f'<div class="topics"><b>Top topics:</b> {topics}</div>{attn_html}</div>')
+            f'<div class="topics"><b>Top topics:</b> {topics}{pol}</div>{attn_html}</div>')
     html = (f'<!doctype html><html lang="en"><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1">'
             f'<title>{title}</title><style>{_CSS}</style></head><body>'
@@ -415,6 +445,60 @@ def render_html(reports, out: str | None = None,
     if out:
         Path(out).write_text(html, encoding="utf-8")
     return html
+
+
+def _read_impressions(path: str):
+    """``behaviors.tsv`` -> ``(shown, clicked)`` dicts of ``user_id -> set(news_id)``
+    from the Impressions column (``Nxxx-1`` clicked / ``Nxxx-0`` shown-not-clicked)."""
+    shown, clicked = {}, {}
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            p = line.rstrip("\n").split("\t")
+            if len(p) < 5 or not p[4]:
+                continue
+            sh = shown.setdefault(p[1], set())
+            cl = clicked.setdefault(p[1], set())
+            for tok in p[4].split():
+                nid, _, lab = tok.rpartition("-")
+                if not nid:
+                    continue
+                sh.add(nid)
+                if lab == "1":
+                    cl.add(nid)
+    return shown, clicked
+
+
+def selective_exposure_array(mind, behaviors_path: str, center: float = 0.0) -> np.ndarray:
+    """Per-user **cross-cutting click-through**: of the *opposite-side* articles the
+    feed actually showed a user, what fraction did they click?  ``nan`` if none were
+    shown.  Higher = more willing to read the other side when offered (an *agency*
+    signal, distinct from what ended up in their diet)."""
+    shown, clicked = _read_impressions(behaviors_path)
+    item_idx = {nid: i for i, nid in enumerate(np.asarray(mind.dataset.item_ids).tolist())}
+    user_idx = {uid: r for r, uid in enumerate(np.asarray(mind.dataset.user_ids).tolist())}
+    pos = np.asarray(mind.item_positions, dtype=float)
+    theta = np.asarray(mind.user_positions if mind.user_positions is not None
+                       else mind.user_positions_from_clicks(fill=np.nan), dtype=float)
+    out = np.full(mind.n_users, np.nan)
+    for uid, sh in shown.items():
+        u = user_idx.get(uid)
+        if u is None or not np.isfinite(theta[u]):
+            continue
+        side = np.sign(theta[u] - center)
+        if side == 0:
+            continue
+        cl = clicked.get(uid, set())
+        opp_shown = opp_clicked = 0
+        for nid in sh:
+            i = item_idx.get(nid)
+            if i is None or not np.isfinite(pos[i]):
+                continue
+            if np.sign(pos[i] - center) == -side:            # opposite side of centre
+                opp_shown += 1
+                opp_clicked += nid in cl
+        if opp_shown:
+            out[u] = opp_clicked / opp_shown
+    return out
 
 
 def _load_item_csv(path: str, item_ids) -> dict:
@@ -454,16 +538,20 @@ def main():
                     help="news_id,reporting CSV from classify_register.py (Reporting Ratio)")
     ap.add_argument("--emotion-csv", default=None,
                     help="news_id,<buckets> CSV from classify_emotion.py (Attention/Emotional)")
+    ap.add_argument("--behaviors", default=None,
+                    help="MIND behaviors.tsv -> Open-Mindedness (cross-cutting click-through)")
     args = ap.parse_args()
 
     mind = MINDData.load(args.npz)
-    register = emotion = None
+    register = emotion = selective = None
     if args.register_csv:
         register = _load_item_csv(args.register_csv, mind.dataset.item_ids)["reporting"]
     if args.emotion_csv:
         emotion = _load_item_csv(args.emotion_csv, mind.dataset.item_ids)
+    if args.behaviors:
+        selective = selective_exposure_array(mind, args.behaviors)
     pop = compute(mind, min_clicks=args.min_clicks, min_political=args.min_political,
-                  top_n=args.top_n, register=register, emotion=emotion)
+                  top_n=args.top_n, register=register, emotion=emotion, selective=selective)
     eligible = np.flatnonzero(pop["n_clicks"] >= args.min_clicks)
     print(f"users={mind.n_users}  items={mind.n_items}  eligible(>= {args.min_clicks} "
           f"clicks)={eligible.size}\n")
