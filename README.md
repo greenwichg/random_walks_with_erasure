@@ -15,6 +15,11 @@ A clean, tested Python implementation of
 > formula we implement — the erasure closed form, the ideal-point gradients, and
 > all the metrics — each mapped to the exact code that computes it.
 >
+> 🩺 **The Information Health Report?** [`docs/HEALTH_REPORT.md`](docs/HEALTH_REPORT.md)
+> explains every score in the per-user reading-diet report (topic/source/viewpoint/
+> echo + reporting/emotion); [`docs/HEALTH_REPORT_PLAN.md`](docs/HEALTH_REPORT_PLAN.md)
+> is its feasibility/scope analysis.
+>
 > 🎞️ **Comparing against the talk?** [`docs/RWE_talk.pptx`](docs/RWE_talk.pptx)
 > is an editable slide deck recreating Bibek Paudel's WWW'21 presentation with a
 > code-mapping on each slide (regenerate with `python docs/make_deck.py`), and

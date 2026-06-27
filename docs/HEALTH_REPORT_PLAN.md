@@ -1,9 +1,10 @@
 # Information Health Report — feasibility & scope plan
 
-> **Status: planning only — no implementation yet.** Companion to
-> [`PAPER_PLAN.md`](PAPER_PLAN.md) and [`NOVELTY_CHECK.md`](NOVELTY_CHECK.md).
-> This records the feasibility verdict for a per-user *Information Health Report*
-> built on the existing MIND pipeline, so scope is fixed before any code.
+> Companion to [`PAPER_PLAN.md`](PAPER_PLAN.md) and [`NOVELTY_CHECK.md`](NOVELTY_CHECK.md).
+> This is the **feasibility / scope** doc (why these metrics, what's risky). For the
+> **reader's guide to each implemented score**, see
+> [`HEALTH_REPORT.md`](HEALTH_REPORT.md). v1 + v2 are now implemented (see Status
+> at the end).
 
 ## TL;DR verdict
 
