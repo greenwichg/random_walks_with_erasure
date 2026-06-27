@@ -135,9 +135,15 @@ with **no new models**:
 python examples/health_report.py --npz mind_text.npz --sample 3
 ```
 
-Still deferred to **v2** (need new classifiers or labels): reporting-vs-opinion,
-emotional exposure, a stronger lean axis, and a user-facing rendering. The
-composite "Overall" is shown only as an explicitly *illustrative* unweighted
-average, per the scoring caution above.
+**v2 in progress.** Added: a **user-facing HTML report** (`health_report.py
+--html`); a **reporting-vs-opinion** classifier (`examples/classify_register.py`,
+zero-shot → `--register-csv` → Reporting Ratio); and an **experimental emotional
+tone** classifier (`examples/classify_emotion.py`, zero-shot → `--emotion-csv` →
+Emotional Balance + Attention profile, rendered labelled *experimental*). The
+classifiers are Colab/GPU scripts (the `classify_lean.py` pattern); the wiring is
+unit-tested on the fixture. **Still open:** a stronger lean axis (a *data-sourcing*
+task — the ingest already supports `--lean-csv` / `--positions-csv`; the missing
+piece is a license-clean outlet-lean table, not code). The composite "Overall" is
+shown only as an explicitly *illustrative* unweighted average, per the caution above.
 
 _Last updated: 2026-06-27._

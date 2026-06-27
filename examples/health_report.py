@@ -29,7 +29,9 @@ For a user u, over their clicked items (shares sum to 1):
 Boundaries:  topic & source over ALL clicks;  viewpoint/echo over the political
 subset.  Users with < ``--min-clicks`` clicks get no scores; viewpoint needs
 ≥ ``--min-political`` political clicks.  Reporting-ratio and emotional exposure
-are deliberately **out of v1** (need new classifiers -- see the plan).
+populate **only** when you pass ``--register-csv`` / ``--emotion-csv`` (from
+``classify_register.py`` / ``classify_emotion.py``); the emotion signal is
+**experimental** (headline-only, fuzzy taxonomy -- see the plan).
 ==============================================================================
 """
 
@@ -142,8 +144,14 @@ def _row_shares(M):
 
 
 def compute(mind: MINDData, min_clicks: int = 5, min_political: int = 3,
-            top_n: int = 4) -> dict:
-    """Per-user raw metrics + population percentiles + the aux matrices."""
+            top_n: int = 4, register=None, emotion=None) -> dict:
+    """Per-user raw metrics + population percentiles + the aux matrices.
+
+    ``register`` (per-column P(reporting)) and ``emotion`` (dict label->per-column
+    share) are optional enrichment from ``classify_register.py`` /
+    ``classify_emotion.py``; when given they populate the Reporting Ratio /
+    Emotional Balance scores and the attention profile.
+    """
     A = mind.dataset.matrix.tocsr().astype(float)
     n_users = A.shape[0]
     cats = np.asarray(mind.categories)
@@ -190,12 +198,43 @@ def compute(mind: MINDData, min_clicks: int = 5, min_political: int = 3,
         echo[u] = echo_score(L, R)
         mean_lean[u] = float(pp.mean())
 
+    # Optional enrichment: reporting register + emotional attention.
+    reporting = reporting_pct = None
+    if register is not None:
+        reg = np.asarray(register, dtype=float)
+        known = np.isfinite(reg)
+        num = np.asarray(A.multiply(np.where(known, reg, 0.0)).sum(axis=1)).ravel()
+        den = np.asarray(A.multiply(known.astype(float)).sum(axis=1)).ravel()
+        reporting = np.divide(num, den, where=den > 0, out=np.full(n_users, np.nan))
+        reporting[~enough] = np.nan
+        reporting_pct = percentiles(reporting)
+
+    attn = balance = balance_pct = emo_labels = None
+    if emotion is not None:
+        emo_labels = list(emotion)
+        EMO = np.column_stack([np.nan_to_num(np.asarray(emotion[l], dtype=float))
+                               for l in emo_labels])
+        known = np.isfinite(np.asarray(emotion[emo_labels[0]], dtype=float))
+        UE = np.asarray(A @ EMO)
+        cnt = np.asarray(A.multiply(known.astype(float)).sum(axis=1)).ravel()
+        attn = np.divide(UE, cnt[:, None], where=cnt[:, None] > 0,
+                         out=np.full(UE.shape, np.nan))
+        charged = [i for i, l in enumerate(emo_labels) if l.lower() in ("fear", "outrage")]
+        balance = (1.0 - attn[:, charged].sum(axis=1) if charged
+                   else np.full(n_users, np.nan))
+        bad = (cnt < 1) | ~enough
+        balance[bad] = np.nan
+        attn[bad] = np.nan
+        balance_pct = percentiles(balance)
+
     return dict(
         n_clicks=n_clicks, n_pol=n_pol,
         topic=topic, eff_src=eff_src, topn=topn, cross=cross, echo=echo,
         mean_lean=mean_lean,
         topic_pct=percentiles(topic), source_pct=percentiles(eff_src),
         viewpoint_pct=percentiles(cross), echo_pct=percentiles(-echo),  # less echo = higher
+        reporting=reporting, reporting_pct=reporting_pct,
+        balance=balance, balance_pct=balance_pct, attn=attn, emo_labels=emo_labels,
         UC=UC, UO=UO, cat_u=cat_u, out_u=out_u,
         catalog_cat_share=shares(np.bincount(_onehot(cats)[0].indices, minlength=n_cat)),
         top_n=top_n,
@@ -217,19 +256,25 @@ def user_report(pop: dict, mind: MINDData, u: int) -> dict:
     top_pubs = [(out_u[i], s_o[i]) for i in np.argsort(-s_o)[:pop["top_n"]] if s_o[i] > 0]
 
     def _sc(arr):
-        v = pop[arr][u]
-        return None if not np.isfinite(v) else round(float(v))
+        a = pop.get(arr)
+        return None if a is None or not np.isfinite(a[u]) else round(float(a[u]))
 
     scores = {"Topic Diversity": _sc("topic_pct"),
               "Source Diversity": _sc("source_pct"),
-              "Viewpoint Balance": _sc("viewpoint_pct"),
-              "Echo Chamber Score": _sc("echo_pct")}
+              "Reporting Ratio": _sc("reporting_pct"),
+              "Emotional Balance": _sc("balance_pct"),
+              "Echo Chamber Score": _sc("echo_pct"),
+              "Viewpoint Balance": _sc("viewpoint_pct")}
     have = [v for v in scores.values() if v is not None]
     overall = round(float(np.mean(have))) if have else None
 
+    attention = None
+    if pop.get("attn") is not None and np.all(np.isfinite(pop["attn"][u])):
+        attention = {l: float(pop["attn"][u][i]) for i, l in enumerate(pop["emo_labels"])}
+
     return dict(
         user=int(u), n_clicks=int(pop["n_clicks"][u]), n_political=int(pop["n_pol"][u]),
-        scores=scores, overall=overall,
+        scores=scores, overall=overall, attention=attention,
         top_categories=top_cats, blind_spots=gaps[:2], top_publishers=top_pubs,
         top_n_share=float(pop["topn"][u]) if np.isfinite(pop["topn"][u]) else None,
         effective_sources=float(pop["eff_src"][u]) if np.isfinite(pop["eff_src"][u]) else None,
@@ -257,8 +302,7 @@ def format_report(rep: dict) -> str:
                  "(illustrative unweighted avg of v1 dimensions)\n")
     for name, v in rep["scores"].items():
         L.append(f"{name}: {v}/100" if v is not None else f"{name}: n/a")
-    L.append("Reporting Ratio: n/a (v2)")
-    L.append("Emotional Balance: n/a (v2)\n")
+    L.append("")
 
     if rep["top_n_share"] is not None and rep["top_publishers"]:
         L.append("Biggest Insight:")
@@ -277,6 +321,9 @@ def format_report(rep: dict) -> str:
     if np.isfinite(lo):
         L.append(f"Viewpoint mix: left {lo * 100:.0f}% · centre {ce * 100:.0f}% · "
                  f"right {ri * 100:.0f}%")
+    if rep.get("attention"):
+        L.append("Attention profile (experimental):  " + "  ".join(
+            f"{k} {v * 100:.0f}%" for k, v in rep["attention"].items()))
     return "\n".join(L)
 
 
@@ -310,7 +357,7 @@ h1{font-size:22px;margin:0 0 4px} .disclaimer{color:var(--mute);font-size:13px;m
 def _bar(label: str, score) -> str:
     if score is None:
         return (f'<div class="row"><span class="lbl">{label}</span>'
-                f'<span class="na">n/a (v2)</span></div>')
+                f'<span class="na">n/a</span></div>')
     return (f'<div class="row"><span class="lbl">{label}</span>'
             f'<span class="track"><span class="fill" style="width:{score}%"></span></span>'
             f'<span class="val">{score}</span></div>')
@@ -322,7 +369,6 @@ def render_html(reports, out: str | None = None,
     cards = []
     for r in reports:
         bars = "".join(_bar(k, v) for k, v in r["scores"].items())
-        bars += _bar("Reporting Ratio", None) + _bar("Emotional Balance", None)
         overall = (f'<div class="overall">{r["overall"]}<span>/100</span>'
                    f'<div class="ov-note">illustrative</div></div>'
                    if r["overall"] is not None else "")
@@ -348,13 +394,18 @@ def render_html(reports, out: str | None = None,
                   f'<div class="vplab">left {lo * 100:.0f}% · centre {ce * 100:.0f}% · '
                   f'right {ri * 100:.0f}%</div></div>')
         topics = ", ".join(f"{c} {s * 100:.0f}%" for c, s in r["top_categories"])
+        if r.get("attention"):
+            parts = " · ".join(f"{k} {v * 100:.0f}%" for k, v in r["attention"].items())
+            attn_html = (f'<div class="attn"><b>Attention profile</b> '
+                         f'(experimental): {parts}</div>')
+        else:
+            attn_html = ('<div class="attn">Attention profile — run '
+                         'classify_emotion.py to populate</div>')
         cards.append(
             f'<div class="card"><div class="head"><div><h2>Reader #{r["user"]}</h2>'
             f'<div class="sub">{r["n_clicks"]} articles · {r["n_political"]} political</div>'
             f'</div>{overall}</div><div class="scores">{bars}</div>{insight}{blind}{vp}'
-            f'<div class="topics"><b>Top topics:</b> {topics}</div>'
-            f'<div class="attn">Attention profile (fear / outrage / analysis / positive) '
-            f'— coming in v2</div></div>')
+            f'<div class="topics"><b>Top topics:</b> {topics}</div>{attn_html}</div>')
     html = (f'<!doctype html><html lang="en"><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1">'
             f'<title>{title}</title><style>{_CSS}</style></head><body>'
@@ -364,6 +415,28 @@ def render_html(reports, out: str | None = None,
     if out:
         Path(out).write_text(html, encoding="utf-8")
     return html
+
+
+def _load_item_csv(path: str, item_ids) -> dict:
+    """Read a ``news_id,col1,col2,...`` CSV into ``{col: per-column array}`` aligned
+    to ``item_ids`` (a column's value is ``nan`` where the article is absent)."""
+    import csv
+    idx = {nid: i for i, nid in enumerate(np.asarray(item_ids).tolist())}
+    out = None
+    with open(path, newline="", encoding="utf-8") as f:
+        rd = csv.DictReader(f)
+        cols = [c for c in rd.fieldnames if c != "news_id"]
+        out = {c: np.full(len(item_ids), np.nan) for c in cols}
+        for row in rd:
+            i = idx.get(row["news_id"])
+            if i is None:
+                continue
+            for c in cols:
+                try:
+                    out[c][i] = float(row[c])
+                except (TypeError, ValueError):
+                    pass
+    return out
 
 
 def main():
@@ -377,11 +450,20 @@ def main():
     ap.add_argument("--top-n", type=int, default=4, help="publishers in the concentration line")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--html", default=None, help="also write a standalone HTML report here")
+    ap.add_argument("--register-csv", default=None,
+                    help="news_id,reporting CSV from classify_register.py (Reporting Ratio)")
+    ap.add_argument("--emotion-csv", default=None,
+                    help="news_id,<buckets> CSV from classify_emotion.py (Attention/Emotional)")
     args = ap.parse_args()
 
     mind = MINDData.load(args.npz)
+    register = emotion = None
+    if args.register_csv:
+        register = _load_item_csv(args.register_csv, mind.dataset.item_ids)["reporting"]
+    if args.emotion_csv:
+        emotion = _load_item_csv(args.emotion_csv, mind.dataset.item_ids)
     pop = compute(mind, min_clicks=args.min_clicks, min_political=args.min_political,
-                  top_n=args.top_n)
+                  top_n=args.top_n, register=register, emotion=emotion)
     eligible = np.flatnonzero(pop["n_clicks"] >= args.min_clicks)
     print(f"users={mind.n_users}  items={mind.n_items}  eligible(>= {args.min_clicks} "
           f"clicks)={eligible.size}\n")
