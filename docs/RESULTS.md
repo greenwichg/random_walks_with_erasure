@@ -132,11 +132,13 @@ outcome, not a measured opinion change.
    axis — it also appears on the topic axis. So the sweep is a robust *mechanism*,
    not by itself proof of *ideological* depolarization; the depolarization link is
    the simulation.
-3. **Significance is across seeds, not observations.** All tables are 7-seed mean ±
-   std and every vs-P3 difference is consistent across all 7 splits (Wilcoxon
-   `p = 0.016`, the n=7 floor) — i.e. the gaps are *stable*, but this is not a
-   per-user test. A per-user paired test (and a 2nd dataset) would strengthen it
-   further.
+3. **Significance is across seeds, not observations.** The 7-seed tables show the
+   gaps are *stable* (Wilcoxon `p = 0.016`, the n=7 floor), but that is not a
+   per-user test. `eval_mind.py --per-user-sig` now adds a **per-user paired
+   Wilcoxon** (n in the thousands, one split) on the accuracy metrics, and
+   `examples/eval_movielens.py` provides a **2nd-dataset RQ2 replication**
+   (MovieLens-1M) — run both to firm this up (the long-tail half is dataset-
+   agnostic; MovieLens has no ideological axis, so only RQ2 transfers).
 4. **Reproducibility / accuracy of base RWE** is on synthetic + this MIND run; the
    paper's private Twitter numbers are not reproduced.
 
@@ -147,6 +149,8 @@ notebooks/run_mind_eval.ipynb           # end-to-end in Colab
 examples/classify_lean.py               # text lean -> news_id,position
 examples/ingest_mind.py --positions-csv # -> mind_text.npz
 examples/eval_mind.py [--sweep-max-distance ...]
+examples/eval_mind.py --per-user-sig    # per-user paired Wilcoxon vs P3
+examples/eval_movielens.py --ratings ml-1m/ratings.dat   # 2nd-dataset RQ2 check
 examples/validate_lean.py               # axis-quality number
 examples/plot_axis.py --npz mind_text.npz  # users + items on the L<->R scale
 ```
