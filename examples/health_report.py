@@ -34,6 +34,7 @@ are deliberately **out of v1** (need new classifiers -- see the plan).
 """
 
 import argparse
+from pathlib import Path
 
 import numpy as np
 import scipy.sparse as sp
@@ -279,6 +280,92 @@ def format_report(rep: dict) -> str:
     return "\n".join(L)
 
 
+# --------------------------------------------------------------------------- #
+# User-facing rendering (standalone HTML, no external deps)
+# --------------------------------------------------------------------------- #
+_CSS = """
+:root{--ink:#2b2b2b;--mute:#8a8a8a;--user:#4C72B0;--right:#C44E52;--keep:#55A868}
+*{box-sizing:border-box} body{font:15px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;
+  color:var(--ink);max-width:760px;margin:24px auto;padding:0 16px;background:#fafafa}
+h1{font-size:22px;margin:0 0 4px} .disclaimer{color:var(--mute);font-size:13px;margin:0 0 20px}
+.card{background:#fff;border:1px solid #e7e7e7;border-radius:12px;padding:18px 20px;
+  margin:0 0 18px;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+.head{display:flex;justify-content:space-between;align-items:flex-start}
+.head h2{font-size:17px;margin:0} .sub{color:var(--mute);font-size:13px}
+.overall{text-align:center;color:var(--keep);font-weight:700;font-size:30px;line-height:1}
+.overall span{font-size:14px;color:var(--mute)} .ov-note{font-size:10px;color:var(--mute);font-weight:400}
+.scores{margin:14px 0} .row{display:flex;align-items:center;gap:10px;margin:6px 0;font-size:13px}
+.lbl{width:150px;flex:none} .track{flex:1;height:9px;background:#eee;border-radius:6px;overflow:hidden}
+.fill{display:block;height:100%;background:var(--user)} .val{width:30px;text-align:right;color:var(--mute)}
+.na{color:var(--mute);font-style:italic}
+.callout{background:#eef3fb;border-left:3px solid var(--user);padding:8px 12px;border-radius:6px;margin:8px 0;font-size:13px}
+.callout.warn{background:#fcefef;border-left-color:var(--right)}
+.vpwrap{margin:12px 0} .vp{display:flex;height:14px;border-radius:6px;overflow:hidden}
+.vp .l{background:var(--user)} .vp .c{background:#cfcfcf} .vp .r{background:var(--right)}
+.vplab{font-size:12px;color:var(--mute);margin-top:3px}
+.topics{font-size:13px;margin-top:10px} .attn{font-size:12px;color:var(--mute);margin-top:8px;font-style:italic}
+"""
+
+
+def _bar(label: str, score) -> str:
+    if score is None:
+        return (f'<div class="row"><span class="lbl">{label}</span>'
+                f'<span class="na">n/a (v2)</span></div>')
+    return (f'<div class="row"><span class="lbl">{label}</span>'
+            f'<span class="track"><span class="fill" style="width:{score}%"></span></span>'
+            f'<span class="val">{score}</span></div>')
+
+
+def render_html(reports, out: str | None = None,
+                title: str = "Information Health Report") -> str:
+    """Render report dicts (from :func:`user_report`) as a standalone HTML page."""
+    cards = []
+    for r in reports:
+        bars = "".join(_bar(k, v) for k, v in r["scores"].items())
+        bars += _bar("Reporting Ratio", None) + _bar("Emotional Balance", None)
+        overall = (f'<div class="overall">{r["overall"]}<span>/100</span>'
+                   f'<div class="ov-note">illustrative</div></div>'
+                   if r["overall"] is not None else "")
+        insight = ""
+        if r["top_n_share"] is not None and r["top_publishers"]:
+            insight = (f'<div class="callout"><b>Biggest insight.</b> '
+                       f'{r["top_n_share"] * 100:.0f}% of your reading came from your top '
+                       f'{len(r["top_publishers"])} publishers '
+                       f'({r["distinct_outlets"]} distinct sources).</div>')
+        blind = ""
+        if r["blind_spots"]:
+            cat, us, cs = r["blind_spots"][0]
+            blind = (f'<div class="callout warn"><b>Blind spot.</b> Little '
+                     f'&lsquo;{cat}&rsquo; news — {us * 100:.0f}% of your reading vs '
+                     f'{cs * 100:.0f}% of the catalog.</div>')
+        lo, ce, ri = r["viewpoint"]
+        vp = ""
+        if lo == lo:                                          # not NaN
+            vp = (f'<div class="vpwrap"><div class="lbl">Viewpoint mix</div>'
+                  f'<div class="vp"><span class="l" style="width:{lo * 100:.0f}%"></span>'
+                  f'<span class="c" style="width:{ce * 100:.0f}%"></span>'
+                  f'<span class="r" style="width:{ri * 100:.0f}%"></span></div>'
+                  f'<div class="vplab">left {lo * 100:.0f}% · centre {ce * 100:.0f}% · '
+                  f'right {ri * 100:.0f}%</div></div>')
+        topics = ", ".join(f"{c} {s * 100:.0f}%" for c, s in r["top_categories"])
+        cards.append(
+            f'<div class="card"><div class="head"><div><h2>Reader #{r["user"]}</h2>'
+            f'<div class="sub">{r["n_clicks"]} articles · {r["n_political"]} political</div>'
+            f'</div>{overall}</div><div class="scores">{bars}</div>{insight}{blind}{vp}'
+            f'<div class="topics"><b>Top topics:</b> {topics}</div>'
+            f'<div class="attn">Attention profile (fear / outrage / analysis / positive) '
+            f'— coming in v2</div></div>')
+    html = (f'<!doctype html><html lang="en"><head><meta charset="utf-8">'
+            f'<meta name="viewport" content="width=device-width,initial-scale=1">'
+            f'<title>{title}</title><style>{_CSS}</style></head><body>'
+            f'<h1>{title}</h1><p class="disclaimer">A descriptive profile of your '
+            f'<b>MSN-News</b> reading (headlines only) — a mirror, not a verdict. '
+            f'Scores are percentiles vs other readers.</p>{"".join(cards)}</body></html>')
+    if out:
+        Path(out).write_text(html, encoding="utf-8")
+    return html
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -289,6 +376,7 @@ def main():
     ap.add_argument("--min-political", type=int, default=3)
     ap.add_argument("--top-n", type=int, default=4, help="publishers in the concentration line")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--html", default=None, help="also write a standalone HTML report here")
     args = ap.parse_args()
 
     mind = MINDData.load(args.npz)
@@ -305,9 +393,13 @@ def main():
     else:
         rng = np.random.default_rng(args.seed)
         users = rng.choice(eligible, size=min(args.sample, eligible.size), replace=False)
-    for u in users:
-        print(format_report(user_report(pop, mind, int(u))))
+    reports = [user_report(pop, mind, int(u)) for u in users]
+    for rep in reports:
+        print(format_report(rep))
         print("\n" + "-" * 60 + "\n")
+    if args.html:
+        render_html(reports, out=args.html)
+        print(f"wrote HTML report → {args.html}")
 
 
 if __name__ == "__main__":

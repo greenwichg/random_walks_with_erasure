@@ -40,6 +40,23 @@ def test_percentiles():
     assert np.isnan(hr.percentiles([np.nan])[0])
 
 
+def test_render_html(tmp_path):
+    rep = dict(user=7, n_clicks=42, n_political=12,
+               scores={"Topic Diversity": 72, "Source Diversity": 41,
+                       "Viewpoint Balance": 58, "Echo Chamber Score": 63},
+               overall=58, top_categories=[("news", 0.5), ("sports", 0.2)],
+               blind_spots=[("health", 0.0, 0.12)],
+               top_publishers=[("a", 0.4), ("b", 0.3), ("c", 0.1), ("d", 0.05)],
+               top_n_share=0.82, effective_sources=3.1, distinct_outlets=9,
+               viewpoint=(0.3, 0.2, 0.5), mean_lean=0.4)
+    out = tmp_path / "r.html"
+    html = hr.render_html([rep], out=str(out))
+    assert out.exists()
+    assert "Reader #7" in html and "82%" in html and "health" in html
+    assert "n/a (v2)" in html                      # reporting / emotional stubs
+    assert "mirror, not a verdict" in html         # honesty disclaimer
+
+
 def test_end_to_end_on_fixture(tmp_path):
     from rwe import load_mind
     fix = ROOT / "tests" / "fixtures" / "mind_demo"
