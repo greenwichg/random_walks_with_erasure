@@ -1,7 +1,8 @@
 # Real-data results (MIND-small)
 
-First real-data run of the pipeline in `docs/PAPER_PLAN.md`. All numbers are from
-`examples/eval_mind.py` on **MIND-small**; reproduce with the Colab notebook
+First real-data run of the pipeline in `docs/PAPER_PLAN.md`. The MIND tables are
+from `examples/eval_mind.py` on **MIND-small** (a **MovieLens-1M** cross-dataset
+RQ2 check has its own section below); reproduce with the Colab notebook
 (`notebooks/run_mind_eval.ipynb`). All tables — RQ2, RQ3, and the bounded-bridging
 sweep — are **mean ± std over 7 seeds**, with a Wilcoxon signed-rank `p` vs P3 on the
 main comparison. These tables were **independently re-run end-to-end (2026-06-25)
@@ -48,6 +49,32 @@ coverage / surprisal, lowest average item degree) at **AUC parity with RP³-β**
 Top-*k* hit-rate drops — the standard diversity↔accuracy trade-off (same regime as
 RP³-β); `--rwed-v` toward 1.0+ trades it back. These metrics are position-
 independent, so they reproduce the paper's long-tail result directly. ✅
+
+## RQ2 on a second dataset — MovieLens-1M
+
+To check the long-tail win is not MIND-specific, the same RQ2 comparison on
+**MovieLens-1M** (`examples/eval_movielens.py`: 6,040 users · 3,706 items ·
+1,000,209 ratings as implicit feedback; 70/30 split; **mean ± std over 5 seeds**).
+MovieLens has no ideological axis, so only the long-tail half (RQ2) transfers.
+
+| model | hit@10 | auc | gini_div | coverage | avg_deg ↓ | surprisal |
+|---|---|---|---|---|---|---|
+| ItemKNN | .101±.001 | .894±.000 | .024±.000 | .159±.002 | 1300±6.8 | 2.298±.007 |
+| P3 | .094±.000 | .896±.000 | .010±.000 | .046±.002 | 1665±4.4 | 1.880±.004 |
+| RP³-β | .127±.001 | .918±.000 | .024±.000 | .264±.004 | 1474±4.7 | 2.149±.005 |
+| **RWE-D** | **.127±.001** | **.918±.000** | **.025±.000** | **.274±.005** | **1470±4.6** | **2.163±.005** |
+
+**The long-tail result reproduces.** RWE-D **ties RP³-β exactly on accuracy**
+(AUC .918, hit@10 .127, NDCG@10 .426 — identical) while **edging it on the
+long-tail axes**: coverage (.274 vs .264) and surprisal (2.163 vs 2.149) by
+≈2–3× the seed std, with gini and avg-degree trending the same way (within seed
+noise). Against P3 it **dominates on both sides** — far higher coverage
+(.274 vs .046), higher surprisal and lower avg-degree, **and** higher accuracy
+(AUC .918 vs .896, hit@10 .127 vs .094). One honest dataset difference: the
+accuracy↔diversity trade-off is **milder than on MIND** — MovieLens is denser and
+less long-tailed, so RWE-D pays no top-*k* penalty vs P3 here (on MIND it did).
+The *direction* of the long-tail win is identical on both datasets, so it is not a
+MIND artifact. ✅
 
 ## RQ3 — ideological bridging (RWE-B)
 
@@ -134,11 +161,12 @@ outcome, not a measured opinion change.
    the simulation.
 3. **Significance is across seeds, not observations.** The 7-seed tables show the
    gaps are *stable* (Wilcoxon `p = 0.016`, the n=7 floor), but that is not a
-   per-user test. `eval_mind.py --per-user-sig` now adds a **per-user paired
-   Wilcoxon** (n in the thousands, one split) on the accuracy metrics, and
-   `examples/eval_movielens.py` provides a **2nd-dataset RQ2 replication**
-   (MovieLens-1M) — run both to firm this up (the long-tail half is dataset-
-   agnostic; MovieLens has no ideological axis, so only RQ2 transfers).
+   per-user test. Two checks address this. (a) The **MovieLens-1M RQ2 replication**
+   above confirms the long-tail win on a *second* public dataset (5 seeds) — done.
+   (b) `eval_mind.py --per-user-sig` adds a **per-user paired Wilcoxon** (n in the
+   thousands, one split) on the accuracy metrics — run in Colab on `mind_text.npz`
+   (notebook cell `# 8b2`), since MIND is not redistributable. The long-tail half
+   is dataset-agnostic; MovieLens has no ideological axis, so only RQ2 transfers.
 4. **Reproducibility / accuracy of base RWE** is on synthetic + this MIND run; the
    paper's private Twitter numbers are not reproduced.
 
@@ -155,4 +183,5 @@ examples/validate_lean.py               # axis-quality number
 examples/plot_axis.py --npz mind_text.npz  # users + items on the L<->R scale
 ```
 
-_Last updated: 2026-06-25 (tables independently reproduced; axis-alignment check added)._
+_Last updated: 2026-06-28 (MovieLens-1M RQ2 replication added; MIND tables
+independently reproduced 2026-06-25; axis-alignment check)._
