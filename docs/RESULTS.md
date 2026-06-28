@@ -162,11 +162,16 @@ outcome, not a measured opinion change.
 3. **Significance is across seeds, not observations.** The 7-seed tables show the
    gaps are *stable* (Wilcoxon `p = 0.016`, the n=7 floor), but that is not a
    per-user test. Two checks address this. (a) The **MovieLens-1M RQ2 replication**
-   above confirms the long-tail win on a *second* public dataset (5 seeds) — done.
-   (b) `eval_mind.py --per-user-sig` adds a **per-user paired Wilcoxon** (n in the
-   thousands, one split) on the accuracy metrics — run in Colab on `mind_text.npz`
-   (notebook cell `# 8b2`), since MIND is not redistributable. The long-tail half
-   is dataset-agnostic; MovieLens has no ideological axis, so only RQ2 transfers.
+   above confirms the long-tail win on a *second* public dataset (5 seeds). (b) A
+   **per-user paired Wilcoxon vs P3** (`eval_mind.py --per-user-sig`, **n ≈ 2,546**
+   paired users on one split) makes every method's accuracy gap to P3 significant
+   far below any threshold — RWE-D `p ≈ 8e-235 / 2e-102 / 3e-129`
+   (auc / hit@10 / ndcg@10), RWE-B `p ≈ 4e-175 / 2e-34 / 2e-69`, with ItemKNN and
+   RP³-β likewise `p < 1e-60`. This confirms the per-user differences are **real,
+   not seed noise**; the signed-rank test does *not* crown a winner — for raw
+   accuracy **P3 leads**, and RWE-D / RWE-B trade it for diversity / bridging (it is
+   that *gap* which is significant). The long-tail half is dataset-agnostic;
+   MovieLens has no ideological axis, so only RQ2 transfers.
 4. **Reproducibility / accuracy of base RWE** is on synthetic + this MIND run; the
    paper's private Twitter numbers are not reproduced.
 
@@ -183,5 +188,5 @@ examples/validate_lean.py               # axis-quality number
 examples/plot_axis.py --npz mind_text.npz  # users + items on the L<->R scale
 ```
 
-_Last updated: 2026-06-28 (MovieLens-1M RQ2 replication added; MIND tables
-independently reproduced 2026-06-25; axis-alignment check)._
+_Last updated: 2026-06-28 (MovieLens-1M RQ2 replication + per-user paired
+significance folded in; MIND tables independently reproduced 2026-06-25)._

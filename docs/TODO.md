@@ -27,16 +27,16 @@
 - [x] Sanity-check the **enriched health report** on real users — `# 8d`; surfaced
       that it needs the full-catalog `mind_full.npz` (+ `--require-political` for the
       demo); fixed
-- [ ] **Per-user significance** on real MIND — notebook cell `# 8b2`
-      (`eval_mind.py --npz mind_text.npz --per-user-sig --no-bprmf`) — Colab-only
-      (MIND not redistributable)
+- [x] **Per-user significance** on real MIND — cell `# 8b2`: every method's
+      accuracy gap to P3 is per-user significant (RWE-D `p ≈ 8e-235`, n ≈ 2,546) →
+      folded into `RESULTS.md` limitation #3
 - [x] **MovieLens RQ2** — ran here (5 seeds); RWE-D ties RP³-β on accuracy, edges it
       on coverage/surprisal → folded into `RESULTS.md`
 - [ ] **Full notebook** clean top-to-bottom run on a fresh runtime
 
 ## 2. Fold results into the docs — [me] · after you paste outputs
 
-- [ ] Per-user-sig p-values → `RESULTS.md` limitation #3 (waiting on `# 8b2` output)
+- [x] Per-user-sig p-values → `RESULTS.md` limitation #3
 - [x] New **"Second dataset (MovieLens-1M)"** section in `RESULTS.md`
 - [x] Decide emotion-metric framing — **keep, labelled experimental** (eyeball
       confirmed the documented behaviour)
