@@ -46,6 +46,13 @@ and emotional tone. It's the *auditing* side of the project's diversification wo
   the RWE evaluation collapses every item to the single category `news`, which makes
   Topic Diversity undefined and "100% political" true by construction — the viewpoint
   metrics still work there, but the Variety section goes blank.
+- **The two metric families pull in opposite directions — that's expected.** On a
+  full catalog, Topic/Source/Reporting/Emotion apply to everyone, but most readers
+  click *little or no* political news, so their Viewpoint / Echo / Open-Mindedness
+  scores are **legitimately `n/a`** (not broken — those metrics only mean something
+  for political readers). To see a reader who exercises *every* dimension, sample with
+  `--require-political` (the notebook does): it draws users above the political-click
+  floor, who still have diverse topics so the other metrics stay meaningful.
 
 ## Quick reference
 

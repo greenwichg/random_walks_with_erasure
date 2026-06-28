@@ -59,6 +59,14 @@ def test_render_html(tmp_path):
     assert "mirror, not a verdict" in html         # honesty disclaimer
 
 
+def test_eligible_pool_filters_by_political_floor():
+    pop = {"n_clicks": np.array([10, 8, 3, 12]),   # idx 2 below click floor
+           "n_pol":    np.array([5, 1, 9, 4])}
+    assert list(hr._eligible_pool(pop, min_clicks=5)) == [0, 1, 3]
+    # adding the political floor drops the click-eligible user with too few politics
+    assert list(hr._eligible_pool(pop, min_clicks=5, min_political=3)) == [0, 3]
+
+
 def test_source_diversity_na_carries_reason_on_mind():
     # MIND has no publisher labels (MSN URLs) -> Source Diversity is structurally
     # n/a; the report should say *why* rather than show a bare, broken-looking n/a.

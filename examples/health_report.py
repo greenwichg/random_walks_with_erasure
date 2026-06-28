@@ -577,6 +577,19 @@ def _load_item_csv(path: str, item_ids) -> dict:
     return out
 
 
+def _eligible_pool(pop: dict, min_clicks: int, min_political: int | None = None) -> np.ndarray:
+    """User indices above the click floor (and, if given, the political-click floor).
+
+    On a full-catalog ingest most users read little or no political news, so their
+    viewpoint/echo/open-mindedness scores are *legitimately* ``n/a``.  Passing
+    ``min_political`` restricts a demo sample to users for whom those scores are
+    defined (they still have diverse topics, so the other metrics stay meaningful)."""
+    pool = np.flatnonzero(pop["n_clicks"] >= min_clicks)
+    if min_political is not None:
+        pool = pool[pop["n_pol"][pool] >= min_political]
+    return pool
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -594,6 +607,9 @@ def main():
                     help="news_id,<buckets> CSV from classify_emotion.py (Attention/Emotional)")
     ap.add_argument("--behaviors", default=None,
                     help="MIND behaviors.tsv -> Open-Mindedness (cross-cutting click-through)")
+    ap.add_argument("--require-political", action="store_true",
+                    help="sample only users with >= --min-political political clicks, so "
+                         "the viewpoint/echo/open-mindedness scores populate in the demo")
     args = ap.parse_args()
 
     mind = MINDData.load(args.npz)
@@ -606,17 +622,23 @@ def main():
         selective = selective_exposure_array(mind, args.behaviors)
     pop = compute(mind, min_clicks=args.min_clicks, min_political=args.min_political,
                   top_n=args.top_n, register=register, emotion=emotion, selective=selective)
-    eligible = np.flatnonzero(pop["n_clicks"] >= args.min_clicks)
+    eligible = _eligible_pool(pop, args.min_clicks)
     print(f"users={mind.n_users}  items={mind.n_items}  eligible(>= {args.min_clicks} "
-          f"clicks)={eligible.size}\n")
-    if eligible.size == 0:
-        print("no users meet the click floor."); return
+          f"clicks)={eligible.size}")
+    pool = eligible
+    if args.require_political:
+        pool = _eligible_pool(pop, args.min_clicks, args.min_political)
+        print(f"with >= {args.min_political} political clicks: {pool.size} "
+              "(the viewpoint/echo/open-mindedness scores populate for these)")
+    print()
+    if pool.size == 0:
+        print("no users meet the floor."); return
 
     if args.user is not None:
         users = [args.user]
     else:
         rng = np.random.default_rng(args.seed)
-        users = rng.choice(eligible, size=min(args.sample, eligible.size), replace=False)
+        users = rng.choice(pool, size=min(args.sample, pool.size), replace=False)
     reports = [user_report(pop, mind, int(u)) for u in users]
     for rep in reports:
         print(format_report(rep))
