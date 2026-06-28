@@ -359,35 +359,58 @@ def format_report(rep: dict) -> str:
 # User-facing rendering (standalone HTML, no external deps)
 # --------------------------------------------------------------------------- #
 _CSS = """
-:root{--ink:#2b2b2b;--mute:#8a8a8a;--user:#4C72B0;--right:#C44E52;--keep:#55A868}
+:root{--ink:#2b2b2b;--mute:#8a8a8a;--user:#4C72B0;--right:#C44E52;--keep:#55A868;--score:#5a7d9a}
 *{box-sizing:border-box} body{font:15px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;
   color:var(--ink);max-width:760px;margin:24px auto;padding:0 16px;background:#fafafa}
-h1{font-size:22px;margin:0 0 4px} .disclaimer{color:var(--mute);font-size:13px;margin:0 0 20px}
+h1{font-size:22px;margin:0 0 4px} .disclaimer{color:var(--mute);font-size:13px;margin:0 0 4px}
+.legend{color:var(--mute);font-size:12px;margin:0 0 20px}
 .card{background:#fff;border:1px solid #e7e7e7;border-radius:12px;padding:18px 20px;
   margin:0 0 18px;box-shadow:0 1px 3px rgba(0,0,0,.04)}
 .head{display:flex;justify-content:space-between;align-items:flex-start}
 .head h2{font-size:17px;margin:0} .sub{color:var(--mute);font-size:13px}
 .overall{text-align:center;color:var(--keep);font-weight:700;font-size:30px;line-height:1}
 .overall span{font-size:14px;color:var(--mute)} .ov-note{font-size:10px;color:var(--mute);font-weight:400}
-.scores{margin:14px 0} .row{display:flex;align-items:center;gap:10px;margin:6px 0;font-size:13px}
-.lbl{width:150px;flex:none} .track{flex:1;height:9px;background:#eee;border-radius:6px;overflow:hidden}
-.fill{display:block;height:100%;background:var(--user)} .val{width:30px;text-align:right;color:var(--mute)}
-.na{color:var(--mute);font-style:italic}
+.scores{margin:10px 0}
+.section{font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
+  color:var(--mute);margin:13px 0 5px}
+.row{display:flex;align-items:center;gap:10px;margin:7px 0;font-size:13px}
+.lbl{width:172px;flex:none;line-height:1.2} .hint{display:block;font-size:10px;color:var(--mute)}
+.track{flex:1;height:9px;background:#eee;border-radius:6px;position:relative}
+.fill{display:block;height:100%;background:var(--score);border-radius:6px}
+.mid{position:absolute;left:50%;top:-3px;height:15px;width:1px;background:rgba(0,0,0,.30)}
+.val{width:28px;text-align:right;color:var(--mute)} .na{color:var(--mute);font-style:italic}
 .callout{background:#eef3fb;border-left:3px solid var(--user);padding:8px 12px;border-radius:6px;margin:8px 0;font-size:13px}
 .callout.warn{background:#fcefef;border-left-color:var(--right)}
-.vpwrap{margin:12px 0} .vp{display:flex;height:14px;border-radius:6px;overflow:hidden}
+.vpwrap,.attnwrap{margin:12px 0} .vplbl,.attnlbl{font-size:13px;font-weight:600}
+.vp,.attn-bar{display:flex;height:14px;border-radius:6px;overflow:hidden;margin-top:4px}
 .vp .l{background:var(--user)} .vp .c{background:#cfcfcf} .vp .r{background:var(--right)}
-.vplab{font-size:12px;color:var(--mute);margin-top:3px}
+.attn-bar span{display:block;height:100%}
+.vplab,.attn-lab{font-size:12px;color:var(--mute);margin-top:3px}
+.exp{font-size:10px;color:var(--mute);font-style:italic;font-weight:400}
 .topics{font-size:13px;margin-top:10px} .attn{font-size:12px;color:var(--mute);margin-top:8px;font-style:italic}
 """
 
+# Score grouping, one-line hints, and Attention-Profile bucket colours (UI).
+_GROUPS = [("Variety", ["Topic Diversity", "Source Diversity"]),
+           ("Balance & openness", ["Viewpoint Balance", "Echo Chamber Score", "Open-Mindedness"]),
+           ("Tone & substance", ["Reporting Ratio", "Emotional Balance"])]
+_HINTS = {"Topic Diversity": "how many topics you read",
+          "Source Diversity": "how many publishers",
+          "Viewpoint Balance": "reading across the centre",
+          "Echo Chamber Score": "higher = less one-sided",
+          "Open-Mindedness": "clicking the other side when shown",
+          "Reporting Ratio": "reporting vs opinion",
+          "Emotional Balance": "calmer vs more charged"}
+_ATTN_COLORS = {"fear": "#C44E52", "outrage": "#E08A3E", "analysis": "#4C72B0",
+                "positive": "#55A868", "neutral": "#cfcfcf"}
 
-def _bar(label: str, score) -> str:
+
+def _bar(label: str, score, hint: str = "") -> str:
+    lab = f'<span class="lbl">{label}<span class="hint">{hint}</span></span>'
     if score is None:
-        return (f'<div class="row"><span class="lbl">{label}</span>'
-                f'<span class="na">n/a</span></div>')
-    return (f'<div class="row"><span class="lbl">{label}</span>'
-            f'<span class="track"><span class="fill" style="width:{score}%"></span></span>'
+        return f'<div class="row">{lab}<span class="na">n/a</span></div>'
+    return (f'<div class="row">{lab}<span class="track">'
+            f'<span class="fill" style="width:{score}%"></span><i class="mid"></i></span>'
             f'<span class="val">{score}</span></div>')
 
 
@@ -396,7 +419,13 @@ def render_html(reports, out: str | None = None,
     """Render report dicts (from :func:`user_report`) as a standalone HTML page."""
     cards = []
     for r in reports:
-        bars = "".join(_bar(k, v) for k, v in r["scores"].items())
+        bars = ""
+        for sect, names in _GROUPS:
+            present = [n for n in names if n in r["scores"]]
+            if not present:
+                continue
+            bars += f'<div class="section">{sect}</div>'
+            bars += "".join(_bar(n, r["scores"][n], _HINTS.get(n, "")) for n in present)
         overall = (f'<div class="overall">{r["overall"]}<span>/100</span>'
                    f'<div class="ov-note">illustrative</div></div>'
                    if r["overall"] is not None else "")
@@ -415,7 +444,7 @@ def render_html(reports, out: str | None = None,
         lo, ce, ri = r["viewpoint"]
         vp = ""
         if lo == lo:                                          # not NaN
-            vp = (f'<div class="vpwrap"><div class="lbl">Viewpoint mix</div>'
+            vp = (f'<div class="vpwrap"><span class="vplbl">Viewpoint mix</span>'
                   f'<div class="vp"><span class="l" style="width:{lo * 100:.0f}%"></span>'
                   f'<span class="c" style="width:{ce * 100:.0f}%"></span>'
                   f'<span class="r" style="width:{ri * 100:.0f}%"></span></div>'
@@ -425,9 +454,15 @@ def render_html(reports, out: str | None = None,
         pol = (f' · <span style="color:var(--mute)">{r["political_share"] * 100:.0f}% '
                f'political</span>' if r.get("political_share") is not None else "")
         if r.get("attention"):
-            parts = " · ".join(f"{k} {v * 100:.0f}%" for k, v in r["attention"].items())
-            attn_html = (f'<div class="attn"><b>Attention profile</b> '
-                         f'(experimental): {parts}</div>')
+            segs = "".join(
+                f'<span style="width:{v * 100:.1f}%;background:'
+                f'{_ATTN_COLORS.get(k.lower(), "#cfcfcf")}"></span>'
+                for k, v in r["attention"].items())
+            lab = " · ".join(f"{k} {v * 100:.0f}%" for k, v in r["attention"].items())
+            attn_html = (f'<div class="attnwrap"><span class="attnlbl">Attention profile</span> '
+                         f'<span class="exp">experimental</span>'
+                         f'<div class="attn-bar">{segs}</div>'
+                         f'<div class="attn-lab">{lab}</div></div>')
         else:
             attn_html = ('<div class="attn">Attention profile — run '
                          'classify_emotion.py to populate</div>')
@@ -440,8 +475,10 @@ def render_html(reports, out: str | None = None,
             f'<meta name="viewport" content="width=device-width,initial-scale=1">'
             f'<title>{title}</title><style>{_CSS}</style></head><body>'
             f'<h1>{title}</h1><p class="disclaimer">A descriptive profile of your '
-            f'<b>MSN-News</b> reading (headlines only) — a mirror, not a verdict. '
-            f'Scores are percentiles vs other readers.</p>{"".join(cards)}</body></html>')
+            f'<b>MSN-News</b> reading (headlines only) — a mirror, not a verdict.</p>'
+            f'<p class="legend">Scores are percentiles vs other readers; the '
+            f'&#9474; tick marks the typical reader (50th), and higher is healthier.</p>'
+            f'{"".join(cards)}</body></html>')
     if out:
         Path(out).write_text(html, encoding="utf-8")
     return html
