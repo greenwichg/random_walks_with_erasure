@@ -43,14 +43,23 @@ surprisal, the RQ3 UW measures), and the aggregate-over-a-user's-clicks pattern 
 | Item | Data source | From existing data? | Reliability | Verdict |
 |---|---|---|---|---|
 | What you consumed | history + metadata | ✅ direct | high | **v1** |
-| Topic diversity | `categories` / `subcategories` (curated) | ✅ | high | **v1** |
-| Source diversity / concentration | `outlets` | ✅ | high | **v1 (strongest)** |
+| Topic diversity | `categories` / `subcategories` (curated) | ✅ | high | **v1** † |
+| Source diversity / concentration | `outlets` | ✅ | high | **v1 (strongest in general)** ‡ |
 | Viewpoint L/C/R exposure | `item_positions` | ✅ | medium (weak axis, Spearman 0.27) | **v1, political subset** |
 | Echo-chamber risk | consumption analogue of RQ3 UW metrics | ✅ (reuse `metrics.py`) | medium (same axis caveat) | **v1, caveated** |
 | Blind spots / "missed" (descriptive) | under-represented categories/sources vs catalog | ✅ | high *as description* | **v1** |
 | Reporting vs opinion | news/opinion classifier | ❌ enrichment | medium | **v2** |
 | Emotional exposure (fear/outrage/…) | emotion classifier | ❌ enrichment | **low** | **v2** |
 | Overall + sub-scores (0–100) | normalisation of the above | ✅ compute / ❌ defensible scale | low unless percentile | **reframe** |
+
+> † **On MIND, run the report over a *full-catalog* ingest** (`mind_full.npz`, all
+> topics). The `--political-only` `mind_text.npz` used for the RWE evaluation has a
+> single category (`news`), so topic entropy is undefined and the Variety section
+> blanks. ‡ **Source diversity is structurally `n/a` on MIND** — its URLs are MSN
+> URLs, so the publisher isn't in the data; it's the strongest dimension only on a
+> dataset that *carries* publishers (EB-NeRD, or an external source-map). The two
+> "Variety" metrics, strongest in principle, are the weakest *on this dataset*; the
+> political viewpoint metrics are what actually populate on the lean slice.
 
 ## Metrics triage
 

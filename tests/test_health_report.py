@@ -59,6 +59,27 @@ def test_render_html(tmp_path):
     assert "mirror, not a verdict" in html         # honesty disclaimer
 
 
+def test_source_diversity_na_carries_reason_on_mind():
+    # MIND has no publisher labels (MSN URLs) -> Source Diversity is structurally
+    # n/a; the report should say *why* rather than show a bare, broken-looking n/a.
+    rep = dict(user=1, n_clicks=20, n_political=0,
+               scores={"Topic Diversity": 55, "Source Diversity": None,
+                       "Reporting Ratio": None, "Emotional Balance": None,
+                       "Echo Chamber Score": None, "Viewpoint Balance": None,
+                       "Open-Mindedness": None},
+               overall=55, attention=None, political_share=0.0,
+               top_categories=[("news", 0.6), ("sports", 0.4)], blind_spots=[],
+               top_publishers=[], top_n_share=None, effective_sources=None,
+               distinct_outlets=0, viewpoint=(float("nan"),) * 3, mean_lean=None)
+    html = hr.render_html([rep])
+    assert "MIND URLs are MSN" in html              # honest reason on the n/a bar
+    assert "no publisher labels" in hr.format_report(rep)
+    # the reason is *only* attached to Source Diversity, not every n/a
+    rep["distinct_outlets"] = 7                       # publishers known -> no reason
+    rep["scores"]["Source Diversity"] = 33
+    assert "MIND URLs are MSN" not in hr.render_html([rep])
+
+
 def test_end_to_end_on_fixture(tmp_path):
     from rwe import load_mind
     fix = ROOT / "tests" / "fixtures" / "mind_demo"

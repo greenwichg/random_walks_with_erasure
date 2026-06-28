@@ -318,6 +318,17 @@ def _political_positions(mind: MINDData, u: int) -> np.ndarray:
     return pos[items][pol[items] & np.isfinite(pos[items])]
 
 
+def _na_reason(rep: dict, name: str) -> str:
+    """Short why-it's-blank note for a *structurally* undefined score, so an
+    unavoidable ``n/a`` reads as a known limitation rather than a broken metric.
+    On MIND, Source Diversity is always undefined: the URLs are MSN URLs, so the
+    original publisher isn't in the data (needs an external source-map)."""
+    if (name == "Source Diversity" and rep["scores"].get(name) is None
+            and rep.get("distinct_outlets", 0) == 0):
+        return "no publisher labels — MIND URLs are MSN"
+    return ""
+
+
 def format_report(rep: dict) -> str:
     """Render the report dict as the INFORMATION HEALTH REPORT text block."""
     L = ["INFORMATION HEALTH REPORT", "=" * 32,
@@ -327,7 +338,11 @@ def format_report(rep: dict) -> str:
         L.append(f"Overall Score: {rep['overall']}/100   "
                  "(illustrative unweighted avg of v1 dimensions)\n")
     for name, v in rep["scores"].items():
-        L.append(f"{name}: {v}/100" if v is not None else f"{name}: n/a")
+        if v is not None:
+            L.append(f"{name}: {v}/100")
+        else:
+            why = _na_reason(rep, name)
+            L.append(f"{name}: n/a" + (f"  ({why})" if why else ""))
     L.append("")
 
     if rep["top_n_share"] is not None and rep["top_publishers"]:
@@ -405,10 +420,11 @@ _ATTN_COLORS = {"fear": "#C44E52", "outrage": "#E08A3E", "analysis": "#4C72B0",
                 "positive": "#55A868", "neutral": "#cfcfcf"}
 
 
-def _bar(label: str, score, hint: str = "") -> str:
+def _bar(label: str, score, hint: str = "", reason: str = "") -> str:
     lab = f'<span class="lbl">{label}<span class="hint">{hint}</span></span>'
     if score is None:
-        return f'<div class="row">{lab}<span class="na">n/a</span></div>'
+        na = f'n/a <span class="exp">{reason}</span>' if reason else "n/a"
+        return f'<div class="row">{lab}<span class="na">{na}</span></div>'
     return (f'<div class="row">{lab}<span class="track">'
             f'<span class="fill" style="width:{score}%"></span><i class="mid"></i></span>'
             f'<span class="val">{score}</span></div>')
@@ -425,7 +441,8 @@ def render_html(reports, out: str | None = None,
             if not present:
                 continue
             bars += f'<div class="section">{sect}</div>'
-            bars += "".join(_bar(n, r["scores"][n], _HINTS.get(n, "")) for n in present)
+            bars += "".join(_bar(n, r["scores"][n], _HINTS.get(n, ""), _na_reason(r, n))
+                            for n in present)
         overall = (f'<div class="overall">{r["overall"]}<span>/100</span>'
                    f'<div class="ov-note">illustrative</div></div>'
                    if r["overall"] is not None else "")

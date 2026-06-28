@@ -40,6 +40,12 @@ and emotional tone. It's the *auditing* side of the project's diversification wo
 - **Political-engagement share** is shown as *context, not a score* — what fraction
   of your reading is political at all. It keeps the viewpoint scores honest: a
   5%-political reader and an 80%-political reader are very different people.
+- **Feed it a full-catalog ingest, not the political slice.** The report profiles a
+  whole *reading diet*, so it needs an `.npz` ingested over **all** topics (the
+  notebook builds `mind_full.npz`). The `--political-only` `mind_text.npz` used for
+  the RWE evaluation collapses every item to the single category `news`, which makes
+  Topic Diversity undefined and "100% political" true by construction — the viewpoint
+  metrics still work there, but the Variety section goes blank.
 
 ## Quick reference
 
@@ -77,6 +83,10 @@ index `HHI = Σ sₒ²` over your publisher shares `sₒ`. Reading 5 sources equ
 gives an effective 5; reading mostly one gives ≈1. Reported as a percentile.
 **Read it:** high = a balanced spread of outlets; low = a few publishers dominate.
 **Limit:** articles whose publisher couldn't be parsed from the URL are excluded.
+**On MIND this is always `n/a`** — MIND's URLs are *MSN* URLs, so the original
+publisher isn't in the data. It needs an external source-map (e.g. EB-NeRD, which
+carries publishers, or a resolved MSN-provider table); the report says so on the
+bar rather than showing a bare blank.
 
 ### Viewpoint Balance
 **Answers:** does your political reading cross the centre, or stay on your side?
