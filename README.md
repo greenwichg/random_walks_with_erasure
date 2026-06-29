@@ -25,6 +25,13 @@ A clean, tested Python implementation of
 > code-mapping on each slide (regenerate with `python docs/make_deck.py`), and
 > [`docs/TALK.md`](docs/TALK.md) is the concise **verification report** —
 > slide → code, with the honest caveats.
+>
+> 📓 **Run it on real data in Colab** — each notebook downloads the data, ingests,
+> and prints the RQ2/RQ3 tables end-to-end (Drive-cache resilient):
+> [![Open MIND in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/greenwichg/random_walks_with_erasure/blob/claude/sleepy-gates-oecof1/notebooks/run_mind_eval.ipynb)
+> **MIND** (news; text-lean + co-click axes) ·
+> [![Open Politosphere in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/greenwichg/random_walks_with_erasure/blob/claude/sleepy-gates-oecof1/notebooks/run_politosphere_eval.ipynb)
+> **Politosphere** (Reddit; behavioral ideal-point axis).
 
 RWE is a modified random-walk exploration of the bipartite user–item feedback
 graph in which the mass reaching certain nodes is systematically *erased* and
