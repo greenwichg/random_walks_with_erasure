@@ -1,0 +1,48 @@
+# Illustrative political lean of well-known subreddits, on the AllSides-style
+# -2..+2 scale (left .. right). Used by ingest_politosphere.py to ORIENT and
+# VALIDATE the ideal-point axis (the learned axis is sign-arbitrary; these leans
+# fix its orientation and give a lean_corr / agreement number).
+#
+# These are coarse, contested, and time-dependent labels (subreddit cultures
+# shift) -- exactly like the outlet-lean caveat in rwe/mind.py. For a paper,
+# replace with a vetted, multi-rater labeling and cite it. Names match Reddit's
+# canonical casing but are matched case-insensitively.
+subreddit,lean
+# --- right ---
+Conservative,2
+Conservatives,2
+Republican,2
+The_Donald,2
+AskTrumpSupporters,2
+askaconservative,2
+ConservativesOnly,2
+NoLeftMedia,2
+# --- lean right ---
+Libertarian,1
+progun,1
+Republican_misfits,1
+tuesday,1
+# --- center ---
+NeutralPolitics,0
+moderatepolitics,0
+centrist,0
+geopolitics,0
+PoliticalDiscussion,0
+# --- lean left ---
+neoliberal,-1
+hillaryclinton,-1
+JoeBiden,-1
+BlueMidterm2018,-1
+VoteBlue,-1
+# --- left ---
+democrats,-2
+progressive,-2
+Liberal,-2
+SandersForPresident,-2
+Political_Revolution,-2
+WayOfTheBern,-2
+socialism,-2
+Anarchism,-2
+Marxism,-2
+LateStageCapitalism,-2
+ChapoTrapHouse,-2

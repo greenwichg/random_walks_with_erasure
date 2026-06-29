@@ -44,8 +44,26 @@
 - [x] Decide emotion-metric framing — **keep, labelled experimental** (eyeball
       confirmed the documented behaviour)
 
-## 3. Stronger lean axis — ensemble route built; run it · [you] Colab
+## 3. Stronger lean axis — behavioral ideal-point is the real fix · [you+me]
 
+The MIND text-lean axis is a weak / construct-mismatched proxy (it conflates
+*topic* with *stance*; a 40-item human check came out ≈ 0). The principled fix is a
+**behavioral** axis from political-endorsement data — now built and proven:
+
+- [x] **Reddit Politosphere ingest — the real fix** — `examples/ingest_politosphere.py`
+      parses the public Politosphere comments (bz2/JSON-lines) into a **user×subreddit
+      endorsement** `.npz` in the MINDData container; `IdeologyModel` then fits a latent
+      L↔R axis **from behaviour alone** (no text, no Twitter API). `examples/data/
+      subreddit_lean.csv` orients + validates it. **Synthetic proof: `lean_corr=0.94`**,
+      axis splits progressive < democrats < center < Conservative < Republican.
+      Unit-tested (6 tests). The whole MIND eval/plot pipeline runs on it unchanged.
+- [ ] **Run it on real Politosphere** — [you] download a slice from
+      <https://zenodo.org/records/5851729> (confirm its license), then
+      `ingest_politosphere.py --ideology` → `eval_mind` / `plot_axis`. This gives RQ3
+      a *genuine* ideological axis — the headline-proxy limitation gone — and a clean
+      `lean_corr` validation number. Then I fold it into RESULTS / the paper.
+
+_MIND text-axis attempts, kept for the record:_
 - [x] **Ensemble tooling** — `examples/ensemble_lean.py` (z-score + average
       independent bias models; prints pairwise convergent validity) + notebook
       `# 7b`. Averaging cuts single-model noise — the *codeable* lever for the axis
