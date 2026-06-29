@@ -88,6 +88,13 @@ it is the **mirror image** of the MIND report:
   "communities" instead of "MSN-News reading"/"articles"/"publishers" — so the report
   doesn't mislabel Reddit data as news. Open-Mindedness stays `n/a` (no impressions).
 
+Two real readers on the validated axis — a one-sided participant (#9553, Echo 45) next
+to a cross-cutting one (#7667, Echo 88). This is the report's balance section shown as
+*measurements* rather than the directional hints it gives on MIND (see
+[`RESULTS.md`](RESULTS.md) for the table and the per-user caveat):
+
+![A real Politosphere Information Health Report — one-sided vs balanced reader on the validated behavioral axis](images/polito_health_card.png)
+
 ## Quick reference
 
 | Score | Measures | Higher means | Needs |

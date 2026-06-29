@@ -159,6 +159,18 @@ Politosphere additionally carries a **validated** behavioral left–right axis
 (`lean_corr = 0.65`) and an independent RQ3 where RWE-B again bridges hardest
 (§7, limitation 1).
 
+That same validated axis powers the per-user **Information Health Report**
+(`examples/health_report.py --domain reddit`): on Politosphere its **Viewpoint
+Balance** and **Echo Chamber** metrics rest on the validated axis — the inverse of
+MIND, where Variety works but the political metrics ride the weak text-lean proxy. It
+cleanly separates a one-sided reader (#9553, Echo 45) from cross-cutting ones
+(#7667 / #12757, Echo ≈ 88), so the recommender's diversification objective is made
+legible per reader. The per-user reads stay directional (they inherit the axis's
+imperfections — `lean_corr 0.65`, n=20 labels, single seed). See `docs/RESULTS.md` for
+the table.
+
+![Politosphere Information Health Report — two contrasting readers on the validated behavioral axis](images/polito_health_card.png)
+
 ### 6.2 RQ2 — Ideological bridging (RWE-B)
 
 | model | RecRange | shift | **UW-shift** | UW-recs |

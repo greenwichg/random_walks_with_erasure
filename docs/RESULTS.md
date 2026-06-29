@@ -149,6 +149,37 @@ suggestive one: the same RWE-B mechanism that bridges the (weak) MIND text-lean 
 also bridges a left–right axis recovered from real endorsement behaviour. (Caveats as
 above: n=20 labels, single seed, threshold-dependent.)
 
+### The audit side — the balance metrics, demonstrated on the validated axis
+
+The same validated axis powers the per-user **Information Health Report**
+(`examples/health_report.py --domain reddit`), the project's *auditing* companion to
+the recommender. On Politosphere it is the **inverse of MIND**: Topic/Reporting/Emotion
+go `n/a` (one category, no article text), but **Viewpoint Balance** and **Echo Chamber**
+now rest on the *validated* behavioral axis — the metrics MIND could not support — and
+Source Diversity reads as community breadth. Three real readers (single seed,
+pseudonymous indices):
+
+| reader | #subs | top subreddits | mix L/C/R | Viewpoint | Echo (↑=balanced) | reads as |
+|---|---|---|---|---|---|---|
+| #9553 | 7 | r/DebateCommunism, r/ShitLiberalsSay, r/CapitalismVSocialism | 57/29/14 | 87 | **45** | left-leaning, **one-sided** |
+| #7667 | 8 | r/AskTrumpSupporters, r/Ask_Politics, r/POLITIC | 38/12/50 | 74 | **88** | balanced, low echo |
+| #12757 | 9 | r/EnoughTrumpSpam, r/NeutralPolitics, r/Libertarian | 33/22/44 | 68 | **89** | balanced across the aisle |
+
+![A real Politosphere Information Health Report — two contrasting readers on the validated behavioral axis (one-sided #9553 vs balanced #7667)](images/polito_health_card.png)
+
+The report **differentiates** a one-sided participant (#9553, Echo 45 — mostly
+left-debate subreddits) from genuinely cross-cutting ones (#7667 / #12757, Echo ≈ 88
+— active in both `r/AskTrumpSupporters` and `r/EnoughTrumpSpam`). Because the axis
+underneath is *validated*, these are the report's balance metrics shown as
+**measurements, not the directional hints they are on MIND** — the concrete payoff of
+the third dataset.
+
+**Read the per-user numbers with the axis caveat.** They inherit the axis's
+imperfections (`lean_corr 0.65`, n=20 labels, single seed): the axis can mis-place an
+individual subreddit — e.g. `r/ShitLiberalsSay` is *far-left* (it mocks liberals from
+the left), so #9553's small "right" share is partly a placement error. So treat them
+as **directional on a validated-but-imperfect axis**, not a precise per-person verdict.
+
 ## RQ3 — ideological bridging (RWE-B)
 
 Mean ± std over 7 seeds (all vs-P3 differences Wilcoxon `p = 0.016`).

@@ -294,6 +294,21 @@ hardest}, with the largest weighted shift across the centre (UW-shift 1.932, vs 
 This makes the bounded-bridging mechanism a \emph{validated}-axis result, not a
 suggestive one (\S\ref{sec:ethics}, Limitation~1).
 
+\paragraph{The validated axis powers a per-user audit.} The same behavioral axis
+drives a per-user \emph{Information Health Report}---an auditing companion to the
+recommender (\texttt{examples/health\_report.py})---and Politosphere is where its
+balance metrics become meaningful. The report is the inverse of its MIND form: topic
+and tone metrics are undefined (one category, no article text), but \emph{Viewpoint
+Balance} and an \emph{Echo Chamber} score now rest on the \emph{validated} axis rather
+than the weak text-lean proxy. It cleanly separates a one-sided participant
+(Echo-Chamber percentile $45$; mostly left-debate subreddits) from cross-cutting ones
+(${\approx}88$; active in both \texttt{r/AskTrumpSupporters} and
+\texttt{r/EnoughTrumpSpam})---scores are percentiles vs.\ other users, higher${=}$more
+balanced. As with RQ3, the per-user reads inherit the axis's imperfections
+($\mathrm{lean\_corr}{=}0.65$, $n{=}20$ labels, single seed) and are directional, not
+precise; but they make the recommender's diversification objective legible at the
+level of an individual reader.
+
 \subsection{RQ2 --- Ideological bridging (RWE-B)}
 \begin{table}[t]
   \centering
