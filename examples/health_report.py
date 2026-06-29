@@ -326,9 +326,12 @@ def _na_reason(rep: dict, name: str, labels: dict | None = None) -> str:
     unavoidable ``n/a`` reads as a known limitation rather than a broken metric.
     On MIND, Source Diversity is always undefined: the URLs are MSN URLs, so the
     original publisher isn't in the data (needs an external source-map)."""
+    lab = labels or _LABELS["news"]
     if (name == "Source Diversity" and rep["scores"].get(name) is None
             and rep.get("distinct_outlets", 0) == 0):
-        return (labels or _LABELS["news"]).get("source_na", "")
+        return lab.get("source_na", "")
+    if rep["scores"].get(name) is None:                 # domain-specific structural n/a
+        return lab.get("na_reasons", {}).get(name, "")
     return ""
 
 
@@ -435,8 +438,9 @@ _LABELS = {
         topics_label="Top topics", topics_from="categories",
         show_blindspot=True, show_political_share=True,
         source_attr="outlets",                      # publisher parsed from the URL
-        section_notes=_SECTION_NOTES, hints={},
-        source_na="no publisher labels — MIND URLs are MSN"),
+        section_notes=_SECTION_NOTES, hints={}, na_reasons={},
+        source_na="no publisher labels — MIND URLs are MSN",
+        attn_absent="Attention profile — run classify_emotion.py to populate"),
     "reddit": dict(
         subject_bold="Reddit", subject_tail=" political-subreddit participation",
         unit="subreddits", read_suffix="", pol_clause=", all political",
@@ -452,7 +456,13 @@ _LABELS = {
         section_notes={"Balance & openness": "on the validated behavioral axis "
                        "(lean_corr ≈ 0.65) — see docs/RESULTS.md"},
         hints={"Source Diversity": "how many communities"},
-        source_na=""),
+        source_na="",
+        # subreddits have no article text / no topic taxonomy, so the text-derived
+        # metrics are *structurally* n/a here (running a classifier can't help) — say so.
+        na_reasons={"Topic Diversity": "one category — every subreddit is political",
+                    "Reporting Ratio": "no article text on Reddit",
+                    "Emotional Balance": "no article text on Reddit"},
+        attn_absent="Attention profile — n/a (no article text to classify on Reddit)"),
 }
 _HINTS = {"Topic Diversity": "how many topics you read",
           "Source Diversity": "how many publishers",
@@ -535,8 +545,7 @@ def render_html(reports, out: str | None = None,
                          f'<div class="attn-bar">{segs}</div>'
                          f'<div class="attn-lab">{attn_lab}</div></div>')
         else:
-            attn_html = ('<div class="attn">Attention profile — run '
-                         'classify_emotion.py to populate</div>')
+            attn_html = f'<div class="attn">{lab["attn_absent"]}</div>'
         cards.append(
             f'<div class="card"><div class="head"><div><h2>Reader #{r["user"]}</h2>'
             f'<div class="sub">{lab["sub_html"].format(n_clicks=r["n_clicks"], n_political=r["n_political"])}</div>'

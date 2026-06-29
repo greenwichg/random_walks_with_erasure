@@ -143,6 +143,11 @@ def test_health_report_reddit_domain():
     assert "Reddit" in html and "distinct communities" in html and "MSN-News" not in html
     # the Balance section note is the *validated*-axis one, not MIND's weak-axis caveat
     assert "validated behavioral axis" in html and "weak text-lean axis" not in html
+    # text-derived metrics are *structurally* n/a on Reddit -> say why, don't prompt a
+    # classifier that can't apply (no article text for subreddits)
+    assert "no article text to classify on Reddit" in html       # attention block
+    assert "run classify_emotion.py" not in html
+    assert "no article text on Reddit" in txt                    # reporting/emotional n/a
 
 
 def test_cli_end_to_end(tmp_path):
