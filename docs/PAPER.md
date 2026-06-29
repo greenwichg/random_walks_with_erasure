@@ -7,6 +7,11 @@
 > are marked **[note]**. Recreates and *extends* Paudel & Bernstein (WWW'21); the
 > base RWE method is theirs, the empirical study and the bounded-bridging analysis
 > are this paper's.
+>
+> **➡️ The submission build is the LaTeX in [`docs/paper/`](paper/)** (ACM `sigconf`
+> + `references.bib`), which additionally folds in the **MovieLens-1M** replication
+> and the **per-user significance**. This Markdown is the prose source of record;
+> keep the two in sync when the numbers change.
 
 ## Abstract
 

@@ -53,8 +53,13 @@
 
 ## 4. Paper / publication — [me + you] · when ready
 
-- [ ] Convert `PAPER.md` → a venue's **LaTeX template**
-- [ ] Flesh out Related Work into prose + **BibTeX**
+- [x] Convert `PAPER.md` → a venue **LaTeX template** — `docs/paper/paper.tex`
+      (ACM `sigconf`, Overleaf-ready; static-checked: envs/braces/cites/figures OK)
+- [x] Flesh out Related Work into prose + **BibTeX** — `docs/paper/references.bib`
+      (12 entries; a few flagged `% TODO verify` for author lists). Paper also folds
+      in the MovieLens replication + per-user significance.
+- [ ] **Verify BibTeX** (`drdw2025`, `network2024polarization`, `stray2023bridging`
+      author lists / pages) + add CCS once the venue is fixed
 - [ ] **Advisor review** of the reproduced results + draft
 - [ ] **Pick the target venue** (workshop / short / reproducibility track) + format to it
 
