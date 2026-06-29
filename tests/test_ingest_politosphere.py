@@ -92,7 +92,7 @@ def test_load_subreddit_lean_skips_comments_header_and_garbage(tmp_path):
 def test_bundled_lean_table_is_well_formed():
     t = ip.load_subreddit_lean(str(ROOT / "examples" / "data" / "subreddit_lean.csv"))
     assert t["conservative"] > 0 and t["democrats"] < 0      # oriented L<0<R
-    assert all(-2 <= v <= 2 for v in t.values()) and len(t) >= 20
+    assert all(-2 <= v <= 2 for v in t.values()) and len(t) >= 60
 
 
 def test_health_report_reddit_domain():

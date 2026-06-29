@@ -46,3 +46,43 @@ Anarchism,-2
 Marxism,-2
 LateStageCapitalism,-2
 ChapoTrapHouse,-2
+# --- expanded batch (2026-06; raises overlap with the filtered Politosphere set) ---
+# right (+2)
+conservatives,2
+AskThe_Donald,2
+Vote_Trump,2
+HillaryForPrison,2
+Sorosforprison,2
+Le_Pen,2
+The_Farage,2
+walkaway,2
+uncensorednews,2
+tea_party,2
+DrainTheSwamp,2
+# lean right (+1)
+randpaul,1
+LibertarianPartyUSA,1
+Anarcho_Capitalism,1
+goldandblack,1
+shitstatistssay,1
+KotakuInAction,1
+MensRights,1
+# center (0)
+CapitalismVSocialism,0
+Ask_Politics,0
+# lean left (-1)
+PoliticalHumor,-1
+# left (-2)
+communism,-2
+communism101,-2
+DebateCommunism,-2
+FULLCOMMUNISM,-2
+Socialism_101,-2
+COMPLETEANARCHY,-2
+DebateAnarchism,-2
+Anarchy101,-2
+ShitLiberalsSay,-2
+EnoughTrumpSpam,-2
+esist,-2
+Fuckthealtright,-2
+GamerGhazi,-2
