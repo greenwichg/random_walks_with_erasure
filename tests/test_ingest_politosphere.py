@@ -40,9 +40,10 @@ def test_read_and_build_dedups_and_skips(tmp_path):
     assert len(files) == 2
     pairs = list(ip._read_comments(files))
     assert len(pairs) == 8                                       # [deleted] dropped
-    users, items = ip._build_inputs(iter(pairs))
-    assert users.size == 6                                       # unique (user, subreddit)
-    assert set(items[users == "u1"]) == {"Conservative", "Republican"}
+    uc, ic, un, sn = ip._build_inputs(iter(pairs))
+    assert uc.size == 6                                          # unique (user, subreddit)
+    u_of, s_of = un[uc], sn[ic]                                  # decode names per row
+    assert set(s_of[u_of == "u1"]) == {"Conservative", "Republican"}
 
 
 def test_read_comments_respects_limit(tmp_path):
@@ -52,11 +53,22 @@ def test_read_comments_respects_limit(tmp_path):
     assert len(list(ip._read_comments(files, limit=4))) == 4
 
 
+def test_filter_min_codes_drops_low_degree(tmp_path):
+    uc = np.array([0, 0, 1, 2, 2]); ic = np.array([0, 1, 0, 2, 3])
+    fuc, fic = ip._filter_min_codes(uc, ic, min_user=1, min_item=2)
+    assert set(fic.tolist()) == {0}            # only subreddit 0 has >= 2 users
+    assert set(fuc.tolist()) == {0, 1}         # users 2's subreddits were dropped
+    # no-op fast path
+    a, b = ip._filter_min_codes(uc, ic, 1, 1)
+    assert a.size == uc.size
+
+
 def test_build_mind_seeds_positions_and_roundtrips(tmp_path):
-    users = np.array(["u1", "u1", "u2", "u3"], dtype=object)
-    items = np.array(["Conservative", "Republican", "democrats", "Libertarian"], dtype=object)
+    uc = np.array([0, 0, 1, 2]); ic = np.array([0, 1, 2, 3])
+    u_names = np.array(["u1", "u2", "u3"], dtype=object)
+    s_names = np.array(["Conservative", "Republican", "democrats", "Libertarian"], dtype=object)
     lean = ip.load_subreddit_lean(str(ROOT / "examples" / "data" / "subreddit_lean.csv"))
-    d = ip.build_mind(users, items, lean=lean)
+    d = ip.build_mind(uc, ic, u_names, s_names, lean=lean)
     assert d.n_users == 3 and d.n_items == 4 and d.political.all()
     pos = {s: p for s, p in zip(np.asarray(d.dataset.item_ids), d.item_positions)}
     assert pos["Conservative"] == 2 and pos["democrats"] == -2 and pos["Libertarian"] == 1

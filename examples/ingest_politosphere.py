@@ -27,10 +27,11 @@ leans so ``--ideology`` *orients* the learned axis to them and reports ``lean_co
 (a validation number); items output is stored in the :class:`~rwe.mind.MINDData`
 container (``item_ids`` = subreddits), so the whole MIND eval pipeline just works.
 
-**Scale note.** The de-dup holds one set of subreddit-ids per author, so memory grows
-with the number of users; subset to a few years / months (or pre-filter subreddits
-with the dataset's own ``load_comments.py``) for a first run. ``--min-*-clicks`` and
-``--sample-users`` keep the final matrix (and the dense ideal-point fit) tractable.
+**Scale.** Users/subreddits are factorized to integer codes up front, so the
+de-dup, min-degree filter, and matrix build all run on ints (fast on millions of
+endorsements -- a string-keyed filter is pathologically slow at that size). Memory
+grows with the number of users; subset to a few months for a first run.
+``--min-*-clicks`` and ``--sample-users`` keep the dense ideal-point fit tractable.
 """
 
 import argparse
@@ -40,9 +41,10 @@ import json
 from pathlib import Path
 
 import numpy as np
+import scipy.sparse as sp
 
-from rwe.data import from_interactions
-from rwe.mind import MINDData, _filter_min
+from rwe.data import Dataset
+from rwe.mind import MINDData
 
 _SKIP_AUTHORS = frozenset({"[deleted]", "[removed]", "", "AutoModerator"})
 _DEFAULT_LEAN = Path(__file__).resolve().parent / "data" / "subreddit_lean.csv"
@@ -81,21 +83,44 @@ def _read_comments(files, limit=None):
 
 
 def _build_inputs(comment_iter):
-    """Stream comments -> de-dup to one row per (author, subreddit) -> parallel
-    ``(users, items)`` name arrays for :func:`from_interactions`."""
-    sid, s_names, user_subs = {}, [], {}
+    """Stream comments -> de-dup to one (author, subreddit) row -> integer-coded
+    ``(user_codes, item_codes)`` plus the ``(user_names, item_names)`` lookups.
+
+    Coding to ints up front is what keeps the downstream min-degree filter and
+    matrix build fast: numpy on int arrays, never on 10^5+ Python strings."""
+    uid, sid, u_names, s_names, user_subs = {}, {}, [], [], {}
     for a, s in comment_iter:
-        i = sid.get(s)
-        if i is None:
-            i = sid[s] = len(s_names)
+        ui = uid.get(a)
+        if ui is None:
+            ui = uid[a] = len(u_names)
+            u_names.append(a)
+        si = sid.get(s)
+        if si is None:
+            si = sid[s] = len(s_names)
             s_names.append(s)
-        user_subs.setdefault(a, set()).add(i)
-    users, items = [], []
-    for a, subs in user_subs.items():
+        user_subs.setdefault(ui, set()).add(si)
+    uc, ic = [], []
+    for u, subs in user_subs.items():
         for i in subs:
-            users.append(a)
-            items.append(s_names[i])
-    return np.array(users, dtype=object), np.array(items, dtype=object)
+            uc.append(u)
+            ic.append(i)
+    return (np.array(uc, dtype=np.int64), np.array(ic, dtype=np.int64),
+            np.array(u_names, dtype=object), np.array(s_names, dtype=object))
+
+
+def _filter_min_codes(uc, ic, min_user, min_item):
+    """Iterative min-degree filter on integer code arrays (``np.bincount`` -> O(n))."""
+    if min_user <= 1 and min_item <= 1:
+        return uc, ic
+    for _ in range(10):
+        n0 = uc.size
+        keep = np.bincount(ic)[ic] >= min_item        # subreddit has >= min_item users
+        uc, ic = uc[keep], ic[keep]
+        keep = np.bincount(uc)[uc] >= min_user         # user in >= min_user subreddits
+        uc, ic = uc[keep], ic[keep]
+        if uc.size == n0:
+            break
+    return uc, ic
 
 
 def load_subreddit_lean(path) -> dict:
@@ -115,11 +140,19 @@ def load_subreddit_lean(path) -> dict:
     return table
 
 
-def build_mind(users, items, lean=None) -> MINDData:
-    """Parallel ``(users, items)`` -> a :class:`MINDData` (items = subreddits)."""
-    ds = from_interactions(users, items)
-    ds.matrix.data[:] = 1.0                       # binary endorsement
-    names = np.asarray(ds.item_ids)
+def build_mind(uc, ic, u_names, s_names, lean=None) -> MINDData:
+    """Integer-coded ``(user_codes, item_codes)`` + name lookups -> a
+    :class:`MINDData` (items = subreddits).  Compacts the surviving codes and builds
+    the binary endorsement matrix directly (``np.unique`` on ints, fast)."""
+    uu, rows = np.unique(uc, return_inverse=True)      # -> compact 0..U user idx
+    ii, cols = np.unique(ic, return_inverse=True)      # -> compact 0..I item idx
+    matrix = sp.coo_matrix((np.ones(rows.size), (rows, cols)),
+                           shape=(uu.size, ii.size)).tocsr()
+    matrix.sum_duplicates()
+    matrix.data[:] = 1.0                               # binary endorsement
+    user_ids = np.asarray(u_names)[uu]
+    names = np.asarray(s_names)[ii]
+    ds = Dataset(matrix=matrix, user_ids=user_ids, item_ids=names)
     n = len(names)
     if lean:
         pos = np.array([lean.get(str(s).lower(), np.nan) for s in names], dtype=float)
@@ -164,14 +197,17 @@ def main() -> None:
 
     files = _comment_files(args.comments_dir, args.pattern)
     print(f"reading {len(files)} comment file(s) from {args.comments_dir} ...")
-    users, items = _build_inputs(_read_comments(files, limit=args.limit))
-    print(f"  {users.size} unique (user, subreddit) endorsements")
-    users, items = _filter_min(users, items, args.min_user_clicks, args.min_item_clicks)
-    if users.size == 0:
+    uc, ic, u_names, s_names = _build_inputs(_read_comments(files, limit=args.limit))
+    print(f"  {uc.size} unique (user, subreddit) endorsements")
+    uc, ic = _filter_min_codes(uc, ic, args.min_user_clicks, args.min_item_clicks)
+    if uc.size == 0:
         raise ValueError("no endorsements left after filtering; lower the thresholds.")
+    print(f"  {uc.size} after min-degree filter "
+          f"(>= {args.min_user_clicks} subreddits/user, "
+          f">= {args.min_item_clicks} users/subreddit)")
 
     lean = load_subreddit_lean(args.lean_csv) if args.lean_csv else None
-    d = build_mind(users, items, lean=lean)
+    d = build_mind(uc, ic, u_names, s_names, lean=lean)
     if args.sample_users:
         d = d.sample_users(args.sample_users, seed=args.seed)
     print("Ingested Politosphere:")
