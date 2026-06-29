@@ -34,6 +34,15 @@ and emotional tone. It's the *auditing* side of the project's diversification wo
 - **Overall Score** is an *unweighted, illustrative* average of the available
   sub-scores. Treat it as a rough roll-up, not a measurement — weighting the
   dimensions against each other is a value judgment we deliberately don't make.
+- **Two tiers of reliability — know which you're reading.** The **Variety / Tone &
+  substance** metrics (Topic Diversity, Source Diversity, Reporting Ratio) are
+  *axis-independent* and stand on their own. The **Balance & openness** metrics
+  (Viewpoint Balance, Echo Chamber Score, Open-Mindedness) all rest on the
+  **ideological axis — which never validated** across three independent constructions
+  (`RESULTS.md` Limitation 1), so they are **directional signals, not measurements.**
+  Emotional Balance / Attention are separately **experimental** (headline emotion is
+  noisy). So a correctly-computed number is not the same as a validated one — the
+  report tells you *what it measured*, tiered by how much to trust it.
 - **Reliability floor:** users below `--min-clicks` get no scores. The political
   metrics (Viewpoint, Echo, Open-Mindedness) need `--min-political` political
   clicks and use the **political subset** only; topic and source use **all** clicks.
@@ -60,14 +69,16 @@ and emotional tone. It's the *auditing* side of the project's diversification wo
 |---|---|---|---|
 | Topic Diversity | spread across news topics | broader reading | — |
 | Source Diversity | spread across publishers | more, more-even sources | — |
-| Viewpoint Balance | reading across the political centre | more cross-cutting | lean axis |
-| Echo Chamber Score | one-sidedness of political reading | **less** echo-chambered | lean axis |
+| Viewpoint Balance | reading across the political centre | more cross-cutting | lean axis ✦ |
+| Echo Chamber Score | one-sidedness of political reading | **less** echo-chambered | lean axis ✦ |
 | Reporting Ratio | reporting vs opinion/editorial | more straight reporting | classifier † |
 | Emotional Balance | calm vs charged tone | calmer reading | classifier †‡ |
 | Attention Profile | mix of fear/outrage/analysis/positive | *(descriptive, not scored)* | classifier †‡ |
-| Open-Mindedness | clicking the other side when shown | more cross-cutting clicks | impressions ◆ |
+| Open-Mindedness | clicking the other side when shown | more cross-cutting clicks | impressions ◆ ✦ |
 
 † needs the GPU classifier run · ‡ **experimental** · ◆ needs `--behaviors` (MIND impressions)
+· ✦ **rests on the unvalidated lean axis** — directional only (three axis
+constructions, none validated; `RESULTS.md` Limitation 1)
 
 ---
 
@@ -102,8 +113,12 @@ on the *opposite* side of the centre from your own average position. Reported as
 percentile.
 **Read it:** high = you regularly read the other side; low = you mostly read your
 own side.
-**Limit:** political subset only; rests on the **text-lean axis, a noisy proxy**
-(≈0.27 correlation with human labels — see `RESULTS.md`), so read it directionally.
+**Limit (read this):** political subset only, and it rests on the **ideological
+axis — which never validated.** We tried three independent constructions (text-lean
+≈0.27/≈0 vs human labels, news co-click 0.37, a Reddit behavioral ideal point 0.13;
+see `RESULTS.md` Limitation 1) and **none came out as a trustworthy left↔right
+measure.** So treat this score as a **directional, suggestive signal, not a
+measurement** — the bar position is only as meaningful as the axis under it.
 
 ### Echo Chamber Score
 **Answers:** how one-sided is your political reading?
@@ -112,7 +127,8 @@ own side.
 percentile of `1 − echo`.
 **Read it:** **higher = LESS echo-chambered** (more balanced). A low score flags a
 one-sided diet. *(The name reads backwards to some — high is good here.)*
-**Limit:** same political-subset and noisy-axis caveats as Viewpoint Balance.
+**Limit:** same political-subset and **unvalidated-axis** caveat as Viewpoint
+Balance — directional only.
 
 ### Open-Mindedness ◆
 **Answers:** when the feed actually *shows* you the other side, do you click it?
@@ -126,8 +142,9 @@ when it's right in front of you.
 *"the algorithm didn't show me the other side"* from *"I chose not to read it,"*
 the supply-vs-demand split at the heart of bridging recommenders. Every other
 score describes your *diet*; this describes your *choice*.
-**Limit:** needs impressions; rests on the noisy lean axis; only defined for users
-actually shown opposite-side political articles.
+**Limit:** needs impressions; rests on the **unvalidated lean axis** (see Viewpoint
+Balance — directional only); only defined for users actually shown opposite-side
+political articles.
 
 ### Reporting Ratio †
 **Answers:** how much of your reading is straight reporting vs opinion/editorial?
@@ -167,10 +184,15 @@ fear / outrage / analysis / positive / neutral. **Descriptive, not scored.**
 ## Honest framing (please keep)
 
 The metrics labelled **experimental** (Emotional Balance, Attention Profile) and
-everything resting on the **lean axis** (Viewpoint, Echo) are *directional signals*,
-not measurements. The report is a **descriptive, exploratory** tool — there is no
-ground truth for "information health," so the scores can't be validated against an
-outcome. Avoid medicalised or prescriptive language in anything user-facing.
+everything resting on the **lean axis** (Viewpoint, Echo, Open-Mindedness) are
+*directional signals*, not measurements. On the axis specifically: **three
+independent constructions all failed to validate as ideological** (`RESULTS.md`
+Limitation 1), so the political sub-scores reflect a *weak proxy*, not a trustworthy
+left↔right position — present them as such. The report is a **descriptive,
+exploratory** tool — there is no ground truth for "information health," so the scores
+can't be validated against an outcome. The numbers are *correctly computed from the
+data* (tested end-to-end); that is not the same as being *validated measurements*.
+Avoid medicalised or prescriptive language in anything user-facing.
 
 ## Map: metric → code
 
@@ -187,4 +209,5 @@ outcome. Avoid medicalised or prescriptive language in anything user-facing.
 | scores → percentiles | `examples/health_report.py` · `percentiles` |
 | HTML rendering | `examples/health_report.py` · `render_html` |
 
-_Last updated: 2026-06-27._
+_Last updated: 2026-06-29 (axis caveat sharpened — the Viewpoint/Echo/Open-Mindedness
+scores rest on an axis that failed to validate across three constructions)._

@@ -409,6 +409,9 @@ h1{font-size:22px;margin:0 0 4px} .disclaimer{color:var(--mute);font-size:13px;m
 _GROUPS = [("Variety", ["Topic Diversity", "Source Diversity"]),
            ("Balance & openness", ["Viewpoint Balance", "Echo Chamber Score", "Open-Mindedness"]),
            ("Tone & substance", ["Reporting Ratio", "Emotional Balance"])]
+# Per-section honesty note (the political metrics rest on an axis that did not
+# validate across three constructions — see docs/RESULTS.md Limitation 1).
+_SECTION_NOTES = {"Balance & openness": "rests on a lean axis that did not validate — directional only"}
 _HINTS = {"Topic Diversity": "how many topics you read",
           "Source Diversity": "how many publishers",
           "Viewpoint Balance": "reading across the centre",
@@ -440,7 +443,9 @@ def render_html(reports, out: str | None = None,
             present = [n for n in names if n in r["scores"]]
             if not present:
                 continue
-            bars += f'<div class="section">{sect}</div>'
+            note = _SECTION_NOTES.get(sect, "")
+            note_html = f' <span class="exp">· {note}</span>' if note else ""
+            bars += f'<div class="section">{sect}{note_html}</div>'
             bars += "".join(_bar(n, r["scores"][n], _HINTS.get(n, ""), _na_reason(r, n))
                             for n in present)
         overall = (f'<div class="overall">{r["overall"]}<span>/100</span>'
