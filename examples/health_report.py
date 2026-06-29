@@ -462,7 +462,7 @@ _LABELS = {
         na_reasons={"Topic Diversity": "one category — every subreddit is political",
                     "Reporting Ratio": "no article text on Reddit",
                     "Emotional Balance": "no article text on Reddit",
-                    "Open-Mindedness": "needs impressions (not in Politosphere)"},
+                    "Open-Mindedness": "no impressions data in Politosphere"},
         attn_absent="Attention profile — n/a (no article text to classify on Reddit)"),
 }
 _HINTS = {"Topic Diversity": "how many topics you read",
