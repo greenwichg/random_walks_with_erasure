@@ -30,9 +30,12 @@ move monotonically from the *opposite extreme* toward the *centre* (uw-recs
 assimilation–contrast opinion-dynamics simulation — in which near-centre exposure
 depolarizes and opposite-extreme exposure backfires — we argue `d` is the lever
 between the backfire and depolarizing regimes. We release an open, reproducible
-pipeline. We are explicit about limitations: the text ideology axis is a weak proxy
-(Spearman 0.27 vs human labels), the centre-ward effect is partly geometric, and
-results are on a single dataset.
+pipeline. The long-tail result replicates on **three independent datasets** (MIND,
+MovieLens-1M, Reddit Politosphere). We are explicit about the central limitation:
+**none of three independent axis constructions** (text-lean, news co-click, Reddit
+behavioral ideal point) **validated as ideological**, so the bridging reads are
+suggestive and the contribution is the bounded-bridging *mechanism* (robust on any
+1-D axis); the centre-ward effect is also partly geometric.
 
 ## 1. Introduction
 
@@ -146,8 +149,9 @@ real data and the others in simulation.
 RWE-D is the best long-tail diversifier on every axis, at AUC parity with RP³-β;
 the diversity gaps are far larger than the seed std (all vs-P3 differences Wilcoxon
 `p = 0.016`, the n=7 floor). Top-`k` hit-rate drops, the standard
-diversity↔accuracy trade-off. This reproduces the paper's long-tail result on a new
-public dataset.
+diversity↔accuracy trade-off. **The long-tail win replicates on two further public
+datasets** — MovieLens-1M (movies) and Reddit Politosphere (social) — so it holds on
+**three independent corpora**, not just MIND (see `docs/RESULTS.md` for both tables).
 
 ### 6.2 RQ2 — Ideological bridging (RWE-B)
 
@@ -211,22 +215,29 @@ it.](images/opinion_dynamics.png)
 
 ## 7. Ethics and limitations
 
-1. **Noisy ideology axis.** The text-lean axis is a weak proxy (Spearman 0.27;
-   75 % directional agreement; most articles near-centre). RQ2–RQ3 reads are
-   suggestive; a multi-rater gold set or true outlet-lean labels would strengthen
-   them.
+1. **No validated ideological axis — three attempts.** Recovering a trustworthy
+   left–right axis from public data proved hard: (i) the **text-lean** classifier is
+   a weak proxy (Spearman ≈ 0.27 vs human labels, ≈ 0 on a second blind set — it
+   conflates *topic* with *stance*); (ii) the **MIND co-click** ideal point is
+   topical (`r = 0.37`); (iii) a **Reddit Politosphere behavioral** ideal point built
+   to fix this came out **non-ideological** (`lean_corr = 0.13`, scrambled extremes).
+   The convergent failure is itself a finding — so **RQ2 reads are suggestive**, and
+   the contribution is the bounded-bridging *mechanism* (limitation 2, robust on any
+   1-D axis), not a measured ideological effect.
 2. **The centre-ward effect is partly geometric.** A smaller bound mechanically
    forces opposite-side items closer to the user on *any* 1-D axis (it also appears
    on an unsupervised co-click axis). So §6.3 demonstrates a robust *control
    mechanism*, not by itself a measured ideological depolarization; the
    depolarization claim rests on the simulation.
-3. **Significance is across seeds, not users.** Differences are stable across 7
-   random splits (Wilcoxon `p = 0.016`, the n=7 floor); a per-user paired test and a
-   second dataset would strengthen this.
-4. **Scope and dual use.** One dataset, US-2019 news; the base RWE accuracy is not
-   validated against the paper's private Twitter data. Tools that steer ideological
-   exposure are dual-use; we frame this as *reducing* backfire and recommend
-   deployment only with the kind of monitoring Stray (2021) proposes.
+3. **Significance and generality.** Differences are stable across 7 random splits
+   (Wilcoxon `p = 0.016`, the n=7 floor) **and** per-user (paired Wilcoxon, n ≈ 2,546,
+   `p ≪ 1e-60`); the long-tail result replicates on **three datasets** (MIND,
+   MovieLens, Politosphere). The *ideological* half, however, rests on the weak/
+   unvalidated axes of limitation 1.
+4. **Scope and dual use.** US-2019 news for the ideological analysis; the base RWE
+   accuracy is not validated against the paper's private Twitter data. Tools that
+   steer ideological exposure are dual-use; we frame this as *reducing* backfire and
+   recommend deployment only with the kind of monitoring Stray (2021) proposes.
 
 ## 8. Conclusion
 

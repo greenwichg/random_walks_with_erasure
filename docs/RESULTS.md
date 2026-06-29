@@ -1,9 +1,10 @@
 # Real-data results (MIND-small)
 
 First real-data run of the pipeline in `docs/PAPER_PLAN.md`. The MIND tables are
-from `examples/eval_mind.py` on **MIND-small** (a **MovieLens-1M** cross-dataset
-RQ2 check has its own section below); reproduce with the Colab notebook
-(`notebooks/run_mind_eval.ipynb`). All tables — RQ2, RQ3, and the bounded-bridging
+from `examples/eval_mind.py` on **MIND-small**; the long-tail result (RQ2) is then
+replicated on **two more public datasets** — **MovieLens-1M** and **Reddit
+Politosphere** (each in its own section below). Reproduce with the Colab notebooks
+(`notebooks/run_mind_eval.ipynb`, `notebooks/run_politosphere_eval.ipynb`). All tables — RQ2, RQ3, and the bounded-bridging
 sweep — are **mean ± std over 7 seeds**, with a Wilcoxon signed-rank `p` vs P3 on the
 main comparison. These tables were **independently re-run end-to-end (2026-06-25)
 from the Colab notebook and reproduce to the printed precision**. Read the
@@ -75,6 +76,41 @@ accuracy↔diversity trade-off is **milder than on MIND** — MovieLens is dense
 less long-tailed, so RWE-D pays no top-*k* penalty vs P3 here (on MIND it did).
 The *direction* of the long-tail win is identical on both datasets, so it is not a
 MIND artifact. ✅
+
+## RQ2 on a third dataset — Reddit Politosphere (behavioral axis)
+
+A third public dataset, and the one we built specifically to *fix* the ideological
+axis: the **Reddit Politosphere** (Hofmann et al., ICWSM 2022), where the
+left↔right axis is learned from **behaviour** — an ideal-point fit on the
+user×subreddit endorsement graph (`examples/ingest_politosphere.py`), not text.
+Evaluated subset: **15,000 users · 295 political subreddits · 109,710 endorsements**
+(US-2016 election window; single seed).
+
+| model | hit@10 | auc | gini_div | coverage | avg_deg ↓ | surprisal |
+|---|---|---|---|---|---|---|
+| ItemKNN | .616 | .940 | .119 | .895 | 1715 | 3.655 |
+| P3 | .614 | .939 | .093 | .563 | 1815 | 3.408 |
+| RP³-β | .637 | .942 | .185 | .993 | 1600 | 4.028 |
+| **RWE-D** | **.637** | **.942** | **.189** | **.993** | **1594** | **4.048** |
+
+**RQ2 replicates a third time.** RWE-D ties RP³-β on accuracy and is the top
+long-tail diversifier (highest gini/coverage/surprisal, lowest avg-degree),
+dominating P3 on diversity at equal accuracy. The long-tail result now holds on
+**three independent public datasets** — news (MIND), movies (MovieLens), and social
+(Reddit).
+
+**RQ3 does *not* transfer here — and that is the informative part.** The behavioral
+axis came out **non-ideological**: against 24 labeled subreddit leans
+`lean_corr = 0.13` (n=24, indistinguishable from 0), and the axis extremes are
+ideologically *scrambled* — `r/secondamendment` and `r/Marco_Rubio` (right) sit
+*with* `r/anarchocommunism` and `r/IWW` (left); `r/guncontrol` and `r/atheismplus`
+(left) sit *with* `r/AltRightChristian` and `r/monarchism` (right). The dominant
+dimension the ideal-point model recovers from broad Reddit commenting is
+niche/small-subreddit idiosyncrasy, not left–right (contested issue-subs are
+co-visited by both sides, confounding an unsupervised 1-D fit). RWE-B still bridges
+hardest across it (`uw_shift 2.389`), but bridging across a non-ideological axis is
+not ideological bridging, so we **do not report a Politosphere RQ3 result**. This is
+the third independent axis construction to come up unvalidated (see Limitation 1).
 
 ## RQ3 — ideological bridging (RWE-B)
 
@@ -158,6 +194,20 @@ outcome, not a measured opinion change.
    bias models into one axis (z-scored, then rescaled); validate any axis against a
    gold set with `examples/validate_lean.py` (calibration cannot help here — Spearman
    is rank-based, so a *less-noisy* model, not a rescaled one, is what lifts it).
+   **Three independent axis constructions, none validated.** We tried (i) the
+   **text-lean** classifier (Spearman ≈ 0.27 vs human labels — and ≈ 0 on a second,
+   blind 40-headline set; it conflates *topic* with *stance*), (ii) the **MIND
+   co-click** ideal point (`r = 0.37`, topical), and (iii) a **Reddit Politosphere
+   behavioral** ideal point built precisely to fix this (`examples/ingest_politosphere.py`)
+   — which came out **non-ideological** (`lean_corr = 0.13`, axis extremes
+   ideologically scrambled; see the third-dataset section above). The convergent
+   failure *is* a finding: a validated left–right axis is genuinely hard to recover
+   from public behavioural/text data (news co-clicks are topical, broad Reddit
+   commenting is cross-cutting, headlines conflate topic with stance). The cleanest
+   remaining signal is Twitter elite-*following* (Barberá-style), which is
+   access-restricted now. **So RQ3 is explicitly *suggestive*, and the contribution
+   is the bounded-bridging *mechanism* (Limitation 2 — robust on any 1-D axis), not a
+   measured ideological effect.**
 2. **The `uw_recs ↓` effect is partly geometric.** A smaller bound mechanically
    forces opposite-side items closer to the user (hence the centre) on *any* 1-D
    axis — it also appears on the topic axis. So the sweep is a robust *mechanism*,
@@ -192,5 +242,6 @@ examples/validate_lean.py               # axis-quality number
 examples/plot_axis.py --npz mind_text.npz  # users + items on the L<->R scale
 ```
 
-_Last updated: 2026-06-28 (MovieLens-1M RQ2 replication + per-user paired
-significance folded in; MIND tables independently reproduced 2026-06-25)._
+_Last updated: 2026-06-29 (Reddit Politosphere folded in — third RQ2 dataset +
+third unvalidated axis; MovieLens-1M RQ2 + per-user significance on 2026-06-28;
+MIND tables independently reproduced 2026-06-25)._

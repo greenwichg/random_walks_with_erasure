@@ -32,7 +32,8 @@ Erasure (RWE)~\cite{paudel2021rwe} on the public MIND news
 dataset~\cite{wu2020mind}---with article ideology estimated from text---we show
 that (i)~the long-tail variant RWE-D is the strongest long-tail diversifier at
 accuracy parity with a degree-reweighted baseline, a result we replicate on
-MovieLens-1M, and (ii)~the bridging variant RWE-B produces by far the largest
+\emph{three} independent public datasets (MIND, MovieLens-1M, Reddit Politosphere),
+and (ii)~the bridging variant RWE-B produces by far the largest
 weighted shift of \emph{extreme} users across the political centre while
 preserving accuracy. Critically, RWE-B's ``not too far'' bound $d$ acts as a
 \textbf{control knob}: as $d$ tightens, recommendations move monotonically from
@@ -43,9 +44,11 @@ Pairing this with an assimilation--contrast opinion-dynamics
 simulation~\cite{chen2021opinion}---in which near-centre exposure depolarizes and
 opposite-extreme exposure backfires---we argue $d$ is the lever between the
 backfire and depolarizing regimes. We release an open, reproducible pipeline. We
-are explicit about limitations: the text ideology axis is a weak proxy
-(Spearman~0.27 vs.\ human labels), the centre-ward effect is partly geometric,
-and the ideological half rests on a single corpus.
+are explicit about limitations: \textbf{none of three independent axis
+constructions} (text-lean, news co-click, Reddit behavioral ideal point)
+\textbf{validated as ideological}, so RQ3 is suggestive and the contribution is the
+bounded-bridging \emph{mechanism} (robust on any 1-D axis); the centre-ward effect
+is also partly geometric.
 \end{abstract}
 
 \keywords{recommender systems, diversification, depolarization, bridging
@@ -264,6 +267,23 @@ so it is not a MIND artifact.
   \end{tabular}
 \end{table}
 
+\paragraph{Third dataset, and a negative result on the axis.} We additionally ran
+RQ1 on the \textbf{Reddit Politosphere}~\cite{politosphere2022}, where the
+left--right axis is learned from \emph{behaviour}---an ideal-point fit on the
+user$\times$subreddit endorsement graph (15{,}000 users, 295 political subreddits,
+US-2016 window). RWE-D is again the top long-tail diversifier at accuracy parity
+with $RP^3_\beta$ (AUC .942, HR@10 .637; gini .189, coverage .993, avg-deg 1594,
+surprisal 4.048), so the long-tail result holds on \textbf{three independent public
+datasets} (news, movies, social). \emph{But the behavioral axis came out
+non-ideological}: validated against 24 labeled subreddit leans, $\mathrm{lean\_corr}=0.13$
+($n{=}24$, indistinguishable from 0), with extremes that are ideologically scrambled
+(e.g.\ \texttt{r/secondamendment} and \texttt{r/Marco\_Rubio} grouped \emph{with}
+\texttt{r/anarchocommunism}). The dominant dimension an unsupervised ideal-point fit
+recovers from broad Reddit commenting is niche-subreddit idiosyncrasy, not
+left--right, so we report Politosphere for RQ1 only and \emph{not} for ideological
+bridging. This is the third independent axis construction to come up unvalidated
+(\S\ref{sec:ethics}, Limitation~1).
+
 \subsection{RQ2 --- Ideological bridging (RWE-B)}
 \begin{table}[t]
   \centering
@@ -372,11 +392,21 @@ measured opinion change in real users (Figure~\ref{fig:opinion}).
 \end{figure}
 
 \section{Ethics and Limitations}
+\label{sec:ethics}
 \begin{enumerate}
-  \item \textbf{Noisy ideology axis.} The text-lean axis is a weak proxy
-  (Spearman~0.27; 75\% directional agreement; most articles near-centre). RQ2--RQ3
-  reads are suggestive; a multi-rater gold set or true outlet-lean labels would
-  strengthen them.
+  \item \textbf{No validated ideological axis (three attempts).} Recovering a
+  trustworthy left--right axis from public data proved genuinely hard. We tried
+  (i)~a \textbf{text-lean} classifier (Spearman~$\approx0.27$ vs.\ human labels, and
+  $\approx0$ on a second blind 40-headline set---it conflates \emph{topic} with
+  \emph{stance}); (ii)~a \textbf{MIND co-click} ideal point ($r=0.37$, topical); and
+  (iii)~a \textbf{Reddit Politosphere behavioral} ideal point built to fix this,
+  which came out \emph{non-ideological} ($\mathrm{lean\_corr}=0.13$, scrambled
+  extremes). The convergent failure is itself a finding: news co-clicks are topical,
+  broad Reddit commenting is cross-cutting, and headlines conflate topic with stance;
+  the cleanest remaining signal is Twitter elite-\emph{following} (Barberá-style),
+  now access-restricted. \textbf{So RQ3 is explicitly \emph{suggestive}}, and the
+  contribution is the bounded-bridging \emph{mechanism} (Limitation~2, robust on any
+  1-D axis), not a measured ideological effect.
   \item \textbf{The centre-ward effect is partly geometric.} A smaller bound
   mechanically forces opposite-side items closer to the user on \emph{any} 1-D
   axis (it also appears on an unsupervised co-click axis). So RQ3 demonstrates a

@@ -44,25 +44,26 @@
 - [x] Decide emotion-metric framing — **keep, labelled experimental** (eyeball
       confirmed the documented behaviour)
 
-## 3. Stronger lean axis — behavioral ideal-point is the real fix · [you+me]
+## 3. Stronger lean axis — CONCLUDED: three attempts, none validated · ✅ written up
 
-The MIND text-lean axis is a weak / construct-mismatched proxy (it conflates
-*topic* with *stance*; a 40-item human check came out ≈ 0). The principled fix is a
-**behavioral** axis from political-endorsement data — now built and proven:
+We pursued a behavioral ideal-point axis (the principled fix) all the way to a real
+run. **Outcome: it did not validate as ideological** — so this thread is closed and
+the honest result is folded into `RESULTS.md` + the paper.
 
-- [x] **Reddit Politosphere ingest — the real fix** — `examples/ingest_politosphere.py`
-      parses the public Politosphere comments (bz2/JSON-lines) into a **user×subreddit
-      endorsement** `.npz` in the MINDData container; `IdeologyModel` then fits a latent
-      L↔R axis **from behaviour alone** (no text, no Twitter API). `examples/data/
-      subreddit_lean.csv` orients + validates it. **Synthetic proof: `lean_corr=0.94`**,
-      axis splits progressive < democrats < center < Conservative < Republican.
-      Unit-tested (6 tests). The whole MIND eval/plot pipeline runs on it unchanged.
-- [ ] **Run it on real Politosphere** — [you] turnkey via
-      **`notebooks/run_politosphere_eval.ipynb`** (Drive-cache resilient: download →
-      ingest `--ideology` → `eval_mind` → `plot_axis`); confirm the dataset license at
-      <https://zenodo.org/records/5851729> first. Watch the printed `lean_corr` (the
-      clean axis-validation number the headline proxy couldn't give). Then I fold the
-      RQ2/RQ3 + `lean_corr` into RESULTS / the paper as the third dataset.
+- [x] **Reddit Politosphere ingest + eval** — `examples/ingest_politosphere.py`
+      (user×subreddit endorsement → `IdeologyModel` ideal point) + turnkey
+      `notebooks/run_politosphere_eval.ipynb`. Synthetic proof worked (`lean_corr=0.94`),
+      but on the **real** US-2016 slice (15k users, 295 subs) the axis came out
+      **non-ideological: `lean_corr = 0.13`, extremes ideologically scrambled** (broad
+      Reddit commenting is cross-cutting; the dominant dimension is niche-subreddit
+      idiosyncrasy). int-coded ingest fixed a 35-min→0.2s hang; unit-tested.
+- [x] **Folded into the writeup** — `RESULTS.md` (third-dataset RQ2 table + the
+      "three axis attempts, none validated" Limitation 1) and the paper (abstract,
+      §6 third dataset, §ethics). RQ2 long-tail now holds on **3 datasets**; RQ3 is
+      explicitly *suggestive* (the mechanism is the contribution).
+- [ ] *(open, low-priority)* one last lever exists — much higher `--min-item-clicks`
+      to drop niche-noise subs (`# 3b` in the notebook); ~30% it helps. If it does,
+      re-open this and add a Politosphere RQ3. Otherwise the conclusion stands.
 
 _MIND text-axis attempts, kept for the record:_
 - [x] **Ensemble tooling** — `examples/ensemble_lean.py` (z-score + average
