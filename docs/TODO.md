@@ -108,9 +108,18 @@ _MIND text-axis attempts, kept for the record:_
 
 ## 5. Optional / future research — lower priority
 
-- [ ] **Real-log satisfaction signal** — currently synthetic; computing it from real
-      dwell/return logs is the move that turns the most-distinctive idea into genuine
-      novelty (needs a dataset with browsing logs — MIND lacks them)
+- [~] **Real-log satisfaction signal** — currently synthetic; computing it from real
+      engagement logs is the move that turns the most-distinctive idea into genuine
+      novelty (MIND lacks the logs, but **Reddit/Politosphere may carry them**). Built a
+      **feasibility probe** (`examples/satisfaction_probe.py` + notebook `# 7`): it reads
+      the comment `score`/`created_utc`/`parent_id` we currently discard and compares
+      **cross-cutting vs same-side** engagement (reception via upvotes, depth via reply
+      threads, return via months) on the **validated** axis — printing a verdict on
+      whether the measured signal is a real satisfaction proxy or adversarial flame-war
+      noise. Unit-tested. **Pending: run on the real slice** (does Politosphere keep the
+      fields, and are cross-cutting comments welcomed or dogpiled?). If sensible → promote
+      to a measured metric + wire into `AdaptiveRWEB`; if flame-war-dominated → report as
+      *why* real satisfaction is hard here (itself a finding).
 - [ ] Health-report polish (e.g. a "you vs the average reader" population view)
 
 ---
