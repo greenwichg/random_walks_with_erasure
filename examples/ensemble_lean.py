@@ -17,7 +17,7 @@ ensemble drops into the existing pipeline unchanged.
     # --label-positions to it (label order differs between models):
     python examples/classify_lean.py --mind-dir MIND --political-only \
         --model premsa/political-bias-prediction-allsides-BERT \
-        --label-positions -1,0,1 --out lean_b.csv
+        --label-positions=-1,0,1 --out lean_b.csv          # '=' is required here
     python examples/ensemble_lean.py lean.csv lean_b.csv --out lean_ens.csv
     # then use lean_ens.csv anywhere lean.csv was used:
     python examples/ingest_mind.py --mind-dir MIND --political-only \

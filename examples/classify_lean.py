@@ -12,10 +12,11 @@ GPU (Colab).
         --positions-csv lean.csv --min-user-clicks 10 --min-item-clicks 10 --out mind_text.npz
     python examples/eval_mind.py --npz mind_text.npz --out-csv results_text.csv --no-bprmf
 
-The position is the softmax-expected class position: with ``--label-positions
-'-1,0,1'`` (left, center, right) and ``--scale 2`` it lands in ``[-2, 2]``, matching
-the outlet-lean scale. **Verify the model's label order** from the printed
-``id2label`` and set ``--label-positions`` to match.
+The position is the softmax-expected class position: with
+``--label-positions=-1,0,1`` (left, center, right) and ``--scale 2`` it lands in
+``[-2, 2]``, matching the outlet-lean scale. **Verify the model's label order** from
+the printed ``id2label`` and set ``--label-positions`` to match. Pass it with an
+``=`` (``--label-positions=-1,0,1``): a leading-dash value is read as a flag otherwise.
 """
 
 import argparse
@@ -60,7 +61,9 @@ def main():
                     help="HF text-classification model (Left/Center/Right)")
     ap.add_argument("--label-positions", default="-1,0,1",
                     help="position per logit index, matching the model's label "
-                         "order (default left,center,right = -1,0,1)")
+                         "order (default left,center,right = -1,0,1). Pass with '=' "
+                         "(--label-positions=-1,0,1); a leading-dash value is else "
+                         "read as a flag")
     ap.add_argument("--scale", type=float, default=2.0,
                     help="scale the expected position (default 2 -> [-2, 2])")
     ap.add_argument("--political-only", action="store_true",
