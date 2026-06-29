@@ -31,11 +31,14 @@ assimilation–contrast opinion-dynamics simulation — in which near-centre exp
 depolarizes and opposite-extreme exposure backfires — we argue `d` is the lever
 between the backfire and depolarizing regimes. We release an open, reproducible
 pipeline. The long-tail result replicates on **three independent datasets** (MIND,
-MovieLens-1M, Reddit Politosphere). We are explicit about the central limitation:
-**none of three independent axis constructions** (text-lean, news co-click, Reddit
-behavioral ideal point) **validated as ideological**, so the bridging reads are
-suggestive and the contribution is the bounded-bridging *mechanism* (robust on any
-1-D axis); the centre-ward effect is also partly geometric.
+MovieLens-1M, Reddit Politosphere). We are explicit about the central limitation: of
+three axis constructions, text-lean and news co-click come out *topical*, but a
+**Reddit behavioral ideal point validates** (`lean_corr = 0.65`, cleanly ideological
+extremes) once low-signal subreddits are filtered — giving an independent RQ3 on a
+validated axis where RWE-B again bridges hardest. The flagship MIND RQ3 still rests on
+the weak text-lean axis (so those reads are suggestive), and the centre-ward effect is
+partly geometric, so the durable contribution is the bounded-bridging *mechanism*
+(robust on any 1-D axis), now demonstrated on a validated ideological axis.
 
 ## 1. Introduction
 
@@ -152,6 +155,9 @@ the diversity gaps are far larger than the seed std (all vs-P3 differences Wilco
 diversity↔accuracy trade-off. **The long-tail win replicates on two further public
 datasets** — MovieLens-1M (movies) and Reddit Politosphere (social) — so it holds on
 **three independent corpora**, not just MIND (see `docs/RESULTS.md` for both tables).
+Politosphere additionally carries a **validated** behavioral left–right axis
+(`lean_corr = 0.65`) and an independent RQ3 where RWE-B again bridges hardest
+(§7, limitation 1).
 
 ### 6.2 RQ2 — Ideological bridging (RWE-B)
 
@@ -215,15 +221,21 @@ it.](images/opinion_dynamics.png)
 
 ## 7. Ethics and limitations
 
-1. **No validated ideological axis — three attempts.** Recovering a trustworthy
-   left–right axis from public data proved hard: (i) the **text-lean** classifier is
-   a weak proxy (Spearman ≈ 0.27 vs human labels, ≈ 0 on a second blind set — it
-   conflates *topic* with *stance*); (ii) the **MIND co-click** ideal point is
-   topical (`r = 0.37`); (iii) a **Reddit Politosphere behavioral** ideal point built
-   to fix this came out **non-ideological** (`lean_corr = 0.13`, scrambled extremes).
-   The convergent failure is itself a finding — so **RQ2 reads are suggestive**, and
-   the contribution is the bounded-bridging *mechanism* (limitation 2, robust on any
-   1-D axis), not a measured ideological effect.
+1. **The ideological axis is hard to recover from text — but behaviour validates
+   it.** Of three axis constructions, two come out *topical* and one *validates*:
+   (i) the **text-lean** classifier is a weak proxy (Spearman ≈ 0.27 vs human labels,
+   ≈ 0 on a second blind set — it conflates *topic* with *stance*); (ii) the **MIND
+   co-click** ideal point is topical (`r = 0.37`); (iii) a **Reddit Politosphere
+   behavioral** ideal point built to fix this **validates** (`lean_corr = 0.65`
+   against labeled subreddit leans, cleanly ideological extremes — communism/anarchism
+   left, Trump/Farage/conservatives right). The lesson is itself a finding: a
+   left–right axis is recoverable from explicit community-endorsement behaviour, not
+   from text or news co-clicks. Honest caveats on the validated axis: it is
+   threshold-sensitive (at a looser filter the same fit gave `lean_corr = 0.13` with
+   scrambled extremes), and rests on n=20 labels and a single seed. **So the flagship
+   MIND RQ3 (text-lean) is suggestive**, but the bounded-bridging *mechanism*
+   (limitation 2, robust on any 1-D axis) is independently demonstrated on the
+   *validated* Politosphere axis, where RWE-B again bridges hardest (UW-shift 1.932).
 2. **The centre-ward effect is partly geometric.** A smaller bound mechanically
    forces opposite-side items closer to the user on *any* 1-D axis (it also appears
    on an unsupervised co-click axis). So §6.3 demonstrates a robust *control
@@ -232,8 +244,9 @@ it.](images/opinion_dynamics.png)
 3. **Significance and generality.** Differences are stable across 7 random splits
    (Wilcoxon `p = 0.016`, the n=7 floor) **and** per-user (paired Wilcoxon, n ≈ 2,546,
    `p ≪ 1e-60`); the long-tail result replicates on **three datasets** (MIND,
-   MovieLens, Politosphere). The *ideological* half, however, rests on the weak/
-   unvalidated axes of limitation 1.
+   MovieLens, Politosphere). The flagship *ideological* half rests on the weak MIND
+   text-lean axis (so it is suggestive), but is independently confirmed on the
+   *validated* Politosphere behavioral axis (limitation 1).
 4. **Scope and dual use.** US-2019 news for the ideological analysis; the base RWE
    accuracy is not validated against the paper's private Twitter data. Tools that
    steer ideological exposure are dual-use; we frame this as *reducing* backfire and

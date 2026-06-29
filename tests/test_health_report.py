@@ -57,7 +57,7 @@ def test_render_html(tmp_path):
     assert "Reader #7" in html and "82%" in html and "health" in html
     assert "n/a" in html                           # un-enriched reporting / emotional
     assert "mirror, not a verdict" in html         # honesty disclaimer
-    assert "did not validate" in html              # axis caveat on Balance & openness
+    assert "weak text-lean axis" in html           # axis caveat on Balance & openness
 
 
 def test_eligible_pool_filters_by_political_floor():

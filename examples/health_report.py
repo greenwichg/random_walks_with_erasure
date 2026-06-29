@@ -409,9 +409,10 @@ h1{font-size:22px;margin:0 0 4px} .disclaimer{color:var(--mute);font-size:13px;m
 _GROUPS = [("Variety", ["Topic Diversity", "Source Diversity"]),
            ("Balance & openness", ["Viewpoint Balance", "Echo Chamber Score", "Open-Mindedness"]),
            ("Tone & substance", ["Reporting Ratio", "Emotional Balance"])]
-# Per-section honesty note (the political metrics rest on an axis that did not
-# validate across three constructions — see docs/RESULTS.md Limitation 1).
-_SECTION_NOTES = {"Balance & openness": "rests on a lean axis that did not validate — directional only"}
+# Per-section honesty note (the political metrics rest on the MIND text-lean axis,
+# a weak proxy ~0.27 vs human labels — see docs/RESULTS.md Limitation 1; a behavioral
+# axis validated elsewhere (Politosphere) but isn't available for MIND articles).
+_SECTION_NOTES = {"Balance & openness": "rests on a weak text-lean axis — directional only"}
 _HINTS = {"Topic Diversity": "how many topics you read",
           "Source Diversity": "how many publishers",
           "Viewpoint Balance": "reading across the centre",

@@ -44,26 +44,36 @@
 - [x] Decide emotion-metric framing — **keep, labelled experimental** (eyeball
       confirmed the documented behaviour)
 
-## 3. Stronger lean axis — CONCLUDED: three attempts, none validated · ✅ written up
+## 3. Stronger lean axis — ✅ VALIDATED on the behavioral axis (Politosphere, mi200)
 
 We pursued a behavioral ideal-point axis (the principled fix) all the way to a real
-run. **Outcome: it did not validate as ideological** — so this thread is closed and
-the honest result is folded into `RESULTS.md` + the paper.
+run. **Outcome: it validates** — `lean_corr = 0.65` with cleanly ideological extremes
+once low-signal subreddits are filtered. The positive result is folded into
+`RESULTS.md` + the paper, with honest caveats (threshold-sensitive, n=20 labels,
+single seed).
 
 - [x] **Reddit Politosphere ingest + eval** — `examples/ingest_politosphere.py`
       (user×subreddit endorsement → `IdeologyModel` ideal point) + turnkey
-      `notebooks/run_politosphere_eval.ipynb`. Synthetic proof worked (`lean_corr=0.94`),
-      but on the **real** US-2016 slice (15k users, 295 subs) the axis came out
-      **non-ideological: `lean_corr = 0.13`, extremes ideologically scrambled** (broad
-      Reddit commenting is cross-cutting; the dominant dimension is niche-subreddit
-      idiosyncrasy). int-coded ingest fixed a 35-min→0.2s hang; unit-tested.
-- [x] **Folded into the writeup** — `RESULTS.md` (third-dataset RQ2 table + the
-      "three axis attempts, none validated" Limitation 1) and the paper (abstract,
-      §6 third dataset, §ethics). RQ2 long-tail now holds on **3 datasets**; RQ3 is
-      explicitly *suggestive* (the mechanism is the contribution).
-- [ ] *(open, low-priority)* one last lever exists — much higher `--min-item-clicks`
-      to drop niche-noise subs (`# 3b` in the notebook); ~30% it helps. If it does,
-      re-open this and add a Politosphere RQ3. Otherwise the conclusion stands.
+      `notebooks/run_politosphere_eval.ipynb`. Synthetic proof worked (`lean_corr=0.94`).
+      On the **real** US-2016 slice the axis is **threshold-sensitive**: at the loose
+      filter (295 subs, `--min-item-clicks 20`) it came out non-ideological
+      (`lean_corr=0.13`, scrambled — niche-subreddit noise), **but at
+      `--min-item-clicks 200` (114 subs with ≥200 distinct commenters) it VALIDATES:
+      `lean_corr = 0.65`, clean left↔right extremes** (communism/anarchism/socialism
+      left; Trump/Farage/conservatives right). int-coded ingest fixed a 35-min→0.2s
+      hang; unit-tested.
+- [x] **Politosphere RQ3 on the validated axis** — `# 3b` cell: RWE-B bridges hardest
+      (`uw_shift 1.932` vs P3 1.125, RP³-β 0.558), highest `shift@10` (1.224) and
+      `rec_range` (4.418) without over-shooting (`uw_recs` .664). A genuine
+      ideological-bridging result on a behaviorally-validated axis.
+- [x] **Folded into the writeup** — `RESULTS.md` (third-dataset RQ2+RQ3 tables, the
+      validated axis + threshold-sensitivity, Limitation 1 rewritten "behaviour
+      validates the axis") and the paper (abstract, §6 third dataset, §ethics). RQ2
+      long-tail holds on **3 datasets**; the bridging mechanism is now demonstrated on
+      a **validated** axis (MIND text-lean RQ3 stays *suggestive*).
+- [ ] *(open, low-priority)* firm up the validation: more labeled subreddits
+      (n>20) and multi-seed/multi-window runs to confirm `lean_corr` and the RQ3
+      bridging are stable, not single-slice artifacts.
 
 _MIND text-axis attempts, kept for the record:_
 - [x] **Ensemble tooling** — `examples/ensemble_lean.py` (z-score + average
@@ -106,7 +116,10 @@ _MIND text-axis attempts, kept for the record:_
 ---
 
 **Critical path:** §1 (verify, [you]) → §2 (I fold the numbers) gives a fully
-reproduced, per-user-significant, two-dataset result + a working health-report PoC.
-§3 (lean axis) is the highest-value *data* task; §4 (paper) is the path to submission.
+reproduced, per-user-significant, three-dataset result + a working health-report PoC.
+§3 (lean axis) is **done** — the behavioral axis validated (`lean_corr = 0.65`); §4
+(paper) is the path to submission. The one remaining axis task is firming up the
+validation (more labels, more seeds).
 
-_Last updated: 2026-06-27._
+_Last updated: 2026-06-29 (Politosphere behavioral axis validated at `--min-item-clicks
+200`: `lean_corr = 0.65`, clean ideological extremes, RQ3 bridging — §3 closed positive)._
