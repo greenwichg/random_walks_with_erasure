@@ -28,7 +28,9 @@ and emotional tone. It's the *auditing* side of the project's diversification wo
 - **Scores are percentiles**, 0–100, vs. the other readers in the dataset — e.g.
   *Source Diversity 41* means "more concentrated than ~59% of readers," not an
   absolute grade. (A fixed 0–100 rubric would be a value judgment; percentiles
-  are defensible.)
+  are defensible.) Pass **`--population`** to add a *"typical reader"* card —
+  the population's **median raw value + IQR** per metric — so a percentile has an
+  absolute anchor ("you read 12 topics; the median reader reads 7").
 - **Higher is always "healthier"** for every score below — more diverse, more
   cross-cutting, **less** echo-chambered, more reporting, calmer.
 - **Overall Score** is an *unweighted, illustrative* average of the available

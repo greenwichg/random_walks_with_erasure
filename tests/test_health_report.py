@@ -106,6 +106,28 @@ def test_end_to_end_on_fixture(tmp_path):
     assert rep["scores"]["Reporting Ratio"] is None and rep["attention"] is None
 
 
+def test_population_summary_and_card(tmp_path):
+    from rwe import load_mind
+    fix = ROOT / "tests" / "fixtures" / "mind_demo"
+    ids = [l.split("\t")[0] for l in open(fix / "news.tsv")]
+    lean = tmp_path / "lean.csv"
+    lean.write_text("news_id,position\n" + "\n".join(
+        f"{i},{p}" for i, p in zip(ids, np.linspace(-1.8, 1.8, len(ids)))))
+    d = load_mind(str(fix), positions_map=str(lean))
+    pop = hr.compute(d, min_clicks=1, min_political=1)
+    eligible = hr._eligible_pool(pop, 1)
+    s = hr.population_summary(pop, eligible)
+    assert s["n_users"] == eligible.size and 0.0 <= s["political_reader_frac"] <= 1.0
+    m = s["metrics"]["Topic Diversity"]
+    assert m is not None and m["p25"] <= m["median"] <= m["p75"]
+    txt = hr.format_population(s)
+    assert "POPULATION VIEW" in txt and "the typical reader" in txt
+    # the population card renders at the top of the page; default (None) omits it
+    html = hr.render_html([hr.user_report(pop, d, int(eligible[0]))], population=s)
+    assert "Population view" in html and "Typical reader" in html
+    assert "Population view" not in hr.render_html([hr.user_report(pop, d, int(eligible[0]))])
+
+
 def test_load_item_csv_aligns_to_item_ids(tmp_path):
     ids = np.array(["N1", "N2", "N3"])
     p = tmp_path / "reg.csv"

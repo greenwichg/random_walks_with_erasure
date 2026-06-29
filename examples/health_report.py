@@ -265,6 +265,65 @@ def compute(mind: MINDData, min_clicks: int = 5, min_political: int = 3,
     )
 
 
+def population_summary(pop: dict, eligible) -> dict:
+    """Population-level context for the report — the *typical* reader, so an individual
+    percentile has an absolute anchor ("you read 12 topics; the median reader reads 7").
+
+    Aggregates the **raw** metric values over the ``eligible`` users (median + IQR), the
+    share who are *political readers* (have a defined viewpoint score), and the median
+    political-engagement share. All higher-is-healthier, matching the per-user scores."""
+    idx = np.asarray(eligible, dtype=int)
+
+    def stat(arr):
+        if arr is None:
+            return None
+        a = np.asarray(arr, dtype=float)[idx]
+        a = a[np.isfinite(a)]
+        if a.size == 0:
+            return None
+        return dict(median=float(np.median(a)), p25=float(np.percentile(a, 25)),
+                    p75=float(np.percentile(a, 75)), n=int(a.size))
+
+    echo = pop.get("echo")
+    metrics = {"Topic Diversity": pop.get("topic"),
+               "Source Diversity": pop.get("eff_src"),
+               "Viewpoint Balance": pop.get("cross"),
+               "Echo Chamber Score": (1.0 - np.asarray(echo, dtype=float)
+                                      if echo is not None else None),
+               "Reporting Ratio": pop.get("reporting"),
+               "Emotional Balance": pop.get("balance")}
+    cross = np.asarray(pop["cross"], dtype=float)[idx]
+    return dict(n_users=int(idx.size),
+                metrics={k: stat(v) for k, v in metrics.items()},
+                political_reader_frac=(float(np.isfinite(cross).mean())
+                                       if cross.size else float("nan")),
+                median_political_share=stat(pop.get("political_share")))
+
+
+_POP_UNITS = {"Topic Diversity": "normalised topic entropy (0–1)",
+              "Source Diversity": "effective # sources",
+              "Viewpoint Balance": "cross-cutting share (0–1)",
+              "Echo Chamber Score": "balance = 1−echo (0–1)",
+              "Reporting Ratio": "P(reporting)",
+              "Emotional Balance": "1−(fear+outrage) share"}
+
+
+def format_population(summary: dict) -> str:
+    """Render the population summary as a text block."""
+    L = ["POPULATION VIEW — the typical reader", "=" * 38,
+         f"profiled readers: {summary['n_users']}"]
+    pr = summary.get("political_reader_frac")
+    if pr is not None and np.isfinite(pr):
+        L.append(f"political readers (have a viewpoint score): {pr * 100:.0f}%")
+    L.append("\nmedian reader (raw metric · IQR):")
+    for name, s in summary["metrics"].items():
+        if s is None:
+            continue
+        L.append(f"  {name:<20} {s['median']:.2f}  "
+                 f"(IQR {s['p25']:.2f}–{s['p75']:.2f}; {_POP_UNITS.get(name, '')})")
+    return "\n".join(L)
+
+
 def user_report(pop: dict, mind: MINDData, u: int) -> dict:
     """Assemble the detailed report dict for one user."""
     UC, UO, cat_u, out_u = pop["UC"], pop["UO"], pop["cat_u"], pop["out_u"]
@@ -486,12 +545,35 @@ def _bar(label: str, score, hint: str = "", reason: str = "") -> str:
             f'<span class="val">{score}</span></div>')
 
 
+def _population_card_html(summary: dict) -> str:
+    """A 'typical reader' context card (raw medians + IQR) for the top of the page."""
+    rows = ""
+    for name, s in summary["metrics"].items():
+        if s is None:
+            continue
+        rows += (f'<div class="row"><span class="lbl">{name}'
+                 f'<span class="hint">{_POP_UNITS.get(name, "")}</span></span>'
+                 f'<span class="track"><span class="fill" style="width:'
+                 f'{min(100, max(2, s["median"] * 100 if s["median"] <= 1 else 50)):.0f}%">'
+                 f'</span></span><span class="val">{s["median"]:.2f}</span></div>')
+    pr = summary.get("political_reader_frac")
+    sub = f"{summary['n_users']} readers profiled"
+    if pr is not None and np.isfinite(pr):
+        sub += f" · {pr * 100:.0f}% political readers"
+    return (f'<div class="card"><div class="head"><div><h2>Population view</h2>'
+            f'<div class="sub">{sub}</div></div></div>'
+            f'<div class="section">Typical reader (median · raw value)</div>'
+            f'<div class="scores">{rows}</div></div>')
+
+
 def render_html(reports, out: str | None = None,
                 title: str = "Information Health Report",
-                labels: dict | None = None) -> str:
+                labels: dict | None = None, population: dict | None = None) -> str:
     """Render report dicts (from :func:`user_report`) as a standalone HTML page."""
     lab = labels or _LABELS["news"]
     cards = []
+    if population is not None:
+        cards.append(_population_card_html(population))
     for r in reports:
         bars = ""
         for sect, names in _GROUPS:
@@ -678,6 +760,9 @@ def main():
                     help="label preset: 'news' (MIND wording) or 'reddit' (Politosphere "
                          "participation — items are subreddits, political metrics on the "
                          "validated behavioral axis)")
+    ap.add_argument("--population", action="store_true",
+                    help="also show a 'typical reader' population view (raw medians + IQR "
+                         "over all eligible readers), so each percentile has an absolute anchor")
     args = ap.parse_args()
     lab = _LABELS[args.domain]
 
@@ -708,6 +793,12 @@ def main():
     if pool.size == 0:
         print("no users meet the floor."); return
 
+    pop_summary = None
+    if args.population and eligible.size:
+        pop_summary = population_summary(pop, eligible)
+        print(format_population(pop_summary))
+        print("\n" + "-" * 60 + "\n")
+
     if args.user is not None:
         users = [args.user]
     else:
@@ -718,7 +809,7 @@ def main():
         print(format_report(rep, lab))
         print("\n" + "-" * 60 + "\n")
     if args.html:
-        render_html(reports, out=args.html, labels=lab)
+        render_html(reports, out=args.html, labels=lab, population=pop_summary)
         print(f"wrote HTML report → {args.html}")
 
 
