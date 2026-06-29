@@ -153,7 +153,11 @@ outcome, not a measured opinion change.
    *independent* signal and gives only **r = +0.37** — corroborating, with a
    number, that the co-click axis is topical rather than ideological (cf. the
    Spearman 0.27 vs human labels). So the axis is well-*oriented* but
-   weakly-*resolved*: a noisy proxy, not a misaligned one.
+   weakly-*resolved*: a noisy proxy, not a misaligned one. To reduce the
+   single-model noise, `examples/ensemble_lean.py` averages several independent
+   bias models into one axis (z-scored, then rescaled); validate any axis against a
+   gold set with `examples/validate_lean.py` (calibration cannot help here — Spearman
+   is rank-based, so a *less-noisy* model, not a rescaled one, is what lifts it).
 2. **The `uw_recs ↓` effect is partly geometric.** A smaller bound mechanically
    forces opposite-side items closer to the user (hence the centre) on *any* 1-D
    axis — it also appears on the topic axis. So the sweep is a robust *mechanism*,

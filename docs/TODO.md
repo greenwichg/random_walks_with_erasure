@@ -44,12 +44,20 @@
 - [x] Decide emotion-metric framing — **keep, labelled experimental** (eyeball
       confirmed the documented behaviour)
 
-## 3. Data-dependent — [you] source → then quick (no code needed)
+## 3. Stronger lean axis — ensemble route built; run it · [you] Colab
 
-- [ ] **Stronger lean axis** — a license-clean outlet-lean table (AllSides /
-      Media Bias-Fact-Check) → `ingest --lean-csv`. **Highest leverage:** lifts
-      both the paper's RQ3 (Spearman 0.27) *and* the report's viewpoint/echo metrics
-- [ ] *(alternative)* multi-rater human-label gold set for the axis
+- [x] **Ensemble tooling** — `examples/ensemble_lean.py` (z-score + average
+      independent bias models; prints pairwise convergent validity) + notebook
+      `# 7b`. Averaging cuts single-model noise — the *codeable* lever for the axis
+      (calibration can't help: Spearman is rank-based). Unit-tested.
+- [ ] **Run it** — in `# 7b` set a 2nd L/C/R bias model (verify its `id2label`),
+      build `lean_ens.csv`, ingest with `--positions-csv lean_ens.csv`, then compare
+      RQ3 + `validate_lean.py` Spearman against the single model
+- [ ] **Outlet-lean (blocked on MIND)** — would lift RQ3 *and* the report's
+      viewpoint/echo, but needs a `news_id→publisher` source-map MIND omits (MSN
+      URLs); only then does an AllSides/MBFC `--lean-csv` attach
+- [ ] *(measurement)* a larger multi-rater gold set → `validate_lean.py` to pick
+      the best single model / ensemble (measures the axis; doesn't itself raise it)
 
 ## 4. Paper / publication — [me + you] · when ready
 
