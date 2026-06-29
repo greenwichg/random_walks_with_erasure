@@ -19,7 +19,7 @@
 - [x] Information Health Report **v1** + standalone **HTML rendering**
 - [x] reporting-vs-opinion + emotional-tone classifiers (wired into the report)
 
-## 1. Verification — [you] · Colab · next
+## 1. Verification — [you] · Colab · ✅ COMPLETE
 
 - [x] Eyeball the **classifiers** — `# 8e`/`# 8f`: register clean (editorials/op-eds
       vs wire reports); emotion sane at the tails but surface-keyed → **keep, stays
@@ -32,7 +32,10 @@
       folded into `RESULTS.md` limitation #3
 - [x] **MovieLens RQ2** — ran here (5 seeds); RWE-D ties RP³-β on accuracy, edges it
       on coverage/surprisal → folded into `RESULTS.md`
-- [ ] **Full notebook** clean top-to-bottom run on a fresh runtime
+- [x] **Full notebook** clean top-to-bottom run on a fresh runtime — passed: every
+      heavy artifact restored from the Drive cache (gated MIND download bypassed),
+      no errors, 7-seed RQ2/RQ3 + per-user-sig + sweep + axis all reproduce to the
+      printed precision. **Validation phase complete.**
 
 ## 2. Fold results into the docs — [me] · after you paste outputs
 
