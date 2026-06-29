@@ -57,11 +57,12 @@ The MIND text-lean axis is a weak / construct-mismatched proxy (it conflates
       subreddit_lean.csv` orients + validates it. **Synthetic proof: `lean_corr=0.94`**,
       axis splits progressive < democrats < center < Conservative < Republican.
       Unit-tested (6 tests). The whole MIND eval/plot pipeline runs on it unchanged.
-- [ ] **Run it on real Politosphere** — [you] download a slice from
-      <https://zenodo.org/records/5851729> (confirm its license), then
-      `ingest_politosphere.py --ideology` → `eval_mind` / `plot_axis`. This gives RQ3
-      a *genuine* ideological axis — the headline-proxy limitation gone — and a clean
-      `lean_corr` validation number. Then I fold it into RESULTS / the paper.
+- [ ] **Run it on real Politosphere** — [you] turnkey via
+      **`notebooks/run_politosphere_eval.ipynb`** (Drive-cache resilient: download →
+      ingest `--ideology` → `eval_mind` → `plot_axis`); confirm the dataset license at
+      <https://zenodo.org/records/5851729> first. Watch the printed `lean_corr` (the
+      clean axis-validation number the headline proxy couldn't give). Then I fold the
+      RQ2/RQ3 + `lean_corr` into RESULTS / the paper as the third dataset.
 
 _MIND text-axis attempts, kept for the record:_
 - [x] **Ensemble tooling** — `examples/ensemble_lean.py` (z-score + average
