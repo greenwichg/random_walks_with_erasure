@@ -18,6 +18,22 @@ data/*.csv
 *.npz
 *.npy
 
+# Generated run/eval outputs (created at repo root by examples/*.py; not deliverables).
+# Root-anchored (leading /) so they never shadow tracked files like
+# examples/data/subreddit_lean.csv.
+/eval_mind.csv
+/results*.csv
+/sweep*.csv
+/*_results.csv
+/movielens_rq2.csv
+/lean*.csv
+/register.csv
+/emotion.csv
+/label_*.tsv
+/axis*.png
+/polito_axis.png
+/health_report.html
+
 # OS / editor
 .DS_Store
 .idea/
