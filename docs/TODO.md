@@ -87,9 +87,12 @@ _MIND text-axis attempts, kept for the record:_
       underpowered** (need |r|>~0.31 for p<.05, so the original 0.27 isn't
       significant either) and those labels were *anchored*. So: not a clean "fails,"
       just no signal at this sample size. **Not folded into RESULTS/paper.**
-- [ ] **Blind, larger gold set (n≥100, 2–3 raters)** — the real unblocker: the
-      only way to a trustworthy axis number *and* a real ensemble-vs-single verdict.
-      Label without seeing any model output, then `validate_lean.py` all axes.
+- [~] **Blind, larger gold set (n≥100, 2–3 raters)** — the real unblocker for a
+      trustworthy *MIND text-axis* number. **Harness built**: `validate_lean.py
+      --sample 100` makes the blind stratified template; `--raters r1 r2 r3` now
+      reports **inter-rater agreement** (mean pairwise Spearman + quadratic-weighted
+      kappa) and validates each axis against the rater **consensus** (unit-tested).
+      Remaining = the human labeling itself (blind, ≥100 items, 2–3 raters), then run.
 - [ ] **Outlet-lean (blocked on MIND)** — would lift RQ3 *and* the report's
       viewpoint/echo, but needs a `news_id→publisher` source-map MIND omits (MSN
       URLs); only then does an AllSides/MBFC `--lean-csv` attach
