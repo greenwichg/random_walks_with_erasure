@@ -66,6 +66,23 @@ and emotional tone. It's the *auditing* side of the project's diversification wo
   `--require-political` (the notebook does): it draws users above the political-click
   floor, who still have diverse topics so the other metrics stay meaningful.
 
+## A worked example — MIND news (the report's primary habitat)
+
+Two real readers from the MIND-news ingest (`mind_full.npz`, classifiers run). This is
+the report's intended home, where the **axis-independent** metrics carry it: Topic
+Diversity, Reporting Ratio, and the (experimental) emotional tone / attention profile
+are populated. Honestly, two things are *not* trustworthy here and the card says so:
+Source Diversity is `n/a` (MIND ships MSN URLs, no publisher labels), and the
+**Balance & openness** scores ride the *weak text-lean axis* — so they're directional,
+and for these two readers mostly `n/a` (they click little political news).
+
+![A real MIND Information Health Report — Variety and Tone & substance populated; Balance rides the weak text-lean axis](images/mind_health_card.png)
+
+This is the **inverse** of the Reddit Politosphere card below: the two datasets exercise
+**opposite halves** of the report — MIND lights up Variety / Tone (no axis needed),
+Politosphere lights up Balance (Viewpoint / Echo) on the *validated* axis. Between them,
+every metric family is shown in the domain where it is actually sound.
+
 ## Running it on Reddit Politosphere (the inverse of MIND)
 
 The report also runs on the **Reddit Politosphere** ingest (`--domain reddit` on
@@ -248,4 +265,6 @@ _Last updated: 2026-06-29 (axis caveat corrected — the Viewpoint/Echo/Open-Min
 scores rest on the report's **weak MIND text-lean axis** (Spearman ≈ 0.27 / ≈ 0); a
 behavioral axis validated elsewhere (Politosphere, `lean_corr = 0.65`) but isn't
 available for MIND. Added `--domain reddit`: the report runs on the Politosphere
-ingest, where the political metrics sit on that validated axis — the inverse of MIND)._
+ingest, where the political metrics sit on that validated axis — the inverse of MIND.
+Added two worked-example cards (real readers) — MIND news and Reddit Politosphere —
+showing the two halves of the report side by side)._
