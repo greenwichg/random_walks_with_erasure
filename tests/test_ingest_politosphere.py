@@ -148,6 +148,10 @@ def test_health_report_reddit_domain():
     assert "no article text to classify on Reddit" in html       # attention block
     assert "run classify_emotion.py" not in html
     assert "no article text on Reddit" in txt                    # reporting/emotional n/a
+    assert "needs impressions (not in Politosphere)" in html      # open-mindedness n/a
+    # every n/a line in the reddit report carries a reason in parens (no bare n/a)
+    na_lines = [l for l in txt.splitlines() if "n/a" in l]
+    assert na_lines and all("(" in l for l in na_lines), "a bare n/a slipped through"
 
 
 def test_cli_end_to_end(tmp_path):
