@@ -151,7 +151,8 @@ def _row_shares(M):
 
 
 def compute(mind: MINDData, min_clicks: int = 5, min_political: int = 3,
-            top_n: int = 4, register=None, emotion=None, selective=None) -> dict:
+            top_n: int = 4, register=None, emotion=None, selective=None,
+            source=None) -> dict:
     """Per-user raw metrics + population percentiles + the aux matrices.
 
     ``register`` (per-column P(reporting)) and ``emotion`` (dict label->per-column
@@ -162,7 +163,9 @@ def compute(mind: MINDData, min_clicks: int = 5, min_political: int = 3,
     A = mind.dataset.matrix.tocsr().astype(float)
     n_users = A.shape[0]
     cats = np.asarray(mind.categories)
-    outs = np.asarray(mind.outlets)
+    # the "source" axis defaults to publisher (`outlets`); a domain can override it
+    # (e.g. Reddit uses the subreddit in `subcategories`) so Source Diversity works.
+    outs = np.asarray(mind.outlets if source is None else source)
     pos = np.asarray(mind.item_positions, dtype=float)
     pol = np.asarray(mind.political, dtype=bool)
     n_clicks = np.asarray(A.sum(axis=1)).ravel()
@@ -318,14 +321,14 @@ def _political_positions(mind: MINDData, u: int) -> np.ndarray:
     return pos[items][pol[items] & np.isfinite(pos[items])]
 
 
-def _na_reason(rep: dict, name: str) -> str:
+def _na_reason(rep: dict, name: str, labels: dict | None = None) -> str:
     """Short why-it's-blank note for a *structurally* undefined score, so an
     unavoidable ``n/a`` reads as a known limitation rather than a broken metric.
     On MIND, Source Diversity is always undefined: the URLs are MSN URLs, so the
     original publisher isn't in the data (needs an external source-map)."""
     if (name == "Source Diversity" and rep["scores"].get(name) is None
             and rep.get("distinct_outlets", 0) == 0):
-        return "no publisher labels — MIND URLs are MSN"
+        return (labels or _LABELS["news"]).get("source_na", "")
     return ""
 
 
@@ -343,7 +346,7 @@ def format_report(rep: dict, labels: dict | None = None) -> str:
         if v is not None:
             L.append(f"{name}: {v}/100")
         else:
-            why = _na_reason(rep, name)
+            why = _na_reason(rep, name, lab)
             L.append(f"{name}: n/a" + (f"  ({why})" if why else ""))
     L.append("")
 
@@ -430,7 +433,10 @@ _LABELS = {
         insight="{pct:.0f}% of your reading came from your top {n} publishers "
                 "(you read {m} distinct sources).",
         topics_label="Top topics", topics_from="categories",
-        show_blindspot=True, show_political_share=True),
+        show_blindspot=True, show_political_share=True,
+        source_attr="outlets",                      # publisher parsed from the URL
+        section_notes=_SECTION_NOTES, hints={},
+        source_na="no publisher labels — MIND URLs are MSN"),
     "reddit": dict(
         subject_bold="Reddit", subject_tail=" political-subreddit participation",
         unit="subreddits", read_suffix="", pol_clause=", all political",
@@ -438,7 +444,15 @@ _LABELS = {
         insight="{pct:.0f}% of your commenting came from your top {n} subreddits "
                 "({m} distinct communities).",
         topics_label="Top subreddits", topics_from="publishers",
-        show_blindspot=False, show_political_share=False),
+        show_blindspot=False, show_political_share=False,
+        # the subreddit (always in `titles` as "r/<sub>", even on an older ingest) is
+        # the "source"/community -> Source Diversity = community breadth; works without
+        # a rebuild. The political metrics sit on the *validated* behavioral axis.
+        source_attr="titles",
+        section_notes={"Balance & openness": "on the validated behavioral axis "
+                       "(lean_corr ≈ 0.65) — see docs/RESULTS.md"},
+        hints={"Source Diversity": "how many communities"},
+        source_na=""),
 }
 _HINTS = {"Topic Diversity": "how many topics you read",
           "Source Diversity": "how many publishers",
@@ -473,11 +487,13 @@ def render_html(reports, out: str | None = None,
             present = [n for n in names if n in r["scores"]]
             if not present:
                 continue
-            note = _SECTION_NOTES.get(sect, "")
+            note = lab.get("section_notes", _SECTION_NOTES).get(sect, "")
             note_html = f' <span class="exp">· {note}</span>' if note else ""
             bars += f'<div class="section">{sect}{note_html}</div>'
-            bars += "".join(_bar(n, r["scores"][n], _HINTS.get(n, ""), _na_reason(r, n))
-                            for n in present)
+            hints = lab.get("hints", {})
+            bars += "".join(
+                _bar(n, r["scores"][n], hints.get(n, _HINTS.get(n, "")), _na_reason(r, n, lab))
+                for n in present)
         overall = (f'<div class="overall">{r["overall"]}<span>/100</span>'
                    f'<div class="ov-note">illustrative</div></div>'
                    if r["overall"] is not None else "")
@@ -663,8 +679,13 @@ def main():
         emotion = _load_item_csv(args.emotion_csv, mind.dataset.item_ids)
     if args.behaviors:
         selective = selective_exposure_array(mind, args.behaviors)
+    # the "source" axis for Source Diversity: publisher (default) or, for reddit, the
+    # subreddit (`subcategories`) — works on any Politosphere npz without a rebuild.
+    src = None if lab["source_attr"] == "outlets" else np.asarray(
+        getattr(mind, lab["source_attr"]))
     pop = compute(mind, min_clicks=args.min_clicks, min_political=args.min_political,
-                  top_n=args.top_n, register=register, emotion=emotion, selective=selective)
+                  top_n=args.top_n, register=register, emotion=emotion,
+                  selective=selective, source=src)
     eligible = _eligible_pool(pop, args.min_clicks)
     print(f"users={mind.n_users}  items={mind.n_items}  eligible(>= {args.min_clicks} "
           f"clicks)={eligible.size}")

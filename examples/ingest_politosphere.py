@@ -163,10 +163,10 @@ def build_mind(uc, ic, u_names, s_names, lean=None) -> MINDData:
         categories=np.array(["political"] * n, dtype=object),
         subcategories=names.astype(object),
         titles=np.array([f"r/{s}" for s in names], dtype=object),
-        # The subreddit IS the "source"/community here -> the health report's Source
-        # Diversity becomes "how many distinct communities you participate in"
-        # (`--domain reddit`). Unused by eval_mind, so this only enriches the report.
-        outlets=np.array([f"r/{s}" for s in names], dtype=object),
+        # No "publisher" concept for subreddits -> outlets blank (like MIND's MSN URLs).
+        # The health report's `--domain reddit` uses the subreddit (`titles`) as the
+        # "source" for Source Diversity instead, so no rebuild is needed.
+        outlets=np.array([""] * n, dtype=object),
         political=np.ones(n, dtype=bool),
         item_positions=pos,
     )

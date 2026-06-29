@@ -72,8 +72,9 @@ def test_build_mind_seeds_positions_and_roundtrips(tmp_path):
     assert d.n_users == 3 and d.n_items == 4 and d.political.all()
     pos = {s: p for s, p in zip(np.asarray(d.dataset.item_ids), d.item_positions)}
     assert pos["Conservative"] == 2 and pos["democrats"] == -2 and pos["Libertarian"] == 1
-    # the subreddit is the "source"/community -> Source Diversity in the health report
-    assert list(d.outlets) == [f"r/{s}" for s in np.asarray(d.dataset.item_ids)]
+    # no "publisher" for subreddits -> outlets blank; the report uses titles ("r/<sub>")
+    assert list(d.outlets) == [""] * d.n_items
+    assert list(d.titles) == [f"r/{s}" for s in np.asarray(d.dataset.item_ids)]
     out = tmp_path / "p.npz"
     d.save(out)
     d2 = ip.MINDData.load(str(out))                              # full MIND container
@@ -114,26 +115,34 @@ def test_health_report_reddit_domain():
     sn = np.array(["socialism", "communism", "democrats",
                    "Conservative", "Republican", "randpaul"], dtype=object)
     d = ip.build_mind(uc, ic, un, sn, lean=None)
-    # simulate the post-`--ideology` axis: a finite position for *every* subreddit
+    # simulate an OLDER cached ingest: blank `outlets`, but the subreddit is still in
+    # `subcategories` + a finite axis position for every subreddit (post-`--ideology`).
     d = type(d)(**{**d.__dict__,
+                   "outlets": np.array([""] * d.n_items, dtype=object),
                    "item_positions": np.array([-1.6, -1.5, -1.0, 1.0, 1.5, 1.6])})
 
-    pop = hr.compute(d, min_clicks=3, min_political=3)
+    lab = hr._LABELS["reddit"]
+    src = np.asarray(getattr(d, lab["source_attr"]))          # -> titles ("r/<sub>")
+    pop = hr.compute(d, min_clicks=3, min_political=3, source=src)
     rep = hr.user_report(pop, d, 0)
-    # source + axis metrics defined; the news-only ones are structurally n/a
-    assert rep["scores"]["Source Diversity"] is not None
+    # source + axis metrics defined even with blank outlets; news-only ones are n/a
+    assert rep["scores"]["Source Diversity"] is not None      # community breadth
+    assert rep["top_publishers"]                              # top subreddits populated
+    assert all(name.startswith("r/") for name, _ in rep["top_publishers"])
     assert rep["scores"]["Viewpoint Balance"] is not None
     assert rep["scores"]["Echo Chamber Score"] is not None
-    assert rep["scores"]["Topic Diversity"] is None          # single 'political' category
+    assert rep["scores"]["Topic Diversity"] is None           # single 'political' category
     assert rep["scores"]["Reporting Ratio"] is None
     assert rep["scores"]["Open-Mindedness"] is None
-    # reddit wording, no MIND nouns
-    lab = hr._LABELS["reddit"]
+    # reddit wording, no MIND nouns / MIND-specific n/a reason
     txt = hr.format_report(rep, lab)
     assert "subreddits, all political" in txt and "Top subreddits" in txt
     assert "articles read" not in txt and "Top topics" not in txt
+    assert "MIND URLs are MSN" not in txt
     html = hr.render_html([rep], labels=lab)
     assert "Reddit" in html and "distinct communities" in html and "MSN-News" not in html
+    # the Balance section note is the *validated*-axis one, not MIND's weak-axis caveat
+    assert "validated behavioral axis" in html and "weak text-lean axis" not in html
 
 
 def test_cli_end_to_end(tmp_path):
