@@ -72,6 +72,8 @@ def test_build_mind_seeds_positions_and_roundtrips(tmp_path):
     assert d.n_users == 3 and d.n_items == 4 and d.political.all()
     pos = {s: p for s, p in zip(np.asarray(d.dataset.item_ids), d.item_positions)}
     assert pos["Conservative"] == 2 and pos["democrats"] == -2 and pos["Libertarian"] == 1
+    # the subreddit is the "source"/community -> Source Diversity in the health report
+    assert list(d.outlets) == [f"r/{s}" for s in np.asarray(d.dataset.item_ids)]
     out = tmp_path / "p.npz"
     d.save(out)
     d2 = ip.MINDData.load(str(out))                              # full MIND container
@@ -90,6 +92,48 @@ def test_bundled_lean_table_is_well_formed():
     t = ip.load_subreddit_lean(str(ROOT / "examples" / "data" / "subreddit_lean.csv"))
     assert t["conservative"] > 0 and t["democrats"] < 0      # oriented L<0<R
     assert all(-2 <= v <= 2 for v in t.values()) and len(t) >= 20
+
+
+def test_health_report_reddit_domain():
+    """The Information Health Report runs on a Politosphere container: Source Diversity
+    (community breadth) + the political metrics (on the behavioral axis) populate, the
+    news-only metrics go n/a, and `--domain reddit` swaps the MIND nouns."""
+    _hr = importlib.util.spec_from_file_location(
+        "health_report", ROOT / "examples" / "health_report.py")
+    hr = importlib.util.module_from_spec(_hr); _hr.loader.exec_module(hr)
+    # 8 users x 6 subreddits (3 left, 3 right); even users left, odd right, user 0 cross-cuts.
+    uc, ic = [], []
+    for u in range(8):
+        picks = list(range(0, 3) if u % 2 == 0 else range(3, 6))
+        if u == 0:
+            picks.append(5)                              # user 0 reaches into the right
+        for i in picks:
+            uc.append(u); ic.append(i)
+    uc, ic = np.array(uc), np.array(ic)
+    un = np.array([f"u{u}" for u in range(8)], dtype=object)
+    sn = np.array(["socialism", "communism", "democrats",
+                   "Conservative", "Republican", "randpaul"], dtype=object)
+    d = ip.build_mind(uc, ic, un, sn, lean=None)
+    # simulate the post-`--ideology` axis: a finite position for *every* subreddit
+    d = type(d)(**{**d.__dict__,
+                   "item_positions": np.array([-1.6, -1.5, -1.0, 1.0, 1.5, 1.6])})
+
+    pop = hr.compute(d, min_clicks=3, min_political=3)
+    rep = hr.user_report(pop, d, 0)
+    # source + axis metrics defined; the news-only ones are structurally n/a
+    assert rep["scores"]["Source Diversity"] is not None
+    assert rep["scores"]["Viewpoint Balance"] is not None
+    assert rep["scores"]["Echo Chamber Score"] is not None
+    assert rep["scores"]["Topic Diversity"] is None          # single 'political' category
+    assert rep["scores"]["Reporting Ratio"] is None
+    assert rep["scores"]["Open-Mindedness"] is None
+    # reddit wording, no MIND nouns
+    lab = hr._LABELS["reddit"]
+    txt = hr.format_report(rep, lab)
+    assert "subreddits, all political" in txt and "Top subreddits" in txt
+    assert "articles read" not in txt and "Top topics" not in txt
+    html = hr.render_html([rep], labels=lab)
+    assert "Reddit" in html and "distinct communities" in html and "MSN-News" not in html
 
 
 def test_cli_end_to_end(tmp_path):

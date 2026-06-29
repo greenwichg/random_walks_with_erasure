@@ -329,11 +329,13 @@ def _na_reason(rep: dict, name: str) -> str:
     return ""
 
 
-def format_report(rep: dict) -> str:
+def format_report(rep: dict, labels: dict | None = None) -> str:
     """Render the report dict as the INFORMATION HEALTH REPORT text block."""
+    lab = labels or _LABELS["news"]
+    pol_clause = lab["pol_clause"].format(n_political=rep["n_political"])
     L = ["INFORMATION HEALTH REPORT", "=" * 32,
-         f"user #{rep['user']}   ({rep['n_clicks']} articles read, "
-         f"{rep['n_political']} political)\n"]
+         f"user #{rep['user']}   ({rep['n_clicks']} {lab['unit']}{lab['read_suffix']}"
+         f"{pol_clause})\n"]
     if rep["overall"] is not None:
         L.append(f"Overall Score: {rep['overall']}/100   "
                  "(illustrative unweighted avg of v1 dimensions)\n")
@@ -347,22 +349,24 @@ def format_report(rep: dict) -> str:
 
     if rep["top_n_share"] is not None and rep["top_publishers"]:
         L.append("Biggest Insight:")
-        L.append(f"  {rep['top_n_share'] * 100:.0f}% of your reading came from your "
-                 f"top {len(rep['top_publishers'])} publishers "
-                 f"(you read {rep['distinct_outlets']} distinct sources).\n")
-    if rep["blind_spots"]:
+        L.append("  " + lab["insight"].format(
+            pct=rep["top_n_share"] * 100, n=len(rep["top_publishers"]),
+            m=rep["distinct_outlets"]) + "\n")
+    if lab["show_blindspot"] and rep["blind_spots"]:
         cat, us, cs = rep["blind_spots"][0]
         L.append("Blind Spot:")
         L.append(f"  You read little '{cat}' news — {us * 100:.0f}% of your reading "
                  f"vs {cs * 100:.0f}% of the catalog.\n")
-    if rep["top_categories"]:
-        L.append("Top topics:  " + ", ".join(f"{c} {s * 100:.0f}%"
-                                              for c, s in rep["top_categories"]))
+    topics_src = (rep["top_categories"] if lab["topics_from"] == "categories"
+                  else rep["top_publishers"])
+    if topics_src:
+        L.append(f"{lab['topics_label']}:  " + ", ".join(f"{c} {s * 100:.0f}%"
+                                                         for c, s in topics_src))
     lo, ce, ri = rep["viewpoint"]
     if np.isfinite(lo):
         L.append(f"Viewpoint mix: left {lo * 100:.0f}% · centre {ce * 100:.0f}% · "
                  f"right {ri * 100:.0f}%")
-    if rep.get("political_share") is not None:
+    if lab["show_political_share"] and rep.get("political_share") is not None:
         L.append(f"Political reading: {rep['political_share'] * 100:.0f}% of your clicks")
     if rep.get("attention"):
         L.append("Attention profile (experimental):  " + "  ".join(
@@ -413,6 +417,29 @@ _GROUPS = [("Variety", ["Topic Diversity", "Source Diversity"]),
 # a weak proxy ~0.27 vs human labels — see docs/RESULTS.md Limitation 1; a behavioral
 # axis validated elsewhere (Politosphere) but isn't available for MIND articles).
 _SECTION_NOTES = {"Balance & openness": "rests on a weak text-lean axis — directional only"}
+
+# Domain presets — the report's nouns. "news" (default) reproduces the MIND wording
+# exactly; "reddit" re-labels it for the Politosphere participation graph (items are
+# subreddits, "source" = community). On Politosphere the political metrics sit on the
+# *validated* behavioral axis (the inverse of MIND — see docs/HEALTH_REPORT.md).
+_LABELS = {
+    "news": dict(
+        subject_bold="MSN-News", subject_tail=" reading (headlines only)",
+        unit="articles", read_suffix=" read", pol_clause=", {n_political} political",
+        sub_html="{n_clicks} articles · {n_political} political",
+        insight="{pct:.0f}% of your reading came from your top {n} publishers "
+                "(you read {m} distinct sources).",
+        topics_label="Top topics", topics_from="categories",
+        show_blindspot=True, show_political_share=True),
+    "reddit": dict(
+        subject_bold="Reddit", subject_tail=" political-subreddit participation",
+        unit="subreddits", read_suffix="", pol_clause=", all political",
+        sub_html="{n_clicks} subreddits",
+        insight="{pct:.0f}% of your commenting came from your top {n} subreddits "
+                "({m} distinct communities).",
+        topics_label="Top subreddits", topics_from="publishers",
+        show_blindspot=False, show_political_share=False),
+}
 _HINTS = {"Topic Diversity": "how many topics you read",
           "Source Diversity": "how many publishers",
           "Viewpoint Balance": "reading across the centre",
@@ -435,8 +462,10 @@ def _bar(label: str, score, hint: str = "", reason: str = "") -> str:
 
 
 def render_html(reports, out: str | None = None,
-                title: str = "Information Health Report") -> str:
+                title: str = "Information Health Report",
+                labels: dict | None = None) -> str:
     """Render report dicts (from :func:`user_report`) as a standalone HTML page."""
+    lab = labels or _LABELS["news"]
     cards = []
     for r in reports:
         bars = ""
@@ -454,12 +483,12 @@ def render_html(reports, out: str | None = None,
                    if r["overall"] is not None else "")
         insight = ""
         if r["top_n_share"] is not None and r["top_publishers"]:
-            insight = (f'<div class="callout"><b>Biggest insight.</b> '
-                       f'{r["top_n_share"] * 100:.0f}% of your reading came from your top '
-                       f'{len(r["top_publishers"])} publishers '
-                       f'({r["distinct_outlets"]} distinct sources).</div>')
+            insight = ('<div class="callout"><b>Biggest insight.</b> '
+                       + lab["insight"].format(pct=r["top_n_share"] * 100,
+                                               n=len(r["top_publishers"]),
+                                               m=r["distinct_outlets"]) + '</div>')
         blind = ""
-        if r["blind_spots"]:
+        if lab["show_blindspot"] and r["blind_spots"]:
             cat, us, cs = r["blind_spots"][0]
             blind = (f'<div class="callout warn"><b>Blind spot.</b> Little '
                      f'&lsquo;{cat}&rsquo; news — {us * 100:.0f}% of your reading vs '
@@ -473,32 +502,35 @@ def render_html(reports, out: str | None = None,
                   f'<span class="r" style="width:{ri * 100:.0f}%"></span></div>'
                   f'<div class="vplab">left {lo * 100:.0f}% · centre {ce * 100:.0f}% · '
                   f'right {ri * 100:.0f}%</div></div>')
-        topics = ", ".join(f"{c} {s * 100:.0f}%" for c, s in r["top_categories"])
+        topics_src = (r["top_categories"] if lab["topics_from"] == "categories"
+                      else r["top_publishers"])
+        topics = ", ".join(f"{c} {s * 100:.0f}%" for c, s in topics_src)
         pol = (f' · <span style="color:var(--mute)">{r["political_share"] * 100:.0f}% '
-               f'political</span>' if r.get("political_share") is not None else "")
+               f'political</span>' if lab["show_political_share"]
+               and r.get("political_share") is not None else "")
         if r.get("attention"):
             segs = "".join(
                 f'<span style="width:{v * 100:.1f}%;background:'
                 f'{_ATTN_COLORS.get(k.lower(), "#cfcfcf")}"></span>'
                 for k, v in r["attention"].items())
-            lab = " · ".join(f"{k} {v * 100:.0f}%" for k, v in r["attention"].items())
+            attn_lab = " · ".join(f"{k} {v * 100:.0f}%" for k, v in r["attention"].items())
             attn_html = (f'<div class="attnwrap"><span class="attnlbl">Attention profile</span> '
                          f'<span class="exp">experimental</span>'
                          f'<div class="attn-bar">{segs}</div>'
-                         f'<div class="attn-lab">{lab}</div></div>')
+                         f'<div class="attn-lab">{attn_lab}</div></div>')
         else:
             attn_html = ('<div class="attn">Attention profile — run '
                          'classify_emotion.py to populate</div>')
         cards.append(
             f'<div class="card"><div class="head"><div><h2>Reader #{r["user"]}</h2>'
-            f'<div class="sub">{r["n_clicks"]} articles · {r["n_political"]} political</div>'
+            f'<div class="sub">{lab["sub_html"].format(n_clicks=r["n_clicks"], n_political=r["n_political"])}</div>'
             f'</div>{overall}</div><div class="scores">{bars}</div>{insight}{blind}{vp}'
-            f'<div class="topics"><b>Top topics:</b> {topics}{pol}</div>{attn_html}</div>')
+            f'<div class="topics"><b>{lab["topics_label"]}:</b> {topics}{pol}</div>{attn_html}</div>')
     html = (f'<!doctype html><html lang="en"><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1">'
             f'<title>{title}</title><style>{_CSS}</style></head><body>'
             f'<h1>{title}</h1><p class="disclaimer">A descriptive profile of your '
-            f'<b>MSN-News</b> reading (headlines only) — a mirror, not a verdict.</p>'
+            f'<b>{lab["subject_bold"]}</b>{lab["subject_tail"]} — a mirror, not a verdict.</p>'
             f'<p class="legend">Scores are percentiles vs other readers; the '
             f'&#9474; tick marks the typical reader (50th), and higher is healthier.</p>'
             f'{"".join(cards)}</body></html>')
@@ -616,7 +648,12 @@ def main():
     ap.add_argument("--require-political", action="store_true",
                     help="sample only users with >= --min-political political clicks, so "
                          "the viewpoint/echo/open-mindedness scores populate in the demo")
+    ap.add_argument("--domain", choices=["news", "reddit"], default="news",
+                    help="label preset: 'news' (MIND wording) or 'reddit' (Politosphere "
+                         "participation — items are subreddits, political metrics on the "
+                         "validated behavioral axis)")
     args = ap.parse_args()
+    lab = _LABELS[args.domain]
 
     mind = MINDData.load(args.npz)
     register = emotion = selective = None
@@ -647,10 +684,10 @@ def main():
         users = rng.choice(pool, size=min(args.sample, pool.size), replace=False)
     reports = [user_report(pop, mind, int(u)) for u in users]
     for rep in reports:
-        print(format_report(rep))
+        print(format_report(rep, lab))
         print("\n" + "-" * 60 + "\n")
     if args.html:
-        render_html(reports, out=args.html)
+        render_html(reports, out=args.html, labels=lab)
         print(f"wrote HTML report → {args.html}")
 
 

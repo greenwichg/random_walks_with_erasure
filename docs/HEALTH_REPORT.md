@@ -66,6 +66,28 @@ and emotional tone. It's the *auditing* side of the project's diversification wo
   `--require-political` (the notebook does): it draws users above the political-click
   floor, who still have diverse topics so the other metrics stay meaningful.
 
+## Running it on Reddit Politosphere (the inverse of MIND)
+
+The report also runs on the **Reddit Politosphere** ingest (`--domain reddit` on
+`politosphere_mi200.npz`; the `run_politosphere_eval.ipynb` notebook does this), and
+it is the **mirror image** of the MIND report:
+
+- **Variety / Tone go `n/a`.** Every item is one `political` category and there is no
+  article text, so **Topic Diversity, Reporting Ratio, Emotional Balance** are
+  structurally undefined.
+- **The political metrics become the *trustworthy* ones.** Here `item_positions` is
+  the **behaviorally-validated** left↔right axis (`lean_corr = 0.65`, `RESULTS.md`),
+  not the weak MIND text-lean proxy — so **Viewpoint Balance** (do you participate in
+  subreddits across the centre?) and **Echo Chamber Score** (how one-sided is your
+  community set?) are, on this dataset, *measurements rather than directional hints*.
+  This is the one place the report's balance metrics rest on a validated axis.
+- **Source Diversity = community breadth.** The subreddit is treated as the "source,"
+  so Source Diversity reads as *how many distinct communities you participate in*
+  (endorsements are binary, so it tracks breadth, not within-community evenness).
+- **`--domain reddit` relabels the nouns** — "Reddit participation"/"subreddits"/
+  "communities" instead of "MSN-News reading"/"articles"/"publishers" — so the report
+  doesn't mislabel Reddit data as news. Open-Mindedness stays `n/a` (no impressions).
+
 ## Quick reference
 
 | Score | Measures | Higher means | Needs |
@@ -218,4 +240,5 @@ Avoid medicalised or prescriptive language in anything user-facing.
 _Last updated: 2026-06-29 (axis caveat corrected — the Viewpoint/Echo/Open-Mindedness
 scores rest on the report's **weak MIND text-lean axis** (Spearman ≈ 0.27 / ≈ 0); a
 behavioral axis validated elsewhere (Politosphere, `lean_corr = 0.65`) but isn't
-available for MIND)._
+available for MIND. Added `--domain reddit`: the report runs on the Politosphere
+ingest, where the political metrics sit on that validated axis — the inverse of MIND)._
