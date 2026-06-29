@@ -93,9 +93,14 @@ _MIND text-axis attempts, kept for the record:_
       reports **inter-rater agreement** (mean pairwise Spearman + quadratic-weighted
       kappa) and validates each axis against the rater **consensus** (unit-tested).
       Remaining = the human labeling itself (blind, ≥100 items, 2–3 raters), then run.
-- [ ] **Outlet-lean (blocked on MIND)** — would lift RQ3 *and* the report's
-      viewpoint/echo, but needs a `news_id→publisher` source-map MIND omits (MSN
-      URLs); only then does an AllSides/MBFC `--lean-csv` attach
+- [~] **Outlet-lean — software-unblocked; only a publisher-carrying catalog remains.**
+      Would lift RQ3 *and* the report's viewpoint/echo. The blocker is purely *data*:
+      MIND ships MSN URLs with no publisher. **Built**: a curated `examples/data/
+      outlet_lean.csv` (AllSides-style, ~55 outlets) + `examples/build_source_map.py`
+      (turns any publisher-carrying catalog — EB-NeRD `.parquet`, or a resolved
+      MSN-provider table — into the `news_id→outlet` map `ingest_mind --source-map`
+      consumes). Unit-tested end-to-end. Remaining = point it at EB-NeRD (or an MSN→
+      provider resolution); MIND alone stays blocked.
 
 ## 4. Paper / publication — [me + you] · when ready
 

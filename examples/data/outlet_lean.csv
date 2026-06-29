@@ -1,0 +1,68 @@
+# Illustrative political lean of major (mostly US) news outlets, on the AllSides-style
+# -2..+2 scale (left .. right). Feeds ingest_mind.py via --lean-csv, joined to articles
+# through a news_id->outlet source-map (see examples/build_source_map.py). MIND itself
+# ships MSN aggregator URLs with no publisher, so this only attaches once you have a
+# catalog that carries publishers (e.g. EB-NeRD) -- that is the outlet-lean blocker.
+#
+# Coarse, contested, time-dependent labels (same caveat as subreddit_lean.csv). For a
+# paper, cite a vetted source (AllSides / Media Bias-Fact Check) and note the version.
+# Names are matched case-insensitively and punctuation-insensitively.
+outlet,lean
+# --- left ---
+Mother Jones,-2
+The Nation,-2
+Jacobin,-2
+Daily Kos,-2
+The Intercept,-2
+Salon,-2
+AlterNet,-2
+Democracy Now,-2
+# --- lean left ---
+New York Times,-1
+Washington Post,-1
+CNN,-1
+MSNBC,-1
+NPR,-1
+The Guardian,-1
+Politico,-1
+NBC News,-1
+ABC News,-1
+CBS News,-1
+Vox,-1
+HuffPost,-1
+The Atlantic,-1
+Time,-1
+Slate,-1
+Bloomberg,-1
+Business Insider,-1
+# --- center ---
+Reuters,0
+Associated Press,0
+AP,0
+BBC,0
+The Hill,0
+Axios,0
+USA Today,0
+Christian Science Monitor,0
+Forbes,0
+NewsNation,0
+MarketWatch,0
+# --- lean right ---
+Wall Street Journal,1
+The Dispatch,1
+Washington Examiner,1
+Reason,1
+National Review,1
+The Epoch Times,1
+# --- right ---
+Fox News,2
+Breitbart,2
+Daily Wire,2
+New York Post,2
+The Daily Caller,2
+Newsmax,2
+OANN,2
+The Federalist,2
+Washington Times,2
+Townhall,2
+The Blaze,2
