@@ -50,14 +50,19 @@
       independent bias models; prints pairwise convergent validity) + notebook
       `# 7b`. Averaging cuts single-model noise — the *codeable* lever for the axis
       (calibration can't help: Spearman is rank-based). Unit-tested.
-- [ ] **Run it** — in `# 7b` set a 2nd L/C/R bias model (verify its `id2label`),
-      build `lean_ens.csv`, ingest with `--positions-csv lean_ens.csv`, then compare
-      RQ3 + `validate_lean.py` Spearman against the single model
+- [x] **Ran it (inconclusive — ensemble not adopted)** — built `lean_b.csv`
+      (premsa/AllSides) + `lean_ens.csv`; cross-model agreement Spearman **+0.38**.
+      Against a 40-item human-labeled set: ensemble **−0.05** vs single **−0.09**
+      (sign-acc 0.50 vs 0.30) → **no meaningful gain**, both ≈ 0. But **n=40 is
+      underpowered** (need |r|>~0.31 for p<.05, so the original 0.27 isn't
+      significant either) and those labels were *anchored*. So: not a clean "fails,"
+      just no signal at this sample size. **Not folded into RESULTS/paper.**
+- [ ] **Blind, larger gold set (n≥100, 2–3 raters)** — the real unblocker: the
+      only way to a trustworthy axis number *and* a real ensemble-vs-single verdict.
+      Label without seeing any model output, then `validate_lean.py` all axes.
 - [ ] **Outlet-lean (blocked on MIND)** — would lift RQ3 *and* the report's
       viewpoint/echo, but needs a `news_id→publisher` source-map MIND omits (MSN
       URLs); only then does an AllSides/MBFC `--lean-csv` attach
-- [ ] *(measurement)* a larger multi-rater gold set → `validate_lean.py` to pick
-      the best single model / ensemble (measures the axis; doesn't itself raise it)
 
 ## 4. Paper / publication — [me + you] · when ready
 
