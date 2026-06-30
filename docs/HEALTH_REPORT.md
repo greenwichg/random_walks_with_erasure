@@ -262,8 +262,30 @@ Avoid medicalised or prescriptive language in anything user-facing.
 | Emotional Balance / Attention | `examples/classify_emotion.py` → `compute(emotion=…)` |
 | scores → percentiles | `examples/health_report.py` · `percentiles` |
 | HTML rendering | `examples/health_report.py` · `render_html` |
+| Generative narrative + steelman | `examples/narrate_report.py` (LLM over the metrics) |
 
-_Last updated: 2026-06-29 (axis caveat corrected — the Viewpoint/Echo/Open-Mindedness
+## Generative narrative layer (`examples/narrate_report.py`)
+
+The metrics above are deterministic; `narrate_report.py` is an optional **generative**
+layer on top — the demo-facing feature. It feeds *only* the engine-computed metrics for a
+reader to an LLM (free Gemini by default, or Claude — reuses the `examples/llm_label.py`
+plumbing) and asks for a warm, plain-language report plus a good-faith **steelman** of the
+viewpoint the reader under-consumes; it can also recommend real opposite-lean headlines
+from the catalog.
+
+The contract is **grounded narration, not a chatbot guess**: `report_facts()` extracts
+only measured values, the prompt forbids inventing any statistic, and `check_grounding()`
+flags any number in the output that is not in the metrics. So the recommender + metrics
+stay the source of truth; the LLM adds the warmth, the blind-spot explanation, and the
+other side's strongest case. Run it via notebook `# 8g`, or:
+
+```
+python examples/narrate_report.py --npz mind_full.npz      # free Gemini; auto-picks a reader
+```
+
+_Last updated: 2026-06-30 (added the generative narrative layer `narrate_report.py`:
+a grounded LLM report + steelman over the computed metrics, with a hallucination-guard
+grounding check). Earlier — axis caveat corrected — the Viewpoint/Echo/Open-Mindedness
 scores rest on the report's **weak MIND text-lean axis** (Spearman ≈ 0.27 / ≈ 0); a
 behavioral axis validated elsewhere (Politosphere, `lean_corr = 0.65`) but isn't
 available for MIND. Added `--domain reddit`: the report runs on the Politosphere

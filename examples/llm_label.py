@@ -217,6 +217,48 @@ def make_caller(provider: str, model: str):
     raise SystemExit(f"unknown --provider {provider!r} (use gemini or anthropic)")
 
 
+# --------------------------------------------------------------------------- #
+# Free-text caller (no JSON schema) — reused by examples/narrate_report.py for
+# prose generation. The labeling callers above are JSON-locked, so narration
+# needs this plain-text variant; the provider/key/retry story is identical.
+# --------------------------------------------------------------------------- #
+def make_text_caller(provider: str, model: str, max_tokens: int = 1500):
+    """Dispatch ``provider`` -> a ``call_fn(system, user) -> prose text``."""
+    if provider == "gemini":
+        try:
+            from google import genai
+            from google.genai import types
+        except ImportError:
+            raise SystemExit("google-genai not installed -- run: pip install google-genai")
+        client = genai.Client()
+
+        def call(system: str, user: str) -> str:
+            resp = client.models.generate_content(
+                model=model, contents=user,
+                config=types.GenerateContentConfig(
+                    system_instruction=system, max_output_tokens=max_tokens),
+            )
+            return resp.text or ""
+        return call
+
+    if provider == "anthropic":
+        try:
+            import anthropic
+        except ImportError:
+            raise SystemExit("anthropic not installed -- run: pip install anthropic")
+        client = anthropic.Anthropic()
+
+        def call(system: str, user: str) -> str:
+            resp = client.messages.create(
+                model=model, max_tokens=max_tokens, system=system,
+                messages=[{"role": "user", "content": user}],
+            )
+            return "".join(b.text for b in resp.content if b.type == "text")
+        return call
+
+    raise SystemExit(f"unknown provider {provider!r} (use gemini or anthropic)")
+
+
 def write_labels(labels: dict, rows, out: str, model: str) -> int:
     """Write the provenance-stamped `news_id,position,reason` CSV; return count."""
     n = 0
