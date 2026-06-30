@@ -74,8 +74,13 @@ def report_facts(rep: dict, domain: str = "news") -> dict:
             f"{round(100 * left)}% / {round(100 * center)}% / {round(100 * right)}%")
     ml = rep.get("mean_lean")
     if ml is not None and ml == ml:
+        side = "left" if ml < 0 else "right"
+        # MIND positions are bounded to [-2, 2]; the Politosphere axis is standardized
+        # (z-scores), so its mean can exceed +/-2 -- don't claim a -2..+2 scale there.
         facts["overall lean of political reading"] = (
-            f"{ml:+.2f} on a -2..+2 scale ({'left' if ml < 0 else 'right'}-leaning)")
+            f"{ml:+.2f} ({side}-leaning; standardized z-score axis, not bounded to +/-2)"
+            if reddit else
+            f"{ml:+.2f} on a -2..+2 scale ({side}-leaning)")
 
     if not reddit:
         facts["top topics"] = ", ".join(

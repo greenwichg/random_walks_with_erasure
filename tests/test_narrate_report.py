@@ -91,6 +91,9 @@ def test_report_facts_reddit_uses_validated_axis_and_communities():
     assert "distinct communities" in f and "share from top communities" in f
     vk = [k for k in f if k.startswith("political reading left/center/right")][0]
     assert "validated behavioral axis" in vk and f[vk] == "80% / 10% / 10%"
+    # the Politosphere axis is standardized (z-scores) -> must NOT claim a -2..+2 scale
+    lean_fact = f["overall lean of political reading"]
+    assert "left-leaning" in lean_fact and "-2..+2 scale" not in lean_fact
 
 
 def test_build_messages_reddit_uses_community_language():
