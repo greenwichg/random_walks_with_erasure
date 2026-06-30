@@ -163,27 +163,28 @@ def serve(npz: str, domain: str, provider: str, model, host: str, port: int) -> 
     http.server.ThreadingHTTPServer((host, port), _make_handler(render)).serve_forever()
 
 
-_BG_SERVER = None
+def start_server(npz: str, domain: str = "news", provider: str = "gemini",
+                 model=None, host: str = "0.0.0.0", port: int = 8000, prior=None):
+    """Start the app in a background thread and **return the server handle**.
 
-
-def serve_background(npz: str, domain: str = "news", provider: str = "gemini",
-                     model=None, host: str = "0.0.0.0", port: int = 8000):
-    """Start (or **restart**) the app in a background thread — safe to call repeatedly from
-    a notebook. It shuts down any prior instance first, so a re-run reloads fresh data and
-    any newly-created enrichment CSVs (emotion.csv / register.csv) without a port clash."""
-    global _BG_SERVER
+    Returns the live ``ThreadingHTTPServer`` so the *caller* owns the handle. Keep it in
+    the notebook's namespace (e.g. ``_ihr_server = ihr_app.start_server(...)``): unlike a
+    module-level global, a notebook variable survives ``importlib.reload(app)``, so a
+    re-run can hand the previous server back via ``prior=`` and we shut it down cleanly
+    instead of orphaning it on the port (which is what caused ``Address already in use``).
+    Building the renderer reloads compute + any new enrichment CSVs (emotion/register)."""
     import threading
-    if _BG_SERVER is not None:                                 # tear down the previous one
+    if prior is not None:                                      # tear down the previous one
         try:
-            _BG_SERVER.shutdown()
-            _BG_SERVER.server_close()
+            prior.shutdown()
+            prior.server_close()
         except Exception:
             pass
     render = make_renderer(npz, domain, provider, model)       # reloads compute + CSVs
-    _BG_SERVER = http.server.ThreadingHTTPServer((host, port), _make_handler(render))
-    threading.Thread(target=_BG_SERVER.serve_forever, daemon=True).start()
+    server = http.server.ThreadingHTTPServer((host, port), _make_handler(render))
+    threading.Thread(target=server.serve_forever, daemon=True).start()
     print(f"serving on port {port}  (domain={domain}, narrative={_key_state()})")
-    return _BG_SERVER
+    return server
 
 
 def main() -> None:
