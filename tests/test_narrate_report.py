@@ -42,6 +42,18 @@ def test_report_facts_uses_only_real_values_and_drops_none():
     assert not any("Open-Mindedness" in k or "Reporting" in k for k in f)
 
 
+def test_report_facts_drops_publisher_facts_when_absent():
+    # MIND case: no publisher data -> distinct_outlets 0 -> emitting "0 publishers" would
+    # be a false statement, so the publisher facts must be dropped entirely.
+    rep = _rep()
+    rep["distinct_outlets"] = 0
+    rep["top_n_share"] = 0.0
+    rep["top_publishers"] = []
+    f = nr.report_facts(rep)
+    assert not any("publisher" in k for k in f)
+    assert f["articles read"] == 40 and "top topics" in f      # non-publisher facts remain
+
+
 def test_report_facts_handles_nan_viewpoint():
     rep = _rep()
     rep["viewpoint"] = (float("nan"), float("nan"), float("nan"))

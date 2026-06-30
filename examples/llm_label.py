@@ -222,7 +222,7 @@ def make_caller(provider: str, model: str):
 # prose generation. The labeling callers above are JSON-locked, so narration
 # needs this plain-text variant; the provider/key/retry story is identical.
 # --------------------------------------------------------------------------- #
-def make_text_caller(provider: str, model: str, max_tokens: int = 1500):
+def make_text_caller(provider: str, model: str, max_tokens: int = 4096):
     """Dispatch ``provider`` -> a ``call_fn(system, user) -> prose text``."""
     if provider == "gemini":
         try:
@@ -233,11 +233,17 @@ def make_text_caller(provider: str, model: str, max_tokens: int = 1500):
         client = genai.Client()
 
         def call(system: str, user: str) -> str:
+            cfg = dict(system_instruction=system, max_output_tokens=max_tokens)
+            # gemini-2.5-flash 'thinks' by default, and thinking shares the output-token
+            # budget -> the visible answer truncates mid-sentence. Disable it for plain
+            # narration (these flash models allow budget 0; 2.5-pro does not).
+            if "2.5" in model and "flash" in model:
+                try:
+                    cfg["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
+                except AttributeError:
+                    pass                # older SDK: the generous max_output_tokens covers it
             resp = client.models.generate_content(
-                model=model, contents=user,
-                config=types.GenerateContentConfig(
-                    system_instruction=system, max_output_tokens=max_tokens),
-            )
+                model=model, contents=user, config=types.GenerateContentConfig(**cfg))
             return resp.text or ""
         return call
 

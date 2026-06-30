@@ -47,9 +47,15 @@ def report_facts(rep: dict) -> dict:
         "viewpoint balance (percentile)": sc.get("Viewpoint Balance"),
         "echo-chamber score (percentile, higher = less echo)": sc.get("Echo Chamber Score"),
         "open-mindedness (percentile)": sc.get("Open-Mindedness"),
-        "share from top publishers": _pct(rep.get("top_n_share")),
-        "distinct publishers": rep.get("distinct_outlets"),
     }
+    # Publisher facts only when the dataset actually carries publishers. On MIND the
+    # URLs are MSN with no publisher, so distinct_outlets is 0 -> emitting "0 publishers"
+    # would be a false statement, not a measurement. Drop them in that case.
+    if rep.get("distinct_outlets"):
+        facts["share from top publishers"] = _pct(rep.get("top_n_share"))
+        facts["distinct publishers"] = rep.get("distinct_outlets")
+        facts["top publishers"] = ", ".join(
+            o for o, _s in (rep.get("top_publishers") or [])[:4]) or None
     if left is not None and left == left:                         # left==left filters NaN
         facts["political reading left/center/right"] = (
             f"{round(100 * left)}% / {round(100 * center)}% / {round(100 * right)}%")
@@ -61,8 +67,6 @@ def report_facts(rep: dict) -> dict:
         f"{c} ({round(100 * s)}%)" for c, s in (rep.get("top_categories") or [])) or None
     facts["under-read topics (below catalog rate)"] = ", ".join(
         c for c, *_ in (rep.get("blind_spots") or [])) or None
-    facts["top publishers"] = ", ".join(
-        o for o, _s in (rep.get("top_publishers") or [])[:4]) or None
     return {k: v for k, v in facts.items() if v is not None}
 
 
