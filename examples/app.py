@@ -81,7 +81,18 @@ def make_renderer(npz: str, domain: str, provider: str, model):
     is unit-testable without starting a server)."""
     mind = MINDData.load(npz)
     src = None if domain == "news" else np.asarray(mind.titles)
-    pop = hr.compute(mind, source=src)
+    # wire in the optional enrichment files if they exist (so Reporting / Emotional /
+    # Attention / Open-Mindedness populate once you've run the classifiers, like # 8d).
+    import glob
+    register = emotion = selective = None
+    if os.path.exists("register.csv"):
+        register = hr._load_item_csv("register.csv", mind.dataset.item_ids)["reporting"]
+    if os.path.exists("emotion.csv"):
+        emotion = hr._load_item_csv("emotion.csv", mind.dataset.item_ids)
+    beh = [b for b in glob.glob("**/behaviors.tsv", recursive=True) if "fixture" not in b]
+    if beh:
+        selective = hr.selective_exposure_array(mind, beh[0])
+    pop = hr.compute(mind, source=src, register=register, emotion=emotion, selective=selective)
     eligible = hr._eligible_pool(pop, 5)
     if len(eligible) == 0:
         raise SystemExit("no eligible users (>=5 clicks) in this .npz")
