@@ -113,7 +113,10 @@ real data and the others in simulation.
 
 1. **Satisfaction-calibrated exposure** (`AdaptiveRWEB`): a per-user `ε` set from a
    browsing-walk "satisfaction" signal, so low-tolerance users receive less opposite
-   content. *(Simulation/illustrative.)*
+   content. *(Controller simulated, but the signal is now empirically motivated: on
+   14.7M Politosphere comments, cross-cutting participation is rare (9% of sided users)
+   yet mostly welcomed — 82% net-upvoted vs 95% same-side, higher reply rate, not
+   dogpiling; self-selected, so an upper bound. See `RESULTS.md`.)*
 2. **Bounded bridging** (`max_distance`): the focus of this paper — see §3, §6.
 3. **Closed-loop guardrails** (`BackfireMonitor`, `EngagementGuardrail`): per-user
    controllers that cut the bridging "dose" when an ideology-drift or

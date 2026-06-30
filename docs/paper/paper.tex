@@ -178,8 +178,13 @@ on real data and the others in simulation.
 \begin{enumerate}
   \item \textbf{Satisfaction-calibrated exposure} (\texttt{AdaptiveRWEB}): a
   per-user $\varepsilon$ set from a browsing-walk ``satisfaction'' signal, so
-  low-tolerance users receive less opposite content. \emph{(Simulation /
-  illustrative; the signal is currently synthetic.)}
+  low-tolerance users receive less opposite content. \emph{(The controller is
+  simulated, but the signal is now empirically motivated: on $14.7$\,M Politosphere
+  comments, cross-cutting participation is rare ($9\%$ of sided users) yet mostly
+  welcomed when it happens---$82\%$ net-upvoted vs.\ $95\%$ same-side, with a
+  \emph{higher} reply rate ($73\%$ vs.\ $59\%$), i.e.\ engagement rather than
+  dogpiling. The observed cross-cutting is self-selected, so this bounds rather than
+  estimates a recommended bridge's reception; \S\ref{sec:results}.)}
   \item \textbf{Bounded bridging} (\texttt{max\_distance}): the focus of this
   paper---see Sections~\ref{sec:background} and~\ref{sec:results}.
   \item \textbf{Closed-loop guardrails} (\texttt{BackfireMonitor},

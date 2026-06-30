@@ -190,6 +190,41 @@ individual subreddit — e.g. `r/ShitLiberalsSay` is *far-left* (it mocks libera
 the left), so #9553's small "right" share is partly a placement error. So treat them
 as **directional on a validated-but-imperfect axis**, not a precise per-person verdict.
 
+### Measured cross-cutting reception (Politosphere) — *measured*, not simulated
+
+The project's most distinctive idea — calibrating exposure to **satisfaction** — was
+synthetic everywhere else. Politosphere lets us *measure* a proxy for it on real
+behaviour: `examples/satisfaction_probe.py` reads the comment `score` / `parent_id` /
+`created_utc` we otherwise discard and compares **cross-cutting** comments (a user posting
+in an opposite-side subreddit on the validated axis) against **same-side** ones, over
+**14.7 M** comments in the 114 positioned subreddits.
+
+Two findings. First, **cross-cutting is rare** — only **9 %** of clear-side users ever do
+it (248 K cross-cutting vs 7.2 M same-side comments) — which is itself a motivation for a
+bridging recommender: people seldom cross over unprompted. Second, **when they do, it is
+predominantly welcomed, at a modest cost**:
+
+| (per-comment) | cross-cutting | same-side |
+|---|---|---|
+| net-upvoted (`score > 0`) | **82 %** | 95 % |
+| median score | 1.0 | 2.0 |
+| reply rate (in-thread) | **73 %** | 59 % |
+
+So cross-cutting comments are net-positive 82 % of the time and draw *more* discussion
+(73 % vs 59 % reply rate) — received as genuine engagement, **not dogpiled flame wars** —
+though with a real reception penalty (82 vs 95 % upvoted, half the median score). This is
+the **first *measured* (not simulated)** evidence that the bounded-bridging objective
+targets engagement readers actually accept.
+
+**Caveat (this leads, not trails).** The observed cross-cutting is **self-selected** — it
+comes from the 9 % who already cross over, posting comments that are themselves likely
+self-selected to be diplomatic. So 82 % is an **upper bound** on how welcomed a *recommended*
+bridge would be, not the counterfactual of nudging a random reader across; the higher reply
+rate is also ambiguous (engagement vs. argument). The **return** dimension was
+**inconclusive** here (1.0 vs 1.0 distinct months — the 3-file window is too short to
+separate them). So we report this as a *promising, measurable* signal that warrants wiring
+into `AdaptiveRWEB`, with the selection bias stated plainly — not as a settled effect.
+
 ## RQ3 — ideological bridging (RWE-B)
 
 Mean ± std over 7 seeds (all vs-P3 differences Wilcoxon `p = 0.016`).

@@ -146,18 +146,19 @@ _MIND text-axis attempts, kept for the record:_
 
 ## 5. Optional / future research — lower priority
 
-- [~] **Real-log satisfaction signal** — currently synthetic; computing it from real
-      engagement logs is the move that turns the most-distinctive idea into genuine
-      novelty (MIND lacks the logs, but **Reddit/Politosphere may carry them**). Built a
-      **feasibility probe** (`examples/satisfaction_probe.py` + notebook `# 7`): it reads
-      the comment `score`/`created_utc`/`parent_id` we currently discard and compares
-      **cross-cutting vs same-side** engagement (reception via upvotes, depth via reply
-      threads, return via months) on the **validated** axis — printing a verdict on
-      whether the measured signal is a real satisfaction proxy or adversarial flame-war
-      noise. Unit-tested. **Pending: run on the real slice** (does Politosphere keep the
-      fields, and are cross-cutting comments welcomed or dogpiled?). If sensible → promote
-      to a measured metric + wire into `AdaptiveRWEB`; if flame-war-dominated → report as
-      *why* real satisfaction is hard here (itself a finding).
+- [x] **Real-log satisfaction signal — RAN on Politosphere; it's measurable and mostly
+      positive.** The most-distinctive idea (satisfaction-calibrated exposure) was
+      synthetic everywhere; `examples/satisfaction_probe.py` + `# 7` measure a proxy on
+      **14.7 M real comments**. Politosphere **keeps** the fields (`score`/`created_utc`/
+      `parent_id`). Findings: cross-cutting is **rare** (9 % of sided users) but, when it
+      happens, **mostly welcomed** — **82 %** net-upvoted (vs 95 % same-side) with a
+      *higher* reply rate (73 % vs 59 %), engagement not dogpiling — at a modest reception
+      penalty. **Caveat (leads):** observed cross-cutting is **self-selected**, an upper
+      bound, not the counterfactual of a recommended bridge; the *return* signal was
+      inconclusive (short window). Folded into `RESULTS.md` (a *measured-not-simulated*
+      subsection), the paper, and `PAPER.md`. _(Next, optional: wire the measured signal
+      into `AdaptiveRWEB`; a longer comment window to make the *return* metric work.)_
+- [ ] Health-report polish (e.g. a "you vs the average reader" population view)
 - [ ] Health-report polish (e.g. a "you vs the average reader" population view)
 
 ---
