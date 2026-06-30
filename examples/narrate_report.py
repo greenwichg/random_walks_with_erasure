@@ -170,10 +170,35 @@ def narrate(facts_text: str, call_fn, recs=None, domain: str = "news",
     return _call_with_retry(call_fn, system, user, retries, backoff).strip()
 
 
+def rweb_recommendations(mind, rep: dict, k: int = 5, epsilon: float = 0.9,
+                         max_distance=None) -> list:
+    """The engine's *actual* RWE-B bounded-bridging recommendations for the reader --
+    titles of the top-k items it surfaces (already-seen excluded), so the demo can say
+    'our recommender chose these', not a heuristic. Returns [] (caller falls back to
+    bridge_candidates) if the user has no usable ideology signal or anything errors."""
+    try:
+        import numpy as np
+        from rwe import FeedbackGraph, RWEB
+        dataset, theta, item_pos = mind.recommender_inputs()      # drops NaN-pos items + empty users
+        uid = np.asarray(mind.dataset.user_ids)[rep["user"]]
+        rows = np.flatnonzero(np.asarray(dataset.user_ids) == uid)
+        if rows.size == 0:
+            return []                                             # user dropped by the filter
+        rec = RWEB(FeedbackGraph(dataset.matrix), theta, item_pos,
+                   epsilon=epsilon, max_distance=max_distance)
+        ranked = rec.recommend(np.array([rows[0]]), top_k=k)[0]   # (k,) item indices, -1 padded
+        id2title = dict(zip(np.asarray(mind.dataset.item_ids).tolist(),
+                            [str(t) for t in np.asarray(mind.titles)]))
+        item_ids = np.asarray(dataset.item_ids)
+        return [id2title.get(item_ids[int(j)], str(item_ids[int(j)]))
+                for j in ranked if int(j) >= 0]
+    except Exception:
+        return []                                                 # any failure -> heuristic fallback
+
+
 def bridge_candidates(mind, rep: dict, k: int = 5) -> list:
-    """A few REAL catalog headlines on the side the reader under-consumes (opposite their
-    mean lean) that they did not click -- grounded 'what to read' candidates. (Swap in true
-    RWE-B recommendations via --recs for the production version.)"""
+    """Fallback when RWE-B is unavailable: a few REAL catalog items on the side the reader
+    under-consumes (opposite their mean lean) that they did not engage with."""
     import numpy as np
     ml = rep.get("mean_lean")
     if ml is None or ml != ml:
@@ -224,7 +249,7 @@ def main() -> None:
     ap.add_argument("--model", default=None, help="model id (default per --provider)")
     ap.add_argument("--recs", default=None,
                     help="'|'-separated titles/communities to recommend (overrides the "
-                         "built-in opposite-lean candidates; pass real RWE-B recs here)")
+                         "built-in RWE-B recommendations / opposite-lean fallback)")
     ap.add_argument("--min-clicks", type=int, default=5)
     args = ap.parse_args()
 
@@ -245,13 +270,19 @@ def main() -> None:
     rep = hr.user_report(pop, mind, int(u))
     facts = report_facts(rep, args.domain)
     facts_text = facts_to_text(facts)
-    recs = (args.recs.split("|") if args.recs else bridge_candidates(mind, rep))
+    # candidate source: manual override > the real RWE-B recommender > opposite-lean heuristic
+    if args.recs:
+        recs, rec_src = [t for t in args.recs.split("|") if t.strip()], "you (--recs)"
+    else:
+        recs, rec_src = rweb_recommendations(mind, rep), "the RWE-B recommender"
+        if not recs:
+            recs, rec_src = bridge_candidates(mind, rep), "an opposite-lean heuristic (un-read)"
 
     print(f"=== Reader {u}: engine-computed facts (the LLM may use ONLY these) ===")
     print(facts_text, "\n")
     if recs:
         what = "subreddit communities" if args.domain == "reddit" else "articles"
-        print(f"=== real candidate bridging {what} (opposite side) -- the LLM "
+        print(f"=== real candidate bridging {what} from {rec_src} -- the LLM "
               "may recommend ONLY from these ===")
         for t in recs:
             print(f"  - {t}")

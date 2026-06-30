@@ -136,6 +136,31 @@ def test_narrate_calls_llm_with_grounded_prompt_and_strips():
     assert "articles read: 40" in seen["user"] and "Some opposite-side headline" in seen["user"]
 
 
+def test_rweb_recommendations_returns_real_engine_titles(tmp_path):
+    # build a tiny Politosphere graph (left vs right users), fit ideology, and check the
+    # RWE-B recommender returns real catalog titles -- the literal "our engine chose this".
+    import bz2, json, sys
+    sys.path.insert(0, str(ROOT / "examples"))
+    import ingest_politosphere as ip
+    rows = []
+    for u in range(24):
+        subs = (["socialism", "Anarchism", "communism"] if u < 12
+                else ["Conservative", "Republican", "The_Donald"])
+        rows += [{"author": f"u{u}", "subreddit": s} for s in subs]
+    with bz2.open(tmp_path / "comments_2016-01.bz2", "wt", encoding="utf-8") as f:
+        for r in rows:
+            f.write(json.dumps(r) + "\n")
+    uc, ic, un, sn = ip._build_inputs(
+        ip._read_comments(ip._comment_files(tmp_path, "comments_*.bz2")))
+    uc, ic = ip._filter_min_codes(uc, ic, 1, 2)
+    d = ip.build_mind(uc, ic, un, sn, lean=ip.load_subreddit_lean(ip._DEFAULT_LEAN))
+    d = d.with_ideology(d.fit_ideology(n_iter=80, seed=0))
+    rep = {"user": 0, "mean_lean": float(d.user_positions[0])}
+    recs = nr.rweb_recommendations(d, rep, k=3)
+    catalog = {str(t) for t in d.titles}
+    assert recs and all(t in catalog for t in recs)     # real engine output, real catalog titles
+
+
 def test_make_text_caller_unknown_provider_errors():
     try:
         nr.make_text_caller("bogus", "m")
