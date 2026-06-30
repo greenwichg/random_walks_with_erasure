@@ -122,3 +122,28 @@ def test_make_caller_unknown_provider_errors():
 def test_default_models_cover_both_providers():
     assert ll._DEFAULT_MODELS["gemini"].startswith("gemini")      # free tier
     assert ll._DEFAULT_MODELS["anthropic"].startswith("claude")   # paid
+
+
+def test_label_headlines_retries_transient_error_then_succeeds():
+    rows = [("N1", "t1")]
+    calls = {"n": 0}
+
+    def flaky(system, user):
+        calls["n"] += 1
+        if calls["n"] < 3:                       # two 503s, then success
+            raise RuntimeError("503 UNAVAILABLE high demand")
+        return json.dumps({"labels": [{"id": "N1", "lean": 0, "reason": "r"}]})
+
+    labels = ll.label_headlines(rows, flaky, batch=20, retries=4, backoff=0)  # backoff=0: no sleep
+    assert labels == {"N1": (0, "r")} and calls["n"] == 3
+
+
+def test_label_headlines_aborts_cleanly_after_retries():
+    def always_503(system, user):
+        raise RuntimeError("503 UNAVAILABLE high demand")
+
+    try:
+        ll.label_headlines([("N1", "t1")], always_503, batch=20, retries=2, backoff=0)
+        assert False, "expected SystemExit after exhausting retries"
+    except SystemExit as e:
+        assert "503" in str(e) or "transient" in str(e)   # actionable message, not a raw trace

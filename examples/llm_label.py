@@ -115,13 +115,39 @@ def _format_batch(rows) -> str:
         f"{nid}\t{title}" for nid, title in rows)
 
 
-def label_headlines(rows, call_fn, batch: int = 20) -> dict:
+def _call_with_retry(call_fn, system, user, retries, backoff):
+    """Call ``call_fn`` with exponential backoff so a transient API error (e.g. a
+    503 'high demand' spike) rides out instead of aborting. Re-raises after the last try."""
+    import time
+    for attempt in range(retries):
+        try:
+            return call_fn(system, user)
+        except Exception as e:                       # transient API / network error
+            if attempt == retries - 1:
+                raise
+            wait = backoff * (2 ** attempt)
+            print(f"  API error ({type(e).__name__}); retry {attempt + 1}/{retries - 1} "
+                  f"in {wait:.0f}s ...")
+            time.sleep(wait)
+
+
+def label_headlines(rows, call_fn, batch: int = 20, retries: int = 4,
+                    backoff: float = 2.0) -> dict:
     """Label every (news_id, title) via ``call_fn(system, user)`` -> response text.
-    ``call_fn`` is injected so the API client is swappable (and testable)."""
+    ``call_fn`` is injected so the API client is swappable (and testable). Each batch
+    retries with exponential backoff; a batch that still fails aborts cleanly (no
+    partial output) with guidance, rather than dumping a raw stack trace."""
     labels = {}
     for i in range(0, len(rows), batch):
         chunk = rows[i:i + batch]
-        text = call_fn(_SYSTEM, _format_batch(chunk))
+        try:
+            text = _call_with_retry(call_fn, _SYSTEM, _format_batch(chunk), retries, backoff)
+        except Exception as e:
+            raise SystemExit(
+                f"labeling failed on batch {i // batch + 1} after {retries} tries: {e}\n"
+                "Usually a transient provider overload (HTTP 503 'high demand') or a bad "
+                "key. Re-run to retry, or pass a less-loaded model: "
+                "--model gemini-2.0-flash (or --model gemini-2.5-flash-lite).")
         labels.update(parse_labels(text))
     return labels
 
