@@ -64,6 +64,42 @@ def test_report_facts_handles_nan_viewpoint():
     assert f["articles read"] == 40                      # the rest still present
 
 
+def _rep_reddit():
+    return {
+        "user": 3, "n_clicks": 30, "n_political": 30,
+        "scores": {"Topic Diversity": None, "Source Diversity": 64, "Reporting Ratio": None,
+                   "Emotional Balance": None, "Echo Chamber Score": 18,
+                   "Viewpoint Balance": 20, "Open-Mindedness": None},
+        "overall": 34, "political_share": None, "top_categories": [], "blind_spots": [],
+        "top_publishers": [("r/socialism", 0.4), ("r/democrats", 0.3), ("r/Anarchism", 0.2)],
+        "top_n_share": 0.9, "effective_sources": 2.0, "distinct_outlets": 5,
+        "viewpoint": (0.8, 0.1, 0.1), "mean_lean": -1.2,
+    }
+
+
+def test_report_facts_reddit_uses_validated_axis_and_communities():
+    f = nr.report_facts(_rep_reddit(), domain="reddit")
+    assert f["subreddits commented in"] == 30
+    # text-derived metrics are structurally n/a on Reddit -> absent, not faked
+    assert "articles read" not in f and "political articles" not in f
+    assert "topic diversity (percentile vs other readers)" not in f
+    assert "open-mindedness (percentile)" not in f
+    assert "top topics" not in f and "under-read topics (below catalog rate)" not in f
+    # community + validated-viewpoint facts present and labeled as such
+    assert f["community diversity (percentile)"] == 64
+    assert f["top subreddits"] == "r/socialism, r/democrats, r/Anarchism"
+    assert "distinct communities" in f and "share from top communities" in f
+    vk = [k for k in f if k.startswith("political reading left/center/right")][0]
+    assert "validated behavioral axis" in vk and f[vk] == "80% / 10% / 10%"
+
+
+def test_build_messages_reddit_uses_community_language():
+    s, u = nr.build_messages("- subreddits commented in: 30", recs=["r/Conservative"],
+                             domain="reddit")
+    assert "Reddit commenter" in u and "communities to follow" in u
+    assert "r/Conservative" in u and "never invent a name" in u
+
+
 def test_build_messages_encodes_the_hard_rules_and_recs():
     facts_text = nr.facts_to_text(nr.report_facts(_rep()))
     system, user = nr.build_messages(facts_text, recs=["A right-leaning headline"])

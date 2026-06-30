@@ -280,12 +280,21 @@ stay the source of truth; the LLM adds the warmth, the blind-spot explanation, a
 other side's strongest case. Run it via notebook `# 8g`, or:
 
 ```
-python examples/narrate_report.py --npz mind_full.npz      # free Gemini; auto-picks a reader
+python examples/narrate_report.py --npz mind_full.npz                 # MIND (text-lean axis)
+python examples/narrate_report.py --npz politosphere_mi200.npz --domain reddit   # VALIDATED axis
 ```
 
+`--domain reddit` runs the narrative on the **behaviorally-validated** Politosphere axis
+(`lean_corr 0.65`): the left/right split *and* the bridging "communities to follow" are
+then trustworthy — the honest, strong version. On MIND the viewpoint half rides the weak
+text-lean axis (so its bridging picks can be mis-categorised — the same limitation the
+`−0.28` convergent-validity check exposed); the topic-diversity and steelman halves are
+solid there. Both modes carry the number- and title-grounding checks.
+
 _Last updated: 2026-06-30 (added the generative narrative layer `narrate_report.py`:
-a grounded LLM report + steelman over the computed metrics, with a hallucination-guard
-grounding check). Earlier — axis caveat corrected — the Viewpoint/Echo/Open-Mindedness
+a grounded LLM report + steelman over the computed metrics, with number- and
+title-grounding hallucination guards, and a `--domain reddit` mode on the validated axis).
+Earlier — axis caveat corrected — the Viewpoint/Echo/Open-Mindedness
 scores rest on the report's **weak MIND text-lean axis** (Spearman ≈ 0.27 / ≈ 0); a
 behavioral axis validated elsewhere (Politosphere, `lean_corr = 0.65`) but isn't
 available for MIND. Added `--domain reddit`: the report runs on the Politosphere
