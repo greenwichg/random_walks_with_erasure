@@ -425,8 +425,10 @@ measured opinion change in real users (Figure~\ref{fig:opinion}).
   \item \textbf{The ideological axis is hard to recover from text, but
   behaviour validates it.} Of three axis constructions, two come out \emph{topical}
   and one \emph{validates}. We tried (i)~a \textbf{text-lean} classifier
-  (Spearman~$\approx0.27$ vs.\ human labels, and $\approx0$ on a second blind
-  40-headline set---it conflates \emph{topic} with \emph{stance}); (ii)~a
+  (Spearman~$\approx0.27$ vs.\ a 40-headline human set, $\approx0$ on a second blind
+  40, and $-0.28$ vs.\ a 120-headline blind LLM second opinion---it conflates
+  \emph{topic} with \emph{stance}, coding anti-Trump \emph{content} as left on an
+  impeachment-heavy slice); (ii)~a
   \textbf{MIND co-click} ideal point ($r=0.37$, topical); and (iii)~a \textbf{Reddit
   Politosphere behavioral} ideal point built to fix this, which \emph{validates}
   ($\mathrm{lean\_corr}=0.65$ against labeled subreddit leans, cleanly ideological

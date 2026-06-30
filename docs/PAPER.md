@@ -236,7 +236,9 @@ it.](images/opinion_dynamics.png)
 1. **The ideological axis is hard to recover from text — but behaviour validates
    it.** Of three axis constructions, two come out *topical* and one *validates*:
    (i) the **text-lean** classifier is a weak proxy (Spearman ≈ 0.27 vs human labels,
-   ≈ 0 on a second blind set — it conflates *topic* with *stance*); (ii) the **MIND
+   ≈ 0 on a second blind set, and **−0.28 vs a 120-headline blind LLM second opinion** —
+   it conflates *topic* with *stance*, coding anti-Trump *content* as left on an
+   impeachment-heavy slice); (ii) the **MIND
    co-click** ideal point is topical (`r = 0.37`); (iii) a **Reddit Politosphere
    behavioral** ideal point built to fix this **validates** (`lean_corr = 0.65`
    against labeled subreddit leans, cleanly ideological extremes — communism/anarchism

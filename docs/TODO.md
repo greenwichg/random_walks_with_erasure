@@ -93,19 +93,22 @@ _MIND text-axis attempts, kept for the record:_
       reports **inter-rater agreement** (mean pairwise Spearman + quadratic-weighted
       kappa) and validates each axis against the rater **consensus** (unit-tested).
       Remaining = the human labeling itself (blind, ≥100 items, 2–3 raters), then run.
-- [~] **Automated convergent validity (LLM second opinion)** — a *cheap, auditable*
-      complement to the human gold set, **not a substitute**. `examples/llm_label.py`
-      labels the blind template with a second model (`--provider gemini`, **free** via
-      Google AI Studio, default — or `--provider anthropic`/Claude, paid; structured
-      outputs, from titles only) and writes a provenance-stamped `news_id,position,
-      reason` CSV that `validate_lean.py --against` reads directly; notebook `# 7d`
-      runs the whole free flow. **Honesty caveat baked in** (docstring, output stamp,
-      notebook print): the text axis is *itself* a language model, so model-vs-model
-      agreement shares lexical bias and is **convergent validity, weaker than human
-      ground truth** — kept separate from the `--raters` consensus path. Unit-tested
-      with an injected fake caller (no live API). Remaining = run it once with a (free)
-      `GEMINI_API_KEY`. _(A free BERT second opinion already exists too — `# 7b`'s
-      premsa/AllSides model gave cross-model Spearman +0.38.)_
+- [x] **Automated convergent validity (LLM second opinion) — built AND run.**
+      `examples/llm_label.py` labels the blind template with a second model
+      (`--provider gemini`, **free** via Google AI Studio, default — or `--provider
+      anthropic`/Claude, paid; structured outputs, from titles only) and writes a
+      provenance-stamped `news_id,position,reason` CSV that `validate_lean.py --against`
+      reads directly; notebook `# 7d` runs the whole free flow (retry/backoff on transient
+      503s). **Honesty caveat baked in** (docstring, output stamp, notebook print): it's
+      **convergent validity (model-vs-model), weaker than human ground truth** — kept
+      separate from the `--raters` consensus path. **Ran it (Gemini 2.5 Flash, n=120):
+      Spearman −0.28, sign-acc 0.41** — a *negative* result. Inspection: the MIND political
+      slice is impeachment-dominated, where the LLM codes anti-Trump *content* as left
+      while the article-classifier keys on surface lexicon → neither recovers editorial
+      slant from a bare headline. **Folded into `RESULTS.md`/`PAPER.md`/`paper.tex`** as
+      concrete evidence the MIND text-lean RQ3 is *suggestive only*, reinforcing the
+      behavioral Politosphere axis (`lean_corr 0.65`) as the primary ideology result. (The
+      `# 7b` two-BERT +0.38 is *shared* method bias, not independent validation.)
 - [~] **Outlet-lean — software-unblocked; only a publisher-carrying catalog remains.**
       Would lift RQ3 *and* the report's viewpoint/echo. The blocker is purely *data*:
       MIND ships MSN URLs with no publisher. **Built**: a curated `examples/data/
@@ -151,5 +154,7 @@ reproduced, per-user-significant, three-dataset result + a working health-report
 (paper) is the path to submission. The one remaining axis task is firming up the
 validation (more labels, more seeds).
 
-_Last updated: 2026-06-29 (Politosphere behavioral axis validated at `--min-item-clicks
-200`: `lean_corr = 0.65`, clean ideological extremes, RQ3 bridging — §3 closed positive)._
+_Last updated: 2026-06-30 (LLM convergent-validity check on the MIND text-lean axis
+built + run: Spearman −0.28, n=120 — a negative result, folded into the docs as evidence
+the text-lean RQ3 is suggestive only. Politosphere behavioral axis remains validated at
+`--min-item-clicks 200`: `lean_corr = 0.65`, clean ideological extremes, RQ3 bridging)._

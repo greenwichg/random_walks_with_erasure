@@ -250,6 +250,20 @@ outcome, not a measured opinion change.
    **Spearman r = 0.27, Pearson 0.30, 75 % sign-agreement on the non-neutral
    items** — a *weak-but-positive* ideology proxy. So RQ3 reads are suggestive;
    a larger multi-rater gold set or true outlet-lean labels would firm it up.
+   An automated **LLM second-opinion** check (model-vs-model *convergent validity*,
+   not human gold) sharpens this: relabeling **120** stratified political headlines
+   blind — titles only, `examples/llm_label.py` (free Gemini) — and correlating with
+   the classifier gives **Spearman −0.28** (n=120; sign-acc 0.41 on the 39 items the
+   LLM called non-centre): the two *disagree*. Inspecting the disagreements shows why —
+   the MIND political slice is dominated by late-2019 impeachment coverage, where the
+   LLM codes anti-Trump *content* as left while the article-trained classifier keys on
+   surface lexicon and scores the same factual headlines right; **neither recovers an
+   outlet's editorial slant from a bare headline** (a careful human would call most of
+   them centre). So on a topically-skewed slice the axis can be not just low-resolution
+   but mildly *anti-aligned* — concrete evidence the MIND text-lean RQ3 is suggestive
+   only, and further motivation for the behavioral Politosphere axis below. (The two-BERT
+   agreement of +0.38 in `# 7b` reflects *shared* article-classifier method bias, not
+   independent validation — which is exactly why the LLM cross-check was worth running.)
    An automatic **axis-alignment check** (`eval_mind.py`, printed each run)
    confirms users and items share one *correctly-oriented* scale: on the
    **text-lean axis** each user's position correlates Pearson **r = +1.00** with
@@ -266,9 +280,10 @@ outcome, not a measured opinion change.
    gold set with `examples/validate_lean.py` (calibration cannot help here — Spearman
    is rank-based, so a *less-noisy* model, not a rescaled one, is what lifts it).
    **Two of three axis constructions are weak; the third — the behavioral one —
-   validates.** We tried (i) the **text-lean** classifier (Spearman ≈ 0.27 vs human
-   labels — and ≈ 0 on a second, blind 40-headline set; it conflates *topic* with
-   *stance*), (ii) the **MIND co-click** ideal point (`r = 0.37`, topical), and
+   validates.** We tried (i) the **text-lean** classifier (Spearman ≈ 0.27 vs a
+   40-headline human set, ≈ 0 on a second blind 40, and **−0.28 vs a 120-headline LLM
+   second opinion**; it conflates *topic* with *stance*), (ii) the **MIND co-click**
+   ideal point (`r = 0.37`, topical), and
    (iii) a **Reddit Politosphere behavioral** ideal point built precisely to fix this
    (`examples/ingest_politosphere.py`). The behavioral axis **validates**:
    `lean_corr = 0.65` against labeled subreddit leans, with cleanly ideological
@@ -323,4 +338,6 @@ _Last updated: 2026-06-29 (Reddit Politosphere folded in — third RQ2 dataset *
 validated behavioral axis** at `--min-item-clicks 200`: `lean_corr = 0.65`, clean
 ideological extremes, independent RQ3 where RWE-B bridges hardest; supersedes the
 earlier null at the looser threshold. MovieLens-1M RQ2 + per-user significance on
-2026-06-28; MIND tables independently reproduced 2026-06-25)._
+2026-06-28; MIND tables independently reproduced 2026-06-25. LLM convergent-validity
+check on the MIND text-lean axis added 2026-06-30: Spearman −0.28 (n=120), a negative
+result reinforcing the suggestive-only reading)._
