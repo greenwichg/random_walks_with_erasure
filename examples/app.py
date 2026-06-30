@@ -127,9 +127,7 @@ def make_renderer(npz: str, domain: str, provider: str, model):
     return render
 
 
-def serve(npz: str, domain: str, provider: str, model, host: str, port: int) -> None:
-    render = make_renderer(npz, domain, provider, model)
-
+def _make_handler(render):
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
             parsed = urlparse(self.path)
@@ -149,11 +147,43 @@ def serve(npz: str, domain: str, provider: str, model, host: str, port: int) -> 
 
         def log_message(self, *a):                              # keep the console quiet
             pass
+    return Handler
 
-    key_on = bool(os.environ.get("GEMINI_API_KEY") or os.environ.get("ANTHROPIC_API_KEY"))
+
+def _key_state():
+    return "ON" if (os.environ.get("GEMINI_API_KEY")
+                    or os.environ.get("ANTHROPIC_API_KEY")) else "OFF — set GEMINI_API_KEY"
+
+
+def serve(npz: str, domain: str, provider: str, model, host: str, port: int) -> None:
+    """Blocking server (CLI entry point)."""
+    render = make_renderer(npz, domain, provider, model)
     print(f"serving http://{host}:{port}  (domain={domain}, "
-          f"narrative={'ON' if key_on else 'OFF — set GEMINI_API_KEY'}) — Ctrl-C to stop")
-    http.server.ThreadingHTTPServer((host, port), Handler).serve_forever()
+          f"narrative={_key_state()}) — Ctrl-C to stop")
+    http.server.ThreadingHTTPServer((host, port), _make_handler(render)).serve_forever()
+
+
+_BG_SERVER = None
+
+
+def serve_background(npz: str, domain: str = "news", provider: str = "gemini",
+                     model=None, host: str = "0.0.0.0", port: int = 8000):
+    """Start (or **restart**) the app in a background thread — safe to call repeatedly from
+    a notebook. It shuts down any prior instance first, so a re-run reloads fresh data and
+    any newly-created enrichment CSVs (emotion.csv / register.csv) without a port clash."""
+    global _BG_SERVER
+    import threading
+    if _BG_SERVER is not None:                                 # tear down the previous one
+        try:
+            _BG_SERVER.shutdown()
+            _BG_SERVER.server_close()
+        except Exception:
+            pass
+    render = make_renderer(npz, domain, provider, model)       # reloads compute + CSVs
+    _BG_SERVER = http.server.ThreadingHTTPServer((host, port), _make_handler(render))
+    threading.Thread(target=_BG_SERVER.serve_forever, daemon=True).start()
+    print(f"serving on port {port}  (domain={domain}, narrative={_key_state()})")
+    return _BG_SERVER
 
 
 def main() -> None:
