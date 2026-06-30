@@ -513,7 +513,7 @@ _LABELS = {
         # a rebuild. The political metrics sit on the *validated* behavioral axis.
         source_attr="titles",
         section_notes={"Balance & openness": "on the validated behavioral axis "
-                       "(lean_corr ≈ 0.65) — see docs/RESULTS.md"},
+                       "(lean_corr ≈ 0.57 ± 0.19 over 5 seeds) — see docs/RESULTS.md"},
         hints={"Source Diversity": "how many communities"},
         source_na="",
         # subreddits have no article text / no topic taxonomy, so the text-derived

@@ -47,10 +47,13 @@
 ## 3. Stronger lean axis — ✅ VALIDATED on the behavioral axis (Politosphere, mi200)
 
 We pursued a behavioral ideal-point axis (the principled fix) all the way to a real
-run. **Outcome: it validates** — `lean_corr = 0.65` with cleanly ideological extremes
-once low-signal subreddits are filtered. The positive result is folded into
-`RESULTS.md` + the paper, with honest caveats (threshold-sensitive, n=20 labels,
-single seed).
+run **and a 5-seed robustness check**. **Outcome: it validates** — `lean_corr =
+0.57 ± 0.19` over 5 seeds (min 0.33, max 0.82) with cleanly ideological extremes, once
+low-signal subreddits are filtered **and** the non-convex fit is stabilized by keeping
+the highest-likelihood of 8 restarts (a 1-restart fit collapsed to ~0 on 2/5 seeds).
+The RQ3 bridging is robust regardless (`uw_shift` 1.97 ± 0.04, beats best baseline 5/5).
+Folded into `RESULTS.md` + the paper, with honest caveats (threshold-sensitive, n=20
+labels, a fit-sensitivity now fixed by the unsupervised multi-restart).
 
 - [x] **Reddit Politosphere ingest + eval** — `examples/ingest_politosphere.py`
       (user×subreddit endorsement → `IdeologyModel` ideal point) + turnkey
@@ -59,9 +62,9 @@ single seed).
       filter (295 subs, `--min-item-clicks 20`) it came out non-ideological
       (`lean_corr=0.13`, scrambled — niche-subreddit noise), **but at
       `--min-item-clicks 200` (114 subs with ≥200 distinct commenters) it VALIDATES:
-      `lean_corr = 0.65`, clean left↔right extremes** (communism/anarchism/socialism
-      left; Trump/Farage/conservatives right). int-coded ingest fixed a 35-min→0.2s
-      hang; unit-tested.
+      `lean_corr = 0.57 ± 0.19` over 5 seeds, clean left↔right extremes** (communism/
+      anarchism/socialism left; Trump/Farage/conservatives right). int-coded ingest fixed
+      a 35-min→0.2s hang; unit-tested.
 - [x] **Politosphere RQ3 on the validated axis** — `# 3b` cell: RWE-B bridges hardest
       (`uw_shift 1.932` vs P3 1.125, RP³-β 0.558), highest `shift@10` (1.224) and
       `rec_range` (4.418) without over-shooting (`uw_recs` .664). A genuine
@@ -71,14 +74,19 @@ single seed).
       validates the axis") and the paper (abstract, §6 third dataset, §ethics). RQ2
       long-tail holds on **3 datasets**; the bridging mechanism is now demonstrated on
       a **validated** axis (MIND text-lean RQ3 stays *suggestive*).
-- [~] *(open — now the top priority, since the paper rests on this axis)* firm up the
-      validation: multi-seed/multi-window runs to confirm `lean_corr` and the RQ3
-      bridging are stable, not single-slice artifacts (and more labeled subreddits, n>20).
-      **Harness ready**: notebook `# 3c` re-runs the validated ingest across 5 seeds and
-      aggregates `lean_corr` + RWE-B `uw_shift` vs the best baseline, with subprocess
-      errors surfaced (not swallowed). Verified end-to-end on synthetic data (ingest
-      `--seed` + `lean_corr=` parse, eval CSV `RWE-B`/`uw_shift` schema, baseline-drop).
-      Remaining = run it on the real slice and paste the `± std over seeds`.
+- [x] **Multi-seed robustness — RAN, and it surfaced + fixed a real instability.**
+      Notebook `# 3c` (read-once, in-memory; 2.5 h → ~40 min) re-fits the validated
+      ingest across 5 seeds and aggregates `lean_corr` + RWE-B `uw_shift` vs the best
+      baseline. **First run (1-restart) exposed seed-instability**: `lean_corr` =
+      {0.82, 0.01, 0.09, 0.69, 0.64}, mean 0.45 ± 0.33 — the non-convex ideal-point fit
+      collapsed to ~0 on 2/5 seeds. **Fix**: `IdeologyModel.fit(restarts=N)` keeps the
+      highest-likelihood of N inits — an *unsupervised* selection (data log-likelihood,
+      never the labels; validated on synthetic at corr(objective, recovery)=+0.94).
+      **Re-run (8 restarts)**: `lean_corr = 0.57 ± 0.19` (min 0.33, max 0.82) — collapses
+      gone. RWE-B bridging robust throughout (`uw_shift` 1.97 ± 0.04, beats best baseline
+      5/5). Threaded through `fit_ideology`/`ingest_politosphere --ideology-restarts`;
+      unit-tested; folded into all the docs. _(Remaining, low-priority: more labeled
+      subreddits, n>20, to tighten the estimate.)_
 
 _MIND text-axis attempts, kept for the record:_
 - [x] **Ensemble tooling** — `examples/ensemble_lean.py` (z-score + average
@@ -112,7 +120,8 @@ _MIND text-axis attempts, kept for the record:_
       while the article-classifier keys on surface lexicon → neither recovers editorial
       slant from a bare headline. **Folded into `RESULTS.md`/`PAPER.md`/`paper.tex`** as
       concrete evidence the MIND text-lean RQ3 is *suggestive only*, reinforcing the
-      behavioral Politosphere axis (`lean_corr 0.65`) as the primary ideology result. (The
+      behavioral Politosphere axis (`lean_corr 0.57 ± 0.19` over 5 seeds) as the primary
+      ideology result. (The
       `# 7b` two-BERT +0.38 is *shared* method bias, not independent validation.)
 - [~] **Outlet-lean — software-unblocked; only a publisher-carrying catalog remains.**
       Would lift RQ3 *and* the report's viewpoint/echo. The blocker is purely *data*:
@@ -155,11 +164,12 @@ _MIND text-axis attempts, kept for the record:_
 
 **Critical path:** §1 (verify, [you]) → §2 (I fold the numbers) gives a fully
 reproduced, per-user-significant, three-dataset result + a working health-report PoC.
-§3 (lean axis) is **done** — the behavioral axis validated (`lean_corr = 0.65`); §4
-(paper) is the path to submission. The one remaining axis task is firming up the
-validation (more labels, more seeds).
+§3 (lean axis) is **done** — the behavioral axis validates across 5 seeds (`lean_corr
+= 0.57 ± 0.19`); §4 (paper) is the path to submission. The one remaining axis task is
+more labeled subreddits (n>20) to tighten the estimate.
 
-_Last updated: 2026-06-30 (LLM convergent-validity check on the MIND text-lean axis
-built + run: Spearman −0.28, n=120 — a negative result, folded into the docs as evidence
-the text-lean RQ3 is suggestive only. Politosphere behavioral axis remains validated at
-`--min-item-clicks 200`: `lean_corr = 0.65`, clean ideological extremes, RQ3 bridging)._
+_Last updated: 2026-06-30 (5-seed robustness on the behavioral axis: a 1-restart fit was
+seed-unstable (collapsed to ~0 on 2/5 seeds); an unsupervised 8-restart likelihood
+selection fixes it → `lean_corr = 0.57 ± 0.19` (min 0.33, max 0.82), RQ3 bridging robust
+(`uw_shift` 1.97 ± 0.04, 5/5). Earlier same day: LLM convergent-validity check on the MIND
+text-lean axis, Spearman −0.28 (n=120), reinforcing the suggestive-only reading)._

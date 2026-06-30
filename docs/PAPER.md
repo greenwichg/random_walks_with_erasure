@@ -33,7 +33,7 @@ between the backfire and depolarizing regimes. We release an open, reproducible
 pipeline. The long-tail result replicates on **three independent datasets** (MIND,
 MovieLens-1M, Reddit Politosphere). We are explicit about the central limitation: of
 three axis constructions, text-lean and news co-click come out *topical*, but a
-**Reddit behavioral ideal point validates** (`lean_corr = 0.65`, cleanly ideological
+**Reddit behavioral ideal point validates** (`lean_corr = 0.57 ± 0.19`, cleanly ideological
 extremes) once low-signal subreddits are filtered — giving an independent RQ3 on a
 validated axis where RWE-B again bridges hardest. The flagship MIND RQ3 still rests on
 the weak text-lean axis (so those reads are suggestive), and the centre-ward effect is
@@ -156,7 +156,7 @@ diversity↔accuracy trade-off. **The long-tail win replicates on two further pu
 datasets** — MovieLens-1M (movies) and Reddit Politosphere (social) — so it holds on
 **three independent corpora**, not just MIND (see `docs/RESULTS.md` for both tables).
 Politosphere additionally carries a **validated** behavioral left–right axis
-(`lean_corr = 0.65`) and an independent RQ3 where RWE-B again bridges hardest
+(`lean_corr = 0.57 ± 0.19`) and an independent RQ3 where RWE-B again bridges hardest
 (§7, limitation 1).
 
 That same validated axis powers the per-user **Information Health Report**
@@ -166,7 +166,7 @@ MIND, where Variety works but the political metrics ride the weak text-lean prox
 cleanly separates a one-sided reader (#9553, Echo 45) from cross-cutting ones
 (#7667 / #12757, Echo ≈ 88), so the recommender's diversification objective is made
 legible per reader. The per-user reads stay directional (they inherit the axis's
-imperfections — `lean_corr 0.65`, n=20 labels, single seed). See `docs/RESULTS.md` for
+imperfections — `lean_corr 0.57 ± 0.19` over 5 seeds, n=20 labels). See `docs/RESULTS.md` for
 the table.
 
 ![Politosphere Information Health Report — two contrasting readers on the validated behavioral axis](images/polito_health_card.png)
@@ -240,13 +240,16 @@ it.](images/opinion_dynamics.png)
    it conflates *topic* with *stance*, coding anti-Trump *content* as left on an
    impeachment-heavy slice); (ii) the **MIND
    co-click** ideal point is topical (`r = 0.37`); (iii) a **Reddit Politosphere
-   behavioral** ideal point built to fix this **validates** (`lean_corr = 0.65`
+   behavioral** ideal point built to fix this **validates** (`lean_corr = 0.57 ± 0.19`
    against labeled subreddit leans, cleanly ideological extremes — communism/anarchism
    left, Trump/Farage/conservatives right). The lesson is itself a finding: a
    left–right axis is recoverable from explicit community-endorsement behaviour, not
    from text or news co-clicks. Honest caveats on the validated axis: it is
    threshold-sensitive (at a looser filter the same fit gave `lean_corr = 0.13` with
-   scrambled extremes), and rests on n=20 labels and a single seed. **So the flagship
+   scrambled extremes), was fit-sensitive until we kept the highest-likelihood of 8
+   restarts (a 1-restart fit collapsed to ~0 on 2/5 seeds; the restart selection is
+   unsupervised — data likelihood, not labels), and rests on n=20 labels. The bridging
+   itself is robust (`uw_shift` 1.97 ± 0.04, 5/5 seeds). **So the flagship
    MIND RQ3 (text-lean) is suggestive**, but the bounded-bridging *mechanism*
    (limitation 2, robust on any 1-D axis) is independently demonstrated on the
    *validated* Politosphere axis, where RWE-B again bridges hardest (UW-shift 1.932).

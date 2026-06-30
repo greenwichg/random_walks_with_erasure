@@ -10,7 +10,8 @@ main comparison. These tables were **independently re-run end-to-end (2026-06-25
 from the Colab notebook and reproduce to the printed precision**. Read the
 limitations at the end — chiefly that the *MIND* ideological axis (used for the
 flagship RQ3) is a noisy proxy; a separate **behavioral** axis built on Reddit
-Politosphere **does** validate (`lean_corr = 0.65`), and carries an independent RQ3.
+Politosphere **does** validate (`lean_corr = 0.57 ± 0.19` over 5 seeds), and carries an
+independent RQ3.
 
 ## Setup
 
@@ -103,8 +104,10 @@ result now holds on **three independent public datasets** — news (MIND), movie
 
 **And here the ideological axis *validates* — the first of our three constructions to
 do so.** The behavioral ideal point matches the labeled subreddit leans at
-**`lean_corr = 0.65`** (n=20 labeled subreddits), and the axis extremes are cleanly
-ideological:
+**`lean_corr = 0.57 ± 0.19` across 5 seeds** (8-restart likelihood-selected fit; min
+0.33, max 0.82; n=20 labeled subreddits), and on the stronger seeds (including the
+single-seed npz behind the example cards, `lean_corr 0.82`) the axis extremes are
+cleanly ideological:
 
 - **left** — `r/communism101` (−3.3), `r/DebateCommunism`, `r/COMPLETEANARCHY`,
   `r/FULLCOMMUNISM`, `r/socialism`, `r/Anarchism`, `r/DebateAnarchism` …
@@ -117,17 +120,21 @@ alone**, no text and no outlet labels. The automatic axis-alignment check agrees
 users sit on their expected side **98.8 %** of the time (item spread 43 % left /
 57 % right).
 
-**It is threshold-sensitive, and we report that honestly.** At the looser ingest
-filter (`--min-item-clicks 20`, **295** subreddits including many niche/small ones)
-the *same* fit gave **`lean_corr = 0.13`** with ideologically *scrambled* extremes —
-the low-signal subreddits inject idiosyncratic dimensions that swamp left–right.
-Restricting to subreddits with **≥200 distinct commenters** (114 subs) removes that
-noise and lets the ideological dimension dominate (filtering low-signal communities
-is a standard denoising step, not a tuned outcome — the loose threshold's failure
-is *explained*, and the clean result is robust to inspection). The honest caveats:
-the validation rests on **n=20** labeled subreddits and a **single seed**, and it
-needs the denoising filter — so we report a *validated-but-small-sample* axis, not a
-definitive one.
+**It is threshold-sensitive *and* fit-sensitive, and we report both honestly.** At the
+looser ingest filter (`--min-item-clicks 20`, **295** subreddits including many
+niche/small ones) the *same* fit gave **`lean_corr = 0.13`** with ideologically
+*scrambled* extremes — the low-signal subreddits inject idiosyncratic dimensions that
+swamp left–right. Restricting to subreddits with **≥200 distinct commenters** (114
+subs) removes that noise. Separately, the ideal-point objective is **non-convex**, so a
+single random init is seed-unstable: across 5 seeds a 1-restart fit gave `lean_corr` =
+{0.82, 0.01, 0.09, 0.69, 0.64} (mean **0.45 ± 0.33**), collapsing to ~0 on **2/5**
+seeds. Keeping the **highest-likelihood of 8 restarts** — an *unsupervised* selection
+(the model's own data log-likelihood, never the labels, so not circular) — removes the
+collapses and gives **`lean_corr = 0.57 ± 0.19` over 5 seeds** (min 0.33, max 0.82). The
+RQ3 bridging is robust *regardless* of the axis seed: **RWE-B `uw_shift` 1.97 ± 0.04,
+beating the best baseline on 5/5 seeds**. The honest read: the axis **consistently**
+recovers ideology (positive every seed, strongly on the majority), on **n=20** labels
+and with the denoising filter — a *validated-but-moderate* axis, not a definitive one.
 
 **RQ3 transfers — and this time on a validated axis.** Ideological bridging
 (`eval_mind.py` RQ3 on the Politosphere npz):
@@ -147,7 +154,9 @@ definitive one.
 ideological, this is a **genuine ideological-bridging result**, not a merely
 suggestive one: the same RWE-B mechanism that bridges the (weak) MIND text-lean axis
 also bridges a left–right axis recovered from real endorsement behaviour. (Caveats as
-above: n=20 labels, single seed, threshold-dependent.)
+above: n=20 labels, threshold-dependent, and a fit-sensitivity fixed by 8-restart
+likelihood selection; the bridging itself is robust — `uw_shift` 1.97 ± 0.04 over 5
+seeds.)
 
 ### The audit side — the balance metrics, demonstrated on the validated axis
 
@@ -175,7 +184,8 @@ underneath is *validated*, these are the report's balance metrics shown as
 the third dataset.
 
 **Read the per-user numbers with the axis caveat.** They inherit the axis's
-imperfections (`lean_corr 0.65`, n=20 labels, single seed): the axis can mis-place an
+imperfections (`lean_corr 0.57 ± 0.19` over 5 seeds, n=20 labels; the cards use the
+`0.82` single-seed npz): the axis can mis-place an
 individual subreddit — e.g. `r/ShitLiberalsSay` is *far-left* (it mocks liberals from
 the left), so #9553's small "right" share is partly a placement error. So treat them
 as **directional on a validated-but-imperfect axis**, not a precise per-person verdict.
@@ -286,13 +296,15 @@ outcome, not a measured opinion change.
    ideal point (`r = 0.37`, topical), and
    (iii) a **Reddit Politosphere behavioral** ideal point built precisely to fix this
    (`examples/ingest_politosphere.py`). The behavioral axis **validates**:
-   `lean_corr = 0.65` against labeled subreddit leans, with cleanly ideological
-   extremes (communism/anarchism left, Trump/Farage/conservatives right; see the
-   third-dataset section) — recovered from endorsement behaviour alone. Two honest
+   `lean_corr = 0.57 ± 0.19` over 5 seeds against labeled subreddit leans, with cleanly
+   ideological extremes (communism/anarchism left, Trump/Farage/conservatives right; see
+   the third-dataset section) — recovered from endorsement behaviour alone. Three honest
    caveats keep it from being definitive: it is **threshold-sensitive** (at the looser
    ingest filter the same fit gave `lean_corr = 0.13` with scrambled extremes — it
-   needs the low-signal subreddits filtered out), and it rests on **n=20** labeled
-   subreddits and a **single seed**. The lesson is itself a finding: a left–right
+   needs the low-signal subreddits filtered out), it was **fit-sensitive** until we
+   selected the highest-likelihood of 8 restarts (a 1-restart fit collapsed to ~0 on
+   2/5 seeds; the unsupervised restart selection fixed it), and it rests on **n=20**
+   labeled subreddits. The lesson is itself a finding: a left–right
    axis is **hard to recover from text or news co-clicks** (both come out topical),
    but **is** recoverable from explicit community-endorsement behaviour once
    low-signal communities are filtered. **The flagship 7-seed MIND RQ3 still runs on
@@ -334,10 +346,11 @@ examples/validate_lean.py               # axis-quality number
 examples/plot_axis.py --npz mind_text.npz  # users + items on the L<->R scale
 ```
 
-_Last updated: 2026-06-29 (Reddit Politosphere folded in — third RQ2 dataset **and a
-validated behavioral axis** at `--min-item-clicks 200`: `lean_corr = 0.65`, clean
-ideological extremes, independent RQ3 where RWE-B bridges hardest; supersedes the
-earlier null at the looser threshold. MovieLens-1M RQ2 + per-user significance on
-2026-06-28; MIND tables independently reproduced 2026-06-25. LLM convergent-validity
-check on the MIND text-lean axis added 2026-06-30: Spearman −0.28 (n=120), a negative
-result reinforcing the suggestive-only reading)._
+_Last updated: 2026-06-30 (5-seed robustness on the behavioral axis: an 8-restart
+likelihood-selected ideal-point fit gives `lean_corr = 0.57 ± 0.19` (min 0.33, max 0.82)
+and removes the single-restart seed-collapse (which hit ~0 on 2/5 seeds); RQ3 bridging
+robust at `uw_shift` 1.97 ± 0.04, beating the best baseline 5/5. Earlier: Reddit
+Politosphere folded in as the third RQ2 dataset + validated behavioral axis at
+`--min-item-clicks 200`; MovieLens-1M RQ2 + per-user significance 2026-06-28; MIND tables
+reproduced 2026-06-25; LLM convergent-validity check on the MIND text-lean axis added
+2026-06-30: Spearman −0.28 (n=120), reinforcing the suggestive-only reading)._

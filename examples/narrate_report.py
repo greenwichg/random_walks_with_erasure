@@ -39,7 +39,8 @@ def report_facts(rep: dict, domain: str = "news") -> dict:
     narratable structure. Every value here is measured -- nothing derived or invented.
 
     ``domain='reddit'`` (Politosphere): the viewpoint metrics sit on the **validated**
-    behavioral axis (lean_corr 0.65), the 'source' is the subreddit community, and the
+    behavioral axis (lean_corr 0.57 ± 0.19 over 5 seeds), the 'source' is the subreddit
+    community, and the
     text-derived metrics (topic/tone/open-mindedness) are structurally absent."""
     reddit = domain == "reddit"
     sc = rep.get("scores", {}) or {}
@@ -69,7 +70,7 @@ def report_facts(rep: dict, domain: str = "news") -> dict:
         facts["top publishers"] = top_src or None
 
     if left is not None and left == left:                         # left==left filters NaN
-        axis = " (validated behavioral axis, lean_corr 0.65)" if reddit else ""
+        axis = " (validated behavioral axis)" if reddit else ""   # 5-seed lean_corr 0.57 ± 0.19
         facts[f"political reading left/center/right{axis}"] = (
             f"{round(100 * left)}% / {round(100 * center)}% / {round(100 * right)}%")
     ml = rep.get("mean_lean")
@@ -216,7 +217,7 @@ def main() -> None:
     ap.add_argument("--npz", required=True, help="ingested .npz (with ideology)")
     ap.add_argument("--domain", choices=["news", "reddit"], default="news",
                     help="news = MIND (text-lean axis); reddit = Politosphere (the "
-                         "VALIDATED behavioral axis, lean_corr 0.65)")
+                         "VALIDATED behavioral axis, lean_corr 0.57 ± 0.19 over 5 seeds)")
     ap.add_argument("--user", type=int, default=None, help="user id (default: auto-pick)")
     ap.add_argument("--provider", choices=["gemini", "anthropic"], default="gemini",
                     help="gemini = free (GEMINI_API_KEY); anthropic = paid")
