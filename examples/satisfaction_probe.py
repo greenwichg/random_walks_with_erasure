@@ -59,7 +59,7 @@ def _comment_files(comments_dir, pattern):
 def _month_code(created_utc) -> int:
     """``created_utc`` (unix seconds, int/str) -> ``year*12 + month`` or ``-1``."""
     try:
-        d = _dt.datetime.utcfromtimestamp(int(created_utc))
+        d = _dt.datetime.fromtimestamp(int(created_utc), _dt.timezone.utc)
         return d.year * 12 + (d.month - 1)
     except (TypeError, ValueError, OSError, OverflowError):
         return -1
