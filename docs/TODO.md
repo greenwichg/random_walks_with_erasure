@@ -156,8 +156,13 @@ _MIND text-axis attempts, kept for the record:_
       penalty. **Caveat (leads):** observed cross-cutting is **self-selected**, an upper
       bound, not the counterfactual of a recommended bridge; the *return* signal was
       inconclusive (short window). Folded into `RESULTS.md` (a *measured-not-simulated*
-      subsection), the paper, and `PAPER.md`. _(Next, optional: wire the measured signal
-      into `AdaptiveRWEB`; a longer comment window to make the *return* metric work.)_
+      subsection), the paper, and `PAPER.md`. **Closed the loop**
+      (`examples/adaptive_satisfaction.py` + `# 7b`): the measured `cross_upvoted_frac` now
+      drives `AdaptiveRWEB`'s per-user exposure/epsilon (not the simulated walk) — vs a
+      uniform recommender at the same average dose, the rank-weighted opposite-content reach
+      rises with measured tolerance while uniform stays flat (the dose redistributes toward
+      those who tolerate it; `Spearman > 0`). Unit-tested. _(Optional next: a longer comment
+      window for the *return* metric.)_
 - [ ] Health-report polish (e.g. a "you vs the average reader" population view)
 - [ ] Health-report polish (e.g. a "you vs the average reader" population view)
 

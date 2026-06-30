@@ -225,6 +225,19 @@ rate is also ambiguous (engagement vs. argument). The **return** dimension was
 separate them). So we report this as a *promising, measurable* signal that warrants wiring
 into `AdaptiveRWEB`, with the selection bias stated plainly — not as a settled effect.
 
+**Closing the loop (`examples/adaptive_satisfaction.py`).** We then *drive* `AdaptiveRWEB`
+from this measured signal instead of the simulated browsing walk: each user's
+`cross_upvoted_frac` becomes their exposure, so their per-user bridging `epsilon` is set by
+how welcomed their real cross-cutting was (`epsilon ∈ [0.5, 0.95]`). Against a uniform RWE-B
+at the **same average dose**, the adaptive policy **redistributes**: the rank-weighted
+opposite-content reach **rises monotonically with measured tolerance** (low→high tercile)
+while the uniform reach stays flat — i.e. low-tolerance readers get a gentler dose,
+high-tolerance readers a stronger one, `Spearman(tolerance, reach) > 0`. This is the
+synthetic `AdaptiveRWEB` mechanism (Limitation 1) made to run on a **real** per-user signal
+— a closed loop, with the same self-selection caveat (only the ~9 % who cross over carry a
+measured value; the rest get a neutral default), so a *mechanism demonstration on real
+data*, not a satisfaction-gain claim.
+
 ## RQ3 — ideological bridging (RWE-B)
 
 Mean ± std over 7 seeds (all vs-P3 differences Wilcoxon `p = 0.016`).
