@@ -289,7 +289,22 @@ python examples/narrate_report.py --npz politosphere_mi200.npz --domain reddit  
 then trustworthy — the honest, strong version. On MIND the viewpoint half rides the weak
 text-lean axis (so its bridging picks can be mis-categorised — the same limitation the
 `−0.28` convergent-validity check exposed); the topic-diversity and steelman halves are
-solid there. Both modes carry the number- and title-grounding checks.
+solid there. Both modes carry the number- and title-grounding checks. The bridging
+"what to read" list is the **real RWE-B recommender's** output (opposite-lean fallback
+if a user has no ideology signal), so it's literally the engine's picks.
+
+### Web app (`examples/app.py`) — the clickable demo
+
+A **dependency-free** web UI (Python stdlib `http.server`, nothing to install) wraps the
+whole pipeline: pick a reader → see the health card + the AI narrative + steelman + the
+RWE-B-recommended bridging items + the live grounding checks. Degrades gracefully (no API
+key → card + recommender only). Notebook `# 8h` launches it in Colab, or locally:
+
+```
+export GEMINI_API_KEY=...                                      # optional (free Gemini)
+python examples/app.py --npz mind_full.npz --domain news       # then open http://127.0.0.1:8000
+python examples/app.py --npz politosphere_mi200.npz --domain reddit   # validated-axis demo
+```
 
 _Last updated: 2026-06-30 (added the generative narrative layer `narrate_report.py`:
 a grounded LLM report + steelman over the computed metrics, with number- and
