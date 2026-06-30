@@ -48,3 +48,15 @@ def test_objective_increases():
     res = IdeologyModel(n_iter=200, seed=0).fit(d["R"])
     # Log-posterior should be higher at the end than at the start.
     assert res.history[-1] > res.history[0]
+
+
+def test_restarts_keep_highest_likelihood_fit():
+    d = synthetic_ideology(n_users=200, n_elites=30, n_content=40, seed=1)
+    m = IdeologyModel(n_iter=120, seed=0)
+    one = m.fit(d["R"])                        # restarts=1 -> seed 0 only
+    many = m.fit(d["R"], restarts=6)           # seeds 0..5, keep best final objective
+    # best-of-6 includes seed 0, so its final (unsupervised) objective can only be >=
+    assert many.history[-1] >= one.history[-1] - 1e-6
+    # and the winner is still a valid, standardized fit (selection by likelihood only)
+    assert many.theta.shape == one.theta.shape
+    assert abs(many.theta.mean()) < 1e-6 and abs(many.theta.std() - 1.0) < 1e-6

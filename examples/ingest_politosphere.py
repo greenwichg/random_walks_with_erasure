@@ -193,6 +193,10 @@ def main() -> None:
                     help="estimate user+subreddit positions via IdeologyModel "
                          "(ideal-point; recommended -- the whole reason for this dataset)")
     ap.add_argument("--ideology-iters", type=int, default=300)
+    ap.add_argument("--ideology-restarts", type=int, default=1,
+                    help="fit the ideal-point model from this many random inits and keep "
+                         "the highest-likelihood one (unsupervised; stabilises a non-convex "
+                         "fit that is otherwise seed-sensitive). Try 8.")
     ap.add_argument("--max-cells", type=float, default=5e7)
     ap.add_argument("--limit", type=int, default=None, help="read only N comments (debug)")
     ap.add_argument("--seed", type=int, default=0)
@@ -218,10 +222,10 @@ def main() -> None:
 
     if args.ideology:
         fit = d.fit_ideology(n_iter=args.ideology_iters, seed=args.seed,
-                             max_cells=args.max_cells)
+                             restarts=args.ideology_restarts, max_cells=args.max_cells)
         d = d.with_ideology(fit)
         print(f"\nFit ideology (ideal-point): users={d.n_users}, items={d.n_items}, "
-              f"lean_corr={fit.lean_corr}  "
+              f"restarts={args.ideology_restarts}, lean_corr={fit.lean_corr}  "
               "(near ±1 = the learned axis matches the labeled subreddit leans)")
     elif lean and d.summary()["items_with_lean"] == 0:
         print("\n[note] No labeled subreddits matched item_ids; check name casing in "

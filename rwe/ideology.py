@@ -119,7 +119,8 @@ class IdeologyModel:
         """Dense confidence-weighted label matrix ``a`` (observed -> weight)."""
         return np.asarray(sp.csr_matrix(M, dtype=float).todense())
 
-    def fit(self, R, S=None, anchor: int | None = None) -> IdeologyResult:
+    def fit(self, R, S=None, anchor: int | None = None,
+            restarts: int = 1) -> IdeologyResult:
         """Estimate ideological positions.
 
         Parameters
@@ -134,8 +135,27 @@ class IdeologyModel:
         anchor:
             Optional user id forced to the left (negative) side to fix the
             global sign.
+        restarts:
+            Fit from this many random initialisations (seeds ``self.seed +
+            0..restarts-1``) and keep the one with the highest **final
+            objective**.  This is an *unsupervised* model selection -- it ranks
+            restarts by the model's own data log-likelihood (eq. 11), never by
+            any external label -- so it does not peek at the validation leans.
+            The ideal-point objective is non-convex, so a single fit can land in
+            a non-ideological local optimum on some seeds; keeping the
+            best-likelihood restart stabilises the recovered axis.
         """
-        rng = np.random.default_rng(self.seed)
+        best = None
+        for k in range(max(1, int(restarts))):
+            res = self._fit_once(R, S, anchor, self.seed + k)
+            if best is None or (res.history and best.history
+                                and res.history[-1] > best.history[-1]):
+                best = res
+        return best
+
+    def _fit_once(self, R, S, anchor, seed) -> IdeologyResult:
+        """One ideal-point fit from a single random initialisation (``seed``)."""
+        rng = np.random.default_rng(seed)
         A = self._as_confidence(R)
         m, n_e = A.shape
 

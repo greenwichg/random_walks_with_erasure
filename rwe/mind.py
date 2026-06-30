@@ -319,7 +319,7 @@ class MINDData:
                         self.political[cols], self.item_positions[cols], up)
 
     def fit_ideology(self, *, model=None, orient_by_lean=True, max_cells=5e7,
-                     **fit_kwargs) -> "IdeologyFit":
+                     restarts: int = 1, **fit_kwargs) -> "IdeologyFit":
         """Estimate latent 1-D positions from click behaviour alone (no outlets).
 
         Fits the elite-only ideal-point model (:class:`rwe.IdeologyModel`) on the
@@ -342,7 +342,7 @@ class MINDData:
                 f"{max_cells:.0f}); the ideal-point model is dense. Filter first "
                 "(political_subset, min_user_clicks/min_item_clicks) or raise max_cells.")
         mdl = model or IdeologyModel(**fit_kwargs)
-        res = mdl.fit(self.dataset.matrix)        # elite-only: phi == item positions
+        res = mdl.fit(self.dataset.matrix, restarts=restarts)   # elite-only: phi == item positions
         theta, item_pos = res.theta, res.phi
         lean_corr = None
         known = ~np.isnan(self.item_positions)
