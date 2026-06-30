@@ -71,9 +71,14 @@ single seed).
       validates the axis") and the paper (abstract, §6 third dataset, §ethics). RQ2
       long-tail holds on **3 datasets**; the bridging mechanism is now demonstrated on
       a **validated** axis (MIND text-lean RQ3 stays *suggestive*).
-- [ ] *(open, low-priority)* firm up the validation: more labeled subreddits
-      (n>20) and multi-seed/multi-window runs to confirm `lean_corr` and the RQ3
-      bridging are stable, not single-slice artifacts.
+- [~] *(open — now the top priority, since the paper rests on this axis)* firm up the
+      validation: multi-seed/multi-window runs to confirm `lean_corr` and the RQ3
+      bridging are stable, not single-slice artifacts (and more labeled subreddits, n>20).
+      **Harness ready**: notebook `# 3c` re-runs the validated ingest across 5 seeds and
+      aggregates `lean_corr` + RWE-B `uw_shift` vs the best baseline, with subprocess
+      errors surfaced (not swallowed). Verified end-to-end on synthetic data (ingest
+      `--seed` + `lean_corr=` parse, eval CSV `RWE-B`/`uw_shift` schema, baseline-drop).
+      Remaining = run it on the real slice and paste the `± std over seeds`.
 
 _MIND text-axis attempts, kept for the record:_
 - [x] **Ensemble tooling** — `examples/ensemble_lean.py` (z-score + average
