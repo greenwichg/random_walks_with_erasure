@@ -103,3 +103,36 @@ def test_make_text_caller_unknown_provider_errors():
         assert False, "expected SystemExit"
     except SystemExit:
         pass
+
+
+def test_rank_demo_users_prefers_one_sided_with_material():
+    # user0: 9 political but NaN lean -> dropped; user3: |lean| huge but <4 political -> dropped;
+    # among the rest, the more one-sided (user1, |1.8|) beats the balanced (user2, |0.3|).
+    n_pol = [9, 5, 6, 2]
+    mean_lean = [float("nan"), 1.8, 0.3, 1.95]
+    order = nr._rank_demo_users(n_pol, mean_lean, [0, 1, 2, 3], min_pol=4)
+    assert order == [1, 2]                    # 0 (nan) and 3 (too few political) filtered out
+
+
+def test_rank_demo_users_falls_back_when_none_qualify():
+    order = nr._rank_demo_users([0, 1], [float("nan"), float("nan")], [0, 1], min_pol=4)
+    assert set(order) == {0, 1}               # no one qualifies -> fall back to all eligible
+
+
+def test_check_title_grounding_flags_invented_titles_only():
+    recs = ["Analysis: Elizabeth Warren growing into front-runner status",
+            "Conservatives rally behind tax plan"]
+    # quotes a REAL candidate -> clean
+    good = 'Try reading "Analysis: Elizabeth Warren growing into front-runner status".'
+    assert nr.check_title_grounding(good, recs) == []
+    # quotes a title NOT in the list -> flagged as possibly invented
+    bad = 'You should read "Ten Reasons The Other Side Is Wrong" this week.'
+    assert nr.check_title_grounding(bad, recs) == ["Ten Reasons The Other Side Is Wrong"]
+    # short quotes (like a section header) are ignored
+    assert nr.check_title_grounding('See "the other side, fairly" below.', recs) == []
+
+
+def test_system_prompt_bans_effusive_filler():
+    # the tone fix is part of the contract -> lock it so it can't silently regress
+    assert "wonderful job" in nr._SYSTEM and "great to see" in nr._SYSTEM
+    assert "EXACT TITLE" in nr._SYSTEM

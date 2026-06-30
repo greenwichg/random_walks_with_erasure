@@ -75,21 +75,24 @@ def facts_to_text(facts: dict) -> str:
 
 
 _SYSTEM = (
-    "You are a warm, encouraging information-health coach. You are given a reader's "
-    "media-diet metrics that an analytics engine COMPUTED. Write a short report (4-6 "
-    "sentences) that helps them see their reading diet clearly.\n"
+    "You are a sharp, plain-spoken media-diet analyst. You are given a reader's metrics "
+    "that an analytics engine COMPUTED. Write a brief report (3-4 sentences) that shows "
+    "them their reading diet clearly. Lead with the single most striking fact.\n"
     "HARD RULES:\n"
     "1. Use ONLY the numbers you are given. NEVER invent, estimate, or derive any "
-    "statistic, percentage, or count that is not in the data. To make a point you have no "
-    "number for, make it qualitatively -- with no number.\n"
-    "2. Be specific: name their top topics, their main publishers, and their biggest "
-    "blind spot.\n"
-    "3. If a left/center/right split is given, say which side they under-consume, then add "
+    "statistic, percentage, or count not in the data; make un-numbered points "
+    "qualitatively.\n"
+    "2. Be concrete: name their top topics and their biggest blind spot.\n"
+    "3. If a left/center/right split is given, name the side they under-consume, then add "
     "a short paragraph headed 'The other side, fairly:' that steelmans -- states the "
     "strongest good-faith version of -- that under-consumed viewpoint on ONE of their top "
-    "political topics. Make explicit it is the other side's case, not your own opinion.\n"
-    "4. End with exactly two concrete, doable suggestions for this week.\n"
-    "Tone: like a supportive coach. Never preachy, moralizing, or medical."
+    "political topics. Make explicit it is the other side's case, not your opinion.\n"
+    "4. If candidate articles are provided, recommend 1-2 BY EXACT TITLE from that list "
+    "only -- copy the title verbatim, never invent or paraphrase one.\n"
+    "5. End with two concrete suggestions for this week.\n"
+    "Tone: direct, plain, a touch wry. NO effusive praise or filler -- do not write "
+    "'wonderful job', 'great to see', \"it's great that\", or 'snapshot'. Don't pad; get "
+    "to the point."
 )
 
 
@@ -115,6 +118,21 @@ def check_grounding(narrative: str, facts_text: str) -> list:
     (a warning, not a failure): '1'/'2' are allowed for 'two suggestions' etc."""
     allowed = extract_numbers(facts_text) | {"1", "2"}
     return sorted(n for n in extract_numbers(narrative) if n not in allowed)
+
+
+def check_title_grounding(narrative: str, recs) -> list:
+    """Quoted article titles in the narrative that don't match any provided candidate ->
+    a possibly invented recommendation. Soft check. Looks at quoted strings >=25 chars
+    (headline-length; skips short quoted phrases like a section header) against the
+    real recs."""
+    quoted = re.findall(r"[\"“”]([^\"“”]{25,})[\"“”]", narrative or "")
+    recs_l = [r.lower() for r in (recs or [])]
+    flagged = []
+    for q in quoted:
+        ql = q.strip().lower()
+        if not any(ql in r or r in ql for r in recs_l):
+            flagged.append(q.strip())
+    return flagged
 
 
 def narrate(facts_text: str, call_fn, recs=None, retries: int = 4, backoff: float = 2.0) -> str:
@@ -144,16 +162,24 @@ def bridge_candidates(mind, rep: dict, k: int = 5) -> list:
     return [str(titles[i]) for i in cand[:k]]
 
 
+def _rank_demo_users(n_pol, mean_lean, eligible, min_pol: int = 4) -> list:
+    """Eligible users ranked for a *striking* demo: most one-sided political reading
+    (largest |mean_lean|) first, then most political material -- among readers with at
+    least ``min_pol`` political clicks and a defined lean. Pure (vectorized) + testable."""
+    import numpy as np
+    npol = np.asarray(n_pol)
+    ml = np.asarray(mean_lean, dtype=float)
+    elig = np.asarray(list(eligible))
+    mask = (npol[elig] >= min_pol) & np.isfinite(ml[elig])
+    cand = elig[mask] if mask.any() else elig                    # fallback: any eligible
+    return sorted((int(u) for u in cand),
+                  key=lambda u: (abs(float(ml[u])), int(npol[u])), reverse=True)
+
+
 def _pick_user(pop, mind, eligible) -> int:
-    """The eligible reader with the most filled metrics (richest demo narrative)."""
-    import health_report as hr
-    best, best_n = int(eligible[0]), -1
-    for u in eligible:
-        rep = hr.user_report(pop, mind, int(u))
-        n = sum(v is not None for v in rep["scores"].values())
-        if n > best_n:
-            best, best_n = int(u), n
-    return best
+    """Auto-pick the most one-sided eligible reader -- the one whose bubble (and steelman)
+    makes the sharpest demo, not just the one with the most filled metrics."""
+    return _rank_demo_users(pop["n_pol"], pop["mean_lean"], eligible)[0]
 
 
 def main() -> None:
@@ -187,6 +213,12 @@ def main() -> None:
 
     print(f"=== Reader {u}: engine-computed facts (the LLM may use ONLY these) ===")
     print(facts_text, "\n")
+    if recs:
+        print("=== real candidate bridging articles (opposite side, un-read) -- the LLM "
+              "may recommend ONLY from these ===")
+        for t in recs:
+            print(f"  - {t}")
+        print()
 
     model = args.model or _DEFAULT_MODELS[args.provider]
     print(f"narrating with {model} ({args.provider}) ...\n")
@@ -195,10 +227,17 @@ def main() -> None:
 
     unsupported = check_grounding(narrative, facts_text)
     if unsupported:
-        print("⚠ grounding check: numbers in the narrative NOT found in the metrics "
+        print("⚠ grounding check (numbers): in the narrative but NOT in the metrics "
               f"(verify, may be invented): {', '.join(unsupported)}")
     else:
-        print("✓ grounding check: every number in the narrative traces to a computed metric.")
+        print("✓ grounding check (numbers): every number traces to a computed metric.")
+
+    bad_titles = check_title_grounding(narrative, recs)
+    if recs and bad_titles:
+        print("⚠ grounding check (titles): quoted titles not in the candidate list "
+              f"(verify): {' | '.join(bad_titles)}")
+    elif recs:
+        print("✓ grounding check (titles): any recommended article came from the real list.")
 
 
 if __name__ == "__main__":
