@@ -14,11 +14,17 @@ It labels from the **headline text only** (blind to the classifier's score) on a
 every label is auditable. Output is a `news_id,position,reason` CSV that
 `validate_lean.py --against` and `ingest_mind.py --positions-csv` read directly.
 
-Usage (needs ANTHROPIC_API_KEY set)::
+Two backends (`--provider`): **gemini** (Google AI Studio — a genuinely free tier,
+no credit card, set `GEMINI_API_KEY`) or **anthropic** (Claude, paid, set
+`ANTHROPIC_API_KEY`). Either is just a *second model*; the convergent-validity caveat
+above applies to both, since both are language models keying on lexical cues.
+
+Usage::
 
     python examples/validate_lean.py --lean lean.csv --news-dir MINDsmall_train \\
         --sample 120 --out label_template.tsv          # blind, stratified template
-    python examples/llm_label.py --template label_template.tsv --out llm_labels.csv
+    python examples/llm_label.py --provider gemini --template label_template.tsv \\
+        --out llm_labels.csv                            # free Gemini second opinion
     python examples/validate_lean.py --lean lean.csv --against llm_labels.csv  # convergent validity
 """
 
@@ -78,10 +84,25 @@ def read_template(path: str) -> list:
     return rows
 
 
+def _strip_fences(text: str) -> str:
+    """Drop a ```json ... ``` markdown fence if a model wraps its JSON in one."""
+    t = (text or "").strip()
+    if t.startswith("```"):
+        t = t.split("\n", 1)[-1] if "\n" in t else t[3:]
+        if t.rstrip().endswith("```"):
+            t = t.rstrip()[:-3]
+    return t.strip()
+
+
 def parse_labels(text: str) -> dict:
-    """Structured-output JSON -> {id: (lean, reason)}."""
+    """Structured-output JSON -> {id: (lean, reason)}. Tolerant of an unparseable
+    batch (returns what it can) so one bad call never aborts the whole run."""
     out = {}
-    for o in json.loads(text).get("labels", []):
+    try:
+        data = json.loads(_strip_fences(text))
+    except (json.JSONDecodeError, TypeError):
+        return out
+    for o in (data.get("labels", []) if isinstance(data, dict) else []):
         try:
             out[str(o["id"])] = (int(o["lean"]), str(o.get("reason", "")))
         except (KeyError, ValueError, TypeError):
@@ -105,9 +126,16 @@ def label_headlines(rows, call_fn, batch: int = 20) -> dict:
     return labels
 
 
+_DEFAULT_MODELS = {"gemini": "gemini-2.5-flash", "anthropic": "claude-opus-4-8"}
+
+
 def _anthropic_caller(model: str):
-    """Return a ``call_fn(system, user)`` backed by the Anthropic SDK."""
-    import anthropic
+    """Return a ``call_fn(system, user)`` backed by the Anthropic SDK (paid;
+    reads ``ANTHROPIC_API_KEY``)."""
+    try:
+        import anthropic
+    except ImportError:
+        raise SystemExit("anthropic not installed -- run: pip install anthropic")
     client = anthropic.Anthropic()
 
     def call(system: str, user: str) -> str:
@@ -119,6 +147,48 @@ def _anthropic_caller(model: str):
         return next(b.text for b in resp.content if b.type == "text")
 
     return call
+
+
+def _gemini_caller(model: str):
+    """Return a ``call_fn(system, user)`` backed by Google's free-tier Gemini
+    (``google-genai`` SDK; reads ``GEMINI_API_KEY`` / ``GOOGLE_API_KEY``)."""
+    try:
+        from google import genai
+        from google.genai import types
+        from pydantic import BaseModel
+    except ImportError:
+        raise SystemExit("google-genai not installed -- run: pip install google-genai")
+
+    class _Label(BaseModel):
+        id: str
+        lean: int
+        reason: str
+
+    class _Labels(BaseModel):
+        labels: list[_Label]
+
+    client = genai.Client()                      # picks up GEMINI_API_KEY from env
+
+    def call(system: str, user: str) -> str:
+        resp = client.models.generate_content(
+            model=model, contents=user,
+            config=types.GenerateContentConfig(
+                system_instruction=system, max_output_tokens=8000,
+                response_mime_type="application/json", response_schema=_Labels,
+            ),
+        )
+        return resp.text or ""
+
+    return call
+
+
+def make_caller(provider: str, model: str):
+    """Dispatch ``--provider`` -> a ``call_fn(system, user) -> response text``."""
+    if provider == "gemini":
+        return _gemini_caller(model)
+    if provider == "anthropic":
+        return _anthropic_caller(model)
+    raise SystemExit(f"unknown --provider {provider!r} (use gemini or anthropic)")
 
 
 def write_labels(labels: dict, rows, out: str, model: str) -> int:
@@ -143,17 +213,21 @@ def main() -> None:
     ap.add_argument("--template", required=True,
                     help="news_id,title file (blind labeling template from validate_lean.py)")
     ap.add_argument("--out", default="llm_labels.csv")
-    ap.add_argument("--model", default="claude-opus-4-8",
-                    help="Anthropic model id (default claude-opus-4-8)")
+    ap.add_argument("--provider", choices=["gemini", "anthropic"], default="gemini",
+                    help="gemini = free (GEMINI_API_KEY); anthropic = paid (ANTHROPIC_API_KEY)")
+    ap.add_argument("--model", default=None,
+                    help="model id (default: gemini-2.5-flash / claude-opus-4-8 per --provider)")
     ap.add_argument("--batch", type=int, default=20, help="headlines per API call")
     args = ap.parse_args()
 
+    model = args.model or _DEFAULT_MODELS[args.provider]
     rows = read_template(args.template)
     if not rows:
         raise SystemExit(f"no (news_id, title) rows read from {args.template}")
-    print(f"labeling {len(rows)} headlines with {args.model} (blind, from titles only) ...")
-    labels = label_headlines(rows, _anthropic_caller(args.model), batch=args.batch)
-    n = write_labels(labels, rows, args.out, args.model)
+    print(f"labeling {len(rows)} headlines with {model} ({args.provider}, blind, "
+          "from titles only) ...")
+    labels = label_headlines(rows, make_caller(args.provider, model), batch=args.batch)
+    n = write_labels(labels, rows, args.out, model)
     miss = len(rows) - n
     print(f"wrote {args.out}: {n} labels"
           + (f"  ({miss} headlines unlabeled — re-run or lower --batch)" if miss else ""))

@@ -98,3 +98,27 @@ def test_end_to_end_label_then_validate(tmp_path):
     out = tmp_path / "out.csv"
     ll.write_labels(labels, rows, str(out), "claude-opus-4-8")
     assert _load_positions_map(str(out)) == {"N1": -1.0, "N2": 1.0, "N3": 0.0}
+
+
+def test_parse_labels_strips_fences_and_tolerates_garbage():
+    # a model that wraps its JSON in a ```json fence still parses
+    fenced = "```json\n" + json.dumps(
+        {"labels": [{"id": "N1", "lean": 1, "reason": "r"}]}) + "\n```"
+    assert ll.parse_labels(fenced) == {"N1": (1, "r")}
+    # garbage / empty -> empty dict, never raises (one bad batch can't abort the run)
+    assert ll.parse_labels("sorry, I can't do that") == {}
+    assert ll.parse_labels("") == {}
+    assert ll.parse_labels(None) == {}
+
+
+def test_make_caller_unknown_provider_errors():
+    try:
+        ll.make_caller("bogus", "m")
+        assert False, "expected SystemExit on unknown provider"
+    except SystemExit:
+        pass
+
+
+def test_default_models_cover_both_providers():
+    assert ll._DEFAULT_MODELS["gemini"].startswith("gemini")      # free tier
+    assert ll._DEFAULT_MODELS["anthropic"].startswith("claude")   # paid
