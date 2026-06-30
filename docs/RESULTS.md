@@ -228,15 +228,26 @@ into `AdaptiveRWEB`, with the selection bias stated plainly — not as a settled
 **Closing the loop (`examples/adaptive_satisfaction.py`).** We then *drive* `AdaptiveRWEB`
 from this measured signal instead of the simulated browsing walk: each user's
 `cross_upvoted_frac` becomes their exposure, so their per-user bridging `epsilon` is set by
-how welcomed their real cross-cutting was (`epsilon ∈ [0.5, 0.95]`). Against a uniform RWE-B
-at the **same average dose**, the adaptive policy **redistributes**: the rank-weighted
-opposite-content reach **rises monotonically with measured tolerance** (low→high tercile)
-while the uniform reach stays flat — i.e. low-tolerance readers get a gentler dose,
-high-tolerance readers a stronger one, `Spearman(tolerance, reach) > 0`. This is the
+how welcomed their real cross-cutting was (`epsilon ∈ [0.5, 0.95]`). On the validated-axis
+npz (15 K served users, **52 %** of them carrying a measured signal — active users cross
+over far more than the 9 % general rate), against a uniform RWE-B at the **same average
+dose** the adaptive policy **redistributes** the rank-weighted opposite-content reach by
+measured tolerance:
+
+| measured tolerance | adaptive reach | uniform reach |
+|---|---|---|
+| low (got pushback) | **0.52** | 0.63 |
+| mid | 1.30 | 0.88 |
+| high (welcomed) | **1.38** | 0.80 |
+
+The adaptive reach **rises monotonically** (0.52 → 1.30 → 1.38) while uniform stays flat —
+i.e. readers whose real bridges drew pushback get a *gentler* dose and those who were
+welcomed get a *stronger* one (`Spearman(tolerance, reach) = +0.61`). Two caveats keep it
+honest: the signal is **self-selected** (only crossover users carry it — an upper bound),
+and it is **coarse per user** (most have 1–2 cross-cutting comments, so the fraction is
+near 0 or 1; the policy mainly *spares those whose bridges drew pushback*). So this is the
 synthetic `AdaptiveRWEB` mechanism (Limitation 1) made to run on a **real** per-user signal
-— a closed loop, with the same self-selection caveat (only the ~9 % who cross over carry a
-measured value; the rest get a neutral default), so a *mechanism demonstration on real
-data*, not a satisfaction-gain claim.
+— a *mechanism demonstration on real data*, not a satisfaction-gain claim.
 
 ## RQ3 — ideological bridging (RWE-B)
 

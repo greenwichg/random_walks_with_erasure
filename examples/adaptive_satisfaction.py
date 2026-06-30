@@ -144,9 +144,12 @@ def run(npz: str, probe_csv: str, k: int = 10, sample: int = 4000,
         "READ: vs a uniform recommender at the SAME average dose, the measured-adaptive "
         "policy gives low-tolerance users a gentler bridging dose and high-tolerance users "
         "a stronger one (adaptive reach rises across the terciles; uniform stays flat) -- "
-        "personalisation from real engagement. CAVEAT: the signal is the self-selected "
-        "~9% who cross over (an upper bound), so this is a mechanism demonstration on "
-        "real data, not a settled satisfaction gain.",
+        "personalisation from real engagement. CAVEATS: the signal is self-selected (only "
+        f"the users who cross over carry it -- {100*measured.mean():.0f}% of these served "
+        "users, an upper bound), and it is coarse per user (most have 1-2 cross-cutting "
+        "comments, so the fraction is near 0 or 1; the policy mainly spares those whose "
+        "bridges drew pushback). So this is a mechanism demonstration on real data, not a "
+        "settled satisfaction gain.",
     ]
     return "\n".join(out)
 

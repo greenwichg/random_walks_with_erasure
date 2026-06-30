@@ -160,9 +160,10 @@ _MIND text-axis attempts, kept for the record:_
       (`examples/adaptive_satisfaction.py` + `# 7b`): the measured `cross_upvoted_frac` now
       drives `AdaptiveRWEB`'s per-user exposure/epsilon (not the simulated walk) — vs a
       uniform recommender at the same average dose, the rank-weighted opposite-content reach
-      rises with measured tolerance while uniform stays flat (the dose redistributes toward
-      those who tolerate it; `Spearman > 0`). Unit-tested. _(Optional next: a longer comment
-      window for the *return* metric.)_
+      rises with measured tolerance while uniform stays flat (real run: low tercile adaptive
+      0.52 < uniform 0.63 → spared; high 1.38 > 0.80 → boosted; `Spearman +0.61`, 52 % of
+      served users carry a signal). Unit-tested. _(Caveats kept: self-selected + coarse
+      per-user. Optional next: a longer comment window for the *return* metric.)_
 - [ ] Health-report polish (e.g. a "you vs the average reader" population view)
 - [ ] Health-report polish (e.g. a "you vs the average reader" population view)
 
