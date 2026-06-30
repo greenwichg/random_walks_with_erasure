@@ -16,8 +16,9 @@ The outlet-lean limitation (read this)
 --------------------------------------
 MIND's ``URL`` column is an **MSN** URL; the *original publisher is not in the
 file*. So the outlet-lean join needs a ``source_map`` (news-id -> outlet) that you
-supply -- e.g. from an augmented MIND release, from the EB-NeRD dataset (which does
-carry publishers), or by resolving the MSN "provider" yourself. Without it, the
+supply -- realistically by resolving the MSN article -> its original "provider"
+(no public mapping exists). Note other public click datasets do *not* fill this gap:
+EB-NeRD and Adressa are single-publisher (no lean variation). Without a source_map the
 click matrix and the political mask still work (both come from MIND alone), but
 ``item_positions`` will be ``NaN``. As a data-driven alternative that needs **no
 outlet labels at all**, call :meth:`MINDData.fit_ideology` -- it fits

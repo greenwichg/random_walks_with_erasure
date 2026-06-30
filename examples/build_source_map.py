@@ -2,10 +2,14 @@
 needs, from any catalog that carries publishers.
 
 MIND ships MSN aggregator URLs with **no publisher field**, so its outlet-lean join is
-blocked (``docs/RESULTS.md`` Limitation: outlet-lean). The join itself works the moment
-you point it at a catalog that *does* carry publishers -- e.g. **EB-NeRD**, or a
-resolved MSN-provider table. This converts any such catalog (TSV/CSV, or EB-NeRD
-``.parquet``) into the 2-column ``news_id<TAB>outlet`` map the ingest consumes::
+blocked (``docs/RESULTS.md`` Limitation: outlet-lean). The join works the moment you point
+it at a catalog that carries **multiple named publishers**, but those are genuinely scarce:
+the public *click* datasets are either single-publisher (EB-NeRD = Ekstra Bladet only,
+Adressa = Adresseavisen only -> no lean variation) or hide the provider (MIND's MSN URLs).
+The realistic unblock for MIND is a **resolved MSN-provider table** (MIND article ->
+original publisher; see ``docs/TODO.md``). This tool converts *any* catalog that does carry
+named publishers (TSV/CSV/parquet) into the 2-column ``news_id<TAB>outlet`` map the ingest
+consumes -- the machinery is ready; only the multi-publisher catalog is missing::
 
     python examples/build_source_map.py --catalog articles.parquet \\
         --id-col article_id --source-col publisher --out source_map.tsv
@@ -61,7 +65,8 @@ def main() -> None:
                     help="news catalog with a publisher column (.tsv/.csv/.parquet)")
     ap.add_argument("--id-col", default="news_id", help="article-id column name")
     ap.add_argument("--source-col", default="publisher",
-                    help="publisher/outlet column name (e.g. EB-NeRD 'publisher')")
+                    help="publisher/outlet column name (must vary across rows -- a "
+                         "single-publisher catalog gives no lean signal)")
     ap.add_argument("--out", default="source_map.tsv")
     args = ap.parse_args()
 

@@ -56,8 +56,9 @@ surprisal, the RQ3 UW measures), and the aggregate-over-a-user's-clicks pattern 
 > topics). The `--political-only` `mind_text.npz` used for the RWE evaluation has a
 > single category (`news`), so topic entropy is undefined and the Variety section
 > blanks. ‡ **Source diversity is structurally `n/a` on MIND** — its URLs are MSN
-> URLs, so the publisher isn't in the data; it's the strongest dimension only on a
-> dataset that *carries* publishers (EB-NeRD, or an external source-map). The two
+> URLs, so the publisher isn't in the data; it populates only on a dataset that carries
+> *named* publishers (note: EB-NeRD/Adressa are single-publisher, so they don't help —
+> it needs a resolved MSN-provider table). The two
 > "Variety" metrics, strongest in principle, are the weakest *on this dataset*; the
 > political viewpoint metrics are what actually populate on the lean slice.
 

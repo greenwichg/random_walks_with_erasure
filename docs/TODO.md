@@ -123,14 +123,19 @@ _MIND text-axis attempts, kept for the record:_
       behavioral Politosphere axis (`lean_corr 0.57 ± 0.19` over 5 seeds) as the primary
       ideology result. (The
       `# 7b` two-BERT +0.38 is *shared* method bias, not independent validation.)
-- [~] **Outlet-lean — software-unblocked; only a publisher-carrying catalog remains.**
-      Would lift RQ3 *and* the report's viewpoint/echo. The blocker is purely *data*:
-      MIND ships MSN URLs with no publisher. **Built**: a curated `examples/data/
-      outlet_lean.csv` (AllSides-style, ~55 outlets) + `examples/build_source_map.py`
-      (turns any publisher-carrying catalog — EB-NeRD `.parquet`, or a resolved
-      MSN-provider table — into the `news_id→outlet` map `ingest_mind --source-map`
-      consumes). Unit-tested end-to-end. Remaining = point it at EB-NeRD (or an MSN→
-      provider resolution); MIND alone stays blocked.
+- [~] **Outlet-lean — software-unblocked; the data gap is *structural*, not a quick source.**
+      Would lift the *MIND* RQ3 and the report's viewpoint/echo (not load-bearing — the
+      **behavioral Politosphere axis already validates**, `lean_corr 0.57 ± 0.19`). **Built**:
+      a curated `examples/data/outlet_lean.csv` (AllSides-style, ~55 outlets) +
+      `examples/build_source_map.py` (turns *any* multi-publisher catalog into the
+      `news_id→outlet` map `ingest_mind --source-map` consumes). Unit-tested end-to-end.
+      **Corrected (2026-06-30): "point it at EB-NeRD" was wrong** — EB-NeRD (Ekstra Bladet)
+      and Adressa are *single-publisher* (no lean variation), and multi-publisher *click*
+      sets anonymise the provider. So a ready catalog doesn't exist; the only realistic
+      unblock is **resolving MIND's MSN articles → original providers** (uncertain, partial
+      coverage, no public mapping). _Recommendation: deprioritise — the ideology story
+      already stands on the validated behavioral axis. First cheap check: does the MIND
+      article HTML/url credit a source publisher? If yes, parse it; if no, dead end._
 
 ## 4. Paper / publication — [me + you] · when ready
 

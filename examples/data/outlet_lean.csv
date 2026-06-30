@@ -2,7 +2,9 @@
 # -2..+2 scale (left .. right). Feeds ingest_mind.py via --lean-csv, joined to articles
 # through a news_id->outlet source-map (see examples/build_source_map.py). MIND itself
 # ships MSN aggregator URLs with no publisher, so this only attaches once you have a
-# catalog that carries publishers (e.g. EB-NeRD) -- that is the outlet-lean blocker.
+# catalog carrying MULTIPLE named publishers -- which is scarce (EB-NeRD/Adressa are
+# single-publisher; multi-publisher click sets anonymise the provider). That is the
+# outlet-lean blocker; the realistic path is resolving MIND's MSN articles to providers.
 #
 # Coarse, contested, time-dependent labels (same caveat as subreddit_lean.csv). For a
 # paper, cite a vetted source (AllSides / Media Bias-Fact Check) and note the version.

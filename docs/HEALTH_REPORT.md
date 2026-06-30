@@ -153,9 +153,9 @@ gives an effective 5; reading mostly one gives ≈1. Reported as a percentile.
 **Read it:** high = a balanced spread of outlets; low = a few publishers dominate.
 **Limit:** articles whose publisher couldn't be parsed from the URL are excluded.
 **On MIND this is always `n/a`** — MIND's URLs are *MSN* URLs, so the original
-publisher isn't in the data. It needs an external source-map (e.g. EB-NeRD, which
-carries publishers, or a resolved MSN-provider table); the report says so on the
-bar rather than showing a bare blank.
+publisher isn't in the data. It needs an external source-map — realistically a
+resolved MSN-provider table (other public click datasets don't help: EB-NeRD/Adressa
+are single-publisher); the report says so on the bar rather than showing a bare blank.
 
 ### Viewpoint Balance
 **Answers:** does your political reading cross the centre, or stay on your side?
