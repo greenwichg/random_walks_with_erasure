@@ -93,6 +93,16 @@ _MIND text-axis attempts, kept for the record:_
       reports **inter-rater agreement** (mean pairwise Spearman + quadratic-weighted
       kappa) and validates each axis against the rater **consensus** (unit-tested).
       Remaining = the human labeling itself (blind, ≥100 items, 2–3 raters), then run.
+- [~] **Automated convergent validity (LLM second opinion)** — a *cheap, auditable*
+      complement to the human gold set, **not a substitute**. `examples/llm_label.py`
+      labels the blind template with a second model (Claude, structured outputs, from
+      titles only) and writes a provenance-stamped `news_id,position,reason` CSV that
+      `validate_lean.py --against` reads directly; notebook `# 7d` runs the whole flow.
+      **Honesty caveat baked in** (docstring, output stamp, notebook print): the text
+      axis is *itself* a language model, so model-vs-model agreement shares lexical
+      bias and is **convergent validity, weaker than human ground truth** — kept
+      separate from the `--raters` consensus path. Unit-tested with an injected fake
+      caller (no live API). Remaining = run it once with an `ANTHROPIC_API_KEY`.
 - [~] **Outlet-lean — software-unblocked; only a publisher-carrying catalog remains.**
       Would lift RQ3 *and* the report's viewpoint/echo. The blocker is purely *data*:
       MIND ships MSN URLs with no publisher. **Built**: a curated `examples/data/
