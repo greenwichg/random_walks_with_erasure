@@ -89,6 +89,22 @@ def test_probe_classifies_cross_vs_same_and_aggregates(tmp_path):
     assert "SENSIBLE" in sp._verdict(s)                  # majority upvoted
 
 
+def test_min_score_threshold_excludes_default_plus_one(tmp_path):
+    # a cross-cutting comment sitting at the auto +1 (score 1) = nobody engaged.
+    # default min_score=1 -> NOT welcomed; min_score=0 recovers the legacy score>0 rule.
+    rows = [{"author": "L1", "subreddit": "socialism", "score": 5, "parent_id": "t3_a"},
+            {"author": "L1", "subreddit": "socialism", "score": 5, "parent_id": "t3_a"},
+            {"author": "L1", "subreddit": "Conservative", "score": 1, "parent_id": "t1_b"}]
+    p = tmp_path / "comments_2016-09.bz2"
+    _write(p, rows)
+    a, pos, score, month, is_reply, _ = sp.read_engagement([str(p)], SUB_POS)
+    default = sp.probe(a, pos, score, month, is_reply)                # min_score=1 (default)
+    assert default["summary"]["min_score"] == 1
+    assert default["summary"]["cross_upvoted_frac"] == 0.0           # score-1 comment doesn't count
+    legacy = sp.probe(a, pos, score, month, is_reply, min_score=0)    # old score>0 behaviour
+    assert legacy["summary"]["cross_upvoted_frac"] == 1.0            # now it counts
+
+
 def test_verdict_flags_flamewar_and_missing_score():
     assert "CONFOUNDED" in sp._verdict(
         {"cross_upvoted_frac": 0.1, "same_upvoted_frac": 0.9})

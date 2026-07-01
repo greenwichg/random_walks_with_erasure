@@ -206,24 +206,35 @@ predominantly welcomed, at a modest cost**:
 
 | (per-comment) | cross-cutting | same-side |
 |---|---|---|
-| net-upvoted (`score > 0`) | **82 %** | 95 % |
+| net-upvoted (`score > 0`, legacy default) | **82 %** | 95 % |
 | median score | 1.0 | 2.0 |
 | reply rate (in-thread) | **73 %** | 59 % |
 
-So cross-cutting comments are net-positive 82 % of the time and draw *more* discussion
-(73 % vs 59 % reply rate) — received as genuine engagement, **not dogpiled flame wars** —
-though with a real reception penalty (82 vs 95 % upvoted, half the median score). This is
-the **first *measured* (not simulated)** evidence that the bounded-bridging objective
-targets engagement readers actually accept.
+So cross-cutting comments are net-positive 82 % of the time. The **upvote signal — not the
+reply count — is what rules out *dogpiled flame wars***: a hostile comment that provokes a
+pile-on gets *down-voted*, lowering `upvoted_frac` rather than raising it (and the reply
+metric counts replies the user *made*, not replies they *received*, so a dogpile of angry
+responses cannot inflate it). Cross-cutting also draws *more* in-thread replies (73 % vs
+59 %), but that is **ambiguous** (constructive back-and-forth vs. argument) and is *not*
+read as approval. There is a real reception penalty (82 vs 95 % upvoted, half the median
+score). This is the **first *measured* (not simulated)** evidence that the bounded-bridging
+objective targets engagement readers actually accept.
 
 **Caveat (this leads, not trails).** The observed cross-cutting is **self-selected** — it
 comes from the 9 % who already cross over, posting comments that are themselves likely
 self-selected to be diplomatic. So 82 % is an **upper bound** on how welcomed a *recommended*
-bridge would be, not the counterfactual of nudging a random reader across; the higher reply
-rate is also ambiguous (engagement vs. argument). The **return** dimension was
-**inconclusive** here (1.0 vs 1.0 distinct months — the 3-file window is too short to
-separate them). So we report this as a *promising, measurable* signal that warrants wiring
-into `AdaptiveRWEB`, with the selection bias stated plainly — not as a settled effect.
+bridge would be, not the counterfactual of nudging a random reader across. Two further
+reasons it is an upper bound: (i) **brigading** — `score` is *net* votes with no record of
+*who* voted, so a hostile comment the user's **own** side up-votes can still read positive
+(Politosphere carries no vote-level attribution to tell a genuine opposite-side welcome from
+same-side vote support); and (ii) the legacy `score > 0` threshold counts a comment sitting
+at Reddit's **auto +1** — i.e. *ignored*, nobody engaged — as "upvoted," conflating
+*welcomed* with *unnoticed*. The probe now defaults to the stricter **`score > 1`**
+(`--min-score`, requiring a real external upvote), which a re-run would apply for a tighter
+estimate. The **return** dimension was **inconclusive** here (1.0 vs 1.0 distinct months —
+the 3-file window is too short to separate them). So we report this as a *promising,
+measurable* signal that warrants wiring into `AdaptiveRWEB`, with the selection bias stated
+plainly — not as a settled effect.
 
 **Closing the loop (`examples/adaptive_satisfaction.py`).** We then *drive* `AdaptiveRWEB`
 from this measured signal instead of the simulated browsing walk: each user's

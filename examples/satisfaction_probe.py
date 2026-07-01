@@ -7,13 +7,24 @@ carries a usable substitute. For each user we find their **cross-cutting** comme
 (in subreddits on the *opposite* side of the validated left--right axis from their own
 side) and measure the engagement quality the simulation only guesses at:
 
-* **reception** -- mean comment ``score`` (upvotes). Upvoted cross-cutting comments
-  are a *welcomed bridge*; heavily downvoted ones are a *flame war* -- the key
+* **reception** -- comment ``score`` (net upvotes). A cross-cutting comment counts as
+  *welcomed* when ``score > --min-score`` (default 1): a fresh Reddit comment starts at
+  the author's auto +1, so ``score > 1`` requires at least one *external* net upvote, not
+  merely that nobody downvoted it. Heavily downvoted comments are a *flame war* -- the key
   confound this probe exists to rule out.
-* **depth** -- fraction of cross-cutting comments that are *replies* (``parent_id``
-  begins ``t1_``), i.e. a back-and-forth rather than a drive-by.
+* **depth** -- fraction of the user's cross-cutting comments that are themselves *replies*
+  (``parent_id`` begins ``t1_``), i.e. the user joined a back-and-forth rather than a
+  drive-by. NB this counts replies the user *made*, NOT replies they *received*: a dogpile
+  of angry responses to a hostile comment does not touch it and is never read as approval.
 * **return** -- number of distinct months the user keeps coming back to the other
   side (``created_utc``).
+
+**Caveat (brigading).** ``score`` is *net* votes with no record of *who* voted, so a
+hostile cross-cutting comment that the user's **own** side brigades up-votes can still
+read positive -- the apparent opposite-side welcome may be same-side vote support. There
+is no vote-level attribution in Politosphere to separate these, so a high ``upvoted_frac``
+is an **upper bound** on genuine welcome; ``--min-score`` and the median-score line partly
+guard against it, but brigading proper cannot be closed from these fields alone.
 
 It prints a population diagnostic comparing cross-cutting vs same-side engagement and
 reports which signals are even available (Politosphere's pseudonymization may have
@@ -119,9 +130,11 @@ def _distinct_months(codes, months, n_users) -> np.ndarray:
     return np.bincount(u, minlength=n_users).astype(float)
 
 
-def probe(authors, pos, score, month, is_reply, *, sub_tau=0.5, user_tau=0.3):
+def probe(authors, pos, score, month, is_reply, *, sub_tau=0.5, user_tau=0.3, min_score=1):
     """Classify each comment as same-/cross-side of the user's own side and aggregate
-    per-user engagement. Returns a dict of per-user arrays + population summary."""
+    per-user engagement. A comment counts as *upvoted* iff ``score > min_score`` (default
+    1: a fresh comment sits at the author's auto +1, so >1 needs a real external upvote).
+    Returns a dict of per-user arrays + population summary."""
     users, codes = np.unique(authors, return_inverse=True)
     n_users = users.size
     cnt = np.bincount(codes, minlength=n_users).astype(float)
@@ -139,7 +152,7 @@ def probe(authors, pos, score, month, is_reply, *, sub_tau=0.5, user_tau=0.3):
         fin = np.isfinite(sc)
         ssum = np.bincount(codes[mask][fin], weights=sc[fin], minlength=n_users)
         sfin = np.bincount(codes[mask][fin], minlength=n_users).astype(float)
-        spos = np.bincount(codes[mask][fin], weights=(sc[fin] > 0).astype(float),
+        spos = np.bincount(codes[mask][fin], weights=(sc[fin] > min_score).astype(float),
                            minlength=n_users)
         rep = np.bincount(codes[mask], weights=is_reply[mask].astype(float),
                           minlength=n_users)
@@ -161,8 +174,9 @@ def probe(authors, pos, score, month, is_reply, *, sub_tau=0.5, user_tau=0.3):
         cross_share_of_sided=float(has_cross.sum() / max(has_side.sum(), 1)),
         # the flame-war check: of *all* cross-cutting comments, what fraction upvoted?
         cross_comments=int(cross.sum()), same_comments=int(same.sum()),
-        cross_upvoted_frac=_frac_pos(score[cross]),
-        same_upvoted_frac=_frac_pos(score[same]),
+        min_score=int(min_score),
+        cross_upvoted_frac=_frac_pos(score[cross], min_score),
+        same_upvoted_frac=_frac_pos(score[same], min_score),
         cross_median_score=_median(score[cross]),
         same_median_score=_median(score[same]),
         cross_reply_frac=float(np.nanmean(is_reply[cross])) if cross.any() else float("nan"),
@@ -173,9 +187,9 @@ def probe(authors, pos, score, month, is_reply, *, sub_tau=0.5, user_tau=0.3):
     return dict(users=users, user_side=user_side, cross=X, same=S, summary=summary)
 
 
-def _frac_pos(a):
+def _frac_pos(a, min_score=1):
     a = a[np.isfinite(a)]
-    return float((a > 0).mean()) if a.size else float("nan")
+    return float((a > min_score).mean()) if a.size else float("nan")
 
 
 def _median(a):
@@ -195,7 +209,7 @@ def _verdict(s: dict) -> str:
                 "bridges dominate, not flame wars. Worth promoting to a real metric.")
     if cf >= 0.33:
         return ("MIXED: a sizeable minority of cross-cutting comments are downvoted. "
-                "Usable, but gate the satisfaction signal on score>0 (constructive only).")
+                "Usable, but raise --min-score to keep only clearly net-positive bridges.")
     return ("CONFOUNDED: cross-cutting comments are mostly downvoted -> adversarial "
             "participation dominates. Reported as *why* real satisfaction is hard here.")
 
@@ -211,7 +225,7 @@ def format_summary(s: dict, fields: dict) -> str:
          "",
          "                          cross-cutting     same-side",
          f"  median comment score   {s['cross_median_score']:>10.2f}    {s['same_median_score']:>10.2f}",
-         f"  upvoted (score>0)       {s['cross_upvoted_frac']*100:>9.0f}%    {s['same_upvoted_frac']*100:>9.0f}%",
+         f"  upvoted (score>{s.get('min_score', 1)})       {s['cross_upvoted_frac']*100:>9.0f}%    {s['same_upvoted_frac']*100:>9.0f}%",
          f"  reply (in-thread) frac  {s['cross_reply_frac']*100:>9.0f}%    {s['same_reply_frac']*100:>9.0f}%",
          f"  return (distinct months){s['cross_return_median']:>10.1f}    {s['same_return_median']:>10.1f}",
          "",
@@ -231,6 +245,10 @@ def main():
                     help="|position| below this = centrist subreddit, skipped")
     ap.add_argument("--user-tau", type=float, default=0.3,
                     help="|mean position| below this = user has no clear side, skipped")
+    ap.add_argument("--min-score", type=int, default=1,
+                    help="a comment counts as upvoted iff score > this (default 1: a fresh "
+                         "comment sits at the author's auto +1, so >1 needs a real upvote; "
+                         "raise it to keep only clearly-welcomed cross-cutting bridges)")
     ap.add_argument("--limit", type=int, default=None, help="cap comments (debug)")
     ap.add_argument("--out", default=None, help="optional per-user CSV")
     args = ap.parse_args()
@@ -252,7 +270,7 @@ def main():
         return
 
     res = probe(authors, p, score, month, is_reply,
-                sub_tau=args.sub_tau, user_tau=args.user_tau)
+                sub_tau=args.sub_tau, user_tau=args.user_tau, min_score=args.min_score)
     print("\n" + format_summary(res["summary"], fields))
 
     if args.out:
