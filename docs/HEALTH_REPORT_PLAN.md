@@ -162,8 +162,14 @@ estimate once the MSN→publisher resolver exists. The
 classifiers are Colab/GPU scripts (the `classify_lean.py` pattern); the wiring is
 unit-tested on the fixture. **Still open:** a stronger lean axis (a *data-sourcing*
 task — the ingest already supports `--lean-csv` / `--positions-csv`; the missing
-piece is a license-clean outlet-lean table, not code) and the MSN→publisher resolver
-that would populate the high-confidence branch. The composite "Overall" is
+piece is a license-clean outlet-lean table, not code). The MSN→publisher resolver
+that would populate the **high-confidence branch** is now prototyped
+(`examples/resolve_msn_publisher.py`, notebook `# 7f`, parser unit-tested): it fetches
+the MIND MSN snapshot and parses the original outlet (JSON-LD / og:site_name / provider
+JSON / canonical host / byline) into the `news_id→outlet` source-map the ingest already
+consumes. It is a **spike** pending a Colab run to confirm the snapshots still fetch and
+carry attribution (this repo's network policy blocks `assets.msn.com` with 403, which is
+exactly the reachability question the spike answers). The composite "Overall" is
 shown only as an explicitly *illustrative* unweighted average, per the caution above.
 
 _Last updated: 2026-07-01._

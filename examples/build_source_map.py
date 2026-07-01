@@ -7,9 +7,12 @@ it at a catalog that carries **multiple named publishers**, but those are genuin
 the public *click* datasets are either single-publisher (EB-NeRD = Ekstra Bladet only,
 Adressa = Adresseavisen only -> no lean variation) or hide the provider (MIND's MSN URLs).
 The realistic unblock for MIND is a **resolved MSN-provider table** (MIND article ->
-original publisher; see ``docs/TODO.md``). This tool converts *any* catalog that does carry
-named publishers (TSV/CSV/parquet) into the 2-column ``news_id<TAB>outlet`` map the ingest
-consumes -- the machinery is ready; only the multi-publisher catalog is missing::
+original publisher; see ``docs/TODO.md``) -- now prototyped in
+``examples/resolve_msn_publisher.py``, which fetches each MSN snapshot and parses the
+original outlet straight into the same source-map this tool emits. This tool converts
+*any* catalog that does carry named publishers (TSV/CSV/parquet) into the 2-column
+``news_id<TAB>outlet`` map the ingest consumes -- the machinery is ready; only the
+multi-publisher catalog is missing::
 
     python examples/build_source_map.py --catalog articles.parquet \\
         --id-col article_id --source-col publisher --out source_map.tsv

@@ -144,9 +144,18 @@ _MIND text-axis attempts, kept for the record:_
       and Adressa are *single-publisher* (no lean variation), and multi-publisher *click*
       sets anonymise the provider. So a ready catalog doesn't exist; the only realistic
       unblock is **resolving MIND's MSN articles → original providers** (uncertain, partial
-      coverage, no public mapping). _Recommendation: deprioritise — the ideology story
-      already stands on the validated behavioral axis. First cheap check: does the MIND
-      article HTML/url credit a source publisher? If yes, parse it; if no, dead end._
+      coverage, no public mapping). **Spike built (2026-07-01):**
+      `examples/resolve_msn_publisher.py` + notebook `# 7f` fetch the MIND MSN snapshot
+      (`assets.msn.com/labs/mind/<id>.html`, browser UA + retries to beat the 409) and
+      parse the outlet (JSON-LD / og:site_name / provider JSON / canonical host / byline)
+      into the `news_id→outlet` source-map, then report lean-join coverage vs
+      `outlet_lean.csv`. The five-strategy parser is unit-tested (13 tests); the **fetch
+      needs open network** — this repo's policy 403-blocks `assets.msn.com`, so it runs in
+      Colab. This is the AI-vs-outlet hybrid's high-confidence branch; the confidence-
+      *weighting* (AI-path arm) already ships in `health_report.py --confidence-csv`.
+      _Recommendation: still deprioritised (the ideology story stands on the validated
+      behavioral axis); `# 7f` answers "reachable at all?" cheaply next Colab session —
+      read `fetched N/M` + coverage. N=0 ⇒ gated ⇒ report as the finding._
 
 ## 4. Paper / publication — [me + you] · when ready
 
