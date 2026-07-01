@@ -35,6 +35,28 @@ def test_viewpoint_and_echo():
     assert np.isnan(hr.echo_score(0.0, 0.0))
 
 
+def test_confidence_weighting_shifts_viewpoint():
+    pos = [-1.0, -1.0, -1.0, 1.0]                  # 3 left, 1 right
+    base = hr.viewpoint_shares(pos)
+    wtd = hr.viewpoint_shares(pos, weights=[1, 1, 1, 0.01])   # down-weight the right item
+    assert wtd[2] < base[2] and wtd[0] > base[0]   # right share shrinks, left grows
+    # the lone (down-weighted) opposite item counts less toward cross-cutting
+    assert (hr.cross_cutting_share(pos, weights=[1, 1, 1, 0.01])
+            < hr.cross_cutting_share(pos))
+    # uniform weights reproduce the unweighted result exactly
+    assert (hr.viewpoint_shares(pos, weights=[2, 2, 2, 2]) ==
+            hr.viewpoint_shares(pos))
+
+
+def test_finite_pw_fallbacks():
+    _, w = hr._finite_pw([-1.0, 0.0, 1.0])                    # weights=None -> uniform
+    np.testing.assert_allclose(w, [1 / 3, 1 / 3, 1 / 3])
+    _, w0 = hr._finite_pw([-1.0, 1.0], weights=[0.0, 0.0])    # all-zero -> uniform, never vanish
+    np.testing.assert_allclose(w0, [0.5, 0.5])
+    p2, w2 = hr._finite_pw([-1.0, 1.0, 0.5], weights=[1.0, np.nan, 1.0])  # unknown -> mean, not dropped
+    assert p2.size == 3 and abs(w2.sum() - 1.0) < 1e-9 and (w2 > 0).all()
+
+
 def test_percentiles():
     assert list(hr.percentiles([1.0, 2.0, 3.0])) == [0.0, 50.0, 100.0]
     assert np.isnan(hr.percentiles([np.nan])[0])
@@ -104,6 +126,35 @@ def test_end_to_end_on_fixture(tmp_path):
     assert "INFORMATION HEALTH REPORT" in hr.format_report(rep)
     # without enrichment, the v2 lines are n/a
     assert rep["scores"]["Reporting Ratio"] is None and rep["attention"] is None
+
+
+def test_end_to_end_confidence_weighting(tmp_path):
+    from rwe import load_mind
+    fix = ROOT / "tests" / "fixtures" / "mind_demo"
+    ids = [l.split("\t")[0] for l in open(fix / "news.tsv")]
+    csv = tmp_path / "lean.csv"
+    csv.write_text("news_id,position\n" + "\n".join(
+        f"{i},{p}" for i, p in zip(ids, np.linspace(-1.8, 1.8, len(ids)))))
+    d = load_mind(str(fix), positions_map=str(csv))
+    n_items = len(np.asarray(d.dataset.item_ids))
+
+    base = hr.compute(d, min_clicks=1, min_political=1)                    # no confidence
+    withc = hr.compute(d, min_clicks=1, min_political=1,
+                       confidence=np.full(n_items, 0.9))                   # uniform high
+    # uniform confidence must not change the scores vs. unweighted
+    np.testing.assert_allclose(np.nan_to_num(base["cross"]),
+                               np.nan_to_num(withc["cross"]), atol=1e-9)
+
+    u = int(np.argmax(withc["n_pol"]))                                     # a political reader
+    assert withc["n_pol"][u] >= 1
+    rep = hr.user_report(withc, d, u)
+    assert abs(rep["viewpoint_confidence"] - 0.9) < 1e-9                   # mean of uniform conf
+    assert "Axis confidence: 0.90 (high)" in hr.format_report(rep)
+    assert "axis confidence 0.90 (high)" in hr.render_html([rep])
+    # a report built without confidence carries None and renders no axis-confidence line
+    base_rep = hr.user_report(base, d, u)
+    assert base_rep["viewpoint_confidence"] is None
+    assert "Axis confidence" not in hr.format_report(base_rep)
 
 
 def test_population_summary_and_card(tmp_path):

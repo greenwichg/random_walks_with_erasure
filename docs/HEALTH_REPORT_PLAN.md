@@ -150,11 +150,20 @@ python examples/health_report.py --npz mind_text.npz --sample 3
 --html`); a **reporting-vs-opinion** classifier (`examples/classify_register.py`,
 zero-shot → `--register-csv` → Reporting Ratio); and an **experimental emotional
 tone** classifier (`examples/classify_emotion.py`, zero-shot → `--emotion-csv` →
-Emotional Balance + Attention profile, rendered labelled *experimental*). The
+Emotional Balance + Attention profile, rendered labelled *experimental*); and
+**article-level confidence weighting** — `classify_lean.py` now emits a per-article
+top-2-margin confidence, and `health_report.py --confidence-csv` down-weights ambiguous
+(low-margin) headlines in the viewpoint / echo / cross metrics and prints a per-reader
+*axis confidence*, operationalising the article-level reliability finding
+(`examples/lean_agreement.py`, Cohen's κ 0.14 exact vs 0.575 side-only). This is the
+AI-path arm of the hybrid outlet-rating/AI-estimation design: confidence is a *weight*,
+not just a label, so a known-publisher (high-confidence) rating would dominate a noisy
+estimate once the MSN→publisher resolver exists. The
 classifiers are Colab/GPU scripts (the `classify_lean.py` pattern); the wiring is
 unit-tested on the fixture. **Still open:** a stronger lean axis (a *data-sourcing*
 task — the ingest already supports `--lean-csv` / `--positions-csv`; the missing
-piece is a license-clean outlet-lean table, not code). The composite "Overall" is
+piece is a license-clean outlet-lean table, not code) and the MSN→publisher resolver
+that would populate the high-confidence branch. The composite "Overall" is
 shown only as an explicitly *illustrative* unweighted average, per the caution above.
 
-_Last updated: 2026-06-27._
+_Last updated: 2026-07-01._

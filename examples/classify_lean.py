@@ -1,10 +1,17 @@
 """Score MIND articles for political lean from TEXT (title + abstract).
 
 Runs a pretrained political-bias text classifier over each article and writes a
-``news_id,position`` CSV that ``ingest_mind.py`` consumes via ``--positions-csv``,
-giving a **text-grounded left<->right axis** -- no outlet labels, and no co-click
-topic confound (the failure mode of the ``--ideology`` path on news). Best on a
-GPU (Colab).
+``news_id,position,confidence`` CSV that ``ingest_mind.py`` consumes via
+``--positions-csv`` (it reads the position and ignores the extra column), giving a
+**text-grounded left<->right axis** -- no outlet labels, and no co-click topic
+confound (the failure mode of the ``--ideology`` path on news). Best on a GPU (Colab).
+
+The third column, ``confidence`` in [0, 1], is the **top-2 softmax margin**: how
+peaked the L/C/R distribution is. It is low exactly for the ambiguous
+centre-vs-side articles the two bias models disagree on (see
+``examples/lean_agreement.py``, Cohen's kappa 0.14), so it is the natural
+per-article confidence -- ``examples/health_report.py --confidence-csv`` uses it to
+*down-weight* those noisy articles when aggregating a reader's viewpoint.
 
     pip install transformers torch
     python examples/classify_lean.py --mind-dir MINDsmall_train --political-only --out lean.csv
@@ -52,6 +59,20 @@ def _positions_from_probs(probs, label_positions, scale=1.0):
     return scale * (probs @ lp)
 
 
+def _confidence_from_probs(probs):
+    """Top-2 softmax margin per article -> confidence in [0, 1].
+
+    A peaked distribution (one class dominant) -> ~1; a near-tie (e.g. centre vs a
+    side) -> ~0. The low-margin articles are precisely the centre-boundary cases the
+    two bias models disagree on (``examples/lean_agreement.py``), so this margin is a
+    calibrated *per-article* reliability weight, not just a heuristic."""
+    probs = np.asarray(probs, dtype=float)
+    if probs.ndim == 1:
+        probs = probs[None, :]
+    top2 = np.sort(probs, axis=1)[:, ::-1][:, :2]
+    return top2[:, 0] - top2[:, 1]
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -96,6 +117,7 @@ def main():
                          f"{model.config.num_labels} labels ({model.config.id2label})")
 
     pos = np.empty(len(texts), dtype=float)
+    conf = np.empty(len(texts), dtype=float)
     for s in range(0, len(texts), args.batch_size):
         batch = texts[s : s + args.batch_size]
         enc = tok(batch, truncation=True, max_length=args.max_length,
@@ -103,15 +125,17 @@ def main():
         with torch.no_grad():
             probs = torch.softmax(model(**enc).logits, dim=-1).cpu().numpy()
         pos[s : s + len(batch)] = _positions_from_probs(probs, lp, args.scale)
+        conf[s : s + len(batch)] = _confidence_from_probs(probs)
         if s % (args.batch_size * 20) == 0:
             print(f"  {s + len(batch)}/{len(texts)}")
 
     with open(args.out, "w", encoding="utf-8") as f:
-        f.write("news_id,position\n")
-        for nid, p in zip(nids, pos):
-            f.write(f"{nid},{p:.4f}\n")
+        f.write("news_id,position,confidence\n")
+        for nid, p, c in zip(nids, pos, conf):
+            f.write(f"{nid},{p:.4f},{c:.4f}\n")
     print(f"wrote {args.out}  (mean={pos.mean():+.2f}, range=[{pos.min():+.2f}, "
-          f"{pos.max():+.2f}])")
+          f"{pos.max():+.2f}]; mean confidence {conf.mean():.2f} = top-2 softmax "
+          "margin, lower where the lean is ambiguous)")
 
     # quick eyeball: the most left- and right-scored headlines
     order = np.argsort(pos)

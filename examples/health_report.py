@@ -39,6 +39,10 @@ viewpoint needs ≥ ``--min-political`` political clicks.  Reporting-ratio and
 emotional exposure populate **only** with ``--register-csv`` / ``--emotion-csv``
 (from ``classify_register.py`` / ``classify_emotion.py``); Open-Mindedness only
 with ``--behaviors``.  The emotion signal is **experimental** (headline-only).
+``--confidence-csv`` (the third column of ``classify_lean.py``'s output)
+**confidence-weights** the viewpoint / echo / cross metrics so ambiguous low-margin
+articles count less and prints a per-reader *axis confidence* — the per-article
+down-weighting the reliability analysis (``examples/lean_agreement.py``) motivates.
 ==============================================================================
 """
 
@@ -90,28 +94,52 @@ def top_n_share(share_vec, n: int) -> float:
     return float(p[:n].sum())
 
 
-def viewpoint_shares(positions, tau: float = LEAN_TAU):
-    """(left, centre, right) fractions of political items by lean band."""
+def _finite_pw(positions, weights=None):
+    """Finite positions with matching **normalized** weights (uniform when ``weights``
+    is None, so every metric below is unchanged without a confidence signal).
+
+    Weights let a per-article *confidence* down-weight ambiguous items: a 0-confidence
+    article contributes nothing, an *unknown*-confidence one (nan) falls back to the mean
+    known weight (neutral, not dropped), and an all-zero/empty weight vector reverts to
+    uniform so a metric never silently vanishes."""
     p = np.asarray(positions, dtype=float)
-    p = p[np.isfinite(p)]
+    fin = np.isfinite(p)
+    p = p[fin]
+    if weights is None:
+        w = np.ones(p.size)
+    else:
+        w = np.asarray(weights, dtype=float)[fin]
+        known = np.isfinite(w)
+        w = (np.where(known, np.clip(w, 0.0, None), np.mean(w[known])) if known.any()
+             else np.ones(p.size))
+    s = w.sum()
+    if s <= 0:
+        w = np.ones(p.size)
+        s = float(p.size)
+    return p, (w / s if s > 0 else w)
+
+
+def viewpoint_shares(positions, tau: float = LEAN_TAU, weights=None):
+    """(left, centre, right) fractions of political items by lean band (confidence-
+    weighted when ``weights`` given, else equal-weighted)."""
+    p, w = _finite_pw(positions, weights)
     if p.size == 0:
         return float("nan"), float("nan"), float("nan")
-    left = float(np.mean(p < -tau))
-    right = float(np.mean(p > tau))
+    left = float(w[p < -tau].sum())
+    right = float(w[p > tau].sum())
     return left, 1.0 - left - right, right
 
 
-def cross_cutting_share(positions, center: float = CENTER) -> float:
-    """Share of political items on the *opposite* side of the user's own mean."""
-    p = np.asarray(positions, dtype=float)
-    p = p[np.isfinite(p)]
+def cross_cutting_share(positions, center: float = CENTER, weights=None) -> float:
+    """Share of political items on the *opposite* side of the user's own (weighted) mean."""
+    p, w = _finite_pw(positions, weights)
     if p.size == 0:
         return float("nan")
-    mu = p.mean()
+    mu = float((w * p).sum())
     if mu == center:
         return float("nan")
     opposite = (p - center) * np.sign(mu - center) < 0
-    return float(np.mean(opposite))
+    return float(w[opposite].sum())
 
 
 def echo_score(left: float, right: float) -> float:
@@ -152,13 +180,18 @@ def _row_shares(M):
 
 def compute(mind: MINDData, min_clicks: int = 5, min_political: int = 3,
             top_n: int = 4, register=None, emotion=None, selective=None,
-            source=None) -> dict:
+            source=None, confidence=None) -> dict:
     """Per-user raw metrics + population percentiles + the aux matrices.
 
     ``register`` (per-column P(reporting)) and ``emotion`` (dict label->per-column
     share) are optional enrichment from ``classify_register.py`` /
     ``classify_emotion.py``; when given they populate the Reporting Ratio /
     Emotional Balance scores and the attention profile.
+
+    ``confidence`` (per-column axis confidence in [0,1], from ``classify_lean.py``'s
+    top-2 margin) *weights* the viewpoint / echo / cross-cutting metrics so ambiguous
+    articles count less -- the per-article down-weighting the reliability analysis
+    (``examples/lean_agreement.py``) motivates. Absent, every article counts equally.
     """
     A = mind.dataset.matrix.tocsr().astype(float)
     n_users = A.shape[0]
@@ -168,6 +201,7 @@ def compute(mind: MINDData, min_clicks: int = 5, min_political: int = 3,
     outs = np.asarray(mind.outlets if source is None else source)
     pos = np.asarray(mind.item_positions, dtype=float)
     pol = np.asarray(mind.political, dtype=bool)
+    conf = None if confidence is None else np.asarray(confidence, dtype=float)
     n_clicks = np.asarray(A.sum(axis=1)).ravel()
 
     # Topic & source distributions per user (vectorised matrix products).
@@ -205,14 +239,17 @@ def compute(mind: MINDData, min_clicks: int = 5, min_political: int = 3,
     n_pol = np.zeros(n_users, dtype=int)
     for u in range(n_users):
         items = A.indices[A.indptr[u]:A.indptr[u + 1]]
-        pp = pos[items][pol[items] & np.isfinite(pos[items])]
+        m = pol[items] & np.isfinite(pos[items])
+        pp = pos[items][m]
         n_pol[u] = pp.size
         if pp.size < min_political:
             continue
-        L, _, R = viewpoint_shares(pp)
-        cross[u] = cross_cutting_share(pp)
+        ww = conf[items][m] if conf is not None else None
+        L, _, R = viewpoint_shares(pp, weights=ww)
+        cross[u] = cross_cutting_share(pp, weights=ww)
         echo[u] = echo_score(L, R)
-        mean_lean[u] = float(pp.mean())
+        _, wn = _finite_pw(pp, ww)
+        mean_lean[u] = float((wn * pp).sum())
 
     # Optional enrichment: reporting register + emotional attention.
     reporting = reporting_pct = None
@@ -253,7 +290,7 @@ def compute(mind: MINDData, min_clicks: int = 5, min_political: int = 3,
     return dict(
         n_clicks=n_clicks, n_pol=n_pol, political_share=political_share,
         topic=topic, eff_src=eff_src, topn=topn, cross=cross, echo=echo,
-        mean_lean=mean_lean,
+        mean_lean=mean_lean, item_confidence=conf,
         topic_pct=percentiles(topic), source_pct=percentiles(eff_src),
         viewpoint_pct=percentiles(cross), echo_pct=percentiles(-echo),  # less echo = higher
         reporting=reporting, reporting_pct=reporting_pct,
@@ -359,6 +396,12 @@ def user_report(pop: dict, mind: MINDData, u: int) -> dict:
     ps = pop.get("political_share")
     political_share = (float(ps[u]) if ps is not None and np.isfinite(ps[u]) else None)
 
+    conf = pop.get("item_confidence")
+    ppos = _political_positions(mind, u)
+    pconf = _political_confidence(mind, u, conf) if conf is not None else None
+    viewpoint_confidence = (float(np.nanmean(pconf)) if pconf is not None and pconf.size
+                            and np.isfinite(pconf).any() else None)
+
     return dict(
         user=int(u), n_clicks=int(pop["n_clicks"][u]), n_political=int(pop["n_pol"][u]),
         scores=scores, overall=overall, attention=attention,
@@ -367,7 +410,8 @@ def user_report(pop: dict, mind: MINDData, u: int) -> dict:
         top_n_share=float(pop["topn"][u]) if np.isfinite(pop["topn"][u]) else None,
         effective_sources=float(pop["eff_src"][u]) if np.isfinite(pop["eff_src"][u]) else None,
         distinct_outlets=int((UO[u] > 0).sum()),
-        viewpoint=viewpoint_shares(_political_positions(mind, u)),
+        viewpoint=viewpoint_shares(ppos, weights=pconf),
+        viewpoint_confidence=viewpoint_confidence,
         mean_lean=float(pop["mean_lean"][u]) if np.isfinite(pop["mean_lean"][u]) else None,
     )
 
@@ -378,6 +422,16 @@ def _political_positions(mind: MINDData, u: int) -> np.ndarray:
     pol = np.asarray(mind.political, dtype=bool)
     items = A.indices[A.indptr[u]:A.indptr[u + 1]]
     return pos[items][pol[items] & np.isfinite(pos[items])]
+
+
+def _political_confidence(mind: MINDData, u: int, conf) -> np.ndarray:
+    """Per-article confidence for user u's political items, aligned 1:1 with
+    :func:`_political_positions` (same items, same finite-position mask)."""
+    A = mind.dataset.matrix.tocsr()
+    pos = np.asarray(mind.item_positions, dtype=float)
+    pol = np.asarray(mind.political, dtype=bool)
+    items = A.indices[A.indptr[u]:A.indptr[u + 1]]
+    return np.asarray(conf, dtype=float)[items][pol[items] & np.isfinite(pos[items])]
 
 
 def _na_reason(rep: dict, name: str, labels: dict | None = None) -> str:
@@ -392,6 +446,11 @@ def _na_reason(rep: dict, name: str, labels: dict | None = None) -> str:
     if rep["scores"].get(name) is None:                 # domain-specific structural n/a
         return lab.get("na_reasons", {}).get(name, "")
     return ""
+
+
+def _conf_band(vc: float) -> str:
+    """Coarse label for an axis-confidence value in [0,1] (top-2 classifier margin)."""
+    return "low" if vc < 0.34 else "medium" if vc < 0.67 else "high"
 
 
 def format_report(rep: dict, labels: dict | None = None) -> str:
@@ -431,6 +490,11 @@ def format_report(rep: dict, labels: dict | None = None) -> str:
     if np.isfinite(lo):
         L.append(f"Viewpoint mix: left {lo * 100:.0f}% · centre {ce * 100:.0f}% · "
                  f"right {ri * 100:.0f}%")
+        vc = rep.get("viewpoint_confidence")
+        if vc is not None:
+            L.append(f"  Axis confidence: {vc:.2f} ({_conf_band(vc)}) — mean top-2 margin "
+                     "of the lean classifier over your political reading; low = placed "
+                     "from ambiguous headlines, so read the mix as directional.")
     if lab["show_political_share"] and rep.get("political_share") is not None:
         L.append(f"Political reading: {rep['political_share'] * 100:.0f}% of your clicks")
     if rep.get("attention"):
@@ -605,7 +669,10 @@ def render_html(reports, out: str | None = None,
         lo, ce, ri = r["viewpoint"]
         vp = ""
         if lo == lo:                                          # not NaN
-            vp = (f'<div class="vpwrap"><span class="vplbl">Viewpoint mix</span>'
+            vc = r.get("viewpoint_confidence")
+            conf_html = (f' <span class="exp">· axis confidence {vc:.2f} '
+                         f'({_conf_band(vc)})</span>' if vc is not None else "")
+            vp = (f'<div class="vpwrap"><span class="vplbl">Viewpoint mix{conf_html}</span>'
                   f'<div class="vp"><span class="l" style="width:{lo * 100:.0f}%"></span>'
                   f'<span class="c" style="width:{ce * 100:.0f}%"></span>'
                   f'<span class="r" style="width:{ri * 100:.0f}%"></span></div>'
@@ -751,6 +818,11 @@ def main():
                     help="news_id,reporting CSV from classify_register.py (Reporting Ratio)")
     ap.add_argument("--emotion-csv", default=None,
                     help="news_id,<buckets> CSV from classify_emotion.py (Attention/Emotional)")
+    ap.add_argument("--confidence-csv", default=None,
+                    help="news_id,position,confidence CSV from classify_lean.py: the "
+                         "confidence column *weights* the viewpoint/echo metrics so "
+                         "ambiguous (low-margin) articles count less (article-level "
+                         "reliability, see examples/lean_agreement.py)")
     ap.add_argument("--behaviors", default=None,
                     help="MIND behaviors.tsv -> Open-Mindedness (cross-cutting click-through)")
     ap.add_argument("--require-political", action="store_true",
@@ -767,11 +839,15 @@ def main():
     lab = _LABELS[args.domain]
 
     mind = MINDData.load(args.npz)
-    register = emotion = selective = None
+    register = emotion = selective = confidence = None
     if args.register_csv:
         register = _load_item_csv(args.register_csv, mind.dataset.item_ids)["reporting"]
     if args.emotion_csv:
         emotion = _load_item_csv(args.emotion_csv, mind.dataset.item_ids)
+    if args.confidence_csv:
+        confidence = _load_item_csv(args.confidence_csv, mind.dataset.item_ids).get("confidence")
+        if confidence is None:
+            print("--confidence-csv has no 'confidence' column; ignoring it")
     if args.behaviors:
         selective = selective_exposure_array(mind, args.behaviors)
     # the "source" axis for Source Diversity: publisher (default) or, for reddit, the
@@ -780,7 +856,7 @@ def main():
         getattr(mind, lab["source_attr"]))
     pop = compute(mind, min_clicks=args.min_clicks, min_political=args.min_political,
                   top_n=args.top_n, register=register, emotion=emotion,
-                  selective=selective, source=src)
+                  selective=selective, source=src, confidence=confidence)
     eligible = _eligible_pool(pop, args.min_clicks)
     print(f"users={mind.n_users}  items={mind.n_items}  eligible(>= {args.min_clicks} "
           f"clicks)={eligible.size}")
