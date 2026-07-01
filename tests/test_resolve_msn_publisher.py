@@ -68,7 +68,7 @@ def test_resolve_with_injected_fetch():
         "D": "<html>no attribution</html>",              # fetched, unparseable
     }
     resolved, counts, n_fetched = rp.resolve(
-        ["A", "B", "C", "D"], fetch_fn=lambda nid: snaps[nid], log_every=0)
+        ["A", "B", "C", "D"], fetch_fn=lambda nid, url: snaps[nid], log_every=0)
     assert resolved == {"A": "CNN", "B": "Reuters"}
     assert n_fetched == 3                                # A, B, D fetched; C failed
     assert counts["site_name"] == 1 and counts["jsonld"] == 1
@@ -93,16 +93,27 @@ def test_write_source_map_format(tmp_path):
     assert "N1\tCNN" in lines and "N2\tFox News" in lines
 
 
-def test_political_news_ids_on_fixture():
+def test_political_news_items_on_fixture():
     fix = str(ROOT / "tests" / "fixtures" / "mind_demo")
-    all_ids = rp._political_news_ids(fix, political_only=False)
-    pol_ids = rp._political_news_ids(fix, political_only=True)
-    assert len(all_ids) == 8                             # the fixture has 8 articles
-    assert 0 < len(pol_ids) <= len(all_ids) and all(isinstance(i, str) for i in pol_ids)
+    all_items = rp._political_news_items(fix, political_only=False)
+    pol_items = rp._political_news_items(fix, political_only=True)
+    assert len(all_items) == 8                            # the fixture has 8 articles
+    assert 0 < len(pol_items) <= len(all_items)
+    nid, url = pol_items[0]                               # (news_id, real MSN url) pairs
+    assert isinstance(nid, str) and url.startswith("http")   # the URL is fetched, not the id
 
 
 def test_fetch_returns_none_on_failure(monkeypatch):
     def boom(*a, **k):
         raise OSError("blocked")
     monkeypatch.setattr(rp.urllib.request, "urlopen", boom)
-    assert rp.fetch_snapshot("N1", retries=1) is None    # graceful, no exception
+    assert rp.fetch_snapshot("N1", url="https://x/y", retries=1) is None   # graceful
+
+
+def test_http_status_reports_code(monkeypatch):
+    import urllib.error
+    def raise_404(*a, **k):
+        raise urllib.error.HTTPError("u", 404, "Not Found", {}, None)
+    monkeypatch.setattr(rp.urllib.request, "urlopen", raise_404)
+    code, reason = rp.http_status("https://example.com/x")
+    assert code == 404 and "Not Found" in reason

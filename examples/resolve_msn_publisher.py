@@ -3,11 +3,13 @@
 MIND ships MSN *aggregator* URLs with **no publisher field**, which blocks the
 outlet-lean join and forces the lean axis onto the noisy text classifier
 (``docs/RESULTS.md`` Limitation: outlet-lean). But MSN *aggregates* from real
-publishers and usually credits them, and the MIND team published static article
-snapshots at ``https://assets.msn.com/labs/mind/<news_id>.html``. So the original
-outlet is often recoverable from that snapshot's ``<meta>`` / JSON-LD / canonical-link
-markup. This tool fetches those snapshots (browser User-Agent + retries) and **parses
-the publisher out**, writing the same ``news_id<TAB>outlet`` source-map that
+publishers and usually credits them, and every MIND article carries its **real MSN URL
+in the ``url`` column of ``news.tsv``** -- this tool fetches *that* URL, not one
+reconstructed from the ``news_id`` (the two do not match: the id is ``N55528`` while the
+URL is an ``.../ar-<MSN id>`` page). So the original outlet is often recoverable from the
+page's ``<meta>`` / JSON-LD / canonical-link markup. This tool fetches each article's URL
+(browser User-Agent + retries) and **parses the publisher out**, writing the same
+``news_id<TAB>outlet`` source-map that
 ``examples/build_source_map.py`` produces -- which ``ingest_mind.py --source-map`` joins
 to ``examples/data/outlet_lean.csv`` to populate the **high-confidence branch** of the
 hybrid lean axis (``docs/HEALTH_REPORT_PLAN.md``: outlet rating vs. AI estimation).
@@ -33,6 +35,7 @@ import html as _html
 import json
 import re
 import time
+import urllib.error
 import urllib.request
 from collections import Counter
 from pathlib import Path
@@ -164,14 +167,15 @@ def parse_publisher(html: str):
     return None, None
 
 
-def fetch_snapshot(news_id: str, url_template: str = MSN_TEMPLATE, timeout: float = 25,
-                   retries: int = 3, backoff: float = 2.0):
-    """GET the snapshot HTML with a browser User-Agent (the 409-gating fix), retrying
-    transient failures with exponential backoff. Returns the HTML or ``None``."""
-    url = url_template.format(news_id)
+def fetch_snapshot(news_id: str, url: str = None, url_template: str = MSN_TEMPLATE,
+                   timeout: float = 25, retries: int = 3, backoff: float = 2.0):
+    """GET the article HTML with a browser User-Agent (the 409-gating fix), retrying
+    transient failures with exponential backoff. Fetches ``url`` (the *real* news.tsv
+    URL) when given, else ``url_template.format(news_id)``. Returns the HTML or ``None``."""
+    target = url or url_template.format(news_id)
     for attempt in range(retries):
         try:
-            req = urllib.request.Request(url, headers={
+            req = urllib.request.Request(target, headers={
                 "User-Agent": _UA, "Accept": "text/html,application/xhtml+xml"})
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 return r.read().decode("utf-8", "replace")
@@ -181,14 +185,31 @@ def fetch_snapshot(news_id: str, url_template: str = MSN_TEMPLATE, timeout: floa
     return None
 
 
-def resolve(news_ids, fetch_fn=None, url_template: str = MSN_TEMPLATE, sleep: float = 0.0,
+def http_status(url: str, timeout: float = 20):
+    """``(code, reason)`` for a single GET -- the diagnostic that turns a blanket
+    ``fetched=0`` into *why* (404 wrong/removed vs 403/409 gated vs a network error)."""
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": _UA})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.status, "ok"
+    except urllib.error.HTTPError as e:
+        return e.code, str(e.reason)
+    except Exception as e:
+        return None, f"{type(e).__name__}: {e}"
+
+
+def resolve(items, fetch_fn=None, url_template: str = MSN_TEMPLATE, sleep: float = 0.0,
             log_every: int = 50):
-    """Fetch + parse each news_id. Returns ``(resolved, strat_counts, n_fetched)``:
-    ``resolved`` = ``{news_id: publisher}``, ``strat_counts`` = which parser hit."""
-    fetch_fn = fetch_fn or (lambda nid: fetch_snapshot(nid, url_template))
+    """Fetch + parse each item. ``items`` = iterable of ``news_id`` or ``(news_id, url)``
+    pairs (URL = the real news.tsv one). ``fetch_fn(news_id, url) -> html`` is injectable
+    for tests. Returns ``(resolved, strat_counts, n_fetched)``, ``resolved`` = ``{nid:
+    publisher}``."""
+    fetch_fn = fetch_fn or (lambda nid, url: fetch_snapshot(nid, url, url_template))
+    items = list(items)
     resolved, strat_counts, n_fetched = {}, Counter(), 0
-    for i, nid in enumerate(news_ids, 1):
-        html = fetch_fn(nid)
+    for i, item in enumerate(items, 1):
+        nid, url = item if isinstance(item, (tuple, list)) else (item, None)
+        html = fetch_fn(nid, url)
         if html:
             n_fetched += 1
             pub, strat = parse_publisher(html)
@@ -198,7 +219,7 @@ def resolve(news_ids, fetch_fn=None, url_template: str = MSN_TEMPLATE, sleep: fl
         if sleep:
             time.sleep(sleep)
         if log_every and i % log_every == 0:
-            print(f"  {i}/{len(news_ids)}  fetched={n_fetched}  resolved={len(resolved)}")
+            print(f"  {i}/{len(items)}  fetched={n_fetched}  resolved={len(resolved)}")
     return resolved, strat_counts, n_fetched
 
 
@@ -214,14 +235,15 @@ def lean_coverage(resolved: dict, lean_table: dict):
     return in_table_articles, in_table_unique, unmatched
 
 
-def _political_news_ids(mind_dir: str, political_only: bool):
-    """news_ids from ``news.tsv`` (optionally only the political ones)."""
+def _political_news_items(mind_dir: str, political_only: bool):
+    """``(news_id, url)`` pairs from ``news.tsv`` (optionally only political ones); the URL
+    is the real MSN article URL the resolver fetches (not one built from the news_id)."""
     news = _read_news(Path(mind_dir) / "news.tsv")     # {nid: (cat, sub, title, url)}
-    ids = []
-    for nid, (_, sub, title, _url) in news.items():
+    items = []
+    for nid, (_, sub, title, url) in news.items():
         if not political_only or _is_political(sub, title, DEFAULT_POLITICAL_TERMS):
-            ids.append(nid)
-    return ids
+            items.append((nid, url))
+    return items
 
 
 def write_source_map(resolved: dict, out: str) -> int:
@@ -252,20 +274,26 @@ def main() -> None:
     ap.add_argument("--sleep", type=float, default=0.0, help="seconds between fetches (be nice)")
     args = ap.parse_args()
 
-    ids = _political_news_ids(args.mind_dir, args.political_only)
+    items = _political_news_items(args.mind_dir, args.political_only)
     if args.limit:
-        ids = ids[: args.limit]
-    print(f"resolving {len(ids)} MSN snapshots (political_only={args.political_only}) ...")
+        items = items[: args.limit]
+    print(f"resolving {len(items)} MSN articles (political_only={args.political_only}) ...")
+    if items:
+        print(f"  first target URL: {items[0][1] or args.url_template.format(items[0][0])}")
 
-    resolved, strat_counts, n_fetched = resolve(ids, url_template=args.url_template,
+    resolved, strat_counts, n_fetched = resolve(items, url_template=args.url_template,
                                                 sleep=args.sleep)
     n = write_source_map(resolved, args.out)
-    print(f"\nfetched {n_fetched}/{len(ids)} snapshots; parsed a publisher for "
+    print(f"\nfetched {n_fetched}/{len(items)} articles; parsed a publisher for "
           f"{len(resolved)} -> wrote {n} rows to {args.out}")
-    if n_fetched == 0:
-        print("NO snapshots fetched -- the URL is gated/blocked here (expected off Colab, "
-              "or Microsoft is 409-ing). This is the reachability question the spike exists "
-              "to answer; run it where the network is open.")
+    if n_fetched == 0 and items:
+        first = items[0][1] or args.url_template.format(items[0][0])
+        code, reason = http_status(first)
+        print(f"NO articles fetched. Diagnostic GET of the first URL:\n  {first}\n"
+              f"  -> HTTP {code} ({reason})")
+        print("  404 => URL wrong/removed; 403/409 => gated (bot-blocked -- may need "
+              "cookies or a non-datacenter IP); timeout/None => network. THIS is the "
+              "reachability answer the spike returns.")
     if strat_counts:
         print("by parser strategy: " + ", ".join(f"{k}={v}" for k, v in strat_counts.most_common()))
 
