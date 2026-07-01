@@ -100,6 +100,17 @@ _MIND text-axis attempts, kept for the record:_
       underpowered** (need |r|>~0.31 for p<.05, so the original 0.27 isn't
       significant either) and those labels were *anchored*. So: not a clean "fails,"
       just no signal at this sample size. **Not folded into RESULTS/paper.**
+- [x] **Article-level reliability decomposed** — `examples/lean_agreement.py`
+      (notebook `# 7e`, unit-tested) turns that +0.38 into the per-article metric a
+      reviewer asks for. Over **n=2,955** articles the two BERT bias models agree on the
+      exact L/C/R bucket only at **Cohen's κ=0.14** ("slight", 59% raw) yet flip
+      Left↔Right just **2.2%** of the time (**side-only κ=0.575**, ~80% raw): the
+      disagreement is *centre-vs-lean*, not *which* lean, and the two are differently
+      calibrated (politicalBiasBERT 77% centre; premsa right-skews, 794 R vs 329 L). This
+      quantifies "well-oriented but weakly-resolved" — the *per-article* label is
+      unreliable; the axis is usable only in **aggregate** (all RWE consumes). Even under
+      *shared* method bias (both article-text BERTs, which should over-agree) the exact
+      label is only "slight." **Folded into `RESULTS.md`/`PAPER.md`/`paper.tex`.**
 - [~] **Blind, larger gold set (n≥100, 2–3 raters)** — the real unblocker for a
       trustworthy *MIND text-axis* number. **Harness built**: `validate_lean.py
       --sample 100` makes the blind stratified template; `--raters r1 r2 r3` now
@@ -180,8 +191,12 @@ reproduced, per-user-significant, three-dataset result + a working health-report
 = 0.57 ± 0.19`); §4 (paper) is the path to submission. The one remaining axis task is
 more labeled subreddits (n>20) to tighten the estimate.
 
-_Last updated: 2026-06-30 (5-seed robustness on the behavioral axis: a 1-restart fit was
+_Last updated: 2026-07-01 (article-level reliability of the MIND text-lean axis via
+`examples/lean_agreement.py`/`# 7e`: the two BERT bias models agree on the exact L/C/R
+label at Cohen's κ=0.14 but flip Left↔Right only 2.2% (side-only κ=0.575) over n=2,955 —
+per-article label unreliable, axis usable only in aggregate; folded into RESULTS/PAPER/
+paper.tex. Prior 2026-06-30: 5-seed robustness on the behavioral axis: a 1-restart fit was
 seed-unstable (collapsed to ~0 on 2/5 seeds); an unsupervised 8-restart likelihood
 selection fixes it → `lean_corr = 0.57 ± 0.19` (min 0.33, max 0.82), RQ3 bridging robust
-(`uw_shift` 1.97 ± 0.04, 5/5). Earlier same day: LLM convergent-validity check on the MIND
+(`uw_shift` 1.97 ± 0.04, 5/5). Earlier that day: LLM convergent-validity check on the MIND
 text-lean axis, Spearman −0.28 (n=120), reinforcing the suggestive-only reading)._

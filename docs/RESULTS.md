@@ -332,7 +332,17 @@ outcome, not a measured opinion change.
    but mildly *anti-aligned* — concrete evidence the MIND text-lean RQ3 is suggestive
    only, and further motivation for the behavioral Politosphere axis below. (The two-BERT
    agreement of +0.38 in `# 7b` reflects *shared* article-classifier method bias, not
-   independent validation — which is exactly why the LLM cross-check was worth running.)
+   independent validation — which is exactly why the LLM cross-check was worth running.
+   `examples/lean_agreement.py` decomposes that agreement over **n = 2 955** articles:
+   even under shared method bias — which should *inflate* agreement — the two models agree
+   on the exact **L / C / R label only at Cohen's κ = 0.14** ("slight", 59 % raw), direct
+   evidence the *per-article* label is unreliable; yet they seldom contradict on *direction*
+   (**side-only κ = 0.575**, "moderate", ~80 % raw, with a **2.2 % Left↔Right flip rate**).
+   The disagreement mass is overwhelmingly *centre-vs-lean*, not *which* lean, and the two
+   models are differently calibrated (politicalBiasBERT 77 % centre and symmetric; the
+   premsa/AllSides model right-skews, 794 R vs 329 L). So the axis carries usable **aggregate**
+   signal — per-user / per-outlet means, which is all RWE consumes — while its single-article
+   labels do not: the quantified form of "well-oriented but weakly-resolved.")
    An automatic **axis-alignment check** (`eval_mind.py`, printed each run)
    confirms users and items share one *correctly-oriented* scale: on the
    **text-lean axis** each user's position correlates Pearson **r = +1.00** with
@@ -412,4 +422,7 @@ robust at `uw_shift` 1.97 ± 0.04, beating the best baseline 5/5. Earlier: Reddi
 Politosphere folded in as the third RQ2 dataset + validated behavioral axis at
 `--min-item-clicks 200`; MovieLens-1M RQ2 + per-user significance 2026-06-28; MIND tables
 reproduced 2026-06-25; LLM convergent-validity check on the MIND text-lean axis added
-2026-06-30: Spearman −0.28 (n=120), reinforcing the suggestive-only reading)._
+2026-06-30: Spearman −0.28 (n=120), reinforcing the suggestive-only reading; article-level
+reliability of the two-BERT axis added 2026-07-01 via `examples/lean_agreement.py`: Cohen's
+κ = 0.14 exact-label vs 0.575 side-only over n=2 955, quantifying the per-article-vs-aggregate
+split)._

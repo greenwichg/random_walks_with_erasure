@@ -241,7 +241,11 @@ it.](images/opinion_dynamics.png)
    (i) the **text-lean** classifier is a weak proxy (Spearman ≈ 0.27 vs human labels,
    ≈ 0 on a second blind set, and **−0.28 vs a 120-headline blind LLM second opinion** —
    it conflates *topic* with *stance*, coding anti-Trump *content* as left on an
-   impeachment-heavy slice); (ii) the **MIND
+   impeachment-heavy slice; and two independent bias classifiers over **n = 2,955**
+   articles agree on the exact L/C/R label only at **Cohen's κ = 0.14** while flipping
+   Left↔Right just **2.2 %** of the time (**side-only κ = 0.58**) — the *per-article*
+   label is unreliable though its *direction* is moderately stable, usable only in
+   aggregate); (ii) the **MIND
    co-click** ideal point is topical (`r = 0.37`); (iii) a **Reddit Politosphere
    behavioral** ideal point built to fix this **validates** (`lean_corr = 0.57 ± 0.19`
    against labeled subreddit leans, cleanly ideological extremes — communism/anarchism

@@ -438,7 +438,11 @@ measured opinion change in real users (Figure~\ref{fig:opinion}).
   (Spearman~$\approx0.27$ vs.\ a 40-headline human set, $\approx0$ on a second blind
   40, and $-0.28$ vs.\ a 120-headline blind LLM second opinion---it conflates
   \emph{topic} with \emph{stance}, coding anti-Trump \emph{content} as left on an
-  impeachment-heavy slice); (ii)~a
+  impeachment-heavy slice; and two independent bias classifiers over $n{=}2{,}955$
+  articles agree on the exact L/C/R label only at Cohen's $\kappa{=}0.14$ while
+  flipping Left$\leftrightarrow$Right just $2.2\%$ of the time
+  ($\kappa_{\mathrm{side}}{=}0.58$), i.e.\ the \emph{per-article} label is unreliable
+  though its \emph{direction} is moderately stable---usable only in aggregate); (ii)~a
   \textbf{MIND co-click} ideal point ($r=0.37$, topical); and (iii)~a \textbf{Reddit
   Politosphere behavioral} ideal point built to fix this, which \emph{validates}
   ($\mathrm{lean\_corr}=0.57\pm0.19$ over 5 seeds against labeled subreddit leans,
