@@ -133,10 +133,12 @@ _MIND text-axis attempts, kept for the record:_
       text at any length. The **outlet-lean** join, by contrast, nails the gold: **κ = 0.841 /
       side-only κ = 1.000 / 90 % acc** at 45 % coverage — the lean lives in the *publisher* (a
       largely outlet-determined label). Both runs done; folded into RESULTS.md / PAPER.md /
-      paper.tex; docstring + printed CAVEAT + `# 7g` cell corrected. _(Open, low priority:
-      disambiguate "AllSides labels are outlet-determined" vs "politicalBiasBERT miscalibrated
-      to Qbias" — e.g. test a 2nd bias model on the full body; the practical fix, use the
-      outlet, is unchanged either way.)_
+      paper.tex; docstring + printed CAVEAT + `# 7g` cell corrected. _(Disambiguation built as
+      notebook `# 7h`: runs a 2nd independent AllSides model (premsa) on the same Qbias gold,
+      headline + full body — if it ALSO centre-collapses, the label is outlet-determined
+      (confirmed across two models); if it recovers the gold, politicalBiasBERT was the
+      problem. GPU, ~1 min; awaiting the run. The practical fix — use the outlet — is unchanged
+      either way.)_
 - [x] **Automated convergent validity (LLM second opinion) — built AND run.**
       `examples/llm_label.py` labels the blind template with a second model
       (`--provider gemini`, **free** via Google AI Studio, default — or `--provider
