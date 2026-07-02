@@ -835,8 +835,13 @@ def main():
     ap.add_argument("--population", action="store_true",
                     help="also show a 'typical reader' population view (raw medians + IQR "
                          "over all eligible readers), so each percentile has an absolute anchor")
+    ap.add_argument("--subject-label", default=None,
+                    help="override the report's subject noun (e.g. 'reading diet (synthetic)') "
+                         "so a non-MIND dataset is not mislabeled 'MSN-News reading'")
     args = ap.parse_args()
-    lab = _LABELS[args.domain]
+    lab = dict(_LABELS[args.domain])                    # copy so an override can't mutate the preset
+    if args.subject_label:
+        lab["subject_bold"], lab["subject_tail"] = args.subject_label, ""
 
     mind = MINDData.load(args.npz)
     register = emotion = selective = confidence = None

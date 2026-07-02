@@ -27,6 +27,26 @@ def test_synthetic_catalog_aligned():
     assert (np.abs(cat.positions) <= 2).all()
 
 
+def test_first_tag_parses_qbias_stringified_list():
+    assert su._first_tag("['White House', 'Politics']") == "White House"   # multi-tag list
+    assert su._first_tag("['Politics']") == "Politics"                     # single-tag list
+    assert su._first_tag("Economy") == "Economy"                          # plain string
+    assert su._first_tag("") == "general" and su._first_tag(None) == "general"
+
+
+def test_catalog_from_qbias_clean_topics(tmp_path):
+    import csv
+    p = tmp_path / "qb.csv"
+    with open(p, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["heading", "text", "bias_rating", "source", "tags"])
+        w.writerow(["H1", "b", "left", "CNN", "['White House', 'Politics']"])
+        w.writerow(["H2", "b", "right", "Fox News", "['Economy']"])
+    cat = su.catalog_from_qbias(str(p))
+    assert set(cat.topics) == {"White House", "Economy"}                   # first tag, cleaned
+    assert not any(("[" in t) or ("'" in t) for t in cat.topics)          # no list-repr leakage
+
+
 def test_sample_population_ranges_and_shapes():
     cfg = su.SimConfig(n_users=150, max_items=200, seed=1)
     cat = su.synthetic_catalog(n_items=200, seed=1)

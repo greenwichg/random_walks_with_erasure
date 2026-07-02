@@ -33,6 +33,7 @@ Outputs (all prefixed ``--tag`` = "sim"):
 """
 
 import argparse
+import ast
 import csv as _csv
 from dataclasses import dataclass, field
 
@@ -104,6 +105,21 @@ def synthetic_catalog(n_items=800, n_outlets=25, n_topics=8, seed=0) -> ItemCata
         ids=np.array([f"S{i}" for i in range(n_items)], dtype=object))
 
 
+def _first_tag(raw) -> str:
+    """Qbias's ``tags`` column is a *stringified* Python list, e.g.
+    ``"['White House', 'Politics']"`` -> the first tag as a clean topic string."""
+    raw = (raw or "").strip()
+    if not raw:
+        return "general"
+    try:
+        parsed = ast.literal_eval(raw)                   # handles "['a', 'b']" and "['a']"
+        if isinstance(parsed, (list, tuple)):
+            return (str(parsed[0]).strip() or "general") if parsed else "general"
+        return str(parsed).strip() or "general"
+    except (ValueError, SyntaxError):                    # plain string or odd format
+        return raw.split(",")[0].strip().strip("[]'\"") or "general"
+
+
 def catalog_from_qbias(csv_path, max_items=None, seed=0) -> ItemCatalog:
     """Build a catalog from Qbias (real gold lean + real outlets + topic tags). Article
     *quality* is SYNTHETIC (Qbias has no quality label) -- a per-article Beta draw."""
@@ -126,8 +142,7 @@ def catalog_from_qbias(csv_path, max_items=None, seed=0) -> ItemCatalog:
                 continue
             pos.append(g)
             outlets.append((row.get(oc) or "unknown").strip() or "unknown")
-            topic = (row.get(tc) or "general").strip() if tc else "general"
-            topics.append(topic.split(",")[0].strip() or "general")   # first tag = topic
+            topics.append(_first_tag(row.get(tc)) if tc else "general")   # clean first tag
             titles.append((row.get(hc) or "").strip())
             ids.append(f"Q{i}")
     pos = np.asarray(pos, dtype=float)
