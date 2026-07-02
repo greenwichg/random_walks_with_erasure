@@ -149,11 +149,11 @@ _MIND text-axis attempts, kept for the record:_
       e.g. `assets.msn.com/labs/mind/AAJgNxm.html` — note the id is the MSN id, **not** the
       `Nxxxx` news_id, which was an early bug) and parse the outlet (JSON-LD / og:site_name /
       provider JSON / canonical host / byline) into the `news_id→outlet` source-map. Ran on
-      real MIND in Colab: **HTTP 409 (Conflict) on every snapshot** — the same account-wide
-      Azure "public access is not permitted" gate that also killed the dataset-blob download
-      (`# 2`). A browser UA does not bypass it (it's an access-policy gate, not a bot block),
-      so **the outlet path is a confirmed dead end on MIND without Microsoft-issued
-      credentials.** The five-strategy parser is unit-tested (14 tests) and reusable on any
+      real MIND in Colab: **HTTP 409 (Conflict) on every snapshot** — a gated response a
+      browser UA does not bypass (Microsoft returns the same 409 for the dataset blob, whose
+      body reads "public access is not permitted" — `# 2` — so almost certainly the same
+      public-access lockdown, not a bot block), so **the outlet path is a confirmed dead end
+      on MIND without Microsoft-issued credentials.** The five-strategy parser is unit-tested (14 tests) and reusable on any
       *non-gated* catalog. This was the hybrid's high-confidence branch; the AI-path arm
       (confidence-*weighting*) ships in `health_report.py --confidence-csv` and stands as
       the axis MIND actually supports. _Recommendation: **close** — record the 409 finding;

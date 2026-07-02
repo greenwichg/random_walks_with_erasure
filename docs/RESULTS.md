@@ -332,9 +332,9 @@ outcome, not a measured opinion change.
    a larger multi-rater gold set or true outlet-lean labels would firm it up. (The
    outlet-lean route was **tested and is blocked on MIND**: `examples/resolve_msn_publisher.py`
    fetches each article's real MSN snapshot to recover the original publisher, but every
-   snapshot returns **HTTP 409** — the account-wide Azure "public access is not permitted"
-   gate that also blocks the dataset-blob download — so outlet resolution would need
-   Microsoft-issued credentials. Hence the axis stays text-derived, used only in aggregate
+   snapshot returns **HTTP 409** — a gated response a browser UA can't bypass (Microsoft
+   returns the same 409 for the MIND dataset blob, whose error reads "public access is not
+   permitted") — so outlet resolution would need Microsoft-issued credentials. Hence the axis stays text-derived, used only in aggregate
    with the confidence weighting of `health_report.py --confidence-csv`.)
    An automated **LLM second-opinion** check (model-vs-model *convergent validity*,
    not human gold) sharpens this: relabeling **120** stratified political headlines

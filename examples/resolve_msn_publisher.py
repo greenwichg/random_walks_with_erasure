@@ -23,12 +23,13 @@ snapshots; the fetch is best-effort. It prints per-strategy hit counts and lean-
 coverage -- the numbers that decide whether pursuing the branch is worth it.
 
 **Result (2026-07-01):** run on real MIND-small in Colab, every snapshot returns **HTTP
-409 (Conflict)** -- the account-wide Azure "public access is not permitted" gate that also
-blocks the MIND dataset-blob download; a browser User-Agent does not bypass it (it is an
-access-policy gate, not a bot block). So on MIND the outlet branch is a **confirmed dead
-end** without Microsoft-issued credentials, and the AI-estimation branch with confidence
-weighting (``health_report.py --confidence-csv``) is the axis MIND supports. The parser is
-retained because it works on any *non-gated* multi-publisher catalog.
+409 (Conflict)** -- a gated response a browser User-Agent does not bypass (Microsoft
+returns the same 409 for the MIND dataset blob, whose body reads "public access is not
+permitted", so this is almost certainly the same public-access lockdown rather than a bot
+block). So on MIND the outlet branch is a **confirmed dead end** without Microsoft-issued
+credentials, and the AI-estimation branch with confidence weighting
+(``health_report.py --confidence-csv``) is the axis MIND supports. The parser is retained
+because it works on any *non-gated* multi-publisher catalog.
 
     python examples/resolve_msn_publisher.py --mind-dir MINDsmall_train --political-only \\
         --limit 300 --lean-csv examples/data/outlet_lean.csv --out source_map.tsv

@@ -168,8 +168,9 @@ that would populate the **high-confidence branch** was prototyped and **run**
 each article's real MSN URL (from `news.tsv`) and parses the original outlet (JSON-LD /
 og:site_name / provider JSON / canonical host / byline) into the `news_id→outlet`
 source-map the ingest consumes. **Result: unreachable — every snapshot returns HTTP 409**
-(the account-wide Azure "public access is not permitted" gate that also blocks the MIND
-dataset download; a browser UA does not bypass it). So on MIND the high-confidence branch
+(a gated response a browser UA can't bypass; Microsoft returns the same 409 for the MIND
+dataset blob, whose text reads "public access is not permitted", so almost certainly the
+same public-access lockdown). So on MIND the high-confidence branch
 is a confirmed dead end without Microsoft credentials, and the **AI-estimation branch with
 confidence-weighting** (`health_report.py --confidence-csv`) is the axis MIND supports. The
 parser is reusable on any non-gated multi-publisher catalog. The composite "Overall" is
