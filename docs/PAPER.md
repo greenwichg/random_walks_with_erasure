@@ -245,11 +245,12 @@ it.](images/opinion_dynamics.png)
    articles agree on the exact L/C/R label only at **Cohen's κ = 0.14** while flipping
    Left↔Right just **2.2 %** of the time (**side-only κ = 0.58**) — the *per-article*
    label is unreliable though its *direction* is moderately stable, usable only in
-   aggregate; and on **human AllSides gold** (Qbias, *n* = 3,000) the *headline-only*
-   classifier collapses to **Cohen's κ = 0.007**, predicting *centre* for 96 % of articles,
-   whereas an **outlet lookup** recovers the same gold at **κ = 0.84 / side-only κ = 1.00** —
-   the lean lives in the *publisher*, not the headline, which is why text-lean is a weak
-   proxy and an outlet-first axis is the fix); (ii) the **MIND
+   aggregate; and on **human AllSides gold** (Qbias, *n* = 3,000) the classifier lands at
+   near-chance from the *text at any length* — **κ = 0.007** from the headline and **κ = 0.001**
+   from the full article body, collapsing to *centre* both ways — whereas an **outlet lookup**
+   recovers the same gold at **κ = 0.84 / side-only κ = 1.00**: the lean lives in the
+   *publisher*, not the words, which is why text-lean is a weak proxy and an outlet-first axis
+   is the fix); (ii) the **MIND
    co-click** ideal point is topical (`r = 0.37`); (iii) a **Reddit Politosphere
    behavioral** ideal point built to fix this **validates** (`lean_corr = 0.57 ± 0.19`
    against labeled subreddit leans, cleanly ideological extremes — communism/anarchism

@@ -126,13 +126,17 @@ _MIND text-axis attempts, kept for the record:_
       scoring. **RAN it (2026-07-02, n=3000) — and it OVERTURNED the domain-shift hypothesis.**
       The intended "high κ here + κ=0.14 on MIND ⇒ domain shift" reading is dead: headline-only
       κ = **0.007** (Spearman 0.02, 20 % acc, collapses to centre — 2896/3000 predicted C),
-      even *in-distribution*. So the MIND axis is weak because a **bare headline** carries
-      almost no lean for an article-trained model, **not** because MSN is out-of-domain. The
-      **outlet-lean** join, by contrast, nails the gold: **κ = 0.841 / side-only κ = 1.000 /
-      90 % acc** at 45 % coverage — the lean lives in the *publisher*. Folded into RESULTS.md /
-      PAPER.md / paper.tex; docstring + printed CAVEAT corrected. **Pending:** run `# 7g` with
-      `--use-text` (full body) for the true in-distribution ceiling (predict κ jumps),
-      confirming *headline length*, not domain, is the bottleneck.
+      even *in-distribution*. **Then the `--use-text` run (2026-07-02) overturned our NEXT
+      guess too:** the full article body is **also** near-chance — κ = **0.001** (Spearman
+      0.065, 26 % acc, still 71 % predicted C). So it is **not headline length** either: this
+      AllSides-trained classifier simply does not recover the AllSides *article* label from
+      text at any length. The **outlet-lean** join, by contrast, nails the gold: **κ = 0.841 /
+      side-only κ = 1.000 / 90 % acc** at 45 % coverage — the lean lives in the *publisher* (a
+      largely outlet-determined label). Both runs done; folded into RESULTS.md / PAPER.md /
+      paper.tex; docstring + printed CAVEAT + `# 7g` cell corrected. _(Open, low priority:
+      disambiguate "AllSides labels are outlet-determined" vs "politicalBiasBERT miscalibrated
+      to Qbias" — e.g. test a 2nd bias model on the full body; the practical fix, use the
+      outlet, is unchanged either way.)_
 - [x] **Automated convergent validity (LLM second opinion) — built AND run.**
       `examples/llm_label.py` labels the blind template with a second model
       (`--provider gemini`, **free** via Google AI Studio, default — or `--provider

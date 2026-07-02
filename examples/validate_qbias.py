@@ -17,15 +17,21 @@ the outlet branch that was 409-blocked on MIND, working here because Qbias carri
 methodology (and possibly some articles).
 
 **What the run actually shows (n=3000, 2026-07-02).** Even in-distribution, the classifier
-on the **headline only** collapses: Cohen's kappa ~0.007 vs the human L/C/R label, ~96 %
-predicted centre (Spearman ~0.02). So the headline-only ceiling is itself ~0. This was
-meant as a *domain-shift control* for MIND, but it does the opposite -- it shows the MIND
-axis is weak because a **bare headline** carries almost no recoverable lean for a model
-trained on full article bodies (it abstains to centre), *not* because MSN is out-of-domain.
-Pass ``--use-text`` to score headline + body (the true in-distribution ceiling; expected far
-higher) and isolate headline length as the bottleneck. The **outlet-lean** join, by
-contrast, recovers the same gold near-perfectly (kappa ~0.84, side-only ~1.0) -- the lean
-lives in the *publisher*, which is why the outlet-first hybrid is the fix.
+collapses to centre and lands at near-chance -- and it does so at **any input length**:
+
+* headline only  : Cohen's kappa ~0.007, Spearman ~0.02, ~96 % predicted centre;
+* headline + body (``--use-text``): kappa ~0.001, Spearman ~0.065, ~71 % predicted centre.
+
+So this is **not** domain shift (it is in-distribution) and **not** headline length either
+(the full body barely helps). This AllSides-trained classifier simply does not recover the
+AllSides *article* label from text. The **outlet-lean** join, by contrast, recovers the same
+gold near-perfectly (kappa ~0.84, side-only ~1.0): the lean lives in the **publisher**, not
+the words -- an AllSides label that is largely outlet-determined, which a text model (seeing
+only the article) cannot recover. Hence the outlet-first hybrid is the fix. (Whether the deep
+cause is "AllSides labels are outlet-determined" or "politicalBiasBERT is miscalibrated to
+Qbias" we cannot separate here; the practical implication -- use the outlet, not the text --
+is the same. ``--use-text`` truncates to the model's ~512 tokens, i.e. the article's opening,
+still far more than a headline.)
 
     # download the CSV once from github.com/irgroup/Qbias, then (GPU recommended):
     python examples/validate_qbias.py --csv allsides_balanced_news_headlines-texts.csv \
@@ -175,17 +181,17 @@ def run(csv_path, score_fn=None, lean_csv=None, model="bucketresearch/politicalB
             lines.append(_report_block("OUTLET-lean  vs  AllSides gold", ro))
         lines.append("")
 
-    cond = ("headline + body — the true in-distribution ceiling" if use_text
-            else "HEADLINE ONLY — MIND's condition")
+    cond = ("headline + FULL BODY (--use-text)" if use_text else "HEADLINE ONLY — MIND's condition")
     lines.append(
-        f"CAVEAT: IN-DISTRIBUTION / upper bound, scored on {cond}. politicalBiasBERT is "
-        "AllSides-trained (Baly 2020) and Qbias is AllSides-sourced, so this shares labeling "
-        "method (possibly articles). NB the observed headline-only ceiling is ~0 (kappa "
-        "~0.007, collapses to centre): a bare HEADLINE — not domain shift — is what makes the "
-        "MIND text-lean axis weak, so re-run with --use-text for the full-body ceiling. The "
-        "OUTLET-lean number shows the lean lives in the publisher (kappa ~0.84), which is why "
-        "the outlet-first hybrid is the fix. (The MIND kappa=0.14 is classifier-vs-classifier; "
-        "this is classifier-vs-human-gold — different references, not directly comparable.)")
+        f"CAVEAT: IN-DISTRIBUTION, scored on {cond}. politicalBiasBERT is AllSides-trained "
+        "(Baly 2020) and Qbias is AllSides-sourced, so this shares labeling method (possibly "
+        "articles). NB the classifier lands at near-chance and collapses to centre at BOTH "
+        "input lengths (headline kappa ~0.007; full body ~0.001) — so the weak text-lean axis "
+        "is NOT domain shift and NOT headline length: this model just does not recover the "
+        "AllSides article label from text. The OUTLET-lean number shows the lean lives in the "
+        "publisher (kappa ~0.84) — a largely outlet-determined label — which is why the "
+        "outlet-first hybrid is the fix. (The MIND kappa=0.14 is classifier-vs-classifier; this "
+        "is classifier-vs-human-gold — different references, not directly comparable.)")
     return "\n".join(lines)
 
 
