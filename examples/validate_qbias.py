@@ -33,7 +33,8 @@ kappa ~0.84 / Spearman ~0.92 / side-only ~1.0 -- **~4x** the best text model -- 
 lives far more in the **publisher** than the words, and the outlet-first hybrid is the fix.
 (NB ``--use-text`` feeds the first ``--max-length`` tokens, default **256**, up to BERT's
 512; on Qbias the excerpts are short so 512 ~ 256 -- a true full-article test would need a
-long-context model.)
+*new* full-text+gold corpus (Qbias has none) and a long-context model; out of scope, and it
+would not change the outlet-first conclusion.)
 
     # download the CSV once from github.com/irgroup/Qbias, then (GPU recommended):
     python examples/validate_qbias.py --csv allsides_balanced_news_headlines-texts.csv \

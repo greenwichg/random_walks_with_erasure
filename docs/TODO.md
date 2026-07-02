@@ -212,8 +212,10 @@ A prioritized split of the project's limitations by *how* they resolve. Full sta
 - [x] **Qbias "labels vs classifier?" — RAN (`# 7h`).** Answer is *both, partially*: a 2nd
       AllSides model (premsa) gets Spearman 0.22 with the body (vs politicalBiasBERT's ~0), so
       text carries a **weak** signal and politicalBiasBERT was partly miscalibrated — but even
-      the better model is ~4× below the outlet, so outlet-first holds. (A long-context model
-      would firm up the "how much is really in the text" ceiling, but low priority.)
+      the better model is ~4× below the outlet, so outlet-first holds. **Closed as won't-do:** a
+      long-context / full-article test isn't even runnable on Qbias — its `text` is a short
+      excerpt (that's why 512 == 256) — so it needs a *new* full-text+gold corpus; and even a
+      win wouldn't change the design (MIND has only headlines, and the outlet already wins at 0.918).
 - [ ] **Return/retention signal** (inconclusive, 3-file window) — a **longer Politosphere window**.
 - [ ] **Register/emotion synthetic-or-noisy; Source Diversity n/a on MIND** — run the real
       classifiers on real full text / use a corpus with outlets (the sim already fills Source Div).
@@ -226,8 +228,9 @@ A prioritized split of the project's limitations by *how* they resolve. Full sta
 
 **🔴 Inherent / externally blocked (frame honestly, don't chase):**
 - MSN publisher on MIND (HTTP 409) → needs MS credentials; work around with an outlet-bearing corpus.
-- "Full-article" text-lean → BERT caps at 512 tok; needs a long-context model (low payoff given
-  the flat 15→256-token trend).
+- "Full-article" text-lean → **not runnable on Qbias** (short excerpts, 512==256); would need a
+  *new* full-text+gold corpus **and** a long-context model, and still wouldn't beat the outlet
+  (0.918) or help MIND (headlines only). **Won't-do.**
 - Base-RWE accuracy vs the original *private* Twitter data → not public; use public proxies.
 - Centre-ward effect partly geometric → the honest "control mechanism, not measured depolarization"
   framing **is** the resolution.
