@@ -32,6 +32,13 @@ A clean, tested Python implementation of
 > **MIND** (news; text-lean + co-click axes) ·
 > [![Open Politosphere in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/greenwichg/random_walks_with_erasure/blob/claude/sleepy-gates-oecof1/notebooks/run_politosphere_eval.ipynb)
 > **Politosphere** (Reddit; behavioral ideal-point axis).
+>
+> 🧪 **Product PoC — synthetic users, *not* research evidence** — an agent-based simulator
+> drives the whole product (RWE recommender → Information Health Report → AI Coach → closed
+> loop) on **synthetic** traffic over a real article catalog, to stress-test before real
+> users exist (strict research/product separation; see [`docs/PRODUCT_SIMULATION.md`](docs/PRODUCT_SIMULATION.md)):
+> [![Open Product Sim in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/greenwichg/random_walks_with_erasure/blob/claude/sleepy-gates-oecof1/notebooks/product_simulation.ipynb)
+> **Synthetic-user simulation**.
 
 RWE is a modified random-walk exploration of the bipartite user–item feedback
 graph in which the mass reaching certain nodes is systematically *erased* and
