@@ -23,12 +23,18 @@ Outputs (all prefixed ``--tag`` = "sim"):
   * ``sim_population.csv``       -- per-user traits + realised metrics (the "user metrics").
   * ``sim_satisfaction_probe.csv`` -- probe-shaped (cross_welcomed_frac from save/share vs
     ignore on cross-cutting clicks) so ``adaptive_satisfaction.py`` closes the loop.
+  * ``sim_behaviors.tsv``        -- MIND-format shown-vs-clicked slates -> **Open-Mindedness**
+    (a real behavioural metric on the sim's impressions).
+  * ``sim_register.csv`` / ``sim_emotion.csv`` -- SYNTHETIC per-article reporting / emotion
+    attributes (like ``quality``) -> **Reporting Ratio** / **Emotional Balance**.
   * ``sim_MANIFEST.txt``         -- config + seed + the SIMULATION stamp.
 
     python examples/simulate_users.py --qbias allsides_balanced_news_headlines-texts.csv \\
         --n-users 3000 --max-items 5000 --out-tag sim
     python examples/eval_mind.py --npz sim_users.npz --no-bprmf
-    python examples/health_report.py --npz sim_users.npz --sample 3 --require-political
+    python examples/health_report.py --npz sim_users.npz --sample 3 --require-political \\
+        --behaviors sim_behaviors.tsv --register-csv sim_register.csv \\
+        --emotion-csv sim_emotion.csv --subject-label '(simulated) reading diet'
     python examples/adaptive_satisfaction.py --npz sim_users.npz --probe-csv sim_satisfaction_probe.csv
 """
 
@@ -47,6 +53,22 @@ BANNER = ("=" * 74 + "\n"
           "  SYNTHETIC USERS -- internal product PoC. NOT research evidence.\n"
           "  Items are real; users + all interactions are simulated.\n"
           + "=" * 74)
+
+EMOTION_LABELS = ("fear", "outrage", "analysis", "positive", "neutral")
+
+
+def _synth_enrichments(positions, rng):
+    """SYNTHETIC per-article enrichments (product-PoC only, like ``quality`` -- swappable
+    for the real ``classify_register`` / ``classify_emotion`` on real text): a
+    reporting-vs-opinion probability and an emotion-bucket share vector over
+    ``EMOTION_LABELS``, where fear/outrage skew up with |lean| (extremer pieces run hotter)."""
+    n = len(positions)
+    absl = np.abs(np.asarray(positions, dtype=float))
+    register = rng.beta(3.0, 2.0, n)                     # mostly reporting, some opinion
+    alpha = np.stack([1.0 + 0.8 * absl, 0.8 + 0.8 * absl, np.full(n, 2.5),
+                      np.full(n, 1.5), 2.0 - 0.4 * absl], axis=1)      # (n, 5)
+    g = rng.gamma(np.clip(alpha, 0.05, None))            # Dirichlet via the gamma trick
+    return register, g / g.sum(axis=1, keepdims=True)
 
 
 def _sigmoid(x):
@@ -76,6 +98,8 @@ class ItemCatalog:
     quality: np.ndarray              # SYNTHETIC latent quality in [0, 1]
     titles: np.ndarray               # headline
     ids: np.ndarray
+    register: np.ndarray = field(default=None)      # SYNTHETIC P(reporting) per article
+    emotion: np.ndarray = field(default=None)       # SYNTHETIC (n, 5) emotion-bucket shares
     topic_idx: np.ndarray = field(default=None)     # topic -> compact index
     outlet_idx: np.ndarray = field(default=None)
     topic_names: np.ndarray = field(default=None)
@@ -96,13 +120,15 @@ def synthetic_catalog(n_items=800, n_outlets=25, n_topics=8, seed=0) -> ItemCata
     outlet_lean = rng.uniform(-2, 2, n_outlets)          # each outlet has a house lean
     oi = rng.integers(0, n_outlets, n_items)
     pos = np.clip(outlet_lean[oi] + rng.normal(0, 0.4, n_items), -2, 2)   # article near its outlet
+    reg, emo = _synth_enrichments(pos, rng)
     return ItemCatalog(
         positions=pos,
         outlets=np.array([f"outlet_{o}" for o in oi], dtype=object),
         topics=np.array([f"topic_{t}" for t in rng.integers(0, n_topics, n_items)], dtype=object),
         quality=rng.beta(2.5, 2.5, n_items),
         titles=np.array([f"synthetic headline {i}" for i in range(n_items)], dtype=object),
-        ids=np.array([f"S{i}" for i in range(n_items)], dtype=object))
+        ids=np.array([f"S{i}" for i in range(n_items)], dtype=object),
+        register=reg, emotion=emo)
 
 
 def _first_tag(raw) -> str:
@@ -151,11 +177,12 @@ def catalog_from_qbias(csv_path, max_items=None, seed=0) -> ItemCatalog:
         pos, outlets, topics, titles, ids = (pos[keep], [outlets[k] for k in keep],
                                              [topics[k] for k in keep],
                                              [titles[k] for k in keep], [ids[k] for k in keep])
+    reg, emo = _synth_enrichments(pos, rng)                            # SYNTHETIC register + emotion
     return ItemCatalog(positions=pos, outlets=np.asarray(outlets, dtype=object),
                        topics=np.asarray(topics, dtype=object),
                        quality=rng.beta(2.5, 2.5, len(pos)),           # SYNTHETIC quality
                        titles=np.asarray(titles, dtype=object),
-                       ids=np.asarray(ids, dtype=object))
+                       ids=np.asarray(ids, dtype=object), register=reg, emotion=emo)
 
 
 @dataclass
@@ -208,7 +235,7 @@ def simulate(cat: ItemCatalog, pop: Population, cfg: SimConfig):
     n = cat.n
     T = len(cat.topic_names)
     pop_prior = rng.pareto(1.5, n) + 1.0                # long-tail article popularity
-    events = []
+    events, impressions = [], []
     for u in range(cfg.n_users):
         item_pref = pop.topic_interest[u][cat.topic_idx]                 # (n,) this user's topic taste
         base_rel = pop_prior * (0.3 + item_pref)
@@ -228,6 +255,7 @@ def simulate(cat: ItemCatalog, pop: Population, cfg: SimConfig):
                      + cfg.w_trust * u_trust + cfg.w_quality * u_qual
                      + cfg.w_novelty * pop.curiosity[u] * novel)
             clicked = rng.random(k) < _sigmoid(logit)
+            impressions.append((u, list(zip(slate.tolist(), clicked.tolist()))))   # shown slate
             for j in np.flatnonzero(clicked):
                 it = int(slate[j])
                 align = 1.0 - np.abs(pop.theta[u] - cat.positions[it]) / 4.0     # [0,1]
@@ -240,7 +268,7 @@ def simulate(cat: ItemCatalog, pop: Population, cfg: SimConfig):
                 events.append((u, it, float(dwell), action))
                 seen_t.add(int(cat.topic_idx[it]))
                 seen_o.add(int(cat.outlet_idx[it]))
-    return events
+    return events, impressions
 
 
 def build_dataset(events, cat: ItemCatalog, cfg: SimConfig, pop: Population) -> MINDData:
@@ -301,10 +329,10 @@ def run(cfg: SimConfig, qbias=None):
     cat = catalog_from_qbias(qbias, max_items=cfg.max_items, seed=cfg.seed) if qbias \
         else synthetic_catalog(n_items=cfg.max_items, seed=cfg.seed)
     pop = sample_population(cat, cfg)
-    events = simulate(cat, pop, cfg)
+    events, impressions = simulate(cat, pop, cfg)
     mind = build_dataset(events, cat, cfg, pop)
     metric_rows, probe_rows = population_metrics(events, cat, pop, cfg)
-    return cat, pop, events, mind, metric_rows, probe_rows
+    return cat, pop, events, impressions, mind, metric_rows, probe_rows
 
 
 def _write_csv(path, rows):
@@ -314,6 +342,29 @@ def _write_csv(path, rows):
         w = _csv.DictWriter(f, fieldnames=list(rows[0]))
         w.writeheader()
         w.writerows(rows)
+
+
+def write_behaviors_tsv(path, impressions, cat):
+    """MIND-format behaviors.tsv: each shown slate as ``<id>-1`` (clicked) / ``<id>-0`` (not),
+    so ``health_report.py --behaviors`` computes Open-Mindedness (cross-cutting click-through
+    of the *shown* opposite-side items -- a real behavioural metric on the sim's slates)."""
+    with open(path, "w", encoding="utf-8") as f:
+        for k, (u, slate) in enumerate(impressions):
+            imps = " ".join(f"{cat.ids[it]}-{1 if c else 0}" for it, c in slate)
+            f.write(f"imp{k}\tsim_u{u}\t\t\t{imps}\n")
+
+
+def write_enrichment_csvs(register_path, emotion_path, cat):
+    """SYNTHETIC per-article register (reporting) + emotion CSVs keyed by the sim item ids, so
+    ``--register-csv`` / ``--emotion-csv`` populate Reporting Ratio / Emotional Balance."""
+    with open(register_path, "w", encoding="utf-8") as f:
+        f.write("news_id,reporting\n")
+        for nid, r in zip(cat.ids, cat.register):
+            f.write(f"{nid},{r:.4f}\n")
+    with open(emotion_path, "w", encoding="utf-8") as f:
+        f.write("news_id," + ",".join(EMOTION_LABELS) + "\n")
+        for nid, row in zip(cat.ids, cat.emotion):
+            f.write(f"{nid}," + ",".join(f"{v:.4f}" for v in row) + "\n")
 
 
 def main():
@@ -332,24 +383,30 @@ def main():
     cfg = SimConfig(n_users=args.n_users, max_items=args.max_items,
                     sessions_lambda=args.sessions, slate_size=args.slate_size, seed=args.seed)
     print(BANNER)
-    cat, pop, events, mind, metric_rows, probe_rows = run(cfg, qbias=args.qbias)
+    cat, pop, events, impressions, mind, metric_rows, probe_rows = run(cfg, qbias=args.qbias)
     tag = args.out_tag
     mind.save(f"{tag}_users.npz")
     _write_csv(f"{tag}_population.csv", metric_rows)
     _write_csv(f"{tag}_satisfaction_probe.csv", probe_rows)
+    write_behaviors_tsv(f"{tag}_behaviors.tsv", impressions, cat)       # -> Open-Mindedness
+    write_enrichment_csvs(f"{tag}_register.csv", f"{tag}_emotion.csv", cat)  # -> Reporting/Emotional
     s = mind.summary()
     with open(f"{tag}_MANIFEST.txt", "w", encoding="utf-8") as f:
         f.write("SIMULATION -- synthetic users, NOT real behaviour, NOT research evidence.\n")
+        f.write("register.csv / emotion.csv are SYNTHETIC article attributes (like quality); "
+                "behaviors.tsv is the sim's real shown-vs-clicked slates.\n")
         f.write(f"catalog: {'Qbias ' + args.qbias if args.qbias else 'synthetic'}\n")
         f.write(f"config: {cfg}\n")
         f.write(f"summary: {s}\n")
     print(f"\nsimulated {cfg.n_users} users x {cat.n} items -> {len(events):,} clicks "
-          f"({s['sparsity']*100:.2f}% dense)")
+          f"({s['sparsity']*100:.2f}% dense), {len(impressions):,} slate impressions")
     print(f"wrote {tag}_users.npz, {tag}_population.csv, {tag}_satisfaction_probe.csv, "
-          f"{tag}_MANIFEST.txt")
+          f"{tag}_behaviors.tsv, {tag}_register.csv, {tag}_emotion.csv, {tag}_MANIFEST.txt")
     print("\nnext (SIMULATION -- product PoC only):")
     print(f"  python examples/eval_mind.py --npz {tag}_users.npz --no-bprmf")
-    print(f"  python examples/health_report.py --npz {tag}_users.npz --sample 3 --require-political")
+    print(f"  python examples/health_report.py --npz {tag}_users.npz --sample 3 --require-political \\\n"
+          f"      --behaviors {tag}_behaviors.tsv --register-csv {tag}_register.csv "
+          f"--emotion-csv {tag}_emotion.csv --subject-label '(simulated) reading diet'")
     print(f"  python examples/adaptive_satisfaction.py --npz {tag}_users.npz "
           f"--probe-csv {tag}_satisfaction_probe.csv")
 

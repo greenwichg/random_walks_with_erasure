@@ -47,6 +47,11 @@ is unit-tested: higher-openness agents measurably click more cross-cutting conte
 - `sim_population.csv` — per-user traits + realised metrics (the "user metrics").
 - `sim_satisfaction_probe.csv` — probe-shaped (`cross_welcomed_frac` = save/share vs ignore
   on cross-cutting clicks) so `adaptive_satisfaction.py` closes the loop on synthetic data.
+- `sim_behaviors.tsv` — MIND-format shown-vs-clicked slates → **Open-Mindedness** (a *real*
+  behavioural metric on the sim's impressions; the openness trait shows up here too).
+- `sim_register.csv` / `sim_emotion.csv` — **synthetic** per-article reporting / emotion
+  attributes (like `quality`, and swappable for the real `classify_register` /
+  `classify_emotion` on real text) → **Reporting Ratio** / **Emotional Balance** / Attention.
 - `sim_MANIFEST.txt` — config + seed + the SIMULATION stamp.
 
 ## Run it

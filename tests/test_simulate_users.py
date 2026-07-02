@@ -64,28 +64,39 @@ def test_simulate_deterministic_and_wellformed():
     cfg = su.SimConfig(n_users=80, max_items=150, seed=2)
     cat = su.synthetic_catalog(n_items=150, seed=2)
     pop = su.sample_population(cat, cfg)
-    e1 = su.simulate(cat, pop, cfg)
-    e2 = su.simulate(cat, pop, cfg)
-    assert len(e1) > 0 and e1 == e2                                     # deterministic given seed
+    e1, imp1 = su.simulate(cat, pop, cfg)
+    e2, imp2 = su.simulate(cat, pop, cfg)
+    assert len(e1) > 0 and e1 == e2 and imp1 == imp2                    # deterministic given seed
     assert {u for u, _, _, _ in e1} <= set(range(80))
     assert {a for _, _, _, a in e1} <= {"ignore", "save", "share"}
     assert all(d > 0 for _, _, d, _ in e1)                             # positive dwell
+    # every clicked event appears as a `-1` in some slate impression
+    clicked_in_imps = {(u, it) for u, slate in imp1 for it, c in slate if c}
+    assert {(u, it) for u, it, _, _ in e1} <= clicked_in_imps
+
+
+def test_enrichments_present_and_normalised():
+    cat = su.synthetic_catalog(n_items=100, seed=5)
+    assert cat.register.shape == (100,) and (cat.register >= 0).all() and (cat.register <= 1).all()
+    assert cat.emotion.shape == (100, len(su.EMOTION_LABELS))
+    assert np.allclose(cat.emotion.sum(axis=1), 1.0)                   # per-article shares
 
 
 def test_openness_increases_cross_cutting():
     cfg = su.SimConfig(n_users=400, max_items=250, seed=3, sessions_lambda=12.0)
     cat = su.synthetic_catalog(n_items=250, seed=3)
     pop = su.sample_population(cat, cfg)
-    rows, _ = su.population_metrics(su.simulate(cat, pop, cfg), cat, pop, cfg)
+    events, _ = su.simulate(cat, pop, cfg)
+    rows, _ = su.population_metrics(events, cat, pop, cfg)
     rate = np.array([r["cross_cutting_rate"] for r in rows])
     med = np.median(pop.openness)
     assert rate[pop.openness >= med].mean() > rate[pop.openness < med].mean()   # model validity
 
 
-def test_build_dataset_roundtrip_and_pipeline(tmp_path):
+def test_build_dataset_roundtrip_and_enrichment_files(tmp_path):
     from rwe.mind import MINDData
     cfg = su.SimConfig(n_users=120, max_items=200, seed=4)
-    cat, pop, events, mind, mrows, prows = su.run(cfg)
+    cat, pop, events, impressions, mind, mrows, prows = su.run(cfg)
     assert mind.n_users == 120 and mind.n_items == 200
     assert set(np.unique(mind.dataset.matrix.data)) <= {1.0}            # binary clicks
     assert np.allclose(mind.item_positions, cat.positions)             # GOLD lean
@@ -97,3 +108,12 @@ def test_build_dataset_roundtrip_and_pipeline(tmp_path):
     assert theta.shape[0] == dataset.matrix.shape[0] >= 1
     assert "cross_cutting_rate" in mrows[0] and "viewpoint" in mrows[0]
     assert prows and all("cross_welcomed_frac" in r for r in prows)     # closed-loop columns
+    # enrichment writers produce files health_report._load_item_csv can join
+    from importlib import import_module  # noqa: F401
+    su.write_behaviors_tsv(str(tmp_path / "beh.tsv"), impressions, cat)
+    su.write_enrichment_csvs(str(tmp_path / "reg.csv"), str(tmp_path / "emo.csv"), cat)
+    reg = open(tmp_path / "reg.csv").readline().strip()
+    emo = open(tmp_path / "emo.csv").readline().strip()
+    assert reg == "news_id,reporting" and emo == "news_id," + ",".join(su.EMOTION_LABELS)
+    beh_first = open(tmp_path / "beh.tsv").readline().split("\t")
+    assert beh_first[1].startswith("sim_u") and "-" in beh_first[4]     # MIND impressions format
