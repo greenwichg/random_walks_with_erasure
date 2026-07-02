@@ -143,19 +143,21 @@ _MIND text-axis attempts, kept for the record:_
       **Corrected (2026-06-30): "point it at EB-NeRD" was wrong** — EB-NeRD (Ekstra Bladet)
       and Adressa are *single-publisher* (no lean variation), and multi-publisher *click*
       sets anonymise the provider. So a ready catalog doesn't exist; the only realistic
-      unblock is **resolving MIND's MSN articles → original providers** (uncertain, partial
-      coverage, no public mapping). **Spike built (2026-07-01):**
-      `examples/resolve_msn_publisher.py` + notebook `# 7f` fetch the MIND MSN snapshot
-      (`assets.msn.com/labs/mind/<id>.html`, browser UA + retries to beat the 409) and
-      parse the outlet (JSON-LD / og:site_name / provider JSON / canonical host / byline)
-      into the `news_id→outlet` source-map, then report lean-join coverage vs
-      `outlet_lean.csv`. The five-strategy parser is unit-tested (13 tests); the **fetch
-      needs open network** — this repo's policy 403-blocks `assets.msn.com`, so it runs in
-      Colab. This is the AI-vs-outlet hybrid's high-confidence branch; the confidence-
-      *weighting* (AI-path arm) already ships in `health_report.py --confidence-csv`.
-      _Recommendation: still deprioritised (the ideology story stands on the validated
-      behavioral axis); `# 7f` answers "reachable at all?" cheaply next Colab session —
-      read `fetched N/M` + coverage. N=0 ⇒ gated ⇒ report as the finding._
+      unblock is **resolving MIND's MSN articles → original providers**. **Spike built AND
+      RUN (2026-07-01) → confirmed unreachable.** `examples/resolve_msn_publisher.py` +
+      notebook `# 7f` fetch each article's *real* MSN URL (from the `news.tsv` `url` column,
+      e.g. `assets.msn.com/labs/mind/AAJgNxm.html` — note the id is the MSN id, **not** the
+      `Nxxxx` news_id, which was an early bug) and parse the outlet (JSON-LD / og:site_name /
+      provider JSON / canonical host / byline) into the `news_id→outlet` source-map. Ran on
+      real MIND in Colab: **HTTP 409 (Conflict) on every snapshot** — the same account-wide
+      Azure "public access is not permitted" gate that also killed the dataset-blob download
+      (`# 2`). A browser UA does not bypass it (it's an access-policy gate, not a bot block),
+      so **the outlet path is a confirmed dead end on MIND without Microsoft-issued
+      credentials.** The five-strategy parser is unit-tested (14 tests) and reusable on any
+      *non-gated* catalog. This was the hybrid's high-confidence branch; the AI-path arm
+      (confidence-*weighting*) ships in `health_report.py --confidence-csv` and stands as
+      the axis MIND actually supports. _Recommendation: **close** — record the 409 finding;
+      the ideology story rests on the validated behavioral Politosphere axis._
 
 ## 4. Paper / publication — [me + you] · when ready
 
