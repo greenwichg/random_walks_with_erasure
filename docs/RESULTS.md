@@ -352,11 +352,13 @@ outcome, not a measured opinion change.
    AllSides-trained, Baly 2020) — which makes the near-zero decisive: it **kills the earlier
    "domain-shift control" hypothesis** (that strong agreement here beside κ 0.14 on MIND would
    pin the MIND noise on domain shift). The headline ceiling is itself ~0 — and the
-   **`--use-text` run settles the cause, against our own prediction**: re-scoring the **full
-   article body** barely moves the classifier (**κ = 0.001**, Spearman +0.065, 26 % accuracy,
-   still 71 % predicted centre). So "the *headline* is the bottleneck" is **also wrong** — the
-   whole body does not rescue it; this AllSides-trained classifier recovers the AllSides label
-   at **near-chance from text at any length**. The honest conclusion is simpler and stronger:
+   **`--use-text` run settles the cause, against our own prediction**: re-scoring the article's
+   **opening (first 256 tokens, ~180 words)** barely moves the classifier (**κ = 0.001**,
+   Spearman +0.065, 26 % accuracy, still 71 % predicted centre). So "the *headline* is the
+   bottleneck" is **also wrong** — 15× more text does not rescue it; this AllSides-trained
+   classifier recovers the AllSides label at **near-chance from text at every length we can
+   test** (a 512-token re-run — BERT's max — is wired in `# 7g`/`# 7h` and pending; the flat
+   15→256-token trend makes a jump unlikely). The honest conclusion is simpler and stronger:
    an article's **lean is not in its words but in its *publisher*** — a label AllSides assigns
    largely at the outlet level, which a text model (seeing only the article) cannot recover.
    (Two explanations we cannot fully separate here — AllSides article labels are
@@ -368,8 +370,8 @@ outcome, not a measured opinion change.
    join (`examples/data/outlet_lean.csv`, the branch 409-blocked on MIND) predicts the same
    AllSides gold at **Spearman +0.918, Cohen's κ = 0.841, 90 % accuracy, and side-only κ = 1.000**
    (never confuses Left for Right) over the **45 %** of articles with a known outlet — so the
-   lean lives in the *publisher*, not the *article text* (headline **or** full body, both
-   near-chance above), which is exactly why the outlet-first hybrid is the right design. Honest caveat: `outlet_lean.csv` is AllSides-derived and Qbias
+   lean lives in the *publisher*, not the *article text* (headline **or** its 256-token
+   opening, both near-chance above), which is exactly why the outlet-first hybrid is the right design. Honest caveat: `outlet_lean.csv` is AllSides-derived and Qbias
    labels are AllSides-derived, so this substantially reflects that AllSides *article* labels
    rarely cross their outlet's *house* lean (the labels are largely outlet-determined) — real
    and useful (know the outlet ⇒ know the lean) but not a fully independent check. (The
@@ -479,9 +481,10 @@ _Last updated: 2026-07-02 (Qbias human-gold check run, `# 7g`, n=3 000: headline
 text-lean vs AllSides gold is **κ = 0.007** — collapses to centre, 2 896/3 000 — while the
 **outlet-lean** join hits **κ = 0.841 / side-only κ = 1.000** at 45 % coverage; this
 overturns the "domain-shift control" reading; the `--use-text` full-body run then overturned
-our *next* guess too — the full body is **also** near-chance (**κ = 0.001**, Spearman +0.065),
-so it is **not** headline length: this classifier can't recover AllSides lean from text at any
-length, and the lean lives in the *outlet* (a largely outlet-determined label). Same day,
+our *next* guess too — the body's first 256 tokens are **also** near-chance (**κ = 0.001**,
+Spearman +0.065), so it is **not** headline length: this classifier can't recover AllSides
+lean from text at any tested length, and the lean lives in the *outlet* (a largely
+outlet-determined label; a 512-token re-run is wired in `# 7g`/`# 7h`, pending). Same day,
 the Politosphere closed loop (`# 7b`) re-ran on the **hardened** reception signal
 (`cross_welcomed_frac` = upvoted AND not controversial): adaptive opposite-content reach rises
 0.35 → 0.76 → 1.29 across tolerance terciles while uniform stays flat (0.51/0.75/0.74),

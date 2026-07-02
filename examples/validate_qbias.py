@@ -19,26 +19,28 @@ methodology (and possibly some articles).
 **What the run actually shows (n=3000, 2026-07-02).** Even in-distribution, the classifier
 collapses to centre and lands at near-chance -- and it does so at **any input length**:
 
-* headline only  : Cohen's kappa ~0.007, Spearman ~0.02, ~96 % predicted centre;
-* headline + body (``--use-text``): kappa ~0.001, Spearman ~0.065, ~71 % predicted centre.
+* headline only                       : Cohen's kappa ~0.007, Spearman ~0.02, ~96 % centre;
+* headline + body's first 256 tokens (``--use-text``): kappa ~0.001, Spearman ~0.065, ~71 % centre.
 
 So this is **not** domain shift (it is in-distribution) and **not** headline length either
-(the full body barely helps). This AllSides-trained classifier simply does not recover the
+(15x more text barely helps). This AllSides-trained classifier simply does not recover the
 AllSides *article* label from text. The **outlet-lean** join, by contrast, recovers the same
 gold near-perfectly (kappa ~0.84, side-only ~1.0): the lean lives in the **publisher**, not
 the words -- an AllSides label that is largely outlet-determined, which a text model (seeing
 only the article) cannot recover. Hence the outlet-first hybrid is the fix. (Whether the deep
 cause is "AllSides labels are outlet-determined" or "politicalBiasBERT is miscalibrated to
 Qbias" we cannot separate here; the practical implication -- use the outlet, not the text --
-is the same. ``--use-text`` truncates to the model's ~512 tokens, i.e. the article's opening,
-still far more than a headline.)
+is the same. NB ``--use-text`` feeds the classifier the first ``--max-length`` tokens
+(default **256**; raise to the model's max, 512 for BERT); either way that is the article's
+*opening*, not the whole body for long pieces -- but still ~15x a headline, and it did not
+help.)
 
     # download the CSV once from github.com/irgroup/Qbias, then (GPU recommended):
     python examples/validate_qbias.py --csv allsides_balanced_news_headlines-texts.csv \
         --lean-csv examples/data/outlet_lean.csv --limit 3000
-    # decisive follow-up -- score the full article body, not just the headline:
+    # decisive follow-up -- score more of the article body (--max-length up to BERT's 512):
     python examples/validate_qbias.py --csv allsides_balanced_news_headlines-texts.csv \
-        --lean-csv examples/data/outlet_lean.csv --limit 3000 --use-text
+        --lean-csv examples/data/outlet_lean.csv --limit 3000 --use-text --max-length 512
 """
 
 from __future__ import annotations
@@ -149,7 +151,7 @@ def _report_block(title, r, names=("classifier", "AllSides gold")):
 
 
 def run(csv_path, score_fn=None, lean_csv=None, model="bucketresearch/politicalBiasBERT",
-        label_positions=(-1, 0, 1), scale=2.0, use_text=False, limit=None,
+        label_positions=(-1, 0, 1), scale=2.0, use_text=False, limit=None, max_length=256,
         headline_col=None, text_col=None, bias_col=None, outlet_col=None):
     texts, gold, outlets, cols = load_qbias(csv_path, headline_col, text_col, bias_col,
                                             outlet_col, use_text=use_text, limit=limit)
@@ -161,9 +163,11 @@ def run(csv_path, score_fn=None, lean_csv=None, model="bucketresearch/politicalB
              f"  AllSides gold: L={dist[-1]}  C={dist[0]}  R={dist[1]}", ""]
 
     if score_fn is None:                                     # real model (GPU)
-        print(f"scoring {len(texts)} headlines with {model} ...")
+        span = f"headline+body <=" + str(max_length) + " tok" if use_text else "headlines"
+        print(f"scoring {len(texts)} {span} with {model} ...")
         tok, mdl, device = load_classifier(model)
-        score_fn = lambda t: score_texts(t, tok, mdl, device, label_positions, scale=scale)[0]
+        score_fn = lambda t: score_texts(t, tok, mdl, device, label_positions,
+                                         scale=scale, max_length=max_length)[0]
     text_pos = np.asarray(score_fn(texts), dtype=float)
 
     r = pair_reliability(text_pos, gold, band=1.0)
@@ -181,12 +185,13 @@ def run(csv_path, score_fn=None, lean_csv=None, model="bucketresearch/politicalB
             lines.append(_report_block("OUTLET-lean  vs  AllSides gold", ro))
         lines.append("")
 
-    cond = ("headline + FULL BODY (--use-text)" if use_text else "HEADLINE ONLY — MIND's condition")
+    cond = (f"headline + article body, first {max_length} tokens (--use-text)" if use_text
+            else "HEADLINE ONLY — MIND's condition")
     lines.append(
         f"CAVEAT: IN-DISTRIBUTION, scored on {cond}. politicalBiasBERT is AllSides-trained "
         "(Baly 2020) and Qbias is AllSides-sourced, so this shares labeling method (possibly "
         "articles). NB the classifier lands at near-chance and collapses to centre at BOTH "
-        "input lengths (headline kappa ~0.007; full body ~0.001) — so the weak text-lean axis "
+        "input lengths (headline kappa ~0.007; body's first 256 tok ~0.001) — so the weak text-lean axis "
         "is NOT domain shift and NOT headline length: this model just does not recover the "
         "AllSides article label from text. The OUTLET-lean number shows the lean lives in the "
         "publisher (kappa ~0.84) — a largely outlet-determined label — which is why the "
@@ -208,6 +213,10 @@ def main():
     ap.add_argument("--use-text", action="store_true",
                     help="score headline + article text (default: headline only, comparable "
                          "to MIND's headline-level axis -- the domain-shift control)")
+    ap.add_argument("--max-length", type=int, default=256,
+                    help="token cap fed to the classifier (default 256). With --use-text, "
+                         "raise to the model's max (BERT: 512) to score more of the body; note "
+                         "even 512 is only the opening for long articles, and it doubles runtime")
     ap.add_argument("--limit", type=int, default=None, help="cap #articles (start small)")
     ap.add_argument("--headline-col", default=None)
     ap.add_argument("--text-col", default=None)
@@ -218,8 +227,8 @@ def main():
     lp = [float(x) for x in args.label_positions.split(",")]
     print(run(args.csv, lean_csv=args.lean_csv, model=args.model, label_positions=lp,
               scale=args.scale, use_text=args.use_text, limit=args.limit,
-              headline_col=args.headline_col, text_col=args.text_col,
-              bias_col=args.bias_col, outlet_col=args.outlet_col))
+              max_length=args.max_length, headline_col=args.headline_col,
+              text_col=args.text_col, bias_col=args.bias_col, outlet_col=args.outlet_col))
 
 
 if __name__ == "__main__":

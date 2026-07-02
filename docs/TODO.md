@@ -127,15 +127,16 @@ _MIND text-axis attempts, kept for the record:_
       The intended "high κ here + κ=0.14 on MIND ⇒ domain shift" reading is dead: headline-only
       κ = **0.007** (Spearman 0.02, 20 % acc, collapses to centre — 2896/3000 predicted C),
       even *in-distribution*. **Then the `--use-text` run (2026-07-02) overturned our NEXT
-      guess too:** the full article body is **also** near-chance — κ = **0.001** (Spearman
-      0.065, 26 % acc, still 71 % predicted C). So it is **not headline length** either: this
-      AllSides-trained classifier simply does not recover the AllSides *article* label from
-      text at any length. The **outlet-lean** join, by contrast, nails the gold: **κ = 0.841 /
+      guess too:** the article body's first **256 tokens** are **also** near-chance — κ =
+      **0.001** (Spearman 0.065, 26 % acc, still 71 % predicted C). So it is **not headline
+      length** either: this AllSides-trained classifier simply does not recover the AllSides
+      *article* label from text at any tested length (a **512-token** re-run — BERT's max — is
+      now wired into `# 7g`/`# 7h`; pending, and unlikely to bend the flat 15→256-token trend). The **outlet-lean** join, by contrast, nails the gold: **κ = 0.841 /
       side-only κ = 1.000 / 90 % acc** at 45 % coverage — the lean lives in the *publisher* (a
       largely outlet-determined label). Both runs done; folded into RESULTS.md / PAPER.md /
       paper.tex; docstring + printed CAVEAT + `# 7g` cell corrected. _(Disambiguation built as
       notebook `# 7h`: runs a 2nd independent AllSides model (premsa) on the same Qbias gold,
-      headline + full body — if it ALSO centre-collapses, the label is outlet-determined
+      headline + body (now 512 tok) — if it ALSO centre-collapses, the label is outlet-determined
       (confirmed across two models); if it recovers the gold, politicalBiasBERT was the
       problem. GPU, ~1 min; awaiting the run. The practical fix — use the outlet — is unchanged
       either way.)_

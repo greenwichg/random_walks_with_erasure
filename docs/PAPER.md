@@ -246,8 +246,8 @@ it.](images/opinion_dynamics.png)
    Left↔Right just **2.2 %** of the time (**side-only κ = 0.58**) — the *per-article*
    label is unreliable though its *direction* is moderately stable, usable only in
    aggregate; and on **human AllSides gold** (Qbias, *n* = 3,000) the classifier lands at
-   near-chance from the *text at any length* — **κ = 0.007** from the headline and **κ = 0.001**
-   from the full article body, collapsing to *centre* both ways — whereas an **outlet lookup**
+   near-chance from the *text at every length we tested* — **κ = 0.007** from the headline and
+   **κ = 0.001** from its 256-token opening, collapsing to *centre* both ways — whereas an **outlet lookup**
    recovers the same gold at **κ = 0.84 / side-only κ = 1.00**: the lean lives in the
    *publisher*, not the words, which is why text-lean is a weak proxy and an outlet-first axis
    is the fix); (ii) the **MIND
