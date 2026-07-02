@@ -35,6 +35,15 @@ def test_viewpoint_and_echo():
     assert np.isnan(hr.echo_score(0.0, 0.0))
 
 
+def test_cross_cutting_dead_centre_reader():
+    # A dead-centre reader (weighted mean exactly at the centre) is no longer n/a:
+    assert hr.cross_cutting_share([0.0, 0.0, 0.0]) == 0.0        # reads only centre -> 0.0 (as asked)
+    assert hr.cross_cutting_share([-1.0, 1.0]) == 1.0           # perfectly balanced L/R -> maximal, not 0
+    assert abs(hr.cross_cutting_share([-1.0, 0.0, 1.0]) - 2 / 3) < 1e-9   # off-centre share
+    # a reader with NO political items stays n/a (nothing to balance)
+    assert np.isnan(hr.cross_cutting_share([]))
+
+
 def test_confidence_weighting_shifts_viewpoint():
     pos = [-1.0, -1.0, -1.0, 1.0]                  # 3 left, 1 right
     base = hr.viewpoint_shares(pos)

@@ -131,13 +131,22 @@ def viewpoint_shares(positions, tau: float = LEAN_TAU, weights=None):
 
 
 def cross_cutting_share(positions, center: float = CENTER, weights=None) -> float:
-    """Share of political items on the *opposite* side of the user's own (weighted) mean."""
+    """Weighted share of a reader's political items that sit *across* their own position.
+
+    For a leaning reader it is the share on the *opposite* side of their weighted-mean lean.
+    A reader whose weighted mean sits exactly at the centre has no "own side", so everything
+    they read *off* the centre counts as cross-cutting: the share of non-centre items — 0.0
+    for a reader who only reads the centre, up to 1.0 for a perfectly balanced left+right
+    diet. (Previously both were ``n/a``; returning the non-centre share keeps a *balanced*
+    reader — the ideal for this metric — from collapsing to the worst score, while still
+    reporting 0.0 for a centre-only reader.) Only a reader with **no** political items is
+    ``n/a``."""
     p, w = _finite_pw(positions, weights)
     if p.size == 0:
         return float("nan")
     mu = float((w * p).sum())
-    if mu == center:
-        return float("nan")
+    if mu == center:                       # no dominant side -> everything off-centre is cross-cutting
+        return float(w[p != center].sum())
     opposite = (p - center) * np.sign(mu - center) < 0
     return float(w[opposite].sum())
 
