@@ -117,6 +117,17 @@ _MIND text-axis attempts, kept for the record:_
       reports **inter-rater agreement** (mean pairwise Spearman + quadratic-weighted
       kappa) and validates each axis against the rater **consensus** (unit-tested).
       Remaining = the human labeling itself (blind, ≥100 items, 2–3 raters), then run.
+- [x] **Large AllSides-gold check via Qbias — built (notebook `# 7g`, unit-tested).**
+      `examples/validate_qbias.py` scores the *same* classifier on Qbias (~21.7k
+      AllSides-labeled articles, 4 expert annotators; Haak & Schaer 2023) and reports
+      agreement with the human L/C/R label (Spearman / Cohen's κ / accuracy / confusion) +
+      an outlet-lean-vs-gold join (the branch 409-blocked on MIND, working here). **Caveat
+      baked into the docstring + output: IN-DISTRIBUTION / upper bound** — politicalBiasBERT
+      is AllSides-trained (Baly 2020), so it shares labeling method (possibly articles) with
+      Qbias. Its real role is the **domain-shift control**: high κ here + κ=0.14 on MIND ⇒ the
+      MIND noise is domain/topic shift, not the classifier failing. Refactored
+      `classify_lean.py` to expose `load_classifier`/`score_texts` so both use identical
+      scoring. Run `# 7g` (GPU) and paste the κ/accuracy to fold the number into RESULTS/paper.
 - [x] **Automated convergent validity (LLM second opinion) — built AND run.**
       `examples/llm_label.py` labels the blind template with a second model
       (`--provider gemini`, **free** via Google AI Studio, default — or `--provider

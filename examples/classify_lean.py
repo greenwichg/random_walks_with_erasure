@@ -73,6 +73,39 @@ def _confidence_from_probs(probs):
     return top2[:, 0] - top2[:, 1]
 
 
+def load_classifier(model_name):
+    """Load an HF sequence-classification model + tokenizer on GPU if available; returns
+    ``(tokenizer, model, device)``. The torch/transformers import is lazy (only here)."""
+    import torch
+    from transformers import AutoModelForSequenceClassification, AutoTokenizer
+    tok = AutoTokenizer.from_pretrained(model_name)
+    model = AutoModelForSequenceClassification.from_pretrained(model_name).eval()
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model.to(device)
+    return tok, model, device
+
+
+def score_texts(texts, tok, model, device, label_positions, scale=2.0,
+                batch_size=32, max_length=256, progress=True):
+    """Score texts -> ``(positions, confidences)`` (softmax-expected lean + top-2 margin).
+    Shared by this CLI and ``examples/validate_qbias.py`` so both use identical scoring."""
+    import torch
+    lp = np.asarray([float(x) for x in label_positions], dtype=float)
+    pos = np.empty(len(texts), dtype=float)
+    conf = np.empty(len(texts), dtype=float)
+    for s in range(0, len(texts), batch_size):
+        batch = texts[s : s + batch_size]
+        enc = tok(batch, truncation=True, max_length=max_length,
+                  padding=True, return_tensors="pt").to(device)
+        with torch.no_grad():
+            probs = torch.softmax(model(**enc).logits, dim=-1).cpu().numpy()
+        pos[s : s + len(batch)] = _positions_from_probs(probs, lp, scale)
+        conf[s : s + len(batch)] = _confidence_from_probs(probs)
+        if progress and s % (batch_size * 20) == 0:
+            print(f"  {s + len(batch)}/{len(texts)}")
+    return pos, conf
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -103,31 +136,14 @@ def main():
     texts = [_text(a[2], a[3]) for a in arts]
     print(f"scoring {len(texts)} articles with {args.model} ...")
 
-    import torch                                          # lazy: only needed here
-    from transformers import (AutoModelForSequenceClassification, AutoTokenizer)
-
-    tok = AutoTokenizer.from_pretrained(args.model)
-    model = AutoModelForSequenceClassification.from_pretrained(args.model).eval()
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    model.to(device)
+    tok, model, device = load_classifier(args.model)
     print("id2label:", model.config.id2label, "(check this matches --label-positions)")
     lp = [float(x) for x in args.label_positions.split(",")]
     if len(lp) != model.config.num_labels:
         raise ValueError(f"--label-positions has {len(lp)} values but the model has "
                          f"{model.config.num_labels} labels ({model.config.id2label})")
-
-    pos = np.empty(len(texts), dtype=float)
-    conf = np.empty(len(texts), dtype=float)
-    for s in range(0, len(texts), args.batch_size):
-        batch = texts[s : s + args.batch_size]
-        enc = tok(batch, truncation=True, max_length=args.max_length,
-                  padding=True, return_tensors="pt").to(device)
-        with torch.no_grad():
-            probs = torch.softmax(model(**enc).logits, dim=-1).cpu().numpy()
-        pos[s : s + len(batch)] = _positions_from_probs(probs, lp, args.scale)
-        conf[s : s + len(batch)] = _confidence_from_probs(probs)
-        if s % (args.batch_size * 20) == 0:
-            print(f"  {s + len(batch)}/{len(texts)}")
+    pos, conf = score_texts(texts, tok, model, device, lp, scale=args.scale,
+                            batch_size=args.batch_size, max_length=args.max_length)
 
     with open(args.out, "w", encoding="utf-8") as f:
         f.write("news_id,position,confidence\n")

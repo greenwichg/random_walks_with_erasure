@@ -334,7 +334,17 @@ outcome, not a measured opinion change.
    Validated against a 40-headline independent-rater set (`validate_lean.py`):
    **Spearman r = 0.27, Pearson 0.30, 75 % sign-agreement on the non-neutral
    items** — a *weak-but-positive* ideology proxy. So RQ3 reads are suggestive;
-   a larger multi-rater gold set or true outlet-lean labels would firm it up. (The
+   a larger multi-rater gold set or true outlet-lean labels would firm it up.
+   A **large AllSides-gold check** exists via the **Qbias** dataset (~21.7k AllSides-labeled
+   articles, Haak & Schaer 2023; `examples/validate_qbias.py`): the *same* classifier scored
+   on AllSides headlines and compared to the human left/center/right label — the biggest gold
+   benchmark for the axis, far past the 40-headline set. Two honest reads: (i) it is
+   **in-distribution / an upper bound** — politicalBiasBERT is itself AllSides-trained
+   (Baly 2020), so it shares labeling method with Qbias; and (ii) more usefully it is a
+   **domain-shift control** — strong agreement on clean AllSides text next to Cohen's κ 0.14
+   on MIND's MSN slice would show the MIND noise is *domain / topic shift*, not classifier
+   incapacity. `validate_qbias.py` also runs the **outlet-lean** join against the same gold
+   (the branch 409-blocked on MIND), demonstrating the hybrid on a dataset where it works. (The
    outlet-lean route was **tested and is blocked on MIND**: `examples/resolve_msn_publisher.py`
    fetches each article's real MSN snapshot to recover the original publisher, but every
    snapshot returns **HTTP 409** — a gated response a browser UA can't bypass (Microsoft
