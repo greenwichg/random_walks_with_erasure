@@ -484,12 +484,13 @@ measured opinion change in real users (Figure~\ref{fig:opinion}).
   flipping Left$\leftrightarrow$Right just $2.2\%$ of the time
   ($\kappa_{\mathrm{side}}{=}0.58$), i.e.\ the \emph{per-article} label is unreliable
   though its \emph{direction} is moderately stable---usable only in aggregate; and on
-  \textbf{human AllSides gold} (Qbias, $n{=}3{,}000$) the classifier lands at near-chance
-  from the \emph{text at every length we tested}---$\kappa{=}0.007$ from the headline and
-  $\kappa{=}0.001$ from its 256-token opening, collapsing to \emph{centre} both ways---whereas an
-  \textbf{outlet lookup} recovers the same gold at
-  $\kappa{=}0.84$ ($\kappa_{\mathrm{side}}{=}1.00$)---the lean lives in the \emph{publisher},
-  not the words, motivating an outlet-first axis); (ii)~a
+  \textbf{human AllSides gold} (Qbias, $n{=}3{,}000$) text-lean is a \emph{weak,
+  model-sensitive} proxy---politicalBiasBERT is near-chance at every length
+  ($\kappa{=}0.007$ headline, $0.001$ body), a second AllSides model (premsa) reaches only
+  Spearman~$0.22$ ($\kappa_{\mathrm{side}}{=}0.30$) with the body, and both are dwarfed by an
+  \textbf{outlet lookup} on the same gold (Spearman~$0.918$, $\kappa{=}0.84$,
+  $\kappa_{\mathrm{side}}{=}1.00$---${\approx}4\times$ the best text model): the lean lives far
+  more in the \emph{publisher} than the words, motivating an outlet-first axis); (ii)~a
   \textbf{MIND co-click} ideal point ($r=0.37$, topical); and (iii)~a \textbf{Reddit
   Politosphere behavioral} ideal point built to fix this, which \emph{validates}
   ($\mathrm{lean\_corr}=0.57\pm0.19$ over 5 seeds against labeled subreddit leans,
@@ -523,7 +524,7 @@ measured opinion change in real users (Figure~\ref{fig:opinion}).
 
 \paragraph{Future work.} Each limitation above has a concrete resolution path. The weak
 text-lean axis is the clearest: on the same AllSides gold an \emph{outlet} lookup recovers the
-label at $\kappa{=}0.84$ where the text classifier is near-chance, so an outlet-first
+label at $\kappa{=}0.84$ where even the best of two text classifiers reaches only Spearman~$0.22$, so an outlet-first
 axis---already demonstrated on Qbias---is the fix wherever publishers are recoverable (MIND's
 are gated behind MSN URLs, but most corpora ship them). The behavioral axis would firm up with
 more than $n{=}20$ labeled communities, and the ideological result would generalize with a

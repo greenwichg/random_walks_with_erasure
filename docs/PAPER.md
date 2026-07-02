@@ -245,12 +245,13 @@ it.](images/opinion_dynamics.png)
    articles agree on the exact L/C/R label only at **Cohen's κ = 0.14** while flipping
    Left↔Right just **2.2 %** of the time (**side-only κ = 0.58**) — the *per-article*
    label is unreliable though its *direction* is moderately stable, usable only in
-   aggregate; and on **human AllSides gold** (Qbias, *n* = 3,000) the classifier lands at
-   near-chance from the *text at every length we tested* — **κ = 0.007** from the headline and
-   **κ = 0.001** from its 256-token opening, collapsing to *centre* both ways — whereas an **outlet lookup**
-   recovers the same gold at **κ = 0.84 / side-only κ = 1.00**: the lean lives in the
-   *publisher*, not the words, which is why text-lean is a weak proxy and an outlet-first axis
-   is the fix); (ii) the **MIND
+   aggregate; and on **human AllSides gold** (Qbias, *n* = 3,000) text-lean is a **weak,
+   model-sensitive** proxy — politicalBiasBERT is near-chance at every length (**κ = 0.007**
+   headline, **0.001** body), a second AllSides model (premsa) reaches only **Spearman 0.22 /
+   side-only κ 0.30** with the body, and both are dwarfed by an **outlet lookup** on the same
+   gold (**Spearman 0.918, κ = 0.84, side-only κ = 1.00** — ~4× the best text model): the lean
+   lives far more in the *publisher* than the words, which is why an outlet-first axis is the
+   fix); (ii) the **MIND
    co-click** ideal point is topical (`r = 0.37`); (iii) a **Reddit Politosphere
    behavioral** ideal point built to fix this **validates** (`lean_corr = 0.57 ± 0.19`
    against labeled subreddit leans, cleanly ideological extremes — communism/anarchism
@@ -285,7 +286,7 @@ it.](images/opinion_dynamics.png)
 
 Each limitation above has a concrete resolution path. The weak text-lean axis is the
 clearest: on the same AllSides gold an **outlet** lookup recovers the label at **κ = 0.84**
-where the text classifier is near-chance, so an **outlet-first axis** — already demonstrated
+where even the best of two text classifiers reaches only Spearman 0.22, so an **outlet-first axis** — already demonstrated
 on Qbias — is the fix wherever publishers are recoverable (MIND's are gated behind MSN URLs,
 but most corpora ship them). The behavioral axis would firm up with more than **n = 20**
 labeled communities, and the ideological result would generalize with a **second news corpus**

@@ -352,26 +352,29 @@ outcome, not a measured opinion change.
    AllSides-trained, Baly 2020) — which makes the near-zero decisive: it **kills the earlier
    "domain-shift control" hypothesis** (that strong agreement here beside κ 0.14 on MIND would
    pin the MIND noise on domain shift). The headline ceiling is itself ~0 — and the
-   **`--use-text` run settles the cause, against our own prediction**: re-scoring the article's
-   **opening (first 256 tokens, ~180 words)** barely moves the classifier (**κ = 0.001**,
-   Spearman +0.065, 26 % accuracy, still 71 % predicted centre). So "the *headline* is the
-   bottleneck" is **also wrong** — 15× more text does not rescue it; this AllSides-trained
-   classifier recovers the AllSides label at **near-chance from text at every length we can
-   test** (a 512-token re-run — BERT's max — is wired in `# 7g`/`# 7h` and pending; the flat
-   15→256-token trend makes a jump unlikely). The honest conclusion is simpler and stronger:
-   an article's **lean is not in its words but in its *publisher*** — a label AllSides assigns
-   largely at the outlet level, which a text model (seeing only the article) cannot recover.
-   (Two explanations we cannot fully separate here — AllSides article labels are
-   outlet-determined, or politicalBiasBERT is specifically miscalibrated to Qbias — but the
-   practical implication, *use the outlet, not the text*, is the same. The MIND κ 0.14 was
-   classifier-vs-*second-classifier*; these Qbias κ's are classifier-vs-*human gold* —
-   different references, so read them as the first honest human-gold numbers, not as "worse
-   than MIND".) The **outlet**, by contrast, all but *determines* the gold label: the **outlet-lean**
+   **`# 7g`/`# 7h` follow-ups (both models, headline + body up to 512 tokens) refined this a
+   third time, against our own predictions twice over.** Two AllSides-trained classifiers
+   *disagree* on how much they recover. **politicalBiasBERT** stays near-chance at *every*
+   length (headline κ 0.007; +body κ 0.001, Spearman +0.065 — and **identical at 256 vs 512
+   tokens**, because Qbias ships short excerpts, not full articles, so more context was never
+   actually on offer). But a **second AllSides model, premsa** (`# 7h`), does meaningfully
+   better *once it sees the body*: Spearman **0.081 → 0.221**, side-only κ **0.05 → 0.30** (κ₃
+   0.10, 34 % accuracy). So two of my earlier claims were too strong: text is **not**
+   signal-*free* (premsa extracts a weak-but-real lean from the body), and for premsa the
+   **headline *was* a limiter** — "not headline length" was politicalBiasBERT-specific. The
+   defensible conclusion is narrower: **text-lean is a *weak, model-sensitive* proxy** — the
+   *better* of two AllSides classifiers reaches only Spearman ~0.22 / side-only κ ~0.30 against
+   human gold, the worse reaches ~0 — so part of the extreme near-zero was a
+   **politicalBiasBERT-specific miscalibration**, not purely "the label is not in the text".
+   (The MIND κ 0.14 was classifier-vs-*second-classifier*; these Qbias κ's are
+   classifier-vs-*human gold* — different references.) What is unambiguous is the
+   **comparison**: the **outlet** all but *determines* the gold label where even the best text
+   model is faint: the **outlet-lean**
    join (`examples/data/outlet_lean.csv`, the branch 409-blocked on MIND) predicts the same
    AllSides gold at **Spearman +0.918, Cohen's κ = 0.841, 90 % accuracy, and side-only κ = 1.000**
    (never confuses Left for Right) over the **45 %** of articles with a known outlet — so the
-   lean lives in the *publisher*, not the *article text* (headline **or** its 256-token
-   opening, both near-chance above), which is exactly why the outlet-first hybrid is the right design. Honest caveat: `outlet_lean.csv` is AllSides-derived and Qbias
+   lean lives **far more in the *publisher* than the *words***: the outlet's Spearman 0.918 is
+   **~4× the best text model's 0.22**, which is exactly why the outlet-first hybrid is the right design. Honest caveat: `outlet_lean.csv` is AllSides-derived and Qbias
    labels are AllSides-derived, so this substantially reflects that AllSides *article* labels
    rarely cross their outlet's *house* lean (the labels are largely outlet-determined) — real
    and useful (know the outlet ⇒ know the lean) but not a fully independent check. (The
@@ -480,11 +483,13 @@ examples/plot_axis.py --npz mind_text.npz  # users + items on the L<->R scale
 _Last updated: 2026-07-02 (Qbias human-gold check run, `# 7g`, n=3 000: headline-only
 text-lean vs AllSides gold is **κ = 0.007** — collapses to centre, 2 896/3 000 — while the
 **outlet-lean** join hits **κ = 0.841 / side-only κ = 1.000** at 45 % coverage; this
-overturns the "domain-shift control" reading; the `--use-text` full-body run then overturned
-our *next* guess too — the body's first 256 tokens are **also** near-chance (**κ = 0.001**,
-Spearman +0.065), so it is **not** headline length: this classifier can't recover AllSides
-lean from text at any tested length, and the lean lives in the *outlet* (a largely
-outlet-determined label; a 512-token re-run is wired in `# 7g`/`# 7h`, pending). Same day,
+overturns the "domain-shift control" reading. `--use-text` (both models, ≤512 tok) then
+refined it a **third** time: politicalBiasBERT stays near-chance with the body (**κ = 0.001**,
+identical at 256/512 — Qbias ships short excerpts), but a **second model, premsa** (`# 7h`),
+does better with the body (Spearman **0.081→0.221**, side-only κ **0.05→0.30**). So text-lean
+is a **weak, model-sensitive** proxy (not signal-free), part of the extreme near-zero was a
+politicalBiasBERT miscalibration, and the **outlet** (Spearman 0.918) is **~4×** the best text
+model — the outlet-first conclusion holds and sharpens. Same day,
 the Politosphere closed loop (`# 7b`) re-ran on the **hardened** reception signal
 (`cross_welcomed_frac` = upvoted AND not controversial): adaptive opposite-content reach rises
 0.35 → 0.76 → 1.29 across tolerance terciles while uniform stays flat (0.51/0.75/0.74),

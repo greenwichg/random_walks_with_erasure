@@ -130,16 +130,17 @@ _MIND text-axis attempts, kept for the record:_
       guess too:** the article body's first **256 tokens** are **also** near-chance — κ =
       **0.001** (Spearman 0.065, 26 % acc, still 71 % predicted C). So it is **not headline
       length** either: this AllSides-trained classifier simply does not recover the AllSides
-      *article* label from text at any tested length (a **512-token** re-run — BERT's max — is
-      now wired into `# 7g`/`# 7h`; pending, and unlikely to bend the flat 15→256-token trend). The **outlet-lean** join, by contrast, nails the gold: **κ = 0.841 /
-      side-only κ = 1.000 / 90 % acc** at 45 % coverage — the lean lives in the *publisher* (a
-      largely outlet-determined label). Both runs done; folded into RESULTS.md / PAPER.md /
-      paper.tex; docstring + printed CAVEAT + `# 7g` cell corrected. _(Disambiguation built as
-      notebook `# 7h`: runs a 2nd independent AllSides model (premsa) on the same Qbias gold,
-      headline + body (now 512 tok) — if it ALSO centre-collapses, the label is outlet-determined
-      (confirmed across two models); if it recovers the gold, politicalBiasBERT was the
-      problem. GPU, ~1 min; awaiting the run. The practical fix — use the outlet — is unchanged
-      either way.)_
+      *article* label from text. **Then `# 7g`/`# 7h` at ≤512 tok refined it a THIRD time:**
+      politicalBiasBERT stays near-chance with the body (κ 0.001, identical 256 vs 512 — Qbias
+      ships short excerpts, so 512 added no text), but a **2nd model, premsa, does better with
+      the body** (Spearman **0.081→0.221**, side-only κ **0.05→0.30**). So the disambiguation
+      answer is **both, partially**: text is *not* signal-free (premsa gets a weak-but-real
+      signal), part of the extreme near-zero was a **politicalBiasBERT miscalibration**, and for
+      premsa the headline *was* a limiter. Net: **text-lean is a *weak, model-sensitive* proxy**
+      (best Spearman ~0.22 vs human gold), and the **outlet-lean** join dwarfs it — **κ = 0.841 /
+      side-only κ = 1.000 / Spearman 0.918** (~4× the best text model) at 45 % coverage — so the
+      outlet-first conclusion **holds and sharpens**. All runs done; folded into RESULTS.md /
+      PAPER.md / paper.tex; validate_qbias docstring + CAVEAT + `# 7g`/`# 7h` cells corrected.
 - [x] **Automated convergent validity (LLM second opinion) — built AND run.**
       `examples/llm_label.py` labels the blind template with a second model
       (`--provider gemini`, **free** via Google AI Studio, default — or `--provider
@@ -208,8 +209,11 @@ A prioritized split of the project's limitations by *how* they resolve. Full sta
 - [ ] **Firm up the behavioral axis** — label more than the current **n=20** subreddits to
       tighten `lean_corr = 0.57 ± 0.19`.
 - [ ] **Generality of the ideological half** — add a **2nd news corpus** beyond US-2019.
-- [ ] **Qbias "labels vs classifier?"** — run `# 7h` (2nd AllSides model, premsa; built,
-      pending) + optionally a long-context model.
+- [x] **Qbias "labels vs classifier?" — RAN (`# 7h`).** Answer is *both, partially*: a 2nd
+      AllSides model (premsa) gets Spearman 0.22 with the body (vs politicalBiasBERT's ~0), so
+      text carries a **weak** signal and politicalBiasBERT was partly miscalibrated — but even
+      the better model is ~4× below the outlet, so outlet-first holds. (A long-context model
+      would firm up the "how much is really in the text" ceiling, but low priority.)
 - [ ] **Return/retention signal** (inconclusive, 3-file window) — a **longer Politosphere window**.
 - [ ] **Register/emotion synthetic-or-noisy; Source Diversity n/a on MIND** — run the real
       classifiers on real full text / use a corpus with outlets (the sim already fills Source Div).

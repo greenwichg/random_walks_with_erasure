@@ -16,24 +16,24 @@ the outlet branch that was 409-blocked on MIND, working here because Qbias carri
 (Baly et al. 2020), and Qbias is AllSides-sourced, so agreement here shares labeling
 methodology (and possibly some articles).
 
-**What the run actually shows (n=3000, 2026-07-02).** Even in-distribution, the classifier
-collapses to centre and lands at near-chance -- and it does so at **any input length**:
+**What the run actually shows (n=3000, 2026-07-02).** In-distribution, text-lean is a
+**weak, model-sensitive** proxy vs the human AllSides label -- two AllSides-trained models
+differ sharply:
 
-* headline only                       : Cohen's kappa ~0.007, Spearman ~0.02, ~96 % centre;
-* headline + body's first 256 tokens (``--use-text``): kappa ~0.001, Spearman ~0.065, ~71 % centre.
+* politicalBiasBERT : near-chance at every length (headline kappa ~0.007; body ~0.001,
+  Spearman ~0.065 -- identical at 256 and 512 tokens, because Qbias ships short excerpts);
+* premsa (2nd model): near-chance on the headline (Spearman ~0.08) but reaches Spearman
+  **~0.22** / side-only kappa **~0.30** *with the body* -- weak, but clearly non-zero.
 
-So this is **not** domain shift (it is in-distribution) and **not** headline length either
-(15x more text barely helps). This AllSides-trained classifier simply does not recover the
-AllSides *article* label from text. The **outlet-lean** join, by contrast, recovers the same
-gold near-perfectly (kappa ~0.84, side-only ~1.0): the lean lives in the **publisher**, not
-the words -- an AllSides label that is largely outlet-determined, which a text model (seeing
-only the article) cannot recover. Hence the outlet-first hybrid is the fix. (Whether the deep
-cause is "AllSides labels are outlet-determined" or "politicalBiasBERT is miscalibrated to
-Qbias" we cannot separate here; the practical implication -- use the outlet, not the text --
-is the same. NB ``--use-text`` feeds the classifier the first ``--max-length`` tokens
-(default **256**; raise to the model's max, 512 for BERT); either way that is the article's
-*opening*, not the whole body for long pieces -- but still ~15x a headline, and it did not
-help.)
+So (a) text is **not** signal-free -- a better model extracts a faint lean from the body;
+(b) part of politicalBiasBERT's extreme near-zero is **model miscalibration**, not purely
+"the label isn't in the text"; and (c) for premsa the headline *was* a limiter. But even the
+better model is faint. The **outlet-lean** join dwarfs both: it recovers the same gold at
+kappa ~0.84 / Spearman ~0.92 / side-only ~1.0 -- **~4x** the best text model -- so the lean
+lives far more in the **publisher** than the words, and the outlet-first hybrid is the fix.
+(NB ``--use-text`` feeds the first ``--max-length`` tokens, default **256**, up to BERT's
+512; on Qbias the excerpts are short so 512 ~ 256 -- a true full-article test would need a
+long-context model.)
 
     # download the CSV once from github.com/irgroup/Qbias, then (GPU recommended):
     python examples/validate_qbias.py --csv allsides_balanced_news_headlines-texts.csv \
@@ -188,15 +188,16 @@ def run(csv_path, score_fn=None, lean_csv=None, model="bucketresearch/politicalB
     cond = (f"headline + article body, first {max_length} tokens (--use-text)" if use_text
             else "HEADLINE ONLY — MIND's condition")
     lines.append(
-        f"CAVEAT: IN-DISTRIBUTION, scored on {cond}. politicalBiasBERT is AllSides-trained "
-        "(Baly 2020) and Qbias is AllSides-sourced, so this shares labeling method (possibly "
-        "articles). NB the classifier lands at near-chance and collapses to centre at BOTH "
-        "input lengths (headline kappa ~0.007; body's first 256 tok ~0.001) — so the weak text-lean axis "
-        "is NOT domain shift and NOT headline length: this model just does not recover the "
-        "AllSides article label from text. The OUTLET-lean number shows the lean lives in the "
-        "publisher (kappa ~0.84) — a largely outlet-determined label — which is why the "
-        "outlet-first hybrid is the fix. (The MIND kappa=0.14 is classifier-vs-classifier; this "
-        "is classifier-vs-human-gold — different references, not directly comparable.)")
+        f"CAVEAT: IN-DISTRIBUTION, scored on {cond}. This model ({model}) is AllSides-trained "
+        "and Qbias is AllSides-sourced, so this shares labeling method (possibly articles). NB "
+        "across two AllSides models, text-lean is a WEAK, MODEL-SENSITIVE proxy vs human gold: "
+        "politicalBiasBERT is near-chance (kappa ~0.007 headline / ~0.001 body), while premsa "
+        "reaches only Spearman ~0.22 with the body — so part of the near-zero is model "
+        "miscalibration, not purely 'the label isn't in the text' (and Qbias ships short "
+        "excerpts, so 512 tok ~ 256). Either way the OUTLET-lean number (Spearman ~0.92, kappa "
+        "~0.84) DWARFS the best text model (~4x), which is why the outlet-first hybrid is the "
+        "fix. (The MIND kappa=0.14 is classifier-vs-classifier; this is classifier-vs-human-gold "
+        "— different references.)")
     return "\n".join(lines)
 
 
