@@ -64,18 +64,20 @@ def _corpus(tmp_path):
 
 def test_read_engagement_keeps_fields_and_filters(tmp_path):
     files = _corpus(tmp_path)
-    a, pos, score, month, is_reply, fields = sp.read_engagement(files, SUB_POS)
+    a, pos, score, month, is_reply, contro, fields = sp.read_engagement(files, SUB_POS)
     assert a.size == 13                                  # 7 L1 + 4 R1 + 2 C1; noise dropped
-    assert fields == {"score": True, "created_utc": True, "parent_id": True}
+    assert fields == {"score": True, "created_utc": True, "parent_id": True,
+                      "controversiality": False}         # corpus carries no controversiality
     # the t1_ comments are flagged replies; t3_ are not
     assert is_reply.sum() == 3                            # 2 L1-cross + 1 R1-cross
+    assert contro.shape == a.shape and np.isnan(contro).all()   # absent field -> all nan
     assert "AskReddit" not in [s for s in a]             # unpositioned sub excluded by sub_pos
 
 
 def test_probe_classifies_cross_vs_same_and_aggregates(tmp_path):
     files = _corpus(tmp_path)
-    a, pos, score, month, is_reply, _ = sp.read_engagement(files, SUB_POS)
-    res = sp.probe(a, pos, score, month, is_reply, sub_tau=0.5, user_tau=0.3)
+    a, pos, score, month, is_reply, contro, _ = sp.read_engagement(files, SUB_POS)
+    res = sp.probe(a, pos, score, month, is_reply, contro=contro, sub_tau=0.5, user_tau=0.3)
     s = res["summary"]
     assert s["n_users"] == 3 and s["n_sided"] == 2       # C1 has no side
     assert s["n_with_cross"] == 2                         # L1 and R1 both cross-cut
@@ -97,12 +99,45 @@ def test_min_score_threshold_excludes_default_plus_one(tmp_path):
             {"author": "L1", "subreddit": "Conservative", "score": 1, "parent_id": "t1_b"}]
     p = tmp_path / "comments_2016-09.bz2"
     _write(p, rows)
-    a, pos, score, month, is_reply, _ = sp.read_engagement([str(p)], SUB_POS)
+    a, pos, score, month, is_reply, _c, _ = sp.read_engagement([str(p)], SUB_POS)
     default = sp.probe(a, pos, score, month, is_reply)                # min_score=1 (default)
     assert default["summary"]["min_score"] == 1
     assert default["summary"]["cross_upvoted_frac"] == 0.0           # score-1 comment doesn't count
     legacy = sp.probe(a, pos, score, month, is_reply, min_score=0)    # old score>0 behaviour
     assert legacy["summary"]["cross_upvoted_frac"] == 1.0            # now it counts
+
+
+def test_controversiality_hardens_welcomed_and_reports_fraction(tmp_path):
+    # L1 is LEFT (6 socialism vs 3 Conservative -> mean < 0), so the 3 Conservative
+    # comments are cross-cutting; all upvoted (score 5) but ONE is controversiality-flagged,
+    # so welcomed (upvoted AND not controversial) drops below upvoted.
+    rows = ([{"author": "L1", "subreddit": "socialism", "score": 5, "parent_id": "t3_a"}
+             for _ in range(6)]
+            + [{"author": "L1", "subreddit": "Conservative", "score": 5, "parent_id": "t1_b",
+                "controversiality": 0},
+               {"author": "L1", "subreddit": "Conservative", "score": 5, "parent_id": "t1_b",
+                "controversiality": 0},
+               {"author": "L1", "subreddit": "Conservative", "score": 5, "parent_id": "t1_b",
+                "controversiality": 1}])
+    p = tmp_path / "comments_2016-09.bz2"
+    _write(p, rows)
+    a, pos, score, month, is_reply, contro, fields = sp.read_engagement([str(p)], SUB_POS)
+    assert fields["controversiality"] is True
+    s = sp.probe(a, pos, score, month, is_reply, contro=contro)["summary"]
+    assert s["has_controversiality"] is True
+    assert s["cross_upvoted_frac"] == 1.0                # all 3 upvoted
+    assert abs(s["cross_welcomed_frac"] - 2 / 3) < 1e-9  # the flagged one is not "welcomed"
+    assert abs(s["cross_controversial_frac"] - 1 / 3) < 1e-9
+    assert "welcomed" in sp.format_summary(s, fields)
+
+
+def test_welcomed_equals_upvoted_when_controversiality_absent(tmp_path):
+    files = _corpus(tmp_path)                             # corpus has no controversiality field
+    a, pos, score, month, is_reply, contro, _ = sp.read_engagement(files, SUB_POS)
+    s = sp.probe(a, pos, score, month, is_reply, contro=contro)["summary"]
+    assert s["has_controversiality"] is False
+    assert s["cross_welcomed_frac"] == s["cross_upvoted_frac"]   # no exclusions applied
+    assert np.isnan(s["cross_controversial_frac"])              # unknown -> n/a
 
 
 def test_verdict_flags_flamewar_and_missing_score():
@@ -121,8 +156,9 @@ def test_missing_score_field_degrades_gracefully(tmp_path):
             {"author": "L1", "subreddit": "socialism"}]
     p = tmp_path / "comments_2016-09.bz2"
     _write(p, rows)
-    a, pos, score, month, is_reply, fields = sp.read_engagement([str(p)], SUB_POS)
-    assert fields == {"score": False, "created_utc": False, "parent_id": False}
-    res = sp.probe(a, pos, score, month, is_reply)
+    a, pos, score, month, is_reply, contro, fields = sp.read_engagement([str(p)], SUB_POS)
+    assert fields == {"score": False, "created_utc": False, "parent_id": False,
+                      "controversiality": False}
+    res = sp.probe(a, pos, score, month, is_reply, contro=contro)
     assert np.isnan(res["summary"]["cross_upvoted_frac"])   # no reception signal
     assert "not measurable" in sp._verdict(res["summary"])

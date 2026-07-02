@@ -38,6 +38,19 @@ def test_measured_exposure_respects_min_cross():
     assert exp[0] == 0.5 and not measured[0]                       # too few cross comments
 
 
+def test_measured_exposure_prefers_welcomed_over_upvoted():
+    rows = {
+        "a": {"cross_n": "5", "cross_upvoted_frac": "0.90",       # hardened column present ->
+              "cross_welcomed_frac": "0.60"},                     #   use welcomed (0.60)
+        "b": {"cross_n": "5", "cross_upvoted_frac": "0.80"},      # old CSV -> fall back to upvoted
+        "c": {"cross_n": "5", "cross_upvoted_frac": "0.70",       # welcomed blank -> fall back
+              "cross_welcomed_frac": ""},
+    }
+    exp, measured = asat.measured_exposure(rows, ["a", "b", "c"], min_cross=1)
+    assert np.allclose(exp, [0.60, 0.80, 0.70])
+    assert list(measured) == [True, True, True]
+
+
 def test_opposite_reach_rewards_higher_ranked_opposite():
     class _Fake:
         def __init__(self, R):

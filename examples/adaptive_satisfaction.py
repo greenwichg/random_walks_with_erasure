@@ -2,7 +2,8 @@
 satisfaction probe), not a simulated browsing walk.
 
 The pipeline: ``satisfaction_probe.csv`` gives, per user, how *welcomed* their real
-cross-cutting comments were (``cross_upvoted_frac`` in [0,1]). That is a measured
+cross-cutting comments were (``cross_welcomed_frac`` = upvoted AND not controversial, or
+``cross_upvoted_frac`` on older CSVs, in [0,1]). That is a measured
 *tolerance* signal — we map it straight to ``AdaptiveRWEB``'s per-user ``exposure``, so a
 user the data says tolerates cross-cutting (their bridges got upvoted) receives a stronger
 bridging dose, and a user who got downvoted gets a gentler one. The dose is now
@@ -37,10 +38,11 @@ def read_probe_csv(path: str) -> dict:
 
 
 def measured_exposure(rows: dict, user_ids, min_cross: int = 1, default: float = 0.5):
-    """Per-user exposure in [0,1] aligned to ``user_ids``: a user's measured
-    ``cross_upvoted_frac`` (how welcomed their cross-cutting was) when they have
-    >= ``min_cross`` cross-cutting comments, else the neutral ``default`` (no signal).
-    Returns ``(exposure, measured_mask)``."""
+    """Per-user exposure in [0,1] aligned to ``user_ids``: a user's measured reception of
+    their cross-cutting comments when they have >= ``min_cross`` of them, else the neutral
+    ``default`` (no signal). Prefers the **hardened** ``cross_welcomed_frac`` (upvoted AND
+    not controversiality-flagged) the probe now writes, falling back to
+    ``cross_upvoted_frac`` for older CSVs. Returns ``(exposure, measured_mask)``."""
     ids = [str(u) for u in user_ids]
     exp = np.full(len(ids), float(default), dtype=float)
     measured = np.zeros(len(ids), dtype=bool)
@@ -48,7 +50,7 @@ def measured_exposure(rows: dict, user_ids, min_cross: int = 1, default: float =
         r = rows.get(u)
         if not r:
             continue
-        uf = r.get("cross_upvoted_frac", "")
+        uf = r.get("cross_welcomed_frac") or r.get("cross_upvoted_frac", "")
         try:
             if int(r.get("cross_n", 0)) >= min_cross and uf not in ("", None):
                 exp[i], measured[i] = float(uf), True

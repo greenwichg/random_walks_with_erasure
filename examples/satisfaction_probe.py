@@ -8,10 +8,15 @@ carries a usable substitute. For each user we find their **cross-cutting** comme
 side) and measure the engagement quality the simulation only guesses at:
 
 * **reception** -- comment ``score`` (net upvotes). A cross-cutting comment counts as
-  *welcomed* when ``score > --min-score`` (default 1): a fresh Reddit comment starts at
+  *upvoted* when ``score > --min-score`` (default 1): a fresh Reddit comment starts at
   the author's auto +1, so ``score > 1`` requires at least one *external* net upvote, not
   merely that nobody downvoted it. Heavily downvoted comments are a *flame war* -- the key
-  confound this probe exists to rule out.
+  confound this probe exists to rule out. A stricter **welcomed** signal additionally drops
+  comments flagged ``controversiality`` (substantial up *and* down votes): a contested
+  comment that merely won on balance isn't a clean welcome. So ``welcomed = score >
+  --min-score AND not controversial`` -- the hardened reception metric the closed loop
+  prefers when the field is present. The **controversial fraction** is reported alongside
+  as a flame-war gauge.
 * **depth** -- fraction of the user's cross-cutting comments that are themselves *replies*
   (``parent_id`` begins ``t1_``), i.e. the user joined a back-and-forth rather than a
   drive-by. NB this counts replies the user *made*, NOT replies they *received*: a dogpile
@@ -80,11 +85,12 @@ def read_engagement(files, sub_pos: dict, limit=None):
     """Stream comments in *positioned* subreddits, keeping the engagement fields.
 
     ``sub_pos`` maps subreddit name -> validated-axis position. Returns parallel
-    arrays ``(author, pos, score, month, is_reply)`` plus a ``fields`` dict marking
-    which optional Pushshift fields were actually present (so the caller can report
-    what is measurable)."""
-    authors, pos, score, month, is_reply = [], [], [], [], []
-    seen = {"score": 0, "created_utc": 0, "parent_id": 0}
+    arrays ``(author, pos, score, month, is_reply, controversiality)`` plus a ``fields``
+    dict marking which optional Pushshift fields were present (so the caller can report
+    what is measurable). ``controversiality`` is Reddit's flag (1 = substantial up *and*
+    down votes -> a contested reception, not a clean welcome); ``nan`` where absent."""
+    authors, pos, score, month, is_reply, contro = [], [], [], [], [], []
+    seen = {"score": 0, "created_utc": 0, "parent_id": 0, "controversiality": 0}
     n = 0
     for path in files:
         opener = bz2.open if str(path).endswith(".bz2") else open
@@ -101,14 +107,17 @@ def read_engagement(files, sub_pos: dict, limit=None):
                 if not a or not s or a in _SKIP_AUTHORS or s not in sub_pos:
                     continue
                 sc, cu, pid = o.get("score"), o.get("created_utc"), o.get("parent_id")
+                cv = o.get("controversiality")
                 seen["score"] += sc is not None
                 seen["created_utc"] += cu is not None
                 seen["parent_id"] += pid is not None
+                seen["controversiality"] += cv is not None
                 authors.append(a)
                 pos.append(sub_pos[s])
                 score.append(np.nan if sc is None else float(sc))
                 month.append(_month_code(cu))
                 is_reply.append(bool(pid) and str(pid).startswith("t1_"))
+                contro.append(np.nan if cv is None else float(cv))
                 n += 1
                 if limit and n >= limit:
                     break
@@ -117,7 +126,7 @@ def read_engagement(files, sub_pos: dict, limit=None):
     fields = {k: (v > 0) for k, v in seen.items()}
     return (np.asarray(authors, dtype=object), np.asarray(pos, dtype=float),
             np.asarray(score, dtype=float), np.asarray(month, dtype=np.int64),
-            np.asarray(is_reply, dtype=bool), fields)
+            np.asarray(is_reply, dtype=bool), np.asarray(contro, dtype=float), fields)
 
 
 def _distinct_months(codes, months, n_users) -> np.ndarray:
@@ -130,13 +139,19 @@ def _distinct_months(codes, months, n_users) -> np.ndarray:
     return np.bincount(u, minlength=n_users).astype(float)
 
 
-def probe(authors, pos, score, month, is_reply, *, sub_tau=0.5, user_tau=0.3, min_score=1):
+def probe(authors, pos, score, month, is_reply, *, sub_tau=0.5, user_tau=0.3, min_score=1,
+          contro=None):
     """Classify each comment as same-/cross-side of the user's own side and aggregate
     per-user engagement. A comment counts as *upvoted* iff ``score > min_score`` (default
-    1: a fresh comment sits at the author's auto +1, so >1 needs a real external upvote).
-    Returns a dict of per-user arrays + population summary."""
+    1: a fresh comment sits at the author's auto +1, so >1 needs a real external upvote),
+    and *welcomed* iff it is upvoted AND not ``controversiality``-flagged (a contested,
+    up-and-down-voted comment isn't a clean welcome). ``contro`` (per-comment, ``nan`` where
+    the field is absent) enables the welcomed / controversial metrics; without it they are
+    ``nan`` and everything else is unchanged. Returns per-user arrays + population summary."""
     users, codes = np.unique(authors, return_inverse=True)
     n_users = users.size
+    if contro is None:
+        contro = np.full(np.asarray(score).shape, np.nan)
     cnt = np.bincount(codes, minlength=n_users).astype(float)
     user_mean = np.bincount(codes, weights=pos, minlength=n_users) / np.maximum(cnt, 1)
     user_side = np.where(np.abs(user_mean) >= user_tau, np.sign(user_mean), 0)
@@ -148,11 +163,18 @@ def probe(authors, pos, score, month, is_reply, *, sub_tau=0.5, user_tau=0.3, mi
 
     def agg(mask):
         c = np.bincount(codes[mask], minlength=n_users).astype(float)
-        sc = score[mask]
+        sc, cv = score[mask], contro[mask]
         fin = np.isfinite(sc)
         ssum = np.bincount(codes[mask][fin], weights=sc[fin], minlength=n_users)
         sfin = np.bincount(codes[mask][fin], minlength=n_users).astype(float)
         spos = np.bincount(codes[mask][fin], weights=(sc[fin] > min_score).astype(float),
+                           minlength=n_users)
+        # welcomed = upvoted AND not controversial (nan controversiality -> not controversial)
+        swel = np.bincount(codes[mask][fin], minlength=n_users,
+                           weights=((sc[fin] > min_score) & ~(cv[fin] > 0)).astype(float))
+        kc = np.isfinite(cv)                              # comments with a known contro flag
+        ckn = np.bincount(codes[mask][kc], minlength=n_users).astype(float)
+        ccon = np.bincount(codes[mask][kc], weights=(cv[kc] > 0).astype(float),
                            minlength=n_users)
         rep = np.bincount(codes[mask], weights=is_reply[mask].astype(float),
                           minlength=n_users)
@@ -161,6 +183,10 @@ def probe(authors, pos, score, month, is_reply, *, sub_tau=0.5, user_tau=0.3, mi
                                               where=sfin > 0),
                     upvoted_frac=np.divide(spos, sfin, out=np.full(n_users, np.nan),
                                            where=sfin > 0),
+                    welcomed_frac=np.divide(swel, sfin, out=np.full(n_users, np.nan),
+                                            where=sfin > 0),
+                    controversial_frac=np.divide(ccon, ckn, out=np.full(n_users, np.nan),
+                                                 where=ckn > 0),
                     reply_frac=np.divide(rep, c, out=np.full(n_users, np.nan),
                                          where=c > 0),
                     months=mon)
@@ -174,9 +200,13 @@ def probe(authors, pos, score, month, is_reply, *, sub_tau=0.5, user_tau=0.3, mi
         cross_share_of_sided=float(has_cross.sum() / max(has_side.sum(), 1)),
         # the flame-war check: of *all* cross-cutting comments, what fraction upvoted?
         cross_comments=int(cross.sum()), same_comments=int(same.sum()),
-        min_score=int(min_score),
+        min_score=int(min_score), has_controversiality=bool(np.isfinite(contro).any()),
         cross_upvoted_frac=_frac_pos(score[cross], min_score),
         same_upvoted_frac=_frac_pos(score[same], min_score),
+        cross_welcomed_frac=_frac_welcomed(score[cross], contro[cross], min_score),
+        same_welcomed_frac=_frac_welcomed(score[same], contro[same], min_score),
+        cross_controversial_frac=_frac_controversial(contro[cross]),
+        same_controversial_frac=_frac_controversial(contro[same]),
         cross_median_score=_median(score[cross]),
         same_median_score=_median(score[same]),
         cross_reply_frac=float(np.nanmean(is_reply[cross])) if cross.any() else float("nan"),
@@ -190,6 +220,24 @@ def probe(authors, pos, score, month, is_reply, *, sub_tau=0.5, user_tau=0.3, mi
 def _frac_pos(a, min_score=1):
     a = a[np.isfinite(a)]
     return float((a > min_score).mean()) if a.size else float("nan")
+
+
+def _frac_welcomed(score, contro, min_score=1):
+    """Fraction upvoted (``score > min_score``) AND *not* controversial (nan controversiality
+    counts as non-controversial), over the comments with a finite score."""
+    score, contro = np.asarray(score, dtype=float), np.asarray(contro, dtype=float)
+    fin = np.isfinite(score)
+    s, c = score[fin], contro[fin]
+    if s.size == 0:
+        return float("nan")
+    return float(((s > min_score) & ~(c > 0)).mean())
+
+
+def _frac_controversial(contro):
+    """Fraction flagged controversial, over comments with a *known* controversiality."""
+    c = np.asarray(contro, dtype=float)
+    c = c[np.isfinite(c)]
+    return float((c > 0).mean()) if c.size else float("nan")
 
 
 def _median(a):
@@ -218,18 +266,27 @@ def format_summary(s: dict, fields: dict) -> str:
     L = ["SATISFACTION PROBE — measured opposite-side engagement (validated axis)",
          "=" * 68,
          f"fields present:  score={fields['score']}  created_utc={fields['created_utc']}"
-         f"  parent_id={fields['parent_id']}",
+         f"  parent_id={fields['parent_id']}  controversiality={fields.get('controversiality', False)}",
          f"users with a clear side: {s['n_sided']}/{s['n_users']}   "
          f"of those, {s['cross_share_of_sided']*100:.0f}% have >=1 cross-cutting comment",
          f"cross-cutting comments: {s['cross_comments']:,}    same-side: {s['same_comments']:,}",
          "",
          "                          cross-cutting     same-side",
          f"  median comment score   {s['cross_median_score']:>10.2f}    {s['same_median_score']:>10.2f}",
-         f"  upvoted (score>{s.get('min_score', 1)})       {s['cross_upvoted_frac']*100:>9.0f}%    {s['same_upvoted_frac']*100:>9.0f}%",
-         f"  reply (in-thread) frac  {s['cross_reply_frac']*100:>9.0f}%    {s['same_reply_frac']*100:>9.0f}%",
-         f"  return (distinct months){s['cross_return_median']:>10.1f}    {s['same_return_median']:>10.1f}",
-         "",
-         "VERDICT: " + _verdict(s)]
+         f"  upvoted (score>{s.get('min_score', 1)})       {s['cross_upvoted_frac']*100:>9.0f}%    {s['same_upvoted_frac']*100:>9.0f}%"]
+    if s.get("has_controversiality"):
+        L.append(f"  controversial (up&down){s['cross_controversial_frac']*100:>10.0f}%    "
+                 f"{s['same_controversial_frac']*100:>9.0f}%")
+        L.append(f"  welcomed (up&non-contr){s['cross_welcomed_frac']*100:>10.0f}%    "
+                 f"{s['same_welcomed_frac']*100:>9.0f}%")
+    L += [f"  reply (in-thread) frac  {s['cross_reply_frac']*100:>9.0f}%    {s['same_reply_frac']*100:>9.0f}%",
+          f"  return (distinct months){s['cross_return_median']:>10.1f}    {s['same_return_median']:>10.1f}",
+          ""]
+    if s.get("has_controversiality"):
+        L.append("NOTE: 'welcomed' = upvoted AND not controversiality-flagged -- the "
+                 "hardened reception signal (a contested up-and-down-voted comment isn't a "
+                 "clean welcome). This is what the closed loop uses when the column is present.")
+    L.append("VERDICT: " + _verdict(s))
     return "\n".join(L)
 
 
@@ -262,34 +319,38 @@ def main():
 
     files = _comment_files(args.comments_dir, args.pattern)
     print(f"reading {len(files)} comment file(s) ...")
-    authors, p, score, month, is_reply, fields = read_engagement(
+    authors, p, score, month, is_reply, contro, fields = read_engagement(
         files, sub_pos, limit=args.limit)
     print(f"  {authors.size:,} comments in positioned subreddits")
     if authors.size == 0:
         print("no comments landed in positioned subreddits — wrong --npz/--comments-dir?")
         return
 
-    res = probe(authors, p, score, month, is_reply,
+    res = probe(authors, p, score, month, is_reply, contro=contro,
                 sub_tau=args.sub_tau, user_tau=args.user_tau, min_score=args.min_score)
     print("\n" + format_summary(res["summary"], fields))
 
     if args.out:
         import csv
         X, S = res["cross"], res["same"]
+
+        def _r(v):
+            return round(float(v), 3) if np.isfinite(v) else ""
+
         with open(args.out, "w", newline="", encoding="utf-8") as fh:
             w = csv.writer(fh)
             w.writerow(["user", "side", "cross_n", "cross_mean_score",
-                        "cross_upvoted_frac", "cross_reply_frac", "cross_months",
+                        "cross_upvoted_frac", "cross_welcomed_frac",
+                        "cross_controversial_frac", "cross_reply_frac", "cross_months",
                         "same_n", "same_mean_score"])
             for i, u in enumerate(res["users"]):
                 if res["user_side"][i] == 0:
                     continue
                 w.writerow([u, int(res["user_side"][i]), int(X["n"][i]),
-                            round(float(X["mean_score"][i]), 3) if np.isfinite(X["mean_score"][i]) else "",
-                            round(float(X["upvoted_frac"][i]), 3) if np.isfinite(X["upvoted_frac"][i]) else "",
-                            round(float(X["reply_frac"][i]), 3) if np.isfinite(X["reply_frac"][i]) else "",
-                            int(X["months"][i]), int(S["n"][i]),
-                            round(float(S["mean_score"][i]), 3) if np.isfinite(S["mean_score"][i]) else ""])
+                            _r(X["mean_score"][i]), _r(X["upvoted_frac"][i]),
+                            _r(X["welcomed_frac"][i]), _r(X["controversial_frac"][i]),
+                            _r(X["reply_frac"][i]), int(X["months"][i]), int(S["n"][i]),
+                            _r(S["mean_score"][i])])
         print(f"\nwrote per-user CSV -> {args.out}")
 
 

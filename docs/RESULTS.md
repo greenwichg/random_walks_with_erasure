@@ -230,8 +230,13 @@ reasons it is an upper bound: (i) **brigading** — `score` is *net* votes with 
 same-side vote support); and (ii) the legacy `score > 0` threshold counts a comment sitting
 at Reddit's **auto +1** — i.e. *ignored*, nobody engaged — as "upvoted," conflating
 *welcomed* with *unnoticed*. The probe now defaults to the stricter **`score > 1`**
-(`--min-score`, requiring a real external upvote), which a re-run would apply for a tighter
-estimate. The **return** dimension was **inconclusive** here (1.0 vs 1.0 distinct months —
+(`--min-score`, requiring a real external upvote) **and a hardened `welcomed` metric** =
+upvoted **and** not `controversiality`-flagged (Politosphere keeps Reddit's flag for
+comments with substantial up *and* down votes — a contested comment that merely won on
+balance isn't a clean welcome; the controversial fraction is reported alongside as a
+flame-war gauge, and the closed loop consumes `cross_welcomed_frac` when present). A re-run
+applies both for a tighter estimate. The **return** dimension was **inconclusive** here
+(1.0 vs 1.0 distinct months —
 the 3-file window is too short to separate them). So we report this as a *promising,
 measurable* signal that warrants wiring into `AdaptiveRWEB`, with the selection bias stated
 plainly — not as a settled effect.
