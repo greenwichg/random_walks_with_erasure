@@ -203,7 +203,19 @@ _MIND text-axis attempts, kept for the record:_
       served users carry a signal). Unit-tested. _(Caveats kept: self-selected + coarse
       per-user. Optional next: a longer comment window for the *return* metric.)_
 - [ ] Health-report polish (e.g. a "you vs the average reader" population view)
-- [ ] Health-report polish (e.g. a "you vs the average reader" population view)
+
+## Product PoC — SEPARATE from research (not paper evidence)
+
+- [x] **Agent-based synthetic-user simulator** — `examples/simulate_users.py` +
+      `notebooks/product_simulation.ipynb` + `docs/PRODUCT_SIMULATION.md` (unit-tested).
+      Real article catalog (Qbias gold lean + real outlets), **synthetic** agents with
+      independent traits (viewpoint / topic interests / openness / outlet trust / quality
+      pref / curiosity / activity / reading time / save-share-ignore); a choice model where
+      openness gates the ideology kernel (validated: open agents click more cross-cutting).
+      Emits a `MINDData` npz + per-user metrics + a probe-shaped CSV, so RWE eval / health
+      report / AI coach / closed loop all run end-to-end on synthetic traffic. **Strictly a
+      product stress-test / demo — NOT evidence** (RQ2 on synthetic clicks is circular by
+      construction). Health report's Source Diversity finally populates (real outlets).
 
 ---
 
