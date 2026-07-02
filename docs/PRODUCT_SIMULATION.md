@@ -63,7 +63,10 @@ simulate → eval → health report → AI coach → closed loop → user metric
 python examples/simulate_users.py --qbias allsides_balanced_news_headlines-texts.csv \
     --n-users 3000 --max-items 5000 --out-tag sim          # omit --qbias for a synthetic catalog
 python examples/eval_mind.py --npz sim_users.npz --no-bprmf
-python examples/health_report.py --npz sim_users.npz --sample 3 --require-political --html sim_health.html
+python examples/health_report.py --npz sim_users.npz --sample 3 --require-political \
+    --behaviors sim_behaviors.tsv --register-csv sim_register.csv --emotion-csv sim_emotion.csv \
+    --subject-label '(simulated) reading diet' \
+    --axis-note 'on the AllSides gold-lean axis (not text-inferred)' --html sim_health.html
 python examples/narrate_report.py --npz sim_users.npz
 python examples/adaptive_satisfaction.py --npz sim_users.npz --probe-csv sim_satisfaction_probe.csv
 ```
@@ -71,6 +74,12 @@ python examples/adaptive_satisfaction.py --npz sim_users.npz --probe-csv sim_sat
 On the sim catalog the health report's **Source Diversity populates** (real outlets) — the
 section MIND could never fill (MSN URLs) — alongside Topic Diversity, Viewpoint, and Echo on
 the gold axis: the most complete report in the project, as a *demo*.
+
+`--axis-note` matters here: the default "Balance & openness" caveat warns that the *MIND*
+political metrics rest on a **weak text-lean axis** (headline classifier, ~0.27 vs human
+labels). That caveat is **wrong for the sim** — its lean is **gold AllSides labels**, the
+strongest axis in the project — so we override it to say so, exactly as the `reddit` domain
+overrides it for the validated behavioural axis. Pass `--axis-note ''` to suppress the line.
 
 ## What it is and isn't
 

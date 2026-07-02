@@ -838,10 +838,19 @@ def main():
     ap.add_argument("--subject-label", default=None,
                     help="override the report's subject noun (e.g. 'reading diet (synthetic)') "
                          "so a non-MIND dataset is not mislabeled 'MSN-News reading'")
+    ap.add_argument("--axis-note", default=None,
+                    help="override the 'Balance & openness' caveat about which lean axis the "
+                         "political metrics rest on (default warns the MIND text-lean axis is "
+                         "weak). Pass e.g. 'on the AllSides gold-lean axis' when item_positions "
+                         "are gold labels, or '' to suppress the note entirely.")
     args = ap.parse_args()
     lab = dict(_LABELS[args.domain])                    # copy so an override can't mutate the preset
     if args.subject_label:
         lab["subject_bold"], lab["subject_tail"] = args.subject_label, ""
+    if args.axis_note is not None:                      # caller states the real axis (gold, etc.)
+        notes = dict(lab.get("section_notes", _SECTION_NOTES))   # copy so the preset isn't mutated
+        notes["Balance & openness"] = args.axis_note             # "" suppresses the caveat
+        lab["section_notes"] = notes
 
     mind = MINDData.load(args.npz)
     register = emotion = selective = confidence = None

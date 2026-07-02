@@ -82,6 +82,30 @@ def test_render_html(tmp_path):
     assert "weak text-lean axis" in html           # axis caveat on Balance & openness
 
 
+def test_axis_note_override_replaces_and_suppresses_caveat():
+    # The default "weak text-lean" caveat is MIND-specific; a caller on a gold axis
+    # (e.g. the Qbias-backed simulator) overrides it — mirrors main()'s --axis-note.
+    rep = dict(user=1, n_clicks=10, n_political=6,
+               scores={"Topic Diversity": 50, "Viewpoint Balance": 40,
+                       "Echo Chamber Score": 55, "Open-Mindedness": 61},
+               overall=51, attention=None, top_categories=[("news", 1.0)],
+               blind_spots=[], top_publishers=[("a", 1.0)], top_n_share=1.0,
+               effective_sources=1.0, distinct_outlets=1, viewpoint=(0.4, 0.2, 0.4),
+               mean_lean=0.0)
+    gold = dict(hr._LABELS["news"])                 # copy, like the CLI, so the preset is intact
+    gold["section_notes"] = {**hr._SECTION_NOTES, "Balance & openness": "on the gold axis"}
+    html = hr.render_html([rep], labels=gold)
+    assert "on the gold axis" in html and "weak text-lean" not in html
+    # empty string suppresses the note but keeps the section heading
+    quiet = dict(hr._LABELS["news"])
+    quiet["section_notes"] = {**hr._SECTION_NOTES, "Balance & openness": ""}
+    html2 = hr.render_html([rep], labels=quiet)
+    assert "weak text-lean" not in html2 and "on the gold axis" not in html2
+    assert "Balance &amp; openness" in html2 or "Balance & openness" in html2
+    # the shared preset dict was not mutated by either override
+    assert hr._SECTION_NOTES["Balance & openness"] == "rests on a weak text-lean axis — directional only"
+
+
 def test_eligible_pool_filters_by_political_floor():
     pop = {"n_clicks": np.array([10, 8, 3, 12]),   # idx 2 below click floor
            "n_pol":    np.array([5, 1, 9, 4])}

@@ -34,7 +34,8 @@ Outputs (all prefixed ``--tag`` = "sim"):
     python examples/eval_mind.py --npz sim_users.npz --no-bprmf
     python examples/health_report.py --npz sim_users.npz --sample 3 --require-political \\
         --behaviors sim_behaviors.tsv --register-csv sim_register.csv \\
-        --emotion-csv sim_emotion.csv --subject-label '(simulated) reading diet'
+        --emotion-csv sim_emotion.csv --subject-label '(simulated) reading diet' \\
+        --axis-note 'on the AllSides gold-lean axis (not text-inferred)'
     python examples/adaptive_satisfaction.py --npz sim_users.npz --probe-csv sim_satisfaction_probe.csv
 """
 
@@ -406,7 +407,8 @@ def main():
     print(f"  python examples/eval_mind.py --npz {tag}_users.npz --no-bprmf")
     print(f"  python examples/health_report.py --npz {tag}_users.npz --sample 3 --require-political \\\n"
           f"      --behaviors {tag}_behaviors.tsv --register-csv {tag}_register.csv "
-          f"--emotion-csv {tag}_emotion.csv --subject-label '(simulated) reading diet'")
+          f"--emotion-csv {tag}_emotion.csv --subject-label '(simulated) reading diet' \\\n"
+          f"      --axis-note 'on the AllSides gold-lean axis (not text-inferred)'")
     print(f"  python examples/adaptive_satisfaction.py --npz {tag}_users.npz "
           f"--probe-csv {tag}_satisfaction_probe.csv")
 
