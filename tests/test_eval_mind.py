@@ -77,3 +77,27 @@ def test_alignment_report_median_center_is_offset_robust():
     st_zero = em._alignment_report(_DS(M), theta, item_pos, center=0.0, verbose=False)
     assert st_med["expected_side"] == 1.0             # median split: all consistent
     assert st_med["expected_side"] > st_zero["expected_side"]   # fixes the offset artifact
+
+
+def test_cli_fails_fast_on_positionless_npz(tmp_path):
+    # An npz whose items all lack a finite position must exit with a clear message,
+    # not a numpy zero-size-reduction traceback (regression: empty/lean-less input).
+    import subprocess, sys
+    import scipy.sparse as sp
+    from rwe.data import Dataset
+    from rwe.mind import MINDData
+    m = sp.csr_matrix(np.ones((3, 4)))
+    d = MINDData(dataset=Dataset(m, [f"u{i}" for i in range(3)],
+                                 [f"n{i}" for i in range(4)]),
+                 categories=["news"] * 4, subcategories=["x"] * 4,
+                 titles=["t"] * 4, outlets=[""] * 4,
+                 political=np.ones(4, dtype=bool),
+                 item_positions=np.full(4, np.nan))
+    npz = tmp_path / "empty.npz"
+    d.save(str(npz))
+    r = subprocess.run([sys.executable, str(ROOT / "examples" / "eval_mind.py"),
+                        "--npz", str(npz), "--no-bprmf"],
+                       capture_output=True, text=True)
+    assert r.returncode != 0
+    assert "nothing to evaluate" in (r.stdout + r.stderr)
+    assert "zero-size" not in (r.stdout + r.stderr)          # the old crash

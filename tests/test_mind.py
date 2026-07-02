@@ -207,3 +207,18 @@ def test_save_load_roundtrip(mind, tmp_path):
     assert np.array_equal(d2.dataset.item_ids, mind.dataset.item_ids)
     np.testing.assert_array_equal(np.nan_to_num(d2.item_positions, nan=-99),
                                   np.nan_to_num(mind.item_positions, nan=-99))
+
+
+def test_ingest_cli_refuses_empty_dataset(tmp_path):
+    # --political-only with no lean source filters the fixture to nothing; the CLI
+    # must refuse to write the empty npz (regression: silent empty write).
+    import subprocess, sys
+    out = tmp_path / "empty.npz"
+    r = subprocess.run([sys.executable, str(FIX.parents[2] / "examples" / "ingest_mind.py"),
+                        "--mind-dir", str(FIX), "--political-only",
+                        "--min-user-clicks", "1", "--min-item-clicks", "1",
+                        "--out", str(out)],
+                       capture_output=True, text=True)
+    assert r.returncode != 0
+    assert "refusing to write an empty dataset" in (r.stdout + r.stderr)
+    assert not out.exists()

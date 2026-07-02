@@ -292,6 +292,12 @@ def main():
     dataset, theta, item_pos = d.recommender_inputs()
     if dataset.n_items < d.n_items:
         print(f"[note] kept {dataset.n_items}/{d.n_items} items with a known position")
+    if dataset.n_users == 0 or dataset.n_items == 0:
+        raise SystemExit(
+            f"nothing to evaluate: the npz has {d.n_users} users / {d.n_items} items, of which "
+            f"{dataset.n_items} carry a finite position. Re-ingest with positions (--ideology "
+            "or --positions-csv lean.csv) and/or looser filters (--min-user-clicks / "
+            "--min-item-clicks, drop --political-only).")
     print(f"users={dataset.n_users}  items={dataset.n_items}  clicks={dataset.matrix.nnz}"
           f"  position range=[{item_pos.min():.2f}, {item_pos.max():.2f}]"
           f"  seeds={args.seeds}\n")

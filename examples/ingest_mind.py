@@ -101,6 +101,13 @@ def main() -> None:
         print("\nFit ideology from click behaviour (standardised latent scale): "
               f"items={d.n_items}, users={d.n_users}, lean_corr={fit.lean_corr}")
 
+    if d.n_users == 0 or d.n_items == 0:
+        raise SystemExit(
+            f"\nrefusing to write an empty dataset ({d.n_users} users, {d.n_items} items) — "
+            "downstream eval would have nothing to score. Likely causes: --political-only "
+            "without any lean source (pass --positions-csv lean.csv, --source-map, or "
+            "--ideology), or filters too tight for this corpus (--min-user-clicks / "
+            "--min-item-clicks / --sample-users).")
     d.save(args.out)
     print(f"\nwrote {args.out}")
 
