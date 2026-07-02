@@ -847,7 +847,10 @@ def main():
     if args.confidence_csv:
         confidence = _load_item_csv(args.confidence_csv, mind.dataset.item_ids).get("confidence")
         if confidence is None:
-            print("--confidence-csv has no 'confidence' column; ignoring it")
+            print(f"NOTE: {args.confidence_csv} has no 'confidence' column (the old 2-column "
+                  "format) — viewpoint confidence-weighting + the axis-confidence line are "
+                  "OFF. Re-run classify_lean.py (notebook # 7) to regenerate it with the "
+                  "confidence column.")
     if args.behaviors:
         selective = selective_exposure_array(mind, args.behaviors)
     # the "source" axis for Source Diversity: publisher (default) or, for reddit, the
