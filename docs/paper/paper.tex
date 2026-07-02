@@ -179,7 +179,8 @@ on real data and the others in simulation.
   \item \textbf{Satisfaction-calibrated exposure} (\texttt{AdaptiveRWEB}): a
   per-user $\varepsilon$ set from a browsing-walk ``satisfaction'' signal, so
   low-tolerance users receive less opposite content. \emph{(The controller is
-  simulated, but the signal is now empirically motivated: on $14.7$\,M Politosphere
+  prototyped in simulation but also \textbf{closed on a real measured signal} on
+  Politosphere (Table~\ref{tab:loop}), and that signal is empirically motivated: on $14.7$\,M Politosphere
   comments, cross-cutting participation is rare ($9\%$ of sided users) yet mostly
   welcomed when it happens---$82\%$ net-upvoted vs.\ $95\%$ same-side, with a
   \emph{higher} reply rate ($73\%$ vs.\ $59\%$), i.e.\ engagement rather than
@@ -318,6 +319,46 @@ balanced. As with RQ3, the per-user reads inherit the axis's imperfections
 ($\mathrm{lean\_corr}{=}0.57\pm0.19$ over 5 seeds, $n{=}20$ labels) and are directional, not
 precise; but they make the recommender's diversification objective legible at the
 level of an individual reader.
+
+\paragraph{Closing the loop on real reception.} The satisfaction-calibrated
+controller of \S\ref{sec:method} (\texttt{AdaptiveRWEB}) is \emph{defined} on a
+simulated browsing walk; Politosphere lets us instead \emph{drive} it from a
+\emph{measured} per-user signal. We set each user's exposure---hence their bridging
+$\varepsilon$---from their \emph{hardened} cross-cutting reception
+(\texttt{cross\_welcomed\_frac}: a comment counts as welcomed only if it was upvoted
+\emph{and} not flagged controversial, so a comment the user's \emph{own} side merely
+vote-brigades up is not read as a welcome). On the validated-axis graph ($15$K served
+users, $52\%$ carrying a signal), against a uniform RWE-B at the \emph{same average dose}
+the measured-adaptive policy \emph{redistributes} rank-weighted opposite-content reach
+toward the readers whose real bridges were tolerated (Table~\ref{tab:loop}): adaptive
+reach rises monotonically across tolerance terciles ($0.35\!\to\!0.76\!\to\!1.29$) while
+the uniform policy does not track tolerance ($0.51/0.75/0.74$), giving low-tolerance
+readers a \emph{gentler} dose and high-tolerance readers a \emph{stronger} one
+($\mathrm{Spearman}(\text{tolerance},\text{reach}){=}{+}0.66$). The signal is
+self-selected (only crossover users carry it---an upper bound) and coarse per user, so we
+report this as a \emph{mechanism demonstration on real data}, not a settled satisfaction
+gain.
+
+\begin{table}[t]
+  \centering
+  \caption{Closing the loop on \emph{real} Politosphere reception. At the same average
+  dose, \texttt{AdaptiveRWEB} driven by \emph{measured} tolerance redistributes
+  rank-weighted opposite-content reach (top-10) toward readers whose real bridges were
+  welcomed, while a uniform policy does not ($\mathrm{Spearman}{=}{+}0.66$);
+  $n{\approx}1{,}334$ per tercile. Self-selected signal, so a mechanism demonstration,
+  not a satisfaction-gain claim.}
+  \label{tab:loop}
+  \small
+  \begin{tabular}{lcc}
+    \toprule
+    measured tolerance & adaptive reach & uniform reach \\
+    \midrule
+    low\ \,(0.00--0.29)  & \textbf{0.35} & 0.51 \\
+    mid\ \,(0.29--0.71)  & 0.76 & 0.75 \\
+    high (0.71--1.00)    & \textbf{1.29} & 0.74 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
 
 \subsection{RQ2 --- Ideological bridging (RWE-B)}
 \begin{table}[t]
