@@ -14,14 +14,25 @@ the outlet branch that was 409-blocked on MIND, working here because Qbias carri
 **IMPORTANT caveat -- this is IN-DISTRIBUTION, an *upper bound*.** The default classifier
 (``bucketresearch/politicalBiasBERT``) is itself trained on AllSides-sourced articles
 (Baly et al. 2020), and Qbias is AllSides-sourced, so agreement here shares labeling
-methodology (and possibly some articles). Its real value is as a **domain-shift control**:
-if the *same* classifier scores AllSides headlines well here but collapses to Cohen's
-kappa ~0.14 on MIND's MSN political slice (``examples/lean_agreement.py``), the MIND noise
-is domain / topic shift, not classifier incapacity -- an honest, defensible reading.
+methodology (and possibly some articles).
+
+**What the run actually shows (n=3000, 2026-07-02).** Even in-distribution, the classifier
+on the **headline only** collapses: Cohen's kappa ~0.007 vs the human L/C/R label, ~96 %
+predicted centre (Spearman ~0.02). So the headline-only ceiling is itself ~0. This was
+meant as a *domain-shift control* for MIND, but it does the opposite -- it shows the MIND
+axis is weak because a **bare headline** carries almost no recoverable lean for a model
+trained on full article bodies (it abstains to centre), *not* because MSN is out-of-domain.
+Pass ``--use-text`` to score headline + body (the true in-distribution ceiling; expected far
+higher) and isolate headline length as the bottleneck. The **outlet-lean** join, by
+contrast, recovers the same gold near-perfectly (kappa ~0.84, side-only ~1.0) -- the lean
+lives in the *publisher*, which is why the outlet-first hybrid is the fix.
 
     # download the CSV once from github.com/irgroup/Qbias, then (GPU recommended):
     python examples/validate_qbias.py --csv allsides_balanced_news_headlines-texts.csv \
         --lean-csv examples/data/outlet_lean.csv --limit 3000
+    # decisive follow-up -- score the full article body, not just the headline:
+    python examples/validate_qbias.py --csv allsides_balanced_news_headlines-texts.csv \
+        --lean-csv examples/data/outlet_lean.csv --limit 3000 --use-text
 """
 
 from __future__ import annotations
@@ -164,12 +175,17 @@ def run(csv_path, score_fn=None, lean_csv=None, model="bucketresearch/politicalB
             lines.append(_report_block("OUTLET-lean  vs  AllSides gold", ro))
         lines.append("")
 
-    lines.append("CAVEAT: IN-DISTRIBUTION / upper bound — politicalBiasBERT is AllSides-"
-                 "trained (Baly 2020) and Qbias is AllSides-sourced, so this shares labeling "
-                 "method (possibly articles). Read it as the classifier's CEILING on clean "
-                 "AllSides text and as the DOMAIN-SHIFT CONTROL for the MIND kappa=0.14: high "
-                 "here + low on MIND => the MIND axis noise is domain/topic shift, not the "
-                 "classifier failing.")
+    cond = ("headline + body — the true in-distribution ceiling" if use_text
+            else "HEADLINE ONLY — MIND's condition")
+    lines.append(
+        f"CAVEAT: IN-DISTRIBUTION / upper bound, scored on {cond}. politicalBiasBERT is "
+        "AllSides-trained (Baly 2020) and Qbias is AllSides-sourced, so this shares labeling "
+        "method (possibly articles). NB the observed headline-only ceiling is ~0 (kappa "
+        "~0.007, collapses to centre): a bare HEADLINE — not domain shift — is what makes the "
+        "MIND text-lean axis weak, so re-run with --use-text for the full-body ceiling. The "
+        "OUTLET-lean number shows the lean lives in the publisher (kappa ~0.84), which is why "
+        "the outlet-first hybrid is the fix. (The MIND kappa=0.14 is classifier-vs-classifier; "
+        "this is classifier-vs-human-gold — different references, not directly comparable.)")
     return "\n".join(lines)
 
 

@@ -121,13 +121,18 @@ _MIND text-axis attempts, kept for the record:_
       `examples/validate_qbias.py` scores the *same* classifier on Qbias (~21.7k
       AllSides-labeled articles, 4 expert annotators; Haak & Schaer 2023) and reports
       agreement with the human L/C/R label (Spearman / Cohen's κ / accuracy / confusion) +
-      an outlet-lean-vs-gold join (the branch 409-blocked on MIND, working here). **Caveat
-      baked into the docstring + output: IN-DISTRIBUTION / upper bound** — politicalBiasBERT
-      is AllSides-trained (Baly 2020), so it shares labeling method (possibly articles) with
-      Qbias. Its real role is the **domain-shift control**: high κ here + κ=0.14 on MIND ⇒ the
-      MIND noise is domain/topic shift, not the classifier failing. Refactored
+      an outlet-lean-vs-gold join (the branch 409-blocked on MIND, working here). Refactored
       `classify_lean.py` to expose `load_classifier`/`score_texts` so both use identical
-      scoring. Run `# 7g` (GPU) and paste the κ/accuracy to fold the number into RESULTS/paper.
+      scoring. **RAN it (2026-07-02, n=3000) — and it OVERTURNED the domain-shift hypothesis.**
+      The intended "high κ here + κ=0.14 on MIND ⇒ domain shift" reading is dead: headline-only
+      κ = **0.007** (Spearman 0.02, 20 % acc, collapses to centre — 2896/3000 predicted C),
+      even *in-distribution*. So the MIND axis is weak because a **bare headline** carries
+      almost no lean for an article-trained model, **not** because MSN is out-of-domain. The
+      **outlet-lean** join, by contrast, nails the gold: **κ = 0.841 / side-only κ = 1.000 /
+      90 % acc** at 45 % coverage — the lean lives in the *publisher*. Folded into RESULTS.md /
+      PAPER.md / paper.tex; docstring + printed CAVEAT corrected. **Pending:** run `# 7g` with
+      `--use-text` (full body) for the true in-distribution ceiling (predict κ jumps),
+      confirming *headline length*, not domain, is the bottleneck.
 - [x] **Automated convergent validity (LLM second opinion) — built AND run.**
       `examples/llm_label.py` labels the blind template with a second model
       (`--provider gemini`, **free** via Google AI Studio, default — or `--provider

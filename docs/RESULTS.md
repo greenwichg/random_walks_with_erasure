@@ -335,16 +335,31 @@ outcome, not a measured opinion change.
    **Spearman r = 0.27, Pearson 0.30, 75 % sign-agreement on the non-neutral
    items** — a *weak-but-positive* ideology proxy. So RQ3 reads are suggestive;
    a larger multi-rater gold set or true outlet-lean labels would firm it up.
-   A **large AllSides-gold check** exists via the **Qbias** dataset (~21.7k AllSides-labeled
-   articles, Haak & Schaer 2023; `examples/validate_qbias.py`): the *same* classifier scored
-   on AllSides headlines and compared to the human left/center/right label — the biggest gold
-   benchmark for the axis, far past the 40-headline set. Two honest reads: (i) it is
-   **in-distribution / an upper bound** — politicalBiasBERT is itself AllSides-trained
-   (Baly 2020), so it shares labeling method with Qbias; and (ii) more usefully it is a
-   **domain-shift control** — strong agreement on clean AllSides text next to Cohen's κ 0.14
-   on MIND's MSN slice would show the MIND noise is *domain / topic shift*, not classifier
-   incapacity. `validate_qbias.py` also runs the **outlet-lean** join against the same gold
-   (the branch 409-blocked on MIND), demonstrating the hybrid on a dataset where it works. (The
+   We then ran the **largest human-gold check available** via the **Qbias** dataset (~21.7k
+   AllSides-labeled articles, Haak & Schaer 2023; `examples/validate_qbias.py`), and the
+   result **overturns** the reading we had expected. Scored on **n = 3 000** AllSides articles
+   (`# 7g`), the *same* classifier on the **headline only** (MIND's condition) agrees with the
+   human L/C/R label at only **Cohen's κ = 0.007** (Spearman +0.02, 20 % accuracy, side-only
+   κ = 0.18): it **collapses to centre**, predicting "centre" for **2 896 / 3 000** articles.
+   This was meant as an *in-distribution upper bound* (politicalBiasBERT is itself
+   AllSides-trained, Baly 2020) — which makes the near-zero decisive: it **kills the earlier
+   "domain-shift control" hypothesis** (that strong agreement here beside κ 0.14 on MIND would
+   pin the MIND noise on domain shift). The headline ceiling is itself ~0, so the MIND axis is
+   weak **not because MSN is out-of-domain but because a bare headline carries almost no
+   recoverable lean** for a classifier trained on full article bodies — it abstains to centre.
+   (The decisive confirmation — `--use-text`, scoring the full body — is *pending*; prediction:
+   κ rises sharply, isolating *headline length*, not domain, as the bottleneck. Note the MIND
+   κ 0.14 was classifier-vs-*second-classifier*; this κ 0.007 is classifier-vs-*human gold* —
+   different references, so read it as the first honest human-gold number, not as "worse than
+   MIND".) The **outlet**, by contrast, all but *determines* the gold label: the **outlet-lean**
+   join (`examples/data/outlet_lean.csv`, the branch 409-blocked on MIND) predicts the same
+   AllSides gold at **Spearman +0.918, Cohen's κ = 0.841, 90 % accuracy, and side-only κ = 1.000**
+   (never confuses Left for Right) over the **45 %** of articles with a known outlet — so the
+   lean lives in the *publisher*, not the *headline text*, which is exactly why the outlet-first
+   hybrid is the right design. Honest caveat: `outlet_lean.csv` is AllSides-derived and Qbias
+   labels are AllSides-derived, so this substantially reflects that AllSides *article* labels
+   rarely cross their outlet's *house* lean (the labels are largely outlet-determined) — real
+   and useful (know the outlet ⇒ know the lean) but not a fully independent check. (The
    outlet-lean route was **tested and is blocked on MIND**: `examples/resolve_msn_publisher.py`
    fetches each article's real MSN snapshot to recover the original publisher, but every
    snapshot returns **HTTP 409** — a gated response a browser UA can't bypass (Microsoft
@@ -447,7 +462,12 @@ examples/validate_lean.py               # axis-quality number
 examples/plot_axis.py --npz mind_text.npz  # users + items on the L<->R scale
 ```
 
-_Last updated: 2026-06-30 (5-seed robustness on the behavioral axis: an 8-restart
+_Last updated: 2026-07-02 (Qbias human-gold check run, `# 7g`, n=3 000: headline-only
+text-lean vs AllSides gold is **κ = 0.007** — collapses to centre, 2 896/3 000 — while the
+**outlet-lean** join hits **κ = 0.841 / side-only κ = 1.000** at 45 % coverage; this
+overturns the "domain-shift control" reading — the bottleneck is the *headline*, not the
+domain, and the lean lives in the *outlet*. `--use-text` full-body check pending. Earlier:
+5-seed robustness on the behavioral axis: an 8-restart
 likelihood-selected ideal-point fit gives `lean_corr = 0.57 ± 0.19` (min 0.33, max 0.82)
 and removes the single-restart seed-collapse (which hit ~0 on 2/5 seeds); RQ3 bridging
 robust at `uw_shift` 1.97 ± 0.04, beating the best baseline 5/5. Earlier: Reddit
