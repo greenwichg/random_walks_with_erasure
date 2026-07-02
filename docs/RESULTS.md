@@ -241,29 +241,36 @@ the 3-file window is too short to separate them). So we report this as a *promis
 measurable* signal that warrants wiring into `AdaptiveRWEB`, with the selection bias stated
 plainly — not as a settled effect.
 
-**Closing the loop (`examples/adaptive_satisfaction.py`).** We then *drive* `AdaptiveRWEB`
-from this measured signal instead of the simulated browsing walk: each user's
-`cross_upvoted_frac` becomes their exposure, so their per-user bridging `epsilon` is set by
-how welcomed their real cross-cutting was (`epsilon ∈ [0.5, 0.95]`). On the validated-axis
-npz (15 K served users, **52 %** of them carrying a measured signal — active users cross
-over far more than the 9 % general rate), against a uniform RWE-B at the **same average
+**Closing the loop (`examples/adaptive_satisfaction.py`, `# 7b`).** We then *drive*
+`AdaptiveRWEB` from this measured signal instead of the simulated browsing walk: each user's
+**`cross_welcomed_frac`** — the *hardened* reception, counting a cross-cutting comment as
+welcomed only if it was **upvoted AND not flagged controversial** (Reddit's own
+up-and-down-vote flag, so a comment the user's *own* side merely brigades up no longer reads
+as a welcome; it falls back to the plain `cross_upvoted_frac` on an older probe CSV) —
+becomes their exposure, so their per-user bridging `epsilon` is set by how welcomed their
+real cross-cutting was (`epsilon ∈ [0.50, 0.95]`, uniform baseline `0.724`). On the
+validated-axis npz (15 K served users, **52 %** carrying a measured signal — active users
+cross over far more than the 9 % general rate), against a uniform RWE-B at the **same average
 dose** the adaptive policy **redistributes** the rank-weighted opposite-content reach by
-measured tolerance:
+measured tolerance (terciles, n ≈ 1,334 each):
 
 | measured tolerance | adaptive reach | uniform reach |
 |---|---|---|
-| low (got pushback) | **0.52** | 0.63 |
-| mid | 1.30 | 0.88 |
-| high (welcomed) | **1.38** | 0.80 |
+| low (0.00–0.29, got pushback) | **0.35** | 0.51 |
+| mid (0.29–0.71) | 0.76 | 0.75 |
+| high (0.71–1.00, welcomed) | **1.29** | 0.74 |
 
-The adaptive reach **rises monotonically** (0.52 → 1.30 → 1.38) while uniform stays flat —
-i.e. readers whose real bridges drew pushback get a *gentler* dose and those who were
-welcomed get a *stronger* one (`Spearman(tolerance, reach) = +0.61`). Two caveats keep it
-honest: the signal is **self-selected** (only crossover users carry it — an upper bound),
-and it is **coarse per user** (most have 1–2 cross-cutting comments, so the fraction is
-near 0 or 1; the policy mainly *spares those whose bridges drew pushback*). So this is the
-synthetic `AdaptiveRWEB` mechanism (Limitation 1) made to run on a **real** per-user signal
-— a *mechanism demonstration on real data*, not a satisfaction-gain claim.
+The adaptive reach **rises monotonically** with measured tolerance (0.35 → 0.76 → 1.29) while
+the uniform policy does not track it (0.51 → 0.75 → 0.74): at the same average dose the
+adaptive policy gives low-tolerance readers *less* opposite content than uniform would (0.35
+vs 0.51 — a gentler dose for those whose real bridges drew pushback) and high-tolerance
+readers *more* (1.29 vs 0.74 — a stronger dose for those who were welcomed),
+`Spearman(tolerance, reach) = +0.66`. Two caveats keep it honest: the signal is
+**self-selected** (only crossover users carry it — an upper bound), and it is **coarse per
+user** (most have 1–2 cross-cutting comments, so the fraction is near 0 or 1; the policy
+mainly *spares those whose bridges drew pushback*). So this is the synthetic `AdaptiveRWEB`
+mechanism (Limitation 1) made to run on a **real, hardened** per-user signal — a *mechanism
+demonstration on real data*, not a satisfaction-gain claim.
 
 ## RQ3 — ideological bridging (RWE-B)
 
@@ -466,7 +473,11 @@ _Last updated: 2026-07-02 (Qbias human-gold check run, `# 7g`, n=3 000: headline
 text-lean vs AllSides gold is **κ = 0.007** — collapses to centre, 2 896/3 000 — while the
 **outlet-lean** join hits **κ = 0.841 / side-only κ = 1.000** at 45 % coverage; this
 overturns the "domain-shift control" reading — the bottleneck is the *headline*, not the
-domain, and the lean lives in the *outlet*. `--use-text` full-body check pending. Earlier:
+domain, and the lean lives in the *outlet*. `--use-text` full-body check pending. Same day,
+the Politosphere closed loop (`# 7b`) re-ran on the **hardened** reception signal
+(`cross_welcomed_frac` = upvoted AND not controversial): adaptive opposite-content reach rises
+0.35 → 0.76 → 1.29 across tolerance terciles while uniform stays flat (0.51/0.75/0.74),
+`Spearman +0.66` (was +0.61 on the plain upvoted signal). Earlier:
 5-seed robustness on the behavioral axis: an 8-restart
 likelihood-selected ideal-point fit gives `lean_corr = 0.57 ± 0.19` (min 0.33, max 0.82)
 and removes the single-restart seed-collapse (which hit ~0 on 2/5 seeds); RQ3 bridging
