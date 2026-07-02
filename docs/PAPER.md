@@ -281,6 +281,22 @@ it.](images/opinion_dynamics.png)
    steer ideological exposure are dual-use; we frame this as *reducing* backfire and
    recommend deployment only with the kind of monitoring Stray (2021) proposes.
 
+### 7.1 Future work
+
+Each limitation above has a concrete resolution path. The weak text-lean axis is the
+clearest: on the same AllSides gold an **outlet** lookup recovers the label at **κ = 0.84**
+where the text classifier is near-chance, so an **outlet-first axis** — already demonstrated
+on Qbias — is the fix wherever publishers are recoverable (MIND's are gated behind MSN URLs,
+but most corpora ship them). The behavioral axis would firm up with more than **n = 20**
+labeled communities, and the ideological result would generalize with a **second news corpus**
+beyond US-2019. The reception and depolarization claims are self-selected and simulation-based
+by necessity; only a **deployment that recommends bridges to _random_ users** and measures real
+acceptance can replace the observational upper bound with a causal estimate — the natural next
+step, and the point at which the synthetic-user pipeline is swapped for real behaviour. The
+remaining constraints (MSN gating, the original private Twitter data, BERT's 512-token context,
+and data-redistribution licences) are external and are handled with public proxies and
+documented work-arounds.
+
 ## 8. Conclusion
 
 On real news-recommendation data, RWE-B bridges users across the political centre

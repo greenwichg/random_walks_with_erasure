@@ -194,6 +194,42 @@ _MIND text-axis attempts, kept for the record:_
 - [ ] **Advisor review** of the reproduced results + draft
 - [ ] **Pick the target venue** (workshop / short / reproducibility track) + format to it
 
+## Limitations → resolution roadmap (what can actually be fixed)
+
+A prioritized split of the project's limitations by *how* they resolve. Full statements:
+`docs/RESULTS.md` §Limitations and the paper's §Ethics/Limitations.
+
+**✅ Resolvable within the project (effort / compute / data-source — not new science):**
+- [ ] **Weak text-lean axis → outlet-first axis.** *Highest-leverage, already demonstrated.*
+      Qbias shows an outlet lookup hits **κ=0.84** vs AllSides gold where the text classifier is
+      near-chance (**κ≈0.007** headline, **0.001** at 256 tok). Adopt outlet-lean wherever
+      publishers are recoverable — blocked on MIND by the 409 gate, but works on any corpus that
+      ships outlets.
+- [ ] **Firm up the behavioral axis** — label more than the current **n=20** subreddits to
+      tighten `lean_corr = 0.57 ± 0.19`.
+- [ ] **Generality of the ideological half** — add a **2nd news corpus** beyond US-2019.
+- [ ] **Qbias "labels vs classifier?"** — run `# 7h` (2nd AllSides model, premsa; built,
+      pending) + optionally a long-context model.
+- [ ] **Return/retention signal** (inconclusive, 3-file window) — a **longer Politosphere window**.
+- [ ] **Register/emotion synthetic-or-noisy; Source Diversity n/a on MIND** — run the real
+      classifiers on real full text / use a corpus with outlets (the sim already fills Source Div).
+
+**🟡 Resolvable only via a real deployment (the product path — resolves as the MVP gets traffic):**
+- [ ] **Satisfaction self-selection** (82% is an *upper bound* — only the ~9% who already cross)
+      — needs an **A/B test** recommending bridges to *random* users for a causal reception estimate.
+- [ ] **Depolarization claim** (rests on the simulation) — needs real longitudinal opinion-change data.
+- [ ] **Simulator circularity + coarse per-user signal** — replaced by real behaviour *by design*.
+
+**🔴 Inherent / externally blocked (frame honestly, don't chase):**
+- MSN publisher on MIND (HTTP 409) → needs MS credentials; work around with an outlet-bearing corpus.
+- "Full-article" text-lean → BERT caps at 512 tok; needs a long-context model (low payoff given
+  the flat 15→256-token trend).
+- Base-RWE accuracy vs the original *private* Twitter data → not public; use public proxies.
+- Centre-ward effect partly geometric → the honest "control mechanism, not measured depolarization"
+  framing **is** the resolution.
+- Accuracy vs bridging (P3 leads raw accuracy) → a Pareto choice, not a bug.
+- Licensed-data non-redistribution + dual-use → documented / mitigated, not eliminable.
+
 ## 5. Optional / future research — lower priority
 
 - [x] **Real-log satisfaction signal — RAN on Politosphere; it's measurable and mostly
