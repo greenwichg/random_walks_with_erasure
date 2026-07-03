@@ -1,5 +1,9 @@
 # The Math Behind Every Piece — Explained from Scratch
 
+> **Viewing note:** equations render on **github.com in a browser** (desktop or
+> phone browser both work). The **GitHub mobile app** does not support math
+> rendering and shows raw LaTeX like `$x^2$` — that's the app, not this file.
+
 This is the **math companion** to the project. [`GUIDE.md`](../GUIDE.md) tells the
 *story* in plain words; [`README.md`](../README.md) is the *API*; this file walks
 through **every formula we implement** — but *slowly*, assuming **no maths
