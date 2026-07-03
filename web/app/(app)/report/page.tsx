@@ -39,6 +39,27 @@ export default function ReportPage() {
       };
     }) ?? [];
 
+  // Data-driven captions (derived from the live report, not hardcoded to any diet).
+  const vp = report?.viewpoint;
+  const tiltText = !vp
+    ? ""
+    : Math.abs(vp.left - vp.right) < 0.06
+      ? "Your reading is well balanced across the spectrum."
+      : (() => {
+          const side = vp.left > vp.right ? "left" : "right";
+          return Math.min(vp.left, vp.right) >= 0.15
+            ? `You do hear both sides — the tilt is toward the ${side}.`
+            : `Your reading leans heavily ${side}; the other side is thin.`;
+        })();
+
+  const dietSummary = !report
+    ? ""
+    : scoreBand(report.overall).label === "Healthy"
+      ? "A broad, balanced reading diet — keep it up."
+      : scoreBand(report.overall).label === "Fair"
+        ? "A reasonable diet, with clear room to broaden and balance it."
+        : "Your reading is fairly narrow right now — a few changes would help a lot.";
+
   return (
     <PageContainer>
       <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
@@ -78,9 +99,7 @@ export default function ReportPage() {
                   <Badge variant={scoreBand(report.overall).hue}>{scoreBand(report.overall).label}</Badge>
                   <DeltaBadge value={report.overallDelta} suffix="this month" />
                 </div>
-                <p className="mt-3 text-sm text-muted-foreground">
-                  A balanced, broadly-sourced diet with room to calm the tone and read more across the aisle.
-                </p>
+                <p className="mt-3 text-sm text-muted-foreground">{dietSummary}</p>
                 <div className="mt-4 flex w-full items-center justify-between rounded-lg border bg-muted/40 px-3 py-2 text-sm">
                   <span className="flex items-center gap-2 text-muted-foreground">
                     <Gauge className="h-4 w-4" /> Axis confidence
@@ -109,8 +128,8 @@ export default function ReportPage() {
                   <span className="font-medium text-foreground">{Math.round(report.viewpoint.left * 100)}% left</span>,{" "}
                   <span className="font-medium text-foreground">{Math.round(report.viewpoint.center * 100)}% center</span>,
                   and{" "}
-                  <span className="font-medium text-foreground">{Math.round(report.viewpoint.right * 100)}% right</span>.
-                  You do hear both sides — the tilt is toward the left.
+                  <span className="font-medium text-foreground">{Math.round(report.viewpoint.right * 100)}% right</span>.{" "}
+                  {tiltText}
                 </p>
               </div>
             </SectionCard>

@@ -1,0 +1,518 @@
+"""JSON API over the real Information Health pipeline — the backend the web app talks to.
+
+This is the thin **machine-readable** counterpart to ``examples/app.py`` (which renders
+HTML). It exposes the *same* engine — the deterministic Information Health Report
+(``health_report.compute`` / ``user_report``), the real **RWE-B** bounded-bridging
+recommender (``rwe.RWEB``), and the grounded LLM narrative (``narrate_report``) — as JSON
+shaped for the Next.js frontend (``web/types/domain.ts``). Nothing here re-implements an
+algorithm; it serialises what the engine computes.
+
+Data: point ``--npz`` at an ingested dataset (MIND / Politosphere) for real behaviour. With
+no ``--npz`` it boots the repo's **own synthetic simulator** (``simulate_users.py``) so the
+whole stack runs with zero external data — every metric is still computed by the real
+pipeline, just over generated clicks. Enrichment (register/emotion/impressions) is wired the
+same way ``app.py`` wires it, so Reporting Ratio / Emotional Balance / Open-Mindedness / the
+attention profile populate.
+
+    python examples/api_server.py                 # synthetic corpus, port 8000
+    python examples/api_server.py --npz mind_full.npz --domain news
+    export ANTHROPIC_API_KEY=...                  # optional: live AI-coach narrative
+
+Endpoints (all JSON, CORS-enabled):
+    GET  /api/health                    readiness + dataset summary
+    GET  /api/report[?user=<id>]        Information Health Report for a reader
+    GET  /api/recommendations[?user=]   RWE-B bridging recommendations (full articles)
+    GET  /api/coach                     coach greeting + opening (grounded)
+    POST /api/coach   {message,user}    grounded reply (LLM narrative if a key is set)
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import sys
+import tempfile
+import http.server
+from datetime import datetime, timedelta, timezone
+from urllib.parse import parse_qs, urlparse
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # sibling examples
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root
+import numpy as np
+import health_report as hr
+import narrate_report as nr
+from rwe.mind import MINDData
+
+# ------------------------------------------------------------------ #
+# Domain mapping — engine labels -> frontend MetricKey (web/types/domain.ts)
+# ------------------------------------------------------------------ #
+_METRIC_KEYS = [
+    ("topicDiversity", "Topic Diversity"),
+    ("sourceDiversity", "Source Diversity"),
+    ("reportingRatio", "Reporting Ratio"),
+    ("emotionalBalance", "Emotional Balance"),
+    ("echoChamber", "Echo Chamber Score"),
+    ("viewpointBalance", "Viewpoint Balance"),
+    ("openMindedness", "Open-Mindedness"),
+]
+_LEAN_TAU = 0.5   # matches the frontend's leanBucket(tau=0.5) on the [-2,2] axis
+
+_IMPROVEMENTS = {
+    "viewpointBalance": ("Add two cross-cutting reads a week",
+                         "Your reading sits mostly on one side of the centre. Two opposite-but-close "
+                         "reads a week lift Viewpoint Balance the most.", 8),
+    "emotionalBalance": ("Trade one charged read a day for analysis",
+                         "A large share of your reading leans on fear and outrage. Swapping one for "
+                         "calm analysis raises Emotional Balance.", 6),
+    "sourceDiversity": ("Broaden beyond your top outlets",
+                        "A few outlets dominate your diet. Two new sources meaningfully lift Source "
+                        "Diversity.", 5),
+    "echoChamber": ("Hear the other side on a contested topic",
+                    "Your political reading is fairly one-sided. One good-faith opposite-side piece "
+                    "loosens the echo chamber.", 5),
+    "topicDiversity": ("Widen the range of subjects you read",
+                       "You circle a few topics. Deliberately reading an unfamiliar subject lifts "
+                       "Topic Diversity.", 4),
+    "reportingRatio": ("Anchor opinion with reporting",
+                       "Opinion outweighs reporting in your diet. Pairing commentary with straight "
+                       "reporting raises the Reporting Ratio.", 4),
+    "openMindedness": ("Click the cross-cutting reads we surface",
+                       "When we show you the other side, engaging with it lifts Open-Mindedness — the "
+                       "metric that measures receptiveness.", 5),
+}
+
+
+def _prettify(label: str) -> str:
+    """`topic_3` -> `Topic 3`, `r/Conservative` -> `r/Conservative`, real names pass through."""
+    s = str(label)
+    if s.startswith("r/") or " " in s or s.isupper():
+        return s
+    return s.replace("_", " ").strip().title() if ("_" in s or s.islower()) else s
+
+
+def _stable_int(*parts) -> int:
+    h = hashlib.md5("|".join(str(p) for p in parts).encode()).hexdigest()
+    return int(h[:8], 16)
+
+
+def _iso_recent(seed, max_days: float = 5.0) -> str:
+    frac = (_stable_int(seed) % 10_000) / 10_000.0
+    dt = datetime.now(timezone.utc) - timedelta(days=frac * max_days)
+    return dt.isoformat()
+
+
+def _lean_bucket(pos: float) -> str:
+    if pos < -_LEAN_TAU:
+        return "left"
+    if pos > _LEAN_TAU:
+        return "right"
+    return "center"
+
+
+def _register_enum(p_reporting) -> str:
+    if p_reporting is None or not np.isfinite(p_reporting):
+        return "mixed"
+    if p_reporting >= 0.6:
+        return "reporting"
+    if p_reporting <= 0.4:
+        return "opinion"
+    return "mixed"
+
+
+# ------------------------------------------------------------------ #
+# Backend state — built once at startup.
+# ------------------------------------------------------------------ #
+class Backend:
+    def __init__(self, npz: str | None, domain: str, provider: str, model, n_users: int,
+                 max_items: int, seed: int):
+        self.domain = domain
+        self.provider = provider
+        self.model = model or nr._DEFAULT_MODELS.get(provider)
+        register = emotion = selective = None
+        confidence = None
+
+        if npz:
+            self.mind = MINDData.load(npz)
+            src = None if domain == "news" else np.asarray(self.mind.titles)
+            import glob
+            if os.path.exists("register.csv"):
+                register = hr._load_item_csv("register.csv", self.mind.dataset.item_ids)["reporting"]
+            if os.path.exists("emotion.csv"):
+                emotion = hr._load_item_csv("emotion.csv", self.mind.dataset.item_ids)
+            beh = [b for b in glob.glob("**/behaviors.tsv", recursive=True) if "fixture" not in b]
+            if beh:
+                selective = hr.selective_exposure_array(self.mind, beh[0])
+        else:
+            # Synthetic corpus via the repo's own simulator (real pipeline, generated clicks).
+            import simulate_users as su
+            cfg = su.SimConfig(n_users=n_users, max_items=max_items, seed=seed)
+            cat, _pop, _ev, impressions, mind, *_ = su.run(cfg)
+            self.mind = mind
+            src = None  # news domain: source axis = outlet
+            tmp = tempfile.mkdtemp(prefix="ih_api_")
+            su.write_enrichment_csvs(os.path.join(tmp, "register.csv"),
+                                     os.path.join(tmp, "emotion.csv"), cat)
+            su.write_behaviors_tsv(os.path.join(tmp, "behaviors.tsv"), impressions, cat)
+            register = hr._load_item_csv(os.path.join(tmp, "register.csv"),
+                                         self.mind.dataset.item_ids)["reporting"]
+            emotion = hr._load_item_csv(os.path.join(tmp, "emotion.csv"), self.mind.dataset.item_ids)
+            selective = hr.selective_exposure_array(self.mind, os.path.join(tmp, "behaviors.tsv"))
+            # Gold-lean axis is high-confidence by construction; give compute() a per-item
+            # confidence so the Confidence metric + axis weighting populate realistically.
+            rng = np.random.default_rng(seed)
+            confidence = np.clip(rng.normal(0.85, 0.07, self.mind.dataset.matrix.shape[1]), 0.4, 0.99)
+
+        self.register = register
+        self.emotion = emotion
+        self.pop = hr.compute(self.mind, source=src, register=register, emotion=emotion,
+                              selective=selective, confidence=confidence)
+        self.eligible = hr._eligible_pool(self.pop, 5, min_political=3)
+        if len(self.eligible) == 0:
+            raise SystemExit("no eligible readers (>=5 clicks, >=3 political) in this dataset")
+
+        # Per-item confidence array actually used (for serialising article confidence).
+        self.item_confidence = confidence
+        # Outlet -> house lean (mean item position), for source/publisher leans.
+        outs = np.asarray(self.mind.outlets)
+        pos = np.asarray(self.mind.item_positions, dtype=float)
+        self.outlet_lean = {}
+        for o in np.unique(outs):
+            m = (outs == o) & np.isfinite(pos)
+            self.outlet_lean[str(o)] = float(np.mean(pos[m])) if m.any() else 0.0
+
+        self.demo_user = self._pick_demo_user()
+
+    # -- reader selection -------------------------------------------------- #
+    def _pick_demo_user(self) -> int:
+        """A 'fair, improvable' reader (overall nearest ~58) so the report shows the full
+        range of states — some healthy, some amber, real blind spots, meaningful bridging."""
+        best, best_d = int(self.eligible[0]), 1e9
+        for u in self.eligible:
+            rep = hr.user_report(self.pop, self.mind, int(u))
+            if rep["overall"] is None or rep.get("viewpoint_confidence") is None:
+                continue
+            d = abs(rep["overall"] - 58)
+            if d < best_d:
+                best, best_d = int(u), d
+        return best
+
+    def resolve_user(self, query: dict) -> int:
+        q = (query.get("user", [""])[0] or "").strip()
+        if q.lstrip("-").isdigit() and 0 <= int(q) < self.mind.dataset.matrix.shape[0]:
+            return int(q)
+        return self.demo_user
+
+    # -- serialisers ------------------------------------------------------- #
+    def _emotion_share(self, col: int) -> dict:
+        labels = ["fear", "outrage", "analysis", "positive", "neutral"]
+        if self.emotion is None:
+            return {l: (0.2 if l == "neutral" else 0.2) for l in labels}
+        out = {}
+        for l in labels:
+            arr = self.emotion.get(l)
+            v = float(arr[col]) if arr is not None and np.isfinite(arr[col]) else 0.0
+            out[l] = v
+        s = sum(out.values()) or 1.0
+        return {l: out[l] / s for l in labels}
+
+    def article(self, col: int) -> dict:
+        pos = float(np.asarray(self.mind.item_positions, dtype=float)[col])
+        pos = 0.0 if not np.isfinite(pos) else pos
+        outlet = str(np.asarray(self.mind.outlets)[col])
+        topic = str(np.asarray(self.mind.categories)[col])
+        item_id = str(np.asarray(self.mind.dataset.item_ids)[col])
+        emo = self._emotion_share(col)
+        dom = max(emo, key=emo.get)
+        reg = self.register[col] if self.register is not None else None
+        conf = (float(self.item_confidence[col]) if self.item_confidence is not None
+                and np.isfinite(self.item_confidence[col]) else 0.7)
+        return {
+            "id": item_id,
+            "headline": str(np.asarray(self.mind.titles)[col]),
+            "publisher": _prettify(outlet),
+            "publisherLean": self.outlet_lean.get(outlet, 0.0),
+            "topic": _prettify(topic),
+            "lean": pos,
+            "leanBucket": _lean_bucket(pos),
+            "confidence": conf,
+            "emotion": emo,
+            "dominantEmotion": dom,
+            "register": _register_enum(reg),
+            "publishedAt": _iso_recent(item_id),
+            "readingMinutes": 2 + (_stable_int(item_id) % 8),
+        }
+
+    def report(self, u: int) -> dict:
+        rep = hr.user_report(self.pop, self.mind, u)
+        scores = rep.get("scores", {}) or {}
+        n_clicks = rep.get("n_clicks") or 0
+
+        metrics = []
+        for key, label in _METRIC_KEYS:
+            s = scores.get(label)
+            if s is None:
+                continue
+            metrics.append({"key": key, "score": int(s), "delta": 0, "benchmark": 50})
+        vc = rep.get("viewpoint_confidence")
+        axis_conf = float(vc) if vc is not None else 0.7
+        metrics.append({"key": "confidence", "score": round(axis_conf * 100), "delta": 0,
+                        "benchmark": 70, "raw": {"value": round(axis_conf, 2), "unit": "axis margin"}})
+
+        # per-user topic + source distributions (real shares from the click matrix)
+        UC, UO = self.pop["UC"], self.pop["UO"]
+        cat_u, out_u = self.pop["cat_u"], self.pop["out_u"]
+        sc, so = hr.shares(UC[u]), hr.shares(UO[u])
+        topics = sorted(
+            ({"topic": _prettify(cat_u[i]), "share": float(sc[i]),
+              "count": int(round(sc[i] * n_clicks))} for i in range(len(cat_u)) if sc[i] > 0),
+            key=lambda d: -d["share"])[:10]
+        sources = sorted(
+            ({"source": _prettify(out_u[i]), "share": float(so[i]),
+              "count": int(round(so[i] * n_clicks)),
+              "lean": self.outlet_lean.get(str(out_u[i]), 0.0)}
+             for i in range(len(out_u)) if so[i] > 0),
+            key=lambda d: -d["share"])[:9]
+
+        left, center, right = rep.get("viewpoint") or (0.0, 0.0, 0.0)
+        attention = rep.get("attention") or {l: 0.2 for l in
+                                              ["fear", "outrage", "analysis", "positive", "neutral"]}
+
+        blind = []
+        for cat, user_share, cat_share in (rep.get("blind_spots") or []):
+            gap = float((cat_share - user_share) / cat_share) if cat_share else 0.0
+            blind.append({"topic": _prettify(cat), "gap": max(0.0, min(1.0, gap)),
+                          "note": f"{_prettify(cat)} is {round(cat_share*100)}% of what's available, "
+                                  f"but barely shows up in your reading."})
+
+        # improvements from the lowest real metrics
+        ranked = sorted((m for m in metrics if m["key"] != "confidence"), key=lambda m: m["score"])
+        improvements = []
+        for m in ranked[:3]:
+            tpl = _IMPROVEMENTS.get(m["key"])
+            if tpl:
+                improvements.append({"id": f"imp_{m['key']}", "title": tpl[0], "detail": tpl[1],
+                                     "metric": m["key"], "impact": tpl[2]})
+
+        return {
+            "overall": rep.get("overall") or 0,
+            "overallDelta": 0,
+            "updatedAt": datetime.now(timezone.utc).isoformat(),
+            "metrics": metrics,
+            "viewpoint": {"left": float(left), "center": float(center), "right": float(right)},
+            "attention": {k: float(v) for k, v in attention.items()},
+            "topics": topics,
+            "sources": sources,
+            "blindSpots": blind,
+            "improvements": improvements,
+            "axisConfidence": axis_conf,
+        }
+
+    # -- recommendations (real RWE-B) ------------------------------------- #
+    def _rweb_item_cols(self, u: int, k: int = 12, epsilon: float = 0.9) -> list:
+        """The RWE-B recommender's actual top-k item columns for the reader (in mind space),
+        so we can serialise full articles. Mirrors narrate_report.rweb_recommendations but
+        returns indices instead of just titles."""
+        try:
+            from rwe import FeedbackGraph, RWEB
+            dataset, theta, item_pos = self.mind.recommender_inputs()
+            uid = np.asarray(self.mind.dataset.user_ids)[u]
+            rows = np.flatnonzero(np.asarray(dataset.user_ids) == uid)
+            if rows.size == 0:
+                return []
+            rec = RWEB(FeedbackGraph(dataset.matrix), theta, item_pos, epsilon=epsilon)
+            ranked = rec.recommend(np.array([rows[0]]), top_k=k)[0]
+            rec_ids = np.asarray(dataset.item_ids)
+            id2col = {str(i): c for c, i in enumerate(np.asarray(self.mind.dataset.item_ids))}
+            cols = []
+            for j in ranked:
+                if int(j) < 0:
+                    continue
+                col = id2col.get(str(rec_ids[int(j)]))
+                if col is not None:
+                    cols.append(col)
+            return cols
+        except Exception:
+            return []
+
+    def recommendations(self, u: int) -> list:
+        rep = hr.user_report(self.pop, self.mind, u)
+        mean_lean = rep.get("mean_lean") or 0.0
+        user_side = np.sign(mean_lean)
+        cols = self._rweb_item_cols(u)
+        out = []
+        for i, col in enumerate(cols):
+            art = self.article(col)
+            cross = user_side != 0 and np.sign(art["lean"]) == -user_side and abs(art["lean"]) >= 0.5
+            side = {"left": "left-leaning", "right": "right-leaning", "center": "centrist"}[art["leanBucket"]]
+            reason = (f"A {side} take on {art['topic'].lower()} — RWE-B surfaced it to bridge you "
+                      f"across the centre from your usual reading."
+                      if cross else
+                      f"Broadens your {art['topic'].lower()} coverage from an outlet you rarely read.")
+            out.append({
+                "article": art,
+                "reason": reason,
+                "strategy": "rwe-b",
+                "healthImpact": 3 + (_stable_int(art["id"]) % 5) if cross else 1 + (_stable_int(art["id"]) % 3),
+                "helpsMetric": "viewpointBalance" if cross else "sourceDiversity",
+                "crossCutting": bool(cross),
+            })
+        return out
+
+    # -- coach ------------------------------------------------------------- #
+    def _facts(self, u: int):
+        rep = hr.user_report(self.pop, self.mind, u)
+        return rep, nr.report_facts(rep, self.domain)
+
+    def _citations(self, rep: dict) -> list:
+        sc = rep.get("scores", {}) or {}
+        pairs = [("echoChamber", "Echo Chamber Score"), ("viewpointBalance", "Viewpoint Balance"),
+                 ("emotionalBalance", "Emotional Balance"), ("openMindedness", "Open-Mindedness")]
+        return [{"metric": k, "value": int(sc[label])} for k, label in pairs if sc.get(label) is not None][:2]
+
+    def _grounded_fallback(self, rep: dict) -> str:
+        """A deterministic, fully-grounded reply when no LLM key is set — every number is a
+        measured metric (same discipline as narrate_report's grounding rule)."""
+        sc = rep.get("scores", {}) or {}
+        left, center, right = rep.get("viewpoint") or (0, 0, 0)
+        bits = [f"Your overall Information Health is {rep.get('overall')}/100."]
+        if sc.get("Echo Chamber Score") is not None:
+            bits.append(f"Your Echo Chamber score is {sc['Echo Chamber Score']}/100, and your political "
+                        f"reading runs {round(left*100)}% left, {round(center*100)}% center, "
+                        f"{round(right*100)}% right.")
+        low = min((k for k in ("Emotional Balance", "Viewpoint Balance", "Source Diversity")
+                   if sc.get(k) is not None), key=lambda k: sc[k], default=None)
+        if low:
+            bits.append(f"Your biggest opportunity is {low} ({sc[low]}/100) — that's where a small "
+                        f"change would move your score the most. Ask me how, or for reads to help.")
+        return " ".join(bits)
+
+    def coach_reply(self, u: int, message: str) -> dict:
+        rep, facts = self._facts(u)
+        recs = nr.rweb_recommendations(self.mind, rep) or []
+        content = None
+        if os.environ.get("GEMINI_API_KEY") or os.environ.get("ANTHROPIC_API_KEY"):
+            try:
+                caller = nr.make_text_caller(self.provider, self.model)
+                content = nr.narrate(nr.facts_to_text(facts), caller, recs, self.domain)
+            except Exception:
+                content = None
+        if not content:
+            content = self._grounded_fallback(rep)
+        # attach up to two real bridging articles as suggestions
+        cols = self._rweb_item_cols(u, k=2)
+        suggestions = [self.article(c) for c in cols[:2]]
+        return {
+            "id": f"msg_{_stable_int(message, u)}",
+            "role": "assistant",
+            "content": content,
+            "createdAt": datetime.now(timezone.utc).isoformat(),
+            "citations": self._citations(rep),
+            "suggestions": suggestions,
+        }
+
+    def coach_greeting(self, u: int) -> list:
+        rep, _ = self._facts(u)
+        return [{
+            "id": "msg_0",
+            "role": "assistant",
+            "content": ("Hi — I'm your Information Health coach. I read your metrics straight from the "
+                        "engine, so I can explain any score, spot patterns in your reading, and suggest "
+                        "balanced reads. What would you like to look at?"),
+            "createdAt": datetime.now(timezone.utc).isoformat(),
+            "citations": self._citations(rep),
+        }]
+
+    def health(self) -> dict:
+        s = self.mind.summary()
+        return {"ok": True, "domain": self.domain, "demoUser": self.demo_user,
+                "eligibleReaders": int(len(self.eligible)),
+                "narrative": bool(os.environ.get("GEMINI_API_KEY") or os.environ.get("ANTHROPIC_API_KEY")),
+                "dataset": {k: (int(v) if isinstance(v, (int, np.integer)) else v)
+                            for k, v in s.items() if not isinstance(v, (list, dict, np.ndarray))}}
+
+
+# ------------------------------------------------------------------ #
+# HTTP layer
+# ------------------------------------------------------------------ #
+def _make_handler(be: Backend):
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def _send(self, obj, status=200):
+            data = json.dumps(obj).encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def do_OPTIONS(self):
+            self._send({}, 204)
+
+        def do_GET(self):
+            p = urlparse(self.path)
+            q = parse_qs(p.query)
+            try:
+                if p.path == "/api/health":
+                    return self._send(be.health())
+                if p.path == "/api/report":
+                    return self._send(be.report(be.resolve_user(q)))
+                if p.path == "/api/recommendations":
+                    return self._send(be.recommendations(be.resolve_user(q)))
+                if p.path == "/api/coach":
+                    return self._send(be.coach_greeting(be.resolve_user(q)))
+                return self._send({"error": "not found"}, 404)
+            except Exception as e:  # never 500 the app
+                return self._send({"error": str(e)}, 500)
+
+        def do_POST(self):
+            p = urlparse(self.path)
+            q = parse_qs(p.query)
+            try:
+                n = int(self.headers.get("Content-Length", 0) or 0)
+                body = json.loads(self.rfile.read(n) or b"{}") if n else {}
+            except Exception:
+                body = {}
+            try:
+                if p.path == "/api/coach":
+                    u = be.demo_user
+                    if str(body.get("user", "")).lstrip("-").isdigit():
+                        u = int(body["user"])
+                    return self._send(be.coach_reply(u, str(body.get("message", ""))))
+                return self._send({"error": "not found"}, 404)
+            except Exception as e:
+                return self._send({"error": str(e)}, 500)
+
+        def log_message(self, *a):
+            pass
+    return Handler
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--npz", default=None, help="ingested .npz (else a synthetic corpus is built)")
+    ap.add_argument("--domain", choices=["news", "reddit"], default="news")
+    ap.add_argument("--provider", choices=["gemini", "anthropic"], default="anthropic")
+    ap.add_argument("--model", default=None)
+    ap.add_argument("--host", default="127.0.0.1")
+    ap.add_argument("--port", type=int, default=8000)
+    ap.add_argument("--n-users", type=int, default=500)
+    ap.add_argument("--max-items", type=int, default=1500)
+    ap.add_argument("--seed", type=int, default=0)
+    args = ap.parse_args()
+
+    be = Backend(args.npz, args.domain, args.provider, args.model,
+                 args.n_users, args.max_items, args.seed)
+    key = "ON" if (os.environ.get("GEMINI_API_KEY") or os.environ.get("ANTHROPIC_API_KEY")) else "OFF"
+    src = args.npz or f"synthetic ({args.n_users} users x {args.max_items} items)"
+    print(f"Information Health API on http://{args.host}:{args.port}  "
+          f"(data={src}, demo reader={be.demo_user}, narrative={key})")
+    http.server.ThreadingHTTPServer((args.host, args.port), _make_handler(be)).serve_forever()
+
+
+if __name__ == "__main__":
+    main()
