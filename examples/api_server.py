@@ -14,9 +14,12 @@ pipeline, just over generated clicks. Enrichment (register/emotion/impressions) 
 same way ``app.py`` wires it, so Reporting Ratio / Emotional Balance / Open-Mindedness / the
 attention profile populate.
 
-    python examples/api_server.py                 # synthetic corpus, port 8000
-    python examples/api_server.py --npz mind_full.npz --domain news
-    export ANTHROPIC_API_KEY=...                  # optional: live AI-coach narrative
+    python examples/api_server.py                              # synthetic corpus, port 8000
+    python examples/api_server.py --profile mind --npz mind_full.npz
+    python examples/api_server.py --profile politosphere --npz politosphere.npz
+    python examples/api_server.py --profile qbias --qbias allsides_balanced_news.csv
+    RWE_PROFILE=mind RWE_NPZ=mind_full.npz python examples/api_server.py   # config-only
+    export ANTHROPIC_API_KEY=...                               # optional: live AI-coach narrative
 
 Endpoints (all JSON, CORS-enabled):
     GET  /api/health                    readiness + dataset summary
@@ -35,6 +38,7 @@ import os
 import sys
 import tempfile
 import http.server
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qs, urlparse
 
@@ -57,7 +61,6 @@ _METRIC_KEYS = [
     ("viewpointBalance", "Viewpoint Balance"),
     ("openMindedness", "Open-Mindedness"),
 ]
-_LEAN_TAU = 0.5   # matches the frontend's leanBucket(tau=0.5) on the [-2,2] axis
 
 _IMPROVEMENTS = {
     "viewpointBalance": ("Add two cross-cutting reads a week",
@@ -103,10 +106,11 @@ def _iso_recent(seed, max_days: float = 5.0) -> str:
     return dt.isoformat()
 
 
-def _lean_bucket(pos: float) -> str:
-    if pos < -_LEAN_TAU:
+def _lean_bucket(pos: float, tau: float = hr.LEAN_TAU) -> str:
+    """Bucket a lean onto left/center/right using the engine's own centre half-width."""
+    if pos < -tau:
         return "left"
-    if pos > _LEAN_TAU:
+    if pos > tau:
         return "right"
     return "center"
 
@@ -124,32 +128,99 @@ def _register_enum(p_reporting) -> str:
 # ------------------------------------------------------------------ #
 # Backend state — built once at startup.
 # ------------------------------------------------------------------ #
+# Dataset profiles — the single knob for switching data sources.
+# ------------------------------------------------------------------ #
+@dataclass
+class DatasetProfile:
+    """Everything the engine needs to pick and configure a data source, so a
+    deployment can switch between MIND, Politosphere, Qbias, a synthetic PoC, or
+    future production data by *configuration only* — never code.
+
+    ``lean_tau`` defaults to the engine's own centre half-width; a standardized
+    (z-score) axis such as Politosphere's may want it tuned per profile.
+    """
+    name: str = "synthetic"
+    kind: str = "synthetic"          # "synthetic" | "npz"
+    domain: str = "news"             # "news" | "reddit"
+    lean_tau: float = hr.LEAN_TAU
+    # synthetic
+    n_users: int = 500
+    max_items: int = 1500
+    seed: int = 0
+    qbias_csv: str | None = None     # set → synthetic users over a real Qbias catalog
+    # npz (MIND / Politosphere / production export)
+    npz: str | None = None
+    register_csv: str | None = None
+    emotion_csv: str | None = None
+    behaviors_tsv: str | None = None
+
+    @classmethod
+    def synthetic(cls, n_users: int = 500, max_items: int = 1500, seed: int = 0,
+                  qbias_csv: str | None = None) -> "DatasetProfile":
+        return cls(name="qbias" if qbias_csv else "synthetic", kind="synthetic",
+                   domain="news", n_users=n_users, max_items=max_items, seed=seed,
+                   qbias_csv=qbias_csv)
+
+
+# Named base templates; paths/sizes are supplied per deployment (flags or env).
+BUILTIN_PROFILES = {
+    "synthetic":    DatasetProfile(name="synthetic", kind="synthetic", domain="news"),
+    "qbias":        DatasetProfile(name="qbias", kind="synthetic", domain="news"),
+    "mind":         DatasetProfile(name="mind", kind="npz", domain="news"),
+    "politosphere": DatasetProfile(name="politosphere", kind="npz", domain="reddit"),
+}
+
+
+def resolve_profile(args) -> DatasetProfile:
+    """Named base profile overlaid with CLI/env overrides (CLI > env > base). This
+    is what makes data selectable by configuration alone (`RWE_PROFILE`, `RWE_NPZ`, …)."""
+    name = args.profile or os.environ.get("RWE_PROFILE") or "synthetic"
+    base = BUILTIN_PROFILES.get(name)
+    if base is None:
+        raise SystemExit(f"unknown profile '{name}'; choose from {sorted(BUILTIN_PROFILES)}")
+
+    def pick(cli, env, default):
+        return cli if cli is not None else os.environ.get(env, default)
+
+    tau = args.lean_tau if args.lean_tau is not None else float(os.environ.get("RWE_LEAN_TAU", base.lean_tau))
+    return DatasetProfile(
+        name=name, kind=base.kind,
+        domain=pick(args.domain, "RWE_DOMAIN", base.domain),
+        lean_tau=tau,
+        n_users=args.n_users if args.n_users is not None else base.n_users,
+        max_items=args.max_items if args.max_items is not None else base.max_items,
+        seed=args.seed if args.seed is not None else base.seed,
+        qbias_csv=pick(args.qbias, "RWE_QBIAS", base.qbias_csv),
+        npz=pick(args.npz, "RWE_NPZ", base.npz),
+        register_csv=pick(args.register_csv, "RWE_REGISTER_CSV", base.register_csv),
+        emotion_csv=pick(args.emotion_csv, "RWE_EMOTION_CSV", base.emotion_csv),
+        behaviors_tsv=pick(args.behaviors, "RWE_BEHAVIORS", base.behaviors_tsv),
+    )
+
+
+# ------------------------------------------------------------------ #
 class Backend:
-    def __init__(self, npz: str | None, domain: str, provider: str, model, n_users: int,
-                 max_items: int, seed: int):
-        self.domain = domain
+    def __init__(self, profile: DatasetProfile, provider: str = "anthropic", model=None):
+        self.profile = profile
+        self.domain = profile.domain
+        self.lean_tau = profile.lean_tau
         self.provider = provider
         self.model = model or nr._DEFAULT_MODELS.get(provider)
-        register = emotion = selective = None
-        confidence = None
+        register = emotion = selective = confidence = None
         self._probe_csv = None   # satisfaction-probe CSV (drives AdaptiveRWEB exposure)
 
-        if npz:
-            self.mind = MINDData.load(npz)
-            src = None if domain == "news" else np.asarray(self.mind.titles)
-            import glob
-            if os.path.exists("register.csv"):
-                register = hr._load_item_csv("register.csv", self.mind.dataset.item_ids)["reporting"]
-            if os.path.exists("emotion.csv"):
-                emotion = hr._load_item_csv("emotion.csv", self.mind.dataset.item_ids)
-            beh = [b for b in glob.glob("**/behaviors.tsv", recursive=True) if "fixture" not in b]
-            if beh:
-                selective = hr.selective_exposure_array(self.mind, beh[0])
+        if profile.kind == "npz":
+            if not profile.npz:
+                raise SystemExit(f"profile '{profile.name}' needs a dataset path (--npz / RWE_NPZ)")
+            self.mind = MINDData.load(profile.npz)
+            src = None if profile.domain == "news" else np.asarray(self.mind.titles)
+            register, emotion, selective = self._load_enrichment(profile)
         else:
-            # Synthetic corpus via the repo's own simulator (real pipeline, generated clicks).
+            # Synthetic corpus via the repo's own simulator (real pipeline, generated clicks);
+            # a Qbias CSV swaps the catalog for real outlets + gold leans.
             import simulate_users as su
-            cfg = su.SimConfig(n_users=n_users, max_items=max_items, seed=seed)
-            cat, _pop, _ev, impressions, mind, _metric_rows, probe_rows = su.run(cfg)
+            cfg = su.SimConfig(n_users=profile.n_users, max_items=profile.max_items, seed=profile.seed)
+            cat, _pop, _ev, impressions, mind, _metric_rows, probe_rows = su.run(cfg, qbias=profile.qbias_csv)
             self.mind = mind
             src = None  # news domain: source axis = outlet
             tmp = tempfile.mkdtemp(prefix="ih_api_")
@@ -164,7 +235,7 @@ class Backend:
             selective = hr.selective_exposure_array(self.mind, os.path.join(tmp, "behaviors.tsv"))
             # Gold-lean axis is high-confidence by construction; give compute() a per-item
             # confidence so the Confidence metric + axis weighting populate realistically.
-            rng = np.random.default_rng(seed)
+            rng = np.random.default_rng(profile.seed)
             confidence = np.clip(rng.normal(0.85, 0.07, self.mind.dataset.matrix.shape[1]), 0.4, 0.99)
 
         self.register = register
@@ -203,6 +274,23 @@ class Backend:
                 pass
 
         self.demo_user = self._pick_demo_user()
+
+    # -- enrichment loading ------------------------------------------------ #
+    def _load_enrichment(self, profile: DatasetProfile):
+        """Register / emotion / selective-exposure arrays for an npz dataset, from the
+        profile's paths, falling back to the conventional working-directory filenames."""
+        import glob
+        ids = self.mind.dataset.item_ids
+        reg_csv = profile.register_csv or ("register.csv" if os.path.exists("register.csv") else None)
+        emo_csv = profile.emotion_csv or ("emotion.csv" if os.path.exists("emotion.csv") else None)
+        beh = profile.behaviors_tsv
+        if not beh:
+            found = [b for b in glob.glob("**/behaviors.tsv", recursive=True) if "fixture" not in b]
+            beh = found[0] if found else None
+        register = hr._load_item_csv(reg_csv, ids)["reporting"] if reg_csv else None
+        emotion = hr._load_item_csv(emo_csv, ids) if emo_csv else None
+        selective = hr.selective_exposure_array(self.mind, beh) if beh else None
+        return register, emotion, selective
 
     # -- reader selection -------------------------------------------------- #
     def _pick_demo_user(self) -> int:
@@ -255,7 +343,7 @@ class Backend:
             "publisherLean": self.outlet_lean.get(outlet, 0.0),
             "topic": _prettify(topic),
             "lean": pos,
-            "leanBucket": _lean_bucket(pos),
+            "leanBucket": _lean_bucket(pos, self.lean_tau),
             "confidence": conf,
             "emotion": emo,
             "dominantEmotion": dom,
@@ -467,8 +555,8 @@ class Backend:
 
     def health(self) -> dict:
         s = self.mind.summary()
-        return {"ok": True, "domain": self.domain, "demoUser": self.demo_user,
-                "eligibleReaders": int(len(self.eligible)),
+        return {"ok": True, "profile": self.profile.name, "domain": self.domain,
+                "demoUser": self.demo_user, "eligibleReaders": int(len(self.eligible)),
                 "narrative": bool(os.environ.get("GEMINI_API_KEY") or os.environ.get("ANTHROPIC_API_KEY")),
                 "dataset": {k: (int(v) if isinstance(v, (int, np.integer)) else v)
                             for k, v in s.items() if not isinstance(v, (list, dict, np.ndarray))}}
@@ -536,23 +624,31 @@ def _make_handler(be: Backend):
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--npz", default=None, help="ingested .npz (else a synthetic corpus is built)")
-    ap.add_argument("--domain", choices=["news", "reddit"], default="news")
+    ap.add_argument("--profile", choices=sorted(BUILTIN_PROFILES), default=None,
+                    help="data source: synthetic (default) | qbias | mind | politosphere "
+                         "(env RWE_PROFILE)")
+    ap.add_argument("--npz", default=None, help="ingested .npz for mind/politosphere (env RWE_NPZ)")
+    ap.add_argument("--qbias", default=None, help="Qbias allsides CSV for the qbias profile (env RWE_QBIAS)")
+    ap.add_argument("--register-csv", default=None, help="per-item P(reporting) CSV (env RWE_REGISTER_CSV)")
+    ap.add_argument("--emotion-csv", default=None, help="per-item emotion CSV (env RWE_EMOTION_CSV)")
+    ap.add_argument("--behaviors", default=None, help="MIND behaviors.tsv for Open-Mindedness (env RWE_BEHAVIORS)")
+    ap.add_argument("--lean-tau", type=float, default=None, help="centre half-width on the lean axis (env RWE_LEAN_TAU)")
+    ap.add_argument("--domain", choices=["news", "reddit"], default=None)
     ap.add_argument("--provider", choices=["gemini", "anthropic"], default="anthropic")
     ap.add_argument("--model", default=None)
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8000)
-    ap.add_argument("--n-users", type=int, default=500)
-    ap.add_argument("--max-items", type=int, default=1500)
-    ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--n-users", type=int, default=None)
+    ap.add_argument("--max-items", type=int, default=None)
+    ap.add_argument("--seed", type=int, default=None)
     args = ap.parse_args()
 
-    be = Backend(args.npz, args.domain, args.provider, args.model,
-                 args.n_users, args.max_items, args.seed)
+    profile = resolve_profile(args)
+    be = Backend(profile, args.provider, args.model)
     key = "ON" if (os.environ.get("GEMINI_API_KEY") or os.environ.get("ANTHROPIC_API_KEY")) else "OFF"
-    src = args.npz or f"synthetic ({args.n_users} users x {args.max_items} items)"
+    src = profile.npz or profile.qbias_csv or f"synthetic ({profile.n_users}u x {profile.max_items}i)"
     print(f"Information Health API on http://{args.host}:{args.port}  "
-          f"(data={src}, demo reader={be.demo_user}, narrative={key})")
+          f"(profile={profile.name}, data={src}, demo reader={be.demo_user}, narrative={key})")
     http.server.ThreadingHTTPServer((args.host, args.port), _make_handler(be)).serve_forever()
 
 

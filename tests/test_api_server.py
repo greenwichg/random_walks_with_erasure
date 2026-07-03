@@ -11,6 +11,7 @@ Fast: a small synthetic corpus is built once for the module (no external data, n
 import importlib.util
 import json
 import pathlib
+import sys
 
 import numpy as np
 import pytest
@@ -21,6 +22,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 def _load_api_server():
     spec = importlib.util.spec_from_file_location("api_server", ROOT / "examples" / "api_server.py")
     mod = importlib.util.module_from_spec(spec)
+    sys.modules["api_server"] = mod          # so @dataclass can resolve the module namespace
     spec.loader.exec_module(mod)
     return mod
 
@@ -40,8 +42,8 @@ STRATEGIES = {"rwe-b", "rwe-d", "adaptive"}
 @pytest.fixture(scope="module")
 def backend():
     """A small synthetic backend (real pipeline, generated clicks) built once."""
-    return api_server.Backend(None, "news", "anthropic", None,
-                              n_users=200, max_items=500, seed=0)
+    profile = api_server.DatasetProfile.synthetic(n_users=200, max_items=500, seed=0)
+    return api_server.Backend(profile)
 
 
 @pytest.fixture(scope="module")
@@ -191,3 +193,50 @@ def test_resolve_user_defaults_and_overrides(backend):
     assert backend.resolve_user({"user": ["0"]}) == 0
     # out-of-range ids fall back to the demo user, never crash
     assert backend.resolve_user({"user": ["999999"]}) == backend.demo_user
+
+
+# --------------------------------------------------------------------------- #
+# dataset profiles — config-only data switching (MIND / Politosphere / Qbias / …)
+# --------------------------------------------------------------------------- #
+def _blank_args(**overrides):
+    import argparse
+    base = dict(profile=None, npz=None, qbias=None, register_csv=None, emotion_csv=None,
+                behaviors=None, lean_tau=None, domain=None, n_users=None, max_items=None, seed=None)
+    base.update(overrides)
+    return argparse.Namespace(**base)
+
+
+def test_profile_defaults_to_synthetic():
+    p = api_server.resolve_profile(_blank_args())
+    assert p.name == "synthetic" and p.kind == "synthetic" and p.domain == "news"
+    assert p.lean_tau == api_server.hr.LEAN_TAU  # sourced from the engine, not hard-coded
+
+
+def test_named_profiles_carry_domain_and_kind():
+    assert api_server.resolve_profile(_blank_args(profile="politosphere")).domain == "reddit"
+    assert api_server.resolve_profile(_blank_args(profile="mind")).kind == "npz"
+    assert api_server.resolve_profile(_blank_args(profile="qbias")).kind == "synthetic"
+
+
+def test_cli_overrides_win_over_profile_and_env(monkeypatch):
+    monkeypatch.setenv("RWE_PROFILE", "synthetic")
+    monkeypatch.setenv("RWE_NPZ", "/env/mind.npz")
+    p = api_server.resolve_profile(_blank_args(profile="mind", npz="/cli/mind.npz", lean_tau=0.75))
+    assert p.name == "mind" and p.npz == "/cli/mind.npz" and p.lean_tau == 0.75
+
+
+def test_env_selects_profile_when_no_cli(monkeypatch):
+    monkeypatch.setenv("RWE_PROFILE", "mind")
+    monkeypatch.setenv("RWE_NPZ", "/env/mind.npz")
+    p = api_server.resolve_profile(_blank_args())
+    assert p.name == "mind" and p.npz == "/env/mind.npz"
+
+
+def test_unknown_profile_is_rejected():
+    with pytest.raises(SystemExit):
+        api_server.resolve_profile(_blank_args(profile="does-not-exist"))
+
+
+def test_synthetic_classmethod_names_qbias_when_catalog_given():
+    assert api_server.DatasetProfile.synthetic().name == "synthetic"
+    assert api_server.DatasetProfile.synthetic(qbias_csv="a.csv").name == "qbias"
