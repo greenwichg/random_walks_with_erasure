@@ -45,7 +45,7 @@ Keep this handy. None of the maths below is harder than these pieces.
 | $x^2$,&nbsp; $\sqrt{x}$ | "x squared", "root x" | multiply $x$ by itself; the reverse of squaring |
 | $(a-b)^2$ | "squared distance" | how far apart two numbers are, made positive by squaring |
 | $\lvert x\rvert$ | "absolute value of x" | distance from zero — drop any minus sign ($\lvert-3\rvert=3$) |
-| $x \odot y$ | "element-wise product" | two equal-length lists → list of pairwise products $[x_1y_1,\,x_2y_2,\dots]$ |
+| $x \odot y$ | "element-wise product" | two equal-length lists → list of pairwise products $[x_1 y_1, x_2 y_2, \dots]$ |
 | $x \cdot y$ | "dot product" | multiply matching entries **and add them up** → one number |
 | $\sigma(z)$ | "sigmoid of z" | a squashing curve that turns any number into a probability in $(0,1)$ |
 | $\theta,\phi,\psi,\alpha,\dots$ | greek letters | just *names* for numbers we are solving for |
@@ -98,16 +98,16 @@ two sides, never within a side.*
 a random neighbour: you → one of your items → another user who liked it → one of
 *their* items, and so on. The table $P$ just records these hop chances: from a dot
 with $4$ lines, each neighbour gets chance $\tfrac14$. Formally $P = D^{-1}A^G$
-(eq 2) — "$D^{-1}$" just means *divide each row by how many neighbours it has* so
+(eq 2) — the $D^{-1}$ just means *divide each row by how many neighbours it has* so
 the chances add to $1$. (`FeedbackGraph` builds $A^G$, the full dot-to-dot table
 eq 1, and $P$.)
 
 **Where it lands.** Start the walker on user $s$ and take $k$ steps. The list of
 landing chances over all dots is written
 
-$$
+```math
 v_s P^k \qquad\text{(start on }s\text{, take }k\text{ steps).}
-$$
+```
 
 Because lines always cross sides, after an **odd** number of steps the walker is
 always on an *item*. That is why $k=3$: it's the first odd number that reaches
@@ -134,9 +134,9 @@ repetitive.
 **RP³-β** (`class RP3Beta`): take P³'s score and **divide by popularity** to give
 small items a chance:
 
-$$
+```math
 \text{score}^{\text{RP3}}_j \;=\; \frac{p_j}{\text{deg}_j^{\,\beta}} .
-$$
+```
 
 **In plain words:** divide each item's score by its popularity raised to the
 power $\beta$. With $\beta=0$ nothing changes (you get P³); bigger $\beta$ pushes
@@ -168,12 +168,12 @@ back to you (red, dashed) to walk again. High tax → suppressed; low tax →
 recommended.*
 
 **The formula (eq 3).** Let $c = p \cdot q$ be the total fraction taxed away on
-one pass (a single number; the "$\cdot$" is the dot product from §0). Then the
+one pass (a single number; the $\cdot$ is the dot product from §0). Then the
 score works out to a clean closed form:
 
-$$
+```math
 \text{score} \;=\; \frac{p \odot (1-q)}{1 - c}, \qquad c = \textstyle\sum_j p_j q_j .
-$$
+```
 
 **Reading it.**
 - $p \odot (1-q)$ — top line: what each item *keeps* on the first pass (its landing
@@ -191,9 +191,9 @@ single unit of mass:
 
 Add up what items keep over **all** passes:
 
-$$
+```math
 p\odot(1-q)\,\big(1 + c + c^2 + c^3 + \cdots\big).
-$$
+```
 
 That bracket is a shrinking sum (since $c<1$, e.g. $1+\tfrac12+\tfrac14+\cdots=2$).
 The standard result is $1+c+c^2+\cdots = \dfrac{1}{1-c}$. Substituting gives the
@@ -221,9 +221,9 @@ match (and §7 shows them agreeing to the last decimal).
 **Goal:** stop popular items from dominating. So **tax an item by how popular it
 is** (eq 4):
 
-$$
+```math
 q^D_j \;=\; 1 - \text{deg}_j^{-\beta}.
-$$
+```
 
 **In plain words:** a blockbuster (huge degree) gets taxed almost fully ($q$ near
 $1$) so most of its mass is recycled to others; a niche item (degree $1$) gets
@@ -250,9 +250,9 @@ crowd). Two ingredients:
 
 **(a) Closeness.** How near an item sits to the user, scaled to $[0,1]$:
 
-$$
+```math
 \text{sim}(u,i) \;=\; 1 - \frac{\lvert\text{pos}_i - \theta_u\rvert}{\text{(widest gap on the line)}} .
-$$
+```
 
 $1$ = same spot, $0$ = opposite ends. (The denominator is just the full width of
 the line, so the fraction is between $0$ and $1$.)
@@ -260,7 +260,7 @@ the line, so the fraction is between $0$ and $1$.)
 **(b) The "bridge" test.** An item is a **bridge** for a user if **both** of these
 are true:
 
-1. **Opposite sides of the center:** $(\theta_u-\kappa)\,(\text{pos}_i-\kappa) < 0$.
+1. **Opposite sides of the center:** $(\theta_u-\kappa)(\text{pos}_i-\kappa) < 0$.
    This product is negative only when one of them is left of center and the other
    is right of it — a neat trick for "on opposite sides."
 2. **Not too far apart:** $\lvert\text{pos}_i-\theta_u\rvert \le d$, i.e. the gap
@@ -275,13 +275,13 @@ inside the zone is surfaced.*
 
 **The tax (eq 5):**
 
-$$
+```math
 q^B_{u,i} \;=\; \begin{cases} \text{sim}(u,i) & \text{if } i \text{ is a bridge for } u,\\ \varepsilon & \text{otherwise (}\varepsilon = 0.9\text{, a big tax).} \end{cases}
-$$
+```
 
 **Why this surfaces bridges.** Remember an item keeps a fraction $1-q$:
 - **Non-bridges** (same side, or too far): taxed $\varepsilon=0.9$, so they keep
-  only $10\%$ — pushed *down*.
+  only 10% — pushed *down*.
 - **Bridges** (opposite side, close): taxed by $\text{sim}$, which is *small* for
   the nearest opposite items, so $1-q$ is *large* — they keep most of their mass
   and rise to the *top*.
@@ -323,17 +323,17 @@ popularity (degree): item0=3 (the hit),  item1=item2=item3=1 (tail)
 
 **Step 1 — the walk** (3 steps from user 0). Landing chances over the 4 items:
 
-$$
+```math
 p = [\,0.5000,\ 0.3333,\ 0.0833,\ 0.0833\,], \qquad \text{(they add to }1).
-$$
+```
 
 The hit (item 0) grabs half; the user's own niche item 1 grabs a third.
 
 **Step 2 — the RWE-D tax** ($\beta=0.5$, so $q^D_j = 1 - 1/\sqrt{\text{deg}_j}$):
 
-$$
+```math
 q = [\,0.4226,\ 0,\ 0,\ 0\,].
-$$
+```
 
 Only the popular item is taxed ($1-1/\sqrt3 = 0.4226$); the degree-1 tail items
 are taxed $0$.
@@ -342,9 +342,9 @@ are taxed $0$.
 $c = p\cdot q = 0.5\times0.4226 = 0.2113$, then
 $\text{score} = \dfrac{p\odot(1-q)}{1-c}$:
 
-$$
+```math
 \text{score} = [\,0.3660,\ 0.4226,\ 0.1057,\ 0.1057\,].
-$$
+```
 
 **Check — the formula vs. the slow loop agree exactly:**
 
@@ -392,9 +392,9 @@ opposite-side "bridge" (§6).*
 **The rule, as a formula (eq 6).** The chance user $u$ endorses elite $e$ goes
 *down* as the squared distance between their positions goes *up*:
 
-$$
+```math
 \Pi^R_{u,e} = -(\theta_u-\phi_e)^2 + \alpha_u + \beta_e, \qquad \Pr(\text{endorse}) = \sigma(\Pi^R_{u,e}).
-$$
+```
 
 **Reading it:** $(\theta_u-\phi_e)^2$ is their squared distance (the minus sign
 makes "far apart" mean "unlikely"); $\alpha_u,\beta_e$ are just "how active/popular"
@@ -415,9 +415,9 @@ improving.
 $\text{err} = (\text{did it happen?}) - (\text{predicted chance})$. For example
 the nudge to a user's position is
 
-$$
+```math
 \nabla_{\theta_u} = \sum_{e} \text{err}_{u,e}\cdot\big(-2(\theta_u-\phi_e)\big) \;-\; \lambda\,\theta_u,
-$$
+```
 
 i.e. *error × direction-to-the-elite*, summed over elites, minus the stay-modest
 pull. Each position type ($\theta,\phi,\psi$ and the fudge factors) has a matching
@@ -447,9 +447,9 @@ text classifier reads the title + abstract and outputs three probabilities —
 $\Pr_L$ (left), $\Pr_C$ (center), $\Pr_R$ (right). We turn those into one position
 number by a weighted average, with left $=-1$, center $=0$, right $=+1$:
 
-$$
+```math
 \text{pos}_i \;=\; s\,\big(-1\cdot\Pr_L + 0\cdot\Pr_C + 1\cdot\Pr_R\big) \;=\; s\,(\Pr_R - \Pr_L).
-$$
+```
 
 **In plain words:** if the model is sure it's right-wing, $\Pr_R\approx1$ and
 $\text{pos}\approx +s$; sure it's left-wing → $-s$; mixed/centered → near $0$. The
@@ -480,9 +480,9 @@ $1$ = perfect. The formula (Mann–Whitney $U$; *a detail — skip if you like, 
 sentence above is the point*) for one user, with $R_+$ = sum of
 the ranks of the liked items, $n_+$ liked and $n_-$ not:
 
-$$
+```math
 \text{AUC}_u = \frac{R_+ - \tfrac{n_+(n_++1)}{2}}{n_+\,n_-}, \qquad \text{AUC} = \text{mean over users}.
-$$
+```
 
 (The subtraction removes the liked items' ranks *among themselves*; the bottom is
 the number of liked-vs-unliked pairs.) Items the user trained on are excluded.
@@ -505,7 +505,7 @@ spread over all items. The Gini number is $0$ when every item is shown equally
 (maximally fair/diverse) and near $1$ when a few items hog everything; we report
 $1-\text{Gini}$ so **higher = more diverse**. (Formula: sort the per-item show-counts
 $x_{(1)}\le\dots\le x_{(n)}$, total $T$, then
-$\text{Gini} = \frac{2\sum_j j\,x_{(j)}}{n\,T} - \frac{n+1}{n}$.)
+$\text{Gini} = \frac{2\sum_j j x_{(j)}}{nT} - \frac{n+1}{n}$.)
 
 **Catalog coverage** (`catalog_coverage`) — what fraction of all items get shown to
 *somebody*.
@@ -515,7 +515,7 @@ recommend; **lower = more long-tail**.
 
 **Personalization** (`personalization`) — how *different* users' lists are from each
 other. We measure the overlap between two lists with
-$\lvert A\cap B\rvert / \sqrt{\lvert A\rvert\,\lvert B\rvert}$ (a "cosine"),
+$\lvert A\cap B\rvert / \sqrt{\lvert A\rvert \lvert B\rvert}$ (a "cosine"),
 average it over user pairs, and
 report $1$ minus that — higher means more personalized.
 
@@ -542,9 +542,9 @@ line: $\max(\text{positions}) - \min(\text{positions})$, averaged over users.
 **Directed shift** (`directed_shift`) — *"on average, did we push people toward the
 other side?"*
 
-$$
+```math
 \text{dshift} = \text{mean over users of}\ \big[-\text{sign}(\rho_u-\kappa)\cdot(\bar r_u-\rho_u)\big].
-$$
+```
 
 The $-\text{sign}(\rho_u-\kappa)$ flips left vs. right so that **crossing toward the
 center counts as positive for everyone**. Higher = more bridging.
@@ -554,13 +554,13 @@ shift, but **weighting extreme users more** (bridging a die-hard matters more th
 nudging a moderate). The bold idea is the point; the formula below is a detail you
 can skim. With weight $w_u = \lvert\rho_u-\kappa\rvert$:
 
-$$
+```math
 \text{UW-shift} = \frac{\sum_u w_u\,[-\text{sign}(\rho_u-\kappa)]\,(\bar r_u-\rho_u)}{\sum_u w_u}.
-$$
+```
 
 **UW-recs** (`weighted_position`) — *where do the recommendations actually land?*
 The extremity-weighted distance of the average recommendation from the center,
-$\dfrac{\sum_u w_u\,\lvert\bar r_u-\kappa\rvert}{\sum_u w_u}$. **Lower is better:** low
+$\dfrac{\sum_u w_u \lvert\bar r_u-\kappa\rvert}{\sum_u w_u}$. **Lower is better:** low
 means bridged reads sit *near the center*; high means they sit at the *opposite
 extreme* (the backfire danger). This is the number the $d$-knob (§6) drives from
 $0.77$ down to $0.27$.
@@ -586,9 +586,9 @@ classic psychology model (*assimilation–contrast / Social Judgment Theory*).
 $\text{shown}$; let $d = \text{shown}-\theta$ be the gap. Then:
 
 - **Close content** ($\lvert d\rvert \le L_a$): the user moves a little **toward** it
-  — they're persuaded. Move $= +\mu_a\, d$.
+  — they're persuaded. Move $= +\mu_a d$.
 - **Far content** ($\lvert d\rvert \ge L_r$): the user moves **away**, deeper into
-  their own side — the **backfire effect**. Move $= -\mu_b\, d$.
+  their own side — the **backfire effect**. Move $= -\mu_b d$.
 - **In between:** ignored.
 
 ($L_a$ = how close before they listen; $L_r$ = how far before they recoil; the
@@ -633,9 +633,9 @@ opposing content each person can take (`rwe/satisfaction.py`). The chain:
 4. **Turn that into a dial** in $[0,1]$ (`exposure`).
 5. **Set each user's tax personally:**
 
-$$
+```math
 \varepsilon_u \;=\; \varepsilon_{\text{low}} + \text{exposure}_u\,(\varepsilon_{\text{high}}-\varepsilon_{\text{low}}).
-$$
+```
 
 **In plain words:** people who tolerate the other side (high exposure) get their
 *own-side* content taxed *harder*, so more opposing reads surface; sensitive
