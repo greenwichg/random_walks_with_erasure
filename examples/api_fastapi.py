@@ -27,9 +27,12 @@ from types import SimpleNamespace
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # import sibling api_server
 import api_server as engine   # Backend, DatasetProfile, resolve_profile, BUILTIN_PROFILES
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 
 def _int_env(name: str):
@@ -84,23 +87,68 @@ app.add_middleware(
 )
 
 
+# ------------------------------------------------------------------ #
+# One typed error envelope for every failure: {"error": {"code", "message"}}
+# (matches the web proxy's shape in web/lib/backend.ts). Success bodies are
+# unchanged, so the frontend and contract are unaffected.
+# ------------------------------------------------------------------ #
+class ErrorBody(BaseModel):
+    code: str
+    message: str
+
+
+class ErrorResponse(BaseModel):
+    error: ErrorBody
+
+
+def _error(status_code: int, code: str, message: str) -> JSONResponse:
+    return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message}})
+
+
+_HTTP_CODES = {400: "bad_request", 404: "not_found", 405: "method_not_allowed",
+               422: "invalid_request", 503: "engine_unavailable"}
+
+
+@app.exception_handler(RequestValidationError)
+async def _on_validation_error(request: Request, exc: RequestValidationError):
+    return _error(422, "invalid_request", "One or more request parameters are invalid.")
+
+
+@app.exception_handler(StarletteHTTPException)
+async def _on_http_error(request: Request, exc: StarletteHTTPException):
+    code = _HTTP_CODES.get(exc.status_code, "http_error")
+    return _error(exc.status_code, code, str(exc.detail))
+
+
+@app.exception_handler(Exception)
+async def _on_unhandled_error(request: Request, exc: Exception):
+    # Structured logging is added in a later commit; never leak internals to the client.
+    return _error(500, "internal_error", "An unexpected error occurred.")
+
+
 class CoachRequest(BaseModel):
     message: str = ""
     user: str | None = None
 
 
+def _require_backend() -> "engine.Backend":
+    if state.backend is None:
+        raise HTTPException(status_code=503, detail="The engine is still starting up.")
+    return state.backend
+
+
 def _resolve(user: str | None) -> int:
-    return state.backend.resolve_user({"user": [user]} if user is not None else {})
+    return _require_backend().resolve_user({"user": [user]} if user is not None else {})
 
 
 @app.get("/api/health")
 def health() -> dict:
-    return state.backend.health()
+    return _require_backend().health()
 
 
 @app.get("/api/report")
 def report(user: str | None = Query(None, description="reader id; defaults to the demo reader")) -> dict:
-    return state.backend.report(_resolve(user))
+    return _require_backend().report(_resolve(user))
 
 
 @app.get("/api/recommendations")
@@ -108,18 +156,19 @@ def recommendations(
     user: str | None = Query(None),
     strategy: str | None = Query(None, description="rwe-b | rwe-d | adaptive; omit for a blended feed"),
 ) -> list:
-    return state.backend.recommendations(_resolve(user), strategy)
+    return _require_backend().recommendations(_resolve(user), strategy)
 
 
 @app.get("/api/coach")
 def coach(user: str | None = Query(None)) -> list:
-    return state.backend.coach_greeting(_resolve(user))
+    return _require_backend().coach_greeting(_resolve(user))
 
 
 @app.post("/api/coach")
 def coach_reply(req: CoachRequest) -> dict:
-    u = int(req.user) if (req.user or "").lstrip("-").isdigit() else state.backend.demo_user
-    return state.backend.coach_reply(u, req.message or "")
+    be = _require_backend()
+    u = int(req.user) if (req.user or "").lstrip("-").isdigit() else be.demo_user
+    return be.coach_reply(u, req.message or "")
 
 
 def main() -> None:

@@ -106,3 +106,14 @@ def test_openapi_document_served(client):
     paths = doc.json()["paths"]
     for p in ("/api/report", "/api/recommendations", "/api/coach", "/api/health"):
         assert p in paths
+
+
+def test_errors_use_typed_envelope(client):
+    r = client.get("/api/does-not-exist")
+    assert r.status_code == 404
+    err = r.json()["error"]
+    assert err["code"] == "not_found" and err["message"]
+
+    r2 = client.request("PUT", "/api/report")   # GET-only route
+    assert r2.status_code == 405
+    assert r2.json()["error"]["code"] == "method_not_allowed"
