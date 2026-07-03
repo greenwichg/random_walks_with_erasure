@@ -21,21 +21,38 @@ npm run dev      # http://localhost:3000
 
 `npm run build && npm start` for a production build. `npm run typecheck` / `npm run lint` to verify.
 
-## Backend integration — mock today, real tomorrow
+## Backend integration — real engine, mock fallback
 
 Every screen reads data through `hooks/use-data.ts` → `services/index.ts` →
-`services/api.ts` (a single Axios client). Today those calls hit **mock API
-routes** under `app/api/*` that return realistic JSON shaped by `types/domain.ts`.
+`services/api.ts` (a single Axios client) → the app's own `app/api/*` route
+handlers. Those handlers **proxy to the real Python engine** and fall back to
+deterministic mock JSON (shaped by `types/domain.ts`) whenever the engine is
+unreachable — so the app always works, and services migrate one at a time.
 
-To point at the real Python backend, set one env var — nothing else changes:
+Wired to the real engine today: **Report** (`health_report.compute` /
+`user_report`), **Recommendations** (the real `RWE-B` / `RWE-D` / Adaptive
+recommenders), and the **AI Coach** (`narrate_report`, grounded in the live
+report metrics). The rest still serve mock data.
+
+### Run against the real engine
 
 ```bash
-# .env.local
-NEXT_PUBLIC_API_BASE_URL=https://api.informationhealth.app
+# 1) start the engine from the repo root (stdlib only; no external data needed —
+#    it boots the repo's synthetic simulator. Add --npz <data> for real corpora,
+#    and an ANTHROPIC_API_KEY to light up the live coach narrative.)
+python examples/api_server.py            # serves http://127.0.0.1:8000
+
+# 2) point the web app at it (web/.env.local)
+RWE_BACKEND_URL=http://127.0.0.1:8000
+
+# 3) run the app; /api/report, /api/recommendations, /api/coach now serve real
+#    engine output. Stop the engine and they transparently fall back to mock.
+npm run dev
 ```
 
-The mock routes (`/api/report`, `/api/recommendations`, `/api/coach`, …) map 1:1
-to the backend endpoints, so you can migrate them one at a time.
+The proxy bridge is `lib/backend.ts` (one env var, fail-soft). The engine
+serialises exactly the shapes in `types/domain.ts`, so nothing in the UI,
+`services`, or hooks changes when a route goes live.
 
 ## Pages
 
