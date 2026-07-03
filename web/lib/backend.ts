@@ -5,14 +5,42 @@
  * Information Health backend. Everything is behind one env var — set
  * `RWE_BACKEND_URL` to the running engine (default `http://127.0.0.1:8000`).
  *
- * Every call is fail-soft: if the backend is unreachable, slow, or returns a
- * non-200, the helper returns `null` and the caller falls back to mock data.
- * That's what lets us migrate one service at a time without breaking the app
- * when the engine isn't running.
+ * Each `backendGet`/`backendPost` is fail-soft: on any transport error it
+ * returns `null`. Whether a route may then serve mock data is a *policy*
+ * decision — see `MOCK_FALLBACK_ENABLED`.
  */
+
+import { NextResponse } from "next/server";
 
 const BASE = process.env.RWE_BACKEND_URL ?? "http://127.0.0.1:8000";
 const TIMEOUT_MS = Number(process.env.RWE_BACKEND_TIMEOUT_MS ?? 6000);
+
+/**
+ * Whether a route backed by the real engine may fall back to mock data when the
+ * engine is unreachable.
+ *
+ * ON in development so the app runs without the engine; OFF in production so a
+ * reader is never shown fabricated health numbers during an outage — they get a
+ * proper error state instead. Override explicitly with `RWE_ALLOW_MOCK_FALLBACK`
+ * (`"true"` / `"false"`). Mock-only routes (no engine counterpart yet) ignore
+ * this and always serve mock until their real service lands.
+ */
+export const MOCK_FALLBACK_ENABLED =
+  process.env.RWE_ALLOW_MOCK_FALLBACK === "true" ||
+  (process.env.RWE_ALLOW_MOCK_FALLBACK !== "false" && process.env.NODE_ENV !== "production");
+
+/** Typed 503 for when the engine is down and mock fallback is disabled. */
+export function engineUnavailable(): NextResponse {
+  return NextResponse.json(
+    {
+      error: {
+        code: "engine_unavailable",
+        message: "The Information Health engine is temporarily unavailable. Please try again shortly.",
+      },
+    },
+    { status: 503 },
+  );
+}
 
 async function withTimeout(input: string, init?: RequestInit): Promise<Response | null> {
   const controller = new AbortController();

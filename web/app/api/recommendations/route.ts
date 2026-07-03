@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import type { Recommendation } from "@/types/domain";
-import { backendGet } from "@/lib/backend";
+import { backendGet, MOCK_FALLBACK_ENABLED, engineUnavailable } from "@/lib/backend";
 import { RECOMMENDATIONS } from "@/mock/data";
 
 // Reflect the live recommender at request time, not a build-time snapshot.
@@ -21,6 +21,7 @@ export async function GET(request: Request) {
   const recs = await backendGet<Recommendation[]>(`/api/recommendations${qs}`);
   if (recs) return NextResponse.json(recs);
 
+  if (!MOCK_FALLBACK_ENABLED) return engineUnavailable();
   const fallback = strategy
     ? RECOMMENDATIONS.filter((r) => r.strategy === strategy)
     : RECOMMENDATIONS;

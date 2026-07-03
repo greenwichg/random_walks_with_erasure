@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import type { CoachMessage } from "@/types/domain";
-import { backendGet, backendPost } from "@/lib/backend";
+import { backendGet, backendPost, MOCK_FALLBACK_ENABLED, engineUnavailable } from "@/lib/backend";
 import { COACH_GREETING, coachReply } from "@/mock/data";
 
 // The coach grounds on the live report, so always run at request time.
@@ -15,11 +15,15 @@ export const dynamic = "force-dynamic";
  */
 export async function GET() {
   const history = await backendGet<CoachMessage[]>("/api/coach");
-  return NextResponse.json(history ?? [COACH_GREETING]);
+  if (history) return NextResponse.json(history);
+  if (MOCK_FALLBACK_ENABLED) return NextResponse.json([COACH_GREETING]);
+  return engineUnavailable();
 }
 
 export async function POST(request: Request) {
   const { message } = (await request.json().catch(() => ({ message: "" }))) as { message: string };
   const reply = await backendPost<CoachMessage>("/api/coach", { message: message ?? "" });
-  return NextResponse.json(reply ?? coachReply(message ?? ""));
+  if (reply) return NextResponse.json(reply);
+  if (MOCK_FALLBACK_ENABLED) return NextResponse.json(coachReply(message ?? ""));
+  return engineUnavailable();
 }
