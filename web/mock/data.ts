@@ -68,51 +68,81 @@ const HEADLINES: Record<string, string[]> = {
     "Turnout surges in early voting as both parties court suburbs",
     "New poll shows a tightening race in key swing states",
     "What the latest ballot measures reveal about the electorate",
+    "Campaigns pour record sums into a handful of battlegrounds",
+    "Election officials brace for a long night of counting",
+    "Independent voters emerge as the decisive bloc",
   ],
   Economy: [
     "Inflation cools for a third straight month, easing pressure on the Fed",
     "Job growth beats forecasts but wage gains stay muted",
     "Why economists disagree on the strength of the recovery",
+    "Consumer spending holds up despite higher borrowing costs",
+    "Markets rally as the Fed signals a patient path on rates",
+    "Small businesses feel the squeeze even as headline numbers improve",
   ],
   Climate: [
     "Nations edge toward a deal on climate finance at summit",
     "Record heat renews debate over the pace of the energy transition",
     "How coastal cities are budgeting for rising seas",
+    "Clean-energy investment hits a new high, but grids lag behind",
+    "Farmers adapt as shifting seasons upend planting",
+    "The fight over who pays for climate damage intensifies",
   ],
   "Foreign Policy": [
     "Diplomats push for a ceasefire as talks resume",
     "Allies weigh new sanctions amid escalating tensions",
     "The strategic calculus behind the latest defense pact",
+    "Aid convoys stall as negotiators trade blame",
+    "A fragile truce holds through its first week",
+    "Regional powers jockey for influence after the summit",
   ],
   Healthcare: [
     "Drug pricing rules take effect, and the industry pushes back",
     "Rural hospitals warn of closures under new funding formula",
     "A new study reframes the debate over preventive care",
+    "Insurers and providers clash over surprise-billing rules",
+    "Mental-health coverage expands, but access gaps remain",
+    "Lawmakers spar over the future of public-health funding",
   ],
   Technology: [
     "Regulators open a fresh antitrust probe into AI platforms",
     "Chipmakers race to meet surging demand for data centers",
     "Inside the fight over who controls your digital identity",
+    "New rules would force platforms to open their algorithms",
+    "A wave of layoffs reshapes the tech labor market",
+    "Startups bet big on AI as funding rebounds",
   ],
   Immigration: [
     "Border crossings shift as new policy reshapes the flow",
     "Cities strain to house new arrivals as funding lags",
     "The economic case for and against the latest visa plan",
+    "Courts weigh a challenge to the asylum overhaul",
+    "Employers press for more work visas amid labor shortages",
+    "Communities divided over how to welcome newcomers",
   ],
   "Supreme Court": [
     "Justices hear arguments in a case that could reshape agencies",
     "A narrow ruling leaves the bigger question for another term",
     "How the court's term is redrawing the balance of power",
+    "Dissent warns of sweeping consequences for regulation",
+    "The court sidesteps a major constitutional question",
+    "A divided bench signals more clashes ahead",
   ],
   Education: [
     "Test scores rebound unevenly as districts spend relief funds",
     "The quiet fight over what belongs in the curriculum",
     "Colleges rethink admissions after the affirmative-action ruling",
+    "Teacher shortages force districts to get creative",
+    "Student-debt relief faces a fresh legal test",
+    "Parents and boards clash over classroom policy",
   ],
   Energy: [
     "Grid operators warn of strain as demand from AI climbs",
     "A permitting overhaul could unlock stalled clean-energy projects",
     "Why gas prices are diverging across regions",
+    "Utilities race to add capacity before summer peaks",
+    "The nuclear revival gains unlikely allies",
+    "Battery costs fall, reshaping the case for renewables",
   ],
 };
 
@@ -259,12 +289,15 @@ export const HISTORY: HistoryEntry[] = ARTICLES.slice(10, 40).map((article, i) =
  * ------------------------------------------------------------------ */
 function makeStory(id: string, title: string, topic: string, summary: string): Story {
   const outlets = [...PUBLISHERS].sort(() => rand() - 0.5).slice(0, 6);
-  const coverage = outlets.map((p) => {
+  // Each outlet covers the same event with a distinct framing (headlines are
+  // assigned by index so no two outlets in a cluster share a headline).
+  const pool = HEADLINES[topic] ?? [title];
+  const coverage = outlets.map((p, idx) => {
     const lean = Math.max(-2, Math.min(2, p.lean + (rand() - 0.5) * 0.5));
     const register = rand() > 0.5 ? "reporting" : "opinion";
     return {
       publisher: p.name,
-      headline: (HEADLINES[topic] ?? [title])[Math.floor(rand() * (HEADLINES[topic]?.length ?? 1))]!,
+      headline: pool[idx % pool.length]!,
       lean,
       leanBucket: leanBucket(lean),
       register: register as "reporting" | "opinion",

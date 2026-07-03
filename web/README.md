@@ -37,6 +37,24 @@ NEXT_PUBLIC_API_BASE_URL=https://api.informationhealth.app
 The mock routes (`/api/report`, `/api/recommendations`, `/api/coach`, …) map 1:1
 to the backend endpoints, so you can migrate them one at a time.
 
+## Pages
+
+| Route | What it shows | Backend service |
+| --- | --- | --- |
+| `/` | Dashboard — overall score, today's reading, metric cards | Information Health Report + reading history |
+| `/report` | The flagship report — radar, distributions, blind spots, improvements | Health Report |
+| `/recommendations` | Cross-cutting / diversifying reads with per-item reasons and score impact | RWE-B / RWE-D / Adaptive RWE |
+| `/coach` | Grounded chat that explains metrics and suggests reads | AI Coach (narrate) |
+| `/history` | Searchable, filterable reading log — timeline + calendar heatmap | Reading history |
+| `/discover` | Featured top story, topic exploration, trending clusters | Story clustering + topic extraction |
+| `/stories` · `/stories/[id]` | One event, coverage across the spectrum — publisher/register/emotion side by side | Story clustering, NER, register + emotion classifiers |
+| `/analytics` | 30-day trends: health, diversity, tone, reporting mix, acceptance | Diversity + satisfaction metrics |
+| `/settings` | Recommender tuning (openness, strength), reports, notifications, privacy | Adaptive RWE-B knobs |
+| `/profile` | Streaks, achievements, health journey, milestones | Profile + report history |
+
+Global states are handled too: route-level `loading`, an `error` boundary, and a
+branded `not-found`.
+
 ## Project structure
 
 ```
@@ -48,7 +66,9 @@ components/
   ui/               vendored shadcn primitives (button, card, dialog, …)
   layout/           sidebar, header, search, page container
   shared/           cross-page building blocks (MetricCard, ScoreRing, charts…)
-  dashboard/        dashboard-specific widgets
+  dashboard/        dashboard widgets       report/    report widgets
+  recommendations/  recommendation card     coach/     chat bubbles
+  stories/          story card
 hooks/              React Query hooks + utilities (useMeasure)
 services/           typed data access + query keys (the API boundary)
 types/              domain model — the contract for the whole app
