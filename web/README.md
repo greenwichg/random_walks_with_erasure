@@ -25,34 +25,75 @@ npm run dev      # http://localhost:3000
 
 Every screen reads data through `hooks/use-data.ts` → `services/index.ts` →
 `services/api.ts` (a single Axios client) → the app's own `app/api/*` route
-handlers. Those handlers **proxy to the real Python engine** and fall back to
-deterministic mock JSON (shaped by `types/domain.ts`) whenever the engine is
-unreachable — so the app always works, and services migrate one at a time.
+handlers. Those handlers **proxy to the real Python engine** (`examples/api_server.py`)
+via `lib/backend.ts`, and serialise exactly the shapes in `types/domain.ts` — so
+nothing in the UI, `services`, or hooks changes when a route goes live.
 
 Wired to the real engine today: **Report** (`health_report.compute` /
 `user_report`), **Recommendations** (the real `RWE-B` / `RWE-D` / Adaptive
 recommenders), and the **AI Coach** (`narrate_report`, grounded in the live
 report metrics). The rest still serve mock data.
 
+### Fallback policy — dev convenience, production honesty
+
+`lib/backend.ts` is fail-soft, but whether a route may then serve mock data is a
+policy set by `MOCK_FALLBACK_ENABLED`:
+
+- **Development** — engine-backed routes fall back to deterministic mock JSON when
+  the engine is unreachable, so the app runs without the engine.
+- **Production** — fallback is **off**; an unreachable engine returns a typed
+  `503 { error: { code: "engine_unavailable", … } }` and the UI shows its error
+  state, so a reader is never shown fabricated health numbers. Override with
+  `RWE_ALLOW_MOCK_FALLBACK=true|false`.
+
+Mock-only routes (no engine counterpart yet) ignore this and keep serving mock
+until their real service lands.
+
+### Backend is the source of truth
+
+Derived, product-defined values are computed once by the engine and consumed by
+the UI, not recomputed per client. The engine emits each article's `leanBucket`
+and `dominantEmotion`, and the health `band` (Healthy / Fair / Needs work) on the
+report and every metric. The frontend consumes these; the local helpers
+(`scoreBand`, `leanBucket`, `dominantEmotion` — via `resolveBand()` and optional
+props) remain only as a fallback for mock data and for payloads that carry a raw
+lean but no bucket (e.g. `SourceSlice`).
+
+### Dataset profiles — switch data by configuration only
+
+The engine selects its data source through a **named `DatasetProfile`** — no code
+change to move between corpora. Profiles are chosen by flag or environment
+variable (CLI > env > profile default):
+
+| Profile | Source | Select with |
+| --- | --- | --- |
+| `synthetic` (default) | the repo's own simulator — no external data | *(nothing)* |
+| `qbias` | synthetic users over a real Qbias AllSides catalog | `--qbias <csv>` / `RWE_QBIAS` |
+| `mind` | an ingested MIND `.npz` (news) | `--npz <file>` / `RWE_NPZ` |
+| `politosphere` | an ingested Politosphere `.npz` (reddit) | `--npz <file>` / `RWE_NPZ` |
+
+Enrichment (`--register-csv`, `--emotion-csv`, `--behaviors`) and the lean-axis
+centre (`--lean-tau`, sourced from the engine's own `LEAN_TAU`) are per-profile,
+so a new production corpus is a new profile, not new code.
+
 ### Run against the real engine
 
 ```bash
-# 1) start the engine from the repo root (stdlib only; no external data needed —
-#    it boots the repo's synthetic simulator. Add --npz <data> for real corpora,
-#    and an ANTHROPIC_API_KEY to light up the live coach narrative.)
-python examples/api_server.py            # serves http://127.0.0.1:8000
+# 1) start the engine from the repo root (stdlib only; boots the synthetic
+#    simulator with zero external data). Add ANTHROPIC_API_KEY for the live coach.
+python examples/api_server.py                         # synthetic, :8000
+python examples/api_server.py --profile mind --npz mind_full.npz
+RWE_PROFILE=mind RWE_NPZ=mind_full.npz python examples/api_server.py   # config-only
 
 # 2) point the web app at it (web/.env.local)
 RWE_BACKEND_URL=http://127.0.0.1:8000
 
 # 3) run the app; /api/report, /api/recommendations, /api/coach now serve real
-#    engine output. Stop the engine and they transparently fall back to mock.
+#    engine output (dev falls back to mock if the engine is down).
 npm run dev
 ```
 
-The proxy bridge is `lib/backend.ts` (one env var, fail-soft). The engine
-serialises exactly the shapes in `types/domain.ts`, so nothing in the UI,
-`services`, or hooks changes when a route goes live.
+The JSON contract is guarded by `tests/test_api_server.py`.
 
 ## Pages
 

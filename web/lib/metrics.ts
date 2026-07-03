@@ -153,12 +153,12 @@ const BAND_HUE: Record<string, BandHue> = {
 
 /**
  * Band label + hue for a 0–100 score — the *fallback* thresholds. The engine is the
- * source of truth; prefer `resolveBand(score, backendBand)` so the UI honours it.
+ * source of truth; prefer `resolveBand(score, backendBand)` so the UI honours it. Hue
+ * is sourced from `BAND_HUE` (one place) so the label→colour mapping isn't restated.
  */
 export function scoreBand(score: number): { label: string; hue: BandHue } {
-  if (score >= 67) return { label: "Healthy", hue: "positive" };
-  if (score >= 40) return { label: "Fair", hue: "caution" };
-  return { label: "Needs work", hue: "negative" };
+  const label = score >= 67 ? "Healthy" : score >= 40 ? "Fair" : "Needs work";
+  return { label, hue: BAND_HUE[label] ?? "negative" };
 }
 
 /** Resolve a band, preferring the engine's value and falling back to local thresholds. */
