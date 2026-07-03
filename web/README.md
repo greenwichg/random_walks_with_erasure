@@ -78,12 +78,19 @@ so a new production corpus is a new profile, not new code.
 
 ### Run against the real engine
 
+The production serving layer is **FastAPI** (`examples/api_fastapi.py`) — same
+paths, params, and JSON as before, plus interactive OpenAPI docs at `/docs`, a
+typed error envelope, structured request logs, and recommenders built once at
+startup. (The dependency-free stdlib server, `examples/api_server.py`, remains
+as a zero-install fallback and is the engine core FastAPI imports.)
+
 ```bash
-# 1) start the engine from the repo root (stdlib only; boots the synthetic
-#    simulator with zero external data). Add ANTHROPIC_API_KEY for the live coach.
-python examples/api_server.py                         # synthetic, :8000
-python examples/api_server.py --profile mind --npz mind_full.npz
-RWE_PROFILE=mind RWE_NPZ=mind_full.npz python examples/api_server.py   # config-only
+# 1) start the engine from the repo root. Same profiles/env as before; add
+#    ANTHROPIC_API_KEY for the live coach narrative.
+pip install -e ".[serve]"                             # fastapi + uvicorn, once
+python examples/api_fastapi.py                        # synthetic, :8000, docs at /docs
+python examples/api_fastapi.py --profile mind --npz mind_full.npz
+RWE_PROFILE=mind RWE_NPZ=mind_full.npz python examples/api_fastapi.py   # config-only
 
 # 2) point the web app at it (web/.env.local)
 RWE_BACKEND_URL=http://127.0.0.1:8000
@@ -93,7 +100,9 @@ RWE_BACKEND_URL=http://127.0.0.1:8000
 npm run dev
 ```
 
-The JSON contract is guarded by `tests/test_api_server.py`.
+The JSON contract is guarded by `tests/test_api_server.py` (serializer level) and
+`tests/test_api_fastapi.py` (HTTP level, asserting the FastAPI responses match the
+serializers exactly).
 
 ## Pages
 
