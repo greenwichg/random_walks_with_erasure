@@ -1,0 +1,23 @@
+# Keep the Docker build context small and reproducible.
+.git
+.gitignore
+**/node_modules
+**/.next
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+*.egg-info
+.eggs
+build
+dist
+# Datasets / large artifacts (mount at runtime instead)
+*.npz
+*.npy
+data
+# Local secrets / logs
+**/.env*.local
+*.log
+# Not needed to build or run the system
+docs
+notebooks
+tests

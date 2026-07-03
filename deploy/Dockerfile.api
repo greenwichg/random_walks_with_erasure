@@ -1,0 +1,23 @@
+# Information Health engine — FastAPI serving layer (examples/api_fastapi.py).
+# Build from the REPO ROOT:
+#   docker build -f deploy/Dockerfile.api -t ih-api .
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Only what the package build + engine need (numpy/scipy/pandas ship manylinux
+# wheels, so no compiler is required).
+COPY pyproject.toml README.md ./
+COPY rwe ./rwe
+COPY examples ./examples
+
+RUN pip install --no-cache-dir ".[serve]"
+
+EXPOSE 8000
+ENV RWE_PROFILE=synthetic \
+    RWE_LOG_LEVEL=INFO
+
+# The synthetic profile needs no data. For MIND / Politosphere, mount a volume and
+# set RWE_PROFILE + RWE_NPZ (see deploy/docker-compose.yml). For the live coach
+# narrative, pass ANTHROPIC_API_KEY.
+CMD ["python", "examples/api_fastapi.py", "--host", "0.0.0.0", "--port", "8000"]

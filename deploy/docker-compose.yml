@@ -1,0 +1,44 @@
+# Complete system: FastAPI engine + Next.js web app.
+#   docker compose -f deploy/docker-compose.yml up --build
+# Then open http://localhost:3000  (API docs at http://localhost:8000/docs).
+services:
+  api:
+    build:
+      context: ..                      # repo root
+      dockerfile: deploy/Dockerfile.api
+    ports:
+      - "8000:8000"
+    environment:
+      RWE_PROFILE: synthetic           # synthetic | qbias | mind | politosphere
+      RWE_LOG_LEVEL: INFO
+      # --- switch datasets by configuration only (uncomment + mount ./data) ---
+      # RWE_PROFILE: mind
+      # RWE_NPZ: /data/mind.npz
+      # RWE_PROFILE: politosphere
+      # RWE_NPZ: /data/politosphere.npz
+      # RWE_DOMAIN: reddit
+      # RWE_PROFILE: qbias
+      # RWE_QBIAS: /data/allsides_balanced_news.csv
+      # --- optional: live AI-coach narrative ---
+      # ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+    # volumes:
+    #   - ./data:/data:ro              # host ./data → /data in the container
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health').status==200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.web
+    ports:
+      - "3000:3000"
+    environment:
+      RWE_BACKEND_URL: http://api:8000
+      NODE_ENV: production
+    depends_on:
+      api:
+        condition: service_healthy

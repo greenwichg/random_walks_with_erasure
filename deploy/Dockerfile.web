@@ -1,0 +1,22 @@
+# Information Health web app (Next.js). Build from the REPO ROOT:
+#   docker build -f deploy/Dockerfile.web -t ih-web .
+FROM node:20-slim
+
+WORKDIR /app
+
+# Install deps against the lockfile first (better layer caching).
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+
+# Build the production bundle. RWE_BACKEND_URL is read per-request at runtime,
+# not at build time, so no backend needs to be reachable to build.
+COPY web ./
+RUN npm run build
+
+EXPOSE 3000
+# NODE_ENV=production turns OFF the mock fallback: if the engine is unreachable the
+# app returns a 503 rather than fabricated numbers. Point RWE_BACKEND_URL at the API.
+ENV NODE_ENV=production \
+    RWE_BACKEND_URL=http://api:8000
+
+CMD ["npm", "start", "--", "-H", "0.0.0.0", "-p", "3000"]
