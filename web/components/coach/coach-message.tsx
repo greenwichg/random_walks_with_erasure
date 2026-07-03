@@ -62,7 +62,7 @@ export function CoachMessageBubble({ message }: { message: TMessage }) {
                 </div>
                 <p className="mt-1 text-sm font-medium leading-snug">{a.headline}</p>
                 <div className="mt-2">
-                  <LeanBadge lean={a.lean} />
+                  <LeanBadge lean={a.lean} bucket={a.leanBucket} />
                 </div>
               </div>
             ))}

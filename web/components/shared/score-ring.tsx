@@ -1,7 +1,7 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { scoreBand } from "@/lib/metrics";
+import { resolveBand } from "@/lib/metrics";
 import { cn } from "@/lib/utils";
 
 const HUE: Record<string, string> = {
@@ -16,20 +16,23 @@ export function ScoreRing({
   size = 128,
   strokeWidth = 10,
   label,
+  band,
   className,
 }: {
   score: number;
   size?: number;
   strokeWidth?: number;
   label?: string;
+  /** Engine-provided health band; falls back to local thresholds when absent. */
+  band?: string;
   className?: string;
 }) {
   const radius = (size - strokeWidth) / 2;
   const circumference = 2 * Math.PI * radius;
   const clamped = Math.max(0, Math.min(100, score));
   const offset = circumference - (clamped / 100) * circumference;
-  const band = scoreBand(clamped);
-  const color = HUE[band.hue];
+  const resolved = resolveBand(clamped, band);
+  const color = HUE[resolved.hue];
 
   return (
     <div className={cn("relative inline-grid place-items-center", className)} style={{ width: size, height: size }}>

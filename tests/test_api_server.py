@@ -37,6 +37,7 @@ EMOTIONS = {"fear", "outrage", "analysis", "positive", "neutral"}
 BUCKETS = {"left", "center", "right"}
 REGISTERS = {"reporting", "opinion", "mixed"}
 STRATEGIES = {"rwe-b", "rwe-d", "adaptive"}
+BANDS = {"Healthy", "Fair", "Needs work", "Unknown"}
 
 
 @pytest.fixture(scope="module")
@@ -86,12 +87,14 @@ def test_report_contract(backend, user):
     }
     assert 0 <= r["overall"] <= 100
     assert 0.0 <= r["axisConfidence"] <= 1.0
+    assert r["band"] in BANDS  # backend owns the health-band thresholds
 
     keys_seen = set()
     for m in r["metrics"]:
         assert m["key"] in METRIC_KEYS
         assert 0 <= m["score"] <= 100
         assert "delta" in m
+        assert m["band"] in BANDS
         keys_seen.add(m["key"])
     assert keys_seen == METRIC_KEYS  # synthetic corpus populates all eight
 

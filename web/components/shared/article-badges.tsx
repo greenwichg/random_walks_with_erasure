@@ -1,18 +1,17 @@
 "use client";
 
 import { FileText, MessageSquareQuote, Gauge, Building2 } from "lucide-react";
-import type { Article, EmotionShare, Lean, Register } from "@/types/domain";
+import type { Article, EmotionShare, Lean, LeanBucket, Register } from "@/types/domain";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { EMOTION_META } from "@/lib/metrics";
 import { leanBucket, leanLabel } from "@/lib/political";
 import { cn } from "@/lib/utils";
 
-/** Political viewpoint pill, coloured by bucket. */
-export function LeanBadge({ lean, className }: { lean: Lean; className?: string }) {
-  const bucket = leanBucket(lean);
+/** Political viewpoint pill, coloured by bucket. Prefers the engine's `bucket` when given. */
+export function LeanBadge({ lean, bucket, className }: { lean: Lean; bucket?: LeanBucket; className?: string }) {
   return (
-    <Badge variant={bucket} className={className}>
+    <Badge variant={bucket ?? leanBucket(lean)} className={className}>
       {leanLabel(lean)}
     </Badge>
   );
@@ -48,9 +47,11 @@ export function ConfidenceBadge({ value }: { value: number }) {
   );
 }
 
-/** Dominant-emotion pill. */
-export function EmotionBadge({ emotion }: { emotion: EmotionShare }) {
-  const key = (Object.keys(emotion) as (keyof EmotionShare)[]).reduce((a, b) => (emotion[a] >= emotion[b] ? a : b));
+/** Dominant-emotion pill. Prefers the engine's `dominant` key when given. */
+export function EmotionBadge({ emotion, dominant }: { emotion: EmotionShare; dominant?: keyof EmotionShare }) {
+  const key =
+    dominant ??
+    (Object.keys(emotion) as (keyof EmotionShare)[]).reduce((a, b) => (emotion[a] >= emotion[b] ? a : b));
   const meta = EMOTION_META[key];
   return (
     <span
@@ -81,9 +82,9 @@ export function RegisterBadge({ register }: { register: Register }) {
 export function ArticleAttributes({ article, className }: { article: Article; className?: string }) {
   return (
     <div className={cn("flex flex-wrap items-center gap-1.5", className)}>
-      <LeanBadge lean={article.lean} />
+      <LeanBadge lean={article.lean} bucket={article.leanBucket} />
       <RegisterBadge register={article.register} />
-      <EmotionBadge emotion={article.emotion} />
+      <EmotionBadge emotion={article.emotion} dominant={article.dominantEmotion} />
       <ConfidenceBadge value={article.confidence} />
     </div>
   );

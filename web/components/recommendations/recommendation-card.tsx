@@ -96,9 +96,9 @@ export function RecommendationCard({
 
       {/* attributes */}
       <div className="mt-3 flex flex-wrap items-center gap-1.5">
-        <LeanBadge lean={article.lean} />
+        <LeanBadge lean={article.lean} bucket={article.leanBucket} />
         <RegisterBadge register={article.register} />
-        <EmotionBadge emotion={article.emotion} />
+        <EmotionBadge emotion={article.emotion} dominant={article.dominantEmotion} />
         <ConfidenceBadge value={article.confidence} />
       </div>
 

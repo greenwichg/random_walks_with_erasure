@@ -18,7 +18,7 @@ import { ReportSkeleton } from "@/components/report/report-skeleton";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { scoreBand, LEAN_META } from "@/lib/metrics";
+import { resolveBand, LEAN_META } from "@/lib/metrics";
 import { leanBucket } from "@/lib/political";
 
 export default function ReportPage() {
@@ -52,11 +52,13 @@ export default function ReportPage() {
             : `Your reading leans heavily ${side}; the other side is thin.`;
         })();
 
-  const dietSummary = !report
+  // Health band comes from the engine (source of truth); fall back to local thresholds.
+  const overallBand = report ? resolveBand(report.overall, report.band) : null;
+  const dietSummary = !overallBand
     ? ""
-    : scoreBand(report.overall).label === "Healthy"
+    : overallBand.label === "Healthy"
       ? "A broad, balanced reading diet — keep it up."
-      : scoreBand(report.overall).label === "Fair"
+      : overallBand.label === "Fair"
         ? "A reasonable diet, with clear room to broaden and balance it."
         : "Your reading is fairly narrow right now — a few changes would help a lot.";
 
@@ -94,9 +96,9 @@ export default function ReportPage() {
           <div className="grid gap-6 lg:grid-cols-3">
             <Card>
               <CardContent className="flex flex-col items-center p-6 text-center">
-                <ScoreRing score={report.overall} size={150} label="of 100" />
+                <ScoreRing score={report.overall} size={150} label="of 100" band={report.band} />
                 <div className="mt-4 flex items-center gap-2">
-                  <Badge variant={scoreBand(report.overall).hue}>{scoreBand(report.overall).label}</Badge>
+                  {overallBand && <Badge variant={overallBand.hue}>{overallBand.label}</Badge>}
                   <DeltaBadge value={report.overallDelta} suffix="this month" />
                 </div>
                 <p className="mt-3 text-sm text-muted-foreground">{dietSummary}</p>

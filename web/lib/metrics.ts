@@ -142,11 +142,30 @@ export const RADAR_METRICS: MetricKey[] = [
   "viewpointBalance",
 ];
 
-/** Band label + hue for a 0–100 score. */
-export function scoreBand(score: number): { label: string; hue: "positive" | "caution" | "negative" } {
+type BandHue = "positive" | "caution" | "negative";
+
+const BAND_HUE: Record<string, BandHue> = {
+  Healthy: "positive",
+  Fair: "caution",
+  "Needs work": "negative",
+  Unknown: "negative",
+};
+
+/**
+ * Band label + hue for a 0–100 score — the *fallback* thresholds. The engine is the
+ * source of truth; prefer `resolveBand(score, backendBand)` so the UI honours it.
+ */
+export function scoreBand(score: number): { label: string; hue: BandHue } {
   if (score >= 67) return { label: "Healthy", hue: "positive" };
   if (score >= 40) return { label: "Fair", hue: "caution" };
   return { label: "Needs work", hue: "negative" };
+}
+
+/** Resolve a band, preferring the engine's value and falling back to local thresholds. */
+export function resolveBand(score: number, band?: string | null): { label: string; hue: BandHue } {
+  const hue = band ? BAND_HUE[band] : undefined;
+  if (band && hue) return { label: band, hue };
+  return scoreBand(score);
 }
 
 export const LEAN_META: Record<LeanBucket, { label: string; color: string; token: string }> = {

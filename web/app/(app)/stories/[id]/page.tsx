@@ -208,7 +208,7 @@ function CoverageItem({ item, index }: { item: StoryCoverage; index: number }) {
       </div>
       <p className="mb-2 line-clamp-3 text-sm leading-snug">{item.headline}</p>
       <div className="flex flex-wrap items-center gap-1.5">
-        <LeanBadge lean={item.lean} />
+        <LeanBadge lean={item.lean} bucket={item.leanBucket} />
         <RegisterBadge register={item.register} />
         <EmotionBadge emotion={item.emotion} />
       </div>

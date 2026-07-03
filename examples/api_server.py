@@ -115,6 +115,18 @@ def _lean_bucket(pos: float, tau: float = hr.LEAN_TAU) -> str:
     return "center"
 
 
+def _score_band(score) -> str:
+    """The product's health band for a 0–100 score — the single source of truth for the
+    thresholds the UI shows (web `scoreBand()` consumes this, falling back to the same cut-offs)."""
+    if score is None:
+        return "Unknown"
+    if score >= 67:
+        return "Healthy"
+    if score >= 40:
+        return "Fair"
+    return "Needs work"
+
+
 def _register_enum(p_reporting) -> str:
     if p_reporting is None or not np.isfinite(p_reporting):
         return "mixed"
@@ -362,11 +374,14 @@ class Backend:
             s = scores.get(label)
             if s is None:
                 continue
-            metrics.append({"key": key, "score": int(s), "delta": 0, "benchmark": 50})
+            metrics.append({"key": key, "score": int(s), "delta": 0, "benchmark": 50,
+                            "band": _score_band(int(s))})
         vc = rep.get("viewpoint_confidence")
         axis_conf = float(vc) if vc is not None else 0.7
-        metrics.append({"key": "confidence", "score": round(axis_conf * 100), "delta": 0,
-                        "benchmark": 70, "raw": {"value": round(axis_conf, 2), "unit": "axis margin"}})
+        conf_score = round(axis_conf * 100)
+        metrics.append({"key": "confidence", "score": conf_score, "delta": 0, "benchmark": 70,
+                        "band": _score_band(conf_score),
+                        "raw": {"value": round(axis_conf, 2), "unit": "axis margin"}})
 
         # per-user topic + source distributions (real shares from the click matrix)
         UC, UO = self.pop["UC"], self.pop["UO"]
@@ -403,9 +418,11 @@ class Backend:
                 improvements.append({"id": f"imp_{m['key']}", "title": tpl[0], "detail": tpl[1],
                                      "metric": m["key"], "impact": tpl[2]})
 
+        overall = rep.get("overall") or 0
         return {
-            "overall": rep.get("overall") or 0,
+            "overall": overall,
             "overallDelta": 0,
+            "band": _score_band(overall),
             "updatedAt": datetime.now(timezone.utc).isoformat(),
             "metrics": metrics,
             "viewpoint": {"left": float(left), "center": float(center), "right": float(right)},

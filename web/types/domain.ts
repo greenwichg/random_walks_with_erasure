@@ -24,6 +24,10 @@ export type MetricKey =
   | "openMindedness"
   | "confidence";
 
+/** Product health band for a 0–100 score. The backend is the source of truth for the
+ * thresholds; the frontend `scoreBand()` is a fallback for data that lacks it. */
+export type HealthBand = "Healthy" | "Fair" | "Needs work" | "Unknown";
+
 /** A single scored metric (0–100) with the context the UI needs to render it. */
 export interface Metric {
   key: MetricKey;
@@ -31,6 +35,8 @@ export interface Metric {
   score: number;
   /** Change vs the previous period, in points. */
   delta: number;
+  /** Health band from the engine (source of truth). */
+  band?: HealthBand;
   /** Raw underlying value + unit, for the "you read 12 topics" anchor. */
   raw?: { value: number; unit: string };
   /** Population median for the same metric (the "typical reader"). */
@@ -84,6 +90,8 @@ export interface Improvement {
 export interface HealthReport {
   overall: number;
   overallDelta: number;
+  /** Health band for the overall score, from the engine (source of truth). */
+  band?: HealthBand;
   updatedAt: string;
   metrics: Metric[];
   viewpoint: ViewpointDistribution;

@@ -39,9 +39,9 @@ export function ArticleRow({
         </div>
         <h4 className="mt-1 font-medium leading-snug">{article.headline}</h4>
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
-          <LeanBadge lean={article.lean} />
+          <LeanBadge lean={article.lean} bucket={article.leanBucket} />
           <RegisterBadge register={article.register} />
-          <EmotionBadge emotion={article.emotion} />
+          <EmotionBadge emotion={article.emotion} dominant={article.dominantEmotion} />
         </div>
       </div>
       <div className="flex shrink-0 flex-col items-end gap-2">
