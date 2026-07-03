@@ -21,7 +21,7 @@ attention profile populate.
 Endpoints (all JSON, CORS-enabled):
     GET  /api/health                    readiness + dataset summary
     GET  /api/report[?user=<id>]        Information Health Report for a reader
-    GET  /api/recommendations[?user=]   RWE-B bridging recommendations (full articles)
+    GET  /api/recommendations[?user=&strategy=rwe-b|rwe-d|adaptive]   RWE recs (full articles)
     GET  /api/coach                     coach greeting + opening (grounded)
     POST /api/coach   {message,user}    grounded reply (LLM narrative if a key is set)
 """
@@ -132,6 +132,7 @@ class Backend:
         self.model = model or nr._DEFAULT_MODELS.get(provider)
         register = emotion = selective = None
         confidence = None
+        self._probe_csv = None   # satisfaction-probe CSV (drives AdaptiveRWEB exposure)
 
         if npz:
             self.mind = MINDData.load(npz)
@@ -148,13 +149,15 @@ class Backend:
             # Synthetic corpus via the repo's own simulator (real pipeline, generated clicks).
             import simulate_users as su
             cfg = su.SimConfig(n_users=n_users, max_items=max_items, seed=seed)
-            cat, _pop, _ev, impressions, mind, *_ = su.run(cfg)
+            cat, _pop, _ev, impressions, mind, _metric_rows, probe_rows = su.run(cfg)
             self.mind = mind
             src = None  # news domain: source axis = outlet
             tmp = tempfile.mkdtemp(prefix="ih_api_")
             su.write_enrichment_csvs(os.path.join(tmp, "register.csv"),
                                      os.path.join(tmp, "emotion.csv"), cat)
             su.write_behaviors_tsv(os.path.join(tmp, "behaviors.tsv"), impressions, cat)
+            self._probe_csv = os.path.join(tmp, "satisfaction_probe.csv")
+            su._write_csv(self._probe_csv, probe_rows)   # measured cross-cutting reception
             register = hr._load_item_csv(os.path.join(tmp, "register.csv"),
                                          self.mind.dataset.item_ids)["reporting"]
             emotion = hr._load_item_csv(os.path.join(tmp, "emotion.csv"), self.mind.dataset.item_ids)
@@ -181,6 +184,23 @@ class Backend:
         for o in np.unique(outs):
             m = (outs == o) & np.isfinite(pos)
             self.outlet_lean[str(o)] = float(np.mean(pos[m])) if m.any() else 0.0
+
+        # Recommender inputs, shared by all RWE variants (drops NaN-pos items + empty users).
+        from rwe import FeedbackGraph
+        self.rec_dataset, self.theta, self.item_pos = self.mind.recommender_inputs()
+        self.fg = FeedbackGraph(self.rec_dataset.matrix)
+        self._id2col = {str(i): c for c, i in enumerate(np.asarray(self.mind.dataset.item_ids))}
+        self._rec_ids = np.asarray(self.rec_dataset.item_ids)
+        # Per-user exposure for AdaptiveRWEB: the sim's measured cross-cutting reception
+        # (real signal); a neutral 0.5 where there's no probe (e.g. a bare --npz).
+        self.exposure = np.full(len(self.rec_dataset.user_ids), 0.5, dtype=float)
+        if self._probe_csv and os.path.exists(self._probe_csv):
+            try:
+                import adaptive_satisfaction as asf
+                self.exposure, _ = asf.measured_exposure(
+                    asf.read_probe_csv(self._probe_csv), self.rec_dataset.user_ids)
+            except Exception:
+                pass
 
         self.demo_user = self._pick_demo_user()
 
@@ -309,55 +329,76 @@ class Backend:
             "axisConfidence": axis_conf,
         }
 
-    # -- recommendations (real RWE-B) ------------------------------------- #
-    def _rweb_item_cols(self, u: int, k: int = 12, epsilon: float = 0.9) -> list:
-        """The RWE-B recommender's actual top-k item columns for the reader (in mind space),
-        so we can serialise full articles. Mirrors narrate_report.rweb_recommendations but
-        returns indices instead of just titles."""
+    # -- recommendations (real RWE family: bridging / discovery / adaptive) --- #
+    def _model(self, strategy: str):
+        """Instantiate the real RWE recommender for a strategy (Section 5.2 / 7)."""
+        from rwe import RWEB, RWED
+        from rwe.satisfaction import AdaptiveRWEB
+        if strategy == "rwe-d":                              # long-tail discovery
+            return RWED(self.fg, beta=0.5)
+        if strategy == "adaptive":                           # satisfaction-adaptive bridging
+            return AdaptiveRWEB(self.fg, self.theta, self.item_pos, self.exposure)
+        return RWEB(self.fg, self.theta, self.item_pos, epsilon=0.9)   # rwe-b bounded bridging
+
+    def _rec_cols(self, u: int, strategy: str, k: int = 12) -> list:
+        """Top-k item columns (in mind space) the given recommender surfaces for the reader,
+        so we can serialise full articles. Returns [] on any failure (caller falls back)."""
         try:
-            from rwe import FeedbackGraph, RWEB
-            dataset, theta, item_pos = self.mind.recommender_inputs()
             uid = np.asarray(self.mind.dataset.user_ids)[u]
-            rows = np.flatnonzero(np.asarray(dataset.user_ids) == uid)
+            rows = np.flatnonzero(np.asarray(self.rec_dataset.user_ids) == uid)
             if rows.size == 0:
                 return []
-            rec = RWEB(FeedbackGraph(dataset.matrix), theta, item_pos, epsilon=epsilon)
-            ranked = rec.recommend(np.array([rows[0]]), top_k=k)[0]
-            rec_ids = np.asarray(dataset.item_ids)
-            id2col = {str(i): c for c, i in enumerate(np.asarray(self.mind.dataset.item_ids))}
+            ranked = self._model(strategy).recommend(np.array([rows[0]]), top_k=k)[0]
             cols = []
             for j in ranked:
                 if int(j) < 0:
                     continue
-                col = id2col.get(str(rec_ids[int(j)]))
+                col = self._id2col.get(str(self._rec_ids[int(j)]))
                 if col is not None:
                     cols.append(col)
             return cols
         except Exception:
             return []
 
-    def recommendations(self, u: int) -> list:
+    def _build_rec(self, u: int, col: int, strategy: str, user_side: float) -> dict:
+        art = self.article(col)
+        cross = user_side != 0 and np.sign(art["lean"]) == -user_side and abs(art["lean"]) >= 0.5
+        side = {"left": "left-leaning", "right": "right-leaning", "center": "centrist"}[art["leanBucket"]]
+        topic = art["topic"].lower()
+        if strategy == "rwe-d":
+            reason = f"A long-tail read on {topic} from an outlet you rarely reach — RWE-D widens your sources."
+            helps = "sourceDiversity"
+        elif strategy == "adaptive":
+            reason = (f"A {side} take on {topic}, sized to how open you've been to the other side — "
+                      f"adaptive bridging tunes the stretch to you.")
+            helps = "openMindedness" if cross else "topicDiversity"
+        else:
+            reason = (f"A {side} take on {topic} — RWE-B surfaced it to bridge you across the centre."
+                      if cross else f"Broadens your {topic} coverage from an outlet you rarely read.")
+            helps = "viewpointBalance" if cross else "sourceDiversity"
+        base = 3 if cross else 1
+        return {
+            "article": art,
+            "reason": reason,
+            "strategy": strategy,
+            "healthImpact": base + (_stable_int(art["id"], strategy) % 4),
+            "helpsMetric": "viewpointBalance" if cross else helps,
+            "crossCutting": bool(cross),
+        }
+
+    def recommendations(self, u: int, strategy: str | None = None) -> list:
         rep = hr.user_report(self.pop, self.mind, u)
-        mean_lean = rep.get("mean_lean") or 0.0
-        user_side = np.sign(mean_lean)
-        cols = self._rweb_item_cols(u)
-        out = []
-        for i, col in enumerate(cols):
-            art = self.article(col)
-            cross = user_side != 0 and np.sign(art["lean"]) == -user_side and abs(art["lean"]) >= 0.5
-            side = {"left": "left-leaning", "right": "right-leaning", "center": "centrist"}[art["leanBucket"]]
-            reason = (f"A {side} take on {art['topic'].lower()} — RWE-B surfaced it to bridge you "
-                      f"across the centre from your usual reading."
-                      if cross else
-                      f"Broadens your {art['topic'].lower()} coverage from an outlet you rarely read.")
-            out.append({
-                "article": art,
-                "reason": reason,
-                "strategy": "rwe-b",
-                "healthImpact": 3 + (_stable_int(art["id"]) % 5) if cross else 1 + (_stable_int(art["id"]) % 3),
-                "helpsMetric": "viewpointBalance" if cross else "sourceDiversity",
-                "crossCutting": bool(cross),
-            })
+        user_side = np.sign(rep.get("mean_lean") or 0.0)
+        # a single strategy, or a blend across the family for the default "all" view
+        plan = ([(strategy, 12)] if strategy in ("rwe-b", "rwe-d", "adaptive")
+                else [("rwe-b", 6), ("rwe-d", 4), ("adaptive", 4)])
+        out, seen = [], set()
+        for strat, k in plan:
+            for col in self._rec_cols(u, strat, k):
+                if col in seen:
+                    continue
+                seen.add(col)
+                out.append(self._build_rec(u, col, strat, user_side))
         return out
 
     # -- coach ------------------------------------------------------------- #
@@ -401,7 +442,7 @@ class Backend:
         if not content:
             content = self._grounded_fallback(rep)
         # attach up to two real bridging articles as suggestions
-        cols = self._rweb_item_cols(u, k=2)
+        cols = self._rec_cols(u, "rwe-b", k=2)
         suggestions = [self.article(c) for c in cols[:2]]
         return {
             "id": f"msg_{_stable_int(message, u)}",
@@ -461,7 +502,8 @@ def _make_handler(be: Backend):
                 if p.path == "/api/report":
                     return self._send(be.report(be.resolve_user(q)))
                 if p.path == "/api/recommendations":
-                    return self._send(be.recommendations(be.resolve_user(q)))
+                    strat = (q.get("strategy", [""])[0] or "").strip() or None
+                    return self._send(be.recommendations(be.resolve_user(q), strat))
                 if p.path == "/api/coach":
                     return self._send(be.coach_greeting(be.resolve_user(q)))
                 return self._send({"error": "not found"}, 404)
