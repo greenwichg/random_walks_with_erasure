@@ -19,8 +19,13 @@ Install the serving deps once:  pip install -e ".[serve]"
 from __future__ import annotations
 
 import argparse
+import contextvars
+import json
+import logging
 import os
 import sys
+import time
+import uuid
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
@@ -33,6 +38,25 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from starlette.exceptions import HTTPException as StarletteHTTPException
+
+
+# ------------------------------------------------------------------ #
+# Structured logging — one JSON line per event, with a per-request id so a
+# client error (X-Request-ID header / error.requestId) correlates to the log.
+# ------------------------------------------------------------------ #
+logger = logging.getLogger("ih.api")
+if not logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(message)s"))
+    logger.addHandler(_handler)
+    logger.setLevel(os.environ.get("RWE_LOG_LEVEL", "INFO").upper())
+    logger.propagate = False
+
+_request_id: contextvars.ContextVar[str] = contextvars.ContextVar("request_id", default="-")
+
+
+def _log(level: int, event: str, **fields) -> None:
+    logger.log(level, json.dumps({"event": event, "requestId": _request_id.get(), **fields}))
 
 
 def _int_env(name: str):
@@ -63,7 +87,10 @@ state = _State()
 async def lifespan(app: FastAPI):
     # Build the engine (dataset + compute + recommender inputs) once, reuse per request.
     provider = os.environ.get("RWE_PROVIDER", "anthropic")
-    state.backend = engine.Backend(_profile_from_env(), provider=provider)
+    be = engine.Backend(_profile_from_env(), provider=provider)
+    state.backend = be
+    _log(logging.INFO, "startup", profile=be.profile.name, demoUser=be.demo_user,
+         eligibleReaders=int(len(be.eligible)))
     yield
     state.backend = None
 
@@ -87,6 +114,24 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def _observability(request: Request, call_next):
+    """Tag each request with an id, time it, and emit one structured log line."""
+    rid = request.headers.get("x-request-id") or uuid.uuid4().hex[:12]
+    _request_id.set(rid)
+    start = time.perf_counter()
+    status = 500
+    try:
+        response = await call_next(request)
+        status = response.status_code
+        response.headers["X-Request-ID"] = rid
+        return response
+    finally:
+        _log(logging.INFO if status < 500 else logging.ERROR, "request",
+             method=request.method, path=request.url.path, status=status,
+             durationMs=round((time.perf_counter() - start) * 1000, 1))
+
+
 # ------------------------------------------------------------------ #
 # One typed error envelope for every failure: {"error": {"code", "message"}}
 # (matches the web proxy's shape in web/lib/backend.ts). Success bodies are
@@ -95,6 +140,7 @@ app.add_middleware(
 class ErrorBody(BaseModel):
     code: str
     message: str
+    requestId: str | None = None
 
 
 class ErrorResponse(BaseModel):
@@ -102,7 +148,10 @@ class ErrorResponse(BaseModel):
 
 
 def _error(status_code: int, code: str, message: str) -> JSONResponse:
-    return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message}})
+    return JSONResponse(
+        status_code=status_code,
+        content={"error": {"code": code, "message": message, "requestId": _request_id.get()}},
+    )
 
 
 _HTTP_CODES = {400: "bad_request", 404: "not_found", 405: "method_not_allowed",
@@ -122,7 +171,8 @@ async def _on_http_error(request: Request, exc: StarletteHTTPException):
 
 @app.exception_handler(Exception)
 async def _on_unhandled_error(request: Request, exc: Exception):
-    # Structured logging is added in a later commit; never leak internals to the client.
+    # Log the failure (type + path) for correlation; never leak internals to the client.
+    _log(logging.ERROR, "unhandled_exception", path=request.url.path, error=type(exc).__name__)
     return _error(500, "internal_error", "An unexpected error occurred.")
 
 

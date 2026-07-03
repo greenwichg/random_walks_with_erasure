@@ -117,3 +117,13 @@ def test_errors_use_typed_envelope(client):
     r2 = client.request("PUT", "/api/report")   # GET-only route
     assert r2.status_code == 405
     assert r2.json()["error"]["code"] == "method_not_allowed"
+
+
+def test_request_id_correlation(client):
+    ok = client.get("/api/health")
+    assert ok.headers.get("x-request-id")                      # every response is tagged
+    err = client.get("/api/nope")
+    assert err.json()["error"]["requestId"]                    # errors carry it too, for support
+    # a caller-supplied id is echoed back (trace propagation)
+    mine = client.get("/api/health", headers={"X-Request-ID": "trace-abc"})
+    assert mine.headers.get("x-request-id") == "trace-abc"
