@@ -259,7 +259,9 @@ A prioritized split of the project's limitations by *how* they resolve. Full sta
       0.74 → boosted; `Spearman +0.66`, 52 % of served users carry a signal). Unit-tested.
       _(Caveats kept: self-selected + coarse per-user. Optional next: a longer comment window
       for the *return* metric.)_
-- [ ] Health-report polish (e.g. a "you vs the average reader" population view)
+- [x] Health-report polish — the "you vs the average reader" population view is built
+      (`--population`: `population_summary` + `_population_card_html`, median + IQR over eligible
+      readers) and unit-tested (`test_population_summary_and_card`).
 
 ## Product PoC — SEPARATE from research (not paper evidence)
 
