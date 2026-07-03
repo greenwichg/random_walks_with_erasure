@@ -1,0 +1,98 @@
+"use client";
+
+import * as React from "react";
+import { motion } from "framer-motion";
+import { Eye, TrendingUp, Plus, Check } from "lucide-react";
+import type { BlindSpot, Improvement } from "@/types/domain";
+import { METRICS } from "@/lib/metrics";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
+
+/** Blind spots — under-consumed topics/sides. */
+export function BlindSpots({ items }: { items: BlindSpot[] }) {
+  return (
+    <div className="space-y-3">
+      {items.map((b, i) => (
+        <motion.div
+          key={b.topic}
+          initial={{ opacity: 0, x: -6 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ delay: i * 0.06 }}
+          className="flex items-start gap-3 rounded-lg border bg-card/60 p-3"
+        >
+          <span className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-caution/12 text-caution">
+            <Eye className="h-4 w-4" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <span className="font-medium">{b.topic}</span>
+              <Badge variant="caution">{Math.round(b.gap * 100)}% gap</Badge>
+            </div>
+            <p className="mt-0.5 text-sm text-muted-foreground">{b.note}</p>
+          </div>
+        </motion.div>
+      ))}
+    </div>
+  );
+}
+
+/** Improvement recommendations — interactive: add to weekly goals. */
+export function Improvements({ items }: { items: Improvement[] }) {
+  const [added, setAdded] = React.useState<Set<string>>(new Set());
+  const toggle = (id: string) =>
+    setAdded((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+
+  return (
+    <div className="space-y-3">
+      {items.map((imp, i) => {
+        const meta = METRICS[imp.metric];
+        const isAdded = added.has(imp.id);
+        return (
+          <motion.div
+            key={imp.id}
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: i * 0.06 }}
+            className="rounded-lg border bg-card/60 p-4"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="font-medium">{imp.title}</p>
+                <p className="mt-1 text-sm text-muted-foreground">{imp.detail}</p>
+              </div>
+              <Badge variant="positive" className="shrink-0">
+                <TrendingUp className="h-3 w-3" /> +{imp.impact}
+              </Badge>
+            </div>
+            <div className="mt-3 flex items-center justify-between">
+              <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                <meta.icon className="h-3.5 w-3.5" /> Helps {meta.label}
+              </span>
+              <Button
+                size="sm"
+                variant={isAdded ? "secondary" : "outline"}
+                onClick={() => toggle(imp.id)}
+                className={cn(isAdded && "text-positive")}
+              >
+                {isAdded ? (
+                  <>
+                    <Check className="h-4 w-4" /> Added to goals
+                  </>
+                ) : (
+                  <>
+                    <Plus className="h-4 w-4" /> Add to goals
+                  </>
+                )}
+              </Button>
+            </div>
+          </motion.div>
+        );
+      })}
+    </div>
+  );
+}

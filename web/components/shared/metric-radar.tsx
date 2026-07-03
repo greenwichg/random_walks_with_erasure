@@ -1,0 +1,46 @@
+"use client";
+
+import { PolarAngleAxis, PolarGrid, PolarRadiusAxis, Radar, RadarChart, Tooltip } from "recharts";
+import type { Metric } from "@/types/domain";
+import { METRICS, RADAR_METRICS } from "@/lib/metrics";
+import { useMeasure } from "@/hooks/use-measure";
+
+/** Interactive radar of the six scored health metrics. */
+export function MetricRadar({ metrics, size = 320 }: { metrics: Metric[]; size?: number }) {
+  const { ref, width } = useMeasure<HTMLDivElement>(size);
+  const dim = Math.min(width, size + 40);
+
+  const data = RADAR_METRICS.map((key) => {
+    const m = metrics.find((x) => x.key === key);
+    return { metric: METRICS[key].short, score: m?.score ?? 0, full: 100 };
+  });
+
+  return (
+    <div ref={ref} className="flex w-full justify-center" style={{ height: dim }}>
+      <RadarChart width={dim} height={dim} data={data} outerRadius="72%">
+        <PolarGrid stroke="hsl(var(--border))" />
+        <PolarAngleAxis dataKey="metric" tick={{ fontSize: 12, fill: "hsl(var(--muted-foreground))" }} />
+        <PolarRadiusAxis domain={[0, 100]} tick={false} axisLine={false} />
+        <Radar
+          name="You"
+          dataKey="score"
+          stroke="hsl(var(--primary))"
+          strokeWidth={2}
+          fill="hsl(var(--primary))"
+          fillOpacity={0.22}
+          animationDuration={900}
+        />
+        <Tooltip
+          contentStyle={{
+            borderRadius: 12,
+            border: "1px solid hsl(var(--border))",
+            background: "hsl(var(--popover))",
+            color: "hsl(var(--popover-foreground))",
+            fontSize: 12,
+          }}
+          formatter={(v: number) => [`${Math.round(v)} / 100`, "Score"]}
+        />
+      </RadarChart>
+    </div>
+  );
+}
