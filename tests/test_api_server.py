@@ -162,6 +162,14 @@ def test_recommendations_blend_tags_each_source(backend, user):
     assert strategies <= STRATEGIES and len(strategies) >= 1
 
 
+def test_recommenders_built_once(backend):
+    # heavy recommender objects are constructed at startup and reused across requests
+    assert backend._model("rwe-b") is backend._model("rwe-b")
+    assert backend._model("adaptive") is backend._model("adaptive")
+    assert backend._model("rwe-b") is not backend._model("rwe-d")
+    assert backend._model("unknown") is backend._model("rwe-b")   # fallback unchanged
+
+
 # --------------------------------------------------------------------------- #
 # coach
 # --------------------------------------------------------------------------- #

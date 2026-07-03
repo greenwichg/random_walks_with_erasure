@@ -285,6 +285,17 @@ class Backend:
             except Exception:
                 pass
 
+        # Build the RWE recommenders once at startup and reuse across requests. recommend()
+        # is a pure read of immutable state (graph + positions + erasure), so a shared
+        # instance is safe under the threadpool; this drops per-request recommender construction.
+        from rwe import RWEB, RWED
+        from rwe.satisfaction import AdaptiveRWEB
+        self._models = {
+            "rwe-b": RWEB(self.fg, self.theta, self.item_pos, epsilon=0.9),
+            "rwe-d": RWED(self.fg, beta=0.5),
+            "adaptive": AdaptiveRWEB(self.fg, self.theta, self.item_pos, self.exposure),
+        }
+
         self.demo_user = self._pick_demo_user()
 
     # -- enrichment loading ------------------------------------------------ #
@@ -436,14 +447,9 @@ class Backend:
 
     # -- recommendations (real RWE family: bridging / discovery / adaptive) --- #
     def _model(self, strategy: str):
-        """Instantiate the real RWE recommender for a strategy (Section 5.2 / 7)."""
-        from rwe import RWEB, RWED
-        from rwe.satisfaction import AdaptiveRWEB
-        if strategy == "rwe-d":                              # long-tail discovery
-            return RWED(self.fg, beta=0.5)
-        if strategy == "adaptive":                           # satisfaction-adaptive bridging
-            return AdaptiveRWEB(self.fg, self.theta, self.item_pos, self.exposure)
-        return RWEB(self.fg, self.theta, self.item_pos, epsilon=0.9)   # rwe-b bounded bridging
+        """The real RWE recommender for a strategy (Section 5.2 / 7), built once at startup
+        and reused. Unknown strategies fall back to RWE-B, matching prior behaviour."""
+        return self._models.get(strategy, self._models["rwe-b"])
 
     def _rec_cols(self, u: int, strategy: str, k: int = 12) -> list:
         """Top-k item columns (in mind space) the given recommender surfaces for the reader,
