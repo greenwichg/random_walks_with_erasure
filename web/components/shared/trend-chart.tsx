@@ -36,7 +36,7 @@ export function TrendChart({
         width={width}
         height={height}
         data={data}
-        margin={{ top: 8, right: 8, left: showAxis ? -16 : 0, bottom: 0 }}
+        margin={{ top: 8, right: 12, left: showAxis ? 0 : 0, bottom: 0 }}
       >
         <defs>
           <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
@@ -60,7 +60,7 @@ export function TrendChart({
             tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
             tickLine={false}
             axisLine={false}
-            width={36}
+            width={40}
           />
         )}
         <Tooltip
