@@ -28,6 +28,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
+from typing import Any, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # import sibling api_server
 import api_server as engine   # Backend, DatasetProfile, resolve_profile, BUILTIN_PROFILES
@@ -36,7 +37,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 
@@ -102,8 +103,15 @@ app = FastAPI(
     description=(
         "JSON over the deterministic Information Health Report (`health_report`), the RWE "
         "recommender family, and the grounded AI coach (`narrate_report`). Responses match "
-        "the frontend domain contract (`web/types/domain.ts`)."
+        "the frontend domain contract (`web/types/domain.ts`). Every error uses one typed "
+        "envelope: `{ \"error\": { \"code\", \"message\", \"requestId\" } }`."
     ),
+    openapi_tags=[
+        {"name": "report", "description": "The flagship Information Health Report for a reader."},
+        {"name": "recommendations", "description": "RWE-B / RWE-D / Adaptive recommendations."},
+        {"name": "coach", "description": "Grounded AI coach — greeting and replies."},
+        {"name": "meta", "description": "Service health and readiness."},
+    ],
     lifespan=lifespan,
 )
 app.add_middleware(
@@ -147,6 +155,10 @@ class ErrorResponse(BaseModel):
     error: ErrorBody
 
 
+# Shared OpenAPI documentation of the typed error envelope (documents, does not enforce).
+_ERR_RESPONSES: dict = {"default": {"model": ErrorResponse, "description": "Typed error envelope."}}
+
+
 def _error(status_code: int, code: str, message: str) -> JSONResponse:
     return JSONResponse(
         status_code=status_code,
@@ -176,6 +188,135 @@ async def _on_unhandled_error(request: Request, exc: Exception):
     return _error(500, "internal_error", "An unexpected error occurred.")
 
 
+# ------------------------------------------------------------------ #
+# Response schemas for OpenAPI. These mirror the existing serialiser output
+# (web/types/domain.ts) exactly; combined with response_model_exclude_none they
+# document the contract without changing any response (the serialisers omit
+# rather than null, and a strict HTTP-vs-serialiser equality test guards this).
+# ------------------------------------------------------------------ #
+class EmotionShareModel(BaseModel):
+    fear: float
+    outrage: float
+    analysis: float
+    positive: float
+    neutral: float
+
+
+class RawModel(BaseModel):
+    value: float
+    unit: str
+
+
+class MetricModel(BaseModel):
+    key: str
+    score: int
+    delta: int
+    band: str
+    benchmark: Optional[int] = None
+    raw: Optional[RawModel] = None
+
+
+class ViewpointModel(BaseModel):
+    left: float
+    center: float
+    right: float
+
+
+class TopicSliceModel(BaseModel):
+    topic: str
+    share: float
+    count: int
+
+
+class SourceSliceModel(BaseModel):
+    source: str
+    share: float
+    count: int
+    lean: float
+
+
+class BlindSpotModel(BaseModel):
+    topic: str
+    gap: float
+    note: str
+
+
+class ImprovementModel(BaseModel):
+    id: str
+    title: str
+    detail: str
+    metric: str
+    impact: int
+
+
+class HealthReportModel(BaseModel):
+    overall: int
+    overallDelta: int
+    band: str
+    updatedAt: str
+    metrics: list[MetricModel]
+    viewpoint: ViewpointModel
+    attention: EmotionShareModel
+    topics: list[TopicSliceModel]
+    sources: list[SourceSliceModel]
+    blindSpots: list[BlindSpotModel]
+    improvements: list[ImprovementModel]
+    axisConfidence: float
+
+
+class ArticleModel(BaseModel):
+    # `register` shadows a BaseModel attribute, so hold it under an alias and serialise
+    # it back to the wire key "register" (FastAPI responds by_alias).
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str
+    headline: str
+    publisher: str
+    publisherLean: float
+    topic: str
+    lean: float
+    leanBucket: str
+    confidence: float
+    emotion: EmotionShareModel
+    dominantEmotion: str
+    register_: str = Field(alias="register")
+    publishedAt: str
+    readingMinutes: int
+
+
+class RecommendationModel(BaseModel):
+    article: ArticleModel
+    reason: str
+    strategy: str
+    healthImpact: int
+    helpsMetric: str
+    crossCutting: bool
+
+
+class CitationModel(BaseModel):
+    metric: str
+    value: int
+
+
+class CoachMessageModel(BaseModel):
+    id: str
+    role: str
+    content: str
+    createdAt: str
+    citations: Optional[list[CitationModel]] = None
+    suggestions: Optional[list[ArticleModel]] = None
+
+
+class HealthStatusModel(BaseModel):
+    ok: bool
+    profile: str
+    domain: str
+    demoUser: int
+    eligibleReaders: int
+    narrative: bool
+    dataset: dict[str, Any]
+
+
 class CoachRequest(BaseModel):
     message: str = ""
     user: str | None = None
@@ -191,17 +332,21 @@ def _resolve(user: str | None) -> int:
     return _require_backend().resolve_user({"user": [user]} if user is not None else {})
 
 
-@app.get("/api/health")
+@app.get("/api/health", response_model=HealthStatusModel, tags=["meta"],
+         summary="Service health and dataset summary", responses=_ERR_RESPONSES)
 def health() -> dict:
     return _require_backend().health()
 
 
-@app.get("/api/report")
+@app.get("/api/report", response_model=HealthReportModel, response_model_exclude_none=True,
+         tags=["report"], summary="Information Health Report for a reader", responses=_ERR_RESPONSES)
 def report(user: str | None = Query(None, description="reader id; defaults to the demo reader")) -> dict:
     return _require_backend().report(_resolve(user))
 
 
-@app.get("/api/recommendations")
+@app.get("/api/recommendations", response_model=list[RecommendationModel],
+         response_model_exclude_none=True, tags=["recommendations"],
+         summary="RWE recommendations (blended, or a single strategy)", responses=_ERR_RESPONSES)
 def recommendations(
     user: str | None = Query(None),
     strategy: str | None = Query(None, description="rwe-b | rwe-d | adaptive; omit for a blended feed"),
@@ -209,12 +354,14 @@ def recommendations(
     return _require_backend().recommendations(_resolve(user), strategy)
 
 
-@app.get("/api/coach")
+@app.get("/api/coach", response_model=list[CoachMessageModel], response_model_exclude_none=True,
+         tags=["coach"], summary="Coach greeting for a reader", responses=_ERR_RESPONSES)
 def coach(user: str | None = Query(None)) -> list:
     return _require_backend().coach_greeting(_resolve(user))
 
 
-@app.post("/api/coach")
+@app.post("/api/coach", response_model=CoachMessageModel, response_model_exclude_none=True,
+          tags=["coach"], summary="Send a message; get a grounded reply", responses=_ERR_RESPONSES)
 def coach_reply(req: CoachRequest) -> dict:
     be = _require_backend()
     u = int(req.user) if (req.user or "").lstrip("-").isdigit() else be.demo_user

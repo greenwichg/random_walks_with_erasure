@@ -6,6 +6,7 @@ serialisers. Skips cleanly when the optional serving deps aren't installed.
 """
 
 import importlib.util
+import json
 import os
 import pathlib
 import sys
@@ -117,6 +118,40 @@ def test_errors_use_typed_envelope(client):
     r2 = client.request("PUT", "/api/report")   # GET-only route
     assert r2.status_code == 405
     assert r2.json()["error"]["code"] == "method_not_allowed"
+
+
+def _strip_volatile(obj):
+    """Drop now()-derived fields so two serialisations are comparable."""
+    volatile = {"updatedAt", "createdAt", "publishedAt"}
+    if isinstance(obj, dict):
+        return {k: _strip_volatile(v) for k, v in obj.items() if k not in volatile}
+    if isinstance(obj, list):
+        return [_strip_volatile(x) for x in obj]
+    return obj
+
+
+def test_report_response_model_preserves_every_field(client):
+    """response_model must not drop or add any field vs the raw serialiser (else the
+    contract silently changes). Timestamps are the only expected difference."""
+    be = api_fastapi.state.backend
+    http = client.get("/api/report").json()
+    direct = json.loads(json.dumps(be.report(be.demo_user)))
+    assert _strip_volatile(http) == _strip_volatile(direct)
+
+
+def test_recommendations_response_model_preserves_every_field(client):
+    be = api_fastapi.state.backend
+    http = client.get("/api/recommendations").json()
+    direct = json.loads(json.dumps(be.recommendations(be.demo_user)))
+    assert _strip_volatile(http) == _strip_volatile(direct)
+
+
+def test_coach_response_model_preserves_every_field(client):
+    be = api_fastapi.state.backend
+    msg = "explain my echo chamber"
+    http = client.post("/api/coach", json={"message": msg}).json()
+    direct = json.loads(json.dumps(be.coach_reply(be.demo_user, msg)))
+    assert _strip_volatile(http) == _strip_volatile(direct)
 
 
 def test_request_id_correlation(client):
