@@ -1,0 +1,127 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Design tokens. Every color is an HSL triplet consumed via `hsl(var(--x))`
+ * in tailwind.config.ts, so the whole product re-themes by swapping this block.
+ * Palette: calm editorial neutrals + an indigo brand, with a fixed political
+ * spectrum (left=blue, centre=violet, right=rose) and metric semantics.
+ */
+@layer base {
+  :root {
+    --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+      Helvetica, Arial, sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+
+    --background: 240 20% 99%;
+    --foreground: 224 24% 12%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 224 24% 12%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 224 24% 12%;
+
+    --primary: 245 58% 51%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 240 16% 96%;
+    --secondary-foreground: 224 20% 20%;
+    --muted: 240 16% 96%;
+    --muted-foreground: 224 12% 46%;
+    --accent: 245 60% 96%;
+    --accent-foreground: 245 58% 40%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 240 14% 91%;
+    --input: 240 14% 90%;
+    --ring: 245 58% 51%;
+
+    --left: 214 80% 52%;
+    --center: 262 52% 55%;
+    --right: 355 74% 54%;
+    --positive: 152 56% 40%;
+    --caution: 38 92% 50%;
+    --negative: 355 74% 54%;
+
+    --radius: 0.85rem;
+  }
+
+  .dark {
+    --background: 226 28% 7%;
+    --foreground: 220 22% 94%;
+
+    --card: 225 24% 10%;
+    --card-foreground: 220 22% 94%;
+    --popover: 225 24% 10%;
+    --popover-foreground: 220 22% 94%;
+
+    --primary: 245 78% 68%;
+    --primary-foreground: 226 28% 8%;
+    --secondary: 225 18% 16%;
+    --secondary-foreground: 220 18% 88%;
+    --muted: 225 18% 15%;
+    --muted-foreground: 220 12% 62%;
+    --accent: 245 40% 20%;
+    --accent-foreground: 245 78% 82%;
+    --destructive: 0 62% 50%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 225 16% 18%;
+    --input: 225 16% 20%;
+    --ring: 245 78% 68%;
+
+    --left: 214 82% 62%;
+    --center: 262 62% 70%;
+    --right: 355 78% 64%;
+    --positive: 152 52% 50%;
+    --caution: 38 92% 58%;
+    --negative: 355 78% 64%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "cv11", "ss01";
+    text-rendering: optimizeLegibility;
+  }
+  ::selection {
+    @apply bg-primary/20;
+  }
+  /* Slim, unobtrusive scrollbars matching the theme. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--border)) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  *::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-border;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+}
+
+@layer components {
+  /* Glassmorphism surface used by the header + floating panels. */
+  .glass {
+    @apply bg-background/70 backdrop-blur-xl backdrop-saturate-150;
+  }
+  .card-surface {
+    @apply rounded-lg border bg-card text-card-foreground shadow-soft;
+  }
+  /* Subtle top-lit gradient border used on hero cards. */
+  .ring-gradient {
+    background: linear-gradient(
+      180deg,
+      hsl(var(--card)) 0%,
+      hsl(var(--muted) / 0.4) 100%
+    );
+  }
+}

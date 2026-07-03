@@ -1,0 +1,55 @@
+import { getJson, postJson } from "@/services/api";
+import type {
+  AnalyticsSeries,
+  Article,
+  CoachMessage,
+  DashboardSummary,
+  FeedbackAction,
+  HealthReport,
+  HistoryEntry,
+  Profile,
+  Recommendation,
+  Settings,
+  Story,
+  TopicSlice,
+} from "@/types/domain";
+
+/**
+ * Typed data-access layer. Every screen imports from here — never from axios
+ * directly — so the transport is centralised and the return types are enforced.
+ * Each function maps 1:1 to a backend endpoint (mock today, Python tomorrow).
+ */
+export const services = {
+  dashboard: () => getJson<DashboardSummary>("/dashboard"),
+  report: () => getJson<HealthReport>("/report"),
+  recommendations: (strategy?: Recommendation["strategy"]) =>
+    getJson<Recommendation[]>("/recommendations", strategy ? { strategy } : undefined),
+  sendFeedback: (articleId: string, action: FeedbackAction) =>
+    postJson<{ ok: boolean }>("/recommendations", { articleId, action }),
+  history: () => getJson<HistoryEntry[]>("/history"),
+  topics: () => getJson<TopicSlice[]>("/topics"),
+  stories: () => getJson<Story[]>("/stories"),
+  story: (id: string) => getJson<Story>(`/stories/${id}`),
+  profile: () => getJson<Profile>("/profile"),
+  settings: () => getJson<Settings>("/settings"),
+  analytics: () => getJson<AnalyticsSeries>("/analytics"),
+  coachHistory: () => getJson<CoachMessage[]>("/coach"),
+  coachSend: (message: string) => postJson<CoachMessage>("/coach", { message }),
+  search: (q: string) => getJson<{ articles: Article[]; stories: Story[] }>("/search", { q }),
+};
+
+/** React Query cache keys, colocated so invalidation stays consistent. */
+export const queryKeys = {
+  dashboard: ["dashboard"] as const,
+  report: ["report"] as const,
+  recommendations: (strategy?: string) => ["recommendations", strategy ?? "all"] as const,
+  history: ["history"] as const,
+  topics: ["topics"] as const,
+  stories: ["stories"] as const,
+  story: (id: string) => ["story", id] as const,
+  profile: ["profile"] as const,
+  settings: ["settings"] as const,
+  analytics: ["analytics"] as const,
+  coach: ["coach"] as const,
+  search: (q: string) => ["search", q] as const,
+};
