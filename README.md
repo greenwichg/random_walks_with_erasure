@@ -39,6 +39,12 @@ A clean, tested Python implementation of
 > users exist (strict research/product separation; see [`docs/PRODUCT_SIMULATION.md`](docs/PRODUCT_SIMULATION.md)):
 > [![Open Product Sim in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/greenwichg/random_walks_with_erasure/blob/claude/sleepy-gates-oecof1/notebooks/product_simulation.ipynb)
 > **Synthetic-user simulation**.
+>
+> 🚀 **Run the full product (web app + engine) live** — clones the branch, boots the FastAPI
+> engine + the Next.js frontend, and opens a public URL. Onboarding → your **Initial
+> Information Health Estimate** works with no credentials (Google sign-in is an optional cell):
+> [![Open the app in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/greenwichg/random_walks_with_erasure/blob/claude/sleepy-gates-oecof1/deploy/information_health_colab.ipynb)
+> **Full-stack app demo**.
 
 RWE is a modified random-walk exploration of the bipartite user–item feedback
 graph in which the mass reaching certain nodes is systematically *erased* and
