@@ -18,6 +18,12 @@ data/*.csv
 *.npz
 *.npy
 
+# Product persistence (SQLite beta store; created at runtime under data/)
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
 # Generated run/eval outputs (created at repo root by examples/*.py; not deliverables).
 # Root-anchored (leading /) so they never shadow tracked files like
 # examples/data/subreddit_lean.csv.
