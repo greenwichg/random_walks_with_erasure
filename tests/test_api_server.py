@@ -119,6 +119,41 @@ def test_report_contract(backend, user):
 
 
 # --------------------------------------------------------------------------- #
+# onboarding: outlets + Initial Information Health Estimate (Milestone B1)
+# --------------------------------------------------------------------------- #
+def test_outlets_listing(backend):
+    outs = backend.outlets()
+    assert isinstance(outs, list) and len(outs) > 0
+    o = outs[0]
+    assert {"id", "name", "lean", "leanBucket", "articles"} <= set(o)
+    assert o["leanBucket"] in BUCKETS and _is_number(o["lean"])
+    _assert_json_roundtrips(outs)
+
+
+def test_estimate_is_labeled_and_grounded(backend):
+    names = [o["id"] for o in backend.outlets()[:6]]
+    est = backend.estimate(names)
+    # explicitly an estimate, with zero-read coverage — never presented as measured
+    assert est["mode"] == "estimate"
+    assert est["coverage"]["reads"] == 0 and est["coverage"]["sufficient"] is False
+    # no fabricated behaviour: axis confidence + Open-Mindedness are n/a from outlets, so omitted
+    assert "axisConfidence" not in est
+    keys = {m["key"] for m in est["metrics"]}
+    assert keys <= (METRIC_KEYS - {"confidence", "openMindedness"})
+    for m in est["metrics"]:
+        assert 0 <= m["score"] <= 100 and m["band"] in BANDS
+    assert 0 <= est["overall"] <= 100
+    assert set(est["viewpoint"]) == BUCKETS and abs(sum(est["viewpoint"].values()) - 1.0) < 1e-6
+    assert set(est["attention"]) == EMOTIONS
+    _assert_json_roundtrips(est)
+
+
+def test_estimate_requires_known_outlets(backend):
+    with pytest.raises(ValueError):
+        backend.estimate(["definitely-not-a-real-outlet"])
+
+
+# --------------------------------------------------------------------------- #
 # article + recommendations
 # --------------------------------------------------------------------------- #
 def _assert_article(a):

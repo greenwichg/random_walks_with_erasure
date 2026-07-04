@@ -253,6 +253,12 @@ class ImprovementModel(BaseModel):
     impact: int
 
 
+class CoverageModel(BaseModel):
+    reads: int
+    threshold: int
+    sufficient: bool
+
+
 class HealthReportModel(BaseModel):
     overall: int
     overallDelta: int
@@ -265,7 +271,11 @@ class HealthReportModel(BaseModel):
     sources: list[SourceSliceModel]
     blindSpots: list[BlindSpotModel]
     improvements: list[ImprovementModel]
-    axisConfidence: float
+    # article-level axis confidence — present on a measured report, omitted on an estimate
+    axisConfidence: Optional[float] = None
+    # mode + coverage make Estimate vs Measured explicit; an estimate omits axisConfidence
+    mode: Optional[str] = None
+    coverage: Optional[CoverageModel] = None
 
 
 class ArticleModel(BaseModel):
@@ -339,6 +349,18 @@ class UserModel(BaseModel):
     displayName: str | None = None
 
 
+class OutletModel(BaseModel):
+    id: str
+    name: str
+    lean: float
+    leanBucket: str
+    articles: int
+
+
+class EstimateRequest(BaseModel):
+    outlets: list[str] = []
+
+
 def _require_backend() -> "engine.Backend":
     if state.backend is None:
         raise HTTPException(status_code=503, detail="The engine is still starting up.")
@@ -407,6 +429,24 @@ def health() -> dict:
 def report(request: Request,
            user: str | None = Query(None, description="reader id; defaults to the demo reader")) -> dict:
     return _require_backend().report(_resolve_request(request, user))
+
+
+@app.get("/api/outlets", response_model=list[OutletModel], tags=["meta"],
+         summary="Publishers available for onboarding selection", responses=_ERR_RESPONSES)
+def outlets() -> list:
+    return _require_backend().outlets()
+
+
+@app.post("/api/estimate", response_model=HealthReportModel, response_model_exclude_none=True,
+          tags=["report"], summary="Initial Information Health Estimate from selected outlets",
+          responses=_ERR_RESPONSES)
+def estimate(req: EstimateRequest) -> dict:
+    """The onboarding result: an Information Health *Estimate* computed from the selected
+    publishers only (never fabricated reads), explicitly flagged mode='estimate'."""
+    try:
+        return _require_backend().estimate(req.outlets)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Select at least one known publisher.")
 
 
 @app.get("/api/recommendations", response_model=list[RecommendationModel],

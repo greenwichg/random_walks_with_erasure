@@ -197,6 +197,27 @@ def test_real_user_header_resolves_and_falls_back(client):
     assert fb.status_code == 200 and "overall" in fb.json()
 
 
+def test_outlets_endpoint(client):
+    outs = client.get("/api/outlets").json()
+    assert isinstance(outs, list) and len(outs) > 0
+    assert {"id", "name", "lean", "leanBucket", "articles"} <= set(outs[0])
+
+
+def test_estimate_endpoint_is_labeled(client):
+    names = [o["id"] for o in client.get("/api/outlets").json()[:6]]
+    est = client.post("/api/estimate", json={"outlets": names}).json()
+    assert est["mode"] == "estimate"
+    assert est["coverage"]["sufficient"] is False
+    assert "axisConfidence" not in est                      # omitted for an estimate
+    assert {m["key"] for m in est["metrics"]} <= (METRIC_KEYS - {"confidence", "openMindedness"})
+    assert 0 <= est["overall"] <= 100
+
+
+def test_estimate_requires_outlets(client):
+    r = client.post("/api/estimate", json={"outlets": ["nope-not-real"]})
+    assert r.status_code == 400 and r.json()["error"]["code"] == "bad_request"
+
+
 def test_internal_secret_gates_the_trust_boundary(client, monkeypatch):
     """With RWE_INTERNAL_SECRET set, internal calls need the X-IH-Auth header and the
     user-id header is honoured only when signed. Unset (the default) leaves dev untouched."""

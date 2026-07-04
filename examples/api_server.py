@@ -211,6 +211,11 @@ def resolve_profile(args) -> DatasetProfile:
 
 
 # ------------------------------------------------------------------ #
+# Real reads needed before an Initial Estimate becomes a Measured report — the report's own
+# click floor (health_report.compute default min_clicks).
+ESTIMATE_MIN_READS = 5
+
+
 class Backend:
     def __init__(self, profile: DatasetProfile, provider: str = "anthropic", model=None):
         self.profile = profile
@@ -443,6 +448,158 @@ class Backend:
             "blindSpots": blind,
             "improvements": improvements,
             "axisConfidence": axis_conf,
+        }
+
+    # -- onboarding: outlets + the Initial Information Health Estimate --------- #
+    def outlets(self) -> list:
+        """Publishers present in the reference corpus, for onboarding selection — name, house
+        lean, coarse bucket, and article count. Reference metadata (which outlets exist), not
+        user data; ordered by how much of the catalog each covers."""
+        outs = np.asarray(self.mind.outlets)
+        result = []
+        for o in np.unique(outs):
+            name = str(o)
+            if name == "":
+                continue
+            lean = float(self.outlet_lean.get(name, 0.0))
+            result.append({"id": name, "name": _prettify(name), "lean": lean,
+                           "leanBucket": _lean_bucket(lean, self.lean_tau),
+                           "articles": int((outs == o).sum())})
+        result.sort(key=lambda d: -d["articles"])
+        return result
+
+    def _pct_vs_pop(self, value, pop_key: str, invert: bool = False):
+        """Percentile (0–100) of a single raw metric value within the reference population's
+        real distribution for that metric — the same higher-is-healthier ranking the measured
+        report uses, so an estimate speaks the same language. ``invert`` for echo (less = better)."""
+        raw = self.pop.get(pop_key)
+        if raw is None or value is None or not np.isfinite(value):
+            return None
+        arr = np.asarray(raw, dtype=float)
+        arr = arr[np.isfinite(arr)]
+        if arr.size == 0:
+            return None
+        a = -arr if invert else arr
+        v = -value if invert else value
+        return int(round(float((a < v).mean() * 100.0)))
+
+    def estimate(self, outlet_names) -> dict:
+        """Initial Information Health **Estimate** from selected outlets only.
+
+        Computed from the *character* of the chosen publishers — each outlet's house lean, its
+        topical mix, and its typical tone/register in the reference catalog — aggregated with
+        equal weight (we do not know how much of each a reader consumes). It reuses the existing
+        ``health_report`` helpers and ranks each estimated raw metric against the reference
+        population, so the scores read on the same 0–100 scale as a measured report. It is
+        explicitly flagged ``mode="estimate"`` with zero-read ``coverage``.
+
+        No reading history is fabricated: there is **no** user row and no synthetic clicks.
+        Metrics that require behaviour (Open-Mindedness) or article-level lean confidence (axis
+        confidence) are omitted — they cannot be honestly estimated from outlets alone."""
+        outs = np.asarray(self.mind.outlets)
+        cats = np.asarray(self.mind.categories)
+        known = [str(o) for o in outlet_names if str(o) in self.outlet_lean and str(o) != ""]
+        mask = np.isin(outs, known)
+        if not known or not mask.any():
+            raise ValueError("no known outlets selected")
+
+        # topic diversity: entropy of the selected outlets' catalog topic mix
+        cat_u = self.pop["cat_u"]
+        n_cat = len(cat_u)
+        cat_index = {c: i for i, c in enumerate(cat_u)}
+        counts = np.zeros(n_cat)
+        for c in cats[mask]:
+            j = cat_index.get(c)
+            if j is not None:
+                counts[j] += 1.0
+        topic_share = hr.shares(counts)
+        topic_raw = hr.normalized_entropy(topic_share, n_cat)
+
+        # source diversity: N equally-weighted outlets -> effective #sources = N
+        src_raw = float(len(known))
+
+        # viewpoint / echo from the outlets' house leans (one position per outlet, equal weight)
+        leans = np.array([self.outlet_lean[o] for o in known], dtype=float)
+        left, center, right = hr.viewpoint_shares(leans, tau=self.lean_tau)
+        cross_raw = hr.cross_cutting_share(leans)
+        echo_raw = hr.echo_score(left, right)
+
+        # emotion / register aggregated over the selected outlets' catalog articles
+        labels = ["fear", "outrage", "analysis", "positive", "neutral"]
+        if self.emotion is not None:
+            emo = {}
+            for l in labels:
+                arr = np.asarray(self.emotion[l], dtype=float)[mask]
+                arr = arr[np.isfinite(arr)]
+                emo[l] = float(arr.mean()) if arr.size else 0.0
+            tot = sum(emo.values()) or 1.0
+            attention = {l: emo[l] / tot for l in labels}
+            balance_raw = 1.0 - (attention["fear"] + attention["outrage"])
+        else:
+            attention = {l: 0.2 for l in labels}
+            balance_raw = None
+        if self.register is not None:
+            reg = np.asarray(self.register, dtype=float)[mask]
+            reg = reg[np.isfinite(reg)]
+            reporting_raw = float(reg.mean()) if reg.size else None
+        else:
+            reporting_raw = None
+
+        raw = {"topicDiversity": self._pct_vs_pop(topic_raw, "topic"),
+               "sourceDiversity": self._pct_vs_pop(src_raw, "eff_src"),
+               "viewpointBalance": self._pct_vs_pop(cross_raw, "cross"),
+               "echoChamber": self._pct_vs_pop(echo_raw, "echo", invert=True),
+               "reportingRatio": self._pct_vs_pop(reporting_raw, "reporting"),
+               "emotionalBalance": self._pct_vs_pop(balance_raw, "balance")}
+        metrics = []
+        for key, _label in _METRIC_KEYS:          # Open-Mindedness has no raw here -> skipped
+            s = raw.get(key)
+            if s is None:
+                continue
+            metrics.append({"key": key, "score": int(s), "delta": 0, "benchmark": 50,
+                            "band": _score_band(int(s))})
+        have = [m["score"] for m in metrics]
+        overall = int(round(sum(have) / len(have))) if have else 0
+
+        topics = sorted(({"topic": _prettify(cat_u[i]), "share": float(topic_share[i]),
+                          "count": int(counts[i])} for i in range(n_cat) if topic_share[i] > 0),
+                        key=lambda d: -d["share"])[:10]
+        share_each = 1.0 / len(known)
+        sources = sorted(({"source": _prettify(o), "share": share_each,
+                           "count": int((outs == o).sum()), "lean": float(self.outlet_lean[o])}
+                          for o in known), key=lambda d: -d["lean"])[:9]
+
+        q_c = self.pop["catalog_cat_share"]
+        gaps = sorted(((cat_u[i], float(topic_share[i]), float(q_c[i])) for i in range(n_cat)
+                       if q_c[i] > 0.02 and topic_share[i] < 0.5 * q_c[i]),
+                      key=lambda t: -(t[2] - t[1]))
+        blind = [{"topic": _prettify(c), "gap": max(0.0, min(1.0, (qc - us) / qc if qc else 0.0)),
+                  "note": f"{_prettify(c)} is {round(qc * 100)}% of what's available, but light in "
+                          f"the outlets you picked."}
+                 for (c, us, qc) in gaps[:2]]
+
+        improvements = []
+        for m in sorted(metrics, key=lambda d: d["score"])[:3]:
+            tpl = _IMPROVEMENTS.get(m["key"])
+            if tpl:
+                improvements.append({"id": f"imp_{m['key']}", "title": tpl[0], "detail": tpl[1],
+                                     "metric": m["key"], "impact": tpl[2]})
+
+        return {
+            "mode": "estimate",
+            "coverage": {"reads": 0, "threshold": ESTIMATE_MIN_READS, "sufficient": False},
+            "overall": overall,
+            "overallDelta": 0,
+            "band": _score_band(overall),
+            "updatedAt": datetime.now(timezone.utc).isoformat(),
+            "metrics": metrics,
+            "viewpoint": {"left": float(left), "center": float(center), "right": float(right)},
+            "attention": {l: float(attention[l]) for l in labels},
+            "topics": topics,
+            "sources": sources,
+            "blindSpots": blind,
+            "improvements": improvements,
+            # axisConfidence intentionally omitted — article-level lean confidence is n/a from outlets
         }
 
     # -- recommendations (real RWE family: bridging / discovery / adaptive) --- #
