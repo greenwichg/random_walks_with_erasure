@@ -23,13 +23,14 @@ change to that URL, not to this code.
 
 from __future__ import annotations
 
+import json
 import os
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator, Optional
 
-from sqlalchemy import (ForeignKey, String, UniqueConstraint, create_engine,
+from sqlalchemy import (ForeignKey, String, Text, UniqueConstraint, create_engine,
                         select)
 from sqlalchemy.orm import (DeclarativeBase, Mapped, Session, mapped_column,
                             relationship, sessionmaker)
@@ -93,6 +94,32 @@ class Identity(Base):
     user: Mapped[User] = relationship(back_populates="identities")
 
 
+class Onboarding(Base):
+    """A user's onboarding choices — the publishers they selected. One row per user
+    (upserted); the seed for their Initial Information Health Estimate."""
+
+    __tablename__ = "onboarding"
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    outlets: Mapped[str] = mapped_column(Text)          # JSON list of outlet ids
+    updated_at: Mapped[datetime] = mapped_column(default=_utcnow)
+
+
+class ReportSnapshot(Base):
+    """A stored Information Health result for a user — an estimate or a measured report.
+    Append-only: the latest row is the current result, and the history feeds later
+    comparison. The full JSON is kept verbatim so the frontend renders it unchanged."""
+
+    __tablename__ = "report_snapshots"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    mode: Mapped[str] = mapped_column(String(16))       # "estimate" | "measured"
+    overall: Mapped[int] = mapped_column()
+    snapshot: Mapped[str] = mapped_column(Text)         # JSON of the full report
+    created_at: Mapped[datetime] = mapped_column(default=_utcnow)
+
+
 class Store:
     """A durable store bound to one database URL.
 
@@ -154,6 +181,39 @@ class Store:
         """The user row for ``user_id``, or ``None`` if there is no such user."""
         with self.session() as s:
             return s.get(User, user_id)
+
+    # -- onboarding choices + report snapshots --------------------------
+    def save_onboarding(self, user_id: int, outlets: list[str]) -> None:
+        """Persist (upsert) the publishers a user selected during onboarding."""
+        payload = json.dumps(list(outlets))
+        with self.session() as s:
+            row = s.get(Onboarding, user_id)
+            if row is None:
+                s.add(Onboarding(user_id=user_id, outlets=payload))
+            else:
+                row.outlets = payload
+                row.updated_at = _utcnow()
+
+    def get_onboarding(self, user_id: int) -> "list[str] | None":
+        """The user's selected outlets, or ``None`` if they haven't onboarded."""
+        with self.session() as s:
+            row = s.get(Onboarding, user_id)
+            return list(json.loads(row.outlets)) if row is not None else None
+
+    def save_report(self, user_id: int, report: dict) -> None:
+        """Append a report/estimate snapshot for a user (the JSON is stored verbatim)."""
+        with self.session() as s:
+            s.add(ReportSnapshot(user_id=user_id, mode=str(report.get("mode", "")),
+                                 overall=int(report.get("overall", 0) or 0),
+                                 snapshot=json.dumps(report)))
+
+    def latest_report(self, user_id: int) -> "dict | None":
+        """The user's most recent stored report/estimate, or ``None``."""
+        with self.session() as s:
+            row = s.scalar(select(ReportSnapshot)
+                           .where(ReportSnapshot.user_id == user_id)
+                           .order_by(ReportSnapshot.id.desc()))
+            return dict(json.loads(row.snapshot)) if row is not None else None
 
 
 def _make_engine(url: str):

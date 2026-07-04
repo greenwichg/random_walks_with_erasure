@@ -361,6 +361,15 @@ class EstimateRequest(BaseModel):
     outlets: list[str] = []
 
 
+class OnboardingSaveRequest(BaseModel):
+    outlets: list[str] = []
+
+
+class MeModel(BaseModel):
+    onboarding: Optional[dict] = None
+    report: Optional[HealthReportModel] = None
+
+
 def _require_backend() -> "engine.Backend":
     if state.backend is None:
         raise HTTPException(status_code=503, detail="The engine is still starting up.")
@@ -418,6 +427,19 @@ def _resolve_request(request: Request, user: str | None) -> int:
     return be.resolve_user({"user": [user]} if user is not None else {})
 
 
+def _require_real_user(request: Request) -> int:
+    """The authenticated engine user id from the trusted web tier (X-IH-User-Id + secret),
+    or 401. The per-user ``/api/me`` endpoints act on a specific real account, so — unlike
+    ``/api/report`` — they have no demo fallback."""
+    raw = request.headers.get(_REAL_USER_HEADER)
+    if not (raw and raw.lstrip("-").isdigit()) or not _trusted(request):
+        raise HTTPException(status_code=401, detail="Authentication required.")
+    uid = int(raw)
+    if state.store is None or state.store.get_user(uid) is None:
+        raise HTTPException(status_code=401, detail="Unknown user.")
+    return uid
+
+
 @app.get("/api/health", response_model=HealthStatusModel, tags=["meta"],
          summary="Service health and dataset summary", responses=_ERR_RESPONSES)
 def health() -> dict:
@@ -447,6 +469,34 @@ def estimate(req: EstimateRequest) -> dict:
         return _require_backend().estimate(req.outlets)
     except ValueError:
         raise HTTPException(status_code=400, detail="Select at least one known publisher.")
+
+
+@app.post("/api/me/onboarding", response_model=HealthReportModel, response_model_exclude_none=True,
+          tags=["report"], summary="Persist onboarding choices + first estimate for the signed-in user",
+          responses=_ERR_RESPONSES)
+def save_my_onboarding(request: Request, req: OnboardingSaveRequest) -> dict:
+    """Called after sign-in to save what the user picked during onboarding. The estimate is
+    recomputed from the outlets server-side (never trusted from the client) and stored, so the
+    user's first result survives to their next visit."""
+    uid = _require_real_user(request)
+    try:
+        estimate = _require_backend().estimate(req.outlets)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Select at least one known publisher.")
+    st = _require_store()
+    st.save_onboarding(uid, req.outlets)
+    st.save_report(uid, estimate)
+    return estimate
+
+
+@app.get("/api/me", response_model=MeModel, response_model_exclude_none=True, tags=["meta"],
+         summary="The signed-in user's saved onboarding + latest result", responses=_ERR_RESPONSES)
+def me(request: Request) -> dict:
+    uid = _require_real_user(request)
+    st = _require_store()
+    outlets = st.get_onboarding(uid)
+    return {"onboarding": {"outlets": outlets} if outlets is not None else None,
+            "report": st.latest_report(uid)}
 
 
 @app.get("/api/recommendations", response_model=list[RecommendationModel],

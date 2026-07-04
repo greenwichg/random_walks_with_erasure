@@ -70,3 +70,21 @@ def test_email_and_name_optional(store):
     user = store.upsert_user_by_identity("google", "acct-x")
     assert user.email is None
     assert user.display_name is None
+
+
+def test_onboarding_upsert_and_get(store):
+    u = store.upsert_user_by_identity("google", "ob-1")
+    assert store.get_onboarding(u.id) is None
+    store.save_onboarding(u.id, ["nyt", "wsj", "ap"])
+    assert store.get_onboarding(u.id) == ["nyt", "wsj", "ap"]
+    store.save_onboarding(u.id, ["bbc"])                 # upsert replaces
+    assert store.get_onboarding(u.id) == ["bbc"]
+
+
+def test_report_snapshot_latest(store):
+    u = store.upsert_user_by_identity("google", "ob-2")
+    assert store.latest_report(u.id) is None
+    store.save_report(u.id, {"mode": "estimate", "overall": 50, "metrics": []})
+    store.save_report(u.id, {"mode": "estimate", "overall": 61, "metrics": []})
+    latest = store.latest_report(u.id)
+    assert latest is not None and latest["overall"] == 61 and latest["mode"] == "estimate"

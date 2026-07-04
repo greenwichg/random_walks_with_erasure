@@ -224,6 +224,23 @@ def test_estimate_requires_outlets(client):
     assert r.status_code == 400 and r.json()["error"]["code"] == "bad_request"
 
 
+def test_me_requires_authentication(client):
+    r = client.get("/api/me")
+    assert r.status_code == 401 and r.json()["error"]["code"] == "unauthorized"
+
+
+def test_save_onboarding_persists_and_me_returns_it(client):
+    uid = client.post("/api/internal/users",
+                      json={"provider": "google", "providerAccountId": "me-1"}).json()["userId"]
+    names = [o["id"] for o in client.get("/api/outlets").json()[:5]]
+    saved = client.post("/api/me/onboarding", json={"outlets": names},
+                        headers={"X-IH-User-Id": str(uid)})
+    assert saved.status_code == 200 and saved.json()["mode"] == "estimate"
+    me = client.get("/api/me", headers={"X-IH-User-Id": str(uid)}).json()
+    assert me["onboarding"]["outlets"] == names
+    assert me["report"]["mode"] == "estimate" and 0 <= me["report"]["overall"] <= 100
+
+
 def test_internal_secret_gates_the_trust_boundary(client, monkeypatch):
     """With RWE_INTERNAL_SECRET set, internal calls need the X-IH-Auth header and the
     user-id header is honoured only when signed. Unset (the default) leaves dev untouched."""
