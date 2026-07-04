@@ -8,6 +8,7 @@ import type { EstimateHealthReport, LeanBucket, Outlet } from "@/types/domain";
 import { Button } from "@/components/ui/button";
 import { ScoreRing } from "@/components/shared/score-ring";
 import { SpectrumBar } from "@/components/shared/spectrum-bar";
+import { PENDING_ONBOARDING_KEY } from "@/components/onboarding/onboarding-sync";
 import { cn } from "@/lib/utils";
 
 type Step = "welcome" | "pick" | "building" | "estimate";
@@ -127,7 +128,12 @@ export function OnboardingFlow() {
             />
           )}
           {step === "estimate" && estimate && (
-            <Estimate key="estimate" report={estimate} onAdjust={() => setStep("pick")} />
+            <Estimate
+              key="estimate"
+              report={estimate}
+              outletIds={[...selected]}
+              onAdjust={() => setStep("pick")}
+            />
           )}
         </AnimatePresence>
       </div>
@@ -312,8 +318,25 @@ function Building({ error, onRetry, onBack }: { error: boolean; onRetry: () => v
   );
 }
 
-function Estimate({ report, onAdjust }: { report: EstimateHealthReport; onAdjust: () => void }) {
+function Estimate({
+  report,
+  outletIds,
+  onAdjust,
+}: {
+  report: EstimateHealthReport;
+  outletIds: string[];
+  onAdjust: () => void;
+}) {
   const takeaway = report.improvements[0];
+  // Stash the selection so it survives the OAuth redirect; OnboardingSync persists it post-auth.
+  const save = () => {
+    try {
+      window.localStorage.setItem(PENDING_ONBOARDING_KEY, JSON.stringify({ outlets: outletIds }));
+    } catch {
+      /* ignore storage failures — sign-in still proceeds */
+    }
+    signIn("google", { callbackUrl: "/" });
+  };
   return (
     <Frame>
       <Brand label="Initial Information Health Estimate" />
@@ -343,7 +366,7 @@ function Estimate({ report, onAdjust }: { report: EstimateHealthReport; onAdjust
           <li>• It becomes a measured report once you have enough reads.</li>
         </ul>
       </div>
-      <Button className="mt-5 w-full" size="lg" onClick={() => signIn("google", { callbackUrl: "/" })}>
+      <Button className="mt-5 w-full" size="lg" onClick={save}>
         Save my estimate &amp; track it
       </Button>
       <button
