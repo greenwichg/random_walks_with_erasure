@@ -82,6 +82,22 @@ def canonical_url(url: str) -> str:
     return urlunsplit((scheme, host, path, "", ""))
 
 
+def normalize_url(url: str) -> str:
+    """Best-effort tidy of a user-supplied URL: trim, and prepend ``https://`` when no scheme is
+    present so a bare ``example.com/x`` parses with a host."""
+    u = (url or "").strip()
+    if u and "://" not in u:
+        u = "https://" + u
+    return u
+
+
+def has_host(url: str) -> bool:
+    """A cheap validity check: the URL has a plausible host (a dot, no spaces) — enough to
+    reject pasted junk before it becomes a reading event."""
+    host = urlsplit(url).netloc
+    return bool(host) and "." in host and " " not in host
+
+
 class Scorer:
     """Baseline, deterministic scorer: a URL -> :class:`ScoredRead`, with an optional enricher.
 

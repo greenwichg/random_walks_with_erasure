@@ -78,9 +78,25 @@ def test_score_with_cache_scores_once():
     assert b.read_at == "t2"                        # the read's own timestamp is preserved
 
 
-def test_scored_reads_are_the_b4_interface():
+def test_normalize_and_has_host():
+    assert ingest.normalize_url("  nytimes.com/a ") == "https://nytimes.com/a"
+    assert ingest.normalize_url("https://x.com/a") == "https://x.com/a"
+    assert ingest.has_host("https://nytimes.com/a") is True
+    assert ingest.has_host("https://not a host") is False   # space
+    assert ingest.has_host("https://justtext") is False     # no dot
+    assert ingest.has_host("") is False
+
+
+def test_scored_reads_match_the_b4_interface():
+    import dataclasses
     scorer = ingest.Scorer()
     reads = [scorer.score(ingest.RawRead(url=u)) for u in (
         "https://nytimes.com/us/politics/a", "https://foxnews.com/politics/b",
         "https://npr.org/world/c")]
-    assert all(isinstance(x, ac.ScoredRead) for x in reads)
+    # Field-name check (not isinstance): sibling tests load augmented_corpus via importlib, so
+    # the class object can differ while the ScoredRead interface is identical.
+    expected = {f.name for f in dataclasses.fields(ac.ScoredRead)}
+    for x in reads:
+        assert type(x).__name__ == "ScoredRead"
+        assert {f.name for f in dataclasses.fields(type(x))} == expected
+        assert isinstance(x.article_id, str) and x.article_id

@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Iterator, Optional
 
 from sqlalchemy import (ForeignKey, String, Text, UniqueConstraint, create_engine,
-                        select)
+                        func, select)
 from sqlalchemy.orm import (DeclarativeBase, Mapped, Session, mapped_column,
                             relationship, sessionmaker)
 from sqlalchemy.pool import StaticPool
@@ -128,6 +128,23 @@ class ScoredArticle(Base):
 
     url: Mapped[str] = mapped_column(String(2048), primary_key=True)
     scored: Mapped[str] = mapped_column(Text)           # JSON of the scored fields
+    created_at: Mapped[datetime] = mapped_column(default=_utcnow)
+
+
+class Read(Base):
+    """One reading event — a scored article a user read. Idempotent per (user_id,
+    canonical_url): submitting the same article again does not create a duplicate row (whether
+    repeated reads should eventually matter is left as a future design decision). The scored
+    fields are stored verbatim so the augmented corpus can be built without re-scoring."""
+
+    __tablename__ = "reads"
+    __table_args__ = (UniqueConstraint("user_id", "canonical_url", name="uq_read_user_url"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    canonical_url: Mapped[str] = mapped_column(String(2048))
+    scored: Mapped[str] = mapped_column(Text)           # JSON of the ScoredRead
+    observed_at: Mapped[Optional[str]] = mapped_column(String(64), default=None)
     created_at: Mapped[datetime] = mapped_column(default=_utcnow)
 
 
@@ -242,6 +259,34 @@ class Store:
                 s.add(ScoredArticle(url=url, scored=payload))
             else:
                 row.scored = payload
+
+    # -- reading events (idempotent per user + canonical URL) -----------
+    def add_read(self, user_id: int, canonical_url: str, scored: dict,
+                 observed_at: "str | None" = None) -> bool:
+        """Record a reading event; return ``True`` if new, ``False`` if this (user, url) was
+        already read — idempotent, no duplicate row."""
+        with self.session() as s:
+            exists = s.scalar(select(Read.id).where(Read.user_id == user_id,
+                                                    Read.canonical_url == canonical_url))
+            if exists is not None:
+                return False
+            s.add(Read(user_id=user_id, canonical_url=canonical_url,
+                       scored=json.dumps(scored), observed_at=observed_at))
+            return True
+
+    def get_reads(self, user_id: int) -> list:
+        """The user's scored reads (JSON verbatim), oldest first — the input to the augmented
+        corpus."""
+        with self.session() as s:
+            rows = s.scalars(select(Read).where(Read.user_id == user_id)
+                             .order_by(Read.id)).all()
+            return [dict(json.loads(r.scored)) for r in rows]
+
+    def count_reads(self, user_id: int) -> int:
+        """How many distinct articles the user has read."""
+        with self.session() as s:
+            return int(s.scalar(select(func.count()).select_from(Read)
+                                .where(Read.user_id == user_id)) or 0)
 
 
 def _make_engine(url: str):

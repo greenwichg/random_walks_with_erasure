@@ -96,3 +96,14 @@ def test_scored_article_cache_roundtrip(store):
     assert store.get_scored_article("https://x.com/a") == {"outlet": "x.com", "lean": 1.0}
     store.save_scored_article("https://x.com/a", {"outlet": "x.com", "lean": 2.0})   # upsert
     assert store.get_scored_article("https://x.com/a")["lean"] == 2.0
+
+
+def test_reads_idempotent_and_counted(store):
+    u = store.upsert_user_by_identity("google", "reads-store-1")
+    assert store.count_reads(u.id) == 0
+    assert store.add_read(u.id, "https://x.com/a", {"outlet": "x.com", "lean": 1.0}) is True
+    assert store.add_read(u.id, "https://x.com/a", {"outlet": "x.com", "lean": 1.0}) is False  # dup
+    assert store.add_read(u.id, "https://y.com/b", {"outlet": "y.com", "lean": -1.0}) is True
+    assert store.count_reads(u.id) == 2
+    reads = store.get_reads(u.id)
+    assert len(reads) == 2 and reads[0]["outlet"] == "x.com"

@@ -229,6 +229,29 @@ def test_me_requires_authentication(client):
     assert r.status_code == 401 and r.json()["error"]["code"] == "unauthorized"
 
 
+def test_reads_requires_authentication(client):
+    r = client.post("/api/me/reads", json={"reads": [{"url": "https://x.com/a"}]})
+    assert r.status_code == 401 and r.json()["error"]["code"] == "unauthorized"
+
+
+def test_reads_ingestion_is_idempotent_and_reports_coverage(client):
+    uid = client.post("/api/internal/users",
+                      json={"provider": "google", "providerAccountId": "reads-1"}).json()["userId"]
+    hdr = {"X-IH-User-Id": str(uid)}
+    reads = [
+        {"url": "https://www.nytimes.com/2024/us/politics/a"},
+        {"url": "nytimes.com/2024/us/politics/a"},          # same canonical -> duplicate
+        {"url": "https://foxnews.com/politics/b"},
+        {"url": "not a url"},                                # rejected (no host)
+    ]
+    r1 = client.post("/api/me/reads", json={"reads": reads}, headers=hdr).json()
+    assert r1["accepted"] == 2 and r1["duplicates"] == 1 and r1["rejected"] == 1
+    assert r1["totalReads"] == 2 and r1["threshold"] == 5 and r1["sufficient"] is False
+    # re-submitting the same articles adds nothing (idempotent per user + canonical URL)
+    r2 = client.post("/api/me/reads", json={"reads": reads[:3]}, headers=hdr).json()
+    assert r2["accepted"] == 0 and r2["duplicates"] == 3 and r2["totalReads"] == 2
+
+
 def test_save_onboarding_persists_and_me_returns_it(client):
     uid = client.post("/api/internal/users",
                       json={"provider": "google", "providerAccountId": "me-1"}).json()["userId"]

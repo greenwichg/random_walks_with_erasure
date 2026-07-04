@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import contextvars
+import dataclasses
 import json
 import logging
 import os
@@ -33,6 +34,7 @@ from typing import Any, Optional
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # import sibling api_server
 import api_server as engine   # Backend, DatasetProfile, resolve_profile, BUILTIN_PROFILES
 import store                  # beta persistence layer (users + identities)
+import ingest                 # reading-event scorer + cache (Milestone C)
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
@@ -81,6 +83,7 @@ def _profile_from_env() -> "engine.DatasetProfile":
 class _State:
     backend: "engine.Backend | None" = None
     store: "store.Store | None" = None
+    scorer: "ingest.Scorer | None" = None
 
 
 state = _State()
@@ -93,11 +96,13 @@ async def lifespan(app: FastAPI):
     be = engine.Backend(_profile_from_env(), provider=provider)
     state.backend = be
     state.store = store.Store()
+    state.scorer = ingest.Scorer()
     _log(logging.INFO, "startup", profile=be.profile.name, demoUser=be.demo_user,
          eligibleReaders=int(len(be.eligible)), db=state.store.url)
     yield
     state.backend = None
     state.store = None
+    state.scorer = None
 
 
 app = FastAPI(
@@ -370,6 +375,28 @@ class MeModel(BaseModel):
     report: Optional[HealthReportModel] = None
 
 
+class ReadInput(BaseModel):
+    url: str
+    title: str | None = None
+    outlet: str | None = None
+    category: str | None = None
+    political: bool | None = None
+    observedAt: str | None = None
+
+
+class ReadsRequest(BaseModel):
+    reads: list[ReadInput] = []
+
+
+class IngestResultModel(BaseModel):
+    accepted: int
+    duplicates: int
+    rejected: int
+    totalReads: int
+    threshold: int
+    sufficient: bool
+
+
 def _require_backend() -> "engine.Backend":
     if state.backend is None:
         raise HTTPException(status_code=503, detail="The engine is still starting up.")
@@ -410,6 +437,12 @@ def _require_store() -> "store.Store":
     if state.store is None:
         raise HTTPException(status_code=503, detail="The engine is still starting up.")
     return state.store
+
+
+def _require_scorer() -> "ingest.Scorer":
+    if state.scorer is None:
+        raise HTTPException(status_code=503, detail="The engine is still starting up.")
+    return state.scorer
 
 
 def _resolve_request(request: Request, user: str | None) -> int:
@@ -497,6 +530,36 @@ def me(request: Request) -> dict:
     outlets = st.get_onboarding(uid)
     return {"onboarding": {"outlets": outlets} if outlets is not None else None,
             "report": st.latest_report(uid)}
+
+
+@app.post("/api/me/reads", response_model=IngestResultModel, tags=["report"],
+          summary="Record reading events for the signed-in user (shared ingestion API)",
+          responses=_ERR_RESPONSES)
+def add_reads(request: Request, req: ReadsRequest) -> dict:
+    """The single ingestion API — paste URL now, browser extension + RSS later. Each read is
+    scored once (cached) and recorded idempotently per (user, canonical URL); repeat submits are
+    no-ops. Returns coverage so the client knows when enough reads exist for a measured report."""
+    uid = _require_real_user(request)
+    scorer = _require_scorer()
+    st = _require_store()
+    accepted = duplicates = rejected = 0
+    for item in req.reads:
+        url = ingest.normalize_url(item.url)
+        if not ingest.has_host(url):
+            rejected += 1
+            continue
+        raw = ingest.RawRead(url=url, title=item.title or "", outlet=item.outlet or "",
+                             category=item.category or "", political=item.political,
+                             read_at=item.observedAt)
+        scored = ingest.score_with_cache(raw, scorer, st)
+        if st.add_read(uid, scored.article_id, dataclasses.asdict(scored), scored.read_at):
+            accepted += 1
+        else:
+            duplicates += 1
+    total = st.count_reads(uid)
+    return {"accepted": accepted, "duplicates": duplicates, "rejected": rejected,
+            "totalReads": total, "threshold": engine.ESTIMATE_MIN_READS,
+            "sufficient": total >= engine.ESTIMATE_MIN_READS}
 
 
 @app.get("/api/recommendations", response_model=list[RecommendationModel],
