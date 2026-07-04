@@ -17,6 +17,18 @@ Browser ──▶ Next.js web app ──▶ /api/* route handlers ──▶ Fast
   **production** (`NODE_ENV=production`) they return a typed `503` instead of fabricated data.
 - The engine picks its data source from a **dataset profile** (below) — configuration only.
 
+## Quick demo in Google Colab (zero local setup)
+
+The fastest way to *see* it running is [`deploy/information_health_colab.ipynb`](deploy/information_health_colab.ipynb):
+open it in Colab and **Run all**. It clones the branch, starts the FastAPI engine + the Next.js
+app, and prints a public URL — the onboarding → **Initial Information Health Estimate** flow
+works with **no credentials** (Google sign-in is an optional cell). One click:
+
+[**▶ Open in Colab**](https://colab.research.google.com/github/greenwichg/random_walks_with_erasure/blob/claude/sleepy-gates-oecof1/deploy/information_health_colab.ipynb)
+
+Colab is for demos only: the runtime idles out and the tunnel URL changes each session. For
+anything real, use the two-process setup below (or Docker).
+
 ## Prerequisites
 
 - **Python** ≥ 3.9 (3.11 recommended) for the engine.
