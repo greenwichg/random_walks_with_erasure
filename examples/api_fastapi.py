@@ -35,6 +35,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # import siblin
 import api_server as engine   # Backend, DatasetProfile, resolve_profile, BUILTIN_PROFILES
 import store                  # beta persistence layer (users + identities)
 import ingest                 # reading-event scorer + cache (Milestone C)
+import personalize            # per-user augmented Measured report / recs / coach
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
@@ -84,6 +85,7 @@ class _State:
     backend: "engine.Backend | None" = None
     store: "store.Store | None" = None
     scorer: "ingest.Scorer | None" = None
+    personalizer: "personalize.Personalizer | None" = None
 
 
 state = _State()
@@ -97,12 +99,16 @@ async def lifespan(app: FastAPI):
     state.backend = be
     state.store = store.Store()
     state.scorer = ingest.Scorer()
+    # The personalization layer: builds a real user's Measured report / recs / coach from an
+    # augmented corpus once they've stored enough reads (cached per user + reading version).
+    state.personalizer = personalize.Personalizer(be, state.store)
     _log(logging.INFO, "startup", profile=be.profile.name, demoUser=be.demo_user,
          eligibleReaders=int(len(be.eligible)), db=state.store.url)
     yield
     state.backend = None
     state.store = None
     state.scorer = None
+    state.personalizer = None
 
 
 app = FastAPI(
@@ -445,19 +451,44 @@ def _require_scorer() -> "ingest.Scorer":
     return state.scorer
 
 
-def _resolve_request(request: Request, user: str | None) -> int:
-    """Corpus row to serve for a request.
+def _require_personalizer() -> "personalize.Personalizer":
+    if state.personalizer is None:
+        raise HTTPException(status_code=503, detail="The engine is still starting up.")
+    return state.personalizer
 
-    A signed-in reader is identified by the ``X-IH-User-Id`` header the web tier sets after
-    Google sign-in; when it names a real user we currently serve the reference reader (their
-    own *measured* report arrives in Milestone B, once reading data exists). Absent or unknown,
-    the existing ``?user=`` selector applies — unchanged for the frontend and contract tests."""
-    be = _require_backend()
+
+def _real_uid(request: Request) -> "int | None":
+    """The authenticated real engine user id if this is a trusted signed-in reader, else None.
+
+    A real user is named by the ``X-IH-User-Id`` header the web tier sets after Google sign-in;
+    the header is honoured only with the internal secret (when configured) and when it maps to a
+    known user. ``None`` means an anonymous / ``?user=`` request — the exact demo + contract
+    behaviour, untouched."""
     raw = request.headers.get(_REAL_USER_HEADER)
     if (raw and raw.lstrip("-").isdigit() and _trusted(request) and state.store is not None
             and state.store.get_user(int(raw)) is not None):
-        return be.demo_user
-    return be.resolve_user({"user": [user]} if user is not None else {})
+        return int(raw)
+    return None
+
+
+def _anon_row(request: Request, user: str | None) -> int:
+    """The base-corpus row for an anonymous request — the ``?user=`` selector, else the demo."""
+    return _require_backend().resolve_user({"user": [user]} if user is not None else {})
+
+
+def _serve(request: Request, user: str | None):
+    """Routing for recommendations + coach (which have no Estimate form).
+
+    Returns ``("personal", uid)`` when the signed-in reader has crossed the read threshold — the
+    request is served from their augmented corpus — else ``("row", row)``: the demo reader for a
+    below-threshold real user (the existing behaviour), or the ``?user=`` selection for an
+    anonymous request (unchanged for the frontend and contract tests)."""
+    uid = _real_uid(request)
+    if uid is not None and _require_personalizer().has_measured(uid):
+        return "personal", uid
+    if uid is not None:
+        return "row", _require_backend().demo_user
+    return "row", _anon_row(request, user)
 
 
 def _require_real_user(request: Request) -> int:
@@ -483,7 +514,27 @@ def health() -> dict:
          tags=["report"], summary="Information Health Report for a reader", responses=_ERR_RESPONSES)
 def report(request: Request,
            user: str | None = Query(None, description="reader id; defaults to the demo reader")) -> dict:
-    return _require_backend().report(_resolve_request(request, user))
+    """Route a report request:
+
+    * **Measured** — a signed-in reader at/above the read threshold: their real report from the
+      augmented corpus (`personalize`).
+    * **Estimate** — a signed-in reader below the threshold who has onboarded: the Initial
+      Information Health Estimate, recomputed server-side from their stored onboarding outlets.
+    * **Demo** — a signed-in reader with no usable onboarding, or an anonymous / ``?user=``
+      request: the reference reader (unchanged for the frontend and contract tests)."""
+    be = _require_backend()
+    uid = _real_uid(request)
+    if uid is None:
+        return be.report(_anon_row(request, user))
+    if _require_personalizer().has_measured(uid):
+        return _require_personalizer().report(uid)
+    outlets = _require_store().get_onboarding(uid)
+    if outlets:
+        try:
+            return be.estimate(outlets)
+        except ValueError:
+            pass
+    return be.report(be.demo_user)
 
 
 @app.get("/api/outlets", response_model=list[OutletModel], tags=["meta"],
@@ -570,19 +621,28 @@ def recommendations(
     user: str | None = Query(None),
     strategy: str | None = Query(None, description="rwe-b | rwe-d | adaptive; omit for a blended feed"),
 ) -> list:
-    return _require_backend().recommendations(_resolve_request(request, user), strategy)
+    kind, val = _serve(request, user)
+    if kind == "personal":
+        return _require_personalizer().recommendations(val, strategy)
+    return _require_backend().recommendations(val, strategy)
 
 
 @app.get("/api/coach", response_model=list[CoachMessageModel], response_model_exclude_none=True,
          tags=["coach"], summary="Coach greeting for a reader", responses=_ERR_RESPONSES)
 def coach(request: Request, user: str | None = Query(None)) -> list:
-    return _require_backend().coach_greeting(_resolve_request(request, user))
+    kind, val = _serve(request, user)
+    if kind == "personal":
+        return _require_personalizer().coach_greeting(val)
+    return _require_backend().coach_greeting(val)
 
 
 @app.post("/api/coach", response_model=CoachMessageModel, response_model_exclude_none=True,
           tags=["coach"], summary="Send a message; get a grounded reply", responses=_ERR_RESPONSES)
 def coach_reply(request: Request, req: CoachRequest) -> dict:
-    return _require_backend().coach_reply(_resolve_request(request, req.user), req.message or "")
+    kind, val = _serve(request, req.user)
+    if kind == "personal":
+        return _require_personalizer().coach_reply(val, req.message or "")
+    return _require_backend().coach_reply(val, req.message or "")
 
 
 @app.post("/api/internal/users", response_model=UserModel, tags=["meta"],

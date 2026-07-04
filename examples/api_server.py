@@ -236,6 +236,23 @@ class _Corpus:
     outlet_lean: dict     # outlet name -> house lean (mean finite item position)
 
 
+@dataclass(frozen=True)
+class _Recommenders:
+    """The RWE recommender stack over one corpus: the derived recommender dataset, the shared
+    ``FeedbackGraph``, the built RWE-B / RWE-D / Adaptive models, and the maps back to ``mind``
+    columns. Built for the base corpus at startup and rebuilt by ``personalize.py`` over a
+    real user's augmented corpus, so both use *identical* construction and hyperparameters
+    (one source of truth — the RWE classes themselves are unchanged)."""
+    rec_dataset: object   # MINDData.recommender_inputs() dataset (NaN-pos items / empty users dropped)
+    theta: object         # per-user ideology estimate
+    item_pos: object      # per-item position (recommender space)
+    fg: object            # rwe.FeedbackGraph over rec_dataset.matrix
+    models: dict          # strategy -> built RWE recommender (shared, recommend() is read-only)
+    id2col: dict          # mind item id -> column index in mind space
+    rec_ids: object       # rec_dataset.item_ids (rec index -> mind item id)
+    exposure: object      # per-user AdaptiveRWEB exposure (measured probe, else neutral 0.5)
+
+
 class Backend:
     def __init__(self, profile: DatasetProfile, provider: str = "anthropic", model=None):
         self.profile = profile
@@ -295,33 +312,15 @@ class Backend:
                                    emotion=self.emotion, confidence=self.item_confidence,
                                    outlet_lean=self.outlet_lean)
 
-        # Recommender inputs, shared by all RWE variants (drops NaN-pos items + empty users).
-        from rwe import FeedbackGraph
-        self.rec_dataset, self.theta, self.item_pos = self.mind.recommender_inputs()
-        self.fg = FeedbackGraph(self.rec_dataset.matrix)
-        self._id2col = {str(i): c for c, i in enumerate(np.asarray(self.mind.dataset.item_ids))}
-        self._rec_ids = np.asarray(self.rec_dataset.item_ids)
-        # Per-user exposure for AdaptiveRWEB: the sim's measured cross-cutting reception
-        # (real signal); a neutral 0.5 where there's no probe (e.g. a bare --npz).
-        self.exposure = np.full(len(self.rec_dataset.user_ids), 0.5, dtype=float)
-        if self._probe_csv and os.path.exists(self._probe_csv):
-            try:
-                import adaptive_satisfaction as asf
-                self.exposure, _ = asf.measured_exposure(
-                    asf.read_probe_csv(self._probe_csv), self.rec_dataset.user_ids)
-            except Exception:
-                pass
-
-        # Build the RWE recommenders once at startup and reuse across requests. recommend()
-        # is a pure read of immutable state (graph + positions + erasure), so a shared
-        # instance is safe under the threadpool; this drops per-request recommender construction.
-        from rwe import RWEB, RWED
-        from rwe.satisfaction import AdaptiveRWEB
-        self._models = {
-            "rwe-b": RWEB(self.fg, self.theta, self.item_pos, epsilon=0.9),
-            "rwe-d": RWED(self.fg, beta=0.5),
-            "adaptive": AdaptiveRWEB(self.fg, self.theta, self.item_pos, self.exposure),
-        }
+        # RWE recommender stack over the base corpus, built once at startup and reused across
+        # requests (recommend() is a pure read of immutable state, so a shared instance is safe
+        # under the threadpool). personalize.py builds the same stack over an augmented corpus.
+        self.rec = self._build_recommenders(self.mind, self._probe_csv)
+        # Back-compat attributes: existing code (and any external reader) still sees these on
+        # the Backend; they're now just views onto the recommender bundle.
+        self.rec_dataset, self.theta, self.item_pos = self.rec.rec_dataset, self.rec.theta, self.rec.item_pos
+        self.fg, self.exposure = self.rec.fg, self.rec.exposure
+        self._id2col, self._rec_ids, self._models = self.rec.id2col, self.rec.rec_ids, self.rec.models
 
         self.demo_user = self._pick_demo_user()
 
@@ -354,6 +353,38 @@ class Backend:
             m = (outs == o) & np.isfinite(pos)
             lean[str(o)] = float(np.mean(pos[m])) if m.any() else 0.0
         return lean
+
+    @staticmethod
+    def _build_recommenders(mind, probe_csv: "str | None" = None) -> "_Recommenders":
+        """Build the RWE recommender stack over ``mind``. Shared by the base corpus (startup)
+        and a real user's augmented corpus (``personalize.py``) so both construct RWE-B / RWE-D
+        / Adaptive with identical inputs and hyperparameters. The RWE algorithms are unchanged —
+        this only assembles their inputs, exactly as ``__init__`` did inline before."""
+        from rwe import FeedbackGraph, RWEB, RWED
+        from rwe.satisfaction import AdaptiveRWEB
+        # Recommender inputs, shared by all RWE variants (drops NaN-pos items + empty users).
+        rec_dataset, theta, item_pos = mind.recommender_inputs()
+        fg = FeedbackGraph(rec_dataset.matrix)
+        id2col = {str(i): c for c, i in enumerate(np.asarray(mind.dataset.item_ids))}
+        rec_ids = np.asarray(rec_dataset.item_ids)
+        # Per-user exposure for AdaptiveRWEB: the sim's measured cross-cutting reception (real
+        # signal) where a probe exists; a neutral 0.5 otherwise (a bare --npz, or a real user
+        # who hasn't yet been measured on cross-cutting reads).
+        exposure = np.full(len(rec_dataset.user_ids), 0.5, dtype=float)
+        if probe_csv and os.path.exists(probe_csv):
+            try:
+                import adaptive_satisfaction as asf
+                exposure, _ = asf.measured_exposure(asf.read_probe_csv(probe_csv),
+                                                    rec_dataset.user_ids)
+            except Exception:
+                pass
+        models = {
+            "rwe-b": RWEB(fg, theta, item_pos, epsilon=0.9),
+            "rwe-d": RWED(fg, beta=0.5),
+            "adaptive": AdaptiveRWEB(fg, theta, item_pos, exposure),
+        }
+        return _Recommenders(rec_dataset=rec_dataset, theta=theta, item_pos=item_pos, fg=fg,
+                             models=models, id2col=id2col, rec_ids=rec_ids, exposure=exposure)
 
     # -- reader selection -------------------------------------------------- #
     def _pick_demo_user(self) -> int:
@@ -464,7 +495,12 @@ class Backend:
              for i in range(len(out_u)) if so[i] > 0),
             key=lambda d: -d["share"])[:9]
 
-        left, center, right = rep.get("viewpoint") or (0.0, 0.0, 0.0)
+        # A reader with no political items has an undefined viewpoint mix (health_report returns
+        # NaN); render it as zeros so the payload stays valid JSON. Demo/eligible readers are
+        # always finite, so their output is unchanged — this only guards the low-political
+        # readers the measured path can now surface (a real user just over the read threshold).
+        vp_raw = rep.get("viewpoint") or (0.0, 0.0, 0.0)
+        left, center, right = (float(x) if x is not None and np.isfinite(x) else 0.0 for x in vp_raw)
         attention = rep.get("attention") or {l: 0.2 for l in
                                               ["fear", "outrage", "analysis", "positive", "neutral"]}
 
@@ -667,20 +703,23 @@ class Backend:
         and reused. Unknown strategies fall back to RWE-B, matching prior behaviour."""
         return self._models.get(strategy, self._models["rwe-b"])
 
-    def _rec_cols(self, u: int, strategy: str, k: int = 12) -> list:
-        """Top-k item columns (in mind space) the given recommender surfaces for the reader,
-        so we can serialise full articles. Returns [] on any failure (caller falls back)."""
+    @staticmethod
+    def _rec_cols_of(mind, rec: "_Recommenders", u: int, strategy: str, k: int = 12) -> list:
+        """Top-k item columns (in ``mind`` space) recommender ``strategy`` surfaces for row ``u``,
+        so we can serialise full articles. Corpus-parametric so a real user's augmented recommender
+        selects columns exactly as the base one does. Returns [] on any failure (caller falls back)."""
         try:
-            uid = np.asarray(self.mind.dataset.user_ids)[u]
-            rows = np.flatnonzero(np.asarray(self.rec_dataset.user_ids) == uid)
+            uid = np.asarray(mind.dataset.user_ids)[u]
+            rows = np.flatnonzero(np.asarray(rec.rec_dataset.user_ids) == uid)
             if rows.size == 0:
                 return []
-            ranked = self._model(strategy).recommend(np.array([rows[0]]), top_k=k)[0]
+            model = rec.models.get(strategy, rec.models["rwe-b"])
+            ranked = model.recommend(np.array([rows[0]]), top_k=k)[0]
             cols = []
             for j in ranked:
                 if int(j) < 0:
                     continue
-                col = self._id2col.get(str(self._rec_ids[int(j)]))
+                col = rec.id2col.get(str(rec.rec_ids[int(j)]))
                 if col is not None:
                     cols.append(col)
             return cols
@@ -729,18 +768,30 @@ class Backend:
                 out.append(self._serialize_rec(corpus, col, strat, user_side))
         return out
 
-    def recommendations(self, u: int, strategy: str | None = None) -> list:
-        rep = hr.user_report(self.pop, self.mind, u)
+    def _serialize_recommendations(self, corpus: _Corpus, rec: "_Recommenders", u: int,
+                                   strategy: str | None = None) -> list:
+        """Full recommendation pipeline over a corpus + its recommender stack: derive the
+        reader's side, pick the plan (one strategy, or the default blend), select columns, and
+        serialise. Shared verbatim by the base path and the augmented (Measured) path, so a real
+        user's recs use the same blend and reason logic — only the corpus + recommender differ."""
+        rep = hr.user_report(corpus.pop, corpus.mind, u)
         user_side = np.sign(rep.get("mean_lean") or 0.0)
         # a single strategy, or a blend across the family for the default "all" view
         plan = ([(strategy, 12)] if strategy in ("rwe-b", "rwe-d", "adaptive")
                 else [("rwe-b", 6), ("rwe-d", 4), ("adaptive", 4)])
-        cols_by_strategy = [(strat, self._rec_cols(u, strat, k)) for strat, k in plan]
-        return self._serialize_recs(self.base_corpus, cols_by_strategy, user_side)
+        cols_by_strategy = [(strat, self._rec_cols_of(corpus.mind, rec, u, strat, k))
+                            for strat, k in plan]
+        return self._serialize_recs(corpus, cols_by_strategy, user_side)
+
+    def recommendations(self, u: int, strategy: str | None = None) -> list:
+        """Base reference-corpus recommendations (demo / ``?user=`` path)."""
+        return self._serialize_recommendations(self.base_corpus, self.rec, u, strategy)
 
     # -- coach ------------------------------------------------------------- #
-    def _facts(self, u: int):
-        rep = hr.user_report(self.pop, self.mind, u)
+    def _facts_of(self, corpus: _Corpus, u: int):
+        """(report dict, narrate facts) for reader ``u`` of a corpus — corpus-parametric so the
+        coach grounds on a real user's augmented corpus exactly as on the base corpus."""
+        rep = hr.user_report(corpus.pop, corpus.mind, u)
         return rep, nr.report_facts(rep, self.domain)
 
     def _citations(self, rep: dict) -> list:
@@ -766,9 +817,13 @@ class Backend:
                         f"change would move your score the most. Ask me how, or for reads to help.")
         return " ".join(bits)
 
-    def coach_reply(self, u: int, message: str) -> dict:
-        rep, facts = self._facts(u)
-        recs = nr.rweb_recommendations(self.mind, rep) or []
+    def _serialize_coach_reply(self, corpus: _Corpus, rec: "_Recommenders", u: int,
+                               message: str) -> dict:
+        """Grounded coach reply for reader ``u`` of a corpus, with bridging suggestions from the
+        matching recommender. Corpus-parametric so a real user is coached from their augmented
+        corpus through the same grounding + narration path as the demo."""
+        rep, facts = self._facts_of(corpus, u)
+        recs = nr.rweb_recommendations(corpus.mind, rep) or []
         content = None
         if os.environ.get("GEMINI_API_KEY") or os.environ.get("ANTHROPIC_API_KEY"):
             try:
@@ -779,8 +834,8 @@ class Backend:
         if not content:
             content = self._grounded_fallback(rep)
         # attach up to two real bridging articles as suggestions
-        cols = self._rec_cols(u, "rwe-b", k=2)
-        suggestions = [self.article(c) for c in cols[:2]]
+        cols = self._rec_cols_of(corpus.mind, rec, u, "rwe-b", k=2)
+        suggestions = [self._serialize_article(corpus, c) for c in cols[:2]]
         return {
             "id": f"msg_{_stable_int(message, u)}",
             "role": "assistant",
@@ -790,8 +845,13 @@ class Backend:
             "suggestions": suggestions,
         }
 
-    def coach_greeting(self, u: int) -> list:
-        rep, _ = self._facts(u)
+    def coach_reply(self, u: int, message: str) -> dict:
+        """Base reference-corpus coach reply (demo / ``?user=`` path)."""
+        return self._serialize_coach_reply(self.base_corpus, self.rec, u, message)
+
+    def _serialize_coach_greeting(self, corpus: _Corpus, u: int) -> list:
+        """Coach greeting for reader ``u`` of a corpus (citations grounded on that corpus)."""
+        rep, _ = self._facts_of(corpus, u)
         return [{
             "id": "msg_0",
             "role": "assistant",
@@ -801,6 +861,10 @@ class Backend:
             "createdAt": datetime.now(timezone.utc).isoformat(),
             "citations": self._citations(rep),
         }]
+
+    def coach_greeting(self, u: int) -> list:
+        """Base reference-corpus coach greeting (demo / ``?user=`` path)."""
+        return self._serialize_coach_greeting(self.base_corpus, u)
 
     def health(self) -> dict:
         s = self.mind.summary()

@@ -285,3 +285,70 @@ def test_internal_secret_gates_the_trust_boundary(client, monkeypatch):
     signed = client.get("/api/report",
                         headers={"X-IH-User-Id": str(uid), "X-IH-Auth": "s3cret"})
     assert signed.status_code == 200 and "overall" in signed.json()
+
+
+# --------------------------------------------------------------------------- #
+# Estimate -> Measured routing (the personalization layer): a signed-in reader gets an
+# Initial Estimate below the read threshold and a real Measured report once they cross it.
+# --------------------------------------------------------------------------- #
+def _signed(uid):
+    return {"X-IH-User-Id": str(uid)}
+
+
+def test_report_is_measured_demo_for_user_without_onboarding(client):
+    """A signed-in reader with no onboarding and no reads falls back to the demo reader
+    (existing behaviour) — a measured report over the reference reader, not an estimate."""
+    uid = client.post("/api/internal/users",
+                      json={"provider": "google", "providerAccountId": "route-demo"}).json()["userId"]
+    body = client.get("/api/report", headers=_signed(uid)).json()
+    assert body["mode"] == "measured"                       # demo reader, not an estimate
+    # it's the reference reader's report, not this user's (they have no reads)
+    assert body["coverage"]["reads"] > 5
+
+
+def test_report_is_estimate_below_threshold_with_onboarding(client):
+    """With onboarding saved but too few reads, the report is the Initial Estimate recomputed
+    server-side from the stored outlets."""
+    uid = client.post("/api/internal/users",
+                      json={"provider": "google", "providerAccountId": "route-est"}).json()["userId"]
+    names = [o["id"] for o in client.get("/api/outlets").json()[:5]]
+    client.post("/api/me/onboarding", json={"outlets": names}, headers=_signed(uid))
+    body = client.get("/api/report", headers=_signed(uid)).json()
+    assert body["mode"] == "estimate"
+    assert body["coverage"]["reads"] == 0 and body["coverage"]["sufficient"] is False
+    assert "axisConfidence" not in body                     # estimate omits article-level confidence
+
+
+def test_report_switches_to_measured_after_threshold(client):
+    """Once a signed-in reader stores enough reads, /api/report serves their real Measured
+    report from the augmented corpus — coverage reflects *their* reads, not the demo reader."""
+    uid = client.post("/api/internal/users",
+                      json={"provider": "google", "providerAccountId": "route-meas"}).json()["userId"]
+    reads = [{"url": f"https://example-news-{i}.com/politics/story-{i}"} for i in range(6)]
+    ing = client.post("/api/me/reads", json={"reads": reads}, headers=_signed(uid)).json()
+    assert ing["totalReads"] == 6 and ing["sufficient"] is True
+
+    body = client.get("/api/report", headers=_signed(uid)).json()
+    assert body["mode"] == "measured"
+    assert body["coverage"]["reads"] == 6                   # this user's own reads (not the demo)
+    assert body["coverage"]["sufficient"] is True
+    assert 0 <= body["overall"] <= 100
+
+    # recommendations + coach are now served from the same augmented corpus
+    recs = client.get("/api/recommendations", headers=_signed(uid))
+    assert recs.status_code == 200 and isinstance(recs.json(), list)
+    greeting = client.get("/api/coach", headers=_signed(uid)).json()
+    assert greeting[0]["role"] == "assistant"
+    reply = client.post("/api/coach", json={"message": "how balanced am I?"}, headers=_signed(uid)).json()
+    assert reply["role"] == "assistant" and reply["content"]
+
+    # /api/me now reflects the persisted measured snapshot (not the earlier estimate)
+    me = client.get("/api/me", headers=_signed(uid)).json()
+    assert me["report"]["mode"] == "measured" and me["report"]["coverage"]["reads"] == 6
+
+
+def test_anonymous_report_is_unchanged_by_routing(client):
+    """The anonymous / ?user= path is untouched: same demo reader, same measured contract."""
+    anon = client.get("/api/report").json()
+    assert anon["mode"] == "measured" and anon["coverage"]["sufficient"] is True
+    assert client.get("/api/report", params={"user": "0"}).status_code == 200
