@@ -4,7 +4,7 @@ import * as React from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { signIn } from "next-auth/react";
 import { ArrowLeft, ArrowLeftRight, Check, Loader2, Search, Sparkles } from "lucide-react";
-import type { HealthReport, LeanBucket, Outlet } from "@/types/domain";
+import type { EstimateHealthReport, LeanBucket, Outlet } from "@/types/domain";
 import { Button } from "@/components/ui/button";
 import { ScoreRing } from "@/components/shared/score-ring";
 import { SpectrumBar } from "@/components/shared/spectrum-bar";
@@ -40,7 +40,7 @@ export function OnboardingFlow() {
   const [step, setStep] = React.useState<Step>("welcome");
   const [outlets, setOutlets] = React.useState<Outlet[]>([]);
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
-  const [estimate, setEstimate] = React.useState<HealthReport | null>(null);
+  const [estimate, setEstimate] = React.useState<EstimateHealthReport | null>(null);
   const [error, setError] = React.useState(false);
 
   React.useEffect(() => {
@@ -76,7 +76,7 @@ export function OnboardingFlow() {
         body: JSON.stringify({ outlets: ids }),
       });
       if (!res.ok) throw new Error("estimate failed");
-      setEstimate((await res.json()) as HealthReport);
+      setEstimate((await res.json()) as EstimateHealthReport);
     } catch {
       setError(true);
     }
@@ -312,7 +312,7 @@ function Building({ error, onRetry, onBack }: { error: boolean; onRetry: () => v
   );
 }
 
-function Estimate({ report, onAdjust }: { report: HealthReport; onAdjust: () => void }) {
+function Estimate({ report, onAdjust }: { report: EstimateHealthReport; onAdjust: () => void }) {
   const takeaway = report.improvements[0];
   return (
     <Frame>

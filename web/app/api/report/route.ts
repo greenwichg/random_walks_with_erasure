@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import type { HealthReport } from "@/types/domain";
+import type { MeasuredHealthReport } from "@/types/domain";
 import { backendGet, MOCK_FALLBACK_ENABLED, engineUnavailable } from "@/lib/backend";
 import { engineAuthHeaders } from "@/lib/engine-auth";
 import { REPORT } from "@/mock/data";
@@ -14,7 +14,7 @@ export const dynamic = "force-dynamic";
  * offline; in production it returns a 503 rather than fabricated numbers.
  */
 export async function GET() {
-  const report = await backendGet<HealthReport>("/api/report", await engineAuthHeaders());
+  const report = await backendGet<MeasuredHealthReport>("/api/report", await engineAuthHeaders());
   if (report) return NextResponse.json(report);
   if (MOCK_FALLBACK_ENABLED) return NextResponse.json(REPORT);
   return engineUnavailable();

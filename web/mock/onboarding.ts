@@ -1,4 +1,4 @@
-import type { HealthReport, Outlet } from "@/types/domain";
+import type { EstimateHealthReport, Outlet } from "@/types/domain";
 
 /**
  * Dev-only fallbacks for the onboarding flow when the engine is offline. Real publisher
@@ -23,7 +23,7 @@ export const MOCK_OUTLETS: Outlet[] = [
 ];
 
 /** A mock Initial Estimate (dev fallback) — always labeled mode:"estimate", zero-read coverage. */
-export function mockEstimate(outlets: string[]): HealthReport {
+export function mockEstimate(outlets: string[]): EstimateHealthReport {
   const n = Math.max(1, outlets.length);
   const overall = Math.min(88, 42 + n * 4);
   const band = overall >= 67 ? "Healthy" : overall >= 40 ? "Fair" : "Needs work";
@@ -62,6 +62,5 @@ export function mockEstimate(outlets: string[]): HealthReport {
         impact: 8,
       },
     ],
-    axisConfidence: 0.5,
   };
 }

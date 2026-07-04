@@ -5,7 +5,7 @@ import type {
   CoachMessage,
   DashboardSummary,
   FeedbackAction,
-  HealthReport,
+  MeasuredHealthReport,
   HistoryEntry,
   Profile,
   Recommendation,
@@ -21,7 +21,7 @@ import type {
  */
 export const services = {
   dashboard: () => getJson<DashboardSummary>("/dashboard"),
-  report: () => getJson<HealthReport>("/report"),
+  report: () => getJson<MeasuredHealthReport>("/report"),
   recommendations: (strategy?: Recommendation["strategy"]) =>
     getJson<Recommendation[]>("/recommendations", strategy ? { strategy } : undefined),
   sendFeedback: (articleId: string, action: FeedbackAction) =>

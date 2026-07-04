@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import type { HealthReport } from "@/types/domain";
+import type { EstimateHealthReport } from "@/types/domain";
 import { backendPost, MOCK_FALLBACK_ENABLED, engineUnavailable } from "@/lib/backend";
 import { mockEstimate } from "@/mock/onboarding";
 
@@ -15,7 +15,7 @@ export const dynamic = "force-dynamic";
 export async function POST(request: Request) {
   const body = (await request.json().catch(() => ({ outlets: [] }))) as { outlets?: string[] };
   const outlets = Array.isArray(body.outlets) ? body.outlets : [];
-  const estimate = await backendPost<HealthReport>("/api/estimate", { outlets });
+  const estimate = await backendPost<EstimateHealthReport>("/api/estimate", { outlets });
   if (estimate) return NextResponse.json(estimate);
   if (MOCK_FALLBACK_ENABLED) return NextResponse.json(mockEstimate(outlets));
   return engineUnavailable();

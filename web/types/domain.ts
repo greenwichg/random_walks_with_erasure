@@ -108,9 +108,8 @@ export interface Coverage {
   sufficient: boolean;
 }
 
-/** The flagship Information Health Report (backend: health_report.py). Also the shape of the
- *  onboarding Initial Estimate, distinguished by `mode` (+ `coverage`). */
-export interface HealthReport {
+/** Fields shared by every Information Health result — measured or estimated. */
+export interface HealthReportBase {
   overall: number;
   overallDelta: number;
   /** Health band for the overall score, from the engine (source of truth). */
@@ -123,13 +122,28 @@ export interface HealthReport {
   sources: SourceSlice[];
   blindSpots: BlindSpot[];
   improvements: Improvement[];
-  /** Per-reader confidence in the political axis (measured report). Omitted on an estimate. */
-  axisConfidence: number;
-  /** "measured" (real reads) or "estimate" (outlets-only onboarding result). */
-  mode?: ReportMode;
-  /** Real-reading coverage backing this report. */
-  coverage?: Coverage;
+  /** Real-reading coverage backing this result. */
+  coverage: Coverage;
 }
+
+/** A measured Information Health Report — computed from a reader's real reads. Carries the
+ *  article-level axis confidence and the full set of behavioral metrics. */
+export interface MeasuredHealthReport extends HealthReportBase {
+  mode: "measured";
+  /** Per-reader confidence in the political axis (top-2 softmax margin mean). */
+  axisConfidence: number;
+}
+
+/** An Initial Information Health Estimate — computed from selected outlets only. Metrics that
+ *  cannot be honestly estimated from outlets are absent: there is no `axisConfidence`, and the
+ *  behavioral Open-Mindedness metric does not appear in `metrics`. */
+export interface EstimateHealthReport extends HealthReportBase {
+  mode: "estimate";
+}
+
+/** The flagship Information Health result — an estimate or a measured report, discriminated by
+ *  `mode`. Narrow on `report.mode` to reach measured-only fields like `axisConfidence`. */
+export type HealthReport = MeasuredHealthReport | EstimateHealthReport;
 
 /** A single trend point for the dashboard sparkline / analytics. */
 export interface TrendPoint {

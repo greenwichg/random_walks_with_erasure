@@ -4,7 +4,7 @@ import type {
   CoachMessage,
   DashboardSummary,
   EmotionShare,
-  HealthReport,
+  MeasuredHealthReport,
   HistoryEntry,
   Profile,
   Recommendation,
@@ -189,7 +189,9 @@ const OVERALL_TREND = trend(58, 72);
 /* ------------------------------------------------------------------ *
  * The flagship Information Health Report.
  * ------------------------------------------------------------------ */
-export const REPORT: HealthReport = {
+export const REPORT: MeasuredHealthReport = {
+  mode: "measured",
+  coverage: { reads: 42, threshold: 5, sufficient: true },
   overall: 72,
   overallDelta: 6,
   updatedAt: new Date().toISOString(),
