@@ -120,6 +120,17 @@ class ReportSnapshot(Base):
     created_at: Mapped[datetime] = mapped_column(default=_utcnow)
 
 
+class ScoredArticle(Base):
+    """A scored article, cached by its canonical URL so a shared read is scored once and reused
+    across users. The scored fields (the ScoredRead interface) are stored as JSON verbatim."""
+
+    __tablename__ = "scored_articles"
+
+    url: Mapped[str] = mapped_column(String(2048), primary_key=True)
+    scored: Mapped[str] = mapped_column(Text)           # JSON of the scored fields
+    created_at: Mapped[datetime] = mapped_column(default=_utcnow)
+
+
 class Store:
     """A durable store bound to one database URL.
 
@@ -214,6 +225,23 @@ class Store:
                            .where(ReportSnapshot.user_id == user_id)
                            .order_by(ReportSnapshot.id.desc()))
             return dict(json.loads(row.snapshot)) if row is not None else None
+
+    # -- scored-article cache -------------------------------------------
+    def get_scored_article(self, url: str) -> "dict | None":
+        """Cached scoring for a canonical URL, or ``None`` if it hasn't been scored yet."""
+        with self.session() as s:
+            row = s.get(ScoredArticle, url)
+            return dict(json.loads(row.scored)) if row is not None else None
+
+    def save_scored_article(self, url: str, scored: dict) -> None:
+        """Cache (upsert) the scoring for a canonical URL."""
+        payload = json.dumps(scored)
+        with self.session() as s:
+            row = s.get(ScoredArticle, url)
+            if row is None:
+                s.add(ScoredArticle(url=url, scored=payload))
+            else:
+                row.scored = payload
 
 
 def _make_engine(url: str):

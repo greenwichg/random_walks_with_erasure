@@ -88,3 +88,11 @@ def test_report_snapshot_latest(store):
     store.save_report(u.id, {"mode": "estimate", "overall": 61, "metrics": []})
     latest = store.latest_report(u.id)
     assert latest is not None and latest["overall"] == 61 and latest["mode"] == "estimate"
+
+
+def test_scored_article_cache_roundtrip(store):
+    assert store.get_scored_article("https://x.com/a") is None
+    store.save_scored_article("https://x.com/a", {"outlet": "x.com", "lean": 1.0})
+    assert store.get_scored_article("https://x.com/a") == {"outlet": "x.com", "lean": 1.0}
+    store.save_scored_article("https://x.com/a", {"outlet": "x.com", "lean": 2.0})   # upsert
+    assert store.get_scored_article("https://x.com/a")["lean"] == 2.0
