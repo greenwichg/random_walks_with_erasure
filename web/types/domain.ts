@@ -70,6 +70,15 @@ export interface SourceSlice {
   lean: Lean;
 }
 
+/** A selectable publisher for onboarding (backend: GET /api/outlets). */
+export interface Outlet {
+  id: string;
+  name: string;
+  lean: Lean;
+  leanBucket: LeanBucket;
+  articles: number;
+}
+
 export interface BlindSpot {
   topic: string;
   /** How under-consumed vs the catalog, 0–1 (bigger = larger gap). */
@@ -86,7 +95,21 @@ export interface Improvement {
   impact: number;
 }
 
-/** The flagship Information Health Report (backend: health_report.py). */
+/** Whether a report is a measured result (real reads) or an initial estimate (outlets only). */
+export type ReportMode = "estimate" | "measured";
+
+/** How much real reading backs a report — drives the Estimate→Measured transition. */
+export interface Coverage {
+  /** Real reads counted so far. */
+  reads: number;
+  /** Reads needed before an estimate becomes a measured report. */
+  threshold: number;
+  /** Whether `reads` has reached `threshold`. */
+  sufficient: boolean;
+}
+
+/** The flagship Information Health Report (backend: health_report.py). Also the shape of the
+ *  onboarding Initial Estimate, distinguished by `mode` (+ `coverage`). */
 export interface HealthReport {
   overall: number;
   overallDelta: number;
@@ -100,8 +123,12 @@ export interface HealthReport {
   sources: SourceSlice[];
   blindSpots: BlindSpot[];
   improvements: Improvement[];
-  /** Per-reader confidence in the political axis (top-2 softmax margin mean). */
+  /** Per-reader confidence in the political axis (measured report). Omitted on an estimate. */
   axisConfidence: number;
+  /** "measured" (real reads) or "estimate" (outlets-only onboarding result). */
+  mode?: ReportMode;
+  /** Real-reading coverage backing this report. */
+  coverage?: Coverage;
 }
 
 /** A single trend point for the dashboard sparkline / analytics. */
