@@ -118,6 +118,16 @@ def test_report_contract(backend, user):
     _assert_json_roundtrips(r)
 
 
+def test_report_is_labeled_measured(backend, user):
+    """The measured report carries the same mode/coverage contract as the estimate."""
+    r = backend.report(user)
+    assert r["mode"] == "measured"
+    cov = r["coverage"]
+    assert cov["threshold"] == 5 and cov["reads"] >= 5           # demo reader is above the floor
+    assert cov["sufficient"] is (cov["reads"] >= cov["threshold"]) is True
+    assert "axisConfidence" in r                                 # measured keeps axis confidence
+
+
 # --------------------------------------------------------------------------- #
 # onboarding: outlets + Initial Information Health Estimate (Milestone B1)
 # --------------------------------------------------------------------------- #

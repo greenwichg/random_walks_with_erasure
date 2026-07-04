@@ -435,7 +435,12 @@ class Backend:
                                      "metric": m["key"], "impact": tpl[2]})
 
         overall = rep.get("overall") or 0
+        n = int(n_clicks)
         return {
+            # explicit counterpart to the estimate's mode/coverage — same contract, both paths
+            "mode": "measured",
+            "coverage": {"reads": n, "threshold": ESTIMATE_MIN_READS,
+                         "sufficient": n >= ESTIMATE_MIN_READS},
             "overall": overall,
             "overallDelta": 0,
             "band": _score_band(overall),

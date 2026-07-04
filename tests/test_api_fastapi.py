@@ -197,6 +197,12 @@ def test_real_user_header_resolves_and_falls_back(client):
     assert fb.status_code == 200 and "overall" in fb.json()
 
 
+def test_report_is_labeled_measured(client):
+    body = client.get("/api/report").json()
+    assert body["mode"] == "measured"
+    assert body["coverage"]["threshold"] == 5 and body["coverage"]["sufficient"] is True
+
+
 def test_outlets_endpoint(client):
     outs = client.get("/api/outlets").json()
     assert isinstance(outs, list) and len(outs) > 0
