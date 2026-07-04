@@ -195,3 +195,26 @@ def test_real_user_header_resolves_and_falls_back(client):
     # an unknown id simply falls back to the demo reader — no error
     fb = client.get("/api/report", headers={"X-IH-User-Id": "999999"})
     assert fb.status_code == 200 and "overall" in fb.json()
+
+
+def test_internal_secret_gates_the_trust_boundary(client, monkeypatch):
+    """With RWE_INTERNAL_SECRET set, internal calls need the X-IH-Auth header and the
+    user-id header is honoured only when signed. Unset (the default) leaves dev untouched."""
+    monkeypatch.setenv("RWE_INTERNAL_SECRET", "s3cret")
+    # no secret -> typed 401
+    denied = client.post("/api/internal/users",
+                         json={"provider": "google", "providerAccountId": "sec-1"})
+    assert denied.status_code == 401 and denied.json()["error"]["code"] == "unauthorized"
+    # correct secret -> 200
+    ok = client.post("/api/internal/users",
+                     json={"provider": "google", "providerAccountId": "sec-1"},
+                     headers={"X-IH-Auth": "s3cret"})
+    assert ok.status_code == 200
+    uid = ok.json()["userId"]
+    # an unsigned user-id header is ignored -> falls back to the demo reader (still 200)
+    unsigned = client.get("/api/report", headers={"X-IH-User-Id": str(uid)})
+    assert unsigned.status_code == 200 and "overall" in unsigned.json()
+    # a signed user-id header is honoured
+    signed = client.get("/api/report",
+                        headers={"X-IH-User-Id": str(uid), "X-IH-Auth": "s3cret"})
+    assert signed.status_code == 200 and "overall" in signed.json()

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import type { CoachMessage } from "@/types/domain";
 import { backendGet, backendPost, MOCK_FALLBACK_ENABLED, engineUnavailable } from "@/lib/backend";
+import { engineAuthHeaders } from "@/lib/engine-auth";
 import { COACH_GREETING, coachReply } from "@/mock/data";
 
 // The coach grounds on the live report, so always run at request time.
@@ -14,7 +15,7 @@ export const dynamic = "force-dynamic";
  * grounded summary. Falls back to the mock coach when the engine is offline.
  */
 export async function GET() {
-  const history = await backendGet<CoachMessage[]>("/api/coach");
+  const history = await backendGet<CoachMessage[]>("/api/coach", await engineAuthHeaders());
   if (history) return NextResponse.json(history);
   if (MOCK_FALLBACK_ENABLED) return NextResponse.json([COACH_GREETING]);
   return engineUnavailable();
@@ -22,7 +23,7 @@ export async function GET() {
 
 export async function POST(request: Request) {
   const { message } = (await request.json().catch(() => ({ message: "" }))) as { message: string };
-  const reply = await backendPost<CoachMessage>("/api/coach", { message: message ?? "" });
+  const reply = await backendPost<CoachMessage>("/api/coach", { message: message ?? "" }, await engineAuthHeaders());
   if (reply) return NextResponse.json(reply);
   if (MOCK_FALLBACK_ENABLED) return NextResponse.json(coachReply(message ?? ""));
   return engineUnavailable();

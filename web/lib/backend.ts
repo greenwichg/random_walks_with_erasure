@@ -54,9 +54,10 @@ async function withTimeout(input: string, init?: RequestInit): Promise<Response 
   }
 }
 
-/** GET `<BASE><path>` → parsed JSON, or `null` on any failure (caller falls back). */
-export async function backendGet<T>(path: string): Promise<T | null> {
-  const res = await withTimeout(`${BASE}${path}`);
+/** GET `<BASE><path>` → parsed JSON, or `null` on any failure (caller falls back).
+ *  Optional `headers` attribute the call to a signed-in user (see `engineAuthHeaders`). */
+export async function backendGet<T>(path: string, headers?: Record<string, string>): Promise<T | null> {
+  const res = await withTimeout(`${BASE}${path}`, headers ? { headers } : undefined);
   if (!res || !res.ok) return null;
   try {
     return (await res.json()) as T;
@@ -65,11 +66,16 @@ export async function backendGet<T>(path: string): Promise<T | null> {
   }
 }
 
-/** POST `<BASE><path>` with a JSON body → parsed JSON, or `null` on any failure. */
-export async function backendPost<T>(path: string, body: unknown): Promise<T | null> {
+/** POST `<BASE><path>` with a JSON body → parsed JSON, or `null` on any failure.
+ *  Optional `headers` attribute the call to a signed-in user (see `engineAuthHeaders`). */
+export async function backendPost<T>(
+  path: string,
+  body: unknown,
+  headers?: Record<string, string>,
+): Promise<T | null> {
   const res = await withTimeout(`${BASE}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...(headers ?? {}) },
     body: JSON.stringify(body ?? {}),
   });
   if (!res || !res.ok) return null;

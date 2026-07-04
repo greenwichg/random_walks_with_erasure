@@ -106,6 +106,7 @@ switching data never touches the frontend.
 | `RWE_N_USERS` / `RWE_MAX_ITEMS` / `RWE_SEED` | `--n-users` / `--max-items` / `--seed` | synthetic corpus size + seed |
 | `RWE_PROVIDER` | `--provider` | coach LLM provider: `anthropic` \| `gemini` |
 | `RWE_LOG_LEVEL` | — | log level for structured logs (default `INFO`) |
+| `RWE_INTERNAL_SECRET` | — | shared secret authenticating the web tier's server-to-server calls (unset = trust local callers) |
 | `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` | — | enable the live coach narrative |
 
 **Web app** (`web/.env.local`):
@@ -116,6 +117,9 @@ switching data never touches the frontend.
 | `RWE_BACKEND_TIMEOUT_MS` | `6000` | proxy timeout before fallback/error |
 | `RWE_ALLOW_MOCK_FALLBACK` | on in dev, off in prod | allow mock when the engine is down |
 | `NODE_ENV` | — | `production` disables the mock fallback |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | *(empty)* | Google OAuth client for sign-in (NextAuth) |
+| `NEXTAUTH_SECRET` / `NEXTAUTH_URL` | *(empty)* | session-JWT signing secret + this app's canonical URL |
+| `RWE_INTERNAL_SECRET` | *(empty)* | shared secret sent as `X-IH-Auth`; must match the engine's |
 | `NEXT_PUBLIC_API_BASE_URL` | *(empty)* | advanced: call a different API origin from the browser |
 
 ---

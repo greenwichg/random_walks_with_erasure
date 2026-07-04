@@ -170,8 +170,8 @@ def _error(status_code: int, code: str, message: str) -> JSONResponse:
     )
 
 
-_HTTP_CODES = {400: "bad_request", 404: "not_found", 405: "method_not_allowed",
-               422: "invalid_request", 503: "engine_unavailable"}
+_HTTP_CODES = {400: "bad_request", 401: "unauthorized", 404: "not_found",
+               405: "method_not_allowed", 422: "invalid_request", 503: "engine_unavailable"}
 
 
 @app.exception_handler(RequestValidationError)
@@ -350,6 +350,29 @@ def _resolve(user: str | None) -> int:
 
 
 _REAL_USER_HEADER = "x-ih-user-id"
+_AUTH_HEADER = "x-ih-auth"
+
+
+def _internal_secret() -> "str | None":
+    """The shared secret the web tier signs internal calls with, or None if unset.
+
+    When unset (local dev) the engine trusts the caller so the app runs with no extra
+    configuration; set it in any shared/production deployment to authenticate the web tier.
+    Read per-request so it can be rotated without a restart."""
+    return os.environ.get("RWE_INTERNAL_SECRET") or None
+
+
+def _trusted(request: Request) -> bool:
+    """Whether a request is from the trusted web tier: always true when no secret is
+    configured, otherwise only when it carries the matching X-IH-Auth header."""
+    secret = _internal_secret()
+    return secret is None or request.headers.get(_AUTH_HEADER) == secret
+
+
+def _require_trusted(request: Request) -> None:
+    """Reject an internal call lacking the configured secret (a no-op when unset)."""
+    if not _trusted(request):
+        raise HTTPException(status_code=401, detail="Missing or invalid internal credentials.")
 
 
 def _require_store() -> "store.Store":
@@ -367,7 +390,7 @@ def _resolve_request(request: Request, user: str | None) -> int:
     the existing ``?user=`` selector applies — unchanged for the frontend and contract tests."""
     be = _require_backend()
     raw = request.headers.get(_REAL_USER_HEADER)
-    if (raw and raw.lstrip("-").isdigit() and state.store is not None
+    if (raw and raw.lstrip("-").isdigit() and _trusted(request) and state.store is not None
             and state.store.get_user(int(raw)) is not None):
         return be.demo_user
     return be.resolve_user({"user": [user]} if user is not None else {})
@@ -412,9 +435,10 @@ def coach_reply(request: Request, req: CoachRequest) -> dict:
 @app.post("/api/internal/users", response_model=UserModel, tags=["meta"],
           summary="Upsert a user by third-party identity (server-to-server)",
           responses=_ERR_RESPONSES)
-def upsert_user(req: UpsertUserRequest) -> dict:
+def upsert_user(request: Request, req: UpsertUserRequest) -> dict:
     """Called by the web tier on sign-in: map a provider account to a stable engine user id,
-    creating the user on first sight. Idempotent."""
+    creating the user on first sight. Idempotent. Requires the internal secret when set."""
+    _require_trusted(request)
     u = _require_store().upsert_user_by_identity(
         req.provider, req.providerAccountId, email=req.email, display_name=req.displayName)
     return {"userId": u.id, "email": u.email, "displayName": u.display_name}
@@ -422,7 +446,8 @@ def upsert_user(req: UpsertUserRequest) -> dict:
 
 @app.get("/api/internal/users/{user_id}", response_model=UserModel, tags=["meta"],
          summary="Resolve a user by engine id", responses=_ERR_RESPONSES)
-def read_user(user_id: int) -> dict:
+def read_user(request: Request, user_id: int) -> dict:
+    _require_trusted(request)
     u = _require_store().get_user(user_id)
     if u is None:
         raise HTTPException(status_code=404, detail="No such user.")
