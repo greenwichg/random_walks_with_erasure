@@ -216,6 +216,26 @@ def resolve_profile(args) -> DatasetProfile:
 ESTIMATE_MIN_READS = 5
 
 
+@dataclass(frozen=True)
+class _Corpus:
+    """The corpus-varying inputs the JSON serialisers read.
+
+    Two instances share this exact shape: the base **reference** corpus, built once at
+    startup, and a per-user **augmented** corpus (base + one reader row + the novel article
+    columns that reader brought in), built in ``personalize.py``. Everything else the
+    serialisers use — ``lean_tau`` and the metric templates — is corpus-invariant and stays
+    on the Backend. Feeding the *same* serialisers a different ``_Corpus`` is what lets a
+    real reader's Measured report be rendered by identical code to the demo reader's, with no
+    algorithm or JSON-contract change.
+    """
+    mind: object          # MINDData: matrix, item_positions, outlets, categories, titles, ids
+    pop: dict             # health_report.compute(...) output for this corpus
+    register: object      # per-item P(reporting) array, or None
+    emotion: object       # per-item emotion dict, or None
+    confidence: object    # per-item lean-confidence array, or None
+    outlet_lean: dict     # outlet name -> house lean (mean finite item position)
+
+
 class Backend:
     def __init__(self, profile: DatasetProfile, provider: str = "anthropic", model=None):
         self.profile = profile
@@ -266,12 +286,14 @@ class Backend:
         # Per-item confidence array actually used (for serialising article confidence).
         self.item_confidence = confidence
         # Outlet -> house lean (mean item position), for source/publisher leans.
-        outs = np.asarray(self.mind.outlets)
-        pos = np.asarray(self.mind.item_positions, dtype=float)
-        self.outlet_lean = {}
-        for o in np.unique(outs):
-            m = (outs == o) & np.isfinite(pos)
-            self.outlet_lean[str(o)] = float(np.mean(pos[m])) if m.any() else 0.0
+        self.outlet_lean = self._build_outlet_lean(self.mind)
+
+        # The serialiser's view of the reference corpus. personalize.py builds an
+        # identically-shaped _Corpus (base + one reader row + novel columns) so the *same*
+        # serialisers below render a Measured report from a real user's augmented corpus.
+        self.base_corpus = _Corpus(mind=self.mind, pop=self.pop, register=self.register,
+                                   emotion=self.emotion, confidence=self.item_confidence,
+                                   outlet_lean=self.outlet_lean)
 
         # Recommender inputs, shared by all RWE variants (drops NaN-pos items + empty users).
         from rwe import FeedbackGraph
@@ -320,6 +342,19 @@ class Backend:
         selective = hr.selective_exposure_array(self.mind, beh) if beh else None
         return register, emotion, selective
 
+    @staticmethod
+    def _build_outlet_lean(mind) -> dict:
+        """Outlet -> house lean (mean finite item position) over a corpus. Built for the base
+        reference corpus at startup and recomputed by ``personalize.py`` for an augmented
+        corpus, so both speak the same publisher-lean scale."""
+        outs = np.asarray(mind.outlets)
+        pos = np.asarray(mind.item_positions, dtype=float)
+        lean = {}
+        for o in np.unique(outs):
+            m = (outs == o) & np.isfinite(pos)
+            lean[str(o)] = float(np.mean(pos[m])) if m.any() else 0.0
+        return lean
+
     # -- reader selection -------------------------------------------------- #
     def _pick_demo_user(self) -> int:
         """A 'fair, improvable' reader (overall nearest ~58) so the report shows the full
@@ -341,34 +376,38 @@ class Backend:
         return self.demo_user
 
     # -- serialisers ------------------------------------------------------- #
-    def _emotion_share(self, col: int) -> dict:
+    @staticmethod
+    def _emotion_share_of(emotion, col: int) -> dict:
         labels = ["fear", "outrage", "analysis", "positive", "neutral"]
-        if self.emotion is None:
+        if emotion is None:
             return {l: (0.2 if l == "neutral" else 0.2) for l in labels}
         out = {}
         for l in labels:
-            arr = self.emotion.get(l)
+            arr = emotion.get(l)
             v = float(arr[col]) if arr is not None and np.isfinite(arr[col]) else 0.0
             out[l] = v
         s = sum(out.values()) or 1.0
         return {l: out[l] / s for l in labels}
 
-    def article(self, col: int) -> dict:
-        pos = float(np.asarray(self.mind.item_positions, dtype=float)[col])
+    def _serialize_article(self, corpus: _Corpus, col: int) -> dict:
+        """Serialise one article (column) of a corpus. Corpus-parametric so the same code
+        renders a reference-catalog article and a novel article a real reader brought in."""
+        mind = corpus.mind
+        pos = float(np.asarray(mind.item_positions, dtype=float)[col])
         pos = 0.0 if not np.isfinite(pos) else pos
-        outlet = str(np.asarray(self.mind.outlets)[col])
-        topic = str(np.asarray(self.mind.categories)[col])
-        item_id = str(np.asarray(self.mind.dataset.item_ids)[col])
-        emo = self._emotion_share(col)
+        outlet = str(np.asarray(mind.outlets)[col])
+        topic = str(np.asarray(mind.categories)[col])
+        item_id = str(np.asarray(mind.dataset.item_ids)[col])
+        emo = self._emotion_share_of(corpus.emotion, col)
         dom = max(emo, key=emo.get)
-        reg = self.register[col] if self.register is not None else None
-        conf = (float(self.item_confidence[col]) if self.item_confidence is not None
-                and np.isfinite(self.item_confidence[col]) else 0.7)
+        reg = corpus.register[col] if corpus.register is not None else None
+        conf = (float(corpus.confidence[col]) if corpus.confidence is not None
+                and np.isfinite(corpus.confidence[col]) else 0.7)
         return {
             "id": item_id,
-            "headline": str(np.asarray(self.mind.titles)[col]),
+            "headline": str(np.asarray(mind.titles)[col]),
             "publisher": _prettify(outlet),
-            "publisherLean": self.outlet_lean.get(outlet, 0.0),
+            "publisherLean": corpus.outlet_lean.get(outlet, 0.0),
             "topic": _prettify(topic),
             "lean": pos,
             "leanBucket": _lean_bucket(pos, self.lean_tau),
@@ -380,8 +419,19 @@ class Backend:
             "readingMinutes": 2 + (_stable_int(item_id) % 8),
         }
 
-    def report(self, u: int) -> dict:
-        rep = hr.user_report(self.pop, self.mind, u)
+    def article(self, col: int) -> dict:
+        """Base reference-corpus article (the demo / ``?user=`` path)."""
+        return self._serialize_article(self.base_corpus, col)
+
+    def _serialize_report(self, corpus: _Corpus, u: int) -> dict:
+        """Serialise the Measured Information Health Report for reader row ``u`` of a corpus.
+
+        Corpus-parametric: the base reference corpus (demo / ``?user=`` path) and a real
+        user's augmented corpus both flow through this one path, so a Measured report is
+        identical in shape and computation regardless of which reader it describes. Every
+        number still comes from ``health_report.user_report`` on the corpus — this only
+        serialises what the unchanged engine computed."""
+        rep = hr.user_report(corpus.pop, corpus.mind, u)
         scores = rep.get("scores", {}) or {}
         n_clicks = rep.get("n_clicks") or 0
 
@@ -400,8 +450,8 @@ class Backend:
                         "raw": {"value": round(axis_conf, 2), "unit": "axis margin"}})
 
         # per-user topic + source distributions (real shares from the click matrix)
-        UC, UO = self.pop["UC"], self.pop["UO"]
-        cat_u, out_u = self.pop["cat_u"], self.pop["out_u"]
+        UC, UO = corpus.pop["UC"], corpus.pop["UO"]
+        cat_u, out_u = corpus.pop["cat_u"], corpus.pop["out_u"]
         sc, so = hr.shares(UC[u]), hr.shares(UO[u])
         topics = sorted(
             ({"topic": _prettify(cat_u[i]), "share": float(sc[i]),
@@ -410,7 +460,7 @@ class Backend:
         sources = sorted(
             ({"source": _prettify(out_u[i]), "share": float(so[i]),
               "count": int(round(so[i] * n_clicks)),
-              "lean": self.outlet_lean.get(str(out_u[i]), 0.0)}
+              "lean": corpus.outlet_lean.get(str(out_u[i]), 0.0)}
              for i in range(len(out_u)) if so[i] > 0),
             key=lambda d: -d["share"])[:9]
 
@@ -454,6 +504,10 @@ class Backend:
             "improvements": improvements,
             "axisConfidence": axis_conf,
         }
+
+    def report(self, u: int) -> dict:
+        """Base reference-corpus Measured report (the demo / ``?user=`` path)."""
+        return self._serialize_report(self.base_corpus, u)
 
     # -- onboarding: outlets + the Initial Information Health Estimate --------- #
     def outlets(self) -> list:
@@ -633,8 +687,11 @@ class Backend:
         except Exception:
             return []
 
-    def _build_rec(self, u: int, col: int, strategy: str, user_side: float) -> dict:
-        art = self.article(col)
+    def _serialize_rec(self, corpus: _Corpus, col: int, strategy: str, user_side: float) -> dict:
+        """Turn a recommended column (in ``corpus.mind`` space) into a rec payload. Corpus-
+        parametric so a real user's augmented recs serialise through the same reason/impact
+        logic as the demo path — only the corpus the article is drawn from differs."""
+        art = self._serialize_article(corpus, col)
         cross = user_side != 0 and np.sign(art["lean"]) == -user_side and abs(art["lean"]) >= 0.5
         side = {"left": "left-leaning", "right": "right-leaning", "center": "centrist"}[art["leanBucket"]]
         topic = art["topic"].lower()
@@ -659,20 +716,27 @@ class Backend:
             "crossCutting": bool(cross),
         }
 
+    def _serialize_recs(self, corpus: _Corpus, cols_by_strategy, user_side: float) -> list:
+        """Dedup + serialise chosen ``(strategy, columns)`` groups into a rec list, preserving
+        first-seen order. Shared by the base path and the augmented (Measured) path; only the
+        recommender that *chose* the columns differs, never this assembly."""
+        out, seen = [], set()
+        for strat, cols in cols_by_strategy:
+            for col in cols:
+                if col in seen:
+                    continue
+                seen.add(col)
+                out.append(self._serialize_rec(corpus, col, strat, user_side))
+        return out
+
     def recommendations(self, u: int, strategy: str | None = None) -> list:
         rep = hr.user_report(self.pop, self.mind, u)
         user_side = np.sign(rep.get("mean_lean") or 0.0)
         # a single strategy, or a blend across the family for the default "all" view
         plan = ([(strategy, 12)] if strategy in ("rwe-b", "rwe-d", "adaptive")
                 else [("rwe-b", 6), ("rwe-d", 4), ("adaptive", 4)])
-        out, seen = [], set()
-        for strat, k in plan:
-            for col in self._rec_cols(u, strat, k):
-                if col in seen:
-                    continue
-                seen.add(col)
-                out.append(self._build_rec(u, col, strat, user_side))
-        return out
+        cols_by_strategy = [(strat, self._rec_cols(u, strat, k)) for strat, k in plan]
+        return self._serialize_recs(self.base_corpus, cols_by_strategy, user_side)
 
     # -- coach ------------------------------------------------------------- #
     def _facts(self, u: int):
