@@ -3,6 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useSession, signOut } from "next-auth/react";
 import { Menu, Search, Bell } from "lucide-react";
 import { Logo } from "@/components/layout/logo";
 import { NavLinks } from "@/components/layout/nav-links";
@@ -24,6 +25,18 @@ import { NAV_FLAT } from "@/lib/nav";
 /** Sticky top bar: mobile nav trigger, page title, search (⌘K), theme, profile. */
 export function Header() {
   const pathname = usePathname();
+  const { data: session } = useSession();
+  const name = session?.user?.name ?? "Guest";
+  const email = session?.user?.email ?? "";
+  const image = session?.user?.image ?? "";
+  const initials =
+    name
+      .split(" ")
+      .map((s) => s.charAt(0))
+      .filter(Boolean)
+      .slice(0, 2)
+      .join("")
+      .toUpperCase() || "U";
   const [mobileNav, setMobileNav] = React.useState(false);
   const [searchOpen, setSearchOpen] = React.useState(false);
 
@@ -83,16 +96,18 @@ export function Header() {
           <DropdownMenuTrigger asChild>
             <button className="ml-1 rounded-full outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring">
               <Avatar>
-                <AvatarImage src="" alt="Alex Rivera" />
-                <AvatarFallback>AR</AvatarFallback>
+                <AvatarImage src={image} alt={name} />
+                <AvatarFallback>{initials}</AvatarFallback>
               </Avatar>
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-56">
             <DropdownMenuLabel>
               <div className="flex flex-col">
-                <span className="text-sm font-medium text-foreground">Alex Rivera</span>
-                <span className="text-xs font-normal text-muted-foreground">alex@example.com</span>
+                <span className="text-sm font-medium text-foreground">{name}</span>
+                {email ? (
+                  <span className="text-xs font-normal text-muted-foreground">{email}</span>
+                ) : null}
               </div>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
@@ -103,7 +118,12 @@ export function Header() {
               <Link href="/settings">Settings</Link>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem className="text-destructive focus:text-destructive">Sign out</DropdownMenuItem>
+            <DropdownMenuItem
+              className="text-destructive focus:text-destructive"
+              onClick={() => signOut({ callbackUrl: "/signin" })}
+            >
+              Sign out
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
