@@ -37,7 +37,7 @@ contract-test suites stay green after every commit.
 ```mermaid
 flowchart TD
   V["Visitor (no account)"] --> O["Onboarding — pick the outlets you read"]
-  O --> E["Estimated Report<br/>badged 'Estimate', from outlets only"]
+  O --> E["Initial Information Health Estimate<br/>(from selected outlets — not reading)"]
   E --> A["Sign in with Google — to save & track"]
   A --> I["Connect reading<br/>Extension (primary) · Paste URL · RSS/OPML"]
   I --> U["Measured Report<br/>real reads, via the augmented corpus"]
@@ -52,10 +52,10 @@ flowchart TD
 | --- | --- | --- |
 | **Visitor** | Lands on the value screen ("a health check for your news diet"); understands it in ~30s. | No signup wall to *see* value. |
 | **Onboarding** | Picks the publishers they read (approved `onboarding.html`, step 2/3). | 30 seconds, no fabricated data. |
-| **First Report** | An **Estimated** Information Health Report computed *directly from the selected outlets'* known characteristics — **not** from invented article reads. Rendered in the normal report shape, badged **"Estimate — based on the outlets you picked."** | We never imply the user read specific articles they didn't. |
+| **Initial Estimate** | An **Initial Information Health Estimate** computed *directly from the selected outlets'* known characteristics — **not** from invented article reads. Presented as an estimate (never a measured report), stating plainly that it is derived from the publishers picked, is not yet based on actual reading, sharpens as real reading is collected, and transitions to a measured report automatically once enough reading exists. | We never imply the user read articles they didn't — nor that an estimate is a measurement. |
 | **Authentication** | "Save your report & track your score" → **Google OAuth**. Progressive: it comes *after* value, not before. | One provider, minimal friction. |
 | **Reading Ingestion** | The user connects a real source. **Browser extension is the primary method**; Paste URL and RSS/OPML are secondary. Each real read is scored and stored. | Real reads, captured with consent. |
-| **Updated (Measured) Report** | Once real reads exist, the report is recomputed from the **augmented corpus** (§4) and the badge shifts **"Estimate" → "Measured (N reads)."** | The estimate is *replaced* by measurement, not blended silently. |
+| **Updated (Measured) Report** | Once enough real reads exist, the report is recomputed from the **augmented corpus** (§4) and the label transitions **Initial Estimate → Measured (N reads)** automatically. | The estimate is *replaced* by measurement, not blended silently. |
 | **Recommendations** | `RWEB` runs over the augmented graph → cross-cutting, bounded-bridging reads. | Same recommender as the research code. |
 | **AI Coach** | `narrate_report` grounds its reply in the user's real metrics and the reads behind them. | Grounded, not free-associating. |
 | **History** | Every report + recommendation set is snapshotted; the user revisits and compares over time. | Their record, persisted. |
@@ -146,11 +146,15 @@ Because the report scores are **percentiles against the population**, the real u
 against the **reference corpus** (see §7). The augmented object is cached per user and
 rebuilt only when their reading changes.
 
-**The Estimated report (onboarding) is a separate, clearly-labeled path.** It is computed
-*directly from the selected outlets'* characteristics (each outlet's lean position, typical
-tone/register, topic profile in the reference data), positioned against the reference
-population, and **badged "Estimate."** It deliberately does **not** inject a fabricated user
-row — no invented reads. When real reads arrive, the **measured** path above supersedes it.
+**The Initial Information Health Estimate (onboarding) is a separate, clearly-labeled path.**
+It is computed *directly from the selected outlets'* characteristics (each outlet's lean
+position, typical tone/register, topic profile in the reference data), positioned against the
+reference population. It deliberately does **not** inject a fabricated user row — no invented
+reads. The UI presents it as an **estimate, not a measured report**, and always communicates
+four things: it is derived from the publishers the user selected; it is not yet based on their
+actual reading behaviour; accuracy improves as real reading events are collected; and it
+transitions to a measured report automatically once sufficient reading data exists. When
+enough real reads arrive, the **measured** path above supersedes it.
 
 ---
 
@@ -196,8 +200,10 @@ tells us when a report is stale.
 - During beta, percentiles are computed against the **existing corpus** (synthetic, or a MIND
   ingest). The UI states this plainly — e.g. *"Compared against the current reference
   population."*
-- The first report is always an **Estimate** until real reads exist; the badge and a coverage
-  indicator make the transition to **Measured** explicit.
+- The onboarding result is always an **Initial Information Health Estimate** until enough real
+  reads exist — clearly labeled as derived from the selected publishers, not yet from actual
+  reading, improving as reading is collected, and transitioning to a **Measured** report
+  automatically. A coverage indicator makes the transition explicit.
 - We transition to a **real-user reference population** once there is enough usage data — a
   configuration change, not an algorithm change.
 
