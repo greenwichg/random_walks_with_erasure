@@ -23,6 +23,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 os.environ.setdefault("RWE_N_USERS", "150")
 os.environ.setdefault("RWE_MAX_ITEMS", "400")
 os.environ.setdefault("RWE_SEED", "0")
+os.environ.setdefault("RWE_DB_URL", "sqlite://")   # ephemeral in-memory store for the app's lifespan
 
 METRIC_KEYS = {
     "topicDiversity", "sourceDiversity", "reportingRatio", "emotionalBalance",
@@ -162,3 +163,35 @@ def test_request_id_correlation(client):
     # a caller-supplied id is echoed back (trace propagation)
     mine = client.get("/api/health", headers={"X-Request-ID": "trace-abc"})
     assert mine.headers.get("x-request-id") == "trace-abc"
+
+
+# --------------------------------------------------------------------------- #
+# Beta identity plumbing (Milestone A/2): user upsert + real-user resolution.
+# --------------------------------------------------------------------------- #
+def test_internal_user_upsert_is_idempotent(client):
+    body = {"provider": "google", "providerAccountId": "acct-123", "displayName": "Ada"}
+    first = client.post("/api/internal/users", json=body)
+    assert first.status_code == 200
+    uid = first.json()["userId"]
+    # same identity, no profile fields -> the same engine user, not a second one
+    again = client.post("/api/internal/users",
+                        json={"provider": "google", "providerAccountId": "acct-123"})
+    assert again.json()["userId"] == uid
+    got = client.get(f"/api/internal/users/{uid}")
+    assert got.status_code == 200 and got.json()["displayName"] == "Ada"
+
+
+def test_internal_user_missing_is_typed_404(client):
+    r = client.get("/api/internal/users/999999")
+    assert r.status_code == 404 and r.json()["error"]["code"] == "not_found"
+
+
+def test_real_user_header_resolves_and_falls_back(client):
+    uid = client.post("/api/internal/users",
+                      json={"provider": "google", "providerAccountId": "hdr-1"}).json()["userId"]
+    # a valid signed-in user resolves to a report (the reference reader until Milestone B)
+    ok = client.get("/api/report", headers={"X-IH-User-Id": str(uid)})
+    assert ok.status_code == 200 and "overall" in ok.json()
+    # an unknown id simply falls back to the demo reader — no error
+    fb = client.get("/api/report", headers={"X-IH-User-Id": "999999"})
+    assert fb.status_code == 200 and "overall" in fb.json()

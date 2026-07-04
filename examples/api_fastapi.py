@@ -32,6 +32,7 @@ from typing import Any, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # import sibling api_server
 import api_server as engine   # Backend, DatasetProfile, resolve_profile, BUILTIN_PROFILES
+import store                  # beta persistence layer (users + identities)
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
@@ -79,6 +80,7 @@ def _profile_from_env() -> "engine.DatasetProfile":
 
 class _State:
     backend: "engine.Backend | None" = None
+    store: "store.Store | None" = None
 
 
 state = _State()
@@ -90,10 +92,12 @@ async def lifespan(app: FastAPI):
     provider = os.environ.get("RWE_PROVIDER", "anthropic")
     be = engine.Backend(_profile_from_env(), provider=provider)
     state.backend = be
+    state.store = store.Store()
     _log(logging.INFO, "startup", profile=be.profile.name, demoUser=be.demo_user,
-         eligibleReaders=int(len(be.eligible)))
+         eligibleReaders=int(len(be.eligible)), db=state.store.url)
     yield
     state.backend = None
+    state.store = None
 
 
 app = FastAPI(
@@ -322,6 +326,19 @@ class CoachRequest(BaseModel):
     user: str | None = None
 
 
+class UpsertUserRequest(BaseModel):
+    provider: str
+    providerAccountId: str
+    email: str | None = None
+    displayName: str | None = None
+
+
+class UserModel(BaseModel):
+    userId: int
+    email: str | None = None
+    displayName: str | None = None
+
+
 def _require_backend() -> "engine.Backend":
     if state.backend is None:
         raise HTTPException(status_code=503, detail="The engine is still starting up.")
@@ -332,6 +349,30 @@ def _resolve(user: str | None) -> int:
     return _require_backend().resolve_user({"user": [user]} if user is not None else {})
 
 
+_REAL_USER_HEADER = "x-ih-user-id"
+
+
+def _require_store() -> "store.Store":
+    if state.store is None:
+        raise HTTPException(status_code=503, detail="The engine is still starting up.")
+    return state.store
+
+
+def _resolve_request(request: Request, user: str | None) -> int:
+    """Corpus row to serve for a request.
+
+    A signed-in reader is identified by the ``X-IH-User-Id`` header the web tier sets after
+    Google sign-in; when it names a real user we currently serve the reference reader (their
+    own *measured* report arrives in Milestone B, once reading data exists). Absent or unknown,
+    the existing ``?user=`` selector applies — unchanged for the frontend and contract tests."""
+    be = _require_backend()
+    raw = request.headers.get(_REAL_USER_HEADER)
+    if (raw and raw.lstrip("-").isdigit() and state.store is not None
+            and state.store.get_user(int(raw)) is not None):
+        return be.demo_user
+    return be.resolve_user({"user": [user]} if user is not None else {})
+
+
 @app.get("/api/health", response_model=HealthStatusModel, tags=["meta"],
          summary="Service health and dataset summary", responses=_ERR_RESPONSES)
 def health() -> dict:
@@ -340,32 +381,52 @@ def health() -> dict:
 
 @app.get("/api/report", response_model=HealthReportModel, response_model_exclude_none=True,
          tags=["report"], summary="Information Health Report for a reader", responses=_ERR_RESPONSES)
-def report(user: str | None = Query(None, description="reader id; defaults to the demo reader")) -> dict:
-    return _require_backend().report(_resolve(user))
+def report(request: Request,
+           user: str | None = Query(None, description="reader id; defaults to the demo reader")) -> dict:
+    return _require_backend().report(_resolve_request(request, user))
 
 
 @app.get("/api/recommendations", response_model=list[RecommendationModel],
          response_model_exclude_none=True, tags=["recommendations"],
          summary="RWE recommendations (blended, or a single strategy)", responses=_ERR_RESPONSES)
 def recommendations(
+    request: Request,
     user: str | None = Query(None),
     strategy: str | None = Query(None, description="rwe-b | rwe-d | adaptive; omit for a blended feed"),
 ) -> list:
-    return _require_backend().recommendations(_resolve(user), strategy)
+    return _require_backend().recommendations(_resolve_request(request, user), strategy)
 
 
 @app.get("/api/coach", response_model=list[CoachMessageModel], response_model_exclude_none=True,
          tags=["coach"], summary="Coach greeting for a reader", responses=_ERR_RESPONSES)
-def coach(user: str | None = Query(None)) -> list:
-    return _require_backend().coach_greeting(_resolve(user))
+def coach(request: Request, user: str | None = Query(None)) -> list:
+    return _require_backend().coach_greeting(_resolve_request(request, user))
 
 
 @app.post("/api/coach", response_model=CoachMessageModel, response_model_exclude_none=True,
           tags=["coach"], summary="Send a message; get a grounded reply", responses=_ERR_RESPONSES)
-def coach_reply(req: CoachRequest) -> dict:
-    be = _require_backend()
-    u = int(req.user) if (req.user or "").lstrip("-").isdigit() else be.demo_user
-    return be.coach_reply(u, req.message or "")
+def coach_reply(request: Request, req: CoachRequest) -> dict:
+    return _require_backend().coach_reply(_resolve_request(request, req.user), req.message or "")
+
+
+@app.post("/api/internal/users", response_model=UserModel, tags=["meta"],
+          summary="Upsert a user by third-party identity (server-to-server)",
+          responses=_ERR_RESPONSES)
+def upsert_user(req: UpsertUserRequest) -> dict:
+    """Called by the web tier on sign-in: map a provider account to a stable engine user id,
+    creating the user on first sight. Idempotent."""
+    u = _require_store().upsert_user_by_identity(
+        req.provider, req.providerAccountId, email=req.email, display_name=req.displayName)
+    return {"userId": u.id, "email": u.email, "displayName": u.display_name}
+
+
+@app.get("/api/internal/users/{user_id}", response_model=UserModel, tags=["meta"],
+         summary="Resolve a user by engine id", responses=_ERR_RESPONSES)
+def read_user(user_id: int) -> dict:
+    u = _require_store().get_user(user_id)
+    if u is None:
+        raise HTTPException(status_code=404, detail="No such user.")
+    return {"userId": u.id, "email": u.email, "displayName": u.display_name}
 
 
 def main() -> None:
