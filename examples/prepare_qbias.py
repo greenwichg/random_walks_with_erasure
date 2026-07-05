@@ -25,27 +25,34 @@ import argparse
 import csv
 import os
 import sys
+import time
 from collections import Counter
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # sibling examples
 from outlet_registry import OutletRegistry, default_registry
+from enrich import BaselineEnricher, LABELS
 
-# Qbias's outlet column, by the same candidate names simulate_users.catalog_from_qbias /
-# validate_qbias look for — so we canonicalise the exact column the corpus builder will read.
+# Qbias's outlet + headline columns, by the same candidate names simulate_users.catalog_from_qbias
+# / validate_qbias look for — so we touch the exact columns the corpus builder will read.
 _OUTLET_COLS = ("source", "outlet", "news_outlet", "publisher", "source_name", "media")
+_HEADLINE_COLS = ("heading", "headline", "title")
 
 csv.field_size_limit(10_000_000)   # Qbias rows carry full article text
 
 
-def pick_outlet_column(fieldnames) -> Optional[str]:
-    """The outlet column name present in ``fieldnames`` (case-insensitive), or ``None``."""
+def _pick_column(fieldnames, candidates) -> Optional[str]:
     lower = {(c or "").lower(): c for c in (fieldnames or [])}
-    for cand in _OUTLET_COLS:
+    for cand in candidates:
         if cand in lower:
             return lower[cand]
     return None
+
+
+def pick_outlet_column(fieldnames) -> Optional[str]:
+    """The outlet column name present in ``fieldnames`` (case-insensitive), or ``None``."""
+    return _pick_column(fieldnames, _OUTLET_COLS)
 
 
 @dataclass
@@ -56,6 +63,10 @@ class CanonReport:
     canonical_outlets: List[str] = field(default_factory=list)   # distinct canonical names produced
     sources_matched: List[str] = field(default_factory=list)     # distinct raw sources that resolved
     unmatched: "Counter[str]" = field(default_factory=Counter)   # raw source -> article count
+    enriched_articles: int = 0                                    # headlines baseline-enriched
+    enrich_seconds: float = 0.0
+    register_path: Optional[str] = None
+    emotion_path: Optional[str] = None
 
     @property
     def pct_articles_canonicalized(self) -> float:
@@ -71,6 +82,9 @@ class CanonReport:
             f"({self.pct_articles_canonicalized:.1f}%)",
             f"unmatched sources          : {len(self.unmatched)}",
         ]
+        if self.enriched_articles:
+            lines.append(f"headlines enriched         : {self.enriched_articles} "
+                         f"(register+emotion, baseline) in {self.enrich_seconds:.1f}s")
         if self.unmatched:
             lines.append(f"\ntop unmatched (kept as-is, by article count):")
             for name, n in self.unmatched.most_common(top_unmatched):
@@ -106,10 +120,37 @@ def canonicalize_rows(rows, outlet_col: str,
     return out_rows, rep
 
 
-def prepare(in_path: str, out_path: Optional[str] = None,
-            registry: Optional[OutletRegistry] = None) -> CanonReport:
-    """Read the raw Qbias CSV, canonicalise its outlet column, optionally write the cleaned CSV
-    (same schema), and return the report. Writing is skipped when ``out_path`` is ``None``."""
+def write_enrichment(rows, headline_col: str, register_path: str, emotion_path: str) -> Tuple[int, float]:
+    """Baseline-enrich each article's headline — the SAME ``BaselineEnricher`` ingested reads use
+    — and write register + emotion sidecars in the exact format ``health_report._load_item_csv``
+    reads, keyed by ``Q{i}`` (``i`` = row order, the id ``catalog_from_qbias`` assigns). So the
+    population and real reads carry identical register/emotion semantics. Rows without a headline
+    are omitted (left n/a, as the engine handles missing data). Returns (count, seconds)."""
+    be = BaselineEnricher()
+    t0 = time.time()
+    n = 0
+    with open(register_path, "w", encoding="utf-8") as fr, \
+            open(emotion_path, "w", encoding="utf-8") as fe:
+        fr.write("news_id,reporting\n")
+        fe.write("news_id," + ",".join(LABELS) + "\n")
+        for i, row in enumerate(rows):
+            text = (row.get(headline_col) or "").strip()
+            if not text:
+                continue
+            emo = be.emotion(text)
+            fr.write(f"Q{i},{be.register(text):.4f}\n")
+            fe.write(f"Q{i}," + ",".join(f"{emo[l]:.4f}" for l in LABELS) + "\n")
+            n += 1
+    return n, time.time() - t0
+
+
+def prepare(in_path: str, out_path: Optional[str] = None, registry: Optional[OutletRegistry] = None,
+            enrich: bool = True, register_out: Optional[str] = None,
+            emotion_out: Optional[str] = None) -> CanonReport:
+    """Read the raw Qbias CSV, canonicalise its outlet column, and (when ``out_path`` is given)
+    write the cleaned CSV plus, unless ``enrich`` is False, baseline register/emotion sidecars.
+    The cleaned CSV keeps Qbias's schema; the sidecars align to it by row order. Writing is
+    skipped when ``out_path`` is ``None`` (report-only mode)."""
     with open(in_path, newline="", encoding="utf-8", errors="replace") as f:
         reader = csv.DictReader(f)
         fieldnames = reader.fieldnames
@@ -119,11 +160,20 @@ def prepare(in_path: str, out_path: Optional[str] = None,
         rows, report = canonicalize_rows(reader, outlet_col, registry)
 
     if out_path:
-        os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
+        os.makedirs(os.path.dirname(os.path.abspath(out_path)) or ".", exist_ok=True)
         with open(out_path, "w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
             writer.writerows(rows)
+        if enrich:
+            headline_col = _pick_column(fieldnames, _HEADLINE_COLS)
+            if not headline_col:
+                raise SystemExit(f"no headline column for enrichment (looked for {_HEADLINE_COLS})")
+            base = os.path.splitext(out_path)[0]
+            report.register_path = register_out or base + ".register.csv"
+            report.emotion_path = emotion_out or base + ".emotion.csv"
+            report.enriched_articles, report.enrich_seconds = write_enrichment(
+                rows, headline_col, report.register_path, report.emotion_path)
     return report
 
 
@@ -135,14 +185,21 @@ def main() -> None:
                     help="cleaned CSV to write (omit / use --report to only analyse)")
     ap.add_argument("--report", action="store_true", help="analyse + print stats, write nothing")
     ap.add_argument("--registry", default=None, help="outlet registry CSV (defaults to bundled)")
+    ap.add_argument("--no-enrich", action="store_true",
+                    help="skip the baseline register/emotion sidecars (outlet canonicalization only)")
+    ap.add_argument("--register-out", default=None, help="register sidecar path (default: <out>.register.csv)")
+    ap.add_argument("--emotion-out", default=None, help="emotion sidecar path (default: <out>.emotion.csv)")
     args = ap.parse_args()
 
     registry = OutletRegistry.load(args.registry) if args.registry else default_registry()
     out_path = None if args.report else args.out_path
-    report = prepare(args.in_path, out_path, registry)
+    report = prepare(args.in_path, out_path, registry, enrich=not args.no_enrich,
+                     register_out=args.register_out, emotion_out=args.emotion_out)
     print(report.summary())
     if out_path:
         print(f"\nwrote cleaned dataset -> {out_path}")
+        if report.register_path:
+            print(f"wrote enrichment sidecars -> {report.register_path}, {report.emotion_path}")
 
 
 if __name__ == "__main__":

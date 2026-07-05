@@ -283,9 +283,14 @@ class Backend:
             su.write_behaviors_tsv(os.path.join(tmp, "behaviors.tsv"), impressions, cat)
             self._probe_csv = os.path.join(tmp, "satisfaction_probe.csv")
             su._write_csv(self._probe_csv, probe_rows)   # measured cross-cutting reception
-            register = hr._load_item_csv(os.path.join(tmp, "register.csv"),
-                                         self.mind.dataset.item_ids)["reporting"]
-            emotion = hr._load_item_csv(os.path.join(tmp, "emotion.csv"), self.mind.dataset.item_ids)
+            # Aligned enrichment: when the profile supplies register/emotion CSVs (e.g.
+            # prepare_qbias's baseline-enriched sidecars), load THOSE so the reference population
+            # carries the SAME register/emotion semantics as ingested reads; otherwise the sim's
+            # synthetic enrichment (unchanged default). Data source only — no algorithm change.
+            reg_csv = profile.register_csv or os.path.join(tmp, "register.csv")
+            emo_csv = profile.emotion_csv or os.path.join(tmp, "emotion.csv")
+            register = hr._load_item_csv(reg_csv, self.mind.dataset.item_ids)["reporting"]
+            emotion = hr._load_item_csv(emo_csv, self.mind.dataset.item_ids)
             selective = hr.selective_exposure_array(self.mind, os.path.join(tmp, "behaviors.tsv"))
             # Gold-lean axis is high-confidence by construction; give compute() a per-item
             # confidence so the Confidence metric + axis weighting populate realistically.

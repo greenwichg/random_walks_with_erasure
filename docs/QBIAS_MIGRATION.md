@@ -40,6 +40,11 @@ This rewrites `source` to the canonical outlet name from `examples/data/outlet_r
 (no article is dropped). The cleaned CSV keeps Qbias's schema, so the existing
 `simulate_users.catalog_from_qbias` reads it unchanged.
 
+It also writes **baseline register/emotion sidecars** next to the cleaned CSV
+(`data/qbias_clean.register.csv`, `data/qbias_clean.emotion.csv`) by running the *same*
+`enrich.BaselineEnricher` used on ingested reads over each headline — so the reference population
+and real reads carry identical enrichment semantics (pass `--no-enrich` to skip).
+
 **Verify before switching** (writes nothing — this is the verification script):
 
 ```bash
@@ -58,6 +63,8 @@ Point the engine at the cleaned dataset via environment variables (read identica
 |---|---|---|
 | `RWE_PROFILE` | `qbias` | Select the Qbias reference profile |
 | `RWE_QBIAS` | `data/qbias_clean.csv` | Path to the **cleaned** dataset |
+| `RWE_REGISTER_CSV` | `data/qbias_clean.register.csv` | Aligned population register (baseline); omit for synthetic |
+| `RWE_EMOTION_CSV` | `data/qbias_clean.emotion.csv` | Aligned population emotion (baseline); omit for synthetic |
 | `RWE_SEED` | e.g. `0` | Simulated-population seed — **pin it** for reproducible reports |
 | `RWE_N_USERS` | e.g. `2000` | Size of the simulated reference population |
 | `RWE_MAX_ITEMS` | e.g. `4000` | Catalog size (subsample of the corpus) |
