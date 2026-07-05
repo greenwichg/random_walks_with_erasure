@@ -347,6 +347,37 @@ def test_report_switches_to_measured_after_threshold(client):
     assert me["report"]["mode"] == "measured" and me["report"]["coverage"]["reads"] == 6
 
 
+def test_history_returns_the_users_reads(client):
+    """The reading-history API serves the signed-in reader's own stored reads (newest first), as
+    real Article payloads — empty for a new reader, and requiring authentication."""
+    uid = client.post("/api/internal/users",
+                      json={"provider": "google", "providerAccountId": "route-hist"}).json()["userId"]
+    hdr = {"X-IH-User-Id": str(uid)}
+
+    assert client.get("/api/me/history", headers=hdr).json() == []      # new reader: a real empty, not mock
+    reads = [
+        {"url": "https://www.foxnews.com/politics/a", "title": "Officials slam the deadly crisis"},
+        {"url": "https://www.nytimes.com/us/politics/b", "title": "Senate advances the bill, leaders say"},
+    ]
+    client.post("/api/me/reads", json={"reads": reads}, headers=hdr)
+
+    hist = client.get("/api/me/history", headers=hdr).json()
+    assert len(hist) == 2
+    assert hist[0]["article"]["headline"] == "Senate advances the bill, leaders say"   # newest first
+    for h in hist:
+        assert set(h) >= {"id", "article", "readAt", "readingMinutes", "completed"}
+        assert set(h["article"]) >= {"id", "headline", "publisher", "publisherLean", "topic",
+                                     "lean", "leanBucket", "emotion", "dominantEmotion", "register"}
+        assert h["completed"] is True
+    # the scorer's registry lean flows through onto each article: Fox right (+), NYT left (−).
+    # (publisherLean is the corpus house-lean, which is 0 here because the synthetic catalog has no
+    # real outlets; on the production Qbias corpus it resolves — this asserts the read's own lean.)
+    leans = [h["article"]["lean"] for h in hist]
+    assert any(v > 0 for v in leans) and any(v < 0 for v in leans)
+
+    assert client.get("/api/me/history").status_code == 401           # auth required (no demo fallback)
+
+
 def test_open_mindedness_completes_the_metric_set(client):
     """The Open-Mindedness feedback loop over HTTP: a measured reader is 7/8 until they open
     cross-cutting recommendations through /api/me/recommendations/opened, then 8/8 — the last

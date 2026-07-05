@@ -323,6 +323,22 @@ class Store:
                              .order_by(Read.id)).all()
             return [dict(json.loads(r.scored)) for r in rows]
 
+    def list_reads(self, user_id: int) -> list:
+        """The user's reads with row metadata for the reading-history view — **newest first**.
+
+        Each entry carries the stable row ``id``, the canonical URL, the verbatim scored fields, and
+        the observed / created timestamps. Complements :meth:`get_reads` (scored payloads only,
+        oldest-first, for the augmented corpus); this is the display-oriented projection the history
+        API serialises."""
+        with self.session() as s:
+            rows = s.scalars(select(Read).where(Read.user_id == user_id)
+                             .order_by(Read.id.desc())).all()
+            return [{"id": r.id, "canonicalUrl": r.canonical_url,
+                     "scored": dict(json.loads(r.scored)),
+                     "observedAt": r.observed_at,
+                     "createdAt": r.created_at.isoformat() if r.created_at else None}
+                    for r in rows]
+
     def count_reads(self, user_id: int) -> int:
         """How many distinct articles the user has read."""
         with self.session() as s:

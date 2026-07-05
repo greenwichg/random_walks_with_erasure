@@ -429,35 +429,94 @@ class Backend:
         s = sum(out.values()) or 1.0
         return {l: out[l] / s for l in labels}
 
-    def _serialize_article(self, corpus: _Corpus, col: int) -> dict:
-        """Serialise one article (column) of a corpus. Corpus-parametric so the same code
-        renders a reference-catalog article and a novel article a real reader brought in."""
-        mind = corpus.mind
-        pos = float(np.asarray(mind.item_positions, dtype=float)[col])
-        pos = 0.0 if not np.isfinite(pos) else pos
-        outlet = str(np.asarray(mind.outlets)[col])
-        topic = str(np.asarray(mind.categories)[col])
-        item_id = str(np.asarray(mind.dataset.item_ids)[col])
-        emo = self._emotion_share_of(corpus.emotion, col)
-        dom = max(emo, key=emo.get)
-        reg = corpus.register[col] if corpus.register is not None else None
-        conf = (float(corpus.confidence[col]) if corpus.confidence is not None
-                and np.isfinite(corpus.confidence[col]) else 0.7)
+    @staticmethod
+    def _emotion_from_dict(emotion) -> dict:
+        """Normalise a stored read's ``label -> share`` emotion dict to the five labels summing to 1
+        (the shape ``_article_payload`` expects). Missing/blank enrichment degrades to fully neutral,
+        exactly as the engine treats missing tone elsewhere."""
+        labels = ["fear", "outrage", "analysis", "positive", "neutral"]
+        if not isinstance(emotion, dict) or not emotion:
+            return {l: (1.0 if l == "neutral" else 0.0) for l in labels}
+        vals = {l: max(0.0, float(emotion.get(l, 0.0) or 0.0)) for l in labels}
+        s = sum(vals.values()) or 1.0
+        return {l: vals[l] / s for l in labels}
+
+    def _article_payload(self, *, item_id, headline, outlet, topic, lean, register,
+                         emotion: dict, confidence, outlet_lean: dict) -> dict:
+        """Build one article payload from already-resolved fields — the SINGLE source of the
+        ``Article`` shape (web/types/domain.ts). Both the corpus serialiser (:meth:`_serialize_article`)
+        and the reading-history serialiser (:meth:`serialize_history`) feed this, so a catalog
+        article and a real reader's stored read render identically. Missing lean/confidence degrade
+        to the same neutral defaults the corpus path already used."""
+        item_id = str(item_id)
+        pos = float(lean) if lean is not None and np.isfinite(lean) else 0.0
+        conf = float(confidence) if confidence is not None and np.isfinite(confidence) else 0.7
+        dom = max(emotion, key=emotion.get) if emotion else "neutral"
         return {
             "id": item_id,
-            "headline": str(np.asarray(mind.titles)[col]),
+            "headline": str(headline),
             "publisher": _prettify(outlet),
-            "publisherLean": corpus.outlet_lean.get(outlet, 0.0),
+            "publisherLean": float(outlet_lean.get(str(outlet), 0.0)),
             "topic": _prettify(topic),
             "lean": pos,
             "leanBucket": _lean_bucket(pos, self.lean_tau),
             "confidence": conf,
-            "emotion": emo,
+            "emotion": emotion,
             "dominantEmotion": dom,
-            "register": _register_enum(reg),
+            "register": _register_enum(register),
             "publishedAt": _iso_recent(item_id),
             "readingMinutes": 2 + (_stable_int(item_id) % 8),
         }
+
+    def _serialize_article(self, corpus: _Corpus, col: int) -> dict:
+        """Serialise one article (column) of a corpus. Corpus-parametric so the same code
+        renders a reference-catalog article and a novel article a real reader brought in."""
+        mind = corpus.mind
+        return self._article_payload(
+            item_id=str(np.asarray(mind.dataset.item_ids)[col]),
+            headline=str(np.asarray(mind.titles)[col]),
+            outlet=str(np.asarray(mind.outlets)[col]),
+            topic=str(np.asarray(mind.categories)[col]),
+            lean=np.asarray(mind.item_positions, dtype=float)[col],
+            register=(corpus.register[col] if corpus.register is not None else None),
+            emotion=self._emotion_share_of(corpus.emotion, col),
+            confidence=(corpus.confidence[col] if corpus.confidence is not None else None),
+            outlet_lean=corpus.outlet_lean)
+
+    def serialize_history(self, reads: list) -> list:
+        """A reader's reading history from their stored, scored reads (``store.list_reads`` rows).
+
+        Each read is rendered as the SAME ``Article`` shape as a recommendation or report article
+        (via :meth:`_article_payload`), so history reuses one serialiser and stays contract-identical
+        for a future mobile client. No corpus or augmented model is needed — a stored read already
+        carries its scored fields; outlet house-lean comes from the base corpus map (unknown → 0).
+        Rows arrive newest-first from the store and are preserved in that order.
+
+        ``readAt`` is the reader's observed timestamp; ``completed`` is ``True`` (opening a read is
+        the only signal we have — real completion tracking is future work), and ``readingMinutes`` /
+        ``publishedAt`` are the same deterministic estimates the article serialiser already uses."""
+        out = []
+        for row in reads:
+            sc = row.get("scored", {}) or {}
+            item_id = str(sc.get("article_id") or row.get("canonicalUrl") or row.get("id"))
+            article = self._article_payload(
+                item_id=item_id,
+                headline=(sc.get("title") or _prettify(str(sc.get("outlet") or "")) or "Untitled read"),
+                outlet=sc.get("outlet", ""),
+                topic=sc.get("category", ""),
+                lean=sc.get("lean"),
+                register=sc.get("register"),
+                emotion=self._emotion_from_dict(sc.get("emotion")),
+                confidence=sc.get("confidence"),
+                outlet_lean=self.outlet_lean)
+            out.append({
+                "id": str(row.get("id")),
+                "article": article,
+                "readAt": row.get("observedAt") or sc.get("read_at") or row.get("createdAt"),
+                "readingMinutes": article["readingMinutes"],
+                "completed": True,
+            })
+        return out
 
     def article(self, col: int) -> dict:
         """Base reference-corpus article (the demo / ``?user=`` path)."""

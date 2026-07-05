@@ -216,6 +216,60 @@ def test_recommenders_built_once(backend):
 
 
 # --------------------------------------------------------------------------- #
+# reading history — serialised from stored reads via the SHARED article payload
+# --------------------------------------------------------------------------- #
+def test_serialize_history_shape_and_degradation(backend):
+    """serialize_history renders each stored read as the same Article shape, preserving order and
+    degrading a sparse read (no title / NaN lean / no emotion) to safe neutral defaults."""
+    rows = [
+        {"id": 2, "canonicalUrl": "https://cnn.com/x", "observedAt": "2026-07-01T10:00:00Z",
+         "createdAt": "2026-07-01T10:00:01Z",
+         "scored": {"article_id": "https://cnn.com/x", "outlet": "CNN", "category": "Politics",
+                    "title": "Senate passes the bill, official says", "lean": -1.0,
+                    "register": 0.8, "confidence": 0.7,
+                    "emotion": {"fear": 0.1, "outrage": 0.1, "analysis": 0.5,
+                                "positive": 0.2, "neutral": 0.1}, "read_at": "2026-07-01T10:00:00Z"}},
+        {"id": 1, "canonicalUrl": "https://blog.example/y", "observedAt": None,
+         "createdAt": "2026-06-30T09:00:00Z",
+         "scored": {"article_id": "https://blog.example/y", "outlet": "Some Blog", "category": "",
+                    "title": "", "lean": float("nan"), "register": float("nan"),
+                    "confidence": float("nan"), "emotion": None, "read_at": None}},
+    ]
+    hist = backend.serialize_history(rows)
+    assert [h["id"] for h in hist] == ["2", "1"]                      # store order preserved
+    for h in hist:
+        assert set(h) >= {"id", "article", "readAt", "readingMinutes", "completed"}
+        assert h["completed"] is True
+        _assert_article(h["article"])                                # same contract as any article
+    _assert_json_roundtrips(hist)                                    # valid JSON, no NaN leak
+    assert hist[0]["article"]["headline"] == "Senate passes the bill, official says"
+    assert hist[0]["article"]["leanBucket"] == "left"
+    assert hist[0]["readAt"] == "2026-07-01T10:00:00Z"
+    # sparse read degrades safely and still validates
+    assert hist[1]["article"]["lean"] == 0.0
+    assert hist[1]["article"]["emotion"]["neutral"] == 1.0
+    assert hist[1]["readAt"] == "2026-06-30T09:00:00Z"               # falls back to createdAt
+
+
+def test_history_article_reuses_catalog_serializer(backend):
+    """A stored read whose id equals a catalog item's id yields the same id-derived fields as
+    _serialize_article — proving both paths flow through the one _article_payload builder."""
+    col = 0
+    item_id = str(np.asarray(backend.base_corpus.mind.dataset.item_ids)[col])
+    art = backend._serialize_article(backend.base_corpus, col)
+    hist = backend.serialize_history([{
+        "id": 9, "canonicalUrl": item_id, "observedAt": "2026-07-01T00:00:00Z",
+        "scored": {"article_id": item_id, "outlet": "CNN", "category": "Politics", "title": "T",
+                   "lean": 0.5, "register": 0.7, "confidence": 0.7,
+                   "emotion": {"fear": 0, "outrage": 0, "analysis": 0, "positive": 0, "neutral": 1}}}])
+    h_art = hist[0]["article"]
+    assert h_art["id"] == art["id"]
+    # readingMinutes is the id-derived deterministic field: identical => both use one _article_payload
+    # (publishedAt is _iso_recent(now-relative), so it is intentionally not id-stable to compare).
+    assert h_art["readingMinutes"] == art["readingMinutes"]
+
+
+# --------------------------------------------------------------------------- #
 # coach
 # --------------------------------------------------------------------------- #
 def test_coach_greeting_contract(backend, user):

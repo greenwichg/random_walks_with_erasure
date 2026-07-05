@@ -319,6 +319,14 @@ class RecommendationModel(BaseModel):
     crossCutting: bool
 
 
+class HistoryEntryModel(BaseModel):
+    id: str
+    article: ArticleModel
+    readAt: str | None = None
+    readingMinutes: int
+    completed: bool
+
+
 class CitationModel(BaseModel):
     metric: str
     value: int
@@ -657,6 +665,17 @@ def add_reads(request: Request, req: ReadsRequest) -> dict:
     return {"accepted": accepted, "duplicates": duplicates, "rejected": rejected,
             "totalReads": total, "threshold": engine.ESTIMATE_MIN_READS,
             "sufficient": total >= engine.ESTIMATE_MIN_READS}
+
+
+@app.get("/api/me/history", response_model=list[HistoryEntryModel], response_model_exclude_none=True,
+         tags=["report"], summary="The signed-in user's reading history (their stored scored reads)",
+         responses=_ERR_RESPONSES)
+def my_history(request: Request) -> list:
+    """The reader's own reading history: every article they've recorded, newest first, rendered as
+    the same Article shape used across the product. Reuses the stored, already-scored reads — no
+    re-scoring, no augmented model. Same trust boundary as the other /api/me endpoints."""
+    uid = _require_real_user(request)
+    return _require_backend().serialize_history(_require_store().list_reads(uid))
 
 
 @app.post("/api/me/recommendations/opened", response_model=RecReceptionModel,

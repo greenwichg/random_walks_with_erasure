@@ -193,3 +193,26 @@ def test_open_before_shown_creates_row(store):
 def test_reception_empty_for_new_user(store):
     u = store.upsert_user_by_identity("google", "rec-5")
     assert store.recommendation_reception(u.id) == {"shownCross": 0, "openedCross": 0, "rate": None}
+
+
+# --------------------------------------------------------------------------- #
+# reading-history projection (list_reads) — newest-first, with row metadata
+# --------------------------------------------------------------------------- #
+def test_list_reads_newest_first_with_metadata(store):
+    u = store.upsert_user_by_identity("google", "hist-1")
+    store.add_read(u.id, "https://a.com/1", {"article_id": "https://a.com/1", "title": "One"},
+                   "2026-06-01T00:00:00Z")
+    store.add_read(u.id, "https://a.com/2", {"article_id": "https://a.com/2", "title": "Two"},
+                   "2026-06-02T00:00:00Z")
+    rows = store.list_reads(u.id)
+    assert [r["scored"]["title"] for r in rows] == ["Two", "One"]     # newest (highest id) first
+    assert rows[0]["canonicalUrl"] == "https://a.com/2"
+    assert rows[0]["observedAt"] == "2026-06-02T00:00:00Z"
+    assert isinstance(rows[0]["id"], int) and rows[0]["createdAt"]    # stable id + insert timestamp
+    # get_reads is unchanged: oldest-first, scored payloads only (the augmented-corpus input)
+    assert [r["title"] for r in store.get_reads(u.id)] == ["One", "Two"]
+
+
+def test_list_reads_empty_for_new_user(store):
+    u = store.upsert_user_by_identity("google", "hist-empty")
+    assert store.list_reads(u.id) == []
