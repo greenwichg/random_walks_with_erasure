@@ -1,0 +1,80 @@
+# Canonical outlet registry — the product layer's single source of truth for outlet IDENTITY
+# and political lean. It exists so three subsystems agree on "who is this outlet": the reading
+# ingestion scorer (which sees a URL / domain), a reference corpus (which may label the same
+# outlet "New York Times (News)"), and the onboarding UI (which shows "New York Times"). All
+# resolve to the SAME canonical outlet + lean here.
+#
+# This is a PRODUCT-LAYER table. It is seeded from the research AllSides table
+# (examples/data/outlet_lean.csv) and extended with domain aliases + a few outlets the browser
+# extension captures. It deliberately does NOT modify the research modules (rwe/, health_report,
+# simulate_users, narrate_report), which keep their own DEFAULT_LEAN; where they differ, THIS
+# table is authoritative for ingestion and the production corpus.
+#
+# Columns:  canonical , lean , aliases
+#   canonical : display name shown to users (and the identity reads/corpus articles collapse to)
+#   lean      : AllSides-style political lean on -2..+2 (left..right). Coarse, contested, and
+#               time-dependent — an illustrative proxy, same caveat as outlet_lean.csv.
+#   aliases   : '|'-separated additional forms — domains and name variants. Parenthetical corpus
+#               suffixes like "(Online News)" / "(News)" / "(Opinion)" are handled by the loader's
+#               normalisation and need NOT be listed. Names are matched case/punctuation-insensitively.
+canonical,lean,aliases
+# --- left (-2) ---
+Mother Jones,-2,motherjones.com
+The Nation,-2,thenation.com
+Jacobin,-2,jacobin.com|jacobinmag.com
+Daily Kos,-2,dailykos.com
+The Intercept,-2,theintercept.com
+Salon,-2,salon.com
+AlterNet,-2,alternet.org
+Democracy Now,-2,democracynow.org
+# --- lean left (-1) ---
+New York Times,-1,nytimes.com|NYT|The New York Times
+Washington Post,-1,washingtonpost.com|WaPo|The Washington Post
+CNN,-1,cnn.com
+MSNBC,-1,msnbc.com
+NPR,-1,npr.org
+The Guardian,-1,theguardian.com|Guardian
+Politico,-1,politico.com
+NBC News,-1,nbcnews.com|NBC
+ABC News,-1,abcnews.go.com|abcnews.com|ABC
+CBS News,-1,cbsnews.com|CBS
+Vox,-1,vox.com
+HuffPost,-1,huffpost.com|huffingtonpost.com|Huffington Post
+The Atlantic,-1,theatlantic.com|Atlantic
+Time,-1,time.com
+Slate,-1,slate.com
+Bloomberg,-1,bloomberg.com
+Business Insider,-1,businessinsider.com
+CNBC,-1,cnbc.com
+Al Jazeera,-1,aljazeera.com|Al Jazeera English
+Los Angeles Times,-1,latimes.com|LA Times
+# --- center (0) ---
+Reuters,0,reuters.com
+Associated Press,0,apnews.com|AP|ap.org
+BBC,0,bbc.com|bbc.co.uk|BBC News
+The Hill,0,thehill.com
+Axios,0,axios.com
+USA Today,0,usatoday.com|USA TODAY
+Christian Science Monitor,0,csmonitor.com
+Forbes,0,forbes.com
+NewsNation,0,newsnationnow.com
+MarketWatch,0,marketwatch.com
+# --- lean right (1) ---
+Wall Street Journal,1,wsj.com|WSJ|The Wall Street Journal
+The Dispatch,1,thedispatch.com
+Washington Examiner,1,washingtonexaminer.com
+Reason,1,reason.com
+National Review,1,nationalreview.com
+The Epoch Times,1,theepochtimes.com|Epoch Times
+# --- right (2) ---
+Fox News,2,foxnews.com
+Breitbart,2,breitbart.com
+Daily Wire,2,dailywire.com|The Daily Wire
+New York Post,2,nypost.com|NY Post
+The Daily Caller,2,dailycaller.com|Daily Caller
+Newsmax,2,newsmax.com
+OANN,2,oann.com|OAN|One America News
+The Federalist,2,thefederalist.com|Federalist
+Washington Times,2,washingtontimes.com
+Townhall,2,townhall.com
+The Blaze,2,theblaze.com|Blaze|TheBlaze

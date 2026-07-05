@@ -1,0 +1,178 @@
+"""Canonical outlet registry — the product layer's single source of truth for outlet identity.
+
+Three subsystems need to agree on *who an outlet is*: the reading-ingestion scorer (which sees a
+URL / domain, e.g. ``https://www.nytimes.com/…``), a reference corpus (which may label the same
+outlet ``"New York Times (News)"``), and the onboarding UI (which shows ``"New York Times"``).
+Left to their own normalisation these disagree — ``nytimes.com`` normalises to ``"nytimes"`` while
+``"New York Times"`` normalises to ``"newyorktimes"`` — so a real read never lines up with the
+population's outlet, and captured domains that start with ``w`` were even corrupted by a
+``lstrip("www.")`` bug in the research helper.
+
+This module fixes that **in the product layer only**. It loads
+:data:`examples/data/outlet_registry.csv` (canonical name · AllSides lean · aliases) and resolves
+any of those forms — display name, domain, full URL (incl. subdomains like ``edition.cnn.com``),
+or a corpus ``"… (Online News)"`` variant — to one :class:`Outlet` (canonical name + lean).
+
+Nothing here touches the research modules (``rwe/``, ``health_report``, ``simulate_users``,
+``narrate_report``); it is a standalone lookup that later milestones will call from the scorer,
+the Qbias preprocessor, and onboarding. **Not wired into anything yet.**
+
+    from outlet_registry import default_registry
+    reg = default_registry()
+    reg.resolve("https://www.washingtonpost.com/2026/politics/x")  # Outlet("Washington Post", -1.0)
+    reg.resolve("Fox News (Online News)")                          # Outlet("Fox News", 2.0)
+    reg.lean("nytimes.com")                                        # -1.0   (NaN if unknown)
+"""
+
+from __future__ import annotations
+
+import csv
+import os
+import re
+from dataclasses import dataclass
+from typing import Dict, List, Optional
+from urllib.parse import urlsplit
+
+_DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "outlet_registry.csv")
+_PARENS = re.compile(r"\([^)]*\)")           # "(Online News)", "(Opinion)", …
+_NONALNUM = re.compile(r"[^a-z0-9]+")
+
+
+@dataclass(frozen=True)
+class Outlet:
+    """A resolved outlet: the canonical display name and its AllSides lean in ``[-2, 2]``."""
+    canonical: str
+    lean: float
+
+
+def _name_key(text: str) -> str:
+    """Comparison key for a *name* form: drop parentheticals, lower-case, drop a leading ``the``,
+    strip to alphanumerics. ``"The New York Times"`` and ``"New York Times (News)"`` → ``newyorktimes``."""
+    s = _PARENS.sub(" ", str(text)).strip().lower()
+    if s.startswith("the "):
+        s = s[4:]
+    return _NONALNUM.sub("", s)
+
+
+def _host_of(text: str) -> str:
+    """Bare host for a *domain/URL* form: handles an optional scheme, a path with no scheme, and
+    strips userinfo / port / a leading ``www.``. ``"https://www.BBC.co.uk/news"`` → ``bbc.co.uk``."""
+    s = str(text).strip()
+    netloc = urlsplit(s).netloc if "://" in s else s.split("/", 1)[0]
+    host = netloc.split("@")[-1].split(":", 1)[0].strip().lower().rstrip(".")
+    if host.startswith("www."):
+        host = host[4:]
+    return host
+
+
+def _looks_like_host(text: str) -> bool:
+    """Whether ``text`` is a domain/URL rather than a display name. Domains never contain spaces;
+    a display name that happens to contain a dot (rare) still routes to the name path."""
+    s = str(text).strip()
+    if "://" in s:
+        return True
+    if " " in s:
+        return False
+    return bool(re.search(r"[a-z0-9-]\.[a-z]{2,}", s.lower()))
+
+
+def _domain_suffixes(host: str) -> List[str]:
+    """Progressively shorter registrable-domain candidates, so a subdomain matches the base:
+    ``edition.cnn.com`` → ``["edition.cnn.com", "cnn.com", "com"]``."""
+    labels = [l for l in host.split(".") if l]
+    return [".".join(labels[i:]) for i in range(len(labels))]
+
+
+class OutletRegistry:
+    """An immutable set of outlets with alias resolution. Build via :meth:`load`."""
+
+    def __init__(self, outlets: List[Outlet], aliases: Dict[str, str]):
+        # `outlets` are the distinct canonical outlets; `aliases` maps every lookup key
+        # (name keys AND domain keys) to a canonical name.
+        self._outlets: Dict[str, Outlet] = {o.canonical: o for o in outlets}
+        self._by_name: Dict[str, str] = {}       # name key   -> canonical
+        self._by_domain: Dict[str, str] = {}      # domain key -> canonical
+        for key, canonical in aliases.items():
+            (self._by_domain if _looks_like_host(key) else self._by_name)[
+                _host_of(key) if _looks_like_host(key) else _name_key(key)
+            ] = canonical
+
+    # -- construction ----------------------------------------------------- #
+    @classmethod
+    def load(cls, path: "str | None" = None) -> "OutletRegistry":
+        """Load the registry CSV (defaults to the bundled ``data/outlet_registry.csv``).
+
+        ``#`` lines and blanks are skipped. Each row is ``canonical, lean, aliases`` where
+        ``aliases`` is ``|``-separated. The canonical name is itself registered as a lookup key."""
+        path = path or _DATA
+        outlets: List[Outlet] = []
+        aliases: Dict[str, str] = {}
+        with open(path, encoding="utf-8") as f:
+            reader = csv.reader(l for l in f if l.strip() and not l.lstrip().startswith("#"))
+            header = next(reader, None)            # skip the column header
+            for row in reader:
+                if len(row) < 2 or not row[0].strip():
+                    continue
+                canonical = row[0].strip()
+                lean = float(row[1])
+                outlets.append(Outlet(canonical=canonical, lean=lean))
+                aliases[canonical] = canonical      # the name itself resolves
+                if len(row) >= 3 and row[2].strip():
+                    for alias in row[2].split("|"):
+                        alias = alias.strip()
+                        if alias:
+                            aliases[alias] = canonical
+        return cls(outlets, aliases)
+
+    # -- resolution ------------------------------------------------------- #
+    def resolve(self, text: "str | None") -> Optional[Outlet]:
+        """Resolve any form (name / domain / URL / corpus variant) to an :class:`Outlet`, or
+        ``None`` if unknown. Domain forms match by registrable-domain suffix (subdomain-tolerant)."""
+        if not text:
+            return None
+        if _looks_like_host(text):
+            host = _host_of(text)
+            for cand in _domain_suffixes(host):
+                canonical = self._by_domain.get(cand)
+                if canonical:
+                    return self._outlets[canonical]
+            # a bare word that looked host-ish but isn't a known domain: fall through to name
+        canonical = self._by_name.get(_name_key(text))
+        return self._outlets.get(canonical) if canonical else None
+
+    def canonical(self, text: "str | None") -> Optional[str]:
+        """The canonical outlet name for ``text``, or ``None``."""
+        o = self.resolve(text)
+        return o.canonical if o else None
+
+    def lean(self, text: "str | None") -> float:
+        """The AllSides lean for ``text``, or ``NaN`` if unknown (matches how the engine treats
+        an unscored article — it is simply excluded from lean-based metrics)."""
+        o = self.resolve(text)
+        return o.lean if o else float("nan")
+
+    def outlets(self) -> List[Outlet]:
+        """All distinct outlets, ordered by lean then name (stable listing for onboarding later)."""
+        return sorted(self._outlets.values(), key=lambda o: (o.lean, o.canonical))
+
+    def __len__(self) -> int:
+        return len(self._outlets)
+
+    def __contains__(self, text) -> bool:
+        return self.resolve(text) is not None
+
+
+_DEFAULT: "OutletRegistry | None" = None
+
+
+def default_registry() -> OutletRegistry:
+    """The process-wide registry loaded from the bundled data (built once, then cached)."""
+    global _DEFAULT
+    if _DEFAULT is None:
+        _DEFAULT = OutletRegistry.load()
+    return _DEFAULT
+
+
+def resolve(text: "str | None") -> Optional[Outlet]:
+    """Convenience: resolve against the default registry."""
+    return default_registry().resolve(text)
