@@ -118,7 +118,9 @@ switching data never touches the frontend.
 | `RWE_N_USERS` / `RWE_MAX_ITEMS` / `RWE_SEED` | `--n-users` / `--max-items` / `--seed` | synthetic corpus size + seed |
 | `RWE_PROVIDER` | `--provider` | coach LLM provider: `anthropic` \| `gemini` |
 | `RWE_LOG_LEVEL` | — | log level for structured logs (default `INFO`) |
-| `RWE_INTERNAL_SECRET` | — | shared secret authenticating the web tier's server-to-server calls (unset = trust local callers) |
+| `RWE_ENV` | — | `production` turns on **fail-closed auth**: the engine requires `RWE_INTERNAL_SECRET` and refuses to start without it. Unset = local dev (trust local callers). |
+| `RWE_REQUIRE_AUTH` | — | force fail-closed auth on/off independently of `RWE_ENV` (`1`/`0`); defaults to whatever `RWE_ENV` implies |
+| `RWE_INTERNAL_SECRET` | — | shared secret authenticating the web tier's server-to-server calls. Unset = trust local callers (dev only); **required** in production. |
 | `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` | — | enable the live coach narrative |
 
 **Web app** (`web/.env.local`):
@@ -131,23 +133,33 @@ switching data never touches the frontend.
 | `NODE_ENV` | — | `production` disables the mock fallback |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | *(empty)* | Google OAuth client for sign-in (NextAuth) |
 | `NEXTAUTH_SECRET` / `NEXTAUTH_URL` | *(empty)* | session-JWT signing secret + this app's canonical URL |
-| `RWE_INTERNAL_SECRET` | *(empty)* | shared secret sent as `X-IH-Auth`; must match the engine's |
+| `RWE_INTERNAL_SECRET` | *(empty)* | shared secret sent as `X-IH-Auth`; must match the engine's (required in production) |
+| `RWE_ENV` | *(empty)* | `production` = real deployment: disables the dev demo-login; pair with the engine's `RWE_ENV=production` |
 | `NEXT_PUBLIC_API_BASE_URL` | *(empty)* | advanced: call a different API origin from the browser |
 
 ---
 
 ## Production build without Docker
 
+> **Fail-closed auth (required in production).** Set `RWE_ENV=production` and a shared
+> `RWE_INTERNAL_SECRET` (identical on both services) for any real deployment. In this mode the
+> engine authenticates every per-user call and **refuses to start** if the secret is missing —
+> so a mis-configured deploy fails loudly instead of silently trusting any caller. Generate the
+> secret with `openssl rand -base64 32`. Also keep the engine on a private network (don't expose
+> its port publicly); the web app is the only client that should reach it.
+
 ```bash
 # Engine — a real ASGI server; add workers to scale out (each worker builds its own
 # in-memory engine at startup, so size memory accordingly).
 pip install -e ".[serve]"
+export RWE_ENV=production RWE_INTERNAL_SECRET="$(openssl rand -base64 32)"
 python examples/api_fastapi.py --host 0.0.0.0 --port 8000
 #   or, multi-worker:  uvicorn examples.api_fastapi:app --host 0.0.0.0 --port 8000 --workers 4
 
-# Web — production Next.js build (mock fallback OFF)
+# Web — production Next.js build (mock fallback OFF). RWE_INTERNAL_SECRET must MATCH the engine's.
 cd web && npm ci && npm run build
-NODE_ENV=production RWE_BACKEND_URL=https://engine.internal npm start
+NODE_ENV=production RWE_ENV=production RWE_BACKEND_URL=https://engine.internal \
+  RWE_INTERNAL_SECRET="$SAME_AS_ENGINE" NEXTAUTH_SECRET="$(openssl rand -base64 32)" npm start
 ```
 
 ---

@@ -601,3 +601,78 @@ def test_resolve_token_respects_internal_secret(client, monkeypatch):
     assert client.post("/api/internal/resolve-token", json={"token": token}).status_code == 401
     ok = client.post("/api/internal/resolve-token", json={"token": token}, headers=auth)
     assert ok.status_code == 200 and ok.json()["userId"] == uid
+
+
+# --------------------------------------------------------------------------- #
+# Commit 1 — Fail-closed authentication.
+#
+# Local dev / the Colab demo (no production signal): the engine trusts the local web tier with
+# zero config (unchanged). Production mode (RWE_ENV=production, or RWE_REQUIRE_AUTH=1): every
+# internal / per-user call must carry the shared secret, and the engine refuses to start without
+# it — so the audited "guess an X-IH-User-Id header -> full account takeover" no longer works.
+# --------------------------------------------------------------------------- #
+def test_dev_mode_preserves_zero_config_trust(client):
+    """Local development is untouched: with no secret and no production signal, the web tier's
+    X-IH-User-Id header is trusted, so /api/me works with zero extra configuration."""
+    uid = client.post("/api/internal/users",
+                      json={"provider": "google", "providerAccountId": "devmode-1"}).json()["userId"]
+    assert client.get("/api/me/profile", headers={"X-IH-User-Id": str(uid)}).status_code == 200
+
+
+def test_config_errors_require_secret_in_production(monkeypatch):
+    """The startup validator flags production mode without the internal secret, and clears once
+    the secret is set — the check that makes a mis-configured prod deploy fail fast."""
+    monkeypatch.delenv("RWE_REQUIRE_AUTH", raising=False)
+    monkeypatch.delenv("RWE_INTERNAL_SECRET", raising=False)
+    monkeypatch.setenv("RWE_ENV", "production")
+    errs = api_fastapi._config_errors()
+    assert errs and any("RWE_INTERNAL_SECRET" in e for e in errs)
+    monkeypatch.setenv("RWE_INTERNAL_SECRET", "prod-secret")
+    assert api_fastapi._config_errors() == []                       # secret present -> no error
+    # dev mode (no production signal) never trips the check
+    monkeypatch.delenv("RWE_INTERNAL_SECRET", raising=False)
+    monkeypatch.delenv("RWE_ENV", raising=False)
+    assert api_fastapi._config_errors() == []
+
+
+def test_fail_closed_blocks_impersonation_in_production(client, monkeypatch):
+    """Proof the audited exploit is closed: in dev the X-IH-User-Id header alone reaches a
+    victim's account; with fail-closed auth on, the same unauthenticated header is refused across
+    every /api/me endpoint and the internal resolver, while a correctly-signed call still works."""
+    victim = client.post("/api/internal/users",
+                         json={"provider": "google", "providerAccountId": "victim@x.com",
+                               "email": "victim@x.com", "displayName": "Victim"}).json()["userId"]
+    hdr = {"X-IH-User-Id": str(victim)}
+
+    # dev (fail-open, as audited): the header alone is honoured
+    assert client.get("/api/me/profile", headers=hdr).status_code == 200
+
+    # turn on fail-closed auth; the unauthenticated header is now refused everywhere
+    monkeypatch.setenv("RWE_REQUIRE_AUTH", "1")
+    for path in ("/api/me", "/api/me/profile", "/api/me/history", "/api/me/settings"):
+        assert client.get(path, headers=hdr).status_code == 401, path
+    assert client.post("/api/me/tokens", json={}, headers=hdr).status_code == 401     # no token minting
+    assert client.get(f"/api/internal/users/{victim}").status_code == 401             # no enumeration
+    assert client.post("/api/internal/users",
+                       json={"provider": "google", "providerAccountId": "x"}).status_code == 401
+
+    # the legitimate web tier, signing with the matching secret, still works
+    monkeypatch.setenv("RWE_INTERNAL_SECRET", "prod-secret")
+    signed = {"X-IH-User-Id": str(victim), "X-IH-Auth": "prod-secret"}
+    assert client.get("/api/me/profile", headers=signed).status_code == 200
+    # ...but a wrong or missing secret is still refused (fail closed)
+    assert client.get("/api/me/profile",
+                      headers={"X-IH-User-Id": str(victim), "X-IH-Auth": "wrong"}).status_code == 401
+    assert client.get("/api/me/profile", headers=hdr).status_code == 401
+
+
+def test_startup_aborts_in_production_without_secret(monkeypatch):
+    """The engine refuses to start (lifespan raises) when production mode is on but the internal
+    secret is missing — it fails loudly instead of coming up fail-open. (Runs last: a failed
+    startup raises before any app state is built, so it never disturbs the shared client.)"""
+    monkeypatch.delenv("RWE_REQUIRE_AUTH", raising=False)
+    monkeypatch.delenv("RWE_INTERNAL_SECRET", raising=False)
+    monkeypatch.setenv("RWE_ENV", "production")
+    with pytest.raises(RuntimeError):
+        with TestClient(api_fastapi.app):
+            pass

@@ -17,10 +17,16 @@ import CredentialsProvider from "next-auth/providers/credentials";
 
 const ENGINE_BASE = process.env.RWE_BACKEND_URL ?? "http://127.0.0.1:8000";
 
-// Dev-only demo sign-in. OFF unless RWE_DEV_LOGIN is explicitly set (e.g. the Colab demo). It lets a
-// reviewer explore the full signed-in app without Google OAuth by signing in as a throwaway demo
-// account. NEVER set this in a real deployment — it is an unauthenticated login path by design.
-const DEV_LOGIN = process.env.RWE_DEV_LOGIN === "1" || process.env.RWE_DEV_LOGIN === "true";
+// Dev-only demo sign-in. OFF unless RWE_DEV_LOGIN is explicitly set (e.g. the Colab demo), and
+// force-OFF whenever production mode is on — so it can NEVER be available in a real deployment,
+// even if the flag leaks into the environment. It lets a reviewer explore the full signed-in app
+// without Google OAuth by signing in as a throwaway demo account (an unauthenticated login path by
+// design). RWE_ENV=production is the cross-tier production switch (the engine reads the same
+// variable to fail closed); the Colab demo does NOT set it, so the demo login keeps working there
+// even though Colab serves a production Next build (NODE_ENV=production).
+const PRODUCTION = process.env.RWE_ENV === "production" || process.env.RWE_ENV === "prod";
+const DEV_LOGIN =
+  !PRODUCTION && (process.env.RWE_DEV_LOGIN === "1" || process.env.RWE_DEV_LOGIN === "true");
 
 /**
  * Map a third-party identity to the stable engine user id, or `null` if the engine

@@ -11,6 +11,14 @@ services:
     environment:
       RWE_PROFILE: synthetic           # synthetic | qbias | mind | politosphere
       RWE_LOG_LEVEL: INFO
+      # --- production hardening (fail-closed auth) --------------------------------
+      # This compose file runs in dev mode by default (the engine trusts the local
+      # web service) so `up` is one command. For a real, internet-facing deployment,
+      # set BOTH of these here AND the matching pair on the web service below — the
+      # engine then refuses any per-user call without the secret, and refuses to even
+      # start if RWE_ENV=production is set without RWE_INTERNAL_SECRET.
+      # RWE_ENV: production
+      # RWE_INTERNAL_SECRET: ${RWE_INTERNAL_SECRET}   # e.g. `openssl rand -base64 32`
       # --- switch datasets by configuration only (uncomment + mount ./data) ---
       # RWE_PROFILE: mind
       # RWE_NPZ: /data/mind.npz
@@ -39,6 +47,10 @@ services:
     environment:
       RWE_BACKEND_URL: http://api:8000
       NODE_ENV: production
+      # --- production hardening (must match the engine's pair above) --------------
+      # RWE_ENV: production            # disables the dev demo-login; signals prod mode
+      # RWE_INTERNAL_SECRET: ${RWE_INTERNAL_SECRET}   # identical to the engine's value
+      # NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}           # openssl rand -base64 32
     depends_on:
       api:
         condition: service_healthy

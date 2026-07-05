@@ -94,6 +94,13 @@ state = _State()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Fail fast on a fatal misconfiguration (production mode without the internal secret) BEFORE
+    # building anything — a mis-configured prod deploy must refuse to start, never come up fail-open.
+    errors = _config_errors()
+    if errors:
+        for err in errors:
+            _log(logging.CRITICAL, "config_error", error=err)
+        raise RuntimeError("Refusing to start: " + " ".join(errors))
     # Build the engine (dataset + compute + recommender inputs) once, reuse per request.
     provider = os.environ.get("RWE_PROVIDER", "anthropic")
     be = engine.Backend(_profile_from_env(), provider=provider)
@@ -602,21 +609,68 @@ _AUTH_HEADER = "x-ih-auth"
 def _internal_secret() -> "str | None":
     """The shared secret the web tier signs internal calls with, or None if unset.
 
-    When unset (local dev) the engine trusts the caller so the app runs with no extra
-    configuration; set it in any shared/production deployment to authenticate the web tier.
-    Read per-request so it can be rotated without a restart."""
+    In local development (no production signal) the engine trusts the local caller so the app
+    runs with zero extra configuration; production mode *requires* it (see :func:`_require_auth`
+    and :func:`_config_errors`). Read per-request so it can be rotated without a restart."""
     return os.environ.get("RWE_INTERNAL_SECRET") or None
 
 
+def _production() -> bool:
+    """Whether the engine is running in production mode (``RWE_ENV=production`` / ``prod``).
+
+    The single cross-tier switch that turns on fail-closed authentication (the web tier reads
+    the same variable). Unset — local dev, the Colab demo, tests — keeps the zero-config,
+    trust-the-local-caller behaviour that makes the app runnable with one command."""
+    return os.environ.get("RWE_ENV", "").strip().lower() in {"production", "prod"}
+
+
+def _require_auth() -> bool:
+    """Whether internal / per-user requests must be authenticated (fail closed).
+
+    Follows production mode by default; ``RWE_REQUIRE_AUTH`` (``1``/``0``) can force it on or off
+    independently — e.g. to exercise the closed path in a test, or harden a staging box that
+    isn't formally ``RWE_ENV=production``."""
+    override = os.environ.get("RWE_REQUIRE_AUTH")
+    if override is not None and override.strip() != "":
+        return override.strip().lower() in {"1", "true", "yes", "on"}
+    return _production()
+
+
+def _config_errors() -> "list[str]":
+    """Fatal misconfigurations that must stop the engine from starting.
+
+    The one that matters for fail-closed auth: production mode with no ``RWE_INTERNAL_SECRET``
+    would leave the engine unable to authenticate the web tier — so rather than silently trust
+    every caller (the audited account-takeover), the engine refuses to boot. Additive: this is
+    empty in local development, so nothing changes there."""
+    errors: list[str] = []
+    if _require_auth() and _internal_secret() is None:
+        errors.append(
+            "Production mode is enabled (RWE_ENV=production or RWE_REQUIRE_AUTH=1) but "
+            "RWE_INTERNAL_SECRET is not set. Without it the engine cannot authenticate the web "
+            "tier and would have to trust any caller presenting an X-IH-User-Id header. Set "
+            "RWE_INTERNAL_SECRET (identical on the web app and the engine), or unset production "
+            "mode for local development."
+        )
+    return errors
+
+
 def _trusted(request: Request) -> bool:
-    """Whether a request is from the trusted web tier: always true when no secret is
-    configured, otherwise only when it carries the matching X-IH-Auth header."""
+    """Whether a request is from the trusted web tier.
+
+    * A secret is configured   -> trusted only with the matching ``X-IH-Auth`` header.
+    * No secret, dev mode      -> trusted (zero-config local development / the Colab demo).
+    * No secret, auth required  -> **never** trusted (fail closed). Startup validation
+      (:func:`_config_errors`) normally prevents this state; this is the runtime safety net so
+      a mis-started prod process denies rather than exposes."""
     secret = _internal_secret()
-    return secret is None or request.headers.get(_AUTH_HEADER) == secret
+    if secret is not None:
+        return request.headers.get(_AUTH_HEADER) == secret
+    return not _require_auth()
 
 
 def _require_trusted(request: Request) -> None:
-    """Reject an internal call lacking the configured secret (a no-op when unset)."""
+    """Reject an internal call that is not from the trusted web tier (fail closed in prod)."""
     if not _trusted(request):
         raise HTTPException(status_code=401, detail="Missing or invalid internal credentials.")
 
@@ -1036,6 +1090,15 @@ def main() -> None:
     for k, v in cli_env.items():
         if v is not None:
             os.environ[k] = str(v)
+
+    # Pre-flight: a clean, immediate exit for the common `python examples/api_fastapi.py` path
+    # if production mode is enabled without its required secret (the lifespan enforces the same
+    # for the `uvicorn examples.api_fastapi:app` entrypoint that bypasses main()).
+    config_errors = _config_errors()
+    if config_errors:
+        for err in config_errors:
+            print(f"FATAL: {err}", file=sys.stderr)
+        raise SystemExit(2)
 
     import uvicorn
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
