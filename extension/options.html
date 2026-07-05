@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>InfoDiet — Extension Settings</title>
+    <style>
+      :root { color-scheme: light dark; }
+      * { box-sizing: border-box; }
+      body {
+        font: 14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+        margin: 0; padding: 28px; max-width: 620px; margin-inline: auto;
+        color: #18181b; background: #fafafa;
+      }
+      @media (prefers-color-scheme: dark) { body { color: #e4e4e7; background: #18181b; } }
+      h1 { font-size: 18px; margin: 0 0 4px; }
+      p.sub { margin: 0 0 20px; color: #71717a; }
+      label { display: block; font-weight: 600; margin: 16px 0 6px; }
+      input {
+        width: 100%; padding: 9px 11px; border-radius: 8px; border: 1px solid #d4d4d8;
+        background: transparent; color: inherit; font: inherit;
+      }
+      input:focus { outline: 2px solid #6366f1; outline-offset: 1px; border-color: transparent; }
+      .row { display: flex; gap: 10px; margin-top: 18px; }
+      button {
+        padding: 9px 16px; border-radius: 8px; border: 1px solid transparent; font: inherit;
+        font-weight: 600; cursor: pointer;
+      }
+      button.primary { background: #6366f1; color: #fff; }
+      button.ghost { background: transparent; border-color: #d4d4d8; color: inherit; }
+      button:disabled { opacity: .55; cursor: default; }
+      .status { margin-top: 18px; padding: 11px 13px; border-radius: 8px; font-size: 13px; display: none; }
+      .status.show { display: block; }
+      .status.ok { background: #dcfce7; color: #166534; }
+      .status.err { background: #fee2e2; color: #991b1b; }
+      .status.info { background: #e0e7ff; color: #3730a3; }
+      @media (prefers-color-scheme: dark) {
+        .status.ok { background: #14532d; color: #bbf7d0; }
+        .status.err { background: #7f1d1d; color: #fecaca; }
+        .status.info { background: #312e81; color: #c7d2fe; }
+      }
+      .privacy { margin-top: 24px; padding-top: 16px; border-top: 1px solid #e4e4e7; color: #71717a; font-size: 12.5px; }
+      code { background: rgba(127,127,127,.15); padding: 1px 5px; border-radius: 4px; }
+    </style>
+  </head>
+  <body>
+    <h1>InfoDiet — Information Health</h1>
+    <p class="sub">Connect this browser to your InfoDiet account so the news articles you read sync automatically.</p>
+
+    <label for="appUrl">InfoDiet app URL</label>
+    <input id="appUrl" type="url" placeholder="http://localhost:3000" autocomplete="off" spellcheck="false" />
+
+    <label for="token">API token</label>
+    <input id="token" type="password" placeholder="ih_…  (from InfoDiet → Settings → Connect browser extension)" autocomplete="off" spellcheck="false" />
+
+    <div class="row">
+      <button id="save" class="primary" type="button">Save</button>
+      <button id="test" class="ghost" type="button">Test connection</button>
+    </div>
+
+    <div id="status" class="status"></div>
+
+    <div class="privacy">
+      InfoDiet only records the URL and title of supported news articles you open. We do not read
+      page contents, browsing history, passwords, or activity outside supported news sites. Your
+      token is stored only in this browser — revoke it any time from InfoDiet → Settings.
+    </div>
+
+    <script src="options.js"></script>
+  </body>
+</html>

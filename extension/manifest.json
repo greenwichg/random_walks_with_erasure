@@ -1,0 +1,43 @@
+{
+  "manifest_version": 3,
+  "name": "InfoDiet — Information Health",
+  "version": "0.1.0",
+  "description": "Records only the URL and title of supported news articles you open, to sync your reading with your InfoDiet account. No page contents, history, passwords, or activity outside supported news sites.",
+  "permissions": ["storage"],
+  "optional_host_permissions": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
+  "background": { "service_worker": "background.js" },
+  "options_page": "options.html",
+  "action": { "default_title": "InfoDiet — Information Health" },
+  "content_scripts": [
+    {
+      "run_at": "document_idle",
+      "js": ["common.js", "content.js"],
+      "matches": [
+        "https://*.nytimes.com/*",
+        "https://*.washingtonpost.com/*",
+        "https://*.wsj.com/*",
+        "https://*.foxnews.com/*",
+        "https://*.cnn.com/*",
+        "https://*.nbcnews.com/*",
+        "https://*.apnews.com/*",
+        "https://*.reuters.com/*",
+        "https://*.npr.org/*",
+        "https://*.bbc.com/*",
+        "https://*.bbc.co.uk/*",
+        "https://*.theguardian.com/*",
+        "https://*.politico.com/*",
+        "https://*.thehill.com/*",
+        "https://*.usatoday.com/*",
+        "https://*.cnbc.com/*",
+        "https://*.bloomberg.com/*",
+        "https://abcnews.go.com/*",
+        "https://*.cbsnews.com/*",
+        "https://*.aljazeera.com/*",
+        "https://*.axios.com/*",
+        "https://*.vox.com/*",
+        "https://*.theatlantic.com/*",
+        "https://*.latimes.com/*"
+      ]
+    }
+  ]
+}

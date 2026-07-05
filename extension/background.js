@@ -1,0 +1,109 @@
+/**
+ * Service worker: the only part that talks to the network. It receives `{url, title,
+ * observedAt}` from the content script, de-duplicates locally for a short TTL, and POSTs to the
+ * InfoDiet web app's existing `/api/me/reads` with the per-user Bearer token. It performs no
+ * scoring — the backend is the single source of truth and the only place reads are interpreted.
+ */
+importScripts("common.js");
+
+const DEDUPE_TTL_MS = 6 * 60 * 60 * 1000; // re-send the same article at most once per 6h
+const DEDUPE_KEY = "dedupe";
+
+/** Stored config: { appUrl, token }. */
+async function getConfig() {
+  const { appUrl, token } = await chrome.storage.local.get(["appUrl", "token"]);
+  return { appUrl: (appUrl || "").replace(/\/+$/, ""), token: token || "" };
+}
+
+function readsEndpoint(appUrl) {
+  return `${appUrl}/api/me/reads`;
+}
+
+/** POST a batch of reads through the web tier with the Bearer token. Returns { ok, status, body }. */
+async function postReads(appUrl, token, reads) {
+  const res = await fetch(readsEndpoint(appUrl), {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ reads }),
+  });
+  let body = null;
+  try {
+    body = await res.json();
+  } catch {
+    /* non-JSON error body */
+  }
+  return { ok: res.ok, status: res.status, body };
+}
+
+async function flashBadge(text, color) {
+  try {
+    await chrome.action.setBadgeBackgroundColor({ color });
+    await chrome.action.setBadgeText({ text });
+    setTimeout(() => chrome.action.setBadgeText({ text: "" }), 4000);
+  } catch {
+    /* action badge is best-effort */
+  }
+}
+
+/** Record one observed article (deduped). Returns a short status string for logging/tests. */
+async function recordArticle(article) {
+  const normalized = normalizeReadUrl(article.url);
+  if (!normalized) return "skipped:bad-url";
+
+  const { appUrl, token } = await getConfig();
+  if (!appUrl || !token) {
+    await flashBadge("!", "#b45309");
+    return "skipped:not-configured";
+  }
+
+  const now = Date.now();
+  const store = await chrome.storage.session.get(DEDUPE_KEY);
+  const cache = pruneCache(store[DEDUPE_KEY] || {}, now, DEDUPE_TTL_MS);
+  if (!shouldSend(cache, normalized, now, DEDUPE_TTL_MS)) return "skipped:duplicate";
+
+  try {
+    const { ok, status } = await postReads(appUrl, token, [
+      { url: article.url, title: article.title || "", observedAt: article.observedAt },
+    ]);
+    if (ok) {
+      cache[normalized] = now;
+      await chrome.storage.session.set({ [DEDUPE_KEY]: cache });
+      await flashBadge("✓", "#15803d");
+      return "sent";
+    }
+    await flashBadge(status === 401 ? "auth" : "err", "#b91c1c");
+    return `error:${status}`;
+  } catch (e) {
+    await flashBadge("err", "#b91c1c");
+    return `error:network`;
+  }
+}
+
+/**
+ * Connection test used by the Options page: POST an empty batch. A valid token + reachable app
+ * returns coverage (accepted:0); an invalid token returns 401; anything else is a config error.
+ */
+async function testConnection() {
+  const { appUrl, token } = await getConfig();
+  if (!appUrl) return { ok: false, reason: "no-url" };
+  if (!token) return { ok: false, reason: "no-token" };
+  try {
+    const { ok, status, body } = await postReads(appUrl, token, []);
+    if (ok) return { ok: true, coverage: body };
+    return { ok: false, reason: status === 401 ? "bad-token" : `status-${status}` };
+  } catch {
+    return { ok: false, reason: "unreachable" };
+  }
+}
+
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (!msg || typeof msg !== "object") return;
+  if (msg.type === "article") {
+    recordArticle(msg).then((status) => sendResponse({ status }));
+    return true; // async response
+  }
+  if (msg.type === "test") {
+    testConnection().then(sendResponse);
+    return true;
+  }
+});
