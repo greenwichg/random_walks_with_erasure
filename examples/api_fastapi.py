@@ -35,6 +35,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # import siblin
 import api_server as engine   # Backend, DatasetProfile, resolve_profile, BUILTIN_PROFILES
 import store                  # beta persistence layer (users + identities)
 import ingest                 # reading-event scorer + cache (Milestone C)
+import enrich                 # headline enrichment (register + emotion) behind ingest.Enricher
 import personalize            # per-user augmented Measured report / recs / coach
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -98,7 +99,7 @@ async def lifespan(app: FastAPI):
     be = engine.Backend(_profile_from_env(), provider=provider)
     state.backend = be
     state.store = store.Store()
-    state.scorer = ingest.Scorer()
+    state.scorer = ingest.Scorer(enricher=enrich.make_enricher())   # baseline register+emotion
     # The personalization layer: builds a real user's Measured report / recs / coach from an
     # augmented corpus once they've stored enough reads (cached per user + reading version).
     state.personalizer = personalize.Personalizer(be, state.store)
