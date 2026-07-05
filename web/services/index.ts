@@ -11,6 +11,7 @@ import type {
   HistoryEntry,
   Profile,
   Recommendation,
+  RecommendationReception,
   Settings,
   Story,
   TopicSlice,
@@ -28,6 +29,9 @@ export const services = {
     getJson<Recommendation[]>("/recommendations", strategy ? { strategy } : undefined),
   sendFeedback: (articleId: string, action: FeedbackAction) =>
     postJson<{ ok: boolean }>("/recommendations", { articleId, action }),
+  // Record that the reader opened a recommended article — the Open-Mindedness reception signal.
+  openRecommendation: (articleId: string, crossCutting: boolean) =>
+    postJson<RecommendationReception>("/me/recommendations/opened", { articleId, crossCutting }),
   history: () => getJson<HistoryEntry[]>("/history"),
   topics: () => getJson<TopicSlice[]>("/topics"),
   stories: () => getJson<Story[]>("/stories"),

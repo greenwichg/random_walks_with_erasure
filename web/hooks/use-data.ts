@@ -36,6 +36,23 @@ export function useFeedback() {
   });
 }
 
+/**
+ * Records that the reader opened a recommended article (the Open-Mindedness reception signal).
+ * On success it refreshes the report + dashboard so Open-Mindedness — which populates from
+ * cross-cutting recommendation reception — appears/updates without a manual reload.
+ */
+export function useOpenRecommendation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ articleId, crossCutting }: { articleId: string; crossCutting: boolean }) =>
+      services.openRecommendation(articleId, crossCutting),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.report });
+      qc.invalidateQueries({ queryKey: queryKeys.dashboard });
+    },
+  });
+}
+
 export function useSearch(q: string) {
   return useQuery({
     queryKey: queryKeys.search(q),

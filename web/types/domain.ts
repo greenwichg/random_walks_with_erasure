@@ -203,6 +203,19 @@ export interface Recommendation {
 
 export type FeedbackAction = "save" | "ignore" | "read-later" | "like" | "dislike";
 
+/**
+ * A reader's cross-cutting recommendation reception — the behavioral signal behind
+ * Open-Mindedness. `rate` = opened / shown over cross-cutting recs; `active` is whether enough
+ * have been surfaced and opened for the metric to populate on the Measured report.
+ */
+export interface RecommendationReception {
+  shownCross: number;
+  openedCross: number;
+  rate: number | null;
+  threshold: number;
+  active: boolean;
+}
+
 /** One reading-history entry. */
 export interface HistoryEntry {
   id: string;

@@ -4,6 +4,8 @@ import * as React from "react";
 import { motion } from "framer-motion";
 import {
   Bookmark,
+  BookOpen,
+  Check,
   Clock,
   ThumbsUp,
   ThumbsDown,
@@ -37,16 +39,19 @@ export function RecommendationCard({
   rec,
   index = 0,
   onAction,
+  onOpen,
   onDismiss,
 }: {
   rec: Recommendation;
   index?: number;
   onAction?: (action: FeedbackAction) => void;
+  onOpen?: () => void;
   onDismiss?: () => void;
 }) {
   const { article } = rec;
   const [saved, setSaved] = React.useState(false);
   const [readLater, setReadLater] = React.useState(false);
+  const [opened, setOpened] = React.useState(false);
   const [vote, setVote] = React.useState<"up" | "down" | null>(null);
   const helps = METRICS[rec.helpsMetric];
 
@@ -120,6 +125,25 @@ export function RecommendationCard({
 
       {/* actions */}
       <div className="mt-4 flex items-center gap-1">
+        {/* Primary: opening a recommended read is the reception signal behind Open-Mindedness —
+            opening the cross-cutting ones is exactly what raises the metric. Idempotent. */}
+        <button
+          onClick={() => {
+            if (opened) return;
+            setOpened(true);
+            onOpen?.();
+          }}
+          aria-pressed={opened}
+          className={cn(
+            "mr-1 inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-medium transition-colors",
+            opened
+              ? "bg-positive/15 text-positive"
+              : "bg-primary text-primary-foreground hover:bg-primary/90",
+          )}
+        >
+          {opened ? <Check className="h-3.5 w-3.5" /> : <BookOpen className="h-3.5 w-3.5" />}
+          {opened ? "Opened" : "Read"}
+        </button>
         <ActionButton
           label="Save"
           active={saved}

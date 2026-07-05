@@ -4,7 +4,7 @@ import * as React from "react";
 import { AnimatePresence } from "framer-motion";
 import { Sparkles, Route, Compass, Wand2 } from "lucide-react";
 import type { FeedbackAction, Recommendation } from "@/types/domain";
-import { useRecommendations, useFeedback } from "@/hooks/use-data";
+import { useRecommendations, useFeedback, useOpenRecommendation } from "@/hooks/use-data";
 import { PageContainer } from "@/components/layout/page-container";
 import { RecommendationCard } from "@/components/recommendations/recommendation-card";
 import { ErrorState, EmptyState } from "@/components/shared/states";
@@ -23,6 +23,7 @@ const FILTERS: { value: Filter; label: string; icon: React.ElementType }[] = [
 export default function RecommendationsPage() {
   const { data, isLoading, isError, refetch } = useRecommendations();
   const feedback = useFeedback();
+  const openRec = useOpenRecommendation();
   const [filter, setFilter] = React.useState<Filter>("all");
   const [dismissed, setDismissed] = React.useState<Set<string>>(new Set());
 
@@ -32,6 +33,12 @@ export default function RecommendationsPage() {
 
   const handleAction = (articleId: string, action: FeedbackAction) => {
     feedback.mutate({ articleId, action });
+  };
+
+  const handleOpen = (rec: Recommendation) => {
+    // Records reception of a recommended read; the hook refreshes the report so Open-Mindedness
+    // (driven by cross-cutting reception) updates automatically.
+    openRec.mutate({ articleId: rec.article.id, crossCutting: rec.crossCutting });
   };
 
   return (
@@ -83,6 +90,7 @@ export default function RecommendationsPage() {
               rec={rec}
               index={i}
               onAction={(action) => handleAction(rec.article.id, action)}
+              onOpen={() => handleOpen(rec)}
               onDismiss={() => setDismissed((prev) => new Set(prev).add(rec.article.id))}
             />
           ))}
