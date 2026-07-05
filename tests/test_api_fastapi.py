@@ -378,6 +378,33 @@ def test_history_returns_the_users_reads(client):
     assert client.get("/api/me/history").status_code == 401           # auth required (no demo fallback)
 
 
+def test_dashboard_reuses_report_and_reflects_reads(client):
+    """The dashboard reuses the very same report /api/report serves (overall + metrics), and its
+    'today' block reflects the reader's real stored reads."""
+    uid = client.post("/api/internal/users",
+                      json={"provider": "google", "providerAccountId": "route-dash"}).json()["userId"]
+    hdr = {"X-IH-User-Id": str(uid)}
+    reads = [{"url": f"https://www.foxnews.com/politics/story-{i}", "title": f"Story {i}"} for i in range(6)]
+    client.post("/api/me/reads", json={"reads": reads}, headers=hdr)
+
+    dash = client.get("/api/dashboard", headers=hdr).json()
+    report = client.get("/api/report", headers=hdr).json()
+    assert dash["overall"] == report["overall"]                                  # report reused verbatim
+    assert {m["key"] for m in dash["metrics"]} == {m["key"] for m in report["metrics"]}
+    assert set(dash["today"]) == {"articlesRead", "avgReadingMinutes", "politicalShare", "topTopics"}
+    assert dash["today"]["articlesRead"] >= 1                                    # observedAt defaults to now
+    assert isinstance(dash["streakDays"], int)
+
+
+def test_dashboard_anonymous_is_demo_with_empty_activity(client):
+    """An anonymous request gets the demo report's score/metrics but no fabricated personal
+    activity — empty trend, zero 'today', zero streak."""
+    dash = client.get("/api/dashboard").json()
+    assert isinstance(dash["overall"], int) and len(dash["metrics"]) > 0
+    assert dash["trend"] == [] and dash["streakDays"] == 0
+    assert dash["today"]["articlesRead"] == 0 and dash["today"]["topTopics"] == []
+
+
 def test_open_mindedness_completes_the_metric_set(client):
     """The Open-Mindedness feedback loop over HTTP: a measured reader is 7/8 until they open
     cross-cutting recommendations through /api/me/recommendations/opened, then 8/8 — the last

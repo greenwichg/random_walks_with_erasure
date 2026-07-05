@@ -270,6 +270,54 @@ def test_history_article_reuses_catalog_serializer(backend):
 
 
 # --------------------------------------------------------------------------- #
+# dashboard — composed from the report + reads + snapshots, reusing serialisers
+# --------------------------------------------------------------------------- #
+def test_build_dashboard_composes_report_reads_snapshots(backend):
+    """build_dashboard lifts overall/metrics from the report verbatim, builds the trend + delta from
+    snapshots, and aggregates *today's* reads — no report re-serialisation, no new algorithm."""
+    import datetime as dt
+    today = dt.datetime.now(dt.timezone.utc).date().isoformat()
+    report = {"overall": 72, "overallDelta": 0,
+              "metrics": [{"key": "topicDiversity", "score": 60, "delta": 0,
+                           "band": "Fair", "benchmark": 50}]}
+    reads = [
+        {"id": 3, "canonicalUrl": "https://cnn.com/a", "observedAt": f"{today}T10:00:00Z",
+         "scored": {"article_id": "https://cnn.com/a", "outlet": "CNN", "category": "Politics",
+                    "title": "A", "lean": -1.0, "register": 0.7, "confidence": 0.7,
+                    "emotion": {"fear": 0, "outrage": 0, "analysis": 0, "positive": 0, "neutral": 1},
+                    "political": True}},
+        {"id": 2, "canonicalUrl": "https://x.com/b", "observedAt": f"{today}T09:00:00Z",
+         "scored": {"article_id": "https://x.com/b", "outlet": "X", "category": "Sports",
+                    "title": "B", "political": False, "emotion": None}},
+        {"id": 1, "canonicalUrl": "https://y.com/c", "observedAt": "2020-01-01T00:00:00Z",   # not today
+         "scored": {"article_id": "https://y.com/c", "outlet": "Y", "category": "World", "political": True}},
+    ]
+    snaps = [{"id": 1, "mode": "estimate", "overall": 60, "createdAt": "2026-06-01T00:00:00+00:00"},
+             {"id": 2, "mode": "measured", "overall": 68, "createdAt": "2026-06-20T00:00:00+00:00"},
+             {"id": 3, "mode": "measured", "overall": 72, "createdAt": "2026-07-01T00:00:00+00:00"}]
+    dash = backend.build_dashboard(report, reads, snaps)
+    assert dash["overall"] == 72
+    assert dash["overallDelta"] == 72 - 68                       # vs the previous snapshot
+    assert dash["metrics"] == report["metrics"]                  # reused verbatim, not re-derived
+    assert [p["overall"] for p in dash["trend"]] == [60, 68, 72] # snapshot history, oldest-first
+    t = dash["today"]
+    assert t["articlesRead"] == 2                                # only today's two reads
+    assert t["politicalShare"] == 0.5                            # 1 of 2 today is political
+    assert set(t["topTopics"]) == {"Politics", "Sports"}
+    assert isinstance(t["avgReadingMinutes"], int)
+    assert dash["streakDays"] >= 1                               # read today -> streak >= 1
+    _assert_json_roundtrips(dash)
+
+
+def test_build_dashboard_empty_for_no_activity(backend):
+    dash = backend.build_dashboard({"overall": 50, "overallDelta": 0, "metrics": []}, [], [])
+    assert dash["overall"] == 50 and dash["overallDelta"] == 0
+    assert dash["trend"] == [] and dash["streakDays"] == 0
+    assert dash["today"] == {"articlesRead": 0, "avgReadingMinutes": 0,
+                             "politicalShare": 0.0, "topTopics": []}
+
+
+# --------------------------------------------------------------------------- #
 # coach
 # --------------------------------------------------------------------------- #
 def test_coach_greeting_contract(backend, user):

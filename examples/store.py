@@ -284,6 +284,19 @@ class Store:
                            .order_by(ReportSnapshot.id.desc()))
             return dict(json.loads(row.snapshot)) if row is not None else None
 
+    def list_report_snapshots(self, user_id: int, limit: int = 60) -> list:
+        """The user's report/estimate snapshots as compact trend points (``overall`` over time),
+        **oldest-first**, capped at the most recent ``limit`` — the source for the dashboard health
+        trend and the analytics score history. The full snapshot JSON is not loaded (only the id,
+        mode, overall, and timestamp), keeping the trend query cheap."""
+        with self.session() as s:
+            rows = s.scalars(select(ReportSnapshot)
+                             .where(ReportSnapshot.user_id == user_id)
+                             .order_by(ReportSnapshot.id)).all()
+        rows = rows[-limit:] if limit else rows
+        return [{"id": r.id, "mode": r.mode, "overall": int(r.overall),
+                 "createdAt": r.created_at.isoformat() if r.created_at else None} for r in rows]
+
     # -- scored-article cache -------------------------------------------
     def get_scored_article(self, url: str) -> "dict | None":
         """Cached scoring for a canonical URL, or ``None`` if it hasn't been scored yet."""

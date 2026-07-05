@@ -290,6 +290,29 @@ class HealthReportModel(BaseModel):
     coverage: Optional[CoverageModel] = None
 
 
+class TrendPointModel(BaseModel):
+    # a point on the health trend; extra per-metric scores are allowed (TrendPoint is open-ended).
+    model_config = ConfigDict(extra="allow")
+    date: str
+    overall: int
+
+
+class DashboardTodayModel(BaseModel):
+    articlesRead: int
+    avgReadingMinutes: int
+    politicalShare: float
+    topTopics: list[str]
+
+
+class DashboardModel(BaseModel):
+    overall: int
+    overallDelta: int
+    trend: list[TrendPointModel]
+    today: DashboardTodayModel
+    metrics: list[MetricModel]          # the report's metrics, reused verbatim (not re-derived)
+    streakDays: int
+
+
 class ArticleModel(BaseModel):
     # `register` shadows a BaseModel attribute, so hold it under an alias and serialise
     # it back to the wire key "register" (FastAPI responds by_alias).
@@ -575,6 +598,13 @@ def report(request: Request,
       Information Health Estimate, recomputed server-side from their stored onboarding outlets.
     * **Demo** — a signed-in reader with no usable onboarding, or an anonymous / ``?user=``
       request: the reference reader (unchanged for the frontend and contract tests)."""
+    return _report_for(request, user)
+
+
+def _report_for(request: Request, user: str | None) -> dict:
+    """The report a reader would see — **Measured** (augmented corpus), **Estimate** (stored
+    onboarding), or **Demo** (anonymous / no onboarding). Shared by ``GET /api/report`` and the
+    dashboard so both speak the exact same report with no duplicated routing or serialisation."""
     be = _require_backend()
     uid = _real_uid(request)
     if uid is None:
@@ -588,6 +618,21 @@ def report(request: Request,
         except ValueError:
             pass
     return be.report(be.demo_user)
+
+
+@app.get("/api/dashboard", response_model=DashboardModel, response_model_exclude_none=True,
+         tags=["report"], summary="Home dashboard summary for a reader", responses=_ERR_RESPONSES)
+def dashboard(request: Request,
+              user: str | None = Query(None, description="reader id; defaults to the demo reader")) -> dict:
+    """The home dashboard, composed from data that already exists: the reader's report (overall +
+    the eight metrics, reused verbatim), their saved health trend (report snapshots), and today's
+    reading + streak (their stored reads). Same Measured/Estimate/Demo routing as ``/api/report`` —
+    no new report serialisation, no algorithm."""
+    rep = _report_for(request, user)
+    st, uid = _require_store(), _real_uid(request)
+    reads = st.list_reads(uid) if uid is not None else []
+    snaps = st.list_report_snapshots(uid) if uid is not None else []
+    return _require_backend().build_dashboard(rep, reads, snaps)
 
 
 @app.get("/api/outlets", response_model=list[OutletModel], tags=["meta"],

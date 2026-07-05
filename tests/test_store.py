@@ -216,3 +216,15 @@ def test_list_reads_newest_first_with_metadata(store):
 def test_list_reads_empty_for_new_user(store):
     u = store.upsert_user_by_identity("google", "hist-empty")
     assert store.list_reads(u.id) == []
+
+
+def test_list_report_snapshots_oldest_first(store):
+    u = store.upsert_user_by_identity("google", "snap-1")
+    assert store.list_report_snapshots(u.id) == []               # none yet
+    store.save_report(u.id, {"mode": "estimate", "overall": 55})
+    store.save_report(u.id, {"mode": "measured", "overall": 61})
+    snaps = store.list_report_snapshots(u.id)
+    assert [s["overall"] for s in snaps] == [55, 61]             # oldest-first (the trend order)
+    assert [s["mode"] for s in snaps] == ["estimate", "measured"]
+    assert all(s["createdAt"] for s in snaps) and all(isinstance(s["id"], int) for s in snaps)
+    assert [s["overall"] for s in store.list_report_snapshots(u.id, limit=1)] == [61]   # keep most recent

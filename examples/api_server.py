@@ -38,6 +38,7 @@ import os
 import sys
 import tempfile
 import http.server
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qs, urlparse
@@ -135,6 +136,20 @@ def _register_enum(p_reporting) -> str:
     if p_reporting <= 0.4:
         return "opinion"
     return "mixed"
+
+
+def _reading_streak(read_ats) -> int:
+    """Consecutive UTC days ending today on which the reader recorded at least one read, from ISO
+    ``readAt`` strings. A break (no read today) makes it 0 — an honest current-streak count, not a
+    best-ever. Timestamps are compared by their date prefix (``YYYY-MM-DD``)."""
+    days = {ra[:10] for ra in read_ats if isinstance(ra, str) and len(ra) >= 10}
+    if not days:
+        return 0
+    streak, d = 0, datetime.now(timezone.utc).date()
+    while d.isoformat() in days:
+        streak += 1
+        d = d - timedelta(days=1)
+    return streak
 
 
 # ------------------------------------------------------------------ #
@@ -517,6 +532,40 @@ class Backend:
                 "completed": True,
             })
         return out
+
+    def build_dashboard(self, report: dict, reads: list, snapshots: list) -> dict:
+        """Compose the dashboard summary from data that already exists — **no new report
+        serialisation**. ``overall`` / ``overallDelta`` / ``metrics`` are lifted verbatim from the
+        Measured/Estimate/Demo ``report`` this reader would see; ``trend`` is their saved report
+        snapshots; ``today`` and ``streakDays`` are light aggregations of their recent reads (via
+        the shared :meth:`serialize_history`). Corpus-independent and mobile-friendly."""
+        recent = self.serialize_history(reads)                       # reuse the one history serialiser
+        political_by_id = {str(r.get("id")): bool((r.get("scored") or {}).get("political"))
+                           for r in reads}
+        today = datetime.now(timezone.utc).date().isoformat()
+        todays = [e for e in recent if str(e.get("readAt") or "")[:10] == today]
+        n = len(todays)
+        avg_min = round(sum(e["readingMinutes"] for e in todays) / n) if n else 0
+        pol_share = (sum(political_by_id.get(e["id"], False) for e in todays) / n) if n else 0.0
+        top_topics = [t for t, _ in Counter(e["article"]["topic"] for e in todays
+                                            if e["article"]["topic"]).most_common(4)]
+
+        # trend + month-over-version delta from the saved snapshots (oldest -> newest)
+        trend = [{"date": str(s.get("createdAt") or "")[:10], "overall": int(s.get("overall") or 0)}
+                 for s in snapshots if s.get("createdAt")]
+        overall = int(report.get("overall") or 0)
+        delta = (overall - int(snapshots[-2]["overall"]) if len(snapshots) >= 2
+                 else int(report.get("overallDelta") or 0))
+
+        return {
+            "overall": overall,
+            "overallDelta": delta,
+            "trend": trend,
+            "today": {"articlesRead": n, "avgReadingMinutes": avg_min,
+                      "politicalShare": round(float(pol_share), 4), "topTopics": top_topics},
+            "metrics": report.get("metrics", []),                    # the report's metrics, reused as-is
+            "streakDays": _reading_streak([e.get("readAt") for e in recent]),
+        }
 
     def article(self, col: int) -> dict:
         """Base reference-corpus article (the demo / ``?user=`` path)."""
