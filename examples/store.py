@@ -107,6 +107,22 @@ class Onboarding(Base):
     updated_at: Mapped[datetime] = mapped_column(default=_utcnow)
 
 
+class UserSettings(Base):
+    """A user's **product preferences** — theme, notification / digest / privacy toggles, and reading
+    goal. Deliberately its own table, kept separate from any health-report state (report snapshots):
+    this row is application preference only, never a metric or a reading event. One row per user
+    (upserted); the whole preferences object is stored as JSON verbatim, so adding a preference field
+    needs no migration and any field a user hasn't set falls back to server defaults at read time.
+
+    Nothing here is wired into the recommender or health algorithms — it only persists preferences."""
+
+    __tablename__ = "user_settings"
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    settings: Mapped[str] = mapped_column(Text)          # JSON of the preferences object
+    updated_at: Mapped[datetime] = mapped_column(default=_utcnow)
+
+
 class ReportSnapshot(Base):
     """A stored Information Health result for a user — an estimate or a measured report.
     Append-only: the latest row is the current result, and the history feeds later
@@ -268,6 +284,26 @@ class Store:
         with self.session() as s:
             row = s.get(Onboarding, user_id)
             return list(json.loads(row.outlets)) if row is not None else None
+
+    # -- product preferences (settings) — never health-report state ----
+    def get_settings(self, user_id: int) -> "dict | None":
+        """The user's stored preferences (JSON verbatim), or ``None`` if they've never saved any —
+        in which case the caller supplies server defaults. Preferences only; no metric state."""
+        with self.session() as s:
+            row = s.get(UserSettings, user_id)
+            return dict(json.loads(row.settings)) if row is not None else None
+
+    def save_settings(self, user_id: int, settings: dict) -> None:
+        """Persist (upsert) a user's preferences — the caller passes the already-normalised object,
+        stored verbatim so future preference fields need no migration."""
+        payload = json.dumps(dict(settings))
+        with self.session() as s:
+            row = s.get(UserSettings, user_id)
+            if row is None:
+                s.add(UserSettings(user_id=user_id, settings=payload))
+            else:
+                row.settings = payload
+                row.updated_at = _utcnow()
 
     def save_report(self, user_id: int, report: dict) -> None:
         """Append a report/estimate snapshot for a user (the JSON is stored verbatim)."""

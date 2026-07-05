@@ -38,6 +38,8 @@ export const services = {
   story: (id: string) => getJson<Story>(`/stories/${id}`),
   profile: () => getJson<Profile>("/profile"),
   settings: () => getJson<Settings>("/settings"),
+  // Persist a (partial) preferences patch; the engine merges + returns the full normalised settings.
+  updateSettings: (patch: Partial<Settings>) => postJson<Settings>("/settings", patch),
   analytics: () => getJson<AnalyticsSeries>("/analytics"),
   coachHistory: () => getJson<CoachMessage[]>("/coach"),
   coachSend: (message: string) => postJson<CoachMessage>("/coach", { message }),

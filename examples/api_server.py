@@ -196,6 +196,71 @@ def _handle_from(name: str, email: str) -> str:
     return h or "reader"
 
 
+# --------------------------------------------------------------------------- #
+# Product preferences (settings) — persisted preference shaping only. These wire
+# NOTHING into the recommender or health algorithms; they just normalise a
+# preferences object to a stable, type-safe contract with honest server defaults.
+# --------------------------------------------------------------------------- #
+DEFAULT_SETTINGS = {
+    "theme": "system",
+    "language": "en",
+    "politicalOpenness": 50,          # a stored preference only — NOT wired to the recommender
+    "recommendationStrength": 50,     # a stored preference only — NOT wired to the recommender
+    "readingGoalMinutes": 20,
+    "weeklyReport": True,
+    "monthlyReport": False,
+    "notifications": {"recommendations": True, "weeklyDigest": True,
+                      "streakReminders": False, "blindSpotAlerts": False},
+    "privacy": {"shareAnonymizedMetrics": False, "personalizedAds": False},
+}
+_SETTINGS_THEMES = ("light", "dark", "system")
+
+
+def _clamp_int(value, lo, hi, default):
+    try:
+        n = int(round(float(value)))
+    except (TypeError, ValueError):
+        return default
+    return max(lo, min(hi, n))
+
+
+def _layered(key, layers, default):
+    """The value of ``key`` from the last layer (dict) that defines it — defaults < stored < patch."""
+    v = default
+    for layer in layers:
+        if isinstance(layer, dict) and key in layer:
+            v = layer[key]
+    return v
+
+
+def _merge_bool_group(defaults: dict, layers, group: str) -> dict:
+    subs = [layer[group] for layer in layers
+            if isinstance(layer, dict) and isinstance(layer.get(group), dict)]
+    return {k: bool(_layered(k, subs, dv)) for k, dv in defaults.items()}
+
+
+def normalize_settings(stored: "dict | None", patch: "dict | None" = None) -> dict:
+    """A complete, type-safe preferences object = server defaults, overlaid with the user's stored
+    preferences, overlaid with an optional incoming ``patch``. Unknown keys are dropped and every
+    value is coerced / clamped to the contract, so a partial update from any client (web, iOS,
+    Android, extension, RSS) is safe and the response shape is always stable. ``patch=None`` reads
+    (with honest defaults for anything unset); a patch merges an update. Preferences only — this
+    shapes no health or recommendation behaviour."""
+    layers = [DEFAULT_SETTINGS, stored or {}, patch or {}]
+    theme = _layered("theme", layers, DEFAULT_SETTINGS["theme"])
+    return {
+        "theme": theme if theme in _SETTINGS_THEMES else DEFAULT_SETTINGS["theme"],
+        "language": (str(_layered("language", layers, "en")).strip()[:16] or "en"),
+        "politicalOpenness": _clamp_int(_layered("politicalOpenness", layers, 50), 0, 100, 50),
+        "recommendationStrength": _clamp_int(_layered("recommendationStrength", layers, 50), 0, 100, 50),
+        "readingGoalMinutes": _clamp_int(_layered("readingGoalMinutes", layers, 20), 0, 600, 20),
+        "weeklyReport": bool(_layered("weeklyReport", layers, True)),
+        "monthlyReport": bool(_layered("monthlyReport", layers, False)),
+        "notifications": _merge_bool_group(DEFAULT_SETTINGS["notifications"], layers, "notifications"),
+        "privacy": _merge_bool_group(DEFAULT_SETTINGS["privacy"], layers, "privacy"),
+    }
+
+
 # ------------------------------------------------------------------ #
 # Backend state — built once at startup.
 # ------------------------------------------------------------------ #

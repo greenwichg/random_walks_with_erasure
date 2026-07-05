@@ -443,6 +443,35 @@ def test_profile_from_the_users_account_and_reads(client):
     assert client.get("/api/me/profile").status_code == 401                # auth required
 
 
+def test_settings_persist_and_merge(client):
+    """Settings load with honest defaults, and partial updates merge over stored preferences and
+    survive a reload — the persistence the mock page lacked. Auth required; preferences only."""
+    uid = client.post("/api/internal/users",
+                      json={"provider": "google", "providerAccountId": "route-set"}).json()["userId"]
+    hdr = {"X-IH-User-Id": str(uid)}
+    full_keys = {"theme", "language", "politicalOpenness", "recommendationStrength",
+                 "readingGoalMinutes", "weeklyReport", "monthlyReport", "notifications", "privacy"}
+
+    d = client.get("/api/me/settings", headers=hdr).json()
+    assert set(d) == full_keys and d["theme"] == "system" and d["politicalOpenness"] == 50  # defaults
+
+    saved = client.post("/api/me/settings",
+                        json={"theme": "dark", "notifications": {"streakReminders": True}},
+                        headers=hdr).json()
+    assert saved["theme"] == "dark" and saved["notifications"]["streakReminders"] is True
+    assert saved["notifications"]["recommendations"] is True                 # untouched default kept
+
+    again = client.get("/api/me/settings", headers=hdr).json()
+    assert again["theme"] == "dark" and again["notifications"]["streakReminders"] is True  # persisted
+
+    client.post("/api/me/settings", json={"readingGoalMinutes": 45}, headers=hdr)
+    final = client.get("/api/me/settings", headers=hdr).json()
+    assert final["theme"] == "dark" and final["readingGoalMinutes"] == 45    # earlier change preserved
+
+    assert client.get("/api/me/settings").status_code == 401                 # auth required
+    assert client.post("/api/me/settings", json={"theme": "light"}).status_code == 401
+
+
 def test_dashboard_anonymous_is_demo_with_empty_activity(client):
     """An anonymous request gets the demo report's score/metrics but no fabricated personal
     activity — empty trend, zero 'today', zero streak."""

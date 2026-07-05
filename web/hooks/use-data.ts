@@ -18,6 +18,15 @@ export const useStory = (id: string) =>
   useQuery({ queryKey: queryKeys.story(id), queryFn: () => services.story(id), enabled: !!id });
 export const useProfile = () => useQuery({ queryKey: queryKeys.profile, queryFn: services.profile });
 export const useSettings = () => useQuery({ queryKey: queryKeys.settings, queryFn: services.settings });
+
+/** Persists a preferences patch and updates the settings cache with the normalised server result. */
+export function useUpdateSettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (patch: Partial<import("@/types/domain").Settings>) => services.updateSettings(patch),
+    onSuccess: (saved) => qc.setQueryData(queryKeys.settings, saved),
+  });
+}
 export const useAnalytics = () => useQuery({ queryKey: queryKeys.analytics, queryFn: services.analytics });
 
 export const useRecommendations = (strategy?: Recommendation["strategy"]) =>

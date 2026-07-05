@@ -408,6 +408,34 @@ def test_build_profile_identity_fallbacks(backend):
 
 
 # --------------------------------------------------------------------------- #
+# settings normalisation — defaults, merge, coercion (preferences only)
+# --------------------------------------------------------------------------- #
+def test_normalize_settings_defaults_merge_and_coerce():
+    # no stored preferences -> the full honest defaults
+    assert api_server.normalize_settings(None) == api_server.DEFAULT_SETTINGS
+    assert api_server.normalize_settings({}) == api_server.DEFAULT_SETTINGS
+
+    stored = {"theme": "dark", "readingGoalMinutes": 45,
+              "notifications": {"weeklyDigest": False}, "bogus": 123}          # unknown key
+    patch = {"politicalOpenness": 999, "language": "x" * 40,
+             "notifications": {"streakReminders": True}, "privacy": {"personalizedAds": True}}
+    m = api_server.normalize_settings(stored, patch)
+    assert m["theme"] == "dark" and m["readingGoalMinutes"] == 45              # from stored
+    assert m["politicalOpenness"] == 100                                      # patch, clamped [0,100]
+    assert len(m["language"]) <= 16                                           # truncated
+    assert m["notifications"]["weeklyDigest"] is False                        # stored (deep-merged)
+    assert m["notifications"]["streakReminders"] is True                      # patch
+    assert m["notifications"]["recommendations"] is True                      # untouched default
+    assert m["privacy"]["personalizedAds"] is True                            # patch
+    assert "bogus" not in m                                                   # unknown key dropped
+    assert set(m) == set(api_server.DEFAULT_SETTINGS)                         # stable shape
+
+    assert api_server.normalize_settings({"theme": "neon"})["theme"] == "system"   # bad enum -> default
+    assert api_server.normalize_settings({"politicalOpenness": "abc"})["politicalOpenness"] == 50  # non-int -> default
+    _assert_json_roundtrips(m)
+
+
+# --------------------------------------------------------------------------- #
 # coach
 # --------------------------------------------------------------------------- #
 def test_coach_greeting_contract(backend, user):

@@ -260,3 +260,18 @@ def test_list_rec_events(store):
     assert opened["shownAt"] and opened["crossCutting"] is True
     unopened = next(e for e in evs if not e["openedAt"])
     assert unopened["shownAt"] and unopened["openedAt"] is None
+
+
+# --------------------------------------------------------------------------- #
+# user settings — preference persistence (kept separate from health state)
+# --------------------------------------------------------------------------- #
+def test_user_settings_roundtrip_and_default(store):
+    u = store.upsert_user_by_identity("google", "set-1")
+    assert store.get_settings(u.id) is None                      # unconfigured -> None (caller defaults)
+    store.save_settings(u.id, {"theme": "dark", "notifications": {"weeklyDigest": False}})
+    got = store.get_settings(u.id)
+    assert got["theme"] == "dark" and got["notifications"]["weeklyDigest"] is False
+    store.save_settings(u.id, {"theme": "light"})                # upsert replaces the stored blob
+    assert store.get_settings(u.id) == {"theme": "light"}
+    # settings live in their own table — saving them never creates report/onboarding state
+    assert store.latest_report(u.id) is None and store.get_onboarding(u.id) is None

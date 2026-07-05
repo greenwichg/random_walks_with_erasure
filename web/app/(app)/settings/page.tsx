@@ -17,7 +17,7 @@ import {
   RotateCcw,
 } from "lucide-react";
 import type { Settings } from "@/types/domain";
-import { useSettings } from "@/hooks/use-data";
+import { useSettings, useUpdateSettings } from "@/hooks/use-data";
 import { PageContainer } from "@/components/layout/page-container";
 import { SectionCard } from "@/components/shared/section-card";
 import { ErrorState } from "@/components/shared/states";
@@ -54,6 +54,7 @@ function strengthLabel(v: number) {
 
 export default function SettingsPage() {
   const { data, isLoading, isError, refetch } = useSettings();
+  const updateSettings = useUpdateSettings();
   const { theme, setTheme } = useTheme();
 
   // Local draft seeded once from the server; theme is applied live via next-themes.
@@ -83,8 +84,14 @@ export default function SettingsPage() {
   }
 
   function save() {
-    // Mock persistence: the real backend would PATCH /settings here.
-    setSaved(true);
+    if (!draft) return;
+    // Persist to the engine; sync the draft to the normalised server result so the form is clean.
+    updateSettings.mutate(draft, {
+      onSuccess: (persisted) => {
+        setDraft(persisted);
+        setSaved(true);
+      },
+    });
   }
   function reset() {
     if (data) setDraft(data);

@@ -369,6 +369,56 @@ class ProfileModel(BaseModel):
     bookmarkCount: int
 
 
+class NotificationPrefsModel(BaseModel):
+    recommendations: bool
+    weeklyDigest: bool
+    streakReminders: bool
+    blindSpotAlerts: bool
+
+
+class PrivacyPrefsModel(BaseModel):
+    shareAnonymizedMetrics: bool
+    personalizedAds: bool
+
+
+class SettingsModel(BaseModel):
+    theme: str
+    language: str
+    politicalOpenness: int
+    recommendationStrength: int
+    readingGoalMinutes: int
+    weeklyReport: bool
+    monthlyReport: bool
+    notifications: NotificationPrefsModel
+    privacy: PrivacyPrefsModel
+
+
+# Update model — every field optional so any client can PATCH a subset; the engine merges it over
+# the stored preferences and returns the full, normalised SettingsModel.
+class NotificationPrefsUpdate(BaseModel):
+    recommendations: bool | None = None
+    weeklyDigest: bool | None = None
+    streakReminders: bool | None = None
+    blindSpotAlerts: bool | None = None
+
+
+class PrivacyPrefsUpdate(BaseModel):
+    shareAnonymizedMetrics: bool | None = None
+    personalizedAds: bool | None = None
+
+
+class SettingsUpdateModel(BaseModel):
+    theme: str | None = None
+    language: str | None = None
+    politicalOpenness: int | None = None
+    recommendationStrength: int | None = None
+    readingGoalMinutes: int | None = None
+    weeklyReport: bool | None = None
+    monthlyReport: bool | None = None
+    notifications: NotificationPrefsUpdate | None = None
+    privacy: PrivacyPrefsUpdate | None = None
+
+
 class ArticleModel(BaseModel):
     # `register` shadows a BaseModel attribute, so hold it under an alias and serialise
     # it back to the wire key "register" (FastAPI responds by_alias).
@@ -804,6 +854,30 @@ def my_profile(request: Request) -> dict:
     user = {"email": u.email, "displayName": u.display_name,
             "createdAt": u.created_at.isoformat() if u.created_at else None}
     return _require_backend().build_profile(user, st.list_reads(uid), st.list_report_snapshots(uid))
+
+
+@app.get("/api/me/settings", response_model=SettingsModel, tags=["meta"],
+         summary="The signed-in user's preferences (server defaults where unset)",
+         responses=_ERR_RESPONSES)
+def get_my_settings(request: Request) -> dict:
+    """The reader's product preferences, with honest server defaults for anything they haven't set.
+    Preferences only — nothing here influences the report or the recommender."""
+    uid = _require_real_user(request)
+    return engine.normalize_settings(_require_store().get_settings(uid))
+
+
+@app.post("/api/me/settings", response_model=SettingsModel, tags=["meta"],
+          summary="Update the signed-in user's preferences (partial patch, merged + persisted)",
+          responses=_ERR_RESPONSES)
+def update_my_settings(request: Request, req: SettingsUpdateModel) -> dict:
+    """Merge a (partial) preferences patch over the user's stored preferences, normalise to the
+    stable contract, persist, and return the full result. Any client may send only the fields it
+    changed. Persists preferences only; wires nothing into health or recommendation behaviour."""
+    uid = _require_real_user(request)
+    st = _require_store()
+    updated = engine.normalize_settings(st.get_settings(uid), req.model_dump(exclude_none=True))
+    st.save_settings(uid, updated)
+    return updated
 
 
 @app.post("/api/me/recommendations/opened", response_model=RecReceptionModel,
