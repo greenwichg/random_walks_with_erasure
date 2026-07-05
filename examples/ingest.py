@@ -53,9 +53,11 @@ _POLITICAL_HINTS = ("politic", "election", "/opinion")
 class RawRead:
     """A reading event as an ingestion source observes it — before scoring.
 
-    ``url`` is required; the rest are hints a source may already know (the extension can read
-    the outlet, section, and whether a page is political off the page itself). Anything left
-    empty / ``None`` is derived by the scorer."""
+    ``url`` is required; the rest are hints a source may already know (the extension reads the
+    outlet, section, headline, and the article's ``og:description`` off the page). ``subtitle`` /
+    ``description`` give the enricher more text than the headline alone (register/emotion spread
+    much better on an abstract); anything left empty / ``None`` is derived by the scorer or
+    degrades gracefully to headline-only."""
 
     url: str
     title: str = ""
@@ -63,6 +65,8 @@ class RawRead:
     category: str = ""
     political: Optional[bool] = None
     read_at: Optional[str] = None
+    subtitle: str = ""          # optional richer text for enrichment (deck / kicker)
+    description: str = ""        # optional richer text for enrichment (og:description / abstract)
 
 
 class Enricher(Protocol):

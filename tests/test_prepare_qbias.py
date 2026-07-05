@@ -217,3 +217,73 @@ def test_backend_consumes_aligned_population_enrichment(tmp_path):
     assert finite.size > 0
     for col in finite[:25]:                                   # population register == baseline
         assert reg[col] == pytest.approx(baseline.register(str(be.mind.titles[col])), abs=1e-4)
+
+
+# --------------------------------------------------------------------------- #
+# Enricher Quality Upgrade: when Qbias carries an article abstract (its `text` column), the
+# population is enriched on headline + abstract — the SAME rich text a read's og:description gives
+# — not the headline alone. This is what spreads Reporting Ratio variance across the population.
+# --------------------------------------------------------------------------- #
+_ABSTRACTS = [
+    "Emergency crews said the data and findings confirm a deadly danger, according to a report.",   # fear
+    "A statement said a survey reported furious backlash as critics condemned the scandal.",        # outrage
+    "Poll results said figures revealed a celebrated historic record win, officials announced.",    # positive
+    "The study finds, according to survey data, a clear breakdown of the numbers by the numbers.",  # analysis
+    "The council released the annual figures in a statement, officials confirmed.",                 # reporting
+    "Here's why we should act — the columnist argues we must, in defense of the plan.",             # opinion
+    "A new poll and survey report shifting views, the study finds, data shows.",                    # reporting
+]
+
+
+def _make_qbias_fixture_with_abstracts(path, n=140):
+    """Same as _make_qbias_fixture but with a `text` column (Qbias's abstract/lede) — the real
+    Qbias schema, which the enricher now folds into the register/emotion text."""
+    fields = ["heading", "text", "source", "bias_rating", "tags"]
+    rows = [{"heading": _HEADLINES[i % len(_HEADLINES)], "text": _ABSTRACTS[i % len(_ABSTRACTS)],
+             "source": _QSOURCES[i % len(_QSOURCES)], "bias_rating": _QBIAS[i % len(_QBIAS)],
+             "tags": "politics"} for i in range(n)]
+    _write_csv(path, rows, fields=fields)
+
+
+def test_enrichment_uses_headline_plus_abstract(tmp_path):
+    """The sidecar enriches combine_text(heading, abstract), not the heading alone — and the abstract
+    shifts register for (almost) every row, which is exactly the variance the milestone needs."""
+    _make_qbias_fixture_with_abstracts(tmp_path / "raw.csv", n=14)
+    rep = pq.prepare(str(tmp_path / "raw.csv"), str(tmp_path / "clean.csv"))
+    assert rep.enriched_articles == 14
+    be = enrich.BaselineEnricher()
+    with open(rep.register_path, newline="", encoding="utf-8") as f:
+        reg = {r["news_id"]: float(r["reporting"]) for r in csv.DictReader(f)}
+    with open(rep.emotion_path, newline="", encoding="utf-8") as f:
+        emo = {r["news_id"]: r for r in csv.DictReader(f)}
+    differs = 0
+    for i in range(14):
+        h = _HEADLINES[i % len(_HEADLINES)]
+        combined = enrich.combine_text(h, _ABSTRACTS[i % len(_ABSTRACTS)])
+        assert reg[f"Q{i}"] == pytest.approx(be.register(combined), abs=1e-4)          # heading+abstract
+        assert float(emo[f"Q{i}"]["fear"]) == pytest.approx(be.emotion(combined)["fear"], abs=1e-4)
+        if abs(be.register(combined) - be.register(h)) > 1e-9:
+            differs += 1
+    assert differs >= 12                                     # abstract changes register for ~all rows
+
+
+def test_backend_loads_richer_sidecar_verbatim(tmp_path):
+    """The engine loads whatever the sidecar holds (now heading+abstract), aligned by Q{i} id —
+    verified against the sidecar file directly, so it stays correct regardless of the text combiner."""
+    import api_server as engine
+    import numpy as np
+    _make_qbias_fixture_with_abstracts(tmp_path / "raw.csv", n=140)
+    rep = pq.prepare(str(tmp_path / "raw.csv"), str(tmp_path / "clean.csv"))
+    with open(rep.register_path, newline="", encoding="utf-8") as f:
+        sidecar = {r["news_id"]: float(r["reporting"]) for r in csv.DictReader(f)}
+    profile = engine.DatasetProfile(name="qbias", kind="synthetic", domain="news",
+                                    n_users=120, max_items=120, seed=0,
+                                    qbias_csv=str(tmp_path / "clean.csv"),
+                                    register_csv=rep.register_path, emotion_csv=rep.emotion_path)
+    be = engine.Backend(profile)
+    ids = np.asarray(be.mind.dataset.item_ids)
+    reg = np.asarray(be.register, dtype=float)
+    finite = np.flatnonzero(np.isfinite(reg))
+    assert finite.size > 0
+    for col in finite[:25]:                                  # engine value == sidecar value at that id
+        assert reg[col] == pytest.approx(sidecar[str(ids[col])], abs=1e-4)

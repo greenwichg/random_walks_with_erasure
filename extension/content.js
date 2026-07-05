@@ -43,10 +43,15 @@
   const canonical = document.querySelector('link[rel="canonical"]');
   const url = (canonical && canonical.href) || location.href;
   const title = (metaContent('meta[property="og:title"]') || document.title || "").trim();
+  // og:description / meta description — a one-line abstract that lets the backend enrich
+  // register + emotion far better than the headline alone. Still standard metadata, no body text.
+  const description = (metaContent('meta[property="og:description"]') ||
+                       metaContent('meta[name="description"]') || "").trim();
 
   chrome.runtime.sendMessage({
     type: "article",
     url,
+    description,
     title,
     observedAt: new Date().toISOString(),
   });

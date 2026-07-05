@@ -63,7 +63,8 @@ async function recordArticle(article) {
 
   try {
     const { ok, status } = await postReads(appUrl, token, [
-      { url: article.url, title: article.title || "", observedAt: article.observedAt },
+      { url: article.url, title: article.title || "", description: article.description || "",
+        observedAt: article.observedAt },
     ]);
     if (ok) {
       cache[normalized] = now;

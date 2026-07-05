@@ -93,6 +93,53 @@ def test_enrichment_is_deterministic():
 
 
 # --------------------------------------------------------------------------- #
+# richer text: enrichment consumes headline + subtitle + description, not headline alone,
+# and degrades gracefully to headline-only. This is the Enricher Quality Upgrade — more text
+# means more lexical signal, which is what spreads register/emotion beyond the flat ~0.6 default.
+# --------------------------------------------------------------------------- #
+def test_combine_text_merges_fields_and_skips_blanks():
+    assert enrich.combine_text("Head", "", "  Desc ") == "Head Desc"
+    assert enrich.combine_text("  ", None, "\t") == ""            # nothing usable -> empty
+    assert enrich.combine_text("Only headline") == "Only headline"
+    assert enrich.combine_text("A", "B", "C") == "A B C"
+
+
+def test_enrich_uses_description_beyond_the_headline():
+    """A neutral headline whose og:description carries fear cues enriches differently than the
+    headline alone — the enricher scores the combined text, one pipeline for reads and population."""
+    be = enrich.BaselineEnricher()
+    scorer = ingest.Scorer(enricher=be)
+    title = "City council meets Tuesday"
+    desc = "Officials warn of a deadly threat as the crisis looms and panic spreads"
+    plain = scorer.score(ingest.RawRead(url="https://cnn.com/x", title=title))
+    rich = scorer.score(ingest.RawRead(url="https://cnn.com/x", title=title, description=desc))
+    assert rich.emotion["fear"] > plain.emotion["fear"]           # the description adds fear signal
+    assert rich.emotion != plain.emotion
+    # identical to enriching combine_text(title, desc) directly — reads flow through one combiner
+    combined = enrich.combine_text(title, desc)
+    assert rich.emotion == be.emotion(combined)
+    assert rich.register == pytest.approx(be.register(combined))
+
+
+def test_enrich_uses_subtitle_field():
+    """The subtitle/deck is folded in between headline and description."""
+    be = enrich.BaselineEnricher()
+    r = ingest.Scorer(enricher=be).score(
+        ingest.RawRead(url="https://cnn.com/x", title="Report", subtitle="celebrates historic record win"))
+    assert r.emotion["positive"] > 0                              # 'celebrates'/'historic'/'win'
+    assert r.emotion == be.emotion(enrich.combine_text("Report", "celebrates historic record win"))
+
+
+def test_enrich_falls_back_to_headline_only():
+    """With no subtitle/description, enrichment is exactly the headline — graceful degradation."""
+    be = enrich.BaselineEnricher()
+    h = "Senator slams rival amid furious backlash"
+    r = ingest.Scorer(enricher=be).score(ingest.RawRead(url="https://cnn.com/x", title=h))
+    assert r.register == pytest.approx(be.register(h))
+    assert r.emotion == be.emotion(h)
+
+
+# --------------------------------------------------------------------------- #
 # caching: an article is enriched once per canonical URL
 # --------------------------------------------------------------------------- #
 def test_cached_article_is_not_re_enriched():

@@ -32,12 +32,15 @@ from typing import Dict, List, Optional, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # sibling examples
 from outlet_registry import OutletRegistry, default_registry
-from enrich import BaselineEnricher, LABELS
+from enrich import BaselineEnricher, LABELS, combine_text
 
 # Qbias's outlet + headline columns, by the same candidate names simulate_users.catalog_from_qbias
 # / validate_qbias look for — so we touch the exact columns the corpus builder will read.
 _OUTLET_COLS = ("source", "outlet", "news_outlet", "publisher", "source_name", "media")
 _HEADLINE_COLS = ("heading", "headline", "title")
+# The article abstract/lede column — enriched *with* the headline so the population gets the same
+# rich text a read's og:description gives, not headline-only.
+_DESCRIPTION_COLS = ("text", "description", "abstract", "body", "snippet", "summary")
 
 csv.field_size_limit(10_000_000)   # Qbias rows carry full article text
 
@@ -120,11 +123,13 @@ def canonicalize_rows(rows, outlet_col: str,
     return out_rows, rep
 
 
-def write_enrichment(rows, headline_col: str, register_path: str, emotion_path: str) -> Tuple[int, float]:
-    """Baseline-enrich each article's headline — the SAME ``BaselineEnricher`` ingested reads use
-    — and write register + emotion sidecars in the exact format ``health_report._load_item_csv``
-    reads, keyed by ``Q{i}`` (``i`` = row order, the id ``catalog_from_qbias`` assigns). So the
-    population and real reads carry identical register/emotion semantics. Rows without a headline
+def write_enrichment(rows, headline_col: str, description_col: Optional[str],
+                     register_path: str, emotion_path: str) -> Tuple[int, float]:
+    """Baseline-enrich each article's **headline + abstract** — the SAME ``BaselineEnricher`` and
+    text combiner ingested reads use (headline + og:description) — and write register + emotion
+    sidecars in the exact format ``health_report._load_item_csv`` reads, keyed by ``Q{i}`` (``i`` =
+    row order, the id ``catalog_from_qbias`` assigns). So the population and real reads carry
+    identical enrichment semantics *and* the richer text that spreads register. Rows with no text
     are omitted (left n/a, as the engine handles missing data). Returns (count, seconds)."""
     be = BaselineEnricher()
     t0 = time.time()
@@ -134,7 +139,8 @@ def write_enrichment(rows, headline_col: str, register_path: str, emotion_path: 
         fr.write("news_id,reporting\n")
         fe.write("news_id," + ",".join(LABELS) + "\n")
         for i, row in enumerate(rows):
-            text = (row.get(headline_col) or "").strip()
+            text = combine_text(row.get(headline_col) or "",
+                                (row.get(description_col) or "") if description_col else "")
             if not text:
                 continue
             emo = be.emotion(text)
@@ -169,11 +175,12 @@ def prepare(in_path: str, out_path: Optional[str] = None, registry: Optional[Out
             headline_col = _pick_column(fieldnames, _HEADLINE_COLS)
             if not headline_col:
                 raise SystemExit(f"no headline column for enrichment (looked for {_HEADLINE_COLS})")
+            description_col = _pick_column(fieldnames, _DESCRIPTION_COLS)   # optional (heading+abstract)
             base = os.path.splitext(out_path)[0]
             report.register_path = register_out or base + ".register.csv"
             report.emotion_path = emotion_out or base + ".emotion.csv"
             report.enriched_articles, report.enrich_seconds = write_enrichment(
-                rows, headline_col, report.register_path, report.emotion_path)
+                rows, headline_col, description_col, report.register_path, report.emotion_path)
     return report
 
 

@@ -389,6 +389,8 @@ class ReadInput(BaseModel):
     category: str | None = None
     political: bool | None = None
     observedAt: str | None = None
+    subtitle: str | None = None       # optional richer text for enrichment
+    description: str | None = None    # optional richer text for enrichment (og:description)
 
 
 class ReadsRequest(BaseModel):
@@ -629,7 +631,8 @@ def add_reads(request: Request, req: ReadsRequest) -> dict:
             continue
         raw = ingest.RawRead(url=url, title=item.title or "", outlet=item.outlet or "",
                              category=item.category or "", political=item.political,
-                             read_at=item.observedAt)
+                             read_at=item.observedAt, subtitle=item.subtitle or "",
+                             description=item.description or "")
         scored = ingest.score_with_cache(raw, scorer, st)
         if st.add_read(uid, scored.article_id, dataclasses.asdict(scored), scored.read_at):
             accepted += 1

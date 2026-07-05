@@ -74,13 +74,24 @@ def _has(text: str, kw: str) -> bool:
     return re.search(r"\b" + re.escape(kw) + r"\b", text) is not None
 
 
+def combine_text(*parts: str) -> str:
+    """Join the available text fields — headline + subtitle + description/abstract — into one
+    string for enrichment. The SAME combiner is used for the reference corpus (headline + article
+    abstract) and for ingested reads (og:title + og:description), so both feed one pipeline; it
+    degrades gracefully to whatever is present (headline-only when nothing else exists). More text
+    means more lexical signal, which is what spreads register/emotion beyond the headline's flat
+    ~0.6 default."""
+    return " ".join(p.strip() for p in parts if isinstance(p, str) and p.strip())
+
+
 class BaselineEnricher:
     """Deterministic, offline register + emotion from the headline. No API key, no network."""
 
     def enrich(self, scored: ScoredRead, raw) -> ScoredRead:
-        text = (getattr(raw, "title", "") or getattr(scored, "title", "") or "").strip()
+        text = combine_text(getattr(raw, "title", "") or getattr(scored, "title", ""),
+                            getattr(raw, "subtitle", ""), getattr(raw, "description", ""))
         if not text:
-            return scored                      # no headline -> leave register/emotion n/a (honest)
+            return scored                      # no text -> leave register/emotion n/a (honest)
         return replace(scored,
                        register=self.register(text, getattr(scored, "category", "")),
                        emotion=self.emotion(text))
@@ -122,7 +133,8 @@ class LLMEnricher:
         self.fallback = fallback or BaselineEnricher()
 
     def enrich(self, scored: ScoredRead, raw) -> ScoredRead:
-        text = (getattr(raw, "title", "") or getattr(scored, "title", "") or "").strip()
+        text = combine_text(getattr(raw, "title", "") or getattr(scored, "title", ""),
+                            getattr(raw, "subtitle", ""), getattr(raw, "description", ""))
         if not text:
             return scored
         try:
