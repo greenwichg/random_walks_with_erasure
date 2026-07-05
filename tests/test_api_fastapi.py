@@ -347,6 +347,52 @@ def test_report_switches_to_measured_after_threshold(client):
     assert me["report"]["mode"] == "measured" and me["report"]["coverage"]["reads"] == 6
 
 
+def test_open_mindedness_completes_the_metric_set(client):
+    """The Open-Mindedness feedback loop over HTTP: a measured reader is 7/8 until they open
+    cross-cutting recommendations through /api/me/recommendations/opened, then 8/8 — the last
+    Information Health metric, populated automatically from recommendation reception."""
+    uid = client.post("/api/internal/users",
+                      json={"provider": "google", "providerAccountId": "route-openmind"}).json()["userId"]
+    # titled, known-outlet, two-sided political reads -> a Measured report with the 7 read-derived
+    # metrics (topic/source/reporting/emotional/echo/viewpoint + confidence), but no Open-Mindedness.
+    reads = [
+        {"url": "https://www.nytimes.com/2026/us/politics/a", "title": "Senate advances the bill, leaders say"},
+        {"url": "https://www.foxnews.com/politics/b", "title": "Outrage as officials slam the deadly crisis"},
+        {"url": "https://www.wsj.com/politics/c", "title": "Opinion: we must act now on the economy"},
+        {"url": "https://www.washingtonpost.com/politics/d", "title": "Analysis: what to know about the vote"},
+        {"url": "https://www.theguardian.com/us-news/politics/e", "title": "Hope as historic deal is celebrated"},
+        {"url": "https://apnews.com/hub/politics/f", "title": "Poll finds shifting views, new data shows"},
+    ]
+    assert client.post("/api/me/reads", json={"reads": reads}, headers=_signed(uid)).json()["sufficient"]
+
+    before = client.get("/api/report", headers=_signed(uid)).json()
+    before_keys = {m["key"] for m in before["metrics"]}
+    assert before["mode"] == "measured"
+    assert "openMindedness" not in before_keys                         # 7/8: no reception yet
+
+    # surfacing recs is a measurable event (records the shown denominator); must not error
+    assert client.get("/api/recommendations", headers=_signed(uid)).status_code == 200
+
+    # open three distinct cross-cutting recommendations -> reception activates the 8th metric
+    last = None
+    for i, aid in enumerate(["cc-a", "cc-b", "cc-c"], start=1):
+        last = client.post("/api/me/recommendations/opened",
+                           json={"articleId": aid, "crossCutting": True}, headers=_signed(uid)).json()
+        assert last["openedCross"] == i and last["shownCross"] == i
+    assert last["active"] is True and last["rate"] == 1.0
+
+    after = client.get("/api/report", headers=_signed(uid)).json()
+    after_keys = {m["key"] for m in after["metrics"]}
+    assert "openMindedness" in after_keys                              # 8/8: the metric appears
+    assert after_keys == before_keys | {"openMindedness"}             # additive: only OM was added
+    # recommendations + coach stay consistent (served, valid) with the metric now present
+    assert client.get("/api/recommendations", headers=_signed(uid)).status_code == 200
+    assert client.get("/api/coach", headers=_signed(uid)).json()[0]["role"] == "assistant"
+
+    # the open endpoint requires a signed-in user (same trust boundary as the other /api/me routes)
+    assert client.post("/api/me/recommendations/opened", json={"articleId": "x"}).status_code == 401
+
+
 def test_anonymous_report_is_unchanged_by_routing(client):
     """The anonymous / ?user= path is untouched: same demo reader, same measured contract."""
     anon = client.get("/api/report").json()

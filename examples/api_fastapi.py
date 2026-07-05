@@ -406,6 +406,21 @@ class IngestResultModel(BaseModel):
     sufficient: bool
 
 
+class RecOpenRequest(BaseModel):
+    # the recommended article the reader opened; crossCutting is the rec's own flag (the web tier
+    # forwards it from the rec payload) used only if the surfacing wasn't recorded first.
+    articleId: str
+    crossCutting: bool | None = None
+
+
+class RecReceptionModel(BaseModel):
+    shownCross: int
+    openedCross: int
+    rate: float | None = None
+    threshold: int          # cross-cutting recs that must be surfaced before Open-Mindedness activates
+    active: bool            # whether the reader now has enough reception for Open-Mindedness
+
+
 class CreateTokenRequest(BaseModel):
     label: str | None = None
 
@@ -644,6 +659,27 @@ def add_reads(request: Request, req: ReadsRequest) -> dict:
             "sufficient": total >= engine.ESTIMATE_MIN_READS}
 
 
+@app.post("/api/me/recommendations/opened", response_model=RecReceptionModel,
+          tags=["recommendations"],
+          summary="Record that the signed-in user opened a recommended article",
+          responses=_ERR_RESPONSES)
+def open_recommendation(request: Request, req: RecOpenRequest) -> dict:
+    """Record the *reception* of a recommendation the engine already produced: the reader opened it.
+    A cross-cutting open is the real-user analogue of the population's cross-cutting click-through,
+    so once enough have been surfaced and opened, **Open-Mindedness** populates automatically on the
+    Measured report. This reuses the existing recommendation pipeline (no new recommender) and the
+    same trust boundary as the other ``/api/me`` endpoints; the cached measured model is invalidated
+    so the next report reflects the new reception."""
+    uid = _require_real_user(request)
+    st = _require_store()
+    st.record_recommendation_open(uid, req.articleId, cross_cutting=req.crossCutting)
+    p = _require_personalizer()
+    p.invalidate(uid)                       # next /api/report rebuilds with the new reception
+    om = p.openmindedness(uid)
+    return {"shownCross": om["shownCross"], "openedCross": om["openedCross"],
+            "rate": om["rate"], "threshold": om["minShown"], "active": om["active"]}
+
+
 @app.post("/api/me/tokens", response_model=TokenMintModel, tags=["meta"],
           summary="Mint a per-user API token (browser extension)", responses=_ERR_RESPONSES)
 def create_my_token(request: Request, req: CreateTokenRequest) -> dict:
@@ -679,9 +715,19 @@ def recommendations(
     strategy: str | None = Query(None, description="rwe-b | rwe-d | adaptive; omit for a blended feed"),
 ) -> list:
     kind, val = _serve(request, user)
-    if kind == "personal":
-        return _require_personalizer().recommendations(val, strategy)
-    return _require_backend().recommendations(val, strategy)
+    recs = (_require_personalizer().recommendations(val, strategy) if kind == "personal"
+            else _require_backend().recommendations(val, strategy))
+    # A recommendation the engine surfaced to a signed-in reader becomes a measurable event: record
+    # which (cross-cutting) recs were shown — the denominator for Open-Mindedness. Best-effort; a
+    # recording failure must never fail the recommendations response. No new recommender is created.
+    uid = _real_uid(request)
+    if uid is not None and state.store is not None:
+        try:
+            state.store.record_recommendations_shown(
+                uid, ((r["article"]["id"], r["crossCutting"]) for r in recs))
+        except Exception:
+            _log(logging.WARNING, "rec_shown_record_failed", userId=uid)
+    return recs
 
 
 @app.get("/api/coach", response_model=list[CoachMessageModel], response_model_exclude_none=True,

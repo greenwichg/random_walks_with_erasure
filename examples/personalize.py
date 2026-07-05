@@ -33,9 +33,10 @@ reads into the existing engine and reuses the Backend's serialisers. The researc
 
 from __future__ import annotations
 
+import os
 import threading
 from dataclasses import dataclass, fields as _dc_fields
-from typing import Dict
+from typing import Dict, Tuple
 
 import numpy as np
 
@@ -61,9 +62,14 @@ class PersonalModel:
     Holds the augmented corpus in the Backend serialiser's shape (:class:`api_server._Corpus`),
     the matrix row of the appended real reader, and the augmented RWE recommender stack —
     everything the corpus-parametric serialisers need to render this user's Measured report,
-    recommendations, and coach."""
+    recommendations, and coach.
+
+    Cached by ``(reading_version, reception_version)``: a new read changes the reading version, and
+    opening/surfacing more cross-cutting recommendations changes the reception version — either one
+    rebuilds, so Open-Mindedness reflects the latest recommendation reception."""
 
     reading_version: int
+    reception_version: Tuple[int, int]
     corpus: "engine._Corpus"
     reader_row: int
     rec: "engine._Recommenders"
@@ -85,6 +91,11 @@ class Personalizer:
         self._persist = persist
         self._cache: Dict[int, PersonalModel] = {}
         self._lock = threading.Lock()
+        # Open-Mindedness activates once the reader has been surfaced enough cross-cutting
+        # recommendations AND opened at least one — below that it stays an honest n/a (7/8), so a
+        # single stray click can't fabricate the metric. Release-pinned, tunable via env.
+        self._openmind_min_shown = max(1, int(os.environ.get("RWE_OPENMIND_MIN_SHOWN", "3")))
+        self._openmind_min_opened = max(1, int(os.environ.get("RWE_OPENMIND_MIN_OPENED", "1")))
 
     # -- threshold gate ----------------------------------------------------
     def has_measured(self, user_id: int) -> bool:
@@ -94,11 +105,44 @@ class Personalizer:
         from the augmented corpus; below it, the Initial Estimate (or demo)."""
         return self.store.count_reads(user_id) >= self.threshold
 
+    # -- Open-Mindedness feedback loop ------------------------------------
+    def _reception_key(self, user_id: int) -> Tuple[int, int]:
+        """Cache key for the user's recommendation reception. ``(0, 0)`` until Open-Mindedness is
+        active (enough cross-cutting recs surfaced *and* opened), so merely surfacing recs doesn't
+        churn the cache; once active it tracks ``(shown, opened)`` so opening more rebuilds."""
+        r = self.store.recommendation_reception(user_id)
+        if (r["openedCross"] >= self._openmind_min_opened
+                and r["shownCross"] >= self._openmind_min_shown):
+            return (int(r["shownCross"]), int(r["openedCross"]))
+        return (0, 0)
+
+    def _augmented_selective(self, user_id: int, reader_row: int):
+        """The population's cross-cutting selective-exposure array with the real reader's measured
+        recommendation reception appended at ``reader_row`` — fed to the unchanged
+        ``health_report.compute(selective=...)`` so Open-Mindedness ranks the reader against the
+        same distribution as everyone else. Returns ``None`` (Open-Mindedness stays n/a, unchanged)
+        when the base corpus carries no selective signal or the reader isn't active yet."""
+        base = getattr(self.backend, "selective", None)
+        if base is None:
+            return None
+        r = self.store.recommendation_reception(user_id)
+        active = (r["openedCross"] >= self._openmind_min_opened
+                  and r["shownCross"] >= self._openmind_min_shown)
+        if not active:
+            return None                     # honest n/a until enough cross-cutting reception
+        base = np.asarray(base, dtype=float)
+        aug = np.full(reader_row + 1, np.nan)
+        n = min(base.size, reader_row)
+        aug[:n] = base[:n]
+        aug[reader_row] = float(r["rate"])
+        return aug
+
     # -- model build + cache ----------------------------------------------
-    def _build_model(self, user_id: int, reading_version: int) -> PersonalModel:
+    def _build_model(self, user_id: int, reading_version: int,
+                     reception_version: Tuple[int, int]) -> PersonalModel:
         """Reconstruct the user's reads, augment the reference corpus, recompute the population
         with the unchanged engine, and build the augmented recommender stack. Expensive; called
-        once per ``reading_version`` via :meth:`_model`."""
+        once per ``(reading_version, reception_version)`` via :meth:`_model`."""
         reads = [_scored_read_from_row(r) for r in self.store.get_reads(user_id)]
         if not reads:
             raise ValueError("cannot build a measured model without stored reads")
@@ -107,19 +151,21 @@ class Personalizer:
         aug = ac.augment(base, reads, user_id=f"__real_user_{user_id}__")
         b = aug.bundle
 
-        # UNCHANGED engine over the augmented population. source=None keeps the outlet source
-        # axis (news); selective=None omits Open-Mindedness — it needs measured cross-cutting
-        # reception the real user hasn't provided yet, so it is an honest n/a (as in the estimate).
+        # UNCHANGED engine over the augmented population. source=None keeps the outlet source axis
+        # (news). ``selective`` carries the reader's measured cross-cutting recommendation reception
+        # (else None), so Open-Mindedness populates once they've engaged with cross-cutting recs and
+        # stays an honest n/a before then — the same array shape the population already uses.
         source = None if self.backend.domain == "news" else np.asarray(b.mind.titles)
+        selective = self._augmented_selective(user_id, aug.reader_row)
         pop = hr.compute(b.mind, register=b.register, emotion=b.emotion,
-                         confidence=b.confidence, source=source)
+                         confidence=b.confidence, source=source, selective=selective)
 
         corpus = engine._Corpus(mind=b.mind, pop=pop, register=b.register, emotion=b.emotion,
                                 confidence=b.confidence,
                                 outlet_lean=self.backend._build_outlet_lean(b.mind))
         rec = self.backend._build_recommenders(b.mind)            # neutral exposure (no probe)
-        model = PersonalModel(reading_version=reading_version, corpus=corpus,
-                              reader_row=aug.reader_row, rec=rec)
+        model = PersonalModel(reading_version=reading_version, reception_version=reception_version,
+                              corpus=corpus, reader_row=aug.reader_row, rec=rec)
 
         if self._persist:
             # Persist the Measured snapshot once per version so /api/me reflects the latest
@@ -133,21 +179,36 @@ class Personalizer:
         return model
 
     def _model(self, user_id: int) -> PersonalModel:
-        """The user's cached augmented model, rebuilt when their reading_version changed."""
+        """The user's cached augmented model, rebuilt when their reads *or* their cross-cutting
+        recommendation reception changed (either shifts the version, so the Measured report and
+        Open-Mindedness stay current)."""
         version = self.store.count_reads(user_id)
+        reception = self._reception_key(user_id)
         with self._lock:
             cached = self._cache.get(user_id)
-            if cached is not None and cached.reading_version == version:
+            if (cached is not None and cached.reading_version == version
+                    and cached.reception_version == reception):
                 return cached
-            model = self._build_model(user_id, version)
+            model = self._build_model(user_id, version, reception)
             self._cache[user_id] = model      # keep only the latest version per user (bounded)
             return model
 
     def invalidate(self, user_id: int) -> None:
-        """Drop a user's cached model (e.g. on new reads). Optional — :meth:`_model` already
-        rebuilds when the reading_version changes; this just frees the entry eagerly."""
+        """Drop a user's cached model (e.g. on new reads or recommendation opens). Optional —
+        :meth:`_model` already rebuilds when the reading or reception version changes; this just
+        frees the entry eagerly."""
         with self._lock:
             self._cache.pop(user_id, None)
+
+    def openmindedness(self, user_id: int) -> dict:
+        """The user's cross-cutting recommendation reception plus whether it's now enough for
+        Open-Mindedness to populate on their Measured report — the exact gate :meth:`_build_model`
+        uses. Lets the API report reception progress without duplicating the threshold logic."""
+        r = self.store.recommendation_reception(user_id)
+        active = (r["openedCross"] >= self._openmind_min_opened
+                  and r["shownCross"] >= self._openmind_min_shown)
+        return {**r, "minShown": self._openmind_min_shown,
+                "minOpened": self._openmind_min_opened, "active": active}
 
     # -- served payloads — reuse the Backend's corpus-parametric serialisers --
     def report(self, user_id: int) -> dict:

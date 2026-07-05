@@ -168,6 +168,27 @@ class ApiToken(Base):
     last_used_at: Mapped[Optional[datetime]] = mapped_column(default=None)
 
 
+class RecEvent(Base):
+    """A recommendation the engine surfaced to a user, and whether they opened it — the behavioral
+    signal behind **Open-Mindedness**. One row per ``(user_id, article_id)``: surfacing the same
+    recommendation again is idempotent (updates ``shown_at``, never clears ``opened_at``); opening
+    it stamps ``opened_at``. ``cross_cutting`` marks a recommendation that bridges the reader across
+    the centre — the reads whose *reception* (opened / surfaced) is the real-user analogue of the
+    population's cross-cutting click-through. No recommendation is generated here; this only records
+    the reception of recs the existing engine already produced."""
+
+    __tablename__ = "rec_events"
+    __table_args__ = (UniqueConstraint("user_id", "article_id", name="uq_recevent_user_article"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    article_id: Mapped[str] = mapped_column(String(2048))
+    cross_cutting: Mapped[bool] = mapped_column(default=False)
+    shown_at: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+    opened_at: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+    created_at: Mapped[datetime] = mapped_column(default=_utcnow)
+
+
 class Store:
     """A durable store bound to one database URL.
 
@@ -307,6 +328,65 @@ class Store:
         with self.session() as s:
             return int(s.scalar(select(func.count()).select_from(Read)
                                 .where(Read.user_id == user_id)) or 0)
+
+    # -- recommendation reception (the Open-Mindedness feedback loop) ----
+    def record_recommendations_shown(self, user_id: int, items, shown_at: "str | None" = None) -> int:
+        """Record that recommendations were *surfaced* to a user — the denominator for
+        Open-Mindedness. ``items`` is an iterable of ``(article_id, cross_cutting)`` from the recs
+        the engine already produced. Idempotent per ``(user, article)``: a re-surfaced rec refreshes
+        ``shown_at`` and never clears ``opened_at``. Returns how many rows were newly created."""
+        stamp = shown_at or _utcnow().isoformat()
+        new = 0
+        with self.session() as s:
+            for article_id, cross in items:
+                aid = str(article_id)
+                row = s.scalar(select(RecEvent).where(RecEvent.user_id == user_id,
+                                                      RecEvent.article_id == aid))
+                if row is None:
+                    s.add(RecEvent(user_id=user_id, article_id=aid,
+                                   cross_cutting=bool(cross), shown_at=stamp))
+                    new += 1
+                else:
+                    row.shown_at = stamp
+                    if cross:                       # only ever upgrade to cross-cutting, never down
+                        row.cross_cutting = True
+        return new
+
+    def record_recommendation_open(self, user_id: int, article_id: str,
+                                   cross_cutting: "bool | None" = None,
+                                   opened_at: "str | None" = None) -> bool:
+        """Record that a user *opened* a recommended article — the numerator. Idempotent: opening
+        the same rec twice is a no-op after the first. If the open arrives before the surfacing was
+        recorded (a race, or a direct open), the row is created using the caller's ``cross_cutting``
+        hint. Returns ``True`` when this open is newly recorded."""
+        stamp = opened_at or _utcnow().isoformat()
+        aid = str(article_id)
+        with self.session() as s:
+            row = s.scalar(select(RecEvent).where(RecEvent.user_id == user_id,
+                                                  RecEvent.article_id == aid))
+            if row is None:
+                s.add(RecEvent(user_id=user_id, article_id=aid,
+                               cross_cutting=bool(cross_cutting), shown_at=stamp, opened_at=stamp))
+                return True
+            if cross_cutting:
+                row.cross_cutting = True
+            if row.opened_at is not None:
+                return False
+            row.opened_at = stamp
+            return True
+
+    def recommendation_reception(self, user_id: int) -> dict:
+        """A user's **cross-cutting recommendation reception**: how many cross-cutting recs were
+        surfaced (``shownCross``) and how many they opened (``openedCross``). ``rate`` =
+        openedCross / shownCross is the real-user analogue of the population's cross-cutting
+        click-through that Open-Mindedness ranks; ``None`` when none have been surfaced."""
+        with self.session() as s:
+            rows = s.scalars(select(RecEvent).where(RecEvent.user_id == user_id,
+                                                    RecEvent.cross_cutting.is_(True))).all()
+        shown = len(rows)
+        opened = sum(1 for r in rows if r.opened_at is not None)
+        return {"shownCross": shown, "openedCross": opened,
+                "rate": (opened / shown) if shown else None}
 
     # -- per-user API tokens (browser extension / non-browser clients) --
     _TOKEN_PREFIX = "ih_"

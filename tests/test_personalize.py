@@ -177,6 +177,87 @@ def test_persist_writes_measured_snapshot(backend, store):
 
 
 # --------------------------------------------------------------------------- #
+# Open-Mindedness feedback loop: cross-cutting recommendation reception -> the 8th metric.
+# --------------------------------------------------------------------------- #
+def _om(rep):
+    return next((m["score"] for m in rep["metrics"] if m["key"] == "openMindedness"), None)
+
+
+def _surface_and_open(store, p, uid, n_open):
+    """Surface the augmented recs to the user (records the shown denominator) and open the first
+    ``n_open`` cross-cutting ones. Returns the cross-cutting rec ids."""
+    recs = p.recommendations(uid)
+    store.record_recommendations_shown(uid, [(r["article"]["id"], r["crossCutting"]) for r in recs])
+    cross = [r["article"]["id"] for r in recs if r["crossCutting"]]
+    assert len(cross) >= p._openmind_min_shown, "fixture must surface enough cross-cutting recs"
+    for aid in cross[:n_open]:
+        store.record_recommendation_open(uid, aid, cross_cutting=True)
+    return cross
+
+
+def test_open_mindedness_populates_after_reception(backend, store):
+    """A measured reader is 7/8 until they open cross-cutting recommendations; opening one adds
+    Open-Mindedness (8/8), and opening more only raises it — the whole point of the milestone."""
+    p = personalize.Personalizer(backend, store, persist=False)
+    uid = _new_user(store, "om-1")
+    _store_reads(store, uid, _catalog_reads(backend, n=8))
+
+    rep0 = p.report(uid)
+    keys0 = {m["key"] for m in rep0["metrics"]}
+    assert _om(rep0) is None and "openMindedness" not in keys0     # 7/8: no reception yet
+
+    cross = _surface_and_open(store, p, uid, n_open=1)
+    rep1 = p.report(uid)                                            # rebuilds on reception change
+    assert _om(rep1) is not None                                   # 8/8: Open-Mindedness populated
+    assert {m["key"] for m in rep1["metrics"]} == keys0 | {"openMindedness"}
+    assert json.loads(json.dumps(rep1)) == rep1                    # still valid JSON, no NaN leak
+
+    for aid in cross[1:]:                                          # open the rest
+        store.record_recommendation_open(uid, aid, cross_cutting=True)
+    rep2 = p.report(uid)
+    assert _om(rep2) >= _om(rep1)                                  # more reception -> not lower
+
+
+def test_open_mindedness_stays_na_when_only_surfaced(backend, store):
+    """Surfacing cross-cutting recs is not enough — Open-Mindedness needs the reader to actually
+    open one (an *interaction*), else it stays an honest n/a (7/8)."""
+    p = personalize.Personalizer(backend, store, persist=False)
+    uid = _new_user(store, "om-surface-only")
+    _store_reads(store, uid, _catalog_reads(backend, n=8))
+    recs = p.recommendations(uid)
+    store.record_recommendations_shown(uid, [(r["article"]["id"], r["crossCutting"]) for r in recs])
+    assert _om(p.report(uid)) is None                             # shown but never opened
+
+
+def test_model_rebuilds_on_reception_change(backend, store):
+    """Opening a recommendation changes the reception version, so the cached model rebuilds even
+    though the read count is unchanged (Open-Mindedness must reflect new reception)."""
+    p = personalize.Personalizer(backend, store, persist=False)
+    uid = _new_user(store, "om-cache")
+    _store_reads(store, uid, _catalog_reads(backend, n=6))
+    m1 = p._model(uid)
+    _surface_and_open(store, p, uid, n_open=1)
+    m2 = p._model(uid)
+    assert m2 is not m1                                           # reception change rebuilt it
+    assert m2.reading_version == m1.reading_version              # reads unchanged
+    assert m2.reception_version != m1.reception_version
+
+
+def test_reception_does_not_perturb_base_or_estimate(backend, store):
+    """The feedback loop only adds the reader's own Open-Mindedness — the shared base/demo report
+    (built with the population's own selective signal) is untouched by a real user's reception."""
+    before = backend.report(backend.demo_user)
+    p = personalize.Personalizer(backend, store, persist=False)
+    uid = _new_user(store, "om-isolation")
+    _store_reads(store, uid, _catalog_reads(backend, n=8))
+    _surface_and_open(store, p, uid, n_open=2)
+    p.report(uid)
+    after = backend.report(backend.demo_user)
+    before.pop("updatedAt"); after.pop("updatedAt")
+    assert before == after
+
+
+# --------------------------------------------------------------------------- #
 # read reconstruction (the B4 ScoredRead interface, round-tripped through the store)
 # --------------------------------------------------------------------------- #
 def test_scored_read_reconstruction_roundtrips():

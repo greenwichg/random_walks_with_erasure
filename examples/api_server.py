@@ -299,6 +299,10 @@ class Backend:
 
         self.register = register
         self.emotion = emotion
+        # Base per-user cross-cutting selective-exposure array (behavioural agency signal). Kept so
+        # personalize.py can rank a real user's measured recommendation reception against the SAME
+        # population distribution — the seam that lets Open-Mindedness populate for a real reader.
+        self.selective = selective
         self.pop = hr.compute(self.mind, source=src, register=register, emotion=emotion,
                               selective=selective, confidence=confidence)
         self.eligible = hr._eligible_pool(self.pop, 5, min_political=3)

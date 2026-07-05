@@ -140,3 +140,56 @@ def test_api_token_stored_only_as_hash(store):
                        .where(store_mod.ApiToken.user_id == u.id))
         assert row.token_hash == store_mod.Store._hash_token(token)
         assert token not in row.token_hash and len(row.token_hash) == 64
+
+
+# --------------------------------------------------------------------------- #
+# recommendation reception — the Open-Mindedness feedback loop
+# --------------------------------------------------------------------------- #
+def test_recommendation_reception_counts_cross_cutting_opens(store):
+    u = store.upsert_user_by_identity("google", "rec-1")
+    # surface 3 cross-cutting recs + 1 non-cross-cutting (only cross-cutting count for the metric)
+    store.record_recommendations_shown(u.id, [("a", True), ("b", True), ("c", True), ("d", False)])
+    r = store.recommendation_reception(u.id)
+    assert r == {"shownCross": 3, "openedCross": 0, "rate": 0.0}
+    # opening two cross-cutting recs raises the reception rate
+    assert store.record_recommendation_open(u.id, "a") is True
+    assert store.record_recommendation_open(u.id, "b") is True
+    r = store.recommendation_reception(u.id)
+    assert r["shownCross"] == 3 and r["openedCross"] == 2 and r["rate"] == pytest.approx(2 / 3)
+    # a non-cross-cutting open never affects the cross-cutting reception
+    store.record_recommendation_open(u.id, "d")
+    assert store.recommendation_reception(u.id)["shownCross"] == 3
+
+
+def test_recommendation_open_is_idempotent(store):
+    u = store.upsert_user_by_identity("google", "rec-2")
+    store.record_recommendations_shown(u.id, [("x", True)])
+    assert store.record_recommendation_open(u.id, "x") is True    # first open counts
+    assert store.record_recommendation_open(u.id, "x") is False   # re-open is a no-op
+    assert store.recommendation_reception(u.id)["openedCross"] == 1
+
+
+def test_reshowing_recs_is_idempotent_and_keeps_open(store):
+    u = store.upsert_user_by_identity("google", "rec-3")
+    store.record_recommendations_shown(u.id, [("a", True), ("b", True)])
+    store.record_recommendation_open(u.id, "a")
+    # re-surfacing the same recs must not create duplicates nor clear the recorded open
+    new = store.record_recommendations_shown(u.id, [("a", True), ("b", True)])
+    assert new == 0
+    r = store.recommendation_reception(u.id)
+    assert r["shownCross"] == 2 and r["openedCross"] == 1
+
+
+def test_open_before_shown_creates_row(store):
+    """An open that arrives before the surfacing was recorded (a race) still counts, using the
+    caller's cross_cutting hint."""
+    u = store.upsert_user_by_identity("google", "rec-4")
+    assert store.record_recommendation_open(u.id, "z", cross_cutting=True) is True
+    r = store.recommendation_reception(u.id)
+    assert r["shownCross"] == 1 and r["openedCross"] == 1
+    assert store.recommendation_reception(u.id)["rate"] == pytest.approx(1.0)
+
+
+def test_reception_empty_for_new_user(store):
+    u = store.upsert_user_by_identity("google", "rec-5")
+    assert store.recommendation_reception(u.id) == {"shownCross": 0, "openedCross": 0, "rate": None}
