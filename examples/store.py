@@ -23,8 +23,10 @@ change to that URL, not to this code.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import secrets
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -146,6 +148,24 @@ class Read(Base):
     scored: Mapped[str] = mapped_column(Text)           # JSON of the ScoredRead
     observed_at: Mapped[Optional[str]] = mapped_column(String(64), default=None)
     created_at: Mapped[datetime] = mapped_column(default=_utcnow)
+
+
+class ApiToken(Base):
+    """A per-user API token for non-browser clients (the browser extension; RSS later).
+
+    Only the SHA-256 **hash** of the token is stored, so a database leak never yields a usable
+    token. Each token is bound to one user and, when presented, resolves to that user's engine
+    id so their reads flow through the *same* ingestion pipeline as the web app — the token is
+    an authentication credential only, never a second code path. Revoking is deleting the row."""
+
+    __tablename__ = "api_tokens"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    label: Mapped[Optional[str]] = mapped_column(String(100), default=None)
+    created_at: Mapped[datetime] = mapped_column(default=_utcnow)
+    last_used_at: Mapped[Optional[datetime]] = mapped_column(default=None)
 
 
 class Store:
@@ -287,6 +307,60 @@ class Store:
         with self.session() as s:
             return int(s.scalar(select(func.count()).select_from(Read)
                                 .where(Read.user_id == user_id)) or 0)
+
+    # -- per-user API tokens (browser extension / non-browser clients) --
+    _TOKEN_PREFIX = "ih_"
+
+    @staticmethod
+    def _hash_token(token: str) -> str:
+        """SHA-256 hex of a token — what we store and look up (never the plaintext)."""
+        return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+    def create_token(self, user_id: int, label: "str | None" = None) -> "tuple[str, dict]":
+        """Mint a token for a user: store only its hash, return the **plaintext once** plus the
+        row metadata (id / label / createdAt). The plaintext is unrecoverable afterwards."""
+        token = self._TOKEN_PREFIX + secrets.token_urlsafe(32)
+        with self.session() as s:
+            row = ApiToken(token_hash=self._hash_token(token), user_id=user_id, label=label)
+            s.add(row)
+            s.flush()
+            meta = {"id": row.id, "label": row.label,
+                    "createdAt": row.created_at.isoformat() if row.created_at else None,
+                    "lastUsedAt": None}
+        return token, meta
+
+    def resolve_token(self, token: str) -> "int | None":
+        """The engine user id a token authorises, or ``None`` if unknown. Touches last_used_at.
+
+        Look-up is by the token's hash, so the stored value is never the secret itself."""
+        if not token:
+            return None
+        h = self._hash_token(token)
+        with self.session() as s:
+            row = s.scalar(select(ApiToken).where(ApiToken.token_hash == h))
+            if row is None:
+                return None
+            row.last_used_at = _utcnow()
+            return int(row.user_id)
+
+    def list_tokens(self, user_id: int) -> list:
+        """A user's tokens (metadata only — never the plaintext or hash), oldest first."""
+        with self.session() as s:
+            rows = s.scalars(select(ApiToken).where(ApiToken.user_id == user_id)
+                             .order_by(ApiToken.id)).all()
+            return [{"id": r.id, "label": r.label,
+                     "createdAt": r.created_at.isoformat() if r.created_at else None,
+                     "lastUsedAt": r.last_used_at.isoformat() if r.last_used_at else None}
+                    for r in rows]
+
+    def revoke_token(self, user_id: int, token_id: int) -> bool:
+        """Delete a user's token; return ``True`` if it existed and belonged to them."""
+        with self.session() as s:
+            row = s.get(ApiToken, token_id)
+            if row is None or row.user_id != user_id:
+                return False
+            s.delete(row)
+            return True
 
 
 def _make_engine(url: str):

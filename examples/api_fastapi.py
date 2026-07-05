@@ -403,6 +403,33 @@ class IngestResultModel(BaseModel):
     sufficient: bool
 
 
+class CreateTokenRequest(BaseModel):
+    label: str | None = None
+
+
+class TokenMintModel(BaseModel):
+    # the plaintext token is returned exactly once, at creation
+    id: int
+    token: str
+    label: str | None = None
+    createdAt: str | None = None
+
+
+class TokenModel(BaseModel):
+    id: int
+    label: str | None = None
+    createdAt: str | None = None
+    lastUsedAt: str | None = None
+
+
+class ResolveTokenRequest(BaseModel):
+    token: str
+
+
+class ResolveTokenModel(BaseModel):
+    userId: int
+
+
 def _require_backend() -> "engine.Backend":
     if state.backend is None:
         raise HTTPException(status_code=503, detail="The engine is still starting up.")
@@ -613,6 +640,32 @@ def add_reads(request: Request, req: ReadsRequest) -> dict:
             "sufficient": total >= engine.ESTIMATE_MIN_READS}
 
 
+@app.post("/api/me/tokens", response_model=TokenMintModel, tags=["meta"],
+          summary="Mint a per-user API token (browser extension)", responses=_ERR_RESPONSES)
+def create_my_token(request: Request, req: CreateTokenRequest) -> dict:
+    """Create a personal token the browser extension sends to attribute reads to this user.
+    The plaintext is returned **once** here (only its hash is stored); show it to the user to
+    copy into the extension. Same trust boundary as the other /api/me endpoints."""
+    uid = _require_real_user(request)
+    token, meta = _require_store().create_token(uid, label=req.label)
+    return {"id": meta["id"], "token": token, "label": meta["label"], "createdAt": meta["createdAt"]}
+
+
+@app.get("/api/me/tokens", response_model=list[TokenModel], tags=["meta"],
+         summary="List the signed-in user's API tokens (metadata only)", responses=_ERR_RESPONSES)
+def list_my_tokens(request: Request) -> list:
+    return _require_store().list_tokens(_require_real_user(request))
+
+
+@app.delete("/api/me/tokens/{token_id}", tags=["meta"],
+            summary="Revoke one of the signed-in user's API tokens", responses=_ERR_RESPONSES)
+def revoke_my_token(request: Request, token_id: int) -> dict:
+    uid = _require_real_user(request)
+    if not _require_store().revoke_token(uid, token_id):
+        raise HTTPException(status_code=404, detail="No such token.")
+    return {"ok": True}
+
+
 @app.get("/api/recommendations", response_model=list[RecommendationModel],
          response_model_exclude_none=True, tags=["recommendations"],
          summary="RWE recommendations (blended, or a single strategy)", responses=_ERR_RESPONSES)
@@ -665,6 +718,21 @@ def read_user(request: Request, user_id: int) -> dict:
     if u is None:
         raise HTTPException(status_code=404, detail="No such user.")
     return {"userId": u.id, "email": u.email, "displayName": u.display_name}
+
+
+@app.post("/api/internal/resolve-token", response_model=ResolveTokenModel, tags=["meta"],
+          summary="Exchange a per-user API token for its engine user id (server-to-server)",
+          responses=_ERR_RESPONSES)
+def resolve_token(request: Request, req: ResolveTokenRequest) -> dict:
+    """The web tier calls this to attribute an extension's reads to the right user: it presents
+    the token, gets back the engine user id, then forwards the read on the *existing*
+    /api/me/reads path with the internal secret. Keeps the token out of the engine's public
+    surface and reuses the one ingestion pipeline. Requires the internal secret when configured."""
+    _require_trusted(request)
+    uid = _require_store().resolve_token(req.token)
+    if uid is None:
+        raise HTTPException(status_code=401, detail="Invalid or unknown token.")
+    return {"userId": uid}
 
 
 def main() -> None:

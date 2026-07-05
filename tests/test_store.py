@@ -107,3 +107,36 @@ def test_reads_idempotent_and_counted(store):
     assert store.count_reads(u.id) == 2
     reads = store.get_reads(u.id)
     assert len(reads) == 2 and reads[0]["outlet"] == "x.com"
+
+
+def test_api_token_mint_resolve_and_revoke(store):
+    u = store.upsert_user_by_identity("google", "tok-1")
+    token, meta = store.create_token(u.id, label="extension")
+    assert token.startswith("ih_") and len(token) > 20
+    assert meta["id"] is not None and meta["label"] == "extension" and meta["createdAt"]
+    # the token resolves to its user; a bogus / empty token does not
+    assert store.resolve_token(token) == u.id
+    assert store.resolve_token("ih_not-a-real-token") is None
+    assert store.resolve_token("") is None
+    # listed metadata never includes the plaintext or the hash; last-used is now populated
+    listed = store.list_tokens(u.id)
+    assert len(listed) == 1 and listed[0]["id"] == meta["id"]
+    assert set(listed[0]) == {"id", "label", "createdAt", "lastUsedAt"}
+    assert listed[0]["lastUsedAt"] is not None                 # resolve() touched it
+    # revoked tokens stop resolving; revoking someone else's token fails
+    other = store.upsert_user_by_identity("google", "tok-2")
+    assert store.revoke_token(other.id, meta["id"]) is False
+    assert store.revoke_token(u.id, meta["id"]) is True
+    assert store.resolve_token(token) is None
+    assert store.list_tokens(u.id) == []
+
+
+def test_api_token_stored_only_as_hash(store):
+    """A DB leak must never reveal a usable token — only its SHA-256 hash is persisted."""
+    u = store.upsert_user_by_identity("google", "tok-hash")
+    token, _ = store.create_token(u.id)
+    with store.session() as s:
+        row = s.scalar(store_mod.select(store_mod.ApiToken)
+                       .where(store_mod.ApiToken.user_id == u.id))
+        assert row.token_hash == store_mod.Store._hash_token(token)
+        assert token not in row.token_hash and len(row.token_hash) == 64

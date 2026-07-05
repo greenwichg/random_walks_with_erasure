@@ -352,3 +352,72 @@ def test_anonymous_report_is_unchanged_by_routing(client):
     anon = client.get("/api/report").json()
     assert anon["mode"] == "measured" and anon["coverage"]["sufficient"] is True
     assert client.get("/api/report", params={"user": "0"}).status_code == 200
+
+
+# --------------------------------------------------------------------------- #
+# Per-user API tokens (Milestone C3): mint (auth'd) -> resolve (internal) -> revoke.
+# The extension will send the token to the web tier, which resolves it here and forwards
+# the read on the existing /api/me/reads path — no new ingestion pathway on the engine.
+# --------------------------------------------------------------------------- #
+def test_api_tokens_require_authentication(client):
+    assert client.post("/api/me/tokens", json={}).status_code == 401
+    assert client.get("/api/me/tokens").status_code == 401
+    assert client.delete("/api/me/tokens/1").status_code == 401
+
+
+def test_api_token_mint_list_resolve_revoke(client):
+    uid = client.post("/api/internal/users",
+                      json={"provider": "google", "providerAccountId": "tok-api-1"}).json()["userId"]
+    hdr = {"X-IH-User-Id": str(uid)}
+
+    minted = client.post("/api/me/tokens", json={"label": "my extension"}, headers=hdr).json()
+    assert minted["token"].startswith("ih_") and minted["label"] == "my extension"
+    token = minted["token"]
+
+    # listing returns metadata only — never the plaintext
+    listed = client.get("/api/me/tokens", headers=hdr).json()
+    assert len(listed) == 1 and listed[0]["id"] == minted["id"]
+    assert "token" not in listed[0]
+
+    # the internal resolver exchanges the token for its engine user id (server-to-server)
+    resolved = client.post("/api/internal/resolve-token", json={"token": token})
+    assert resolved.status_code == 200 and resolved.json()["userId"] == uid
+    bad = client.post("/api/internal/resolve-token", json={"token": "ih_nope"})
+    assert bad.status_code == 401 and bad.json()["error"]["code"] == "unauthorized"
+
+    # revoking is scoped to the owner and stops the token resolving
+    assert client.delete(f"/api/me/tokens/{minted['id']}", headers=hdr).status_code == 200
+    assert client.post("/api/internal/resolve-token", json={"token": token}).status_code == 401
+    assert client.get("/api/me/tokens", headers=hdr).json() == []
+
+
+def test_token_ingestion_attributes_reads_to_the_right_user(client):
+    """The end-to-end shape the web proxy will use: resolve a token to a uid, then record a
+    read for that uid on the *existing* endpoint — the read lands on the user's own history."""
+    uid = client.post("/api/internal/users",
+                      json={"provider": "google", "providerAccountId": "tok-e2e"}).json()["userId"]
+    hdr = {"X-IH-User-Id": str(uid)}
+    token = client.post("/api/me/tokens", json={}, headers=hdr).json()["token"]
+
+    resolved_uid = client.post("/api/internal/resolve-token", json={"token": token}).json()["userId"]
+    # the web tier would now forward with X-IH-User-Id = resolved uid (+ secret in prod)
+    res = client.post("/api/me/reads",
+                      json={"reads": [{"url": "https://www.nytimes.com/2024/us/politics/tok"}]},
+                      headers={"X-IH-User-Id": str(resolved_uid)}).json()
+    assert res["accepted"] == 1 and res["totalReads"] >= 1
+
+
+def test_resolve_token_respects_internal_secret(client, monkeypatch):
+    """With RWE_INTERNAL_SECRET set, the resolver (like the other internal endpoints) requires
+    the X-IH-Auth header — an unsigned exchange is refused."""
+    monkeypatch.setenv("RWE_INTERNAL_SECRET", "s3cret")
+    auth = {"X-IH-Auth": "s3cret"}
+    uid = client.post("/api/internal/users",
+                      json={"provider": "google", "providerAccountId": "tok-sec"},
+                      headers=auth).json()["userId"]
+    token = client.post("/api/me/tokens", json={},
+                        headers={"X-IH-User-Id": str(uid), **auth}).json()["token"]
+    # unsigned resolve -> 401; signed -> 200
+    assert client.post("/api/internal/resolve-token", json={"token": token}).status_code == 401
+    ok = client.post("/api/internal/resolve-token", json={"token": token}, headers=auth)
+    assert ok.status_code == 200 and ok.json()["userId"] == uid
