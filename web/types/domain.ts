@@ -293,6 +293,22 @@ export interface Settings {
   };
 }
 
+/** A per-user API token for the browser extension (metadata only — the plaintext is never stored). */
+export interface ApiToken {
+  id: number;
+  label: string | null;
+  createdAt: string | null;
+  lastUsedAt: string | null;
+}
+
+/** The result of minting a token: the plaintext is present exactly once, at creation. */
+export interface ApiTokenMint {
+  id: number;
+  token: string;
+  label: string | null;
+  createdAt: string | null;
+}
+
 export interface AnalyticsSeries {
   readingOverTime: TrendPoint[];
   topicDiversity: TrendPoint[];

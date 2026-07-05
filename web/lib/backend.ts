@@ -85,3 +85,14 @@ export async function backendPost<T>(
     return null;
   }
 }
+
+/** DELETE `<BASE><path>` → parsed JSON, or `null` on any failure (caller maps to a status). */
+export async function backendDelete<T>(path: string, headers?: Record<string, string>): Promise<T | null> {
+  const res = await withTimeout(`${BASE}${path}`, { method: "DELETE", ...(headers ? { headers } : {}) });
+  if (!res || !res.ok) return null;
+  try {
+    return (await res.json()) as T;
+  } catch {
+    return null;
+  }
+}

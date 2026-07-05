@@ -1,6 +1,8 @@
-import { getJson, postJson } from "@/services/api";
+import { getJson, postJson, deleteJson } from "@/services/api";
 import type {
   AnalyticsSeries,
+  ApiToken,
+  ApiTokenMint,
   Article,
   CoachMessage,
   DashboardSummary,
@@ -36,6 +38,10 @@ export const services = {
   coachHistory: () => getJson<CoachMessage[]>("/coach"),
   coachSend: (message: string) => postJson<CoachMessage>("/coach", { message }),
   search: (q: string) => getJson<{ articles: Article[]; stories: Story[] }>("/search", { q }),
+  // Per-user API tokens for the browser extension (auth'd; proxied to the engine server-side).
+  apiTokens: () => getJson<ApiToken[]>("/me/tokens"),
+  createApiToken: (label?: string) => postJson<ApiTokenMint>("/me/tokens", { label }),
+  revokeApiToken: (id: number) => deleteJson<{ ok: boolean }>(`/me/tokens/${id}`),
 };
 
 /** React Query cache keys, colocated so invalidation stays consistent. */
@@ -52,4 +58,5 @@ export const queryKeys = {
   analytics: ["analytics"] as const,
   coach: ["coach"] as const,
   search: (q: string) => ["search", q] as const,
+  apiTokens: ["apiTokens"] as const,
 };

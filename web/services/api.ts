@@ -50,3 +50,8 @@ export async function postJson<T>(url: string, body?: unknown): Promise<T> {
   const { data } = await api.post<T>(url, body);
   return data;
 }
+
+export async function deleteJson<T>(url: string): Promise<T> {
+  const { data } = await api.delete<T>(url);
+  return data;
+}

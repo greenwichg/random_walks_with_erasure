@@ -44,6 +44,28 @@ export function useSearch(q: string) {
   });
 }
 
+/** The signed-in user's browser-extension API tokens (metadata only). */
+export const useApiTokens = () =>
+  useQuery({ queryKey: queryKeys.apiTokens, queryFn: services.apiTokens });
+
+/** Mints a token; refreshes the list so the new token appears. */
+export function useCreateApiToken() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (label?: string) => services.createApiToken(label),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.apiTokens }),
+  });
+}
+
+/** Revokes a token; refreshes the list. */
+export function useRevokeApiToken() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => services.revokeApiToken(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.apiTokens }),
+  });
+}
+
 /** Sends a coach message and appends the reply to the cached transcript. */
 export function useCoachSend() {
   const qc = useQueryClient();

@@ -21,6 +21,7 @@ import { useSettings } from "@/hooks/use-data";
 import { PageContainer } from "@/components/layout/page-container";
 import { SectionCard } from "@/components/shared/section-card";
 import { ErrorState } from "@/components/shared/states";
+import { ExtensionConnect } from "@/components/settings/extension-connect";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
@@ -267,6 +268,9 @@ export default function SettingsPage() {
               />
             </div>
           </SectionCard>
+
+          {/* Browser extension — real per-user tokens (talks to the engine, not mock) */}
+          <ExtensionConnect />
         </div>
       )}
 
