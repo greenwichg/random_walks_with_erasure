@@ -13,8 +13,14 @@
  */
 import type { NextAuthOptions } from "next-auth";
 import GoogleProvider from "next-auth/providers/google";
+import CredentialsProvider from "next-auth/providers/credentials";
 
 const ENGINE_BASE = process.env.RWE_BACKEND_URL ?? "http://127.0.0.1:8000";
+
+// Dev-only demo sign-in. OFF unless RWE_DEV_LOGIN is explicitly set (e.g. the Colab demo). It lets a
+// reviewer explore the full signed-in app without Google OAuth by signing in as a throwaway demo
+// account. NEVER set this in a real deployment — it is an unauthenticated login path by design.
+const DEV_LOGIN = process.env.RWE_DEV_LOGIN === "1" || process.env.RWE_DEV_LOGIN === "true";
 
 /**
  * Map a third-party identity to the stable engine user id, or `null` if the engine
@@ -52,13 +58,40 @@ export const authOptions: NextAuthOptions = {
       clientId: process.env.GOOGLE_CLIENT_ID ?? "",
       clientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "",
     }),
+    // Present only when RWE_DEV_LOGIN is set. Upserts a stable throwaway demo user in the engine and
+    // resolves its engine id here, so the dev session flows through the exact same /api/me/* path a
+    // real user does — no special-casing downstream.
+    ...(DEV_LOGIN
+      ? [
+          CredentialsProvider({
+            id: "dev",
+            name: "Demo reader (dev)",
+            credentials: {
+              name: { label: "Name", type: "text" },
+              email: { label: "Email", type: "text" },
+            },
+            async authorize(credentials) {
+              const name = (credentials?.name || "Demo Reader").toString().slice(0, 100);
+              const email = (credentials?.email || "demo@infodiet.local").toString().slice(0, 200);
+              const engineUserId = await upsertEngineUser({
+                provider: "dev",
+                providerAccountId: email,
+                email,
+                displayName: name,
+              });
+              if (engineUserId == null) return null; // engine down -> sign-in fails cleanly
+              return { id: String(engineUserId), name, email, engineUserId };
+            },
+          }),
+        ]
+      : []),
   ],
   session: { strategy: "jwt" },
   pages: { signIn: "/signin" },
   callbacks: {
-    async jwt({ token, account, profile }) {
-      // `account` is present only on the initial sign-in — the one place we call the engine.
-      if (account) {
+    async jwt({ token, account, profile, user }) {
+      // Google: upsert the identity into the engine on the initial sign-in (the one engine call).
+      if (account?.provider === "google") {
         const engineUserId = await upsertEngineUser({
           provider: account.provider,
           providerAccountId: account.providerAccountId,
@@ -67,6 +100,8 @@ export const authOptions: NextAuthOptions = {
         });
         if (engineUserId != null) token.engineUserId = engineUserId;
       }
+      // Dev credentials sign-in: the engine id was resolved in authorize() and rides on `user`.
+      if (typeof user?.engineUserId === "number") token.engineUserId = user.engineUserId;
       return token;
     },
     async session({ session, token }) {

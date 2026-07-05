@@ -32,6 +32,27 @@ export default function SignInPage() {
         <p className="mt-4 text-center text-xs text-muted-foreground">
           We use your Google account only to sign you in. Your reading data stays private.
         </p>
+
+        {/* Dev-only demo login (build-time gated by NEXT_PUBLIC_DEV_LOGIN). Lets a reviewer explore
+            the signed-in app in the Colab demo without Google OAuth. Never enabled in production. */}
+        {process.env.NEXT_PUBLIC_DEV_LOGIN === "1" && (
+          <>
+            <div className="my-5 flex items-center gap-3 text-[0.7rem] uppercase tracking-wider text-muted-foreground">
+              <span className="h-px flex-1 bg-border" /> dev only <span className="h-px flex-1 bg-border" />
+            </div>
+            <Button
+              variant="outline"
+              className="w-full"
+              size="lg"
+              onClick={() => signIn("dev", { callbackUrl: "/" })}
+            >
+              Continue as demo reader
+            </Button>
+            <p className="mt-2 text-center text-xs text-muted-foreground">
+              Creates a throwaway demo account — no Google needed. Not available in production.
+            </p>
+          </>
+        )}
       </div>
     </main>
   );

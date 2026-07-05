@@ -11,6 +11,10 @@ declare module "next-auth" {
     /** Stable engine user id from `POST /api/internal/users`, when resolved. */
     engineUserId?: number;
   }
+  interface User {
+    /** Resolved by the dev credentials provider's `authorize` (dev-only sign-in). */
+    engineUserId?: number;
+  }
 }
 
 declare module "next-auth/jwt" {
