@@ -369,6 +369,45 @@ def test_build_analytics_empty_is_honest(backend):
 
 
 # --------------------------------------------------------------------------- #
+# profile — identity + streaks + score history from persisted data; honest empties
+# --------------------------------------------------------------------------- #
+def test_build_profile_from_persisted_data(backend):
+    import datetime as dt
+    today = dt.datetime.now(dt.timezone.utc).date()
+    d = lambda n: (today - dt.timedelta(days=n)).isoformat()
+    user = {"email": "ada@example.com", "displayName": "Ada Lovelace",
+            "createdAt": "2026-01-01T00:00:00+00:00"}
+    reads = [
+        {"id": 1, "observedAt": f"{d(0)}T10:00:00Z", "scored": {}},
+        {"id": 2, "observedAt": f"{d(0)}T11:00:00Z", "scored": {}},          # same day (today)
+        {"id": 3, "observedAt": "2026-02-01T09:00:00Z", "scored": {}},
+        {"id": 4, "observedAt": "2026-02-02T09:00:00Z", "scored": {}},
+        {"id": 5, "observedAt": "2026-02-03T09:00:00Z", "scored": {}},       # 3 consecutive -> longest 3
+    ]
+    snapshots = [{"id": 1, "mode": "estimate", "overall": 55, "createdAt": "2026-02-01T00:00:00+00:00"},
+                 {"id": 2, "mode": "measured", "overall": 62, "createdAt": "2026-02-10T00:00:00+00:00"}]
+    p = backend.build_profile(user, reads, snapshots)
+    assert p["name"] == "Ada Lovelace" and p["email"] == "ada@example.com"
+    assert p["handle"] == "ada"                                             # email local-part, alnum
+    assert p["joinedAt"] == "2026-01-01T00:00:00+00:00"
+    assert p["streakDays"] == 1                                             # only today's reads
+    assert p["longestStreak"] == 3                                          # the Feb 1-3 run
+    assert [s["overall"] for s in p["scoreHistory"]] == [55, 62]           # reuses the snapshot trend
+    assert p["achievements"] == [] and p["savedCount"] == 0 and p["bookmarkCount"] == 0
+    _assert_json_roundtrips(p)
+
+
+def test_build_profile_identity_fallbacks(backend):
+    p = backend.build_profile({"email": "", "displayName": "", "createdAt": None}, [], [])
+    assert p["name"] == "Reader" and p["handle"] == "reader"               # no email/name -> defaults
+    assert p["streakDays"] == 0 and p["longestStreak"] == 0 and p["scoreHistory"] == []
+    assert isinstance(p["joinedAt"], str) and p["joinedAt"]                # falls back to now (non-null)
+    p2 = backend.build_profile(
+        {"email": "sam.q@x.com", "displayName": None, "createdAt": "2026-01-01T00:00:00+00:00"}, [], [])
+    assert p2["name"] == "sam.q" and p2["handle"] == "samq"                # name = local part; handle alnum
+
+
+# --------------------------------------------------------------------------- #
 # coach
 # --------------------------------------------------------------------------- #
 def test_coach_greeting_contract(backend, user):

@@ -165,6 +165,37 @@ def _day(ts) -> "str | None":
     return ts[:10] if isinstance(ts, str) and len(ts) >= 10 else None
 
 
+def _overall_trend(snapshots) -> list:
+    """Compact overall-score trend points from report snapshots (as ``list_report_snapshots`` rows),
+    oldest-first. One definition shared by the dashboard trend and the profile score history."""
+    return [{"date": _day(s.get("createdAt")), "overall": int(s.get("overall") or 0)}
+            for s in snapshots if _day(s.get("createdAt"))]
+
+
+def _longest_streak(read_ats) -> int:
+    """The longest run of consecutive UTC days with at least one read, over all of a reader's reads
+    (not necessarily ending today). Deterministic; ``0`` when there are no reads."""
+    days = sorted({ra[:10] for ra in read_ats if isinstance(ra, str) and len(ra) >= 10})
+    if not days:
+        return 0
+    from datetime import date
+    best = run = 1
+    prev = date.fromisoformat(days[0])
+    for d in days[1:]:
+        cur = date.fromisoformat(d)
+        run = run + 1 if (cur - prev).days == 1 else 1
+        best, prev = max(best, run), cur
+    return best
+
+
+def _handle_from(name: str, email: str) -> str:
+    """A stable @handle derived from the email local-part (else the name): lower-cased, alphanumerics
+    only. There is no stored handle; this is a deterministic display derivation, never fabricated."""
+    base = (email.split("@")[0] if email else "") or name or "reader"
+    h = "".join(c for c in base.lower() if c.isalnum())
+    return h or "reader"
+
+
 # ------------------------------------------------------------------ #
 # Backend state — built once at startup.
 # ------------------------------------------------------------------ #
@@ -564,8 +595,7 @@ class Backend:
                                             if e["article"]["topic"]).most_common(4)]
 
         # trend + month-over-version delta from the saved snapshots (oldest -> newest)
-        trend = [{"date": str(s.get("createdAt") or "")[:10], "overall": int(s.get("overall") or 0)}
-                 for s in snapshots if s.get("createdAt")]
+        trend = _overall_trend(snapshots)
         overall = int(report.get("overall") or 0)
         delta = (overall - int(snapshots[-2]["overall"]) if len(snapshots) >= 2
                  else int(report.get("overallDelta") or 0))
@@ -655,6 +685,30 @@ class Backend:
             "reporting": self._reporting_per_day(reads),
             "recommendationAcceptance": self._recommendation_acceptance(rec_events),
             "healthImprovement": health,
+        }
+
+    @staticmethod
+    def build_profile(user: dict, reads: list, snapshots: list) -> dict:
+        """The account profile, built entirely from persisted data — identity from the user row,
+        streaks from stored reads (shared ``_reading_streak`` / ``_longest_streak``), and the health
+        journey from saved report snapshots (shared ``_overall_trend``). Features that don't exist
+        yet — achievements, saved / bookmarked articles — return an **honest empty state**, never
+        fabricated values. Corpus-independent; no algorithm."""
+        email = (user.get("email") or "").strip()
+        name = ((user.get("displayName") or "").strip()
+                or (email.split("@")[0] if email else "") or "Reader")
+        read_ats = [_read_at(r) for r in reads]
+        return {
+            "name": name,
+            "handle": _handle_from(name, email),
+            "email": email,
+            "joinedAt": user.get("createdAt") or datetime.now(timezone.utc).isoformat(),
+            "streakDays": _reading_streak(read_ats),
+            "longestStreak": _longest_streak(read_ats),
+            "scoreHistory": _overall_trend(snapshots),
+            "achievements": [],          # not built yet — honest empty, not fabricated
+            "savedCount": 0,             # saved / bookmark actions are not persisted yet
+            "bookmarkCount": 0,
         }
 
     def article(self, col: int) -> dict:

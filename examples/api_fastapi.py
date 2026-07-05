@@ -345,6 +345,30 @@ class AnalyticsModel(BaseModel):
     healthImprovement: list[TrendPointModel]
 
 
+class AchievementModel(BaseModel):
+    id: str
+    title: str
+    description: str
+    icon: str
+    unlocked: bool
+    unlockedAt: str | None = None
+    progress: float | None = None
+
+
+class ProfileModel(BaseModel):
+    name: str
+    handle: str
+    email: str
+    avatarUrl: str | None = None
+    joinedAt: str
+    streakDays: int
+    longestStreak: int
+    scoreHistory: list[TrendPointModel]
+    achievements: list[AchievementModel]     # empty until the feature exists (honest, not faked)
+    savedCount: int
+    bookmarkCount: int
+
+
 class ArticleModel(BaseModel):
     # `register` shadows a BaseModel attribute, so hold it under an alias and serialise
     # it back to the wire key "register" (FastAPI responds by_alias).
@@ -766,6 +790,20 @@ def my_analytics(request: Request) -> dict:
     st = _require_store()
     return _require_backend().build_analytics(
         st.report_metric_series(uid), st.list_reads(uid), st.list_rec_events(uid))
+
+
+@app.get("/api/me/profile", response_model=ProfileModel, response_model_exclude_none=True,
+         tags=["meta"], summary="The signed-in user's account profile", responses=_ERR_RESPONSES)
+def my_profile(request: Request) -> dict:
+    """The reader's profile from persisted data only: identity from their account, streaks from
+    their stored reads, and the health journey from their saved report snapshots. Achievements /
+    saved counts are an honest empty state until those features exist — never fabricated."""
+    uid = _require_real_user(request)
+    st = _require_store()
+    u = st.get_user(uid)
+    user = {"email": u.email, "displayName": u.display_name,
+            "createdAt": u.created_at.isoformat() if u.created_at else None}
+    return _require_backend().build_profile(user, st.list_reads(uid), st.list_report_snapshots(uid))
 
 
 @app.post("/api/me/recommendations/opened", response_model=RecReceptionModel,

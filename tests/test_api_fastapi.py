@@ -419,6 +419,30 @@ def test_analytics_from_the_users_stored_data(client):
     assert client.get("/api/me/analytics").status_code == 401           # auth required
 
 
+def test_profile_from_the_users_account_and_reads(client):
+    """The profile is built from the reader's account + stored reads + snapshots; a brand-new user
+    gets real identity with honest-empty activity, and reading populates streak + score history."""
+    uid = client.post("/api/internal/users",
+                      json={"provider": "google", "providerAccountId": "route-prof",
+                            "email": "reader@example.com", "displayName": "Casey Reader"}).json()["userId"]
+    hdr = {"X-IH-User-Id": str(uid)}
+
+    p0 = client.get("/api/me/profile", headers=hdr).json()
+    assert p0["email"] == "reader@example.com" and p0["name"] == "Casey Reader"
+    assert p0["handle"] == "reader" and p0["joinedAt"]
+    assert p0["achievements"] == [] and p0["savedCount"] == 0 and p0["bookmarkCount"] == 0
+    assert p0["scoreHistory"] == [] and p0["streakDays"] == 0               # no activity yet
+
+    reads = [{"url": f"https://www.nytimes.com/politics/p{i}", "title": f"Story {i}"} for i in range(6)]
+    client.post("/api/me/reads", json={"reads": reads}, headers=hdr)
+    client.get("/api/report", headers=hdr)                                 # saves a report snapshot
+    p1 = client.get("/api/me/profile", headers=hdr).json()
+    assert p1["streakDays"] >= 1                                            # read today
+    assert len(p1["scoreHistory"]) >= 1                                    # >=1 saved snapshot
+
+    assert client.get("/api/me/profile").status_code == 401                # auth required
+
+
 def test_dashboard_anonymous_is_demo_with_empty_activity(client):
     """An anonymous request gets the demo report's score/metrics but no fabricated personal
     activity — empty trend, zero 'today', zero streak."""
