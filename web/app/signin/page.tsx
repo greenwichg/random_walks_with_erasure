@@ -44,7 +44,14 @@ export default function SignInPage() {
               variant="outline"
               className="w-full"
               size="lg"
-              onClick={() => signIn("dev", { callbackUrl: "/" })}
+              onClick={async () => {
+                // redirect:false keeps NextAuth from building an absolute redirect to the server's
+                // own origin (which is `localhost` behind a tunnel and unreachable from the browser).
+                // The CSRF + callback requests are same-origin, so this works over the tunnel; we
+                // navigate ourselves on success.
+                const res = await signIn("dev", { redirect: false });
+                if (res?.ok) window.location.assign("/");
+              }}
             >
               Continue as demo reader
             </Button>

@@ -2,7 +2,6 @@
 
 import * as React from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { signIn } from "next-auth/react";
 import { ArrowLeft, ArrowLeftRight, Check, Loader2, Search, Sparkles } from "lucide-react";
 import type { EstimateHealthReport, LeanBucket, Outlet } from "@/types/domain";
 import { Button } from "@/components/ui/button";
@@ -215,7 +214,7 @@ function Welcome({ onBuild, onSample }: { onBuild: () => void; onSample: () => v
       <p className="mt-4 text-center text-xs text-muted-foreground">
         Already have an account?{" "}
         <button
-          onClick={() => signIn("google", { callbackUrl: "/" })}
+          onClick={() => window.location.assign("/signin")}
           className="font-medium text-primary underline-offset-2 hover:underline"
         >
           Sign in
@@ -328,14 +327,16 @@ function Estimate({
   onAdjust: () => void;
 }) {
   const takeaway = report.improvements[0];
-  // Stash the selection so it survives the OAuth redirect; OnboardingSync persists it post-auth.
+  // Stash the selection so it survives the sign-in redirect; OnboardingSync persists it post-auth.
   const save = () => {
     try {
       window.localStorage.setItem(PENDING_ONBOARDING_KEY, JSON.stringify({ outlets: outletIds }));
     } catch {
       /* ignore storage failures — sign-in still proceeds */
     }
-    signIn("google", { callbackUrl: "/" });
+    // Go to the sign-in page (Google, or the demo login when enabled) rather than forcing one
+    // provider — so a reader without Google configured can still sign in.
+    window.location.assign("/signin");
   };
   return (
     <Frame>
