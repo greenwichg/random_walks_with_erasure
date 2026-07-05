@@ -228,3 +228,35 @@ def test_list_report_snapshots_oldest_first(store):
     assert [s["mode"] for s in snaps] == ["estimate", "measured"]
     assert all(s["createdAt"] for s in snaps) and all(isinstance(s["id"], int) for s in snaps)
     assert [s["overall"] for s in store.list_report_snapshots(u.id, limit=1)] == [61]   # keep most recent
+
+
+def test_report_metric_series_parses_snapshots(store):
+    u = store.upsert_user_by_identity("google", "ana-1")
+    store.save_report(u.id, {"mode": "measured", "overall": 70,
+                             "metrics": [{"key": "topicDiversity", "score": 65},
+                                         {"key": "viewpointBalance", "score": 40}],
+                             "attention": {"fear": 0.2, "outrage": 0.1, "analysis": 0.4,
+                                           "positive": 0.2, "neutral": 0.1}})
+    store.save_report(u.id, {"mode": "measured", "overall": 74,
+                             "metrics": [{"key": "topicDiversity", "score": 68}],
+                             "attention": {"fear": 0.1}})
+    series = store.report_metric_series(u.id)
+    assert [s["overall"] for s in series] == [70, 74]                # oldest-first
+    assert series[0]["metrics"] == {"topicDiversity": 65, "viewpointBalance": 40}
+    assert series[0]["attention"]["analysis"] == 0.4
+    assert all(len(s["date"]) == 10 for s in series)                # YYYY-MM-DD day
+    assert store.report_metric_series(u.id, limit=1)[0]["overall"] == 74
+    other = store.upsert_user_by_identity("google", "ana-empty")
+    assert store.report_metric_series(other.id) == []               # honest empty
+
+
+def test_list_rec_events(store):
+    u = store.upsert_user_by_identity("google", "ana-recev")
+    store.record_recommendations_shown(u.id, [("a", True), ("b", False)])
+    store.record_recommendation_open(u.id, "a")
+    evs = store.list_rec_events(u.id)
+    assert len(evs) == 2
+    opened = next(e for e in evs if e["openedAt"])
+    assert opened["shownAt"] and opened["crossCutting"] is True
+    unopened = next(e for e in evs if not e["openedAt"])
+    assert unopened["shownAt"] and unopened["openedAt"] is None

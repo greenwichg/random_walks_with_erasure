@@ -396,6 +396,29 @@ def test_dashboard_reuses_report_and_reflects_reads(client):
     assert isinstance(dash["streakDays"], int)
 
 
+def test_analytics_from_the_users_stored_data(client):
+    """Analytics is built entirely from the reader's stored snapshots + reads: honest empty series
+    for a new reader, populated once they read (and a report snapshot is saved). Auth required."""
+    uid = client.post("/api/internal/users",
+                      json={"provider": "google", "providerAccountId": "route-ana"}).json()["userId"]
+    hdr = {"X-IH-User-Id": str(uid)}
+    keys = {"readingOverTime", "topicDiversity", "politicalDiversity", "publisherDiversity",
+            "emotion", "reporting", "recommendationAcceptance", "healthImprovement"}
+
+    empty = client.get("/api/me/analytics", headers=hdr).json()
+    assert set(empty) == keys and all(v == [] for v in empty.values())   # honest empty, all series present
+
+    reads = [{"url": f"https://www.foxnews.com/politics/s{i}", "title": f"Story {i}"} for i in range(6)]
+    client.post("/api/me/reads", json={"reads": reads}, headers=hdr)
+    client.get("/api/report", headers=hdr)                              # measured build -> saves a snapshot
+
+    ana = client.get("/api/me/analytics", headers=hdr).json()
+    assert sum(p["overall"] for p in ana["readingOverTime"]) == 6       # every read counted by day
+    assert len(ana["healthImprovement"]) >= 1                           # >=1 saved snapshot
+
+    assert client.get("/api/me/analytics").status_code == 401           # auth required
+
+
 def test_dashboard_anonymous_is_demo_with_empty_activity(client):
     """An anonymous request gets the demo report's score/metrics but no fabricated personal
     activity — empty trend, zero 'today', zero streak."""

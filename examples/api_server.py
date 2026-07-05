@@ -152,6 +152,19 @@ def _reading_streak(read_ats) -> int:
     return streak
 
 
+def _read_at(row) -> "str | None":
+    """A stored-read row's effective timestamp: the reader's observed time, else the scored read's
+    own timestamp, else the row's insert time. One definition shared by the history and analytics
+    serialisers so day-bucketing never diverges."""
+    sc = row.get("scored") or {}
+    return row.get("observedAt") or sc.get("read_at") or row.get("createdAt")
+
+
+def _day(ts) -> "str | None":
+    """The ``YYYY-MM-DD`` day of an ISO timestamp string, or ``None`` if it isn't one."""
+    return ts[:10] if isinstance(ts, str) and len(ts) >= 10 else None
+
+
 # ------------------------------------------------------------------ #
 # Backend state — built once at startup.
 # ------------------------------------------------------------------ #
@@ -527,7 +540,7 @@ class Backend:
             out.append({
                 "id": str(row.get("id")),
                 "article": article,
-                "readAt": row.get("observedAt") or sc.get("read_at") or row.get("createdAt"),
+                "readAt": _read_at(row),
                 "readingMinutes": article["readingMinutes"],
                 "completed": True,
             })
@@ -565,6 +578,83 @@ class Backend:
                       "politicalShare": round(float(pol_share), 4), "topTopics": top_topics},
             "metrics": report.get("metrics", []),                    # the report's metrics, reused as-is
             "streakDays": _reading_streak([e.get("readAt") for e in recent]),
+        }
+
+    # -- analytics: visualise stored data only (no new intelligence) -------- #
+    _EMO_LABELS = ("fear", "outrage", "analysis", "positive", "neutral")
+
+    @staticmethod
+    def _reads_per_day(reads) -> list:
+        """Reading volume: articles recorded per UTC day, ascending — a count of stored reads."""
+        counts: "Counter[str]" = Counter()
+        for row in reads:
+            d = _day(_read_at(row))
+            if d:
+                counts[d] += 1
+        return [{"date": d, "overall": counts[d]} for d in sorted(counts)]
+
+    @staticmethod
+    def _reporting_per_day(reads) -> list:
+        """Reporting-vs-opinion share per day = the mean stored ``register`` (P(reporting)) over the
+        day's reads, and its complement. Only reads carrying a finite register count; days with none
+        are omitted. A plain average of values the enricher already computed — no re-scoring."""
+        acc: dict = {}
+        for row in reads:
+            d = _day(_read_at(row))
+            reg = (row.get("scored") or {}).get("register")
+            if not d or reg is None or not np.isfinite(reg):
+                continue
+            a = acc.setdefault(d, [0.0, 0])
+            a[0] += float(reg)
+            a[1] += 1
+        out = []
+        for d in sorted(acc):
+            mean = acc[d][0] / acc[d][1]
+            out.append({"date": d, "reporting": round(mean, 4), "opinion": round(1.0 - mean, 4)})
+        return out
+
+    @staticmethod
+    def _recommendation_acceptance(rec_events) -> list:
+        """Recommendation acceptance per day from stored rec events: an opened rec counts as
+        *accepted* on its opened day; a surfaced-but-never-opened rec counts as *ignored* on its
+        shown day. Each event contributes once — a deterministic tally, no inference."""
+        accepted: "Counter[str]" = Counter()
+        ignored: "Counter[str]" = Counter()
+        for r in rec_events:
+            od, sd = _day(r.get("openedAt")), _day(r.get("shownAt"))
+            if od:
+                accepted[od] += 1
+            elif sd:
+                ignored[sd] += 1
+        days = sorted(set(accepted) | set(ignored))
+        return [{"date": d, "accepted": accepted.get(d, 0), "ignored": ignored.get(d, 0)} for d in days]
+
+    def build_analytics(self, snapshots: list, reads: list, rec_events: list) -> dict:
+        """The AnalyticsSeries — composed ENTIRELY from stored data: report snapshots (score/metric
+        trends + emotion attention), stored reads (volume + reporting share), and recommendation
+        events (acceptance). Every point is a deterministic aggregation of values already computed
+        and saved; empty inputs yield empty series (an honest empty state, never fabricated).
+
+        ``snapshots`` are ``store.report_metric_series`` rows: ``{date, overall, metrics{key:score},
+        attention{label:share}}``, oldest-first."""
+        def metric_trend(key):
+            return [{"date": s["date"], "overall": int(s["metrics"][key])}
+                    for s in snapshots if s.get("date") and s.get("metrics", {}).get(key) is not None]
+
+        health = [{"date": s["date"], "overall": int(s["overall"])}
+                  for s in snapshots if s.get("date")]
+        emotion = [{"date": s["date"], **{l: round(float(s["attention"].get(l, 0.0)), 4)
+                                          for l in self._EMO_LABELS}}
+                   for s in snapshots if s.get("date") and s.get("attention")]
+        return {
+            "readingOverTime": self._reads_per_day(reads),
+            "topicDiversity": metric_trend("topicDiversity"),
+            "politicalDiversity": metric_trend("viewpointBalance"),
+            "publisherDiversity": metric_trend("sourceDiversity"),
+            "emotion": emotion,
+            "reporting": self._reporting_per_day(reads),
+            "recommendationAcceptance": self._recommendation_acceptance(rec_events),
+            "healthImprovement": health,
         }
 
     def article(self, col: int) -> dict:

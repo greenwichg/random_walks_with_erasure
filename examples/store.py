@@ -297,6 +297,29 @@ class Store:
         return [{"id": r.id, "mode": r.mode, "overall": int(r.overall),
                  "createdAt": r.created_at.isoformat() if r.created_at else None} for r in rows]
 
+    def report_metric_series(self, user_id: int, limit: int = 60) -> list:
+        """Per-snapshot analytics inputs: each saved report's ``overall``, per-metric ``{key: score}``,
+        and emotion ``attention``, **oldest-first** (capped at the most recent ``limit``). Parses the
+        stored snapshot JSON (the full report as saved) — no metric is recomputed, so analytics only
+        ever *visualises* what the engine already computed. ``date`` is the snapshot's UTC day."""
+        with self.session() as s:
+            rows = s.scalars(select(ReportSnapshot)
+                             .where(ReportSnapshot.user_id == user_id)
+                             .order_by(ReportSnapshot.id)).all()
+        rows = rows[-limit:] if limit else rows
+        out = []
+        for r in rows:
+            try:
+                rep = json.loads(r.snapshot)
+            except (TypeError, ValueError):
+                continue
+            metrics = {m.get("key"): m.get("score") for m in (rep.get("metrics") or [])
+                       if m.get("key") is not None and m.get("score") is not None}
+            out.append({"date": r.created_at.isoformat()[:10] if r.created_at else None,
+                        "overall": int(r.overall), "metrics": metrics,
+                        "attention": rep.get("attention") or {}})
+        return out
+
     # -- scored-article cache -------------------------------------------
     def get_scored_article(self, url: str) -> "dict | None":
         """Cached scoring for a canonical URL, or ``None`` if it hasn't been scored yet."""
@@ -416,6 +439,15 @@ class Store:
         opened = sum(1 for r in rows if r.opened_at is not None)
         return {"shownCross": shown, "openedCross": opened,
                 "rate": (opened / shown) if shown else None}
+
+    def list_rec_events(self, user_id: int) -> list:
+        """All of a user's recommendation events (surfaced / opened timestamps + cross-cutting flag),
+        oldest-first — the source for the analytics recommendation-acceptance series."""
+        with self.session() as s:
+            rows = s.scalars(select(RecEvent).where(RecEvent.user_id == user_id)
+                             .order_by(RecEvent.id)).all()
+            return [{"shownAt": r.shown_at, "openedAt": r.opened_at,
+                     "crossCutting": bool(r.cross_cutting)} for r in rows]
 
     # -- per-user API tokens (browser extension / non-browser clients) --
     _TOKEN_PREFIX = "ih_"

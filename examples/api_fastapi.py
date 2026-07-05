@@ -313,6 +313,38 @@ class DashboardModel(BaseModel):
     streakDays: int
 
 
+class EmotionPointModel(BaseModel):
+    date: str
+    fear: float
+    outrage: float
+    analysis: float
+    positive: float
+    neutral: float
+
+
+class ReportingPointModel(BaseModel):
+    date: str
+    reporting: float
+    opinion: float
+
+
+class RecAcceptancePointModel(BaseModel):
+    date: str
+    accepted: int
+    ignored: int
+
+
+class AnalyticsModel(BaseModel):
+    readingOverTime: list[TrendPointModel]
+    topicDiversity: list[TrendPointModel]
+    politicalDiversity: list[TrendPointModel]
+    publisherDiversity: list[TrendPointModel]
+    emotion: list[EmotionPointModel]
+    reporting: list[ReportingPointModel]
+    recommendationAcceptance: list[RecAcceptancePointModel]
+    healthImprovement: list[TrendPointModel]
+
+
 class ArticleModel(BaseModel):
     # `register` shadows a BaseModel attribute, so hold it under an alias and serialise
     # it back to the wire key "register" (FastAPI responds by_alias).
@@ -721,6 +753,19 @@ def my_history(request: Request) -> list:
     re-scoring, no augmented model. Same trust boundary as the other /api/me endpoints."""
     uid = _require_real_user(request)
     return _require_backend().serialize_history(_require_store().list_reads(uid))
+
+
+@app.get("/api/me/analytics", response_model=AnalyticsModel, response_model_exclude_none=True,
+         tags=["report"], summary="The signed-in user's analytics (trends over their stored data)",
+         responses=_ERR_RESPONSES)
+def my_analytics(request: Request) -> dict:
+    """Analytics for the signed-in reader: score / metric / reading / tone / acceptance trends,
+    composed entirely from their stored report snapshots, reads, and recommendation events — no new
+    metric or algorithm. Empty series when there's no history yet (an honest empty state)."""
+    uid = _require_real_user(request)
+    st = _require_store()
+    return _require_backend().build_analytics(
+        st.report_metric_series(uid), st.list_reads(uid), st.list_rec_events(uid))
 
 
 @app.post("/api/me/recommendations/opened", response_model=RecReceptionModel,

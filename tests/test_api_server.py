@@ -318,6 +318,57 @@ def test_build_dashboard_empty_for_no_activity(backend):
 
 
 # --------------------------------------------------------------------------- #
+# analytics — every series is a deterministic aggregation of stored data
+# --------------------------------------------------------------------------- #
+def test_build_analytics_from_stored_data(backend):
+    snapshots = [
+        {"date": "2026-06-01", "overall": 60,
+         "metrics": {"topicDiversity": 55, "viewpointBalance": 40, "sourceDiversity": 50},
+         "attention": {"fear": 0.2, "outrage": 0.1, "analysis": 0.4, "positive": 0.2, "neutral": 0.1}},
+        {"date": "2026-06-10", "overall": 66,
+         "metrics": {"topicDiversity": 60, "viewpointBalance": 45, "sourceDiversity": 52},
+         "attention": {"fear": 0.15, "outrage": 0.1, "analysis": 0.45, "positive": 0.2, "neutral": 0.1}},
+    ]
+    reads = [
+        {"id": 2, "observedAt": "2026-06-10T10:00:00Z", "scored": {"register": 0.8, "political": True}},
+        {"id": 1, "observedAt": "2026-06-10T11:00:00Z", "scored": {"register": 0.6, "political": False}},
+        {"id": 3, "observedAt": "2026-06-09T09:00:00Z", "scored": {"register": 0.4}},
+        {"id": 4, "observedAt": "2026-06-08T09:00:00Z", "scored": {"register": None}},   # no register
+    ]
+    rec_events = [
+        {"shownAt": "2026-06-10T08:00:00Z", "openedAt": "2026-06-10T09:00:00Z", "crossCutting": True},
+        {"shownAt": "2026-06-10T08:00:00Z", "openedAt": None, "crossCutting": False},
+        {"shownAt": "2026-06-09T08:00:00Z", "openedAt": None, "crossCutting": True},
+    ]
+    a = backend.build_analytics(snapshots, reads, rec_events)
+    # snapshot-derived score/metric trends (oldest-first)
+    assert [p["overall"] for p in a["healthImprovement"]] == [60, 66]
+    assert [p["overall"] for p in a["topicDiversity"]] == [55, 60]
+    assert [p["overall"] for p in a["politicalDiversity"]] == [40, 45]     # viewpointBalance
+    assert [p["overall"] for p in a["publisherDiversity"]] == [50, 52]     # sourceDiversity
+    assert set(a["emotion"][0]) == {"date", "fear", "outrage", "analysis", "positive", "neutral"}
+    assert a["emotion"][0]["analysis"] == 0.4
+    # reads-derived: volume per day + reporting = mean register per day (06-08 excluded, no register)
+    rot = {p["date"]: p["overall"] for p in a["readingOverTime"]}
+    assert rot == {"2026-06-08": 1, "2026-06-09": 1, "2026-06-10": 2}
+    rep = {p["date"]: p for p in a["reporting"]}
+    assert rep["2026-06-10"]["reporting"] == 0.7 and rep["2026-06-10"]["opinion"] == 0.3   # mean(0.8,0.6)
+    assert "2026-06-08" not in rep
+    # rec-event-derived acceptance: opened->accepted on opened day; unopened->ignored on shown day
+    acc = {p["date"]: p for p in a["recommendationAcceptance"]}
+    assert acc["2026-06-10"] == {"date": "2026-06-10", "accepted": 1, "ignored": 1}
+    assert acc["2026-06-09"]["ignored"] == 1 and acc["2026-06-09"]["accepted"] == 0
+    _assert_json_roundtrips(a)
+
+
+def test_build_analytics_empty_is_honest(backend):
+    a = backend.build_analytics([], [], [])
+    assert a == {"readingOverTime": [], "topicDiversity": [], "politicalDiversity": [],
+                 "publisherDiversity": [], "emotion": [], "reporting": [],
+                 "recommendationAcceptance": [], "healthImprovement": []}
+
+
+# --------------------------------------------------------------------------- #
 # coach
 # --------------------------------------------------------------------------- #
 def test_coach_greeting_contract(backend, user):
