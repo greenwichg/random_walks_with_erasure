@@ -10,6 +10,10 @@ import { Button } from "@/components/ui/button";
  * requests a protected page. On success NextAuth returns them to `callbackUrl`.
  */
 export default function SignInPage() {
+  // In the Colab demo (dev login on) Google OAuth isn't configured, so showing "Continue with
+  // Google" would only dead-end. In that mode we show ONLY the demo login; a normal build shows
+  // only Google. This is build-time gated by NEXT_PUBLIC_DEV_LOGIN and never on in production.
+  const demoMode = process.env.NEXT_PUBLIC_DEV_LOGIN === "1";
   return (
     <main className="flex min-h-screen items-center justify-center px-4">
       <div className="w-full max-w-sm rounded-2xl border bg-card p-8 shadow-sm">
@@ -20,29 +24,15 @@ export default function SignInPage() {
           Welcome to Information Health
         </h1>
         <p className="mx-auto mt-2 max-w-xs text-center text-sm text-muted-foreground">
-          Sign in to save your reports and track how your reading diet changes over time.
-        </p>
-        <Button
-          className="mt-6 w-full"
-          size="lg"
-          onClick={() => signIn("google", { callbackUrl: "/" })}
-        >
-          Continue with Google
-        </Button>
-        <p className="mt-4 text-center text-xs text-muted-foreground">
-          We use your Google account only to sign you in. Your reading data stays private.
+          {demoMode
+            ? "Demo mode — sign in as a throwaway demo reader to explore the app. No account needed."
+            : "Sign in to save your reports and track how your reading diet changes over time."}
         </p>
 
-        {/* Dev-only demo login (build-time gated by NEXT_PUBLIC_DEV_LOGIN). Lets a reviewer explore
-            the signed-in app in the Colab demo without Google OAuth. Never enabled in production. */}
-        {process.env.NEXT_PUBLIC_DEV_LOGIN === "1" && (
+        {demoMode ? (
           <>
-            <div className="my-5 flex items-center gap-3 text-[0.7rem] uppercase tracking-wider text-muted-foreground">
-              <span className="h-px flex-1 bg-border" /> dev only <span className="h-px flex-1 bg-border" />
-            </div>
             <Button
-              variant="outline"
-              className="w-full"
+              className="mt-6 w-full"
               size="lg"
               onClick={async () => {
                 // redirect:false keeps NextAuth from building an absolute redirect to the server's
@@ -55,8 +45,21 @@ export default function SignInPage() {
             >
               Continue as demo reader
             </Button>
-            <p className="mt-2 text-center text-xs text-muted-foreground">
-              Creates a throwaway demo account — no Google needed. Not available in production.
+            <p className="mt-3 text-center text-xs text-muted-foreground">
+              Creates a throwaway demo account — no Google needed. Dev/demo only.
+            </p>
+          </>
+        ) : (
+          <>
+            <Button
+              className="mt-6 w-full"
+              size="lg"
+              onClick={() => signIn("google", { callbackUrl: "/" })}
+            >
+              Continue with Google
+            </Button>
+            <p className="mt-4 text-center text-xs text-muted-foreground">
+              We use your Google account only to sign you in. Your reading data stays private.
             </p>
           </>
         )}
