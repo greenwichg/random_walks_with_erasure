@@ -1,15 +1,18 @@
 """Reading-event ingestion — turn a raw read (a URL) into a scored read the engine can use.
 
-Milestone C1: the **abstraction + the scored-article cache only**. Every ingestion source
-(browser extension, pasted URL, RSS) hands in a :class:`RawRead`; this module scores it into
-the :class:`ScoredRead` interface from Milestone B4, which the augmented-corpus seam then
-places into the reference corpus. Nothing here is wired into an endpoint yet, and no research
-algorithm is touched — the scorer only *reads* the bundled outlet-lean table from ``rwe.mind``.
+Every ingestion source (browser extension, pasted URL, RSS) hands in a :class:`RawRead`; this
+module scores it into the :class:`ScoredRead` interface from Milestone B4, which the
+augmented-corpus seam then places into the reference corpus. No research algorithm is touched —
+outlet identity + lean come from the product-layer :mod:`outlet_registry`.
 
 Scoring strategy (approved): a **deterministic baseline** that needs no API key —
 
-    outlet            = the URL's domain (rwe.mind._outlet_from_url)
-    lean              = outlet -> AllSides lean via rwe.mind.DEFAULT_LEAN (NaN if unknown)
+    outlet + lean     = the canonical OutletRegistry (the product layer's single source of truth
+                        for outlet identity): a captured URL, a source-supplied outlet name, and a
+                        corpus label all resolve to the SAME canonical outlet + AllSides lean.
+                        An outlet the registry doesn't know still ingests — the outlet is the bare
+                        domain and the lean is NaN (excluded from lean metrics, as the engine
+                        already handles missing data).
     political / topic = what the source supplies, else a light URL-path heuristic
 
 plus an **optional, pluggable** :class:`Enricher` (e.g. an LLM emotion/register/topic
@@ -29,7 +32,7 @@ from typing import Optional, Protocol
 from urllib.parse import urlsplit, urlunsplit
 
 from augmented_corpus import ScoredRead
-from rwe.mind import DEFAULT_LEAN, _norm, _outlet_from_url
+from outlet_registry import OutletRegistry, default_registry
 
 # Coarse URL-path segment -> display topic. The browser extension can pass the real section
 # (OpenGraph article:section) and the optional enricher can refine it; this is only a
@@ -98,37 +101,54 @@ def has_host(url: str) -> bool:
     return bool(host) and "." in host and " " not in host
 
 
+def _domain_of(url: str) -> str:
+    """Bare host of a URL (lower-cased, ``www.`` removed) — the fallback outlet label when the
+    registry doesn't know the outlet. Correct prefix handling: the research helper's
+    ``lstrip("www.")`` ate leading ``w`` characters (``washingtonpost.com`` -> ``ashingtonpost``,
+    ``wsj.com`` -> ``sj``); this strips the ``www.`` prefix only."""
+    s = (url or "").strip()
+    netloc = urlsplit(s).netloc if "://" in s else s.split("/", 1)[0]
+    host = netloc.split("@")[-1].split(":", 1)[0].lower()
+    return host[4:] if host.startswith("www.") else host
+
+
 class Scorer:
     """Baseline, deterministic scorer: a URL -> :class:`ScoredRead`, with an optional enricher.
 
-    Uses the bundled AllSides outlet-lean table (``rwe.mind.DEFAULT_LEAN``) read-only; pass a
-    different ``lean_table`` (normalised keys) to widen coverage. No API key, no network."""
+    Outlet identity + lean come from the canonical :class:`OutletRegistry` (the product layer's
+    single source of truth), so a captured URL, a source-supplied outlet name, and a corpus label
+    all collapse to the same canonical outlet. An outlet the registry doesn't know still ingests —
+    the outlet is the bare domain and the lean is NaN. No API key, no network."""
 
-    def __init__(self, lean_table: Optional[dict] = None, enricher: Optional[Enricher] = None):
-        self.lean_table = DEFAULT_LEAN if lean_table is None else lean_table
+    def __init__(self, registry: Optional[OutletRegistry] = None,
+                 enricher: Optional[Enricher] = None):
+        self.registry = registry if registry is not None else default_registry()
         self.enricher = enricher
 
     def score(self, raw: RawRead) -> ScoredRead:
-        outlet = raw.outlet or _outlet_from_url(raw.url)
         path = urlsplit(raw.url).path.lower()
         political = (raw.political if raw.political is not None
                      else any(h in path for h in _POLITICAL_HINTS))
+        outlet, lean = self._resolve_outlet(raw)
         scored = ScoredRead(
             article_id=canonical_url(raw.url),
             outlet=outlet,
             category=raw.category or self._topic_from_path(path),
             title=raw.title or "",
-            lean=self._lean_for(outlet),
+            lean=lean,
             political=political,
             read_at=raw.read_at,
         )
         return self.enricher.enrich(scored, raw) if self.enricher is not None else scored
 
-    def _lean_for(self, outlet: str) -> float:
-        if not outlet:
-            return float("nan")
-        v = self.lean_table.get(_norm(outlet))
-        return float(v) if v is not None else float("nan")
+    def _resolve_outlet(self, raw: RawRead):
+        """Canonical outlet + AllSides lean via the registry — resolving a source-supplied outlet
+        name if present, else the URL. Unknown -> (the source's label or the bare domain, NaN), so
+        the read still ingests, just without a lean."""
+        out = self.registry.resolve(raw.outlet or raw.url)
+        if out is not None:
+            return out.canonical, out.lean
+        return (raw.outlet or _domain_of(raw.url)), float("nan")
 
     @staticmethod
     def _topic_from_path(path: str) -> str:
