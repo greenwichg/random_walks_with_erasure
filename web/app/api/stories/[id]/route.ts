@@ -1,19 +1,15 @@
 import { NextResponse } from "next/server";
+import type { Story } from "@/types/domain";
+import { backendGet, engineUnavailable } from "@/lib/backend";
+import { engineAuthHeaders } from "@/lib/engine-auth";
 
-// A single story's cross-publisher coverage depends on the same story clustering as the Stories
-// list, which is not built yet. This endpoint explicitly reports the feature as not yet available
-// rather than fabricating coverage; the route is kept as a placeholder for the real implementation.
+// One clustered story's full cross-publisher coverage, from the engine (examples/discover.py).
 export const dynamic = "force-dynamic";
 
-export function GET() {
-  return NextResponse.json(
-    {
-      error: {
-        code: "not_available",
-        message:
-          "Story coverage is coming soon — this feature depends on story clustering over the news corpus, which is not built yet.",
-      },
-    },
-    { status: 501 },
+export async function GET(_request: Request, { params }: { params: { id: string } }) {
+  const story = await backendGet<Story>(
+    `/api/stories/${encodeURIComponent(params.id)}`,
+    await engineAuthHeaders(),
   );
+  return story ? NextResponse.json(story) : engineUnavailable();
 }

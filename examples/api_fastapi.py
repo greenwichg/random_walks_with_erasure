@@ -40,6 +40,7 @@ import personalize            # per-user augmented Measured report / recs / coac
 import ratelimit              # dependency-free token-bucket rate limiter (Private Alpha hardening)
 import reqlimits              # request-body size / batch-shape limits (Private Alpha hardening)
 import feed_source            # optional: source the recommender catalog from the RSS FeedArticle store
+import discover               # Discover & Stories: product-layer exploration over the FeedArticle catalog
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
@@ -521,6 +522,8 @@ class ArticleModel(BaseModel):
     # the canonical publisher URL — present only when verified (live feed source / a real read),
     # omitted otherwise (response_model_exclude_none); the frontend opens it for the Read flow.
     url: Optional[str] = None
+    # short summary — populated for Discover/Stories (from the feed); omitted for recommendations.
+    description: Optional[str] = None
     lean: float
     leanBucket: str
     confidence: float
@@ -546,6 +549,46 @@ class HistoryEntryModel(BaseModel):
     readAt: str | None = None
     readingMinutes: int
     completed: bool
+
+
+# ---- Discover & Stories (FeedArticle-powered exploration; product layer) ----
+class DiscoverResponseModel(BaseModel):
+    articles: list[ArticleModel]
+    topics: list[str]        # facet values for the topic filter
+    publishers: list[str]    # facet values for the publisher filter
+
+
+class StoryCoverageModel(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)   # `register` alias, as ArticleModel
+    publisher: str
+    headline: str
+    lean: float
+    leanBucket: str
+    register_: str = Field(alias="register")
+    emotion: EmotionShareModel
+    url: Optional[str] = None
+    publishedAt: str
+
+
+class TimelinePointModel(BaseModel):
+    date: str
+    label: str
+
+
+class StoryModel(BaseModel):
+    id: str
+    title: str
+    summary: str
+    topic: str
+    updatedAt: str
+    totalCoverage: int          # number of articles in the cluster
+    publisherCount: int         # number of distinct publishers
+    earliest: str
+    latest: str
+    distribution: ViewpointModel   # L/C/R over distinct publishers
+    coverage: list[StoryCoverageModel]
+    timeline: list[TimelinePointModel]
+    blindspotSide: Optional[str] = None
 
 
 class CitationModel(BaseModel):
@@ -970,6 +1013,39 @@ def dashboard(request: Request,
          summary="Publishers available for onboarding selection", responses=_ERR_RESPONSES)
 def outlets() -> list:
     return _require_backend().outlets()
+
+
+# ---- Discover & Stories: read-only exploration over the RSS FeedArticle catalog ---------------- #
+# Additive product surface: reshapes the catalog into the existing Article/Story contracts and
+# clusters it into events deterministically. No recommender, report, or protected module involved.
+@app.get("/api/discover", response_model=DiscoverResponseModel, response_model_exclude_none=True,
+         tags=["discover"], summary="Latest catalog articles + topic/publisher/lean filters",
+         responses=_ERR_RESPONSES)
+def discover_feed(
+    topic: Optional[str] = Query(None, description="filter to a topic (facet value)"),
+    publisher: Optional[str] = Query(None, description="filter to a publisher (facet value)"),
+    lean: Optional[str] = Query(None, description="left | center | right"),
+    limit: int = Query(60, ge=1, le=200),
+) -> dict:
+    return discover.list_discover(_require_store(), topic=topic, publisher=publisher,
+                                  lean=lean, limit=limit)
+
+
+@app.get("/api/stories", response_model=list[StoryModel], response_model_exclude_none=True,
+         tags=["discover"], summary="News events — FeedArticles clustered across publishers",
+         responses=_ERR_RESPONSES)
+def stories() -> list:
+    return discover.cluster_stories(_require_store())
+
+
+@app.get("/api/stories/{story_id}", response_model=StoryModel, response_model_exclude_none=True,
+         tags=["discover"], summary="One clustered story with full cross-publisher coverage",
+         responses=_ERR_RESPONSES)
+def story(story_id: str) -> dict:
+    s = discover.story_detail(_require_store(), story_id)
+    if s is None:
+        raise HTTPException(status_code=404, detail="Story not found.")
+    return s
 
 
 @app.post("/api/estimate", response_model=HealthReportModel, response_model_exclude_none=True,

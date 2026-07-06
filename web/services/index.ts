@@ -6,6 +6,7 @@ import type {
   Article,
   CoachMessage,
   DashboardSummary,
+  DiscoverResponse,
   FeedbackAction,
   MeasuredHealthReport,
   HistoryEntry,
@@ -34,6 +35,9 @@ export const services = {
     postJson<RecommendationReception>("/me/recommendations/opened", { articleId, crossCutting }),
   history: () => getJson<HistoryEntry[]>("/history"),
   topics: () => getJson<TopicSlice[]>("/topics"),
+  // Discover: latest catalog articles + facets, with optional topic/publisher/lean filters.
+  discover: (filters?: { topic?: string; publisher?: string; lean?: string }) =>
+    getJson<DiscoverResponse>("/discover", filters && Object.keys(filters).length ? filters : undefined),
   stories: () => getJson<Story[]>("/stories"),
   story: (id: string) => getJson<Story>(`/stories/${id}`),
   profile: () => getJson<Profile>("/profile"),
@@ -57,6 +61,8 @@ export const queryKeys = {
   recommendations: (strategy?: string) => ["recommendations", strategy ?? "all"] as const,
   history: ["history"] as const,
   topics: ["topics"] as const,
+  discover: (filters?: { topic?: string; publisher?: string; lean?: string }) =>
+    ["discover", filters?.topic ?? "all", filters?.publisher ?? "all", filters?.lean ?? "all"] as const,
   stories: ["stories"] as const,
   story: (id: string) => ["story", id] as const,
   profile: ["profile"] as const,

@@ -4,10 +4,7 @@ import * as React from "react";
 import { motion } from "framer-motion";
 import {
   Bookmark,
-  BookOpen,
-  Check,
   Clock,
-  ExternalLink,
   ThumbsUp,
   ThumbsDown,
   X,
@@ -25,6 +22,7 @@ import {
   EmotionBadge,
   ConfidenceBadge,
 } from "@/components/shared/article-badges";
+import { ReadArticleButton } from "@/components/shared/read-article-button";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
@@ -52,7 +50,6 @@ export function RecommendationCard({
   const { article } = rec;
   const [saved, setSaved] = React.useState(false);
   const [readLater, setReadLater] = React.useState(false);
-  const [opened, setOpened] = React.useState(false);
   const [vote, setVote] = React.useState<"up" | "down" | null>(null);
   const helps = METRICS[rec.helpsMetric];
 
@@ -127,39 +124,11 @@ export function RecommendationCard({
       {/* actions */}
       <div className="mt-4 flex items-center gap-1">
         {/* Primary: opening a recommended read records the reception signal behind Open-Mindedness
-            (the existing /me/recommendations/opened endpoint), and — when the recommendation carries
-            a verified publisher URL (the live RSS-backed catalog) — opens the real article in a new
-            tab so the browser extension captures the read and Dashboard/History/Analytics/Health
-            update naturally. A recommendation without a URL just records the open (never fabricated):
-            current behavior is preserved and no broken link is offered. window.open runs in the
-            click gesture (before the mutation resolves) so it is not blocked and the open is recorded
-            first. */}
-        <button
-          onClick={() => {
-            if (!opened) {
-              setOpened(true);
-              onOpen?.(); // record the recommendation as opened FIRST (Open-Mindedness reception)
-            }
-            if (article.url) window.open(article.url, "_blank", "noopener,noreferrer");
-          }}
-          aria-pressed={opened}
-          title={article.url ? "Open the article and record it as read" : "Record as read"}
-          className={cn(
-            "mr-1 inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-medium transition-colors",
-            opened
-              ? "bg-positive/15 text-positive"
-              : "bg-primary text-primary-foreground hover:bg-primary/90",
-          )}
-        >
-          {opened ? (
-            <Check className="h-3.5 w-3.5" />
-          ) : article.url ? (
-            <ExternalLink className="h-3.5 w-3.5" />
-          ) : (
-            <BookOpen className="h-3.5 w-3.5" />
-          )}
-          {opened ? "Opened" : article.url ? "Read article" : "Read"}
-        </button>
+            (the existing /me/recommendations/opened endpoint via onOpen) and opens the real article
+            so the browser extension captures the read and Dashboard/History/Analytics/Health update
+            naturally. The shared control only navigates to an absolute publisher URL — never a
+            relative value that would resolve to the app's own origin. */}
+        <ReadArticleButton article={article} onOpen={onOpen} className="mr-1" />
         <ActionButton
           label="Save"
           active={saved}

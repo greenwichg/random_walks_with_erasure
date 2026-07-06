@@ -13,6 +13,8 @@ export const useDashboard = () => useQuery({ queryKey: queryKeys.dashboard, quer
 export const useReport = () => useQuery({ queryKey: queryKeys.report, queryFn: services.report });
 export const useHistory = () => useQuery({ queryKey: queryKeys.history, queryFn: services.history });
 export const useTopics = () => useQuery({ queryKey: queryKeys.topics, queryFn: services.topics });
+export const useDiscover = (filters?: { topic?: string; publisher?: string; lean?: string }) =>
+  useQuery({ queryKey: queryKeys.discover(filters), queryFn: () => services.discover(filters) });
 export const useStories = () => useQuery({ queryKey: queryKeys.stories, queryFn: services.stories });
 export const useStory = (id: string) =>
   useQuery({ queryKey: queryKeys.story(id), queryFn: () => services.story(id), enabled: !!id });

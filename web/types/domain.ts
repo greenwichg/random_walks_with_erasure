@@ -177,6 +177,8 @@ export interface Article {
   topic: string;
   url?: string;
   imageUrl?: string;
+  /** Short summary — populated for Discover/Stories (from the feed); omitted for recommendations. */
+  description?: string;
   lean: Lean;
   leanBucket: LeanBucket;
   confidence: number; // 0–1
@@ -243,11 +245,22 @@ export interface Story {
   summary: string;
   topic: string;
   updatedAt: string;
-  totalCoverage: number;
+  totalCoverage: number; // number of articles in the cluster
+  /** Distinct publishers covering the event (from the FeedArticle-clustered Stories). */
+  publisherCount?: number;
+  earliest?: string;
+  latest?: string;
   distribution: ViewpointDistribution;
   coverage: StoryCoverage[];
   timeline: { date: string; label: string }[];
   blindspotSide?: LeanBucket;
+}
+
+/** Discover feed: the latest catalog articles plus the facet values for the filters. */
+export interface DiscoverResponse {
+  articles: Article[];
+  topics: string[];
+  publishers: string[];
 }
 
 /** AI Coach chat message. */
