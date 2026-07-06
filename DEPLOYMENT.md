@@ -296,9 +296,13 @@ articles **exactly** as they do over the static qbias catalog (no algorithm, eng
 change). It requires at least `RWE_FEED_MIN_ARTICLES` (default 50) in the catalog; below that it
 **falls back** to the existing corpus, so enabling it before any RSS ingest is safe.
 
-> Recommendation item ids remain the qbias-style synthetic ids — carrying the real publisher URL
-> through to the recommendation *payload* is the separate **Honest URL Pass-through** step (the
-> exported CSV already carries the `url` per row to make that a small follow-up).
+> Recommendation item ids remain the qbias-style synthetic ids, but each feed-sourced recommendation
+> now **also carries the real publisher `url`** (the engine maps `Q{i}` → the FeedArticle URL via the
+> exported CSV and adds it to the article payload only when verified — never fabricated). This is the
+> **Honest URL Pass-through**: the recommendation Read button records the open and then opens the real
+> article, so the browser extension captures the read and Dashboard / History / Analytics / Health /
+> Open-Mindedness update through the existing ingestion pipeline. A recommendation without a URL (the
+> static/synthetic corpus) records the open but opens nothing — current behaviour, no broken link.
 
 ---
 

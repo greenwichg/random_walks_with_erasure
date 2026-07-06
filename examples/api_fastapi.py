@@ -123,17 +123,22 @@ async def lifespan(app: FastAPI):
     # at a FeedArticle-derived qbias-format CSV, so the ENGINE and the protected simulator are unchanged
     # and the recommender operates over live articles exactly as over qbias. Falls back (keeps the
     # existing corpus) when the catalog is too small.
+    feed_csv = None
     if feed_source.enabled():
-        csv_path = feed_source.prepare(st)
-        if csv_path:
-            os.environ["RWE_QBIAS"] = csv_path
+        feed_csv = feed_source.prepare(st)
+        if feed_csv:
+            os.environ["RWE_QBIAS"] = feed_csv
             os.environ.setdefault("RWE_PROFILE", "qbias")
-            _log(logging.INFO, "recs_source", source="feed", csv=csv_path,
+            _log(logging.INFO, "recs_source", source="feed", csv=feed_csv,
                  articles=st.count_feed_articles())
         else:
             _log(logging.WARNING, "recs_source_fallback", source="feed",
                  reason="catalog below RWE_FEED_MIN_ARTICLES", articles=st.count_feed_articles())
     be = engine.Backend(_profile_from_env(), provider=provider)
+    if feed_csv:
+        # Map the corpus item ids (Q{i}) back to their FeedArticle publisher URLs, so recommendations
+        # carry the real openable URL (the Honest URL Pass-through). Additive; no algorithm change.
+        be.attach_url_resolver(feed_source.load_url_map(feed_csv))
     state.backend = be
     state.store = st
     state.scorer = ingest.Scorer(enricher=enrich.make_enricher())   # baseline register+emotion
@@ -498,6 +503,9 @@ class ArticleModel(BaseModel):
     publisher: str
     publisherLean: float
     topic: str
+    # the canonical publisher URL — present only when verified (live feed source / a real read),
+    # omitted otherwise (response_model_exclude_none); the frontend opens it for the Read flow.
+    url: Optional[str] = None
     lean: float
     leanBucket: str
     confidence: float

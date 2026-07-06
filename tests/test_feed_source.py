@@ -77,6 +77,20 @@ def test_enabled_flag(monkeypatch):
     assert feed_source.enabled() is True
 
 
+def test_load_url_map_mirrors_qbias_ids(tmp_path):
+    """Q{i} keys by CSV data-row index, matching catalog_from_qbias's enumerate — including the gap
+    left by a row the builder drops (empty bias), whose (unused) entry is still present + harmless."""
+    p = tmp_path / "c.csv"
+    p.write_text("title,source,bias_rating,tags,url\n"
+                 "a,Fox News,right,Politics,https://www.foxnews.com/a\n"
+                 "b,Somewhere,,Politics,https://x.com/b\n"          # empty bias -> builder skips (no Q1 rec)
+                 "c,CNN,left,Politics,https://www.cnn.com/c\n", encoding="utf-8")
+    m = feed_source.load_url_map(str(p))
+    assert m["Q0"] == "https://www.foxnews.com/a"
+    assert m["Q2"] == "https://www.cnn.com/c"                        # row index 2 (0-based), not compacted
+    assert m["Q1"] == "https://x.com/b"                             # present but never emitted as a rec id
+
+
 # --------------------------------------------------------------------------- #
 # End-to-end: the recommender, sourced from FeedArticle, behaves as it does over qbias.
 # --------------------------------------------------------------------------- #
@@ -103,3 +117,37 @@ def test_recommender_sources_from_feed_catalog(tmp_path):
     # sanity: the same report/metric machinery runs over the live catalog
     report = be.report(be.demo_user)
     assert 0 <= report["overall"] <= 100 and len(report["sources"]) > 0
+
+
+def test_recommendations_carry_verified_url_and_degrade_gracefully(tmp_path):
+    """The Honest URL Pass-through: recs from the live feed catalog carry the real publisher URL;
+    the id-is-a-URL rule gives history its URL too; and with no resolver, no URL is emitted."""
+    pytest.importorskip("scipy")
+    import api_server as engine
+
+    st = store.Store("sqlite://")
+    _seed(st, per_outlet=70)
+    csv_path = str(tmp_path / "feed.csv")
+    feed_source.export_catalog_csv(st, csv_path)
+    profile = engine.DatasetProfile.synthetic(n_users=120, max_items=500, seed=0, qbias_csv=csv_path)
+    be = engine.Backend(profile)
+    be.attach_url_resolver(feed_source.load_url_map(csv_path))
+
+    recs = be.recommendations(be.demo_user)
+    assert recs
+    for r in recs:
+        a = r["article"]
+        assert a["id"].startswith("Q")                              # qbias-style corpus id
+        assert a.get("url", "").startswith("https://ex.com/")       # ...resolved to a verified FeedArticle URL
+
+    # id-is-a-URL rule: a real reader's stored read (history) carries its own canonical URL.
+    hist = be.serialize_history([{
+        "id": 1, "canonicalUrl": "https://www.foxnews.com/x",
+        "scored": {"article_id": "https://www.foxnews.com/x", "outlet": "Fox News", "title": "t", "lean": 1.0},
+        "observedAt": None, "createdAt": None}])
+    assert hist[0]["article"]["url"] == "https://www.foxnews.com/x"
+
+    # graceful: cleared resolver + a non-URL id -> no url emitted (never fabricated).
+    assert be._resolve_url("S144") is None
+    be.attach_url_resolver({})
+    assert all("url" not in r["article"] for r in be.recommendations(be.demo_user))

@@ -7,6 +7,7 @@ import {
   BookOpen,
   Check,
   Clock,
+  ExternalLink,
   ThumbsUp,
   ThumbsDown,
   X,
@@ -125,15 +126,24 @@ export function RecommendationCard({
 
       {/* actions */}
       <div className="mt-4 flex items-center gap-1">
-        {/* Primary: opening a recommended read is the reception signal behind Open-Mindedness —
-            opening the cross-cutting ones is exactly what raises the metric. Idempotent. */}
+        {/* Primary: opening a recommended read records the reception signal behind Open-Mindedness
+            (the existing /me/recommendations/opened endpoint), and — when the recommendation carries
+            a verified publisher URL (the live RSS-backed catalog) — opens the real article in a new
+            tab so the browser extension captures the read and Dashboard/History/Analytics/Health
+            update naturally. A recommendation without a URL just records the open (never fabricated):
+            current behavior is preserved and no broken link is offered. window.open runs in the
+            click gesture (before the mutation resolves) so it is not blocked and the open is recorded
+            first. */}
         <button
           onClick={() => {
-            if (opened) return;
-            setOpened(true);
-            onOpen?.();
+            if (!opened) {
+              setOpened(true);
+              onOpen?.(); // record the recommendation as opened FIRST (Open-Mindedness reception)
+            }
+            if (article.url) window.open(article.url, "_blank", "noopener,noreferrer");
           }}
           aria-pressed={opened}
+          title={article.url ? "Open the article and record it as read" : "Record as read"}
           className={cn(
             "mr-1 inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-medium transition-colors",
             opened
@@ -141,8 +151,14 @@ export function RecommendationCard({
               : "bg-primary text-primary-foreground hover:bg-primary/90",
           )}
         >
-          {opened ? <Check className="h-3.5 w-3.5" /> : <BookOpen className="h-3.5 w-3.5" />}
-          {opened ? "Opened" : "Read"}
+          {opened ? (
+            <Check className="h-3.5 w-3.5" />
+          ) : article.url ? (
+            <ExternalLink className="h-3.5 w-3.5" />
+          ) : (
+            <BookOpen className="h-3.5 w-3.5" />
+          )}
+          {opened ? "Opened" : article.url ? "Read article" : "Read"}
         </button>
         <ActionButton
           label="Save"

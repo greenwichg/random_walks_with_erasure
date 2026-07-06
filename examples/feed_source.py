@@ -99,6 +99,26 @@ def prepare(store_, path: Optional[str] = None, *, min_articles: Optional[int] =
     return out
 
 
+def load_url_map(csv_path: str) -> dict:
+    """The corpus item-id -> publisher URL map implied by the exported catalog.
+
+    ``catalog_from_qbias`` labels the i-th CSV *data* row ``Q{i}`` (``for i, row in enumerate(...)``)
+    and drops rows with no resolvable lean without renumbering, so mapping each data-row index ``i``
+    to that row's ``url`` reproduces the exact ids the recommender emits. Rows the builder later
+    drops simply never appear as a recommendation id — their entries here are harmless. Reads the
+    same CSV ``export_catalog_csv`` wrote (no duplicate storage)."""
+    out: dict = {}
+    try:
+        with open(csv_path, newline="", encoding="utf-8") as f:
+            for i, row in enumerate(csv.DictReader(f)):
+                url = (row.get("url") or "").strip()
+                if url:
+                    out[f"Q{i}"] = url
+    except OSError:
+        pass
+    return out
+
+
 def _int_env(name: str, default: int) -> int:
     v = os.environ.get(name)
     return int(v) if v and v.lstrip("-").isdigit() else default

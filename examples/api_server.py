@@ -386,6 +386,9 @@ class Backend:
         self.model = model or nr._DEFAULT_MODELS.get(provider)
         register = emotion = selective = confidence = None
         self._probe_csv = None   # satisfaction-probe CSV (drives AdaptiveRWEB exposure)
+        # corpus item-id -> canonical publisher URL, attached by the serving layer when the catalog is
+        # sourced from the live RSS feed (empty otherwise → no URL is emitted, unchanged behaviour).
+        self.url_by_id: dict = {}
 
         if profile.kind == "npz":
             if not profile.npz:
@@ -565,6 +568,21 @@ class Backend:
         s = sum(vals.values()) or 1.0
         return {l: vals[l] / s for l in labels}
 
+    def attach_url_resolver(self, mapping: dict) -> None:
+        """Attach a corpus item-id -> canonical publisher URL map (from the live RSS feed source), so
+        serialized articles carry the real openable URL. Purely additive — the recommender, ranking,
+        scoring, report, and personalization are untouched; this only enriches the article payload."""
+        self.url_by_id = dict(mapping or {})
+
+    def _resolve_url(self, item_id) -> "str | None":
+        """The verified canonical publisher URL for an article id, or ``None``. Two honest sources,
+        never fabricated: the id is itself a canonical URL (a real reader's stored read), or the live
+        feed source mapped this corpus id (``Q{i}``) to a FeedArticle URL."""
+        s = str(item_id)
+        if s.startswith("http://") or s.startswith("https://"):
+            return s
+        return self.url_by_id.get(s)
+
     def _article_payload(self, *, item_id, headline, outlet, topic, lean, register,
                          emotion: dict, confidence, outlet_lean: dict) -> dict:
         """Build one article payload from already-resolved fields — the SINGLE source of the
@@ -576,7 +594,7 @@ class Backend:
         pos = float(lean) if lean is not None and np.isfinite(lean) else 0.0
         conf = float(confidence) if confidence is not None and np.isfinite(confidence) else 0.7
         dom = max(emotion, key=emotion.get) if emotion else "neutral"
-        return {
+        payload = {
             "id": item_id,
             "headline": str(headline),
             "publisher": _prettify(outlet),
@@ -591,6 +609,12 @@ class Backend:
             "publishedAt": _iso_recent(item_id),
             "readingMinutes": 2 + (_stable_int(item_id) % 8),
         }
+        # Additive: include the canonical publisher URL only when one is verified (never fabricated),
+        # so the frontend can open the real article. Omitted otherwise (response_model_exclude_none).
+        url = self._resolve_url(item_id)
+        if url:
+            payload["url"] = url
+        return payload
 
     def _serialize_article(self, corpus: _Corpus, col: int) -> dict:
         """Serialise one article (column) of a corpus. Corpus-parametric so the same code
