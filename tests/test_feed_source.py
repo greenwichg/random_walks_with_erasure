@@ -61,6 +61,33 @@ def test_export_catalog_csv_format(tmp_path):
     assert by["Fox News"]["tags"] == "Politics"
 
 
+def test_export_caps_per_outlet(tmp_path):
+    """max_per_outlet stops a high-volume ('firehose') feed from swamping the recommendation corpus:
+    the dominant outlet is capped, thin outlets are kept whole, and the Q{i}->url map still aligns."""
+    st = store.Store("sqlite://")
+    for k in range(100):                                          # a firehose outlet
+        u = f"https://wsj.com/{k}"
+        _add(st, u, u, "Wall Street Journal", 0.8, title=f"wsj {k}")
+    for name, lean in [("NPR", -1.0), ("Fox News", 1.4)]:        # two thin outlets
+        for k in range(10):
+            u = f"https://{name.replace(' ', '').lower()}.com/{k}"
+            _add(st, u, u, name, lean, title=f"{name} {k}")
+
+    path = str(tmp_path / "c.csv")
+    n = feed_source.export_catalog_csv(st, path, max_per_outlet=15)
+    counts = {}
+    for r in _csv.DictReader(open(path, encoding="utf-8")):
+        counts[r["source"]] = counts.get(r["source"], 0) + 1
+    assert counts["Wall Street Journal"] == 15                   # firehose capped
+    assert counts["NPR"] == 10 and counts["Fox News"] == 10      # thin outlets kept whole
+    assert n == 35
+    # no cap -> everything is exported (default behaviour is unchanged)
+    assert feed_source.export_catalog_csv(st, str(tmp_path / "all.csv")) == 120
+    # the url map still mirrors the (capped) exported rows one-to-one
+    m = feed_source.load_url_map(path)
+    assert len(m) == n and all(v.startswith("http") for v in m.values())
+
+
 def test_prepare_threshold_and_fallback(tmp_path):
     st = store.Store("sqlite://")
     assert feed_source.prepare(st, str(tmp_path / "x.csv"), min_articles=5) is None   # below -> fallback

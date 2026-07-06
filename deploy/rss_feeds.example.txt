@@ -6,17 +6,24 @@
 #   python examples/rss_ingest.py run --feeds deploy/rss_feeds.example.txt
 #   # or: RWE_RSS_FEEDS=deploy/rss_feeds.example.txt python examples/rss_ingest.py run
 #
-# These are EXAMPLES — verify each URL against the publisher's current feed and adjust the mix for
-# your deployment. Publisher names are resolved to a canonical outlet + AllSides lean from the URL,
-# so the `Name|` prefix is only a hint / fallback. Chosen to span the spectrum (left / center / right)
-# and to match the domains the browser extension recognizes.
+# These are EXAMPLES — verify each URL against the publisher's CURRENT feed and adjust the mix for
+# your deployment. Two things to watch for (both seen in the wild):
+#   * Stale/legacy feeds. Some old feed hosts still respond but serve months-old cached articles.
+#     Check `rss_ingest.py status` — if the dates look old, replace that URL with the publisher's
+#     current feed. (The engine passes each article's real <pubDate> through unchanged.)
+#   * Firehose feeds. A single high-volume "world news" feed can return hundreds of items and swamp
+#     the catalog, so nearly every recommendation comes from that one outlet. Prefer a section feed
+#     (politics / top-stories) over a firehose, and set RWE_FEED_MAX_PER_OUTLET (e.g. 40) so no single
+#     feed can dominate the recommendation corpus regardless of how much it returns.
+#
+# Publisher names are resolved to a canonical outlet + AllSides lean from the URL, so the `Name|`
+# prefix is only a hint / fallback. Chosen to span the spectrum and match the extension's domains.
 
 # --- Left / center-left ---
 The Guardian|https://www.theguardian.com/us-news/rss
 NPR|https://feeds.npr.org/1001/rss.xml
 CNN|http://rss.cnn.com/rss/cnn_topstories.rss
 The New York Times|https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml
-The Washington Post|https://feeds.washingtonpost.com/rss/politics
 
 # --- Center ---
 BBC News|https://feeds.bbci.co.uk/news/rss.xml
@@ -24,4 +31,5 @@ The Hill|https://thehill.com/homenews/feed/
 
 # --- Right / center-right ---
 Fox News|https://moxie.foxnews.com/google-publisher/politics.xml
-The Wall Street Journal|https://feeds.a.dj.com/rss/RSSWorldNews.xml
+New York Post|https://nypost.com/feed/
+Washington Times|https://www.washingtontimes.com/rss/headlines/news/politics/

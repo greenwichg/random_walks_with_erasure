@@ -59,21 +59,33 @@ def _bias_label(lean, center: float = 0.5) -> str:
 
 
 def export_catalog_csv(store_, path: str, *, max_items: Optional[int] = None,
-                       center: float = 0.5) -> int:
-    """Write the FeedArticle catalog to a qbias-format CSV at ``path``. Returns the row count."""
+                       center: float = 0.5, max_per_outlet: Optional[int] = None) -> int:
+    """Write the FeedArticle catalog to a qbias-format CSV at ``path``. Returns the row count.
+
+    ``max_per_outlet`` (optional) keeps at most that many articles per outlet — the most-recently
+    fetched, since :meth:`Store.list_feed_articles` is ordered newest-first — so a single high-volume
+    feed (e.g. a "world news" firehose) can't dominate the recommendations. It is corpus *composition*
+    only (like ``max_items``); it does not touch ranking, scoring, diversity, or selection."""
     rows = store_.list_feed_articles(limit=max_items or 1_000_000)
     parent = os.path.dirname(os.path.abspath(path))
     if parent:
         os.makedirs(parent, exist_ok=True)
     n = 0
+    per_outlet: dict = {}
     with open(path, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerow(_COLUMNS)
         for a in rows:
             scored = a.get("scored") or {}
+            outlet = a.get("publisher") or scored.get("outlet") or ""
+            if max_per_outlet:
+                key = outlet.strip().lower()
+                per_outlet[key] = per_outlet.get(key, 0) + 1
+                if per_outlet[key] > max_per_outlet:
+                    continue                 # this outlet already hit its cap — keep the corpus balanced
             w.writerow([
                 a.get("title") or scored.get("title") or "",
-                a.get("publisher") or scored.get("outlet") or "",
+                outlet,
                 _bias_label(scored.get("lean"), center),
                 scored.get("category") or "",
                 a.get("url") or a.get("canonicalUrl") or "",
@@ -95,7 +107,10 @@ def prepare(store_, path: Optional[str] = None, *, min_articles: Optional[int] =
     if total < threshold:
         return None
     out = path or os.environ.get("RWE_FEED_CORPUS_CSV") or os.path.join(_data_dir(), "feed_corpus.csv")
-    export_catalog_csv(store_, out, max_items=max_items)
+    # Optional per-outlet cap (RWE_FEED_MAX_PER_OUTLET, 0/unset = no cap) so one firehose feed can't
+    # dominate the recommendation corpus. Applied to the corpus export only; the full catalog is kept.
+    export_catalog_csv(store_, out, max_items=max_items,
+                       max_per_outlet=_int_env("RWE_FEED_MAX_PER_OUTLET", 0) or None)
     return out
 
 

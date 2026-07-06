@@ -17,6 +17,9 @@ services:
       # the catalog ends up below RWE_FEED_MIN_ARTICLES (feeds unreachable), the engine falls back to
       # RWE_PROFILE above. Comment this out to always use the static corpus (recommendations, no URLs).
       RWE_RECS_SOURCE: feed
+      # Cap articles per outlet in the recommendation corpus so one high-volume ("firehose") feed can't
+      # dominate the recommendations. 0/unset = no cap. The full catalog is unaffected.
+      RWE_FEED_MAX_PER_OUTLET: 40
       # --- production hardening (fail-closed auth) --------------------------------
       # This compose file runs in dev mode by default (the engine trusts the local
       # web service) so `up` is one command. For a real, internet-facing deployment,
