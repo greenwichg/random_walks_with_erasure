@@ -304,6 +304,15 @@ change). It requires at least `RWE_FEED_MIN_ARTICLES` (default 50) in the catalo
 > Open-Mindedness update through the existing ingestion pipeline. A recommendation without a URL (the
 > static/synthetic corpus) records the open but opens nothing — current behaviour, no broken link.
 
+**Docker Compose wires this up automatically.** `deploy/docker-compose.yml` includes a one-shot
+`ingest` service that fetches the feeds in `deploy/rss_feeds.example.txt` into the shared catalog
+**before** the engine starts (`api` `depends_on` it), and sets `RWE_RECS_SOURCE=feed` on the engine —
+so a fresh `docker compose up` serves URL-carrying recommendations out of the box. The ingest exits
+cleanly even if a feed is unreachable (`|| true`), so it never blocks the deploy; below
+`RWE_FEED_MIN_ARTICLES` the engine falls back to the static corpus. Edit the feeds file to change the
+mix, or comment out `RWE_RECS_SOURCE` to always use the static corpus. The Colab notebook
+(`deploy/information_health_colab.ipynb`) has an equivalent optional **“Live RSS feed”** cell.
+
 ---
 
 ## Startup validation (fail fast)
