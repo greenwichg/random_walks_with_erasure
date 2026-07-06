@@ -11,9 +11,27 @@
  */
 
 import { NextResponse } from "next/server";
+import { headers } from "next/headers";
 
 const BASE = process.env.RWE_BACKEND_URL ?? "http://127.0.0.1:8000";
 const TIMEOUT_MS = Number(process.env.RWE_BACKEND_TIMEOUT_MS ?? 6000);
+
+/**
+ * Forward the originating client's IP to the engine as `X-Forwarded-For`, so the engine's per-IP
+ * rate limiting keys on the real caller rather than the web tier's own socket address. Read from
+ * the incoming request via `next/headers`; a no-op outside a request scope or when absent (local
+ * dev). Authenticated calls are keyed by user id engine-side, so this only affects the anonymous /
+ * extension-token paths.
+ */
+function forwardedFor(): Record<string, string> {
+  try {
+    const h = headers();
+    const ip = h.get("x-forwarded-for") ?? h.get("x-real-ip");
+    return ip ? { "x-forwarded-for": ip } : {};
+  } catch {
+    return {};
+  }
+}
 
 /**
  * Whether a route backed by the real engine may fall back to mock data when the
@@ -45,8 +63,13 @@ export function engineUnavailable(): NextResponse {
 async function withTimeout(input: string, init?: RequestInit): Promise<Response | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  // Caller headers (auth / user id) win over the forwarded IP on any conflict.
+  const mergedHeaders: Record<string, string> = {
+    ...forwardedFor(),
+    ...((init?.headers as Record<string, string> | undefined) ?? {}),
+  };
   try {
-    return await fetch(input, { ...init, signal: controller.signal, cache: "no-store" });
+    return await fetch(input, { ...init, headers: mergedHeaders, signal: controller.signal, cache: "no-store" });
   } catch {
     return null; // ECONNREFUSED, abort/timeout, DNS, …
   } finally {

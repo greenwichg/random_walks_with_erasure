@@ -37,6 +37,7 @@ import store                  # beta persistence layer (users + identities)
 import ingest                 # reading-event scorer + cache (Milestone C)
 import enrich                 # headline enrichment (register + emotion) behind ingest.Enricher
 import personalize            # per-user augmented Measured report / recs / coach
+import ratelimit              # dependency-free token-bucket rate limiter (Private Alpha hardening)
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
@@ -87,6 +88,7 @@ class _State:
     store: "store.Store | None" = None
     scorer: "ingest.Scorer | None" = None
     personalizer: "personalize.Personalizer | None" = None
+    limiter: "ratelimit.RateLimiter | None" = None
 
 
 state = _State()
@@ -110,13 +112,16 @@ async def lifespan(app: FastAPI):
     # The personalization layer: builds a real user's Measured report / recs / coach from an
     # augmented corpus once they've stored enough reads (cached per user + reading version).
     state.personalizer = personalize.Personalizer(be, state.store)
+    state.limiter = ratelimit.RateLimiter()          # per-process token-bucket limiter
     _log(logging.INFO, "startup", profile=be.profile.name, demoUser=be.demo_user,
-         eligibleReaders=int(len(be.eligible)), db=state.store.url)
+         eligibleReaders=int(len(be.eligible)), db=state.store.url,
+         rateLimit=ratelimit.enabled(), production=_production())
     yield
     state.backend = None
     state.store = None
     state.scorer = None
     state.personalizer = None
+    state.limiter = None
 
 
 app = FastAPI(
@@ -147,12 +152,21 @@ app.add_middleware(
 
 @app.middleware("http")
 async def _observability(request: Request, call_next):
-    """Tag each request with an id, time it, and emit one structured log line."""
+    """Tag each request with an id, apply rate limiting, time it, and emit one structured log line.
+
+    The rate-limit check runs here (after the request id is set, before the handler) so a throttled
+    request is denied without doing any work, yet is still logged and carries ``X-Request-ID`` and
+    ``error.requestId`` exactly like every other response."""
     rid = request.headers.get("x-request-id") or uuid.uuid4().hex[:12]
     _request_id.set(rid)
     start = time.perf_counter()
     status = 500
     try:
+        limited = _rate_limit_check(request)
+        if limited is not None:
+            status = limited.status_code
+            limited.headers["X-Request-ID"] = rid
+            return limited
         response = await call_next(request)
         status = response.status_code
         response.headers["X-Request-ID"] = rid
@@ -673,6 +687,52 @@ def _require_trusted(request: Request) -> None:
     """Reject an internal call that is not from the trusted web tier (fail closed in prod)."""
     if not _trusted(request):
         raise HTTPException(status_code=401, detail="Missing or invalid internal credentials.")
+
+
+def _client_ip(request: Request) -> str:
+    """Best-effort client IP for rate-limit keying: the first ``X-Forwarded-For`` hop (set by the
+    web tier / load balancer) when present, else the socket peer. Behind the web proxy the real
+    client IP arrives via XFF; a direct call uses the peer."""
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        first = xff.split(",")[0].strip()
+        if first:
+            return first
+    return request.client.host if request.client else "unknown"
+
+
+def _rate_identity(request: Request) -> str:
+    """The rate-limit key subject: the authenticated user when the trusted web tier names one
+    (``u:<id>``), else the client IP (``ip:<addr>``). Keying by user id keeps per-user limits
+    correct even though every production request shares the web tier's socket address."""
+    raw = request.headers.get(_REAL_USER_HEADER)
+    if raw and raw.lstrip("-").isdigit() and _trusted(request):
+        return f"u:{raw}"
+    return f"ip:{_client_ip(request)}"
+
+
+def _rate_limit_check(request: Request) -> "JSONResponse | None":
+    """Apply the token-bucket limiter to a request. Returns a typed ``429`` (with ``Retry-After``)
+    when the caller has exceeded the scope's rate, else ``None`` to let the request proceed. Never
+    raises — a limiter fault must not take down the request path. Exempt paths (health/docs) and
+    pre-flight are classified out by :func:`ratelimit.scope_for`."""
+    limiter = state.limiter
+    if limiter is None or not ratelimit.enabled():
+        return None
+    scope = ratelimit.scope_for(request.method, request.url.path)
+    if scope is None:
+        return None
+    identity = _rate_identity(request)
+    rate = ratelimit.rate_for(scope, production=_production())
+    ok, retry_after = limiter.check(f"{scope}|{identity}", rate)
+    if ok:
+        return None
+    _log(logging.WARNING, "rate_limited", scope=scope, identityKind=identity.split(":", 1)[0],
+         method=request.method, path=request.url.path, limitPerMin=rate, retryAfter=retry_after)
+    resp = _error(429, "rate_limited",
+                  "Too many requests — please slow down and try again in a moment.")
+    resp.headers["Retry-After"] = str(retry_after)
+    return resp
 
 
 def _require_store() -> "store.Store":

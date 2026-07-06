@@ -121,6 +121,8 @@ switching data never touches the frontend.
 | `RWE_ENV` | — | `production` turns on **fail-closed auth**: the engine requires `RWE_INTERNAL_SECRET` and refuses to start without it. Unset = local dev (trust local callers). |
 | `RWE_REQUIRE_AUTH` | — | force fail-closed auth on/off independently of `RWE_ENV` (`1`/`0`); defaults to whatever `RWE_ENV` implies |
 | `RWE_INTERNAL_SECRET` | — | shared secret authenticating the web tier's server-to-server calls. Unset = trust local callers (dev only); **required** in production. |
+| `RWE_RATELIMIT_ENABLED` | — | rate limiting is on by default; set `0`/`false` to disable |
+| `RWE_RATELIMIT_<SCOPE>_PER_MIN` | — | override a scope's sustained requests/minute. `SCOPE` ∈ `AUTH` (30), `AI` (15), `INGEST` (60), `WRITE` (60), `READ` (240), `DEFAULT` (120) — production defaults shown; relaxed ×50 outside production |
 | `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` | — | enable the live coach narrative |
 
 **Web app** (`web/.env.local`):
@@ -204,6 +206,12 @@ images as two services, set `RWE_BACKEND_URL` on the web service to the engine's
 - **Logs:** the engine emits one structured JSON line per request
   (`{"event":"request","method","path","status","durationMs","requestId"}`) plus a `startup`
   line. Set verbosity with `RWE_LOG_LEVEL`.
+- **Rate limiting:** a per-process token-bucket limiter protects the engine (no Redis). Each
+  request is keyed by the authenticated user (else client IP) and classified into a scope
+  (auth / ai / ingest / write / read); over-limit requests get a typed `429` with a `Retry-After`
+  header and are logged as `{"event":"rate_limited","scope","identityKind","path","retryAfter"}`.
+  Tune per scope with `RWE_RATELIMIT_<SCOPE>_PER_MIN` (see the config reference). Note: limits are
+  per engine process, so with `--workers N` the effective ceiling is N× the configured rate.
 - **Tracing:** every response carries an `X-Request-ID` (echoing an inbound one if provided),
   and every error body includes `error.requestId` — so a user‑visible failure maps to a log line.
 
