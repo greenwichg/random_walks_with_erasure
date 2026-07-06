@@ -72,6 +72,16 @@ def _int_env(name: str):
     return int(v) if v and v.lstrip("-").isdigit() else None
 
 
+def _production() -> bool:
+    """Whether the engine is running in production mode (``RWE_ENV=production`` / ``prod``).
+
+    The single cross-tier switch that turns on fail-closed authentication (the web tier reads the
+    same variable) and the strict CORS default. Unset — local dev, the Colab demo, tests — keeps the
+    zero-config behaviour that makes the app runnable with one command. Defined early because the
+    CORS middleware (configured at import) consults it."""
+    return os.environ.get("RWE_ENV", "").strip().lower() in {"production", "prod"}
+
+
 def _profile_from_env() -> "engine.DatasetProfile":
     """Resolve the dataset profile from environment only (deployment config), reusing the
     exact same resolution as the CLI so behaviour is identical."""
@@ -143,11 +153,25 @@ app = FastAPI(
     ],
     lifespan=lifespan,
 )
+def _cors_origins() -> "list[str]":
+    """Browser origins allowed to call the engine cross-origin.
+
+    ``RWE_CORS_ORIGINS`` (comma-separated) wins. Otherwise: permissive (``*``) in development, where
+    the engine is often hit directly from a browser / the docs; **locked** (none) in production,
+    where the engine is internal and the web tier calls it server-to-server (not subject to CORS).
+    Read at import (when the middleware is configured), like a deployment setting."""
+    raw = os.environ.get("RWE_CORS_ORIGINS")
+    if raw is not None and raw.strip() != "":
+        return [o.strip() for o in raw.split(",") if o.strip()]
+    return [] if _production() else ["*"]
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_origins=_cors_origins(),
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
     allow_headers=["*"],
+    expose_headers=["X-Request-ID"],
 )
 
 
@@ -163,20 +187,20 @@ async def _observability(request: Request, call_next):
     start = time.perf_counter()
     status = 500
     try:
-        oversized = _body_limit_check(request)      # reject a too-large body before buffering it
-        if oversized is not None:
-            status = oversized.status_code
-            oversized.headers["X-Request-ID"] = rid
-            return oversized
-        limited = _rate_limit_check(request)
-        if limited is not None:
-            status = limited.status_code
-            limited.headers["X-Request-ID"] = rid
-            return limited
-        response = await call_next(request)
-        status = response.status_code
-        response.headers["X-Request-ID"] = rid
-        return response
+        # Reject a too-large body (413) before buffering it; then apply the rate limiter (429). The
+        # first non-None short-circuits the handler; otherwise run it. Headers are set uniformly below.
+        resp = _body_limit_check(request) or _rate_limit_check(request)
+        if resp is None:
+            resp = await call_next(request)
+        status = resp.status_code
+        resp.headers["X-Request-ID"] = rid
+        # Response hardening for a JSON API: never sniff types, never leak the URL as a referrer, and
+        # never cache per-user data. (CSP/frame headers live on the browser-facing web tier.)
+        resp.headers["X-Content-Type-Options"] = "nosniff"
+        resp.headers["Referrer-Policy"] = "no-referrer"
+        if request.url.path.startswith("/api/"):
+            resp.headers.setdefault("Cache-Control", "no-store")
+        return resp
     finally:
         _log(logging.INFO if status < 500 else logging.ERROR, "request",
              method=request.method, path=request.url.path, status=status,
@@ -642,15 +666,6 @@ def _internal_secret() -> "str | None":
     runs with zero extra configuration; production mode *requires* it (see :func:`_require_auth`
     and :func:`_config_errors`). Read per-request so it can be rotated without a restart."""
     return os.environ.get("RWE_INTERNAL_SECRET") or None
-
-
-def _production() -> bool:
-    """Whether the engine is running in production mode (``RWE_ENV=production`` / ``prod``).
-
-    The single cross-tier switch that turns on fail-closed authentication (the web tier reads
-    the same variable). Unset — local dev, the Colab demo, tests — keeps the zero-config,
-    trust-the-local-caller behaviour that makes the app runnable with one command."""
-    return os.environ.get("RWE_ENV", "").strip().lower() in {"production", "prod"}
 
 
 def _require_auth() -> bool:

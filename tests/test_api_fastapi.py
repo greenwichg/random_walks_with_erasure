@@ -680,6 +680,28 @@ def test_fail_closed_blocks_impersonation_in_production(client, monkeypatch):
     assert client.get("/api/me/profile", headers=hdr).status_code == 401
 
 
+def test_cors_origins_policy(monkeypatch):
+    """CORS is permissive in dev, locked in production, and an explicit allow-list wins."""
+    monkeypatch.delenv("RWE_CORS_ORIGINS", raising=False)
+    monkeypatch.delenv("RWE_ENV", raising=False)
+    assert api_fastapi._cors_origins() == ["*"]                          # dev: permissive
+    monkeypatch.setenv("RWE_ENV", "production")
+    assert api_fastapi._cors_origins() == []                            # prod: locked (engine is internal)
+    monkeypatch.setenv("RWE_CORS_ORIGINS", "https://app.example.com, https://admin.example.com")
+    assert api_fastapi._cors_origins() == ["https://app.example.com", "https://admin.example.com"]
+
+
+def test_response_security_headers(client):
+    """Every engine response carries the JSON-API hardening headers; /api responses are no-store."""
+    r = client.get("/api/health")
+    assert r.headers["x-content-type-options"] == "nosniff"
+    assert r.headers["referrer-policy"] == "no-referrer"
+    assert r.headers["cache-control"] == "no-store"
+    # a cross-origin browser request is answered with CORS headers in dev (permissive default)
+    cors = client.get("/api/health", headers={"Origin": "http://localhost:3000"})
+    assert cors.headers.get("access-control-allow-origin") in {"*", "http://localhost:3000"}
+
+
 def test_storage_diagnostics_endpoint(client, monkeypatch):
     """The internal storage endpoint reports live pragmas + a corruption probe, and is a trusted
     endpoint (requires the secret when configured)."""

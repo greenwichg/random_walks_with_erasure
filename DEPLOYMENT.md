@@ -127,6 +127,7 @@ switching data never touches the frontend.
 | `RWE_MAX_READS_PER_BATCH` / `RWE_MAX_URL_LEN` / `RWE_MAX_TITLE_LEN` / `RWE_MAX_TEXT_LEN` | — | ingestion batch-shape caps (default `100` / `2048` / `512` / `2048`); exceeded → `413` |
 | `RWE_DB_URL` | — | durable store URL (default `sqlite:///<repo>/data/ih_beta.db`). Production refuses to start on an ephemeral value (in-memory, or a `/tmp` path). |
 | `RWE_BACKUP_DIR` | — | where `db_backup.py` writes backups (default: `backups/` beside the DB file) |
+| `RWE_CORS_ORIGINS` | — | comma-separated browser origins allowed to call the engine cross-origin. Default: `*` in dev, **none** in production (the engine is internal; the web tier calls it server-to-server). |
 | `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` | — | enable the live coach narrative |
 
 **Web app** (`web/.env.local`):
@@ -141,7 +142,9 @@ switching data never touches the frontend.
 | `NEXTAUTH_SECRET` / `NEXTAUTH_URL` | *(empty)* | session-JWT signing secret + this app's canonical URL |
 | `RWE_INTERNAL_SECRET` | *(empty)* | shared secret sent as `X-IH-Auth`; must match the engine's (required in production) |
 | `RWE_ENV` | *(empty)* | `production` = real deployment: disables the dev demo-login; pair with the engine's `RWE_ENV=production` |
-| `NEXT_PUBLIC_API_BASE_URL` | *(empty)* | advanced: call a different API origin from the browser |
+| `RWE_CSP` | *(built-in)* | override the Content-Security-Policy string (build-time; see "Browser security") |
+| `RWE_DISABLE_CSP` | *(off)* | `1` removes the CSP header only (escape hatch); other security headers stay |
+| `NEXT_PUBLIC_API_BASE_URL` | *(empty)* | advanced: call a different API origin from the browser (folded into CSP `connect-src`) |
 
 ---
 
@@ -269,6 +272,39 @@ FATAL: refusing to start — invalid configuration (1 problem(s)):
   ✗ Production mode is enabled ... but RWE_INTERNAL_SECRET is not set. ...
 ==========================================================================
 ```
+
+---
+
+## Browser security (headers, CORS, CSP, cookies)
+
+The browser-facing **web tier** sets security headers via `next.config.mjs` → `securityHeaders()`
+(`web/lib/security-headers.mjs`). Because Next serializes `headers()` at **build time**, run
+`next build` in the target mode: a production build (`NODE_ENV=production`) bakes in the strict CSP
+and HSTS; `next dev` evaluates live and relaxes the CSP for HMR.
+
+**Pages + static assets** get: `Content-Security-Policy` (`default-src 'self'`; `frame-ancestors
+'none'`; `object-src 'none'`; `script-src`/`style-src 'self' 'unsafe-inline'` for Next's inline
+hydration; `connect-src 'self'`), `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`,
+`Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy` (camera/mic/geo/topics
+denied), `Cross-Origin-Opener-Policy: same-origin`, `Cross-Origin-Resource-Policy: same-origin`, and
+`Strict-Transport-Security` (production builds only).
+
+**Authenticated APIs** (`/api/*`) get `Cache-Control: no-store` + `nosniff` — and deliberately **no**
+`Cross-Origin-Resource-Policy`, so the browser extension's privileged cross-origin `fetch` to
+`/api/me/reads` is never blocked.
+
+- **Compatibility (verified):** headless Chromium loads the pages with **zero CSP violations**;
+  Google OAuth is a top-level redirect (not an embed), so no google origins are needed; the
+  extension reaches the app via `host_permissions` (privileged fetch, exempt from page CORS/CSP).
+  A nonce-based CSP (dropping `'unsafe-inline'`) is future work; `RWE_CSP` / `RWE_DISABLE_CSP` are
+  the override / escape hatch.
+- **Engine CORS:** `*` in dev, **locked** in production (the engine is internal — the web tier calls
+  it server-to-server, which isn't subject to CORS). Set `RWE_CORS_ORIGINS` to allow specific
+  browser origins. Engine JSON responses also carry `nosniff` + `no-referrer` + `no-store`.
+- **Cookies:** the NextAuth session cookie is `HttpOnly` + `SameSite=Lax` (Lax is required so the
+  OAuth callback receives it), and `Secure` with a `__Secure-` prefix when `NEXTAUTH_URL` is https
+  (required in production — see "Startup validation"). These are NextAuth defaults; keep
+  `NEXTAUTH_URL` on https in production so `Secure` is applied.
 
 ---
 
