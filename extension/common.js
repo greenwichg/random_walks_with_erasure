@@ -76,7 +76,29 @@ function pruneCache(cache, nowMs, ttlMs, max = 500) {
   return Object.fromEntries(fresh.slice(0, max));
 }
 
+/**
+ * Validate the stored connection config, returning "ok" or a specific reason. The Options page, the
+ * service worker, and the tests all use this one function, so an incomplete configuration surfaces
+ * the same clear cause everywhere instead of failing silently.
+ *
+ * @param {{appUrl?: string, token?: string}} cfg
+ * @returns {"ok"|"no-url"|"no-token"|"bad-url"}
+ */
+function configStatus(cfg) {
+  const appUrl = ((cfg && cfg.appUrl) || "").trim();
+  const token = ((cfg && cfg.token) || "").trim();
+  if (!appUrl) return "no-url";
+  if (!token) return "no-token";
+  try {
+    const u = new URL(appUrl);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return "bad-url";
+  } catch {
+    return "bad-url";
+  }
+  return "ok";
+}
+
 // Export for Node tests; harmless no-op in the browser (module is undefined there).
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { isArticlePage, normalizeReadUrl, shouldSend, pruneCache };
+  module.exports = { isArticlePage, normalizeReadUrl, shouldSend, pruneCache, configStatus };
 }

@@ -673,6 +673,14 @@ def _config_errors() -> "list[str]":
             "RWE_INTERNAL_SECRET (identical on the web app and the engine), or unset production "
             "mode for local development."
         )
+    db_url = os.environ.get("RWE_DB_URL", "")
+    if _production() and (db_url.strip() in {"sqlite://", "sqlite:///:memory:"}
+                          or ":memory:" in db_url):
+        errors.append(
+            "Production mode is enabled (RWE_ENV=production) but RWE_DB_URL is an in-memory SQLite "
+            "database — every account, read, report, and token is lost on restart. Point RWE_DB_URL "
+            "at a persistent file (e.g. sqlite:////data/ih_beta.db on a mounted volume) or a database."
+        )
     return errors
 
 
@@ -1181,13 +1189,18 @@ def main() -> None:
         if v is not None:
             os.environ[k] = str(v)
 
-    # Pre-flight: a clean, immediate exit for the common `python examples/api_fastapi.py` path
-    # if production mode is enabled without its required secret (the lifespan enforces the same
-    # for the `uvicorn examples.api_fastapi:app` entrypoint that bypasses main()).
+    # Pre-flight: a clean, immediate exit with human-readable diagnostics for the common
+    # `python examples/api_fastapi.py` path if production mode is mis-configured (the lifespan
+    # enforces the same for the `uvicorn examples.api_fastapi:app` entrypoint that bypasses main()).
     config_errors = _config_errors()
     if config_errors:
+        bar = "=" * 74
+        print(f"\n{bar}\nFATAL: refusing to start — invalid configuration "
+              f"({len(config_errors)} problem(s)):\n", file=sys.stderr)
         for err in config_errors:
-            print(f"FATAL: {err}", file=sys.stderr)
+            print(f"  ✗ {err}\n", file=sys.stderr)
+        print(f"Fix the above, or unset RWE_ENV / RWE_REQUIRE_AUTH for local development.\n{bar}\n",
+              file=sys.stderr)
         raise SystemExit(2)
 
     import uvicorn

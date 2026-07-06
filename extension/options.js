@@ -72,6 +72,7 @@ async function test() {
   const messages = {
     "no-url": "Set the app URL first.",
     "no-token": "Paste your API token first.",
+    "bad-url": "That app URL doesn’t look valid. Example: <code>http://localhost:3000</code>",
     "bad-token": "That token was rejected. Generate a new one in InfoDiet → Settings and paste it here.",
     unreachable: "Couldn’t reach the app URL. Check it’s running and the address is correct.",
   };

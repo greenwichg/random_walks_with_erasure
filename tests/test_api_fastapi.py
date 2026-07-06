@@ -625,13 +625,25 @@ def test_config_errors_require_secret_in_production(monkeypatch):
     monkeypatch.delenv("RWE_REQUIRE_AUTH", raising=False)
     monkeypatch.delenv("RWE_INTERNAL_SECRET", raising=False)
     monkeypatch.setenv("RWE_ENV", "production")
+    monkeypatch.setenv("RWE_DB_URL", "sqlite:////tmp/ih_ok.db")     # a persistent DB (isolate this check)
     errs = api_fastapi._config_errors()
     assert errs and any("RWE_INTERNAL_SECRET" in e for e in errs)
     monkeypatch.setenv("RWE_INTERNAL_SECRET", "prod-secret")
-    assert api_fastapi._config_errors() == []                       # secret present -> no error
+    assert api_fastapi._config_errors() == []                       # secret + persistent DB -> no error
     # dev mode (no production signal) never trips the check
     monkeypatch.delenv("RWE_INTERNAL_SECRET", raising=False)
     monkeypatch.delenv("RWE_ENV", raising=False)
+    assert api_fastapi._config_errors() == []
+
+
+def test_config_errors_flag_in_memory_db_in_production(monkeypatch):
+    """Startup validation refuses an in-memory DB in production (all data lost on restart); a
+    persistent file DB with the secret set passes."""
+    monkeypatch.setenv("RWE_ENV", "production")
+    monkeypatch.setenv("RWE_INTERNAL_SECRET", "s3cret")            # satisfy the auth requirement
+    monkeypatch.setenv("RWE_DB_URL", "sqlite://")                  # in-memory -> data vanishes
+    assert any("in-memory" in e for e in api_fastapi._config_errors())
+    monkeypatch.setenv("RWE_DB_URL", "sqlite:////tmp/ih_persist_test.db")   # a real file -> ok
     assert api_fastapi._config_errors() == []
 
 

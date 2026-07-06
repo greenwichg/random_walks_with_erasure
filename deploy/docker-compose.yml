@@ -48,9 +48,14 @@ services:
       RWE_BACKEND_URL: http://api:8000
       NODE_ENV: production
       # --- production hardening (must match the engine's pair above) --------------
+      # With RWE_ENV=production the web app validates these AT STARTUP and refuses to
+      # boot if any are missing (see DEPLOYMENT.md → "Startup validation").
       # RWE_ENV: production            # disables the dev demo-login; signals prod mode
       # RWE_INTERNAL_SECRET: ${RWE_INTERNAL_SECRET}   # identical to the engine's value
       # NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}           # openssl rand -base64 32
+      # NEXTAUTH_URL: https://app.example.com         # this app's canonical URL (OAuth callbacks)
+      # GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}         # required in prod (only sign-in method)
+      # GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
     depends_on:
       api:
         condition: service_healthy

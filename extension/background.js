@@ -45,14 +45,35 @@ async function flashBadge(text, color) {
   }
 }
 
+/**
+ * Reflect connection-config status on the toolbar icon (persistent badge + tooltip), so an
+ * unconfigured extension states what's wrong instead of silently doing nothing. Called on install,
+ * when the config changes, and whenever a read is skipped for lack of configuration.
+ */
+async function refreshConfigBadge() {
+  const { appUrl, token } = await getConfig();
+  const ok = configStatus({ appUrl, token }) === "ok";
+  try {
+    await chrome.action.setTitle({
+      title: ok
+        ? "InfoDiet — syncing your reads"
+        : "InfoDiet — open Options and set your app URL and API token to start syncing",
+    });
+    await chrome.action.setBadgeBackgroundColor({ color: ok ? "#15803d" : "#b45309" });
+    await chrome.action.setBadgeText({ text: ok ? "" : "!" });
+  } catch {
+    /* action API unavailable in this context */
+  }
+}
+
 /** Record one observed article (deduped). Returns a short status string for logging/tests. */
 async function recordArticle(article) {
   const normalized = normalizeReadUrl(article.url);
   if (!normalized) return "skipped:bad-url";
 
   const { appUrl, token } = await getConfig();
-  if (!appUrl || !token) {
-    await flashBadge("!", "#b45309");
+  if (configStatus({ appUrl, token }) !== "ok") {
+    await refreshConfigBadge();        // persistent "!" + explanatory tooltip, not a silent no-op
     return "skipped:not-configured";
   }
 
@@ -86,8 +107,8 @@ async function recordArticle(article) {
  */
 async function testConnection() {
   const { appUrl, token } = await getConfig();
-  if (!appUrl) return { ok: false, reason: "no-url" };
-  if (!token) return { ok: false, reason: "no-token" };
+  const status = configStatus({ appUrl, token });
+  if (status !== "ok") return { ok: false, reason: status };
   try {
     const { ok, status, body } = await postReads(appUrl, token, []);
     if (ok) return { ok: true, coverage: body };
@@ -107,4 +128,21 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     testConnection().then(sendResponse);
     return true;
   }
+});
+
+// On first install, open the setup page so configuration is never skipped; keep the toolbar
+// indicator accurate on install/update and whenever the saved config changes.
+chrome.runtime.onInstalled.addListener(async (details) => {
+  if (details.reason === "install") {
+    try {
+      await chrome.runtime.openOptionsPage();
+    } catch {
+      /* options UI unavailable in this context */
+    }
+  }
+  await refreshConfigBadge();
+});
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && ("appUrl" in changes || "token" in changes)) refreshConfigBadge();
 });

@@ -1,6 +1,8 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  // Run instrumentation.ts's register() at server boot — used for fail-fast env validation.
+  experimental: { instrumentationHook: true },
   // Images from arbitrary publishers/CDNs; loosen when the real backend fixes a set.
   images: {
     remotePatterns: [{ protocol: "https", hostname: "**" }],

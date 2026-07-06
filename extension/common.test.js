@@ -6,7 +6,7 @@
  */
 const { test } = require("node:test");
 const assert = require("node:assert");
-const { isArticlePage, normalizeReadUrl, shouldSend, pruneCache } = require("./common.js");
+const { isArticlePage, normalizeReadUrl, shouldSend, pruneCache, configStatus } = require("./common.js");
 
 test("isArticlePage — positive signals", () => {
   assert.equal(isArticlePage({ ogType: "article" }), true);
@@ -41,6 +41,17 @@ test("shouldSend — TTL de-dup decision", () => {
   assert.equal(shouldSend({ "https://x.com/a": now }, "https://x.com/a", now, ttl), false); // fresh
   assert.equal(shouldSend({ "https://x.com/a": now - ttl }, "https://x.com/a", now, ttl), true); // expired
   assert.equal(shouldSend({}, "", now, ttl), false); // empty (unparseable) url
+});
+
+test("configStatus — reports the exact missing/invalid piece, never silently ok", () => {
+  assert.equal(configStatus({ appUrl: "https://app.example.com", token: "ih_abc" }), "ok");
+  assert.equal(configStatus({ appUrl: "http://localhost:3000", token: "ih_abc" }), "ok");
+  assert.equal(configStatus({ token: "ih_abc" }), "no-url");
+  assert.equal(configStatus({ appUrl: "https://app.example.com" }), "no-token");
+  assert.equal(configStatus({ appUrl: "  ", token: "  " }), "no-url"); // whitespace-only
+  assert.equal(configStatus({ appUrl: "not a url", token: "ih_abc" }), "bad-url");
+  assert.equal(configStatus({ appUrl: "ftp://x.com", token: "ih_abc" }), "bad-url"); // wrong scheme
+  assert.equal(configStatus({}), "no-url");
 });
 
 test("pruneCache — drops stale entries and caps size", () => {

@@ -168,6 +168,35 @@ NODE_ENV=production RWE_ENV=production RWE_BACKEND_URL=https://engine.internal \
 
 ---
 
+## Startup validation (fail fast)
+
+Both tiers validate configuration at startup when **production mode** is on (`RWE_ENV=production`)
+and **refuse to boot** rather than come up mis-configured and fail at the first request. Production
+mode is the cross-tier switch `RWE_ENV=production` — deliberately *not* `NODE_ENV`, so the Colab
+demo (which serves a production build) and local dev stay zero-config.
+
+- **Engine** (`examples/api_fastapi.py`) exits with a diagnostic and status `2` if production mode
+  is set without `RWE_INTERNAL_SECRET`, or with an in-memory `RWE_DB_URL` (data would vanish on
+  restart). Enforced for both the `python examples/api_fastapi.py` and `uvicorn …:app` entrypoints.
+- **Web** (`instrumentation.ts`, run at server boot) exits before serving if any of these is missing
+  in production: `NEXTAUTH_SECRET`, `RWE_INTERNAL_SECRET`, `RWE_BACKEND_URL`, and a complete Google
+  OAuth setup (`GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET` + `NEXTAUTH_URL`) — the dev demo-login is
+  disabled in production, so OAuth is the only sign-in method. Outside production nothing is fatal;
+  a half-configured OAuth pair is surfaced as a warning.
+- **Extension** validates its stored config and, on install, opens its Options page and shows a
+  persistent toolbar badge (with an explanatory tooltip) until the app URL + API token are set — an
+  unconfigured extension never silently no-ops.
+
+```
+$ RWE_ENV=production python examples/api_fastapi.py
+==========================================================================
+FATAL: refusing to start — invalid configuration (1 problem(s)):
+  ✗ Production mode is enabled ... but RWE_INTERNAL_SECRET is not set. ...
+==========================================================================
+```
+
+---
+
 ## Package with Docker
 
 Ready-to-use artifacts live in `deploy/`:
