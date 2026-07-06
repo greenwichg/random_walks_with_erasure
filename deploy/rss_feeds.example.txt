@@ -1,0 +1,27 @@
+# Cross-spectrum publisher RSS/Atom feeds for the Information Health news catalog.
+#
+# Format: one entry per line, either `feed-url` or `Publisher Name|feed-url`.
+# Blank lines and lines starting with `#` are ignored.
+#
+#   python examples/rss_ingest.py run --feeds deploy/rss_feeds.example.txt
+#   # or: RWE_RSS_FEEDS=deploy/rss_feeds.example.txt python examples/rss_ingest.py run
+#
+# These are EXAMPLES — verify each URL against the publisher's current feed and adjust the mix for
+# your deployment. Publisher names are resolved to a canonical outlet + AllSides lean from the URL,
+# so the `Name|` prefix is only a hint / fallback. Chosen to span the spectrum (left / center / right)
+# and to match the domains the browser extension recognizes.
+
+# --- Left / center-left ---
+The Guardian|https://www.theguardian.com/us-news/rss
+NPR|https://feeds.npr.org/1001/rss.xml
+CNN|http://rss.cnn.com/rss/cnn_topstories.rss
+The New York Times|https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml
+The Washington Post|https://feeds.washingtonpost.com/rss/politics
+
+# --- Center ---
+BBC News|https://feeds.bbci.co.uk/news/rss.xml
+The Hill|https://thehill.com/homenews/feed/
+
+# --- Right / center-right ---
+Fox News|https://moxie.foxnews.com/google-publisher/politics.xml
+The Wall Street Journal|https://feeds.a.dj.com/rss/RSSWorldNews.xml

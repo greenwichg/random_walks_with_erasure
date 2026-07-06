@@ -128,6 +128,7 @@ switching data never touches the frontend.
 | `RWE_DB_URL` | — | durable store URL (default `sqlite:///<repo>/data/ih_beta.db`). Production refuses to start on an ephemeral value (in-memory, or a `/tmp` path). |
 | `RWE_BACKUP_DIR` | — | where `db_backup.py` writes backups (default: `backups/` beside the DB file) |
 | `RWE_CORS_ORIGINS` | — | comma-separated browser origins allowed to call the engine cross-origin. Default: `*` in dev, **none** in production (the engine is internal; the web tier calls it server-to-server). |
+| `RWE_RSS_FEEDS` | — | RSS/Atom feeds for `rss_ingest.py` — a feeds file path or a comma-list of `url` / `Name\|url` (see "News ingestion") |
 | `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` | — | enable the live coach narrative |
 
 **Web app** (`web/.env.local`):
@@ -243,6 +244,44 @@ python examples/db_backup.py restore /path/to/ih_beta-<ts>.db
 | Failed / concurrent write | possible `database is locked` | WAL + `busy_timeout` retries |
 | Power loss | durable, no concurrency | WAL+`NORMAL`: no corruption (may drop last txn) |
 | Volume loss / corruption | unrecoverable | restore from an **off-host** backup |
+
+---
+
+## News ingestion (RSS catalog)
+
+`examples/rss_ingest.py` pulls articles from operator-configured RSS/Atom feeds into a **news
+catalog** (`store.FeedArticle`), scoring each through the **same** pipeline the reading path uses
+(`ingest.Scorer` + the baseline enricher) and deduplicating by canonical URL. Dependency-free (stdlib
+`xml.etree` + `urllib`). It is **ingestion only** — it does not touch the recommendation corpus, the
+report, the recommendation algorithms, or the UI; the recommender keeps using the existing corpus.
+The catalog is the data foundation a later milestone will draw real-article recommendations from.
+
+```bash
+# configure feeds (one per line, `url` or `Name|url`; `#` comments ok) — see deploy/rss_feeds.example.txt
+python examples/rss_ingest.py run --feeds deploy/rss_feeds.example.txt
+#   or:  RWE_RSS_FEEDS=deploy/rss_feeds.example.txt python examples/rss_ingest.py run
+python examples/rss_ingest.py status                 # catalog size + most-recent articles
+```
+
+Schedule `run` from cron/systemd (feeds are operator-configured, not user input, so fetching them is
+not a user-facing SSRF surface). Each catalog article preserves the real publisher URL, publisher,
+publication timestamp, title, description, and (when the feed carries it) the body.
+
+**URL coverage by ingestion source** — which sources can populate a real publisher `url` today:
+
+| Source | Real URL? | Notes |
+| --- | --- | --- |
+| Browser extension | ✅ | captures the canonical article URL on recognized publisher domains |
+| Pasted URL (`/api/me/reads`) | ✅ | the reader supplies a real URL |
+| **RSS ingestion** (this milestone) | ✅ | preserves the feed's real publisher article URL |
+| Qbias corpus | ❌ | dataset columns are `title,tags,heading,source,text,bias_rating` — no URL |
+| MIND corpus | ❌ | ships MSN-aggregator URLs (not publisher article URLs); not carried into the corpus |
+| Synthetic corpus | ❌ | fully generated tokens (e.g. `S144`) — no real articles |
+
+*Future work for full coverage:* point the recommender / discover surface at the `feed_articles`
+catalog (which carries real URLs), at which point the approved **Honest URL Pass-through** on
+recommendations becomes live end-to-end (Read → record opened → open the real publisher URL →
+extension captures the read → Dashboard/History/Analytics/Open-Mindedness update).
 
 ---
 

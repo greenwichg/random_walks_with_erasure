@@ -208,6 +208,32 @@ class RecEvent(Base):
     created_at: Mapped[datetime] = mapped_column(default=_utcnow)
 
 
+class FeedArticle(Base):
+    """An article discovered via RSS ingestion — the news **catalog** (distinct from per-user
+    ``reads``). Deduplicated by ``canonical_url`` (the same key ``reads`` and the scoring cache use),
+    so re-polling a feed never creates a duplicate. It preserves what RSS carries that the scored
+    model does not — the real publisher article URL, the publisher, the publication timestamp, the
+    title, the description, and (when the feed provides it) the body — alongside the ``scored`` JSON
+    produced by the SAME scorer the reading pipeline uses. Nothing here feeds the recommender yet:
+    this is the data foundation a future real-article recommender / discover surface will draw from,
+    so it is deliberately isolated from the corpus, the report, and the recommendation algorithms."""
+
+    __tablename__ = "feed_articles"
+
+    canonical_url: Mapped[str] = mapped_column(String(2048), primary_key=True)   # dedup key
+    url: Mapped[str] = mapped_column(String(2048))                     # the original publisher URL
+    publisher: Mapped[str] = mapped_column(String(255), default="")    # resolved canonical outlet
+    source_publisher: Mapped[Optional[str]] = mapped_column(String(255), default=None)  # raw feed title
+    title: Mapped[str] = mapped_column(Text, default="")
+    description: Mapped[str] = mapped_column(Text, default="")
+    body: Mapped[Optional[str]] = mapped_column(Text, default=None)    # content:encoded, when present
+    published_at: Mapped[Optional[str]] = mapped_column(String(64), default=None)  # article pubDate (ISO)
+    source_feed: Mapped[str] = mapped_column(String(2048), default="")  # feed URL it came from
+    scored: Mapped[str] = mapped_column(Text)                          # JSON of the ScoredRead
+    fetched_at: Mapped[datetime] = mapped_column(default=_utcnow, index=True)
+    created_at: Mapped[datetime] = mapped_column(default=_utcnow)
+
+
 class Store:
     """A durable store bound to one database URL.
 
@@ -375,6 +401,61 @@ class Store:
                 s.add(ScoredArticle(url=url, scored=payload))
             else:
                 row.scored = payload
+
+    # -- news catalog (RSS ingestion; deduped by canonical URL) ---------
+    def upsert_feed_article(self, *, canonical_url: str, url: str, publisher: str,
+                            source_publisher: "str | None", title: str, description: str,
+                            body: "str | None", published_at: "str | None", source_feed: str,
+                            scored: dict) -> bool:
+        """Insert a catalog article, or refresh an existing one (dedup by ``canonical_url``). Returns
+        ``True`` when newly created, ``False`` on a re-poll. A re-poll refreshes ``fetched_at`` and
+        backfills any field that was empty before, but never rewrites first-seen metadata."""
+        payload = json.dumps(scored)
+        with self.session() as s:
+            row = s.get(FeedArticle, canonical_url)
+            if row is None:
+                s.add(FeedArticle(
+                    canonical_url=canonical_url, url=url, publisher=publisher,
+                    source_publisher=source_publisher, title=title, description=description,
+                    body=body, published_at=published_at, source_feed=source_feed, scored=payload))
+                return True
+            row.fetched_at = _utcnow()
+            if title and not row.title:
+                row.title = title
+            if description and not row.description:
+                row.description = description
+            if body and not row.body:
+                row.body = body
+            if published_at and not row.published_at:
+                row.published_at = published_at
+            return False
+
+    def get_feed_article(self, canonical_url: str) -> "dict | None":
+        """One catalog article (all fields + parsed ``scored``), or ``None``."""
+        with self.session() as s:
+            r = s.get(FeedArticle, canonical_url)
+            return self._feed_row(r) if r is not None else None
+
+    def count_feed_articles(self) -> int:
+        """How many distinct catalog articles have been ingested."""
+        with self.session() as s:
+            return int(s.scalar(select(func.count()).select_from(FeedArticle)) or 0)
+
+    def list_feed_articles(self, limit: int = 50) -> list:
+        """Catalog articles, most-recently-fetched first (capped at ``limit``)."""
+        with self.session() as s:
+            rows = s.scalars(select(FeedArticle)
+                             .order_by(FeedArticle.fetched_at.desc())
+                             .limit(limit)).all()
+            return [self._feed_row(r) for r in rows]
+
+    @staticmethod
+    def _feed_row(r: "FeedArticle") -> dict:
+        return {"canonicalUrl": r.canonical_url, "url": r.url, "publisher": r.publisher,
+                "sourcePublisher": r.source_publisher, "title": r.title,
+                "description": r.description, "body": r.body, "publishedAt": r.published_at,
+                "sourceFeed": r.source_feed, "scored": dict(json.loads(r.scored)),
+                "fetchedAt": r.fetched_at.isoformat() if r.fetched_at else None}
 
     # -- reading events (idempotent per user + canonical URL) -----------
     def add_read(self, user_id: int, canonical_url: str, scored: dict,
