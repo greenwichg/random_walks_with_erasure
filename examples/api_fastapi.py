@@ -39,6 +39,7 @@ import enrich                 # headline enrichment (register + emotion) behind 
 import personalize            # per-user augmented Measured report / recs / coach
 import ratelimit              # dependency-free token-bucket rate limiter (Private Alpha hardening)
 import reqlimits              # request-body size / batch-shape limits (Private Alpha hardening)
+import feed_source            # optional: source the recommender catalog from the RSS FeedArticle store
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
@@ -116,9 +117,25 @@ async def lifespan(app: FastAPI):
         raise RuntimeError("Refusing to start: " + " ".join(errors))
     # Build the engine (dataset + compute + recommender inputs) once, reuse per request.
     provider = os.environ.get("RWE_PROVIDER", "anthropic")
+    st = store.Store()
+    # Live recommendation source (opt-in): build the recommender's catalog from the RSS FeedArticle
+    # store instead of the static qbias CSV / synthetic generator. Additive — it just points RWE_QBIAS
+    # at a FeedArticle-derived qbias-format CSV, so the ENGINE and the protected simulator are unchanged
+    # and the recommender operates over live articles exactly as over qbias. Falls back (keeps the
+    # existing corpus) when the catalog is too small.
+    if feed_source.enabled():
+        csv_path = feed_source.prepare(st)
+        if csv_path:
+            os.environ["RWE_QBIAS"] = csv_path
+            os.environ.setdefault("RWE_PROFILE", "qbias")
+            _log(logging.INFO, "recs_source", source="feed", csv=csv_path,
+                 articles=st.count_feed_articles())
+        else:
+            _log(logging.WARNING, "recs_source_fallback", source="feed",
+                 reason="catalog below RWE_FEED_MIN_ARTICLES", articles=st.count_feed_articles())
     be = engine.Backend(_profile_from_env(), provider=provider)
     state.backend = be
-    state.store = store.Store()
+    state.store = st
     state.scorer = ingest.Scorer(enricher=enrich.make_enricher())   # baseline register+emotion
     # The personalization layer: builds a real user's Measured report / recs / coach from an
     # augmented corpus once they've stored enough reads (cached per user + reading version).

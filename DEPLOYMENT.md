@@ -129,6 +129,9 @@ switching data never touches the frontend.
 | `RWE_BACKUP_DIR` | — | where `db_backup.py` writes backups (default: `backups/` beside the DB file) |
 | `RWE_CORS_ORIGINS` | — | comma-separated browser origins allowed to call the engine cross-origin. Default: `*` in dev, **none** in production (the engine is internal; the web tier calls it server-to-server). |
 | `RWE_RSS_FEEDS` | — | RSS/Atom feeds for `rss_ingest.py` — a feeds file path or a comma-list of `url` / `Name\|url` (see "News ingestion") |
+| `RWE_RECS_SOURCE` | — | `feed` sources the recommender's catalog from the RSS `FeedArticle` store (else the static corpus) |
+| `RWE_FEED_MIN_ARTICLES` | — | min catalog size before the feed source activates (default `50`; below it, falls back to the static corpus) |
+| `RWE_FEED_CORPUS_CSV` | — | where the `FeedArticle`→qbias export is written (default `data/feed_corpus.csv`) |
 | `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` | — | enable the live coach narrative |
 
 **Web app** (`web/.env.local`):
@@ -282,6 +285,20 @@ publication timestamp, title, description, and (when the feed carries it) the bo
 catalog (which carries real URLs), at which point the approved **Honest URL Pass-through** on
 recommendations becomes live end-to-end (Read → record opened → open the real publisher URL →
 extension captures the read → Dashboard/History/Analytics/Open-Mindedness update).
+
+### Live recommendation source (opt-in)
+
+Set **`RWE_RECS_SOURCE=feed`** and the engine builds the recommender's catalog from the ingested
+`FeedArticle` store instead of the static corpus. It does this by exporting the catalog to a
+qbias-format CSV that the **existing, unchanged** corpus machinery (`simulate_users.run(qbias=…)`)
+reads — so the recommender, health metrics, diversity, and personalization operate over live
+articles **exactly** as they do over the static qbias catalog (no algorithm, engine, or simulator
+change). It requires at least `RWE_FEED_MIN_ARTICLES` (default 50) in the catalog; below that it
+**falls back** to the existing corpus, so enabling it before any RSS ingest is safe.
+
+> Recommendation item ids remain the qbias-style synthetic ids — carrying the real publisher URL
+> through to the recommendation *payload* is the separate **Honest URL Pass-through** step (the
+> exported CSV already carries the `url` per row to make that a small follow-up).
 
 ---
 
