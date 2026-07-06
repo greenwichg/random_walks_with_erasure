@@ -106,6 +106,31 @@ class _State:
 state = _State()
 
 
+def _configure_recs_source(st) -> "str | None":
+    """Opt-in live recommendation source. When ``RWE_RECS_SOURCE=feed`` and the RSS ``FeedArticle``
+    catalog is large enough, export it to a qbias-format CSV and point the engine's corpus at it
+    **authoritatively** — ``RWE_QBIAS`` at the CSV *and* ``RWE_PROFILE=qbias`` — then return the CSV
+    path. The feed catalog *is* the corpus, so the profile must become ``qbias`` even if
+    ``RWE_PROFILE`` was already set (e.g. the docker/compose default ``synthetic``); otherwise the
+    engine would build the pre-set corpus and silently ignore the feed CSV (and no publisher URL
+    would ever reach a recommendation). Returns ``None`` — keep the existing corpus, touch no env —
+    when the source is disabled or the catalog is below ``RWE_FEED_MIN_ARTICLES`` (so enabling the
+    flag before any RSS ingest stays safe). No recommendation algorithm is affected; this only
+    selects the article source."""
+    if not feed_source.enabled():
+        return None
+    feed_csv = feed_source.prepare(st)
+    if not feed_csv:
+        _log(logging.WARNING, "recs_source_fallback", source="feed",
+             reason="catalog below RWE_FEED_MIN_ARTICLES", articles=st.count_feed_articles())
+        return None
+    os.environ["RWE_QBIAS"] = feed_csv
+    os.environ["RWE_PROFILE"] = "qbias"   # authoritative: the feed catalog is now the corpus
+    _log(logging.INFO, "recs_source", source="feed", csv=feed_csv, profile="qbias",
+         articles=st.count_feed_articles())
+    return feed_csv
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Fail fast on a fatal misconfiguration (production mode without the internal secret) BEFORE
@@ -123,17 +148,7 @@ async def lifespan(app: FastAPI):
     # at a FeedArticle-derived qbias-format CSV, so the ENGINE and the protected simulator are unchanged
     # and the recommender operates over live articles exactly as over qbias. Falls back (keeps the
     # existing corpus) when the catalog is too small.
-    feed_csv = None
-    if feed_source.enabled():
-        feed_csv = feed_source.prepare(st)
-        if feed_csv:
-            os.environ["RWE_QBIAS"] = feed_csv
-            os.environ.setdefault("RWE_PROFILE", "qbias")
-            _log(logging.INFO, "recs_source", source="feed", csv=feed_csv,
-                 articles=st.count_feed_articles())
-        else:
-            _log(logging.WARNING, "recs_source_fallback", source="feed",
-                 reason="catalog below RWE_FEED_MIN_ARTICLES", articles=st.count_feed_articles())
+    feed_csv = _configure_recs_source(st)
     be = engine.Backend(_profile_from_env(), provider=provider)
     if feed_csv:
         # Map the corpus item ids (Q{i}) back to their FeedArticle publisher URLs, so recommendations
