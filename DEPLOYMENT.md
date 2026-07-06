@@ -289,6 +289,30 @@ Polling keeps the **catalog** current; a *running* engine still serves the recom
 built at startup until the validated hot-refresh (a later milestone) swaps it — so today, polling
 benefits Discover/Search and the next restart's corpus, not the live recommendation set.
 
+**Retention (validation-aware).** To stop the catalog growing without bound, set a retention policy —
+after each poll cycle it prunes old/excess `FeedArticle` rows. It prunes **only** `feed_articles`
+(reads, dashboard history, analytics, health reports, and recommendation events are separate,
+user-keyed tables with no foreign key to it, so they are never affected). Crucially it is
+**validation-aware and monotonic**: it computes the raw age/count prune set, then *retains older
+articles* until the kept catalog still meets the floors a healthy replacement corpus needs — so it
+can never prune the catalog into a state from which no healthy corpus could ever be rebuilt. If the
+feeds never supplied enough diversity to meet a floor, it keeps everything relevant (best effort) and
+logs it. Runs standalone too: `python examples/corpus_health.py`.
+
+| Env | Default | Meaning |
+| --- | --- | --- |
+| `RWE_RETENTION_MAX_AGE_DAYS` | off | prune articles older than this many days |
+| `RWE_RETENTION_MAX_COUNT` | off | keep at most this many articles (newest first) |
+| `RWE_CORPUS_MIN_ARTICLES` | `RWE_FEED_MIN_ARTICLES` (50) | floor: never prune below this total |
+| `RWE_CORPUS_MIN_PUBLISHERS` | `0` | floor: keep ≥ this many distinct publishers |
+| `RWE_CORPUS_MIN_PER_BUCKET` | `0` | floor: keep ≥ this many per left / center / right |
+| `RWE_CORPUS_MIN_FRESH` | `0` | floor: keep ≥ this many fresh articles |
+| `RWE_CORPUS_FRESH_MAX_AGE_DAYS` | `3` | what counts as "fresh" |
+
+Retention runs only when `RWE_RETENTION_MAX_AGE_DAYS` or `RWE_RETENTION_MAX_COUNT` is set; the
+`RWE_CORPUS_MIN_*` floors are the same thresholds the corpus-validation gate (a later milestone) will
+enforce, so retention never removes what validation will need.
+
 **URL coverage by ingestion source** — which sources can populate a real publisher `url` today:
 
 | Source | Real URL? | Notes |

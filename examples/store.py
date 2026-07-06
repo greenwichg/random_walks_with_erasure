@@ -36,7 +36,7 @@ from pathlib import Path
 from typing import Iterator, Optional
 
 from sqlalchemy import (ForeignKey, String, Text, UniqueConstraint, create_engine,
-                        event, func, select)
+                        delete, event, func, select)
 from sqlalchemy.orm import (DeclarativeBase, Mapped, Session, mapped_column,
                             relationship, sessionmaker)
 from sqlalchemy.pool import StaticPool
@@ -448,6 +448,23 @@ class Store:
                              .order_by(FeedArticle.fetched_at.desc())
                              .limit(limit)).all()
             return [self._feed_row(r) for r in rows]
+
+    def delete_feed_articles(self, canonical_urls) -> int:
+        """Delete FeedArticle rows by canonical URL (retention). Chunked to stay under SQLite's bound
+        parameter limit. Returns the number deleted. Touches ONLY the ``feed_articles`` table — reads,
+        report snapshots, analytics history, and rec-events are separate, user-keyed tables with no
+        foreign key to ``feed_articles``, so they are never affected."""
+        urls = [u for u in dict.fromkeys(canonical_urls) if u]   # de-dup, drop blanks, keep order
+        if not urls:
+            return 0
+        deleted = 0
+        with self.session() as s:
+            for i in range(0, len(urls), 500):
+                res = s.execute(delete(FeedArticle)
+                                .where(FeedArticle.canonical_url.in_(urls[i:i + 500])))
+                deleted += res.rowcount or 0
+            s.commit()
+        return deleted
 
     @staticmethod
     def _feed_row(r: "FeedArticle") -> dict:
