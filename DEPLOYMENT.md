@@ -270,6 +270,25 @@ Schedule `run` from cron/systemd (feeds are operator-configured, not user input,
 not a user-facing SSRF surface). Each catalog article preserves the real publisher URL, publisher,
 publication timestamp, title, description, and (when the feed carries it) the body.
 
+**Automatic polling (opt-in).** Instead of cron, the engine can keep the catalog fresh itself: set
+**`RWE_FEED_POLL=1`** (alongside `RWE_RECS_SOURCE=feed`) and a background thread re-runs the ingest
+pipeline every `RWE_POLL_INTERVAL` seconds (default 600). It reuses the exact `rss_ingest` pipeline —
+incremental and deduplicated by canonical URL, so it only imports genuinely new articles — isolates
+per-feed failures, retries transient fetch errors, logs each cycle (`feed_poll` events), and shuts
+down gracefully with the app. It runs standalone too: `python examples/feed_service.py`.
+
+| Env | Default | Meaning |
+| --- | --- | --- |
+| `RWE_FEED_POLL` | off | enable the background poller (needs `RWE_RECS_SOURCE=feed`) |
+| `RWE_POLL_INTERVAL` | `600` | seconds between poll cycles |
+| `RWE_POLL_TIMEOUT` | `15` | per-feed fetch timeout (seconds) |
+| `RWE_POLL_RETRIES` | `2` | per-feed fetch retries (capped exponential backoff) |
+| `RWE_POLL_BACKOFF` | `2` | base seconds for the retry backoff |
+
+Polling keeps the **catalog** current; a *running* engine still serves the recommendation corpus it
+built at startup until the validated hot-refresh (a later milestone) swaps it — so today, polling
+benefits Discover/Search and the next restart's corpus, not the live recommendation set.
+
 **URL coverage by ingestion source** — which sources can populate a real publisher `url` today:
 
 | Source | Real URL? | Notes |

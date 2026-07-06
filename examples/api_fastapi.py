@@ -40,6 +40,7 @@ import personalize            # per-user augmented Measured report / recs / coac
 import ratelimit              # dependency-free token-bucket rate limiter (Private Alpha hardening)
 import reqlimits              # request-body size / batch-shape limits (Private Alpha hardening)
 import feed_source            # optional: source the recommender catalog from the RSS FeedArticle store
+import feed_service           # optional: background RSS polling that keeps the FeedArticle catalog fresh
 import discover               # Discover & Stories: product-layer exploration over the FeedArticle catalog
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -102,6 +103,7 @@ class _State:
     scorer: "ingest.Scorer | None" = None
     personalizer: "personalize.Personalizer | None" = None
     limiter: "ratelimit.RateLimiter | None" = None
+    poller: "feed_service.FeedPoller | None" = None
 
 
 state = _State()
@@ -165,7 +167,17 @@ async def lifespan(app: FastAPI):
     _log(logging.INFO, "startup", profile=be.profile.name, demoUser=be.demo_user,
          eligibleReaders=int(len(be.eligible)), db=state.store.url,
          rateLimit=ratelimit.enabled(), production=_production())
+    # Automatic RSS polling (opt-in): keep the FeedArticle catalog fresh in the background. Requires
+    # BOTH the live feed source (RWE_RECS_SOURCE=feed) and the poll flag (RWE_FEED_POLL). It only
+    # ingests (incremental + deduped); it does NOT rebuild the recommendation corpus — a running
+    # engine keeps the corpus it built at startup until a later commit adds the validated hot swap.
+    if feed_service.enabled() and feed_source.enabled():
+        state.poller = feed_service.FeedPoller(state.store, log=_log)
+        state.poller.start()
     yield
+    if state.poller is not None:
+        state.poller.stop()          # graceful: signal + join the current cycle
+    state.poller = None
     state.backend = None
     state.store = None
     state.scorer = None
