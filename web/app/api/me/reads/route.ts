@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { backendPost, engineUnavailable } from "@/lib/backend";
 import { engineAuthHeaders, engineHeadersForUserId, resolveApiToken, bearerToken } from "@/lib/engine-auth";
+import { rejectIfTooLarge } from "@/lib/body-limit";
 
 export const dynamic = "force-dynamic";
 
@@ -25,6 +26,8 @@ function unauthorized() {
  * (this writes real account state).
  */
 export async function POST(request: Request) {
+  const tooLarge = rejectIfTooLarge(request, "ingest");
+  if (tooLarge) return tooLarge;
   const body = (await request.json().catch(() => ({ reads: [] }))) as { reads?: unknown };
   const reads = Array.isArray(body.reads) ? body.reads : [];
 

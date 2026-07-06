@@ -123,6 +123,8 @@ switching data never touches the frontend.
 | `RWE_INTERNAL_SECRET` | — | shared secret authenticating the web tier's server-to-server calls. Unset = trust local callers (dev only); **required** in production. |
 | `RWE_RATELIMIT_ENABLED` | — | rate limiting is on by default; set `0`/`false` to disable |
 | `RWE_RATELIMIT_<SCOPE>_PER_MIN` | — | override a scope's sustained requests/minute. `SCOPE` ∈ `AUTH` (30), `AI` (15), `INGEST` (60), `WRITE` (60), `READ` (240), `DEFAULT` (120) — production defaults shown; relaxed ×50 outside production |
+| `RWE_BODY_LIMIT_<SCOPE>_BYTES` | — | max request body per class: `AUTH` (4 KB), `AI` (16 KB), `INGEST` (1 MB), `WRITE` (32 KB), `DEFAULT` (16 KB) — production defaults; relaxed ×4 outside production. Oversized → `413` |
+| `RWE_MAX_READS_PER_BATCH` / `RWE_MAX_URL_LEN` / `RWE_MAX_TITLE_LEN` / `RWE_MAX_TEXT_LEN` | — | ingestion batch-shape caps (default `100` / `2048` / `512` / `2048`); exceeded → `413` |
 | `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` | — | enable the live coach narrative |
 
 **Web app** (`web/.env.local`):
@@ -212,6 +214,13 @@ images as two services, set `RWE_BACKEND_URL` on the web service to the engine's
   header and are logged as `{"event":"rate_limited","scope","identityKind","path","retryAfter"}`.
   Tune per scope with `RWE_RATELIMIT_<SCOPE>_PER_MIN` (see the config reference). Note: limits are
   per engine process, so with `--workers N` the effective ceiling is N× the configured rate.
+- **Request-size limits:** each body-bearing endpoint has a per-class byte cap (`RWE_BODY_LIMIT_*`)
+  checked against `Content-Length` *before* the body is buffered — an oversized payload gets a typed
+  `413` in ~1 ms with no memory allocated — plus batch-shape caps on ingestion (`RWE_MAX_READS_*`).
+  The check reads `Content-Length` only, never the body, and logs `{"event":"payload_too_large",
+  "contentLength","limitBytes"}` (never the body). A chunked upload that omits `Content-Length`
+  bypasses the header check and is bounded only by the model limits — put a hard `client_max_body_size`
+  (nginx) / body limit on the fronting proxy or platform LB in production as defense-in-depth.
 - **Tracing:** every response carries an `X-Request-ID` (echoing an inbound one if provided),
   and every error body includes `error.requestId` — so a user‑visible failure maps to a log line.
 

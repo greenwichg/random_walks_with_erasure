@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import type { Settings } from "@/types/domain";
 import { backendGet, backendPost, MOCK_FALLBACK_ENABLED, engineUnavailable } from "@/lib/backend";
 import { engineAuthHeaders } from "@/lib/engine-auth";
+import { rejectIfTooLarge } from "@/lib/body-limit";
 import { SETTINGS } from "@/mock/data";
 
 // Reflect the reader's saved preferences at request time, never a build-time snapshot.
@@ -28,6 +29,8 @@ export async function GET() {
 /** Persist a (partial) preferences patch for the signed-in reader; returns the full, normalised
  *  settings. Real account state — no mock fallback. */
 export async function POST(request: Request) {
+  const tooLarge = rejectIfTooLarge(request, "write");
+  if (tooLarge) return tooLarge;
   const patch = await request.json().catch(() => ({}));
   const headers = await engineAuthHeaders();
   if (!headers["X-IH-User-Id"]) return unauthorized();

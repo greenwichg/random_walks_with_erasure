@@ -38,6 +38,7 @@ import ingest                 # reading-event scorer + cache (Milestone C)
 import enrich                 # headline enrichment (register + emotion) behind ingest.Enricher
 import personalize            # per-user augmented Measured report / recs / coach
 import ratelimit              # dependency-free token-bucket rate limiter (Private Alpha hardening)
+import reqlimits              # request-body size / batch-shape limits (Private Alpha hardening)
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
@@ -162,6 +163,11 @@ async def _observability(request: Request, call_next):
     start = time.perf_counter()
     status = 500
     try:
+        oversized = _body_limit_check(request)      # reject a too-large body before buffering it
+        if oversized is not None:
+            status = oversized.status_code
+            oversized.headers["X-Request-ID"] = rid
+            return oversized
         limited = _rate_limit_check(request)
         if limited is not None:
             status = limited.status_code
@@ -204,7 +210,8 @@ def _error(status_code: int, code: str, message: str) -> JSONResponse:
 
 
 _HTTP_CODES = {400: "bad_request", 401: "unauthorized", 404: "not_found",
-               405: "method_not_allowed", 422: "invalid_request", 503: "engine_unavailable"}
+               405: "method_not_allowed", 413: "payload_too_large", 422: "invalid_request",
+               503: "engine_unavailable"}
 
 
 @app.exception_handler(RequestValidationError)
@@ -711,6 +718,24 @@ def _rate_identity(request: Request) -> str:
     return f"ip:{_client_ip(request)}"
 
 
+def _body_limit_check(request: Request) -> "JSONResponse | None":
+    """Reject an oversized request body with a typed ``413`` *before* it is buffered or parsed —
+    the memory-exhaustion defence. Uses the ``Content-Length`` header (all JSON clients set it), so
+    the body is never read; the body is never logged. Returns ``None`` for exempt / read-only /
+    no-body requests. A chunked upload without ``Content-Length`` is passed through here and bounded
+    downstream by the per-scope model limits (see the deployment notes)."""
+    limit = reqlimits.max_body_bytes(request.method, request.url.path, _production())
+    if limit is None:
+        return None
+    cl = request.headers.get("content-length")
+    if cl is not None and cl.isdigit() and int(cl) > limit:
+        _log(logging.WARNING, "payload_too_large", method=request.method, path=request.url.path,
+             contentLength=int(cl), limitBytes=limit)
+        return _error(413, "payload_too_large",
+                      "Request body is too large. Please reduce the payload and try again.")
+    return None
+
+
 def _rate_limit_check(request: Request) -> "JSONResponse | None":
     """Apply the token-bucket limiter to a request. Returns a typed ``429`` (with ``Retry-After``)
     when the caller has exceeded the scope's rate, else ``None`` to let the request proceed. Never
@@ -909,6 +934,11 @@ def add_reads(request: Request, req: ReadsRequest) -> dict:
     scored once (cached) and recorded idempotently per (user, canonical URL); repeat submits are
     no-ops. Returns coverage so the client knows when enough reads exist for a measured report."""
     uid = _require_real_user(request)
+    # Bound the batch shape (count + per-read field lengths) before any scoring — the byte cap
+    # already bounded the raw body; this rejects an over-count / over-long batch that fits under it.
+    batch_error = reqlimits.reads_batch_error(req.reads)
+    if batch_error is not None:
+        raise HTTPException(status_code=413, detail=batch_error)
     scorer = _require_scorer()
     st = _require_store()
     accepted = duplicates = rejected = 0

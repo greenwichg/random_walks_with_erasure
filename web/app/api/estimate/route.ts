@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import type { EstimateHealthReport } from "@/types/domain";
 import { backendPost, MOCK_FALLBACK_ENABLED, engineUnavailable } from "@/lib/backend";
+import { rejectIfTooLarge } from "@/lib/body-limit";
 import { mockEstimate } from "@/mock/onboarding";
 
 // The onboarding estimate is computed live and used before sign-in — public, no caching.
@@ -13,6 +14,8 @@ export const dynamic = "force-dynamic";
  * is offline, or a 503 in production (never a fabricated measured report).
  */
 export async function POST(request: Request) {
+  const tooLarge = rejectIfTooLarge(request, "write");
+  if (tooLarge) return tooLarge;
   const body = (await request.json().catch(() => ({ outlets: [] }))) as { outlets?: string[] };
   const outlets = Array.isArray(body.outlets) ? body.outlets : [];
   const estimate = await backendPost<EstimateHealthReport>("/api/estimate", { outlets });
