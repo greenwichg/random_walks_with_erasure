@@ -11,6 +11,12 @@ services:
     environment:
       RWE_PROFILE: synthetic           # synthetic | qbias | mind | politosphere
       RWE_LOG_LEVEL: INFO
+      # Live recommendation source: the `ingest` service (below) fills the FeedArticle catalog from
+      # real RSS feeds, and this flag makes the engine source recommendations from it — so each
+      # recommendation carries the real publisher URL and the web app's "Read" opens the article. If
+      # the catalog ends up below RWE_FEED_MIN_ARTICLES (feeds unreachable), the engine falls back to
+      # RWE_PROFILE above. Comment this out to always use the static corpus (recommendations, no URLs).
+      RWE_RECS_SOURCE: feed
       # --- production hardening (fail-closed auth) --------------------------------
       # This compose file runs in dev mode by default (the engine trusts the local
       # web service) so `up` is one command. For a real, internet-facing deployment,
@@ -43,6 +49,28 @@ services:
       timeout: 5s
       retries: 10
       start_period: 30s
+    depends_on:
+      # The one-shot RSS ingest runs to completion FIRST, so the engine sees a populated FeedArticle
+      # catalog at startup (it selects the corpus once, on boot). Ingest exits 0 even if some feeds
+      # fail, so a flaky feed never blocks the deploy — the engine simply falls back to RWE_PROFILE.
+      ingest:
+        condition: service_completed_successfully
+
+  # One-shot RSS ingest (runs on `up`, then exits): pulls cross-spectrum articles from real RSS/Atom
+  # feeds into the shared FeedArticle catalog so recommendations can carry real publisher URLs. Edit
+  # deploy/rss_feeds.example.txt to change the feed mix. `|| true` keeps an unreachable feed from
+  # failing the deploy. Re-runs on every `up`, refreshing the catalog.
+  ingest:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.api
+    environment:
+      RWE_RSS_FEEDS: /app/feeds/rss_feeds.txt
+      RWE_LOG_LEVEL: INFO
+    volumes:
+      - ih-data:/app/data                                    # the SAME durable store the engine reads
+      - ./rss_feeds.example.txt:/app/feeds/rss_feeds.txt:ro  # the feed list (edit to customize)
+    command: ["sh", "-c", "python examples/rss_ingest.py run || true"]
 
   web:
     build:
