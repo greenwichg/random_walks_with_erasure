@@ -744,6 +744,30 @@ class StorageStatusModel(BaseModel):
     ephemeral: bool
 
 
+class FeedHealthModel(BaseModel):
+    # per-feed polling health + quality (observational). `status` is derived from the failure count.
+    feedUrl: str
+    name: Optional[str] = None
+    status: str                 # healthy | degraded | unhealthy
+    healthy: bool
+    consecutiveFailures: int
+    totalPolls: int
+    totalOk: int
+    totalFailed: int
+    lastSuccessAt: Optional[str] = None
+    lastFailureAt: Optional[str] = None
+    lastError: Optional[str] = None
+    lastLatencyMs: Optional[float] = None
+    avgLatencyMs: Optional[float] = None
+    newestPublished: Optional[str] = None
+    oldestPublished: Optional[str] = None
+    imported: int
+    duplicate: int
+    rejected: int
+    missingMetadata: int
+    updatedAt: Optional[str] = None
+
+
 def _require_backend() -> "engine.Backend":
     if state.backend is None:
         raise HTTPException(status_code=503, detail="The engine is still starting up.")
@@ -1318,6 +1342,26 @@ def storage_status(request: Request) -> dict:
     internal secret in production, like the other ``/api/internal/*`` routes."""
     _require_trusted(request)
     return _require_store().storage_diagnostics()
+
+
+@app.get("/api/internal/feeds", response_model=list[FeedHealthModel], tags=["meta"],
+         summary="Per-feed RSS polling health + quality (server-to-server)", responses=_ERR_RESPONSES)
+def feed_health(request: Request) -> list:
+    """Ops diagnostics for the RSS poller: per-feed availability (healthy / consecutive failures /
+    last success + failure / latency) and quality (imported / duplicate / rejected / missing-metadata /
+    newest + oldest article dates). **Observational only** — feed health never influences corpus
+    construction, article export, or recommendation serving. Trusted endpoint — requires the internal
+    secret in production, like the other ``/api/internal/*`` routes."""
+    _require_trusted(request)
+    warn_after = _int_env("RWE_FEED_WARN_AFTER")
+    if warn_after is None:
+        warn_after = 1
+    out = []
+    for r in _require_store().list_feed_health():
+        status = ("unhealthy" if not r["healthy"]
+                  else "degraded" if r["consecutiveFailures"] >= warn_after else "healthy")
+        out.append({**r, "status": status})
+    return out
 
 
 @app.post("/api/internal/resolve-token", response_model=ResolveTokenModel, tags=["meta"],

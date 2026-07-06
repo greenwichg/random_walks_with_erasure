@@ -198,10 +198,21 @@ def make_scorer() -> "ingest.Scorer":
 
 
 def ingest_entries(entries, source_publisher, source_feed, scorer, store_) -> dict:
-    """Score + upsert a list of :class:`FeedEntry` into the catalog. Returns per-batch stats."""
-    stats = {"entries": 0, "new": 0, "duplicates": 0, "skipped": 0}
+    """Score + upsert a list of :class:`FeedEntry` into the catalog. Returns per-batch stats plus
+    observational quality metrics (``missing_metadata`` = no title or no publication date; ``newest`` /
+    ``oldest`` publication dates). Quality metrics are collected only — they never drop an article."""
+    stats = {"entries": 0, "new": 0, "duplicates": 0, "skipped": 0,
+             "missing_metadata": 0, "newest": None, "oldest": None}
     for e in entries:
         stats["entries"] += 1
+        if not (e.title or "").strip() or not (e.published_at or "").strip():
+            stats["missing_metadata"] += 1
+        iso = e.published_at            # already ISO (see _to_iso); lexical min/max within a feed
+        if iso:
+            if stats["newest"] is None or iso > stats["newest"]:
+                stats["newest"] = iso
+            if stats["oldest"] is None or iso < stats["oldest"]:
+                stats["oldest"] = iso
         url = ingest.normalize_url(e.url)
         if not ingest.has_host(url):
             stats["skipped"] += 1
@@ -225,20 +236,36 @@ def ingest_feed(feed_url, name, scorer, store_, fetch: Callable[[str], bytes] = 
     return s
 
 
-def ingest_all(feeds, scorer, store_, fetch: Callable[[str], bytes] = fetch_feed) -> dict:
-    """Ingest every feed; one feed's failure never aborts the rest (errors are collected)."""
+def ingest_all(feeds, scorer, store_, fetch: Callable[[str], bytes] = fetch_feed,
+               on_feed: "Callable[..., None] | None" = None) -> dict:
+    """Ingest every feed; one feed's failure never aborts the rest (errors are collected).
+
+    Optional ``on_feed(name, url, stats_or_None, latency_ms, error_or_None)`` is called once per feed
+    with its per-feed result + wall-clock latency — the seam feed-health monitoring records from. It is
+    observational: an exception in ``on_feed`` is swallowed so it can never break polling."""
     agg = {"feeds": 0, "ok": 0, "failed": 0, "entries": 0, "new": 0, "duplicates": 0,
            "skipped": 0, "errors": []}
     for name, url in feeds:
         agg["feeds"] += 1
+        t0 = time.perf_counter()
+        result, error = None, None
         try:
-            s = ingest_feed(url, name, scorer, store_, fetch=fetch)
+            result = ingest_feed(url, name, scorer, store_, fetch=fetch)
+        except Exception as e:                          # network/parse error on one feed
+            error = e
+        latency_ms = (time.perf_counter() - t0) * 1000.0
+        if error is None:
             agg["ok"] += 1
             for k in ("entries", "new", "duplicates", "skipped"):
-                agg[k] += s[k]
-        except Exception as e:                          # network/parse error on one feed
+                agg[k] += result[k]
+        else:
             agg["failed"] += 1
-            agg["errors"].append({"feed": url, "error": f"{type(e).__name__}: {e}"})
+            agg["errors"].append({"feed": url, "error": f"{type(error).__name__}: {error}"})
+        if on_feed is not None:
+            try:
+                on_feed(name, url, result, latency_ms, error)
+            except Exception:                            # health recording must never break polling
+                pass
     return agg
 
 

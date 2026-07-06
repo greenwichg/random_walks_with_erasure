@@ -794,3 +794,24 @@ def test_configure_recs_source_disabled_or_too_small_keeps_corpus(tmp_path, monk
     _seed_feed(st, 10)                                        # below threshold
     assert api_fastapi._configure_recs_source(st) is None
     assert os.environ["RWE_PROFILE"] == "mind" and "RWE_QBIAS" not in os.environ
+
+
+def test_feed_health_endpoint(client, monkeypatch):
+    """GET /api/internal/feeds reports per-feed health + quality, with a derived status, and is a
+    trusted route (requires the internal secret when configured)."""
+    st = api_fastapi.state.store
+    st.record_feed_health("https://ok.example/feed", ok=True, name="OK",
+                          latency_ms=90.0, stats={"new": 3, "duplicates": 1, "missing_metadata": 0},
+                          unhealthy_after=3)
+    st.record_feed_health("https://down.example/feed", ok=False, name="Down",
+                          error=OSError("connection refused"), latency_ms=200.0, unhealthy_after=1)
+
+    feeds = {f["feedUrl"]: f for f in client.get("/api/internal/feeds").json()}
+    assert feeds["https://ok.example/feed"]["status"] == "healthy"
+    assert feeds["https://ok.example/feed"]["imported"] == 3 and feeds["https://ok.example/feed"]["healthy"] is True
+    assert feeds["https://down.example/feed"]["status"] == "unhealthy"
+    assert feeds["https://down.example/feed"]["healthy"] is False
+    assert "connection refused" in feeds["https://down.example/feed"]["lastError"]
+
+    monkeypatch.setenv("RWE_INTERNAL_SECRET", "s3cret")       # trusted like the other /api/internal/* routes
+    assert client.get("/api/internal/feeds").status_code == 401

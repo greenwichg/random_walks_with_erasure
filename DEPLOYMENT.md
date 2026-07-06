@@ -313,6 +313,25 @@ Retention runs only when `RWE_RETENTION_MAX_AGE_DAYS` or `RWE_RETENTION_MAX_COUN
 `RWE_CORPUS_MIN_*` floors are the same thresholds the corpus-validation gate (a later milestone) will
 enforce, so retention never removes what validation will need.
 
+**Feed health monitoring (observational).** When polling, the engine persists a per-feed health +
+quality record (table `feed_health`) each cycle — availability (healthy · consecutive failures ·
+last success/failure · last error · last + average latency) and quality (imported · duplicate ·
+rejected · missing-metadata counts · newest/oldest article dates). A feed is marked **unhealthy**
+after `RWE_FEED_UNHEALTHY_AFTER` consecutive failures (default 3) and **auto-recovers** on its next
+successful poll; the poller keeps polling unhealthy feeds so they rejoin automatically. Partial
+failures never stop the cycle. **This is strictly observational** — feed health never removes
+articles, modifies `FeedArticle`, or influences corpus construction or recommendations; a future
+Corpus Validation milestone consumes it. Operators read it at:
+
+```
+GET /api/internal/feeds        # per-feed status/latency/quality — trusted (internal secret in prod)
+```
+
+| Env | Default | Meaning |
+| --- | --- | --- |
+| `RWE_FEED_UNHEALTHY_AFTER` | `3` | consecutive failures before a feed is marked unhealthy |
+| `RWE_FEED_WARN_AFTER` | `1` | consecutive failures before a feed reads as "degraded" (diagnostics only) |
+
 **URL coverage by ingestion source** — which sources can populate a real publisher `url` today:
 
 | Source | Real URL? | Notes |

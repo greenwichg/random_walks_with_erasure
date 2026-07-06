@@ -88,11 +88,31 @@ class FeedPoller:
         self.retries = retries if retries is not None else _int_env("RWE_POLL_RETRIES", DEFAULT_RETRIES)
         self.backoff = backoff if backoff is not None else _float_env("RWE_POLL_BACKOFF", DEFAULT_BACKOFF)
         self.feeds_spec = feeds_spec
+        self.unhealthy_after = _int_env("RWE_FEED_UNHEALTHY_AFTER", 3)   # consecutive failures -> unhealthy
         self._log = log or _default_log
         self._on_cycle = on_cycle                 # future hot-refresh seam; unused by the poller itself
         self._scorer = rss_ingest.make_scorer()   # the SAME scorer the reading pipeline uses
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
+
+    # -- per-feed health recording (observational; never affects articles/corpus/recs) ----------
+    def _record_health(self, name, url, stats, latency_ms, error) -> None:
+        """``ingest_all`` on_feed callback: persist this feed's poll result to FeedHealth. Failures
+        increment the consecutive-failure counter (unhealthy at the threshold); a success resets it.
+        Purely observational — it writes only the feed_health table."""
+        rec = self.store.record_feed_health(
+            url, ok=(error is None), name=name, latency_ms=latency_ms,
+            error=(f"{type(error).__name__}: {error}" if error is not None else None),
+            stats=stats or {}, unhealthy_after=self.unhealthy_after)
+        if error is not None:
+            self._log(logging.WARNING, "feed_health", feed=url, healthy=rec["healthy"],
+                      consecutiveFailures=rec["consecutiveFailures"],
+                      latencyMs=round(latency_ms, 1), error=rec["lastError"])
+        if rec.get("transition") == "unhealthy":
+            self._log(logging.WARNING, "feed_unhealthy", feed=url,
+                      consecutiveFailures=rec["consecutiveFailures"])
+        elif rec.get("transition") == "recovered":
+            self._log(logging.INFO, "feed_recovered", feed=url)
 
     # -- fetch with interruptible, capped exponential retry --------------------------------------
     def _make_fetch(self) -> Callable[[str], bytes]:
@@ -122,7 +142,8 @@ class FeedPoller:
                     "duplicates": 0, "skipped": 0, "errors": [], "catalog": self.store.count_feed_articles()}
 
         t0 = time.perf_counter()
-        agg = rss_ingest.ingest_all(feeds, self._scorer, self.store, fetch=self._make_fetch())
+        agg = rss_ingest.ingest_all(feeds, self._scorer, self.store,
+                                    fetch=self._make_fetch(), on_feed=self._record_health)
         agg["durationMs"] = round((time.perf_counter() - t0) * 1000.0, 1)
         agg["catalog"] = self.store.count_feed_articles()
 

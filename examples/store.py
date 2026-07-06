@@ -234,6 +234,35 @@ class FeedArticle(Base):
     created_at: Mapped[datetime] = mapped_column(default=_utcnow)
 
 
+class FeedHealth(Base):
+    """Per-feed polling health + quality — **observational only**. Written each poll cycle by the
+    poller; never removes articles, never modifies :class:`FeedArticle`, and never influences corpus
+    construction, export, or recommendation serving. A future Corpus Validation milestone may read it.
+    Keyed by feed URL; no foreign key, so it is fully isolated from users/reads/reports/rec-events."""
+
+    __tablename__ = "feed_health"
+
+    feed_url: Mapped[str] = mapped_column(String(2048), primary_key=True)
+    name: Mapped[Optional[str]] = mapped_column(String(255), default=None)          # publisher hint
+    healthy: Mapped[bool] = mapped_column(default=True)
+    consecutive_failures: Mapped[int] = mapped_column(default=0)
+    total_polls: Mapped[int] = mapped_column(default=0)
+    total_ok: Mapped[int] = mapped_column(default=0)
+    total_failed: Mapped[int] = mapped_column(default=0)
+    last_success_at: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+    last_failure_at: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+    last_error: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    last_latency_ms: Mapped[Optional[float]] = mapped_column(default=None)
+    avg_latency_ms: Mapped[Optional[float]] = mapped_column(default=None)
+    newest_published: Mapped[Optional[str]] = mapped_column(String(64), default=None)   # last cycle
+    oldest_published: Mapped[Optional[str]] = mapped_column(String(64), default=None)   # last cycle
+    imported: Mapped[int] = mapped_column(default=0)          # new rows, last cycle
+    duplicate: Mapped[int] = mapped_column(default=0)         # already-seen, last cycle
+    rejected: Mapped[int] = mapped_column(default=0)          # failed URL/host guard, last cycle
+    missing_metadata: Mapped[int] = mapped_column(default=0)  # no title / no pub date, last cycle
+    updated_at: Mapped[datetime] = mapped_column(default=_utcnow)
+
+
 class Store:
     """A durable store bound to one database URL.
 
@@ -473,6 +502,79 @@ class Store:
                 "description": r.description, "body": r.body, "publishedAt": r.published_at,
                 "sourceFeed": r.source_feed, "scored": dict(json.loads(r.scored)),
                 "fetchedAt": r.fetched_at.isoformat() if r.fetched_at else None}
+
+    # -- per-feed health (observational only; never affects articles/corpus/recs) --------
+    def record_feed_health(self, feed_url: str, *, ok: bool, name: "str | None" = None,
+                           latency_ms: "float | None" = None, error=None, stats: "dict | None" = None,
+                           unhealthy_after: int = 3, at: "str | None" = None) -> dict:
+        """Upsert one poll result into ``feed_health``. Success resets the consecutive-failure
+        counter; failure increments it and marks the feed unhealthy at ``unhealthy_after``. Maintains
+        cumulative counters + a running-average latency. Observational — writes only ``feed_health``,
+        and returns the updated record as a dict."""
+        now = _utcnow()
+        when = at or now.isoformat()
+        stats = stats or {}
+        with self.session() as s:
+            row = s.get(FeedHealth, feed_url)
+            existed = row is not None
+            prev_healthy = row.healthy if existed else True
+            if not existed:
+                # explicit zeros: mapped_column(default=…) only applies at flush, but we mutate first
+                row = FeedHealth(feed_url=feed_url, healthy=True, consecutive_failures=0,
+                                 total_polls=0, total_ok=0, total_failed=0,
+                                 imported=0, duplicate=0, rejected=0, missing_metadata=0)
+                s.add(row)
+            if name:
+                row.name = name
+            row.total_polls += 1
+            if latency_ms is not None:
+                row.last_latency_ms = float(latency_ms)
+                prev = row.avg_latency_ms if row.avg_latency_ms is not None else float(latency_ms)
+                row.avg_latency_ms = prev + (float(latency_ms) - prev) / row.total_polls
+            if ok:
+                row.total_ok += 1
+                row.consecutive_failures = 0
+                row.last_success_at = when
+                row.last_error = None
+                row.imported = int(stats.get("imported", stats.get("new", 0)))
+                row.duplicate = int(stats.get("duplicate", stats.get("duplicates", 0)))
+                row.rejected = int(stats.get("rejected", stats.get("skipped", 0)))
+                row.missing_metadata = int(stats.get("missing_metadata", 0))
+                row.newest_published = stats.get("newest")
+                row.oldest_published = stats.get("oldest")
+            else:
+                row.total_failed += 1
+                row.consecutive_failures += 1
+                row.last_failure_at = when
+                row.last_error = (str(error)[:1000] if error is not None else "unknown")
+            row.healthy = row.consecutive_failures < int(unhealthy_after)
+            row.updated_at = now
+            transition = None                       # health-state change, for the poller to log
+            if existed and prev_healthy and not row.healthy:
+                transition = "unhealthy"
+            elif existed and not prev_healthy and row.healthy:
+                transition = "recovered"
+            rec = self._feed_health_row(row)
+            rec["transition"] = transition
+            return rec
+
+    def list_feed_health(self) -> list:
+        with self.session() as s:
+            rows = s.scalars(select(FeedHealth).order_by(FeedHealth.feed_url)).all()
+            return [self._feed_health_row(r) for r in rows]
+
+    @staticmethod
+    def _feed_health_row(r: "FeedHealth") -> dict:
+        return {"feedUrl": r.feed_url, "name": r.name, "healthy": r.healthy,
+                "consecutiveFailures": r.consecutive_failures, "totalPolls": r.total_polls,
+                "totalOk": r.total_ok, "totalFailed": r.total_failed,
+                "lastSuccessAt": r.last_success_at, "lastFailureAt": r.last_failure_at,
+                "lastError": r.last_error, "lastLatencyMs": r.last_latency_ms,
+                "avgLatencyMs": round(r.avg_latency_ms, 1) if r.avg_latency_ms is not None else None,
+                "newestPublished": r.newest_published, "oldestPublished": r.oldest_published,
+                "imported": r.imported, "duplicate": r.duplicate, "rejected": r.rejected,
+                "missingMetadata": r.missing_metadata,
+                "updatedAt": r.updated_at.isoformat() if r.updated_at else None}
 
     # -- reading events (idempotent per user + canonical URL) -----------
     def add_read(self, user_id: int, canonical_url: str, scored: dict,
