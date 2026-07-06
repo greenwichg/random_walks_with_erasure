@@ -1,0 +1,131 @@
+# Continuous Integration — verifies every pull request (and pushes to the default branch).
+#
+# Jobs run in parallel; the `ci-success` gate depends on all of them, so branch protection only
+# needs to require that one check. Additive: it runs the repository's EXISTING test/build/typecheck
+# commands (pytest, tsc --noEmit, next build, node --test) — no application code is changed.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+# Cancel superseded runs on the same branch/PR to save runner minutes.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    name: Python tests
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        python-version: ["3.11", "3.12"] # dev/prod target + next version (requires-python >= 3.9)
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip # cache the pip download/wheel cache
+          cache-dependency-path: pyproject.toml
+      - name: Install (engine + test extras)
+        run: pip install -e ".[test,serve]"
+      - name: Run pytest
+        run: python -m pytest --junitxml=pytest-report.xml -q
+      - name: Upload test report
+        if: always() # keep the report even when tests fail
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-report-py${{ matrix.python-version }}
+          path: pytest-report.xml
+          if-no-files-found: ignore
+
+  web:
+    name: Web typecheck + build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm # cache ~/.npm keyed on the lockfile
+          cache-dependency-path: web/package-lock.json
+      - name: Install (clean, from lockfile)
+        run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Web unit tests (node --test)
+        run: node --test lib/*.test.mjs
+      - name: Production build
+        run: npm run build 2>&1 | tee ../web-build.log
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-build-log
+          path: web-build.log
+          if-no-files-found: ignore
+
+  extension:
+    name: Extension tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      # The extension is dependency-free (no package.json); its pure logic is run with node --test.
+      - name: Run extension tests
+        run: node --test extension/common.test.js
+
+  docker:
+    name: Docker builds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build engine image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile.api
+          push: false
+          load: false
+          tags: ih-api:ci
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
+      - name: Build web image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile.web
+          push: false
+          load: false
+          tags: ih-web:ci
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,mode=max,scope=web
+
+  # Single aggregate check for branch protection: require "CI success" and it fans in the rest.
+  ci-success:
+    name: CI success
+    if: always()
+    needs: [python, web, extension, docker]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify all jobs passed
+        run: |
+          echo "python=${{ needs.python.result }} web=${{ needs.web.result }} extension=${{ needs.extension.result }} docker=${{ needs.docker.result }}"
+          test "${{ needs.python.result }}" = "success" \
+            && test "${{ needs.web.result }}" = "success" \
+            && test "${{ needs.extension.result }}" = "success" \
+            && test "${{ needs.docker.result }}" = "success"
