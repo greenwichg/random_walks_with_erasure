@@ -570,6 +570,10 @@ class HealthStatusModel(BaseModel):
     eligibleReaders: int
     narrative: bool
     dataset: dict[str, Any]
+    # Recommendation-source diagnostic: is the live RSS feed driving recs (so they carry real
+    # publisher URLs — the Honest URL Pass-through) or the static corpus (no URLs)? Lets an operator
+    # verify the deployment's URL state with a single GET /api/health.
+    recommendationSource: dict[str, Any]
 
 
 class CoachRequest(BaseModel):
@@ -899,7 +903,18 @@ def _require_real_user(request: Request) -> int:
 @app.get("/api/health", response_model=HealthStatusModel, tags=["meta"],
          summary="Service health and dataset summary", responses=_ERR_RESPONSES)
 def health() -> dict:
-    return _require_backend().health()
+    be = _require_backend()
+    h = be.health()
+    # Surface whether recommendations are sourced from the live RSS feed (URLs present) or the static
+    # corpus (no URLs). `url_by_id` is populated only when the feed source was active at startup.
+    feed_articles = state.store.count_feed_articles() if state.store is not None else 0
+    h["recommendationSource"] = {
+        "source": "feed" if be.url_by_id else "static",
+        "feedArticles": int(feed_articles),
+        "resolvedUrls": len(be.url_by_id),
+        "recsSourceEnv": os.environ.get("RWE_RECS_SOURCE", ""),
+    }
+    return h
 
 
 @app.get("/api/report", response_model=HealthReportModel, response_model_exclude_none=True,

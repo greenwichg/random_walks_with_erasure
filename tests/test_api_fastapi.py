@@ -57,6 +57,15 @@ def test_health_ok(client):
     assert body["ok"] is True and "profile" in body and body["eligibleReaders"] > 0
 
 
+def test_health_reports_recommendation_source(client):
+    """The health diagnostic makes the recs-source state verifiable: this app runs the default
+    synthetic corpus (no feed source), so it reports `static` with no resolved URLs — the exact
+    signal an operator uses to see why recommendation `url`s are absent."""
+    rs = client.get("/api/health").json()["recommendationSource"]
+    assert rs["source"] == "static"            # feed source not active -> recommendations carry no url
+    assert rs["feedArticles"] == 0 and rs["resolvedUrls"] == 0
+
+
 def test_report_serves_engine_output(client):
     r = client.get("/api/report")
     assert r.status_code == 200
