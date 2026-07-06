@@ -613,6 +613,14 @@ class ResolveTokenModel(BaseModel):
     userId: int
 
 
+class StorageStatusModel(BaseModel):
+    # storage/durability diagnostics — the concrete fields depend on the backend, so allow extras.
+    model_config = ConfigDict(extra="allow")
+    url: str
+    backend: str
+    ephemeral: bool
+
+
 def _require_backend() -> "engine.Backend":
     if state.backend is None:
         raise HTTPException(status_code=503, detail="The engine is still starting up.")
@@ -673,13 +681,13 @@ def _config_errors() -> "list[str]":
             "RWE_INTERNAL_SECRET (identical on the web app and the engine), or unset production "
             "mode for local development."
         )
-    db_url = os.environ.get("RWE_DB_URL", "")
-    if _production() and (db_url.strip() in {"sqlite://", "sqlite:///:memory:"}
-                          or ":memory:" in db_url):
+    db_url = os.environ.get("RWE_DB_URL") or store.default_db_url()
+    if _production() and store.is_ephemeral_url(db_url):
         errors.append(
-            "Production mode is enabled (RWE_ENV=production) but RWE_DB_URL is an in-memory SQLite "
-            "database — every account, read, report, and token is lost on restart. Point RWE_DB_URL "
-            "at a persistent file (e.g. sqlite:////data/ih_beta.db on a mounted volume) or a database."
+            "Production mode is enabled (RWE_ENV=production) but RWE_DB_URL points at ephemeral "
+            "storage (an in-memory database, or a temp directory like /tmp) — every account, read, "
+            "report, and token is lost on restart. Point RWE_DB_URL at a persistent file on a "
+            "mounted volume (e.g. sqlite:////app/data/ih_beta.db) or a database server."
         )
     return errors
 
@@ -1141,6 +1149,17 @@ def read_user(request: Request, user_id: int) -> dict:
     if u is None:
         raise HTTPException(status_code=404, detail="No such user.")
     return {"userId": u.id, "email": u.email, "displayName": u.display_name}
+
+
+@app.get("/api/internal/storage", response_model=StorageStatusModel, tags=["meta"],
+         summary="Storage / durability diagnostics (server-to-server)", responses=_ERR_RESPONSES)
+def storage_status(request: Request) -> dict:
+    """Ops diagnostics for the durable store: the active database (redacted), whether it is
+    ephemeral, the SQLite journal mode + pragmas actually in effect, on-disk size, a fast
+    corruption probe (``PRAGMA quick_check``), and backup status. Trusted endpoint — requires the
+    internal secret in production, like the other ``/api/internal/*`` routes."""
+    _require_trusted(request)
+    return _require_store().storage_diagnostics()
 
 
 @app.post("/api/internal/resolve-token", response_model=ResolveTokenModel, tags=["meta"],

@@ -29,8 +29,14 @@ services:
       # RWE_QBIAS: /data/allsides_balanced_news.csv
       # --- optional: live AI-coach narrative ---
       # ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
-    # volumes:
-    #   - ./data:/data:ro              # host ./data → /data in the container
+    volumes:
+      # Persist the SQLite store (default RWE_DB_URL -> /app/data/ih_beta.db) on a NAMED volume so
+      # user data survives container recreation / redeploys — the durability guarantee. Backups
+      # written by `db_backup.py` land in /app/data/backups on the same volume; copy them off-host
+      # for real disaster recovery (see DEPLOYMENT.md).
+      - ih-data:/app/data
+      # Datasets (MIND/Politosphere/Qbias) are read-only and separate from the writable DB volume:
+      # - ./data:/datasets:ro          # then set e.g. RWE_NPZ=/datasets/mind.npz
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health').status==200 else 1)"]
       interval: 15s
@@ -59,3 +65,18 @@ services:
     depends_on:
       api:
         condition: service_healthy
+
+  # One-shot backup: `docker compose run --rm backup` writes a timestamped, integrity-checked
+  # snapshot into the shared data volume (/app/data/backups). Runs against the SAME volume as the
+  # engine, so it needs no separate config. Schedule it from cron/systemd on the host.
+  backup:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.api
+    profiles: ["backup"]               # not started by `up`; run explicitly
+    volumes:
+      - ih-data:/app/data
+    command: ["python", "examples/db_backup.py", "backup"]
+
+volumes:
+  ih-data:                             # named volume: the durable SQLite store + local backups

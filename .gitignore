@@ -23,6 +23,10 @@ data/*.csv
 *.db-journal
 *.db-wal
 *.db-shm
+# Backup / restore runtime artifacts (examples/db_backup.py)
+backups/
+*.db.pre-restore
+*.restore.tmp
 
 # Generated run/eval outputs (created at repo root by examples/*.py; not deliverables).
 # Root-anchored (leading /) so they never shadow tracked files like

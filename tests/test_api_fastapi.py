@@ -625,7 +625,7 @@ def test_config_errors_require_secret_in_production(monkeypatch):
     monkeypatch.delenv("RWE_REQUIRE_AUTH", raising=False)
     monkeypatch.delenv("RWE_INTERNAL_SECRET", raising=False)
     monkeypatch.setenv("RWE_ENV", "production")
-    monkeypatch.setenv("RWE_DB_URL", "sqlite:////tmp/ih_ok.db")     # a persistent DB (isolate this check)
+    monkeypatch.setenv("RWE_DB_URL", "sqlite:////var/lib/ih/ih.db")  # a persistent DB (isolate this check)
     errs = api_fastapi._config_errors()
     assert errs and any("RWE_INTERNAL_SECRET" in e for e in errs)
     monkeypatch.setenv("RWE_INTERNAL_SECRET", "prod-secret")
@@ -636,14 +636,16 @@ def test_config_errors_require_secret_in_production(monkeypatch):
     assert api_fastapi._config_errors() == []
 
 
-def test_config_errors_flag_in_memory_db_in_production(monkeypatch):
-    """Startup validation refuses an in-memory DB in production (all data lost on restart); a
-    persistent file DB with the secret set passes."""
+def test_config_errors_flag_ephemeral_db_in_production(monkeypatch):
+    """Startup validation refuses ephemeral storage in production (data lost on restart): an
+    in-memory DB and a /tmp file both fail; a persistent file (with the secret set) passes."""
     monkeypatch.setenv("RWE_ENV", "production")
     monkeypatch.setenv("RWE_INTERNAL_SECRET", "s3cret")            # satisfy the auth requirement
-    monkeypatch.setenv("RWE_DB_URL", "sqlite://")                  # in-memory -> data vanishes
-    assert any("in-memory" in e for e in api_fastapi._config_errors())
-    monkeypatch.setenv("RWE_DB_URL", "sqlite:////tmp/ih_persist_test.db")   # a real file -> ok
+    monkeypatch.setenv("RWE_DB_URL", "sqlite://")                  # in-memory -> ephemeral
+    assert any("ephemeral" in e for e in api_fastapi._config_errors())
+    monkeypatch.setenv("RWE_DB_URL", "sqlite:////tmp/ih.db")       # temp dir -> ephemeral
+    assert any("ephemeral" in e for e in api_fastapi._config_errors())
+    monkeypatch.setenv("RWE_DB_URL", "sqlite:////var/lib/ih/ih.db")  # persistent file -> ok
     assert api_fastapi._config_errors() == []
 
 
@@ -676,6 +678,18 @@ def test_fail_closed_blocks_impersonation_in_production(client, monkeypatch):
     assert client.get("/api/me/profile",
                       headers={"X-IH-User-Id": str(victim), "X-IH-Auth": "wrong"}).status_code == 401
     assert client.get("/api/me/profile", headers=hdr).status_code == 401
+
+
+def test_storage_diagnostics_endpoint(client, monkeypatch):
+    """The internal storage endpoint reports live pragmas + a corruption probe, and is a trusted
+    endpoint (requires the secret when configured)."""
+    diag = client.get("/api/internal/storage").json()
+    assert diag["quickCheck"] == "ok" and diag["foreignKeys"] is True
+    assert "journalMode" in diag and "ephemeral" in diag
+    # trusted like the other /api/internal/* routes
+    monkeypatch.setenv("RWE_INTERNAL_SECRET", "s3cret")
+    assert client.get("/api/internal/storage").status_code == 401
+    assert client.get("/api/internal/storage", headers={"X-IH-Auth": "s3cret"}).status_code == 200
 
 
 def test_startup_aborts_in_production_without_secret(monkeypatch):

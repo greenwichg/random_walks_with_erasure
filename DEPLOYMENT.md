@@ -125,6 +125,8 @@ switching data never touches the frontend.
 | `RWE_RATELIMIT_<SCOPE>_PER_MIN` | — | override a scope's sustained requests/minute. `SCOPE` ∈ `AUTH` (30), `AI` (15), `INGEST` (60), `WRITE` (60), `READ` (240), `DEFAULT` (120) — production defaults shown; relaxed ×50 outside production |
 | `RWE_BODY_LIMIT_<SCOPE>_BYTES` | — | max request body per class: `AUTH` (4 KB), `AI` (16 KB), `INGEST` (1 MB), `WRITE` (32 KB), `DEFAULT` (16 KB) — production defaults; relaxed ×4 outside production. Oversized → `413` |
 | `RWE_MAX_READS_PER_BATCH` / `RWE_MAX_URL_LEN` / `RWE_MAX_TITLE_LEN` / `RWE_MAX_TEXT_LEN` | — | ingestion batch-shape caps (default `100` / `2048` / `512` / `2048`); exceeded → `413` |
+| `RWE_DB_URL` | — | durable store URL (default `sqlite:///<repo>/data/ih_beta.db`). Production refuses to start on an ephemeral value (in-memory, or a `/tmp` path). |
+| `RWE_BACKUP_DIR` | — | where `db_backup.py` writes backups (default: `backups/` beside the DB file) |
 | `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` | — | enable the live coach narrative |
 
 **Web app** (`web/.env.local`):
@@ -165,6 +167,79 @@ cd web && npm ci && npm run build
 NODE_ENV=production RWE_ENV=production RWE_BACKEND_URL=https://engine.internal \
   RWE_INTERNAL_SECRET="$SAME_AS_ENGINE" NEXTAUTH_SECRET="$(openssl rand -base64 32)" npm start
 ```
+
+---
+
+## Data durability & backups
+
+All product state — accounts, identities, onboarding, reading history, report snapshots, settings,
+API tokens, recommendation events — lives in **one SQLite database** (`RWE_DB_URL`, default
+`data/ih_beta.db`). No PostgreSQL, no Redis; simple and file-backed for the first 100 users.
+
+### SQLite settings (pragmas)
+
+Every connection is opened with these pragmas (`examples/store.py` → `SQLITE_PRAGMAS`):
+
+| Pragma | Value | Why |
+| --- | --- | --- |
+| `journal_mode` | `WAL` | Write-Ahead Logging — readers never block the writer (and vice-versa); clean crash recovery. The durability/concurrency core. |
+| `synchronous` | `NORMAL` | The WAL-recommended sync level: durable across an app/OS crash; a sudden power loss may drop only the last un-checkpointed transaction, never corrupting the file. (Far faster than `FULL`.) |
+| `busy_timeout` | `5000` ms | Wait for a lock instead of immediately raising `database is locked`. |
+| `foreign_keys` | `ON` | Enforce foreign keys (SQLite defaults them **off** per connection). |
+
+WAL adds `-wal` / `-shm` sidecar files next to the database; keep them together.
+
+### Development vs production storage
+
+- **Development / Colab:** the default `data/ih_beta.db` on your local disk (git-ignored) — zero config.
+- **Production:** a file on a **persistent volume**. `docker-compose.yml` mounts a named volume
+  `ih-data` at `/app/data`, so the DB survives container recreation and redeploys. The engine
+  **refuses to start** in production (`RWE_ENV=production`) if `RWE_DB_URL` is clearly ephemeral
+  (in-memory, or under `/tmp`) — see "Startup validation".
+
+### Backup & restore
+
+`examples/db_backup.py` uses SQLite's **online backup** (consistent snapshot while the server runs):
+
+```bash
+# Consistent, timestamped backup (server can stay up). Writes <db-dir>/backups/ih_beta-<ts>.db
+python examples/db_backup.py backup
+docker compose run --rm backup            # same thing, against the compose data volume
+
+# Inspect storage + list backups (also served at GET /api/internal/storage)
+python examples/db_backup.py status
+```
+
+**Restore** validates the backup's integrity *before* touching the live DB, snapshots the current
+file to `…​.pre-restore`, then atomically swaps — and refuses (leaving the active DB untouched) if
+the backup is corrupt:
+
+```bash
+# STOP the engine first, then:
+python examples/db_backup.py restore /path/to/ih_beta-<ts>.db
+# start the engine again
+```
+
+### Disaster recovery
+
+- **Schedule** `db_backup.py backup` from cron/systemd (e.g. hourly). Backups land on the data
+  volume; **copy them off-host** (object storage / another machine) so a lost volume ≠ lost data.
+- **Corruption check:** `GET /api/internal/storage` (or `db_backup.py status`) runs
+  `PRAGMA quick_check`; restore from the newest good backup if it ever reports anything but `ok`.
+- **Recovery drill:** `restore` a recent backup into a scratch path and diff — practise before you
+  need it.
+
+### Data-loss matrix
+
+| Scenario | Before this milestone | Now |
+| --- | --- | --- |
+| Process restart | safe (file) | safe |
+| Container restart (same container) | safe | safe |
+| **Deployment / container recreate** | **DATA LOST** (no volume) | safe (named volume) |
+| Host reboot | usually safe | safe |
+| Failed / concurrent write | possible `database is locked` | WAL + `busy_timeout` retries |
+| Power loss | durable, no concurrency | WAL+`NORMAL`: no corruption (may drop last txn) |
+| Volume loss / corruption | unrecoverable | restore from an **off-host** backup |
 
 ---
 

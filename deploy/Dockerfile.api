@@ -17,6 +17,12 @@ EXPOSE 8000
 ENV RWE_PROFILE=synthetic \
     RWE_LOG_LEVEL=INFO
 
+# The durable SQLite store lives here (default RWE_DB_URL -> /app/data/ih_beta.db). Declared as a
+# volume so a bare `docker run` persists it in an anonymous volume; docker-compose mounts a NAMED
+# volume here so user data survives container recreation / redeploys. Back it up with
+# `python examples/db_backup.py backup` (see DEPLOYMENT.md → "Backup & restore").
+VOLUME ["/app/data"]
+
 # The synthetic profile needs no data. For MIND / Politosphere, mount a volume and
 # set RWE_PROFILE + RWE_NPZ (see deploy/docker-compose.yml). For the live coach
 # narrative, pass ANTHROPIC_API_KEY.

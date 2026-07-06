@@ -26,14 +26,17 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import secrets
+import shutil
+import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator, Optional
 
 from sqlalchemy import (ForeignKey, String, Text, UniqueConstraint, create_engine,
-                        func, select)
+                        event, func, select)
 from sqlalchemy.orm import (DeclarativeBase, Mapped, Session, mapped_column,
                             relationship, sessionmaker)
 from sqlalchemy.pool import StaticPool
@@ -539,6 +542,63 @@ class Store:
             s.delete(row)
             return True
 
+    # -- storage / durability diagnostics -------------------------------
+    def storage_diagnostics(self) -> dict:
+        """A read-only snapshot of the storage backend for ops: the (redacted) URL, whether it is
+        ephemeral, the SQLite journal mode + key pragmas actually in effect, the on-disk size, a
+        fast corruption probe (``PRAGMA quick_check``), and backup status (count + newest). Safe to
+        call on a live database."""
+        info: dict = {"url": _redact_url(self.url), "backend": self.engine.dialect.name,
+                      "ephemeral": is_ephemeral_url(self.url)}
+        if self.url.startswith("sqlite"):
+            with self.engine.connect() as c:
+                info["journalMode"] = c.exec_driver_sql("PRAGMA journal_mode").scalar()
+                info["foreignKeys"] = bool(c.exec_driver_sql("PRAGMA foreign_keys").scalar())
+                info["busyTimeoutMs"] = int(c.exec_driver_sql("PRAGMA busy_timeout").scalar() or 0)
+                info["synchronous"] = c.exec_driver_sql("PRAGMA synchronous").scalar()
+                info["quickCheck"] = c.exec_driver_sql("PRAGMA quick_check").scalar()
+            path = sqlite_path(self.url)
+            if path and os.path.exists(path):
+                info["sizeBytes"] = os.path.getsize(path)
+        try:                                    # backup status is best-effort — never fail diagnostics
+            backups = list_backups(default_backup_dir(self.url))
+            info["backupCount"] = len(backups)
+            info["lastBackupAt"] = backups[0]["modifiedAt"] if backups else None
+        except Exception:
+            pass
+        return info
+
+
+# SQLite pragmas applied to EVERY connection for durability + concurrency. journal_mode is
+# persistent on the file (setting it again is a harmless no-op); the rest are per-connection and
+# must be re-applied on each connect. Documented in DEPLOYMENT.md → "SQLite settings":
+#
+#   journal_mode=WAL   Write-Ahead Logging: readers never block the writer (and vice-versa), and a
+#                      crash mid-write recovers cleanly — the durability/concurrency core.
+#   synchronous=NORMAL The WAL-recommended sync level: durable across an application/OS crash; a
+#                      sudden power loss may drop the last un-checkpointed transaction but never
+#                      corrupts the file. (FULL is safer but fsyncs every commit; NORMAL is the
+#                      documented WAL default and far faster.)
+#   busy_timeout=5000  On lock contention, wait up to 5s for the lock instead of immediately
+#                      raising "database is locked".
+#   foreign_keys=ON    Enforce foreign keys (SQLite defaults them OFF per connection).
+SQLITE_PRAGMAS = (
+    ("journal_mode", "WAL"),
+    ("synchronous", "NORMAL"),
+    ("busy_timeout", "5000"),
+    ("foreign_keys", "ON"),
+)
+
+
+def _apply_sqlite_pragmas(dbapi_conn, _record) -> None:
+    """SQLAlchemy ``connect`` listener: set the durability pragmas on each new SQLite connection."""
+    cur = dbapi_conn.cursor()
+    try:
+        for name, value in SQLITE_PRAGMAS:
+            cur.execute(f"PRAGMA {name}={value}")
+    finally:
+        cur.close()
+
 
 def _make_engine(url: str):
     """Create the SQLAlchemy engine for ``url``.
@@ -546,14 +606,150 @@ def _make_engine(url: str):
     SQLite needs ``check_same_thread=False`` because one engine is shared across FastAPI's
     request threadpool; an in-memory URL additionally needs a single shared connection
     (``StaticPool``) or each session would see its own empty database. A file-backed URL has
-    its parent directory created so the first run works from a clean checkout."""
+    its parent directory created so the first run works from a clean checkout. Every SQLite
+    connection gets the durability pragmas (:data:`SQLITE_PRAGMAS`) via a ``connect`` listener."""
     if url.startswith("sqlite"):
         connect_args = {"check_same_thread": False}
         if ":memory:" in url or url == "sqlite://":
-            return create_engine(url, future=True, connect_args=connect_args,
-                                 poolclass=StaticPool)
-        path = url.split("sqlite:///", 1)[-1]
-        if path and path != ":memory:":
-            Path(path).parent.mkdir(parents=True, exist_ok=True)
-        return create_engine(url, future=True, connect_args=connect_args)
+            engine = create_engine(url, future=True, connect_args=connect_args,
+                                   poolclass=StaticPool)
+        else:
+            path = url.split("sqlite:///", 1)[-1]
+            if path and path != ":memory:":
+                Path(path).parent.mkdir(parents=True, exist_ok=True)
+            engine = create_engine(url, future=True, connect_args=connect_args)
+        event.listen(engine, "connect", _apply_sqlite_pragmas)
+        return engine
     return create_engine(url, future=True)
+
+
+# --------------------------------------------------------------------------- #
+# Storage introspection + backup / restore (Private Alpha durability).
+# --------------------------------------------------------------------------- #
+def sqlite_path(url: str) -> "str | None":
+    """The filesystem path of a file-backed SQLite URL, or ``None`` for in-memory / non-SQLite."""
+    if not url or not url.startswith("sqlite") or ":memory:" in url or url == "sqlite://":
+        return None
+    return url.split("sqlite:///", 1)[-1] or None
+
+
+_EPHEMERAL_DIRS = ("/tmp/", "/var/tmp/", "/dev/shm/")
+
+
+def is_ephemeral_url(url: str) -> bool:
+    """Whether a DB URL points at storage that does not survive a restart/redeploy — an in-memory
+    SQLite database, or a file under an obviously-ephemeral temp directory. Used to refuse a
+    production start that would silently lose data. A file under a mounted volume is NOT ephemeral;
+    that guarantee comes from the deployment (docker-compose mounts a named volume)."""
+    u = (url or "").strip()
+    if not u.startswith("sqlite"):
+        return False
+    if u in {"sqlite://", "sqlite:///:memory:"} or ":memory:" in u:
+        return True
+    path = u.split("sqlite:///", 1)[-1]
+    return any(path.startswith(d) or path.startswith(d[1:]) for d in _EPHEMERAL_DIRS)
+
+
+def _redact_url(url: str) -> str:
+    """Hide any password in a ``scheme://user:pass@host`` URL; SQLite file URLs are unchanged."""
+    return re.sub(r"://([^:/@]+):[^@]+@", r"://\1:***@", url or "")
+
+
+def integrity_ok(db_path: str) -> bool:
+    """True iff ``PRAGMA integrity_check`` reports a single ``ok`` for the SQLite file — the check
+    run on a backup before it is trusted, and before a restore replaces the live database."""
+    con = sqlite3.connect(db_path)
+    try:
+        rows = con.execute("PRAGMA integrity_check").fetchall()
+        return len(rows) == 1 and rows[0][0] == "ok"
+    except sqlite3.DatabaseError:
+        return False
+    finally:
+        con.close()
+
+
+def backup_database(db_path: str, dest_path: str) -> None:
+    """Consistent **online** backup of a live SQLite DB using the sqlite3 backup API, which copies
+    pages while the database is in use — the server keeps running. Writes to a temp file then
+    atomically renames, so a partial backup is never published under ``dest_path``. The source is
+    opened normally (not read-only): the backup API only reads it, and a strict read-only handle
+    cannot read a WAL database because it needs the ``-shm`` file."""
+    src = sqlite3.connect(db_path)
+    tmp = dest_path + ".tmp"
+    dst = sqlite3.connect(tmp)
+    try:
+        src.backup(dst)                 # online snapshot: consistent, no server stop
+    finally:
+        dst.close()
+        src.close()
+    os.replace(tmp, dest_path)          # atomic publish
+
+
+def restore_database(backup_path: str, db_path: str) -> str:
+    """Replace the active DB with ``backup_path``, **safely**: verify the backup's integrity FIRST
+    (raise, untouched, if bad), snapshot the current DB to a ``.pre-restore`` sidecar, then
+    atomically swap and drop stale ``-wal``/``-shm`` sidecars so the restored file is authoritative.
+    Returns the pre-restore snapshot path (or ""). The engine must be STOPPED during a restore."""
+    if not os.path.exists(backup_path):
+        raise FileNotFoundError(f"backup not found: {backup_path}")
+    if not integrity_ok(backup_path):
+        raise ValueError(f"refusing to restore: {backup_path} failed its integrity check")
+    saved = ""
+    if os.path.exists(db_path):
+        saved = db_path + ".pre-restore"
+        shutil.copy2(db_path, saved)
+    tmp = db_path + ".restore.tmp"
+    shutil.copy2(backup_path, tmp)
+    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+    os.replace(tmp, db_path)
+    for side in ("-wal", "-shm"):
+        try:
+            os.remove(db_path + side)
+        except FileNotFoundError:
+            pass
+    return saved
+
+
+def default_backup_dir(db_url: str) -> str:
+    """Where backups go: ``RWE_BACKUP_DIR`` if set, else a ``backups/`` folder beside the DB file,
+    else ``<repo>/backups`` (in-memory / no file path)."""
+    env = os.environ.get("RWE_BACKUP_DIR")
+    if env:
+        return env
+    path = sqlite_path(db_url)
+    if path:
+        return str(Path(path).resolve().parent / "backups")
+    return str(Path(__file__).resolve().parent.parent / "backups")
+
+
+def list_backups(out_dir: str) -> list:
+    """Backups in ``out_dir`` (``*.db``), newest first, with size + mtime."""
+    p = Path(out_dir)
+    if not p.is_dir():
+        return []
+    out = []
+    for f in sorted(p.glob("*.db"), key=lambda x: x.stat().st_mtime, reverse=True):
+        st = f.stat()
+        out.append({"path": str(f), "sizeBytes": st.st_size,
+                    "modifiedAt": datetime.fromtimestamp(st.st_mtime, timezone.utc).isoformat()})
+    return out
+
+
+def create_backup(db_url: "str | None" = None, out_dir: "str | None" = None) -> str:
+    """Back up the configured database to a timestamped file and return its path. Verifies the
+    backup's integrity and discards it if the check fails (never leaves a bad backup behind)."""
+    url = db_url or default_db_url()
+    path = sqlite_path(url)
+    if path is None:
+        raise ValueError("cannot back up an in-memory or non-file database")
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"database file not found: {path}")
+    out = out_dir or default_backup_dir(url)
+    os.makedirs(out, exist_ok=True)
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    dest = os.path.join(out, f"{Path(path).stem}-{ts}.db")
+    backup_database(path, dest)
+    if not integrity_ok(dest):
+        os.remove(dest)
+        raise RuntimeError("backup failed its integrity check and was discarded")
+    return dest
