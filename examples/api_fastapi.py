@@ -42,6 +42,7 @@ import reqlimits              # request-body size / batch-shape limits (Private 
 import feed_source            # optional: source the recommender catalog from the RSS FeedArticle store
 import feed_service           # optional: background RSS polling that keeps the FeedArticle catalog fresh
 import corpus_validation      # corpus-eligibility gate (validation only; no activation / no hot swap)
+import corpus_refresh         # atomic hot activation of a validated corpus (background Backend swap)
 import discover               # Discover & Stories: product-layer exploration over the FeedArticle catalog
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -99,12 +100,23 @@ def _profile_from_env() -> "engine.DatasetProfile":
 
 
 class _State:
-    backend: "engine.Backend | None" = None
+    # `active` is the single atomically-swapped serving bundle (backend + personalizer + generation).
+    # `backend` / `personalizer` are read-only views onto it, so existing accessors keep working while
+    # a hot refresh replaces the pair together (never one without the other).
+    active: "corpus_refresh.Active | None" = None
     store: "store.Store | None" = None
     scorer: "ingest.Scorer | None" = None
-    personalizer: "personalize.Personalizer | None" = None
     limiter: "ratelimit.RateLimiter | None" = None
     poller: "feed_service.FeedPoller | None" = None
+    refresh: "corpus_refresh.RefreshManager | None" = None
+
+    @property
+    def backend(self) -> "engine.Backend | None":
+        return self.active.backend if self.active is not None else None
+
+    @property
+    def personalizer(self) -> "personalize.Personalizer | None":
+        return self.active.personalizer if self.active is not None else None
 
 
 state = _State()
@@ -147,6 +159,9 @@ async def lifespan(app: FastAPI):
     # Build the engine (dataset + compute + recommender inputs) once, reuse per request.
     provider = os.environ.get("RWE_PROVIDER", "anthropic")
     st = store.Store()
+    state.store = st
+    state.scorer = ingest.Scorer(enricher=enrich.make_enricher())   # baseline register+emotion
+    state.limiter = ratelimit.RateLimiter()          # per-process token-bucket limiter
     # Live recommendation source (opt-in): build the recommender's catalog from the RSS FeedArticle
     # store instead of the static qbias CSV / synthetic generator. Additive — it just points RWE_QBIAS
     # at a FeedArticle-derived qbias-format CSV, so the ENGINE and the protected simulator are unchanged
@@ -158,31 +173,37 @@ async def lifespan(app: FastAPI):
         # Map the corpus item ids (Q{i}) back to their FeedArticle publisher URLs, so recommendations
         # carry the real openable URL (the Honest URL Pass-through). Additive; no algorithm change.
         be.attach_url_resolver(feed_source.load_url_map(feed_csv))
-    state.backend = be
-    state.store = st
-    state.scorer = ingest.Scorer(enricher=enrich.make_enricher())   # baseline register+emotion
     # The personalization layer: builds a real user's Measured report / recs / coach from an
     # augmented corpus once they've stored enough reads (cached per user + reading version).
-    state.personalizer = personalize.Personalizer(be, state.store)
-    state.limiter = ratelimit.RateLimiter()          # per-process token-bucket limiter
+    personalizer = personalize.Personalizer(be, st)
+    # Seed the atomic serving bundle (generation 1) + the refresh manager. The boot Backend is built
+    # exactly as before; the manager only ever REPLACES it later via a validated, atomic hot swap
+    # (backend + personalizer together), so the running engine picks up new articles without a restart.
+    state.refresh = corpus_refresh.RefreshManager(state, provider=provider, log=_log)
+    source = "feed" if be.url_by_id else "static"
+    sig = corpus_refresh.initial_signature(st) if feed_csv else "static"
+    state.refresh.seed(be, personalizer, source, sig, len(be.mind.dataset.item_ids))
     _log(logging.INFO, "startup", profile=be.profile.name, demoUser=be.demo_user,
-         eligibleReaders=int(len(be.eligible)), db=state.store.url,
+         eligibleReaders=int(len(be.eligible)), db=st.url,
          rateLimit=ratelimit.enabled(), production=_production())
-    # Automatic RSS polling (opt-in): keep the FeedArticle catalog fresh in the background. Requires
-    # BOTH the live feed source (RWE_RECS_SOURCE=feed) and the poll flag (RWE_FEED_POLL). It only
-    # ingests (incremental + deduped); it does NOT rebuild the recommendation corpus — a running
-    # engine keeps the corpus it built at startup until a later commit adds the validated hot swap.
+    # Automatic RSS polling + hot refresh (opt-in): keep the FeedArticle catalog fresh in the
+    # background, and — via the poller's on_cycle seam — atomically activate a newly validated corpus
+    # so new articles become recommendable with NO restart. Requires BOTH the live feed source
+    # (RWE_RECS_SOURCE=feed) and the poll flag (RWE_FEED_POLL). Retention/health/validation are
+    # unchanged and owned by earlier commits; this only consumes their outputs.
     if feed_service.enabled() and feed_source.enabled():
-        state.poller = feed_service.FeedPoller(state.store, log=_log)
+        state.refresh.polling_enabled = True
+        state.poller = feed_service.FeedPoller(state.store, log=_log,
+                                               on_cycle=state.refresh.on_poll_cycle)
         state.poller.start()
     yield
     if state.poller is not None:
         state.poller.stop()          # graceful: signal + join the current cycle
     state.poller = None
-    state.backend = None
+    state.active = None
+    state.refresh = None
     state.store = None
     state.scorer = None
-    state.personalizer = None
     state.limiter = None
 
 
@@ -789,10 +810,42 @@ class CorpusValidationModel(BaseModel):
     thresholds: dict[str, Any]
 
 
-def _require_backend() -> "engine.Backend":
-    if state.backend is None:
+class RefreshStatusModel(BaseModel):
+    # Hot-refresh / activation diagnostics (Commit 5). Reports the active corpus generation and the
+    # last refresh outcome; it triggers nothing. Extra allowed for forward-compat.
+    model_config = ConfigDict(extra="allow")
+    state: str                          # idle | building | swapping | failed
+    source: str                         # feed | static
+    generation: int
+    activeVersion: int
+    activeSignature: Optional[str] = None
+    candidateVersion: Optional[str] = None
+    itemCount: int
+    builtAt: Optional[str] = None
+    refreshCount: int
+    lastSuccessAt: Optional[str] = None
+    lastFailedAt: Optional[str] = None
+    lastValidationAt: Optional[str] = None
+    lastError: Optional[str] = None
+    lastFailures: list[str] = []
+    buildMs: Optional[float] = None
+    activationMs: Optional[float] = None
+    pollingEnabled: bool
+
+
+def _active() -> "corpus_refresh.Active":
+    """The current serving bundle (backend + personalizer + generation), captured in one atomic read.
+    A handler that needs a swap-consistent view for the whole request captures this ONCE and reads
+    ``.backend`` / ``.personalizer`` off it, so a hot swap landing mid-request can't split a response
+    across two generations."""
+    a = state.active
+    if a is None:
         raise HTTPException(status_code=503, detail="The engine is still starting up.")
-    return state.backend
+    return a
+
+
+def _require_backend() -> "engine.Backend":
+    return _active().backend
 
 
 def _resolve(user: str | None) -> int:
@@ -948,9 +1001,7 @@ def _require_scorer() -> "ingest.Scorer":
 
 
 def _require_personalizer() -> "personalize.Personalizer":
-    if state.personalizer is None:
-        raise HTTPException(status_code=503, detail="The engine is still starting up.")
-    return state.personalizer
+    return _active().personalizer
 
 
 def _real_uid(request: Request) -> "int | None":
@@ -967,24 +1018,25 @@ def _real_uid(request: Request) -> "int | None":
     return None
 
 
-def _anon_row(request: Request, user: str | None) -> int:
+def _anon_row(active: "corpus_refresh.Active", request: Request, user: str | None) -> int:
     """The base-corpus row for an anonymous request — the ``?user=`` selector, else the demo."""
-    return _require_backend().resolve_user({"user": [user]} if user is not None else {})
+    return active.backend.resolve_user({"user": [user]} if user is not None else {})
 
 
-def _serve(request: Request, user: str | None):
-    """Routing for recommendations + coach (which have no Estimate form).
+def _serve(active: "corpus_refresh.Active", request: Request, user: str | None):
+    """Routing for recommendations + coach (which have no Estimate form). Reads the single captured
+    ``active`` bundle so the whole request stays on one corpus generation across a hot swap.
 
     Returns ``("personal", uid)`` when the signed-in reader has crossed the read threshold — the
     request is served from their augmented corpus — else ``("row", row)``: the demo reader for a
     below-threshold real user (the existing behaviour), or the ``?user=`` selection for an
     anonymous request (unchanged for the frontend and contract tests)."""
     uid = _real_uid(request)
-    if uid is not None and _require_personalizer().has_measured(uid):
+    if uid is not None and active.personalizer.has_measured(uid):
         return "personal", uid
     if uid is not None:
-        return "row", _require_backend().demo_user
-    return "row", _anon_row(request, user)
+        return "row", active.backend.demo_user
+    return "row", _anon_row(active, request, user)
 
 
 def _require_real_user(request: Request) -> int:
@@ -1003,13 +1055,16 @@ def _require_real_user(request: Request) -> int:
 @app.get("/api/health", response_model=HealthStatusModel, tags=["meta"],
          summary="Service health and dataset summary", responses=_ERR_RESPONSES)
 def health() -> dict:
-    be = _require_backend()
+    active = _active()
+    be = active.backend
     h = be.health()
     # Surface whether recommendations are sourced from the live RSS feed (URLs present) or the static
-    # corpus (no URLs). `url_by_id` is populated only when the feed source was active at startup.
+    # corpus (no URLs), plus the active corpus generation (bumps on each hot refresh). `url_by_id` is
+    # populated when the feed source is active; `generation` starts at 1 and increments per swap.
     feed_articles = state.store.count_feed_articles() if state.store is not None else 0
     h["recommendationSource"] = {
         "source": "feed" if be.url_by_id else "static",
+        "generation": active.generation,
         "feedArticles": int(feed_articles),
         "resolvedUrls": len(be.url_by_id),
         "recsSourceEnv": os.environ.get("RWE_RECS_SOURCE", ""),
@@ -1029,19 +1084,20 @@ def report(request: Request,
       Information Health Estimate, recomputed server-side from their stored onboarding outlets.
     * **Demo** — a signed-in reader with no usable onboarding, or an anonymous / ``?user=``
       request: the reference reader (unchanged for the frontend and contract tests)."""
-    return _report_for(request, user)
+    return _report_for(_active(), request, user)
 
 
-def _report_for(request: Request, user: str | None) -> dict:
+def _report_for(active: "corpus_refresh.Active", request: Request, user: str | None) -> dict:
     """The report a reader would see — **Measured** (augmented corpus), **Estimate** (stored
     onboarding), or **Demo** (anonymous / no onboarding). Shared by ``GET /api/report`` and the
-    dashboard so both speak the exact same report with no duplicated routing or serialisation."""
-    be = _require_backend()
+    dashboard so both speak the exact same report with no duplicated routing or serialisation. Serves
+    the whole request from one captured ``active`` bundle (swap-consistent)."""
+    be = active.backend
     uid = _real_uid(request)
     if uid is None:
-        return be.report(_anon_row(request, user))
-    if _require_personalizer().has_measured(uid):
-        return _require_personalizer().report(uid)
+        return be.report(_anon_row(active, request, user))
+    if active.personalizer.has_measured(uid):
+        return active.personalizer.report(uid)
     outlets = _require_store().get_onboarding(uid)
     if outlets:
         try:
@@ -1059,11 +1115,12 @@ def dashboard(request: Request,
     the eight metrics, reused verbatim), their saved health trend (report snapshots), and today's
     reading + streak (their stored reads). Same Measured/Estimate/Demo routing as ``/api/report`` —
     no new report serialisation, no algorithm."""
-    rep = _report_for(request, user)
+    active = _active()
+    rep = _report_for(active, request, user)
     st, uid = _require_store(), _real_uid(request)
     reads = st.list_reads(uid) if uid is not None else []
     snaps = st.list_report_snapshots(uid) if uid is not None else []
-    return _require_backend().build_dashboard(rep, reads, snaps)
+    return active.backend.build_dashboard(rep, reads, snaps)
 
 
 @app.get("/api/outlets", response_model=list[OutletModel], tags=["meta"],
@@ -1298,9 +1355,10 @@ def recommendations(
     user: str | None = Query(None),
     strategy: str | None = Query(None, description="rwe-b | rwe-d | adaptive; omit for a blended feed"),
 ) -> list:
-    kind, val = _serve(request, user)
-    recs = (_require_personalizer().recommendations(val, strategy) if kind == "personal"
-            else _require_backend().recommendations(val, strategy))
+    active = _active()
+    kind, val = _serve(active, request, user)
+    recs = (active.personalizer.recommendations(val, strategy) if kind == "personal"
+            else active.backend.recommendations(val, strategy))
     # A recommendation the engine surfaced to a signed-in reader becomes a measurable event: record
     # which (cross-cutting) recs were shown — the denominator for Open-Mindedness. Best-effort; a
     # recording failure must never fail the recommendations response. No new recommender is created.
@@ -1317,19 +1375,21 @@ def recommendations(
 @app.get("/api/coach", response_model=list[CoachMessageModel], response_model_exclude_none=True,
          tags=["coach"], summary="Coach greeting for a reader", responses=_ERR_RESPONSES)
 def coach(request: Request, user: str | None = Query(None)) -> list:
-    kind, val = _serve(request, user)
+    active = _active()
+    kind, val = _serve(active, request, user)
     if kind == "personal":
-        return _require_personalizer().coach_greeting(val)
-    return _require_backend().coach_greeting(val)
+        return active.personalizer.coach_greeting(val)
+    return active.backend.coach_greeting(val)
 
 
 @app.post("/api/coach", response_model=CoachMessageModel, response_model_exclude_none=True,
           tags=["coach"], summary="Send a message; get a grounded reply", responses=_ERR_RESPONSES)
 def coach_reply(request: Request, req: CoachRequest) -> dict:
-    kind, val = _serve(request, req.user)
+    active = _active()
+    kind, val = _serve(active, request, req.user)
     if kind == "personal":
-        return _require_personalizer().coach_reply(val, req.message or "")
-    return _require_backend().coach_reply(val, req.message or "")
+        return active.personalizer.coach_reply(val, req.message or "")
+    return active.backend.coach_reply(val, req.message or "")
 
 
 @app.post("/api/internal/users", response_model=UserModel, tags=["meta"],
@@ -1399,6 +1459,21 @@ def corpus_validation_status(request: Request) -> dict:
     other ``/api/internal/*`` routes."""
     _require_trusted(request)
     return corpus_validation.evaluate(_require_store()).to_dict()
+
+
+@app.get("/api/internal/refresh", response_model=RefreshStatusModel, tags=["meta"],
+         summary="Hot recommendation-corpus refresh / activation state (server-to-server)",
+         responses=_ERR_RESPONSES)
+def refresh_status(request: Request) -> dict:
+    """Ops diagnostics for the atomic hot refresh: the active corpus generation + signature, the last
+    candidate signature seen, build/activation timings, refresh count, current source, and the last
+    success / failure / validation timestamps. **Read-only** — it reports activation state and triggers
+    nothing (the poller drives refreshes). Trusted endpoint — requires the internal secret in
+    production, like the other ``/api/internal/*`` routes."""
+    _require_trusted(request)
+    if state.refresh is None:
+        raise HTTPException(status_code=503, detail="The engine is still starting up.")
+    return state.refresh.snapshot()
 
 
 @app.post("/api/internal/resolve-token", response_model=ResolveTokenModel, tags=["meta"],

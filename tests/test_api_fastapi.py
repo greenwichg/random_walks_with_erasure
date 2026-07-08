@@ -851,3 +851,20 @@ def test_corpus_validation_endpoint(client, monkeypatch):
         assert client.get("/api/internal/corpus").status_code == 401
     finally:
         st.delete_feed_articles(urls)                        # leave the shared store as we found it
+
+
+def test_refresh_status_endpoint(client, monkeypatch):
+    """GET /api/internal/refresh reports the active corpus generation + activation state, is a trusted
+    route, and triggers nothing (a diagnostics read leaves the live Backend untouched)."""
+    be_before = api_fastapi.state.backend
+    body = client.get("/api/internal/refresh").json()
+    assert api_fastapi.state.backend is be_before            # a diagnostics read never activates
+
+    assert body["generation"] == 1 and body["activeVersion"] == 1   # boot corpus is generation 1
+    assert body["state"] == "idle" and body["refreshCount"] == 0
+    assert body["source"] in {"feed", "static"} and isinstance(body["pollingEnabled"], bool)
+    # health surfaces the same generation for a one-GET check
+    assert client.get("/api/health").json()["recommendationSource"]["generation"] == 1
+
+    monkeypatch.setenv("RWE_INTERNAL_SECRET", "s3cret")      # trusted like the other /api/internal/* routes
+    assert client.get("/api/internal/refresh").status_code == 401

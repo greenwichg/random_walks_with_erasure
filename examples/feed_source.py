@@ -58,6 +58,43 @@ def _bias_label(lean, center: float = 0.5) -> str:
     return "center"
 
 
+def _qbias_record(a: dict, center: float) -> list:
+    """One qbias-format CSV row ``[title, source, bias_rating, tags, url]`` from a FeedArticle-shaped
+    dict. The single definition of the row shape, shared by both exporters below so the CSV format
+    (and the row order the ``Q{i}`` -> URL map depends on) lives in exactly one place."""
+    scored = a.get("scored") or {}
+    outlet = a.get("publisher") or scored.get("outlet") or ""
+    return [
+        a.get("title") or scored.get("title") or "",
+        outlet,
+        _bias_label(scored.get("lean"), center),
+        scored.get("category") or "",
+        a.get("url") or a.get("canonicalUrl") or "",
+    ]
+
+
+def export_candidate_csv(rows, path: str, *, center: float = 0.5) -> int:
+    """Write an explicit, already-composed list of FeedArticle-shaped dicts to a qbias-format CSV at
+    ``path`` in the given order; returns the row count. This is **the** qbias serializer — the catalog
+    exporter (below) and the hot-refresh Backend builder (``corpus_refresh``) both go through it, so
+    the CSV format and the ``Q{i}`` row indexing that :func:`load_url_map` relies on are defined once.
+
+    It writes every row verbatim and applies no filtering or cap: composition is the caller's job
+    (``corpus_validation.build_candidate`` already balanced + capped the candidate). No article is
+    modified — only projected onto the five qbias columns."""
+    parent = os.path.dirname(os.path.abspath(path))
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    n = 0
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(_COLUMNS)
+        for a in rows:
+            w.writerow(_qbias_record(a, center))
+            n += 1
+    return n
+
+
 def export_catalog_csv(store_, path: str, *, max_items: Optional[int] = None,
                        center: float = 0.5, max_per_outlet: Optional[int] = None) -> int:
     """Write the FeedArticle catalog to a qbias-format CSV at ``path``. Returns the row count.
@@ -65,33 +102,21 @@ def export_catalog_csv(store_, path: str, *, max_items: Optional[int] = None,
     ``max_per_outlet`` (optional) keeps at most that many articles per outlet — the most-recently
     fetched, since :meth:`Store.list_feed_articles` is ordered newest-first — so a single high-volume
     feed (e.g. a "world news" firehose) can't dominate the recommendations. It is corpus *composition*
-    only (like ``max_items``); it does not touch ranking, scoring, diversity, or selection."""
+    only (like ``max_items``); it does not touch ranking, scoring, diversity, or selection. Serializes
+    through :func:`export_candidate_csv` so the CSV format is single-sourced."""
     rows = store_.list_feed_articles(limit=max_items or 1_000_000)
-    parent = os.path.dirname(os.path.abspath(path))
-    if parent:
-        os.makedirs(parent, exist_ok=True)
-    n = 0
-    per_outlet: dict = {}
-    with open(path, "w", newline="", encoding="utf-8") as f:
-        w = csv.writer(f)
-        w.writerow(_COLUMNS)
+    if max_per_outlet:
+        kept = []
+        per_outlet: dict = {}
         for a in rows:
             scored = a.get("scored") or {}
-            outlet = a.get("publisher") or scored.get("outlet") or ""
-            if max_per_outlet:
-                key = outlet.strip().lower()
-                per_outlet[key] = per_outlet.get(key, 0) + 1
-                if per_outlet[key] > max_per_outlet:
-                    continue                 # this outlet already hit its cap — keep the corpus balanced
-            w.writerow([
-                a.get("title") or scored.get("title") or "",
-                outlet,
-                _bias_label(scored.get("lean"), center),
-                scored.get("category") or "",
-                a.get("url") or a.get("canonicalUrl") or "",
-            ])
-            n += 1
-    return n
+            key = (a.get("publisher") or scored.get("outlet") or "").strip().lower()
+            per_outlet[key] = per_outlet.get(key, 0) + 1
+            if per_outlet[key] > max_per_outlet:
+                continue                     # this outlet already hit its cap — keep the corpus balanced
+            kept.append(a)
+        rows = kept
+    return export_candidate_csv(rows, path, center=center)
 
 
 def prepare(store_, path: Optional[str] = None, *, min_articles: Optional[int] = None,

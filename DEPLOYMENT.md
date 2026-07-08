@@ -358,6 +358,24 @@ every check is independent and off by default (`0` / unset). Percentages are on 
 | `RWE_CORPUS_MAX_MISSING_METADATA_PERCENT` | off | ceiling: max share missing a title or publication date |
 | `RWE_CORPUS_REQUIRE_HEALTHY_FEEDS` | off | require zero unhealthy feeds (else ineligible — fail-closed) |
 
+**Atomic hot refresh (activation).** With polling on, a validated corpus is activated **without a
+restart**. After each cycle that changes the catalog, the engine rebuilds a `Backend` from the
+validated candidate **entirely in the background** (in the poller thread — never on a request), runs
+sanity checks, and swaps a single pointer so new requests immediately use it while in-flight requests
+finish on the old one. The `Backend`, the personalizer, and the URL resolver swap **together**, so a
+reader never mixes generations and Read Article keeps opening canonical publisher URLs. Activation
+happens **only** when validation passed, the build succeeded, the resolver attached, and the built
+item count matched the validated candidate; otherwise the current `Backend` keeps serving and the next
+cycle retries. An unchanged catalog rebuilds nothing. The engine, ranking, scoring, selection, and
+serializers are untouched — only the *data source* behind them is replaced. Operators watch it at:
+
+```
+GET /api/internal/refresh      # generation, timings, last success/failure — trusted (internal secret in prod)
+```
+
+The active corpus `generation` also appears on `GET /api/health` (`recommendationSource.generation`)
+for a one-request check. No new configuration — it rides on `RWE_RECS_SOURCE=feed` + `RWE_FEED_POLL`.
+
 **URL coverage by ingestion source** — which sources can populate a real publisher `url` today:
 
 | Source | Real URL? | Notes |
