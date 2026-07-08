@@ -167,9 +167,11 @@ def test_discover_stories_endpoints(tmp_path, monkeypatch):
         assert "register" in disc["articles"][0]           # alias serialised back to the wire key
         assert len(c.get("/api/discover", params={"lean": "left"}).json()["articles"]) == 3
 
-        stories = c.get("/api/stories").json()
-        assert len(stories) == 2
-        sid = stories[0]["id"]
-        detail = c.get(f"/api/stories/{sid}").json()
+        # /api/stories is now a paginated envelope from the Story Service (Commit 7).
+        body = c.get("/api/stories").json()
+        assert body["total"] == 2 and len(body["stories"]) == 2 and body["page"] == 1
+        sid = body["stories"][0]["id"]
+        detail = c.get(f"/api/story/{sid}").json()                 # new singular route
         assert detail["id"] == sid and all(cv["url"].startswith("http") for cv in detail["coverage"])
-        assert c.get("/api/stories/st_bogus").status_code == 404
+        assert c.get(f"/api/stories/{sid}").json()["id"] == sid    # backward-compatible alias
+        assert c.get("/api/story/st_bogus").status_code == 404

@@ -43,8 +43,9 @@ import feed_source            # optional: source the recommender catalog from th
 import feed_service           # optional: background RSS polling that keeps the FeedArticle catalog fresh
 import corpus_validation      # corpus-eligibility gate (validation only; no activation / no hot swap)
 import corpus_refresh         # atomic hot activation of a validated corpus (background Backend swap)
-import discover               # Discover & Stories: product-layer exploration over the FeedArticle catalog
+import discover               # Discover: product-layer exploration over the FeedArticle catalog
 import search                 # live full-text + faceted search over the FeedArticle catalog (Commit 6)
+import story_service          # the single owner of Story construction (Discover + Stories consume it)
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
@@ -627,16 +628,41 @@ class StoryModel(BaseModel):
     id: str
     title: str
     summary: str
+    # Future-ready image contract (nullable) — Commit 8 (AI summarization + image enrichment) can
+    # populate these without an API change.
+    image: Optional[str] = None
+    imageSource: Optional[str] = None
+    imageAttribution: Optional[str] = None
     topic: str
     updatedAt: str
     totalCoverage: int          # number of articles in the cluster
     publisherCount: int         # number of distinct publishers
+    publishers: list[str] = []  # explicit publisher list
+    publisherDiversity: Optional[float] = None   # distinct publishers / articles
     earliest: str
     latest: str
-    distribution: ViewpointModel   # L/C/R over distinct publishers
+    firstPublished: Optional[str] = None
+    latestUpdate: Optional[str] = None
+    newest: Optional[str] = None
+    oldest: Optional[str] = None
+    timeSpanHours: Optional[float] = None
+    distribution: ViewpointModel   # L/C/R over distinct publishers (coverage, not opinion)
     coverage: list[StoryCoverageModel]
     timeline: list[TimelinePointModel]
     blindspotSide: Optional[str] = None
+
+
+class StoriesResponseModel(BaseModel):
+    # Paginated Story envelope (Commit 7). `clusterMs` + `diagnostics` appear only in debug mode, so
+    # allow extras. Discover and Stories both consume this from the single Story Service.
+    model_config = ConfigDict(extra="allow")
+    stories: list[StoryModel]
+    total: int
+    page: int
+    pageSize: int
+    hasMore: bool
+    remainingPages: int
+    sort: str
 
 
 class CitationModel(BaseModel):
@@ -1159,21 +1185,49 @@ def discover_feed(
                                   lean=lean, limit=limit)
 
 
-@app.get("/api/stories", response_model=list[StoryModel], response_model_exclude_none=True,
-         tags=["discover"], summary="News events — FeedArticles clustered across publishers",
+@app.get("/api/stories", response_model=StoriesResponseModel, response_model_exclude_none=True,
+         tags=["discover"], summary="News events — FeedArticles clustered into Stories (filtered + paged)",
          responses=_ERR_RESPONSES)
-def stories() -> list:
-    return discover.cluster_stories(_require_store())
+def stories(
+    topic: Optional[str] = Query(None, description="exact topic / category"),
+    publisher: Optional[str] = Query(None, description="stories that include this publisher"),
+    lean: Optional[str] = Query(None, description="stories with coverage on left | center | right"),
+    dateFrom: Optional[str] = Query(None, description="ISO lower bound on publication time"),
+    dateTo: Optional[str] = Query(None, description="ISO upper bound on publication time"),
+    sort: str = Query("top", description="top | latest | oldest | publishers"),
+    limit: int = Query(30, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    debug: bool = Query(False, description="include clusterMs + cluster diagnostics"),
+) -> dict:
+    """News events clustered from the live FeedArticle catalog by the single **Story Service** — the
+    same service Discover consumes. Filter by topic/publisher/lean/date, sort, and paginate; each Story
+    carries its cross-publisher coverage (each article opening its canonical publisher URL, unchanged
+    Read flow) and the nullable `image` contract for future enrichment. Never touches the recommender."""
+    debug = debug or os.environ.get("RWE_STORIES_DEBUG", "").strip().lower() in {"1", "true", "yes", "on"}
+    return story_service.list_stories(_require_store(), topic=topic, publisher=publisher, lean=lean,
+                                      date_from=dateFrom, date_to=dateTo, sort=sort,
+                                      limit=limit, offset=offset, debug=debug)
 
 
-@app.get("/api/stories/{story_id}", response_model=StoryModel, response_model_exclude_none=True,
-         tags=["discover"], summary="One clustered story with full cross-publisher coverage",
+@app.get("/api/story/{story_id}", response_model=StoryModel, response_model_exclude_none=True,
+         tags=["discover"], summary="One clustered Story with full cross-publisher coverage",
          responses=_ERR_RESPONSES)
-def story(story_id: str) -> dict:
-    s = discover.story_detail(_require_store(), story_id)
+def story_single(story_id: str) -> dict:
+    """One Story by its stable id (anchored to the representative article, so it survives new coverage
+    of the same event). Consumes the Story Service — no independent Story construction."""
+    s = story_service.get_story(_require_store(), story_id)
     if s is None:
         raise HTTPException(status_code=404, detail="Story not found.")
     return s
+
+
+@app.get("/api/stories/{story_id}", response_model=StoryModel, response_model_exclude_none=True,
+         tags=["discover"], summary="One clustered Story (backward-compatible alias of /api/story/{id})",
+         responses=_ERR_RESPONSES)
+def story(story_id: str) -> dict:
+    """Backward-compatible alias of ``GET /api/story/{story_id}`` (the web detail page still calls the
+    plural path). Same Story Service, same result."""
+    return story_single(story_id)
 
 
 @app.get("/api/search", response_model=SearchResponseModel, response_model_exclude_none=True,

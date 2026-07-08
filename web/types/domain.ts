@@ -243,17 +243,51 @@ export interface Story {
   id: string;
   title: string;
   summary: string;
+  /** Nullable image contract — absent until Commit 8 (AI summarization + image enrichment). */
+  image?: string | null;
+  imageSource?: string | null;
+  imageAttribution?: string | null;
   topic: string;
   updatedAt: string;
   totalCoverage: number; // number of articles in the cluster
   /** Distinct publishers covering the event (from the FeedArticle-clustered Stories). */
   publisherCount?: number;
+  publishers?: string[];
+  publisherDiversity?: number;
   earliest?: string;
   latest?: string;
+  firstPublished?: string;
+  latestUpdate?: string;
+  newest?: string;
+  oldest?: string;
+  timeSpanHours?: number;
   distribution: ViewpointDistribution;
   coverage: StoryCoverage[];
   timeline: { date: string; label: string }[];
   blindspotSide?: LeanBucket;
+}
+
+/** Story list request — every field optional; omitted params are unfiltered. */
+export interface StoryQuery {
+  topic?: string;
+  publisher?: string;
+  lean?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  sort?: "top" | "latest" | "oldest" | "publishers";
+  limit?: number;
+  offset?: number;
+}
+
+/** Paginated Story list — Discover and Stories both consume this from the single Story Service. */
+export interface StoriesResponse {
+  stories: Story[];
+  total: number;
+  page: number;
+  pageSize: number;
+  hasMore: boolean;
+  remainingPages: number;
+  sort: string;
 }
 
 /** Discover feed: the latest catalog articles plus the facet values for the filters. */

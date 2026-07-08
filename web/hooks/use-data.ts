@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { queryKeys, services } from "@/services";
-import type { FeedbackAction, Recommendation, SearchParams } from "@/types/domain";
+import type { FeedbackAction, Recommendation, SearchParams, StoryQuery } from "@/types/domain";
 
 /**
  * React Query hooks — the only way components read/write server state. Thin
@@ -15,7 +15,8 @@ export const useHistory = () => useQuery({ queryKey: queryKeys.history, queryFn:
 export const useTopics = () => useQuery({ queryKey: queryKeys.topics, queryFn: services.topics });
 export const useDiscover = (filters?: { topic?: string; publisher?: string; lean?: string }) =>
   useQuery({ queryKey: queryKeys.discover(filters), queryFn: () => services.discover(filters) });
-export const useStories = () => useQuery({ queryKey: queryKeys.stories, queryFn: services.stories });
+export const useStories = (query?: StoryQuery) =>
+  useQuery({ queryKey: queryKeys.stories(query), queryFn: () => services.stories(query) });
 export const useStory = (id: string) =>
   useQuery({ queryKey: queryKeys.story(id), queryFn: () => services.story(id), enabled: !!id });
 export const useProfile = () => useQuery({ queryKey: queryKeys.profile, queryFn: services.profile });

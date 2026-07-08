@@ -394,6 +394,29 @@ returning `{results, total, page, pageSize, hasMore, remainingPages}`. Pass `deb
 `RWE_SEARCH_DEBUG`) to include `queryMs` and an `ftsAvailable` probe (FTS5 is **detected but not used
 yet** — search is LIKE-based; FTS is a future optimization).
 
+**Story clustering & the Story Service.** Discover and Stories are both backed by one **Story Service**
+(`examples/story_service.py`) that clusters the live `FeedArticle` catalog into news events with a
+deterministic, dependency-free algorithm (`examples/clustering.py` — union-find over headline Jaccard
+similarity within a time window; **no LLM**). It is the single owner of Story construction — Discover
+and Stories never build a Story independently — and it never touches the recommender.
+
+```
+GET /api/stories?topic=Politics&lean=left&sort=top&limit=24&offset=0    # paginated Story envelope
+GET /api/story/{storyId}       # one Story  (backward-compatible alias: GET /api/stories/{storyId})
+```
+
+Each Story carries its cross-publisher coverage (every article opening its canonical publisher URL —
+the identical Read flow), a publication window + timeline, publisher list/count/diversity, L/C/R
+**coverage** (not opinion) with the blind-spot side, and a nullable `{image, imageSource,
+imageAttribution}` contract a future enrichment step can populate without an API change. Story IDs are
+**stable across rebuilds as coverage grows** (anchored to the event's representative article), so a
+Story URL keeps working as more outlets cover the event. Supports topic/publisher/lean/date filters,
+`top` | `latest` | `oldest` | `publishers` sort, and `limit`/`offset` paging. Pass `debug=1` (or set
+`RWE_STORIES_DEBUG`) for `clusterMs` + cluster diagnostics (story count, average + largest cluster,
+size distribution). Clustering is **O(n²)** over the bounded scan (~1 s at ~1,800 articles); a
+per-topic/day pre-bucket or a poll-driven cache is the next optimization. `/api/discover` (article
+search) remains for backward compatibility and provides the filter facets.
+
 **URL coverage by ingestion source** — which sources can populate a real publisher `url` today:
 
 | Source | Real URL? | Notes |

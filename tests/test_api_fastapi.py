@@ -898,3 +898,43 @@ def test_search_endpoint(client):
         assert {a["publisher"] for a in pol["results"]} == {"SearchAP"}
     finally:
         st.delete_feed_articles(urls)
+
+
+def test_stories_endpoint_envelope_and_detail(client):
+    """GET /api/stories is a paginated Story envelope from the Story Service; /api/story/{id} (and the
+    /api/stories/{id} alias) return one Story whose coverage articles keep their canonical URLs."""
+    st = api_fastapi.state.store
+    urls = []
+    try:
+        # one event across 3 publishers (L/C/R) + a distinct 2-publisher event
+        for cu, pub, lean, title, cat in [
+            ("https://s-npr.example/1", "StNPR", -1.1, "Capitol vote advances the relief package tonight", "Politics"),
+            ("https://s-bbc.example/1", "StBBC", 0.0, "Capitol vote advances relief package after debate", "Politics"),
+            ("https://s-fox.example/1", "StFox", 1.3, "Capitol vote advances relief package averting lapse", "Politics"),
+            ("https://w-cnn.example/1", "StCNN", -1.2, "Coastal storm floods harbor towns overnight", "Climate"),
+            ("https://w-grd.example/1", "StGuardian", -1.4, "Coastal storm floods harbor towns and roads", "Climate"),
+        ]:
+            urls.append(cu)
+            st.upsert_feed_article(canonical_url=cu, url=cu, publisher=pub, source_publisher=pub, title=title,
+                                   description="d", body=None, published_at="2026-07-06T12:00:00+00:00",
+                                   source_feed="f", scored={"article_id": cu, "outlet": pub, "lean": lean,
+                                                            "category": cat})
+        body = client.get("/api/stories", params={"debug": "true"}).json()
+        assert body["total"] >= 2 and body["page"] == 1 and isinstance(body["hasMore"], bool)
+        assert "clusterMs" in body and body["diagnostics"]["storyCount"] == body["total"]
+        cap = next(s for s in body["stories"] if "Capitol" in s["title"])
+        assert cap["publisherCount"] == 3 and set(cap["publishers"]) == {"StNPR", "StBBC", "StFox"}
+        # nullable image contract: omitted while null (response_model_exclude_none), appears once enriched
+        assert cap.get("image") is None and cap.get("imageAttribution") is None
+
+        # filter: only stories that include a publisher / a lean side
+        assert client.get("/api/stories", params={"publisher": "StCNN"}).json()["total"] == 1
+        assert client.get("/api/stories", params={"lean": "right"}).json()["total"] == 1   # only the Capitol event
+
+        sid = cap["id"]
+        detail = client.get(f"/api/story/{sid}").json()                 # new singular route
+        assert detail["id"] == sid and all(c["url"].startswith("https://") for c in detail["coverage"])
+        assert client.get(f"/api/stories/{sid}").json()["id"] == sid    # backward-compatible alias
+        assert client.get("/api/story/st_bogus").status_code == 404
+    finally:
+        st.delete_feed_articles(urls)

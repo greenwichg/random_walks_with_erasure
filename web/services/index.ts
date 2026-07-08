@@ -15,7 +15,9 @@ import type {
   SearchParams,
   SearchResponse,
   Settings,
+  StoriesResponse,
   Story,
+  StoryQuery,
   TopicSlice,
 } from "@/types/domain";
 
@@ -39,7 +41,15 @@ export const services = {
   // Discover: latest catalog articles + facets, with optional topic/publisher/lean filters.
   discover: (filters?: { topic?: string; publisher?: string; lean?: string }) =>
     getJson<DiscoverResponse>("/discover", filters && Object.keys(filters).length ? filters : undefined),
-  stories: () => getJson<Story[]>("/stories"),
+  // Stories — the paginated Story envelope from the single Story Service (Discover consumes it too).
+  stories: (query?: StoryQuery) => {
+    const clean: Record<string, string> = {};
+    if (query)
+      for (const [k, v] of Object.entries(query)) {
+        if (v !== undefined && v !== null && v !== "" && v !== "all") clean[k] = String(v);
+      }
+    return getJson<StoriesResponse>("/stories", Object.keys(clean).length ? clean : undefined);
+  },
   story: (id: string) => getJson<Story>(`/stories/${id}`),
   profile: () => getJson<Profile>("/profile"),
   settings: () => getJson<Settings>("/settings"),
@@ -71,7 +81,15 @@ export const queryKeys = {
   topics: ["topics"] as const,
   discover: (filters?: { topic?: string; publisher?: string; lean?: string }) =>
     ["discover", filters?.topic ?? "all", filters?.publisher ?? "all", filters?.lean ?? "all"] as const,
-  stories: ["stories"] as const,
+  stories: (query?: StoryQuery) =>
+    [
+      "stories",
+      query?.topic ?? "all",
+      query?.publisher ?? "all",
+      query?.lean ?? "all",
+      query?.sort ?? "top",
+      query?.offset ?? 0,
+    ] as const,
   story: (id: string) => ["story", id] as const,
   profile: ["profile"] as const,
   settings: ["settings"] as const,

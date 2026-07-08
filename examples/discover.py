@@ -13,10 +13,7 @@ publisher URL, so the existing "record opened → open the real article" Read fl
 
 from __future__ import annotations
 
-import hashlib
 import math
-import re
-from datetime import datetime, timezone
 from typing import Optional
 
 import api_server as engine   # reuse the serializer helpers _prettify / _lean_bucket (no algorithm)
@@ -24,14 +21,6 @@ import api_server as engine   # reuse the serializer helpers _prettify / _lean_b
 # EmotionShare shape the web `Article` expects; a neutral default when the feed carries no emotion.
 _NEUTRAL_EMOTION = {"fear": 0.0, "outrage": 0.0, "analysis": 0.0, "positive": 0.0, "neutral": 1.0}
 _REGISTERS = {"reporting", "opinion", "mixed"}
-
-# Small English stop-list for title-similarity clustering — enough to keep function words from
-# inflating overlap without a stemming dependency.
-_STOPWORDS = frozenset("""
-a an and the of to in on for with from by at as is are was were be been being this that these those
-it its his her their our your my we you they he she who what when where why how than then so but or
-not no nor into over under after before amid amto about says say said new latest live update updates
-""".split())
 
 
 # --------------------------------------------------------------------------- #
@@ -129,177 +118,19 @@ def list_discover(store_, *, topic: Optional[str] = None, publisher: Optional[st
 
 
 # --------------------------------------------------------------------------- #
-# Stories — deterministic event clustering (topic + title similarity + publisher + time).
+# Stories — delegated to the Story Service (the single owner of Story construction).
+# The clustering algorithm lives in ``clustering`` and Story construction in ``story_service``; these
+# stay as thin backward-compatible wrappers. ``story_service`` is imported lazily because it imports
+# THIS module for ``feed_article_to_article`` — the lazy import breaks the cycle.
 # --------------------------------------------------------------------------- #
-def _title_tokens(title: str) -> frozenset:
-    toks = re.findall(r"[a-z0-9]+", (title or "").lower())
-    return frozenset(t for t in toks if len(t) > 2 and t not in _STOPWORDS)
-
-
-def _jaccard(a: frozenset, b: frozenset) -> float:
-    if not a or not b:
-        return 0.0
-    inter = len(a & b)
-    return inter / len(a | b) if inter else 0.0
-
-
-def _parse_time(iso: str) -> Optional[datetime]:
-    s = (iso or "").strip()
-    if not s:
-        return None
-    try:
-        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
-        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
-    except ValueError:
-        return None
-
-
-def _within_window(a: Optional[datetime], b: Optional[datetime], days: float) -> bool:
-    if a is None or b is None:
-        return True                          # missing timestamps don't block a title match
-    return abs((a - b).total_seconds()) <= days * 86400.0
-
-
-class _DSU:
-    def __init__(self, n: int):
-        self.p = list(range(n))
-
-    def find(self, x: int) -> int:
-        while self.p[x] != x:
-            self.p[x] = self.p[self.p[x]]
-            x = self.p[x]
-        return x
-
-    def union(self, a: int, b: int) -> None:
-        ra, rb = self.find(a), self.find(b)
-        if ra != rb:
-            self.p[max(ra, rb)] = min(ra, rb)   # attach to the lower index -> deterministic roots
-
-
-def _distribution(members: list) -> dict:
-    """L/C/R distribution over **distinct publishers** (one vote per outlet), normalised to sum 1."""
-    by_pub = {}
-    for m in members:
-        by_pub.setdefault(m["art"]["publisher"], m["art"]["leanBucket"])
-    counts = {"left": 0, "center": 0, "right": 0}
-    for bucket in by_pub.values():
-        counts[bucket] = counts.get(bucket, 0) + 1
-    total = sum(counts.values()) or 1
-    return {k: counts[k] / total for k in ("left", "center", "right")}
-
-
-def _blindspot(dist: dict) -> Optional[str]:
-    """The under-covered side of an event: a spectrum bucket with no publishers while another side
-    has real coverage. ``None`` when coverage is broad. Deterministic (left < center < right)."""
-    empties = [k for k in ("left", "center", "right") if dist[k] == 0.0]
-    covered = [k for k in ("left", "center", "right") if dist[k] > 0.0]
-    if empties and len(covered) >= 1 and max(dist.values()) >= 0.5:
-        return empties[0]
-    return None
-
-
-def _coverage(members: list) -> list:
-    """One StoryCoverage entry per article, newest first."""
-    out = []
-    for m in sorted(members, key=lambda m: (m["art"]["publishedAt"] or "", m["art"]["id"]), reverse=True):
-        a = m["art"]
-        out.append({
-            "publisher": a["publisher"], "headline": a["headline"], "lean": a["lean"],
-            "leanBucket": a["leanBucket"], "register": a["register"], "emotion": a["emotion"],
-            "url": a["url"], "publishedAt": a["publishedAt"],
-        })
-    return out
-
-
-def _story_id(members: list) -> str:
-    key = "|".join(sorted(m["art"]["id"] for m in members))
-    return "st_" + hashlib.md5(key.encode("utf-8")).hexdigest()[:16]
-
-
-def _mode_topic(members: list) -> str:
-    counts: dict = {}
-    for m in members:
-        t = m["art"]["topic"]
-        counts[t] = counts.get(t, 0) + 1
-    # most frequent topic; alphabetical tiebreak for determinism
-    return sorted(counts, key=lambda t: (-counts[t], t))[0] if counts else "General"
-
-
-def _build_story(members: list) -> dict:
-    times = [m["time"] for m in members if m["time"] is not None]
-    earliest = min(times).isoformat() if times else ""
-    latest = max(times).isoformat() if times else ""
-    # Representative = earliest-published article (deterministic); its headline titles the event.
-    rep = min(members, key=lambda m: (m["art"]["publishedAt"] or "~", m["art"]["id"]))["art"]
-    dist = _distribution(members)
-    publishers = sorted({m["art"]["publisher"] for m in members})
-    timeline = []
-    if earliest:
-        timeline.append({"date": earliest, "label": "First report"})
-    if latest and latest != earliest:
-        timeline.append({"date": latest, "label": "Latest"})
-    return {
-        "id": _story_id(members),
-        "title": rep["headline"],
-        "summary": rep["description"] or f"{len(publishers)} publishers covering {rep['topic'].lower()}.",
-        "topic": _mode_topic(members),
-        "updatedAt": latest or rep["publishedAt"],
-        "totalCoverage": len(members),          # articles
-        "publisherCount": len(publishers),      # distinct outlets (additive; UI also derives it)
-        "earliest": earliest,
-        "latest": latest,
-        "distribution": dist,
-        "coverage": _coverage(members),
-        "timeline": timeline,
-        "blindspotSide": _blindspot(dist),
-    }
-
-
-def cluster_stories(store_, *, min_articles: int = 2, min_publishers: int = 2, sim: float = 0.28,
-                    window_days: float = 6.0, max_scan: int = 2000) -> list:
-    """Cluster the catalog into news events. Two articles join the same event when their titles are
-    similar enough (token Jaccard ≥ ``sim``) and published within ``window_days`` of each other; a
-    story needs ≥ ``min_articles`` from ≥ ``min_publishers`` distinct outlets. Fully deterministic:
-    same catalog -> same clusters, ids, and order. No LLM, no external deps."""
-    rows = store_.list_feed_articles(limit=max_scan)
-    items = []
-    for r in rows:
-        a = feed_article_to_article(r)
-        items.append({"art": a, "tokens": _title_tokens(a["headline"]), "time": _parse_time(a["publishedAt"])})
-
-    n = len(items)
-    dsu = _DSU(n)
-    for i in range(n):
-        ti = items[i]
-        if not ti["tokens"]:
-            continue
-        for j in range(i + 1, n):
-            tj = items[j]
-            if tj["tokens"] and _jaccard(ti["tokens"], tj["tokens"]) >= sim \
-                    and _within_window(ti["time"], tj["time"], window_days):
-                dsu.union(i, j)
-
-    groups: dict = {}
-    for i in range(n):
-        groups.setdefault(dsu.find(i), []).append(items[i])
-
-    stories = []
-    for members in groups.values():
-        if len(members) < min_articles:
-            continue
-        if len({m["art"]["publisher"] for m in members}) < min_publishers:
-            continue
-        stories.append(_build_story(members))
-
-    # Biggest, freshest events first: more publishers, then more articles, then most recent.
-    stories.sort(key=lambda s: (s["publisherCount"], s["totalCoverage"], s["latest"]), reverse=True)
-    return stories
+def cluster_stories(store_, **kwargs) -> list:
+    """Backward-compatible bare Story list — delegates to ``story_service.cluster_from_store``. No
+    clustering or Story construction lives here anymore (one implementation, owned by the service)."""
+    import story_service
+    return story_service.cluster_from_store(store_, **kwargs)
 
 
 def story_detail(store_, story_id: str, **kwargs) -> Optional[dict]:
-    """Re-derive the clusters and return the one whose id matches (clustering is deterministic, so the
-    id is stable for a given catalog). ``None`` when it no longer exists (the catalog changed)."""
-    for s in cluster_stories(store_, **kwargs):
-        if s["id"] == story_id:
-            return s
-    return None
+    """Backward-compatible single-Story lookup — delegates to ``story_service.get_story``."""
+    import story_service
+    return story_service.get_story(store_, story_id, **kwargs)
