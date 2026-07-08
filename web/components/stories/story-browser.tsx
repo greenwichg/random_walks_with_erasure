@@ -25,10 +25,11 @@ const asFilter = (v: string) => (v === "all" ? undefined : v);
 const PAGE = 24;
 
 /**
- * The shared Story browsing surface — filters (topic / publisher / lean), sort, and pagination over
- * the single Story Service (`/api/stories`). Both Discover and Stories render this; they differ only
- * in copy and default sort. Facet values come from the catalog (`/api/discover`). Opening a Story
- * (its card) goes to the detail page, where each article opens its canonical publisher URL.
+ * The event-centric Story browsing surface — filters (topic / publisher / lean), sort, and pagination
+ * over the single Story Service (`/api/stories`). The Stories page renders this; Discover is the
+ * article-centric surface (`DiscoverCard` over `/api/discover`). Facet values come from the catalog
+ * (`/api/discover`). Opening a Story (its card) goes to the detail page, where each article opens its
+ * canonical publisher URL.
  */
 export function StoryBrowser({
   title,

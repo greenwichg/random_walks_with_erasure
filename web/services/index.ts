@@ -39,8 +39,8 @@ export const services = {
     postJson<RecommendationReception>("/me/recommendations/opened", { articleId, crossCutting }),
   history: () => getJson<HistoryEntry[]>("/history"),
   topics: () => getJson<TopicSlice[]>("/topics"),
-  // Discover: latest catalog articles + facets, with optional topic/publisher/lean filters.
-  discover: (filters?: { topic?: string; publisher?: string; lean?: string }) =>
+  // Discover: latest catalog articles + facets, with optional topic/publisher/lean filters + a size cap.
+  discover: (filters?: { topic?: string; publisher?: string; lean?: string; limit?: number }) =>
     getJson<DiscoverResponse>("/discover", filters && Object.keys(filters).length ? filters : undefined),
   // Stories — the paginated Story envelope from the single Story Service (Discover consumes it too).
   stories: (query?: StoryQuery) => {
@@ -82,8 +82,14 @@ export const queryKeys = {
   recommendations: (strategy?: string) => ["recommendations", strategy ?? "all"] as const,
   history: ["history"] as const,
   topics: ["topics"] as const,
-  discover: (filters?: { topic?: string; publisher?: string; lean?: string }) =>
-    ["discover", filters?.topic ?? "all", filters?.publisher ?? "all", filters?.lean ?? "all"] as const,
+  discover: (filters?: { topic?: string; publisher?: string; lean?: string; limit?: number }) =>
+    [
+      "discover",
+      filters?.topic ?? "all",
+      filters?.publisher ?? "all",
+      filters?.lean ?? "all",
+      filters?.limit ?? "default",
+    ] as const,
   stories: (query?: StoryQuery) =>
     [
       "stories",
