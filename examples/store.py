@@ -35,8 +35,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator, Optional
 
-from sqlalchemy import (ForeignKey, String, Text, UniqueConstraint, create_engine,
-                        delete, event, func, select)
+from sqlalchemy import (ForeignKey, String, Text, UniqueConstraint, and_, create_engine,
+                        delete, event, func, or_, select, text)
 from sqlalchemy.orm import (DeclarativeBase, Mapped, Session, mapped_column,
                             relationship, sessionmaker)
 from sqlalchemy.pool import StaticPool
@@ -277,6 +277,7 @@ class Store:
         Base.metadata.create_all(self.engine)
         self._Session = sessionmaker(bind=self.engine, expire_on_commit=False,
                                      future=True)
+        self._ensure_search_indexes()
 
     @contextmanager
     def session(self) -> Iterator[Session]:
@@ -502,6 +503,109 @@ class Store:
                 "description": r.description, "body": r.body, "publishedAt": r.published_at,
                 "sourceFeed": r.source_feed, "scored": dict(json.loads(r.scored)),
                 "fetchedAt": r.fetched_at.isoformat() if r.fetched_at else None}
+
+    # -- catalog search (live, index-backed; never touches the recommender) ------------------------
+    def _ensure_search_indexes(self) -> None:
+        """Additive, idempotent search indexes on ``feed_articles`` (also upgrades pre-existing DBs).
+        Column filters + sort become index-backed; the JSON ``lean``/``category`` get expression
+        indexes (SQLite only). Purely additive — indexes never change results, only speed — and a
+        failure here never blocks startup (search still works, just with a scan)."""
+        stmts = ["CREATE INDEX IF NOT EXISTS ix_feed_publisher ON feed_articles(publisher)",
+                 "CREATE INDEX IF NOT EXISTS ix_feed_published_at ON feed_articles(published_at)",
+                 "CREATE INDEX IF NOT EXISTS ix_feed_source_feed ON feed_articles(source_feed)"]
+        if self.engine.dialect.name == "sqlite":
+            stmts += ["CREATE INDEX IF NOT EXISTS ix_feed_lean ON feed_articles(json_extract(scored,'$.lean'))",
+                      "CREATE INDEX IF NOT EXISTS ix_feed_category ON feed_articles(json_extract(scored,'$.category'))"]
+        try:
+            with self.session() as s:
+                for stmt in stmts:
+                    s.execute(text(stmt))
+        except Exception:
+            pass
+
+    @staticmethod
+    def _lean_expr():
+        return func.json_extract(FeedArticle.scored, "$.lean")
+
+    @staticmethod
+    def _category_expr():
+        return func.json_extract(FeedArticle.scored, "$.category")
+
+    def _search_conditions(self, *, q, publisher, lean, topic, date_from, date_to, source) -> list:
+        """The WHERE terms for a catalog search — text (title/description/publisher/category), exact
+        publisher/topic/source, lean bucket (via the JSON lean), and an ISO date range."""
+        conds: list = []
+        if q and q.strip():
+            like = f"%{q.strip()}%"
+            conds.append(or_(FeedArticle.title.ilike(like), FeedArticle.description.ilike(like),
+                             FeedArticle.publisher.ilike(like), self._category_expr().ilike(like)))
+        if publisher and publisher.strip():
+            conds.append(func.lower(FeedArticle.publisher) == publisher.strip().lower())
+        if source and source.strip():
+            conds.append(FeedArticle.source_feed == source.strip())
+        if topic and topic.strip():
+            conds.append(func.lower(self._category_expr()) == topic.strip().lower())
+        if lean == "left":
+            conds.append(self._lean_expr() <= -0.5)
+        elif lean == "right":
+            conds.append(self._lean_expr() >= 0.5)
+        elif lean == "center":
+            conds.append(and_(self._lean_expr() > -0.5, self._lean_expr() < 0.5))
+        if date_from and date_from.strip():
+            conds.append(FeedArticle.published_at >= date_from.strip())
+        if date_to and date_to.strip():
+            conds.append(FeedArticle.published_at <= date_to.strip())
+        return conds
+
+    @staticmethod
+    def _search_order(sort: str):
+        if sort == "oldest":
+            return (FeedArticle.published_at.asc(), FeedArticle.canonical_url.asc())
+        if sort == "publisher":
+            return (func.lower(FeedArticle.publisher).asc(), FeedArticle.published_at.desc())
+        # "newest" (default) and "relevance" (future) -> newest publication first
+        return (FeedArticle.published_at.desc(), FeedArticle.canonical_url.desc())
+
+    def search_feed_articles(self, *, q=None, publisher=None, lean=None, topic=None,
+                             date_from=None, date_to=None, source=None, sort="newest",
+                             pagination=None):
+        """Search the catalog directly, in SQL. Returns ``(rows, total)`` — ``rows`` are paginated
+        FeedArticle-row dicts, ``total`` the match count before pagination. All filtering / sorting /
+        paging happen in the database (index-backed); it never touches the recommendation engine.
+        ``pagination`` is a :class:`pagination.Pagination` (defaults to offset paging)."""
+        from pagination import OffsetPagination
+        pg = pagination or OffsetPagination()
+        conds = self._search_conditions(q=q, publisher=publisher, lean=lean, topic=topic,
+                                         date_from=date_from, date_to=date_to, source=source)
+        where = and_(*conds) if conds else None
+        with self.session() as s:
+            cnt = select(func.count()).select_from(FeedArticle)
+            if where is not None:
+                cnt = cnt.where(where)
+            total = int(s.scalar(cnt) or 0)
+            stmt = select(FeedArticle)
+            if where is not None:
+                stmt = stmt.where(where)
+            stmt = pg.apply(stmt.order_by(*self._search_order(sort)))
+            return [self._feed_row(r) for r in s.scalars(stmt).all()], total
+
+    def feed_article_facets(self) -> dict:
+        """Distinct publishers + topics (categories) across the whole catalog, for filter dropdowns."""
+        with self.session() as s:
+            pubs = [p for (p,) in s.execute(select(FeedArticle.publisher).distinct()).all() if p]
+            cats = [c for (c,) in s.execute(select(self._category_expr()).distinct()).all() if c]
+        return {"publishers": sorted(set(pubs)), "topics": sorted(set(cats))}
+
+    def fts5_available(self) -> bool:
+        """Whether this SQLite build has FTS5 compiled in — **diagnostics only** (FTS is not used yet;
+        search is LIKE-based). Non-SQLite backends report False."""
+        if self.engine.dialect.name != "sqlite":
+            return False
+        try:
+            with self.session() as s:
+                return bool(s.scalar(text("SELECT sqlite_compileoption_used('ENABLE_FTS5')")))
+        except Exception:
+            return False
 
     # -- per-feed health (observational only; never affects articles/corpus/recs) --------
     def record_feed_health(self, feed_url: str, *, ok: bool, name: "str | None" = None,

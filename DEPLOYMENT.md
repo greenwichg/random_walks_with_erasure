@@ -376,6 +376,24 @@ GET /api/internal/refresh      # generation, timings, last success/failure — t
 The active corpus `generation` also appears on `GET /api/health` (`recommendationSource.generation`)
 for a one-request check. No new configuration — it rides on `RWE_RECS_SOURCE=feed` + `RWE_FEED_POLL`.
 
+**Live search & discovery.** Discover and the ⌘K search are backed by a live search **directly over
+the `FeedArticle` catalog** — it queries the catalog in SQL and **never touches the recommendation
+engine**. Results reuse the exact Article shape, so Read Article opens the canonical publisher URL and
+the extension → reads → Dashboard/History/Analytics/Health flow is identical to recommendations.
+Discover now shares the same `search_feed_articles()` path (one filtering implementation). Additive
+indexes on `publisher`, `published_at`, `source_feed`, and an expression index on the JSON lean are
+created idempotently at startup (existing DBs are upgraded in place, never rebuilt).
+
+```
+GET /api/search?query=climate&lean=left&topic=Politics&dateFrom=2026-07-01&sort=newest&limit=24&offset=0
+```
+
+Supports text (title / description / publisher / topic), publisher / lean / topic / date-range / source
+filters, `newest` | `oldest` | `publisher` sort (`relevance` reserved), and `limit` / `offset` paging —
+returning `{results, total, page, pageSize, hasMore, remainingPages}`. Pass `debug=1` (or set
+`RWE_SEARCH_DEBUG`) to include `queryMs` and an `ftsAvailable` probe (FTS5 is **detected but not used
+yet** — search is LIKE-based; FTS is a future optimization).
+
 **URL coverage by ingestion source** — which sources can populate a real publisher `url` today:
 
 | Source | Real URL? | Notes |

@@ -107,25 +107,25 @@ def list_discover(store_, *, topic: Optional[str] = None, publisher: Optional[st
                   lean: Optional[str] = None, limit: int = 60, max_scan: int = 2000) -> dict:
     """Latest FeedArticles as Article dicts, newest first, with optional facet filters. Returns
     ``{"articles": [...], "topics": [...], "publishers": [...]}`` — facets computed over the whole
-    scanned catalog so the filter dropdowns stay stable as filters are applied."""
-    rows = store_.list_feed_articles(limit=max_scan)
-    arts = [feed_article_to_article(r) for r in rows]
-    topics = sorted({a["topic"] for a in arts if a["topic"]})
-    publishers = sorted({a["publisher"] for a in arts if a["publisher"]})
+    catalog so the filter dropdowns stay stable as filters are applied.
 
-    def keep(a: dict) -> bool:
-        if topic and topic != "all" and a["topic"] != topic:
-            return False
-        if publisher and publisher != "all" and a["publisher"] != publisher:
-            return False
-        if lean and lean != "all" and a["leanBucket"] != lean:
-            return False
-        return True
+    Backed by the **shared** ``store.search_feed_articles`` path (one filtering implementation for
+    Discover and Search — no duplicated filter/sort code). Facets come from the store's distinct
+    publisher/category values, prettified exactly as before. ``max_scan`` is retained for backward
+    compatibility (the SQL path needs no scan bound)."""
+    from pagination import OffsetPagination
 
-    filtered = [a for a in arts if keep(a)]
-    # "Latest": newest publication first; canonical id breaks ties deterministically.
-    filtered.sort(key=lambda a: (a["publishedAt"] or "", a["id"]), reverse=True)
-    return {"articles": filtered[: max(0, int(limit))], "topics": topics, "publishers": publishers}
+    def _f(v):     # drop the sentinel "all" and empties
+        return v if v and v != "all" else None
+
+    rows, _total = store_.search_feed_articles(
+        publisher=_f(publisher), topic=_f(topic), lean=_f(lean), sort="newest",
+        pagination=OffsetPagination.from_params(limit, 0))
+    articles = [feed_article_to_article(r) for r in rows]
+    facets = store_.feed_article_facets()
+    topics = sorted({engine._prettify(t) for t in facets["topics"] if t})
+    publishers = sorted({engine._prettify(p) for p in facets["publishers"] if p})
+    return {"articles": articles, "topics": topics, "publishers": publishers}
 
 
 # --------------------------------------------------------------------------- #

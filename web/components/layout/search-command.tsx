@@ -2,36 +2,52 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { Search, FileText, Newspaper, Loader2, CornerDownLeft } from "lucide-react";
+import { Search, FileText, Loader2, CornerDownLeft, ArrowRight } from "lucide-react";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { useSearch } from "@/hooks/use-data";
+import type { Article } from "@/types/domain";
 import { leanBucket, leanLabel } from "@/lib/political";
 import { cn } from "@/lib/utils";
 
-/** ⌘K / global search across articles + stories, backed by /api/search. */
+/** ⌘K / global search — a quick launcher over the live FeedArticle catalog, backed by /api/search. */
 export function SearchCommand({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const [q, setQ] = React.useState("");
   const router = useRouter();
-  const { data, isFetching } = useSearch(q);
+  const active = q.trim().length > 1;
+  const { data, isFetching } = useSearch({ query: q.trim(), limit: 7 }, active);
+  const results = data?.results ?? [];
 
   React.useEffect(() => {
     if (!open) setQ("");
   }, [open]);
 
-  const go = (href: string) => {
+  const seeAll = () => {
     onOpenChange(false);
-    router.push(href);
+    router.push(`/search?query=${encodeURIComponent(q.trim())}`);
   };
 
-  const hasResults = (data?.articles.length ?? 0) + (data?.stories.length ?? 0) > 0;
+  // A result opens the canonical publisher URL (the Read flow the extension captures); with no usable
+  // link, fall back to the full search page.
+  const openArticle = (a: Article) => {
+    onOpenChange(false);
+    const href = a.url && /^https?:\/\//i.test(a.url) ? a.url : null;
+    if (href) window.open(href, "_blank", "noopener,noreferrer");
+    else router.push(`/search?query=${encodeURIComponent(q.trim())}`);
+  };
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right" hideClose className="w-full border-none bg-transparent p-0 shadow-none sm:w-[34rem]">
         <div className="mx-auto mt-[10vh] w-[calc(100%-2rem)] max-w-xl overflow-hidden rounded-2xl border bg-popover shadow-card sm:w-full">
-          <div className="flex items-center gap-3 border-b px-4">
+          <form
+            className="flex items-center gap-3 border-b px-4"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (active) seeAll();
+            }}
+          >
             {isFetching ? (
               <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
             ) : (
@@ -41,64 +57,48 @@ export function SearchCommand({ open, onOpenChange }: { open: boolean; onOpenCha
               autoFocus
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              placeholder="Search articles, stories, topics…"
+              placeholder="Search the live news catalog…"
               className="h-12 border-0 bg-transparent px-0 shadow-none focus-visible:ring-0"
             />
             <kbd className="hidden rounded border bg-muted px-1.5 py-0.5 text-[0.65rem] text-muted-foreground sm:block">
               ESC
             </kbd>
-          </div>
+          </form>
 
           <div className="max-h-[50vh] overflow-y-auto p-2">
-            {q.trim().length <= 1 && (
+            {!active && (
               <p className="px-3 py-8 text-center text-sm text-muted-foreground">
-                Type to search your reading and today's stories.
+                Type to search every publisher in the live catalog.
               </p>
             )}
-            {q.trim().length > 1 && !hasResults && !isFetching && (
-              <p className="px-3 py-8 text-center text-sm text-muted-foreground">No matches for “{q}”.</p>
+            {active && results.length === 0 && !isFetching && (
+              <p className="px-3 py-8 text-center text-sm text-muted-foreground">No matches for “{q.trim()}”.</p>
             )}
 
-            {data?.stories.length ? (
-              <Group label="Stories">
-                {data.stories.map((s) => (
-                  <Row key={s.id} icon={Newspaper} onClick={() => go(`/stories/${s.id}`)}>
-                    <span className="truncate">{s.title}</span>
-                    <Badge variant="secondary" className="ml-auto shrink-0">
-                      {s.topic}
-                    </Badge>
-                  </Row>
-                ))}
-              </Group>
-            ) : null}
-
-            {data?.articles.length ? (
-              <Group label="Articles">
-                {data.articles.map((a) => (
-                  <Row key={a.id} icon={FileText} onClick={() => go("/history")}>
+            {results.length > 0 && (
+              <div className="mb-1">
+                <p className="px-3 py-1.5 text-[0.7rem] font-semibold uppercase tracking-wider text-muted-foreground/70">
+                  Articles
+                </p>
+                {results.map((a) => (
+                  <Row key={a.id} icon={FileText} onClick={() => openArticle(a)}>
                     <span className="truncate">{a.headline}</span>
                     <Badge variant={leanBucket(a.lean)} className="ml-auto shrink-0">
                       {leanLabel(a.lean)}
                     </Badge>
                   </Row>
                 ))}
-              </Group>
-            ) : null}
+                <Row icon={ArrowRight} onClick={seeAll}>
+                  <span className="text-muted-foreground">
+                    See all {data?.total ?? results.length} results for “{q.trim()}”
+                  </span>
+                </Row>
+              </div>
+            )}
           </div>
         </div>
       </SheetContent>
     </Sheet>
-  );
-}
-
-function Group({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="mb-1">
-      <p className="px-3 py-1.5 text-[0.7rem] font-semibold uppercase tracking-wider text-muted-foreground/70">
-        {label}
-      </p>
-      {children}
-    </div>
   );
 }
 

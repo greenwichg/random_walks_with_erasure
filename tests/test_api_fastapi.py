@@ -868,3 +868,33 @@ def test_refresh_status_endpoint(client, monkeypatch):
 
     monkeypatch.setenv("RWE_INTERNAL_SECRET", "s3cret")      # trusted like the other /api/internal/* routes
     assert client.get("/api/internal/refresh").status_code == 401
+
+
+def test_search_endpoint(client):
+    """GET /api/search returns live FeedArticle results with pagination + filters, preserving the
+    canonical URL (the Read flow). Public read-only, like /api/discover. Inserts are cleaned up."""
+    st = api_fastapi.state.store
+    urls = []
+    try:
+        for i, (pub, lean, cat) in enumerate([("SearchNPR", -1.2, "Politics"),
+                                              ("SearchFox", 1.4, "Politics"),
+                                              ("SearchAP", 0.0, "Climate")] * 3):
+            u = f"https://{pub}-{i}.example/a"
+            urls.append(u)
+            st.upsert_feed_article(canonical_url=u, url=u, publisher=pub, source_publisher=pub,
+                                   title=f"{pub} headline {i}", description="body text", body=None,
+                                   published_at="2026-07-06T12:00:00+00:00", source_feed="f",
+                                   scored={"article_id": u, "outlet": pub, "lean": lean, "category": cat})
+        body = client.get("/api/search", params={"query": "headline", "limit": 4, "offset": 0,
+                                                 "debug": "true"}).json()
+        assert body["total"] == 9 and body["pageSize"] == 4 and body["page"] == 1
+        assert body["hasMore"] is True and body["remainingPages"] == 2 and len(body["results"]) == 4
+        assert "queryMs" in body and isinstance(body["ftsAvailable"], bool)
+        assert body["results"][0]["url"].startswith("https://") and "register" in body["results"][0]
+
+        left = client.get("/api/search", params={"lean": "left", "limit": 50}).json()
+        assert {a["publisher"] for a in left["results"]} == {"SearchNPR"}
+        pol = client.get("/api/search", params={"topic": "Climate", "limit": 50}).json()
+        assert {a["publisher"] for a in pol["results"]} == {"SearchAP"}
+    finally:
+        st.delete_feed_articles(urls)

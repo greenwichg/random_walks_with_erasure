@@ -1,15 +1,38 @@
 import { NextResponse } from "next/server";
-import { ARTICLES, STORIES } from "@/mock/data";
+import type { SearchResponse } from "@/types/domain";
+import { backendGet, engineUnavailable } from "@/lib/backend";
+import { engineAuthHeaders } from "@/lib/engine-auth";
 
-/** Unified search across articles + stories. Mock: case-insensitive contains. */
+// Live search over the FeedArticle catalog, proxied to the engine (examples/search.py). Passes the
+// query/filter/sort/pagination params straight through — the engine searches the catalog directly and
+// never touches the recommendation engine. Replaces the former in-memory mock.
+export const dynamic = "force-dynamic";
+
+const KEYS = [
+  "query",
+  "publisher",
+  "lean",
+  "topic",
+  "dateFrom",
+  "dateTo",
+  "source",
+  "sort",
+  "limit",
+  "offset",
+  "debug",
+] as const;
+
 export async function GET(request: Request) {
-  const q = (new URL(request.url).searchParams.get("q") ?? "").toLowerCase().trim();
-  if (!q) return NextResponse.json({ articles: [], stories: [] });
-  const articles = ARTICLES.filter(
-    (a) => a.headline.toLowerCase().includes(q) || a.publisher.toLowerCase().includes(q) || a.topic.toLowerCase().includes(q),
-  ).slice(0, 8);
-  const stories = STORIES.filter(
-    (s) => s.title.toLowerCase().includes(q) || s.topic.toLowerCase().includes(q),
-  ).slice(0, 5);
-  return NextResponse.json({ articles, stories });
+  const src = new URL(request.url).searchParams;
+  const qs = new URLSearchParams();
+  for (const key of KEYS) {
+    const value = src.get(key);
+    if (value) qs.set(key, value);
+  }
+  const query = qs.toString();
+  const data = await backendGet<SearchResponse>(
+    `/api/search${query ? `?${query}` : ""}`,
+    await engineAuthHeaders(),
+  );
+  return data ? NextResponse.json(data) : engineUnavailable();
 }

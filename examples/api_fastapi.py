@@ -44,6 +44,7 @@ import feed_service           # optional: background RSS polling that keeps the 
 import corpus_validation      # corpus-eligibility gate (validation only; no activation / no hot swap)
 import corpus_refresh         # atomic hot activation of a validated corpus (background Backend swap)
 import discover               # Discover & Stories: product-layer exploration over the FeedArticle catalog
+import search                 # live full-text + faceted search over the FeedArticle catalog (Commit 6)
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
@@ -590,6 +591,19 @@ class DiscoverResponseModel(BaseModel):
     articles: list[ArticleModel]
     topics: list[str]        # facet values for the topic filter
     publishers: list[str]    # facet values for the publisher filter
+
+
+class SearchResponseModel(BaseModel):
+    # Live catalog search (Commit 6). `queryMs` + `ftsAvailable` appear only in debug mode, so allow
+    # extras. Results reuse the exact Article contract, so the Read flow is identical.
+    model_config = ConfigDict(extra="allow")
+    results: list[ArticleModel]
+    total: int
+    page: int
+    pageSize: int
+    hasMore: bool
+    remainingPages: int
+    sort: str
 
 
 class StoryCoverageModel(BaseModel):
@@ -1160,6 +1174,32 @@ def story(story_id: str) -> dict:
     if s is None:
         raise HTTPException(status_code=404, detail="Story not found.")
     return s
+
+
+@app.get("/api/search", response_model=SearchResponseModel, response_model_exclude_none=True,
+         tags=["discover"], summary="Live search over the FeedArticle catalog (text + facets + paging)",
+         responses=_ERR_RESPONSES)
+def search_feed(
+    query: Optional[str] = Query(None, description="free text over title / description / publisher / topic"),
+    publisher: Optional[str] = Query(None, description="exact publisher"),
+    lean: Optional[str] = Query(None, description="left | center | right"),
+    topic: Optional[str] = Query(None, description="exact topic / category"),
+    dateFrom: Optional[str] = Query(None, description="ISO lower bound on publication time"),
+    dateTo: Optional[str] = Query(None, description="ISO upper bound on publication time"),
+    source: Optional[str] = Query(None, description="exact source feed URL"),
+    sort: str = Query("newest", description="newest | oldest | publisher | relevance"),
+    limit: int = Query(30, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    debug: bool = Query(False, description="include queryMs + ftsAvailable diagnostics"),
+) -> dict:
+    """Search the live RSS catalog directly (index-backed SQL) — never the recommendation engine.
+    Results reuse the exact Article contract, so Read Article opens the canonical publisher URL and the
+    browser-extension read flow is identical to Discover and recommendations. Timing is surfaced when
+    ``debug`` (query param) or ``RWE_SEARCH_DEBUG`` is set."""
+    debug = debug or os.environ.get("RWE_SEARCH_DEBUG", "").strip().lower() in {"1", "true", "yes", "on"}
+    return search.search(_require_store(), query=query, publisher=publisher, lean=lean, topic=topic,
+                         date_from=dateFrom, date_to=dateTo, source=source, sort=sort,
+                         limit=limit, offset=offset, debug=debug)
 
 
 @app.post("/api/estimate", response_model=HealthReportModel, response_model_exclude_none=True,

@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { queryKeys, services } from "@/services";
-import type { FeedbackAction, Recommendation } from "@/types/domain";
+import type { FeedbackAction, Recommendation, SearchParams } from "@/types/domain";
 
 /**
  * React Query hooks — the only way components read/write server state. Thin
@@ -64,11 +64,11 @@ export function useOpenRecommendation() {
   });
 }
 
-export function useSearch(q: string) {
+export function useSearch(params: SearchParams, enabled = true) {
   return useQuery({
-    queryKey: queryKeys.search(q),
-    queryFn: () => services.search(q),
-    enabled: q.trim().length > 1,
+    queryKey: queryKeys.search(params),
+    queryFn: () => services.search(params),
+    enabled,
   });
 }
 

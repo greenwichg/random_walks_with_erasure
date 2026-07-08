@@ -263,6 +263,33 @@ export interface DiscoverResponse {
   publishers: string[];
 }
 
+/** Live catalog search request — every field optional; omitted params are unfiltered. */
+export interface SearchParams {
+  query?: string;
+  publisher?: string;
+  lean?: string;
+  topic?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  source?: string;
+  sort?: "newest" | "oldest" | "publisher" | "relevance";
+  limit?: number;
+  offset?: number;
+}
+
+/** Live catalog search response — paginated FeedArticle results (same Article shape as Discover). */
+export interface SearchResponse {
+  results: Article[];
+  total: number;
+  page: number;
+  pageSize: number;
+  hasMore: boolean;
+  remainingPages: number;
+  sort: string;
+  queryMs?: number; // debug only
+  ftsAvailable?: boolean; // debug only
+}
+
 /** AI Coach chat message. */
 export interface CoachMessage {
   id: string;

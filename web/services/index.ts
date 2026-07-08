@@ -3,7 +3,6 @@ import type {
   AnalyticsSeries,
   ApiToken,
   ApiTokenMint,
-  Article,
   CoachMessage,
   DashboardSummary,
   DiscoverResponse,
@@ -13,6 +12,8 @@ import type {
   Profile,
   Recommendation,
   RecommendationReception,
+  SearchParams,
+  SearchResponse,
   Settings,
   Story,
   TopicSlice,
@@ -47,7 +48,14 @@ export const services = {
   analytics: () => getJson<AnalyticsSeries>("/analytics"),
   coachHistory: () => getJson<CoachMessage[]>("/coach"),
   coachSend: (message: string) => postJson<CoachMessage>("/coach", { message }),
-  search: (q: string) => getJson<{ articles: Article[]; stories: Story[] }>("/search", { q }),
+  // Live catalog search — text + facet + date filters, sorting, and offset pagination.
+  search: (params: SearchParams) => {
+    const clean: Record<string, string> = {};
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== undefined && v !== null && v !== "" && v !== "all") clean[k] = String(v);
+    }
+    return getJson<SearchResponse>("/search", Object.keys(clean).length ? clean : undefined);
+  },
   // Per-user API tokens for the browser extension (auth'd; proxied to the engine server-side).
   apiTokens: () => getJson<ApiToken[]>("/me/tokens"),
   createApiToken: (label?: string) => postJson<ApiTokenMint>("/me/tokens", { label }),
@@ -69,6 +77,15 @@ export const queryKeys = {
   settings: ["settings"] as const,
   analytics: ["analytics"] as const,
   coach: ["coach"] as const,
-  search: (q: string) => ["search", q] as const,
+  search: (params: SearchParams) =>
+    [
+      "search",
+      params.query ?? "",
+      params.publisher ?? "all",
+      params.lean ?? "all",
+      params.topic ?? "all",
+      params.sort ?? "newest",
+      params.offset ?? 0,
+    ] as const,
   apiTokens: ["apiTokens"] as const,
 };
