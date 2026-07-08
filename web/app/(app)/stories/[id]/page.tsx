@@ -8,6 +8,7 @@ import { PageContainer } from "@/components/layout/page-container";
 import { SpectrumBar } from "@/components/shared/spectrum-bar";
 import { LeanBadge } from "@/components/shared/article-badges";
 import { ArticleImage } from "@/components/shared/article-image";
+import { StoryIntelligencePanel } from "@/components/stories/story-intelligence-panel";
 import { ReadArticleButton } from "@/components/shared/read-article-button";
 import { EmptyState, ErrorState } from "@/components/shared/states";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -107,6 +108,8 @@ export default function StoryDetailPage() {
           )}
         </div>
       </div>
+
+      <StoryIntelligencePanel storyId={story.id} />
 
       <h2 className="mb-3 mt-6 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
         Coverage across publishers

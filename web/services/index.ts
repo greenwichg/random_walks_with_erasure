@@ -17,6 +17,7 @@ import type {
   Settings,
   StoriesResponse,
   Story,
+  StoryIntelligence,
   StoryQuery,
   TopicSlice,
 } from "@/types/domain";
@@ -51,6 +52,8 @@ export const services = {
     return getJson<StoriesResponse>("/stories", Object.keys(clean).length ? clean : undefined);
   },
   story: (id: string) => getJson<Story>(`/stories/${id}`),
+  // Deterministic Story Intelligence (freshness / lifecycle / momentum / timeline / new-since-last-visit).
+  storyIntelligence: (id: string) => getJson<StoryIntelligence>(`/stories/${id}/intelligence`),
   profile: () => getJson<Profile>("/profile"),
   settings: () => getJson<Settings>("/settings"),
   // Persist a (partial) preferences patch; the engine merges + returns the full normalised settings.
@@ -91,6 +94,7 @@ export const queryKeys = {
       query?.offset ?? 0,
     ] as const,
   story: (id: string) => ["story", id] as const,
+  storyIntelligence: (id: string) => ["story-intelligence", id] as const,
   profile: ["profile"] as const,
   settings: ["settings"] as const,
   analytics: ["analytics"] as const,

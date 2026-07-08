@@ -6,6 +6,7 @@ import { Newspaper, ArrowRight, EyeOff } from "lucide-react";
 import type { Story } from "@/types/domain";
 import { SpectrumBar } from "@/components/shared/spectrum-bar";
 import { ArticleImage } from "@/components/shared/article-image";
+import { FreshnessBadge } from "@/components/stories/freshness-badge";
 import { LEAN_META } from "@/lib/metrics";
 import { compact, timeAgo, cn } from "@/lib/utils";
 
@@ -24,10 +25,15 @@ export function StoryCard({ story, index = 0 }: { story: Story; index?: number }
         <ArticleImage src={story.image} alt={story.title} className="mb-3" />
 
         <div className="mb-2 flex items-center justify-between gap-2">
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-medium text-primary">
-            {story.topic}
-          </span>
-          <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+          <div className="flex min-w-0 items-center gap-1.5">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-medium text-primary">
+              {story.topic}
+            </span>
+            {story.freshness && (
+              <FreshnessBadge band={story.freshness.band} score={story.freshness.score} />
+            )}
+          </div>
+          <span className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
             <Newspaper className="h-3.5 w-3.5" />
             {compact(story.totalCoverage)} sources
           </span>

@@ -278,6 +278,99 @@ export interface Story {
   coverage: StoryCoverage[];
   timeline: { date: string; label: string }[];
   blindspotSide?: LeanBucket;
+  /** Lightweight Story Intelligence badge attached by /api/stories (Commit 10) — no extra request. */
+  freshness?: StoryFreshness;
+  lifecycle?: StoryLifecycle;
+}
+
+// --- Story Intelligence (Commit 10) — deterministic, computed on top of a Story ----------------
+/** Freshness band from the latest publication's age + recent velocity/burst. */
+export type FreshnessBand = "Breaking" | "Developing" | "Active" | "Cooling" | "Archived";
+/** Coarser lifecycle stage from age + momentum. */
+export type StoryLifecycle = "Breaking" | "Developing" | "Mature" | "Archived";
+
+export interface StoryFreshness {
+  band: FreshnessBand;
+  score: number; // 0–100
+  latestAgeHours?: number | null;
+  recentArticles?: number;
+}
+
+export interface StoryMomentum {
+  state: "Growing" | "Stable" | "Declining";
+  recentArticles: number;
+  priorArticles: number;
+  newPublishers: number;
+}
+
+export type StoryTimelineEventType =
+  | "first_report"
+  | "publisher_join"
+  | "perspective_expansion"
+  | "milestone"
+  | "latest";
+
+export interface StoryTimelineEvent {
+  date: string;
+  type: StoryTimelineEventType;
+  label: string;
+  publisher?: string;
+  perspective?: LeanBucket;
+  count?: number;
+}
+
+export interface StoryCoverageStatistics {
+  publisherDiversity?: number | null;
+  publisherCount?: number | null;
+  articleCount: number;
+  coverageDurationHours: number;
+  coverageVelocityPerDay: number;
+  coverageGrowth: { recent: number; prior: number; delta: number; ratio: number };
+  politicalDistribution?: ViewpointDistribution | null;
+  publisherDistribution: Record<string, number>;
+}
+
+export interface StoryNewSinceLastVisit {
+  lastVisited: string | null;
+  lastUpdated: string | null;
+  count: number;
+  articles: {
+    publisher?: string;
+    headline?: string;
+    url?: string;
+    leanBucket?: LeanBucket;
+    publishedAt?: string;
+  }[];
+  publishers: string[];
+  perspectives: LeanBucket[];
+}
+
+export type StoryAlertType =
+  | "new_publisher"
+  | "new_perspective"
+  | "became_breaking"
+  | "became_archived"
+  | "coverage_doubled";
+
+export interface StoryAlert {
+  type: StoryAlertType;
+  message: string;
+  publishers?: string[];
+  perspectives?: LeanBucket[];
+}
+
+export interface StoryIntelligence {
+  storyId: string;
+  freshness: StoryFreshness;
+  lifecycle: StoryLifecycle;
+  momentum: StoryMomentum;
+  coverageStatistics: StoryCoverageStatistics;
+  timeline: StoryTimelineEvent[];
+  newSinceLastVisit: StoryNewSinceLastVisit;
+  alerts: StoryAlert[];
+  lastVisited: string | null;
+  lastUpdated: string | null;
+  diagnostics?: { computeMs: number; coverageCount: number; timelineEvents: number };
 }
 
 /** Story list request — every field optional; omitted params are unfiltered. */

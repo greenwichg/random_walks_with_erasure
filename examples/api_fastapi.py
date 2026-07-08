@@ -46,6 +46,7 @@ import corpus_refresh         # atomic hot activation of a validated corpus (bac
 import discover               # Discover: product-layer exploration over the FeedArticle catalog
 import search                 # live full-text + faceted search over the FeedArticle catalog (Commit 6)
 import story_service          # the single owner of Story construction (Discover + Stories consume it)
+import story_intelligence     # deterministic intelligence computed ON TOP of Story objects (Commit 10)
 import media                  # centralised media + publisher-logo selection (rec enrichment, Commit 9)
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -665,6 +666,26 @@ class StoryModel(BaseModel):
     coverage: list[StoryCoverageModel]
     timeline: list[TimelinePointModel]
     blindspotSide: Optional[str] = None
+    # Story Intelligence summary (Commit 10) — attached by the API layer so cards can badge without an
+    # extra request. story_service stays untouched. Omitted (exclude_none) if not computed.
+    freshness: Optional[dict[str, Any]] = None    # {band, score}
+    lifecycle: Optional[str] = None
+
+
+class StoryIntelligenceModel(BaseModel):
+    # Full Story Intelligence (Commit 10). Nested shapes vary, so allow extras.
+    model_config = ConfigDict(extra="allow")
+    storyId: str
+    freshness: dict[str, Any]
+    lifecycle: str
+    momentum: dict[str, Any]
+    coverageStatistics: dict[str, Any]
+    timeline: list[dict[str, Any]]
+    newSinceLastVisit: dict[str, Any]
+    alerts: list[dict[str, Any]]
+    lastVisited: Optional[str] = None
+    lastUpdated: Optional[str] = None
+    diagnostics: dict[str, Any]
 
 
 class StoriesResponseModel(BaseModel):
@@ -1219,9 +1240,14 @@ def stories(
     carries its cross-publisher coverage (each article opening its canonical publisher URL, unchanged
     Read flow) and the nullable `image` contract for future enrichment. Never touches the recommender."""
     debug = debug or os.environ.get("RWE_STORIES_DEBUG", "").strip().lower() in {"1", "true", "yes", "on"}
-    return story_service.list_stories(_require_store(), topic=topic, publisher=publisher, lean=lean,
-                                      date_from=dateFrom, date_to=dateTo, sort=sort,
-                                      limit=limit, offset=offset, debug=debug)
+    result = story_service.list_stories(_require_store(), topic=topic, publisher=publisher, lean=lean,
+                                        date_from=dateFrom, date_to=dateTo, sort=sort,
+                                        limit=limit, offset=offset, debug=debug)
+    # Additive Story Intelligence summary (freshness + lifecycle) per story — computed HERE (the API
+    # layer consumes Story Intelligence; story_service never does), so cards badge without extra calls.
+    for s in result.get("stories", []):
+        s.update(story_intelligence.compute_summary(s))
+    return result
 
 
 @app.get("/api/story/{story_id}", response_model=StoryModel, response_model_exclude_none=True,
@@ -1243,6 +1269,26 @@ def story(story_id: str) -> dict:
     """Backward-compatible alias of ``GET /api/story/{story_id}`` (the web detail page still calls the
     plural path). Same Story Service, same result."""
     return story_single(story_id)
+
+
+@app.get("/api/story/{story_id}/intelligence", response_model=StoryIntelligenceModel,
+         response_model_exclude_none=True, tags=["discover"],
+         summary="Story Intelligence — freshness, lifecycle, momentum, timeline, new-since-last-visit",
+         responses=_ERR_RESPONSES)
+def story_intelligence_endpoint(request: Request, story_id: str) -> dict:
+    """Deterministic intelligence computed **on top of** the Story (freshness / lifecycle / momentum /
+    coverage statistics / expanded timeline / coverage alerts). When a trusted signed-in reader is
+    named, ``newSinceLastVisit`` is computed from their existing browser-extension reads (baseline =
+    their most recent read of this event); anonymous requests get an empty ``newSinceLastVisit``. This
+    is a read-only consumer of the Story Service — it changes no recommendation, report, or read
+    tracking. 404 when the event is no longer in the live catalog."""
+    st = _require_store()
+    uid = _real_uid(request)
+    reads = st.list_reads(uid) if uid is not None else None
+    intel = story_intelligence.intelligence_for(st, story_id, reads=reads)
+    if intel is None:
+        raise HTTPException(status_code=404, detail="Story not found.")
+    return intel
 
 
 @app.get("/api/search", response_model=SearchResponseModel, response_model_exclude_none=True,

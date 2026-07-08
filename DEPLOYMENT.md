@@ -431,6 +431,40 @@ runs, so no recommendation logic changes. Cards render a lazy `<img>` when media
 back to the existing text-only layout otherwise — native browser caching only, image URLs canonical.
 Media survives polling (backfilled on re-poll), retention (whole-row deletes), and hot refresh.
 
+**Story Intelligence.** Deterministic intelligence computed **on top of** a Story
+(`examples/story_intelligence.py`) — freshness, lifecycle, momentum, coverage statistics, an expanded
+timeline, "new since your last visit", and informational alerts. It is a strict **consumer** of the
+Story Service (dependency graph `FeedArticle → Story Service → Story Intelligence`, never the reverse):
+it reads a Story's existing fields + the reader's existing browser-extension reads and derives
+everything with no clustering, no recommender, no LLM, and **no new read tracking**. Read-only — it
+changes no recommendation, report, or read.
+
+```
+GET /api/stories …             # every Story now also carries a lightweight { freshness, lifecycle } badge
+GET /api/story/{storyId}/intelligence   # full intelligence for one event (reader-aware when signed in)
+```
+
+`/api/stories` attaches the cheap **freshness (band + score) + lifecycle** summary to every card, so
+Story lists badge without an extra request. The detail endpoint adds **momentum** (Growing / Stable /
+Declining), **coverage statistics** (velocity, growth, publisher distribution), an **expanded
+timeline** (first report, publisher joins, article-count milestones, the latest update, and a
+**Perspective Expansion** event when coverage broadens to a new political side), **coverage alerts**,
+and **`newSinceLastVisit`** — for a signed-in reader, what's new since they last read this event
+(baseline = their most recent `observedAt` among reads belonging to the Story; both `lastVisited` and
+`lastUpdated` are returned so the UI can explain the comparison). Anonymous requests get an empty
+`newSinceLastVisit`. Everything is deterministic and O(coverage); typical clustered stories are small,
+so per-card summary cost is microseconds (a 200-article worst-case story computes full intelligence in
+~1.5 ms). Thresholds are configurable (hours; article counts):
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `RWE_STORY_BREAKING_HOURS` | `3` | latest coverage within this age (+ a ≥2-article burst) reads as **Breaking** |
+| `RWE_STORY_DEVELOPING_HOURS` | `12` | freshness **Developing** ceiling |
+| `RWE_STORY_ACTIVE_HOURS` | `48` | freshness **Active** ceiling (also the score half-life) |
+| `RWE_STORY_COOLING_HOURS` | `168` | freshness **Cooling** ceiling; older is **Archived** |
+| `RWE_STORY_MOMENTUM_WINDOW_HOURS` | `24` | recent-vs-prior comparison window for momentum + growth |
+| `RWE_STORY_MILESTONES` | `2,5,10,20` | article-count milestones emitted on the timeline |
+
 **URL coverage by ingestion source** — which sources can populate a real publisher `url` today:
 
 | Source | Real URL? | Notes |

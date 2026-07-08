@@ -19,6 +19,13 @@ export const useStories = (query?: StoryQuery) =>
   useQuery({ queryKey: queryKeys.stories(query), queryFn: () => services.stories(query) });
 export const useStory = (id: string) =>
   useQuery({ queryKey: queryKeys.story(id), queryFn: () => services.story(id), enabled: !!id });
+/** Deterministic Story Intelligence for one event (freshness / lifecycle / momentum / timeline / alerts). */
+export const useStoryIntelligence = (id: string) =>
+  useQuery({
+    queryKey: queryKeys.storyIntelligence(id),
+    queryFn: () => services.storyIntelligence(id),
+    enabled: !!id,
+  });
 export const useProfile = () => useQuery({ queryKey: queryKeys.profile, queryFn: services.profile });
 export const useSettings = () => useQuery({ queryKey: queryKeys.settings, queryFn: services.settings });
 

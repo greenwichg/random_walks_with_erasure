@@ -10,6 +10,7 @@ import json
 import os
 import pathlib
 import sys
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -936,6 +937,65 @@ def test_stories_endpoint_envelope_and_detail(client):
         assert detail["id"] == sid and all(c["url"].startswith("https://") for c in detail["coverage"])
         assert client.get(f"/api/stories/{sid}").json()["id"] == sid    # backward-compatible alias
         assert client.get("/api/story/st_bogus").status_code == 404
+    finally:
+        st.delete_feed_articles(urls)
+
+
+def test_stories_carry_intelligence_summary(client):
+    """Commit 10: /api/stories enriches each Story with the lightweight freshness + lifecycle badge
+    (story_intelligence.compute_summary), so cards need no extra request. Additive — the Story Service
+    clustering / pagination is unchanged; Stories consumes Intelligence, never the reverse."""
+    st = api_fastapi.state.store
+    now_iso = datetime.now(timezone.utc).isoformat()
+    urls = ["https://si-npr.example/1", "https://si-bbc.example/1", "https://si-fox.example/1"]
+    try:
+        for cu, pub, lean in [(urls[0], "SiNPR", -1.1), (urls[1], "SiBBC", 0.0), (urls[2], "SiFox", 1.3)]:
+            st.upsert_feed_article(canonical_url=cu, url=cu, publisher=pub, source_publisher=pub,
+                                   title="Budget summit reaches a breakthrough agreement tonight",
+                                   description="d", body=None, published_at=now_iso, source_feed="f",
+                                   scored={"article_id": cu, "outlet": pub, "lean": lean, "category": "Politics"})
+        s = next(x for x in client.get("/api/stories").json()["stories"] if "Budget" in x["title"])
+        assert isinstance(s["freshness"], dict)
+        assert 0 <= s["freshness"]["score"] <= 100
+        assert s["lifecycle"] in {"Breaking", "Developing", "Mature", "Archived"}
+        # freshly published across 3 publishers inside the breaking window -> Breaking badge
+        assert s["freshness"]["band"] == "Breaking" and s["lifecycle"] == "Breaking"
+    finally:
+        st.delete_feed_articles(urls)
+
+
+def test_story_intelligence_endpoint(client):
+    """Commit 10: GET /api/story/{id}/intelligence returns the full deterministic intelligence; a
+    signed-in reader's prior read of the event seeds newSinceLastVisit; a bogus id is 404. Read-only —
+    it changes no recommendation, report, or read tracking."""
+    st = api_fastapi.state.store
+    now = datetime.now(timezone.utc)
+    early, late = (now - timedelta(hours=6)).isoformat(), now.isoformat()
+    urls = ["https://intel-npr.example/1", "https://intel-bbc.example/1", "https://intel-fox.example/1"]
+    try:
+        for cu, pub, lean, at in [(urls[0], "IntelNPR", -1.1, early), (urls[1], "IntelBBC", 0.0, early),
+                                  (urls[2], "IntelFox", 1.3, late)]:
+            st.upsert_feed_article(canonical_url=cu, url=cu, publisher=pub, source_publisher=pub,
+                                   title="Trade council unveils a sweeping tariff overhaul plan",
+                                   description="d", body=None, published_at=at, source_feed="f",
+                                   scored={"article_id": cu, "outlet": pub, "lean": lean, "category": "Business"})
+        sid = next(x for x in client.get("/api/stories").json()["stories"] if "Trade" in x["title"])["id"]
+        intel = client.get(f"/api/story/{sid}/intelligence").json()
+        for k in ("storyId", "freshness", "lifecycle", "momentum", "coverageStatistics", "timeline",
+                  "newSinceLastVisit", "alerts", "diagnostics"):
+            assert k in intel
+        assert intel["storyId"] == sid and intel["diagnostics"]["coverageCount"] == 3
+        assert intel["newSinceLastVisit"]["lastVisited"] is None          # anonymous -> empty baseline
+
+        # a signed-in reader who read the earliest article sees the later coverage as "new"
+        uid = st.upsert_user_by_identity("dev", "intel-reader").id
+        st.add_read(uid, urls[0], {"article_id": urls[0], "outlet": "IntelNPR"}, early)
+        intel2 = client.get(f"/api/story/{sid}/intelligence", headers={"X-IH-User-Id": str(uid)}).json()
+        assert intel2["newSinceLastVisit"]["lastVisited"] == early
+        assert intel2["lastUpdated"] == intel2["newSinceLastVisit"]["lastUpdated"]
+        assert intel2["newSinceLastVisit"]["count"] >= 1                  # the late article is new
+
+        assert client.get("/api/story/st_bogus/intelligence").status_code == 404
     finally:
         st.delete_feed_articles(urls)
 
