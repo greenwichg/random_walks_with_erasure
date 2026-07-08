@@ -5,11 +5,13 @@ articles, modifies FeedArticle, or affects recommendations."""
 
 import pathlib
 import sys
+from datetime import datetime, timedelta, timezone
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "examples"))
 import store          # noqa: E402
 import rss_ingest     # noqa: E402
+import feed_service   # noqa: E402
 
 
 def _rss(items):
@@ -108,3 +110,57 @@ def test_ingest_entries_quality_metrics():
     assert s["entries"] == 3 and s["missing_metadata"] == 2      # a/2 (no title) + a/3 (no date)
     assert s["newest"] == "2026-07-05T00:00:00+00:00" and s["oldest"] == "2026-07-01T00:00:00+00:00"
     assert s["new"] == 3 and s["skipped"] == 0                   # all three are valid absolute URLs
+
+
+# --------------------------------------------------------------------------- #
+# feed staleness — a freshness axis over the newest-article date (observational, additive)
+# --------------------------------------------------------------------------- #
+NOW = datetime(2026, 7, 8, 12, 0, 0, tzinfo=timezone.utc)
+
+
+def _rec(newest, *, healthy=True, url="https://f.example/feed"):
+    """A minimal FeedHealth-shaped record (only the fields annotate_staleness reads)."""
+    return {"feedUrl": url, "healthy": healthy, "consecutiveFailures": 0, "newestPublished": newest}
+
+
+def test_staleness_flags_old_feed_not_fresh():
+    old = (NOW - timedelta(days=60)).isoformat()
+    fresh = (NOW - timedelta(days=3)).isoformat()
+    out = {r["feedUrl"]: r for r in feed_service.annotate_staleness(
+        [_rec(old, url="https://old.example/feed"), _rec(fresh, url="https://fresh.example/feed")],
+        threshold_days=30, now=NOW)}
+    o, f = out["https://old.example/feed"], out["https://fresh.example/feed"]
+    assert o["stale"] is True and round(o["newestAgeDays"]) == 60 and o["staleThresholdDays"] == 30
+    assert f["stale"] is False and round(f["newestAgeDays"]) == 3
+
+
+def test_staleness_undated_feed_is_not_stale():
+    out = feed_service.annotate_staleness([_rec(None)], threshold_days=30, now=NOW)[0]
+    assert out["stale"] is False and out["newestAgeDays"] is None      # unknown age, not "old"
+
+
+def test_staleness_is_a_separate_axis_from_availability():
+    """The CNN case: a feed that polls successfully (healthy) but only serves old content is BOTH
+    healthy AND stale — staleness never changes the availability fields."""
+    old = (NOW - timedelta(days=400)).isoformat()
+    out = feed_service.annotate_staleness([_rec(old, healthy=True)], threshold_days=30, now=NOW)[0]
+    assert out["healthy"] is True and out["stale"] is True
+
+
+def test_staleness_threshold_from_env(monkeypatch):
+    monkeypatch.setenv("RWE_FEED_STALE_DAYS", "7")
+    assert feed_service.stale_days() == 7
+    ten = (NOW - timedelta(days=10)).isoformat()
+    out = feed_service.annotate_staleness([_rec(ten)], now=NOW)[0]     # no explicit threshold -> env
+    assert out["staleThresholdDays"] == 7 and out["stale"] is True
+
+
+def test_staleness_default_threshold_is_30(monkeypatch):
+    monkeypatch.delenv("RWE_FEED_STALE_DAYS", raising=False)
+    assert feed_service.stale_days() == 30
+
+
+def test_staleness_disabled_when_threshold_non_positive():
+    ancient = (NOW - timedelta(days=9999)).isoformat()
+    out = feed_service.annotate_staleness([_rec(ancient)], threshold_days=0, now=NOW)[0]
+    assert out["stale"] is False and out["newestAgeDays"] is not None  # age still reported, just not flagged

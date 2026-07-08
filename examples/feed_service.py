@@ -30,6 +30,7 @@ import logging
 import os
 import threading
 import time
+from datetime import datetime, timezone
 from typing import Callable, Optional
 
 import rss_ingest      # reuse: load_feeds, make_scorer, fetch_feed, ingest_all — NO duplicate ingestion
@@ -60,6 +61,70 @@ def _float_env(name: str, default: float) -> float:
 def _int_env(name: str, default: int) -> int:
     v = os.environ.get(name)
     return int(v) if v and v.lstrip("-").isdigit() else default
+
+
+# --------------------------------------------------------------------------- #
+# Feed staleness — a freshness axis over the (already-tracked) newest article date.
+#
+# Distinct from availability: a feed can poll SUCCESSFULLY (healthy) yet only serve old content — a
+# retired/frozen feed that still responds. This is observational, exactly like the rest of Feed
+# Health: it never stops polling a stale feed (so it can recover automatically) and never excludes it
+# from the recommendation corpus (that decision stays with Corpus Validation).
+# --------------------------------------------------------------------------- #
+DEFAULT_STALE_DAYS = 30
+
+
+def stale_days() -> int:
+    """Freshness threshold in days: a feed whose newest published article is older than this reads as
+    **stale**. Configurable via ``RWE_FEED_STALE_DAYS`` (default 30); ``0`` or negative disables
+    staleness flagging entirely."""
+    return _int_env("RWE_FEED_STALE_DAYS", DEFAULT_STALE_DAYS)
+
+
+def _parse_iso(value) -> Optional[datetime]:
+    """Parse an ISO-8601 timestamp (as stored in ``FeedHealth.newestPublished``) to an aware datetime,
+    or ``None`` if absent/unparseable. A naive timestamp is assumed UTC."""
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def newest_age_days(record: dict, *, now: Optional[datetime] = None) -> Optional[float]:
+    """Age in days of a feed's newest published article (from its ``newestPublished``), relative to
+    ``now``. ``None`` when the feed has no dated article yet (unknown age, not old)."""
+    dt = _parse_iso(record.get("newestPublished"))
+    if dt is None:
+        return None
+    now = now or datetime.now(timezone.utc)
+    return (now - dt).total_seconds() / 86400.0
+
+
+def annotate_staleness(records, *, threshold_days: Optional[int] = None,
+                       now: Optional[datetime] = None) -> list:
+    """Additively annotate FeedHealth records with **staleness**, computed at read time from each
+    feed's newest-article age vs the ``RWE_FEED_STALE_DAYS`` threshold. Adds three fields per record:
+
+        newestAgeDays       float | None   age (days) of the newest published article; None if undated
+        staleThresholdDays  int            the threshold in effect
+        stale               bool           the newest article is older than the threshold
+
+    Staleness is a **separate axis from availability**: a feed can poll successfully (``healthy``) yet
+    be ``stale`` because it only serves old content (a frozen/retired feed that still responds). A feed
+    with no dated article is not stale (unknown, not old); a threshold ``<= 0`` disables flagging. Pure
+    and read-time — it stores nothing, stops no polling, and touches no corpus."""
+    threshold = stale_days() if threshold_days is None else int(threshold_days)
+    now = now or datetime.now(timezone.utc)
+    annotated = []
+    for r in records:
+        age = newest_age_days(r, now=now)
+        stale = threshold > 0 and age is not None and age > threshold
+        annotated.append({**r, "newestAgeDays": (round(age, 2) if age is not None else None),
+                          "staleThresholdDays": threshold, "stale": stale})
+    return annotated
 
 
 def _default_log(level: int, event: str, **fields) -> None:

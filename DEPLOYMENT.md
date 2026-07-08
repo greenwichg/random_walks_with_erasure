@@ -319,9 +319,19 @@ last success/failure · last error · last + average latency) and quality (impor
 rejected · missing-metadata counts · newest/oldest article dates). A feed is marked **unhealthy**
 after `RWE_FEED_UNHEALTHY_AFTER` consecutive failures (default 3) and **auto-recovers** on its next
 successful poll; the poller keeps polling unhealthy feeds so they rejoin automatically. Partial
-failures never stop the cycle. **This is strictly observational** — feed health never removes
-articles, modifies `FeedArticle`, or influences corpus construction or recommendations; a future
-Corpus Validation milestone consumes it. Operators read it at:
+failures never stop the cycle.
+
+**Freshness / staleness** is a **separate axis from availability**: `/api/internal/feeds` also reports
+`stale` + `newestAgeDays` against `staleThresholdDays`. A feed is **stale** when its newest published
+article is older than `RWE_FEED_STALE_DAYS` (default 30; `0`/negative disables). This catches a
+**retired/frozen feed that still responds but only serves old content** — it polls fine (`status:
+healthy`) yet is flagged `stale: true` (e.g. a legacy `rss.cnn.com` feed stuck on 2023 articles). A
+feed with no dated article is not stale (unknown, not old). Staleness is computed at read time from the
+already-tracked newest-article date; it is **observational** — a stale feed keeps being polled so it can
+recover automatically, and it is **not** excluded from the recommendation corpus (that decision stays
+with Corpus Validation). **All of feed health is strictly observational** — it never removes articles,
+modifies `FeedArticle`, or influences corpus construction or recommendations; a future Corpus Validation
+milestone consumes it. Operators read it at:
 
 ```
 GET /api/internal/feeds        # per-feed status/latency/quality — trusted (internal secret in prod)
@@ -331,6 +341,7 @@ GET /api/internal/feeds        # per-feed status/latency/quality — trusted (in
 | --- | --- | --- |
 | `RWE_FEED_UNHEALTHY_AFTER` | `3` | consecutive failures before a feed is marked unhealthy |
 | `RWE_FEED_WARN_AFTER` | `1` | consecutive failures before a feed reads as "degraded" (diagnostics only) |
+| `RWE_FEED_STALE_DAYS` | `30` | newest-article age (days) beyond which a feed reads as `stale` (diagnostics only; `0`/negative disables) |
 
 **Corpus validation (candidate-corpus eligibility gate).** The engine can answer *"is the current
 catalog healthy enough to become a recommendation corpus?"* without touching the live one. It builds a

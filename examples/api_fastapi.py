@@ -859,6 +859,9 @@ class FeedHealthModel(BaseModel):
     avgLatencyMs: Optional[float] = None
     newestPublished: Optional[str] = None
     oldestPublished: Optional[str] = None
+    newestAgeDays: Optional[float] = None       # age (days) of the newest article; None if undated
+    staleThresholdDays: Optional[int] = None    # RWE_FEED_STALE_DAYS in effect
+    stale: Optional[bool] = None                # newest article older than the threshold (separate from status)
     imported: int
     duplicate: int
     rejected: int
@@ -1608,8 +1611,11 @@ def storage_status(request: Request) -> dict:
          summary="Per-feed RSS polling health + quality (server-to-server)", responses=_ERR_RESPONSES)
 def feed_health(request: Request) -> list:
     """Ops diagnostics for the RSS poller: per-feed availability (healthy / consecutive failures /
-    last success + failure / latency) and quality (imported / duplicate / rejected / missing-metadata /
-    newest + oldest article dates). **Observational only** — feed health never influences corpus
+    last success + failure / latency), quality (imported / duplicate / rejected / missing-metadata /
+    newest + oldest article dates), and **freshness** (``stale`` + ``newestAgeDays`` vs
+    ``staleThresholdDays``). Staleness is a separate axis from availability — a feed can be ``healthy``
+    (polling fine) yet ``stale`` (only serving old content, e.g. a retired/frozen feed). **Observational
+    only** — feed health, staleness included, never stops polling a feed and never influences corpus
     construction, article export, or recommendation serving. Trusted endpoint — requires the internal
     secret in production, like the other ``/api/internal/*`` routes."""
     _require_trusted(request)
@@ -1617,7 +1623,7 @@ def feed_health(request: Request) -> list:
     if warn_after is None:
         warn_after = 1
     out = []
-    for r in _require_store().list_feed_health():
+    for r in feed_service.annotate_staleness(_require_store().list_feed_health()):
         status = ("unhealthy" if not r["healthy"]
                   else "degraded" if r["consecutiveFailures"] >= warn_after else "healthy")
         out.append({**r, "status": status})

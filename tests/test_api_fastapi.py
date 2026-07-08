@@ -806,6 +806,14 @@ def test_feed_health_endpoint(client, monkeypatch):
                           unhealthy_after=3)
     st.record_feed_health("https://down.example/feed", ok=False, name="Down",
                           error=OSError("connection refused"), latency_ms=200.0, unhealthy_after=1)
+    # a feed that polls fine but only serves old content (the CNN case): healthy AND stale
+    st.record_feed_health("https://stale.example/feed", ok=True, name="Stale", latency_ms=70.0,
+                          stats={"new": 0, "duplicates": 5, "newest": "2023-01-01T00:00:00+00:00",
+                                 "oldest": "2023-01-01T00:00:00+00:00"}, unhealthy_after=3)
+    # a healthy feed with fresh content is not stale
+    fresh_iso = datetime.now(timezone.utc).isoformat()
+    st.record_feed_health("https://fresh.example/feed", ok=True, name="Fresh", latency_ms=60.0,
+                          stats={"new": 4, "newest": fresh_iso, "oldest": fresh_iso}, unhealthy_after=3)
 
     feeds = {f["feedUrl"]: f for f in client.get("/api/internal/feeds").json()}
     assert feeds["https://ok.example/feed"]["status"] == "healthy"
@@ -813,6 +821,11 @@ def test_feed_health_endpoint(client, monkeypatch):
     assert feeds["https://down.example/feed"]["status"] == "unhealthy"
     assert feeds["https://down.example/feed"]["healthy"] is False
     assert "connection refused" in feeds["https://down.example/feed"]["lastError"]
+    # staleness is a separate axis from availability: healthy status, stale content, still polled
+    stale = feeds["https://stale.example/feed"]
+    assert stale["status"] == "healthy" and stale["stale"] is True
+    assert stale["newestAgeDays"] is not None and stale["newestAgeDays"] > 30 and stale["staleThresholdDays"] == 30
+    assert feeds["https://fresh.example/feed"]["stale"] is False           # fresh content -> not stale
 
     monkeypatch.setenv("RWE_INTERNAL_SECRET", "s3cret")       # trusted like the other /api/internal/* routes
     assert client.get("/api/internal/feeds").status_code == 401
