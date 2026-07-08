@@ -41,6 +41,7 @@ import ratelimit              # dependency-free token-bucket rate limiter (Priva
 import reqlimits              # request-body size / batch-shape limits (Private Alpha hardening)
 import feed_source            # optional: source the recommender catalog from the RSS FeedArticle store
 import feed_service           # optional: background RSS polling that keeps the FeedArticle catalog fresh
+import sources                # pluggable multi-source ingestion (RSS + NewsAPI + GDELT) via adapters
 import corpus_validation      # corpus-eligibility gate (validation only; no activation / no hot swap)
 import corpus_refresh         # atomic hot activation of a validated corpus (background Backend swap)
 import discover               # Discover: product-layer exploration over the FeedArticle catalog
@@ -190,15 +191,18 @@ async def lifespan(app: FastAPI):
     _log(logging.INFO, "startup", profile=be.profile.name, demoUser=be.demo_user,
          eligibleReaders=int(len(be.eligible)), db=st.url,
          rateLimit=ratelimit.enabled(), production=_production())
-    # Automatic RSS polling + hot refresh (opt-in): keep the FeedArticle catalog fresh in the
-    # background, and — via the poller's on_cycle seam — atomically activate a newly validated corpus
-    # so new articles become recommendable with NO restart. Requires BOTH the live feed source
-    # (RWE_RECS_SOURCE=feed) and the poll flag (RWE_FEED_POLL). Retention/health/validation are
-    # unchanged and owned by earlier commits; this only consumes their outputs.
-    if feed_service.enabled() and feed_source.enabled():
+    # Automatic multi-source polling + hot refresh (opt-in): keep the FeedArticle catalog fresh in the
+    # background from every enabled source (RSS + NewsAPI + GDELT via the SourceRegistry), and — via the
+    # poller's on_cycle seam — atomically activate a newly validated corpus so new articles become
+    # recommendable with NO restart. Requires the live feed source (RWE_RECS_SOURCE=feed) and at least
+    # one enabled adapter (RSS defaults to the existing RWE_FEED_POLL). Each adapter polls on its own
+    # interval, isolated; retention/health/validation/hot-refresh are unchanged and owned by earlier
+    # commits — this only consumes their outputs. FeedPoller is untouched (standalone CLI still uses it).
+    registry = sources.default_registry()
+    if feed_source.enabled() and registry.enabled():
         state.refresh.polling_enabled = True
-        state.poller = feed_service.FeedPoller(state.store, log=_log,
-                                               on_cycle=state.refresh.on_poll_cycle)
+        state.poller = sources.MultiSourcePoller(state.store, state.scorer, registry=registry,
+                                                 log=_log, on_cycle=state.refresh.on_poll_cycle)
         state.poller.start()
     yield
     if state.poller is not None:

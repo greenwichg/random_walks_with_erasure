@@ -77,6 +77,31 @@ def _dumps_scored(scored) -> str:
     return json.dumps(_json_safe(scored))
 
 
+# Multi-source media-merge priority: when the same canonical URL arrives from several ingestion sources,
+# the image from the higher-priority source wins (see ``upsert_feed_article``). Centralised here so the
+# ordering changes in ONE place with **no data migration** — precedence is derived dynamically from each
+# row's ``source_type`` (nothing extra is persisted). Env-overridable, e.g.
+# ``RWE_SOURCE_PRIORITY="rss:100,newsapi:80,gdelt:60"``. Unknown / absent source_type -> 0 (lowest).
+SOURCE_PRIORITY = {"rss": 100, "newsapi": 80, "gdelt": 60}
+
+
+def _source_priority_map() -> dict:
+    raw = os.environ.get("RWE_SOURCE_PRIORITY", "").strip()
+    if not raw:
+        return SOURCE_PRIORITY
+    out = dict(SOURCE_PRIORITY)
+    for part in raw.split(","):
+        k, _, v = part.partition(":")
+        if v.strip().lstrip("-").isdigit():
+            out[k.strip().lower()] = int(v.strip())
+    return out
+
+
+def _media_priority(source_type) -> int:
+    """Media precedence for a ``source_type`` (higher wins on merge); unknown / ``None`` -> 0."""
+    return _source_priority_map().get((source_type or "").lower(), 0)
+
+
 def default_db_url() -> str:
     """Repo-local SQLite file (``<repo>/data/ih_beta.db``) unless ``RWE_DB_URL`` overrides.
 
@@ -268,6 +293,11 @@ class FeedArticle(Base):
     image_mime: Mapped[Optional[str]] = mapped_column(String(128), default=None)
     image_source: Mapped[Optional[str]] = mapped_column(String(255), default=None)   # winning media tag
     image_attribution: Mapped[Optional[str]] = mapped_column(String(512), default=None)
+    # Source attribution (additive; multi-source ingestion). All None on legacy / RSS-only rows until set;
+    # downstream stays source-agnostic — these are provenance/diagnostics + the media-merge priority key.
+    source_type: Mapped[Optional[str]] = mapped_column(String(32), default=None)        # rss | newsapi | gdelt
+    source_provider: Mapped[Optional[str]] = mapped_column(String(255), default=None)   # feed name / "NewsAPI" / "GDELT"
+    external_id: Mapped[Optional[str]] = mapped_column(String(512), default=None)       # provider's article id, if any
     fetched_at: Mapped[datetime] = mapped_column(default=_utcnow, index=True)
     created_at: Mapped[datetime] = mapped_column(default=_utcnow)
 
@@ -316,6 +346,7 @@ class Store:
         self._Session = sessionmaker(bind=self.engine, expire_on_commit=False,
                                      future=True)
         self._ensure_media_columns()
+        self._ensure_source_columns()
         self._ensure_search_indexes()
 
     @contextmanager
@@ -478,11 +509,18 @@ class Store:
                             scored: dict, image: "str | None" = None,
                             image_width: "int | None" = None, image_height: "int | None" = None,
                             image_mime: "str | None" = None, image_source: "str | None" = None,
-                            image_attribution: "str | None" = None) -> bool:
+                            image_attribution: "str | None" = None, source_type: "str | None" = None,
+                            source_provider: "str | None" = None, external_id: "str | None" = None) -> bool:
         """Insert a catalog article, or refresh an existing one (dedup by ``canonical_url``). Returns
         ``True`` when newly created, ``False`` on a re-poll. A re-poll refreshes ``fetched_at`` and
-        backfills any field that was empty before (media included, so an image that a feed adds later is
-        picked up), but never rewrites first-seen metadata."""
+        backfills any field that was empty before, but never rewrites first-seen metadata — so the same
+        canonical URL arriving from a **different source** merges into the one row (never duplicates).
+
+        Media merge is **source-priority-aware**: an incoming image replaces the stored one when the row
+        has none, or when the incoming ``source_type`` outranks the stored row's ``source_type`` (via
+        ``SOURCE_PRIORITY``); equal/lower priority keeps the existing image. Nothing extra is persisted —
+        precedence is derived from each row's ``source_type``. Callers that pass no ``source_type``
+        (priority 0) get the original backfill-when-empty behaviour, so existing callers are unchanged."""
         payload = _dumps_scored(scored)
         with self.session() as s:
             row = s.get(FeedArticle, canonical_url)
@@ -493,7 +531,8 @@ class Store:
                     body=body, published_at=published_at, source_feed=source_feed, scored=payload,
                     image=image, image_width=image_width, image_height=image_height,
                     image_mime=image_mime, image_source=image_source,
-                    image_attribution=image_attribution))
+                    image_attribution=image_attribution, source_type=source_type,
+                    source_provider=source_provider, external_id=external_id))
                 return True
             row.fetched_at = _utcnow()
             if title and not row.title:
@@ -504,7 +543,12 @@ class Store:
                 row.body = body
             if published_at and not row.published_at:
                 row.published_at = published_at
-            if image and not row.image:                 # backfill media if a later poll supplies it
+            if external_id and not row.external_id:
+                row.external_id = external_id
+            # Media merge by source priority: fill when empty, else the higher-priority source's image
+            # wins (equal/lower keeps the existing one). Precedence derived from each row's source_type.
+            if image and (not row.image
+                          or _media_priority(source_type) > _media_priority(row.source_type)):
                 row.image, row.image_width, row.image_height = image, image_width, image_height
                 row.image_mime, row.image_source, row.image_attribution = image_mime, image_source, image_attribution
             return False
@@ -554,6 +598,8 @@ class Store:
                 "image": r.image, "imageWidth": r.image_width, "imageHeight": r.image_height,
                 "imageMimeType": r.image_mime, "imageSource": r.image_source,
                 "imageAttribution": r.image_attribution,
+                "sourceType": r.source_type, "sourceProvider": r.source_provider,
+                "externalId": r.external_id,
                 "fetchedAt": r.fetched_at.isoformat() if r.fetched_at else None}
 
     def feed_article_media(self, canonical_urls) -> dict:
@@ -583,6 +629,19 @@ class Store:
         cols = [("image", "VARCHAR(2048)"), ("image_width", "INTEGER"), ("image_height", "INTEGER"),
                 ("image_mime", "VARCHAR(128)"), ("image_source", "VARCHAR(255)"),
                 ("image_attribution", "VARCHAR(512)")]
+        for name, decl in cols:
+            try:
+                with self.session() as s:
+                    s.execute(text(f"ALTER TABLE feed_articles ADD COLUMN {name} {decl}"))
+            except Exception:
+                pass    # already exists (fresh DB) or a non-sqlite backend — nothing to do
+
+    def _ensure_source_columns(self) -> None:
+        """Additive, idempotent source-attribution columns on ``feed_articles`` (upgrades pre-existing
+        DBs in place, exactly like ``_ensure_media_columns``). Backward compatible — legacy rows keep
+        ``NULL`` for these until a source sets them, and every existing API keeps working unchanged."""
+        cols = [("source_type", "VARCHAR(32)"), ("source_provider", "VARCHAR(255)"),
+                ("external_id", "VARCHAR(512)")]
         for name, decl in cols:
             try:
                 with self.session() as s:

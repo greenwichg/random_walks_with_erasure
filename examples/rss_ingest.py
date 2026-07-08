@@ -47,18 +47,29 @@ _USER_AGENT = "InformationHealth-RSS/0.1 (+https://code.claude.com)"
 
 @dataclass
 class FeedEntry:
-    """One article as an RSS/Atom feed describes it — before scoring."""
+    """One article as a source describes it — before scoring. The **single normalized shape** every
+    ingestion source (RSS/Atom, NewsAPI, GDELT, future adapters) produces; downstream never learns
+    where an entry originated."""
     url: str
     title: str = ""
     description: str = ""
     body: Optional[str] = None
     published_at: Optional[str] = None
-    # Media metadata (additive; RSS/Atom only — no download, no Open Graph). All None when absent.
+    # Media metadata (additive; metadata only — no download, no Open Graph). All None when absent.
     image: Optional[str] = None
     image_width: Optional[int] = None
     image_height: Optional[int] = None
     image_mime: Optional[str] = None
     image_source: Optional[str] = None      # the winning media tag (media:content / enclosure / …)
+    # Source attribution + hints (additive; populated by non-RSS adapters). All optional so RSS parsing
+    # is unchanged. ``publisher_hint`` seeds outlet resolution when a source knows the outlet/domain.
+    source_type: Optional[str] = None       # rss | newsapi | gdelt
+    source_provider: Optional[str] = None   # feed name / "NewsAPI" / "GDELT"
+    category: Optional[str] = None
+    language: Optional[str] = None
+    country: Optional[str] = None
+    external_id: Optional[str] = None
+    publisher_hint: Optional[str] = None
 
 
 # --------------------------------------------------------------------------- #
@@ -247,10 +258,15 @@ def make_scorer() -> "ingest.Scorer":
     return ingest.Scorer(enricher=enrich.make_enricher("baseline"))
 
 
-def ingest_entries(entries, source_publisher, source_feed, scorer, store_) -> dict:
+def ingest_entries(entries, source_publisher, source_feed, scorer, store_, *,
+                   source_type=None, source_provider=None) -> dict:
     """Score + upsert a list of :class:`FeedEntry` into the catalog. Returns per-batch stats plus
     observational quality metrics (``missing_metadata`` = no title or no publication date; ``newest`` /
-    ``oldest`` publication dates). Quality metrics are collected only — they never drop an article."""
+    ``oldest`` publication dates). Quality metrics are collected only — they never drop an article.
+
+    ``source_type`` / ``source_provider`` are the batch-level attribution a non-RSS adapter passes; a
+    per-entry value on the :class:`FeedEntry` (set by the adapter during normalization) overrides them.
+    RSS callers pass neither and their entries carry no per-entry values, so behaviour is unchanged."""
     stats = {"entries": 0, "new": 0, "duplicates": 0, "skipped": 0,
              "missing_metadata": 0, "newest": None, "oldest": None}
     for e in entries:
@@ -267,7 +283,8 @@ def ingest_entries(entries, source_publisher, source_feed, scorer, store_) -> di
         if not ingest.has_host(url):
             stats["skipped"] += 1
             continue
-        raw = ingest.RawRead(url=url, title=e.title or "", description=e.description or "")
+        raw = ingest.RawRead(url=url, title=e.title or "", description=e.description or "",
+                             outlet=e.publisher_hint or "", category=e.category or "")
         scored = ingest.score_with_cache(raw, scorer, store_)      # same scorer + shared cache as reads
         created = store_.upsert_feed_article(
             canonical_url=scored.article_id, url=url, publisher=scored.outlet,
@@ -276,21 +293,26 @@ def ingest_entries(entries, source_publisher, source_feed, scorer, store_) -> di
             source_feed=source_feed, scored=dataclasses.asdict(scored),
             image=e.image, image_width=e.image_width, image_height=e.image_height,
             image_mime=e.image_mime, image_source=e.image_source,
-            image_attribution=(source_publisher or scored.outlet or None))
+            image_attribution=(source_publisher or scored.outlet or None),
+            source_type=(e.source_type or source_type),
+            source_provider=(e.source_provider or source_provider or source_publisher),
+            external_id=e.external_id)
         stats["new" if created else "duplicates"] += 1
     return stats
 
 
-def ingest_feed(feed_url, name, scorer, store_, fetch: Callable[[str], bytes] = fetch_feed) -> dict:
+def ingest_feed(feed_url, name, scorer, store_, fetch: Callable[[str], bytes] = fetch_feed,
+                *, source_type: str = "rss") -> dict:
     data = fetch(feed_url)
     channel_title, entries = parse_feed(data)
-    s = ingest_entries(entries, name or channel_title or None, feed_url, scorer, store_)
+    s = ingest_entries(entries, name or channel_title or None, feed_url, scorer, store_,
+                       source_type=source_type)
     s["feed"] = feed_url
     return s
 
 
 def ingest_all(feeds, scorer, store_, fetch: Callable[[str], bytes] = fetch_feed,
-               on_feed: "Callable[..., None] | None" = None) -> dict:
+               on_feed: "Callable[..., None] | None" = None, *, source_type: str = "rss") -> dict:
     """Ingest every feed; one feed's failure never aborts the rest (errors are collected).
 
     Optional ``on_feed(name, url, stats_or_None, latency_ms, error_or_None)`` is called once per feed
@@ -303,7 +325,7 @@ def ingest_all(feeds, scorer, store_, fetch: Callable[[str], bytes] = fetch_feed
         t0 = time.perf_counter()
         result, error = None, None
         try:
-            result = ingest_feed(url, name, scorer, store_, fetch=fetch)
+            result = ingest_feed(url, name, scorer, store_, fetch=fetch, source_type=source_type)
         except Exception as e:                          # network/parse error on one feed
             error = e
         latency_ms = (time.perf_counter() - t0) * 1000.0

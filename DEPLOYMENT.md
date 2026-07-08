@@ -289,6 +289,54 @@ Polling keeps the **catalog** current; a *running* engine still serves the recom
 built at startup until the validated hot-refresh (a later milestone) swaps it — so today, polling
 benefits Discover/Search and the next restart's corpus, not the live recommendation set.
 
+**Multi-source ingestion (RSS + NewsAPI + GDELT).** Ingestion is a **pluggable adapter layer**
+(`examples/sources.py`). Every source — RSS/Atom, NewsAPI, GDELT, and future providers — normalizes its
+data into the **one** `rss_ingest.FeedEntry` shape and terminates at the existing `ingest_entries`
+pipeline; after that boundary the whole platform (scoring, canonical-URL dedup, media selection,
+persistence, Search, Discover, Stories, Story Intelligence, recommendations, hot refresh, retention)
+behaves **exactly as for RSS and never learns where an article came from.** A `SourceRegistry` holds the
+adapters and a `MultiSourcePoller` runs one background thread **per enabled adapter**, each on its own
+interval, isolated (one source's outage can't stop another). `FeedPoller` is unchanged (standalone CLI
+still uses it). New providers register in one place with no poller change.
+
+* **Deduplication is cross-source** — the same canonical publisher URL from RSS *and* NewsAPI *and*
+  GDELT collapses to **one** `FeedArticle` (metadata merged additively; URL-only, never title/semantic).
+* **Media priority** — when several sources supply an image for one URL, the higher-priority source
+  wins: `SOURCE_PRIORITY = {rss:100, newsapi:80, gdelt:60}` (env `RWE_SOURCE_PRIORITY`). Precedence is
+  derived from each row's `source_type` at merge time — nothing extra is persisted, so priorities change
+  in one place with no migration. `media.py` selection is unchanged; images are never downloaded.
+* **Per-source health** — each adapter reports under a stable key (`https://…` per RSS feed,
+  `newsapi://top-headlines`, `gdelt://doc`) via the existing `feed_health` table (availability, latency,
+  new/duplicates, staleness). Health is never combined across sources.
+* **Per-source quotas** — `RWE_{RSS,NEWSAPI,GDELT}_MAX_ARTICLES` cap a batch **before** ingestion; they
+  never touch retention, validation, or recommendations.
+* **New columns (additive, idempotent `ALTER`)** — `source_type`, `source_provider`, `external_id` on
+  `feed_articles`; all existing APIs stay backward compatible (legacy rows keep `NULL`).
+
+| Env | Default | Meaning |
+| --- | --- | --- |
+| `RWE_RSS_ENABLED` | `RWE_FEED_POLL` | enable the RSS adapter (defaults to the existing poll flag) |
+| `RWE_RSS_MAX_ARTICLES` | — | cap entries per RSS feed per cycle |
+| `RWE_NEWSAPI_ENABLED` | off | enable the NewsAPI adapter (also needs a key) |
+| `RWE_NEWSAPI_API_KEY` | — | NewsAPI key (sent as `X-Api-Key`; required) |
+| `RWE_NEWSAPI_POLL_INTERVAL` | `900` | seconds between NewsAPI polls |
+| `RWE_NEWSAPI_MAX_ARTICLES` | — | cap articles per NewsAPI poll |
+| `RWE_NEWSAPI_ENDPOINT` / `_QUERY` / `_CATEGORY` / `_COUNTRY` / `_LANGUAGE` | `top-headlines` / … | NewsAPI query shape |
+| `RWE_GDELT_ENABLED` | off | enable the GDELT adapter (keyless) |
+| `RWE_GDELT_POLL_INTERVAL` | `900` | seconds between GDELT polls |
+| `RWE_GDELT_MAX_ARTICLES` | — | cap articles per GDELT poll |
+| `RWE_GDELT_QUERY` | `sourcelang:english` | GDELT DOC 2.0 query |
+| `RWE_SOURCE_PRIORITY` | `rss:100,newsapi:80,gdelt:60` | media-merge source priority |
+
+**Production gaps (multi-source):** live NewsAPI/GDELT polling requires outbound network to
+`newsapi.org` / `api.gdeltproject.org` (allowlist them) plus a NewsAPI key; the free NewsAPI tier is
+rate-limited, non-commercial, and truncates `content`; GDELT is keyless but rate-limited and returns
+sparse bodies. Cross-source dedup is **canonical-URL only** — the same story under a syndicated/AMP/
+redirect URL that canonicalizes differently lands as two rows. A declared image URL with no recognizable
+image extension (some NewsAPI/GDELT images) is stored as `null` rather than guessed (media.py detects by
+extension/MIME and never probes the network). Multi-source polls **serialize on a shared write lock** for
+SQLite safety; parallel fetch is a future optimization.
+
 **Retention (validation-aware).** To stop the catalog growing without bound, set a retention policy —
 after each poll cycle it prunes old/excess `FeedArticle` rows. It prunes **only** `feed_articles`
 (reads, dashboard history, analytics, health reports, and recommendation events are separate,
