@@ -102,21 +102,40 @@ def _media_priority(source_type) -> int:
     return _source_priority_map().get((source_type or "").lower(), 0)
 
 
-def _stored_image_priority(image_source, origin_source_type) -> int:
+# The image_source tags RSS/Atom ingestion emits (via ``media.pick_best_image``): the ``media:`` media
+# tags plus ``enclosure`` and the Atom image link. Kept here so precedence never relies on an implicit
+# "anything unrecognised must be RSS" assumption — it is an explicit, closed contract.
+_RSS_IMAGE_TAGS = frozenset({"enclosure", "atom:link"})
+
+
+def normalize_image_source(image_source: "str | None") -> str:
+    """Normalise a stored ``FeedArticle.image_source`` to the **ingestion source** that supplied the
+    image — one of ``"rss"`` | ``"newsapi"`` | ``"gdelt"`` | ``"unknown"``.
+
+    A non-RSS adapter tags its image with its own ``source_type`` (``newsapi`` / ``gdelt``); RSS/Atom
+    tags it with a media tag (``media:content`` / ``media:thumbnail`` / ``enclosure`` / ``atom:link``),
+    all of which map to ``"rss"``. Anything unrecognised (or absent) is ``"unknown"`` — it never
+    inherits RSS priority by accident. This is the single place the mapping lives; ``SOURCE_PRIORITY``
+    remains the single source of truth for the numbers."""
+    s = (image_source or "").strip().lower()
+    if s in ("rss", "newsapi", "gdelt"):
+        return s
+    if s.startswith("media:") or s in _RSS_IMAGE_TAGS:
+        return "rss"
+    return "unknown"
+
+
+def _stored_image_priority(image_source, origin_source_type=None) -> int:
     """Media priority of the source that supplied the **currently stored** image. ``image_source`` is
     refreshed every time the image is replaced, so it — not the article's origin ``source_type`` — is
     the correct precedence key (otherwise a GDELT-origin row whose image was upgraded to RSS could be
-    wrongly overwritten by NewsAPI). A non-RSS adapter tags the image with its ``source_type`` (e.g.
-    ``newsapi`` / ``gdelt``); RSS tags it with the winning media tag (``media:content`` / ``enclosure`` /
-    …), which maps to ``rss``. An untagged (legacy) image falls back to the row's origin. Precedence is
-    still derived dynamically from ``SOURCE_PRIORITY`` — no numeric priority is ever persisted."""
-    s = (image_source or "").strip().lower()
-    pri = _source_priority_map()
-    if s in pri:                    # an adapter tagged the image with its source_type
-        return pri[s]
-    if s:                           # any media tag -> an RSS-supplied image
-        return pri.get("rss", 0)
-    return _media_priority(origin_source_type)      # untagged legacy image -> the row's origin
+    wrongly overwritten by NewsAPI). The source is resolved by :func:`normalize_image_source`; an
+    unrecognised tag is ``"unknown"`` (priority 0), and a truly absent tag (legacy rows) falls back to
+    the row's origin. Precedence is always looked up in ``SOURCE_PRIORITY`` — nothing numeric is
+    persisted."""
+    if not (image_source or "").strip():
+        return _media_priority(origin_source_type)          # legacy: no image_source recorded
+    return _media_priority(normalize_image_source(image_source))
 
 
 def default_db_url() -> str:

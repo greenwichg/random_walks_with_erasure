@@ -182,6 +182,26 @@ def test_stored_image_priority_maps_source_correctly():
     assert p(None, None) == 0
 
 
+def test_normalize_image_source_contract():
+    """The hardened contract: every image_source maps to exactly one of rss/newsapi/gdelt/unknown."""
+    n = store_mod.normalize_image_source
+    for tag in ("media:content", "media:thumbnail", "media:group", "enclosure", "atom:link", "rss"):
+        assert n(tag) == "rss", tag                          # every RSS/Atom media tag -> rss
+    assert n("newsapi") == "newsapi" and n("gdelt") == "gdelt"
+    assert n(None) == "unknown" and n("") == "unknown" and n("some-cdn-source") == "unknown"
+    assert n("NewsAPI") == "newsapi" and n("MEDIA:CONTENT") == "rss"   # case-insensitive
+
+
+def test_unknown_image_source_never_gets_rss_priority():
+    """Hardening regression: a non-empty but unrecognised image_source must NOT inherit RSS priority
+    (previously any unrecognised tag fell through to rss=100)."""
+    assert store_mod.normalize_image_source("weird-cdn-tag") == "unknown"
+    assert store_mod._stored_image_priority("weird-cdn-tag", "gdelt") == 0        # unknown -> 0, not 100
+    # so a real source can still replace an unknown-sourced image, and a lower one still can't beat RSS
+    assert store_mod._media_priority("newsapi") > store_mod._stored_image_priority("weird-cdn-tag", None)
+    assert store_mod._media_priority("newsapi") < store_mod._stored_image_priority("media:content", None)
+
+
 # --------------------------------------------------------------------------- #
 # Quotas — truncate BEFORE ingest_entries
 # --------------------------------------------------------------------------- #
