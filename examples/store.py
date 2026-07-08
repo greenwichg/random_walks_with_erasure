@@ -102,6 +102,23 @@ def _media_priority(source_type) -> int:
     return _source_priority_map().get((source_type or "").lower(), 0)
 
 
+def _stored_image_priority(image_source, origin_source_type) -> int:
+    """Media priority of the source that supplied the **currently stored** image. ``image_source`` is
+    refreshed every time the image is replaced, so it — not the article's origin ``source_type`` — is
+    the correct precedence key (otherwise a GDELT-origin row whose image was upgraded to RSS could be
+    wrongly overwritten by NewsAPI). A non-RSS adapter tags the image with its ``source_type`` (e.g.
+    ``newsapi`` / ``gdelt``); RSS tags it with the winning media tag (``media:content`` / ``enclosure`` /
+    …), which maps to ``rss``. An untagged (legacy) image falls back to the row's origin. Precedence is
+    still derived dynamically from ``SOURCE_PRIORITY`` — no numeric priority is ever persisted."""
+    s = (image_source or "").strip().lower()
+    pri = _source_priority_map()
+    if s in pri:                    # an adapter tagged the image with its source_type
+        return pri[s]
+    if s:                           # any media tag -> an RSS-supplied image
+        return pri.get("rss", 0)
+    return _media_priority(origin_source_type)      # untagged legacy image -> the row's origin
+
+
 def default_db_url() -> str:
     """Repo-local SQLite file (``<repo>/data/ih_beta.db``) unless ``RWE_DB_URL`` overrides.
 
@@ -517,10 +534,12 @@ class Store:
         canonical URL arriving from a **different source** merges into the one row (never duplicates).
 
         Media merge is **source-priority-aware**: an incoming image replaces the stored one when the row
-        has none, or when the incoming ``source_type`` outranks the stored row's ``source_type`` (via
-        ``SOURCE_PRIORITY``); equal/lower priority keeps the existing image. Nothing extra is persisted —
-        precedence is derived from each row's ``source_type``. Callers that pass no ``source_type``
-        (priority 0) get the original backfill-when-empty behaviour, so existing callers are unchanged."""
+        has none, or when the incoming ``source_type`` outranks the source of the **currently stored
+        image** (via ``SOURCE_PRIORITY``); equal/lower priority keeps the existing image. The stored
+        image's source is read from ``image_source`` (refreshed on every replace), so an upgraded image
+        is compared against its real source, not the article's origin. Nothing extra is persisted.
+        Callers that pass no ``source_type`` (priority 0) get the original backfill-when-empty behaviour,
+        so existing callers are unchanged."""
         payload = _dumps_scored(scored)
         with self.session() as s:
             row = s.get(FeedArticle, canonical_url)
@@ -546,9 +565,11 @@ class Store:
             if external_id and not row.external_id:
                 row.external_id = external_id
             # Media merge by source priority: fill when empty, else the higher-priority source's image
-            # wins (equal/lower keeps the existing one). Precedence derived from each row's source_type.
+            # wins (equal/lower keeps the existing one). Precedence for the stored image comes from its
+            # own source (``image_source``, refreshed on replace) — NOT the article's origin source_type.
             if image and (not row.image
-                          or _media_priority(source_type) > _media_priority(row.source_type)):
+                          or _media_priority(source_type)
+                          > _stored_image_priority(row.image_source, row.source_type)):
                 row.image, row.image_width, row.image_height = image, image_width, image_height
                 row.image_mime, row.image_source, row.image_attribution = image_mime, image_source, image_attribution
             return False

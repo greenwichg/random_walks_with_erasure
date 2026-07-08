@@ -152,6 +152,36 @@ def test_source_priority_env_override(monkeypatch):
     assert store_mod._media_priority("gdelt") == 200 and store_mod._media_priority("rss") == 100
 
 
+def _ing_img(store, stype, image, image_source, *, url, scorer):
+    """Ingest one entry carrying a realistic per-source image tag (RSS uses a media tag, not 'rss')."""
+    e = ri.FeedEntry(url=url, title="t", published_at="2026-07-08T10:00:00Z", image=image,
+                     image_source=image_source, source_type=stype, source_provider=stype.upper(),
+                     external_id=url)
+    ri.ingest_entries([e], stype.upper(), f"{stype}://x", scorer, store, source_type=stype)
+
+
+def test_media_priority_uses_stored_image_source_not_article_origin(store):
+    """Regression: GDELT origin -> RSS upgrades the image -> NewsAPI must NOT replace it. Precedence for
+    the stored image comes from ``image_source`` (the RSS media tag maps to rss=100), not the row's
+    origin ``source_type`` (still gdelt=60)."""
+    url, sc = "https://cnn.com/seq", ri.make_scorer()
+    _ing_img(store, "gdelt", "https://img/gdelt.jpg", "gdelt", url=url, scorer=sc)
+    assert store.get_feed_article(url)["image"] == "https://img/gdelt.jpg"
+    _ing_img(store, "rss", "https://img/rss.jpg", "media:content", url=url, scorer=sc)   # real RSS tag
+    assert store.get_feed_article(url)["image"] == "https://img/rss.jpg"                 # RSS(100) > GDELT(60)
+    _ing_img(store, "newsapi", "https://img/newsapi.jpg", "newsapi", url=url, scorer=sc)
+    assert store.get_feed_article(url)["image"] == "https://img/rss.jpg"                 # RSS(100) > NewsAPI(80): KEPT
+    assert store.get_feed_article(url)["sourceType"] == "gdelt"                          # origin provenance unchanged
+
+
+def test_stored_image_priority_maps_source_correctly():
+    p = store_mod._stored_image_priority
+    assert p("media:content", "gdelt") == 100 and p("enclosure", None) == 100    # RSS media tags -> rss
+    assert p("newsapi", "gdelt") == 80 and p("gdelt", "rss") == 60               # adapter tags -> its source
+    assert p(None, "newsapi") == 80 and p("", "rss") == 100                      # untagged -> row origin
+    assert p(None, None) == 0
+
+
 # --------------------------------------------------------------------------- #
 # Quotas — truncate BEFORE ingest_entries
 # --------------------------------------------------------------------------- #
