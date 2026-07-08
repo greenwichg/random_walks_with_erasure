@@ -6,6 +6,8 @@ This module is not imported by the JSON API yet, so no other suite is affected.
 """
 
 import importlib.util
+import json
+import math
 import pathlib
 import sys
 
@@ -275,3 +277,129 @@ def test_user_settings_roundtrip_and_default(store):
     assert store.get_settings(u.id) == {"theme": "light"}
     # settings live in their own table — saving them never creates report/onboarding state
     assert store.latest_report(u.id) is None and store.get_onboarding(u.id) is None
+
+
+# --------------------------------------------------------------------------- #
+# scored-JSON sanitisation — non-finite floats must never reach SQLite
+#
+# Regression: scored reads carry NaN sentinels by design (confidence/register default to NaN;
+# an unknown outlet scores lean as NaN). json.dumps at its default allow_nan=True writes the
+# bare tokens NaN/Infinity/-Infinity, which are invalid JSON — SQLite's json_extract index
+# (on feed_articles.scored) then rejects the row with "malformed JSON" and ingestion of every
+# feed fails. The fix routes every scored write through _dumps_scored -> _json_safe, which maps
+# non-finite floats to null. These tests pin that invariant.
+# --------------------------------------------------------------------------- #
+def _no_json_constants(token):
+    """parse_constant hook: json.loads accepts NaN/Infinity by default, so raise on them to
+    assert the string is strictly RFC-8259-valid."""
+    raise ValueError(f"non-RFC JSON constant present: {token!r}")
+
+
+def test_json_safe_maps_non_finite_to_none():
+    js = store_mod._json_safe
+    assert js(float("nan")) is None
+    assert js(float("inf")) is None
+    assert js(float("-inf")) is None
+    # finite floats, ints, strings, bools and None pass through byte-for-byte
+    assert js(1.5) == 1.5 and js(-2.0) == -2.0 and js(0.0) == 0.0
+    assert js(7) == 7 and js("x") == "x" and js(None) is None
+    assert js(True) is True and js(False) is False        # bools are not coerced via the float branch
+
+
+def test_json_safe_recurses_nested_dicts_and_lists():
+    js = store_mod._json_safe
+    payload = {
+        "lean": float("nan"),
+        "confidence": float("-inf"),
+        "outlet": "NPR",
+        "finite": 1.25,
+        "emotion": {"fear": float("nan"), "anger": 0.5, "joy": float("inf")},   # nested dict
+        "vec": [1.0, float("nan"), -3.0, float("-inf")],                          # nested list
+        "nested": {"deep": [{"v": float("inf")}]},                               # dict->list->dict
+    }
+    out = js(payload)
+    assert out["lean"] is None and out["confidence"] is None
+    assert out["outlet"] == "NPR" and out["finite"] == 1.25          # non-float + finite untouched
+    assert out["emotion"] == {"fear": None, "anger": 0.5, "joy": None}
+    assert out["vec"] == [1.0, None, -3.0, None]
+    assert out["nested"] == {"deep": [{"v": None}]}
+    # the original object is not mutated
+    assert math.isnan(payload["lean"]) and math.isnan(payload["emotion"]["fear"])
+
+
+def test_dumps_scored_is_rfc_valid_json():
+    payload = store_mod._dumps_scored(
+        {"lean": float("nan"), "confidence": float("inf"), "emotion": {"fear": float("-inf")},
+         "outlet": "BBC", "score": 0.7})
+    assert "NaN" not in payload and "Infinity" not in payload      # no bare non-RFC tokens
+    # strict parse: raises if any NaN/Infinity constant slipped through
+    parsed = json.loads(payload, parse_constant=_no_json_constants)
+    assert parsed == {"lean": None, "confidence": None, "emotion": {"fear": None},
+                      "outlet": "BBC", "score": 0.7}
+
+
+def _sqlite_json_valid(store, table, column="scored"):
+    """Every stored `column` value, plus SQLite's own json_valid() verdict for each row."""
+    with store.session() as s:
+        rows = s.execute(store_mod.text(
+            f"SELECT {column}, json_valid({column}) FROM {table}")).all()
+    return rows
+
+
+def test_feed_article_scored_is_json_valid_with_nan(store):
+    """The exact failing path: a FeedArticle whose scored dict carries NaN (as every offline
+    scoring does) must persist and read back as valid JSON — json_valid(scored) == 1."""
+    scored = {"article_id": "https://npr.example/a", "outlet": "NPR", "lean": float("nan"),
+              "confidence": float("nan"), "register": float("nan"), "category": "Politics",
+              "emotion": {"fear": float("nan")}}
+    created = store.upsert_feed_article(
+        canonical_url="https://npr.example/a", url="https://npr.example/a", publisher="NPR",
+        source_publisher="NPR", title="Headline", description="", body=None,
+        published_at="2026-07-01T00:00:00Z", source_feed="f", scored=scored)
+    assert created is True
+    rows = _sqlite_json_valid(store, "feed_articles")
+    assert len(rows) == 1
+    stored_text, valid = rows[0]
+    assert valid == 1                                              # SQLite accepts it as JSON
+    assert "NaN" not in stored_text                                # the invalid token is gone
+    # read-back: NaN sentinels surface as None; the outlet/category are intact
+    back = store.get_feed_article("https://npr.example/a")["scored"]
+    assert back["lean"] is None and back["confidence"] is None and back["emotion"]["fear"] is None
+    assert back["outlet"] == "NPR" and back["category"] == "Politics"
+
+
+def test_feed_article_finite_scored_unchanged(store):
+    """A fully-finite scored dict is stored and read back with its values intact (the fix only
+    touches non-finite floats)."""
+    scored = {"article_id": "https://wsj.example/b", "outlet": "WSJ", "lean": 0.9,
+              "confidence": 0.83, "category": "Business"}
+    store.upsert_feed_article(
+        canonical_url="https://wsj.example/b", url="https://wsj.example/b", publisher="WSJ",
+        source_publisher="WSJ", title="Markets", description="", body=None,
+        published_at="2026-07-01T00:00:00Z", source_feed="f", scored=scored)
+    _, valid = _sqlite_json_valid(store, "feed_articles")[0]
+    assert valid == 1
+    back = store.get_feed_article("https://wsj.example/b")["scored"]
+    assert back["lean"] == 0.9 and back["confidence"] == 0.83 and back["outlet"] == "WSJ"
+
+
+def test_scored_cache_stores_valid_json(store):
+    """save_scored_article (the scoring cache) also sanitises: valid JSON, NaN -> None on read."""
+    store.save_scored_article("https://cnn.example/c",
+                              {"outlet": "CNN", "lean": float("nan"), "confidence": 0.4})
+    _, valid = _sqlite_json_valid(store, "scored_articles")[0]
+    assert valid == 1
+    got = store.get_scored_article("https://cnn.example/c")
+    assert got["lean"] is None and got["confidence"] == 0.4 and got["outlet"] == "CNN"
+
+
+def test_reads_store_valid_json(store):
+    """add_read persists reader scored payloads as valid JSON too (single serialisation path)."""
+    u = store.upsert_user_by_identity("google", "san-reads")
+    store.add_read(u.id, "https://fox.example/d",
+                   {"article_id": "https://fox.example/d", "outlet": "Fox News",
+                    "lean": float("inf"), "confidence": float("nan")}, "2026-07-01T00:00:00Z")
+    _, valid = _sqlite_json_valid(store, "reads")[0]
+    assert valid == 1
+    back = store.get_reads(u.id)[0]
+    assert back["lean"] is None and back["confidence"] is None and back["outlet"] == "Fox News"

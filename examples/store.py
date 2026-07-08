@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import secrets
@@ -44,6 +45,36 @@ from sqlalchemy.pool import StaticPool
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _json_safe(obj):
+    """Recursively replace non-finite floats (``NaN`` / ``Infinity`` / ``-Infinity``) with
+    ``None`` so the value serialises to RFC-8259-valid JSON. Recurses ``dict`` values and
+    ``list`` items; every finite number and every non-float value passes through unchanged.
+
+    Scored reads carry ``NaN`` sentinels by design: ``confidence`` / ``register`` default to
+    ``NaN`` when a read isn't enriched, and an outlet the registry doesn't know scores ``lean``
+    as ``NaN`` (see ``ingest``/``augmented_corpus``). Those mean "unknown", and every consumer
+    already treats a missing value and ``NaN`` identically (``discover._num`` falls back to its
+    default; ``feed_source._bias_label`` drops the row on either). But ``json.dumps`` at its
+    default ``allow_nan=True`` emits the bare tokens ``NaN`` / ``Infinity`` / ``-Infinity``,
+    which are not valid JSON and which SQLite's ``json_extract`` / ``json_valid`` reject as
+    "malformed JSON". Mapping them to ``null`` keeps the stored document valid while preserving
+    that "unknown" meaning — it changes neither scoring nor recommendation behaviour."""
+    if isinstance(obj, float):
+        return obj if math.isfinite(obj) else None
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_json_safe(v) for v in obj]
+    return obj
+
+
+def _dumps_scored(scored) -> str:
+    """The single serialisation path for scored JSON. Sanitises non-finite floats, then dumps,
+    so no invalid-JSON document can ever be persisted — ``json_valid(scored) = 1`` holds for
+    every stored row. All ``scored`` writes in this module go through here."""
+    return json.dumps(_json_safe(scored))
 
 
 def default_db_url() -> str:
@@ -432,7 +463,7 @@ class Store:
 
     def save_scored_article(self, url: str, scored: dict) -> None:
         """Cache (upsert) the scoring for a canonical URL."""
-        payload = json.dumps(scored)
+        payload = _dumps_scored(scored)
         with self.session() as s:
             row = s.get(ScoredArticle, url)
             if row is None:
@@ -452,7 +483,7 @@ class Store:
         ``True`` when newly created, ``False`` on a re-poll. A re-poll refreshes ``fetched_at`` and
         backfills any field that was empty before (media included, so an image that a feed adds later is
         picked up), but never rewrites first-seen metadata."""
-        payload = json.dumps(scored)
+        payload = _dumps_scored(scored)
         with self.session() as s:
             row = s.get(FeedArticle, canonical_url)
             if row is None:
@@ -746,7 +777,7 @@ class Store:
             if exists is not None:
                 return False
             s.add(Read(user_id=user_id, canonical_url=canonical_url,
-                       scored=json.dumps(scored), observed_at=observed_at))
+                       scored=_dumps_scored(scored), observed_at=observed_at))
             return True
 
     def get_reads(self, user_id: int) -> list:
