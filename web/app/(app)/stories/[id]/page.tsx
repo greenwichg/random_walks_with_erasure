@@ -7,6 +7,7 @@ import { useStory } from "@/hooks/use-data";
 import { PageContainer } from "@/components/layout/page-container";
 import { SpectrumBar } from "@/components/shared/spectrum-bar";
 import { LeanBadge } from "@/components/shared/article-badges";
+import { ArticleImage } from "@/components/shared/article-image";
 import { ReadArticleButton } from "@/components/shared/read-article-button";
 import { EmptyState, ErrorState } from "@/components/shared/states";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -75,6 +76,7 @@ export default function StoryDetailPage() {
       {back}
 
       <div className="rounded-lg border bg-card p-6 shadow-soft">
+        <ArticleImage src={story.image} alt={story.title} className="mb-4" aspect="aspect-[21/9]" />
         <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-medium text-primary">
           {story.topic}
         </span>

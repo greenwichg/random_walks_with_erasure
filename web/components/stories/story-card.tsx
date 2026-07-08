@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import { Newspaper, ArrowRight, EyeOff } from "lucide-react";
 import type { Story } from "@/types/domain";
 import { SpectrumBar } from "@/components/shared/spectrum-bar";
+import { ArticleImage } from "@/components/shared/article-image";
 import { LEAN_META } from "@/lib/metrics";
 import { compact, timeAgo, cn } from "@/lib/utils";
 
@@ -20,6 +21,8 @@ export function StoryCard({ story, index = 0 }: { story: Story; index?: number }
         href={`/stories/${story.id}`}
         className="group flex h-full flex-col rounded-lg border bg-card p-5 shadow-soft transition-all hover:-translate-y-0.5 hover:shadow-card"
       >
+        <ArticleImage src={story.image} alt={story.title} className="mb-3" />
+
         <div className="mb-2 flex items-center justify-between gap-2">
           <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-medium text-primary">
             {story.topic}

@@ -230,6 +230,13 @@ class FeedArticle(Base):
     published_at: Mapped[Optional[str]] = mapped_column(String(64), default=None)  # article pubDate (ISO)
     source_feed: Mapped[str] = mapped_column(String(2048), default="")  # feed URL it came from
     scored: Mapped[str] = mapped_column(Text)                          # JSON of the ScoredRead
+    # Media metadata (additive; RSS/Atom only, canonical URL, no binary storage). All None when absent.
+    image: Mapped[Optional[str]] = mapped_column(String(2048), default=None)
+    image_width: Mapped[Optional[int]] = mapped_column(default=None)
+    image_height: Mapped[Optional[int]] = mapped_column(default=None)
+    image_mime: Mapped[Optional[str]] = mapped_column(String(128), default=None)
+    image_source: Mapped[Optional[str]] = mapped_column(String(255), default=None)   # winning media tag
+    image_attribution: Mapped[Optional[str]] = mapped_column(String(512), default=None)
     fetched_at: Mapped[datetime] = mapped_column(default=_utcnow, index=True)
     created_at: Mapped[datetime] = mapped_column(default=_utcnow)
 
@@ -277,6 +284,7 @@ class Store:
         Base.metadata.create_all(self.engine)
         self._Session = sessionmaker(bind=self.engine, expire_on_commit=False,
                                      future=True)
+        self._ensure_media_columns()
         self._ensure_search_indexes()
 
     @contextmanager
@@ -436,10 +444,14 @@ class Store:
     def upsert_feed_article(self, *, canonical_url: str, url: str, publisher: str,
                             source_publisher: "str | None", title: str, description: str,
                             body: "str | None", published_at: "str | None", source_feed: str,
-                            scored: dict) -> bool:
+                            scored: dict, image: "str | None" = None,
+                            image_width: "int | None" = None, image_height: "int | None" = None,
+                            image_mime: "str | None" = None, image_source: "str | None" = None,
+                            image_attribution: "str | None" = None) -> bool:
         """Insert a catalog article, or refresh an existing one (dedup by ``canonical_url``). Returns
         ``True`` when newly created, ``False`` on a re-poll. A re-poll refreshes ``fetched_at`` and
-        backfills any field that was empty before, but never rewrites first-seen metadata."""
+        backfills any field that was empty before (media included, so an image that a feed adds later is
+        picked up), but never rewrites first-seen metadata."""
         payload = json.dumps(scored)
         with self.session() as s:
             row = s.get(FeedArticle, canonical_url)
@@ -447,7 +459,10 @@ class Store:
                 s.add(FeedArticle(
                     canonical_url=canonical_url, url=url, publisher=publisher,
                     source_publisher=source_publisher, title=title, description=description,
-                    body=body, published_at=published_at, source_feed=source_feed, scored=payload))
+                    body=body, published_at=published_at, source_feed=source_feed, scored=payload,
+                    image=image, image_width=image_width, image_height=image_height,
+                    image_mime=image_mime, image_source=image_source,
+                    image_attribution=image_attribution))
                 return True
             row.fetched_at = _utcnow()
             if title and not row.title:
@@ -458,6 +473,9 @@ class Store:
                 row.body = body
             if published_at and not row.published_at:
                 row.published_at = published_at
+            if image and not row.image:                 # backfill media if a later poll supplies it
+                row.image, row.image_width, row.image_height = image, image_width, image_height
+                row.image_mime, row.image_source, row.image_attribution = image_mime, image_source, image_attribution
             return False
 
     def get_feed_article(self, canonical_url: str) -> "dict | None":
@@ -502,7 +520,44 @@ class Store:
                 "sourcePublisher": r.source_publisher, "title": r.title,
                 "description": r.description, "body": r.body, "publishedAt": r.published_at,
                 "sourceFeed": r.source_feed, "scored": dict(json.loads(r.scored)),
+                "image": r.image, "imageWidth": r.image_width, "imageHeight": r.image_height,
+                "imageMimeType": r.image_mime, "imageSource": r.image_source,
+                "imageAttribution": r.image_attribution,
                 "fetchedAt": r.fetched_at.isoformat() if r.fetched_at else None}
+
+    def feed_article_media(self, canonical_urls) -> dict:
+        """Media metadata for a set of catalog articles, keyed by canonical URL — the batched lookup the
+        recommendation layer uses to enrich recs (whose corpus carries no media) at serialization time.
+        Only rows that carry an image are returned."""
+        urls = [u for u in dict.fromkeys(canonical_urls) if u]
+        if not urls:
+            return {}
+        out: dict = {}
+        with self.session() as s:
+            for i in range(0, len(urls), 500):
+                rows = s.scalars(select(FeedArticle)
+                                 .where(FeedArticle.canonical_url.in_(urls[i:i + 500]))).all()
+                for r in rows:
+                    if r.image:
+                        out[r.canonical_url] = {
+                            "image": r.image, "imageWidth": r.image_width, "imageHeight": r.image_height,
+                            "imageMimeType": r.image_mime, "imageSource": r.image_source,
+                            "imageAttribution": r.image_attribution}
+        return out
+
+    def _ensure_media_columns(self) -> None:
+        """Additive, idempotent media columns on ``feed_articles`` — upgrades pre-existing DBs in place
+        (``create_all`` only creates NEW tables). SQLite ``ADD COLUMN`` is cheap; a duplicate-column
+        error (already present, e.g. a fresh DB) is ignored, so this is safe on every startup."""
+        cols = [("image", "VARCHAR(2048)"), ("image_width", "INTEGER"), ("image_height", "INTEGER"),
+                ("image_mime", "VARCHAR(128)"), ("image_source", "VARCHAR(255)"),
+                ("image_attribution", "VARCHAR(512)")]
+        for name, decl in cols:
+            try:
+                with self.session() as s:
+                    s.execute(text(f"ALTER TABLE feed_articles ADD COLUMN {name} {decl}"))
+            except Exception:
+                pass    # already exists (fresh DB) or a non-sqlite backend — nothing to do
 
     # -- catalog search (live, index-backed; never touches the recommender) ------------------------
     def _ensure_search_indexes(self) -> None:

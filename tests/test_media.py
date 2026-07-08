@@ -1,0 +1,146 @@
+"""Tests for media enrichment (Commit 9) — media.py selection + RSS extraction + storage survival.
+
+Proves image selection is centralised + deterministic, RSS/Atom media is parsed (never downloaded),
+FeedArticle stores media metadata, the Story hero is picked by priority, publisher logos derive from
+the publisher's own domain, and media survives re-polling + retention. Feeds without images still work.
+"""
+
+import pathlib
+import sys
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "examples"))
+import media                 # noqa: E402
+import rss_ingest as ri      # noqa: E402
+import store as store_mod    # noqa: E402
+import discover              # noqa: E402
+
+
+# --------------------------------------------------------------------------- #
+# media.pick_best_image — choose among a feed item's media tags
+# --------------------------------------------------------------------------- #
+def test_pick_best_image_largest_wins():
+    best = media.pick_best_image([
+        {"url": "https://x.example/small.jpg", "width": 150, "height": 100, "mime": "image/jpeg", "source": "media:thumbnail"},
+        {"url": "https://x.example/big.jpg", "width": 1200, "height": 800, "mime": "image/jpeg", "source": "media:content"},
+    ])
+    assert best["url"] == "https://x.example/big.jpg" and best["width"] == 1200
+
+
+def test_pick_best_image_rejects_audio_and_relative():
+    assert media.pick_best_image([{"url": "https://x.example/a.mp3", "mime": "audio/mpeg", "source": "enclosure"}]) is None
+    assert media.pick_best_image([{"url": "/relative/x.jpg", "source": "enclosure"}]) is None
+    assert media.pick_best_image([]) is None
+
+
+def test_pick_best_image_by_extension_when_no_mime():
+    best = media.pick_best_image([{"url": "https://x.example/pic.png", "source": "enclosure"}])
+    assert best and best["url"].endswith("pic.png")
+
+
+def test_pick_article_media_and_guard():
+    row = {"image": "https://x.example/a.jpg", "imageWidth": 800, "imageHeight": 600,
+           "imageMimeType": "image/jpeg", "imageSource": "media:content", "imageAttribution": "NPR"}
+    m = media.pick_article_media(row)
+    assert m["image"] == "https://x.example/a.jpg" and m["imageWidth"] == 800 and m["imageAttribution"] == "NPR"
+    assert media.pick_article_media({"image": None})["image"] is None
+    assert media.pick_article_media({"image": "ftp://x/a.jpg"})["image"] is None    # non-http guard
+
+
+def test_pick_story_hero_priority():
+    rep = {"image": "https://x.example/rep.jpg", "imageWidth": 400, "imageHeight": 300, "publishedAt": "2026-07-01"}
+    big = {"image": "https://x.example/big.jpg", "imageWidth": 2000, "imageHeight": 1500, "publishedAt": "2026-07-02"}
+    # representative wins even though `big` is larger
+    assert media.pick_story_hero([rep, big], representative=rep)["image"] == "https://x.example/rep.jpg"
+    # when the representative has no image, the highest-quality one wins
+    rep0 = {"image": None, "publishedAt": "2026-07-01"}
+    assert media.pick_story_hero([rep0, big], representative=rep0)["image"] == "https://x.example/big.jpg"
+    # none when no article carries an image
+    assert media.pick_story_hero([{"image": None}, {"image": None}]) is None
+
+
+def test_pick_best_logo_favicon_from_domain():
+    logo = media.pick_best_logo("Fox News", "https://www.foxnews.com/politics/x")
+    assert logo["publisherLogo"] == "https://www.foxnews.com/favicon.ico" and logo["publisherLogoSource"] == "favicon"
+    assert media.pick_best_logo("Unknown", None)["publisherLogo"] is None
+
+
+# --------------------------------------------------------------------------- #
+# RSS/Atom media extraction (parse only — never downloads)
+# --------------------------------------------------------------------------- #
+def test_rss_media_extraction_selects_best_and_rejects_audio():
+    rss = (b"<?xml version='1.0'?><rss version='2.0' xmlns:media='http://search.yahoo.com/mrss/'>"
+           b"<channel><title>C</title><item><title>T</title><link>https://n.example/1</link>"
+           b"<description>d</description><pubDate>Wed, 02 Jul 2026 12:00:00 GMT</pubDate>"
+           b"<media:content url='https://n.example/big.jpg' type='image/jpeg' width='1200' height='800' medium='image'/>"
+           b"<media:thumbnail url='https://n.example/small.jpg' width='150' height='100'/>"
+           b"<enclosure url='https://n.example/audio.mp3' type='audio/mpeg'/></item></channel></rss>")
+    _, entries = ri.parse_feed(rss)
+    e = entries[0]
+    assert e.image == "https://n.example/big.jpg" and e.image_width == 1200 and e.image_source == "media:content"
+
+
+def test_atom_image_link_extracted():
+    atom = (b"<feed xmlns='http://www.w3.org/2005/Atom'><title>C</title><entry><title>T</title>"
+            b"<link rel='alternate' href='https://a.example/1'/>"
+            b"<link rel='enclosure' type='image/jpeg' href='https://a.example/hero.jpg'/>"
+            b"<published>2026-07-02T12:00:00Z</published></entry></feed>")
+    _, entries = ri.parse_feed(atom)
+    assert entries[0].url == "https://a.example/1" and entries[0].image == "https://a.example/hero.jpg"
+
+
+def test_feed_without_images_still_parses():
+    rss = (b"<?xml version='1.0'?><rss version='2.0'><channel><title>C</title>"
+           b"<item><title>T</title><link>https://n.example/1</link><description>d</description></item>"
+           b"</channel></rss>")
+    _, entries = ri.parse_feed(rss)
+    assert len(entries) == 1 and entries[0].image is None      # graceful: no media, still an entry
+
+
+# --------------------------------------------------------------------------- #
+# Storage: media persists, survives re-poll + retention, and serialises through
+# --------------------------------------------------------------------------- #
+def _put(st, cu, *, image=None, w=None, h=None, mime=None, pub="NPR"):
+    st.upsert_feed_article(canonical_url=cu, url=cu, publisher=pub, source_publisher=pub, title="t",
+                           description="", body=None, published_at="2026-07-05T10:00:00+00:00",
+                           source_feed="f", scored={"article_id": cu, "outlet": pub, "lean": -1.0},
+                           image=image, image_width=w, image_height=h, image_mime=mime,
+                           image_source="media:content" if image else None,
+                           image_attribution=pub if image else None)
+
+
+def test_media_stored_and_serialised_with_logo():
+    st = store_mod.Store("sqlite://")
+    _put(st, "https://foxnews.com/a", image="https://foxnews.com/i.jpg", w=1000, h=700,
+         mime="image/jpeg", pub="Fox News")
+    row = st.get_feed_article("https://foxnews.com/a")
+    assert row["image"] == "https://foxnews.com/i.jpg" and row["imageWidth"] == 1000
+    a = discover.feed_article_to_article(st.list_feed_articles(limit=1)[0])
+    assert a["image"] == "https://foxnews.com/i.jpg" and a["imageWidth"] == 1000
+    assert a["publisherLogo"] == "https://foxnews.com/favicon.ico"
+
+
+def test_media_survives_repoll_and_backfills():
+    st = store_mod.Store("sqlite://")
+    _put(st, "https://n.example/a")                                   # first poll: no image
+    _put(st, "https://n.example/a", image="https://n.example/late.jpg", w=800, h=600)   # later poll adds one
+    assert st.get_feed_article("https://n.example/a")["image"] == "https://n.example/late.jpg"   # backfilled
+    _put(st, "https://n.example/a")                                   # a later image-less poll doesn't wipe it
+    assert st.get_feed_article("https://n.example/a")["image"] == "https://n.example/late.jpg"
+
+
+def test_media_survives_retention_and_batched_lookup():
+    st = store_mod.Store("sqlite://")
+    _put(st, "https://n.example/keep", image="https://n.example/k.jpg", w=800, h=600)
+    _put(st, "https://n.example/drop")                                # no image
+    st.delete_feed_articles(["https://n.example/drop"])              # retention removes the other row
+    assert st.count_feed_articles() == 1
+    assert st.get_feed_article("https://n.example/keep")["image"] == "https://n.example/k.jpg"
+    mm = st.feed_article_media(["https://n.example/keep", "https://n.example/missing"])
+    assert mm["https://n.example/keep"]["image"] == "https://n.example/k.jpg" and "https://n.example/missing" not in mm
+
+
+def test_media_imports_no_recommendation_algorithm():
+    for banned in ("health_report", "rwe", "simulate_users", "personalize", "narrate_report",
+                   "corpus_refresh", "api_server", "story_service"):
+        assert not hasattr(media, banned), f"media must not import {banned}"

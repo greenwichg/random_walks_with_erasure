@@ -187,6 +187,16 @@ export interface Article {
   register: Register;
   publishedAt: string;
   readingMinutes: number;
+  // Media + publisher logo (Commit 9; RSS/Atom media only). Absent → the card falls back to text-only.
+  image?: string;
+  imageWidth?: number;
+  imageHeight?: number;
+  imageMimeType?: string;
+  imageSource?: string;
+  imageAttribution?: string;
+  publisherLogo?: string;
+  publisherLogoDark?: string;
+  publisherLogoSource?: string;
 }
 
 /** A recommendation = an article + why RWE surfaced it + its health impact. */
@@ -243,8 +253,11 @@ export interface Story {
   id: string;
   title: string;
   summary: string;
-  /** Nullable image contract — absent until Commit 8 (AI summarization + image enrichment). */
+  /** Nullable hero image contract — selected from the cluster's RSS media (Commit 9). */
   image?: string | null;
+  imageWidth?: number | null;
+  imageHeight?: number | null;
+  imageMimeType?: string | null;
   imageSource?: string | null;
   imageAttribution?: string | null;
   topic: string;

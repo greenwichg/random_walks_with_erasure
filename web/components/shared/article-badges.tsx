@@ -1,5 +1,6 @@
 "use client";
 
+import * as React from "react";
 import { FileText, MessageSquareQuote, Gauge, Building2 } from "lucide-react";
 import type { Article, EmotionShare, Lean, LeanBucket, Register } from "@/types/domain";
 import { Badge } from "@/components/ui/badge";
@@ -17,13 +18,28 @@ export function LeanBadge({ lean, bucket, className }: { lean: Lean; bucket?: Le
   );
 }
 
-/** Publisher with its own house-lean dot. */
-export function PublisherBadge({ name, lean }: { name: string; lean?: Lean }) {
+/** Publisher with its own house-lean dot, and an optional logo (falls back to the icon). */
+export function PublisherBadge({ name, lean, logo }: { name: string; lean?: Lean; logo?: string }) {
   const bucket = lean === undefined ? null : leanBucket(lean);
   const color = bucket ? `hsl(var(--${bucket}))` : "hsl(var(--muted-foreground))";
+  const [logoOk, setLogoOk] = React.useState(true);
+  React.useEffect(() => setLogoOk(true), [logo]);
   return (
     <span className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-      <Building2 className="h-3.5 w-3.5" />
+      {logo && logoOk ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={logo}
+          alt=""
+          width={14}
+          height={14}
+          loading="lazy"
+          onError={() => setLogoOk(false)}
+          className="h-3.5 w-3.5 rounded-sm object-contain"
+        />
+      ) : (
+        <Building2 className="h-3.5 w-3.5" />
+      )}
       {name}
       {bucket && <span className="h-1.5 w-1.5 rounded-full" style={{ background: color }} />}
     </span>

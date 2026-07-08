@@ -25,6 +25,7 @@ from typing import Optional
 
 import clustering                 # the deterministic union-find Jaccard primitive (algorithm only)
 import discover                   # feed_article_to_article — the shared Article serializer (Read flow)
+import media                      # centralised hero-image selection (additive; no clustering change)
 from pagination import OffsetPagination
 
 SORTS = ("top", "latest", "oldest", "publishers")
@@ -94,6 +95,9 @@ def _build_story(members: list) -> dict:
     dist = _distribution(members)
     publishers = sorted({m["publisher"] for m in members})
     total = len(members)
+    # Optional hero image (additive; centralised in media.py): representative → best → most recent →
+    # None. This is the only media touch here — the clustering/filter/sort/pagination logic is unchanged.
+    hero = media.pick_story_hero(members, representative=rep) or {}
     timeline = []
     if earliest:
         timeline.append({"date": earliest, "label": "First report"})
@@ -103,10 +107,13 @@ def _build_story(members: list) -> dict:
         "id": _story_id(members),
         "title": rep["headline"],
         "summary": rep["description"] or f"{len(publishers)} publishers covering {rep['topic'].lower()}.",
-        # Future-ready image contract (nullable) — Commit 8 populates without an API change.
-        "image": None,
-        "imageSource": None,
-        "imageAttribution": None,
+        # Hero image contract (nullable) — selected from the cluster's articles' RSS media.
+        "image": hero.get("image"),
+        "imageWidth": hero.get("imageWidth"),
+        "imageHeight": hero.get("imageHeight"),
+        "imageMimeType": hero.get("imageMimeType"),
+        "imageSource": hero.get("imageSource"),
+        "imageAttribution": hero.get("imageAttribution"),
         "topic": _mode_topic(members),
         "updatedAt": latest or rep["publishedAt"],
         "totalCoverage": total,                 # article count

@@ -17,6 +17,7 @@ import math
 from typing import Optional
 
 import api_server as engine   # reuse the serializer helpers _prettify / _lean_bucket (no algorithm)
+import media                  # centralised image + publisher-logo selection (additive, presentation-only)
 
 # EmotionShare shape the web `Article` expects; a neutral default when the feed carries no emotion.
 _NEUTRAL_EMOTION = {"fear": 0.0, "outrage": 0.0, "analysis": 0.0, "positive": 0.0, "neutral": 1.0}
@@ -67,7 +68,7 @@ def feed_article_to_article(row: dict) -> dict:
     emo = _emotion(scored)
     topic = scored.get("category") or ""
     url = _absolute_url(row.get("url") or row.get("canonicalUrl"))
-    return {
+    art = {
         "id": row.get("canonicalUrl") or url,
         "headline": row.get("title") or scored.get("title") or "(untitled)",
         "publisher": engine._prettify(outlet),
@@ -84,6 +85,10 @@ def feed_article_to_article(row: dict) -> dict:
         "publishedAt": row.get("publishedAt") or row.get("fetchedAt") or "",
         "readingMinutes": _reading_minutes(row),
     }
+    # Additive media + publisher logo (centralised in media.py; all-null when the feed carried no image).
+    art.update(media.pick_article_media(row))
+    art.update(media.pick_best_logo(art["publisher"], url))
+    return art
 
 
 # --------------------------------------------------------------------------- #

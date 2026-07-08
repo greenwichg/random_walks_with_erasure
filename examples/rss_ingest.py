@@ -40,6 +40,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # import siblin
 import ingest
 import enrich
 import store
+import media                     # image SELECTION (pick_best_image) — metadata only, never downloads
 
 _USER_AGENT = "InformationHealth-RSS/0.1 (+https://code.claude.com)"
 
@@ -52,6 +53,12 @@ class FeedEntry:
     description: str = ""
     body: Optional[str] = None
     published_at: Optional[str] = None
+    # Media metadata (additive; RSS/Atom only — no download, no Open Graph). All None when absent.
+    image: Optional[str] = None
+    image_width: Optional[int] = None
+    image_height: Optional[int] = None
+    image_mime: Optional[str] = None
+    image_source: Optional[str] = None      # the winning media tag (media:content / enclosure / …)
 
 
 # --------------------------------------------------------------------------- #
@@ -93,6 +100,48 @@ def _to_iso(value: str) -> Optional[str]:
         return None
 
 
+def _media_candidates(el, is_atom: bool) -> list:
+    """Collect image media candidates from a feed item/entry: ``media:content`` / ``media:thumbnail``
+    (both map to local names ``content``/``thumbnail`` — disambiguated by the ``url`` attribute, which
+    Atom's own ``<content>`` lacks), ``enclosure``, and Atom ``<link rel="enclosure|image">``.
+    Namespace-agnostic; metadata only, no download."""
+    out = []
+    for t in _children(el, "content") + _children(el, "thumbnail"):
+        url = (t.get("url") or "").strip()
+        if not url:
+            continue
+        medium = (t.get("medium") or "").lower()
+        if medium and medium != "image":                # skip media:content medium="video"/"audio"
+            continue
+        out.append({"url": url, "width": t.get("width"), "height": t.get("height"),
+                    "mime": t.get("type"),
+                    "source": "media:thumbnail" if _local(t.tag) == "thumbnail" else "media:content"})
+    for enc in _children(el, "enclosure"):
+        url = (enc.get("url") or "").strip()
+        if url:
+            out.append({"url": url, "width": None, "height": None,
+                        "mime": enc.get("type"), "source": "enclosure"})
+    if is_atom:
+        for link in _children(el, "link"):
+            if link.get("rel") in ("enclosure", "image") and (link.get("href") or "").strip():
+                out.append({"url": link.get("href").strip(), "width": None, "height": None,
+                            "mime": link.get("type"), "source": "atom:link"})
+    return out
+
+
+def _apply_media(entry: FeedEntry, el, is_atom: bool) -> FeedEntry:
+    """Select the best image for this entry from its media tags and attach the metadata (or leave the
+    entry image-less). Selection is centralised in :func:`media.pick_best_image`."""
+    best = media.pick_best_image(_media_candidates(el, is_atom))
+    if best:
+        entry.image = best["url"]
+        entry.image_width = best.get("width")
+        entry.image_height = best.get("height")
+        entry.image_mime = best.get("mime")
+        entry.image_source = best.get("source")
+    return entry
+
+
 def _rss_item(item) -> Optional[FeedEntry]:
     try:
         link = _text(_first(item, "link"))
@@ -102,12 +151,12 @@ def _rss_item(item) -> Optional[FeedEntry]:
                 link = _text(guid)
         pub = (_text(_first(item, "pubdate")) or _text(_first(item, "date"))
                or _text(_first(item, "published")))
-        return FeedEntry(
+        return _apply_media(FeedEntry(
             url=link,
             title=_text(_first(item, "title")),
             description=_text(_first(item, "description")) or _text(_first(item, "summary")),
             body=_text(_first(item, "encoded")) or None,   # content:encoded -> local name "encoded"
-            published_at=_to_iso(pub))
+            published_at=_to_iso(pub)), item, is_atom=False)
     except Exception:
         return None
 
@@ -125,12 +174,13 @@ def _atom_link(entry) -> str:
 
 def _atom_entry(entry) -> Optional[FeedEntry]:
     try:
-        return FeedEntry(
+        return _apply_media(FeedEntry(
             url=_atom_link(entry),
             title=_text(_first(entry, "title")),
             description=_text(_first(entry, "summary")) or _text(_first(entry, "content")),
             body=_text(_first(entry, "content")) or None,
-            published_at=_to_iso(_text(_first(entry, "published")) or _text(_first(entry, "updated"))))
+            published_at=_to_iso(_text(_first(entry, "published")) or _text(_first(entry, "updated")))),
+            entry, is_atom=True)
     except Exception:
         return None
 
@@ -223,7 +273,10 @@ def ingest_entries(entries, source_publisher, source_feed, scorer, store_) -> di
             canonical_url=scored.article_id, url=url, publisher=scored.outlet,
             source_publisher=source_publisher, title=e.title or scored.title,
             description=e.description or "", body=e.body, published_at=e.published_at,
-            source_feed=source_feed, scored=dataclasses.asdict(scored))
+            source_feed=source_feed, scored=dataclasses.asdict(scored),
+            image=e.image, image_width=e.image_width, image_height=e.image_height,
+            image_mime=e.image_mime, image_source=e.image_source,
+            image_attribution=(source_publisher or scored.outlet or None))
         stats["new" if created else "duplicates"] += 1
     return stats
 

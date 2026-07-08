@@ -3,6 +3,7 @@
 import { motion } from "framer-motion";
 import type { Article } from "@/types/domain";
 import { PublisherBadge, LeanBadge } from "@/components/shared/article-badges";
+import { ArticleImage } from "@/components/shared/article-image";
 import { ReadArticleButton } from "@/components/shared/read-article-button";
 import { timeAgo } from "@/lib/utils";
 
@@ -20,8 +21,10 @@ export function DiscoverCard({ article, index = 0 }: { article: Article; index?:
       transition={{ delay: Math.min(index * 0.04, 0.4), duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
       className="flex flex-col rounded-lg border bg-card p-5 shadow-soft transition-shadow hover:shadow-card"
     >
+      <ArticleImage src={article.image} alt={article.headline} className="mb-3" />
+
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <PublisherBadge name={article.publisher} lean={article.publisherLean} />
+        <PublisherBadge name={article.publisher} lean={article.publisherLean} logo={article.publisherLogo} />
         <span className="text-xs text-muted-foreground">·</span>
         <span className="text-xs font-medium text-muted-foreground">{article.topic}</span>
         <span className="text-xs text-muted-foreground">·</span>

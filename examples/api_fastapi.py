@@ -46,6 +46,7 @@ import corpus_refresh         # atomic hot activation of a validated corpus (bac
 import discover               # Discover: product-layer exploration over the FeedArticle catalog
 import search                 # live full-text + faceted search over the FeedArticle catalog (Commit 6)
 import story_service          # the single owner of Story construction (Discover + Stories consume it)
+import media                  # centralised media + publisher-logo selection (rec enrichment, Commit 9)
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
@@ -568,6 +569,17 @@ class ArticleModel(BaseModel):
     register_: str = Field(alias="register")
     publishedAt: str
     readingMinutes: int
+    # Media + publisher logo (Commit 9; RSS/Atom media only). Null/omitted when absent — the card falls
+    # back to the existing text-only layout. `response_model_exclude_none` drops the null fields.
+    image: Optional[str] = None
+    imageWidth: Optional[int] = None
+    imageHeight: Optional[int] = None
+    imageMimeType: Optional[str] = None
+    imageSource: Optional[str] = None
+    imageAttribution: Optional[str] = None
+    publisherLogo: Optional[str] = None
+    publisherLogoDark: Optional[str] = None
+    publisherLogoSource: Optional[str] = None
 
 
 class RecommendationModel(BaseModel):
@@ -628,9 +640,12 @@ class StoryModel(BaseModel):
     id: str
     title: str
     summary: str
-    # Future-ready image contract (nullable) — Commit 8 (AI summarization + image enrichment) can
-    # populate these without an API change.
+    # Hero image contract (nullable) — selected from the cluster's RSS media (Commit 9). Omitted when
+    # no article in the event carried an image.
     image: Optional[str] = None
+    imageWidth: Optional[int] = None
+    imageHeight: Optional[int] = None
+    imageMimeType: Optional[str] = None
     imageSource: Optional[str] = None
     imageAttribution: Optional[str] = None
     topic: str
@@ -1453,6 +1468,7 @@ def recommendations(
     kind, val = _serve(active, request, user)
     recs = (active.personalizer.recommendations(val, strategy) if kind == "personal"
             else active.backend.recommendations(val, strategy))
+    _enrich_rec_media(recs)     # attach image (from the live FeedArticle) + publisher logo — additive
     # A recommendation the engine surfaced to a signed-in reader becomes a measurable event: record
     # which (cross-cutting) recs were shown — the denominator for Open-Mindedness. Best-effort; a
     # recording failure must never fail the recommendations response. No new recommender is created.
@@ -1464,6 +1480,29 @@ def recommendations(
         except Exception:
             _log(logging.WARNING, "rec_shown_record_failed", userId=uid)
     return recs
+
+
+def _enrich_rec_media(recs: list) -> None:
+    """Attach media + a publisher logo to already-serialised recommendation articles **after** the
+    (protected) recommender serialiser has run — so recommendation cards can show an image without any
+    change to ``api_server``. The image comes from the live ``FeedArticle`` catalog (recs whose URL
+    matches an ingested article); the logo is derived from the publisher URL. Best-effort + additive:
+    a lookup failure or a rec with no matching article simply leaves it image-less (text-only card)."""
+    if not recs or state.store is None:
+        return
+    try:
+        urls = [r["article"].get("url") for r in recs if r.get("article", {}).get("url")]
+        by_url = state.store.feed_article_media(urls) if urls else {}
+    except Exception:
+        by_url = {}
+    for r in recs:
+        a = r.get("article")
+        if not isinstance(a, dict):
+            continue
+        m = by_url.get(a.get("url"))
+        if m:
+            a.update({k: v for k, v in m.items() if v is not None})
+        a.update(media.pick_best_logo(a.get("publisher", ""), a.get("url")))
 
 
 @app.get("/api/coach", response_model=list[CoachMessageModel], response_model_exclude_none=True,

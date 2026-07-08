@@ -417,6 +417,20 @@ size distribution). Clustering is **O(n²)** over the bounded scan (~1 s at ~1,8
 per-topic/day pre-bucket or a poll-driven cache is the next optimization. `/api/discover` (article
 search) remains for backward compatibility and provides the filter facets.
 
+**Media enrichment (rich cards).** RSS ingestion extracts image metadata — `media:content`,
+`media:thumbnail`, `enclosure`, and Atom image links — and stores it on `FeedArticle` (additive columns
+`image` / `imageWidth` / `imageHeight` / `imageMimeType` / `imageSource` / `imageAttribution`, added in
+place on existing DBs). **Metadata only — no image is ever downloaded and no Open Graph is fetched.**
+All selection is centralised in `examples/media.py` (`pick_best_image`, `pick_article_media`,
+`pick_story_hero`, `pick_best_logo`), so Discover, Search, Story heroes, and recommendation cards reuse
+one implementation. A Story's hero is chosen **representative → highest-quality → most-recent → null**;
+publisher logos derive from the publisher's own-domain favicon (privacy-preserving — no third party; a
+curated override map with dark-mode variants is the extension point). Recommendations (whose corpus
+carries no media) are enriched from the live `FeedArticle` catalog **after** the protected serializer
+runs, so no recommendation logic changes. Cards render a lazy `<img>` when media is present and fall
+back to the existing text-only layout otherwise — native browser caching only, image URLs canonical.
+Media survives polling (backfilled on re-poll), retention (whole-row deletes), and hot refresh.
+
 **URL coverage by ingestion source** — which sources can populate a real publisher `url` today:
 
 | Source | Real URL? | Notes |

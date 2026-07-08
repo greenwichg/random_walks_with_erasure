@@ -23,6 +23,7 @@ import {
   ConfidenceBadge,
 } from "@/components/shared/article-badges";
 import { ReadArticleButton } from "@/components/shared/read-article-button";
+import { ArticleImage } from "@/components/shared/article-image";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
@@ -85,10 +86,12 @@ export function RecommendationCard({
         </button>
       </div>
 
+      <ArticleImage src={article.image} alt={article.headline} className="mb-3" />
+
       {/* headline + publisher + topic */}
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <PublisherBadge name={article.publisher} lean={article.publisherLean} />
+          <PublisherBadge name={article.publisher} lean={article.publisherLean} logo={article.publisherLogo} />
           <span className="text-xs text-muted-foreground">·</span>
           <span className="text-xs font-medium text-muted-foreground">{article.topic}</span>
         </div>
