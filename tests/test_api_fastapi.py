@@ -815,3 +815,39 @@ def test_feed_health_endpoint(client, monkeypatch):
 
     monkeypatch.setenv("RWE_INTERNAL_SECRET", "s3cret")       # trusted like the other /api/internal/* routes
     assert client.get("/api/internal/feeds").status_code == 401
+
+
+def test_corpus_validation_endpoint(client, monkeypatch):
+    """GET /api/internal/corpus reports candidate-corpus eligibility + diagnostics, is a trusted
+    route, and NEVER activates anything — a validation probe must leave the live Backend untouched.
+    Inserts are cleaned up so the shared module store is left as found (see the feedArticles==0 test)."""
+    st = api_fastapi.state.store
+    urls = []
+    try:
+        for i in range(4):
+            for pub, lean in (("CV-Left", -1.5), ("CV-Center", 0.0), ("CV-Right", 1.5)):
+                u = f"https://cv-{pub}-{i}.example/a"
+                urls.append(u)
+                st.upsert_feed_article(canonical_url=u, url=u, publisher=pub, source_publisher=pub,
+                                       title=f"{pub} {i}", description="", body=None,
+                                       published_at="2026-07-06T12:00:00+00:00", source_feed="f",
+                                       scored={"article_id": u, "outlet": pub, "lean": lean,
+                                               "category": "Politics"})
+        monkeypatch.setenv("RWE_CORPUS_MIN_ARTICLES", "1")   # low floor so a small test corpus is eligible
+
+        be_before = api_fastapi.state.backend
+        body = client.get("/api/internal/corpus").json()
+        assert api_fastapi.state.backend is be_before        # validation NEVER rebuilds / activates Backend
+
+        assert isinstance(body["eligible"], bool) and body["status"] in {"pass", "fail"}
+        assert body["eligible"] is True                      # only the min_articles>=1 floor is on
+        for pub in ("CV-Left", "CV-Center", "CV-Right"):
+            assert pub in body["publisherDistribution"]
+        assert set(body["politicalDistribution"]) == {"left", "center", "right"}
+        assert isinstance(body["failures"], list) and "missingMetadataPct" in body["metrics"]
+        assert "healthyFeeds" in body and "unhealthyFeeds" in body
+
+        monkeypatch.setenv("RWE_INTERNAL_SECRET", "s3cret")  # trusted like the other /api/internal/* routes
+        assert client.get("/api/internal/corpus").status_code == 401
+    finally:
+        st.delete_feed_articles(urls)                        # leave the shared store as we found it

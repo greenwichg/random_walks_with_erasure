@@ -149,3 +149,46 @@ def test_run_retention_respects_min_articles_floor():
     # a count cap of 2, but a floor of 8 -> only 2 pruned, 8 retained
     res = ch.run_retention(st, max_count=2, thresholds=TH(minArticles=8), now=NOW)
     assert res["pruned"] == 2 and st.count_feed_articles() == 8 and res["retainedForFloor"] == 6
+
+
+# --------------------------------------------------------------------------- #
+# Commit 4 additions: missing-metadata metric + validation ceilings (additive)
+# --------------------------------------------------------------------------- #
+def test_corpus_metrics_missing_metadata():
+    arts = [
+        {"canonicalUrl": "u1", "url": "u1", "publisher": "NPR", "title": "Has a title",
+         "scored": {"article_id": "u1", "outlet": "NPR", "lean": -1.0},
+         "publishedAt": (NOW - timedelta(days=0)).isoformat()},                       # complete
+        {"canonicalUrl": "u2", "url": "u2", "publisher": "AP", "title": "",           # no title
+         "scored": {"article_id": "u2", "outlet": "AP", "lean": 0.0},
+         "publishedAt": (NOW - timedelta(days=1)).isoformat()},
+        {"canonicalUrl": "u3", "url": "u3", "publisher": "Fox", "title": "T",         # no publication date
+         "scored": {"article_id": "u3", "outlet": "Fox", "lean": 1.5}, "publishedAt": None},
+    ]
+    m = ch.corpus_metrics(arts, now=NOW, fresh_max_age_days=3)
+    assert m["missingMetadata"] == 2 and m["missingMetadataPct"] == round(200 / 3, 2)
+
+
+def test_thresholds_from_env_includes_validation_ceilings(monkeypatch):
+    for k in ("RWE_CORPUS_MAX_PER_PUBLISHER", "RWE_CORPUS_MAX_BUCKET_PERCENT",
+              "RWE_CORPUS_MAX_ARTICLE_AGE_DAYS", "RWE_CORPUS_MAX_DUPLICATE_PERCENT",
+              "RWE_CORPUS_MAX_MISSING_METADATA_PERCENT", "RWE_CORPUS_REQUIRE_HEALTHY_FEEDS"):
+        monkeypatch.delenv(k, raising=False)
+    th = ch.thresholds_from_env()
+    assert th["maxPerPublisher"] == 0 and th["maxBucketPercent"] == 0.0
+    assert th["requireHealthyFeeds"] is False
+    monkeypatch.setenv("RWE_CORPUS_MAX_PER_PUBLISHER", "40")
+    monkeypatch.setenv("RWE_CORPUS_MAX_BUCKET_PERCENT", "55.5")
+    monkeypatch.setenv("RWE_CORPUS_REQUIRE_HEALTHY_FEEDS", "1")
+    th2 = ch.thresholds_from_env()
+    assert th2["maxPerPublisher"] == 40 and th2["maxBucketPercent"] == 55.5
+    assert th2["requireHealthyFeeds"] is True
+
+
+def test_retention_ignores_validation_ceilings():
+    # Retention reads only the floor keys; the new ceiling keys must never change its behaviour.
+    arts = [_a(f"u{i}", "P", 0.0, i) for i in range(10)]
+    th = ch.thresholds_from_env()
+    th.update({"minArticles": 0})     # isolate: only the explicit count policy should act
+    plan = ch.plan_retention(arts, max_count=4, thresholds=th, now=NOW)
+    assert plan["pruned"] == 6        # ceilings (maxPerPublisher, maxBucketPercent, …) are ignored

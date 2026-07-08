@@ -22,6 +22,14 @@ Config (env, all optional):
     RWE_CORPUS_MIN_PER_BUCKET    floor: min articles per left/center/right (default 0 = off)
     RWE_CORPUS_MIN_FRESH         floor: min fresh articles                 (default 0 = off)
     RWE_CORPUS_FRESH_MAX_AGE_DAYS   what counts as "fresh"                 (default 3)
+
+Validation ceilings (read only by the corpus-validation gate; retention ignores them):
+    RWE_CORPUS_MAX_PER_PUBLISHER      ceiling: max articles from one publisher   (default 0 = off)
+    RWE_CORPUS_MAX_BUCKET_PERCENT     ceiling: max share of any political bucket (0–100, 0 = off)
+    RWE_CORPUS_MAX_ARTICLE_AGE_DAYS   ceiling: newest article must be within this (default 0 = off)
+    RWE_CORPUS_MAX_DUPLICATE_PERCENT  ceiling: max duplicate share               (0–100, 0 = off)
+    RWE_CORPUS_MAX_MISSING_METADATA_PERCENT  ceiling: max missing-metadata share (0–100, 0 = off)
+    RWE_CORPUS_REQUIRE_HEALTHY_FEEDS  require zero unhealthy feeds to activate   (default off)
 """
 
 from __future__ import annotations
@@ -42,6 +50,21 @@ _logger = logging.getLogger("ih.corpus")
 def _int_env(name: str, default: int) -> int:
     v = os.environ.get(name)
     return int(v) if v and v.lstrip("-").isdigit() else default
+
+
+def _float_env(name: str, default: float) -> float:
+    v = os.environ.get(name)
+    try:
+        return float(v) if v not in (None, "") else default
+    except ValueError:
+        return default
+
+
+def _bool_env(name: str, default: bool = False) -> bool:
+    v = os.environ.get(name)
+    if v is None or v.strip() == "":
+        return default
+    return v.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _default_log(level: int, event: str, **fields) -> None:
@@ -90,16 +113,48 @@ def _canonical(a: dict) -> str:
     return a.get("canonicalUrl") or a.get("url") or ""
 
 
+def _has_publication_date(a: dict) -> bool:
+    """Whether the article carries a parseable *publication* date (``publishedAt`` only — ``fetchedAt``
+    is set on every row and would mask a genuinely missing date)."""
+    s = (a.get("publishedAt") or "").strip()
+    if not s:
+        return False
+    try:
+        datetime.fromisoformat(s.replace("Z", "+00:00"))
+        return True
+    except ValueError:
+        return False
+
+
+def _missing_metadata(a: dict) -> bool:
+    """Missing metadata = no title or no publication date — the same rule ``rss_ingest`` uses for its
+    per-feed quality metric, so a corpus-level count and a per-feed count mean the same thing."""
+    return (not (a.get("title") or "").strip()) or (not _has_publication_date(a))
+
+
 # --------------------------------------------------------------------------- #
 # Metrics + thresholds.
 # --------------------------------------------------------------------------- #
 def thresholds_from_env() -> dict:
+    """The single definition of "what a healthy corpus needs" — floors (used by retention *and* the
+    validation gate) plus ceilings (read only by the validation gate). Retention consults just the
+    floor keys, so adding the ceiling keys leaves ``plan_retention``/``run_retention`` unchanged.
+    Every threshold is optional; ``0`` / unset means the corresponding check is off."""
     return {
+        # Floors — shared with retention.
         "minArticles": _int_env("RWE_CORPUS_MIN_ARTICLES", _int_env("RWE_FEED_MIN_ARTICLES", 50)),
         "minPublishers": _int_env("RWE_CORPUS_MIN_PUBLISHERS", 0),
         "minPerBucket": _int_env("RWE_CORPUS_MIN_PER_BUCKET", 0),
         "minFresh": _int_env("RWE_CORPUS_MIN_FRESH", 0),
         "freshMaxAgeDays": _int_env("RWE_CORPUS_FRESH_MAX_AGE_DAYS", 3),
+        # Ceilings — read only by the corpus-validation gate (examples/corpus_validation.py).
+        # Retention never consults these; percentages are on a 0–100 scale (like duplicatePct).
+        "maxPerPublisher": _int_env("RWE_CORPUS_MAX_PER_PUBLISHER", 0),
+        "maxBucketPercent": _float_env("RWE_CORPUS_MAX_BUCKET_PERCENT", 0.0),
+        "maxArticleAgeDays": _int_env("RWE_CORPUS_MAX_ARTICLE_AGE_DAYS", 0),
+        "maxDuplicatePct": _float_env("RWE_CORPUS_MAX_DUPLICATE_PERCENT", 0.0),
+        "maxMissingMetadataPct": _float_env("RWE_CORPUS_MAX_MISSING_METADATA_PERCENT", 0.0),
+        "requireHealthyFeeds": _bool_env("RWE_CORPUS_REQUIRE_HEALTHY_FEEDS", False),
     }
 
 
@@ -116,6 +171,7 @@ def corpus_metrics(articles: list, *, now: Optional[datetime] = None,
     fresh = 0
     seen = set()
     dups = 0
+    missing = 0
     for a in articles:
         o = _outlet(a)
         if o:
@@ -133,6 +189,8 @@ def corpus_metrics(articles: list, *, now: Optional[datetime] = None,
             dups += 1
         elif cu:
             seen.add(cu)
+        if _missing_metadata(a):
+            missing += 1
     return {
         "total": total,
         "publishers": len(pub),
@@ -141,6 +199,8 @@ def corpus_metrics(articles: list, *, now: Optional[datetime] = None,
         "duplicatePct": round(100.0 * dups / total, 2) if total else 0.0,
         "fresh": fresh,
         "freshMaxAgeDays": fresh_days,
+        "missingMetadata": missing,
+        "missingMetadataPct": round(100.0 * missing / total, 2) if total else 0.0,
         "oldest": min(times).isoformat() if times else None,
         "newest": max(times).isoformat() if times else None,
     }

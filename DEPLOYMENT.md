@@ -310,8 +310,8 @@ logs it. Runs standalone too: `python examples/corpus_health.py`.
 | `RWE_CORPUS_FRESH_MAX_AGE_DAYS` | `3` | what counts as "fresh" |
 
 Retention runs only when `RWE_RETENTION_MAX_AGE_DAYS` or `RWE_RETENTION_MAX_COUNT` is set; the
-`RWE_CORPUS_MIN_*` floors are the same thresholds the corpus-validation gate (a later milestone) will
-enforce, so retention never removes what validation will need.
+`RWE_CORPUS_MIN_*` floors are the same thresholds the corpus-validation gate (see below) enforces, so
+retention never removes what validation will need.
 
 **Feed health monitoring (observational).** When polling, the engine persists a per-feed health +
 quality record (table `feed_health`) each cycle — availability (healthy · consecutive failures ·
@@ -331,6 +331,32 @@ GET /api/internal/feeds        # per-feed status/latency/quality — trusted (in
 | --- | --- | --- |
 | `RWE_FEED_UNHEALTHY_AFTER` | `3` | consecutive failures before a feed is marked unhealthy |
 | `RWE_FEED_WARN_AFTER` | `1` | consecutive failures before a feed reads as "degraded" (diagnostics only) |
+
+**Corpus validation (candidate-corpus eligibility gate).** The engine can answer *"is the current
+catalog healthy enough to become a recommendation corpus?"* without touching the live one. It builds a
+**candidate** — a publisher-capped, newest-first **subset of `FeedArticle`** (never a copy; no article
+is modified, duplicated, synthesized, re-titled, re-dated, or re-URL'd) — measures it, and reports
+whether it *would* be eligible to activate, with every failing reason. **This milestone is validation
+only:** it never rebuilds the `Backend`, activates a corpus, or performs a hot swap (that is a separate
+milestone); the live recommendations are unaffected. It is read-only, never throws (an unexpected error
+returns an *ineligible* result — fail-closed), and imports no recommendation code, so it cannot change
+ranking, scoring, selection, or serialization. Runs standalone too: `python examples/corpus_validation.py`.
+
+```
+GET /api/internal/corpus       # candidate eligibility + metrics/failures — trusted (internal secret in prod)
+```
+
+The floors above (`RWE_CORPUS_MIN_*`, shared with retention) plus these ceilings define eligibility;
+every check is independent and off by default (`0` / unset). Percentages are on a 0–100 scale.
+
+| Env | Default | Meaning |
+| --- | --- | --- |
+| `RWE_CORPUS_MAX_PER_PUBLISHER` | off | ceiling + candidate cap: max articles from one publisher (newest kept) |
+| `RWE_CORPUS_MAX_BUCKET_PERCENT` | off | ceiling: max share of any one political bucket (viewpoint balance) |
+| `RWE_CORPUS_MAX_ARTICLE_AGE_DAYS` | off | ceiling: the newest article must be within this many days (staleness) |
+| `RWE_CORPUS_MAX_DUPLICATE_PERCENT` | off | ceiling: max duplicate share |
+| `RWE_CORPUS_MAX_MISSING_METADATA_PERCENT` | off | ceiling: max share missing a title or publication date |
+| `RWE_CORPUS_REQUIRE_HEALTHY_FEEDS` | off | require zero unhealthy feeds (else ineligible — fail-closed) |
 
 **URL coverage by ingestion source** — which sources can populate a real publisher `url` today:
 

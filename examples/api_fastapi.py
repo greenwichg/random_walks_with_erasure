@@ -41,6 +41,7 @@ import ratelimit              # dependency-free token-bucket rate limiter (Priva
 import reqlimits              # request-body size / batch-shape limits (Private Alpha hardening)
 import feed_source            # optional: source the recommender catalog from the RSS FeedArticle store
 import feed_service           # optional: background RSS polling that keeps the FeedArticle catalog fresh
+import corpus_validation      # corpus-eligibility gate (validation only; no activation / no hot swap)
 import discover               # Discover & Stories: product-layer exploration over the FeedArticle catalog
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -768,6 +769,26 @@ class FeedHealthModel(BaseModel):
     updatedAt: Optional[str] = None
 
 
+class CorpusValidationModel(BaseModel):
+    # Corpus-eligibility diagnostics (validation ONLY — this reports whether a candidate corpus WOULD
+    # be eligible to activate; it never activates, rebuilds Backend, or hot-swaps). Nested dicts vary
+    # in shape, so allow extras.
+    model_config = ConfigDict(extra="allow")
+    eligible: bool
+    status: str                              # pass | fail | error
+    generatedAt: str
+    candidateSize: int
+    metrics: dict[str, Any]
+    publisherDistribution: dict[str, Any]
+    politicalDistribution: dict[str, Any]
+    freshness: dict[str, Any]
+    healthyFeeds: int
+    unhealthyFeeds: int
+    failures: list[dict[str, Any]]
+    warnings: list[dict[str, Any]]
+    thresholds: dict[str, Any]
+
+
 def _require_backend() -> "engine.Backend":
     if state.backend is None:
         raise HTTPException(status_code=503, detail="The engine is still starting up.")
@@ -1362,6 +1383,22 @@ def feed_health(request: Request) -> list:
                   else "degraded" if r["consecutiveFailures"] >= warn_after else "healthy")
         out.append({**r, "status": status})
     return out
+
+
+@app.get("/api/internal/corpus", response_model=CorpusValidationModel, tags=["meta"],
+         summary="Candidate corpus validation + diagnostics (server-to-server)", responses=_ERR_RESPONSES)
+def corpus_validation_status(request: Request) -> dict:
+    """Ops diagnostics for the corpus-validation gate: builds a publisher-capped candidate from the
+    current ``FeedArticle`` catalog, measures it (totals, publisher + political distribution,
+    freshness, duplicates, missing metadata, healthy/unhealthy feeds), and reports whether it *would*
+    be **eligible** to activate, with every failure + warning reason and the thresholds in effect.
+
+    **Validation only** — this endpoint activates nothing, rebuilds no ``Backend``, and performs no
+    hot swap; it is a read-only probe over ``FeedArticle`` + ``feed_health`` and never touches the
+    live recommendation corpus. Trusted endpoint — requires the internal secret in production, like the
+    other ``/api/internal/*`` routes."""
+    _require_trusted(request)
+    return corpus_validation.evaluate(_require_store()).to_dict()
 
 
 @app.post("/api/internal/resolve-token", response_model=ResolveTokenModel, tags=["meta"],
