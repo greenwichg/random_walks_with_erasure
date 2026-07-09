@@ -46,12 +46,9 @@ A clean, tested Python implementation of
 > [![Open the app in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/greenwichg/random_walks_with_erasure/blob/c41d26fccfa261f7b23a0666d3fa1756f3345f85/deploy/information_health_colab.ipynb)
 > **Full-stack app demo**.
 >
-> 🔬 **Developer Validation Notebook — validate every Information Health metric independently.** A
-> developer / research / QA tool (not the product) that recomputes each metric from a Reading History
-> and checks it against the unchanged engine — independent metric calculation, raw metric verification,
-> percentile verification, dashboard comparison, drift detection, golden-persona validation, and
-> PASS / FAIL reports. Runs **completely offline** by default; an optional *Dashboard Verification* mode
-> compares against a running app's Dashboard/API values when one is available:
+> 🧪 **Validate Information Health metrics independently** — recomputes metrics from Reading History,
+> verifies raw calculations, compares dashboard metrics, detects drift, and generates PASS / FAIL
+> reports. Runs offline by default with an optional *Dashboard Verification* mode:
 > [![Open Metric Validation in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/greenwichg/random_walks_with_erasure/blob/da845429e9e200a8db2f2347b8a057f5fbcaf13a/deploy/metric_validation_colab.ipynb)
 > **Developer validation notebook** (see [`docs/METRIC_PIPELINE.md`](docs/METRIC_PIPELINE.md)).
 
