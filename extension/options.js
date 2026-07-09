@@ -73,8 +73,13 @@ async function test() {
     "no-url": "Set the app URL first.",
     "no-token": "Paste your API token first.",
     "bad-url": "That app URL doesn’t look valid. Example: <code>http://localhost:3000</code>",
-    "bad-token": "That token was rejected. Generate a new one in InfoDiet → Settings and paste it here.",
-    unreachable: "Couldn’t reach the app URL. Check it’s running and the address is correct.",
+    "bad-token":
+      "Authentication failed — your API token is invalid or expired. Open InfoDiet → Settings, regenerate a token, and paste it here.",
+    "wrong-url":
+      "Reached a server, but not InfoDiet (no <code>/api/me/reads</code>). Double-check the app URL — in Colab it changes every session.",
+    "unavailable": "The InfoDiet engine is running but returned an error. Try again shortly.",
+    unreachable:
+      "Couldn’t reach the app URL. Check it’s running and the address is correct (a Colab tunnel URL changes each session).",
   };
   showStatus("err", messages[reason] || `Connection failed (${reason}).`);
 }

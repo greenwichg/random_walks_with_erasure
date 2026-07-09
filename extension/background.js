@@ -9,6 +9,14 @@ importScripts("common.js");
 const DEDUPE_TTL_MS = 6 * 60 * 60 * 1000; // re-send the same article at most once per 6h
 const DEDUPE_KEY = "dedupe";
 
+/** Human-readable cause for each sync failure — logged to the console so a failure is never silent. */
+const REASON_HELP = {
+  "bad-token": "API token is invalid or expired — open InfoDiet, regenerate a token, and update Options.",
+  "wrong-url": "reached a server that isn't InfoDiet (no /api/me/reads) — check the app URL in Options.",
+  "unavailable": "the InfoDiet engine is up but returned an error — try again shortly.",
+  "unreachable": "couldn't reach the app URL — is it running? (a Colab tunnel URL changes each session).",
+};
+
 /** Stored config: { appUrl, token }. */
 async function getConfig() {
   const { appUrl, token } = await chrome.storage.local.get(["appUrl", "token"]);
@@ -93,11 +101,14 @@ async function recordArticle(article) {
       await flashBadge("✓", "#15803d");
       return "sent";
     }
-    await flashBadge(status === 401 ? "auth" : "err", "#b91c1c");
-    return `error:${status}`;
+    const reason = readsErrorReason(status);
+    console.warn(`[InfoDiet] read NOT recorded (HTTP ${status}): ${REASON_HELP[reason] || reason}`);
+    await flashBadge(reason === "bad-token" ? "auth" : "err", "#b91c1c");
+    return `error:${reason}`;
   } catch (e) {
+    console.warn(`[InfoDiet] read NOT recorded: ${REASON_HELP.unreachable}`);
     await flashBadge("err", "#b91c1c");
-    return `error:network`;
+    return "error:unreachable";
   }
 }
 
@@ -112,7 +123,7 @@ async function testConnection() {
   try {
     const { ok, status, body } = await postReads(appUrl, token, []);
     if (ok) return { ok: true, coverage: body };
-    return { ok: false, reason: status === 401 ? "bad-token" : `status-${status}` };
+    return { ok: false, reason: readsErrorReason(status), status };
   } catch {
     return { ok: false, reason: "unreachable" };
   }

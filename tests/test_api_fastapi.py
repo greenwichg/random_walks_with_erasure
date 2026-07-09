@@ -492,6 +492,54 @@ def test_saved_articles_persist_and_drive_the_profile_count(client):
     assert client.delete("/api/me/saved", params={"articleId": "x"}).status_code == 401
 
 
+def test_reading_sync_single_identity_and_diagnostics(client):
+    """The dev token and the web demo-login resolve to the SAME engine user, so extension reads land
+    exactly where Reading History reads; an unknown/stale token 401s (never a wrong uid); and the
+    dev diagnostics endpoint reports the identity match, token validity, and read count."""
+    import api_fastapi as A
+    dev = A._dev_token()
+    assert dev, "dev token must be available in dev/test mode"
+
+    # dev token -> the demo reader; the web demo-login upserts the SAME identity -> one uid.
+    demo_uid = client.post("/api/internal/resolve-token", json={"token": dev}).json()["userId"]
+    same = client.post("/api/internal/users",
+                       json={"provider": "dev", "providerAccountId": "demo@infodiet.local",
+                             "email": "demo@infodiet.local", "displayName": "Demo Reader"}).json()["userId"]
+    assert same == demo_uid                                      # single identity
+
+    # a read attributed to that identity appears in that user's Reading History.
+    hdr = {"X-IH-User-Id": str(demo_uid)}
+    client.post("/api/me/reads",
+                json={"reads": [{"url": "https://www.nytimes.com/2026/ext", "title": "Extension read"}]},
+                headers=hdr)
+    hist = client.get("/api/me/history", headers=hdr).json()
+    assert any(h["article"]["headline"] == "Extension read" for h in hist)
+
+    # a stale / unknown token 401s — it never silently resolves to some other uid.
+    assert client.post("/api/internal/resolve-token", json={"token": "stale-nope"}).status_code == 401
+
+    # diagnostics: session and extension name the same user; token valid; read count > 0.
+    d = client.get(f"/api/dev/diagnostics?token={dev}", headers=hdr).json()
+    assert d["sessionUid"] == demo_uid and d["extensionUid"] == demo_uid
+    assert d["match"] is True and d["tokenValid"] is True and d["readCount"] >= 1 and d["devToken"] == dev
+
+    # a genuine mismatch is visible (session = demo, token = a different user's real token).
+    other = client.post("/api/internal/users",
+                        json={"provider": "google", "providerAccountId": "other-acct"}).json()["userId"]
+    tok = client.post("/api/me/tokens", json={"label": "ext"},
+                      headers={"X-IH-User-Id": str(other)}).json()["token"]
+    d2 = client.get(f"/api/dev/diagnostics?token={tok}", headers=hdr).json()
+    assert d2["extensionUid"] == other and d2["sessionUid"] == demo_uid and d2["match"] is False
+
+
+def test_dev_diagnostics_absent_in_production(client, monkeypatch):
+    """The diagnostics endpoint (and the fixed dev token) must not exist on a real deployment."""
+    import api_fastapi as A
+    monkeypatch.setattr(A, "_production", lambda: True)
+    assert client.get("/api/dev/diagnostics").status_code == 404
+    assert A._dev_token() is None                               # no fixed dev token in production
+
+
 def test_settings_persist_and_merge(client):
     """Settings load with honest defaults, and partial updates merge over stored preferences and
     survive a reload — the persistence the mock page lacked. Auth required; preferences only."""

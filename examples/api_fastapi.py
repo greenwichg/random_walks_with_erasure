@@ -92,6 +92,34 @@ def _production() -> bool:
     return os.environ.get("RWE_ENV", "").strip().lower() in {"production", "prod"}
 
 
+# --- dev-only single reading identity -----------------------------------------
+# In dev / Colab the browser extension and the web "demo reader" must resolve to the SAME engine
+# user (so extension reads land where Reading History looks), and that must survive the container's
+# ephemeral database being recreated. A fixed dev token — the default off production, overridable via
+# RWE_DEV_TOKEN — always resolves to the demo reader below (the identity the web dev-login upserts),
+# so the two never diverge and the token never goes stale on a restart. OFF in production unless
+# RWE_DEV_TOKEN is explicitly set.
+_DEV_DEMO_PROVIDER = "dev"
+_DEV_DEMO_ACCOUNT = "demo@infodiet.local"
+_DEFAULT_DEV_TOKEN = "infodiet-dev-demo-token"
+
+
+def _dev_token() -> "str | None":
+    """The fixed demo token that binds the extension to the web demo reader (dev only), or None."""
+    explicit = (os.environ.get("RWE_DEV_TOKEN") or "").strip()
+    if explicit:
+        return explicit
+    return None if _production() else _DEFAULT_DEV_TOKEN
+
+
+def _ensure_demo_user() -> int:
+    """The stable demo-reader engine uid (created on demand), matching the web dev-login identity —
+    so the fixed dev token and the web session always name the same user, even after a DB reset."""
+    u = _require_store().upsert_user_by_identity(
+        _DEV_DEMO_PROVIDER, _DEV_DEMO_ACCOUNT, email=_DEV_DEMO_ACCOUNT, display_name="Demo Reader")
+    return u.id
+
+
 def _profile_from_env() -> "engine.DatasetProfile":
     """Resolve the dataset profile from environment only (deployment config), reusing the
     exact same resolution as the CLI so behaviour is identical."""
@@ -1731,10 +1759,50 @@ def resolve_token(request: Request, req: ResolveTokenRequest) -> dict:
     /api/me/reads path with the internal secret. Keeps the token out of the engine's public
     surface and reuses the one ingestion pipeline. Requires the internal secret when configured."""
     _require_trusted(request)
+    dev = _dev_token()
+    if dev and req.token == dev:                 # dev single-identity: always the demo reader
+        return {"userId": _ensure_demo_user()}
     uid = _require_store().resolve_token(req.token)
     if uid is None:
         raise HTTPException(status_code=401, detail="Invalid or unknown token.")
     return {"userId": uid}
+
+
+class DevDiagnosticsModel(BaseModel):
+    devMode: bool
+    sessionUid: int | None = None       # the signed-in web user (from the trusted X-IH-User-Id)
+    extensionUid: int | None = None     # the user a supplied ?token= resolves to
+    match: bool                         # session and extension name the SAME engine user
+    tokenValid: bool                    # the supplied token resolved to a user
+    readCount: int                      # reads stored for that user (what Reading History shows)
+    devToken: str | None = None         # the fixed demo token to paste into the extension (dev only)
+
+
+@app.get("/api/dev/diagnostics", response_model=DevDiagnosticsModel, tags=["meta"],
+         summary="[dev only] Reading-sync identity diagnostics", responses=_ERR_RESPONSES)
+def dev_diagnostics(request: Request, token: str | None = None) -> dict:
+    """Development-only: the one place to see *why* extension reads aren't appearing in Reading
+    History. Reports the signed-in session user, the user a supplied extension ``token`` resolves to,
+    whether they match, token validity, and the read count for that user. Returns **404 in
+    production** so it never exists on a real deployment."""
+    if _production():
+        raise HTTPException(status_code=404, detail="Not found.")
+    st = _require_store()
+    session_uid = _real_uid(request)
+    ext_uid = None
+    if token:
+        dev = _dev_token()
+        ext_uid = _ensure_demo_user() if (dev and token == dev) else st.resolve_token(token)
+    who = session_uid if session_uid is not None else ext_uid
+    return {
+        "devMode": True,
+        "sessionUid": session_uid,
+        "extensionUid": ext_uid,
+        "match": session_uid is not None and ext_uid is not None and session_uid == ext_uid,
+        "tokenValid": ext_uid is not None,
+        "readCount": st.count_reads(who) if who is not None else 0,
+        "devToken": _dev_token(),
+    }
 
 
 def main() -> None:

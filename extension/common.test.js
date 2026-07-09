@@ -6,7 +6,7 @@
  */
 const { test } = require("node:test");
 const assert = require("node:assert");
-const { isArticlePage, normalizeReadUrl, shouldSend, pruneCache, configStatus } = require("./common.js");
+const { isArticlePage, normalizeReadUrl, shouldSend, pruneCache, configStatus, readsErrorReason } = require("./common.js");
 
 test("isArticlePage — positive signals", () => {
   assert.equal(isArticlePage({ ogType: "article" }), true);
@@ -66,4 +66,13 @@ test("pruneCache — drops stale entries and caps size", () => {
   assert.equal(Object.keys(capped).length, 5);
   assert.ok(Object.keys(capped).includes("u0")); // newest retained
   assert.ok(!Object.keys(capped).includes("u19")); // oldest dropped
+});
+
+test("readsErrorReason — distinguishes token / url / backend failures", () => {
+  assert.equal(readsErrorReason(401), "bad-token"); // invalid or expired token
+  assert.equal(readsErrorReason(403), "bad-token"); // unauthorized
+  assert.equal(readsErrorReason(404), "wrong-url"); // reached a server, not InfoDiet
+  assert.equal(readsErrorReason(500), "unavailable"); // backend up but erroring
+  assert.equal(readsErrorReason(503), "unavailable");
+  assert.equal(readsErrorReason(418), "status-418"); // unexpected status is surfaced verbatim
 });

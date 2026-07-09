@@ -89,6 +89,23 @@ export async function backendGet<T>(path: string, headers?: Record<string, strin
   }
 }
 
+/** GET that preserves the HTTP status, so a caller can distinguish auth failure (401/403) from an
+ *  unreachable engine (status 0). `data` is `null` on any non-2xx or parse failure. Used where a
+ *  route must surface an explicit error instead of falling back to mock data. */
+export async function backendGetResult<T>(
+  path: string,
+  headers?: Record<string, string>,
+): Promise<{ status: number; data: T | null }> {
+  const res = await withTimeout(`${BASE}${path}`, headers ? { headers } : undefined);
+  if (!res) return { status: 0, data: null };
+  if (!res.ok) return { status: res.status, data: null };
+  try {
+    return { status: res.status, data: (await res.json()) as T };
+  } catch {
+    return { status: res.status, data: null };
+  }
+}
+
 /** POST `<BASE><path>` with a JSON body → parsed JSON, or `null` on any failure.
  *  Optional `headers` attribute the call to a signed-in user (see `engineAuthHeaders`). */
 export async function backendPost<T>(

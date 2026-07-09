@@ -98,7 +98,27 @@ function configStatus(cfg) {
   return "ok";
 }
 
+/**
+ * Map a reads-sync HTTP status to a stable failure reason the UI can explain clearly, so a failed
+ * sync never looks the same as an idle one:
+ *   - 401 / 403 → "bad-token"  : the API token is invalid or expired — regenerate it.
+ *   - 404       → "wrong-url"   : reached a server, but not InfoDiet (no /api/me/reads) — check the URL.
+ *   - >= 500    → "unavailable" : the backend is up but erroring.
+ *   - else      → "status-<n>"  : an unexpected status.
+ * A network-level failure (fetch threw: DNS, refused, timeout) is "unreachable", decided by the
+ * caller (there is no HTTP status in that case).
+ *
+ * @param {number} status
+ * @returns {"bad-token"|"wrong-url"|"unavailable"|string}
+ */
+function readsErrorReason(status) {
+  if (status === 401 || status === 403) return "bad-token";
+  if (status === 404) return "wrong-url";
+  if (status >= 500) return "unavailable";
+  return `status-${status}`;
+}
+
 // Export for Node tests; harmless no-op in the browser (module is undefined there).
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { isArticlePage, normalizeReadUrl, shouldSend, pruneCache, configStatus };
+  module.exports = { isArticlePage, normalizeReadUrl, shouldSend, pruneCache, configStatus, readsErrorReason };
 }
