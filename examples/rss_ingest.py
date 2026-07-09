@@ -41,6 +41,7 @@ import ingest
 import enrich
 import store
 import media                     # image SELECTION (pick_best_image) — metadata only, never downloads
+import text_utils                # the ONE canonical HTML→text normalizer (used by FeedEntry below)
 
 _USER_AGENT = "InformationHealth-RSS/0.1 (+https://code.claude.com)"
 
@@ -70,6 +71,17 @@ class FeedEntry:
     country: Optional[str] = None
     external_id: Optional[str] = None
     publisher_hint: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        """FeedEntry is the canonical *normalized* contract: every adapter (RSS/Atom, NewsAPI,
+        GDELT, and any future source) constructs a FeedEntry, and construction normalizes the
+        human-readable text through the single :func:`text_utils.clean_html` sanitizer. So every
+        downstream consumer (scoring, dedup, persistence, media, Discover, Search, Stories,
+        Recommendations, the coach) can assume ``title`` / ``description`` / ``body`` are already
+        tag-free, entity-decoded, and whitespace-normalized — nobody sanitizes separately."""
+        self.title = text_utils.clean_html(self.title)
+        self.description = text_utils.clean_html(self.description)
+        self.body = text_utils.clean_html(self.body) or None    # image-only/empty body → None
 
 
 # --------------------------------------------------------------------------- #
