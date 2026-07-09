@@ -24,7 +24,7 @@ open it in Colab and **Run all**. It clones the branch, starts the FastAPI engin
 app, and prints a public URL — the onboarding → **Initial Information Health Estimate** flow
 works with **no credentials** (Google sign-in is an optional cell). One click:
 
-[**▶ Open in Colab**](https://colab.research.google.com/github/greenwichg/random_walks_with_erasure/blob/claude/sleepy-gates-oecof1/deploy/information_health_colab.ipynb)
+[**▶ Open in Colab**](https://colab.research.google.com/github/greenwichg/random_walks_with_erasure/blob/c41d26fccfa261f7b23a0666d3fa1756f3345f85/deploy/information_health_colab.ipynb)
 
 Colab is for demos only: the runtime idles out and the tunnel URL changes each session. For
 anything real, use the two-process setup below (or Docker).

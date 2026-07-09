@@ -7,7 +7,7 @@ ideological-diversity (RQ3) tables on **real** data, with no local setup and
 without touching the dataset license (MIND is downloaded from Microsoft's
 official source at runtime — research use, not redistributed).
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/greenwichg/random_walks_with_erasure/blob/claude/sleepy-gates-oecof1/notebooks/run_mind_eval.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/greenwichg/random_walks_with_erasure/blob/c41d26fccfa261f7b23a0666d3fa1756f3345f85/notebooks/run_mind_eval.ipynb)
 
 The notebook: clones this branch → `pip install -e .` → downloads & unzips
 `MINDsmall_train` → `ingest_mind.py --ideology` (learns user+item positions from
@@ -33,7 +33,7 @@ openness to opposing views, per-outlet trust, quality preference, curiosity, act
 reading time, save/share/ignore) reading a **real** article catalog (Qbias — gold
 AllSides lean + real outlets + topics), then runs the whole product on that traffic.
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/greenwichg/random_walks_with_erasure/blob/claude/sleepy-gates-oecof1/notebooks/product_simulation.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/greenwichg/random_walks_with_erasure/blob/c41d26fccfa261f7b23a0666d3fa1756f3345f85/notebooks/product_simulation.ipynb)
 
 The notebook: clone → (optional) Qbias download → `simulate_users.py` →
 `eval_mind.py` (a system stress test, **not** an accuracy claim — synthetic clicks

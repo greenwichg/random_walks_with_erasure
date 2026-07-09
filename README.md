@@ -28,22 +28,22 @@ A clean, tested Python implementation of
 >
 > 📓 **Run it on real data in Colab** — each notebook downloads the data, ingests,
 > and prints the RQ2/RQ3 tables end-to-end (Drive-cache resilient):
-> [![Open MIND in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/greenwichg/random_walks_with_erasure/blob/claude/sleepy-gates-oecof1/notebooks/run_mind_eval.ipynb)
+> [![Open MIND in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/greenwichg/random_walks_with_erasure/blob/c41d26fccfa261f7b23a0666d3fa1756f3345f85/notebooks/run_mind_eval.ipynb)
 > **MIND** (news; text-lean + co-click axes) ·
-> [![Open Politosphere in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/greenwichg/random_walks_with_erasure/blob/claude/sleepy-gates-oecof1/notebooks/run_politosphere_eval.ipynb)
+> [![Open Politosphere in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/greenwichg/random_walks_with_erasure/blob/c41d26fccfa261f7b23a0666d3fa1756f3345f85/notebooks/run_politosphere_eval.ipynb)
 > **Politosphere** (Reddit; behavioral ideal-point axis).
 >
 > 🧪 **Product PoC — synthetic users, *not* research evidence** — an agent-based simulator
 > drives the whole product (RWE recommender → Information Health Report → AI Coach → closed
 > loop) on **synthetic** traffic over a real article catalog, to stress-test before real
 > users exist (strict research/product separation; see [`docs/PRODUCT_SIMULATION.md`](docs/PRODUCT_SIMULATION.md)):
-> [![Open Product Sim in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/greenwichg/random_walks_with_erasure/blob/claude/sleepy-gates-oecof1/notebooks/product_simulation.ipynb)
+> [![Open Product Sim in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/greenwichg/random_walks_with_erasure/blob/c41d26fccfa261f7b23a0666d3fa1756f3345f85/notebooks/product_simulation.ipynb)
 > **Synthetic-user simulation**.
 >
 > 🚀 **Run the full product (web app + engine) live** — clones the branch, boots the FastAPI
 > engine + the Next.js frontend, and opens a public URL. Onboarding → your **Initial
 > Information Health Estimate** works with no credentials (Google sign-in is an optional cell):
-> [![Open the app in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/greenwichg/random_walks_with_erasure/blob/claude/sleepy-gates-oecof1/deploy/information_health_colab.ipynb)
+> [![Open the app in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/greenwichg/random_walks_with_erasure/blob/c41d26fccfa261f7b23a0666d3fa1756f3345f85/deploy/information_health_colab.ipynb)
 > **Full-stack app demo**.
 
 RWE is a modified random-walk exploration of the bipartite user–item feedback
