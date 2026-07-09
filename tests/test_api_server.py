@@ -313,8 +313,31 @@ def test_build_dashboard_empty_for_no_activity(backend):
     dash = backend.build_dashboard({"overall": 50, "overallDelta": 0, "metrics": []}, [], [])
     assert dash["overall"] == 50 and dash["overallDelta"] == 0
     assert dash["trend"] == [] and dash["streakDays"] == 0
-    assert dash["today"] == {"articlesRead": 0, "avgReadingMinutes": 0,
+    assert dash["today"] == {"articlesRead": 0, "avgReadingMinutes": 0, "minutesRead": 0,
                              "politicalShare": 0.0, "topTopics": []}
+
+
+def test_build_dashboard_reading_goal_progress(backend):
+    """A reader's stored daily goal adds today-vs-goal progress; without a goal (anonymous/demo)
+    the goal keys are absent, so the pre-goal payload is unchanged."""
+    import datetime as dt
+    today = dt.datetime.now(dt.timezone.utc).date().isoformat()
+    reads = [{"id": 1, "canonicalUrl": "https://a.com/1", "observedAt": f"{today}T10:00:00Z",
+              "scored": {"article_id": "https://a.com/1", "outlet": "A", "category": "World",
+                         "title": "Aid convoy reaches the region, officials say", "political": False}}]
+    report = {"overall": 50, "overallDelta": 0, "metrics": []}
+
+    dash = backend.build_dashboard(report, reads, [], goal_minutes=20)
+    t = dash["today"]
+    assert t["goalMinutes"] == 20
+    assert isinstance(t["minutesRead"], int) and t["minutesRead"] >= 1
+    assert t["goalMet"] == (t["minutesRead"] >= 20)
+
+    met = backend.build_dashboard(report, reads, [], goal_minutes=1)["today"]
+    assert met["goalMet"] is True                                 # any read meets a 1-minute goal
+
+    none = backend.build_dashboard(report, reads, [])["today"]
+    assert "goalMinutes" not in none and "goalMet" not in none    # no goal -> no goal keys
 
 
 # --------------------------------------------------------------------------- #
@@ -521,3 +544,72 @@ def test_unknown_profile_is_rejected():
 def test_synthetic_classmethod_names_qbias_when_catalog_given():
     assert api_server.DatasetProfile.synthetic().name == "synthetic"
     assert api_server.DatasetProfile.synthetic(qbias_csv="a.csv").name == "qbias"
+
+
+# --------------------------------------------------------------------------- #
+# Preference sliders → per-request recommender parameters (Commit 16)
+# --------------------------------------------------------------------------- #
+def test_rec_params_mapper_anchors_and_clamps():
+    """50 = None (the untouched default stack); the extremes hit the documented anchors; only a
+    *moved* slider contributes a key; out-of-range and missing settings are safe."""
+    f = api_server.rec_params_from_settings
+    assert f(None) is None                                        # no settings at all
+    assert f({}) is None                                          # defaults everywhere
+    assert f({"politicalOpenness": 50, "recommendationStrength": 50}) is None
+    assert f({"politicalOpenness": 0}) == {"epsilon": 0.70}
+    assert f({"politicalOpenness": 100}) == {"epsilon": 0.97}
+    assert f({"recommendationStrength": 0}) == {"beta": 0.30}
+    assert f({"recommendationStrength": 100}) == {"beta": 0.80}
+    both = f({"politicalOpenness": 100, "recommendationStrength": 0})
+    assert both == {"epsilon": 0.97, "beta": 0.30}
+    # clamped by normalize_settings before mapping
+    assert f({"politicalOpenness": 999}) == {"epsilon": 0.97}
+    assert f({"politicalOpenness": -5}) == {"epsilon": 0.70}
+    # monotone: more openness never lowers epsilon
+    eps = [f({"politicalOpenness": v})["epsilon"] for v in (0, 25, 75, 100)]
+    assert eps == sorted(eps)
+
+
+def _rec_ids(backend, u, strategy, params):
+    return [r["article"]["id"] for r in backend.recommendations(u, strategy, params)]
+
+
+def test_sliders_change_the_feed_and_defaults_do_not(backend, user):
+    """The impact proof: untouched sliders (params=None) serve the exact pre-slider feed; moved
+    sliders change it; adaptive ignores the params (its epsilon is the satisfaction policy)."""
+    base_b = _rec_ids(backend, user, "rwe-b", None)
+    base_d = _rec_ids(backend, user, "rwe-d", None)
+    assert base_b and base_d
+
+    # identity anchors — a rebuild at the default constants is byte-identical to the cached stack
+    assert _rec_ids(backend, user, "rwe-b", {"epsilon": 0.9}) == base_b
+    assert _rec_ids(backend, user, "rwe-d", {"beta": 0.5}) == base_d
+
+    # impact — the extremes reorder the feed (deterministic on the seeded synthetic corpus)
+    lo_b = _rec_ids(backend, user, "rwe-b", {"epsilon": 0.70})
+    hi_b = _rec_ids(backend, user, "rwe-b", {"epsilon": 0.97})
+    assert lo_b != base_b                                          # openness=0 visibly changes rwe-b
+    assert lo_b != hi_b                                            # 0 vs 100 differ
+    lo_d = _rec_ids(backend, user, "rwe-d", {"beta": 0.30})
+    hi_d = _rec_ids(backend, user, "rwe-d", {"beta": 0.80})
+    assert lo_d != base_d and hi_d != base_d and lo_d != hi_d      # strength moves rwe-d both ways
+
+    # the blended default feed responds too (params apply per strategy inside the blend)
+    blend = _rec_ids(backend, user, None, None)
+    moved = _rec_ids(backend, user, None, {"epsilon": 0.70, "beta": 0.80})
+    assert blend != moved
+
+    # adaptive serves the shared policy model regardless of params
+    assert _rec_ids(backend, user, "adaptive", {"epsilon": 0.7, "beta": 0.8}) == \
+        _rec_ids(backend, user, "adaptive", None)
+
+
+def test_slider_params_do_not_mutate_the_shared_stack(backend, user):
+    """A per-request override must never change the cached models — the same default request
+    before and after a params request returns the identical feed."""
+    before = _rec_ids(backend, user, "rwe-b", None)
+    _rec_ids(backend, user, "rwe-b", {"epsilon": 0.70})            # a moved-slider request in between
+    _rec_ids(backend, user, "rwe-d", {"beta": 0.80})
+    assert _rec_ids(backend, user, "rwe-b", None) == before
+    assert float(backend.rec.models["rwe-b"].epsilon) == 0.9       # cached hyperparams untouched
+    assert float(backend.rec.models["rwe-d"].beta) == 0.5

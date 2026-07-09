@@ -36,7 +36,7 @@ const LANGUAGES = [
   { value: "pt", label: "Português" },
 ];
 
-/** Descriptor for the political-openness slider (maps to AdaptiveRWE-B epsilon). */
+/** Descriptor for the political-openness slider (maps to per-request RWE-B epsilon; 50 = engine default). */
 function opennessLabel(v: number) {
   if (v < 25) return "Stay close to my views";
   if (v < 55) return "Nudge me gently";
@@ -44,7 +44,7 @@ function opennessLabel(v: number) {
   return "Push me out of my comfort zone";
 }
 
-/** Descriptor for recommendation strength (maps to RWE-B max distance). */
+/** Descriptor for recommendation strength (maps to per-request RWE-D beta; 50 = engine default). */
 function strengthLabel(v: number) {
   if (v < 25) return "Subtle";
   if (v < 55) return "Balanced";
@@ -191,7 +191,7 @@ export default function SettingsPage() {
               <SliderRow
                 icon={Target}
                 title="Daily reading goal"
-                description="Your target reading time. Powers streaks and reminders."
+                description="Your target reading time. Tracks today's progress on your dashboard."
                 value={draft.readingGoalMinutes}
                 onChange={(v) => set("readingGoalMinutes", v)}
                 min={5}

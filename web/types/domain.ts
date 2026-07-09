@@ -159,8 +159,13 @@ export interface DashboardSummary {
   today: {
     articlesRead: number;
     avgReadingMinutes: number;
+    /** Today's total estimated reading minutes (per-read estimates, not measured dwell). */
+    minutesRead?: number;
     politicalShare: number; // 0–1
     topTopics: string[];
+    /** Today-vs-goal progress from the reader's stored daily goal; absent for anonymous/demo. */
+    goalMinutes?: number;
+    goalMet?: boolean;
   };
   metrics: Metric[];
   streakDays: number;
@@ -489,9 +494,9 @@ export interface SaveResult {
 export interface Settings {
   theme: "light" | "dark" | "system";
   language: string;
-  politicalOpenness: number; // 0–100 → maps to AdaptiveRWEB epsilon
-  recommendationStrength: number; // 0–100 → RWE-B max_distance
-  readingGoalMinutes: number;
+  politicalOpenness: number; // 0–100 → per-request RWE-B epsilon (50 = engine default 0.9)
+  recommendationStrength: number; // 0–100 → per-request RWE-D beta (50 = engine default 0.5)
+  readingGoalMinutes: number; // drives the dashboard's today-vs-goal progress
   weeklyReport: boolean;
   monthlyReport: boolean;
   notifications: {

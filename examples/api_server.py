@@ -197,15 +197,17 @@ def _handle_from(name: str, email: str) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# Product preferences (settings) — persisted preference shaping only. These wire
-# NOTHING into the recommender or health algorithms; they just normalise a
-# preferences object to a stable, type-safe contract with honest server defaults.
+# Product preferences (settings). Three of these now shape product behaviour —
+# ``politicalOpenness`` / ``recommendationStrength`` map to per-request RWE-B/RWE-D
+# hyperparameters (see :func:`rec_params_from_settings`) and ``readingGoalMinutes``
+# drives the dashboard's today-vs-goal progress. Settings still wire NOTHING into
+# the health report or its metrics.
 # --------------------------------------------------------------------------- #
 DEFAULT_SETTINGS = {
     "theme": "system",
     "language": "en",
-    "politicalOpenness": 50,          # a stored preference only — NOT wired to the recommender
-    "recommendationStrength": 50,     # a stored preference only — NOT wired to the recommender
+    "politicalOpenness": 50,          # 50 = the stack's default RWE-B epsilon (0.9)
+    "recommendationStrength": 50,     # 50 = the stack's default RWE-D beta (0.5)
     "readingGoalMinutes": 20,
     "weeklyReport": True,
     "monthlyReport": False,
@@ -244,8 +246,9 @@ def normalize_settings(stored: "dict | None", patch: "dict | None" = None) -> di
     preferences, overlaid with an optional incoming ``patch``. Unknown keys are dropped and every
     value is coerced / clamped to the contract, so a partial update from any client (web, iOS,
     Android, extension, RSS) is safe and the response shape is always stable. ``patch=None`` reads
-    (with honest defaults for anything unset); a patch merges an update. Preferences only — this
-    shapes no health or recommendation behaviour."""
+    (with honest defaults for anything unset); a patch merges an update. Normalisation only — the
+    behavioural mapping of the two recommendation sliders lives in
+    :func:`rec_params_from_settings`, and nothing here ever shapes the health report."""
     layers = [DEFAULT_SETTINGS, stored or {}, patch or {}]
     theme = _layered("theme", layers, DEFAULT_SETTINGS["theme"])
     return {
@@ -259,6 +262,40 @@ def normalize_settings(stored: "dict | None", patch: "dict | None" = None) -> di
         "notifications": _merge_bool_group(DEFAULT_SETTINGS["notifications"], layers, "notifications"),
         "privacy": _merge_bool_group(DEFAULT_SETTINGS["privacy"], layers, "privacy"),
     }
+
+
+# Slider → recommender-parameter mapping. Piecewise-linear through three anchors, pinned so
+# **slider 50 maps exactly to the constants the stack has always used** (RWE-B epsilon 0.9,
+# RWE-D beta 0.5): an untouched slider changes nothing, byte for byte. The ranges are deliberately
+# gentle — Political openness rides the weak text-lean axis (directional, not a measurement; see
+# docs/HEALTH_REPORT.md), so its reach is a nudge, never a hard flip.
+_OPENNESS_EPSILON = (0.70, 0.90, 0.97)    # slider 0 / 50 / 100 → RWE-B epsilon (non-bridge erasure)
+_STRENGTH_BETA = (0.30, 0.50, 0.80)       # slider 0 / 50 / 100 → RWE-D beta (popularity suppression)
+
+
+def _piecewise(v: float, lo: float, mid: float, hi: float) -> float:
+    """Linear 0→``lo``, 50→``mid``, 100→``hi`` (callers pass an already-clamped 0–100 value)."""
+    v = float(v)
+    return lo + (mid - lo) * (v / 50.0) if v <= 50.0 else mid + (hi - mid) * ((v - 50.0) / 50.0)
+
+
+def rec_params_from_settings(settings: "dict | None") -> "dict | None":
+    """Per-request recommender parameters from a reader's stored preferences, or ``None``.
+
+    The two sliders map to hyperparameters the RWE classes have always accepted — Political
+    openness → RWE-B ``epsilon`` (how strongly same-side items are erased, i.e. how far the walk
+    reaches for cross-cutting reads) and Recommendation strength → RWE-D ``beta`` (how strongly
+    popular items are suppressed, i.e. how far the feed diversifies from the usual diet). Only a
+    *moved* slider contributes a key, and ``None`` means "use the shared default stack" — so demo,
+    anonymous, and untouched-slider requests are provably identical to the pre-slider behaviour.
+    The algorithms themselves are untouched; this only chooses constructor arguments."""
+    s = normalize_settings(settings)
+    params = {}
+    if s["politicalOpenness"] != 50:
+        params["epsilon"] = _piecewise(s["politicalOpenness"], *_OPENNESS_EPSILON)
+    if s["recommendationStrength"] != 50:
+        params["beta"] = _piecewise(s["recommendationStrength"], *_STRENGTH_BETA)
+    return params or None
 
 
 # ------------------------------------------------------------------ #
@@ -670,19 +707,24 @@ class Backend:
             })
         return out
 
-    def build_dashboard(self, report: dict, reads: list, snapshots: list) -> dict:
+    def build_dashboard(self, report: dict, reads: list, snapshots: list,
+                        goal_minutes: "int | None" = None) -> dict:
         """Compose the dashboard summary from data that already exists — **no new report
         serialisation**. ``overall`` / ``overallDelta`` / ``metrics`` are lifted verbatim from the
         Measured/Estimate/Demo ``report`` this reader would see; ``trend`` is their saved report
         snapshots; ``today`` and ``streakDays`` are light aggregations of their recent reads (via
-        the shared :meth:`serialize_history`). Corpus-independent and mobile-friendly."""
+        the shared :meth:`serialize_history`). ``goal_minutes`` (the reader's stored daily reading
+        goal) adds today-vs-goal progress — minutes here are the same per-read *estimates* the
+        history already shows, so the goal tracks estimated reading time, not measured dwell.
+        Corpus-independent and mobile-friendly."""
         recent = self.serialize_history(reads)                       # reuse the one history serialiser
         political_by_id = {str(r.get("id")): bool((r.get("scored") or {}).get("political"))
                            for r in reads}
         today = datetime.now(timezone.utc).date().isoformat()
         todays = [e for e in recent if str(e.get("readAt") or "")[:10] == today]
         n = len(todays)
-        avg_min = round(sum(e["readingMinutes"] for e in todays) / n) if n else 0
+        total_min = int(sum(e["readingMinutes"] for e in todays))
+        avg_min = round(total_min / n) if n else 0
         pol_share = (sum(political_by_id.get(e["id"], False) for e in todays) / n) if n else 0.0
         top_topics = [t for t, _ in Counter(e["article"]["topic"] for e in todays
                                             if e["article"]["topic"]).most_common(4)]
@@ -693,12 +735,17 @@ class Backend:
         delta = (overall - int(snapshots[-2]["overall"]) if len(snapshots) >= 2
                  else int(report.get("overallDelta") or 0))
 
+        today_block = {"articlesRead": n, "avgReadingMinutes": avg_min, "minutesRead": total_min,
+                       "politicalShare": round(float(pol_share), 4), "topTopics": top_topics}
+        if goal_minutes is not None:                                 # signed-in reader with a goal
+            today_block["goalMinutes"] = int(goal_minutes)
+            today_block["goalMet"] = total_min >= int(goal_minutes)
+
         return {
             "overall": overall,
             "overallDelta": delta,
             "trend": trend,
-            "today": {"articlesRead": n, "avgReadingMinutes": avg_min,
-                      "politicalShare": round(float(pol_share), 4), "topTopics": top_topics},
+            "today": today_block,
             "metrics": report.get("metrics", []),                    # the report's metrics, reused as-is
             "streakDays": _reading_streak([e.get("readAt") for e in recent]),
         }
@@ -1057,16 +1104,38 @@ class Backend:
         return self._models.get(strategy, self._models["rwe-b"])
 
     @staticmethod
-    def _rec_cols_of(mind, rec: "_Recommenders", u: int, strategy: str, k: int = 12) -> list:
+    def _model_for(rec: "_Recommenders", strategy: str, params: "dict | None"):
+        """The strategy's model — the shared default, or a per-request rebuild with the reader's
+        slider-mapped hyperparameters (:func:`rec_params_from_settings`).
+
+        The rebuild reuses the cached ``FeedbackGraph`` / positions, so constructing an RWEB/RWED
+        around them is cheap and the shared stack is never mutated or churned. Only the two wired
+        knobs exist: ``epsilon`` for rwe-b, ``beta`` for rwe-d; ``adaptive`` always serves the
+        shared model (its epsilon is the measured satisfaction policy, not a preference)."""
+        default = rec.models.get(strategy, rec.models["rwe-b"])
+        if not params:
+            return default
+        from rwe import RWEB, RWED
+        if strategy == "rwe-b" and "epsilon" in params:
+            return RWEB(rec.fg, rec.theta, rec.item_pos, epsilon=float(params["epsilon"]))
+        if strategy == "rwe-d" and "beta" in params:
+            return RWED(rec.fg, beta=float(params["beta"]))
+        return default
+
+    @staticmethod
+    def _rec_cols_of(mind, rec: "_Recommenders", u: int, strategy: str, k: int = 12,
+                     params: "dict | None" = None) -> list:
         """Top-k item columns (in ``mind`` space) recommender ``strategy`` surfaces for row ``u``,
         so we can serialise full articles. Corpus-parametric so a real user's augmented recommender
-        selects columns exactly as the base one does. Returns [] on any failure (caller falls back)."""
+        selects columns exactly as the base one does; ``params`` (slider-mapped hyperparameters)
+        swaps in a per-request model via :meth:`_model_for`. Returns [] on any failure (caller
+        falls back)."""
         try:
             uid = np.asarray(mind.dataset.user_ids)[u]
             rows = np.flatnonzero(np.asarray(rec.rec_dataset.user_ids) == uid)
             if rows.size == 0:
                 return []
-            model = rec.models.get(strategy, rec.models["rwe-b"])
+            model = Backend._model_for(rec, strategy, params)
             ranked = model.recommend(np.array([rows[0]]), top_k=k)[0]
             cols = []
             for j in ranked:
@@ -1122,23 +1191,28 @@ class Backend:
         return out
 
     def _serialize_recommendations(self, corpus: _Corpus, rec: "_Recommenders", u: int,
-                                   strategy: str | None = None) -> list:
+                                   strategy: str | None = None,
+                                   params: "dict | None" = None) -> list:
         """Full recommendation pipeline over a corpus + its recommender stack: derive the
         reader's side, pick the plan (one strategy, or the default blend), select columns, and
         serialise. Shared verbatim by the base path and the augmented (Measured) path, so a real
-        user's recs use the same blend and reason logic — only the corpus + recommender differ."""
+        user's recs use the same blend and reason logic — only the corpus + recommender differ.
+        ``params`` (the reader's slider-mapped hyperparameters) applies per strategy inside the
+        blend too, so a moved slider shapes its slice of the default feed as well."""
         rep = hr.user_report(corpus.pop, corpus.mind, u)
         user_side = np.sign(rep.get("mean_lean") or 0.0)
         # a single strategy, or a blend across the family for the default "all" view
         plan = ([(strategy, 12)] if strategy in ("rwe-b", "rwe-d", "adaptive")
                 else [("rwe-b", 6), ("rwe-d", 4), ("adaptive", 4)])
-        cols_by_strategy = [(strat, self._rec_cols_of(corpus.mind, rec, u, strat, k))
+        cols_by_strategy = [(strat, self._rec_cols_of(corpus.mind, rec, u, strat, k, params))
                             for strat, k in plan]
         return self._serialize_recs(corpus, cols_by_strategy, user_side)
 
-    def recommendations(self, u: int, strategy: str | None = None) -> list:
-        """Base reference-corpus recommendations (demo / ``?user=`` path)."""
-        return self._serialize_recommendations(self.base_corpus, self.rec, u, strategy)
+    def recommendations(self, u: int, strategy: str | None = None,
+                        params: "dict | None" = None) -> list:
+        """Base reference-corpus recommendations (demo / ``?user=`` path). ``params`` carries a
+        signed-in reader's slider-mapped hyperparameters (None → the shared default stack)."""
+        return self._serialize_recommendations(self.base_corpus, self.rec, u, strategy, params)
 
     # -- coach ------------------------------------------------------------- #
     def _facts_of(self, corpus: _Corpus, u: int):

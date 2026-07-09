@@ -94,9 +94,13 @@ export default function DashboardPage() {
               <StatCard icon={BookOpen} label="Articles read" value={`${data.today.articlesRead}`} hue="primary" index={0} />
               <StatCard
                 icon={Clock}
-                label="Avg. reading time"
-                value={`${data.today.avgReadingMinutes}`}
-                sub="min"
+                label={data.today.goalMinutes != null ? "Reading time today" : "Avg. reading time"}
+                value={`${data.today.goalMinutes != null ? (data.today.minutesRead ?? 0) : data.today.avgReadingMinutes}`}
+                sub={
+                  data.today.goalMinutes != null
+                    ? `of ${data.today.goalMinutes} min goal${data.today.goalMet ? " ✓" : ""}`
+                    : "min"
+                }
                 hue="left"
                 index={1}
               />

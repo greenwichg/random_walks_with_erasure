@@ -466,8 +466,13 @@ class TrendPointModel(BaseModel):
 class DashboardTodayModel(BaseModel):
     articlesRead: int
     avgReadingMinutes: int
+    minutesRead: int                    # today's total estimated reading minutes
     politicalShare: float
     topTopics: list[str]
+    # today-vs-goal progress from the reader's stored daily reading goal; omitted (None) for
+    # anonymous/demo requests, which have no settings. Minutes are per-read estimates.
+    goalMinutes: int | None = None
+    goalMet: bool | None = None
 
 
 class DashboardModel(BaseModel):
@@ -1258,7 +1263,11 @@ def dashboard(request: Request,
     st, uid = _require_store(), _real_uid(request)
     reads = st.list_reads(uid) if uid is not None else []
     snaps = st.list_report_snapshots(uid) if uid is not None else []
-    return active.backend.build_dashboard(rep, reads, snaps)
+    # A signed-in reader's stored daily reading goal drives the today-vs-goal progress (their
+    # settings always normalise to a goal, so every real user gets one); anonymous/demo has none.
+    goal = (engine.normalize_settings(st.get_settings(uid))["readingGoalMinutes"]
+            if uid is not None else None)
+    return active.backend.build_dashboard(rep, reads, snaps, goal_minutes=goal)
 
 
 @app.get("/api/outlets", response_model=list[OutletModel], tags=["meta"],
@@ -1500,7 +1509,9 @@ def my_profile(request: Request) -> dict:
          responses=_ERR_RESPONSES)
 def get_my_settings(request: Request) -> dict:
     """The reader's product preferences, with honest server defaults for anything they haven't set.
-    Preferences only — nothing here influences the report or the recommender."""
+    Political openness / Recommendation strength shape the reader's own recommendations
+    (per-request RWE-B epsilon / RWE-D beta) and the reading goal shapes the dashboard's
+    today-vs-goal progress; nothing here ever influences the health report."""
     uid = _require_real_user(request)
     return engine.normalize_settings(_require_store().get_settings(uid))
 
@@ -1511,7 +1522,9 @@ def get_my_settings(request: Request) -> dict:
 def update_my_settings(request: Request, req: SettingsUpdateModel) -> dict:
     """Merge a (partial) preferences patch over the user's stored preferences, normalise to the
     stable contract, persist, and return the full result. Any client may send only the fields it
-    changed. Persists preferences only; wires nothing into health or recommendation behaviour."""
+    changed. The recommendation sliders take effect on the reader's next recommendations request
+    (per-request parameters — no model rebuild, no cache churn); nothing here touches the health
+    report."""
     uid = _require_real_user(request)
     st = _require_store()
     updated = engine.normalize_settings(st.get_settings(uid), req.model_dump(exclude_none=True))
@@ -1610,13 +1623,24 @@ def recommendations(
 ) -> list:
     active = _active()
     kind, val = _serve(active, request, user)
-    recs = (active.personalizer.recommendations(val, strategy) if kind == "personal"
-            else active.backend.recommendations(val, strategy))
+    # A signed-in reader's preference sliders map to per-request recommender hyperparameters
+    # (Political openness → RWE-B epsilon, Recommendation strength → RWE-D beta). Untouched
+    # sliders map to None — the shared default stack — so demo/anonymous requests and readers
+    # who never moved a slider get exactly the pre-slider feed. Best-effort: a settings read
+    # failure serves defaults, never an error.
+    uid = _real_uid(request)
+    params = None
+    if uid is not None and state.store is not None:
+        try:
+            params = engine.rec_params_from_settings(state.store.get_settings(uid))
+        except Exception:
+            params = None
+    recs = (active.personalizer.recommendations(val, strategy, params) if kind == "personal"
+            else active.backend.recommendations(val, strategy, params))
     _enrich_rec_media(recs)     # attach image (from the live FeedArticle) + publisher logo — additive
     # A recommendation the engine surfaced to a signed-in reader becomes a measurable event: record
     # which (cross-cutting) recs were shown — the denominator for Open-Mindedness. Best-effort; a
     # recording failure must never fail the recommendations response. No new recommender is created.
-    uid = _real_uid(request)
     if uid is not None and state.store is not None:
         try:
             state.store.record_recommendations_shown(

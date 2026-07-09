@@ -216,10 +216,14 @@ class Personalizer:
         m = self._model(user_id)
         return self.backend._serialize_report(m.corpus, m.reader_row)
 
-    def recommendations(self, user_id: int, strategy: "str | None" = None) -> list:
-        """RWE recommendations computed on the user's augmented feedback graph."""
+    def recommendations(self, user_id: int, strategy: "str | None" = None,
+                        params: "dict | None" = None) -> list:
+        """RWE recommendations computed on the user's augmented feedback graph. ``params`` (the
+        reader's slider-mapped hyperparameters, from ``api_server.rec_params_from_settings``) is a
+        per-request override — the cached augmented model and its recommender stack are untouched,
+        so preference changes never churn the model cache."""
         m = self._model(user_id)
-        return self.backend._serialize_recommendations(m.corpus, m.rec, m.reader_row, strategy)
+        return self.backend._serialize_recommendations(m.corpus, m.rec, m.reader_row, strategy, params)
 
     def coach_greeting(self, user_id: int) -> list:
         """Coach greeting grounded on the user's Measured report."""

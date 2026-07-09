@@ -401,7 +401,8 @@ def test_dashboard_reuses_report_and_reflects_reads(client):
     report = client.get("/api/report", headers=hdr).json()
     assert dash["overall"] == report["overall"]                                  # report reused verbatim
     assert {m["key"] for m in dash["metrics"]} == {m["key"] for m in report["metrics"]}
-    assert set(dash["today"]) == {"articlesRead", "avgReadingMinutes", "politicalShare", "topTopics"}
+    assert set(dash["today"]) == {"articlesRead", "avgReadingMinutes", "minutesRead",
+                                  "politicalShare", "topTopics", "goalMinutes", "goalMet"}
     assert dash["today"]["articlesRead"] >= 1                                    # observedAt defaults to now
     assert isinstance(dash["streakDays"], int)
 
@@ -1165,3 +1166,62 @@ def test_media_serialization_and_rec_enrichment(client):
         assert recs2[0]["article"]["publisherLogo"] == "https://other.example/favicon.ico"
     finally:
         st.delete_feed_articles([u])
+
+
+# --------------------------------------------------------------------------- #
+# Preference sliders — settings genuinely shape the signed-in reader's feed
+# --------------------------------------------------------------------------- #
+def _feed_ids(client, strategy="rwe-b", headers=None):
+    r = client.get(f"/api/recommendations?strategy={strategy}", headers=headers or {})
+    assert r.status_code == 200
+    return [x["article"]["id"] for x in r.json()]
+
+
+def test_sliders_shape_the_feed_end_to_end(client):
+    """POST /api/me/settings → GET /api/recommendations: untouched sliders serve the exact
+    anonymous/default feed; a moved slider changes it; moving it back restores it."""
+    uid = client.post("/api/internal/users",
+                      json={"provider": "google", "providerAccountId": "sliders-1"}).json()["userId"]
+    hdr = {"X-IH-User-Id": str(uid)}
+    anonymous = _feed_ids(client)                                  # the shared default stack
+
+    # defaults (50/50) -> identical to the anonymous feed, byte for byte
+    assert _feed_ids(client, headers=hdr) == anonymous
+
+    # move Political openness to 0 -> the rwe-b feed changes for this reader only
+    client.post("/api/me/settings", json={"politicalOpenness": 0}, headers=hdr)
+    moved = _feed_ids(client, headers=hdr)
+    assert moved != anonymous
+    assert _feed_ids(client) == anonymous                          # anonymous unaffected
+
+    # move Recommendation strength -> the rwe-d feed changes too
+    base_d = _feed_ids(client, strategy="rwe-d")
+    client.post("/api/me/settings", json={"recommendationStrength": 100}, headers=hdr)
+    assert _feed_ids(client, strategy="rwe-d", headers=hdr) != base_d
+
+    # back to 50/50 -> the default feed again (no residue, nothing cached per user)
+    client.post("/api/me/settings",
+                json={"politicalOpenness": 50, "recommendationStrength": 50}, headers=hdr)
+    assert _feed_ids(client, headers=hdr) == anonymous
+    assert _feed_ids(client, strategy="rwe-d", headers=hdr) == base_d
+
+
+def test_dashboard_reports_reading_goal_progress(client):
+    """A signed-in reader's dashboard carries today-vs-goal progress from their stored goal;
+    the anonymous dashboard has no goal keys (response_model_exclude_none drops them)."""
+    uid = client.post("/api/internal/users",
+                      json={"provider": "google", "providerAccountId": "goal-1"}).json()["userId"]
+    hdr = {"X-IH-User-Id": str(uid)}
+    client.post("/api/me/settings", json={"readingGoalMinutes": 5}, headers=hdr)
+    client.post("/api/me/reads",
+                json={"reads": [{"url": "https://www.nytimes.com/2026/business/markets-rally",
+                                 "title": "Markets rally on strong earnings"}]}, headers=hdr)
+
+    t = client.get("/api/dashboard", headers=hdr).json()["today"]
+    assert t["goalMinutes"] == 5
+    assert isinstance(t["minutesRead"], int) and t["minutesRead"] >= 1
+    assert t["goalMet"] == (t["minutesRead"] >= 5)
+
+    anon = client.get("/api/dashboard").json()["today"]
+    assert "goalMinutes" not in anon and "goalMet" not in anon
+    assert anon["minutesRead"] == 0
