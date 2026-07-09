@@ -258,6 +258,13 @@ class Read(Base):
     canonical_url: Mapped[str] = mapped_column(String(2048))
     scored: Mapped[str] = mapped_column(Text)           # JSON of the ScoredRead
     observed_at: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+    # Additive read-source attribution (Commit 14) — all nullable, metadata ONLY (no consumer
+    # branches on them): read_source = app | extension | <future import>; opened_from = the in-app
+    # surface (recommendations/discover/stories/search/saved); device = optional client hint. Legacy
+    # rows and the browser extension keep NULL here, so every existing reader/consumer is unchanged.
+    read_source: Mapped[Optional[str]] = mapped_column(String(32), default=None)
+    opened_from: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+    device: Mapped[Optional[str]] = mapped_column(String(64), default=None)
     created_at: Mapped[datetime] = mapped_column(default=_utcnow)
 
 
@@ -400,6 +407,7 @@ class Store:
                                      future=True)
         self._ensure_media_columns()
         self._ensure_source_columns()
+        self._ensure_read_columns()
         self._ensure_search_indexes()
 
     @contextmanager
@@ -706,6 +714,18 @@ class Store:
             except Exception:
                 pass    # already exists (fresh DB) or a non-sqlite backend — nothing to do
 
+    def _ensure_read_columns(self) -> None:
+        """Additive, idempotent read-source columns on ``reads`` (Commit 14), upgrading pre-existing
+        DBs in place exactly like ``_ensure_source_columns``. Backward compatible — legacy reads and
+        the browser extension keep ``NULL`` here, and every read consumer keeps working unchanged."""
+        cols = [("read_source", "VARCHAR(32)"), ("opened_from", "VARCHAR(64)"), ("device", "VARCHAR(64)")]
+        for name, decl in cols:
+            try:
+                with self.session() as s:
+                    s.execute(text(f"ALTER TABLE reads ADD COLUMN {name} {decl}"))
+            except Exception:
+                pass    # already exists (fresh DB) or a non-sqlite backend — nothing to do
+
     # -- catalog search (live, index-backed; never touches the recommender) ------------------------
     def _ensure_search_indexes(self) -> None:
         """Additive, idempotent search indexes on ``feed_articles`` (also upgrades pre-existing DBs).
@@ -884,16 +904,20 @@ class Store:
 
     # -- reading events (idempotent per user + canonical URL) -----------
     def add_read(self, user_id: int, canonical_url: str, scored: dict,
-                 observed_at: "str | None" = None) -> bool:
+                 observed_at: "str | None" = None, *, read_source: "str | None" = None,
+                 opened_from: "str | None" = None, device: "str | None" = None) -> bool:
         """Record a reading event; return ``True`` if new, ``False`` if this (user, url) was
-        already read — idempotent, no duplicate row."""
+        already read — idempotent, no duplicate row. ``read_source`` / ``opened_from`` / ``device``
+        are additive attribution metadata (Commit 14): stored on the new row, never consulted for
+        dedup and never re-scored, so any source (app, extension, future import) shares this one path."""
         with self.session() as s:
             exists = s.scalar(select(Read.id).where(Read.user_id == user_id,
                                                     Read.canonical_url == canonical_url))
             if exists is not None:
                 return False
             s.add(Read(user_id=user_id, canonical_url=canonical_url,
-                       scored=_dumps_scored(scored), observed_at=observed_at))
+                       scored=_dumps_scored(scored), observed_at=observed_at,
+                       read_source=read_source, opened_from=opened_from, device=device))
             return True
 
     def get_reads(self, user_id: int) -> list:
@@ -917,6 +941,7 @@ class Store:
             return [{"id": r.id, "canonicalUrl": r.canonical_url,
                      "scored": dict(json.loads(r.scored)),
                      "observedAt": r.observed_at,
+                     "readSource": r.read_source, "openedFrom": r.opened_from, "device": r.device,
                      "createdAt": r.created_at.isoformat() if r.created_at else None}
                     for r in rows]
 

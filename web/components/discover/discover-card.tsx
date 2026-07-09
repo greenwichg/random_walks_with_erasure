@@ -13,7 +13,15 @@ import { timeAgo } from "@/lib/utils";
  * time, outlet lean, category, and the shared Read control (opens the canonical publisher URL).
  * Reuses the article badges and the same Read button as Recommendations; adds no new article store.
  */
-export function DiscoverCard({ article, index = 0 }: { article: Article; index?: number }) {
+export function DiscoverCard({
+  article,
+  index = 0,
+  openedFrom = "discover",
+}: {
+  article: Article;
+  index?: number;
+  openedFrom?: string;
+}) {
   return (
     <motion.article
       layout
@@ -44,7 +52,7 @@ export function DiscoverCard({ article, index = 0 }: { article: Article; index?:
       </div>
 
       <div className="mt-4 flex items-center gap-2">
-        <ReadArticleButton article={article} />
+        <ReadArticleButton article={article} openedFrom={openedFrom} />
         <SaveButton article={article} />
       </div>
     </motion.article>

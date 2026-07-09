@@ -130,7 +130,7 @@ export function RecommendationCard({
             so the browser extension captures the read and Dashboard/History/Analytics/Health update
             naturally. The shared control only navigates to an absolute publisher URL — never a
             relative value that would resolve to the app's own origin. */}
-        <ReadArticleButton article={article} onOpen={onOpen} className="mr-1" />
+        <ReadArticleButton article={article} openedFrom="recommendations" onOpen={onOpen} className="mr-1" />
         <SaveButton article={article} />
         <ActionButton
           label="Read later"

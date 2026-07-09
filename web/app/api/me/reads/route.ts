@@ -31,9 +31,10 @@ export async function POST(request: Request) {
   const body = (await request.json().catch(() => ({ reads: [] }))) as { reads?: unknown };
   const reads = Array.isArray(body.reads) ? body.reads : [];
 
-  // 1) Signed-in web session.
+  // 1) Signed-in web session (in-app read tracking + the paste-URL flow).
   const sessionHeaders = await engineAuthHeaders();
   let headers: Record<string, string> | null = sessionHeaders["X-IH-User-Id"] ? sessionHeaders : null;
+  let defaultSource = "app";
 
   // 2) Otherwise a browser-extension bearer token, resolved server-side to a user id.
   if (!headers) {
@@ -42,9 +43,18 @@ export async function POST(request: Request) {
     const userId = await resolveApiToken(token);
     if (userId == null) return unauthorized();
     headers = engineHeadersForUserId(userId);
+    defaultSource = "extension";
   }
 
-  const result = await backendPost("/api/me/reads", { reads }, headers);
+  // Stamp the read source by auth path (a client may override — e.g. a future import via session).
+  // Metadata only: the engine never branches on it; it just attributes the one shared read pipeline.
+  const tagged = reads.map((r) =>
+    r && typeof r === "object"
+      ? { ...(r as Record<string, unknown>), readSource: (r as { readSource?: string }).readSource ?? defaultSource }
+      : r,
+  );
+
+  const result = await backendPost("/api/me/reads", { reads: tagged }, headers);
   if (result) return NextResponse.json(result);
   return engineUnavailable();
 }

@@ -663,6 +663,10 @@ class Backend:
                 "readAt": _read_at(row),
                 "readingMinutes": article["readingMinutes"],
                 "completed": True,
+                # Additive attribution (Commit 14) — carried through verbatim, omitted when unknown
+                # (legacy / extension reads). Metadata only; nothing downstream branches on it.
+                "readSource": row.get("readSource"),
+                "openedFrom": row.get("openedFrom"),
             })
         return out
 

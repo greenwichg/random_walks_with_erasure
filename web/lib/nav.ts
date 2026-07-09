@@ -8,6 +8,7 @@ import {
   Compass,
   Newspaper,
   BarChart3,
+  Bookmark,
   Settings,
   User,
 } from "lucide-react";
@@ -43,6 +44,7 @@ export const NAV: NavSection[] = [
     items: [
       { label: "Discover", href: "/discover", icon: Compass, hint: "Trending stories & clusters" },
       { label: "Stories", href: "/stories", icon: Newspaper, hint: "One event, every viewpoint" },
+      { label: "Saved", href: "/saved", icon: Bookmark, hint: "Articles you saved to read later" },
       { label: "Reading History", href: "/history", icon: History, hint: "Everything you've read" },
       { label: "Analytics", href: "/analytics", icon: BarChart3, hint: "Trends over time" },
     ],

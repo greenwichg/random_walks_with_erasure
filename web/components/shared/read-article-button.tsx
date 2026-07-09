@@ -3,29 +3,35 @@
 import * as React from "react";
 import { BookOpen, Check, ExternalLink } from "lucide-react";
 import type { Article } from "@/types/domain";
+import { useRecordRead } from "@/hooks/use-data";
 import { cn } from "@/lib/utils";
 
 /**
- * The single "Read article" control, shared by Recommendations, Discover, and Stories so the Read
- * flow behaves identically everywhere. It records the open (optional `onOpen`) FIRST, then opens the
- * **canonical publisher URL** in a new tab so the browser extension captures the read and the
- * Dashboard / History / Analytics update naturally.
+ * The single "Read article" control, shared by Recommendations, Discover, Search, Stories, and Saved
+ * so the Read flow behaves identically everywhere.
+ *
+ * It records the read into the canonical `/api/me/reads` pipeline FIRST — this is **in-app read
+ * tracking, the primary reading source**; the browser extension is now only an optional enhancement
+ * for reads that happen OUTSIDE the app — tags it with `openedFrom`, then opens the **canonical
+ * publisher URL** in a new tab so Dashboard / History / Analytics / Health update naturally. When a
+ * caller passes `onOpen` (recommendations), that reception signal (RecEvent) is also recorded.
  *
  * It opens the URL ONLY when it is an absolute http(s) URL. A relative/malformed value is never
- * navigated to — that is what made a bad `url` resolve against the app's own origin instead of the
- * publisher. With no usable URL the control still records the open (if there's an `onOpen`), or is
- * disabled — it never offers a broken link.
+ * navigated to. With no usable URL the control still records `onOpen` (if given), or is disabled.
  */
 export function ReadArticleButton({
   article,
+  openedFrom,
   onOpen,
   className,
 }: {
-  article: Pick<Article, "url">;
+  article: Pick<Article, "url"> & Partial<Pick<Article, "id" | "headline" | "description">>;
+  openedFrom?: string;
   onOpen?: () => void;
   className?: string;
 }) {
   const [opened, setOpened] = React.useState(false);
+  const recordRead = useRecordRead();
   const href = article.url && /^https?:\/\//i.test(article.url) ? article.url : null;
   const actionable = Boolean(href || onOpen);
 
@@ -38,7 +44,16 @@ export function ReadArticleButton({
       onClick={() => {
         if (!opened) {
           setOpened(true);
-          onOpen?.(); // record reception FIRST, inside the click gesture (before window.open)
+          // Record the in-app read FIRST (canonical pipeline), then the optional rec reception.
+          if (href) {
+            recordRead.mutate({
+              url: href,
+              title: article.headline,
+              description: article.description,
+              openedFrom,
+            });
+          }
+          onOpen?.();
         }
         if (href) window.open(href, "_blank", "noopener,noreferrer");
       }}

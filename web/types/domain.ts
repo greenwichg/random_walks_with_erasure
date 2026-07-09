@@ -235,6 +235,9 @@ export interface HistoryEntry {
   readAt: string;
   readingMinutes: number;
   completed: boolean;
+  /** Additive attribution (Commit 14): where the read came from. Omitted for legacy/extension reads. */
+  readSource?: string; // app | extension | <future import>
+  openedFrom?: string; // recommendations | discover | stories | search | saved | ai-coach
 }
 
 /** A clustered story: one event, many publishers across the spectrum. */

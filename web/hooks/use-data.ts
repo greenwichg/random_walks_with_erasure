@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { queryKeys, services } from "@/services";
+import { recordRead, type RecordReadInput } from "@/lib/record-read";
 import type {
   FeedbackAction,
   Profile,
@@ -60,6 +61,28 @@ export function useFeedback() {
   return useMutation({
     mutationFn: ({ articleId, action }: { articleId: string; action: FeedbackAction }) =>
       services.sendFeedback(articleId, action),
+  });
+}
+
+/**
+ * Records an in-app read (the PRIMARY reading source) into the canonical `/api/me/reads` pipeline,
+ * then refreshes the read-derived views. Fire-and-forget for the caller — the button opens the
+ * publisher immediately; a short grace lets the beacon persist before we invalidate history /
+ * dashboard / analytics / report, so the new read appears without a manual reload. No optimistic
+ * write (a read must be the server's truth), and only read-derived queries are touched.
+ */
+export function useRecordRead() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: RecordReadInput) => {
+      recordRead(input);
+      await new Promise((resolve) => setTimeout(resolve, 700)); // let the beacon reach + persist
+    },
+    onSettled: () => {
+      for (const key of [queryKeys.history, queryKeys.dashboard, queryKeys.analytics, queryKeys.report]) {
+        qc.invalidateQueries({ queryKey: key });
+      }
+    },
   });
 }
 

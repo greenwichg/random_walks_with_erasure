@@ -112,7 +112,7 @@ function SearchInner() {
 
       <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
         {results.map((article, i) => (
-          <DiscoverCard key={article.id} article={article} index={i} />
+          <DiscoverCard key={article.id} article={article} index={i} openedFrom="search" />
         ))}
       </div>
 

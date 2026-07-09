@@ -635,6 +635,8 @@ class HistoryEntryModel(BaseModel):
     readAt: str | None = None
     readingMinutes: int
     completed: bool
+    readSource: str | None = None     # additive: app | extension | <import> (omitted when unknown)
+    openedFrom: str | None = None     # additive: the in-app surface a read came from
 
 
 # ---- Discover & Stories (FeedArticle-powered exploration; product layer) ----
@@ -814,6 +816,9 @@ class ReadInput(BaseModel):
     observedAt: str | None = None
     subtitle: str | None = None       # optional richer text for enrichment
     description: str | None = None    # optional richer text for enrichment (og:description)
+    readSource: str | None = None     # app | extension | <future import> (additive; metadata only)
+    openedFrom: str | None = None     # in-app surface: recommendations/discover/stories/search/saved
+    device: str | None = None         # optional client hint
 
 
 class ReadsRequest(BaseModel):
@@ -1440,7 +1445,8 @@ def add_reads(request: Request, req: ReadsRequest) -> dict:
                              read_at=item.observedAt, subtitle=item.subtitle or "",
                              description=item.description or "")
         scored = ingest.score_with_cache(raw, scorer, st)
-        if st.add_read(uid, scored.article_id, dataclasses.asdict(scored), scored.read_at):
+        if st.add_read(uid, scored.article_id, dataclasses.asdict(scored), scored.read_at,
+                       read_source=item.readSource, opened_from=item.openedFrom, device=item.device):
             accepted += 1
         else:
             duplicates += 1

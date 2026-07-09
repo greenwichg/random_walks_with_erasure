@@ -132,7 +132,7 @@ export default function StoryDetailPage() {
               <h3 className="mt-1 font-medium leading-snug">{c.headline}</h3>
             </div>
             <div className="flex shrink-0 items-center gap-2 self-start sm:self-center">
-              <ReadArticleButton article={{ url: c.url }} />
+              <ReadArticleButton article={{ url: c.url, headline: c.headline }} openedFrom="stories" />
               {c.url && (
                 <SaveButton
                   article={{ id: c.url, url: c.url, headline: c.headline, publisher: c.publisher,

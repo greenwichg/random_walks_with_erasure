@@ -430,3 +430,20 @@ def test_saved_articles_dedup_unsave_and_count(store):
     assert store.unsave_article(u.id, a1["id"]) is True
     assert store.unsave_article(u.id, a1["id"]) is False           # already gone — safe
     assert store.count_saved(u.id) == 1
+
+
+def test_add_read_carries_source_metadata(store):
+    """add_read stores additive read-source attribution (never consulted for dedup); list_reads
+    surfaces it; a source-less read (extension/legacy) keeps NULL — backward compatible."""
+    u = store.upsert_user_by_identity("google", "src-read")
+    scored = {"article_id": "https://cnn.com/a", "outlet": "CNN", "title": "T", "lean": 0.0}
+    assert store.add_read(u.id, "https://cnn.com/a", scored, "2026-07-09T10:00:00Z",
+                          read_source="app", opened_from="discover", device="desktop") is True
+    # dedup ignores source metadata — the same (user, url) is still one read
+    assert store.add_read(u.id, "https://cnn.com/a", scored, None, read_source="app") is False
+    row = store.list_reads(u.id)[0]
+    assert row["readSource"] == "app" and row["openedFrom"] == "discover" and row["device"] == "desktop"
+    # a source-less read stays NULL (extension / legacy)
+    store.add_read(u.id, "https://npr.org/b", {"article_id": "https://npr.org/b", "outlet": "NPR"}, None)
+    leg = [r for r in store.list_reads(u.id) if r["canonicalUrl"] == "https://npr.org/b"][0]
+    assert leg["readSource"] is None and leg["openedFrom"] is None and store.count_reads(u.id) == 2

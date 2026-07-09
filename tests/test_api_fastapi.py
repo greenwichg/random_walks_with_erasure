@@ -532,6 +532,40 @@ def test_reading_sync_single_identity_and_diagnostics(client):
     assert d2["extensionUid"] == other and d2["sessionUid"] == demo_uid and d2["match"] is False
 
 
+def test_in_app_reads_carry_source_metadata_end_to_end(client):
+    """Commit 14: an in-app read POSTed with readSource/openedFrom is recorded once (idempotent) and
+    Reading History carries the attribution; a source-less read (extension/legacy) still records and
+    omits the fields. readSource is metadata only — every source lands in the SAME reads pipeline."""
+    uid = client.post("/api/internal/users",
+                      json={"provider": "google", "providerAccountId": "reader-14",
+                            "email": "r14@x.com", "displayName": "R14"}).json()["userId"]
+    hdr = {"X-IH-User-Id": str(uid)}
+
+    r = client.post("/api/me/reads", json={"reads": [
+        {"url": "https://www.cnn.com/2026/app-read", "title": "App read",
+         "readSource": "app", "openedFrom": "discover", "device": "desktop"}]}, headers=hdr).json()
+    assert r["accepted"] == 1
+    # repeat is idempotent — one read per (user, canonical URL), source metadata not consulted
+    assert client.post("/api/me/reads", json={"reads": [
+        {"url": "https://www.cnn.com/2026/app-read", "title": "App read", "readSource": "app"}]},
+        headers=hdr).json()["duplicates"] == 1
+
+    entry = next(h for h in client.get("/api/me/history", headers=hdr).json()
+                 if h["article"]["headline"] == "App read")
+    assert entry["readSource"] == "app" and entry["openedFrom"] == "discover"
+
+    # a source-less read (extension / legacy) still records; history omits the additive fields
+    client.post("/api/me/reads", json={"reads": [
+        {"url": "https://www.npr.org/2026/ext-read", "title": "Ext read"}]}, headers=hdr)
+    ext = next(h for h in client.get("/api/me/history", headers=hdr).json()
+               if h["article"]["headline"] == "Ext read")
+    assert "readSource" not in ext and "openedFrom" not in ext   # exclude_none omits unknown source
+
+    # both reads flow through the one pipeline the whole platform consumes
+    assert len(client.get("/api/me/history", headers=hdr).json()) >= 2
+    assert client.get("/api/me/profile", headers=hdr).json()["streakDays"] >= 1
+
+
 def test_dev_diagnostics_absent_in_production(client, monkeypatch):
     """The diagnostics endpoint (and the fixed dev token) must not exist on a real deployment."""
     import api_fastapi as A
