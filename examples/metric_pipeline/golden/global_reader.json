@@ -1,0 +1,24 @@
+{
+  "name": "global_reader",
+  "description": "The aspirational diet: ten distinct publishers across the globe, seven topics, an even left/right split, calm and mostly reporting. Near the top of every dimension.",
+  "expected": {
+    "sourceDiversity_raw": "10.0 effective publishers (all distinct)",
+    "topicDiversity_raw": "high (7 topics)",
+    "viewpointBalance_raw": "0.5 (2 left, 2 right)",
+    "echoChamber_raw": "0.0 (balanced L/R)",
+    "reportingRatio_raw": "0.9 (9 of 10 reporting)",
+    "emotionalBalance_raw": "0.90"
+  },
+  "reads": [
+    {"scored": {"title": "Senate committee debates the funding bill", "category": "Politics", "outlet": "BBC", "lean": -1.2, "political": true, "register": "reporting", "emotion": {"fear": 0.05, "outrage": 0.05, "analysis": 0.5, "positive": 0.25, "neutral": 0.15}}},
+    {"scored": {"title": "Governors respond to the new border plan", "category": "Politics", "outlet": "Fox News", "lean": 1.5, "political": true, "register": "reporting", "emotion": {"fear": 0.05, "outrage": 0.1, "analysis": 0.45, "positive": 0.2, "neutral": 0.2}}},
+    {"scored": {"title": "Regional leaders meet over the treaty", "category": "Politics", "outlet": "Al Jazeera", "lean": -0.6, "political": true, "register": "reporting", "emotion": {"fear": 0.05, "outrage": 0.05, "analysis": 0.5, "positive": 0.2, "neutral": 0.2}}},
+    {"scored": {"title": "The measured case for the tax plan", "category": "Politics", "outlet": "The Wall Street Journal", "lean": 0.9, "political": true, "register": "opinion", "emotion": {"fear": 0.05, "outrage": 0.1, "analysis": 0.45, "positive": 0.2, "neutral": 0.2}}},
+    {"scored": {"title": "Markets steady after earnings week", "category": "Business", "outlet": "Reuters", "lean": 0.0, "political": false, "register": "reporting", "emotion": {"fear": 0.05, "outrage": 0.05, "analysis": 0.5, "positive": 0.2, "neutral": 0.2}}},
+    {"scored": {"title": "A new chip pushes laptops further", "category": "Technology", "outlet": "The Verge", "lean": 0.0, "political": false, "register": "reporting", "emotion": {"fear": 0.02, "outrage": 0.03, "analysis": 0.55, "positive": 0.2, "neutral": 0.2}}},
+    {"scored": {"title": "Telescope captures a distant galaxy", "category": "Science", "outlet": "Nature", "lean": 0.0, "political": false, "register": "reporting", "emotion": {"fear": 0.02, "outrage": 0.03, "analysis": 0.55, "positive": 0.25, "neutral": 0.15}}},
+    {"scored": {"title": "Study links sleep to memory", "category": "Health", "outlet": "NPR", "lean": -0.4, "political": false, "register": "reporting", "emotion": {"fear": 0.05, "outrage": 0.05, "analysis": 0.5, "positive": 0.2, "neutral": 0.2}}},
+    {"scored": {"title": "A festival reshapes the old quarter", "category": "Culture", "outlet": "The Guardian", "lean": -0.7, "political": false, "register": "reporting", "emotion": {"fear": 0.03, "outrage": 0.05, "analysis": 0.5, "positive": 0.27, "neutral": 0.15}}},
+    {"scored": {"title": "Aid convoy reaches the region", "category": "World", "outlet": "Associated Press", "lean": 0.0, "political": false, "register": "reporting", "emotion": {"fear": 0.1, "outrage": 0.05, "analysis": 0.45, "positive": 0.2, "neutral": 0.2}}}
+  ]
+}

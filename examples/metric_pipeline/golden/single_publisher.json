@@ -1,0 +1,19 @@
+{
+  "name": "single_publisher",
+  "description": "Every article from one publisher, across varied topics. Isolates the Source Diversity floor (effective sources = 1.0) while Topic Diversity stays high.",
+  "expected": {
+    "sourceDiversity_raw": "1.0 (a single publisher)",
+    "topicDiversity_raw": "high (5 distinct topics)",
+    "viewpointBalance_raw": "0.0 (one left-leaning political read, no opposite)",
+    "echoChamber_raw": "1.0 (one-sided political subset)",
+    "reportingRatio_raw": "1.0 (all reporting)",
+    "emotionalBalance_raw": "0.90"
+  },
+  "reads": [
+    {"scored": {"title": "Senate advances the funding bill", "category": "Politics", "outlet": "BBC", "lean": -0.9, "political": true, "register": "reporting", "emotion": {"fear": 0.05, "outrage": 0.05, "analysis": 0.5, "positive": 0.2, "neutral": 0.2}}},
+    {"scored": {"title": "Markets rally on strong earnings", "category": "Business", "outlet": "BBC", "lean": 0.0, "political": false, "register": "reporting", "emotion": {"fear": 0.05, "outrage": 0.05, "analysis": 0.5, "positive": 0.2, "neutral": 0.2}}},
+    {"scored": {"title": "A new chip pushes laptops further", "category": "Technology", "outlet": "BBC", "lean": 0.0, "political": false, "register": "reporting", "emotion": {"fear": 0.02, "outrage": 0.03, "analysis": 0.55, "positive": 0.2, "neutral": 0.2}}},
+    {"scored": {"title": "Study links sleep to memory", "category": "Health", "outlet": "BBC", "lean": -0.2, "political": false, "register": "reporting", "emotion": {"fear": 0.05, "outrage": 0.05, "analysis": 0.5, "positive": 0.2, "neutral": 0.2}}},
+    {"scored": {"title": "Aid convoy reaches the region", "category": "World", "outlet": "BBC", "lean": 0.1, "political": false, "register": "reporting", "emotion": {"fear": 0.1, "outrage": 0.05, "analysis": 0.45, "positive": 0.2, "neutral": 0.2}}}
+  ]
+}

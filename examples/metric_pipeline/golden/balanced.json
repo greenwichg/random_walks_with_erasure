@@ -1,0 +1,22 @@
+{
+  "name": "balanced",
+  "description": "A healthy, varied diet: many topics, many publishers, an even left/right political split, calm tone, mostly reporting. Should score high on every dimension.",
+  "expected": {
+    "sourceDiversity_raw": "8 effective publishers (all distinct)",
+    "topicDiversity_raw": "high (5 topics)",
+    "viewpointBalance_raw": "0.5 (2 left, 2 right; balanced)",
+    "echoChamber_raw": "0.0 (perfectly balanced L/R)",
+    "reportingRatio_raw": "0.875 (7 of 8 reporting)",
+    "emotionalBalance_raw": "0.90 (calm)"
+  },
+  "reads": [
+    {"scored": {"title": "Senate committee debates the funding bill", "category": "Politics", "outlet": "BBC", "lean": -1.2, "political": true, "register": "reporting", "emotion": {"fear": 0.05, "outrage": 0.05, "analysis": 0.5, "positive": 0.2, "neutral": 0.2}}},
+    {"scored": {"title": "Governors respond to the new border plan", "category": "Politics", "outlet": "Fox News", "lean": 1.4, "political": true, "register": "reporting", "emotion": {"fear": 0.05, "outrage": 0.05, "analysis": 0.5, "positive": 0.2, "neutral": 0.2}}},
+    {"scored": {"title": "Why the tax proposal misses the mark", "category": "Politics", "outlet": "The Wall Street Journal", "lean": 0.8, "political": true, "register": "opinion", "emotion": {"fear": 0.05, "outrage": 0.1, "analysis": 0.45, "positive": 0.2, "neutral": 0.2}}},
+    {"scored": {"title": "Lawmakers reach a compromise on housing", "category": "Politics", "outlet": "The Guardian", "lean": -1.1, "political": true, "register": "reporting", "emotion": {"fear": 0.05, "outrage": 0.05, "analysis": 0.5, "positive": 0.2, "neutral": 0.2}}},
+    {"scored": {"title": "Markets steady after earnings week", "category": "Business", "outlet": "Reuters", "lean": 0.0, "political": false, "register": "reporting", "emotion": {"fear": 0.05, "outrage": 0.05, "analysis": 0.5, "positive": 0.2, "neutral": 0.2}}},
+    {"scored": {"title": "A new chip pushes laptops further", "category": "Technology", "outlet": "The Verge", "lean": 0.0, "political": false, "register": "reporting", "emotion": {"fear": 0.02, "outrage": 0.03, "analysis": 0.55, "positive": 0.2, "neutral": 0.2}}},
+    {"scored": {"title": "Study links sleep to memory", "category": "Health", "outlet": "NPR", "lean": -0.5, "political": false, "register": "reporting", "emotion": {"fear": 0.05, "outrage": 0.05, "analysis": 0.5, "positive": 0.2, "neutral": 0.2}}},
+    {"scored": {"title": "Telescope captures a distant galaxy", "category": "Science", "outlet": "Nature", "lean": 0.0, "political": false, "register": "reporting", "emotion": {"fear": 0.02, "outrage": 0.03, "analysis": 0.55, "positive": 0.25, "neutral": 0.15}}}
+  ]
+}

@@ -48,3 +48,6 @@ backups/
 .DS_Store
 .idea/
 .vscode/
+
+# Metric Validation Pipeline — isolated, local-only run history (Stage 10)
+examples/metric_pipeline/.runs.jsonl

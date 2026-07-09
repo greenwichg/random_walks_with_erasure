@@ -1,0 +1,21 @@
+{
+  "name": "technology",
+  "description": "A narrow, calm, apolitical diet concentrated on technology. Isolates low Topic Diversity with high Source Diversity, and a legitimately n/a viewpoint (no political reads).",
+  "expected": {
+    "topicDiversity_raw": "low (Technology dominates 5 of 7)",
+    "sourceDiversity_raw": "7.0 effective publishers",
+    "viewpointBalance_raw": "n/a (no political reads)",
+    "echoChamber_raw": "n/a (no political reads)",
+    "reportingRatio_raw": "~0.857 (6 of 7 reporting)",
+    "emotionalBalance_raw": "0.95 (very calm)"
+  },
+  "reads": [
+    {"scored": {"title": "A new chip pushes laptops further", "category": "Technology", "outlet": "The Verge", "lean": 0.0, "political": false, "register": "reporting", "emotion": {"fear": 0.02, "outrage": 0.03, "analysis": 0.6, "positive": 0.15, "neutral": 0.2}}},
+    {"scored": {"title": "Inside the open-source model release", "category": "Technology", "outlet": "Wired", "lean": 0.0, "political": false, "register": "reporting", "emotion": {"fear": 0.02, "outrage": 0.03, "analysis": 0.6, "positive": 0.15, "neutral": 0.2}}},
+    {"scored": {"title": "Benchmarking the latest GPUs", "category": "Technology", "outlet": "Ars Technica", "lean": 0.0, "political": false, "register": "reporting", "emotion": {"fear": 0.02, "outrage": 0.03, "analysis": 0.6, "positive": 0.15, "neutral": 0.2}}},
+    {"scored": {"title": "The startup betting on tiny satellites", "category": "Technology", "outlet": "TechCrunch", "lean": 0.0, "political": false, "register": "reporting", "emotion": {"fear": 0.02, "outrage": 0.03, "analysis": 0.6, "positive": 0.15, "neutral": 0.2}}},
+    {"scored": {"title": "Should we worry about model scaling?", "category": "Technology", "outlet": "MIT Technology Review", "lean": 0.0, "political": false, "register": "opinion", "emotion": {"fear": 0.05, "outrage": 0.05, "analysis": 0.6, "positive": 0.1, "neutral": 0.2}}},
+    {"scored": {"title": "Chip supply steadies after a hard year", "category": "Business", "outlet": "Bloomberg", "lean": 0.1, "political": false, "register": "reporting", "emotion": {"fear": 0.05, "outrage": 0.05, "analysis": 0.55, "positive": 0.15, "neutral": 0.2}}},
+    {"scored": {"title": "A quiet breakthrough in battery chemistry", "category": "Science", "outlet": "Nature", "lean": 0.0, "political": false, "register": "reporting", "emotion": {"fear": 0.02, "outrage": 0.03, "analysis": 0.6, "positive": 0.2, "neutral": 0.15}}}
+  ]
+}
