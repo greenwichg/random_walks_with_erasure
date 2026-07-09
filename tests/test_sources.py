@@ -266,6 +266,41 @@ def test_config_warnings_collects_only_misconfigured(monkeypatch):
     assert sources.RSSAdapter().config_warning() is None
 
 
+def test_get_json_retries_transient_429(monkeypatch):
+    """A 429 (common for GDELT on shared IPs) is retried with backoff and then succeeds."""
+    import urllib.error
+    calls = {"n": 0}
+
+    class _Resp:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def read(self): return b'{"ok": true}'
+
+    def fake_urlopen(req, timeout=None):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise urllib.error.HTTPError(req.full_url, 429, "Too Many Requests", {}, None)
+        return _Resp()
+
+    monkeypatch.setattr(sources.urllib.request, "urlopen", fake_urlopen)
+    out = sources._get_json("https://x.example/y", retries=3, backoff=0)   # backoff=0 -> no real sleep
+    assert out == {"ok": True} and calls["n"] == 3          # retried twice, succeeded on the third
+
+
+def test_get_json_does_not_retry_non_transient_401(monkeypatch):
+    import urllib.error
+    calls = {"n": 0}
+
+    def fake_urlopen(req, timeout=None):
+        calls["n"] += 1
+        raise urllib.error.HTTPError(req.full_url, 401, "Unauthorized", {}, None)
+
+    monkeypatch.setattr(sources.urllib.request, "urlopen", fake_urlopen)
+    with pytest.raises(urllib.error.HTTPError):
+        sources._get_json("https://x.example/y", retries=3, backoff=0)
+    assert calls["n"] == 1                                  # 401 is not transient -> no retry
+
+
 def test_sources_cli_check_lists_adapters(monkeypatch, capsys, tmp_path):
     """`python examples/sources.py check` lists every adapter's status + a by-source summary, and does
     NOT ingest (all disabled here -> no network)."""

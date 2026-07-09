@@ -28,6 +28,7 @@ import logging
 import os
 import threading
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
@@ -76,6 +77,28 @@ def _int_or_none(name: str) -> Optional[int]:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _get_json(url: str, *, headers=None, timeout: float = 15.0,
+              retries: Optional[int] = None, backoff: Optional[float] = None) -> dict:
+    """HTTP GET -> parsed JSON, retrying **transient** failures (HTTP 429 + 5xx) with linear backoff.
+    429 is common on shared IPs (e.g. GDELT from Colab), so a one-shot poll shouldn't fail on it; a
+    non-transient error (e.g. 401 Unauthorized) raises immediately. Tunable via RWE_SOURCE_RETRIES /
+    RWE_SOURCE_BACKOFF."""
+    retries = _int_env("RWE_SOURCE_RETRIES", 3) if retries is None else retries
+    backoff = _float_env("RWE_SOURCE_BACKOFF", 5.0) if backoff is None else backoff
+    req = urllib.request.Request(url, headers=headers or {})
+    attempt = 0
+    while True:
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return json.loads(resp.read())
+        except urllib.error.HTTPError as e:
+            attempt += 1
+            transient = e.code == 429 or 500 <= e.code < 600
+            if not transient or attempt > retries:
+                raise
+            time.sleep(min(backoff * attempt, 60.0))     # 5s, 10s, 15s … (capped)
 
 
 def _default_log(level: int, event: str, **fields) -> None:
@@ -311,9 +334,8 @@ class NewsAPIAdapter(SourceAdapter):
         url = self._url()
         if self._fetch_fn is not None:
             return self._fetch_fn(url)
-        req = urllib.request.Request(url, headers={"X-Api-Key": self.api_key(), "User-Agent": _USER_AGENT})
-        with urllib.request.urlopen(req, timeout=_float_env("RWE_NEWSAPI_TIMEOUT", 15.0)) as resp:
-            return json.loads(resp.read())
+        return _get_json(url, headers={"X-Api-Key": self.api_key(), "User-Agent": _USER_AGENT},
+                         timeout=_float_env("RWE_NEWSAPI_TIMEOUT", 15.0))
 
     def normalize(self, raw: dict) -> SourceBatch:
         arts = (raw or {}).get("articles") or []
@@ -379,9 +401,8 @@ class GDELTAdapter(SourceAdapter):
         url = self._url()
         if self._fetch_fn is not None:
             return self._fetch_fn(url)
-        req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
-        with urllib.request.urlopen(req, timeout=_float_env("RWE_GDELT_TIMEOUT", 15.0)) as resp:
-            return json.loads(resp.read())
+        return _get_json(url, headers={"User-Agent": _USER_AGENT},
+                         timeout=_float_env("RWE_GDELT_TIMEOUT", 15.0))
 
     def normalize(self, raw: dict) -> SourceBatch:
         arts = (raw or {}).get("articles") or []
