@@ -393,7 +393,8 @@ def test_build_profile_from_persisted_data(backend):
     assert p["streakDays"] == 1                                             # only today's reads
     assert p["longestStreak"] == 3                                          # the Feb 1-3 run
     assert [s["overall"] for s in p["scoreHistory"]] == [55, 62]           # reuses the snapshot trend
-    assert p["achievements"] == [] and p["savedCount"] == 0 and p["bookmarkCount"] == 0
+    assert p["achievements"] == [] and p["savedCount"] == 0 and "bookmarkCount" not in p
+    assert backend.build_profile(user, reads, snapshots, saved_count=3)["savedCount"] == 3
     _assert_json_roundtrips(p)
 
 

@@ -5,6 +5,7 @@ import type { Article } from "@/types/domain";
 import { PublisherBadge, LeanBadge } from "@/components/shared/article-badges";
 import { ArticleImage } from "@/components/shared/article-image";
 import { ReadArticleButton } from "@/components/shared/read-article-button";
+import { SaveButton } from "@/components/shared/save-button";
 import { timeAgo } from "@/lib/utils";
 
 /**
@@ -42,8 +43,9 @@ export function DiscoverCard({ article, index = 0 }: { article: Article; index?:
         <LeanBadge lean={article.lean} bucket={article.leanBucket} />
       </div>
 
-      <div className="mt-4">
+      <div className="mt-4 flex items-center gap-2">
         <ReadArticleButton article={article} />
+        <SaveButton article={article} />
       </div>
     </motion.article>
   );

@@ -503,8 +503,7 @@ class ProfileModel(BaseModel):
     longestStreak: int
     scoreHistory: list[TrendPointModel]
     achievements: list[AchievementModel]     # empty until the feature exists (honest, not faked)
-    savedCount: int
-    bookmarkCount: int
+    savedCount: int                          # the single "Saved" counter (no separate bookmark)
 
 
 class NotificationPrefsModel(BaseModel):
@@ -815,6 +814,23 @@ class RecReceptionModel(BaseModel):
     rate: float | None = None
     threshold: int          # cross-cutting recs that must be surfaced before Open-Mindedness activates
     active: bool            # whether the reader now has enough reception for Open-Mindedness
+
+
+class SaveArticleRequest(BaseModel):
+    articleId: str
+    article: dict = {}      # the Article snapshot the reader saw (rendered later in the saved list)
+
+
+class SavedArticleModel(BaseModel):
+    articleId: str
+    article: dict
+    savedAt: str | None = None
+
+
+class SaveResultModel(BaseModel):
+    articleId: str
+    saved: bool             # the resulting state: true after a save, false after an unsave
+    savedCount: int         # the reader's live saved total (drives the profile's Saved counter)
 
 
 class CreateTokenRequest(BaseModel):
@@ -1434,14 +1450,15 @@ def my_analytics(request: Request) -> dict:
          tags=["meta"], summary="The signed-in user's account profile", responses=_ERR_RESPONSES)
 def my_profile(request: Request) -> dict:
     """The reader's profile from persisted data only: identity from their account, streaks from
-    their stored reads, and the health journey from their saved report snapshots. Achievements /
-    saved counts are an honest empty state until those features exist — never fabricated."""
+    their stored reads, the health journey from their saved report snapshots, and the real Saved
+    count from persisted saves. Achievements are an honest empty state until that feature exists."""
     uid = _require_real_user(request)
     st = _require_store()
     u = st.get_user(uid)
     user = {"email": u.email, "displayName": u.display_name,
             "createdAt": u.created_at.isoformat() if u.created_at else None}
-    return _require_backend().build_profile(user, st.list_reads(uid), st.list_report_snapshots(uid))
+    return _require_backend().build_profile(user, st.list_reads(uid), st.list_report_snapshots(uid),
+                                            saved_count=st.count_saved(uid))
 
 
 @app.get("/api/me/settings", response_model=SettingsModel, tags=["meta"],
@@ -1487,6 +1504,40 @@ def open_recommendation(request: Request, req: RecOpenRequest) -> dict:
     om = p.openmindedness(uid)
     return {"shownCross": om["shownCross"], "openedCross": om["openedCross"],
             "rate": om["rate"], "threshold": om["minShown"], "active": om["active"]}
+
+
+@app.get("/api/me/saved", response_model=list[SavedArticleModel], tags=["meta"],
+         summary="The signed-in user's saved articles (newest first)", responses=_ERR_RESPONSES)
+def list_my_saved(request: Request) -> list:
+    """The reader's saved articles — the single "Saved" concept (there is no separate bookmark).
+    Newest first, each carrying the Article snapshot the reader saw so the list renders without
+    re-fetching the catalog. Per-user; touches no recommender, report, corpus, or ingestion path."""
+    uid = _require_real_user(request)
+    return _require_store().list_saved(uid)
+
+
+@app.post("/api/me/saved", response_model=SaveResultModel, tags=["meta"],
+          summary="Save an article for the signed-in user (idempotent)", responses=_ERR_RESPONSES)
+def save_my_article(request: Request, req: SaveArticleRequest) -> dict:
+    """Persist a saved article. Idempotent per ``(user, article)`` — saving one already saved is a
+    no-op (the duplicate is ignored) that only refreshes the stored snapshot. Returns the resulting
+    saved state and the reader's live saved total (the profile's Saved counter)."""
+    uid = _require_real_user(request)
+    st = _require_store()
+    st.save_article(uid, req.articleId, req.article)
+    return {"articleId": req.articleId, "saved": True, "savedCount": st.count_saved(uid)}
+
+
+@app.delete("/api/me/saved", response_model=SaveResultModel, tags=["meta"],
+            summary="Remove a saved article for the signed-in user", responses=_ERR_RESPONSES)
+def unsave_my_article(request: Request, articleId: str) -> dict:
+    """Remove a saved article. ``articleId`` is a query parameter (article ids are URLs, so they must
+    not sit in a path segment). Safe when the article isn't saved. Returns the resulting saved state
+    and the reader's live saved total."""
+    uid = _require_real_user(request)
+    st = _require_store()
+    st.unsave_article(uid, articleId)
+    return {"articleId": articleId, "saved": False, "savedCount": st.count_saved(uid)}
 
 
 @app.post("/api/me/tokens", response_model=TokenMintModel, tags=["meta"],

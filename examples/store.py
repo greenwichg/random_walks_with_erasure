@@ -300,6 +300,23 @@ class RecEvent(Base):
     created_at: Mapped[datetime] = mapped_column(default=_utcnow)
 
 
+class SavedArticle(Base):
+    """An article a user explicitly **saved** — the single "Saved" concept (there is no separate
+    bookmark). One row per ``(user_id, article_id)``: saving the same article twice is idempotent
+    (the duplicate is ignored) and unsaving deletes the row. ``article`` is a JSON snapshot of the
+    Article the reader saw, so the saved list renders without re-fetching the catalog. Per-user and
+    self-contained — it touches no recommender, report, corpus, ingestion, or clustering path."""
+
+    __tablename__ = "saved_articles"
+    __table_args__ = (UniqueConstraint("user_id", "article_id", name="uq_saved_user_article"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    article_id: Mapped[str] = mapped_column(String(2048))
+    article: Mapped[str] = mapped_column(Text)          # JSON snapshot of the saved Article
+    created_at: Mapped[datetime] = mapped_column(default=_utcnow)
+
+
 class FeedArticle(Base):
     """An article discovered via RSS ingestion — the news **catalog** (distinct from per-user
     ``reads``). Deduplicated by ``canonical_url`` (the same key ``reads`` and the scoring cache use),
@@ -908,6 +925,49 @@ class Store:
         with self.session() as s:
             return int(s.scalar(select(func.count()).select_from(Read)
                                 .where(Read.user_id == user_id)) or 0)
+
+    # -- saved articles (the single "Saved" concept; no separate bookmark) ----
+    def save_article(self, user_id: int, article_id: str, article: dict) -> bool:
+        """Persist a saved article for a user. Idempotent per ``(user, article)``: saving one that is
+        already saved is a no-op that only refreshes the stored snapshot (the duplicate is ignored).
+        Returns ``True`` when this save newly created the row, ``False`` when it already existed."""
+        aid = str(article_id)
+        payload = json.dumps(article or {})
+        with self.session() as s:
+            row = s.scalar(select(SavedArticle).where(SavedArticle.user_id == user_id,
+                                                      SavedArticle.article_id == aid))
+            if row is None:
+                s.add(SavedArticle(user_id=user_id, article_id=aid, article=payload))
+                return True
+            row.article = payload                       # keep the snapshot fresh; still one saved row
+            return False
+
+    def unsave_article(self, user_id: int, article_id: str) -> bool:
+        """Remove a user's saved article. Returns ``True`` when a row was deleted, ``False`` when the
+        article was not saved (so unsaving twice, or unsaving something never saved, is safe)."""
+        aid = str(article_id)
+        with self.session() as s:
+            row = s.scalar(select(SavedArticle).where(SavedArticle.user_id == user_id,
+                                                      SavedArticle.article_id == aid))
+            if row is None:
+                return False
+            s.delete(row)
+            return True
+
+    def list_saved(self, user_id: int) -> list:
+        """A user's saved articles, newest-first — each ``{articleId, article, savedAt}`` with the
+        stored Article snapshot parsed back to a dict."""
+        with self.session() as s:
+            rows = s.scalars(select(SavedArticle).where(SavedArticle.user_id == user_id)
+                             .order_by(SavedArticle.created_at.desc(), SavedArticle.id.desc())).all()
+            return [{"articleId": r.article_id, "article": json.loads(r.article),
+                     "savedAt": r.created_at.isoformat() if r.created_at else None} for r in rows]
+
+    def count_saved(self, user_id: int) -> int:
+        """How many articles the user has saved — the real number behind the profile's Saved counter."""
+        with self.session() as s:
+            return int(s.scalar(select(func.count()).select_from(SavedArticle)
+                                .where(SavedArticle.user_id == user_id)) or 0)
 
     # -- recommendation reception (the Open-Mindedness feedback loop) ----
     def record_recommendations_shown(self, user_id: int, items, shown_at: "str | None" = None) -> int:

@@ -401,7 +401,6 @@ export const PROFILE: Profile = {
   longestStreak: 21,
   scoreHistory: OVERALL_TREND,
   savedCount: 34,
-  bookmarkCount: 18,
   achievements: [
     { id: "ach_1", title: "First Steps", description: "Read your first 10 articles", icon: "sparkles", unlocked: true, unlockedAt: daysAgo(90) },
     { id: "ach_2", title: "Bridge Builder", description: "Read 25 cross-cutting articles", icon: "route", unlocked: true, unlockedAt: daysAgo(30) },

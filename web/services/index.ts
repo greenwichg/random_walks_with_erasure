@@ -12,6 +12,9 @@ import type {
   Profile,
   Recommendation,
   RecommendationReception,
+  SavableArticle,
+  SavedArticle,
+  SaveResult,
   SearchParams,
   SearchResponse,
   Settings,
@@ -73,6 +76,13 @@ export const services = {
   apiTokens: () => getJson<ApiToken[]>("/me/tokens"),
   createApiToken: (label?: string) => postJson<ApiTokenMint>("/me/tokens", { label }),
   revokeApiToken: (id: number) => deleteJson<{ ok: boolean }>(`/me/tokens/${id}`),
+  // Saved articles — the single "Saved" concept, persisted per user; drives the profile counter.
+  saved: () => getJson<SavedArticle[]>("/me/saved"),
+  saveArticle: (article: SavableArticle) =>
+    postJson<SaveResult>("/me/saved", { articleId: article.id, article }),
+  // article ids are URLs, so pass the id as an encoded query param (never a path segment).
+  unsaveArticle: (articleId: string) =>
+    deleteJson<SaveResult>(`/me/saved?articleId=${encodeURIComponent(articleId)}`),
 };
 
 /** React Query cache keys, colocated so invalidation stays consistent. */
@@ -102,6 +112,7 @@ export const queryKeys = {
   story: (id: string) => ["story", id] as const,
   storyIntelligence: (id: string) => ["story-intelligence", id] as const,
   profile: ["profile"] as const,
+  saved: ["saved"] as const,
   settings: ["settings"] as const,
   analytics: ["analytics"] as const,
   coach: ["coach"] as const,

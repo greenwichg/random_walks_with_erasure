@@ -403,3 +403,30 @@ def test_reads_store_valid_json(store):
     assert valid == 1
     back = store.get_reads(u.id)[0]
     assert back["lean"] is None and back["confidence"] is None and back["outlet"] == "Fox News"
+
+
+def test_saved_articles_dedup_unsave_and_count(store):
+    """Saved articles: idempotent per (user, article), per-user isolation, newest-first list with the
+    stored snapshot, safe unsave, and an accurate count — the persistence behind the Saved counter."""
+    u = store.upsert_user_by_identity("google", "san-saved")
+    other = store.upsert_user_by_identity("google", "san-other")
+    a1 = {"id": "https://cnn.com/a", "headline": "Senate bill", "publisher": "CNN"}
+    a2 = {"id": "https://npr.org/b", "headline": "Climate deal", "publisher": "NPR"}
+
+    assert store.count_saved(u.id) == 0 and store.list_saved(u.id) == []
+    assert store.save_article(u.id, a1["id"], a1) is True          # newly created
+    assert store.save_article(u.id, a1["id"], a1) is False         # duplicate ignored
+    assert store.count_saved(u.id) == 1
+    store.save_article(u.id, a2["id"], a2)
+    assert store.count_saved(u.id) == 2
+
+    saved = store.list_saved(u.id)
+    assert [s["articleId"] for s in saved] == [a2["id"], a1["id"]]  # newest first
+    assert saved[0]["article"]["headline"] == "Climate deal" and saved[0]["savedAt"]
+
+    # per-user isolation — another user's count is independent
+    assert store.count_saved(other.id) == 0
+
+    assert store.unsave_article(u.id, a1["id"]) is True
+    assert store.unsave_article(u.id, a1["id"]) is False           # already gone — safe
+    assert store.count_saved(u.id) == 1

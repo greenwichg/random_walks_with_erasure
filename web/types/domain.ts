@@ -462,8 +462,25 @@ export interface Profile {
   longestStreak: number;
   scoreHistory: TrendPoint[];
   achievements: Achievement[];
+  savedCount: number;          // the single "Saved" counter (Bookmarks merged into this)
+}
+
+/** The minimal shape needed to save an article: its id (the persistence key) plus whatever display
+ *  fields the surface has (a full Article on Recs/Discover/Search; a partial one from Story coverage). */
+export type SavableArticle = Pick<Article, "id"> & Partial<Article>;
+
+/** One saved article as the engine returns it — the stored Article snapshot + when it was saved. */
+export interface SavedArticle {
+  articleId: string;
+  article: SavableArticle;
+  savedAt: string | null;
+}
+
+/** The result of a save/unsave — the resulting state plus the reader's live Saved total. */
+export interface SaveResult {
+  articleId: string;
+  saved: boolean;
   savedCount: number;
-  bookmarkCount: number;
 }
 
 export interface Settings {

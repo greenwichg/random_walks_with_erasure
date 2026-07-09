@@ -440,7 +440,7 @@ def test_profile_from_the_users_account_and_reads(client):
     p0 = client.get("/api/me/profile", headers=hdr).json()
     assert p0["email"] == "reader@example.com" and p0["name"] == "Casey Reader"
     assert p0["handle"] == "reader" and p0["joinedAt"]
-    assert p0["achievements"] == [] and p0["savedCount"] == 0 and p0["bookmarkCount"] == 0
+    assert p0["achievements"] == [] and p0["savedCount"] == 0 and "bookmarkCount" not in p0
     assert p0["scoreHistory"] == [] and p0["streakDays"] == 0               # no activity yet
 
     reads = [{"url": f"https://www.nytimes.com/politics/p{i}", "title": f"Story {i}"} for i in range(6)]
@@ -451,6 +451,45 @@ def test_profile_from_the_users_account_and_reads(client):
     assert len(p1["scoreHistory"]) >= 1                                    # >=1 saved snapshot
 
     assert client.get("/api/me/profile").status_code == 401                # auth required
+
+
+def test_saved_articles_persist_and_drive_the_profile_count(client):
+    """Saving persists per-user, is idempotent (duplicate saves ignored), unsaving removes it, and the
+    profile's Saved counter reflects the real persisted count throughout — the whole Commit 12 loop."""
+    uid = client.post("/api/internal/users",
+                      json={"provider": "google", "providerAccountId": "route-saved",
+                            "email": "saver@example.com", "displayName": "Sam Saver"}).json()["userId"]
+    hdr = {"X-IH-User-Id": str(uid)}
+    art = {"id": "https://cnn.com/2026/senate", "headline": "Senate passes bill", "publisher": "CNN"}
+
+    assert client.get("/api/me/profile", headers=hdr).json()["savedCount"] == 0
+    assert client.get("/api/me/saved", headers=hdr).json() == []
+
+    r = client.post("/api/me/saved", json={"articleId": art["id"], "article": art}, headers=hdr).json()
+    assert r == {"articleId": art["id"], "saved": True, "savedCount": 1}
+    assert client.get("/api/me/profile", headers=hdr).json()["savedCount"] == 1
+
+    # duplicate save is ignored — still one
+    r2 = client.post("/api/me/saved", json={"articleId": art["id"], "article": art}, headers=hdr).json()
+    assert r2["saved"] is True and r2["savedCount"] == 1
+
+    art2 = {"id": "https://npr.org/2026/climate", "headline": "Climate deal", "publisher": "NPR"}
+    client.post("/api/me/saved", json={"articleId": art2["id"], "article": art2}, headers=hdr)
+    saved = client.get("/api/me/saved", headers=hdr).json()
+    assert [s["articleId"] for s in saved] == [art2["id"], art["id"]]        # newest first
+    assert saved[0]["article"]["headline"] == "Climate deal" and saved[0]["savedAt"]
+    assert client.get("/api/me/profile", headers=hdr).json()["savedCount"] == 2
+
+    d = client.delete("/api/me/saved", params={"articleId": art["id"]}, headers=hdr).json()
+    assert d == {"articleId": art["id"], "saved": False, "savedCount": 1}
+    # unsaving again is safe (no-op)
+    assert client.delete("/api/me/saved", params={"articleId": art["id"]}, headers=hdr).json()["savedCount"] == 1
+    assert client.get("/api/me/profile", headers=hdr).json()["savedCount"] == 1
+
+    # auth required on every verb
+    assert client.get("/api/me/saved").status_code == 401
+    assert client.post("/api/me/saved", json={"articleId": "x"}).status_code == 401
+    assert client.delete("/api/me/saved", params={"articleId": "x"}).status_code == 401
 
 
 def test_settings_persist_and_merge(client):

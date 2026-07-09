@@ -10,6 +10,7 @@ import { LeanBadge } from "@/components/shared/article-badges";
 import { ArticleImage } from "@/components/shared/article-image";
 import { StoryIntelligencePanel } from "@/components/stories/story-intelligence-panel";
 import { ReadArticleButton } from "@/components/shared/read-article-button";
+import { SaveButton } from "@/components/shared/save-button";
 import { EmptyState, ErrorState } from "@/components/shared/states";
 import { Skeleton } from "@/components/ui/skeleton";
 import { LEAN_META } from "@/lib/metrics";
@@ -130,7 +131,15 @@ export default function StoryDetailPage() {
               </div>
               <h3 className="mt-1 font-medium leading-snug">{c.headline}</h3>
             </div>
-            <ReadArticleButton article={{ url: c.url }} className="shrink-0 self-start sm:self-center" />
+            <div className="flex shrink-0 items-center gap-2 self-start sm:self-center">
+              <ReadArticleButton article={{ url: c.url }} />
+              {c.url && (
+                <SaveButton
+                  article={{ id: c.url, url: c.url, headline: c.headline, publisher: c.publisher,
+                             publishedAt: c.publishedAt }}
+                />
+              )}
+            </div>
           </div>
         ))}
       </div>

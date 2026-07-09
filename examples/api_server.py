@@ -777,12 +777,12 @@ class Backend:
         }
 
     @staticmethod
-    def build_profile(user: dict, reads: list, snapshots: list) -> dict:
+    def build_profile(user: dict, reads: list, snapshots: list, saved_count: int = 0) -> dict:
         """The account profile, built entirely from persisted data — identity from the user row,
-        streaks from stored reads (shared ``_reading_streak`` / ``_longest_streak``), and the health
-        journey from saved report snapshots (shared ``_overall_trend``). Features that don't exist
-        yet — achievements, saved / bookmarked articles — return an **honest empty state**, never
-        fabricated values. Corpus-independent; no algorithm."""
+        streaks from stored reads (shared ``_reading_streak`` / ``_longest_streak``), the health
+        journey from saved report snapshots (shared ``_overall_trend``), and ``savedCount`` from the
+        caller's real persisted saved-article count. Achievements that don't exist yet return an
+        **honest empty state**, never fabricated. Corpus-independent; no algorithm."""
         email = (user.get("email") or "").strip()
         name = ((user.get("displayName") or "").strip()
                 or (email.split("@")[0] if email else "") or "Reader")
@@ -796,8 +796,7 @@ class Backend:
             "longestStreak": _longest_streak(read_ats),
             "scoreHistory": _overall_trend(snapshots),
             "achievements": [],          # not built yet — honest empty, not fabricated
-            "savedCount": 0,             # saved / bookmark actions are not persisted yet
-            "bookmarkCount": 0,
+            "savedCount": saved_count,   # the real persisted count (Saved is the single concept)
         }
 
     def article(self, col: int) -> dict:

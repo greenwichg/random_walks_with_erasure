@@ -2,7 +2,15 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { queryKeys, services } from "@/services";
-import type { FeedbackAction, Recommendation, SearchParams, StoryQuery } from "@/types/domain";
+import type {
+  FeedbackAction,
+  Profile,
+  Recommendation,
+  SavableArticle,
+  SavedArticle,
+  SearchParams,
+  StoryQuery,
+} from "@/types/domain";
 
 /**
  * React Query hooks — the only way components read/write server state. Thin
@@ -52,6 +60,84 @@ export function useFeedback() {
   return useMutation({
     mutationFn: ({ articleId, action }: { articleId: string; action: FeedbackAction }) =>
       services.sendFeedback(articleId, action),
+  });
+}
+
+/** The signed-in reader's saved articles (persisted). Backs the shared SaveButton's saved-state so
+ *  every button on a page reflects the same server truth, and survives a refresh. */
+export const useSaved = () => useQuery({ queryKey: queryKeys.saved, queryFn: services.saved });
+
+/**
+ * Save an article — optimistic: the SaveButton flips and the profile's Saved counter increments
+ * immediately; on failure both roll back. Only the `saved` + `profile` queries are touched (never a
+ * full reload), and `onSettled` refetches them so multiple tabs converge on the real server count.
+ */
+export function useSaveArticle() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (article: SavableArticle) => services.saveArticle(article),
+    onMutate: async (article) => {
+      await Promise.all([
+        qc.cancelQueries({ queryKey: queryKeys.saved }),
+        qc.cancelQueries({ queryKey: queryKeys.profile }),
+      ]);
+      const prevSaved = qc.getQueryData<SavedArticle[]>(queryKeys.saved);
+      const prevProfile = qc.getQueryData<Profile>(queryKeys.profile);
+      const already = (prevSaved ?? []).some((s) => s.articleId === article.id);
+      if (!already) {
+        qc.setQueryData<SavedArticle[]>(queryKeys.saved, (old) => [
+          { articleId: article.id, article, savedAt: new Date().toISOString() },
+          ...(old ?? []),
+        ]);
+        qc.setQueryData<Profile>(queryKeys.profile, (old) =>
+          old ? { ...old, savedCount: old.savedCount + 1 } : old,
+        );
+      }
+      return { prevSaved, prevProfile };
+    },
+    onError: (_e, _article, ctx) => {
+      if (ctx?.prevSaved !== undefined) qc.setQueryData(queryKeys.saved, ctx.prevSaved);
+      if (ctx?.prevProfile !== undefined) qc.setQueryData(queryKeys.profile, ctx.prevProfile);
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.saved });
+      qc.invalidateQueries({ queryKey: queryKeys.profile });
+    },
+  });
+}
+
+/** Unsave an article — the mirror of {@link useSaveArticle}: optimistic removal + counter decrement,
+ *  rollback on failure, and the same minimal `saved` + `profile` invalidation. */
+export function useUnsaveArticle() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (articleId: string) => services.unsaveArticle(articleId),
+    onMutate: async (articleId) => {
+      await Promise.all([
+        qc.cancelQueries({ queryKey: queryKeys.saved }),
+        qc.cancelQueries({ queryKey: queryKeys.profile }),
+      ]);
+      const prevSaved = qc.getQueryData<SavedArticle[]>(queryKeys.saved);
+      const prevProfile = qc.getQueryData<Profile>(queryKeys.profile);
+      const existed = (prevSaved ?? []).some((s) => s.articleId === articleId);
+      if (existed) {
+        qc.setQueryData<SavedArticle[]>(queryKeys.saved, (old) =>
+          (old ?? []).filter((s) => s.articleId !== articleId),
+        );
+        qc.setQueryData<Profile>(queryKeys.profile, (old) =>
+          old ? { ...old, savedCount: Math.max(0, old.savedCount - 1) } : old,
+        );
+      }
+      return { prevSaved, prevProfile };
+    },
+    onError: (_e, _articleId, ctx) => {
+      if (ctx?.prevSaved !== undefined) qc.setQueryData(queryKeys.saved, ctx.prevSaved);
+      if (ctx?.prevProfile !== undefined) qc.setQueryData(queryKeys.profile, ctx.prevProfile);
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.saved });
+      qc.invalidateQueries({ queryKey: queryKeys.profile });
+    },
   });
 }
 

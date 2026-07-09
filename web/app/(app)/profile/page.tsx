@@ -9,7 +9,6 @@ import {
   Newspaper,
   HeartPulse,
   Eye,
-  Bookmark,
   BookmarkCheck,
   Trophy,
   CalendarDays,
@@ -93,11 +92,10 @@ export default function ProfilePage() {
           </div>
 
           {/* Quick stats */}
-          <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3">
             <QuickStat icon={Flame} label="Current streak" value={`${data.streakDays} days`} accent="caution" />
             <QuickStat icon={TrendingUp} label="Longest streak" value={`${data.longestStreak} days`} accent="positive" />
             <QuickStat icon={BookmarkCheck} label="Saved" value={data.savedCount} accent="primary" />
-            <QuickStat icon={Bookmark} label="Bookmarks" value={data.bookmarkCount} accent="left" />
           </div>
         </CardContent>
       </Card>

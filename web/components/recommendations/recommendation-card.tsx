@@ -3,7 +3,6 @@
 import * as React from "react";
 import { motion } from "framer-motion";
 import {
-  Bookmark,
   Clock,
   ThumbsUp,
   ThumbsDown,
@@ -23,6 +22,7 @@ import {
   ConfidenceBadge,
 } from "@/components/shared/article-badges";
 import { ReadArticleButton } from "@/components/shared/read-article-button";
+import { SaveButton } from "@/components/shared/save-button";
 import { ArticleImage } from "@/components/shared/article-image";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -49,7 +49,6 @@ export function RecommendationCard({
   onDismiss?: () => void;
 }) {
   const { article } = rec;
-  const [saved, setSaved] = React.useState(false);
   const [readLater, setReadLater] = React.useState(false);
   const [vote, setVote] = React.useState<"up" | "down" | null>(null);
   const helps = METRICS[rec.helpsMetric];
@@ -132,16 +131,7 @@ export function RecommendationCard({
             naturally. The shared control only navigates to an absolute publisher URL — never a
             relative value that would resolve to the app's own origin. */}
         <ReadArticleButton article={article} onOpen={onOpen} className="mr-1" />
-        <ActionButton
-          label="Save"
-          active={saved}
-          activeClass="text-primary"
-          icon={Bookmark}
-          onClick={() => {
-            setSaved((v) => !v);
-            act("save");
-          }}
-        />
+        <SaveButton article={article} />
         <ActionButton
           label="Read later"
           active={readLater}
