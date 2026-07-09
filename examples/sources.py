@@ -528,3 +528,60 @@ class MultiSourcePoller:
     @property
     def running(self) -> bool:
         return any(t.is_alive() for t in self._threads)
+
+
+# --------------------------------------------------------------------------- #
+# One-shot CLI (complements rss_ingest.py) — ingest / inspect every enabled source once.
+# --------------------------------------------------------------------------- #
+def _cli_health_recorder(store_):
+    def rec(name, url, stats, latency_ms, error):
+        try:
+            store_.record_feed_health(
+                url, ok=(error is None), name=name, latency_ms=latency_ms,
+                error=(f"{type(error).__name__}: {error}" if error is not None else None),
+                stats=stats or {})
+        except Exception:
+            pass
+    return rec
+
+
+def main(argv=None) -> int:
+    """One-shot multi-source ingest / status (complements ``rss_ingest.py``):
+
+        python examples/sources.py poll     # poll every ENABLED adapter once into the catalog
+        python examples/sources.py check    # per-adapter enabled/config status only (no ingest)
+
+    Reuses the same pipeline, scorer, dedup, and health as the running engine — set the same env
+    (RWE_NEWSAPI_ENABLED / RWE_NEWSAPI_API_KEY / RWE_GDELT_ENABLED / RWE_DB_URL) so it writes the
+    catalog the engine reads."""
+    import argparse
+    from collections import Counter
+    import store as store_mod
+    ap = argparse.ArgumentParser(description="one-shot multi-source ingest / status",
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("command", nargs="?", choices=("poll", "check"), default="poll")
+    ap.add_argument("--db", default=None, help="RWE_DB_URL override")
+    args = ap.parse_args(argv)
+
+    reg = default_registry()
+    for w in config_warnings(reg):
+        print(f"  ! {w}")
+    st = store_mod.Store(args.db)
+    scorer = rss_ingest.make_scorer()
+    rec = _cli_health_recorder(st)
+    for a in reg.adapters():
+        print(f"[{a.provider:<8}] {'enabled ' if a.enabled() else 'disabled'} "
+              f"source_type={a.source_type} interval={a.interval():.0f}s key={a.health_key}")
+        if args.command == "poll" and a.enabled():
+            agg = a.poll_once(st, scorer, on_feed=rec)
+            print(f"           -> new={agg.get('new', 0)} duplicates={agg.get('duplicates', 0)} "
+                  f"failed={agg.get('failed', 0)} raw={agg.get('rawCount', 0)} "
+                  f"errors={agg.get('errors') or '-'}")
+    rows = st.list_feed_articles(limit=1_000_000)
+    print(f"catalog: {st.count_feed_articles()} articles  "
+          f"by source: {dict(Counter(r.get('sourceType') for r in rows))}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

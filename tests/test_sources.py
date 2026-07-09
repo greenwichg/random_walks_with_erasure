@@ -266,6 +266,19 @@ def test_config_warnings_collects_only_misconfigured(monkeypatch):
     assert sources.RSSAdapter().config_warning() is None
 
 
+def test_sources_cli_check_lists_adapters(monkeypatch, capsys, tmp_path):
+    """`python examples/sources.py check` lists every adapter's status + a by-source summary, and does
+    NOT ingest (all disabled here -> no network)."""
+    monkeypatch.setenv("RWE_DB_URL", f"sqlite:///{tmp_path / 'c.db'}")
+    for v in ("RWE_FEED_POLL", "RWE_RSS_ENABLED", "RWE_NEWSAPI_ENABLED", "RWE_GDELT_ENABLED"):
+        monkeypatch.delenv(v, raising=False)
+    rc = sources.main(["check"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "RSS" in out and "NewsAPI" in out and "GDELT" in out and "disabled" in out
+    assert "catalog:" in out and "by source:" in out
+
+
 # --------------------------------------------------------------------------- #
 # Health monitoring — per source, under a stable key (reuses store.record_feed_health)
 # --------------------------------------------------------------------------- #
