@@ -51,3 +51,9 @@ backups/
 
 # Metric Validation Pipeline — isolated, local-only run history (Stage 10)
 examples/metric_pipeline/.runs.jsonl
+
+# Metric Validation notebook — local run outputs (exports + throwaway demo DB)
+metric_validation.json
+metric_validation.csv
+metric_validation.html
+data/metric_validation_demo.db
