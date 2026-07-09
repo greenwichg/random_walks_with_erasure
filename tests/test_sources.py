@@ -235,6 +235,37 @@ def test_source_batch_shape():
     assert b.provider == "NewsAPI" and b.source_type == "newsapi" and len(b) == 3 and b.error is None
 
 
+def test_gdelt_default_query_is_news_oriented(monkeypatch):
+    # the default carries topic keywords — a bare "sourcelang:english" returns non-news junk
+    assert "sourcelang:english" in sources.DEFAULT_GDELT_QUERY
+    assert sources.DEFAULT_GDELT_QUERY != "sourcelang:english" and "politics" in sources.DEFAULT_GDELT_QUERY.lower()
+    monkeypatch.delenv("RWE_GDELT_QUERY", raising=False)
+    assert "politics" in sources.GDELTAdapter()._url().lower()          # default applied to the URL
+    monkeypatch.setenv("RWE_GDELT_QUERY", "climate")
+    assert "query=climate" in sources.GDELTAdapter()._url()             # explicit override wins
+
+
+def test_newsapi_config_warning_when_enabled_without_key(monkeypatch):
+    monkeypatch.setenv("RWE_NEWSAPI_ENABLED", "1")
+    monkeypatch.delenv("RWE_NEWSAPI_API_KEY", raising=False)
+    a = sources.NewsAPIAdapter()
+    assert a.enabled() is False
+    assert a.config_warning() and "RWE_NEWSAPI_API_KEY" in a.config_warning()   # points at the fix
+    monkeypatch.setenv("RWE_NEWSAPI_API_KEY", "k")                              # a key clears it + enables
+    assert a.enabled() is True and a.config_warning() is None
+    monkeypatch.setenv("RWE_NEWSAPI_ENABLED", "0")                              # flag off -> nothing intended
+    assert sources.NewsAPIAdapter().config_warning() is None
+
+
+def test_config_warnings_collects_only_misconfigured(monkeypatch):
+    monkeypatch.setenv("RWE_NEWSAPI_ENABLED", "1")
+    monkeypatch.delenv("RWE_NEWSAPI_API_KEY", raising=False)
+    ws = sources.config_warnings(sources.default_registry())
+    assert len(ws) == 1 and "NewsAPI" in ws[0]                          # only NewsAPI is misconfigured
+    assert sources.GDELTAdapter().config_warning() is None              # keyless -> never misconfigured
+    assert sources.RSSAdapter().config_warning() is None
+
+
 # --------------------------------------------------------------------------- #
 # Health monitoring — per source, under a stable key (reuses store.record_feed_health)
 # --------------------------------------------------------------------------- #

@@ -199,6 +199,12 @@ async def lifespan(app: FastAPI):
     # interval, isolated; retention/health/validation/hot-refresh are unchanged and owned by earlier
     # commits — this only consumes their outputs. FeedPoller is untouched (standalone CLI still uses it).
     registry = sources.default_registry()
+    for _w in sources.config_warnings(registry):     # e.g. RWE_NEWSAPI_ENABLED set but no API key
+        _log(logging.WARNING, "source_misconfigured", detail=_w)
+    if registry.enabled() and not feed_source.enabled():
+        _log(logging.WARNING, "source_poller_inactive",
+             detail="ingestion adapters are enabled but RWE_RECS_SOURCE != feed, so the poller will not start",
+             adapters=[a.provider for a in registry.enabled()])
     if feed_source.enabled() and registry.enabled():
         state.refresh.polling_enabled = True
         state.poller = sources.MultiSourcePoller(state.store, state.scorer, registry=registry,

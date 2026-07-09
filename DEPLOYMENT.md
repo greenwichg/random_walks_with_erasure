@@ -325,7 +325,7 @@ still uses it). New providers register in one place with no poller change.
 | `RWE_GDELT_ENABLED` | off | enable the GDELT adapter (keyless) |
 | `RWE_GDELT_POLL_INTERVAL` | `900` | seconds between GDELT polls |
 | `RWE_GDELT_MAX_ARTICLES` | — | cap articles per GDELT poll |
-| `RWE_GDELT_QUERY` | `sourcelang:english` | GDELT DOC 2.0 query |
+| `RWE_GDELT_QUERY` | `(politics OR economy OR election OR climate OR world) sourcelang:english` | GDELT DOC 2.0 query (topic keywords — a bare `sourcelang:english` returns non-news results) |
 | `RWE_SOURCE_PRIORITY` | `rss:100,newsapi:80,gdelt:60` | media-merge source priority |
 
 **Production gaps (multi-source):** live NewsAPI/GDELT polling requires outbound network to

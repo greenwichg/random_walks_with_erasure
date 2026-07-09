@@ -42,6 +42,11 @@ _USER_AGENT = "InformationHealth-Sources/0.1 (+https://code.claude.com)"
 _TRUE = {"1", "true", "yes", "on"}
 _logger = logging.getLogger("ih.sources")
 
+# A sensible default GDELT DOC 2.0 query: real news topics. A bare ``sourcelang:english`` (no keyword)
+# returns a degenerate, non-news result set (e.g. google.com help pages), so the default carries topic
+# keywords. Override with ``RWE_GDELT_QUERY``.
+DEFAULT_GDELT_QUERY = "(politics OR economy OR election OR climate OR world) sourcelang:english"
+
 
 # --------------------------------------------------------------------------- #
 # Config helpers
@@ -115,6 +120,12 @@ class SourceAdapter:
         raise NotImplementedError
 
     def max_articles(self) -> Optional[int]:
+        return None
+
+    def config_warning(self) -> Optional[str]:
+        """A human-readable reason this source looks *intended-on but disabled* (e.g. a flag set without
+        its required key), or ``None``. Surfaced at startup so a silent ``enabled() == False`` never
+        hides a typo."""
         return None
 
     @property
@@ -267,6 +278,12 @@ class NewsAPIAdapter(SourceAdapter):
     def enabled(self) -> bool:
         return _bool_env("RWE_NEWSAPI_ENABLED") and bool(self.api_key())
 
+    def config_warning(self) -> Optional[str]:
+        if _bool_env("RWE_NEWSAPI_ENABLED") and not self.api_key():
+            return ("RWE_NEWSAPI_ENABLED is set but RWE_NEWSAPI_API_KEY is missing/empty — NewsAPI "
+                    "stays disabled. Get a free key at https://newsapi.org and set RWE_NEWSAPI_API_KEY.")
+        return None
+
     def interval(self) -> float:
         return _float_env("RWE_NEWSAPI_POLL_INTERVAL", 900.0)
 
@@ -353,7 +370,7 @@ class GDELTAdapter(SourceAdapter):
         return "gdelt://doc"
 
     def _url(self) -> str:
-        params = {"query": os.environ.get("RWE_GDELT_QUERY", "sourcelang:english"),
+        params = {"query": os.environ.get("RWE_GDELT_QUERY") or DEFAULT_GDELT_QUERY,
                   "mode": "artlist", "format": "json", "sort": "datedesc",
                   "maxrecords": str(min(self.max_articles() or 75, 250))}
         return f"https://api.gdeltproject.org/api/v2/doc/doc?{urllib.parse.urlencode(params)}"
@@ -411,6 +428,13 @@ def default_registry(feeds_spec: Optional[str] = None) -> SourceRegistry:
     reg.register(NewsAPIAdapter())
     reg.register(GDELTAdapter())
     return reg
+
+
+def config_warnings(registry: SourceRegistry) -> list:
+    """Config warnings for every registered adapter that looks intended-on but is disabled (e.g. a flag
+    set without its required key). Empty when nothing is misconfigured — surfaced at startup so a silent
+    ``enabled() == False`` doesn't hide a typo."""
+    return [w for a in registry.adapters() if (w := a.config_warning())]
 
 
 # --------------------------------------------------------------------------- #
