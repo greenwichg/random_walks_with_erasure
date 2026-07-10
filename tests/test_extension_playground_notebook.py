@@ -33,13 +33,13 @@ def _cell(marker):
 def test_notebook_is_valid_nbformat():
     nb = _nb()
     assert nb["nbformat"] == 4
-    assert len(nb["cells"]) == 13 and all("cell_type" in c for c in nb["cells"])
+    assert len(nb["cells"]) == 14 and all("cell_type" in c for c in nb["cells"])
 
 
 def test_notebook_has_the_expected_sections():
     text = _text()
     for marker in ("5-minute Quick Start", "What's happening?",           # DX: intro + diagram
-                   "1 · Setup", "2 · Launch", "3 · What the extension is",
+                   "1 · Setup", "2 · Launch", "2b · Status", "3 · What the extension is",
                    "4 · Install the extension", "5 · Generate your extension token",
                    "6 · Connection test", "7 · Read a real article",
                    "8 · Live validation dashboard", "9 · Developer Playground",
@@ -59,6 +59,18 @@ def test_notebook_reuses_the_existing_surfaces_not_new_ones():
     assert "demo@infodiet.local" in text                       # same demo identity as the app
     # the poller only cycles with a feeds spec — the launch cell must set it (quiet-feed lesson)
     assert '"RWE_RSS_FEEDS": "deploy/rss_feeds.example.txt"' in text
+
+
+def test_launch_never_fetches_sources_upfront():
+    """Launching must not run an ingestion pass — the background poller (and the user's own
+    extension reads) seed the catalog, and the status cards explain an empty one instead."""
+    launch = _cell("2 · Launch")
+    assert "rss_ingest" not in launch
+    assert "def catalog_card" in launch and "def refresh_card" in launch   # the cards ship in the helper
+    assert "ui.catalog_card()" in launch                                   # rendered right after launch
+    assert "Waiting for RSS ingestion" in launch                           # the empty-catalog explainer
+    status = _cell("2b · Status")
+    assert "ui.catalog_card()" in status and "ui.refresh_card()" in status
 
 
 def test_notebook_defaults_are_safe():
@@ -105,6 +117,8 @@ def test_embedded_helper_module_compiles_and_works(tmp_path):
     st = ns["load_state"]()
     assert st["publicUrl"].startswith("https://") and st["uid"] == 7
     assert (tmp_path / "playground_state.json").exists()       # state is module-dir anchored
+    assert ns["card"]("ok", "Catalog Status", [("FeedArticles", 152)]) is True
+    assert ns["_age"](None) == "never yet"
 
 
 def test_runtime_artifacts_are_gitignored():
