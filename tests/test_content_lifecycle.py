@@ -32,11 +32,11 @@ def _upsert(st, canonical, source_type, **over):
 def test_extension_creates_provisional_feed_sources_create_active():
     st = _st()
     assert _upsert(st, "https://a.example/x", "extension") is True
-    assert st.get_feed_article("https://a.example/x")["status"] == "provisional"
+    assert st.get_feed_article("https://a.example/x")["articleState"] == "provisional"
     assert _upsert(st, "https://b.example/y", "rss") is True
-    assert st.get_feed_article("https://b.example/y")["status"] is None
+    assert st.get_feed_article("https://b.example/y")["articleState"] is None
     assert _upsert(st, "https://c.example/z", None) is True            # legacy callers unchanged
-    assert st.get_feed_article("https://c.example/z")["status"] is None
+    assert st.get_feed_article("https://c.example/z")["articleState"] is None
 
 
 def test_feed_rediscovery_merges_and_promotes():
@@ -48,7 +48,7 @@ def test_feed_rediscovery_merges_and_promotes():
         assert _upsert(st, url, "extension") is True
         assert _upsert(st, url, feed_source_type, title="Fuller title") is False   # merged, no dup
         row = st.get_feed_article(url)
-        assert row["status"] is None, feed_source_type                              # promoted
+        assert row["articleState"] == "verified", feed_source_type                        # promoted
         assert row["sourceType"] == "extension"                                     # first-seen kept
         assert st.count_feed_articles() == 1
 
@@ -58,7 +58,7 @@ def test_extension_re_read_does_not_promote():
     url = "https://a.example/story"
     _upsert(st, url, "extension")
     assert _upsert(st, url, "extension") is False
-    assert st.get_feed_article(url)["status"] == "provisional"        # extension can't self-promote
+    assert st.get_feed_article(url)["articleState"] == "provisional"        # extension can't self-promote
 
 
 def test_multiple_distinct_readers_promote():
@@ -74,8 +74,8 @@ def test_multiple_distinct_readers_promote():
     assert st.maybe_promote_feed_article(url, 2) is False
     st.add_read(u2, url, {"article_id": url}, None)
     assert st.maybe_promote_feed_article(url, 2) is True              # second distinct reader
-    assert st.get_feed_article(url)["status"] is None
-    assert st.maybe_promote_feed_article(url, 2) is False             # idempotent (already active)
+    assert st.get_feed_article(url)["articleState"] == "verified"
+    assert st.maybe_promote_feed_article(url, 2) is False             # idempotent (already verified)
     assert st.count_feed_articles() == 1
 
 

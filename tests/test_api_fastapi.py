@@ -1258,7 +1258,7 @@ def test_extension_read_creates_provisional_article(client):
 
     row = st.get_feed_article("https://news-site.example/politics/zebra-quorum-vote")
     assert row is not None
-    assert row["sourceType"] == "extension" and row["status"] == "provisional"
+    assert row["sourceType"] == "extension" and row["articleState"] == "provisional"
     assert row["image"] == "https://cdn.example.com/hero.jpg"           # og metadata persisted
     assert row["publishedAt"] == "2026-07-10T08:00:00+00:00"
     assert (row["scored"] or {}).get("category")                        # classified by the one scorer
@@ -1288,7 +1288,7 @@ def test_extension_read_of_cataloged_article_reuses_it(client):
                     headers=hdr).json()
     assert r["accepted"] == 1
     assert st.count_feed_articles() == before                           # merged, never duplicated
-    assert st.get_feed_article(url)["status"] is None                   # stays active
+    assert st.get_feed_article(url)["articleState"] is None             # stays active
 
 
 def test_two_readers_one_article_and_promotion(client):
@@ -1301,13 +1301,13 @@ def test_two_readers_one_article_and_promotion(client):
 
     client.post("/api/me/reads", json={"reads": [_ext_read(url, "Quantum lattice chip unveiled")]},
                 headers=h1)
-    assert st.get_feed_article(url)["status"] == "provisional"
+    assert st.get_feed_article(url)["articleState"] == "provisional"
     disc = client.get("/api/discover?limit=200").json()
     assert not any("quantum-lattice" in (a.get("url") or "") for a in disc["articles"])
 
     client.post("/api/me/reads", json={"reads": [_ext_read(url, "Quantum lattice chip unveiled")]},
                 headers=h2)
-    assert st.get_feed_article(url)["status"] is None                   # promoted by 2nd reader
+    assert st.get_feed_article(url)["articleState"] == "verified"       # promoted by 2nd reader
     assert st.count_feed_articles() == len({a["canonicalUrl"] for a in st.list_feed_articles(10_000)})
     disc = client.get("/api/discover?limit=200").json()
     assert any("quantum-lattice" in (a.get("url") or "") for a in disc["articles"])   # now eligible

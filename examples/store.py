@@ -360,11 +360,13 @@ class FeedArticle(Base):
     source_type: Mapped[Optional[str]] = mapped_column(String(32), default=None)        # rss | newsapi | gdelt | extension
     source_provider: Mapped[Optional[str]] = mapped_column(String(255), default=None)   # feed name / "NewsAPI" / "GDELT"
     external_id: Mapped[Optional[str]] = mapped_column(String(512), default=None)       # provider's article id, if any
-    # Content lifecycle (additive). ``None`` = active (every feed-produced article, and all legacy rows);
-    # ``"provisional"`` = created from a single user's extension read — participates in Stories/Search/
-    # the corpus, but hidden from Discover until promoted (a feed re-discovers it, or >= N distinct
-    # readers read it). Derived from provenance at insert; flipped in place on promotion.
-    status: Mapped[Optional[str]] = mapped_column(String(16), default=None)
+    # Content lifecycle (additive, generic so it can grow: provisional | verified | archived …).
+    # ``None`` = the default active state (every feed-produced article, and all legacy rows);
+    # ``"provisional"`` = created from a single user's extension read — participates in Stories/
+    # Search/the corpus, but hidden from Discover until promoted; ``"verified"`` = an explicitly
+    # promoted article (a feed re-discovered it, or enough distinct readers corroborated it), which
+    # also records that the promotion happened. Derived from provenance at insert.
+    article_state: Mapped[Optional[str]] = mapped_column(String(16), default=None)
     fetched_at: Mapped[datetime] = mapped_column(default=_utcnow, index=True)
     created_at: Mapped[datetime] = mapped_column(default=_utcnow)
 
@@ -593,11 +595,11 @@ class Store:
         Callers that pass no ``source_type`` (priority 0) get the original backfill-when-empty behaviour,
         so existing callers are unchanged.
 
-        Content lifecycle (Commit 18): the ``status`` is derived from provenance — an article created by
-        a user's browser extension is born ``"provisional"`` (hidden from Discover until promoted); every
-        feed-produced article is born active (``None``). When a real feed later re-discovers a
-        provisional article, the merge itself **promotes** it — corroboration by an independent source is
-        exactly the promotion signal the lifecycle wants."""
+        Content lifecycle (Commit 18): ``article_state`` is derived from provenance — an article created
+        by a user's browser extension is born ``"provisional"`` (hidden from Discover until promoted);
+        every feed-produced article is born active (``None``). When a real feed later re-discovers a
+        provisional article, the merge itself **promotes** it to ``"verified"`` — corroboration by an
+        independent source is exactly the promotion signal the lifecycle wants."""
         payload = _dumps_scored(scored)
         with self.session() as s:
             row = s.get(FeedArticle, canonical_url)
@@ -610,7 +612,7 @@ class Store:
                     image_mime=image_mime, image_source=image_source,
                     image_attribution=image_attribution, source_type=source_type,
                     source_provider=source_provider, external_id=external_id,
-                    status=("provisional" if (source_type or "").lower() == "extension" else None)))
+                    article_state=("provisional" if (source_type or "").lower() == "extension" else None)))
                 return True
             row.fetched_at = _utcnow()
             if title and not row.title:
@@ -624,9 +626,10 @@ class Store:
             if external_id and not row.external_id:
                 row.external_id = external_id
             # Lifecycle promotion on merge: an independent feed source re-discovering a provisional
-            # (extension-created) article corroborates it — it becomes a first-class active article.
-            if row.status == "provisional" and source_type and (source_type or "").lower() != "extension":
-                row.status = None
+            # (extension-created) article corroborates it — promoted to an explicit "verified" state
+            # (distinguishable from feed-born NULL, so the promotion itself stays auditable).
+            if row.article_state == "provisional" and source_type and (source_type or "").lower() != "extension":
+                row.article_state = "verified"
             # Media merge by source priority: fill when empty, else the higher-priority source's image
             # wins (equal/lower keeps the existing one). Precedence for the stored image comes from its
             # own source (``image_source``, refreshed on replace) — NOT the article's origin source_type.
@@ -683,7 +686,7 @@ class Store:
                 "imageMimeType": r.image_mime, "imageSource": r.image_source,
                 "imageAttribution": r.image_attribution,
                 "sourceType": r.source_type, "sourceProvider": r.source_provider,
-                "externalId": r.external_id, "status": r.status,
+                "externalId": r.external_id, "articleState": r.article_state,
                 "fetchedAt": r.fetched_at.isoformat() if r.fetched_at else None}
 
     def feed_article_media(self, canonical_urls) -> dict:
@@ -748,12 +751,20 @@ class Store:
     def _ensure_lifecycle_columns(self) -> None:
         """Additive, idempotent content-lifecycle column on ``feed_articles`` (Commit 18), upgrading
         pre-existing DBs in place exactly like the other ``_ensure_*`` migrations. Backward compatible —
-        legacy rows keep ``NULL`` (= active), so nothing changes for feed-produced articles."""
+        legacy rows keep ``NULL`` (= active), so nothing changes for feed-produced articles. Also
+        carries over values from the short-lived ``status`` spelling of this column, so a DB created
+        by the first cut of Commit 18 keeps its provisional flags."""
         try:
             with self.session() as s:
-                s.execute(text("ALTER TABLE feed_articles ADD COLUMN status VARCHAR(16)"))
+                s.execute(text("ALTER TABLE feed_articles ADD COLUMN article_state VARCHAR(16)"))
         except Exception:
             pass        # already exists (fresh DB) or a non-sqlite backend — nothing to do
+        try:
+            with self.session() as s:
+                s.execute(text("UPDATE feed_articles SET article_state = status "
+                               "WHERE article_state IS NULL AND status IS NOT NULL"))
+        except Exception:
+            pass        # no legacy 'status' column — the common case
 
     # -- catalog search (live, index-backed; never touches the recommender) ------------------------
     def _ensure_search_indexes(self) -> None:
@@ -831,8 +842,8 @@ class Store:
         conds = self._search_conditions(q=q, publisher=publisher, lean=lean, topic=topic,
                                          date_from=date_from, date_to=date_to, source=source)
         if not include_provisional:
-            conds = list(conds) + [or_(FeedArticle.status.is_(None),
-                                       FeedArticle.status != "provisional")]
+            conds = list(conds) + [or_(FeedArticle.article_state.is_(None),
+                                       FeedArticle.article_state != "provisional")]
         where = and_(*conds) if conds else None
         with self.session() as s:
             cnt = select(func.count()).select_from(FeedArticle)
@@ -849,7 +860,7 @@ class Store:
         """Distinct publishers + topics (categories) across the catalog, for filter dropdowns.
         ``include_provisional=False`` (Discover) keeps the facet counts consistent with what that
         surface actually lists — unpromoted extension-created articles are excluded."""
-        cond = or_(FeedArticle.status.is_(None), FeedArticle.status != "provisional")
+        cond = or_(FeedArticle.article_state.is_(None), FeedArticle.article_state != "provisional")
         with self.session() as s:
             pq, cq = select(FeedArticle.publisher).distinct(), select(self._category_expr()).distinct()
             if not include_provisional:
@@ -866,13 +877,13 @@ class Store:
         Returns ``True`` only when this call performed the promotion."""
         with self.session() as s:
             row = s.get(FeedArticle, canonical_url)
-            if row is None or row.status != "provisional":
+            if row is None or row.article_state != "provisional":
                 return False
             readers = int(s.scalar(select(func.count(func.distinct(Read.user_id)))
                                    .where(Read.canonical_url == canonical_url)) or 0)
             if readers < max(1, int(min_readers)):
                 return False
-            row.status = None
+            row.article_state = "verified"
             return True
 
     def distinct_read_urls(self) -> set:
