@@ -57,7 +57,7 @@ A clean, tested Python implementation of
 > read travel the whole pipeline — Read → provisional FeedArticle → Search / Stories → refresh →
 > recommendation graph → Discover promotion — on a live status dashboard, with one-click
 > inspectors, the automated PASS / WAIT / FAIL experiment kit, and a reset cell:
-> [![Open the Extension Playground in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/greenwichg/random_walks_with_erasure/blob/67ddab9f9d3ed584206a8ee7d2911d6a91df3844/deploy/browser_extension_playground.ipynb)
+> [![Open the Extension Playground in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/greenwichg/random_walks_with_erasure/blob/e65b8fb2878e7999b966c2b70d498d923ba6a436/deploy/browser_extension_playground.ipynb)
 > **Extension onboarding & E2E playground** (see [`docs/EXTENSION_E2E_EXPERIMENT.md`](docs/EXTENSION_E2E_EXPERIMENT.md)).
 
 RWE is a modified random-walk exploration of the bipartite user–item feedback
