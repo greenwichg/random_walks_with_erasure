@@ -13,12 +13,13 @@ the explanation is licensed by evidence — the question a user actually asks ("
 from __future__ import annotations
 
 import dataclasses
+import json
 import os
 import pathlib
 import sys
 import tempfile
 from types import SimpleNamespace
-from typing import Optional
+from typing import List, Optional
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
@@ -153,6 +154,56 @@ def build(fixture: dict, *, keep_env: bool = False) -> Case:
                 os.unlink(tmp.name)
             except OSError:
                 pass
+
+
+def load_history(path: str) -> List[dict]:
+    """A lenient reader for an exported reading history — the notebook's "run on my own reads"
+    path. Accepts the app's ``/api/me/history`` response (a list of ``{article: {...}}``), a
+    ``{"reads": [...]}`` envelope, or the metric-notebook ``{"scored": {...}}`` rows. Normalizes
+    each to ``{url, publisher, topic, lean, title}``; rows without a usable URL are skipped."""
+    data = json.loads(pathlib.Path(path).read_text())
+    rows = data.get("reads") if isinstance(data, dict) else data
+    out = []
+    for r in rows or []:
+        a = r.get("article") if isinstance(r, dict) and isinstance(r.get("article"), dict) else \
+            r.get("scored") if isinstance(r, dict) and isinstance(r.get("scored"), dict) else r
+        url = (a.get("url") or a.get("article_id") or (r.get("url") if isinstance(r, dict) else None))
+        if not url:
+            continue
+        out.append({"url": str(url), "publisher": a.get("publisher") or a.get("outlet") or "",
+                    "topic": a.get("topic") or a.get("category") or "",
+                    "lean": float(a.get("lean") or 0.0),
+                    "title": a.get("headline") or a.get("title") or ""})
+    return out
+
+
+def fixture_from_history(reads: List[dict], name: str = "my-reading-history") -> dict:
+    """Turn an exported reading history into a scenario fixture (no target): a base catalog for
+    graph structure + the reader's own read-articles + the reader under test. Every recommendation
+    the pipeline then surfaces is validated by the same universal invariants — the target-specific
+    scenario checks are simply skipped. A small or single-outlet history yields a thin feed, but
+    each recommendation in it is still proven evidence-backed."""
+    base = json.loads((pathlib.Path(__file__).resolve().parent / "golden" / "mixed_feed.json")
+                      .read_text())["catalog"]
+    seen = {er._canon(a["url"]) for a in base}
+    extra = []
+    for r in reads:
+        c = er._canon(r["url"])
+        if c in seen:
+            continue
+        seen.add(c)
+        extra.append({"url": r["url"], "publisher": r["publisher"] or "Unknown",
+                      "title": r.get("title", ""), "publishedAt": "2026-07-05T00:00:00+00:00",
+                      "scored": {"outlet": r["publisher"] or "Unknown",
+                                 "category": r["topic"] or "News", "lean": r["lean"],
+                                 "political": abs(r["lean"]) > 0.4, "title": r.get("title", ""),
+                                 "register": 0.8,
+                                 "emotion": {"fear": 0.1, "outrage": 0.1, "analysis": 0.5,
+                                             "positive": 0.1, "neutral": 0.2}}})
+    reader = {"id": name, "underTest": True,
+              "reads": [{"url": r["url"], "publisher": r["publisher"]} for r in reads]}
+    return {"name": name, "description": f"Your exported reading history ({len(reads)} reads).",
+            "catalog": base + extra, "readers": [reader], "expected": {}}
 
 
 def _article_of(a: dict) -> dict:
