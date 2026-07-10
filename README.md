@@ -51,6 +51,14 @@ A clean, tested Python implementation of
 > reports. Runs offline by default with an optional *Dashboard Verification* mode:
 > [![Open Metric Validation in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/greenwichg/random_walks_with_erasure/blob/da845429e9e200a8db2f2347b8a057f5fbcaf13a/deploy/metric_validation_colab.ipynb)
 > **Developer validation notebook** (see [`docs/METRIC_PIPELINE.md`](docs/METRIC_PIPELINE.md)).
+>
+> 🔌 **Browser Extension Playground** — install the InfoDiet browser extension, connect it to a
+> live Colab-hosted copy of the app (public tunnel + one-click token), and watch a real article you
+> read travel the whole pipeline — Read → provisional FeedArticle → Search / Stories → refresh →
+> recommendation graph → Discover promotion — on a live status dashboard, with one-click
+> inspectors, the automated PASS / WAIT / FAIL experiment kit, and a reset cell:
+> [![Open the Extension Playground in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/greenwichg/random_walks_with_erasure/blob/67ddab9f9d3ed584206a8ee7d2911d6a91df3844/deploy/browser_extension_playground.ipynb)
+> **Extension onboarding & E2E playground** (see [`docs/EXTENSION_E2E_EXPERIMENT.md`](docs/EXTENSION_E2E_EXPERIMENT.md)).
 
 RWE is a modified random-walk exploration of the bipartite user–item feedback
 graph in which the mass reaching certain nodes is systematically *erased* and
