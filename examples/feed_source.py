@@ -103,13 +103,27 @@ def export_catalog_csv(store_, path: str, *, max_items: Optional[int] = None,
     fetched, since :meth:`Store.list_feed_articles` is ordered newest-first — so a single high-volume
     feed (e.g. a "world news" firehose) can't dominate the recommendations. It is corpus *composition*
     only (like ``max_items``); it does not touch ranking, scoring, diversity, or selection. Serializes
-    through :func:`export_candidate_csv` so the CSV format is single-sourced."""
+    through :func:`export_candidate_csv` so the CSV format is single-sourced.
+
+    Read-demand exemption (Commit 18): an article a user actually **read** is never trimmed out —
+    neither by the ``max_items`` recency window nor by the per-outlet cap — because trimming a read
+    article would disconnect that reader from the recommendation graph. Composition only, bounded by
+    the distinct-read-URL set."""
     rows = store_.list_feed_articles(limit=max_items or 1_000_000)
+    read_urls = store_.distinct_read_urls()
+    if read_urls:                            # union in read articles the recency window missed
+        have = {a.get("canonicalUrl") for a in rows}
+        missing = [u for u in read_urls if u not in have]
+        if missing:
+            rows = rows + store_.feed_articles_by_urls(missing)
     if max_per_outlet:
         kept = []
         per_outlet: dict = {}
         for a in rows:
             scored = a.get("scored") or {}
+            if a.get("canonicalUrl") in read_urls:
+                kept.append(a)               # read-demand exemption: never capped out
+                continue
             key = (a.get("publisher") or scored.get("outlet") or "").strip().lower()
             per_outlet[key] = per_outlet.get(key, 0) + 1
             if per_outlet[key] > max_per_outlet:

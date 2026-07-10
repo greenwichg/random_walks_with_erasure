@@ -92,7 +92,13 @@ async function recordArticle(article) {
 
   try {
     const { ok, status } = await postReads(appUrl, token, [
+      // Standard page metadata only; empty fields drop out of the JSON. The web tier stamps
+      // readSource="extension" on this token-authenticated path, which is what lets the backend
+      // also feed the article into the shared catalog (Commit 18).
       { url: article.url, title: article.title || "", description: article.description || "",
+        image: article.image || undefined, siteName: article.siteName || undefined,
+        publishedAt: article.publishedAt || undefined, language: article.language || undefined,
+        author: article.author || undefined,
         observedAt: article.observedAt },
     ]);
     if (ok) {

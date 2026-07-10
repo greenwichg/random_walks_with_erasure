@@ -42,6 +42,7 @@ import reqlimits              # request-body size / batch-shape limits (Private 
 import feed_source            # optional: source the recommender catalog from the RSS FeedArticle store
 import feed_service           # optional: background RSS polling that keeps the FeedArticle catalog fresh
 import sources                # pluggable multi-source ingestion (RSS + NewsAPI + GDELT) via adapters
+import rss_ingest             # FeedEntry + ingest_entries — the one producer path (Commit 18: + extension)
 import corpus_validation      # corpus-eligibility gate (validation only; no activation / no hot swap)
 import corpus_refresh         # atomic hot activation of a validated corpus (background Backend swap)
 import discover               # Discover: product-layer exploration over the FeedArticle catalog
@@ -824,6 +825,15 @@ class ReadInput(BaseModel):
     readSource: str | None = None     # app | extension | <future import> (additive; metadata only)
     openedFrom: str | None = None     # in-app surface: recommendations/discover/stories/search/saved
     device: str | None = None         # optional client hint
+    # Standard page metadata the extension collects (Commit 18) so an extension read can become a
+    # first-class FeedArticle. All optional + additive; never trusted for canonicalization (the
+    # engine canonicalizes the URL itself). ``language``/``author`` are accepted per the privacy
+    # allowlist but not yet persisted (FeedArticle has no columns for them).
+    image: str | None = None          # og:image
+    publishedAt: str | None = None    # article:published_time
+    siteName: str | None = None       # og:site_name (publisher hint)
+    language: str | None = None       # <html lang>
+    author: str | None = None         # meta[name=author]
 
 
 class ReadsRequest(BaseModel):
@@ -1428,13 +1438,48 @@ def me(request: Request) -> dict:
             "report": st.latest_report(uid)}
 
 
+# Distinct readers needed to promote a provisional (extension-created) article into Discover —
+# independent readers corroborate it the way a feed re-discovery does. Env-tunable, floor 1.
+_PROMOTE_MIN_READERS = max(1, int(os.environ.get("RWE_PROMOTE_MIN_READERS", "2")))
+
+
+def _catalog_from_extension_read(item: ReadInput, url: str, scored, scorer, st) -> None:
+    """Commit 18 — the browser extension as FeedArticle producer #4, through the SAME pipeline as
+    RSS/NewsAPI/GDELT: build a :class:`FeedEntry` from the page metadata the extension collected and
+    hand it to ``rss_ingest.ingest_entries`` (scoring is a cache hit — the read was scored a moment
+    ago with the same canonical key). Born ``provisional`` (hidden from Discover until a feed
+    re-discovers it or enough distinct readers corroborate it); Stories/Search/corpus see it at once.
+    Best-effort by contract: the Read is already recorded — this must never fail the request."""
+    try:
+        entry = rss_ingest.FeedEntry(
+            url=url,
+            title=(item.title or scored.title or ""),
+            description=item.description or "",
+            published_at=item.publishedAt,
+            image=item.image,
+            image_source="og:image" if item.image else None,
+            publisher_hint=(item.siteName or item.outlet or ""),
+            category=item.category,
+            language=item.language,          # accepted (privacy allowlist); not yet persisted
+            source_type="extension",
+            source_provider="Browser extension",
+        )
+        rss_ingest.ingest_entries([entry], item.siteName or None, "extension", scorer, st)
+        st.maybe_promote_feed_article(scored.article_id, _PROMOTE_MIN_READERS)
+    except Exception as e:                   # Case 10: the read is preserved; creation is best-effort
+        _log(logging.WARNING, "extension_catalog_failed", url=url[:200], error=type(e).__name__)
+
+
 @app.post("/api/me/reads", response_model=IngestResultModel, tags=["report"],
           summary="Record reading events for the signed-in user (shared ingestion API)",
           responses=_ERR_RESPONSES)
 def add_reads(request: Request, req: ReadsRequest) -> dict:
-    """The single ingestion API — paste URL now, browser extension + RSS later. Each read is
+    """The single ingestion API — paste URL, in-app Read, browser extension. Each read is
     scored once (cached) and recorded idempotently per (user, canonical URL); repeat submits are
-    no-ops. Returns coverage so the client knows when enough reads exist for a measured report."""
+    no-ops. An **extension** read additionally feeds the article into the shared FeedArticle
+    catalog (producer #4 — see ``_catalog_from_extension_read``); the Read itself is always
+    recorded first. Returns coverage so the client knows when enough reads exist for a measured
+    report."""
     uid = _require_real_user(request)
     # Bound the batch shape (count + per-read field lengths) before any scoring — the byte cap
     # already bounded the raw body; this rejects an over-count / over-long batch that fits under it.
@@ -1459,6 +1504,11 @@ def add_reads(request: Request, req: ReadsRequest) -> dict:
             accepted += 1
         else:
             duplicates += 1
+        # Commit 18: an extension read also produces/merges the catalog article (read recorded first;
+        # runs for duplicates too so a transient failure heals on the next open, and a second reader
+        # can promote an article created by the first).
+        if (item.readSource or "").strip().lower() == "extension":
+            _catalog_from_extension_read(item, url, scored, scorer, st)
     total = st.count_reads(uid)
     return {"accepted": accepted, "duplicates": duplicates, "rejected": rejected,
             "totalReads": total, "threshold": engine.ESTIMATE_MIN_READS,

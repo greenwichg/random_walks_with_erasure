@@ -1,13 +1,17 @@
 # InfoDiet — Information Health (browser extension)
 
-A deliberately tiny Manifest V3 extension that records **only the URL and title** of supported
-news articles you open, and syncs them to your InfoDiet account so your reading produces a real
-**Measured Information Health Report**. All scoring, classification, and recommendation happen in
-the backend — the extension contains none of it.
+A deliberately tiny Manifest V3 extension that records **only the URL and standard page metadata**
+(title, description, image link, publisher, publication date) of supported news articles you open,
+and syncs them to your InfoDiet account — powering your real **Measured Information Health Report**
+and, since Commit 18, feeding each article you discover into the shared catalog as a first-class
+`FeedArticle` (born *provisional*; promoted once a feed re-discovers it or more readers corroborate
+it). All scoring, classification, and recommendation happen in the backend — the extension contains
+none of it.
 
-> **Privacy.** InfoDiet only records the URL and title of supported news articles you open. We do
-> not read page contents, browsing history, passwords, or activity outside supported news sites.
-> Your token lives only in this browser; revoke it any time from InfoDiet → Settings.
+> **Privacy.** InfoDiet only records the URL and standard page metadata (title, description, image
+> link, publisher, publication date, language/author when present) of supported news articles you
+> open. We never read article text, browsing history, passwords, or activity outside supported news
+> sites. Your token lives only in this browser; revoke it any time from InfoDiet → Settings.
 
 ## Permissions (kept to the minimum)
 
@@ -24,7 +28,9 @@ fetches the news sites themselves — it only reads standard metadata already in
 
 ```
 content.js (allowlisted news page)      detect article via og:type / JSON-LD / <article>+<h1>
-   → { url, title, observedAt }         (no page text, no scoring)
+   → { url, title, description,         (standard metadata only — no page text, no scoring)
+       image, siteName, publishedAt,
+       author, language, observedAt }
 background.js (service worker)          de-dup locally (6h TTL, session storage)
    → POST {appUrl}/api/me/reads         Authorization: Bearer <token>
 web tier (Next.js)                      resolves the token → forwards to the engine

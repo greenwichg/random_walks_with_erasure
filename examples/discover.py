@@ -112,11 +112,13 @@ def list_discover(store_, *, topic: Optional[str] = None, publisher: Optional[st
     def _f(v):     # drop the sentinel "all" and empties
         return v if v and v != "all" else None
 
+    # Discover is the one surface that hides *provisional* (extension-created, not yet corroborated)
+    # articles — Stories/Search/the corpus include them (Commit 18 lifecycle). Same shared SQL path.
     rows, _total = store_.search_feed_articles(
         publisher=_f(publisher), topic=_f(topic), lean=_f(lean), sort="newest",
-        pagination=OffsetPagination.from_params(limit, 0))
+        pagination=OffsetPagination.from_params(limit, 0), include_provisional=False)
     articles = [feed_article_to_article(r) for r in rows]
-    facets = store_.feed_article_facets()
+    facets = store_.feed_article_facets(include_provisional=False)
     topics = sorted({engine._prettify(t) for t in facets["topics"] if t})
     publishers = sorted({engine._prettify(p) for p in facets["publishers"] if p})
     return {"articles": articles, "topics": topics, "publishers": publishers}

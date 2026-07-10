@@ -81,8 +81,10 @@ def _dumps_scored(scored) -> str:
 # the image from the higher-priority source wins (see ``upsert_feed_article``). Centralised here so the
 # ordering changes in ONE place with **no data migration** — precedence is derived dynamically from each
 # row's ``source_type`` (nothing extra is persisted). Env-overridable, e.g.
-# ``RWE_SOURCE_PRIORITY="rss:100,newsapi:80,gdelt:60"``. Unknown / absent source_type -> 0 (lowest).
-SOURCE_PRIORITY = {"rss": 100, "newsapi": 80, "gdelt": 60}
+# ``RWE_SOURCE_PRIORITY="rss:100,newsapi:80,gdelt:60,extension:40"``. Unknown / absent -> 0 (lowest).
+# ``extension`` (a user's browser reporting standard page metadata) ranks below every real feed, so a
+# feed that later discovers the same article upgrades its media on merge — never the reverse.
+SOURCE_PRIORITY = {"rss": 100, "newsapi": 80, "gdelt": 60, "extension": 40}
 
 
 def _source_priority_map() -> dict:
@@ -355,9 +357,14 @@ class FeedArticle(Base):
     image_attribution: Mapped[Optional[str]] = mapped_column(String(512), default=None)
     # Source attribution (additive; multi-source ingestion). All None on legacy / RSS-only rows until set;
     # downstream stays source-agnostic — these are provenance/diagnostics + the media-merge priority key.
-    source_type: Mapped[Optional[str]] = mapped_column(String(32), default=None)        # rss | newsapi | gdelt
+    source_type: Mapped[Optional[str]] = mapped_column(String(32), default=None)        # rss | newsapi | gdelt | extension
     source_provider: Mapped[Optional[str]] = mapped_column(String(255), default=None)   # feed name / "NewsAPI" / "GDELT"
     external_id: Mapped[Optional[str]] = mapped_column(String(512), default=None)       # provider's article id, if any
+    # Content lifecycle (additive). ``None`` = active (every feed-produced article, and all legacy rows);
+    # ``"provisional"`` = created from a single user's extension read — participates in Stories/Search/
+    # the corpus, but hidden from Discover until promoted (a feed re-discovers it, or >= N distinct
+    # readers read it). Derived from provenance at insert; flipped in place on promotion.
+    status: Mapped[Optional[str]] = mapped_column(String(16), default=None)
     fetched_at: Mapped[datetime] = mapped_column(default=_utcnow, index=True)
     created_at: Mapped[datetime] = mapped_column(default=_utcnow)
 
@@ -408,6 +415,7 @@ class Store:
         self._ensure_media_columns()
         self._ensure_source_columns()
         self._ensure_read_columns()
+        self._ensure_lifecycle_columns()
         self._ensure_search_indexes()
 
     @contextmanager
@@ -583,7 +591,13 @@ class Store:
         image's source is read from ``image_source`` (refreshed on every replace), so an upgraded image
         is compared against its real source, not the article's origin. Nothing extra is persisted.
         Callers that pass no ``source_type`` (priority 0) get the original backfill-when-empty behaviour,
-        so existing callers are unchanged."""
+        so existing callers are unchanged.
+
+        Content lifecycle (Commit 18): the ``status`` is derived from provenance — an article created by
+        a user's browser extension is born ``"provisional"`` (hidden from Discover until promoted); every
+        feed-produced article is born active (``None``). When a real feed later re-discovers a
+        provisional article, the merge itself **promotes** it — corroboration by an independent source is
+        exactly the promotion signal the lifecycle wants."""
         payload = _dumps_scored(scored)
         with self.session() as s:
             row = s.get(FeedArticle, canonical_url)
@@ -595,7 +609,8 @@ class Store:
                     image=image, image_width=image_width, image_height=image_height,
                     image_mime=image_mime, image_source=image_source,
                     image_attribution=image_attribution, source_type=source_type,
-                    source_provider=source_provider, external_id=external_id))
+                    source_provider=source_provider, external_id=external_id,
+                    status=("provisional" if (source_type or "").lower() == "extension" else None)))
                 return True
             row.fetched_at = _utcnow()
             if title and not row.title:
@@ -608,6 +623,10 @@ class Store:
                 row.published_at = published_at
             if external_id and not row.external_id:
                 row.external_id = external_id
+            # Lifecycle promotion on merge: an independent feed source re-discovering a provisional
+            # (extension-created) article corroborates it — it becomes a first-class active article.
+            if row.status == "provisional" and source_type and (source_type or "").lower() != "extension":
+                row.status = None
             # Media merge by source priority: fill when empty, else the higher-priority source's image
             # wins (equal/lower keeps the existing one). Precedence for the stored image comes from its
             # own source (``image_source``, refreshed on replace) — NOT the article's origin source_type.
@@ -664,7 +683,7 @@ class Store:
                 "imageMimeType": r.image_mime, "imageSource": r.image_source,
                 "imageAttribution": r.image_attribution,
                 "sourceType": r.source_type, "sourceProvider": r.source_provider,
-                "externalId": r.external_id,
+                "externalId": r.external_id, "status": r.status,
                 "fetchedAt": r.fetched_at.isoformat() if r.fetched_at else None}
 
     def feed_article_media(self, canonical_urls) -> dict:
@@ -725,6 +744,16 @@ class Store:
                     s.execute(text(f"ALTER TABLE reads ADD COLUMN {name} {decl}"))
             except Exception:
                 pass    # already exists (fresh DB) or a non-sqlite backend — nothing to do
+
+    def _ensure_lifecycle_columns(self) -> None:
+        """Additive, idempotent content-lifecycle column on ``feed_articles`` (Commit 18), upgrading
+        pre-existing DBs in place exactly like the other ``_ensure_*`` migrations. Backward compatible —
+        legacy rows keep ``NULL`` (= active), so nothing changes for feed-produced articles."""
+        try:
+            with self.session() as s:
+                s.execute(text("ALTER TABLE feed_articles ADD COLUMN status VARCHAR(16)"))
+        except Exception:
+            pass        # already exists (fresh DB) or a non-sqlite backend — nothing to do
 
     # -- catalog search (live, index-backed; never touches the recommender) ------------------------
     def _ensure_search_indexes(self) -> None:
@@ -790,15 +819,20 @@ class Store:
 
     def search_feed_articles(self, *, q=None, publisher=None, lean=None, topic=None,
                              date_from=None, date_to=None, source=None, sort="newest",
-                             pagination=None):
+                             pagination=None, include_provisional: bool = True):
         """Search the catalog directly, in SQL. Returns ``(rows, total)`` — ``rows`` are paginated
         FeedArticle-row dicts, ``total`` the match count before pagination. All filtering / sorting /
         paging happen in the database (index-backed); it never touches the recommendation engine.
-        ``pagination`` is a :class:`pagination.Pagination` (defaults to offset paging)."""
+        ``pagination`` is a :class:`pagination.Pagination` (defaults to offset paging).
+        ``include_provisional=False`` (the Discover surface only) hides extension-created articles that
+        haven't been promoted yet; Search/Stories/export keep the default and see everything."""
         from pagination import OffsetPagination
         pg = pagination or OffsetPagination()
         conds = self._search_conditions(q=q, publisher=publisher, lean=lean, topic=topic,
                                          date_from=date_from, date_to=date_to, source=source)
+        if not include_provisional:
+            conds = list(conds) + [or_(FeedArticle.status.is_(None),
+                                       FeedArticle.status != "provisional")]
         where = and_(*conds) if conds else None
         with self.session() as s:
             cnt = select(func.count()).select_from(FeedArticle)
@@ -811,12 +845,53 @@ class Store:
             stmt = pg.apply(stmt.order_by(*self._search_order(sort)))
             return [self._feed_row(r) for r in s.scalars(stmt).all()], total
 
-    def feed_article_facets(self) -> dict:
-        """Distinct publishers + topics (categories) across the whole catalog, for filter dropdowns."""
+    def feed_article_facets(self, include_provisional: bool = True) -> dict:
+        """Distinct publishers + topics (categories) across the catalog, for filter dropdowns.
+        ``include_provisional=False`` (Discover) keeps the facet counts consistent with what that
+        surface actually lists — unpromoted extension-created articles are excluded."""
+        cond = or_(FeedArticle.status.is_(None), FeedArticle.status != "provisional")
         with self.session() as s:
-            pubs = [p for (p,) in s.execute(select(FeedArticle.publisher).distinct()).all() if p]
-            cats = [c for (c,) in s.execute(select(self._category_expr()).distinct()).all() if c]
+            pq, cq = select(FeedArticle.publisher).distinct(), select(self._category_expr()).distinct()
+            if not include_provisional:
+                pq, cq = pq.where(cond), cq.where(cond)
+            pubs = [p for (p,) in s.execute(pq).all() if p]
+            cats = [c for (c,) in s.execute(cq).all() if c]
         return {"publishers": sorted(set(pubs)), "topics": sorted(set(cats))}
+
+    # -- content lifecycle (Commit 18: extension-created articles) --------------------
+    def maybe_promote_feed_article(self, canonical_url: str, min_readers: int) -> bool:
+        """Promote a ``provisional`` article to active once ``min_readers`` **distinct** users have
+        read it — independent readers corroborate an extension-discovered article the way a feed
+        re-discovery does. Idempotent and cheap: a no-op unless the row exists and is provisional.
+        Returns ``True`` only when this call performed the promotion."""
+        with self.session() as s:
+            row = s.get(FeedArticle, canonical_url)
+            if row is None or row.status != "provisional":
+                return False
+            readers = int(s.scalar(select(func.count(func.distinct(Read.user_id)))
+                                   .where(Read.canonical_url == canonical_url)) or 0)
+            if readers < max(1, int(min_readers)):
+                return False
+            row.status = None
+            return True
+
+    def distinct_read_urls(self) -> set:
+        """Every canonical URL any user has read — the read-demand set the corpus export keeps
+        cap-exempt (an article someone actually read must stay in the recommendation corpus)."""
+        with self.session() as s:
+            return {u for (u,) in s.execute(select(Read.canonical_url).distinct()).all() if u}
+
+    def feed_articles_by_urls(self, canonical_urls) -> list:
+        """Catalog rows for specific canonical URLs (chunked ``IN``), in ``_feed_row`` shape —
+        the fetch behind the read-demand export exemption."""
+        urls = [u for u in dict.fromkeys(canonical_urls) if u]
+        out = []
+        with self.session() as s:
+            for i in range(0, len(urls), 500):
+                rows = s.scalars(select(FeedArticle)
+                                 .where(FeedArticle.canonical_url.in_(urls[i:i + 500]))).all()
+                out.extend(self._feed_row(r) for r in rows)
+        return out
 
     def fts5_available(self) -> bool:
         """Whether this SQLite build has FTS5 compiled in — **diagnostics only** (FTS is not used yet;

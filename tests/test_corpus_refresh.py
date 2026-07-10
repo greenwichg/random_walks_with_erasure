@@ -303,3 +303,30 @@ def test_real_backend_build_and_swap(monkeypatch):
     mgr.on_poll_cycle({"new": 90})
     assert app.active.generation == old.generation + 1     # swapped to a freshly built real Backend
     assert app.active.backend is not old.backend
+
+
+# --------------------------------------------------------------------------- #
+# Commit 18 (D5): the refresh candidate keeps read articles past the publisher cap
+# --------------------------------------------------------------------------- #
+def test_candidate_read_demand_exemption(monkeypatch):
+    """An article a user READ is re-added after the per-publisher cap trims it — the protected
+    builder's output is unchanged for everything unread, and the read article changes the candidate
+    signature (which is what makes the next poll cycle refresh automatically)."""
+    st = store_mod.Store("sqlite://")
+    urls = _seed_catalog(st, n_per_bucket=6)
+    monkeypatch.setenv("RWE_CORPUS_MAX_PER_PUBLISHER", "2")     # tight cap: 2 per publisher
+
+    before = cr.build_candidate_for(st)
+    sig_before = cr.candidate_signature(before)
+    guardian_kept = [a["canonicalUrl"] for a in before if "guardian" in a["canonicalUrl"]]
+    assert len(guardian_kept) == 2
+    # the OLDEST Guardian article was capped out — a user reads exactly that one
+    dropped = [u for u in urls if "guardian" in u and u not in guardian_kept][-1]
+    u = st.upsert_user_by_identity("google", "cap-reader").id
+    st.add_read(u, dropped, {"article_id": dropped}, None)
+
+    after = cr.build_candidate_for(st)
+    kept_urls = {a["canonicalUrl"] for a in after}
+    assert dropped in kept_urls                                  # exemption re-added the read article
+    assert len([x for x in kept_urls if "guardian" in x]) == 3   # cap still binds for unread ones
+    assert cr.candidate_signature(after) != sig_before           # signature change -> auto refresh

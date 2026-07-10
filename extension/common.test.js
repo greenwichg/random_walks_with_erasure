@@ -6,7 +6,8 @@
  */
 const { test } = require("node:test");
 const assert = require("node:assert");
-const { isArticlePage, normalizeReadUrl, shouldSend, pruneCache, configStatus, readsErrorReason } = require("./common.js");
+const { isArticlePage, collectArticleMeta, normalizeReadUrl, shouldSend, pruneCache, configStatus,
+        readsErrorReason } = require("./common.js");
 
 test("isArticlePage — positive signals", () => {
   assert.equal(isArticlePage({ ogType: "article" }), true);
@@ -75,4 +76,41 @@ test("readsErrorReason — distinguishes token / url / backend failures", () => 
   assert.equal(readsErrorReason(500), "unavailable"); // backend up but erroring
   assert.equal(readsErrorReason(503), "unavailable");
   assert.equal(readsErrorReason(418), "status-418"); // unexpected status is surfaced verbatim
+});
+
+// ---- collectArticleMeta (Commit 18: the extension as a catalog producer) ----
+test("collectArticleMeta picks og tags with fallbacks and validates the image URL", () => {
+  const metas = {
+    'meta[property="og:title"]': "  OG Title  ",
+    'meta[property="og:description"]': "A one-line abstract",
+    'meta[property="og:image"]': "https://cdn.example.com/hero.jpg",
+    'meta[property="og:site_name"]': "The Example Times",
+    'meta[property="article:published_time"]': "2026-07-10T08:00:00Z",
+    'meta[name="author"]': "A. Reporter",
+  };
+  const m = collectArticleMeta((sel) => metas[sel] || null,
+                               { docTitle: "Doc Title", docLang: "en-US" });
+  assert.equal(m.title, "OG Title");
+  assert.equal(m.description, "A one-line abstract");
+  assert.equal(m.image, "https://cdn.example.com/hero.jpg");
+  assert.equal(m.siteName, "The Example Times");
+  assert.equal(m.publishedAt, "2026-07-10T08:00:00Z");
+  assert.equal(m.author, "A. Reporter");
+  assert.equal(m.language, "en-US");
+});
+
+test("collectArticleMeta falls back to document title and drops non-http images", () => {
+  const m = collectArticleMeta((sel) =>
+    sel === 'meta[property="og:image"]' ? "data:image/png;base64,xxxx" : null,
+    { docTitle: "Fallback Headline", docLang: "" });
+  assert.equal(m.title, "Fallback Headline");
+  assert.equal(m.image, "");                      // data:/relative images are never forwarded
+  assert.equal(m.description, "");
+  assert.equal(m.language, "");
+});
+
+test("collectArticleMeta tolerates a page with no metadata at all", () => {
+  const m = collectArticleMeta(() => null, {});
+  assert.deepEqual(m, { title: "", description: "", image: "", siteName: "",
+                        publishedAt: "", author: "", language: "" });
 });

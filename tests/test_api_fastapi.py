@@ -1225,3 +1225,117 @@ def test_dashboard_reports_reading_goal_progress(client):
     anon = client.get("/api/dashboard").json()["today"]
     assert "goalMinutes" not in anon and "goalMet" not in anon
     assert anon["minutesRead"] == 0
+
+
+# --------------------------------------------------------------------------- #
+# Commit 18 — extension reads become first-class FeedArticles (producer #4)
+# --------------------------------------------------------------------------- #
+def _ext_read(url, title, **extra):
+    """An extension-shaped read item (the web tier stamps readSource on the token path)."""
+    return {"url": url, "title": title, "readSource": "extension",
+            "description": extra.pop("description", "A short standard-metadata abstract."),
+            "image": extra.pop("image", "https://cdn.example.com/hero.jpg"),
+            "siteName": extra.pop("siteName", "The Example Times"),
+            "publishedAt": extra.pop("publishedAt", "2026-07-10T08:00:00+00:00"),
+            "language": "en", "author": "A. Reporter", **extra}
+
+
+def _mkuser(client, acct):
+    uid = client.post("/api/internal/users",
+                      json={"provider": "google", "providerAccountId": acct}).json()["userId"]
+    return uid, {"X-IH-User-Id": str(uid)}
+
+
+def test_extension_read_creates_provisional_article(client):
+    """Case 2 + participation: the article exists with extension provenance + provisional status,
+    is visible to Search (Case 4) and the story data path (Case 5), but hidden from Discover."""
+    st = api_fastapi.state.store
+    url = "https://news-site.example/politics/zebra-quorum-vote"
+    _uid, hdr = _mkuser(client, "c18-new")
+    r = client.post("/api/me/reads", json={"reads": [_ext_read(url, "Zebra quorum vote passes")]},
+                    headers=hdr).json()
+    assert r["accepted"] == 1
+
+    row = st.get_feed_article("https://news-site.example/politics/zebra-quorum-vote")
+    assert row is not None
+    assert row["sourceType"] == "extension" and row["status"] == "provisional"
+    assert row["image"] == "https://cdn.example.com/hero.jpg"           # og metadata persisted
+    assert row["publishedAt"] == "2026-07-10T08:00:00+00:00"
+    assert (row["scored"] or {}).get("category")                        # classified by the one scorer
+
+    # Case 4 — Search sees it immediately
+    hits = client.get("/api/search?query=zebra+quorum").json()
+    assert any("zebra-quorum" in (a.get("url") or "") for a in hits["results"])
+    # Case 5 — the Stories data path sees it (same shared query, default include)
+    rows, total = st.search_feed_articles(q="zebra quorum")
+    assert total >= 1
+    # Discover hides provisional articles until promoted
+    disc = client.get("/api/discover?limit=200").json()
+    assert not any("zebra-quorum" in (a.get("url") or "") for a in disc["articles"])
+
+
+def test_extension_read_of_cataloged_article_reuses_it(client):
+    """Case 1: no duplicate FeedArticle, active status untouched, read recorded."""
+    st = api_fastapi.state.store
+    url = "https://feeds.example/world/aid-convoy"
+    st.upsert_feed_article(canonical_url=url, url=url, publisher="AP", source_publisher="AP",
+                           title="Aid convoy reaches the region", description="d", body=None,
+                           published_at=None, source_feed="feed://ap", source_type="rss",
+                           scored={"article_id": url, "outlet": "AP", "category": "World"})
+    before = st.count_feed_articles()
+    _uid, hdr = _mkuser(client, "c18-existing")
+    r = client.post("/api/me/reads", json={"reads": [_ext_read(url, "Aid convoy reaches the region")]},
+                    headers=hdr).json()
+    assert r["accepted"] == 1
+    assert st.count_feed_articles() == before                           # merged, never duplicated
+    assert st.get_feed_article(url)["status"] is None                   # stays active
+
+
+def test_two_readers_one_article_and_promotion(client):
+    """Cases 3 + 11: two users → one FeedArticle + two Reads; the second distinct reader promotes
+    it, and Discover picks it up."""
+    st = api_fastapi.state.store
+    url = "https://news-site.example/tech/quantum-lattice-chip"
+    _u1, h1 = _mkuser(client, "c18-reader-1")
+    _u2, h2 = _mkuser(client, "c18-reader-2")
+
+    client.post("/api/me/reads", json={"reads": [_ext_read(url, "Quantum lattice chip unveiled")]},
+                headers=h1)
+    assert st.get_feed_article(url)["status"] == "provisional"
+    disc = client.get("/api/discover?limit=200").json()
+    assert not any("quantum-lattice" in (a.get("url") or "") for a in disc["articles"])
+
+    client.post("/api/me/reads", json={"reads": [_ext_read(url, "Quantum lattice chip unveiled")]},
+                headers=h2)
+    assert st.get_feed_article(url)["status"] is None                   # promoted by 2nd reader
+    assert st.count_feed_articles() == len({a["canonicalUrl"] for a in st.list_feed_articles(10_000)})
+    disc = client.get("/api/discover?limit=200").json()
+    assert any("quantum-lattice" in (a.get("url") or "") for a in disc["articles"])   # now eligible
+
+
+def test_extension_catalog_failure_never_loses_the_read(client, monkeypatch):
+    """Case 10: article creation blows up → the read is still recorded and the request succeeds."""
+    def _boom(*a, **k):
+        raise RuntimeError("synthetic ingestion failure")
+    monkeypatch.setattr(api_fastapi.rss_ingest, "ingest_entries", _boom)
+    st = api_fastapi.state.store
+    url = "https://news-site.example/health/mitochondria-study"
+    _uid, hdr = _mkuser(client, "c18-failure")
+    r = client.post("/api/me/reads", json={"reads": [_ext_read(url, "Mitochondria study lands")]},
+                    headers=hdr)
+    assert r.status_code == 200 and r.json()["accepted"] == 1
+    assert st.get_feed_article(url) is None                             # no article — and no error
+    hist = client.get("/api/me/history", headers=hdr).json()
+    assert any("mitochondria-study" in (e.get("article", {}).get("url") or "") for e in hist)
+
+
+def test_app_reads_do_not_produce_articles(client):
+    """D1: only the extension is a producer — an in-app/paste read never touches the catalog."""
+    st = api_fastapi.state.store
+    url = "https://news-site.example/culture/opera-revival"
+    _uid, hdr = _mkuser(client, "c18-app-read")
+    r = client.post("/api/me/reads",
+                    json={"reads": [{"url": url, "title": "Opera revival", "readSource": "app"}]},
+                    headers=hdr).json()
+    assert r["accepted"] == 1
+    assert st.get_feed_article(url) is None

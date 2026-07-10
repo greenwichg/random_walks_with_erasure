@@ -42,17 +42,24 @@
 
   const canonical = document.querySelector('link[rel="canonical"]');
   const url = (canonical && canonical.href) || location.href;
-  const title = (metaContent('meta[property="og:title"]') || document.title || "").trim();
-  // og:description / meta description — a one-line abstract that lets the backend enrich
-  // register + emotion far better than the headline alone. Still standard metadata, no body text.
-  const description = (metaContent('meta[property="og:description"]') ||
-                       metaContent('meta[name="description"]') || "").trim();
+  // Standard page metadata only (OpenGraph / meta tags — never article text): title + description
+  // enrich scoring; image / site name / publication date / author / language let the backend make
+  // the article a first-class catalog entry (Commit 18). `collectArticleMeta` lives in common.js.
+  const meta = collectArticleMeta(metaContent, {
+    docTitle: document.title,
+    docLang: document.documentElement.lang,
+  });
 
   chrome.runtime.sendMessage({
     type: "article",
     url,
-    description,
-    title,
+    title: meta.title,
+    description: meta.description,
+    image: meta.image,
+    siteName: meta.siteName,
+    publishedAt: meta.publishedAt,
+    author: meta.author,
+    language: meta.language,
     observedAt: new Date().toISOString(),
   });
 })();

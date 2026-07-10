@@ -92,10 +92,22 @@ def candidate_signature(candidate: list) -> str:
 
 
 def build_candidate_for(store_, thresholds: Optional[dict] = None) -> list:
-    """The current candidate — Commit 4's builder over the live catalog, consumed unchanged."""
+    """The current candidate — Commit 4's builder over the live catalog, consumed unchanged — plus the
+    read-demand exemption (Commit 18): an article a user actually read is re-added if the per-publisher
+    cap trimmed it, so composition balancing never disconnects a reader from the corpus. The protected
+    builder itself is untouched (a bounded post-pass over its output). Because the candidate is built
+    from the store, an extension-created article also changes the candidate *signature* — the next poll
+    cycle refreshes the corpus automatically, with no extra trigger."""
     th = thresholds or corpus_health.thresholds_from_env()
     articles = store_.list_feed_articles(limit=10_000_000)
-    return corpus_validation.build_candidate(articles, max_per_publisher=th["maxPerPublisher"] or None)
+    candidate = corpus_validation.build_candidate(articles, max_per_publisher=th["maxPerPublisher"] or None)
+    read_urls = store_.distinct_read_urls()
+    if read_urls:
+        kept = {a.get("canonicalUrl") for a in candidate}
+        candidate = candidate + [a for a in articles
+                                 if a.get("canonicalUrl") in read_urls
+                                 and a.get("canonicalUrl") not in kept]
+    return candidate
 
 
 def initial_signature(store_) -> str:

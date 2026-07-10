@@ -51,6 +51,41 @@ function normalizeReadUrl(url) {
 }
 
 /**
+ * Collect the standard page metadata an article read may carry to the backend (Commit 18 — the
+ * extension as a catalog producer). Same privacy stance as detection: OpenGraph / standard meta
+ * only, never article text. Pure: `metaContent` is the caller's selector→content lookup and
+ * `page` carries the two non-meta fallbacks, so Node tests can drive it without a DOM.
+ *
+ * @param {(selector: string) => string|null} metaContent
+ * @param {{docTitle?: string, docLang?: string}} [page]
+ */
+function collectArticleMeta(metaContent, page) {
+  const pick = (...sels) => {
+    for (const s of sels) {
+      const v = metaContent(s);
+      if (v && v.trim()) return v.trim();
+    }
+    return "";
+  };
+  let image = pick('meta[property="og:image"]', 'meta[property="og:image:url"]');
+  try {
+    const u = new URL(image);                        // forward only an absolute http(s) image URL
+    if (u.protocol !== "http:" && u.protocol !== "https:") image = "";
+  } catch {
+    image = "";
+  }
+  return {
+    title: pick('meta[property="og:title"]') || ((page && page.docTitle) || "").trim(),
+    description: pick('meta[property="og:description"]', 'meta[name="description"]'),
+    image,
+    siteName: pick('meta[property="og:site_name"]'),
+    publishedAt: pick('meta[property="article:published_time"]', 'meta[name="article:published_time"]'),
+    author: pick('meta[name="author"]', 'meta[property="article:author"]'),
+    language: ((page && page.docLang) || "").trim(),
+  };
+}
+
+/**
  * Local de-dup decision: should we send `url` given a cache of `{normalizedUrl: sentAtMs}`?
  * True when we've never sent it, or the last send is older than `ttlMs`. Pure — the caller
  * owns loading/saving the cache.
@@ -120,5 +155,6 @@ function readsErrorReason(status) {
 
 // Export for Node tests; harmless no-op in the browser (module is undefined there).
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { isArticlePage, normalizeReadUrl, shouldSend, pruneCache, configStatus, readsErrorReason };
+  module.exports = { isArticlePage, collectArticleMeta, normalizeReadUrl, shouldSend, pruneCache,
+                     configStatus, readsErrorReason };
 }

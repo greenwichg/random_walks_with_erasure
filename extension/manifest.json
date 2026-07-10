@@ -1,17 +1,30 @@
 {
   "manifest_version": 3,
-  "name": "InfoDiet — Information Health",
+  "name": "InfoDiet \u2014 Information Health",
   "version": "0.1.0",
-  "description": "Records only the URL and title of supported news articles you open, to sync your reading with your InfoDiet account. No page contents, history, passwords, or activity outside supported news sites.",
-  "permissions": ["storage"],
-  "optional_host_permissions": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
-  "background": { "service_worker": "background.js" },
+  "description": "Records only the URL and standard page metadata (title, description, image link, publisher, publication date) of supported news articles you open, to sync your reading with your InfoDiet account. Never article text, history, passwords, or activity outside supported news sites.",
+  "permissions": [
+    "storage"
+  ],
+  "optional_host_permissions": [
+    "https://*/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
   "options_page": "options.html",
-  "action": { "default_title": "InfoDiet — Information Health" },
+  "action": {
+    "default_title": "InfoDiet \u2014 Information Health"
+  },
   "content_scripts": [
     {
       "run_at": "document_idle",
-      "js": ["common.js", "content.js"],
+      "js": [
+        "common.js",
+        "content.js"
+      ],
       "matches": [
         "https://*.nytimes.com/*",
         "https://*.washingtonpost.com/*",

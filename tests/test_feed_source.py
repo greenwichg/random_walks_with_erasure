@@ -178,3 +178,25 @@ def test_recommendations_carry_verified_url_and_degrade_gracefully(tmp_path):
     assert be._resolve_url("S144") is None
     be.attach_url_resolver({})
     assert all("url" not in r["article"] for r in be.recommendations(be.demo_user))
+
+
+def test_export_read_demand_exemption(tmp_path):
+    """Commit 18 (D5): an article a user READ is never trimmed out of the corpus export — neither by
+    the per-outlet cap nor by the max_items recency window — so a reader can't be disconnected from
+    the recommendation graph by composition balancing."""
+    st = store.Store("sqlite://")
+    _seed(st, per_outlet=30)                                   # newest-first catalog, 3 outlets
+    # the OLDEST Guardian article (first inserted -> last in recency, certain to be capped out)
+    read_url = "https://ex.com/theguardian/0"
+    u = st.upsert_user_by_identity("google", "reader").id
+    st.add_read(u, read_url, {"article_id": read_url}, None)
+
+    path = str(tmp_path / "c.csv")
+    # tight caps: only 5/outlet and only 12 items total — without the exemption the read article
+    # (old + beyond the per-outlet cap) cannot survive both trims
+    feed_source.export_catalog_csv(st, path, max_items=12, max_per_outlet=5)
+    urls = {r["url"] for r in _csv.DictReader(open(path, encoding="utf-8"))}
+    assert read_url in urls
+    # and the cap still binds for everything unread (composition stays balanced)
+    guardian = [x for x in urls if "theguardian" in x]
+    assert len(guardian) <= 5 + 1                              # capped set + the exempt read article
