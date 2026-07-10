@@ -10,6 +10,7 @@ import type {
   SavableArticle,
   SavedArticle,
   SearchParams,
+  Settings,
   StoryQuery,
 } from "@/types/domain";
 
@@ -38,12 +39,28 @@ export const useStoryIntelligence = (id: string) =>
 export const useProfile = () => useQuery({ queryKey: queryKeys.profile, queryFn: services.profile });
 export const useSettings = () => useQuery({ queryKey: queryKeys.settings, queryFn: services.settings });
 
-/** Persists a preferences patch and updates the settings cache with the normalised server result. */
+/** Persists a preferences patch and updates the settings cache with the normalised server result.
+ * The recommendation sliders are per-request recommender parameters and the reading goal feeds the
+ * dashboard's today-vs-goal card, so a save that changed them marks those caches stale — the query
+ * refetches on next mount (e.g. navigating back to Recommendations), no hard refresh needed. */
 export function useUpdateSettings() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (patch: Partial<import("@/types/domain").Settings>) => services.updateSettings(patch),
-    onSuccess: (saved) => qc.setQueryData(queryKeys.settings, saved),
+    mutationFn: (patch: Partial<Settings>) => services.updateSettings(patch),
+    onSuccess: (saved) => {
+      const prev = qc.getQueryData<Settings>(queryKeys.settings);
+      qc.setQueryData(queryKeys.settings, saved);
+      if (
+        prev?.politicalOpenness !== saved.politicalOpenness ||
+        prev?.recommendationStrength !== saved.recommendationStrength
+      ) {
+        // bare prefix: matches every strategy variant ["recommendations", "all" | "rwe-b" | …]
+        qc.invalidateQueries({ queryKey: ["recommendations"] });
+      }
+      if (prev?.readingGoalMinutes !== saved.readingGoalMinutes) {
+        qc.invalidateQueries({ queryKey: queryKeys.dashboard });
+      }
+    },
   });
 }
 export const useAnalytics = () => useQuery({ queryKey: queryKeys.analytics, queryFn: services.analytics });
