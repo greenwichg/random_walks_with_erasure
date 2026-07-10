@@ -290,3 +290,51 @@ def test_base_corpus_report_is_unchanged_by_personalization(backend, store):
     # timestamps aside, the base reader's report is identical (augment never mutates the base)
     before.pop("updatedAt"); after.pop("updatedAt")
     assert before == after
+
+
+# --------------------------------------------------------------------------- #
+# URL → catalog-id join (live-feed mode)
+# --------------------------------------------------------------------------- #
+def test_url_reads_join_catalog_columns_and_bridge(backend, store):
+    """A measured reader whose stored reads are URLs of catalog articles (the live-feed reality:
+    corpus ids are Q{i}, reads are canonical URLs) must land on the REAL catalog columns — a
+    connected click graph and genuine RWE-B cross-cutting — not on novel island columns (the
+    regression: every measured user's walk was trapped on their own reads → 0 bridging)."""
+    ids = np.asarray(backend.mind.dataset.item_ids)
+    pos = np.asarray(backend.mind.item_positions, dtype=float)
+    pol = np.asarray(backend.mind.political, dtype=bool)
+    cols = [c for c in range(len(ids)) if pol[c] and np.isfinite(pos[c]) and pos[c] < -0.5][:6]
+    assert len(cols) == 6, "synthetic corpus should have >= 6 strongly-left political items"
+
+    url_map = {str(ids[c]): f"https://pub{i}.example/story/{i}" for i, c in enumerate(cols)}
+    backend.attach_url_resolver(url_map)          # exactly what live-feed mode does pre-Personalizer
+    try:
+        p = personalize.Personalizer(backend, store, threshold=5, persist=False)
+        uid = _new_user(store, "url-join")
+        _store_reads(store, uid, [ac.ScoredRead(article_id=url_map[str(ids[c])], political=True)
+                                  for c in cols])
+
+        m = p._model(uid)
+        # joined: no novel columns appended (the matrix keeps the catalog width)…
+        assert m.corpus.mind.dataset.matrix.shape[1] == backend.mind.dataset.matrix.shape[1]
+        # …the reader's row sits on their 6 real catalog columns…
+        assert m.corpus.mind.dataset.matrix.tocsr()[m.reader_row].nnz == 6
+        # …and the connected walk yields genuine cross-cutting bridging for this one-sided reader.
+        recs = p.recommendations(uid)
+        assert recs, "measured recommendations expected"
+        assert sum(1 for r in recs if r["crossCutting"]) > 0
+    finally:
+        backend.url_by_id = {}                    # leave the shared module fixture untouched
+
+
+def test_unknown_urls_still_append_novel_columns(backend, store):
+    """Without a URL map (synthetic/MIND corpora, or a read of an article outside the catalog),
+    URL-identified reads keep the previous behaviour: appended as novel columns."""
+    p = personalize.Personalizer(backend, store, threshold=5, persist=False)
+    uid = _new_user(store, "url-novel")
+    _store_reads(store, uid, [ac.ScoredRead(article_id=f"https://elsewhere.example/{i}",
+                                            outlet=f"O{i}", category="Politics",
+                                            lean=-1.0, political=True) for i in range(5)])
+    m = p._model(uid)
+    assert (m.corpus.mind.dataset.matrix.shape[1]
+            == backend.mind.dataset.matrix.shape[1] + 5)

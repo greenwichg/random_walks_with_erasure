@@ -9,6 +9,10 @@ Pipeline — nothing here re-implements an algorithm or a serialiser:
 
     Store.get_reads(uid)                        stored scored reads (JSON verbatim)
       -> ScoredRead[]                           reconstructed B4 interface
+      -> URL → catalog-id join                  a read of a catalog article lands on its REAL column
+                                                (via the backend's url resolver, inverted), keeping the
+                                                reader connected to the click graph; unknown URLs stay
+                                                novel columns
       -> augmented_corpus.augment(base, reads)  append 1 row + novel columns (base untouched)
       -> health_report.compute(...)             UNCHANGED engine, over the augmented population
       -> Backend._serialize_report / _serialize_recommendations / _serialize_coach_*
@@ -35,7 +39,7 @@ from __future__ import annotations
 
 import os
 import threading
-from dataclasses import dataclass, fields as _dc_fields
+from dataclasses import dataclass, fields as _dc_fields, replace as _dc_replace
 from typing import Dict, Tuple
 
 import numpy as np
@@ -43,6 +47,7 @@ import numpy as np
 import health_report as hr
 import augmented_corpus as ac
 import api_server as engine
+from ingest import canonical_url as _canonical_url
 
 
 # Field names of the B4 ScoredRead, so a stored read dict (dataclasses.asdict verbatim) is
@@ -91,6 +96,18 @@ class Personalizer:
         self._persist = persist
         self._cache: Dict[int, PersonalModel] = {}
         self._lock = threading.Lock()
+        # URL → corpus-item-id join, inverted from the backend's url resolver (attached in live-feed
+        # mode BEFORE the Personalizer is built, on boot and on every hot swap). A stored read is
+        # identified by its canonical URL while corpus items are Q{i}/S{i}/N{i} ids, so without this
+        # join every read appends as a novel column nobody else clicked — the reader becomes an
+        # island in the click graph and the random walk (hence bridging/cross-cutting) degenerates.
+        # Keyed by both the raw and the canonicalised URL form; empty when the corpus has no URL map
+        # (synthetic/MIND), where reads keep appending as novel columns exactly as before.
+        self._catalog_ids: Dict[str, str] = {}
+        for iid, u in (getattr(backend, "url_by_id", None) or {}).items():
+            for key in (str(u), _canonical_url(str(u))):
+                if key:
+                    self._catalog_ids.setdefault(key, str(iid))
         # Open-Mindedness activates once the reader has been surfaced enough cross-cutting
         # recommendations AND opened at least one — below that it stays an honest n/a (7/8), so a
         # single stray click can't fabricate the metric. Release-pinned, tunable via env.
@@ -146,6 +163,13 @@ class Personalizer:
         reads = [_scored_read_from_row(r) for r in self.store.get_reads(user_id)]
         if not reads:
             raise ValueError("cannot build a measured model without stored reads")
+        # Join reads to the corpus id space: a read whose (canonical) URL is a catalog article lands
+        # on that REAL column — the one other readers clicked — so the reader is embedded in the
+        # connected click graph and the walk-based recommenders (RWE-B bridging, cross-cutting) work
+        # as designed. A URL not in the catalog keeps the previous behaviour (a novel column).
+        if self._catalog_ids:
+            reads = [(_dc_replace(r, article_id=self._catalog_ids[str(r.article_id)])
+                      if str(r.article_id) in self._catalog_ids else r) for r in reads]
 
         base = ac.bundle_from_backend(self.backend)               # read-only view of the corpus
         aug = ac.augment(base, reads, user_id=f"__real_user_{user_id}__")
