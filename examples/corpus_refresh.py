@@ -96,8 +96,10 @@ def build_candidate_for(store_, thresholds: Optional[dict] = None) -> list:
     read-demand exemption (Commit 18): an article a user actually read is re-added if the per-publisher
     cap trimmed it, so composition balancing never disconnects a reader from the corpus. The protected
     builder itself is untouched (a bounded post-pass over its output). Because the candidate is built
-    from the store, an extension-created article also changes the candidate *signature* — the next poll
-    cycle refreshes the corpus automatically, with no extra trigger."""
+    from the store, an extension-created article changes the candidate *signature*; the poller's
+    hot-refresh seam normally runs only on feed growth, so the request path also marks the manager
+    ``catalog_dirty`` (D6) — together bounding an extension article's graph latency to one poll
+    interval even on quiet feeds."""
     th = thresholds or corpus_health.thresholds_from_env()
     articles = store_.list_feed_articles(limit=10_000_000)
     candidate = corpus_validation.build_candidate(articles, max_per_publisher=th["maxPerPublisher"] or None)
@@ -141,6 +143,12 @@ class RefreshManager:
         self._log = log or (lambda *a, **k: None)
         self._lock = threading.Lock()        # serializes state transitions + the swap (NOT the read path)
         self.polling_enabled = False
+        # Commit 18 (D6): set when a request-path producer (an extension read) created a catalog
+        # article between poll cycles. The poller's hot-refresh seam normally fires only when a feed
+        # cycle ingested something new; this flag lets a quiet-feed cycle still trigger the rebuild,
+        # bounding an extension article's graph latency to one poll interval. Consumed (cleared) by
+        # ``_maybe_refresh`` — a plain bool write, safe cross-thread under the GIL.
+        self.catalog_dirty = False
         # diagnostics
         self.state = RefreshState.IDLE
         self.generation = 0
@@ -226,6 +234,15 @@ class RefreshManager:
         return active, result, None
 
     # -- the poller seam (runs in the poller thread; off the request path) -- #
+    def mark_catalog_dirty(self) -> None:
+        """A request-path producer (extension read) created a catalog article: make sure the NEXT
+        poll cycle runs the refresh check even if the feeds themselves bring nothing new (D6)."""
+        self.catalog_dirty = True
+
+    def is_catalog_dirty(self) -> bool:
+        """The poller's quiet-cycle check (see ``sources.MultiSourcePoller._post_cycle``)."""
+        return bool(self.catalog_dirty)
+
     def on_poll_cycle(self, agg: dict) -> None:
         """Called by the poller after each ingest/retention cycle. Rebuilds + swaps only when the
         candidate actually changed and validates. Never raises (guarded) and never blocks readers."""
@@ -242,6 +259,7 @@ class RefreshManager:
         store_ = self.app.store
         if store_ is None:
             return
+        self.catalog_dirty = False           # consuming the nudge: this check covers everything so far
         th = corpus_health.thresholds_from_env()
         candidate = build_candidate_for(store_, th)
         sig = candidate_signature(candidate)
@@ -300,4 +318,5 @@ class RefreshManager:
                 "buildMs": self.last_build_ms,
                 "activationMs": self.last_activation_ms,
                 "pollingEnabled": self.polling_enabled,
+                "catalogDirty": bool(self.catalog_dirty),
             }

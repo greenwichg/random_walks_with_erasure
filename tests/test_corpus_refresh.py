@@ -330,3 +330,42 @@ def test_candidate_read_demand_exemption(monkeypatch):
     assert dropped in kept_urls                                  # exemption re-added the read article
     assert len([x for x in kept_urls if "guardian" in x]) == 3   # cap still binds for unread ones
     assert cr.candidate_signature(after) != sig_before           # signature change -> auto refresh
+
+
+# --------------------------------------------------------------------------- #
+# Commit 18 (D6): the hot-refresh seam fires for request-path catalog growth too
+# --------------------------------------------------------------------------- #
+def test_post_cycle_gate_respects_dirty_check(monkeypatch):
+    """The poller's on_cycle seam runs on feed growth OR when the request path flagged the catalog
+    dirty (extension read) — a quiet feed must not stall an extension article's graph entry."""
+    import sources
+    st = store_mod.Store("sqlite://")
+    calls = []
+    dirty = {"v": False}
+    p = sources.MultiSourcePoller(st, scorer=object(), log=lambda *a, **k: None,
+                                  on_cycle=lambda agg: calls.append(agg),
+                                  dirty_check=lambda: dirty["v"])
+    p._post_cycle({"new": 0})                 # quiet feed, clean catalog -> no trigger
+    assert calls == []
+    dirty["v"] = True
+    p._post_cycle({"new": 0})                 # quiet feed, dirty catalog -> trigger (the fix)
+    assert len(calls) == 1
+    dirty["v"] = False
+    p._post_cycle({"new": 3})                 # feed growth -> trigger (unchanged behaviour)
+    assert len(calls) == 2
+    # no dirty_check wired (legacy callers) -> exactly the old behaviour
+    q = sources.MultiSourcePoller(st, scorer=object(), log=lambda *a, **k: None,
+                                  on_cycle=lambda agg: calls.append(agg))
+    q._post_cycle({"new": 0})
+    assert len(calls) == 2
+
+
+def test_maybe_refresh_consumes_the_dirty_flag(monkeypatch):
+    monkeypatch.setenv("RWE_CORPUS_MIN_ARTICLES", "1")
+    st = store_mod.Store("sqlite://")
+    _seed_catalog(st)
+    app, mgr = _manager(st, monkeypatch)
+    mgr.mark_catalog_dirty()
+    assert mgr.is_catalog_dirty() is True
+    mgr.on_poll_cycle({})                     # runs _maybe_refresh
+    assert mgr.is_catalog_dirty() is False    # consumed, regardless of whether a swap happened

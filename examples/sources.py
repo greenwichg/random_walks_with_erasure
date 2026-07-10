@@ -465,12 +465,14 @@ def config_warnings(registry: SourceRegistry) -> list:
 # --------------------------------------------------------------------------- #
 class MultiSourcePoller:
     def __init__(self, store_, scorer=None, *, registry: Optional[SourceRegistry] = None,
-                 log: Optional[Callable] = None, on_cycle: Optional[Callable[[dict], None]] = None):
+                 log: Optional[Callable] = None, on_cycle: Optional[Callable[[dict], None]] = None,
+                 dirty_check: Optional[Callable[[], bool]] = None):
         self.store = store_
         self.scorer = scorer or rss_ingest.make_scorer()
         self.registry = registry or default_registry()
         self._log = log or _default_log
         self._on_cycle = on_cycle                           # hot-refresh seam (reused; never modified)
+        self._dirty_check = dirty_check                     # Commit 18 D6: request-path catalog growth
         self.unhealthy_after = _int_env("RWE_FEED_UNHEALTHY_AFTER", 3)
         self._stop = threading.Event()
         self._threads: list = []
@@ -491,9 +493,13 @@ class MultiSourcePoller:
         elif rec.get("transition") == "recovered":
             self._log(logging.INFO, "feed_recovered", feed=url)
 
-    # -- reused post-cycle seams: validation-aware retention + the hot-refresh trigger (only on growth) --
+    # -- reused post-cycle seams: validation-aware retention + the hot-refresh trigger. Fires on feed
+    # growth OR when a request-path producer flagged the catalog dirty between cycles (Commit 18 D6:
+    # an extension read creates an article the poller's own counters never see; without this check a
+    # quiet feed stalls that article's graph entry indefinitely). Trigger condition only — ingestion,
+    # retention, and the refresh machinery are untouched. --
     def _post_cycle(self, agg: dict) -> None:
-        if agg.get("new", 0) <= 0:
+        if agg.get("new", 0) <= 0 and not (self._dirty_check is not None and self._dirty_check()):
             return
         if corpus_health.retention_enabled():
             corpus_health.run_retention(self.store, log=self._log)

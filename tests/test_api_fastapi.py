@@ -1339,3 +1339,22 @@ def test_app_reads_do_not_produce_articles(client):
                     headers=hdr).json()
     assert r["accepted"] == 1
     assert st.get_feed_article(url) is None
+
+
+def test_extension_read_marks_catalog_dirty(client):
+    """D6: creating a NEW catalog article from the request path nudges the refresh manager, so the
+    next poll cycle runs the refresh check even on quiet feeds; a duplicate read must NOT re-flag."""
+    st = api_fastapi.state.store
+    ref = api_fastapi.state.refresh
+    ref.catalog_dirty = False
+    url = "https://news-site.example/science/dirty-flag-probe"
+    _uid, hdr = _mkuser(client, "c18-dirty")
+    client.post("/api/me/reads", json={"reads": [_ext_read(url, "Dirty flag probe lands")]},
+                headers=hdr)
+    assert st.get_feed_article(url) is not None
+    assert ref.catalog_dirty is True                      # new article -> nudged
+
+    ref.catalog_dirty = False
+    client.post("/api/me/reads", json={"reads": [_ext_read(url, "Dirty flag probe lands")]},
+                headers=hdr)                              # duplicate read, article exists
+    assert ref.catalog_dirty is False                     # merge only -> no nudge

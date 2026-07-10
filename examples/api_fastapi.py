@@ -237,7 +237,8 @@ async def lifespan(app: FastAPI):
     if feed_source.enabled() and registry.enabled():
         state.refresh.polling_enabled = True
         state.poller = sources.MultiSourcePoller(state.store, state.scorer, registry=registry,
-                                                 log=_log, on_cycle=state.refresh.on_poll_cycle)
+                                                 log=_log, on_cycle=state.refresh.on_poll_cycle,
+                                                 dirty_check=state.refresh.is_catalog_dirty)
         state.poller.start()
     yield
     if state.poller is not None:
@@ -1464,8 +1465,12 @@ def _catalog_from_extension_read(item: ReadInput, url: str, scored, scorer, st) 
             source_type="extension",
             source_provider="Browser extension",
         )
-        rss_ingest.ingest_entries([entry], item.siteName or None, "extension", scorer, st)
+        stats = rss_ingest.ingest_entries([entry], item.siteName or None, "extension", scorer, st)
         st.maybe_promote_feed_article(scored.article_id, _PROMOTE_MIN_READERS)
+        # D6: a NEW catalog article from the request path — nudge the poller so the next cycle runs
+        # the refresh check even if the feeds bring nothing new (bounds graph latency to one interval).
+        if stats.get("new", 0) > 0 and state.refresh is not None:
+            state.refresh.mark_catalog_dirty()
     except Exception as e:                   # Case 10: the read is preserved; creation is best-effort
         _log(logging.WARNING, "extension_catalog_failed", url=url[:200], error=type(e).__name__)
 
