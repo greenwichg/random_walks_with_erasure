@@ -1273,6 +1273,15 @@ class Backend:
         return rec_explain.explain(self, self.base_corpus, self.rec, u,
                                    strategy=strategy, params=params, article=article)
 
+    def explanation_context(self, u: int) -> dict:
+        """Reader context for the Evidence Resolver (Commit 21a.3), base/demo path: the same
+        familiarity lookup the reason gating uses + the reader's top topics. No store reads
+        exist here (synthetic personas), so the history-based priorities fall through honestly."""
+        rep = hr.user_report(self.base_corpus.pop, self.base_corpus.mind, u)
+        return {"reads": [],
+                "familiarity": _familiarity_of(self.base_corpus.pop, u),
+                "top_topics": [_prettify(t) for t, _ in (rep.get("top_categories") or [])]}
+
     # -- coach ------------------------------------------------------------- #
     def _facts_of(self, corpus: _Corpus, u: int):
         """(report dict, narrate facts) for reader ``u`` of a corpus — corpus-parametric so the

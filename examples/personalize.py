@@ -270,6 +270,20 @@ class Personalizer:
                                "receptionVersion": m.reception_version}
         return out
 
+    def explanation_context(self, user_id: int) -> dict:
+        """Reader context for the Evidence Resolver (Commit 21a.3): the measured reader's reads
+        (canonical URL + outlet, oldest first — recency by order), the same familiarity lookup
+        the reason gating uses, and their top reading topics. Read-only over the cached model."""
+        m = self._model(user_id)
+        rep = hr.user_report(m.corpus.pop, m.corpus.mind, m.reader_row)
+        reads = [{"url": _canonical_url(str(r.get("article_id") or "")),
+                  "publisher": str(r.get("outlet") or ""),
+                  "publishedAt": r.get("read_at")}
+                 for r in self.store.get_reads(user_id)]
+        return {"reads": reads,
+                "familiarity": engine._familiarity_of(m.corpus.pop, m.reader_row),
+                "top_topics": [engine._prettify(t) for t, _ in (rep.get("top_categories") or [])]}
+
     def coach_greeting(self, user_id: int) -> list:
         """Coach greeting grounded on the user's Measured report."""
         m = self._model(user_id)

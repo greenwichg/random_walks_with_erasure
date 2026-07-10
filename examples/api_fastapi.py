@@ -37,6 +37,7 @@ import store                  # beta persistence layer (users + identities)
 import ingest                 # reading-event scorer + cache (Milestone C)
 import enrich                 # headline enrichment (register + emotion) behind ingest.Enricher
 import personalize            # per-user augmented Measured report / recs / coach
+import evidence_resolver      # ONE human explanation per rec, chosen from evidence (21a.3)
 import ratelimit              # dependency-free token-bucket rate limiter (Private Alpha hardening)
 import reqlimits              # request-body size / batch-shape limits (Private Alpha hardening)
 import feed_source            # optional: source the recommender catalog from the RSS FeedArticle store
@@ -627,15 +628,28 @@ class ArticleModel(BaseModel):
     publisherLogoSource: Optional[str] = None
 
 
+class ExplanationModel(BaseModel):
+    """The Evidence Resolver's structured explanation (21a.3): the UI shows ``message``;
+    tooling and the validation pipeline consume ``type``/``priority``/``evidence``."""
+    type: str
+    priority: int
+    variant: str | None = None
+    message: str
+    evidence: dict | None = None
+
+
 class RecommendationModel(BaseModel):
     # Commit 21a: ``healthImpact`` removed — it was a stable hash, not a measurement, and every
     # surfaced signal must be traceable to real recommender evidence (the explain endpoint,
     # /api/internal/recommendations/explain, carries that evidence).
+    # Commit 21a.3: ``reason`` mirrors ``explanation.message`` (the resolver's ONE human
+    # sentence); the structured ``explanation`` is the contract tooling should prefer.
     article: ArticleModel
     reason: str
     strategy: str
     helpsMetric: str
     crossCutting: bool
+    explanation: ExplanationModel | None = None
 
 
 class HistoryEntryModel(BaseModel):
@@ -1670,6 +1684,27 @@ def revoke_my_token(request: Request, token_id: int) -> dict:
     return {"ok": True}
 
 
+def _resolver_ctx(active: "corpus_refresh.Active", kind: str, val) -> dict:
+    """The per-reader context the Evidence Resolver can honestly claim from (21a.3)."""
+    return (active.personalizer.explanation_context(val) if kind == "personal"
+            else active.backend.explanation_context(val))
+
+
+def _attach_explanations(recs: list, active: "corpus_refresh.Active", kind: str, val) -> None:
+    """Evidence Resolver post-pass (21a.3) — after the (protected) serializer and the media
+    enrichment, replace each rec's templated reason with the ONE explanation its evidence
+    licenses (structured ``explanation``; ``reason`` mirrors ``message`` for back-compat).
+    Best-effort: a resolver failure leaves the 21a evidence-gated templates in place."""
+    try:
+        ctx = _resolver_ctx(active, kind, val)
+        idx = evidence_resolver.story_index(state.store)
+        for r in recs:
+            r["explanation"] = evidence_resolver.resolve(r, ctx, idx)
+            r["reason"] = r["explanation"]["message"]
+    except Exception:
+        _log(logging.WARNING, "explanation_resolver_failed")
+
+
 @app.get("/api/recommendations", response_model=list[RecommendationModel],
          response_model_exclude_none=True, tags=["recommendations"],
          summary="RWE recommendations (blended, or a single strategy)", responses=_ERR_RESPONSES)
@@ -1695,6 +1730,7 @@ def recommendations(
     recs = (active.personalizer.recommendations(val, strategy, params) if kind == "personal"
             else active.backend.recommendations(val, strategy, params))
     _enrich_rec_media(recs)     # attach image (from the live FeedArticle) + publisher logo — additive
+    _attach_explanations(recs, active, kind, val)   # Evidence Resolver (21a.3) — additive post-pass
     # A recommendation the engine surfaced to a signed-in reader becomes a measurable event: record
     # which (cross-cutting) recs were shown — the denominator for Open-Mindedness. Best-effort; a
     # recording failure must never fail the recommendations response. No new recommender is created.
@@ -1866,6 +1902,20 @@ def explain_recommendations_internal(
             params = None
     out = (active.personalizer.explain(val, strategy, params, article) if kind == "personal"
            else active.backend.explain_recommendations(val, strategy, params, article))
+    # 21a.3: the SAME resolved explanation the card shows, attached per evidence entry — the
+    # drawer, dev tooling, and the validation pipeline read one sentence from one resolver.
+    try:
+        ctx = _resolver_ctx(active, kind, val)
+        idx = evidence_resolver.story_index(state.store)
+        for r in out.get("recommendations") or []:
+            pseudo = {"article": {"id": r.get("articleId"), "url": r.get("url"),
+                                  "publisher": r.get("publisher"), "topic": r.get("topic"),
+                                  "lean": r.get("lean"), "publishedAt": r.get("publishedAt")},
+                      "crossCutting": bool((r.get("crossCutting") or {}).get("value")),
+                      "strategy": r.get("chosenBy")}
+            r["explanation"] = evidence_resolver.resolve(pseudo, ctx, idx)
+    except Exception:
+        _log(logging.WARNING, "explanation_resolver_failed", where="explain")
     # Debugging identity (21a.2): serving is deterministic given (corpus generation, model
     # version, params), so this id names the exact recommendation instance a report is about.
     from datetime import datetime, timezone

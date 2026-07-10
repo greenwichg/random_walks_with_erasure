@@ -47,6 +47,11 @@ function lcr(v: { left: number; center: number; right: number }) {
   return `L ${v.left}% · C ${v.center}% · R ${v.right}%`;
 }
 
+/** Technical vocabulary (ranks, IDs, hyperparameters, scores, model versions, connectivity,
+ *  classifier confidence) is developer-facing (21a.3 removal list): rendered only in dev
+ *  builds; the internal explain endpoint remains the full source of truth everywhere. */
+const DEV_DETAIL = process.env.NEXT_PUBLIC_DEV_LOGIN === "1";
+
 function EvidenceSections({
   rec,
   ev,
@@ -60,16 +65,27 @@ function EvidenceSections({
   const params = (chosen?.paramsUsed ?? {}) as Record<string, unknown>;
   const fam = ev.outletFamiliarity;
   const reads = explain.trace.reader.reads;
+  const explanation = ev.explanation ?? rec.explanation;
   return (
     <>
-      <Section title="Recommendation">
-        {explain.explainId && (
-          <Row label="ID" value={<span className="break-all text-[10px]">{explain.explainId}</span>} />
-        )}
-        <Row label="Strategy" value={ev.chosenBy.toUpperCase()} />
-        <Row label="Rank" value={`#${ev.rank} of ${chosen?.candidates ?? "?"} candidates`} />
-        <Row label="Match" value={ev.match} mono={false} />
-      </Section>
+      {explanation && (
+        <Section title="Explanation">
+          <p className="text-xs leading-snug text-foreground/90">{explanation.message}</p>
+          {DEV_DETAIL && (
+            <Row label="Type" value={`${explanation.type} (P${explanation.priority})`} />
+          )}
+        </Section>
+      )}
+      {DEV_DETAIL && (
+        <Section title="Recommendation">
+          {explain.explainId && (
+            <Row label="ID" value={<span className="break-all text-[10px]">{explain.explainId}</span>} />
+          )}
+          <Row label="Strategy" value={ev.chosenBy.toUpperCase()} />
+          <Row label="Rank" value={`#${ev.rank} of ${chosen?.candidates ?? "?"} candidates`} />
+          <Row label="Match" value={ev.match} mono={false} />
+        </Section>
+      )}
 
       <Section title="Bridge">
         <Row
@@ -86,7 +102,9 @@ function EvidenceSections({
 
       <Section title="Article metadata">
         <Row label="Political leaning" value={rec.article.leanBucket} mono={false} />
-        <Row label="Classifier confidence" value={`${Math.round(rec.article.confidence * 100)}%`} />
+        {DEV_DETAIL && (
+          <Row label="Classifier confidence" value={`${Math.round(rec.article.confidence * 100)}%`} />
+        )}
         <Row label="Publisher" value={rec.article.publisher} mono={false} />
         <Row label="Category" value={rec.article.topic} mono={false} />
       </Section>
@@ -102,10 +120,12 @@ function EvidenceSections({
           label={`Previous reads from ${ev.publisher}`}
           value={fam.reads === 0 ? "0 — new outlet for you" : `${fam.reads} (${Math.round(fam.share * 100)}%)`}
         />
-        <Row
-          label="Graph connectivity"
-          value={`${ev.connectivity.readsWithinTwoHops} of ${ev.connectivity.graphReads} reads within 2 hops`}
-        />
+        {DEV_DETAIL && (
+          <Row
+            label="Graph connectivity"
+            value={`${ev.connectivity.readsWithinTwoHops} of ${ev.connectivity.graphReads} reads within 2 hops`}
+          />
+        )}
       </Section>
 
       <Section title="Estimated effect">
@@ -125,6 +145,7 @@ function EvidenceSections({
         )}
       </Section>
 
+      {DEV_DETAIL && (
       <Section title="Technical">
         {"epsilon" in params && <Row label="ε (RWE-B erasure)" value={String(params.epsilon)} />}
         {"beta" in params && <Row label="β (RWE-D long-tail)" value={String(params.beta)} />}
@@ -138,6 +159,7 @@ function EvidenceSections({
           <Row label="Model version" value={`reads ${explain.modelVersion.readingVersion}`} />
         )}
       </Section>
+      )}
     </>
   );
 }

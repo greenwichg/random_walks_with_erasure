@@ -151,10 +151,27 @@ def test_report_response_model_preserves_every_field(client):
 
 
 def test_recommendations_response_model_preserves_every_field(client):
+    """The response model must not drop or add fields vs the serialiser — modulo the two
+    DOCUMENTED handler post-passes: media enrichment (Commit 9) and the Evidence Resolver
+    (21a.3), which owns ``reason`` and adds the structured ``explanation``."""
     be = api_fastapi.state.backend
     http = client.get("/api/recommendations").json()
     direct = json.loads(json.dumps(be.recommendations(be.demo_user)))
-    assert _strip_volatile(http) == _strip_volatile(direct)
+
+    def _norm(recs, drop=("explanation", "reason", "image", "imageWidth", "imageHeight",
+                          "imageMimeType", "imageSource", "imageAttribution",
+                          "publisherLogo", "publisherLogoDark", "publisherLogoSource")):
+        out = []
+        for r in recs:
+            r = {k: v for k, v in r.items() if k not in drop}
+            r["article"] = {k: v for k, v in r["article"].items() if k not in drop}
+            out.append(r)
+        return out
+
+    assert _strip_volatile(_norm(http)) == _strip_volatile(_norm(direct))
+    # the resolver post-pass contract itself: reason mirrors the structured explanation
+    for r in http:
+        assert r["explanation"]["message"] == r["reason"]
 
 
 def test_coach_response_model_preserves_every_field(client):

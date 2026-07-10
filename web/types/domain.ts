@@ -204,9 +204,20 @@ export interface Article {
   publisherLogoSource?: string;
 }
 
-/** A recommendation = an article + why RWE surfaced it (evidence-gated reason). */
+/** The Evidence Resolver's structured explanation (21a.3): UI shows `message`;
+ *  tooling and the validation pipeline consume `type`/`priority`/`evidence`. */
+export interface RecommendationExplanation {
+  type: string;
+  priority: number;
+  variant?: string;
+  message: string;
+  evidence?: Record<string, unknown>;
+}
+
+/** A recommendation = an article + the ONE evidence-backed explanation for it. */
 export interface Recommendation {
   article: Article;
+  /** Mirrors `explanation.message` (kept for back-compat with older payloads). */
   reason: string;
   /** Which extension produced it. */
   strategy: "rwe-b" | "rwe-d" | "adaptive";
@@ -214,6 +225,7 @@ export interface Recommendation {
   helpsMetric: MetricKey;
   /** Whether it bridges the reader across the centre. */
   crossCutting: boolean;
+  explanation?: RecommendationExplanation;
 }
 
 export type FeedbackAction = "save" | "ignore" | "read-later" | "like" | "dislike";
@@ -257,6 +269,9 @@ export interface RecommendationEvidence {
   } | null;
   longTail: { itemDegree: number; degreePercentile: number };
   connectivity: { readsWithinTwoHops: number; graphReads: number };
+  topic?: string;
+  publishedAt?: string | null;
+  explanation?: RecommendationExplanation;
 }
 
 export interface RecommendationExplain {

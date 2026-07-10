@@ -203,6 +203,7 @@ def explain(backend, corpus, rec, u: int, strategy: Optional[str] = None,
         return {
             "articleId": art["id"], "url": art.get("url"), "headline": art["headline"],
             "publisher": art["publisher"], "lean": art["lean"],
+            "topic": art.get("topic"), "publishedAt": art.get("publishedAt"),
             "chosenBy": chosen_by,
             "rank": r0 + 1,
             "scorePercentile": rank_percentile(r0, candidates),

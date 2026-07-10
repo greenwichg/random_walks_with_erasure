@@ -264,13 +264,19 @@ export const RECOMMENDATIONS: Recommendation[] = ARTICLES.slice(0, 14).map((arti
   return {
     article,
     strategy: crossCutting ? "rwe-b" : i % 3 === 0 ? "rwe-d" : "adaptive",
+    // Mirrors the Evidence Resolver vocabulary (21a.3): reason == explanation.message.
     reason: crossCutting
-      ? `A center-right take on ${article.topic.toLowerCase()} — bridges the gap from your usual reading without going to the extreme.`
-      : article.register === "reporting"
-        ? `Straight reporting on ${article.topic.toLowerCase()} from an outlet you rarely read.`
-        : `Broadens your ${article.topic.toLowerCase()} coverage into the long tail.`,
+      ? "This article offers another political perspective."
+      : `You rarely read ${article.publisher}. This broadens your source diversity.`,
     helpsMetric: crossCutting ? "viewpointBalance" : i % 2 === 0 ? "sourceDiversity" : "topicDiversity",
     crossCutting,
+    explanation: crossCutting
+      ? { type: "bridge", priority: 4, message: "This article offers another political perspective." }
+      : {
+          type: "new_publisher",
+          priority: 3,
+          message: `You rarely read ${article.publisher}. This broadens your source diversity.`,
+        },
   };
 });
 

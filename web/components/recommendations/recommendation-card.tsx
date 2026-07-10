@@ -109,12 +109,19 @@ export function RecommendationCard({
         <EmotionBadge emotion={article.emotion} dominant={article.dominantEmotion} />
       </div>
 
-      {/* why recommended — the reason is evidence-gated server-side; the removed "+N health"
-          badge was a placeholder number, and no un-computed signal belongs on the card */}
+      {/* the ONE explanation the Evidence Resolver's evidence licenses (21a.3) — no
+          technical vocabulary on the consumer card; the drawer carries the evidence */}
       <div className="mt-4 rounded-lg border bg-muted/30 p-3">
         <div className="flex items-start gap-2">
           <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-          <p className="text-sm text-muted-foreground">{rec.reason}</p>
+          <div className="min-w-0">
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/80">
+              Why this article?
+            </div>
+            <p className="mt-0.5 text-sm text-muted-foreground">
+              {rec.explanation?.message ?? rec.reason}
+            </p>
+          </div>
         </div>
         <div className="mt-2.5 flex items-center gap-2 pl-6 text-xs">
           <span className="inline-flex items-center gap-1 text-muted-foreground">
