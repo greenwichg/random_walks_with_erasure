@@ -628,10 +628,12 @@ class ArticleModel(BaseModel):
 
 
 class RecommendationModel(BaseModel):
+    # Commit 21a: ``healthImpact`` removed — it was a stable hash, not a measurement, and every
+    # surfaced signal must be traceable to real recommender evidence (the explain endpoint,
+    # /api/internal/recommendations/explain, carries that evidence).
     article: ArticleModel
     reason: str
     strategy: str
-    healthImpact: int
     helpsMetric: str
     crossCutting: bool
 
@@ -1833,6 +1835,38 @@ def refresh_status(request: Request) -> dict:
     if state.refresh is None:
         raise HTTPException(status_code=503, detail="The engine is still starting up.")
     return state.refresh.snapshot()
+
+
+@app.get("/api/internal/recommendations/explain", tags=["meta"],
+         summary="Explain a reader's recommendation feed (evidence + trace; developer tool)",
+         responses=_ERR_RESPONSES)
+def explain_recommendations_internal(
+    request: Request,
+    user: str | None = Query(None, description="demo row (anonymous path), as on /api/recommendations"),
+    strategy: str | None = Query(None, description="rwe-b | rwe-d | adaptive; omit for the blended feed"),
+    article: str | None = Query(None, description='ask "why was/wasn\'t THIS article (id or URL) in the feed?"'),
+) -> dict:
+    """Read-only explainability observer (Commit 21a): the exact feed ``/api/recommendations``
+    would serve for the same caller, decorated with the evidence that produced it — the real
+    pipeline trace (reads → catalog join → graph → per-strategy models with the hyperparameters
+    actually in effect → slices → dedup), per-recommendation evidence (per-strategy score/rank,
+    match band, cross-cutting derivation, measured outlet familiarity, item-degree percentile,
+    two-hop connectivity), and a truthful exclusion verdict for ``article``. Same resolution and
+    slider-mapped params as the serving endpoint, so explanations can never describe a different
+    feed than the one served. Trusted endpoint, like the other ``/api/internal/*`` routes."""
+    _require_trusted(request)
+    active = _active()
+    kind, val = _serve(active, request, user)
+    uid = _real_uid(request)
+    params = None
+    if uid is not None and state.store is not None:
+        try:
+            params = engine.rec_params_from_settings(state.store.get_settings(uid))
+        except Exception:
+            params = None
+    if kind == "personal":
+        return active.personalizer.explain(val, strategy, params, article)
+    return active.backend.explain_recommendations(val, strategy, params, article)
 
 
 @app.post("/api/internal/resolve-token", response_model=ResolveTokenModel, tags=["meta"],

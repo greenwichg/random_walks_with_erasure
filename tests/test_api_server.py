@@ -186,12 +186,14 @@ def test_recommendations_contract(backend, user):
     recs = backend.recommendations(user)
     assert len(recs) > 0
     for r in recs:
-        assert set(r) >= {"article", "reason", "strategy", "healthImpact", "helpsMetric", "crossCutting"}
+        assert set(r) >= {"article", "reason", "strategy", "helpsMetric", "crossCutting"}
         _assert_article(r["article"])
         assert r["strategy"] in STRATEGIES
         assert r["helpsMetric"] in METRIC_KEYS
         assert isinstance(r["crossCutting"], bool)
-        assert isinstance(r["healthImpact"], int) and r["healthImpact"] > 0
+        # Commit 21a: the placeholder impact number (a stable hash, not a measurement) is gone —
+        # every surfaced signal must be traceable to real recommender evidence.
+        assert "healthImpact" not in r
     _assert_json_roundtrips(recs)
 
 

@@ -269,7 +269,6 @@ export const RECOMMENDATIONS: Recommendation[] = ARTICLES.slice(0, 14).map((arti
       : article.register === "reporting"
         ? `Straight reporting on ${article.topic.toLowerCase()} from an outlet you rarely read.`
         : `Broadens your ${article.topic.toLowerCase()} coverage into the long tail.`,
-    healthImpact: crossCutting ? 3 + Math.round(rand() * 4) : 1 + Math.round(rand() * 3),
     helpsMetric: crossCutting ? "viewpointBalance" : i % 2 === 0 ? "sourceDiversity" : "topicDiversity",
     crossCutting,
   };

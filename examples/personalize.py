@@ -249,6 +249,22 @@ class Personalizer:
         m = self._model(user_id)
         return self.backend._serialize_recommendations(m.corpus, m.rec, m.reader_row, strategy, params)
 
+    def explain(self, user_id: int, strategy: "str | None" = None,
+                params: "dict | None" = None, article: "str | None" = None) -> dict:
+        """Read-only explainability observer over the user's cached augmented model (Commit 21a)
+        — the measured twin of :meth:`Backend.explain_recommendations`. Adds the reader's
+        read-join evidence (how many stored reads landed on real catalog columns — the URL →
+        catalog-id join that connects them to the click graph) and reuses the same catalog-id
+        index so an exclusion query accepts raw or canonical URLs. Never mutates the model."""
+        m = self._model(user_id)
+        reads = [_scored_read_from_row(r) for r in self.store.get_reads(user_id)]
+        joined = sum(1 for r in reads if str(r.article_id) in self._catalog_ids)
+        import rec_explain
+        return rec_explain.explain(self.backend, m.corpus, m.rec, m.reader_row,
+                                   strategy=strategy, params=params, article=article,
+                                   reads_meta={"total": len(reads), "joined": joined},
+                                   url_to_id=self._catalog_ids)
+
     def coach_greeting(self, user_id: int) -> list:
         """Coach greeting grounded on the user's Measured report."""
         m = self._model(user_id)

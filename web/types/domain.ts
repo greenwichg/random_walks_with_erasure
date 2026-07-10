@@ -204,14 +204,12 @@ export interface Article {
   publisherLogoSource?: string;
 }
 
-/** A recommendation = an article + why RWE surfaced it + its health impact. */
+/** A recommendation = an article + why RWE surfaced it (evidence-gated reason). */
 export interface Recommendation {
   article: Article;
   reason: string;
   /** Which extension produced it. */
   strategy: "rwe-b" | "rwe-d" | "adaptive";
-  /** Expected change to the overall health score if read. */
-  healthImpact: number;
   /** Which metric it most helps. */
   helpsMetric: MetricKey;
   /** Whether it bridges the reader across the centre. */

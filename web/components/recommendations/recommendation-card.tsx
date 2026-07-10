@@ -7,7 +7,6 @@ import {
   ThumbsUp,
   ThumbsDown,
   X,
-  TrendingUp,
   Sparkles,
   Route,
 } from "lucide-react";
@@ -107,16 +106,14 @@ export function RecommendationCard({
         <ConfidenceBadge value={article.confidence} />
       </div>
 
-      {/* why recommended + health impact */}
+      {/* why recommended — the reason is evidence-gated server-side; the removed "+N health"
+          badge was a placeholder number, and no un-computed signal belongs on the card */}
       <div className="mt-4 rounded-lg border bg-muted/30 p-3">
         <div className="flex items-start gap-2">
           <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
           <p className="text-sm text-muted-foreground">{rec.reason}</p>
         </div>
         <div className="mt-2.5 flex items-center gap-2 pl-6 text-xs">
-          <Badge variant="positive">
-            <TrendingUp className="h-3 w-3" /> +{rec.healthImpact} health
-          </Badge>
           <span className="inline-flex items-center gap-1 text-muted-foreground">
             <helps.icon className="h-3.5 w-3.5" /> Helps {helps.label}
           </span>

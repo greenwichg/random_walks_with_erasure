@@ -116,6 +116,37 @@ def _lean_bucket(pos: float, tau: float = hr.LEAN_TAU) -> str:
     return "center"
 
 
+def _cross_of(user_side: float, lean: float) -> bool:
+    """The cross-cutting gate, shared by the recommendation serializer and the explain observer
+    (Commit 21a) — one definition, so an explanation can never disagree with the card it explains."""
+    return bool(user_side != 0 and np.sign(lean) == -user_side and abs(lean) >= 0.5)
+
+
+def _familiarity_band(count: int, share: float) -> str:
+    """Three-tier outlet familiarity behind the reason copy: ``never`` (no reads), ``rarely``
+    (< 5 % of the reader's diet), ``familiar`` (>= 5 %)."""
+    if count <= 0:
+        return "never"
+    return "rarely" if share < 0.05 else "familiar"
+
+
+def _familiarity_of(pop: dict, u: int):
+    """Per-outlet familiarity lookup for reader row ``u`` — the evidence behind reason claims.
+    A sentence like "an outlet you rarely read" must be computed from the reader's measured
+    outlet shares, never asserted (Commit 21a truthfulness fix)."""
+    counts = np.asarray(pop["UO"][u], dtype=float)
+    share = hr.shares(counts)
+    idx = {str(n): i for i, n in enumerate(pop["out_u"])}
+
+    def fam(publisher: str) -> dict:
+        i = idx.get(str(publisher))
+        c = int(counts[i]) if i is not None else 0
+        s = float(share[i]) if i is not None else 0.0
+        return {"reads": c, "share": s, "band": _familiarity_band(c, s)}
+
+    return fam
+
+
 def _score_band(score) -> str:
     """The product's health band for a 0–100 score — the single source of truth for the
     thresholds the UI shows (web `scoreBand()` consumes this, falling back to the same cut-offs)."""
@@ -1148,36 +1179,50 @@ class Backend:
         except Exception:
             return []
 
-    def _serialize_rec(self, corpus: _Corpus, col: int, strategy: str, user_side: float) -> dict:
+    def _serialize_rec(self, corpus: _Corpus, col: int, strategy: str, user_side: float,
+                       familiarity=None) -> dict:
         """Turn a recommended column (in ``corpus.mind`` space) into a rec payload. Corpus-
-        parametric so a real user's augmented recs serialise through the same reason/impact
-        logic as the demo path — only the corpus the article is drawn from differs."""
+        parametric so a real user's augmented recs serialise through the same reason logic as
+        the demo path — only the corpus the article is drawn from differs.
+
+        Commit 21a: reasons are **evidence-gated** — a familiarity claim ("an outlet you rarely
+        read") appears only when the reader's measured outlet share says so; the adaptive copy
+        states the neutral-exposure truth (measured exposure isn't wired into AdaptiveRWEB yet);
+        and the placeholder ``healthImpact`` number is gone (it was a stable hash, not a
+        measurement — the explain endpoint carries the real evidence instead)."""
         art = self._serialize_article(corpus, col)
-        cross = user_side != 0 and np.sign(art["lean"]) == -user_side and abs(art["lean"]) >= 0.5
+        cross = _cross_of(user_side, art["lean"])
         side = {"left": "left-leaning", "right": "right-leaning", "center": "centrist"}[art["leanBucket"]]
         topic = art["topic"].lower()
+        band = (familiarity(art["publisher"]) if familiarity is not None else {}).get("band")
+        novelty = {"never": "an outlet you've never read",
+                   "rarely": "an outlet you rarely read"}.get(band)
         if strategy == "rwe-d":
-            reason = f"A long-tail read on {topic} from an outlet you rarely reach — RWE-D widens your sources."
+            reason = (f"A long-tail read on {topic} from {novelty} — RWE-D widens your sources."
+                      if novelty else
+                      f"A long-tail read on {topic} — RWE-D reaches past the popular head to "
+                      f"widen your sources.")
             helps = "sourceDiversity"
         elif strategy == "adaptive":
-            reason = (f"A {side} take on {topic}, sized to how open you've been to the other side — "
-                      f"adaptive bridging tunes the stretch to you.")
+            reason = (f"A {side} take on {topic} — adaptive bridging balances the stretch, and "
+                      f"tunes further as your open-mindedness signal accrues.")
             helps = "openMindedness" if cross else "topicDiversity"
         else:
             reason = (f"A {side} take on {topic} — RWE-B surfaced it to bridge you across the centre."
-                      if cross else f"Broadens your {topic} coverage from an outlet you rarely read.")
+                      if cross else
+                      (f"Broadens your {topic} coverage from {novelty}." if novelty else
+                       f"Broadens your {topic} coverage beyond your usual mix."))
             helps = "viewpointBalance" if cross else "sourceDiversity"
-        base = 3 if cross else 1
         return {
             "article": art,
             "reason": reason,
             "strategy": strategy,
-            "healthImpact": base + (_stable_int(art["id"], strategy) % 4),
             "helpsMetric": "viewpointBalance" if cross else helps,
             "crossCutting": bool(cross),
         }
 
-    def _serialize_recs(self, corpus: _Corpus, cols_by_strategy, user_side: float) -> list:
+    def _serialize_recs(self, corpus: _Corpus, cols_by_strategy, user_side: float,
+                        familiarity=None) -> list:
         """Dedup + serialise chosen ``(strategy, columns)`` groups into a rec list, preserving
         first-seen order. Shared by the base path and the augmented (Measured) path; only the
         recommender that *chose* the columns differs, never this assembly."""
@@ -1187,7 +1232,7 @@ class Backend:
                 if col in seen:
                     continue
                 seen.add(col)
-                out.append(self._serialize_rec(corpus, col, strat, user_side))
+                out.append(self._serialize_rec(corpus, col, strat, user_side, familiarity))
         return out
 
     def _serialize_recommendations(self, corpus: _Corpus, rec: "_Recommenders", u: int,
@@ -1201,18 +1246,32 @@ class Backend:
         blend too, so a moved slider shapes its slice of the default feed as well."""
         rep = hr.user_report(corpus.pop, corpus.mind, u)
         user_side = np.sign(rep.get("mean_lean") or 0.0)
+        try:
+            familiarity = _familiarity_of(corpus.pop, u)   # evidence for the reason templates
+        except Exception:
+            familiarity = None                             # best-effort: claims are then omitted
         # a single strategy, or a blend across the family for the default "all" view
         plan = ([(strategy, 12)] if strategy in ("rwe-b", "rwe-d", "adaptive")
                 else [("rwe-b", 6), ("rwe-d", 4), ("adaptive", 4)])
         cols_by_strategy = [(strat, self._rec_cols_of(corpus.mind, rec, u, strat, k, params))
                             for strat, k in plan]
-        return self._serialize_recs(corpus, cols_by_strategy, user_side)
+        return self._serialize_recs(corpus, cols_by_strategy, user_side, familiarity)
 
     def recommendations(self, u: int, strategy: str | None = None,
                         params: "dict | None" = None) -> list:
         """Base reference-corpus recommendations (demo / ``?user=`` path). ``params`` carries a
         signed-in reader's slider-mapped hyperparameters (None → the shared default stack)."""
         return self._serialize_recommendations(self.base_corpus, self.rec, u, strategy, params)
+
+    def explain_recommendations(self, u: int, strategy: str | None = None,
+                                params: "dict | None" = None,
+                                article: str | None = None) -> dict:
+        """Read-only explainability observer for the base/demo path (Commit 21a) — see
+        :mod:`rec_explain`. Observes the same models :meth:`recommendations` serves from and
+        replicates its plan; parity is pinned by tests. Never mutates or re-ranks."""
+        import rec_explain
+        return rec_explain.explain(self, self.base_corpus, self.rec, u,
+                                   strategy=strategy, params=params, article=article)
 
     # -- coach ------------------------------------------------------------- #
     def _facts_of(self, corpus: _Corpus, u: int):

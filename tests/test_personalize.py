@@ -137,7 +137,8 @@ def test_measured_recommendations_and_coach(backend, store):
     assert json.loads(json.dumps(recs)) == recs
     assert {r["strategy"] for r in recs} <= {"rwe-b", "rwe-d", "adaptive"}
     for r in recs:
-        assert set(r) >= {"article", "reason", "strategy", "healthImpact", "helpsMetric", "crossCutting"}
+        assert set(r) >= {"article", "reason", "strategy", "helpsMetric", "crossCutting"}
+        assert "healthImpact" not in r      # Commit 21a: placeholder number removed
 
     greeting = p.coach_greeting(uid)
     assert isinstance(greeting, list) and greeting[0]["role"] == "assistant"
