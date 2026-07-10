@@ -59,6 +59,14 @@ A clean, tested Python implementation of
 > inspectors, the automated PASS / WAIT / FAIL experiment kit, and a reset cell:
 > [![Open the Extension Playground in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/greenwichg/random_walks_with_erasure/blob/e65b8fb2878e7999b966c2b70d498d923ba6a436/deploy/browser_extension_playground.ipynb)
 > **Extension onboarding & E2E playground** (see [`docs/EXTENSION_E2E_EXPERIMENT.md`](docs/EXTENSION_E2E_EXPERIMENT.md)).
+>
+> 🎯 **Prove recommendations are justified** — validates that every recommendation is a deterministic
+> consequence of the reading history: evidence-backed, explanations that re-derive clean and never
+> invent facts (`evidence ⊆ context`), deterministic, and history-sensitive. Nine scenarios mapped to
+> explanation types, plus a *run-on-your-own-reading-history* mode. Offline; reuses the production
+> ranking (independent RWE recompute is a later phase):
+> [![Open Recommendation Validation in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/greenwichg/random_walks_with_erasure/blob/ad6a478c1c2d260d8c05c8ad3102e9f4d80f0289/deploy/rec_validation_colab.ipynb)
+> **Recommendation validation notebook**.
 
 RWE is a modified random-walk exploration of the bipartite user–item feedback
 graph in which the mass reaching certain nodes is systematically *erased* and
