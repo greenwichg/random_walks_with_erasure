@@ -57,3 +57,12 @@ metric_validation.json
 metric_validation.csv
 metric_validation.html
 data/metric_validation_demo.db
+
+# Browser Extension Playground notebook — runtime artifacts its Section 2 creates at the
+# repo root when the notebook runs inside a checkout (helper module, state, service logs)
+/_playground_ui.py
+/playground_state.json
+/engine.log
+/web.log
+/cf.log
+/cloudflared
