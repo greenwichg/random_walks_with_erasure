@@ -4,6 +4,7 @@ import * as React from "react";
 import { motion } from "framer-motion";
 import {
   Clock,
+  HelpCircle,
   ThumbsUp,
   ThumbsDown,
   X,
@@ -18,11 +19,11 @@ import {
   LeanBadge,
   RegisterBadge,
   EmotionBadge,
-  ConfidenceBadge,
 } from "@/components/shared/article-badges";
 import { ReadArticleButton } from "@/components/shared/read-article-button";
 import { SaveButton } from "@/components/shared/save-button";
 import { ArticleImage } from "@/components/shared/article-image";
+import { WhyDrawer } from "@/components/recommendations/why-drawer";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
@@ -49,6 +50,7 @@ export function RecommendationCard({
 }) {
   const { article } = rec;
   const [readLater, setReadLater] = React.useState(false);
+  const [why, setWhy] = React.useState(false);
   const [vote, setVote] = React.useState<"up" | "down" | null>(null);
   const helps = METRICS[rec.helpsMetric];
 
@@ -100,10 +102,11 @@ export function RecommendationCard({
 
       {/* attributes */}
       <div className="mt-3 flex flex-wrap items-center gap-1.5">
+        {/* classifier confidence moved into the Why? drawer (21a.2): a bare % on a
+            recommendation card reads as a recommendation score, which it never was */}
         <LeanBadge lean={article.lean} bucket={article.leanBucket} />
         <RegisterBadge register={article.register} />
         <EmotionBadge emotion={article.emotion} dominant={article.dominantEmotion} />
-        <ConfidenceBadge value={article.confidence} />
       </div>
 
       {/* why recommended — the reason is evidence-gated server-side; the removed "+N health"
@@ -129,6 +132,13 @@ export function RecommendationCard({
             relative value that would resolve to the app's own origin. */}
         <ReadArticleButton article={article} openedFrom="recommendations" onOpen={onOpen} className="mr-1" />
         <SaveButton article={article} />
+        <ActionButton
+          label="Why?"
+          active={why}
+          activeClass="text-primary"
+          icon={HelpCircle}
+          onClick={() => setWhy((v) => !v)}
+        />
         <ActionButton
           label="Read later"
           active={readLater}
@@ -162,6 +172,9 @@ export function RecommendationCard({
           />
         </div>
       </div>
+
+      {/* the proof behind the card (21a.2): every line is real recommender evidence */}
+      <WhyDrawer rec={rec} open={why} />
     </motion.article>
   );
 }

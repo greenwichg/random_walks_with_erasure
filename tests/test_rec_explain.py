@@ -126,6 +126,43 @@ def test_adaptive_copy_states_the_neutral_truth(backend, user):
         assert "how open you've been" not in r["reason"]      # the pre-21a over-claim
 
 
+def test_viewpoint_shift_is_report_identical_and_directional(backend, user):
+    """The 'Estimated effect' must be the report's own computation: current == rep['viewpoint'],
+    and appending a right article must move the right share up (and never invent a projection
+    for non-political articles)."""
+    import health_report as hr
+    exp = backend.explain_recommendations(user)
+    rep = hr.user_report(backend.base_corpus.pop, backend.base_corpus.mind, user)
+    cur_rep = rep["viewpoint"]
+    saw_projection = False
+    for r in exp["recommendations"]:
+        vs = r["viewpointShift"]
+        if vs is None:
+            continue
+        saw_projection = True
+        assert vs["estimated"] is True and "political reads" in vs["basis"]
+        assert vs["current"]["left"] == pytest.approx(round(100 * cur_rep[0], 1))
+        assert vs["current"]["right"] == pytest.approx(round(100 * cur_rep[2], 1))
+        total = vs["after"]["left"] + vs["after"]["center"] + vs["after"]["right"]
+        assert total == pytest.approx(100.0, abs=0.3)
+        if r["lean"] > 0.5:          # a right article must not move the right share DOWN
+            assert vs["after"]["right"] >= vs["current"]["right"]
+        if r["lean"] < -0.5:
+            assert vs["after"]["left"] >= vs["current"]["left"]
+    assert saw_projection, "no political recommendation produced a projection"
+
+
+def test_topic_share_and_lean_gap_evidence(backend, user):
+    import health_report as hr
+    exp = backend.explain_recommendations(user)
+    mean_lean = exp["trace"]["reader"]["meanLean"]
+    for r in exp["recommendations"]:
+        assert r["leanGap"] == pytest.approx(abs(r["lean"] - mean_lean), abs=0.011)
+        ts = r["topicShare"]
+        if ts is not None:
+            assert 0.0 <= ts["share"] <= 1.0
+
+
 def test_two_hop_and_degree_evidence_bounds(backend, user):
     exp = backend.explain_recommendations(user)
     for r in exp["recommendations"]:
@@ -235,6 +272,11 @@ def test_measured_reader_explain_endpoint(tmp_path, monkeypatch):
         assert [r["articleId"] for r in exp["recommendations"]] == \
                [r["article"]["id"] for r in served]
         assert exp["trace"]["reader"]["reads"] == {"total": 5, "joined": 5}
+        # 21a.2 debugging identity: the exact recommendation instance is nameable
+        assert exp["explainId"].startswith("rec_") and f"u{uid}_g" in exp["explainId"]
+        assert isinstance(exp["corpusGeneration"], int)
+        assert exp["modelVersion"] == {"readingVersion": 5, "receptionVersion":
+                                       exp["modelVersion"]["receptionVersion"]}
 
         q = urllib.parse.quote(arts[0]["url"], safe="")
         v = client.get(f"/api/internal/recommendations/explain?article={q}", headers=h).json()

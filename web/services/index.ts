@@ -11,6 +11,7 @@ import type {
   HistoryEntry,
   Profile,
   Recommendation,
+  RecommendationExplain,
   RecommendationReception,
   SavableArticle,
   SavedArticle,
@@ -35,6 +36,8 @@ export const services = {
   report: () => getJson<MeasuredHealthReport>("/report"),
   recommendations: (strategy?: Recommendation["strategy"]) =>
     getJson<Recommendation[]>("/recommendations", strategy ? { strategy } : undefined),
+  // 21a.2: the evidence behind the card's "Why?" drawer — fetched lazily on first open (D1).
+  recommendationExplain: () => getJson<RecommendationExplain>("/recommendations/explain"),
   sendFeedback: (articleId: string, action: FeedbackAction) =>
     postJson<{ ok: boolean }>("/recommendations", { articleId, action }),
   // Record that the reader opened a recommended article — the Open-Mindedness reception signal.
@@ -90,6 +93,8 @@ export const queryKeys = {
   dashboard: ["dashboard"] as const,
   report: ["report"] as const,
   recommendations: (strategy?: string) => ["recommendations", strategy ?? "all"] as const,
+  // under the ["recommendations"] prefix so slider saves invalidate it with the feed
+  recommendationExplain: ["recommendations", "explain"] as const,
   history: ["history"] as const,
   topics: ["topics"] as const,
   discover: (filters?: { topic?: string; publisher?: string; lean?: string; limit?: number }) =>

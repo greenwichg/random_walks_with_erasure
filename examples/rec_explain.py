@@ -76,6 +76,51 @@ def url_index_from(url_by_id: dict) -> dict:
     return out
 
 
+def _viewpoint_shift(corpus, u: int, col: int, n_political: int) -> Optional[dict]:
+    """The "Estimated effect" evidence (21a.2, D2): the report's own viewpoint computation —
+    same functions, same confidence weighting — with this one article appended. ``None`` when
+    the article isn't political or the reader is below the report's political-read minimum:
+    the drawer must never show a projection the report itself wouldn't stand behind."""
+    mind = corpus.mind
+    pos = np.asarray(mind.item_positions, dtype=float)
+    pol = np.asarray(mind.political, dtype=bool)
+    if col >= pos.size or not (bool(pol[col]) and np.isfinite(pos[col])):
+        return None
+    conf = corpus.pop.get("item_confidence")
+    ppos = hr._political_positions(mind, u)
+    pconf = hr._political_confidence(mind, u, conf) if conf is not None else None
+    cur = hr.viewpoint_shares(ppos, weights=pconf)
+    if not np.isfinite(cur[0]):
+        return None                                   # below the report's own minimum
+    a_pos = float(pos[col])
+    if pconf is not None:
+        c = np.asarray(conf, dtype=float)
+        a_w = float(c[col]) if np.isfinite(c[col]) else 1.0
+        after = hr.viewpoint_shares(np.append(ppos, a_pos), weights=np.append(pconf, a_w))
+    else:
+        after = hr.viewpoint_shares(np.append(ppos, a_pos))
+
+    def pct(t):
+        return {"left": round(100 * t[0], 1), "center": round(100 * t[1], 1),
+                "right": round(100 * t[2], 1)}
+
+    return {"current": pct(cur), "after": pct(after), "estimated": True,
+            "basis": (f"the report's viewpoint computation (confidence-weighted, over your "
+                      f"{n_political} political reads) with this one article appended")}
+
+
+def _topic_share(corpus, u: int, col: int) -> Optional[dict]:
+    """This article's topic as a fraction of the reader's history ("Politics is 42% of your
+    reading") — straight from the population matrices the report reads."""
+    try:
+        cat = str(np.asarray(corpus.mind.categories)[col])
+        i = [str(c) for c in corpus.pop["cat_u"]].index(cat)
+        share = float(hr.shares(np.asarray(corpus.pop["UC"][u], dtype=float))[i])
+        return {"topic": cat, "share": round(share, 3)}
+    except Exception:
+        return None
+
+
 def _params_used(model, strategy: str, params: Optional[dict]) -> dict:
     """Echo the hyperparameters actually in effect on the model instance (never the request)."""
     used = {"source": "sliders" if params else "defaults"}
@@ -170,6 +215,9 @@ def explain(backend, corpus, rec, u: int, strategy: Optional[str] = None,
                 "gate": "opposite sign and |lean| >= 0.5",
             },
             "outletFamiliarity": familiarity(art["publisher"]),
+            "leanGap": round(abs(float(art["lean"]) - float(rep.get("mean_lean") or 0.0)), 2),
+            "topicShare": _topic_share(corpus, u, col),
+            "viewpointShift": _viewpoint_shift(corpus, u, col, int(rep.get("n_political") or 0)),
             "longTail": {
                 "itemDegree": int(item_deg[j]),
                 "degreePercentile": round(100.0 * float(np.mean(item_deg <= item_deg[j])), 1),

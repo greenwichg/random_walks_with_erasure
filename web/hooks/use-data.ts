@@ -71,6 +71,16 @@ export const useRecommendations = (strategy?: Recommendation["strategy"]) =>
     queryFn: () => services.recommendations(strategy),
   });
 
+/** The evidence behind the card's "Why?" drawer (21a.2). Lazy by design (D1): fetched only when
+ * a drawer first opens, then cached and shared by every card of the feed. Keyed under the
+ * ["recommendations"] prefix so a slider save invalidates it together with the feed it explains. */
+export const useRecommendationExplain = (enabled: boolean) =>
+  useQuery({
+    queryKey: queryKeys.recommendationExplain,
+    queryFn: services.recommendationExplain,
+    enabled,
+  });
+
 export const useCoachHistory = () =>
   useQuery({ queryKey: queryKeys.coach, queryFn: services.coachHistory });
 

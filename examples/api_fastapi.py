@@ -1864,9 +1864,16 @@ def explain_recommendations_internal(
             params = engine.rec_params_from_settings(state.store.get_settings(uid))
         except Exception:
             params = None
-    if kind == "personal":
-        return active.personalizer.explain(val, strategy, params, article)
-    return active.backend.explain_recommendations(val, strategy, params, article)
+    out = (active.personalizer.explain(val, strategy, params, article) if kind == "personal"
+           else active.backend.explain_recommendations(val, strategy, params, article))
+    # Debugging identity (21a.2): serving is deterministic given (corpus generation, model
+    # version, params), so this id names the exact recommendation instance a report is about.
+    from datetime import datetime, timezone
+    out["corpusGeneration"] = int(active.generation)
+    who = f"u{uid}" if kind == "personal" else f"demo{val}"
+    out["explainId"] = (f"rec_{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}"
+                        f"_{who}_g{active.generation}")
+    return out
 
 
 @app.post("/api/internal/resolve-token", response_model=ResolveTokenModel, tags=["meta"],

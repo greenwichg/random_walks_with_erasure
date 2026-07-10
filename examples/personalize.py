@@ -260,10 +260,15 @@ class Personalizer:
         reads = [_scored_read_from_row(r) for r in self.store.get_reads(user_id)]
         joined = sum(1 for r in reads if str(r.article_id) in self._catalog_ids)
         import rec_explain
-        return rec_explain.explain(self.backend, m.corpus, m.rec, m.reader_row,
-                                   strategy=strategy, params=params, article=article,
-                                   reads_meta={"total": len(reads), "joined": joined},
-                                   url_to_id=self._catalog_ids)
+        out = rec_explain.explain(self.backend, m.corpus, m.rec, m.reader_row,
+                                  strategy=strategy, params=params, article=article,
+                                  reads_meta={"total": len(reads), "joined": joined},
+                                  url_to_id=self._catalog_ids)
+        # The measured model's identity, so a reported feed is reproducible: which reads
+        # version and reception version the cached augmented model was built from (21a.2).
+        out["modelVersion"] = {"readingVersion": m.reading_version,
+                               "receptionVersion": m.reception_version}
+        return out
 
     def coach_greeting(self, user_id: int) -> list:
         """Coach greeting grounded on the user's Measured report."""

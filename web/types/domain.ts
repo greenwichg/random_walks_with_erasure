@@ -218,6 +218,72 @@ export interface Recommendation {
 
 export type FeedbackAction = "save" | "ignore" | "read-later" | "like" | "dislike";
 
+/* ------------------------------------------------------------------ *
+ * Recommendation explainability (21a.2) — the payload behind the card's
+ * "Why?" drawer, proxied from the engine's internal explain endpoint.
+ * Every field is real recommender evidence; nothing here is templated.
+ * ------------------------------------------------------------------ */
+
+export interface ExplainStrategyEvidence {
+  score: number;
+  /** 1-based rank in this strategy's full candidate ranking; null = not ranked (seen). */
+  rank: number | null;
+  inSlice: boolean;
+}
+
+export interface RecommendationEvidence {
+  articleId: string;
+  url?: string;
+  headline: string;
+  publisher: string;
+  lean: number;
+  chosenBy: Recommendation["strategy"];
+  rank: number;
+  scorePercentile: number;
+  match: "strong" | "good" | "candidate";
+  byStrategy: Record<string, ExplainStrategyEvidence>;
+  crossCutting: { value: boolean; userMeanLean: number; articleLean: number; gate: string };
+  outletFamiliarity: { reads: number; share: number; band: "never" | "rarely" | "familiar" };
+  /** |article lean − your weighted mean lean| — the "bridge distance". */
+  leanGap: number;
+  topicShare: { topic: string; share: number } | null;
+  /** The report's own viewpoint computation with this article appended; null when the
+   *  article isn't political or the reader is below the report's political minimum. */
+  viewpointShift: {
+    current: { left: number; center: number; right: number };
+    after: { left: number; center: number; right: number };
+    estimated: boolean;
+    basis: string;
+  } | null;
+  longTail: { itemDegree: number; degreePercentile: number };
+  connectivity: { readsWithinTwoHops: number; graphReads: number };
+}
+
+export interface RecommendationExplain {
+  trace: {
+    reader: {
+      row: number;
+      corpusRow: number;
+      reads: { total: number; joined: number | null };
+      meanLean: number;
+    };
+    graph: { users: number; items: number; edges: number };
+    strategies: Record<
+      string,
+      { paramsUsed: Record<string, unknown>; candidates: number; seenExcluded: number }
+    >;
+    plan: { strategy: string; slice: number }[];
+    dedupDropped: number;
+    served: number;
+  };
+  recommendations: RecommendationEvidence[];
+  notes: string[];
+  /** Debugging identity of this exact recommendation instance (21a.2). */
+  explainId?: string;
+  corpusGeneration?: number;
+  modelVersion?: { readingVersion: number; receptionVersion: number | string };
+}
+
 /**
  * A reader's cross-cutting recommendation reception — the behavioral signal behind
  * Open-Mindedness. `rate` = opened / shown over cross-cutting recs; `active` is whether enough
