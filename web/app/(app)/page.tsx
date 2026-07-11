@@ -17,6 +17,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { METRIC_ORDER, scoreBand } from "@/lib/metrics";
+import { heroCopyKeys } from "@/lib/hero-copy";
 import { useTranslation } from "@/lib/i18n";
 
 /** Metric key → its detail route on the report page. */
@@ -25,6 +26,20 @@ const metricHref = (key: string) => `/report#${key}`;
 export default function DashboardPage() {
   const { data, isLoading, isError, refetch } = useDashboard();
   const { t } = useTranslation();
+
+  // Headline, status badge, and supporting text all come from ONE band (scoreBand) — so a low score
+  // can never pair a "Needs work" badge with a "looking healthy" headline. The supporting text names
+  // the reader's strongest metric and their biggest opportunity (the lowest-scoring diet metric;
+  // Confidence is a reliability meta-metric, not a lever, so it's excluded).
+  const band = scoreBand(data?.overall ?? 0);
+  const hero = heroCopyKeys(band.label);
+  const byScore = [...(data?.metrics ?? [])].filter((m) => m.key !== "confidence").sort((a, b) => a.score - b.score);
+  const lowest = byScore[0];
+  const strongest = byScore[byScore.length - 1];
+  const heroParams = {
+    metric: lowest ? t(`metric.${lowest.key}.label`) : "",
+    strong: strongest ? t(`metric.${strongest.key}.label`) : "",
+  };
 
   return (
     <PageContainer>
@@ -45,14 +60,14 @@ export default function DashboardPage() {
                 <ScoreRing score={data.overall} size={148} label={t("common.of100")} />
                 <div className="flex-1 text-center sm:text-left">
                   <div className="flex items-center justify-center gap-2 sm:justify-start">
-                    <Badge variant={scoreBand(data.overall).hue}>{t(`band.${scoreBand(data.overall).label}`)}</Badge>
+                    <Badge variant={band.hue}>{t(`band.${band.label}`)}</Badge>
                     <DeltaBadge value={data.overallDelta} suffix={t("report.thisMonth")} />
                   </div>
                   <h2 className="mt-3 text-xl font-semibold tracking-tight">
-                    {t("dashboard.heroTitle")}
+                    {t(hero.title)}
                   </h2>
                   <p className="mt-1.5 max-w-md text-sm text-muted-foreground">
-                    {t("dashboard.heroBody", { n: data.overallDelta })}
+                    {t(hero.body, heroParams)}
                   </p>
                   <div className="mt-4 flex flex-wrap justify-center gap-2 sm:justify-start">
                     <Button asChild size="sm">
