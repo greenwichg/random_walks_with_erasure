@@ -31,7 +31,9 @@ def test_first_tag_parses_qbias_stringified_list():
     assert su._first_tag("['White House', 'Politics']") == "White House"   # multi-tag list
     assert su._first_tag("['Politics']") == "Politics"                     # single-tag list
     assert su._first_tag("Economy") == "Economy"                          # plain string
-    assert su._first_tag("") == "general" and su._first_tag(None) == "general"
+    # Commit R2: uncategorized stays "" — no synthesized "general" topic
+    assert su._first_tag("") == "" and su._first_tag(None) == ""
+    assert su._first_tag("[]") == ""
 
 
 def test_catalog_from_qbias_clean_topics(tmp_path):

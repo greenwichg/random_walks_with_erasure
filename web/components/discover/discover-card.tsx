@@ -35,8 +35,12 @@ export function DiscoverCard({
 
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <PublisherBadge name={article.publisher} lean={article.publisherLean} logo={article.publisherLogo} />
-        <span className="text-xs text-muted-foreground">·</span>
-        <span className="text-xs font-medium text-muted-foreground">{article.topic}</span>
+        {article.topic && (
+          <>
+            <span className="text-xs text-muted-foreground">·</span>
+            <span className="text-xs font-medium text-muted-foreground">{article.topic}</span>
+          </>
+        )}
         <span className="text-xs text-muted-foreground">·</span>
         <span className="text-xs text-muted-foreground">{timeAgo(article.publishedAt)}</span>
       </div>

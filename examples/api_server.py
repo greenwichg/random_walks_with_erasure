@@ -1341,7 +1341,9 @@ class Backend:
         rep = hr.user_report(self.base_corpus.pop, self.base_corpus.mind, u)
         return {"reads": [],
                 "familiarity": _familiarity_of(self.base_corpus.pop, u),
-                "top_topics": [_prettify(t) for t, _ in (rep.get("top_categories") or [])]}
+                # Commit R2: blank / legacy-"general" buckets are not claimable topics.
+                "top_topics": [_prettify(t) for t, _ in (rep.get("top_categories") or [])
+                               if str(t).strip() and str(t).strip().lower() != "general"]}
 
     # -- coach ------------------------------------------------------------- #
     def _facts_of(self, corpus: _Corpus, u: int):

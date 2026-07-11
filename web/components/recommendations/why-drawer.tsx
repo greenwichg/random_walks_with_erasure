@@ -178,7 +178,7 @@ function EvidenceSections({
           <Row label="Classifier confidence" value={`${Math.round(rec.article.confidence * 100)}%`} />
         )}
         <Row label={t("filter.publisher")} value={rec.article.publisher} mono={false} />
-        <Row label={t("why.category")} value={rec.article.topic} mono={false} />
+        {rec.article.topic && <Row label={t("why.category")} value={rec.article.topic} mono={false} />}
         {/* register + emotion live here now — demoted from the card face (Commit 22) */}
         <Row label={t("why.coverageType")} value={t(`register.${rec.article.register}`)} mono={false} />
         <Row label={t("filter.emotion")} value={t(`emotion.${dominant}`)} mono={false} />

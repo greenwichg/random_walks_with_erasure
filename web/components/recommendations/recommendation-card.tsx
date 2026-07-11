@@ -98,8 +98,12 @@ export function RecommendationCard({
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
           <PublisherBadge name={article.publisher} lean={article.publisherLean} logo={article.publisherLogo} />
-          <span className="text-xs text-muted-foreground">·</span>
-          <span className="text-xs font-medium text-muted-foreground">{article.topic}</span>
+          {article.topic && (
+            <>
+              <span className="text-xs text-muted-foreground">·</span>
+              <span className="text-xs font-medium text-muted-foreground">{article.topic}</span>
+            </>
+          )}
         </div>
         <h3 className="mt-1.5 text-[1.05rem] font-semibold leading-snug tracking-tight">
           {article.headline}

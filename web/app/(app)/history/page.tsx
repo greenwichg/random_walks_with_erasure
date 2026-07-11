@@ -39,7 +39,7 @@ export default function HistoryPage() {
   const [dayLimit, setDayLimit] = React.useState(PAGE_DAYS);
 
   const topics = React.useMemo(
-    () => [...new Set((data ?? []).map((h) => h.article.topic))].sort(),
+    () => [...new Set((data ?? []).map((h) => h.article.topic))].filter(Boolean).sort(),
     [data],
   );
   const publishers = React.useMemo(

@@ -73,7 +73,9 @@ def feed_article_to_article(row: dict) -> dict:
         "headline": row.get("title") or scored.get("title") or "(untitled)",
         "publisher": engine._prettify(outlet),
         "publisherLean": lean,
-        "topic": engine._prettify(topic) if topic else "General",
+        # Commit R2: uncategorized stays "" (the UI hides the segment) — no synthesized "General"
+        # that History renders blank while Discover/explanations present it as a real topic.
+        "topic": engine._prettify(topic) if topic else "",
         "url": url,
         "lean": lean,
         "leanBucket": engine._lean_bucket(lean),

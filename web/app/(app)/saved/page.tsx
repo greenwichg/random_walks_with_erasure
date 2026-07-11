@@ -27,7 +27,7 @@ function toArticle(s: SavedArticle): Article {
     headline: a.headline ?? "Saved article",
     publisher: a.publisher ?? "Unknown",
     publisherLean: a.publisherLean ?? 0,
-    topic: a.topic ?? "General",
+    topic: a.topic ?? "",
     lean: a.lean ?? 0,
     leanBucket: a.leanBucket ?? "center",
     confidence: a.confidence ?? 0.7,

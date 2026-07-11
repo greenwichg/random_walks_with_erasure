@@ -58,8 +58,12 @@ export function CoachMessageBubble({ message }: { message: TMessage }) {
               <div key={a.id} className="rounded-lg border bg-muted/30 p-3">
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
                   <span className="font-medium">{a.publisher}</span>
-                  <span>·</span>
-                  <span>{a.topic}</span>
+                  {a.topic && (
+                    <>
+                      <span>·</span>
+                      <span>{a.topic}</span>
+                    </>
+                  )}
                 </div>
                 <p className="mt-1 text-sm font-medium leading-snug">{a.headline}</p>
                 <div className="mt-2">

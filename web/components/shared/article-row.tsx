@@ -45,8 +45,12 @@ export function ArticleRow({
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
           <span className="font-medium">{article.publisher}</span>
-          <span>·</span>
-          <span>{article.topic}</span>
+          {article.topic && (
+            <>
+              <span>·</span>
+              <span>{article.topic}</span>
+            </>
+          )}
           {meta && (
             <>
               <span>·</span>

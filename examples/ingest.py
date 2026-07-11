@@ -43,6 +43,7 @@ _SECTIONS = {
     "technology": "Technology", "tech": "Technology",
     "science": "Science", "health": "Health", "climate": "Climate", "environment": "Climate",
     "world": "World", "us": "U.S.", "opinion": "Opinion", "sports": "Sports",
+    "sport": "Sports", "football": "Sports", "soccer": "Sports",
     "entertainment": "Entertainment", "arts": "Arts", "culture": "Culture",
 }
 # Path substrings that flag a read as political when the source doesn't say.

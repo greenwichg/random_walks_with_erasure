@@ -135,17 +135,21 @@ def synthetic_catalog(n_items=800, n_outlets=25, n_topics=8, seed=0) -> ItemCata
 
 def _first_tag(raw) -> str:
     """Qbias's ``tags`` column is a *stringified* Python list, e.g.
-    ``"['White House', 'Politics']"`` -> the first tag as a clean topic string."""
+    ``"['White House', 'Politics']"`` -> the first tag as a clean topic string.
+
+    An empty/missing tags cell yields ``""`` — uncategorized stays uncategorized (Commit R2).
+    The old ``"general"`` default synthesized a topic that surfaced in explanations ("General has
+    been one of your most-read topics") while the same articles rendered blank elsewhere."""
     raw = (raw or "").strip()
     if not raw:
-        return "general"
+        return ""
     try:
         parsed = ast.literal_eval(raw)                   # handles "['a', 'b']" and "['a']"
         if isinstance(parsed, (list, tuple)):
-            return (str(parsed[0]).strip() or "general") if parsed else "general"
-        return str(parsed).strip() or "general"
+            return (str(parsed[0]).strip() if parsed else "")
+        return str(parsed).strip()
     except (ValueError, SyntaxError):                    # plain string or odd format
-        return raw.split(",")[0].strip().strip("[]'\"") or "general"
+        return raw.split(",")[0].strip().strip("[]'\"")
 
 
 def _parse_political(raw) -> "bool | None":
