@@ -27,7 +27,7 @@ def _read(st, uid, url, publisher, title):
                  "lean": 0.0, "political": True, "title": title})
 
 
-def test_empty_catalog_reports_no_coverage(tmp_path):
+def test_empty_catalog_reports_no_coverage(tmp_path, capsys):
     st = store_mod.Store(f"sqlite:///{tmp_path / 'a.db'}")
     uid = st.upsert_user_by_identity("dev", "t1").id
     _read(st, uid, "https://ex.com/politics/x", "AP", "Some read")
@@ -36,6 +36,31 @@ def test_empty_catalog_reports_no_coverage(tmp_path):
     assert cov["catalogArticles"] == 0 and cov["storyClusters"] == 0
     assert cov["verdicts"] == {"read_not_in_any_cluster": 1}
     assert cov["storyMatchPossible"] is False
+    # the report states the no-coverage conclusion explicitly, in so many words
+    asc.sibling_report(st, uid)
+    out = capsys.readouterr().out
+    assert "lacks cross-publisher coverage" in out
+    assert "corpus coverage, not recommendation logic" in out
+
+
+def test_report_names_freshness_exclusions(tmp_path, capsys, monkeypatch):
+    """A clustered, unread, different-publisher sibling outside the candidate window must appear
+    in the report as a FRESHNESS exclusion (never silently missing)."""
+    monkeypatch.delenv("RWE_RECS_SOURCE", raising=False)
+    st = store_mod.Store(f"sqlite:///{tmp_path / 'r.db'}")
+    title = "Landmark ruling reshapes the harbor bridge project"
+    _feed(st, "https://a.example.com/story/bridge", "Outlet A", title)
+    _feed(st, "https://b.example.com/story/bridge", "Outlet B", title,
+          when="2026-07-10T11:00:00+00:00")
+    uid = st.upsert_user_by_identity("dev", "t5").id
+    _read(st, uid, "https://a.example.com/story/bridge", "Outlet A", title)
+    er._INDEX_CACHE.update(key=None, index=None)
+    monkeypatch.setenv("RWE_FEED_MAX_AGE_DAYS", "0.001")   # everything ages out of candidacy
+    asc.sibling_report(st, uid)
+    out = capsys.readouterr().out
+    assert "SIBLING:" in out and "Outlet B" in out
+    assert "same validated cluster: yes" in out
+    assert "excluded by FRESHNESS" in out
 
 
 def test_topic_overlap_is_not_story_membership(tmp_path):

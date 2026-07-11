@@ -143,6 +143,83 @@ def serve_and_diagnose(st, user_id: int) -> dict:
     return out
 
 
+def sibling_report(st, user_id: int) -> None:
+    """The full per-read sibling report: every Reading History article with >= 1 same-story
+    sibling in the catalog — the sibling(s), the shared validated cluster, whether each sibling
+    was recommended, and if not the exact reason it was excluded. Reasons map to the engine's
+    truthful taxonomy:
+
+      freshness         outside the RWE_FEED_MAX_AGE_DAYS candidate window (C4) — never a candidate
+      already read      you read the sibling too — a reader's own reads are never re-recommended
+      ranking cutoff    ranked by every strategy but outside each served slice (per-strategy ranks
+                        shown; a non-political sibling is additionally inadmissible to the
+                        political-only Bridging slice — noted as political gating)
+      not in graph      in the catalog but not a recommendable node (e.g. unresolved outlet lean)
+
+    Two requested reasons cannot exclude an article outright, so they never appear: first-seen
+    DEDUPLICATION only reassigns which strategy serves a column (the article is still served),
+    and ANOTHER STRATEGY WINNING is what "ranking cutoff" shows per strategy. A SERVED sibling
+    always explains as story_match — priority over bridge is pinned by the story_over_bridge
+    golden — so "served but explained differently" is not a possible outcome."""
+    cov = audit(st, user_id)
+    with_siblings = [p for p in cov["perRead"]
+                     if p["verdict"] in ("sibling_available", "siblings_all_stale")]
+    print(f"reads: {cov['reads']}   catalog: {cov['catalogArticles']}   "
+          f"story clusters: {cov['storyClusters']} ({cov['multiPublisherClusters']} multi-publisher)")
+    if not with_siblings:
+        also_read = cov["verdicts"].get("all_siblings_read", 0)
+        extra = (f" ({also_read} read(s) whose only cross-publisher coverage you ALREADY read)"
+                 if also_read else "")
+        print("\nNo article in this reading history has an unread same-story sibling in the "
+              "catalog — the current corpus lacks cross-publisher coverage for those "
+              f"stories{extra}. Story Match is impossible from this data; this is corpus "
+              "coverage, not recommendation logic.")
+        return
+
+    s = serve_and_diagnose(st, user_id)
+    measured = bool(s.get("measured")) and "served" in s
+    # serve_and_diagnose lists an exclusion for every FRESH sibling that was NOT served, so a
+    # fresh sibling absent from that list was served (and a served sibling explains story_match).
+    excl_by_url = {x["sibling"]: x for x in s.get("unservedSiblings", [])} if measured else {}
+    pol_of = {a["canonicalUrl"]: (a.get("scored") or {}).get("political")
+              for a in st.list_feed_articles(limit=1_000_000)}
+
+    for p in with_siblings:
+        art = st.get_feed_article(p["url"]) or {}
+        print(f"\nREAD: {art.get('title') or p['url']}")
+        print(f"      {p['url']}")
+        print(f"      validated story cluster: {p['storyId']} ({p['clusterSize']} members)")
+        for m in p.get("siblings") or []:
+            curl = er._canon(str(m["url"]))
+            print(f"  SIBLING: {m['headline']}  ({m['publisher']})")
+            print(f"      {m['url']}")
+            print(f"      same validated cluster: yes ({p['storyId']})")
+            if not m["fresh"]:
+                print("      recommended: NO — excluded by FRESHNESS "
+                      "(outside the RWE_FEED_MAX_AGE_DAYS candidate window)")
+                continue
+            if not measured:
+                print("      recommended: n/a — reader below the measured threshold "
+                      "(served from the demo path, which has no personal history)")
+                continue
+            ex = excl_by_url.get(str(m["url"]))
+            if ex is None or ex.get("verdict") == "recommended":
+                print("      recommended: YES — served, explains as story_match")
+                continue
+            verdict = ex.get("verdict")
+            if verdict == "seen_excluded":
+                print("      recommended: NO — ALREADY READ (a reader's own reads are never "
+                      "re-recommended)")
+            elif verdict == "below_cutoff":
+                gate = ("; political gating: NOT admissible to the Bridging slice "
+                        "(article is non-political)" if pol_of.get(curl) is False else "")
+                print(f"      recommended: NO — RANKING CUTOFF ({ex.get('detail')}{gate})")
+            else:
+                print(f"      recommended: NO — {verdict}: {ex.get('detail')}")
+    if measured and s.get("servedStoryMatches"):
+        print(f"\nserved story_match cards this cycle: {s['servedStoryMatches']}")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -151,7 +228,16 @@ def main() -> int:
     ap.add_argument("--serve", action="store_true",
                     help="also build the serving stack: per-card storyMatch diagnostics + "
                          "exclusion verdicts for unserved siblings")
+    ap.add_argument("--report", action="store_true",
+                    help="the per-read sibling report: every read with same-story siblings, "
+                         "each sibling's cluster + served/excluded verdict with the exact reason")
     args = ap.parse_args()
+
+    if args.report:
+        st = store_mod.Store(args.db)
+        print(f"store: {st.url}")
+        sibling_report(st, args.user)
+        return 0
 
     st = store_mod.Store(args.db)
     cov = audit(st, args.user)
