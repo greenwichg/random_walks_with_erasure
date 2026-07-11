@@ -156,3 +156,96 @@ export function summarizeHistory(entries: HistoryEntry[]): HistoryInsights {
     concentration: topPublisherShare >= 0.5 ? "concentrated" : "spread",
   };
 }
+
+// ---- reading sessions + behavioural pattern (Phase 3) ----
+
+export interface ReadingSession {
+  start: string; // ISO of the oldest read in the session
+  end: string; // ISO of the newest read
+  reads: HistoryEntry[]; // newest-first
+}
+
+/** A new session begins when the gap between consecutive reads exceeds this many minutes. */
+export const SESSION_GAP_MINUTES = 45;
+
+/**
+ * Split reads (typically one day's) into contiguous reading sessions by read-time gaps. Accepts any
+ * order; returns newest session first, reads newest-first within each. Pure.
+ */
+export function sessionize(entries: HistoryEntry[], gapMinutes = SESSION_GAP_MINUTES): ReadingSession[] {
+  const sorted = [...entries].sort((a, b) => new Date(b.readAt).getTime() - new Date(a.readAt).getTime());
+  const out: ReadingSession[] = [];
+  let cur: HistoryEntry[] = [];
+  const flush = () => {
+    if (cur.length) out.push({ start: cur[cur.length - 1]!.readAt, end: cur[0]!.readAt, reads: cur });
+  };
+  for (const e of sorted) {
+    if (cur.length === 0) {
+      cur = [e];
+      continue;
+    }
+    const gapMs = new Date(cur[cur.length - 1]!.readAt).getTime() - new Date(e.readAt).getTime();
+    if (gapMs > gapMinutes * 60000) {
+      flush();
+      cur = [e];
+    } else {
+      cur.push(e);
+    }
+  }
+  flush();
+  return out;
+}
+
+export type TimeBucket = "morning" | "afternoon" | "evening" | "night";
+
+/** Local hour → coarse time-of-day bucket (morning 5–11, afternoon 12–16, evening 17–21, night). */
+export function timeBucket(hour: number): TimeBucket {
+  if (hour >= 5 && hour < 12) return "morning";
+  if (hour >= 12 && hour < 17) return "afternoon";
+  if (hour >= 17 && hour < 22) return "evening";
+  return "night";
+}
+
+export interface ReadingPattern {
+  total: number;
+  articlesThisWeek: number;
+  sessionCount: number;
+  avgSessionSize: number; // total / sessionCount (0 when there are no reads)
+  preferredTime: TimeBucket | null;
+}
+
+/**
+ * Behavioural summary of how a reader consumes over time: volume this week, average contiguous-
+ * session size, and the modal time-of-day. `now` is injectable for tests. Pure.
+ */
+export function readingPattern(entries: HistoryEntry[], now: number = Date.now()): ReadingPattern {
+  const weekAgo = now - 7 * 24 * 60 * 60 * 1000;
+  const articlesThisWeek = entries.filter((e) => new Date(e.readAt).getTime() >= weekAgo).length;
+
+  const byDay = new Map<string, HistoryEntry[]>();
+  for (const e of entries) {
+    const k = dayKey(e.readAt);
+    const arr = byDay.get(k) ?? [];
+    arr.push(e);
+    byDay.set(k, arr);
+  }
+  let sessionCount = 0;
+  for (const reads of byDay.values()) sessionCount += sessionize(reads).length;
+
+  const buckets = new Map<TimeBucket, number>();
+  for (const e of entries) {
+    const bkt = timeBucket(new Date(e.readAt).getHours());
+    buckets.set(bkt, (buckets.get(bkt) ?? 0) + 1);
+  }
+  let preferredTime: TimeBucket | null = null;
+  let max = 0;
+  for (const [bkt, n] of buckets) if (n > max) { max = n; preferredTime = bkt; }
+
+  return {
+    total: entries.length,
+    articlesThisWeek,
+    sessionCount,
+    avgSessionSize: sessionCount ? entries.length / sessionCount : 0,
+    preferredTime,
+  };
+}

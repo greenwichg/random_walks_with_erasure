@@ -1,7 +1,8 @@
 "use client";
 
 import * as React from "react";
-import { Search, ListFilter, CalendarDays, X } from "lucide-react";
+import Link from "next/link";
+import { Search, ListFilter, CalendarDays, X, Clock, BookOpen } from "lucide-react";
 import type { EmotionShare } from "@/types/domain";
 import { useHistory } from "@/hooks/use-data";
 import { useTranslation } from "@/lib/i18n";
@@ -11,17 +12,19 @@ import { PageContainer } from "@/components/layout/page-container";
 import { ArticleRow } from "@/components/shared/article-row";
 import { InsightStrip } from "@/components/history/insight-strip";
 import { ReflectionInsights } from "@/components/history/reflection-insights";
+import { ReadingPatternStrip } from "@/components/history/reading-pattern";
 import { DailySummary } from "@/components/history/daily-summary";
 import { CalendarView } from "@/components/history/calendar-view";
 import { FilterSelect } from "@/components/shared/filter-select";
 import { EmptyState, ErrorState } from "@/components/shared/states";
-import { summarizeHistory, dayKey } from "@/lib/history-insights";
+import { summarizeHistory, readingPattern, sessionize, dayKey, type ReadingSession } from "@/lib/history-insights";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
 type View = "timeline" | "calendar";
+const PAGE_DAYS = 8;
 
 export default function HistoryPage() {
   const { data, isLoading, isError, refetch } = useHistory();
@@ -33,6 +36,7 @@ export default function HistoryPage() {
   const [emotion, setEmotion] = React.useState("all");
   const [view, setView] = React.useState<View>("timeline");
   const [selectedDay, setSelectedDay] = React.useState<string | null>(null);
+  const [dayLimit, setDayLimit] = React.useState(PAGE_DAYS);
 
   const topics = React.useMemo(
     () => [...new Set((data ?? []).map((h) => h.article.topic))].sort(),
@@ -53,13 +57,14 @@ export default function HistoryPage() {
     return true;
   });
 
-  // A selected Calendar day narrows the Timeline + the summaries to that day (synchronised via the
-  // shared local dayKey). The Calendar heatmap itself always shows the full attribute-filtered set.
+  // A selected Calendar day narrows the Timeline + the content summaries to that day (synchronised
+  // via the shared local dayKey). The Calendar heatmap always shows the full attribute-filtered set.
   const inView = selectedDay ? filtered.filter((h) => dayKey(h.readAt) === selectedDay) : filtered;
 
-  // Descriptive summary of the reads currently in view — powers the Information Health strip, the
-  // Reflection/Insights section, and (when a day is selected) the Daily Summary. Reacts to filters.
+  // Content composition of the reads in view (strip, reflection, daily summary).
   const insights = summarizeHistory(inView);
+  // Behavioural pattern across all in-filter days (not narrowed to a selected day).
+  const pattern = readingPattern(filtered);
 
   const anyFilter = q || topic !== "all" || publisher !== "all" || lean !== "all" || emotion !== "all";
   const reset = () => {
@@ -74,6 +79,10 @@ export default function HistoryPage() {
   React.useEffect(() => {
     setSelectedDay(null);
   }, [q, topic, publisher, lean, emotion]);
+  // Any change to what's shown resets pagination to the first page of days.
+  React.useEffect(() => {
+    setDayLimit(PAGE_DAYS);
+  }, [q, topic, publisher, lean, emotion, selectedDay]);
 
   const selectedDayLabel = React.useMemo(() => {
     if (!selectedDay) return "";
@@ -85,16 +94,22 @@ export default function HistoryPage() {
     });
   }, [selectedDay, formatDate]);
 
-  // group the in-view reads by calendar day (read time)
+  // group the in-view reads by calendar day (read time), newest day first — keyed by the sortable
+  // dayKey so the order is the actual date, robust to the store's insert order.
   const groups = React.useMemo(() => {
-    const map = new Map<string, typeof inView>();
+    const map = new Map<string, { label: string; items: typeof inView }>();
     inView.forEach((h) => {
-      const key = formatDate(h.readAt, { weekday: "long", month: "long", day: "numeric" });
-      if (!map.has(key)) map.set(key, []);
-      map.get(key)!.push(h);
+      const key = dayKey(h.readAt);
+      let g = map.get(key);
+      if (!g) {
+        g = { label: formatDate(h.readAt, { weekday: "long", month: "long", day: "numeric" }), items: [] };
+        map.set(key, g);
+      }
+      g.items.push(h);
     });
-    return [...map.entries()];
+    return [...map.entries()].sort((a, b) => (a[0] < b[0] ? 1 : a[0] > b[0] ? -1 : 0));
   }, [inView, formatDate]);
+  const shownGroups = groups.slice(0, dayLimit);
 
   return (
     <PageContainer>
@@ -156,6 +171,7 @@ export default function HistoryPage() {
 
       {data && filtered.length > 0 && (
         <div className="mb-6 space-y-5">
+          {!selectedDay && <ReadingPatternStrip pattern={pattern} />}
           <InsightStrip insights={insights} />
           <ReflectionInsights insights={insights} />
           {selectedDay && inView.length > 0 && <DailySummary insights={insights} dayLabel={selectedDayLabel} />}
@@ -171,28 +187,54 @@ export default function HistoryPage() {
       )}
       {isError && <ErrorState onRetry={() => refetch()} />}
 
-      {data && filtered.length === 0 && (
+      {data && data.length === 0 && (
+        <EmptyState
+          icon={BookOpen}
+          title={t("history.startEmpty.title")}
+          description={t("history.startEmpty.body")}
+          action={
+            <Button asChild>
+              <Link href="/discover">{t("history.startEmpty.cta")}</Link>
+            </Button>
+          }
+        />
+      )}
+      {data && data.length > 0 && filtered.length === 0 && (
         <EmptyState icon={Search} title={t("history.empty.title")} description={t("history.empty.body")} />
       )}
 
       {data && view === "timeline" && inView.length > 0 && (
         <div className="space-y-8">
-          {groups.map(([day, items]) => (
-            <div key={day}>
+          {shownGroups.map(([key, { label, items }]) => (
+            <div key={key}>
               <div className="mb-3 flex items-center gap-3">
-                <h3 className="text-sm font-semibold">{day}</h3>
+                <h3 className="text-sm font-semibold">{label}</h3>
                 <span className="text-xs text-muted-foreground">{t("history.articlesCount", { n: items.length })}</span>
                 <div className="h-px flex-1 bg-border" />
               </div>
-              <div className="space-y-3">
-                {items.map((h, i) => (
-                  // The card's relative time is the article's publication time (same field + formatter
-                  // Discover uses) — NOT readAt, which drives only the day grouping above.
-                  <ArticleRow key={h.id} article={h.article} meta={timeAgo(h.article.publishedAt)} index={i} />
+              <div className="space-y-5">
+                {sessionize(items).map((s) => (
+                  <div key={s.end} className="space-y-2.5">
+                    <SessionHeader session={s} />
+                    <div className="space-y-3">
+                      {s.reads.map((h, i) => (
+                        // The card's relative time is the article's publication time (same field +
+                        // formatter Discover uses) — NOT readAt, which drives the day/session grouping.
+                        <ArticleRow key={h.id} article={h.article} meta={timeAgo(h.article.publishedAt)} source={h.openedFrom} index={i} />
+                      ))}
+                    </div>
+                  </div>
                 ))}
               </div>
             </div>
           ))}
+          {groups.length > dayLimit && (
+            <div className="flex justify-center pt-2">
+              <Button variant="outline" onClick={() => setDayLimit((d) => d + PAGE_DAYS)}>
+                {t("history.loadMore")}
+              </Button>
+            </div>
+          )}
         </div>
       )}
 
@@ -200,6 +242,21 @@ export default function HistoryPage() {
         <CalendarView entries={filtered} selectedDay={selectedDay} onSelect={setSelectedDay} />
       )}
     </PageContainer>
+  );
+}
+
+function SessionHeader({ session }: { session: ReadingSession }) {
+  const { t, lang } = useTranslation();
+  // Time-only (the day is already in the group header); formatDate uses toLocaleDateString, which
+  // would append the date, so format the clock time directly in the active locale.
+  const time = (iso: string) => new Date(iso).toLocaleTimeString(lang, { hour: "numeric", minute: "2-digit" });
+  const range = session.start === session.end ? time(session.start) : `${time(session.start)} – ${time(session.end)}`;
+  return (
+    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+      <Clock className="h-3.5 w-3.5 shrink-0" />
+      <span className="font-medium">{range}</span>
+      <span className="opacity-70">· {t("history.articlesCount", { n: session.reads.length })}</span>
+    </div>
   );
 }
 

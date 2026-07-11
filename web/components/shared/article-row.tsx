@@ -11,13 +11,30 @@ import { useTranslation } from "@/lib/i18n";
 export function ArticleRow({
   article,
   meta,
+  source,
   index = 0,
 }: {
   article: Article;
   meta?: string;
+  /** `openedFrom` provenance (recommendations / discover / …); rendered subtly when recognised. */
+  source?: string;
   index?: number;
 }) {
   const { t } = useTranslation();
+  const sourceLabel =
+    source === "recommendations"
+      ? t("history.source.recommendations")
+      : source === "discover"
+        ? t("history.source.discover")
+        : source === "stories"
+          ? t("history.source.stories")
+          : source === "search"
+            ? t("history.source.search")
+            : source === "saved"
+              ? t("history.source.saved")
+              : source === "ai-coach"
+                ? t("history.source.aiCoach")
+                : null;
   return (
     <motion.div
       initial={{ opacity: 0, y: 6 }}
@@ -38,10 +55,16 @@ export function ArticleRow({
           )}
         </div>
         <h4 className="mt-1 font-medium leading-snug">{article.headline}</h4>
+        {sourceLabel && (
+          <p className="mt-1 text-[0.7rem] text-muted-foreground">{t("history.openedFrom", { source: sourceLabel })}</p>
+        )}
+        {/* Lean stays the primary signal; Register + Emotion are kept but visually secondary. */}
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
           <LeanBadge lean={article.lean} bucket={article.leanBucket} />
-          <RegisterBadge register={article.register} />
-          <EmotionBadge emotion={article.emotion} dominant={article.dominantEmotion} />
+          <span className="flex flex-wrap items-center gap-1.5 opacity-70">
+            <RegisterBadge register={article.register} />
+            <EmotionBadge emotion={article.emotion} dominant={article.dominantEmotion} />
+          </span>
         </div>
       </div>
       <div className="flex shrink-0 flex-col items-end gap-2">

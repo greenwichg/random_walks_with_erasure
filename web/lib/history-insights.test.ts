@@ -13,6 +13,9 @@ import {
   classifyReporting,
   tally,
   dayKey,
+  sessionize,
+  timeBucket,
+  readingPattern,
 } from "./history-insights.ts";
 
 type Art = { topic: string; publisher: string; lean: number; register: string; readingMinutes: number;
@@ -104,4 +107,49 @@ test("tally is deterministic (count desc, then name asc)", () => {
     { name: "b", n: 2 },
     { name: "c", n: 1 },
   ]);
+});
+
+const at = (readAt: string) =>
+  ({ id: readAt, readAt, readingMinutes: 3, completed: true,
+     article: { topic: "T", publisher: "P", lean: 0, register: "reporting", readingMinutes: 3, emotion: NEUTRAL } }) as never;
+
+test("sessionize splits reads by gaps, newest session (and read) first", () => {
+  const s = sessionize([
+    at("2026-07-11T09:00:00Z"),
+    at("2026-07-11T09:20:00Z"), // +20m → same session
+    at("2026-07-11T11:00:00Z"), // +100m → new session
+    at("2026-07-11T11:10:00Z"), // +10m → same
+  ]);
+  assert.equal(s.length, 2);
+  assert.equal(s[0]!.reads.length, 2);
+  assert.equal(s[0]!.start, "2026-07-11T11:00:00Z");
+  assert.equal(s[0]!.end, "2026-07-11T11:10:00Z");
+  assert.equal(s[1]!.start, "2026-07-11T09:00:00Z");
+  assert.equal(s[1]!.end, "2026-07-11T09:20:00Z");
+});
+
+test("timeBucket boundaries", () => {
+  assert.equal(timeBucket(5), "morning");
+  assert.equal(timeBucket(11), "morning");
+  assert.equal(timeBucket(12), "afternoon");
+  assert.equal(timeBucket(16), "afternoon");
+  assert.equal(timeBucket(17), "evening");
+  assert.equal(timeBucket(21), "evening");
+  assert.equal(timeBucket(22), "night");
+  assert.equal(timeBucket(4), "night");
+});
+
+test("readingPattern: this-week volume, session count, avg size (injectable now)", () => {
+  const now = new Date("2026-07-11T12:00:00Z").getTime();
+  const p = readingPattern([
+    at("2026-07-11T09:00:00Z"), // today, session A
+    at("2026-07-11T09:10:00Z"), // today, session A
+    at("2026-07-11T15:00:00Z"), // today, session B (>45m gap)
+    at("2026-07-01T09:00:00Z"), // 10 days ago → own day/session, outside the week
+  ], now);
+  assert.equal(p.total, 4);
+  assert.equal(p.articlesThisWeek, 3);
+  assert.equal(p.sessionCount, 3); // Jul 11: 2 sessions, Jul 1: 1
+  assert.ok(Math.abs(p.avgSessionSize - 4 / 3) < 1e-9);
+  assert.notEqual(p.preferredTime, null);
 });
