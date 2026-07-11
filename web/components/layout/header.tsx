@@ -21,6 +21,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { NAV_FLAT } from "@/lib/nav";
+import { useTranslation } from "@/lib/i18n";
 
 /** Sticky top bar: mobile nav trigger, page title, search (⌘K), theme, profile. */
 export function Header() {
@@ -40,6 +41,7 @@ export function Header() {
   const [mobileNav, setMobileNav] = React.useState(false);
   const [searchOpen, setSearchOpen] = React.useState(false);
 
+  const { t } = useTranslation();
   const current = NAV_FLAT.find((n) => (n.href === "/" ? pathname === "/" : pathname.startsWith(n.href)));
 
   React.useEffect(() => {
@@ -70,7 +72,7 @@ export function Header() {
         </SheetContent>
       </Sheet>
 
-      <h1 className="hidden text-lg font-semibold tracking-tight sm:block">{current?.label ?? "Dashboard"}</h1>
+      <h1 className="hidden text-lg font-semibold tracking-tight sm:block">{t(current?.labelKey ?? "nav.dashboard")}</h1>
 
       <div className="ml-auto flex items-center gap-1.5">
         <button

@@ -247,6 +247,9 @@ DEFAULT_SETTINGS = {
     "privacy": {"shareAnonymizedMetrics": False, "personalizedAds": False},
 }
 _SETTINGS_THEMES = ("light", "dark", "system")
+# Supported interface languages (Commit 20). An unsupported/garbage value falls back to English —
+# the same allowlist the web LanguageProvider enforces, so the two never disagree.
+_SETTINGS_LANGUAGES = ("en", "es", "fr", "de", "pt")
 
 
 def _clamp_int(value, lo, hi, default):
@@ -284,7 +287,8 @@ def normalize_settings(stored: "dict | None", patch: "dict | None" = None) -> di
     theme = _layered("theme", layers, DEFAULT_SETTINGS["theme"])
     return {
         "theme": theme if theme in _SETTINGS_THEMES else DEFAULT_SETTINGS["theme"],
-        "language": (str(_layered("language", layers, "en")).strip()[:16] or "en"),
+        "language": (lambda v: v if v in _SETTINGS_LANGUAGES else "en")(
+            str(_layered("language", layers, "en")).strip().lower()),
         "politicalOpenness": _clamp_int(_layered("politicalOpenness", layers, 50), 0, 100, 50),
         "recommendationStrength": _clamp_int(_layered("recommendationStrength", layers, 50), 0, 100, 50),
         "readingGoalMinutes": _clamp_int(_layered("readingGoalMinutes", layers, 20), 0, 600, 20),

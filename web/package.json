@@ -2,13 +2,14 @@
   "name": "information-health",
   "version": "0.1.0",
   "private": true,
-  "description": "Information Health — a reading-diet intelligence product. Frontend for the RWE recommender + Information Health Report backend.",
+  "description": "Information Health \u2014 a reading-diet intelligence product. Frontend for the RWE recommender + Information Health Report backend.",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --test lib/i18n-core.test.ts"
   },
   "dependencies": {
     "@radix-ui/react-avatar": "^1.1.1",

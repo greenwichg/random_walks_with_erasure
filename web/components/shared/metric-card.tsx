@@ -7,6 +7,7 @@ import { METRICS } from "@/lib/metrics";
 import { DeltaBadge } from "@/components/shared/delta-badge";
 import { InfoTooltip } from "@/components/shared/info-tooltip";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "@/lib/i18n";
 
 const HUE_BG: Record<string, string> = {
   primary: "bg-primary/10 text-primary",
@@ -27,6 +28,7 @@ const HUE_BAR: Record<string, string> = {
 
 /** The reusable metric tile: icon, tooltip, score, trend, mini bar. */
 export function MetricCard({ metric, href, index = 0 }: { metric: Metric; href?: string; index?: number }) {
+  const { t } = useTranslation();
   const meta = METRICS[metric.key];
   const Icon = meta.icon;
 
@@ -45,7 +47,7 @@ export function MetricCard({ metric, href, index = 0 }: { metric: Metric; href?:
         <span className={cn("grid h-8 w-8 place-items-center rounded-lg", HUE_BG[meta.hue])}>
           <Icon className="h-[1.05rem] w-[1.05rem]" />
         </span>
-        <span className="text-sm font-medium">{meta.label}</span>
+        <span className="text-sm font-medium">{t(`metric.${meta.key}.label`)}</span>
         <InfoTooltip text={meta.tooltip} className="ml-auto" />
       </div>
 

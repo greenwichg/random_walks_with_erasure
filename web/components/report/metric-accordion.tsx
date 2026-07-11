@@ -7,6 +7,7 @@ import type { Metric } from "@/types/domain";
 import { METRIC_ORDER, METRICS } from "@/lib/metrics";
 import { DeltaBadge } from "@/components/shared/delta-badge";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "@/lib/i18n";
 
 const HUE_BG: Record<string, string> = {
   primary: "bg-primary/10 text-primary",
@@ -27,6 +28,7 @@ const HUE_BAR: Record<string, string> = {
 
 /** Expandable per-metric rows — the report's detailed breakdown. */
 export function MetricAccordion({ metrics }: { metrics: Metric[] }) {
+  const { t } = useTranslation();
   const [open, setOpen] = React.useState<string | null>(null);
 
   return (
@@ -49,7 +51,7 @@ export function MetricAccordion({ metrics }: { metrics: Metric[] }) {
               </span>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
-                  <span className="font-medium">{meta.label}</span>
+                  <span className="font-medium">{t(`metric.${meta.key}.label`)}</span>
                   <DeltaBadge value={metric.delta} />
                 </div>
                 <div className="mt-1.5 h-1.5 w-full max-w-sm overflow-hidden rounded-full bg-muted">
@@ -74,7 +76,7 @@ export function MetricAccordion({ metrics }: { metrics: Metric[] }) {
                   className="overflow-hidden"
                 >
                   <div className="px-4 pb-4 pl-16 text-sm text-muted-foreground">
-                    <p>{meta.description}</p>
+                    <p>{t(`metric.${meta.key}.description`)}</p>
                     <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-xs">
                       {metric.raw && (
                         <span>

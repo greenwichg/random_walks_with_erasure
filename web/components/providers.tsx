@@ -5,6 +5,7 @@ import { SessionProvider } from "next-auth/react";
 import { ThemeProvider } from "next-themes";
 import { useState, type ReactNode } from "react";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { LanguageProvider } from "@/lib/i18n";
 
 /**
  * App-wide client providers: theme (light/dark/system), React Query, and the
@@ -28,7 +29,9 @@ export function Providers({ children }: { children: ReactNode }) {
     <SessionProvider>
       <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
         <QueryClientProvider client={queryClient}>
-          <TooltipProvider delayDuration={200}>{children}</TooltipProvider>
+          <LanguageProvider>
+            <TooltipProvider delayDuration={200}>{children}</TooltipProvider>
+          </LanguageProvider>
         </QueryClientProvider>
       </ThemeProvider>
     </SessionProvider>

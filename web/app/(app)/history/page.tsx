@@ -4,6 +4,7 @@ import * as React from "react";
 import { Search, ListFilter, CalendarDays, X } from "lucide-react";
 import type { EmotionShare } from "@/types/domain";
 import { useHistory } from "@/hooks/use-data";
+import { useTranslation } from "@/lib/i18n";
 import { leanBucket, dominantEmotion } from "@/lib/political";
 import { EMOTION_META, LEAN_META } from "@/lib/metrics";
 import { PageContainer } from "@/components/layout/page-container";
@@ -19,6 +20,7 @@ type View = "timeline" | "calendar";
 
 export default function HistoryPage() {
   const { data, isLoading, isError, refetch } = useHistory();
+  const { formatDate } = useTranslation();
   const [q, setQ] = React.useState("");
   const [topic, setTopic] = React.useState("all");
   const [publisher, setPublisher] = React.useState("all");
@@ -58,12 +60,12 @@ export default function HistoryPage() {
   const groups = React.useMemo(() => {
     const map = new Map<string, typeof filtered>();
     filtered.forEach((h) => {
-      const key = new Date(h.readAt).toLocaleDateString("en", { weekday: "long", month: "long", day: "numeric" });
+      const key = formatDate(h.readAt, { weekday: "long", month: "long", day: "numeric" });
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(h);
     });
     return [...map.entries()];
-  }, [filtered]);
+  }, [filtered, formatDate]);
 
   return (
     <PageContainer>
@@ -168,6 +170,7 @@ function ViewToggle({
 
 /** A simple 5-week reading-activity heatmap. */
 function CalendarView({ entries }: { entries: { readAt: string }[] }) {
+  const { formatDate } = useTranslation();
   const counts = new Map<string, number>();
   entries.forEach((e) => {
     const key = new Date(e.readAt).toDateString();
@@ -198,7 +201,7 @@ function CalendarView({ entries }: { entries: { readAt: string }[] }) {
         {days.map((d, i) => (
           <div
             key={i}
-            title={`${d.date.toLocaleDateString("en", { month: "short", day: "numeric" })} · ${d.count} read`}
+            title={`${formatDate(d.date.toISOString(), { month: "short", day: "numeric" })} · ${d.count} read`}
             className={cn("aspect-square rounded-sm", shades[level(d.count)])}
           />
         ))}

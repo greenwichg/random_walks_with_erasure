@@ -448,12 +448,19 @@ def test_normalize_settings_defaults_merge_and_coerce():
     m = api_server.normalize_settings(stored, patch)
     assert m["theme"] == "dark" and m["readingGoalMinutes"] == 45              # from stored
     assert m["politicalOpenness"] == 100                                      # patch, clamped [0,100]
-    assert len(m["language"]) <= 16                                           # truncated
+    assert m["language"] == "en"                    # Commit 20: unsupported value falls back to English
     assert m["notifications"]["weeklyDigest"] is False                        # stored (deep-merged)
     assert m["notifications"]["streakReminders"] is True                      # patch
     assert m["notifications"]["recommendations"] is True                      # untouched default
     assert m["privacy"]["personalizedAds"] is True                            # patch
     assert "bogus" not in m                                                   # unknown key dropped
+
+    # Commit 20: every supported language passes through; case/whitespace normalized; junk → en.
+    for lang in ("en", "es", "fr", "de", "pt"):
+        assert api_server.normalize_settings({}, {"language": lang})["language"] == lang
+    assert api_server.normalize_settings({}, {"language": " ES "})["language"] == "es"
+    assert api_server.normalize_settings({}, {"language": "klingon"})["language"] == "en"
+    assert api_server.normalize_settings({}, {})["language"] == "en"           # default
     assert set(m) == set(api_server.DEFAULT_SETTINGS)                         # stable shape
 
     assert api_server.normalize_settings({"theme": "neon"})["theme"] == "system"   # bad enum -> default

@@ -10,6 +10,8 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
 /** Blind spots — under-consumed topics/sides. */
+import { useTranslation } from "@/lib/i18n";
+
 export function BlindSpots({ items }: { items: BlindSpot[] }) {
   return (
     <div className="space-y-3">
@@ -39,6 +41,7 @@ export function BlindSpots({ items }: { items: BlindSpot[] }) {
 
 /** Improvement recommendations — interactive: add to weekly goals. */
 export function Improvements({ items }: { items: Improvement[] }) {
+  const { t } = useTranslation();
   const [added, setAdded] = React.useState<Set<string>>(new Set());
   const toggle = (id: string) =>
     setAdded((prev) => {
@@ -71,7 +74,7 @@ export function Improvements({ items }: { items: Improvement[] }) {
             </div>
             <div className="mt-3 flex items-center justify-between">
               <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-                <meta.icon className="h-3.5 w-3.5" /> Helps {meta.label}
+                <meta.icon className="h-3.5 w-3.5" /> {t("rec.helps", { metric: t(`metric.${meta.key}.label`) })}
               </span>
               <Button
                 size="sm"

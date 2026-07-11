@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { motion } from "framer-motion";
 import { NAV } from "@/lib/nav";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "@/lib/i18n";
 
 function isActive(pathname: string, href: string) {
   return href === "/" ? pathname === "/" : pathname.startsWith(href);
@@ -13,6 +14,7 @@ function isActive(pathname: string, href: string) {
 /** The sidebar's grouped nav list. Shared by the desktop rail and mobile drawer. */
 export function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
+  const { t } = useTranslation();
 
   return (
     <nav className="flex flex-col gap-6 px-3">
@@ -20,7 +22,7 @@ export function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
         <div key={i} className="flex flex-col gap-1">
           {section.title && (
             <p className="px-3 pb-1 text-[0.7rem] font-semibold uppercase tracking-wider text-muted-foreground/70">
-              {section.title}
+              {section.titleKey ? t(section.titleKey) : section.title}
             </p>
           )}
           {section.items.map((item) => {
@@ -45,7 +47,7 @@ export function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
                   />
                 )}
                 <item.icon className="relative z-10 h-[1.15rem] w-[1.15rem]" />
-                <span className="relative z-10">{item.label}</span>
+                <span className="relative z-10">{t(item.labelKey)}</span>
               </Link>
             );
           })}

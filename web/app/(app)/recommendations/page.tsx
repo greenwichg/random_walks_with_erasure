@@ -5,6 +5,7 @@ import { AnimatePresence } from "framer-motion";
 import { Sparkles, Route, Compass, Wand2 } from "lucide-react";
 import type { FeedbackAction, Recommendation } from "@/types/domain";
 import { useRecommendations, useFeedback, useOpenRecommendation } from "@/hooks/use-data";
+import { useTranslation } from "@/lib/i18n";
 import { PageContainer } from "@/components/layout/page-container";
 import { RecommendationCard } from "@/components/recommendations/recommendation-card";
 import { ErrorState, EmptyState } from "@/components/shared/states";
@@ -22,6 +23,7 @@ const FILTERS: { value: Filter; label: string; icon: React.ElementType }[] = [
 
 export default function RecommendationsPage() {
   const { data, isLoading, isError, refetch } = useRecommendations();
+  const { t } = useTranslation();
   const feedback = useFeedback();
   const openRec = useOpenRecommendation();
   const [filter, setFilter] = React.useState<Filter>("all");
@@ -45,11 +47,8 @@ export default function RecommendationsPage() {
     <PageContainer>
       <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Recommendations</h1>
-          <p className="mt-1 max-w-xl text-sm text-muted-foreground">
-            Picked to balance your diet — bridging reads across the centre, plus fresh sources and
-            topics. Each shows exactly why it's here and how it moves your score.
-          </p>
+          <h1 className="text-2xl font-semibold tracking-tight">{t("rec.title")}</h1>
+          <p className="mt-1 max-w-xl text-sm text-muted-foreground">{t("rec.subtitle")}</p>
         </div>
       </div>
 

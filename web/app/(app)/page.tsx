@@ -17,18 +17,20 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { METRIC_ORDER, scoreBand } from "@/lib/metrics";
+import { useTranslation } from "@/lib/i18n";
 
 /** Metric key → its detail route on the report page. */
 const metricHref = (key: string) => `/report#${key}`;
 
 export default function DashboardPage() {
   const { data, isLoading, isError, refetch } = useDashboard();
+  const { t } = useTranslation();
 
   return (
     <PageContainer>
       <div className="mb-6 flex flex-col gap-1">
-        <p className="text-sm text-muted-foreground">Good to see you, Alex</p>
-        <h1 className="text-2xl font-semibold tracking-tight">Your Information Health</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">{t("dashboard.title")}</h1>
+        <p className="text-sm text-muted-foreground">{t("dashboard.subtitle")}</p>
       </div>
 
       {isLoading && <DashboardSkeleton />}
@@ -85,38 +87,38 @@ export default function DashboardPage() {
           {/* Today's reading */}
           <div>
             <div className="mb-3 flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-muted-foreground">Today's reading</h3>
+              <h3 className="text-sm font-semibold text-muted-foreground">{t("dashboard.today")}</h3>
               <Link href="/history" className="text-xs font-medium text-primary hover:underline">
-                View history
+                {t("nav.history")}
               </Link>
             </div>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <StatCard icon={BookOpen} label="Articles read" value={`${data.today.articlesRead}`} hue="primary" index={0} />
+              <StatCard icon={BookOpen} label={t("dashboard.articlesRead")} value={`${data.today.articlesRead}`} hue="primary" index={0} />
               <StatCard
                 icon={Clock}
-                label={data.today.goalMinutes != null ? "Reading time today" : "Avg. reading time"}
+                label={data.today.goalMinutes != null ? t("dashboard.minutesRead") : t("dashboard.avgReadingTime")}
                 value={`${data.today.goalMinutes != null ? (data.today.minutesRead ?? 0) : data.today.avgReadingMinutes}`}
                 sub={
                   data.today.goalMinutes != null
-                    ? `of ${data.today.goalMinutes} min goal${data.today.goalMet ? " ✓" : ""}`
-                    : "min"
+                    ? `${t("dashboard.ofGoal", { min: data.today.goalMinutes })}${data.today.goalMet ? " ✓" : ""}`
+                    : t("settings.minutes")
                 }
                 hue="left"
                 index={1}
               />
               <StatCard
                 icon={Landmark}
-                label="Political reading"
+                label={t("dashboard.politicalReading")}
                 value={`${Math.round(data.today.politicalShare * 100)}%`}
                 hue="center"
                 index={2}
               />
-              <StatCard icon={Flame} label="Reading streak" value={`${data.streakDays}`} sub="days" hue="caution" index={3} />
+              <StatCard icon={Flame} label={t("dashboard.streak")} value={`${data.streakDays}`} sub={t("dashboard.days")} hue="caution" index={3} />
             </div>
             <div className="mt-3 flex flex-wrap items-center gap-2">
-              <span className="text-xs text-muted-foreground">Top topics today:</span>
-              {data.today.topTopics.map((t) => (
-                <TopicChip key={t} topic={t} />
+              <span className="text-xs text-muted-foreground">{t("dashboard.topTopics")}</span>
+              {data.today.topTopics.map((topic) => (
+                <TopicChip key={topic} topic={topic} />
               ))}
             </div>
           </div>
@@ -124,7 +126,7 @@ export default function DashboardPage() {
           {/* The eight metrics */}
           <div>
             <div className="mb-3 flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-muted-foreground">Your health metrics</h3>
+              <h3 className="text-sm font-semibold text-muted-foreground">{t("dashboard.healthMetrics")}</h3>
               <Link href="/report" className="text-xs font-medium text-primary hover:underline">
                 Full breakdown
               </Link>

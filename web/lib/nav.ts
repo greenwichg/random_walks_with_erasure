@@ -14,46 +14,56 @@ import {
 } from "lucide-react";
 
 export interface NavItem {
+  /** English label — a fallback; the UI renders `labelKey` through the translation catalog. */
   label: string;
+  /** i18n catalog key for the label (Commit 20). */
+  labelKey: string;
   href: string;
   icon: LucideIcon;
-  /** Optional short description for tooltips / command palette. */
+  /** Optional short description for tooltips / command palette (English fallback). */
   hint?: string;
+  /** i18n catalog key for the hint. */
+  hintKey?: string;
 }
 
 export interface NavSection {
   title?: string;
+  /** i18n catalog key for the section title. */
+  titleKey?: string;
   items: NavItem[];
 }
 
 /**
  * Primary navigation. Grouped so new sections (e.g. an Enterprise or Publisher
- * dashboard) can be added later without touching the sidebar component.
+ * dashboard) can be added later without touching the sidebar component. Labels carry both an
+ * English fallback and an i18n key; render sites translate via `useTranslation().t(labelKey)`.
  */
 export const NAV: NavSection[] = [
   {
     items: [
-      { label: "Dashboard", href: "/", icon: LayoutDashboard, hint: "Your health at a glance" },
-      { label: "Health Report", href: "/report", icon: Activity, hint: "The full reading-diet analysis" },
-      { label: "Recommendations", href: "/recommendations", icon: Sparkles, hint: "Reads picked to balance your diet" },
-      { label: "AI Coach", href: "/coach", icon: Bot, hint: "Ask about your reading" },
+      { label: "Dashboard", labelKey: "nav.dashboard", href: "/", icon: LayoutDashboard, hint: "Your health at a glance", hintKey: "nav.hint.dashboard" },
+      { label: "Health Report", labelKey: "nav.report", href: "/report", icon: Activity, hint: "The full reading-diet analysis", hintKey: "nav.hint.report" },
+      { label: "Recommendations", labelKey: "nav.recommendations", href: "/recommendations", icon: Sparkles, hint: "Reads picked to balance your diet", hintKey: "nav.hint.recommendations" },
+      { label: "AI Coach", labelKey: "nav.coach", href: "/coach", icon: Bot, hint: "Ask about your reading", hintKey: "nav.hint.coach" },
     ],
   },
   {
     title: "Explore",
+    titleKey: "nav.section.explore",
     items: [
-      { label: "Discover", href: "/discover", icon: Compass, hint: "Trending stories & clusters" },
-      { label: "Stories", href: "/stories", icon: Newspaper, hint: "One event, every viewpoint" },
-      { label: "Saved", href: "/saved", icon: Bookmark, hint: "Articles you saved to read later" },
-      { label: "Reading History", href: "/history", icon: History, hint: "Everything you've read" },
-      { label: "Analytics", href: "/analytics", icon: BarChart3, hint: "Trends over time" },
+      { label: "Discover", labelKey: "nav.discover", href: "/discover", icon: Compass, hint: "Trending stories & clusters", hintKey: "nav.hint.discover" },
+      { label: "Stories", labelKey: "nav.stories", href: "/stories", icon: Newspaper, hint: "One event, every viewpoint", hintKey: "nav.hint.stories" },
+      { label: "Saved", labelKey: "nav.saved", href: "/saved", icon: Bookmark, hint: "Articles you saved to read later", hintKey: "nav.hint.saved" },
+      { label: "Reading History", labelKey: "nav.history", href: "/history", icon: History, hint: "Everything you've read", hintKey: "nav.hint.history" },
+      { label: "Analytics", labelKey: "nav.analytics", href: "/analytics", icon: BarChart3, hint: "Trends over time", hintKey: "nav.hint.analytics" },
     ],
   },
   {
     title: "Account",
+    titleKey: "nav.section.account",
     items: [
-      { label: "Profile", href: "/profile", icon: User },
-      { label: "Settings", href: "/settings", icon: Settings },
+      { label: "Profile", labelKey: "nav.profile", href: "/profile", icon: User },
+      { label: "Settings", labelKey: "nav.settings", href: "/settings", icon: Settings },
     ],
   },
 ];

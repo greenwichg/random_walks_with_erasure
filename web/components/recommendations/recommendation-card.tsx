@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import type { FeedbackAction, Recommendation } from "@/types/domain";
 import { METRICS } from "@/lib/metrics";
-import { timeAgo } from "@/lib/utils";
+import { useTranslation } from "@/lib/i18n";
 import {
   PublisherBadge,
   LeanBadge,
@@ -28,10 +28,10 @@ import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
-const STRATEGY_LABEL: Record<Recommendation["strategy"], string> = {
-  "rwe-b": "Bridging",
-  "rwe-d": "Discovery",
-  adaptive: "For you",
+const STRATEGY_LABEL_KEY: Record<Recommendation["strategy"], string> = {
+  "rwe-b": "rec.strategy.rwe-b",
+  "rwe-d": "rec.strategy.rwe-d",
+  adaptive: "rec.strategy.adaptive",
 };
 
 /** A single recommendation with full transparency + the five feedback actions. */
@@ -49,6 +49,7 @@ export function RecommendationCard({
   onDismiss?: () => void;
 }) {
   const { article } = rec;
+  const { t, localizeExplanation, timeAgo } = useTranslation();
   const [readLater, setReadLater] = React.useState(false);
   const [why, setWhy] = React.useState(false);
   const [vote, setVote] = React.useState<"up" | "down" | null>(null);
@@ -70,7 +71,7 @@ export function RecommendationCard({
         <div className="flex items-center gap-2">
           <Badge variant={rec.crossCutting ? "right" : "default"}>
             {rec.crossCutting ? <Route className="h-3 w-3" /> : <Sparkles className="h-3 w-3" />}
-            {STRATEGY_LABEL[rec.strategy]}
+            {t(STRATEGY_LABEL_KEY[rec.strategy])}
           </Badge>
           <span className="text-xs text-muted-foreground">{timeAgo(article.publishedAt)}</span>
         </div>
@@ -116,16 +117,16 @@ export function RecommendationCard({
           <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
           <div className="min-w-0">
             <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/80">
-              Why this article?
+              {t("rec.whyThisArticle")}
             </div>
             <p className="mt-0.5 text-sm text-muted-foreground">
-              {rec.explanation?.message ?? rec.reason}
+              {localizeExplanation(rec.explanation ?? { message: rec.reason })}
             </p>
           </div>
         </div>
         <div className="mt-2.5 flex items-center gap-2 pl-6 text-xs">
           <span className="inline-flex items-center gap-1 text-muted-foreground">
-            <helps.icon className="h-3.5 w-3.5" /> Helps {helps.label}
+            <helps.icon className="h-3.5 w-3.5" /> {t("rec.helps", { metric: t(`metric.${rec.helpsMetric}.label`) })}
           </span>
         </div>
       </div>

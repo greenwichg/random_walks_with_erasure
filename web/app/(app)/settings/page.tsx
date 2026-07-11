@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import type { Settings } from "@/types/domain";
 import { useSettings, useUpdateSettings } from "@/hooks/use-data";
+import { useTranslation } from "@/lib/i18n";
 import { PageContainer } from "@/components/layout/page-container";
 import { SectionCard } from "@/components/shared/section-card";
 import { ErrorState } from "@/components/shared/states";
@@ -56,6 +57,7 @@ export default function SettingsPage() {
   const { data, isLoading, isError, refetch } = useSettings();
   const updateSettings = useUpdateSettings();
   const { theme, setTheme } = useTheme();
+  const { t } = useTranslation();
 
   // Local draft seeded once from the server; theme is applied live via next-themes.
   const [draft, setDraft] = React.useState<Settings | null>(null);
@@ -101,10 +103,8 @@ export default function SettingsPage() {
   return (
     <PageContainer>
       <div className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Tune how Information Health recommends, notifies, and reports.
-        </p>
+        <h1 className="text-2xl font-semibold tracking-tight">{t("settings.title")}</h1>
+        <p className="mt-1 text-sm text-muted-foreground">{t("settings.subtitle")}</p>
       </div>
 
       {isLoading && (
@@ -119,15 +119,15 @@ export default function SettingsPage() {
       {draft && (
         <div className="grid gap-6 pb-24">
           {/* Appearance */}
-          <SectionCard title="Appearance" info="How the app looks. Theme changes apply instantly.">
+          <SectionCard title={t("settings.appearance")} info="How the app looks. Theme changes apply instantly.">
             <div className="divide-y">
-              <SettingRow title="Theme" description="Match your system, or pick a side.">
+              <SettingRow title={t("settings.theme")} description={t("settings.themeDesc")}>
                 <div className="inline-flex rounded-lg border bg-muted p-1">
                   {(
                     [
-                      { value: "light", label: "Light", icon: Sun },
-                      { value: "dark", label: "Dark", icon: Moon },
-                      { value: "system", label: "System", icon: Monitor },
+                      { value: "light", labelKey: "settings.theme.light", icon: Sun },
+                      { value: "dark", labelKey: "settings.theme.dark", icon: Moon },
+                      { value: "system", labelKey: "settings.theme.system", icon: Monitor },
                     ] as const
                   ).map((opt) => (
                     <button
@@ -140,12 +140,12 @@ export default function SettingsPage() {
                           : "text-muted-foreground hover:text-foreground",
                       )}
                     >
-                      <opt.icon className="h-4 w-4" /> {opt.label}
+                      <opt.icon className="h-4 w-4" /> {t(opt.labelKey)}
                     </button>
                   ))}
                 </div>
               </SettingRow>
-              <SettingRow title="Language" description="The language for the interface and digests.">
+              <SettingRow title={t("settings.language")} description={t("settings.languageDesc")}>
                 <div className="flex flex-wrap justify-end gap-1.5">
                   {LANGUAGES.map((l) => (
                     <button
@@ -294,21 +294,21 @@ export default function SettingsPage() {
             <div className="glass flex w-full max-w-md items-center justify-between gap-3 rounded-full border px-3 py-2 shadow-card">
               {saved ? (
                 <span className="flex items-center gap-2 pl-2 text-sm font-medium text-positive">
-                  <Check className="h-4 w-4" /> All changes saved
+                  <Check className="h-4 w-4" /> {t("common.allChangesSaved")}
                 </span>
               ) : (
                 <span className="flex items-center gap-2 pl-2 text-sm text-muted-foreground">
-                  <span className="h-2 w-2 rounded-full bg-caution" /> Unsaved changes
+                  <span className="h-2 w-2 rounded-full bg-caution" /> {t("settings.unsaved")}
                 </span>
               )}
               <div className="flex items-center gap-2">
                 {!saved && (
                   <Button variant="ghost" size="sm" onClick={reset} className="text-muted-foreground">
-                    <RotateCcw className="h-3.5 w-3.5" /> Reset
+                    <RotateCcw className="h-3.5 w-3.5" /> {t("common.reset")}
                   </Button>
                 )}
                 <Button size="sm" onClick={save} disabled={saved} className="rounded-full">
-                  {saved ? "Saved" : "Save changes"}
+                  {saved ? t("settings.savedShort") : t("settings.saveChanges")}
                 </Button>
               </div>
             </div>

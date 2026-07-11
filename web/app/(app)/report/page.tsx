@@ -19,10 +19,12 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { resolveBand, LEAN_META } from "@/lib/metrics";
+import { useTranslation } from "@/lib/i18n";
 import { leanBucket } from "@/lib/political";
 
 export default function ReportPage() {
   const { data: report, isLoading, isError, refetch } = useReport();
+  const { t } = useTranslation();
 
   const topicItems: BarItem[] =
     report?.topics.slice(0, 8).map((t) => ({ label: t.topic, value: t.share, count: t.count })) ?? [];
@@ -66,7 +68,7 @@ export default function ReportPage() {
     <PageContainer>
       <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Information Health Report</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">{t("report.title")}</h1>
           {report && (
             <p className="mt-1 text-sm text-muted-foreground">
               Updated{" "}
@@ -98,7 +100,7 @@ export default function ReportPage() {
               <CardContent className="flex flex-col items-center p-6 text-center">
                 <ScoreRing score={report.overall} size={150} label="of 100" band={report.band} />
                 <div className="mt-4 flex items-center gap-2">
-                  {overallBand && <Badge variant={overallBand.hue}>{overallBand.label}</Badge>}
+                  {overallBand && <Badge variant={overallBand.hue}>{t(`band.${overallBand.label}`)}</Badge>}
                   <DeltaBadge value={report.overallDelta} suffix="this month" />
                 </div>
                 <p className="mt-3 text-sm text-muted-foreground">{dietSummary}</p>
