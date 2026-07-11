@@ -13,7 +13,12 @@ Scoring strategy (approved): a **deterministic baseline** that needs no API key 
                         An outlet the registry doesn't know still ingests — the outlet is the bare
                         domain and the lean is NaN (excluded from lean metrics, as the engine
                         already handles missing data).
-    political / topic = what the source supplies, else a light URL-path heuristic
+    topic             = the ONE canonical deterministic classifier, :func:`classify_topic`:
+                        the source's own category tags normalized into the closed taxonomy, else
+                        the URL's topical section, else a headline/description keyword lexicon,
+                        else the URL's *geographic* section (World / U.S.), else "" (uncategorized)
+    political         = what the source supplies, else the shared :func:`looks_political`
+                        heuristic over the URL/source category/classified topic
 
 plus an **optional, pluggable** :class:`Enricher` (e.g. an LLM emotion/register/topic
 classifier, cached) that improves a read *only when configured*. Absent an enricher, scoring is
@@ -27,6 +32,7 @@ exactly as the engine already handles missing data.
 from __future__ import annotations
 
 import dataclasses
+import re
 from dataclasses import asdict, dataclass, replace
 from typing import Optional, Protocol
 from urllib.parse import urlsplit, urlunsplit
@@ -34,16 +40,20 @@ from urllib.parse import urlsplit, urlunsplit
 from augmented_corpus import ScoredRead
 from outlet_registry import OutletRegistry, default_registry
 
-# Coarse URL-path segment -> display topic. The browser extension can pass the real section
-# (OpenGraph article:section) and the optional enricher can refine it; this is only a
-# best-effort fallback so Topic Diversity has *some* signal for a pasted link.
+# Coarse URL-path segment -> section topic, consulted by :func:`classify_topic` AFTER the
+# publisher's own category tags. A topical section (/politics/, /business/) is decisive; a
+# *geographic* section (/us-news/, /world/) only wins when the headline lexicon finds no specific
+# subject — geography says where a story happened, not what it is about.
 _SECTIONS = {
-    "politics": "Politics", "election": "Politics", "elections": "Politics",
-    "business": "Business", "economy": "Business", "markets": "Business",
+    "politics": "Politics", "election": "Politics", "elections": "Politics", "law": "Politics",
+    "business": "Business", "economy": "Business", "markets": "Business", "money": "Business",
     "technology": "Technology", "tech": "Technology",
     "science": "Science", "health": "Health", "climate": "Climate", "environment": "Climate",
-    "world": "World", "us": "U.S.", "opinion": "Opinion", "sports": "Sports",
-    "sport": "Sports", "football": "Sports", "soccer": "Sports",
+    "world": "World", "world-news": "World", "uk-news": "World", "australia-news": "World",
+    "global-development": "World",
+    "us": "U.S.", "us-news": "U.S.",
+    "opinion": "Opinion", "commentisfree": "Opinion",
+    "sports": "Sports", "sport": "Sports", "football": "Sports", "soccer": "Sports",
     "entertainment": "Entertainment", "arts": "Arts", "culture": "Culture",
 }
 # Path substrings that flag a read as political when the source doesn't say.
@@ -62,6 +72,253 @@ def looks_political(url: str = "", category: str = "") -> bool:
     cat = (category or "").lower()
     return (any(h in path for h in _POLITICAL_HINTS)
             or any(h in cat for h in _POLITICAL_CATEGORY_HINTS))
+
+
+# --------------------------------------------------------------------------- #
+# Canonical topic classification — the ONE place a topic is ever assigned.
+# --------------------------------------------------------------------------- #
+# The closed product taxonomy. classify_topic returns a member or "" (uncategorized — the UI
+# hides the topic segment); it never invents a junk drawer ("General") and never stores a raw
+# publisher label verbatim.
+TAXONOMY = ("Politics", "Business", "Technology", "Science", "Health", "Climate", "World",
+            "U.S.", "Opinion", "Sports", "Entertainment", "Arts", "Culture")
+
+# Sections that locate a story geographically rather than topically — used as the LAST fallback
+# in classify_topic so "/us-news/" never hides a plainly political / business / science headline.
+_GEO_TOPICS = frozenset({"World", "U.S."})
+
+# Publisher/source category label -> canonical topic. Keys are lower-cased, whitespace-collapsed
+# labels; the URL-segment names double as labels, extended with the multi-word spellings real
+# feeds use. A label that maps nowhere contributes NO signal — junk drawers ("News",
+# "Top Stories", "General", "Featured", "Latest") simply fall through to the URL and headline
+# evidence instead of being stored verbatim.
+_CATEGORY_ALIASES = {
+    **_SECTIONS,
+    # Politics — politicians, elections, legislation, government, courts, diplomacy, policy.
+    "us politics": "Politics", "u.s. politics": "Politics", "uk politics": "Politics",
+    "politics news": "Politics", "political news": "Politics", "government": "Politics",
+    "government and politics": "Politics", "policy": "Politics", "public policy": "Politics",
+    "justice": "Politics", "courts": "Politics", "supreme court": "Politics",
+    "congress": "Politics", "white house": "Politics", "geopolitics": "Politics",
+    "diplomacy": "Politics", "campaign 2024": "Politics", "election 2024": "Politics",
+    # Business / economy / markets.
+    "economics": "Business", "finance": "Business", "financial": "Business",
+    "personal finance": "Business", "business news": "Business", "wall street": "Business",
+    "stock market": "Business", "stocks": "Business", "investing": "Business",
+    "companies": "Business", "earnings": "Business",
+    # Technology.
+    "sci-tech": "Technology", "science and technology": "Technology",
+    "artificial intelligence": "Technology", "ai": "Technology", "cybersecurity": "Technology",
+    "internet": "Technology", "software": "Technology", "gadgets": "Technology",
+    "computing": "Technology", "technology news": "Technology",
+    # Science.
+    "space": "Science", "astronomy": "Science", "physics": "Science",
+    # Health.
+    "wellness": "Health", "medicine": "Health", "medical": "Health", "healthcare": "Health",
+    "health care": "Health", "public health": "Health", "mental health": "Health",
+    "health news": "Health", "fitness": "Health", "coronavirus": "Health", "covid": "Health",
+    "covid-19": "Health",
+    # Climate (the product keeps the "Climate" name; "Environment" normalizes into it).
+    "climate change": "Climate", "climate crisis": "Climate", "environmental": "Climate",
+    "global warming": "Climate", "sustainability": "Climate",
+    "energy and environment": "Climate", "climate and environment": "Climate",
+    "extreme weather": "Climate",
+    # World (geographic; regional desks normalize here).
+    "world news": "World", "international": "World", "international news": "World",
+    "global": "World", "global news": "World", "foreign news": "World", "europe": "World",
+    "asia": "World", "africa": "World", "middle east": "World", "americas": "World",
+    "latin america": "World", "uk news": "World", "australia news": "World",
+    "global development": "World",
+    # U.S. (geographic).
+    "us news": "U.S.", "u.s. news": "U.S.", "u.s.": "U.S.", "usa": "U.S.",
+    "united states": "U.S.", "national": "U.S.", "nation": "U.S.",
+    # Opinion.
+    "opinions": "Opinion", "editorial": "Opinion", "editorials": "Opinion",
+    "commentary": "Opinion", "comment": "Opinion", "comment is free": "Opinion",
+    "op-ed": "Opinion", "op-eds": "Opinion", "voices": "Opinion", "perspectives": "Opinion",
+    "letters": "Opinion",
+    # Sports.
+    "sports news": "Sports", "nfl": "Sports", "nba": "Sports", "mlb": "Sports", "nhl": "Sports",
+    "baseball": "Sports", "basketball": "Sports", "tennis": "Sports", "golf": "Sports",
+    "cricket": "Sports", "rugby": "Sports", "olympics": "Sports", "motorsport": "Sports",
+    "formula 1": "Sports", "formula one": "Sports",
+    # Entertainment.
+    "celebrity": "Entertainment", "celebrities": "Entertainment", "tv": "Entertainment",
+    "television": "Entertainment", "movies": "Entertainment", "film": "Entertainment",
+    "films": "Entertainment", "music": "Entertainment", "showbiz": "Entertainment",
+    "hollywood": "Entertainment", "tv and radio": "Entertainment",
+    "entertainment news": "Entertainment",
+    # Arts / Culture.
+    "art": "Arts", "art and design": "Arts", "design": "Arts", "theater": "Arts",
+    "theatre": "Arts", "dance": "Arts", "photography": "Arts",
+    "books": "Culture", "literature": "Culture", "style": "Culture", "fashion": "Culture",
+    "lifestyle": "Culture", "life and style": "Culture",
+}
+
+# Feeds pack several tags into one string ("Trump administration; US politics; Farming") and
+# some sections nest ("News/Politics") — split on the common separators, never on ".".
+_LABEL_SPLIT = re.compile(r"[;,|/&>»]+")
+
+
+def _category_labels(source_category: str) -> "list[str]":
+    """Normalized candidate labels from a source category string: split on separators,
+    lower-case, collapse whitespace, drop empties. Order preserved (first tag = most specific
+    in every feed dialect we ingest)."""
+    out = []
+    for part in _LABEL_SPLIT.split(source_category or ""):
+        label = re.sub(r"\s+", " ", part).strip().lower()
+        if label:
+            out.append(label)
+    return out
+
+
+def _rx(*terms: str) -> "re.Pattern":
+    """A case-insensitive word-boundary alternation over ``terms`` (each may be a phrase or a
+    small regex fragment). Word boundaries keep precision high: "law" never fires on "lawn"."""
+    return re.compile(r"\b(?:" + "|".join(terms) + r")\b", re.IGNORECASE)
+
+
+# Deterministic subject lexicon, checked in order (first hit wins) against — in priority — the
+# source category text, then the title, then the description. Politics comes first and is
+# deliberately rich (politicians, institutions, processes, parties, courts, diplomacy/geopolitics)
+# so an obviously political story is never filed under a generic label. Every pattern is chosen
+# for precision over recall: a missed article degrades to a section/"" (honest), a wrong hit
+# would be a lie.
+_TOPIC_LEXICON = (
+    ("Politics", _rx(
+        r"politics?", r"political", r"politicians?", r"geopolitic\w*",
+        # heads of state / government figures
+        r"trump", r"biden", r"kamala harris", r"obama", r"putin", r"zelenskyy?", r"netanyahu",
+        r"xi jinping", r"kim jong[- ]un", r"macron", r"starmer", r"modi",
+        # institutions + agencies
+        r"congress\w*", r"senate", r"senators?", r"house of representatives", r"capitol hill",
+        r"white house", r"oval office", r"supreme court", r"scotus", r"pentagon",
+        r"state department", r"justice department", r"homeland security", r"parliament\w*",
+        r"downing street", r"kremlin",
+        # offices + roles
+        r"president\w*", r"vice[- ]president", r"prime minister", r"chancellors?",
+        r"governors?", r"mayors?", r"lawmakers?", r"legislators?", r"legislat\w*",
+        r"attorney general", r"secretary of state", r"ministers?",
+        # elections + process
+        r"elections?", r"electoral", r"ballots?", r"voters?", r"midterms?", r"primaries",
+        r"caucus\w*", r"referend\w*", r"impeach\w*", r"inaugurat\w*", r"filibuster", r"veto\w*",
+        r"executive order", r"government shutdown", r"coup", r"martial law", r"regimes?",
+        r"authoritarian\w*",
+        # courts as public power
+        r"federal judge", r"federal court", r"appeals court", r"high court",
+        # parties + movements
+        r"democrats?", r"democratic party", r"republicans?", r"gop", r"labour party",
+        r"labor party", r"tor(?:y|ies)", r"conservative party", r"far[- ]right", r"far[- ]left",
+        r"brexit",
+        # diplomacy + geopolitical events + policy
+        r"sanctions?", r"tariffs?", r"treaty", r"treaties", r"diplomac\w*", r"diplomat\w*",
+        r"embass\w*", r"nato", r"united nations", r"un security council", r"ceasefire",
+        r"cease-fire", r"peace talks", r"immigration", r"asylum seekers?", r"deportations?",
+    )),
+    ("Business", _rx(
+        r"stock market", r"stocks", r"wall street", r"dow jones", r"s&p 500", r"nasdaq",
+        r"earnings", r"quarterly profits?", r"revenues?", r"ipos?", r"mergers?",
+        r"acquisitions?", r"layoffs?", r"inflation", r"recession", r"gdp", r"federal reserve",
+        r"interest rates?", r"central banks?", r"cryptocurrenc\w*", r"bitcoin", r"startups?",
+        r"ceos?", r"econom(?:y|ic|ics|ist)\w*",
+    )),
+    ("Technology", _rx(
+        r"artificial intelligence", r"ai", r"chatgpt", r"openai", r"machine learning",
+        r"software", r"smartphones?", r"iphone", r"android", r"silicon valley",
+        r"cybersecurity", r"hackers?", r"data breach", r"tiktok", r"google", r"microsoft",
+        r"tesla", r"semiconductors?", r"apps?",
+    )),
+    ("Science", _rx(
+        r"nasa", r"spacex", r"space station", r"asteroid", r"telescope", r"quantum",
+        r"physicists?", r"dna", r"genome", r"fossils?", r"archaeolog\w*", r"astronomers?",
+        r"spacecraft", r"rocket launch",
+    )),
+    ("Health", _rx(
+        r"cancer", r"vaccines?", r"vaccination", r"virus", r"outbreak", r"pandemic",
+        r"epidemic", r"covid(?:-19)?", r"coronavirus", r"mental health", r"diabetes",
+        r"alzheimer\w*", r"opioid\w*", r"obesity", r"hospitals?", r"public health", r"fda",
+        r"cdc", r"medicare", r"medicaid",
+    )),
+    ("Climate", _rx(
+        r"climate", r"global warming", r"greenhouse gas\w*", r"emissions", r"carbon",
+        r"wildfires?", r"heatwaves?", r"heat wave", r"drought", r"flooding",
+        r"renewable energy", r"solar power", r"fossil fuels?", r"deforestation",
+        r"biodiversity", r"hurricanes?", r"typhoons?",
+    )),
+    ("Sports", _rx(
+        r"super bowl", r"world cup", r"olympics?", r"olympic", r"nfl", r"nba", r"mlb", r"nhl",
+        r"playoffs?", r"touchdowns?", r"quarterbacks?", r"grand slam", r"wimbledon",
+        r"premier league", r"champions league", r"formula (?:1|one)", r"home run",
+        r"world series", r"fifa", r"uefa",
+    )),
+    ("Entertainment", _rx(
+        r"box office", r"movie", r"film", r"netflix", r"hollywood", r"celebrity", r"grammys?",
+        r"oscars?", r"academy awards?", r"emmys?", r"tv series", r"album", r"concert",
+        r"singer", r"actors?", r"actress", r"rapper", r"sitcom", r"premiere",
+    )),
+    ("Arts", _rx(
+        r"museums?", r"exhibitions?", r"opera", r"ballet", r"sculpture", r"art gallery",
+    )),
+)
+
+
+def _lexicon_topic(text: str) -> str:
+    """First lexicon topic whose pattern matches ``text``, or ""."""
+    t = (text or "").strip()
+    if not t:
+        return ""
+    for topic, rx in _TOPIC_LEXICON:
+        if rx.search(t):
+            return topic
+    return ""
+
+
+def _topic_from_path(path: str) -> str:
+    """The URL path's section topic, or "". The first *topical* segment wins; a geographic
+    segment (/us/, /world/) is returned only when no topical segment exists — so
+    ``/us/politics/…`` is Politics, not U.S."""
+    geo = ""
+    for seg in path.split("/"):
+        hit = _SECTIONS.get(seg.lower())
+        if hit and hit not in _GEO_TOPICS:
+            return hit
+        if hit and not geo:
+            geo = hit
+    return geo
+
+
+def classify_topic(url: str = "", source_category: str = "", title: str = "",
+                   description: str = "") -> str:
+    """THE canonical topic classifier — every stored/served article topic comes from here.
+
+    Deterministic (no network, no LLM), resolving in confidence order:
+
+    1. the source's own category tags (RSS ``<category>``, OpenGraph ``article:section``),
+       normalized into the taxonomy — first by label alias, then by the subject lexicon over the
+       tag text (so "Trump administration" is Politics even though it isn't a section name);
+       labels that map nowhere ("News", "Top Stories", "General") contribute nothing
+    2. a *topical* URL section (/politics/, /business/, /opinion/ …)
+    3. the subject lexicon over the title, then the description
+    4. a *geographic* URL section (/us-news/, /world/) — where a story happened is the weakest
+       signal about what it is about, so it never outranks a plainly political headline
+
+    Returns a :data:`TAXONOMY` member or "" (uncategorized; the UI hides the segment). Never
+    "General", never a raw publisher label."""
+    for label in _category_labels(source_category):
+        hit = _CATEGORY_ALIASES.get(label)
+        if hit:
+            return hit
+    hit = _lexicon_topic(source_category)
+    if hit:
+        return hit
+    path = urlsplit(url).path.lower() if url else ""
+    section = _topic_from_path(path)
+    if section and section not in _GEO_TOPICS:
+        return section
+    hit = _lexicon_topic(title) or _lexicon_topic(description)
+    if hit:
+        return hit
+    return section
 
 
 @dataclass(frozen=True)
@@ -145,14 +402,16 @@ class Scorer:
         self.enricher = enricher
 
     def score(self, raw: RawRead) -> ScoredRead:
-        path = urlsplit(raw.url).path.lower()
+        category = classify_topic(url=raw.url, source_category=raw.category, title=raw.title,
+                                  description=f"{raw.subtitle} {raw.description}".strip())
         political = (raw.political if raw.political is not None
-                     else looks_political(raw.url, raw.category))
+                     else (looks_political(raw.url, raw.category)
+                           or looks_political(category=category)))
         outlet, lean = self._resolve_outlet(raw)
         scored = ScoredRead(
             article_id=canonical_url(raw.url),
             outlet=outlet,
-            category=raw.category or self._topic_from_path(path),
+            category=category,
             title=raw.title or "",
             lean=lean,
             political=political,
@@ -168,14 +427,6 @@ class Scorer:
         if out is not None:
             return out.canonical, out.lean
         return (raw.outlet or _domain_of(raw.url)), float("nan")
-
-    @staticmethod
-    def _topic_from_path(path: str) -> str:
-        for seg in path.split("/"):
-            hit = _SECTIONS.get(seg.lower())
-            if hit:
-                return hit
-        return ""
 
 
 # --------------------------------------------------------------------------- #

@@ -193,7 +193,7 @@ def catalog_from_qbias(csv_path, max_items=None, seed=0) -> ItemCatalog:
                 continue
             pos.append(g)
             outlets.append((row.get(oc) or "unknown").strip() or "unknown")
-            topics.append(_first_tag(row.get(tc)) if tc else "general")   # clean first tag
+            topics.append(_first_tag(row.get(tc)) if tc else "")   # clean first tag; "" = untagged
             titles.append((row.get(hc) or "").strip())
             ids.append(f"Q{i}")
             flag = _parse_political(row.get(pc)) if pc else None

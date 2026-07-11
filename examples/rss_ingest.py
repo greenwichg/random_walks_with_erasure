@@ -4,7 +4,8 @@ Pulls articles from operator-configured RSS/Atom feeds, scores each one through 
 reading path uses (``ingest.Scorer`` + the baseline enricher), and stores them in the ``feed_articles``
 catalog (``store.FeedArticle``), deduplicated by canonical URL. It preserves what the scored model
 does not: the real publisher article URL, the publisher, the publication timestamp, the title, the
-description, and (when the feed provides it) the body.
+description, and (when the feed provides it) the body. The feed's ``<category>`` tags are parsed and
+handed to the scorer as the highest-confidence input to ``ingest.classify_topic``.
 
 Deliberately scoped to *ingestion only*: it does **not** touch the recommendation corpus, the report,
 the recommendation algorithms, or the UI. The recommender keeps using the existing corpus; a later
@@ -82,6 +83,7 @@ class FeedEntry:
         self.title = text_utils.clean_html(self.title)
         self.description = text_utils.clean_html(self.description)
         self.body = text_utils.clean_html(self.body) or None    # image-only/empty body → None
+        self.category = text_utils.clean_html(self.category) or None
 
 
 # --------------------------------------------------------------------------- #
@@ -165,6 +167,21 @@ def _apply_media(entry: FeedEntry, el, is_atom: bool) -> FeedEntry:
     return entry
 
 
+def _entry_categories(el) -> Optional[str]:
+    """Every ``<category>`` on an item/entry, joined ``"a; b; c"`` (deduped, order kept) — the
+    publisher's own topic tags, the highest-confidence input to ``ingest.classify_topic``. RSS
+    puts the tag in the element text; Atom in the ``term`` (display ``label``) attribute; a
+    ``dc:subject`` maps to local name ``subject``."""
+    seen, out = set(), []
+    for c in _children(el, "category") + _children(el, "subject"):
+        val = (_text(c) or (c.get("term") or "").strip() or (c.get("label") or "").strip())
+        key = val.lower()
+        if val and key not in seen:
+            seen.add(key)
+            out.append(val)
+    return "; ".join(out) or None
+
+
 def _rss_item(item) -> Optional[FeedEntry]:
     try:
         link = _text(_first(item, "link"))
@@ -179,7 +196,8 @@ def _rss_item(item) -> Optional[FeedEntry]:
             title=_text(_first(item, "title")),
             description=_text(_first(item, "description")) or _text(_first(item, "summary")),
             body=_text(_first(item, "encoded")) or None,   # content:encoded -> local name "encoded"
-            published_at=_to_iso(pub)), item, is_atom=False)
+            published_at=_to_iso(pub),
+            category=_entry_categories(item)), item, is_atom=False)
     except Exception:
         return None
 
@@ -202,8 +220,8 @@ def _atom_entry(entry) -> Optional[FeedEntry]:
             title=_text(_first(entry, "title")),
             description=_text(_first(entry, "summary")) or _text(_first(entry, "content")),
             body=_text(_first(entry, "content")) or None,
-            published_at=_to_iso(_text(_first(entry, "published")) or _text(_first(entry, "updated")))),
-            entry, is_atom=True)
+            published_at=_to_iso(_text(_first(entry, "published")) or _text(_first(entry, "updated"))),
+            category=_entry_categories(entry)), entry, is_atom=True)
     except Exception:
         return None
 
