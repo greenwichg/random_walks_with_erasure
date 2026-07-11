@@ -1,24 +1,23 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { Check, Clock } from "lucide-react";
+import { Clock } from "lucide-react";
 import type { Article } from "@/types/domain";
 import { LeanBadge, EmotionBadge, RegisterBadge } from "@/components/shared/article-badges";
 import { ReadArticleButton } from "@/components/shared/read-article-button";
-import { cn } from "@/lib/utils";
+import { useTranslation } from "@/lib/i18n";
 
-/** A compact article line item — used in history, search, and lists. */
+/** A compact article line item for the reading-history timeline. */
 export function ArticleRow({
   article,
   meta,
-  completed,
   index = 0,
 }: {
   article: Article;
   meta?: string;
-  completed?: boolean;
   index?: number;
 }) {
+  const { t } = useTranslation();
   return (
     <motion.div
       initial={{ opacity: 0, y: 6 }}
@@ -46,20 +45,14 @@ export function ArticleRow({
         </div>
       </div>
       <div className="flex shrink-0 flex-col items-end gap-2">
-        <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-          <Clock className="h-3.5 w-3.5" /> {article.readingMinutes}m
+        {/* Estimated (not measured) reading time — labeled honestly; the value is a deterministic
+            per-article estimate, not tracked dwell. */}
+        <span
+          className="inline-flex items-center gap-1 text-xs text-muted-foreground"
+          title={t("read.estMinutesTitle")}
+        >
+          <Clock className="h-3.5 w-3.5" /> {t("read.estMinutes", { n: article.readingMinutes })}
         </span>
-        {completed !== undefined && (
-          <span
-            className={cn(
-              "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[0.7rem] font-medium",
-              completed ? "bg-positive/12 text-positive" : "bg-muted text-muted-foreground",
-            )}
-          >
-            {completed && <Check className="h-3 w-3" />}
-            {completed ? "Read" : "Skimmed"}
-          </span>
-        )}
         {/* Same shared Read control as Discover/Stories/Recommendations — opens the canonical
             article.url in a new tab via the /api/me/reads pipeline; disabled when no URL. */}
         <ReadArticleButton article={article} openedFrom="history" />

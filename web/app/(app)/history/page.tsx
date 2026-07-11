@@ -9,8 +9,11 @@ import { leanBucket, dominantEmotion } from "@/lib/political";
 import { EMOTION_META, LEAN_META } from "@/lib/metrics";
 import { PageContainer } from "@/components/layout/page-container";
 import { ArticleRow } from "@/components/shared/article-row";
+import { InsightStrip } from "@/components/history/insight-strip";
+import { ReflectionInsights } from "@/components/history/reflection-insights";
 import { FilterSelect } from "@/components/shared/filter-select";
 import { EmptyState, ErrorState } from "@/components/shared/states";
+import { summarizeHistory } from "@/lib/history-insights";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -46,6 +49,10 @@ export default function HistoryPage() {
     if (emotion !== "all" && dominantEmotion(a.emotion) !== emotion) return false;
     return true;
   });
+
+  // Descriptive summary of the reads currently in view — powers the Information Health strip and the
+  // Reflection/Insights section (Phase 1). Reacts to the filters, since it summarises `filtered`.
+  const insights = summarizeHistory(filtered);
 
   const anyFilter = q || topic !== "all" || publisher !== "all" || lean !== "all" || emotion !== "all";
   const reset = () => {
@@ -107,6 +114,13 @@ export default function HistoryPage() {
         )}
       </div>
 
+      {data && filtered.length > 0 && (
+        <div className="mb-6 space-y-5">
+          <InsightStrip insights={insights} />
+          <ReflectionInsights insights={insights} />
+        </div>
+      )}
+
       {isLoading && (
         <div className="space-y-3">
           {Array.from({ length: 5 }).map((_, i) => (
@@ -133,7 +147,7 @@ export default function HistoryPage() {
                 {items.map((h, i) => (
                   // The card's relative time is the article's publication time (same field + formatter
                   // Discover uses) — NOT readAt, which drives only the day grouping above.
-                  <ArticleRow key={h.id} article={h.article} completed={h.completed} meta={timeAgo(h.article.publishedAt)} index={i} />
+                  <ArticleRow key={h.id} article={h.article} meta={timeAgo(h.article.publishedAt)} index={i} />
                 ))}
               </div>
             </div>
