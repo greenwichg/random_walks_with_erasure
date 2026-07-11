@@ -131,7 +131,9 @@ export default function HistoryPage() {
               </div>
               <div className="space-y-3">
                 {items.map((h, i) => (
-                  <ArticleRow key={h.id} article={h.article} completed={h.completed} meta={timeAgo(h.readAt)} index={i} />
+                  // The card's relative time is the article's publication time (same field + formatter
+                  // Discover uses) — NOT readAt, which drives only the day grouping above.
+                  <ArticleRow key={h.id} article={h.article} completed={h.completed} meta={timeAgo(h.article.publishedAt)} index={i} />
                 ))}
               </div>
             </div>
