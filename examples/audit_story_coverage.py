@@ -83,6 +83,7 @@ def audit(st, user_id: int) -> dict:
                                           for m in siblings]})
 
     verdicts = Counter(p["verdict"] for p in per_read)
+    with_sibling = verdicts.get("sibling_available", 0)
     return {"catalogArticles": catalog_n,
             "storyClusters": len(stories),
             "multiPublisherClusters": len(multi_pub),
@@ -90,7 +91,12 @@ def audit(st, user_id: int) -> dict:
             "readsInClusters": sum(1 for p in per_read if "storyId" in p),
             "perRead": per_read,
             "verdicts": dict(verdicts),
-            "storyMatchPossible": verdicts.get("sibling_available", 0) > 0}
+            # the headline coverage metric: share of the reading history with at least one
+            # UNREAD, different-publisher, candidate-eligible (fresh) same-story sibling
+            "siblingCoverage": {"withSibling": with_sibling, "reads": len(reads),
+                                "percent": round(100.0 * with_sibling / len(reads), 1)
+                                if reads else 0.0},
+            "storyMatchPossible": with_sibling > 0}
 
 
 def serve_and_diagnose(st, user_id: int) -> dict:
@@ -164,8 +170,11 @@ def sibling_report(st, user_id: int) -> None:
     cov = audit(st, user_id)
     with_siblings = [p for p in cov["perRead"]
                      if p["verdict"] in ("sibling_available", "siblings_all_stale")]
+    sc = cov["siblingCoverage"]
     print(f"reads: {cov['reads']}   catalog: {cov['catalogArticles']}   "
           f"story clusters: {cov['storyClusters']} ({cov['multiPublisherClusters']} multi-publisher)")
+    print(f"sibling coverage: {sc['withSibling']}/{sc['reads']} reads "
+          f"({sc['percent']}%) have >= 1 unread same-story sibling available as a candidate")
     if not with_siblings:
         also_read = cov["verdicts"].get("all_siblings_read", 0)
         extra = (f" ({also_read} read(s) whose only cross-publisher coverage you ALREADY read)"
@@ -241,10 +250,13 @@ def main() -> int:
 
     st = store_mod.Store(args.db)
     cov = audit(st, args.user)
+    sc = cov["siblingCoverage"]
     print(f"store: {st.url}")
     print(f"catalog articles: {cov['catalogArticles']}   story clusters: {cov['storyClusters']}"
           f"   multi-publisher clusters: {cov['multiPublisherClusters']}")
     print(f"reads (user {args.user}): {cov['reads']}   in any cluster: {cov['readsInClusters']}")
+    print(f"sibling coverage: {sc['withSibling']}/{sc['reads']} reads ({sc['percent']}%) "
+          f"have >= 1 unread same-story sibling available as a candidate")
     print(f"per-read verdicts: {cov['verdicts'] or '-'}")
     for p in cov["perRead"]:
         if p["verdict"] in ("sibling_available", "siblings_all_stale"):
