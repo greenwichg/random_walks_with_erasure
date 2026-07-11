@@ -39,7 +39,7 @@ export function SaveButton({
       title={isSaved ? t("save.removeTitle") : t("save.saveTitle")}
       onClick={() => (isSaved ? unsave.mutate(article.id) : save.mutate(article))}
       className={cn(
-        "inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-medium transition-colors",
+        "inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg px-3 text-xs font-medium transition-colors",
         isSaved
           ? "bg-primary/15 text-primary hover:bg-primary/20"
           : "bg-muted text-muted-foreground hover:bg-muted/70 hover:text-foreground",

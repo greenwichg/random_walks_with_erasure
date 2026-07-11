@@ -63,7 +63,7 @@ export function ReadArticleButton({
         if (href) window.open(href, "_blank", "noopener,noreferrer");
       }}
       className={cn(
-        "inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-medium transition-colors",
+        "inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg px-3 text-xs font-medium transition-colors",
         opened
           ? "bg-positive/15 text-positive"
           : actionable

@@ -4,6 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import {
+  ArrowLeftRight,
   Clock,
   HelpCircle,
   ThumbsUp,
@@ -54,6 +55,10 @@ export function RecommendationCard({
   // claim → receipt → proof (Commit 22): pure key selection from the resolver's structured
   // explanation — the module invents nothing, the drawer stays the proof layer.
   const pres = presentRecommendation(rec.explanation);
+  // History-backed explanations (story match, new publisher) get a slightly stronger evidence
+  // container (22.1) so "this is about MY reading" is recognizable at scan speed. Existing
+  // primary token only — no new colors.
+  const historyBacked = !!pres.comparison || rec.explanation?.type === "new_publisher";
 
   const act = (action: FeedbackAction) => onAction?.(action);
 
@@ -112,12 +117,12 @@ export function RecommendationCard({
       {/* claim → receipt → proof (Commit 22): the evidence block SHOWS the resolver's evidence —
           the two-publisher comparison for story matches, structured receipts elsewhere; the
           claim-free fallback keeps the validated sentence. The drawer stays the proof layer. */}
-      <div className="mt-4 rounded-lg border bg-muted/30 p-3">
+      <div className={cn("mt-4 rounded-lg border p-3", historyBacked ? "border-primary/25 bg-primary/[0.04]" : "bg-muted/30")}>
         {pres.comparison ? (
           <div>
             <div className="flex items-start gap-2">
-              <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-              <p className="min-w-0 text-sm font-medium leading-snug">{t(pres.claimKey ?? "rec.whyThisArticle")}</p>
+              <ArrowLeftRight className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+              <p className="min-w-0 text-sm font-semibold leading-snug">{t(pres.claimKey ?? "rec.whyThisArticle")}</p>
             </div>
             {/* the receipt: You read {A} ✓ → Compare with / Update from {B} — evidence the
                 resolver already proved (story membership, publishers, dates) shown as structure */}
@@ -172,7 +177,7 @@ export function RecommendationCard({
             <div className="min-w-0">
               {pres.claimKey ? (
                 <>
-                  <p className="text-sm font-medium leading-snug">{t(pres.claimKey)}</p>
+                  <p className="text-sm font-semibold leading-snug">{t(pres.claimKey)}</p>
                   {pres.receipts.length > 0 && (
                     <p className="mt-0.5 text-xs text-muted-foreground">
                       {pres.receipts.map((r) => t(r.key, r.params)).join(" · ")}
@@ -203,8 +208,9 @@ export function RecommendationCard({
         </div>
       </div>
 
-      {/* actions */}
-      <div className="mt-4 flex items-center gap-1">
+      {/* actions — pills never break mid-word (buttons are nowrap); the row itself wraps so
+          long FR/DE CTAs move whole pills to a second line instead of deforming them (22.1) */}
+      <div className="mt-4 flex flex-wrap items-center gap-1 gap-y-1.5">
         {/* Primary: opening a recommended read records the reception signal behind Open-Mindedness
             (the existing /me/recommendations/opened endpoint via onOpen) and opens the real article
             so the browser extension captures the read and Dashboard/History/Analytics/Health update
