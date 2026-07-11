@@ -171,29 +171,37 @@ export function RecommendationCard({
               </div>
             )}
           </div>
+        ) : pres.reader || pres.contribution ? (
+          <div className="flex items-start gap-2">
+            <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+            <div className="min-w-0">
+              {/* Commit 23: the resolver's structured parts — the reader fact leads, the
+                  contribution supports. For the documented contribution-first exception
+                  (long_tail has no truthful reader fact) the contribution takes the bold slot. */}
+              {pres.reader && (
+                <p className="text-sm font-semibold leading-snug">
+                  {t(pres.reader.key, pres.reader.params)}
+                </p>
+              )}
+              {pres.contribution && (
+                <p className={pres.reader ? "mt-0.5 text-xs text-muted-foreground" : "text-sm font-semibold leading-snug"}>
+                  {t(pres.contribution.key, pres.contribution.params)}
+                </p>
+              )}
+            </div>
+          </div>
         ) : (
           <div className="flex items-start gap-2">
             <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
             <div className="min-w-0">
-              {pres.claimKey ? (
-                <>
-                  <p className="text-sm font-semibold leading-snug">{t(pres.claimKey)}</p>
-                  {pres.receipts.length > 0 && (
-                    <p className="mt-0.5 text-xs text-muted-foreground">
-                      {pres.receipts.map((r) => t(r.key, r.params)).join(" · ")}
-                    </p>
-                  )}
-                </>
-              ) : (
-                <>
-                  <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/80">
-                    {t("rec.whyThisArticle")}
-                  </div>
-                  <p className="mt-0.5 text-sm text-muted-foreground">
-                    {localizeExplanation(rec.explanation ?? { message: rec.reason })}
-                  </p>
-                </>
-              )}
+              {/* claim-free fallback (coverage_breadth, balanced-profile bridge, unknown types):
+                  the resolver's validated sentence, localized — never an over-claim */}
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/80">
+                {t("rec.whyThisArticle")}
+              </div>
+              <p className="mt-0.5 text-sm text-muted-foreground">
+                {localizeExplanation(rec.explanation ?? { message: rec.reason })}
+              </p>
             </div>
           </div>
         )}

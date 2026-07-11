@@ -202,6 +202,126 @@ def test_validate_catches_tampering_and_over_claims():
     assert er.validate(fake_topic, _rec(CNN, "CNN", topic="Energy"), _ctx(tops=["Politics"]), INDEX)
 
 
+# ---------------------------------------------------------------- Commit 23: structured parts
+def test_parts_story_variants_and_validate():
+    ctx = _ctx(reads=[(FOX, "Fox News")])
+    same = _rec(CNN, "CNN", published="2026-07-09T09:00:00+00:00")
+    out = er.resolve(same, ctx, INDEX)
+    assert out["readerFact"] == {"key": "read_story_from", "params": {"publisher": "Fox News"}}
+    assert out["contribution"] == {"key": "covered_same_story", "params": {"publisher": "CNN"}}
+    assert er.validate(out, same, ctx, INDEX) == []
+
+    update = _rec(CNN, "CNN", published="2026-07-10T09:00:00+00:00")
+    out2 = er.resolve(update, ctx, INDEX)
+    assert out2["contribution"] == {"key": "story_update", "params": {"publisher": "CNN"}}
+    assert er.validate(out2, update, ctx, INDEX) == []
+
+    ctx3 = _ctx(reads=[(FOX, "Fox News"), (GUARDIAN, "The Guardian")])
+    out3 = er.resolve(_rec(CNN, "CNN"), ctx3, INDEX)
+    assert out3["readerFact"] == {"key": "following_story", "params": {"n": 2}}
+    assert out3["contribution"] == {"key": "story_coverage", "params": {"publisher": "CNN"}}
+    assert er.validate(out3, _rec(CNN, "CNN"), ctx3, INDEX) == []
+
+
+def test_parts_new_publisher_bands():
+    never = er.resolve(_rec("https://cnn.example.com/x", "CNN"), _ctx(bands={"CNN": (0, 0.0)}), {})
+    assert never["readerFact"] == {"key": "never_read_publisher", "params": {"publisher": "CNN"}}
+    assert never["contribution"]["key"] == "add_new_publisher"
+
+    ctx = _ctx(bands={"CNN": (2, 0.02)})   # share < 5 % → the "rarely" band
+    rarely = er.resolve(_rec("https://cnn.example.com/x", "CNN"), ctx, {})
+    assert rarely["readerFact"] == {"key": "rarely_read_publisher",
+                                    "params": {"publisher": "CNN", "n": 2}}
+    assert er.validate(rarely, _rec("https://cnn.example.com/x", "CNN"), ctx, {}) == []
+
+
+def test_parts_topic_long_tail_and_claim_free():
+    ctx = _ctx(bands={"CNN": (9, 0.3)}, tops=["Politics"])
+    topic = er.resolve(_rec("https://cnn.example.com/x", "CNN", cross=False), ctx, {})
+    assert topic["readerFact"] == {"key": "top_topic", "params": {"topic": "Politics"}}
+    assert topic["contribution"]["key"] == "more_topic_coverage"
+    assert er.validate(topic, _rec("https://cnn.example.com/x", "CNN", cross=False), ctx, {}) == []
+
+    # long_tail: the documented exception — contribution only, NEVER a reader fact
+    tail_ctx = _ctx(bands={"CNN": (9, 0.3)})
+    tail = er.resolve(_rec("https://cnn.example.com/x", "CNN", strategy="rwe-d"), tail_ctx, {})
+    assert "readerFact" not in tail
+    assert tail["contribution"] == {"key": "rare_in_feeds", "params": {}}
+    assert er.validate(tail, _rec("https://cnn.example.com/x", "CNN", strategy="rwe-d"), tail_ctx, {}) == []
+
+    # coverage_breadth stays part-free
+    cb = er.resolve(_rec("https://cnn.example.com/x", "CNN"), _ctx(bands={"CNN": (9, 0.3)}), {})
+    assert cb["type"] == "coverage_breadth"
+    assert "readerFact" not in cb and "contribution" not in cb
+
+
+def test_bridge_semantic_profile_banding():
+    rec = _rec("https://cnn.example.com/x", "CNN", cross=True)
+    # no reader_mean_lean in ctx → balanced (the no-claim default) → article-centric, no parts
+    ctx = _ctx(bands={"CNN": (9, 0.3)})
+    out = er.resolve(rec, ctx, {})
+    assert out["type"] == "bridge"
+    assert out["evidence"]["readerPoliticalProfile"] == "balanced"
+    assert "readerFact" not in out and "contribution" not in out
+    assert er.validate(out, rec, ctx, {}) == []
+
+    # near-center mean stays balanced; presentation never sees the raw number
+    ctx_near = dict(ctx, reader_mean_lean=0.3)
+    near = er.resolve(rec, ctx_near, {})
+    assert near["evidence"]["readerPoliticalProfile"] == "balanced"
+    assert "readerFact" not in near
+
+    # meaningfully off-center → semantic profile + reader-first parts, validate clean
+    for mean, profile, key in ((0.8, "leans_right", "political_lean_right"),
+                               (-0.8, "leans_left", "political_lean_left")):
+        ctx_lean = dict(ctx, reader_mean_lean=mean)
+        lean = er.resolve(rec, ctx_lean, {})
+        assert lean["evidence"]["readerPoliticalProfile"] == profile
+        assert lean["readerFact"] == {"key": key, "params": {}}
+        assert lean["contribution"] == {"key": "other_side_perspective", "params": {}}
+        assert er.validate(lean, rec, ctx_lean, {}) == []
+
+
+def test_validate_catches_part_tampering():
+    ctx = _ctx(reads=[(FOX, "Fox News")])
+    rec = _rec(CNN, "CNN", published="2026-07-09T09:00:00+00:00")
+    good = er.resolve(rec, ctx, INDEX)
+
+    wrong_pub = dict(good, contribution={"key": "covered_same_story", "params": {"publisher": "Reuters"}})
+    assert any("contribution cites a publisher" in f for f in er.validate(wrong_pub, rec, ctx, INDEX))
+
+    wrong_fact = dict(good, readerFact={"key": "read_story_from", "params": {"publisher": "CNN"}})
+    assert any("readerFact cites a publisher" in f for f in er.validate(wrong_fact, rec, ctx, INDEX))
+
+    # a balanced bridge must never carry reader-first parts
+    brec = _rec("https://cnn.example.com/x", "CNN", cross=True)
+    bctx = _ctx(bands={"CNN": (9, 0.3)})
+    bridge = er.resolve(brec, bctx, {})
+    forged = dict(bridge, readerFact={"key": "political_lean_right", "params": {}},
+                  contribution={"key": "other_side_perspective", "params": {}})
+    assert any("balanced bridge" in f for f in er.validate(forged, brec, bctx, {}))
+
+    # evidence profile must match the recomputed profile when the ctx carries the mean
+    lean_ctx = dict(bctx, reader_mean_lean=0.8)
+    lean = er.resolve(brec, lean_ctx, {})
+    tampered = dict(lean, evidence=dict(lean["evidence"], readerPoliticalProfile="leans_left"))
+    assert any("recomputed profile" in f for f in er.validate(tampered, brec, lean_ctx, {}))
+
+    # long_tail may never claim a reader fact
+    tail = er.resolve(_rec("https://cnn.example.com/x", "CNN", strategy="rwe-d"), bctx, {})
+    tail_forged = dict(tail, readerFact={"key": "never_read_publisher", "params": {"publisher": "CNN"}})
+    assert any("documented exception" in f for f in er.validate(tail_forged,
+               _rec("https://cnn.example.com/x", "CNN", strategy="rwe-d"), bctx, {}))
+
+    # rarely count must match the evidence
+    rctx = _ctx(bands={"CNN": (2, 0.02)})
+    rare = er.resolve(_rec("https://cnn.example.com/x", "CNN"), rctx, {})
+    off_by_one = dict(rare, readerFact={"key": "rarely_read_publisher",
+                                        "params": {"publisher": "CNN", "n": 7}})
+    assert any("count does not match" in f for f in er.validate(off_by_one,
+               _rec("https://cnn.example.com/x", "CNN"), rctx, {}))
+
+
 # ---------------------------------------------------------------- real clustering round-trip
 def test_story_index_from_real_clusters(tmp_path):
     """Case 1 across the REAL Story Service: two publishers, same title tokens → one story;
@@ -289,6 +409,10 @@ def test_every_served_explanation_validates(tmp_path, monkeypatch):
             assert r["reason"] == exp["message"]                      # the mirror contract
             assert "RWE-B" not in r["reason"] and "RWE-D" not in r["reason"]
             assert er.validate(exp, r, ctx, idx) == [], (exp, r["article"]["id"])
+            # Commit 23: structured parts must survive the typed FastAPI model (additive fields)
+            for part in ("readerFact", "contribution"):
+                if exp.get(part) is not None:
+                    assert isinstance(exp[part].get("key"), str) and exp[part]["key"]
 
         # the explain payload carries the SAME resolved sentence per article
         exp_payload = client.get("/api/internal/recommendations/explain", headers=h).json()

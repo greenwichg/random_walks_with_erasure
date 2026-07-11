@@ -628,12 +628,24 @@ class ArticleModel(BaseModel):
     publisherLogoSource: Optional[str] = None
 
 
+class ExplanationPartModel(BaseModel):
+    """One semantic explanation part (Commit 23): a catalog-template discriminator plus its
+    evidence-derived params — never a localized sentence (the web localizes via the
+    rec.reader.* / rec.contribution.* templates, the Commit 20 pattern)."""
+    key: str
+    params: dict | None = None
+
+
 class ExplanationModel(BaseModel):
     """The Evidence Resolver's structured explanation (21a.3): the UI shows ``message``;
-    tooling and the validation pipeline consume ``type``/``priority``/``evidence``."""
+    tooling and the validation pipeline consume ``type``/``priority``/``evidence``.
+    Commit 23 adds the semantic ``readerFact``/``contribution`` parts — additive; older
+    clients keep reading ``message``, which is byte-identical."""
     type: str
     priority: int
     variant: str | None = None
+    readerFact: ExplanationPartModel | None = None
+    contribution: ExplanationPartModel | None = None
     message: str
     evidence: dict | None = None
 

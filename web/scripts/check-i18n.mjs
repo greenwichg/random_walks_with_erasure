@@ -44,6 +44,28 @@ const DYNAMIC_PREFIXES = [
  * Every supported (type, variant) MUST have a catalog template, or a recommendation would fall back
  * to raw English server prose.
  */
+/**
+ * Commit 23 — every semantic part the resolver can emit MUST have a template, or a structured
+ * explanation would silently fall back to the English message. Mirrors READER_TEMPLATES /
+ * CONTRIBUTION_TEMPLATES in lib/rec-presentation.ts.
+ */
+const REQUIRED_PART_KEYS = [
+  "rec.reader.read_story_from",
+  "rec.reader.following_story",
+  "rec.reader.never_read_publisher",
+  "rec.reader.rarely_read_publisher",
+  "rec.reader.top_topic",
+  "rec.reader.political_lean_left",
+  "rec.reader.political_lean_right",
+  "rec.contribution.covered_same_story",
+  "rec.contribution.story_update",
+  "rec.contribution.story_coverage",
+  "rec.contribution.add_new_publisher",
+  "rec.contribution.more_topic_coverage",
+  "rec.contribution.other_side_perspective",
+  "rec.contribution.rare_in_feeds",
+];
+
 const REQUIRED_EXPLANATION_KEYS = [
   "explanation.story_match.same_event",
   "explanation.story_match.follow_up",
@@ -113,9 +135,12 @@ for (const key of enKeys) {
   }
 }
 
-// ---- 4. explanation template coverage ----
+// ---- 4. explanation + structured-part template coverage ----
 for (const k of REQUIRED_EXPLANATION_KEYS) {
   if (!enKeys.has(k)) fail(`missing required explanation template: "${k}"`);
+}
+for (const k of REQUIRED_PART_KEYS) {
+  if (!enKeys.has(k)) fail(`missing required part template: "${k}"`);
 }
 
 // ---- 5. unused keys (scan source) ----

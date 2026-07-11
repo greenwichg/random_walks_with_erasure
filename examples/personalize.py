@@ -282,7 +282,11 @@ class Personalizer:
                  for r in self.store.get_reads(user_id)]
         return {"reads": reads,
                 "familiarity": engine._familiarity_of(m.corpus.pop, m.reader_row),
-                "top_topics": [engine._prettify(t) for t, _ in (rep.get("top_categories") or [])]}
+                "top_topics": [engine._prettify(t) for t, _ in (rep.get("top_categories") or [])],
+                # Commit 23: the reader's mean political lean for the resolver's SEMANTIC
+                # readerPoliticalProfile banding (the raw number never reaches presentation).
+                # `rep` is already computed above — no new computation runs.
+                "reader_mean_lean": round(float(rep.get("mean_lean") or 0.0), 3)}
 
     def coach_greeting(self, user_id: int) -> list:
         """Coach greeting grounded on the user's Measured report."""

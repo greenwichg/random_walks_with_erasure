@@ -7,8 +7,17 @@ source of truth underneath it.
 Contract (structured, so tooling never parses prose):
 
     {"type": "story_match", "priority": 1, "variant": "same_event",
+     "readerFact":   {"key": "read_story_from",    "params": {"publisher": "Fox News"}},
+     "contribution": {"key": "covered_same_story", "params": {"publisher": "CNN"}},
      "message": "You already read this story from Fox News. Here's how CNN covered the same story.",
      "evidence": {...the computed facts that license the sentence...}}
+
+Commit 23: ``readerFact`` / ``contribution`` are SEMANTIC parts (key + params, never localized
+prose) — the UI renders them via catalog templates (``rec.reader.*`` / ``rec.contribution.*``),
+exactly the Commit 20 pattern. ``message`` stays byte-identical: it remains the validated whole,
+the ``reason`` mirror, and the drawer sentence. Types without a truthful reader fact carry no
+``readerFact`` (long_tail — see the branch comment — and coverage_breadth; a balanced-profile
+bridge degrades the same way), so the structure can never over-claim.
 
 Priorities (first match wins; explanations are NEVER combined). Ordered so the most personal,
 most provable reason always wins — a same-story relationship, a cross-cutting read, or an
@@ -48,6 +57,27 @@ TYPES = ("story_match", "topic_continuity", "new_publisher", "bridge",
 #: "latest update" is only truthful when the recommendation is meaningfully newer than the
 #: coverage the reader already saw — a same-news-cycle article is "the same story", not an update.
 _FOLLOW_UP_MIN_HOURS = 6.0
+
+#: Commit 23 — the reader-side "meaningfully off-center" bar for the SEMANTIC political profile,
+#: deliberately the same 0.5 the cross-cutting gate applies to the article (api_server._cross_of),
+#: so "leans" means one thing product-wide. Numeric thresholding stays HERE; presentation only
+#: ever sees the semantic value.
+_READER_LEAN_TAU = 0.5
+
+
+def _reader_political_profile(ctx: dict) -> str:
+    """``balanced`` / ``leans_left`` / ``leans_right`` from the context's reader mean lean.
+    Missing or near-center means (|mean| < tau) are ``balanced`` — the no-claim default, so an
+    older caller that doesn't supply the mean can never cause an over-claim."""
+    try:
+        mean = float(ctx.get("reader_mean_lean"))
+    except (TypeError, ValueError):
+        return "balanced"
+    if mean <= -_READER_LEAN_TAU:
+        return "leans_left"
+    if mean >= _READER_LEAN_TAU:
+        return "leans_right"
+    return "balanced"
 
 
 def _hours_after(later: str, earlier: str) -> Optional[float]:
@@ -116,15 +146,22 @@ def resolve(rec: dict, ctx: dict, index: Optional[dict] = None) -> dict:
             if len(mine) >= 2:
                 variant, message = "following", (
                     f"You've been following this story. Here's {publisher}'s coverage.")
+                reader_fact = {"key": "following_story", "params": {"n": len(mine)}}
+                contribution = {"key": "story_coverage", "params": {"publisher": publisher}}
             elif gap_h is not None and gap_h >= _FOLLOW_UP_MIN_HOURS:
                 variant, message = "follow_up", (
                     f"You already read the earlier coverage from {read_pub}. "
                     f"Here's {publisher}'s latest update.")
+                reader_fact = {"key": "read_story_from", "params": {"publisher": read_pub}}
+                contribution = {"key": "story_update", "params": {"publisher": publisher}}
             else:
                 variant, message = "same_event", (
                     f"You already read this story from {read_pub}. "
                     f"Here's how {publisher} covered the same story.")
+                reader_fact = {"key": "read_story_from", "params": {"publisher": read_pub}}
+                contribution = {"key": "covered_same_story", "params": {"publisher": publisher}}
             return {"type": "story_match", "priority": 1, "variant": variant, "message": message,
+                    "readerFact": reader_fact, "contribution": contribution,
                     "evidence": {"storyId": story["storyId"], "readUrl": read["url"],
                                  "readPublisher": read_pub, "recPublisher": publisher,
                                  "storyReads": len(mine),
@@ -134,9 +171,18 @@ def resolve(rec: dict, ctx: dict, index: Optional[dict] = None) -> dict:
     # -- P2 · bridge (a cross-cutting read is a stronger, more personal reason than a merely
     #                 shared topic — so it outranks topic_continuity as of 21a.4) -----------
     if bool(rec.get("crossCutting")):
-        return {"type": "bridge", "priority": 2,
-                "message": "This article offers another political perspective.",
-                "evidence": {"crossCutting": True, "articleLean": art.get("lean")}}
+        # Commit 23: the SEMANTIC reader profile licenses the reader-first parts. Only a reader
+        # who is meaningfully off-center gets "your reading has leaned {side}"; a balanced (or
+        # unknown-mean) reader degrades to the article-centric message — honesty over symmetry.
+        profile = _reader_political_profile(ctx)
+        out = {"type": "bridge", "priority": 2,
+               "message": "This article offers another political perspective.",
+               "evidence": {"crossCutting": True, "articleLean": art.get("lean"),
+                            "readerPoliticalProfile": profile}}
+        if profile in ("leans_left", "leans_right"):
+            out["readerFact"] = {"key": f"political_lean_{profile.split('_')[1]}", "params": {}}
+            out["contribution"] = {"key": "other_side_perspective", "params": {}}
+        return out
 
     # -- P3 · new_publisher --------------------------------------------------
     fam_of: Optional[Callable] = ctx.get("familiarity")
@@ -144,8 +190,14 @@ def resolve(rec: dict, ctx: dict, index: Optional[dict] = None) -> dict:
     if fam and fam.get("band") in ("never", "rarely"):
         first = (f"You've never read {publisher} before." if fam["band"] == "never"
                  else f"You rarely read {publisher}.")
+        reader_fact = ({"key": "never_read_publisher", "params": {"publisher": publisher}}
+                       if fam["band"] == "never" else
+                       {"key": "rarely_read_publisher",
+                        "params": {"publisher": publisher, "n": int(fam.get("reads") or 0)}})
         return {"type": "new_publisher", "priority": 3,
                 "message": f"{first} This broadens your source diversity.",
+                "readerFact": reader_fact,
+                "contribution": {"key": "add_new_publisher", "params": {}},
                 "evidence": dict(fam, publisher=publisher)}
 
     # -- P4 · topic_continuity (fallback only — reached only after story, cross-cutting, and
@@ -157,12 +209,18 @@ def resolve(rec: dict, ctx: dict, index: Optional[dict] = None) -> dict:
                   else "Here's more coverage from another outlet.")
         return {"type": "topic_continuity", "priority": 4,
                 "message": f"You've been reading about {topic.lower()}. {second}",
+                "readerFact": {"key": "top_topic", "params": {"topic": topic}},
+                "contribution": {"key": "more_topic_coverage", "params": {}},
                 "evidence": {"topic": topic, "topTopics": tops, "crossCutting": cross}}
 
     # -- P5 · long_tail --------------------------------------------------------
     if str(rec.get("strategy") or "") == "rwe-d":
+        # Commit 23 documented exception: NO reader fact exists here by construction — when P5
+        # fires, new_publisher (P3) did not, so the reader is NOT unfamiliar with this publisher.
+        # Long tail therefore leads with its contribution (an item fact RWE-D licenses).
         return {"type": "long_tail", "priority": 5,
                 "message": "This article introduces a less frequently recommended source.",
+                "contribution": {"key": "rare_in_feeds", "params": {}},
                 "evidence": {"strategy": "rwe-d"}}
 
     # -- P6 · coverage_breadth (claim-free — no priority may over-claim) --------
@@ -225,4 +283,76 @@ def validate(explanation: dict, rec: dict, ctx: dict, index: Optional[dict] = No
         if str(rec.get("strategy")) != "rwe-d":
             fails.append("recommendation was not chosen by rwe-d")
     # coverage_breadth: claim-free by construction — nothing to verify.
+
+    # ---- Commit 23 · structured parts are SHOWN sentences too — validate each individually.
+    # Additive: every whole-message check above is unchanged; these gates prove the semantic
+    # readerFact/contribution objects are licensed by the same evidence, so the pipeline keeps
+    # validating exactly what users see after the UI switches to the structured fields.
+    rf = explanation.get("readerFact")
+    co = explanation.get("contribution")
+
+    def _part(part, name):
+        """Shape check; returns (key, params) or records a failure."""
+        if part is None:
+            return None, {}
+        if not isinstance(part, dict) or not isinstance(part.get("key"), str):
+            fails.append(f"{name} is not a structured part")
+            return None, {}
+        return part["key"], dict(part.get("params") or {})
+
+    rf_key, rf_p = _part(rf, "readerFact")
+    co_key, co_p = _part(co, "contribution")
+
+    if etype == "story_match":
+        if rf_key not in ("read_story_from", "following_story"):
+            fails.append(f"story readerFact key {rf_key!r} not allowed")
+        elif rf_key == "read_story_from" and rf_p.get("publisher") != ev.get("readPublisher"):
+            fails.append("story readerFact cites a publisher the evidence does not")
+        elif rf_key == "following_story":
+            if int(rf_p.get("n") or 0) != int(ev.get("storyReads") or 0) or int(ev.get("storyReads") or 0) < 2:
+                fails.append("following_story count does not match storyReads evidence")
+        want_co = {"same_event": "covered_same_story", "follow_up": "story_update",
+                   "following": "story_coverage"}.get(str(explanation.get("variant")))
+        if co_key != want_co:
+            fails.append(f"story contribution key {co_key!r} not allowed for the variant")
+        elif co_p.get("publisher") != ev.get("recPublisher"):
+            fails.append("story contribution cites a publisher the evidence does not")
+    elif etype == "new_publisher":
+        want_rf = "never_read_publisher" if ev.get("band") == "never" else "rarely_read_publisher"
+        if rf_key != want_rf:
+            fails.append(f"new_publisher readerFact key {rf_key!r} does not match band")
+        else:
+            if rf_p.get("publisher") != publisher:
+                fails.append("new_publisher readerFact cites the wrong publisher")
+            if rf_key == "rarely_read_publisher" and int(rf_p.get("n") or -1) != int(ev.get("reads") or 0):
+                fails.append("rarely_read_publisher count does not match evidence reads")
+        if co_key != "add_new_publisher":
+            fails.append(f"new_publisher contribution key {co_key!r} not allowed")
+    elif etype == "topic_continuity":
+        if rf_key != "top_topic" or rf_p.get("topic") != str(art.get("topic") or ""):
+            fails.append("topic readerFact does not cite the article's topic")
+        if co_key != "more_topic_coverage":
+            fails.append(f"topic contribution key {co_key!r} not allowed")
+    elif etype == "bridge":
+        profile = ev.get("readerPoliticalProfile")
+        if profile not in ("balanced", "leans_left", "leans_right"):
+            fails.append(f"bridge evidence has no valid readerPoliticalProfile: {profile!r}")
+        elif "reader_mean_lean" in ctx and _reader_political_profile(ctx) != profile:
+            fails.append("readerPoliticalProfile does not match the recomputed profile")
+        if profile == "balanced":
+            if rf is not None or co is not None:
+                fails.append("balanced bridge must not claim reader-first parts")
+        else:
+            if rf_key != f"political_lean_{str(profile).split('_')[-1]}":
+                fails.append(f"bridge readerFact {rf_key!r} does not match profile {profile!r}")
+            if co_key != "other_side_perspective":
+                fails.append(f"bridge contribution key {co_key!r} not allowed")
+    elif etype == "long_tail":
+        if rf is not None:
+            fails.append("long_tail must not claim a reader fact (documented exception)")
+        if co_key != "rare_in_feeds":
+            fails.append(f"long_tail contribution key {co_key!r} not allowed")
+    elif etype == "coverage_breadth":
+        if rf is not None or co is not None:
+            fails.append("coverage_breadth is claim-free and must carry no parts")
     return fails

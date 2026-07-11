@@ -204,12 +204,24 @@ export interface Article {
   publisherLogoSource?: string;
 }
 
+/** One semantic explanation part (Commit 23): a template discriminator + evidence-derived
+ *  params — never a localized sentence. The UI localizes via the rec.reader.* /
+ *  rec.contribution.* catalog templates (the Commit 20 pattern). */
+export interface ExplanationPart {
+  key: string;
+  params?: Record<string, unknown>;
+}
+
 /** The Evidence Resolver's structured explanation (21a.3): UI shows `message`;
- *  tooling and the validation pipeline consume `type`/`priority`/`evidence`. */
+ *  tooling and the validation pipeline consume `type`/`priority`/`evidence`.
+ *  Commit 23 adds the semantic `readerFact`/`contribution` parts — additive; `message`
+ *  is unchanged and remains the validated whole + the `reason` mirror. */
 export interface RecommendationExplanation {
   type: string;
   priority: number;
   variant?: string;
+  readerFact?: ExplanationPart;
+  contribution?: ExplanationPart;
   message: string;
   evidence?: Record<string, unknown>;
 }
