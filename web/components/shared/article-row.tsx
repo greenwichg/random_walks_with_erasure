@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import { Check, Clock } from "lucide-react";
 import type { Article } from "@/types/domain";
 import { LeanBadge, EmotionBadge, RegisterBadge } from "@/components/shared/article-badges";
+import { ReadArticleButton } from "@/components/shared/read-article-button";
 import { cn } from "@/lib/utils";
 
 /** A compact article line item — used in history, search, and lists. */
@@ -59,6 +60,9 @@ export function ArticleRow({
             {completed ? "Read" : "Skimmed"}
           </span>
         )}
+        {/* Same shared Read control as Discover/Stories/Recommendations — opens the canonical
+            article.url in a new tab via the /api/me/reads pipeline; disabled when no URL. */}
+        <ReadArticleButton article={article} openedFrom="history" />
       </div>
     </motion.div>
   );
