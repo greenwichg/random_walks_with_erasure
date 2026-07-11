@@ -15,7 +15,10 @@ What this module does:
   table), rank-based match band (``strong`` / ``good`` / ``candidate`` — ranking language, not a
   statistical confidence), the cross-cutting derivation, three-tier outlet familiarity
   (``never`` / ``rarely`` / ``familiar``), item-degree percentile (the long-tail evidence behind
-  RWE-D), and a two-hop connectivity summary (how many of the reader's graph reads co-connect);
+  RWE-D), a two-hop connectivity summary (how many of the reader's graph reads co-connect), and —
+  on the personal path (C5) — a ``storyMatch`` diagnostic: the Story-Service cluster that would
+  license a story_match explanation, the reader's matched reads inside it, or the exact gate that
+  failed (``not_in_any_story`` / ``no_story_mate_in_history`` / ``only_same_publisher_coverage``);
 * answers "why wasn't article X recommended?" with a truthful exclusion taxonomy:
   ``recommended`` · ``seen_excluded`` (you read it) · ``below_cutoff`` (ranked, with the numbers)
   · ``not_in_graph`` (in the catalog but not a recommendable node) · ``not_in_catalog``.
@@ -121,6 +124,36 @@ def _topic_share(corpus, u: int, col: int) -> Optional[dict]:
         return None
 
 
+def _story_match_diag(art: dict, index: dict, read_urls: set) -> dict:
+    """The story_match (P1) licensing facts for THIS article, re-derived from the SAME story index
+    the Evidence Resolver consumes — so a story_match card is traceable to its validated cluster,
+    and a card that did NOT story-match shows exactly which gate failed. Verdicts:
+
+      not_in_any_story             the article belongs to no Story Service cluster
+      no_story_mate_in_history     it has a cluster, but the reader read none of its members
+      only_same_publisher_coverage the reader's only story-mates are the SAME publisher (P1
+                                   requires a different publisher — "here's how X covered it"
+                                   is never licensed by X's own coverage)
+      matched                      P1 is licensed (story_match will outrank bridge and the rest)
+    """
+    url = _canonical_url(str(art.get("url") or art.get("id") or ""))
+    story = index.get(url)
+    if not story:
+        return {"storyId": None, "matched": False, "reason": "not_in_any_story", "readMatches": []}
+    members = {_canonical_url(str(m["url"])): m for m in story["coverage"] if m.get("url")}
+    mine = [members[u] for u in sorted(read_urls) if u in members and u != url]
+    matches = [{"url": m.get("url"), "publisher": m.get("publisher"),
+                "headline": m.get("headline"), "publishedAt": m.get("publishedAt")} for m in mine]
+    if not mine:
+        return {"storyId": story["storyId"], "matched": False,
+                "reason": "no_story_mate_in_history", "readMatches": []}
+    if all(str(m.get("publisher") or "") == str(art.get("publisher") or "") for m in mine):
+        return {"storyId": story["storyId"], "matched": False,
+                "reason": "only_same_publisher_coverage", "readMatches": matches}
+    return {"storyId": story["storyId"], "matched": True, "reason": "matched",
+            "readMatches": matches}
+
+
 def _params_used(model, strategy: str, params: Optional[dict]) -> dict:
     """Echo the hyperparameters actually in effect on the model instance (never the request)."""
     used = {"source": "sliders" if params else "defaults"}
@@ -138,12 +171,19 @@ def _params_used(model, strategy: str, params: Optional[dict]) -> dict:
 
 def explain(backend, corpus, rec, u: int, strategy: Optional[str] = None,
             params: Optional[dict] = None, article: Optional[str] = None,
-            reads_meta: Optional[dict] = None, url_to_id: Optional[dict] = None) -> dict:
+            reads_meta: Optional[dict] = None, url_to_id: Optional[dict] = None,
+            story_index: Optional[dict] = None, read_urls: Optional[set] = None) -> dict:
     """Explain the exact feed ``(corpus, rec, u, strategy, params)`` would serve.
 
     Read-only: reuses ``Backend._model_for`` (the serving models) and replicates the serving
     plan; tests pin the resulting article ids equal to ``Backend._serialize_recommendations``.
     ``article`` (id or URL) additionally asks "why was/wasn't THIS article in the feed?".
+
+    ``story_index`` + ``read_urls`` (Commit C5, the personal path) additionally attach a
+    ``storyMatch`` diagnostic per recommendation — the P1 licensing facts re-derived from the
+    same Story Service clusters the Evidence Resolver consumes (story id, the reader's matched
+    reads, or the exact gate that failed). Absent on the base/demo path, which has no reader
+    history for story matching to reason over.
     """
     mind = corpus.mind
     uid = np.asarray(mind.dataset.user_ids)[u]
@@ -216,7 +256,7 @@ def explain(backend, corpus, rec, u: int, strategy: Optional[str] = None,
         co_readers = fg.A[:, j]
         co_items = np.asarray((fg.A.T @ co_readers).todense()).ravel()
         within2 = int(sum(1 for i in seen if i != j and co_items[i] > 0))
-        return {
+        out = {
             "articleId": art["id"], "url": art.get("url"), "headline": art["headline"],
             "publisher": art["publisher"], "lean": art["lean"],
             "topic": art.get("topic"), "publishedAt": art.get("publishedAt"),
@@ -242,6 +282,9 @@ def explain(backend, corpus, rec, u: int, strategy: Optional[str] = None,
             },
             "connectivity": {"readsWithinTwoHops": within2, "graphReads": len(seen)},
         }
+        if story_index is not None:
+            out["storyMatch"] = _story_match_diag(art, story_index, read_urls or set())
+        return out
 
     recommendations = [_evidence(col, j, s) for col, j, s in chosen]
 

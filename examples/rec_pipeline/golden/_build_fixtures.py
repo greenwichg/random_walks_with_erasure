@@ -1,5 +1,6 @@
-"""Author the 9 scenario golden fixtures for the Recommendation Validation Pipeline (21d Phase 1).
-Each scenario maps to an explanation type so a failure names the type, not a persona."""
+"""Author the scenario golden fixtures for the Recommendation Validation Pipeline (21d Phase 1;
+10 scenarios as of Commit C5). Each scenario maps to an explanation type / precedence claim so a
+failure names the type, not a persona."""
 import json
 import pathlib
 
@@ -167,6 +168,26 @@ FIX["story_follower"] = {
     "readers": [reader([("https://foxnews.example.com/story/summit", "Fox News"),
                         ("https://cnn.example.com/story/summit", "CNN")] + BASE_READS[:3])],
     "target": "https://bbc.example.com/story/summit"}
+
+# 10 · story_over_bridge — the Adams-style precedence pair (Commit C5): the target is BOTH a
+# story sibling (the reader read CNN's coverage of the same political story) AND cross-cutting
+# (a right political article to a left-history reader) — so story_match (P1) and bridge (P2)
+# are simultaneously applicable, and P1 must win. `targetCrossCutting` pins that the rival
+# bridge gate really was live, so this can never silently degrade into a trivial pass.
+FIX["story_over_bridge"] = {
+    "description": "Adams-style precedence: a left-history reader read CNN's coverage of a "
+                   "political story; Fox News' cross-cutting sibling of the SAME story must "
+                   "resolve to story_match ('how Fox covered the same story') — never bridge — "
+                   "with crossCutting=True proving bridge was applicable too.",
+    "expected": {"targetType": "story_match", "targetVariant": "same_event",
+                 "targetCrossCutting": True},
+    "catalog": base() + story("adams", "mayor adams corruption ruling reshapes race",
+                              ["CNN", "Fox News"], topic="Politics",
+                              lean_by={"CNN": -0.8, "Fox News": 1.6},
+                              when={"CNN": "2026-07-09T09:00:00+00:00",
+                                    "Fox News": "2026-07-09T11:00:00+00:00"}),
+    "readers": [reader([("https://cnn.example.com/story/adams", "CNN")] + BASE_READS[:4])],
+    "target": "https://foxnews.example.com/story/adams"}
 
 def _dump(fx: dict) -> str:
     """Compact, reviewable JSON: top-level keys indented, but each catalog article and each read on

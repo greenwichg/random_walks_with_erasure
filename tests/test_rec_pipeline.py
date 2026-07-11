@@ -21,10 +21,11 @@ from rec_pipeline import pipeline, evidence, report  # noqa: E402
 import evidence_resolver as er  # noqa: E402
 
 SCENARIOS = {"same_story", "same_publisher", "follow_up_story", "new_publisher", "bridge",
-             "long_tail", "mixed_feed", "cold_start", "story_follower"}
+             "long_tail", "mixed_feed", "cold_start", "story_follower",
+             "story_over_bridge"}                     # C5: the Adams-style precedence scenario
 
 
-def test_all_nine_scenarios_present():
+def test_all_scenarios_present():
     assert set(pipeline.fixture_names()) == SCENARIOS
 
 

@@ -34,6 +34,15 @@ def run(case) -> list:
             checks.append(Check("explanation", f"target variant is {case.expected['targetVariant']}",
                                 exp.get("variant") == case.expected["targetVariant"],
                                 f"got {exp.get('variant')}"))
+        # C5 (precedence proof): a fixture may pin that the target is ALSO cross-cutting — i.e.
+        # bridge (P2) was applicable too — so "story_match wins" is proven against a live rival
+        # gate, not against a scenario where nothing else could have fired anyway.
+        if "targetCrossCutting" in case.expected:
+            want_cc = bool(case.expected["targetCrossCutting"])
+            checks.append(Check("explanation",
+                                f"target crossCutting is {want_cc} (rival gate live)",
+                                bool(tr.get("crossCutting")) == want_cc,
+                                f"crossCutting={tr.get('crossCutting')}"))
         checks.append(Check("explanation", "target explanation validates",
                             er.validate(exp, tr, case.context, case.index) == [],
                             str(er.validate(exp, tr, case.context, case.index))))

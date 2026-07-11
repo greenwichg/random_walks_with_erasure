@@ -51,6 +51,12 @@ def evidence_subset_of_context(exp: dict, rec: dict, ctx: dict, index: dict) -> 
             bad.append("cited read is not a member of the recommended article's story")
         if ev.get("recPublisher") != pub:
             bad.append("recPublisher does not match the recommended article")
+        # C5: the cited headline must be the story member's own (traceability, never invention)
+        if ev.get("readHeadline") is not None:
+            member = next((m for m in (story or {}).get("coverage", [])
+                           if er._canon(str(m.get("url") or "")) == ev.get("readUrl")), {})
+            if ev.get("readHeadline") != member.get("headline"):
+                bad.append("readHeadline does not match the cited story member's headline")
     elif t == "topic_continuity":
         if ev.get("topic") != topic:
             bad.append("evidence topic is not the article's topic")

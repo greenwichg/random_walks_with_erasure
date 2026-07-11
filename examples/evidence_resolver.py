@@ -162,7 +162,10 @@ def resolve(rec: dict, ctx: dict, index: Optional[dict] = None) -> dict:
                 contribution = {"key": "covered_same_story", "params": {"publisher": publisher}}
             return {"type": "story_match", "priority": 1, "variant": variant, "message": message,
                     "readerFact": reader_fact, "contribution": contribution,
+                    # storyId + readUrl (+ headline) make the claim directly traceable: WHICH
+                    # validated story cluster licensed it, and WHICH earlier read matched.
                     "evidence": {"storyId": story["storyId"], "readUrl": read["url"],
+                                 "readHeadline": member.get("headline") or None,
                                  "readPublisher": read_pub, "recPublisher": publisher,
                                  "storyReads": len(mine),
                                  "readPublishedAt": read_at or None,

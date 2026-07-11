@@ -255,15 +255,21 @@ class Personalizer:
         — the measured twin of :meth:`Backend.explain_recommendations`. Adds the reader's
         read-join evidence (how many stored reads landed on real catalog columns — the URL →
         catalog-id join that connects them to the click graph) and reuses the same catalog-id
-        index so an exclusion query accepts raw or canonical URLs. Never mutates the model."""
+        index so an exclusion query accepts raw or canonical URLs. Also passes the Story
+        Service's cluster index + the reader's read URLs (C5), so every recommendation carries a
+        ``storyMatch`` diagnostic — the story cluster that licenses (or the gate that blocks) a
+        story_match explanation. Never mutates the model."""
         m = self._model(user_id)
         reads = [_scored_read_from_row(r) for r in self.store.get_reads(user_id)]
         joined = sum(1 for r in reads if str(r.article_id) in self._catalog_ids)
+        import evidence_resolver
         import rec_explain
         out = rec_explain.explain(self.backend, m.corpus, m.rec, m.reader_row,
                                   strategy=strategy, params=params, article=article,
                                   reads_meta={"total": len(reads), "joined": joined},
-                                  url_to_id=self._catalog_ids)
+                                  url_to_id=self._catalog_ids,
+                                  story_index=evidence_resolver.story_index(self.store),
+                                  read_urls={_canonical_url(str(r.article_id)) for r in reads})
         # The measured model's identity, so a reported feed is reproducible: which reads
         # version and reception version the cached augmented model was built from (21a.2).
         out["modelVersion"] = {"readingVersion": m.reading_version,
