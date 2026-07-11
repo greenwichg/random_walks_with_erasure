@@ -47,6 +47,20 @@ _SECTIONS = {
 }
 # Path substrings that flag a read as political when the source doesn't say.
 _POLITICAL_HINTS = ("politic", "election", "/opinion")
+# Category substrings that flag an article as political (case-insensitive).
+_POLITICAL_CATEGORY_HINTS = ("politic", "election", "opinion")
+
+
+def looks_political(url: str = "", category: str = "") -> bool:
+    """The shared article-level political heuristic: URL path hints or a political category.
+
+    ONE definition product-wide — the read scorer and the corpus loaders both use it, so the
+    Information Health metrics, the cross-cutting gate, and the bridge explanations can never
+    disagree about what "political" means. Deterministic; no network."""
+    path = urlsplit(url).path.lower() if url else ""
+    cat = (category or "").lower()
+    return (any(h in path for h in _POLITICAL_HINTS)
+            or any(h in cat for h in _POLITICAL_CATEGORY_HINTS))
 
 
 @dataclass(frozen=True)
@@ -132,7 +146,7 @@ class Scorer:
     def score(self, raw: RawRead) -> ScoredRead:
         path = urlsplit(raw.url).path.lower()
         political = (raw.political if raw.political is not None
-                     else any(h in path for h in _POLITICAL_HINTS))
+                     else looks_political(raw.url, raw.category))
         outlet, lean = self._resolve_outlet(raw)
         scored = ScoredRead(
             article_id=canonical_url(raw.url),

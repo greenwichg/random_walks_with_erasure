@@ -27,7 +27,7 @@
     {"url": "https://thewallstreetjournal.example.com/base/business-1", "publisher": "The Wall Street Journal", "title": "The Wall Street Journal on business, dispatch 1", "publishedAt": "2026-07-01T00:00:00+00:00", "scored": {"outlet": "The Wall Street Journal", "category": "Business", "lean": 0.9, "political": false, "title": "The Wall Street Journal on business 1", "register": 0.8, "emotion": {"fear": 0.1, "outrage": 0.1, "analysis": 0.5, "positive": 0.1, "neutral": 0.2}}},
     {"url": "https://thewallstreetjournal.example.com/base/business-2", "publisher": "The Wall Street Journal", "title": "The Wall Street Journal on business, dispatch 2", "publishedAt": "2026-07-01T00:00:00+00:00", "scored": {"outlet": "The Wall Street Journal", "category": "Business", "lean": 0.9, "political": false, "title": "The Wall Street Journal on business 2", "register": 0.8, "emotion": {"fear": 0.1, "outrage": 0.1, "analysis": 0.5, "positive": 0.1, "neutral": 0.2}}},
     {"url": "https://thewallstreetjournal.example.com/base/business-3", "publisher": "The Wall Street Journal", "title": "The Wall Street Journal on business, dispatch 3", "publishedAt": "2026-07-01T00:00:00+00:00", "scored": {"outlet": "The Wall Street Journal", "category": "Business", "lean": 0.9, "political": false, "title": "The Wall Street Journal on business 3", "register": 0.8, "emotion": {"fear": 0.1, "outrage": 0.1, "analysis": 0.5, "positive": 0.1, "neutral": 0.2}}},
-    {"url": "https://foxnews.example.com/world/bridge", "publisher": "Fox News", "title": "A conservative view from the summit", "publishedAt": "2026-07-05T00:00:00+00:00", "scored": {"outlet": "Fox News", "category": "World", "lean": 1.8, "political": false, "title": "A conservative view from the summit", "register": 0.8, "emotion": {"fear": 0.1, "outrage": 0.1, "analysis": 0.5, "positive": 0.1, "neutral": 0.2}}}
+    {"url": "https://foxnews.example.com/politics/bridge", "publisher": "Fox News", "title": "A conservative view from the summit", "publishedAt": "2026-07-05T00:00:00+00:00", "scored": {"outlet": "Fox News", "category": "Politics", "lean": 1.8, "political": true, "title": "A conservative view from the summit", "register": 0.8, "emotion": {"fear": 0.1, "outrage": 0.1, "analysis": 0.5, "positive": 0.1, "neutral": 0.2}}}
   ],
   "readers": [
     {
@@ -41,5 +41,5 @@
       ]
     }
   ],
-  "target": "https://foxnews.example.com/world/bridge"
+  "target": "https://foxnews.example.com/politics/bridge"
 }

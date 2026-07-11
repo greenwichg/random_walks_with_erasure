@@ -116,10 +116,15 @@ def _lean_bucket(pos: float, tau: float = hr.LEAN_TAU) -> str:
     return "center"
 
 
-def _cross_of(user_side: float, lean: float) -> bool:
+def _cross_of(user_side: float, lean: float, political: bool) -> bool:
     """The cross-cutting gate, shared by the recommendation serializer and the explain observer
-    (Commit 21a) — one definition, so an explanation can never disagree with the card it explains."""
-    return bool(user_side != 0 and np.sign(lean) == -user_side and abs(lean) >= 0.5)
+    (Commit 21a) — one definition, so an explanation can never disagree with the card it explains.
+
+    ``political`` (Commit R1) is the ARTICLE-level classification (corpus mask / scored flag): a
+    non-political article can never be cross-cutting — its lean is only the outlet's house lean,
+    which does not license "offers another political perspective" for a promo or a sports piece.
+    The parameter is required (no default) so no call site can silently skip the gate."""
+    return bool(political and user_side != 0 and np.sign(lean) == -user_side and abs(lean) >= 0.5)
 
 
 def _familiarity_band(count: int, share: float) -> str:
@@ -656,12 +661,14 @@ class Backend:
         return self.url_by_id.get(s)
 
     def _article_payload(self, *, item_id, headline, outlet, topic, lean, register,
-                         emotion: dict, confidence, outlet_lean: dict) -> dict:
+                         emotion: dict, confidence, outlet_lean: dict,
+                         political: "bool | None" = None) -> dict:
         """Build one article payload from already-resolved fields — the SINGLE source of the
         ``Article`` shape (web/types/domain.ts). Both the corpus serialiser (:meth:`_serialize_article`)
         and the reading-history serialiser (:meth:`serialize_history`) feed this, so a catalog
         article and a real reader's stored read render identically. Missing lean/confidence degrade
-        to the same neutral defaults the corpus path already used."""
+        to the same neutral defaults the corpus path already used. ``political`` (Commit R1) is the
+        article-level classification — included when known, omitted when unknown (never fabricated)."""
         item_id = str(item_id)
         pos = float(lean) if lean is not None and np.isfinite(lean) else 0.0
         conf = float(confidence) if confidence is not None and np.isfinite(confidence) else 0.7
@@ -681,6 +688,8 @@ class Backend:
             "publishedAt": _iso_recent(item_id),
             "readingMinutes": 2 + (_stable_int(item_id) % 8),
         }
+        if political is not None:
+            payload["political"] = bool(political)
         # Additive: include the canonical publisher URL only when one is verified (never fabricated),
         # so the frontend can open the real article. Omitted otherwise (response_model_exclude_none).
         url = self._resolve_url(item_id)
@@ -692,6 +701,7 @@ class Backend:
         """Serialise one article (column) of a corpus. Corpus-parametric so the same code
         renders a reference-catalog article and a novel article a real reader brought in."""
         mind = corpus.mind
+        pol = getattr(mind, "political", None)
         return self._article_payload(
             item_id=str(np.asarray(mind.dataset.item_ids)[col]),
             headline=str(np.asarray(mind.titles)[col]),
@@ -701,7 +711,8 @@ class Backend:
             register=(corpus.register[col] if corpus.register is not None else None),
             emotion=self._emotion_share_of(corpus.emotion, col),
             confidence=(corpus.confidence[col] if corpus.confidence is not None else None),
-            outlet_lean=corpus.outlet_lean)
+            outlet_lean=corpus.outlet_lean,
+            political=(bool(np.asarray(pol, dtype=bool)[col]) if pol is not None else None))
 
     def serialize_history(self, reads: list) -> list:
         """A reader's reading history from their stored, scored reads (``store.list_reads`` rows).
@@ -728,7 +739,8 @@ class Backend:
                 register=sc.get("register"),
                 emotion=self._emotion_from_dict(sc.get("emotion")),
                 confidence=sc.get("confidence"),
-                outlet_lean=self.outlet_lean)
+                outlet_lean=self.outlet_lean,
+                political=sc.get("political"))
             out.append({
                 "id": str(row.get("id")),
                 "article": article,
@@ -1158,27 +1170,48 @@ class Backend:
         return default
 
     @staticmethod
+    def _slice_admits(mind, strategy: str, col: int) -> bool:
+        """Whether a ranked column may occupy a slot in ``strategy``'s slice (Commit R1).
+
+        The bridging slice (rwe-b) exists to surface *political* perspective articles — RWEB's
+        bridge test is pure lean geometry (outlet house lean), so a promo or sports piece from a
+        leaning outlet ranks like a perspective article. Non-political items are therefore
+        excluded from the rwe-b slice (backfilled by the next-ranked political item); every other
+        strategy admits everything. Shared by the serving path and the explain observer so the
+        replicated plan stays byte-identical (the 21a parity guarantee)."""
+        if strategy != "rwe-b":
+            return True
+        pol = getattr(mind, "political", None)
+        if pol is None:
+            return True
+        return bool(np.asarray(pol, dtype=bool)[col])
+
+    @staticmethod
     def _rec_cols_of(mind, rec: "_Recommenders", u: int, strategy: str, k: int = 12,
                      params: "dict | None" = None) -> list:
-        """Top-k item columns (in ``mind`` space) recommender ``strategy`` surfaces for row ``u``,
-        so we can serialise full articles. Corpus-parametric so a real user's augmented recommender
-        selects columns exactly as the base one does; ``params`` (slider-mapped hyperparameters)
-        swaps in a per-request model via :meth:`_model_for`. Returns [] on any failure (caller
-        falls back)."""
+        """Top-k *admitted* item columns (in ``mind`` space) recommender ``strategy`` surfaces for
+        row ``u``, so we can serialise full articles. Ranks the full list and takes the first ``k``
+        columns that pass :meth:`_slice_admits` (rwe-b: political only), so a filtered slot is
+        backfilled by the next-ranked admissible item instead of shrinking the slice.
+        Corpus-parametric so a real user's augmented recommender selects columns exactly as the
+        base one does; ``params`` (slider-mapped hyperparameters) swaps in a per-request model via
+        :meth:`_model_for`. Returns [] on any failure (caller falls back)."""
         try:
             uid = np.asarray(mind.dataset.user_ids)[u]
             rows = np.flatnonzero(np.asarray(rec.rec_dataset.user_ids) == uid)
             if rows.size == 0:
                 return []
             model = Backend._model_for(rec, strategy, params)
-            ranked = model.recommend(np.array([rows[0]]), top_k=k)[0]
+            ranked = model.recommend(np.array([rows[0]]), top_k=int(len(rec.rec_ids)))[0]
             cols = []
             for j in ranked:
                 if int(j) < 0:
                     continue
                 col = rec.id2col.get(str(rec.rec_ids[int(j)]))
-                if col is not None:
+                if col is not None and Backend._slice_admits(mind, strategy, col):
                     cols.append(col)
+                    if len(cols) >= k:
+                        break
             return cols
         except Exception:
             return []
@@ -1195,7 +1228,8 @@ class Backend:
         and the placeholder ``healthImpact`` number is gone (it was a stable hash, not a
         measurement — the explain endpoint carries the real evidence instead)."""
         art = self._serialize_article(corpus, col)
-        cross = _cross_of(user_side, art["lean"])
+        # Conservative: an article with an unknown political flag is never claimed cross-cutting.
+        cross = _cross_of(user_side, art["lean"], bool(art.get("political")))
         side = {"left": "left-leaning", "right": "right-leaning", "center": "centrist"}[art["leanBucket"]]
         topic = art["topic"].lower()
         band = (familiarity(art["publisher"]) if familiarity is not None else {}).get("band")

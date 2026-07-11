@@ -181,6 +181,8 @@ export interface Article {
   publisherLean: Lean;
   topic: string;
   url?: string;
+  /** Article-level political classification — the flag behind the cross-cutting gate; omitted when unknown. */
+  political?: boolean;
   imageUrl?: string;
   /** Short summary — populated for Discover/Stories (from the feed); omitted for recommendations. */
   description?: string;

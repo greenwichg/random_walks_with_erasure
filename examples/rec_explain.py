@@ -169,14 +169,23 @@ def explain(backend, corpus, rec, u: int, strategy: Optional[str] = None,
                   "rank_of": {j: i for i, j in enumerate(ranked)},
                   "params_used": _params_used(model, s, params)}
 
-    # --- replicate the serving selection (plan → id2col mapping → first-seen dedup) -----------
+    # --- replicate the serving selection (plan → slice admission → id2col → first-seen dedup) --
+    # Mirrors Backend._rec_cols_of exactly: walk the full ranking, keep the first kk columns the
+    # strategy's slice admits (Commit R1: rwe-b admits political items only — the SAME shared
+    # predicate, so the parity guarantee holds), then dedup first-seen across strategies.
+    # ``slice_js`` records which ranked items occupy each strategy's admitted slots — the honest
+    # meaning of "inSlice" now that admission can skip over non-admitted ranks.
     plan = ((strategy, SINGLE_K),) if strategy in STRATEGIES else BLEND_PLAN
     chosen, seen_cols, dedup_dropped = [], set(), 0
+    slice_js: dict = {s: set() for s in STRATEGIES}
     for s, kk in plan:
-        for j in per[s]["ranking"][:kk]:
+        for j in per[s]["ranking"]:
+            if len(slice_js[s]) >= kk:
+                break
             col = rec.id2col.get(str(rec.rec_ids[j]))
-            if col is None:
+            if col is None or not engine.Backend._slice_admits(mind, s, col):
                 continue
+            slice_js[s].add(int(j))          # an admitted slot, even if dedup then drops it
             if col in seen_cols:
                 dedup_dropped += 1
                 continue
@@ -193,7 +202,10 @@ def explain(backend, corpus, rec, u: int, strategy: Optional[str] = None,
             by_strategy[s] = {
                 "score": float(per[s]["scores"][j]),
                 "rank": (r + 1) if r is not None else None,          # 1-based for humans
-                "inSlice": r is not None and r < dict(plan).get(s, 0),
+                # Whether this item occupies one of the strategy's admitted slice slots (Commit R1:
+                # admission can skip non-admitted ranks, so a slot-holder's raw rank may exceed the
+                # slice size — membership, not rank arithmetic, is the truthful signal).
+                "inSlice": int(j) in slice_js[s],
             }
         r0 = per[chosen_by]["rank_of"].get(j, 0)
         candidates = len(per[chosen_by]["ranking"])
@@ -210,10 +222,11 @@ def explain(backend, corpus, rec, u: int, strategy: Optional[str] = None,
             "match": match_band(r0, candidates),
             "byStrategy": by_strategy,
             "crossCutting": {
-                "value": engine._cross_of(user_side, art["lean"]),
+                "value": engine._cross_of(user_side, art["lean"], bool(art.get("political"))),
                 "userMeanLean": round(float(rep.get("mean_lean") or 0.0), 3),
                 "articleLean": float(art["lean"]),
-                "gate": "opposite sign and |lean| >= 0.5",
+                "articlePolitical": bool(art.get("political")),
+                "gate": "political article, opposite sign and |lean| >= 0.5",
             },
             "outletFamiliarity": familiarity(art["publisher"]),
             "leanGap": round(abs(float(art["lean"]) - float(rep.get("mean_lean") or 0.0)), 2),

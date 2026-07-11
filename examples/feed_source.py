@@ -25,8 +25,10 @@ from typing import Optional
 DEFAULT_MIN_ARTICLES = 50
 # Column names chosen to match what ``catalog_from_qbias`` fuzzy-picks (headline / bias / outlet /
 # tags). ``url`` is written too (the builder ignores it) so a future URL pass-through can recover the
-# real publisher URL from the same CSV by row order.
-_COLUMNS = ["title", "source", "bias_rating", "tags", "url"]
+# real publisher URL from the same CSV by row order. ``political`` (Commit R1) carries the scored
+# article-level flag ("1"/"0"; "" = unknown → the loader derives from tags+url) so the corpus mask
+# is real per-article classification, never assumed.
+_COLUMNS = ["title", "source", "bias_rating", "tags", "url", "political"]
 
 
 def enabled() -> bool:
@@ -64,12 +66,14 @@ def _qbias_record(a: dict, center: float) -> list:
     (and the row order the ``Q{i}`` -> URL map depends on) lives in exactly one place."""
     scored = a.get("scored") or {}
     outlet = a.get("publisher") or scored.get("outlet") or ""
+    political = scored.get("political")
     return [
         a.get("title") or scored.get("title") or "",
         outlet,
         _bias_label(scored.get("lean"), center),
         scored.get("category") or "",
         a.get("url") or a.get("canonicalUrl") or "",
+        "" if political is None else ("1" if political else "0"),
     ]
 
 

@@ -75,7 +75,8 @@ def test_cross_cutting_parity_and_derivation(backend, user):
     for r in exp["recommendations"]:
         cc = r["crossCutting"]
         assert cc["value"] == served[r["articleId"]]["crossCutting"]
-        assert cc["value"] == api_server._cross_of(np.sign(cc["userMeanLean"]), cc["articleLean"])
+        assert cc["value"] == api_server._cross_of(np.sign(cc["userMeanLean"]), cc["articleLean"],
+                                                   cc["articlePolitical"])
 
 
 def test_rank_band_and_score_invariants(backend, user):
@@ -86,7 +87,10 @@ def test_rank_band_and_score_invariants(backend, user):
         chosen = r["chosenBy"]
         own = r["byStrategy"][chosen]
         assert r["rank"] == own["rank"] >= 1
-        assert own["inSlice"] and own["rank"] <= slices[chosen]
+        # inSlice = occupies an admitted slot. With slice admission (Commit R1: rwe-b admits
+        # political items only) a slot-holder's RAW rank may exceed the slice size, so the old
+        # rank <= slice bound no longer holds — membership is the invariant.
+        assert own["inSlice"]
         assert 0.0 < r["scorePercentile"] <= 100.0
         n_cand = exp["trace"]["strategies"][chosen]["candidates"]
         assert r["match"] == rec_explain.match_band(own["rank"] - 1, n_cand)

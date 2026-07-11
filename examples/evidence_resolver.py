@@ -170,7 +170,11 @@ def resolve(rec: dict, ctx: dict, index: Optional[dict] = None) -> dict:
 
     # -- P2 · bridge (a cross-cutting read is a stronger, more personal reason than a merely
     #                 shared topic — so it outranks topic_continuity as of 21a.4) -----------
-    if bool(rec.get("crossCutting")):
+    # Commit R1 defense in depth: the serializer's cross gate already requires the article be
+    # political, but a direct caller could still hand us crossCutting=True on a non-political
+    # payload — "another political perspective" is never licensed for one. (An absent flag is
+    # legacy/unknown and does not block; the serializer no longer emits such payloads.)
+    if bool(rec.get("crossCutting")) and art.get("political") is not False:
         # Commit 23: the SEMANTIC reader profile licenses the reader-first parts. Only a reader
         # who is meaningfully off-center gets "your reading has leaned {side}"; a balanced (or
         # unknown-mean) reader degrades to the article-centric message — honesty over symmetry.
@@ -178,6 +182,7 @@ def resolve(rec: dict, ctx: dict, index: Optional[dict] = None) -> dict:
         out = {"type": "bridge", "priority": 2,
                "message": "This article offers another political perspective.",
                "evidence": {"crossCutting": True, "articleLean": art.get("lean"),
+                            "articlePolitical": art.get("political"),
                             "readerPoliticalProfile": profile}}
         if profile in ("leans_left", "leans_right"):
             out["readerFact"] = {"key": f"political_lean_{profile.split('_')[1]}", "params": {}}
@@ -279,6 +284,10 @@ def validate(explanation: dict, rec: dict, ctx: dict, index: Optional[dict] = No
     elif etype == "bridge":
         if not bool(rec.get("crossCutting")):
             fails.append("recommendation is not cross-cutting")
+        # Commit R1: "another political perspective" requires a political article. An absent flag
+        # is legacy/unknown (older payloads) — only an explicit False is an over-claim.
+        if art.get("political") is False:
+            fails.append("bridge claims a political perspective on a non-political article")
     elif etype == "long_tail":
         if str(rec.get("strategy")) != "rwe-d":
             fails.append("recommendation was not chosen by rwe-d")

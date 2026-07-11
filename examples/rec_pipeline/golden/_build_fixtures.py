@@ -106,19 +106,22 @@ FIX["new_publisher"] = {
     "readers": [reader(BASE_READS)],
     "target": "https://bloomberg.example.com/tech/chips"}
 
-# 5 · bridge — a right article to a left-leaning reader, familiar outlet, off-topic → bridge
+# 5 · bridge — a right POLITICAL article to a left-leaning reader, familiar outlet → bridge.
+# (Commit R1: the cross-cutting gate requires article-level political classification, so the
+# target is authored as the politics article the scenario always described — the earlier
+# "World" topic predates the gate and contradicted the fixture's own description.)
 FIX["bridge"] = {
     "description": "A right-leaning Fox News politics article to a left-leaning reader who already "
                    "reads Fox (so not new_publisher) must resolve to bridge (cross-cutting).",
     "expected": {"targetType": "bridge"},
-    "catalog": base() + [novel("https://foxnews.example.com/world/bridge", "Fox News",
-                               "World", 1.8, "A conservative view from the summit")],
+    "catalog": base() + [novel("https://foxnews.example.com/politics/bridge", "Fox News",
+                               "Politics", 1.8, "A conservative view from the summit")],
     "readers": [reader([("https://theguardian.example.com/base/politics-0", "The Guardian"),
                         ("https://theguardian.example.com/base/politics-1", "The Guardian"),
                         ("https://npr.example.com/base/health-0", "NPR"),
                         ("https://foxnews.example.com/base/politics-0", "Fox News"),
                         ("https://foxnews.example.com/base/politics-1", "Fox News")])],
-    "target": "https://foxnews.example.com/world/bridge"}
+    "target": "https://foxnews.example.com/politics/bridge"}
 
 # 6 · long_tail — a niche article surfaced by rwe-d; the target-rec strategy is rwe-d
 FIX["long_tail"] = {

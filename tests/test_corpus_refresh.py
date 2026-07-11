@@ -46,7 +46,10 @@ def _seed_catalog(st, n_per_bucket=6, prefix="a"):
             st.upsert_feed_article(canonical_url=u, url=u, publisher=pub, source_publisher=pub,
                                    title=f"{pub} {prefix}{i}", description="d", body=None,
                                    published_at=(NOW - timedelta(hours=i)).isoformat(), source_feed=pub,
-                                   scored={"article_id": u, "outlet": pub, "lean": lean, "category": "P"})
+                                   # political=True mirrors production: every ingested article is
+                                   # scored (ingest always sets the flag); these model political news.
+                                   scored={"article_id": u, "outlet": pub, "lean": lean,
+                                           "category": "P", "political": True})
     return urls
 
 

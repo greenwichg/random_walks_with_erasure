@@ -54,11 +54,13 @@ def test_export_catalog_csv_format(tmp_path):
     assert feed_source.export_catalog_csv(st, path) == 2
 
     rows = list(_csv.DictReader(open(path, encoding="utf-8")))
-    assert set(rows[0].keys()) == {"title", "source", "bias_rating", "tags", "url"}   # qbias-format
+    # qbias-format + the Commit R1 political column (the scored article-level flag)
+    assert set(rows[0].keys()) == {"title", "source", "bias_rating", "tags", "url", "political"}
     by = {r["source"]: r for r in rows}
     assert by["Fox News"]["bias_rating"] == "right" and by["New York Times"]["bias_rating"] == "left"
     assert by["Fox News"]["url"].startswith("https://www.foxnews.com")  # url carried (builder ignores it)
     assert by["Fox News"]["tags"] == "Politics"
+    assert by["Fox News"]["political"] == "1"     # the seed scores political=True
 
 
 def test_export_caps_per_outlet(tmp_path):

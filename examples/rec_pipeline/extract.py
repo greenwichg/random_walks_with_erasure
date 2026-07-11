@@ -66,7 +66,9 @@ class Case:
     def _cross(self, art: dict) -> bool:
         import numpy as np
         mean = float(self.context.get("_mean_lean") or 0.0)
-        return engine._cross_of(np.sign(mean), float(art.get("lean") or 0.0))
+        # Commit R1: same conservative rule as the serializer — unknown political never crosses.
+        return engine._cross_of(np.sign(mean), float(art.get("lean") or 0.0),
+                                bool(art.get("political")))
 
 
 def _restore_env(saved: dict) -> None:
@@ -211,9 +213,12 @@ def _article_of(a: dict) -> dict:
     sc = a["scored"]
     lean = float(sc.get("lean") or 0.0)
     bucket = "left" if lean < -0.5 else "right" if lean > 0.5 else "center"
-    return {"id": a["url"], "url": a["url"], "publisher": a["publisher"],
-            "topic": sc.get("category") or "", "lean": lean, "leanBucket": bucket,
-            "headline": a.get("title", sc.get("title", "")), "publishedAt": a.get("publishedAt")}
+    art = {"id": a["url"], "url": a["url"], "publisher": a["publisher"],
+           "topic": sc.get("category") or "", "lean": lean, "leanBucket": bucket,
+           "headline": a.get("title", sc.get("title", "")), "publishedAt": a.get("publishedAt")}
+    if sc.get("political") is not None:                 # Commit R1: mirror the additive flag
+        art["political"] = bool(sc["political"])
+    return art
 
 
 def _base_context(be, st, uid, reads) -> dict:

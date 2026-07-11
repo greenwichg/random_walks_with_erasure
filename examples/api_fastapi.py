@@ -605,6 +605,9 @@ class ArticleModel(BaseModel):
     # the canonical publisher URL — present only when verified (live feed source / a real read),
     # omitted otherwise (response_model_exclude_none); the frontend opens it for the Read flow.
     url: Optional[str] = None
+    # article-level political classification (Commit R1) — the flag behind the cross-cutting gate
+    # and the bridge explanation; present when known, omitted when unknown (never fabricated).
+    political: Optional[bool] = None
     # short summary — populated for Discover/Stories (from the feed); omitted for recommendations.
     description: Optional[str] = None
     lean: float

@@ -101,6 +101,7 @@ class ItemCatalog:
     ids: np.ndarray
     register: np.ndarray = field(default=None)      # SYNTHETIC P(reporting) per article
     emotion: np.ndarray = field(default=None)       # SYNTHETIC (n, 5) emotion-bucket shares
+    political: np.ndarray = field(default=None)     # REAL per-article flag (None -> caller default)
     topic_idx: np.ndarray = field(default=None)     # topic -> compact index
     outlet_idx: np.ndarray = field(default=None)
     topic_names: np.ndarray = field(default=None)
@@ -147,22 +148,41 @@ def _first_tag(raw) -> str:
         return raw.split(",")[0].strip().strip("[]'\"") or "general"
 
 
+def _parse_political(raw) -> "bool | None":
+    """The CSV ``political`` cell: "1"/"true" -> True, "0"/"false" -> False, ""/unknown -> None."""
+    s = str(raw or "").strip().lower()
+    if s in ("1", "true", "yes"):
+        return True
+    if s in ("0", "false", "no"):
+        return False
+    return None
+
+
 def catalog_from_qbias(csv_path, max_items=None, seed=0) -> ItemCatalog:
     """Build a catalog from Qbias (real gold lean + real outlets + topic tags). Article
-    *quality* is SYNTHETIC (Qbias has no quality label) -- a per-article Beta draw."""
+    *quality* is SYNTHETIC (Qbias has no quality label) -- a per-article Beta draw.
+
+    ``political`` is REAL per-article classification: the ``political`` column when present
+    (the feed exporter writes the scored flag), else derived from tags + url via the shared
+    ``ingest.looks_political`` heuristic — never assumed. This is the mask the Information
+    Health metrics and the cross-cutting gate consume, so a promo or sports article can no
+    longer count as political just because its outlet has a house lean."""
     import sys
     import pathlib
     sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
     from validate_qbias import _pick_col, label_to_pos, _HEADLINE_COLS, _BIAS_COLS, _OUTLET_COLS
+    from ingest import looks_political
 
     rng = np.random.default_rng(seed)
-    pos, outlets, topics, titles, ids = [], [], [], [], []
+    pos, outlets, topics, titles, ids, political = [], [], [], [], [], []
     with open(csv_path, newline="", encoding="utf-8", errors="replace") as f:
         rd = _csv.DictReader(f)
         hc = _pick_col(rd.fieldnames, _HEADLINE_COLS)
         bc = _pick_col(rd.fieldnames, _BIAS_COLS)
         oc = _pick_col(rd.fieldnames, _OUTLET_COLS)
         tc = _pick_col(rd.fieldnames, ("tags", "topic", "topics", "tag"))
+        pc = _pick_col(rd.fieldnames, ("political",))
+        uc = _pick_col(rd.fieldnames, ("url", "link"))
         for i, row in enumerate(rd):
             g = label_to_pos(row.get(bc, ""))
             if not np.isfinite(g):
@@ -172,18 +192,25 @@ def catalog_from_qbias(csv_path, max_items=None, seed=0) -> ItemCatalog:
             topics.append(_first_tag(row.get(tc)) if tc else "general")   # clean first tag
             titles.append((row.get(hc) or "").strip())
             ids.append(f"Q{i}")
+            flag = _parse_political(row.get(pc)) if pc else None
+            if flag is None:                                # unknown -> derive, never assume
+                flag = looks_political(url=(row.get(uc) or "" if uc else ""),
+                                       category=str(row.get(tc) or "") if tc else "")
+            political.append(bool(flag))
     pos = np.asarray(pos, dtype=float)
+    political = np.asarray(political, dtype=bool)
     if max_items and len(pos) > max_items:                # random subsample for a denser demo
         keep = rng.choice(len(pos), size=max_items, replace=False)
-        pos, outlets, topics, titles, ids = (pos[keep], [outlets[k] for k in keep],
-                                             [topics[k] for k in keep],
-                                             [titles[k] for k in keep], [ids[k] for k in keep])
+        pos, outlets, topics, titles, ids, political = (
+            pos[keep], [outlets[k] for k in keep], [topics[k] for k in keep],
+            [titles[k] for k in keep], [ids[k] for k in keep], political[keep])
     reg, emo = _synth_enrichments(pos, rng)                            # SYNTHETIC register + emotion
     return ItemCatalog(positions=pos, outlets=np.asarray(outlets, dtype=object),
                        topics=np.asarray(topics, dtype=object),
                        quality=rng.beta(2.5, 2.5, len(pos)),           # SYNTHETIC quality
                        titles=np.asarray(titles, dtype=object),
-                       ids=np.asarray(ids, dtype=object), register=reg, emotion=emo)
+                       ids=np.asarray(ids, dtype=object), register=reg, emotion=emo,
+                       political=political)
 
 
 @dataclass
@@ -284,9 +311,13 @@ def build_dataset(events, cat: ItemCatalog, cfg: SimConfig, pop: Population) -> 
     M.data[:] = 1.0
     ds = Dataset(matrix=M, user_ids=np.array([f"sim_u{i}" for i in range(cfg.n_users)],
                                              dtype=object), item_ids=cat.ids.astype(object))
+    # REAL per-article political mask when the catalog carries one (qbias/feed corpora);
+    # all-True only for purely synthetic catalogs that never classified their items.
+    political = (np.asarray(cat.political, dtype=bool) if cat.political is not None
+                 else np.ones(n, dtype=bool))
     return MINDData(dataset=ds, categories=cat.topics.astype(object),
                     subcategories=cat.topics.astype(object), titles=cat.titles.astype(object),
-                    outlets=cat.outlets.astype(object), political=np.ones(n, dtype=bool),
+                    outlets=cat.outlets.astype(object), political=political,
                     item_positions=cat.positions.astype(float),
                     user_positions=pop.theta.astype(float))
 
