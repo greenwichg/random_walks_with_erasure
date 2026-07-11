@@ -87,7 +87,7 @@ export function StoryBrowser({
           onChange={setPublisher}
         />
         <FilterSelect label={t("filter.lean")} value={lean} options={LEAN_OPTIONS} onChange={setLean} />
-        <FilterSelect label={t("filter.sort")} value={sort} options={SORT_OPTIONS} onChange={setSort} allLabel={t("filter.top")} />
+        <FilterSelect label={t("filter.sort")} value={sort} options={SORT_OPTIONS} onChange={setSort} resettable={false} />
         {total > 0 && (
           <span className="ml-auto text-sm text-muted-foreground">
             {total} {total === 1 ? "story" : "stories"}

@@ -17,19 +17,27 @@ export interface FilterOption {
   label: string;
 }
 
-/** A compact single-select dropdown filter. `all` is the reset option. */
+/**
+ * A compact single-select dropdown filter. When `resettable` (the default), an `all` reset row
+ * labeled `allLabel` precedes the options — the "show everything" state for real filters
+ * (topic / publisher / lean / emotion). Set `resettable={false}` for a mandatory single-choice
+ * such as Sort, which has no "all" state: rendering the reset row there both duplicates whichever
+ * option shares its label and lets the caller emit an out-of-contract `all` value.
+ */
 export function FilterSelect({
   label,
   value,
   options,
   onChange,
   allLabel = "All",
+  resettable = true,
 }: {
   label: string;
   value: string;
   options: FilterOption[];
   onChange: (v: string) => void;
   allLabel?: string;
+  resettable?: boolean;
 }) {
   const active = value !== "all";
   const current = options.find((o) => o.value === value)?.label;
@@ -51,7 +59,7 @@ export function FilterSelect({
         <DropdownMenuLabel>{label}</DropdownMenuLabel>
         <DropdownMenuSeparator />
         <DropdownMenuRadioGroup value={value} onValueChange={onChange}>
-          <DropdownMenuRadioItem value="all">{allLabel}</DropdownMenuRadioItem>
+          {resettable && <DropdownMenuRadioItem value="all">{allLabel}</DropdownMenuRadioItem>}
           {options.map((o) => (
             <DropdownMenuRadioItem key={o.value} value={o.value}>
               {o.label}
