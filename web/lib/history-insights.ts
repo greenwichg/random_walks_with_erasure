@@ -5,7 +5,7 @@
  * engine's scored, all-time Information Health metrics (Dashboard / Report). No React, no i18n —
  * callers map the returned discriminators to catalog strings.
  */
-import type { HistoryEntry } from "@/types/domain";
+import type { HistoryEntry, EmotionShare } from "@/types/domain";
 
 /**
  * Lean → bucket at tau=0.5. Inlined (mirrors lib/political.ts::leanBucket and the backend) so this
@@ -17,6 +17,12 @@ function bucketOf(lean: number): "left" | "center" | "right" {
   if (lean < -LEAN_TAU) return "left";
   if (lean > LEAN_TAU) return "right";
   return "center";
+}
+
+/** The dominant emotion of a share vector (inlined mirror of lib/political.ts::dominantEmotion). */
+function dominantOf(e: EmotionShare): keyof EmotionShare {
+  const keys = Object.keys(e) as (keyof EmotionShare)[];
+  return keys.reduce((a, b) => (e[a] >= e[b] ? a : b));
 }
 
 export type PoliticalTilt = "left" | "right" | "balanced";
@@ -39,6 +45,8 @@ export interface HistoryInsights {
   reportingShare: number; // 0..1
   opinionShare: number; // 0..1
   avgReadingMinutes: number;
+  /** Reads bucketed by their dominant emotion, present emotions only, most-frequent first. */
+  emotion: { key: keyof EmotionShare; n: number }[];
   topTopics: Tallied[];
   topPublishers: Tallied[];
   mostReadTopic: string | null;
@@ -50,6 +58,16 @@ export interface HistoryInsights {
   topicBreadth: TopicBreadth;
   reportingTilt: ReportingTilt;
   concentration: Concentration;
+}
+
+/**
+ * Stable local-day key (YYYY-MM-DD) for a timestamp — the shared identifier that syncs the Calendar
+ * selection to the Timeline grouping (both bucket reads by local day). Pure; no imports.
+ */
+export function dayKey(iso: string): string {
+  const d = new Date(iso);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
 /** Count occurrences, returned most-frequent first (ties broken alphabetically for determinism). */
@@ -104,6 +122,16 @@ export function summarizeHistory(entries: HistoryEntry[]): HistoryInsights {
   const avgReadingMinutes = count
     ? arts.reduce((s, a) => s + (a.readingMinutes || 0), 0) / count
     : 0;
+
+  const emo = new Map<keyof EmotionShare, number>();
+  for (const a of arts) {
+    const k = dominantOf(a.emotion);
+    emo.set(k, (emo.get(k) ?? 0) + 1);
+  }
+  const emotion = [...emo.entries()]
+    .map(([key, n]) => ({ key, n }))
+    .sort((a, b) => b.n - a.n || a.key.localeCompare(b.key));
+
   const topPublisher = publishers[0];
   const topPublisherShare = topPublisher && count ? topPublisher.n / count : 0;
 
@@ -116,6 +144,7 @@ export function summarizeHistory(entries: HistoryEntry[]): HistoryInsights {
     reportingShare,
     opinionShare,
     avgReadingMinutes,
+    emotion,
     topTopics: topics.slice(0, 3),
     topPublishers: publishers.slice(0, 3),
     mostReadTopic: topics[0]?.name ?? null,

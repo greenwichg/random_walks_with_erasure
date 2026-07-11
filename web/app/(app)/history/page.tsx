@@ -6,14 +6,16 @@ import type { EmotionShare } from "@/types/domain";
 import { useHistory } from "@/hooks/use-data";
 import { useTranslation } from "@/lib/i18n";
 import { leanBucket, dominantEmotion } from "@/lib/political";
-import { EMOTION_META, LEAN_META } from "@/lib/metrics";
+import { EMOTION_META } from "@/lib/metrics";
 import { PageContainer } from "@/components/layout/page-container";
 import { ArticleRow } from "@/components/shared/article-row";
 import { InsightStrip } from "@/components/history/insight-strip";
 import { ReflectionInsights } from "@/components/history/reflection-insights";
+import { DailySummary } from "@/components/history/daily-summary";
+import { CalendarView } from "@/components/history/calendar-view";
 import { FilterSelect } from "@/components/shared/filter-select";
 import { EmptyState, ErrorState } from "@/components/shared/states";
-import { summarizeHistory } from "@/lib/history-insights";
+import { summarizeHistory, dayKey } from "@/lib/history-insights";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -30,6 +32,7 @@ export default function HistoryPage() {
   const [lean, setLean] = React.useState("all");
   const [emotion, setEmotion] = React.useState("all");
   const [view, setView] = React.useState<View>("timeline");
+  const [selectedDay, setSelectedDay] = React.useState<string | null>(null);
 
   const topics = React.useMemo(
     () => [...new Set((data ?? []).map((h) => h.article.topic))].sort(),
@@ -50,9 +53,13 @@ export default function HistoryPage() {
     return true;
   });
 
-  // Descriptive summary of the reads currently in view — powers the Information Health strip and the
-  // Reflection/Insights section (Phase 1). Reacts to the filters, since it summarises `filtered`.
-  const insights = summarizeHistory(filtered);
+  // A selected Calendar day narrows the Timeline + the summaries to that day (synchronised via the
+  // shared local dayKey). The Calendar heatmap itself always shows the full attribute-filtered set.
+  const inView = selectedDay ? filtered.filter((h) => dayKey(h.readAt) === selectedDay) : filtered;
+
+  // Descriptive summary of the reads currently in view — powers the Information Health strip, the
+  // Reflection/Insights section, and (when a day is selected) the Daily Summary. Reacts to filters.
+  const insights = summarizeHistory(inView);
 
   const anyFilter = q || topic !== "all" || publisher !== "all" || lean !== "all" || emotion !== "all";
   const reset = () => {
@@ -63,16 +70,31 @@ export default function HistoryPage() {
     setEmotion("all");
   };
 
-  // group by calendar day
+  // Changing an attribute filter can empty the selected day, so clear the selection alongside it.
+  React.useEffect(() => {
+    setSelectedDay(null);
+  }, [q, topic, publisher, lean, emotion]);
+
+  const selectedDayLabel = React.useMemo(() => {
+    if (!selectedDay) return "";
+    const [y, m, d] = selectedDay.split("-").map(Number);
+    return formatDate(new Date(y ?? 0, (m ?? 1) - 1, d ?? 1).toISOString(), {
+      weekday: "long",
+      month: "long",
+      day: "numeric",
+    });
+  }, [selectedDay, formatDate]);
+
+  // group the in-view reads by calendar day (read time)
   const groups = React.useMemo(() => {
-    const map = new Map<string, typeof filtered>();
-    filtered.forEach((h) => {
+    const map = new Map<string, typeof inView>();
+    inView.forEach((h) => {
       const key = formatDate(h.readAt, { weekday: "long", month: "long", day: "numeric" });
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(h);
     });
     return [...map.entries()];
-  }, [filtered, formatDate]);
+  }, [inView, formatDate]);
 
   return (
     <PageContainer>
@@ -88,7 +110,7 @@ export default function HistoryPage() {
       </div>
 
       {/* filter bar */}
-      <div className="mb-6 flex flex-wrap items-center gap-2">
+      <div className="mb-4 flex flex-wrap items-center gap-2">
         <div className="relative min-w-[12rem] flex-1">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t("history.searchPlaceholder")} className="pl-9" />
@@ -114,10 +136,29 @@ export default function HistoryPage() {
         )}
       </div>
 
+      {/* selected-day chip — a Calendar selection filtering the Timeline; removable */}
+      {selectedDay && (
+        <div className="mb-6 flex items-center gap-2">
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/5 px-3 py-1 text-xs font-medium text-primary">
+            <CalendarDays className="h-3.5 w-3.5" />
+            {selectedDayLabel}
+            <button
+              type="button"
+              onClick={() => setSelectedDay(null)}
+              aria-label={t("history.clearDay")}
+              className="-mr-1 ml-0.5 rounded-full p-0.5 transition-colors hover:bg-primary/15"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </span>
+        </div>
+      )}
+
       {data && filtered.length > 0 && (
         <div className="mb-6 space-y-5">
           <InsightStrip insights={insights} />
           <ReflectionInsights insights={insights} />
+          {selectedDay && inView.length > 0 && <DailySummary insights={insights} dayLabel={selectedDayLabel} />}
         </div>
       )}
 
@@ -134,7 +175,7 @@ export default function HistoryPage() {
         <EmptyState icon={Search} title={t("history.empty.title")} description={t("history.empty.body")} />
       )}
 
-      {data && view === "timeline" && filtered.length > 0 && (
+      {data && view === "timeline" && inView.length > 0 && (
         <div className="space-y-8">
           {groups.map(([day, items]) => (
             <div key={day}>
@@ -155,7 +196,9 @@ export default function HistoryPage() {
         </div>
       )}
 
-      {data && view === "calendar" && <CalendarView entries={filtered} />}
+      {data && view === "calendar" && filtered.length > 0 && (
+        <CalendarView entries={filtered} selectedDay={selectedDay} onSelect={setSelectedDay} />
+      )}
     </PageContainer>
   );
 }
@@ -181,47 +224,5 @@ function ViewToggle({
     >
       <Icon className="h-4 w-4" /> {label}
     </button>
-  );
-}
-
-/** A simple 5-week reading-activity heatmap. */
-function CalendarView({ entries }: { entries: { readAt: string }[] }) {
-  const { t, formatDate } = useTranslation();
-  const counts = new Map<string, number>();
-  entries.forEach((e) => {
-    const key = new Date(e.readAt).toDateString();
-    counts.set(key, (counts.get(key) ?? 0) + 1);
-  });
-  const days = Array.from({ length: 35 }, (_, i) => {
-    const d = new Date();
-    d.setDate(d.getDate() - (34 - i));
-    return { date: d, count: counts.get(d.toDateString()) ?? 0 };
-  });
-  const max = Math.max(...days.map((d) => d.count), 1);
-  const level = (c: number) => (c === 0 ? 0 : Math.ceil((c / max) * 4));
-  const shades = ["bg-muted", "bg-primary/25", "bg-primary/45", "bg-primary/70", "bg-primary"];
-
-  return (
-    <div className="rounded-lg border bg-card p-6">
-      <div className="mb-4 flex items-center justify-between">
-        <h3 className="text-sm font-semibold">{t("history.last5weeks")}</h3>
-        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          {t("history.less")}
-          {shades.map((s, i) => (
-            <span key={i} className={cn("h-3 w-3 rounded-sm", s)} />
-          ))}
-          {t("history.more")}
-        </div>
-      </div>
-      <div className="grid grid-flow-col grid-rows-7 gap-1.5">
-        {days.map((d, i) => (
-          <div
-            key={i}
-            title={`${formatDate(d.date.toISOString(), { month: "short", day: "numeric" })} · ${t("history.readCount", { n: d.count })}`}
-            className={cn("aspect-square rounded-sm", shades[level(d.count)])}
-          />
-        ))}
-      </div>
-    </div>
   );
 }

@@ -899,6 +899,25 @@ M = {
                                        "Eine Mischung aus Bericht und Meinung",
                                        "Uma mistura de reportagem e opinião"),
 
+    # ---- calendar↔timeline sync + daily summary (Phase 2 redesign) ----
+    "history.clearDay": ("Clear selected day", "Quitar día seleccionado", "Effacer le jour sélectionné",
+                         "Ausgewählten Tag entfernen", "Limpar dia selecionado"),
+    "history.daily.political": ("Political exposure", "Exposición política", "Exposition politique",
+                                "Politische Exposition", "Exposição política"),
+    "history.daily.emotional": ("Emotional exposure", "Exposición emocional", "Exposition émotionnelle",
+                                "Emotionale Exposition", "Exposição emocional"),
+    "history.daily.reporting": ("Reporting vs opinion", "Información vs opinión", "Information vs opinion",
+                                "Bericht vs. Meinung", "Reportagem vs opinião"),
+    "history.daily.mostReadTopic": ("Most-read topic", "Tema más leído", "Sujet le plus lu",
+                                    "Meistgelesenes Thema", "Tema mais lido"),
+    "history.daily.mostReadPublisher": ("Most-read publisher", "Medio más leído", "Source la plus lue",
+                                        "Meistgelesene Quelle", "Fonte mais lida"),
+    "history.daily.avgReadTime": ("Avg. read time", "Tiempo medio de lectura", "Temps de lecture moyen",
+                                  "Ø Lesezeit", "Tempo médio de leitura"),
+    "history.daily.avgMinutes": ("~{n} min", "~{n} min", "~{n} min", "~{n} Min.", "~{n} min"),
+    "history.daily.topTopics": ("Top topics", "Temas principales", "Principaux sujets",
+                                "Top-Themen", "Principais temas"),
+
     # ---- Why? drawer (user-facing labels; dev/technical rows stay English by design) ----
     "why.explanation": ("Why this article", "Por qué este artículo", "Pourquoi cet article",
                         "Warum dieser Artikel", "Por que este artigo"),
