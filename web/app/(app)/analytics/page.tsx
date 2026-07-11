@@ -1,6 +1,7 @@
 "use client";
 
 import { useAnalytics } from "@/hooks/use-data";
+import { useTranslation } from "@/lib/i18n";
 import { PageContainer } from "@/components/layout/page-container";
 import { SectionCard } from "@/components/shared/section-card";
 import { TrendChart } from "@/components/shared/trend-chart";
@@ -11,14 +12,13 @@ import { EMOTION_META } from "@/lib/metrics";
 
 export default function AnalyticsPage() {
   const { data, isLoading, isError, refetch } = useAnalytics();
+  const { t } = useTranslation();
 
   return (
     <PageContainer>
       <div className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight">Analytics</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          How your reading and Information Health have moved over the last 30 days.
-        </p>
+        <h1 className="text-2xl font-semibold tracking-tight">{t("analytics.title")}</h1>
+        <p className="mt-1 text-sm text-muted-foreground">{t("analytics.subtitle")}</p>
       </div>
 
       {isLoading && (
@@ -32,37 +32,37 @@ export default function AnalyticsPage() {
 
       {data && (
         <div className="grid gap-6 lg:grid-cols-2">
-          <SectionCard title="Health improvement" info="Your overall Information Health score over time." className="lg:col-span-2">
+          <SectionCard title={t("analytics.healthImprovement")} info={t("analytics.healthImprovementInfo")} className="lg:col-span-2">
             <TrendChart data={data.healthImprovement} height={240} />
           </SectionCard>
 
-          <SectionCard title="Reading volume" info="Articles read per day.">
+          <SectionCard title={t("analytics.readingVolume")} info={t("analytics.readingVolumeInfo")}>
             <StackedBar
               data={data.readingOverTime}
-              series={[{ key: "overall", label: "Articles", color: "hsl(var(--primary))" }]}
+              series={[{ key: "overall", label: t("analytics.articles"), color: "hsl(var(--primary))" }]}
               stacked={false}
               height={220}
             />
           </SectionCard>
 
-          <SectionCard title="Topic diversity" info="Breadth of subjects over time.">
+          <SectionCard title={t("analytics.topicDiversity")} info={t("analytics.topicDiversityInfo")}>
             <TrendChart data={data.topicDiversity} height={220} color="hsl(var(--primary))" domain={[0, 100]} />
           </SectionCard>
 
-          <SectionCard title="Political diversity" info="How balanced your left/right reading has been.">
+          <SectionCard title={t("analytics.politicalDiversity")} info={t("analytics.politicalDiversityInfo")}>
             <TrendChart data={data.politicalDiversity} height={220} color="hsl(var(--center))" domain={[0, 100]} />
           </SectionCard>
 
-          <SectionCard title="Publisher diversity" info="How many distinct outlets you rely on.">
+          <SectionCard title={t("analytics.publisherDiversity")} info={t("analytics.publisherDiversityInfo")}>
             <TrendChart data={data.publisherDiversity} height={220} color="hsl(var(--left))" domain={[0, 100]} />
           </SectionCard>
 
-          <SectionCard title="Emotional tone" info="The emotional makeup of your reading, by period.">
+          <SectionCard title={t("analytics.emotionalTone")} info={t("analytics.emotionalToneInfo")}>
             <StackedBar
               data={data.emotion}
               series={(Object.keys(EMOTION_META) as (keyof typeof EMOTION_META)[]).map((k) => ({
                 key: k,
-                label: EMOTION_META[k].label,
+                label: t(`emotion.${k}`),
                 color: EMOTION_META[k].color,
               }))}
               percent
@@ -70,24 +70,24 @@ export default function AnalyticsPage() {
             />
           </SectionCard>
 
-          <SectionCard title="Reporting vs opinion" info="The balance of factual reporting and commentary.">
+          <SectionCard title={t("analytics.reportingVsOpinion")} info={t("analytics.reportingVsOpinionInfo")}>
             <StackedBar
               data={data.reporting}
               series={[
-                { key: "reporting", label: "Reporting", color: "hsl(var(--positive))" },
-                { key: "opinion", label: "Opinion", color: "hsl(var(--muted-foreground))" },
+                { key: "reporting", label: t("analytics.reporting"), color: "hsl(var(--positive))" },
+                { key: "opinion", label: t("analytics.opinion"), color: "hsl(var(--muted-foreground))" },
               ]}
               percent
               height={220}
             />
           </SectionCard>
 
-          <SectionCard title="Recommendation acceptance" info="How often you act on our recommendations.">
+          <SectionCard title={t("analytics.recAcceptance")} info={t("analytics.recAcceptanceInfo")}>
             <StackedBar
               data={data.recommendationAcceptance}
               series={[
-                { key: "accepted", label: "Accepted", color: "hsl(var(--positive))" },
-                { key: "ignored", label: "Ignored", color: "hsl(var(--muted))" },
+                { key: "accepted", label: t("analytics.accepted"), color: "hsl(var(--positive))" },
+                { key: "ignored", label: t("analytics.ignored"), color: "hsl(var(--muted))" },
               ]}
               stacked={false}
               height={220}

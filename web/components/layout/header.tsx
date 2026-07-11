@@ -60,7 +60,7 @@ export function Header() {
       {/* Mobile nav */}
       <Sheet open={mobileNav} onOpenChange={setMobileNav}>
         <SheetTrigger asChild>
-          <Button variant="ghost" size="icon" className="lg:hidden" aria-label="Open menu">
+          <Button variant="ghost" size="icon" className="lg:hidden" aria-label={t("header.openMenu")}>
             <Menu className="h-5 w-5" />
           </Button>
         </SheetTrigger>
@@ -80,14 +80,14 @@ export function Header() {
           className="hidden h-9 items-center gap-2 rounded-lg border bg-background/60 px-3 text-sm text-muted-foreground transition-colors hover:bg-accent sm:flex"
         >
           <Search className="h-4 w-4" />
-          <span>Search</span>
+          <span>{t("header.search")}</span>
           <kbd className="rounded border bg-muted px-1.5 py-0.5 text-[0.65rem]">⌘K</kbd>
         </button>
-        <Button variant="ghost" size="icon" className="text-muted-foreground sm:hidden" onClick={() => setSearchOpen(true)} aria-label="Search">
+        <Button variant="ghost" size="icon" className="text-muted-foreground sm:hidden" onClick={() => setSearchOpen(true)} aria-label={t("header.search")}>
           <Search className="h-5 w-5" />
         </Button>
 
-        <Button variant="ghost" size="icon" className="relative text-muted-foreground" aria-label="Notifications">
+        <Button variant="ghost" size="icon" className="relative text-muted-foreground" aria-label={t("header.notifications")}>
           <Bell className="h-[1.15rem] w-[1.15rem]" />
           <span className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full bg-primary" />
         </Button>
@@ -114,17 +114,17 @@ export function Header() {
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
             <DropdownMenuItem asChild>
-              <Link href="/profile">Profile</Link>
+              <Link href="/profile">{t("nav.profile")}</Link>
             </DropdownMenuItem>
             <DropdownMenuItem asChild>
-              <Link href="/settings">Settings</Link>
+              <Link href="/settings">{t("nav.settings")}</Link>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem
               className="text-destructive focus:text-destructive"
               onClick={() => signOut({ callbackUrl: "/signin" })}
             >
-              Sign out
+              {t("header.signOut")}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

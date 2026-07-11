@@ -3,6 +3,7 @@
 import * as React from "react";
 import { Compass } from "lucide-react";
 import { useDiscover } from "@/hooks/use-data";
+import { useTranslation } from "@/lib/i18n";
 import { PageContainer } from "@/components/layout/page-container";
 import { DiscoverCard } from "@/components/discover/discover-card";
 import { FilterSelect, type FilterOption } from "@/components/shared/filter-select";
@@ -27,6 +28,7 @@ const PAGE = 24;
 const FETCH = 200;
 
 export default function DiscoverPage() {
+  const { t } = useTranslation();
   const [topic, setTopic] = React.useState("all");
   const [publisher, setPublisher] = React.useState("all");
   const [lean, setLean] = React.useState("all");
@@ -53,23 +55,19 @@ export default function DiscoverPage() {
   return (
     <PageContainer>
       <div className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight">Discover</h1>
-        <p className="mt-1 max-w-xl text-sm text-muted-foreground">
-          The latest articles across every publisher — newest first. Filter by topic, publisher, or
-          lean, and open the real article. Looking for how one event is covered across the spectrum? Try
-          Stories.
-        </p>
+        <h1 className="text-2xl font-semibold tracking-tight">{t("discover.title")}</h1>
+        <p className="mt-1 max-w-xl text-sm text-muted-foreground">{t("discover.subtitle")}</p>
       </div>
 
       <div className="mb-6 flex flex-wrap items-center gap-2">
-        <FilterSelect label="Topic" value={topic} options={opt(data?.topics ?? [])} onChange={setTopic} />
+        <FilterSelect label={t("filter.topic")} value={topic} options={opt(data?.topics ?? [])} onChange={setTopic} />
         <FilterSelect
-          label="Publisher"
+          label={t("filter.publisher")}
           value={publisher}
           options={opt(data?.publishers ?? [])}
           onChange={setPublisher}
         />
-        <FilterSelect label="Lean" value={lean} options={LEAN_OPTIONS} onChange={setLean} />
+        <FilterSelect label={t("filter.lean")} value={lean} options={LEAN_OPTIONS} onChange={setLean} />
         {total > 0 && (
           <span className="ml-auto text-sm text-muted-foreground">
             {total} article{total === 1 ? "" : "s"}
@@ -89,8 +87,8 @@ export default function DiscoverPage() {
       {data && total === 0 && (
         <EmptyState
           icon={Compass}
-          title="No articles yet"
-          description="Discover shows the latest articles from the live news catalog. Once RSS ingestion has run (RWE_RECS_SOURCE=feed), fresh articles appear here."
+          title={t("discover.empty.title")}
+          description={t("discover.empty.body")}
           className="mt-4"
         />
       )}

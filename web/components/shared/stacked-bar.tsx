@@ -2,6 +2,7 @@
 
 import { Bar, BarChart, Tooltip, XAxis, YAxis } from "recharts";
 import { useMeasure } from "@/hooks/use-measure";
+import { useTranslation } from "@/lib/i18n";
 
 export interface BarSeries {
   key: string;
@@ -25,6 +26,7 @@ export function StackedBar({
   percent?: boolean;
   xKey?: string;
 }) {
+  const { formatDate } = useTranslation();
   const { ref, width } = useMeasure<HTMLDivElement>();
 
   return (
@@ -34,7 +36,7 @@ export function StackedBar({
           dataKey={xKey}
           tickFormatter={(d: string) =>
             typeof d === "string" && d.includes("-")
-              ? new Date(d).toLocaleDateString("en", { month: "short", day: "numeric" })
+              ? formatDate(d, { month: "short", day: "numeric" })
               : d
           }
           tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
@@ -61,7 +63,7 @@ export function StackedBar({
           formatter={(v: number, name: string) => [percent ? `${Math.round(v * 100)}%` : v, name]}
           labelFormatter={(d) =>
             typeof d === "string" && d.includes("-")
-              ? new Date(d).toLocaleDateString("en", { month: "long", day: "numeric" })
+              ? formatDate(d, { month: "long", day: "numeric" })
               : d
           }
         />

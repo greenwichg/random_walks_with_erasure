@@ -42,28 +42,27 @@ export default function DashboardPage() {
           <div className="grid gap-6 lg:grid-cols-3">
             <Card className="overflow-hidden lg:col-span-2">
               <CardContent className="flex flex-col items-center gap-6 p-6 sm:flex-row sm:p-8">
-                <ScoreRing score={data.overall} size={148} label="of 100" />
+                <ScoreRing score={data.overall} size={148} label={t("common.of100")} />
                 <div className="flex-1 text-center sm:text-left">
                   <div className="flex items-center justify-center gap-2 sm:justify-start">
-                    <Badge variant={scoreBand(data.overall).hue}>{scoreBand(data.overall).label}</Badge>
-                    <DeltaBadge value={data.overallDelta} suffix="this month" />
+                    <Badge variant={scoreBand(data.overall).hue}>{t(`band.${scoreBand(data.overall).label}`)}</Badge>
+                    <DeltaBadge value={data.overallDelta} suffix={t("report.thisMonth")} />
                   </div>
                   <h2 className="mt-3 text-xl font-semibold tracking-tight">
-                    Your reading diet is looking healthy.
+                    {t("dashboard.heroTitle")}
                   </h2>
                   <p className="mt-1.5 max-w-md text-sm text-muted-foreground">
-                    You're up {data.overallDelta} points this month — driven by more cross-cutting reads.
-                    Your best lever right now is Emotional Balance.
+                    {t("dashboard.heroBody", { n: data.overallDelta })}
                   </p>
                   <div className="mt-4 flex flex-wrap justify-center gap-2 sm:justify-start">
                     <Button asChild size="sm">
                       <Link href="/report">
-                        View full report <ArrowRight className="h-4 w-4" />
+                        {t("dashboard.viewReport")} <ArrowRight className="h-4 w-4" />
                       </Link>
                     </Button>
                     <Button asChild size="sm" variant="outline">
                       <Link href="/coach">
-                        <Sparkles className="h-4 w-4" /> Ask the coach
+                        <Sparkles className="h-4 w-4" /> {t("dashboard.askCoach")}
                       </Link>
                     </Button>
                   </div>
@@ -74,8 +73,8 @@ export default function DashboardPage() {
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="flex items-center justify-between text-sm font-medium">
-                  Health trend
-                  <span className="text-xs font-normal text-muted-foreground">30 days</span>
+                  {t("dashboard.healthTrend")}
+                  <span className="text-xs font-normal text-muted-foreground">{t("dashboard.days30")}</span>
                 </CardTitle>
               </CardHeader>
               <CardContent className="px-2 pb-2">
@@ -128,7 +127,7 @@ export default function DashboardPage() {
             <div className="mb-3 flex items-center justify-between">
               <h3 className="text-sm font-semibold text-muted-foreground">{t("dashboard.healthMetrics")}</h3>
               <Link href="/report" className="text-xs font-medium text-primary hover:underline">
-                Full breakdown
+                {t("dashboard.fullBreakdown")}
               </Link>
             </div>
             <motion.div

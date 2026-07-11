@@ -24,10 +24,10 @@ import { leanBucket } from "@/lib/political";
 
 export default function ReportPage() {
   const { data: report, isLoading, isError, refetch } = useReport();
-  const { t } = useTranslation();
+  const { t, formatDate } = useTranslation();
 
   const topicItems: BarItem[] =
-    report?.topics.slice(0, 8).map((t) => ({ label: t.topic, value: t.share, count: t.count })) ?? [];
+    report?.topics.slice(0, 8).map((tp) => ({ label: tp.topic, value: tp.share, count: tp.count })) ?? [];
 
   const sourceItems: BarItem[] =
     report?.sources.map((s) => {
@@ -37,7 +37,7 @@ export default function ReportPage() {
         value: s.share,
         count: s.count,
         color: LEAN_META[bucket].color,
-        sublabel: LEAN_META[bucket].label,
+        sublabel: t(`filter.${bucket}`),
       };
     }) ?? [];
 
@@ -71,19 +71,19 @@ export default function ReportPage() {
           <h1 className="text-2xl font-semibold tracking-tight">{t("report.title")}</h1>
           {report && (
             <p className="mt-1 text-sm text-muted-foreground">
-              Updated{" "}
-              {new Date(report.updatedAt).toLocaleDateString("en", { month: "long", day: "numeric", year: "numeric" })}{" "}
-              · based on your last 30 days of reading
+              {t("report.updatedCaption", {
+                date: formatDate(report.updatedAt, { month: "long", day: "numeric", year: "numeric" }),
+              })}
             </p>
           )}
         </div>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={() => window.print()}>
-            <Download className="h-4 w-4" /> Export
+            <Download className="h-4 w-4" /> {t("report.export")}
           </Button>
           <Button size="sm" asChild>
             <Link href="/coach">
-              <Sparkles className="h-4 w-4" /> Discuss with coach
+              <Sparkles className="h-4 w-4" /> {t("report.discussCoach")}
             </Link>
           </Button>
         </div>
@@ -98,15 +98,15 @@ export default function ReportPage() {
           <div className="grid gap-6 lg:grid-cols-3">
             <Card>
               <CardContent className="flex flex-col items-center p-6 text-center">
-                <ScoreRing score={report.overall} size={150} label="of 100" band={report.band} />
+                <ScoreRing score={report.overall} size={150} label={t("common.of100")} band={report.band} />
                 <div className="mt-4 flex items-center gap-2">
                   {overallBand && <Badge variant={overallBand.hue}>{t(`band.${overallBand.label}`)}</Badge>}
-                  <DeltaBadge value={report.overallDelta} suffix="this month" />
+                  <DeltaBadge value={report.overallDelta} suffix={t("report.thisMonth")} />
                 </div>
                 <p className="mt-3 text-sm text-muted-foreground">{dietSummary}</p>
                 <div className="mt-4 flex w-full items-center justify-between rounded-lg border bg-muted/40 px-3 py-2 text-sm">
                   <span className="flex items-center gap-2 text-muted-foreground">
-                    <Gauge className="h-4 w-4" /> Axis confidence
+                    <Gauge className="h-4 w-4" /> {t("report.axisConfidence")}
                   </span>
                   <span className="font-medium tabular-nums">{Math.round(report.axisConfidence * 100)}%</span>
                 </div>
@@ -114,8 +114,8 @@ export default function ReportPage() {
             </Card>
 
             <SectionCard
-              title="Metric overview"
-              info="Your six scored health metrics on one scale. Further from the centre is healthier."
+              title={t("report.metricOverview")}
+              info={t("report.metricOverviewInfo")}
               className="lg:col-span-2"
             >
               <MetricRadar metrics={report.metrics} />
@@ -124,7 +124,7 @@ export default function ReportPage() {
 
           {/* Political distribution + attention */}
           <div className="grid gap-6 lg:grid-cols-2">
-            <SectionCard title="Political distribution" info="How your reading splits across the spectrum.">
+            <SectionCard title={t("report.politicalDist")} info={t("report.politicalDistInfo")}>
               <div className="pt-2">
                 <SpectrumBar distribution={report.viewpoint} height={16} />
                 <p className="mt-4 text-sm text-muted-foreground">
@@ -138,27 +138,27 @@ export default function ReportPage() {
               </div>
             </SectionCard>
 
-            <SectionCard title="Attention profile" info="The emotional makeup of what you read. Lower 'charged' is calmer.">
+            <SectionCard title={t("report.attentionProfile")} info={t("report.attentionProfileInfo")}>
               <AttentionProfile attention={report.attention} />
             </SectionCard>
           </div>
 
           {/* Reading + source distribution */}
           <div className="grid gap-6 lg:grid-cols-2">
-            <SectionCard title="Reading distribution" info="Your most-read topics this month.">
+            <SectionCard title={t("report.readingDist")} info={t("report.readingDistInfo")}>
               <BarList items={topicItems} />
             </SectionCard>
-            <SectionCard title="Source distribution" info="Your publishers, coloured by political lean.">
+            <SectionCard title={t("report.sourceDist")} info={t("report.sourceDistInfo")}>
               <BarList items={sourceItems} />
             </SectionCard>
           </div>
 
           {/* Blind spots + improvements */}
           <div className="grid gap-6 lg:grid-cols-2">
-            <SectionCard title="Blind spots" info="Topics and viewpoints you under-consume.">
+            <SectionCard title={t("report.blindSpotsTitle")} info={t("report.blindSpotsInfo")}>
               <BlindSpots items={report.blindSpots} />
             </SectionCard>
-            <SectionCard title="Recommendations for improvement" info="The highest-impact changes for your score.">
+            <SectionCard title={t("report.improvementsTitle")} info={t("report.improvementsInfo")}>
               <Improvements items={report.improvements} />
             </SectionCard>
           </div>
@@ -166,8 +166,8 @@ export default function ReportPage() {
           {/* Full metric breakdown */}
           <div>
             <div className="mb-3 flex items-center gap-1.5">
-              <h2 className="text-sm font-semibold">Detailed breakdown</h2>
-              <span className="text-xs text-muted-foreground">· tap a metric to learn what it means</span>
+              <h2 className="text-sm font-semibold">{t("report.detailedBreakdown")}</h2>
+              <span className="text-xs text-muted-foreground">{t("report.tapMetric")}</span>
             </div>
             <MetricAccordion metrics={report.metrics} />
           </div>

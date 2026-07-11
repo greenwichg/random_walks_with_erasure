@@ -3,14 +3,15 @@
 import { motion } from "framer-motion";
 import { Bot } from "lucide-react";
 import type { CoachMessage as TMessage } from "@/types/domain";
-import { METRICS } from "@/lib/metrics";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { LeanBadge } from "@/components/shared/article-badges";
+import { useTranslation } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 /** One chat bubble. Assistant messages can carry grounded citations + article suggestions. */
 export function CoachMessageBubble({ message }: { message: TMessage }) {
+  const { t } = useTranslation();
   const isUser = message.role === "user";
   return (
     <motion.div
@@ -45,7 +46,7 @@ export function CoachMessageBubble({ message }: { message: TMessage }) {
           <div className="flex flex-wrap gap-1.5">
             {message.citations.map((c) => (
               <Badge key={c.metric} variant="secondary" className="font-normal">
-                {METRICS[c.metric].label}: <span className="font-semibold">{c.value}</span>
+                {t(`metric.${c.metric}.label`)}: <span className="font-semibold">{c.value}</span>
               </Badge>
             ))}
           </div>

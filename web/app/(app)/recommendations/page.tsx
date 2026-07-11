@@ -14,11 +14,12 @@ import { Skeleton } from "@/components/ui/skeleton";
 
 type Filter = "all" | Recommendation["strategy"];
 
-const FILTERS: { value: Filter; label: string; icon: React.ElementType }[] = [
-  { value: "all", label: "All", icon: Sparkles },
-  { value: "rwe-b", label: "Bridging", icon: Route },
-  { value: "adaptive", label: "For you", icon: Wand2 },
-  { value: "rwe-d", label: "Discovery", icon: Compass },
+// Label comes from the catalog at render time: `rec.filter.all` for All, else `rec.strategy.<value>`.
+const FILTERS: { value: Filter; icon: React.ElementType }[] = [
+  { value: "all", icon: Sparkles },
+  { value: "rwe-b", icon: Route },
+  { value: "adaptive", icon: Wand2 },
+  { value: "rwe-d", icon: Compass },
 ];
 
 export default function RecommendationsPage() {
@@ -57,7 +58,7 @@ export default function RecommendationsPage() {
           {FILTERS.map((f) => (
             <TabsTrigger key={f.value} value={f.value}>
               <f.icon className="h-3.5 w-3.5" />
-              {f.label}
+              {f.value === "all" ? t("rec.filter.all") : t(`rec.strategy.${f.value}`)}
             </TabsTrigger>
           ))}
         </TabsList>
@@ -75,8 +76,8 @@ export default function RecommendationsPage() {
       {data && visible.length === 0 && (
         <EmptyState
           icon={Sparkles}
-          title="You're all caught up"
-          description="No more recommendations in this filter. Check back after you read a few more articles."
+          title={t("rec.empty.title")}
+          description={t("rec.empty.body")}
           className="mt-4"
         />
       )}

@@ -14,13 +14,13 @@ import { EmptyState, ErrorState } from "@/components/shared/states";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { timeAgo, cn } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 type View = "timeline" | "calendar";
 
 export default function HistoryPage() {
   const { data, isLoading, isError, refetch } = useHistory();
-  const { formatDate } = useTranslation();
+  const { t, formatDate, timeAgo } = useTranslation();
   const [q, setQ] = React.useState("");
   const [topic, setTopic] = React.useState("all");
   const [publisher, setPublisher] = React.useState("all");
@@ -71,12 +71,12 @@ export default function HistoryPage() {
     <PageContainer>
       <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Reading History</h1>
-          <p className="mt-1 text-sm text-muted-foreground">Everything you've read, searchable and filterable.</p>
+          <h1 className="text-2xl font-semibold tracking-tight">{t("nav.history")}</h1>
+          <p className="mt-1 text-sm text-muted-foreground">{t("history.subtitle")}</p>
         </div>
         <div className="inline-flex rounded-lg border bg-muted p-1">
-          <ViewToggle icon={ListFilter} label="Timeline" active={view === "timeline"} onClick={() => setView("timeline")} />
-          <ViewToggle icon={CalendarDays} label="Calendar" active={view === "calendar"} onClick={() => setView("calendar")} />
+          <ViewToggle icon={ListFilter} label={t("history.timeline")} active={view === "timeline"} onClick={() => setView("timeline")} />
+          <ViewToggle icon={CalendarDays} label={t("history.calendar")} active={view === "calendar"} onClick={() => setView("calendar")} />
         </div>
       </div>
 
@@ -84,25 +84,25 @@ export default function HistoryPage() {
       <div className="mb-6 flex flex-wrap items-center gap-2">
         <div className="relative min-w-[12rem] flex-1">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search your reading…" className="pl-9" />
+          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t("history.searchPlaceholder")} className="pl-9" />
         </div>
-        <FilterSelect label="Topic" value={topic} options={topics.map((t) => ({ value: t, label: t }))} onChange={setTopic} />
-        <FilterSelect label="Publisher" value={publisher} options={publishers.map((p) => ({ value: p, label: p }))} onChange={setPublisher} />
+        <FilterSelect label={t("filter.topic")} value={topic} options={topics.map((tp) => ({ value: tp, label: tp }))} onChange={setTopic} />
+        <FilterSelect label={t("filter.publisher")} value={publisher} options={publishers.map((p) => ({ value: p, label: p }))} onChange={setPublisher} />
         <FilterSelect
-          label="Lean"
+          label={t("filter.lean")}
           value={lean}
-          options={(["left", "center", "right"] as const).map((l) => ({ value: l, label: LEAN_META[l].label }))}
+          options={(["left", "center", "right"] as const).map((l) => ({ value: l, label: t(`filter.${l}`) }))}
           onChange={setLean}
         />
         <FilterSelect
-          label="Emotion"
+          label={t("filter.emotion")}
           value={emotion}
-          options={(Object.keys(EMOTION_META) as (keyof EmotionShare)[]).map((e) => ({ value: e, label: EMOTION_META[e].label }))}
+          options={(Object.keys(EMOTION_META) as (keyof EmotionShare)[]).map((e) => ({ value: e, label: t(`emotion.${e}`) }))}
           onChange={setEmotion}
         />
         {anyFilter && (
           <Button variant="ghost" size="sm" onClick={reset} className="text-muted-foreground">
-            <X className="h-4 w-4" /> Clear
+            <X className="h-4 w-4" /> {t("common.clear")}
           </Button>
         )}
       </div>
@@ -117,7 +117,7 @@ export default function HistoryPage() {
       {isError && <ErrorState onRetry={() => refetch()} />}
 
       {data && filtered.length === 0 && (
-        <EmptyState icon={Search} title="No matches" description="Try clearing a filter or searching for something else." />
+        <EmptyState icon={Search} title={t("history.empty.title")} description={t("history.empty.body")} />
       )}
 
       {data && view === "timeline" && filtered.length > 0 && (
@@ -126,7 +126,7 @@ export default function HistoryPage() {
             <div key={day}>
               <div className="mb-3 flex items-center gap-3">
                 <h3 className="text-sm font-semibold">{day}</h3>
-                <span className="text-xs text-muted-foreground">{items.length} articles</span>
+                <span className="text-xs text-muted-foreground">{t("history.articlesCount", { n: items.length })}</span>
                 <div className="h-px flex-1 bg-border" />
               </div>
               <div className="space-y-3">
@@ -170,7 +170,7 @@ function ViewToggle({
 
 /** A simple 5-week reading-activity heatmap. */
 function CalendarView({ entries }: { entries: { readAt: string }[] }) {
-  const { formatDate } = useTranslation();
+  const { t, formatDate } = useTranslation();
   const counts = new Map<string, number>();
   entries.forEach((e) => {
     const key = new Date(e.readAt).toDateString();
@@ -188,20 +188,20 @@ function CalendarView({ entries }: { entries: { readAt: string }[] }) {
   return (
     <div className="rounded-lg border bg-card p-6">
       <div className="mb-4 flex items-center justify-between">
-        <h3 className="text-sm font-semibold">Last 5 weeks</h3>
+        <h3 className="text-sm font-semibold">{t("history.last5weeks")}</h3>
         <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          Less
+          {t("history.less")}
           {shades.map((s, i) => (
             <span key={i} className={cn("h-3 w-3 rounded-sm", s)} />
           ))}
-          More
+          {t("history.more")}
         </div>
       </div>
       <div className="grid grid-flow-col grid-rows-7 gap-1.5">
         {days.map((d, i) => (
           <div
             key={i}
-            title={`${formatDate(d.date.toISOString(), { month: "short", day: "numeric" })} · ${d.count} read`}
+            title={`${formatDate(d.date.toISOString(), { month: "short", day: "numeric" })} · ${t("history.readCount", { n: d.count })}`}
             className={cn("aspect-square rounded-sm", shades[level(d.count)])}
           />
         ))}

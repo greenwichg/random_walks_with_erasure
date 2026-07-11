@@ -4,6 +4,7 @@ import * as React from "react";
 import { Bookmark, BookmarkCheck } from "lucide-react";
 import type { SavableArticle } from "@/types/domain";
 import { useSaved, useSaveArticle, useUnsaveArticle } from "@/hooks/use-data";
+import { useTranslation } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 /**
@@ -22,6 +23,7 @@ export function SaveButton({
   article: SavableArticle;
   className?: string;
 }) {
+  const { t } = useTranslation();
   const { data: saved } = useSaved();
   const save = useSaveArticle();
   const unsave = useUnsaveArticle();
@@ -34,7 +36,7 @@ export function SaveButton({
       type="button"
       aria-pressed={isSaved}
       disabled={pending || !article.id}
-      title={isSaved ? "Remove from Saved" : "Save for later"}
+      title={isSaved ? t("save.removeTitle") : t("save.saveTitle")}
       onClick={() => (isSaved ? unsave.mutate(article.id) : save.mutate(article))}
       className={cn(
         "inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-medium transition-colors",
@@ -46,7 +48,7 @@ export function SaveButton({
       )}
     >
       {isSaved ? <BookmarkCheck className="h-3.5 w-3.5" /> : <Bookmark className="h-3.5 w-3.5" />}
-      {isSaved ? "Saved" : "Save"}
+      {isSaved ? t("save.saved") : t("save.save")}
     </button>
   );
 }

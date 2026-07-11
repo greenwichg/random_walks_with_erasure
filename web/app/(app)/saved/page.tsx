@@ -3,6 +3,7 @@
 import * as React from "react";
 import { Bookmark } from "lucide-react";
 import { useSaved } from "@/hooks/use-data";
+import { useTranslation } from "@/lib/i18n";
 import { PageContainer } from "@/components/layout/page-container";
 import { DiscoverCard } from "@/components/discover/discover-card";
 import { EmptyState, ErrorState } from "@/components/shared/states";
@@ -40,16 +41,14 @@ function toArticle(s: SavedArticle): Article {
 
 export default function SavedPage() {
   const { data, isLoading, isError, refetch } = useSaved();
+  const { t } = useTranslation();
   const saved = data ?? [];
 
   return (
     <PageContainer>
       <div className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight">Saved</h1>
-        <p className="mt-1 max-w-xl text-sm text-muted-foreground">
-          Articles you saved to read later. Saving isn&apos;t reading — click <strong>Read</strong> to
-          open one and record it in your Reading History.
-        </p>
+        <h1 className="text-2xl font-semibold tracking-tight">{t("saved.title")}</h1>
+        <p className="mt-1 max-w-xl text-sm text-muted-foreground">{t("saved.subtitle")}</p>
       </div>
 
       {isLoading && (
@@ -64,8 +63,8 @@ export default function SavedPage() {
       {data && saved.length === 0 && (
         <EmptyState
           icon={Bookmark}
-          title="No saved articles yet"
-          description="Tap Save on any article in Recommendations, Discover, Search, or a Story to keep it here for later."
+          title={t("saved.empty.title")}
+          description={t("saved.empty.body")}
           className="mt-4"
         />
       )}

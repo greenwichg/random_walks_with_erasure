@@ -19,6 +19,16 @@ export function normalizeLang(value: unknown): Lang {
   return (SUPPORTED as readonly string[]).includes(value as string) ? (value as Lang) : DEFAULT_LANG;
 }
 
+/**
+ * The active language read from `<html lang>` — the authoritative value the LanguageProvider keeps
+ * in sync. For **module-level** formatters that can't call the `useTranslation` hook (they aren't
+ * React components); component code should prefer the hook. Falls back to English on the server.
+ */
+export function activeLang(): Lang {
+  if (typeof document === "undefined") return DEFAULT_LANG;
+  return normalizeLang(document.documentElement.lang);
+}
+
 /** Replace `{name}` placeholders from `params` (missing params are left as-is, never blanked). */
 export function interpolate(template: string, params?: Record<string, unknown>): string {
   if (!params) return template;

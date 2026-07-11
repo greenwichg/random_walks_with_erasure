@@ -44,9 +44,9 @@ test("makeT: active language wins, then English, then the key itself", () => {
   const es = load("es");
   const en = load("en");
   const t = makeT(es, en);
-  assert.equal(t("common.save"), "Guardar"); // active language
+  assert.equal(t("nav.settings"), "Ajustes"); // active language
   const partial = makeT({ "only.here": "X" }, en);
-  assert.equal(partial("common.save"), "Save"); // falls back to English catalog
+  assert.equal(partial("nav.settings"), "Settings"); // falls back to English catalog
   const misses: string[] = [];
   const tm = makeT({}, {}, (k) => misses.push(k));
   assert.equal(tm("nope.key"), "nope.key"); // final fallback = the key
@@ -114,6 +114,17 @@ test("all five catalogs share identical keys with non-empty values (no missing t
     assert.deepEqual(Object.keys(cats[l]).sort(), enKeys, `${l}.json key set differs from en.json`);
     for (const [k, v] of Object.entries(cats[l])) {
       assert.ok(typeof v === "string" && v.trim().length > 0, `${l}.json has an empty value for ${k}`);
+    }
+  }
+});
+
+test("interpolation placeholders match across every language (no dropped {params})", () => {
+  const cats = Object.fromEntries(SUPPORTED.map((l) => [l, load(l)]));
+  const ph = (s: string) => new Set([...s.matchAll(/\{(\w+)\}/g)].map((m) => m[1]));
+  for (const key of Object.keys(cats.en)) {
+    const base = [...ph(cats.en[key])].sort();
+    for (const l of SUPPORTED) {
+      assert.deepEqual([...ph(cats[l][key])].sort(), base, `${l}.json "${key}" has different {placeholders} than en`);
     }
   }
 });

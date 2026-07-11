@@ -4,21 +4,16 @@ import * as React from "react";
 import { Send, Sparkles } from "lucide-react";
 import type { CoachMessage } from "@/types/domain";
 import { services } from "@/services";
+import { useTranslation } from "@/lib/i18n";
 import { useCoachHistory } from "@/hooks/use-data";
 import { CoachMessageBubble, CoachTyping } from "@/components/coach/coach-message";
 import { Button } from "@/components/ui/button";
 
-const SUGGESTIONS = [
-  "How balanced is my reading?",
-  "Why is my echo score low?",
-  "How can I improve this week?",
-  "Suggest two articles for me",
-  "Explain my metrics",
-  "Generate my weekly goals",
-];
+const SUGGESTION_KEYS = ["coach.s1", "coach.s2", "coach.s3", "coach.s4", "coach.s5", "coach.s6"];
 
 export default function CoachPage() {
   const { data: history } = useCoachHistory();
+  const { t } = useTranslation();
   const [messages, setMessages] = React.useState<CoachMessage[]>([]);
   const [input, setInput] = React.useState("");
   const [thinking, setThinking] = React.useState(false);
@@ -58,7 +53,7 @@ export default function CoachPage() {
         {
           id: `e_${Date.now()}`,
           role: "assistant",
-          content: "I couldn't reach the analysis service just now. Please try again.",
+          content: t("coach.error"),
           createdAt: new Date().toISOString(),
         },
       ]);
@@ -77,10 +72,8 @@ export default function CoachPage() {
           <div className="grid h-11 w-11 place-items-center rounded-2xl bg-primary text-primary-foreground shadow-glow">
             <Sparkles className="h-5 w-5" />
           </div>
-          <h1 className="text-lg font-semibold tracking-tight">AI Coach</h1>
-          <p className="max-w-sm text-sm text-muted-foreground">
-            Ask about your reading. I only ever cite numbers your report actually computed.
-          </p>
+          <h1 className="text-lg font-semibold tracking-tight">{t("coach.title")}</h1>
+          <p className="max-w-sm text-sm text-muted-foreground">{t("coach.subtitle")}</p>
         </div>
 
         {messages.map((m) => (
@@ -93,13 +86,13 @@ export default function CoachPage() {
       <div className="space-y-3 pb-6">
         {showSuggestions && (
           <div className="flex flex-wrap gap-2">
-            {SUGGESTIONS.map((s) => (
+            {SUGGESTION_KEYS.map((key) => (
               <button
-                key={s}
-                onClick={() => send(s)}
+                key={key}
+                onClick={() => send(t(key))}
                 className="rounded-full border bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
               >
-                {s}
+                {t(key)}
               </button>
             ))}
           </div>
@@ -121,16 +114,14 @@ export default function CoachPage() {
               }
             }}
             rows={1}
-            placeholder="Ask your coach anything about your reading…"
+            placeholder={t("coach.placeholder")}
             className="max-h-40 flex-1 resize-none bg-transparent px-2 py-1.5 text-sm outline-none placeholder:text-muted-foreground"
           />
-          <Button type="submit" size="icon" disabled={!input.trim() || thinking} aria-label="Send">
+          <Button type="submit" size="icon" disabled={!input.trim() || thinking} aria-label={t("coach.send")}>
             <Send className="h-4 w-4" />
           </Button>
         </form>
-        <p className="text-center text-[0.7rem] text-muted-foreground">
-          The coach narrates engine-computed metrics. It won't invent statistics.
-        </p>
+        <p className="text-center text-[0.7rem] text-muted-foreground">{t("coach.footer")}</p>
       </div>
     </div>
   );

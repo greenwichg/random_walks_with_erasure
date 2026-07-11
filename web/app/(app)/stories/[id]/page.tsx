@@ -14,15 +14,14 @@ import { SaveButton } from "@/components/shared/save-button";
 import { EmptyState, ErrorState } from "@/components/shared/states";
 import { Skeleton } from "@/components/ui/skeleton";
 import { LEAN_META } from "@/lib/metrics";
-import { timeAgo } from "@/lib/utils";
+import { useTranslation } from "@/lib/i18n";
+import { activeLang, formatDate } from "@/lib/i18n-core";
 
-const fmtDate = (iso?: string) => {
-  if (!iso) return "";
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
-};
+const fmtDate = (iso?: string) =>
+  iso ? formatDate(iso, activeLang(), { month: "short", day: "numeric", year: "numeric" }) : "";
 
 export default function StoryDetailPage() {
+  const { t, timeAgo } = useTranslation();
   const params = useParams<{ id: string }>();
   const id = params?.id ?? "";
   const { data: story, isLoading, isError, refetch } = useStory(id);
@@ -32,7 +31,7 @@ export default function StoryDetailPage() {
       href="/stories"
       className="mb-5 inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
     >
-      <ArrowLeft className="h-4 w-4" /> All stories
+      <ArrowLeft className="h-4 w-4" /> {t("stories.back")}
     </Link>
   );
 
@@ -64,8 +63,8 @@ export default function StoryDetailPage() {
         {back}
         <EmptyState
           icon={Newspaper}
-          title="Story not found"
-          description="This event is no longer in the live catalog, or its coverage has changed. Head back to Stories for the latest events."
+          title={t("stories.notFound.title")}
+          description={t("stories.notFound.body")}
         />
       </PageContainer>
     );
@@ -87,13 +86,13 @@ export default function StoryDetailPage() {
 
         <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
           <span className="inline-flex items-center gap-1">
-            <Users className="h-3.5 w-3.5" /> {publisherCount} publishers
+            <Users className="h-3.5 w-3.5" /> {t("stories.publishers", { n: publisherCount })}
           </span>
           <span className="inline-flex items-center gap-1">
-            <Newspaper className="h-3.5 w-3.5" /> {story.totalCoverage} articles
+            <Newspaper className="h-3.5 w-3.5" /> {t("stories.articlesCount", { n: story.totalCoverage })}
           </span>
-          {story.earliest && <span>First report {fmtDate(story.earliest)}</span>}
-          {story.latest && story.latest !== story.earliest && <span>Latest {fmtDate(story.latest)}</span>}
+          {story.earliest && <span>{t("stories.firstReport", { date: fmtDate(story.earliest) })}</span>}
+          {story.latest && story.latest !== story.earliest && <span>{t("stories.latestReport", { date: fmtDate(story.latest) })}</span>}
         </div>
 
         <div className="mt-4 max-w-md">
@@ -104,7 +103,7 @@ export default function StoryDetailPage() {
               style={{ color: LEAN_META[story.blindspotSide].color }}
             >
               <EyeOff className="h-3.5 w-3.5" />
-              Thin coverage on the {LEAN_META[story.blindspotSide].label.toLowerCase()}
+              {t("stories.thinCoverage", { side: t(`filter.${story.blindspotSide}`).toLowerCase() })}
             </p>
           )}
         </div>
@@ -113,7 +112,7 @@ export default function StoryDetailPage() {
       <StoryIntelligencePanel storyId={story.id} />
 
       <h2 className="mb-3 mt-6 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-        Coverage across publishers
+        {t("stories.coverageAcross")}
       </h2>
       <div className="space-y-3">
         {story.coverage.map((c, i) => (

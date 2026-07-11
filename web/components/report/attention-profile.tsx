@@ -3,16 +3,18 @@
 import { Cell, Pie, PieChart, Tooltip } from "recharts";
 import type { EmotionShare } from "@/types/domain";
 import { EMOTION_META } from "@/lib/metrics";
+import { useTranslation } from "@/lib/i18n";
 import { useMeasure } from "@/hooks/use-measure";
 
 /** Donut of the emotional makeup of a reader's diet (fear/outrage/…/neutral). */
 export function AttentionProfile({ attention }: { attention: EmotionShare }) {
+  const { t } = useTranslation();
   const { ref, width } = useMeasure<HTMLDivElement>(240);
   const dim = Math.min(width, 240);
 
   const data = (Object.keys(attention) as (keyof EmotionShare)[]).map((key) => ({
     key,
-    name: EMOTION_META[key].label,
+    name: t(`emotion.${key}`),
     value: Math.round(attention[key] * 100),
     color: EMOTION_META[key].color,
   }));
@@ -49,7 +51,7 @@ export function AttentionProfile({ attention }: { attention: EmotionShare }) {
         </PieChart>
         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
           <span className="text-2xl font-semibold tabular-nums">{charged}%</span>
-          <span className="text-[0.7rem] text-muted-foreground">charged</span>
+          <span className="text-[0.7rem] text-muted-foreground">{t("report.charged")}</span>
         </div>
       </div>
 

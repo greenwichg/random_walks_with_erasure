@@ -10,11 +10,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useTranslation } from "@/lib/i18n";
+import { activeLang, formatDate } from "@/lib/i18n-core";
 
 function fmtDate(iso: string | null): string {
   if (!iso) return "—";
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  return formatDate(iso, activeLang(), { month: "short", day: "numeric", year: "numeric" }) || "—";
 }
 
 /**
@@ -25,6 +26,7 @@ function fmtDate(iso: string | null): string {
  * of truth.
  */
 export function ExtensionConnect() {
+  const { t } = useTranslation();
   const { status } = useSession();
   const authed = status === "authenticated";
   const tokens = useApiTokens();
@@ -58,29 +60,21 @@ export function ExtensionConnect() {
   }
 
   return (
-    <SectionCard
-      title="Connect browser extension"
-      info="Generate a token, paste it into the Information Health extension, and the articles you read on supported news sites sync automatically."
-    >
+    <SectionCard title={t("ext.title")} info={t("ext.info")}>
       {!authed ? (
-        <p className="text-sm text-muted-foreground">
-          Sign in to generate a token for the browser extension.
-        </p>
+        <p className="text-sm text-muted-foreground">{t("ext.signIn")}</p>
       ) : (
         <div className="space-y-5">
           <div className="flex items-start gap-3 rounded-lg bg-muted/50 p-3">
             <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-            <p className="text-sm text-muted-foreground">
-              The extension sends the pages you open on supported news sites to your account. Tokens
-              are shown once and stored only as a hash — revoke any token here to disconnect a device.
-            </p>
+            <p className="text-sm text-muted-foreground">{t("ext.privacy")}</p>
           </div>
 
           {/* Freshly minted token — shown a single time */}
           {minted && (
             <div className="rounded-lg border border-primary/30 bg-primary/5 p-3">
               <div className="mb-2 flex items-center gap-1.5 text-sm font-medium text-primary">
-                <KeyRound className="h-4 w-4" /> Your new token — copy it now
+                <KeyRound className="h-4 w-4" /> {t("ext.newToken")}
               </div>
               <div className="flex items-center gap-2">
                 <code className="min-w-0 flex-1 truncate rounded-md border bg-background px-2.5 py-1.5 font-mono text-xs">
@@ -88,13 +82,10 @@ export function ExtensionConnect() {
                 </code>
                 <Button size="sm" variant="outline" onClick={onCopy} className="shrink-0">
                   {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-                  {copied ? "Copied" : "Copy"}
+                  {copied ? t("common.copied") : t("common.copy")}
                 </Button>
               </div>
-              <p className="mt-2 text-xs text-muted-foreground">
-                Paste this into the extension&apos;s setup screen. You won&apos;t be able to see it again —
-                if you lose it, revoke it and generate a new one.
-              </p>
+              <p className="mt-2 text-xs text-muted-foreground">{t("ext.pasteHint")}</p>
             </div>
           )}
 
@@ -103,23 +94,23 @@ export function ExtensionConnect() {
             <Input
               value={label}
               onChange={(e) => setLabel(e.target.value)}
-              placeholder="Label (optional, e.g. “Work laptop”)"
+              placeholder={t("ext.labelPlaceholder")}
               maxLength={100}
-              aria-label="Token label"
+              aria-label={t("ext.tokenLabel")}
             />
             <Button onClick={onCreate} disabled={create.isPending} className="shrink-0">
               {create.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Puzzle className="h-4 w-4" />}
-              Generate token
+              {t("ext.generate")}
             </Button>
           </div>
           {create.isError && (
-            <p className="text-sm text-negative">Couldn&apos;t generate a token. Please try again.</p>
+            <p className="text-sm text-negative">{t("ext.error")}</p>
           )}
 
           {/* Existing tokens */}
           <div>
             <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Active tokens
+              {t("ext.activeTokens")}
             </p>
             {tokens.isLoading ? (
               <div className="space-y-2">
@@ -128,35 +119,33 @@ export function ExtensionConnect() {
               </div>
             ) : tokens.data && tokens.data.length > 0 ? (
               <ul className="divide-y rounded-lg border">
-                {tokens.data.map((t) => (
-                  <li key={t.id} className="flex items-center justify-between gap-3 px-3 py-2.5">
+                {tokens.data.map((tok) => (
+                  <li key={tok.id} className="flex items-center justify-between gap-3 px-3 py-2.5">
                     <div className="min-w-0">
-                      <p className="truncate text-sm font-medium">{t.label || "Extension token"}</p>
+                      <p className="truncate text-sm font-medium">{tok.label || t("ext.defaultLabel")}</p>
                       <p className="mt-0.5 text-xs text-muted-foreground">
-                        Created {fmtDate(t.createdAt)} ·{" "}
-                        {t.lastUsedAt ? `last used ${fmtDate(t.lastUsedAt)}` : "never used"}
+                        {t("ext.created", { date: fmtDate(tok.createdAt) })} ·{" "}
+                        {tok.lastUsedAt ? t("ext.lastUsed", { date: fmtDate(tok.lastUsedAt) }) : t("ext.neverUsed")}
                       </p>
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
-                      {!t.lastUsedAt && <Badge variant="secondary">Unused</Badge>}
+                      {!tok.lastUsedAt && <Badge variant="secondary">{t("ext.unused")}</Badge>}
                       <Button
                         size="sm"
                         variant="ghost"
                         className="text-muted-foreground hover:text-negative"
-                        onClick={() => revoke.mutate(t.id)}
+                        onClick={() => revoke.mutate(tok.id)}
                         disabled={revoke.isPending}
-                        aria-label={`Revoke ${t.label || "token"}`}
+                        aria-label={t("ext.revokeAria", { label: tok.label || t("ext.revoke") })}
                       >
-                        <Trash2 className="h-3.5 w-3.5" /> Revoke
+                        <Trash2 className="h-3.5 w-3.5" /> {t("ext.revoke")}
                       </Button>
                     </div>
                   </li>
                 ))}
               </ul>
             ) : (
-              <p className="text-sm text-muted-foreground">
-                No tokens yet. Generate one to connect the extension.
-              </p>
+              <p className="text-sm text-muted-foreground">{t("ext.noTokens")}</p>
             )}
           </div>
         </div>

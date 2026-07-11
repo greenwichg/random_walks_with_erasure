@@ -80,7 +80,7 @@ export function RecommendationCard({
             act("ignore");
             onDismiss?.();
           }}
-          aria-label="Ignore"
+          aria-label={t("rec.ignore")}
           className="grid h-7 w-7 place-items-center rounded-md text-muted-foreground opacity-0 transition-all hover:bg-muted hover:text-foreground group-hover:opacity-100"
         >
           <X className="h-4 w-4" />
@@ -141,14 +141,14 @@ export function RecommendationCard({
         <ReadArticleButton article={article} openedFrom="recommendations" onOpen={onOpen} className="mr-1" />
         <SaveButton article={article} />
         <ActionButton
-          label="Why?"
+          label={t("rec.why")}
           active={why}
           activeClass="text-primary"
           icon={HelpCircle}
           onClick={() => setWhy((v) => !v)}
         />
         <ActionButton
-          label="Read later"
+          label={t("rec.readLater")}
           active={readLater}
           activeClass="text-left"
           icon={Clock}
@@ -159,7 +159,7 @@ export function RecommendationCard({
         />
         <div className="ml-auto flex items-center gap-1">
           <ActionButton
-            label="Like"
+            label={t("rec.like")}
             active={vote === "up"}
             activeClass="text-positive"
             icon={ThumbsUp}
@@ -169,7 +169,7 @@ export function RecommendationCard({
             }}
           />
           <ActionButton
-            label="Dislike"
+            label={t("rec.dislike")}
             active={vote === "down"}
             activeClass="text-negative"
             icon={ThumbsDown}

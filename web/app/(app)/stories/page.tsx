@@ -2,14 +2,16 @@
 
 import { Newspaper } from "lucide-react";
 import { StoryBrowser } from "@/components/stories/story-browser";
+import { useTranslation } from "@/lib/i18n";
 
 export default function StoriesPage() {
+  const { t } = useTranslation();
   return (
     <StoryBrowser
-      title="Stories"
+      title={t("stories.title")}
       icon={Newspaper}
       defaultSort="top"
-      description="One event, every viewpoint — the same story clustered across left, center, and right publishers."
+      description={t("stories.subtitle")}
       emptyDescription="Stories cluster the live news catalog into events. Once enough articles across publishers cover the same event, they appear here."
     />
   );

@@ -4,6 +4,7 @@ import * as React from "react";
 import { useSearchParams } from "next/navigation";
 import { Search as SearchIcon } from "lucide-react";
 import { useSearch, useDiscover } from "@/hooks/use-data";
+import { useTranslation } from "@/lib/i18n";
 import type { SearchParams } from "@/types/domain";
 import { PageContainer } from "@/components/layout/page-container";
 import { DiscoverCard } from "@/components/discover/discover-card";
@@ -28,6 +29,7 @@ const PAGE = 24;
 
 function SearchInner() {
   const initial = useSearchParams().get("query") ?? "";
+  const { t } = useTranslation();
   const [q, setQ] = React.useState(initial);
   const [topic, setTopic] = React.useState("all");
   const [publisher, setPublisher] = React.useState("all");
@@ -59,10 +61,8 @@ function SearchInner() {
   return (
     <PageContainer>
       <div className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight">Search</h1>
-        <p className="mt-1 max-w-xl text-sm text-muted-foreground">
-          Search the live news catalog across every publisher — filter, sort, and open the real article.
-        </p>
+        <h1 className="text-2xl font-semibold tracking-tight">{t("search.title")}</h1>
+        <p className="mt-1 max-w-xl text-sm text-muted-foreground">{t("search.subtitle")}</p>
       </div>
 
       <div className="mb-4 flex items-center gap-2 rounded-lg border bg-card px-3">
@@ -70,24 +70,24 @@ function SearchInner() {
         <Input
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder="Search articles, publishers, topics…"
+          placeholder={t("search.placeholder")}
           className="h-11 border-0 bg-transparent px-0 shadow-none focus-visible:ring-0"
         />
       </div>
 
       <div className="mb-6 flex flex-wrap items-center gap-2">
-        <FilterSelect label="Topic" value={topic} options={opt(facets.data?.topics ?? [])} onChange={setTopic} />
+        <FilterSelect label={t("filter.topic")} value={topic} options={opt(facets.data?.topics ?? [])} onChange={setTopic} />
         <FilterSelect
-          label="Publisher"
+          label={t("filter.publisher")}
           value={publisher}
           options={opt(facets.data?.publishers ?? [])}
           onChange={setPublisher}
         />
-        <FilterSelect label="Lean" value={lean} options={LEAN_OPTIONS} onChange={setLean} />
-        <FilterSelect label="Sort" value={sort} options={SORT_OPTIONS} onChange={setSort} allLabel="Newest" />
+        <FilterSelect label={t("filter.lean")} value={lean} options={LEAN_OPTIONS} onChange={setLean} />
+        <FilterSelect label={t("filter.sort")} value={sort} options={SORT_OPTIONS} onChange={setSort} allLabel={t("filter.newest")} />
         {total > 0 && (
           <span className="ml-auto text-sm text-muted-foreground">
-            {total} result{total === 1 ? "" : "s"}
+            {total === 1 ? t("common.resultOne", { n: total }) : t("common.results", { n: total })}
           </span>
         )}
       </div>
@@ -104,8 +104,8 @@ function SearchInner() {
       {data && results.length === 0 && (
         <EmptyState
           icon={SearchIcon}
-          title="No matching articles"
-          description="Try a different query or clear the filters. Search reads the live news catalog, populated once RSS ingestion has run (RWE_RECS_SOURCE=feed)."
+          title={t("search.empty.title")}
+          description={t("search.empty.body")}
           className="mt-4"
         />
       )}
@@ -123,15 +123,15 @@ function SearchInner() {
             onClick={() => setOffset(Math.max(0, offset - PAGE))}
             className="inline-flex h-9 items-center rounded-lg border bg-card px-4 text-sm font-medium transition-colors hover:bg-accent disabled:opacity-50"
           >
-            Previous
+            {t("common.previous")}
           </button>
-          <span className="text-sm text-muted-foreground">Page {page}</span>
+          <span className="text-sm text-muted-foreground">{t("common.page", { n: page })}</span>
           <button
             disabled={!hasMore || isFetching}
             onClick={() => setOffset(offset + PAGE)}
             className="inline-flex h-9 items-center rounded-lg border bg-card px-4 text-sm font-medium transition-colors hover:bg-accent disabled:opacity-50"
           >
-            Next
+            {t("common.next")}
           </button>
         </div>
       )}

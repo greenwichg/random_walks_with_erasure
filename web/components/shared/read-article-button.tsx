@@ -4,6 +4,7 @@ import * as React from "react";
 import { BookOpen, Check, ExternalLink } from "lucide-react";
 import type { Article } from "@/types/domain";
 import { useRecordRead } from "@/hooks/use-data";
+import { useTranslation } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 /**
@@ -30,6 +31,7 @@ export function ReadArticleButton({
   onOpen?: () => void;
   className?: string;
 }) {
+  const { t } = useTranslation();
   const [opened, setOpened] = React.useState(false);
   const recordRead = useRecordRead();
   const href = article.url && /^https?:\/\//i.test(article.url) ? article.url : null;
@@ -40,7 +42,7 @@ export function ReadArticleButton({
       type="button"
       disabled={!actionable}
       aria-pressed={opened}
-      title={href ? "Open the article and record it as read" : onOpen ? "Record as read" : "No link available"}
+      title={href ? t("read.openTitle") : onOpen ? t("read.recordTitle") : t("read.noLinkTitle")}
       onClick={() => {
         if (!opened) {
           setOpened(true);
@@ -74,7 +76,7 @@ export function ReadArticleButton({
       ) : (
         <BookOpen className="h-3.5 w-3.5" />
       )}
-      {opened ? "Opened" : href ? "Read article" : "No link"}
+      {opened ? t("read.opened") : href ? t("read.readArticle") : t("read.noLink")}
     </button>
   );
 }

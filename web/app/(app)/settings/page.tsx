@@ -37,20 +37,20 @@ const LANGUAGES = [
   { value: "pt", label: "Português" },
 ];
 
-/** Descriptor for the political-openness slider (maps to per-request RWE-B epsilon; 50 = engine default). */
-function opennessLabel(v: number) {
-  if (v < 25) return "Stay close to my views";
-  if (v < 55) return "Nudge me gently";
-  if (v < 80) return "Challenge me regularly";
-  return "Push me out of my comfort zone";
+/** Catalog key for the political-openness slider (maps to per-request RWE-B epsilon; 50 = default). */
+function opennessLabelKey(v: number) {
+  if (v < 25) return "settings.openness.close";
+  if (v < 55) return "settings.openness.gentle";
+  if (v < 80) return "settings.openness.regular";
+  return "settings.openness.push";
 }
 
-/** Descriptor for recommendation strength (maps to per-request RWE-D beta; 50 = engine default). */
-function strengthLabel(v: number) {
-  if (v < 25) return "Subtle";
-  if (v < 55) return "Balanced";
-  if (v < 80) return "Assertive";
-  return "Bold";
+/** Catalog key for recommendation strength (maps to per-request RWE-D beta; 50 = default). */
+function strengthLabelKey(v: number) {
+  if (v < 25) return "settings.strength.subtle";
+  if (v < 55) return "settings.strength.balanced";
+  if (v < 80) return "settings.strength.assertive";
+  return "settings.strength.bold";
 }
 
 export default function SettingsPage() {
@@ -119,7 +119,7 @@ export default function SettingsPage() {
       {draft && (
         <div className="grid gap-6 pb-24">
           {/* Appearance */}
-          <SectionCard title={t("settings.appearance")} info="How the app looks. Theme changes apply instantly.">
+          <SectionCard title={t("settings.appearance")} info={t("settings.appearanceInfo")}>
             <div className="divide-y">
               <SettingRow title={t("settings.theme")} description={t("settings.themeDesc")}>
                 <div className="inline-flex rounded-lg border bg-muted p-1">
@@ -168,54 +168,54 @@ export default function SettingsPage() {
 
           {/* Recommendations */}
           <SectionCard
-            title="Recommendations"
-            info="These directly tune the RWE recommender that picks your reads."
+            title={t("settings.recommendations")}
+            info={t("settings.recommendationsInfo")}
           >
             <div className="space-y-8">
               <SliderRow
                 icon={Scale}
-                title="Political openness"
-                description="How far across the spectrum we reach for cross-cutting reads."
+                title={t("settings.politicalOpenness")}
+                description={t("settings.opennessDesc")}
                 value={draft.politicalOpenness}
                 onChange={(v) => set("politicalOpenness", v)}
-                valueLabel={opennessLabel(draft.politicalOpenness)}
+                valueLabel={t(opennessLabelKey(draft.politicalOpenness))}
               />
               <SliderRow
                 icon={Sparkles}
-                title="Recommendation strength"
-                description="How aggressively we diversify away from your usual diet."
+                title={t("settings.recommendationStrength")}
+                description={t("settings.strengthDesc")}
                 value={draft.recommendationStrength}
                 onChange={(v) => set("recommendationStrength", v)}
-                valueLabel={strengthLabel(draft.recommendationStrength)}
+                valueLabel={t(strengthLabelKey(draft.recommendationStrength))}
               />
               <SliderRow
                 icon={Target}
-                title="Daily reading goal"
-                description="Your target reading time. Tracks today's progress on your dashboard."
+                title={t("settings.readingGoal")}
+                description={t("settings.readingGoalFull")}
                 value={draft.readingGoalMinutes}
                 onChange={(v) => set("readingGoalMinutes", v)}
                 min={5}
                 max={120}
                 step={5}
-                valueLabel={`${draft.readingGoalMinutes} min/day`}
+                valueLabel={t("settings.perDay", { n: draft.readingGoalMinutes })}
               />
             </div>
           </SectionCard>
 
           {/* Reports */}
-          <SectionCard title="Reports" info="Your recurring Information Health summaries.">
+          <SectionCard title={t("settings.reports")} info={t("settings.reportsInfo")}>
             <div className="divide-y">
               <ToggleRow
                 icon={FileText}
-                title="Weekly report"
-                description="A snapshot of your reading diet, every Monday."
+                title={t("settings.weeklyReport")}
+                description={t("settings.weeklyReportDesc")}
                 checked={draft.weeklyReport}
                 onChange={(v) => set("weeklyReport", v)}
               />
               <ToggleRow
                 icon={FileText}
-                title="Monthly deep dive"
-                description="A fuller breakdown with trends and blind spots."
+                title={t("settings.monthlyReport")}
+                description={t("settings.monthlyReportDesc")}
                 checked={draft.monthlyReport}
                 onChange={(v) => set("monthlyReport", v)}
               />
@@ -223,33 +223,33 @@ export default function SettingsPage() {
           </SectionCard>
 
           {/* Notifications */}
-          <SectionCard title="Notifications" info="What we ping you about.">
+          <SectionCard title={t("settings.notifications")} info={t("settings.notificationsInfo")}>
             <div className="divide-y">
               <ToggleRow
                 icon={Bell}
-                title="New recommendations"
-                description="When fresh cross-cutting reads are ready for you."
+                title={t("settings.notif.recs")}
+                description={t("settings.notif.recsDesc")}
                 checked={draft.notifications.recommendations}
                 onChange={(v) => setNotif("recommendations", v)}
               />
               <ToggleRow
                 icon={Bell}
-                title="Weekly digest"
-                description="A short email rounding up your week."
+                title={t("settings.notif.digest")}
+                description={t("settings.notif.digestDesc")}
                 checked={draft.notifications.weeklyDigest}
                 onChange={(v) => setNotif("weeklyDigest", v)}
               />
               <ToggleRow
                 icon={Bell}
-                title="Streak reminders"
-                description="A nudge before your reading streak lapses."
+                title={t("settings.notif.streak")}
+                description={t("settings.notif.streakDesc")}
                 checked={draft.notifications.streakReminders}
                 onChange={(v) => setNotif("streakReminders", v)}
               />
               <ToggleRow
                 icon={Bell}
-                title="Blind-spot alerts"
-                description="When a topic or viewpoint drops out of your diet."
+                title={t("settings.notif.blindSpot")}
+                description={t("settings.notif.blindSpotDesc")}
                 checked={draft.notifications.blindSpotAlerts}
                 onChange={(v) => setNotif("blindSpotAlerts", v)}
               />
@@ -257,19 +257,19 @@ export default function SettingsPage() {
           </SectionCard>
 
           {/* Privacy */}
-          <SectionCard title="Privacy" info="You're in control of your data.">
+          <SectionCard title={t("settings.privacy")} info={t("settings.privacyInfo")}>
             <div className="divide-y">
               <ToggleRow
                 icon={ShieldCheck}
-                title="Share anonymized metrics"
-                description="Help improve population benchmarks. Never tied to your identity."
+                title={t("settings.privacy.share")}
+                description={t("settings.privacy.shareDesc")}
                 checked={draft.privacy.shareAnonymizedMetrics}
                 onChange={(v) => setPrivacy("shareAnonymizedMetrics", v)}
               />
               <ToggleRow
                 icon={ShieldCheck}
-                title="Personalized ads"
-                description="Off by default. We don't sell your reading history."
+                title={t("settings.privacy.ads")}
+                description={t("settings.privacy.adsDesc")}
                 checked={draft.privacy.personalizedAds}
                 onChange={(v) => setPrivacy("personalizedAds", v)}
               />

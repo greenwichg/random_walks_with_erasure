@@ -8,15 +8,23 @@ export function leanBucket(lean: Lean, tau = 0.5): LeanBucket {
   return "center";
 }
 
-/** A short human label for a lean value, e.g. "Lean left". */
-export function leanLabel(lean: Lean): string {
+/**
+ * The i18n message key for a lean value (e.g. `lean.leanLeft`). The label text itself lives in the
+ * catalogs; components translate the key with `t()`. Keys are returned as string literals so the
+ * i18n unused-key validator sees every one referenced.
+ */
+export function leanLabelKey(lean: Lean): string {
   const bucket = leanBucket(lean);
   const strength = Math.abs(lean);
-  if (bucket === "center") return "Center";
-  const side = bucket === "left" ? "left" : "right";
-  if (strength > 1.4) return `Strong ${side}`;
-  if (strength > 0.9) return side.charAt(0).toUpperCase() + side.slice(1);
-  return `Lean ${side}`;
+  if (bucket === "center") return "lean.center";
+  if (bucket === "left") {
+    if (strength > 1.4) return "lean.strongLeft";
+    if (strength > 0.9) return "lean.left";
+    return "lean.leanLeft";
+  }
+  if (strength > 1.4) return "lean.strongRight";
+  if (strength > 0.9) return "lean.right";
+  return "lean.leanRight";
 }
 
 /** Normalise a lean to a 0–100 position on the spectrum bar (0 = far left). */
@@ -31,8 +39,4 @@ export function dominantEmotion(e: EmotionShare): keyof EmotionShare {
 
 export function emotionColor(key: keyof EmotionShare): string {
   return EMOTION_META[key].color;
-}
-
-export function emotionLabel(key: keyof EmotionShare): string {
-  return EMOTION_META[key].label;
 }

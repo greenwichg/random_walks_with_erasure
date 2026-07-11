@@ -6,14 +6,16 @@ import type { Article, EmotionShare, Lean, LeanBucket, Register } from "@/types/
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { EMOTION_META } from "@/lib/metrics";
-import { leanBucket, leanLabel } from "@/lib/political";
+import { leanBucket, leanLabelKey } from "@/lib/political";
+import { useTranslation } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 /** Political viewpoint pill, coloured by bucket. Prefers the engine's `bucket` when given. */
 export function LeanBadge({ lean, bucket, className }: { lean: Lean; bucket?: LeanBucket; className?: string }) {
+  const { t } = useTranslation();
   return (
     <Badge variant={bucket ?? leanBucket(lean)} className={className}>
-      {leanLabel(lean)}
+      {t(leanLabelKey(lean))}
     </Badge>
   );
 }
@@ -48,8 +50,11 @@ export function PublisherBadge({ name, lean, logo }: { name: string; lean?: Lean
 
 /** Confidence pill (top-2 softmax margin from the backend). */
 export function ConfidenceBadge({ value }: { value: number }) {
+  const { t } = useTranslation();
   const pct = Math.round(value * 100);
   const level = value >= 0.75 ? "high" : value >= 0.5 ? "medium" : "low";
+  const levelKey =
+    level === "high" ? "badge.confidence.high" : level === "medium" ? "badge.confidence.medium" : "badge.confidence.low";
   const variant = level === "high" ? "positive" : level === "medium" ? "caution" : "secondary";
   return (
     <Tooltip>
@@ -58,13 +63,14 @@ export function ConfidenceBadge({ value }: { value: number }) {
           <Gauge className="h-3 w-3" /> {pct}%
         </Badge>
       </TooltipTrigger>
-      <TooltipContent>Model confidence in this article's lean estimate ({level}).</TooltipContent>
+      <TooltipContent>{t("badge.confidence.tooltip", { level: t(levelKey) })}</TooltipContent>
     </Tooltip>
   );
 }
 
 /** Dominant-emotion pill. Prefers the engine's `dominant` key when given. */
 export function EmotionBadge({ emotion, dominant }: { emotion: EmotionShare; dominant?: keyof EmotionShare }) {
+  const { t } = useTranslation();
   const key =
     dominant ??
     (Object.keys(emotion) as (keyof EmotionShare)[]).reduce((a, b) => (emotion[a] >= emotion[b] ? a : b));
@@ -74,22 +80,23 @@ export function EmotionBadge({ emotion, dominant }: { emotion: EmotionShare; dom
       className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium"
       style={{ background: `${meta.color}1f`, color: meta.color }}
     >
-      {meta.label}
+      {t(`emotion.${key}`)}
     </span>
   );
 }
 
 /** Reporting vs opinion pill. */
 export function RegisterBadge({ register }: { register: Register }) {
+  const { t } = useTranslation();
   const map = {
-    reporting: { label: "Reporting", icon: FileText, variant: "positive" as const },
-    opinion: { label: "Opinion", icon: MessageSquareQuote, variant: "secondary" as const },
-    mixed: { label: "Mixed", icon: FileText, variant: "secondary" as const },
+    reporting: { labelKey: "register.reporting", icon: FileText, variant: "positive" as const },
+    opinion: { labelKey: "register.opinion", icon: MessageSquareQuote, variant: "secondary" as const },
+    mixed: { labelKey: "register.mixed", icon: FileText, variant: "secondary" as const },
   };
   const m = map[register];
   return (
     <Badge variant={m.variant}>
-      <m.icon className="h-3 w-3" /> {m.label}
+      <m.icon className="h-3 w-3" /> {t(m.labelKey)}
     </Badge>
   );
 }

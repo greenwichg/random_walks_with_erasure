@@ -8,15 +8,16 @@ import { Button } from "@/components/ui/button";
 import { ScoreRing } from "@/components/shared/score-ring";
 import { SpectrumBar } from "@/components/shared/spectrum-bar";
 import { PENDING_ONBOARDING_KEY } from "@/components/onboarding/onboarding-sync";
+import { useTranslation } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 type Step = "welcome" | "pick" | "building" | "estimate";
 
 const MIN_PICKS = 3;
-const BUILD_LINES = [
-  "Scoring viewpoint balance…",
-  "Finding your blind spots…",
-  "Picking balancing reads…",
+const BUILD_LINE_KEYS = [
+  "onboarding.loading.scoring",
+  "onboarding.loading.blindSpots",
+  "onboarding.loading.picking",
 ];
 const LEAN_HUE: Record<LeanBucket, string> = {
   left: "hsl(var(--left))",
@@ -148,6 +149,7 @@ function Frame({ children, className }: { children: React.ReactNode; className?:
   );
 }
 
+/** Brand mark. `label` defaults to the (untranslated) product name; callers pass a localized label. */
 function Brand({ label = "Information Health" }: { label?: string }) {
   return (
     <div className="mb-5 flex items-center gap-2">
@@ -168,29 +170,29 @@ function Brand({ label = "Information Health" }: { label?: string }) {
 }
 
 function Steps({ n }: { n: 1 | 2 | 3 }) {
+  const { t } = useTranslation();
   return (
     <div className="mb-5 flex items-center gap-1.5">
       {[1, 2, 3].map((i) => (
         <span key={i} className={cn("h-1.5 flex-1 rounded-full", i <= n ? "bg-primary" : "bg-muted")} />
       ))}
-      <span className="ml-1.5 font-mono text-[10px] text-muted-foreground">Step {n} of 3</span>
+      <span className="ml-1.5 font-mono text-[10px] text-muted-foreground">{t("onboarding.stepOf", { n })}</span>
     </div>
   );
 }
 
 function Welcome({ onBuild, onSample }: { onBuild: () => void; onSample: () => void }) {
+  const { t } = useTranslation();
   const values = [
-    { icon: <Sparkles className="h-3.5 w-3.5" />, t: "Your reading, scored 0–100", d: "One number for how balanced your diet is." },
-    { icon: <Search className="h-3.5 w-3.5" />, t: "Find your blind spots", d: "The topics and viewpoints you're missing." },
-    { icon: <ArrowLeftRight className="h-3.5 w-3.5" />, t: "Balancing reads, with the reason why", d: "Cross-cutting, never whiplash." },
+    { icon: <Sparkles className="h-3.5 w-3.5" />, t: t("onboarding.value1.t"), d: t("onboarding.value1.d") },
+    { icon: <Search className="h-3.5 w-3.5" />, t: t("onboarding.value2.t"), d: t("onboarding.value2.d") },
+    { icon: <ArrowLeftRight className="h-3.5 w-3.5" />, t: t("onboarding.value3.t"), d: t("onboarding.value3.d") },
   ];
   return (
     <Frame>
       <Brand />
-      <h1 className="text-balance text-2xl font-bold tracking-tight">A health check for your news diet.</h1>
-      <p className="mt-2 text-sm text-muted-foreground">
-        See what you read scored for diversity, tone, and balance — then get the other side, one tap away.
-      </p>
+      <h1 className="text-balance text-2xl font-bold tracking-tight">{t("onboarding.welcome.title")}</h1>
+      <p className="mt-2 text-sm text-muted-foreground">{t("onboarding.welcome.subtitle")}</p>
       <ul className="my-6 space-y-3">
         {values.map((v) => (
           <li key={v.t} className="flex gap-3">
@@ -205,19 +207,19 @@ function Welcome({ onBuild, onSample }: { onBuild: () => void; onSample: () => v
         ))}
       </ul>
       <Button className="w-full" size="lg" onClick={onBuild}>
-        Build my report
+        {t("onboarding.buildReport")}
       </Button>
       <Button className="mt-2 w-full" size="lg" variant="outline" onClick={onSample}>
-        See a sample first
+        {t("onboarding.sampleFirst")}
       </Button>
-      <p className="mt-3 text-center text-xs text-muted-foreground">Takes about a minute · No account needed to start</p>
+      <p className="mt-3 text-center text-xs text-muted-foreground">{t("onboarding.takesMinute")}</p>
       <p className="mt-4 text-center text-xs text-muted-foreground">
-        Already have an account?{" "}
+        {t("onboarding.haveAccount")}{" "}
         <button
           onClick={() => window.location.assign("/signin")}
           className="font-medium text-primary underline-offset-2 hover:underline"
         >
-          Sign in
+          {t("onboarding.signIn")}
         </button>
       </p>
     </Frame>
@@ -237,15 +239,16 @@ function Pick({
   onBack: () => void;
   onBuild: () => void;
 }) {
+  const { t } = useTranslation();
   const count = selected.size;
   const ok = count >= MIN_PICKS;
   return (
     <Frame>
       <Steps n={2} />
-      <h2 className="text-xl font-bold tracking-tight">Which of these do you read?</h2>
-      <p className="mt-1 text-sm text-muted-foreground">Tap the ones you follow — even loosely. More picks, more accurate.</p>
+      <h2 className="text-xl font-bold tracking-tight">{t("onboarding.pick.title")}</h2>
+      <p className="mt-1 text-sm text-muted-foreground">{t("onboarding.pick.subtitle")}</p>
       <div className="my-4 flex flex-wrap gap-2">
-        {outlets.length === 0 && <p className="text-sm text-muted-foreground">Loading publishers…</p>}
+        {outlets.length === 0 && <p className="text-sm text-muted-foreground">{t("onboarding.loadingPublishers")}</p>}
         {outlets.map((o) => {
           const on = selected.has(o.id);
           return (
@@ -266,41 +269,40 @@ function Pick({
         })}
       </div>
       <Button className="w-full" size="lg" disabled={!ok} onClick={onBuild}>
-        {ok ? `Build my report · ${count} picked` : `Pick at least ${MIN_PICKS} for a reliable score`}
+        {ok
+          ? t("onboarding.buildPicked", { n: count })
+          : t("onboarding.pickAtLeast", { n: MIN_PICKS })}
       </Button>
       <button
         onClick={onBack}
         className="mt-3 flex w-full items-center justify-center gap-1 text-xs text-muted-foreground hover:text-foreground"
       >
-        <ArrowLeft className="h-3 w-3" /> Back
+        <ArrowLeft className="h-3 w-3" /> {t("common.back")}
       </button>
-      <p className="mt-3 text-center text-[11px] text-muted-foreground">
-        Prefer automatic? The browser extension &amp; RSS import arrive in the beta.
-      </p>
+      <p className="mt-3 text-center text-[11px] text-muted-foreground">{t("onboarding.autoHint")}</p>
     </Frame>
   );
 }
 
 function Building({ error, onRetry, onBack }: { error: boolean; onRetry: () => void; onBack: () => void }) {
+  const { t } = useTranslation();
   const [line, setLine] = React.useState(0);
   React.useEffect(() => {
     if (error) return undefined;
-    const t = setInterval(() => setLine((l) => (l + 1) % BUILD_LINES.length), 1100);
-    return () => clearInterval(t);
+    const id = setInterval(() => setLine((l) => (l + 1) % BUILD_LINE_KEYS.length), 1100);
+    return () => clearInterval(id);
   }, [error]);
 
   if (error) {
     return (
       <Frame className="text-center">
-        <h2 className="text-lg font-semibold">We couldn&apos;t build your estimate just now.</h2>
-        <p className="mt-2 text-sm text-muted-foreground">
-          The engine didn&apos;t respond. Try again in a moment — we never show fabricated numbers.
-        </p>
+        <h2 className="text-lg font-semibold">{t("onboarding.error.title")}</h2>
+        <p className="mt-2 text-sm text-muted-foreground">{t("onboarding.error.body")}</p>
         <Button className="mt-5 w-full" size="lg" onClick={onRetry}>
-          Try again
+          {t("common.tryAgain")}
         </Button>
         <button onClick={onBack} className="mt-3 text-xs text-muted-foreground hover:text-foreground">
-          Back to picks
+          {t("onboarding.backToPicks")}
         </button>
       </Frame>
     );
@@ -311,8 +313,8 @@ function Building({ error, onRetry, onBack }: { error: boolean; onRetry: () => v
       <div className="mx-auto mt-4 grid h-28 w-28 place-items-center">
         <Loader2 className="h-16 w-16 animate-spin text-primary" />
       </div>
-      <p className="mt-5 text-lg font-semibold">Reading your diet…</p>
-      <p className="mt-1 font-mono text-xs text-muted-foreground">{BUILD_LINES[line] ?? ""}</p>
+      <p className="mt-5 text-lg font-semibold">{t("onboarding.readingDiet")}</p>
+      <p className="mt-1 font-mono text-xs text-muted-foreground">{t(BUILD_LINE_KEYS[line] ?? "onboarding.loading.scoring")}</p>
     </Frame>
   );
 }
@@ -326,6 +328,7 @@ function Estimate({
   outletIds: string[];
   onAdjust: () => void;
 }) {
+  const { t } = useTranslation();
   const takeaway = report.improvements[0];
   // Stash the selection so it survives the sign-in redirect; OnboardingSync persists it post-auth.
   const save = () => {
@@ -340,45 +343,43 @@ function Estimate({
   };
   return (
     <Frame>
-      <Brand label="Initial Information Health Estimate" />
+      <Brand label={t("onboarding.estimateTitle")} />
       <div className="mb-4 inline-flex items-center gap-1.5 rounded-full border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-[11px] font-medium text-amber-700 dark:text-amber-400">
-        <Sparkles className="h-3 w-3" /> Estimate — from the outlets you picked
+        <Sparkles className="h-3 w-3" /> {t("onboarding.estimateBadge")}
       </div>
       <div className="flex flex-col items-center">
-        <ScoreRing score={report.overall} band={report.band} label="of 100" size={132} />
+        <ScoreRing score={report.overall} band={report.band} label={t("common.of100")} size={132} />
         {report.band && (
           <span className="mt-2 rounded-full bg-muted px-3 py-1 font-mono text-[11px] font-semibold uppercase tracking-wide">
-            {report.band}
+            {t(`band.${report.band}`)}
           </span>
         )}
       </div>
       <SpectrumBar distribution={report.viewpoint} className="mt-5" />
       {takeaway && (
         <div className="mt-5 rounded-xl border bg-muted/50 p-3.5 text-sm">
-          <span className="mb-1 block font-mono text-[10px] font-bold uppercase tracking-wide text-primary">Your one thing</span>
+          <span className="mb-1 block font-mono text-[10px] font-bold uppercase tracking-wide text-primary">{t("onboarding.yourOneThing")}</span>
           {takeaway.detail}
         </div>
       )}
       <div className="mt-4 rounded-xl border border-dashed p-3.5 text-xs text-muted-foreground">
-        <span className="mb-1.5 block font-medium text-foreground">What this is</span>
+        <span className="mb-1.5 block font-medium text-foreground">{t("onboarding.whatThis")}</span>
         <ul className="space-y-1">
-          <li>• An estimate from the publishers you selected — not yet based on your actual reading.</li>
-          <li>• It gets more accurate as you connect real reading.</li>
-          <li>• It becomes a measured report once you have enough reads.</li>
+          <li>• {t("onboarding.what1")}</li>
+          <li>• {t("onboarding.what2")}</li>
+          <li>• {t("onboarding.what3")}</li>
         </ul>
       </div>
       <Button className="mt-5 w-full" size="lg" onClick={save}>
-        Save my estimate &amp; track it
+        {t("onboarding.saveTrack")}
       </Button>
       <button
         onClick={onAdjust}
         className="mt-3 flex w-full items-center justify-center gap-1 text-xs text-muted-foreground hover:text-foreground"
       >
-        <ArrowLeft className="h-3 w-3" /> Adjust my outlets
+        <ArrowLeft className="h-3 w-3" /> {t("onboarding.adjustOutlets")}
       </button>
-      <p className="mt-3 text-center text-[11px] text-muted-foreground">
-        We score the news you read — never your identity, and never sold.
-      </p>
+      <p className="mt-3 text-center text-[11px] text-muted-foreground">{t("onboarding.privacyNote")}</p>
     </Frame>
   );
 }

@@ -5,7 +5,8 @@
   "description": "Information Health \u2014 a reading-diet intelligence product. Frontend for the RWE recommender + Information Health Report backend.",
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "check:i18n": "node scripts/check-i18n.mjs",
+    "build": "npm run check:i18n && next build",
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",

@@ -4,14 +4,16 @@ import Link from "next/link";
 import { motion } from "framer-motion";
 import { Newspaper, ArrowRight, EyeOff } from "lucide-react";
 import type { Story } from "@/types/domain";
+import { useTranslation } from "@/lib/i18n";
 import { SpectrumBar } from "@/components/shared/spectrum-bar";
 import { ArticleImage } from "@/components/shared/article-image";
 import { FreshnessBadge } from "@/components/stories/freshness-badge";
 import { LEAN_META } from "@/lib/metrics";
-import { compact, timeAgo, cn } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 /** A clustered-story preview card — one event, coverage across the spectrum. */
 export function StoryCard({ story, index = 0 }: { story: Story; index?: number }) {
+  const { t, formatCompact, timeAgo } = useTranslation();
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
@@ -35,7 +37,7 @@ export function StoryCard({ story, index = 0 }: { story: Story; index?: number }
           </div>
           <span className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
             <Newspaper className="h-3.5 w-3.5" />
-            {compact(story.totalCoverage)} sources
+            {t("storyCard.sources", { n: formatCompact(story.totalCoverage) })}
           </span>
         </div>
 
@@ -55,13 +57,13 @@ export function StoryCard({ story, index = 0 }: { story: Story; index?: number }
               style={{ color: LEAN_META[story.blindspotSide].color }}
             >
               <EyeOff className="h-3.5 w-3.5" />
-              Thin on the {LEAN_META[story.blindspotSide].label.toLowerCase()}
+              {t("storyCard.thinOn", { side: t(`filter.${story.blindspotSide}`).toLowerCase() })}
             </span>
           ) : (
-            <span>Updated {timeAgo(story.updatedAt)}</span>
+            <span>{t("storyCard.updated", { time: timeAgo(story.updatedAt) })}</span>
           )}
           <span className="inline-flex items-center gap-0.5 font-medium text-foreground/70 transition-colors group-hover:text-primary">
-            Compare
+            {t("storyCard.compare")}
             <ArrowRight className={cn("h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5")} />
           </span>
         </div>

@@ -4,6 +4,7 @@ import * as React from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import type { Recommendation, RecommendationEvidence, RecommendationExplain } from "@/types/domain";
 import { useRecommendationExplain } from "@/hooks/use-data";
+import { useTranslation } from "@/lib/i18n";
 import { Skeleton } from "@/components/ui/skeleton";
 
 /**
@@ -36,13 +37,15 @@ function Row({ label, value, mono = true }: { label: string; value: React.ReactN
   );
 }
 
-/** Coarse reading aid next to the raw number — the number is the authoritative value. */
+/** Coarse reading aid next to the raw number — returns a catalog key (the number is authoritative). */
 function sideOf(lean: number) {
-  if (lean < -0.05) return "Left";
-  if (lean > 0.05) return "Right";
-  return "Center";
+  if (lean < -0.05) return "filter.left";
+  if (lean > 0.05) return "filter.right";
+  return "filter.center";
 }
 
+/** Compact L/C/R percentage readout. The single-letter axis abbreviations are intentionally not
+ *  localized (they are symbolic column markers, like chart-axis ticks). */
 function lcr(v: { left: number; center: number; right: number }) {
   return `L ${v.left}% · C ${v.center}% · R ${v.right}%`;
 }
@@ -61,6 +64,7 @@ function EvidenceSections({
   ev: RecommendationEvidence;
   explain: RecommendationExplain;
 }) {
+  const { t, localizeExplanation } = useTranslation();
   const chosen = explain.trace.strategies[ev.chosenBy];
   const params = (chosen?.paramsUsed ?? {}) as Record<string, unknown>;
   const fam = ev.outletFamiliarity;
@@ -69,8 +73,8 @@ function EvidenceSections({
   return (
     <>
       {explanation && (
-        <Section title="Explanation">
-          <p className="text-xs leading-snug text-foreground/90">{explanation.message}</p>
+        <Section title={t("why.explanation")}>
+          <p className="text-xs leading-snug text-foreground/90">{localizeExplanation(explanation)}</p>
           {DEV_DETAIL && (
             <Row label="Type" value={`${explanation.type} (P${explanation.priority})`} />
           )}
@@ -87,38 +91,38 @@ function EvidenceSections({
         </Section>
       )}
 
-      <Section title="Bridge">
+      <Section title={t("why.bridge")}>
         <Row
-          label="Your position"
-          value={`${sideOf(ev.crossCutting.userMeanLean)} (${ev.crossCutting.userMeanLean.toFixed(2)})`}
+          label={t("why.yourPosition")}
+          value={`${t(sideOf(ev.crossCutting.userMeanLean))} (${ev.crossCutting.userMeanLean.toFixed(2)})`}
         />
         <Row
-          label="Article"
-          value={`${sideOf(ev.crossCutting.articleLean)} (${ev.crossCutting.articleLean.toFixed(2)})`}
+          label={t("why.article")}
+          value={`${t(sideOf(ev.crossCutting.articleLean))} (${ev.crossCutting.articleLean.toFixed(2)})`}
         />
-        <Row label="Gap" value={ev.leanGap.toFixed(2)} />
-        <Row label="Cross-cutting" value={ev.crossCutting.value ? "yes" : "no"} mono={false} />
+        <Row label={t("why.gap")} value={ev.leanGap.toFixed(2)} />
+        <Row label={t("why.crossCutting")} value={ev.crossCutting.value ? t("common.yes") : t("common.no")} mono={false} />
       </Section>
 
-      <Section title="Article metadata">
-        <Row label="Political leaning" value={rec.article.leanBucket} mono={false} />
+      <Section title={t("why.articleMeta")}>
+        <Row label={t("why.leaning")} value={rec.article.leanBucket} mono={false} />
         {DEV_DETAIL && (
           <Row label="Classifier confidence" value={`${Math.round(rec.article.confidence * 100)}%`} />
         )}
-        <Row label="Publisher" value={rec.article.publisher} mono={false} />
-        <Row label="Category" value={rec.article.topic} mono={false} />
+        <Row label={t("filter.publisher")} value={rec.article.publisher} mono={false} />
+        <Row label={t("why.category")} value={rec.article.topic} mono={false} />
       </Section>
 
-      <Section title="History">
+      <Section title={t("why.history")}>
         {ev.topicShare && (
           <Row
             label={ev.topicShare.topic}
-            value={`${Math.round(ev.topicShare.share * 100)}% of your reading`}
+            value={t("why.shareOfReading", { pct: Math.round(ev.topicShare.share * 100) })}
           />
         )}
         <Row
-          label={`Previous reads from ${ev.publisher}`}
-          value={fam.reads === 0 ? "0 — new outlet for you" : `${fam.reads} (${Math.round(fam.share * 100)}%)`}
+          label={t("why.prevReads", { publisher: ev.publisher })}
+          value={fam.reads === 0 ? t("why.newOutlet") : `${fam.reads} (${Math.round(fam.share * 100)}%)`}
         />
         {DEV_DETAIL && (
           <Row
@@ -128,20 +132,17 @@ function EvidenceSections({
         )}
       </Section>
 
-      <Section title="Estimated effect">
+      <Section title={t("why.estEffect")}>
         {ev.viewpointShift ? (
           <>
-            <Row label="Current" value={lcr(ev.viewpointShift.current)} />
-            <Row label="After reading" value={lcr(ev.viewpointShift.after)} />
+            <Row label={t("why.current")} value={lcr(ev.viewpointShift.current)} />
+            <Row label={t("why.afterReading")} value={lcr(ev.viewpointShift.after)} />
             <p className="pt-1 text-[10px] leading-snug text-muted-foreground">
-              Estimated — {ev.viewpointShift.basis}.
+              {t("why.estimatedBasis", { basis: ev.viewpointShift.basis })}
             </p>
           </>
         ) : (
-          <p className="text-[10px] leading-snug text-muted-foreground">
-            No viewpoint projection for this article — it isn&apos;t political, or your political
-            history is below the report&apos;s own minimum.
-          </p>
+          <p className="text-[10px] leading-snug text-muted-foreground">{t("why.noProjection")}</p>
         )}
       </Section>
 
@@ -165,6 +166,7 @@ function EvidenceSections({
 }
 
 export function WhyDrawer({ rec, open }: { rec: Recommendation; open: boolean }) {
+  const { t } = useTranslation();
   const { data, isLoading, isError } = useRecommendationExplain(open);
   const ev = data?.recommendations.find((e) => e.articleId === rec.article.id);
   return (
@@ -186,16 +188,10 @@ export function WhyDrawer({ rec, open }: { rec: Recommendation; open: boolean })
               </div>
             )}
             {!isLoading && (isError || !data) && (
-              <p className="p-3 text-xs text-muted-foreground">
-                Explanation unavailable — the engine could not be reached (there is no mock for
-                evidence: it&apos;s either real or absent).
-              </p>
+              <p className="p-3 text-xs text-muted-foreground">{t("why.unavailable")}</p>
             )}
             {!isLoading && data && !ev && (
-              <p className="p-3 text-xs text-muted-foreground">
-                No explanation for this card — the feed has likely refreshed since it loaded.
-                Reload the page to re-sync cards and evidence.
-              </p>
+              <p className="p-3 text-xs text-muted-foreground">{t("why.stale")}</p>
             )}
             {!isLoading && data && ev && <EvidenceSections rec={rec} ev={ev} explain={data} />}
           </div>

@@ -2,6 +2,7 @@
 
 import { Area, AreaChart, Tooltip, XAxis, YAxis } from "recharts";
 import type { TrendPoint } from "@/types/domain";
+import { useTranslation } from "@/lib/i18n";
 import { useMeasure } from "@/hooks/use-measure";
 
 /**
@@ -27,6 +28,7 @@ export function TrendChart({
   showAxis?: boolean;
   domain?: [number, number];
 }) {
+  const { formatDate } = useTranslation();
   const { ref, width } = useMeasure<HTMLDivElement>();
   const gradientId = `grad-${dataKey}`;
 
@@ -47,7 +49,7 @@ export function TrendChart({
         {showAxis && (
           <XAxis
             dataKey="date"
-            tickFormatter={(d: string) => new Date(d).toLocaleDateString("en", { month: "short", day: "numeric" })}
+            tickFormatter={(d: string) => formatDate(d, { month: "short", day: "numeric" })}
             tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
             tickLine={false}
             axisLine={false}
@@ -73,7 +75,7 @@ export function TrendChart({
             boxShadow: "0 8px 24px -12px rgb(0 0 0 / 0.2)",
             fontSize: 12,
           }}
-          labelFormatter={(d) => new Date(d as string).toLocaleDateString("en", { month: "long", day: "numeric" })}
+          labelFormatter={(d) => formatDate(d as string, { month: "long", day: "numeric" })}
         />
         <Area
           type="monotone"

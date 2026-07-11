@@ -1,5 +1,8 @@
+"use client";
+
 import { Flame, TrendingUp, Radio, Snowflake, Archive, type LucideIcon } from "lucide-react";
 import type { FreshnessBand } from "@/types/domain";
+import { useTranslation } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 /**
@@ -41,9 +44,11 @@ export function FreshnessBadge({
   showScore?: boolean;
   className?: string;
 }) {
+  const { t } = useTranslation();
   const meta = BAND_META[band];
   if (!meta) return null;
   const Icon = meta.icon;
+  const bandLabel = t(`freshness.${band}`);
   return (
     <span
       className={cn(
@@ -51,12 +56,10 @@ export function FreshnessBadge({
         meta.className,
         className,
       )}
-      title={
-        typeof score === "number" ? `${band} · freshness ${score}/100` : band
-      }
+      title={typeof score === "number" ? t("freshness.title", { band: bandLabel, score }) : bandLabel}
     >
       <Icon className="h-3.5 w-3.5" aria-hidden />
-      {band}
+      {bandLabel}
       {showScore && typeof score === "number" && (
         <span className="tabular-nums opacity-70">· {score}</span>
       )}

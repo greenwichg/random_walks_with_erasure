@@ -27,6 +27,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "@/lib/i18n";
+import { activeLang, formatDate } from "@/lib/i18n-core";
 
 const ACHIEVEMENT_ICONS: Record<string, LucideIcon> = {
   sparkles: Sparkles,
@@ -38,7 +40,7 @@ const ACHIEVEMENT_ICONS: Record<string, LucideIcon> = {
 };
 
 const fmtDate = (iso: string) =>
-  new Date(iso).toLocaleDateString("en", { month: "long", day: "numeric", year: "numeric" });
+  formatDate(iso, activeLang(), { month: "long", day: "numeric", year: "numeric" });
 
 function initials(name: string) {
   return name
@@ -51,6 +53,7 @@ function initials(name: string) {
 
 export default function ProfilePage() {
   const { data, isLoading, isError, refetch } = useProfile();
+  const { t } = useTranslation();
 
   if (isLoading) return <ProfileSkeleton />;
   if (isError || !data)
@@ -87,15 +90,15 @@ export default function ProfilePage() {
             </div>
             <div className="flex items-center gap-2 pb-1 text-sm text-muted-foreground">
               <CalendarDays className="h-4 w-4" />
-              Member since {fmtDate(data.joinedAt)}
+              {t("profile.memberSince", { date: fmtDate(data.joinedAt) })}
             </div>
           </div>
 
           {/* Quick stats */}
           <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3">
-            <QuickStat icon={Flame} label="Current streak" value={`${data.streakDays} days`} accent="caution" />
-            <QuickStat icon={TrendingUp} label="Longest streak" value={`${data.longestStreak} days`} accent="positive" />
-            <QuickStat icon={BookmarkCheck} label="Saved" value={data.savedCount} accent="primary" />
+            <QuickStat icon={Flame} label={t("profile.currentStreak")} value={t("profile.daysValue", { n: data.streakDays })} accent="caution" />
+            <QuickStat icon={TrendingUp} label={t("profile.longestStreak")} value={t("profile.daysValue", { n: data.longestStreak })} accent="positive" />
+            <QuickStat icon={BookmarkCheck} label={t("profile.saved")} value={data.savedCount} accent="primary" />
           </div>
         </CardContent>
       </Card>
@@ -103,8 +106,8 @@ export default function ProfilePage() {
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Health journey */}
         <SectionCard
-          title="Health journey"
-          info="Your overall Information Health over the last 30 days."
+          title={t("profile.healthJourney")}
+          info={t("profile.healthJourneyInfo")}
           className="lg:col-span-2"
           action={
             <div className="flex items-center gap-2">
@@ -117,7 +120,7 @@ export default function ProfilePage() {
         </SectionCard>
 
         {/* Streak */}
-        <SectionCard title="Reading streak" info="Consecutive days you've read at least one article.">
+        <SectionCard title={t("profile.readingStreak")} info={t("profile.readingStreakInfo")}>
           <div className="flex flex-col items-center py-2 text-center">
             <div className="relative grid h-28 w-28 place-items-center">
               <Flame className="h-14 w-14 text-caution" strokeWidth={1.5} />
@@ -125,9 +128,9 @@ export default function ProfilePage() {
                 {data.streakDays}
               </span>
             </div>
-            <p className="mt-4 text-sm font-medium">{data.streakDays}-day streak</p>
+            <p className="mt-4 text-sm font-medium">{t("profile.dayStreak", { n: data.streakDays })}</p>
             <p className="mt-1 text-sm text-muted-foreground">
-              Your best is {data.longestStreak} days. Keep reading daily to beat it.
+              {t("profile.streakHint", { n: data.longestStreak })}
             </p>
             <div className="mt-5 flex flex-wrap justify-center gap-1.5">
               {Array.from({ length: 14 }).map((_, i) => {
@@ -152,10 +155,10 @@ export default function ProfilePage() {
         <div className="mb-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Trophy className="h-5 w-5 text-caution" />
-            <h2 className="text-lg font-semibold tracking-tight">Achievements</h2>
+            <h2 className="text-lg font-semibold tracking-tight">{t("profile.achievements")}</h2>
           </div>
           <span className="text-sm text-muted-foreground">
-            {unlocked.length} of {data.achievements.length} unlocked
+            {t("profile.unlockedCount", { unlocked: unlocked.length, total: data.achievements.length })}
           </span>
         </div>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -167,7 +170,7 @@ export default function ProfilePage() {
 
       {/* Milestones */}
       <div className="mt-8">
-        <h2 className="mb-4 text-lg font-semibold tracking-tight">Milestones</h2>
+        <h2 className="mb-4 text-lg font-semibold tracking-tight">{t("profile.milestones")}</h2>
         <Milestones profile={data} />
       </div>
     </PageContainer>
@@ -207,6 +210,7 @@ function QuickStat({
 }
 
 function AchievementCard({ achievement: a, index }: { achievement: Achievement; index: number }) {
+  const { t } = useTranslation();
   const Icon = ACHIEVEMENT_ICONS[a.icon] ?? Trophy;
   return (
     <motion.div
@@ -231,7 +235,7 @@ function AchievementCard({ achievement: a, index }: { achievement: Achievement; 
         <p className="mt-0.5 text-sm text-muted-foreground">{a.description}</p>
         {a.unlocked ? (
           a.unlockedAt && (
-            <p className="mt-2 text-xs font-medium text-positive">Unlocked {fmtDate(a.unlockedAt)}</p>
+            <p className="mt-2 text-xs font-medium text-positive">{t("profile.unlockedOn", { date: fmtDate(a.unlockedAt) })}</p>
           )
         ) : (
           <div className="mt-3">
@@ -242,7 +246,7 @@ function AchievementCard({ achievement: a, index }: { achievement: Achievement; 
               />
             </div>
             <p className="mt-1.5 text-xs text-muted-foreground">
-              {Math.round((a.progress ?? 0) * 100)}% complete
+              {t("profile.percentComplete", { pct: Math.round((a.progress ?? 0) * 100) })}
             </p>
           </div>
         )}
@@ -253,8 +257,9 @@ function AchievementCard({ achievement: a, index }: { achievement: Achievement; 
 
 /** A simple vertical timeline built from join date + unlocked achievements. */
 function Milestones({ profile }: { profile: Profile }) {
+  const { t } = useTranslation();
   const items = [
-    { icon: Sparkles, title: "Joined Information Health", date: profile.joinedAt },
+    { icon: Sparkles, title: t("profile.joined"), date: profile.joinedAt },
     ...profile.achievements
       .filter((a) => a.unlocked && a.unlockedAt)
       .map((a) => ({ icon: ACHIEVEMENT_ICONS[a.icon] ?? Trophy, title: a.title, date: a.unlockedAt! })),

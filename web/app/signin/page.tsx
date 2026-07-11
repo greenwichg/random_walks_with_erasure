@@ -3,6 +3,7 @@
 import { signIn } from "next-auth/react";
 import { Logo } from "@/components/layout/logo";
 import { Button } from "@/components/ui/button";
+import { useTranslation } from "@/lib/i18n";
 
 /**
  * Sign-in page — the only auth entry point for the closed beta (Google OAuth).
@@ -10,6 +11,7 @@ import { Button } from "@/components/ui/button";
  * requests a protected page. On success NextAuth returns them to `callbackUrl`.
  */
 export default function SignInPage() {
+  const { t } = useTranslation();
   // In the Colab demo (dev login on) Google OAuth isn't configured, so showing "Continue with
   // Google" would only dead-end. In that mode we show ONLY the demo login; a normal build shows
   // only Google. This is build-time gated by NEXT_PUBLIC_DEV_LOGIN and never on in production.
@@ -21,12 +23,10 @@ export default function SignInPage() {
           <Logo />
         </div>
         <h1 className="text-center text-xl font-semibold tracking-tight text-balance">
-          Welcome to Information Health
+          {t("signin.welcome")}
         </h1>
         <p className="mx-auto mt-2 max-w-xs text-center text-sm text-muted-foreground">
-          {demoMode
-            ? "Demo mode — sign in as a throwaway demo reader to explore the app. No account needed."
-            : "Sign in to save your reports and track how your reading diet changes over time."}
+          {demoMode ? t("signin.demoSubtitle") : t("signin.subtitle")}
         </p>
 
         {demoMode ? (
@@ -43,11 +43,9 @@ export default function SignInPage() {
                 if (res?.ok) window.location.assign("/");
               }}
             >
-              Continue as demo reader
+              {t("signin.continueDemo")}
             </Button>
-            <p className="mt-3 text-center text-xs text-muted-foreground">
-              Creates a throwaway demo account — no Google needed. Dev/demo only.
-            </p>
+            <p className="mt-3 text-center text-xs text-muted-foreground">{t("signin.demoNote")}</p>
           </>
         ) : (
           <>
@@ -56,11 +54,9 @@ export default function SignInPage() {
               size="lg"
               onClick={() => signIn("google", { callbackUrl: "/" })}
             >
-              Continue with Google
+              {t("signin.continueGoogle")}
             </Button>
-            <p className="mt-4 text-center text-xs text-muted-foreground">
-              We use your Google account only to sign you in. Your reading data stays private.
-            </p>
+            <p className="mt-4 text-center text-xs text-muted-foreground">{t("signin.googleNote")}</p>
           </>
         )}
       </div>

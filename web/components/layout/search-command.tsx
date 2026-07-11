@@ -8,11 +8,13 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { useSearch } from "@/hooks/use-data";
 import type { Article } from "@/types/domain";
-import { leanBucket, leanLabel } from "@/lib/political";
+import { leanBucket, leanLabelKey } from "@/lib/political";
+import { useTranslation } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 /** ⌘K / global search — a quick launcher over the live FeedArticle catalog, backed by /api/search. */
 export function SearchCommand({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
+  const { t } = useTranslation();
   const [q, setQ] = React.useState("");
   const router = useRouter();
   const active = q.trim().length > 1;
@@ -57,7 +59,7 @@ export function SearchCommand({ open, onOpenChange }: { open: boolean; onOpenCha
               autoFocus
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              placeholder="Search the live news catalog…"
+              placeholder={t("searchCmd.placeholder")}
               className="h-12 border-0 bg-transparent px-0 shadow-none focus-visible:ring-0"
             />
             <kbd className="hidden rounded border bg-muted px-1.5 py-0.5 text-[0.65rem] text-muted-foreground sm:block">
@@ -67,30 +69,28 @@ export function SearchCommand({ open, onOpenChange }: { open: boolean; onOpenCha
 
           <div className="max-h-[50vh] overflow-y-auto p-2">
             {!active && (
-              <p className="px-3 py-8 text-center text-sm text-muted-foreground">
-                Type to search every publisher in the live catalog.
-              </p>
+              <p className="px-3 py-8 text-center text-sm text-muted-foreground">{t("searchCmd.hint")}</p>
             )}
             {active && results.length === 0 && !isFetching && (
-              <p className="px-3 py-8 text-center text-sm text-muted-foreground">No matches for “{q.trim()}”.</p>
+              <p className="px-3 py-8 text-center text-sm text-muted-foreground">{t("searchCmd.noMatches", { q: q.trim() })}</p>
             )}
 
             {results.length > 0 && (
               <div className="mb-1">
                 <p className="px-3 py-1.5 text-[0.7rem] font-semibold uppercase tracking-wider text-muted-foreground/70">
-                  Articles
+                  {t("analytics.articles")}
                 </p>
                 {results.map((a) => (
                   <Row key={a.id} icon={FileText} onClick={() => openArticle(a)}>
                     <span className="truncate">{a.headline}</span>
                     <Badge variant={leanBucket(a.lean)} className="ml-auto shrink-0">
-                      {leanLabel(a.lean)}
+                      {t(leanLabelKey(a.lean))}
                     </Badge>
                   </Row>
                 ))}
                 <Row icon={ArrowRight} onClick={seeAll}>
                   <span className="text-muted-foreground">
-                    See all {data?.total ?? results.length} results for “{q.trim()}”
+                    {t("searchCmd.seeAll", { n: data?.total ?? results.length, q: q.trim() })}
                   </span>
                 </Row>
               </div>

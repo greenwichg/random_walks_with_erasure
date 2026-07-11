@@ -6,7 +6,7 @@ import { PublisherBadge, LeanBadge } from "@/components/shared/article-badges";
 import { ArticleImage } from "@/components/shared/article-image";
 import { ReadArticleButton } from "@/components/shared/read-article-button";
 import { SaveButton } from "@/components/shared/save-button";
-import { timeAgo } from "@/lib/utils";
+import { useTranslation } from "@/lib/i18n";
 
 /**
  * A Discover article card — one live FeedArticle: publisher, title, description, real publication
@@ -22,6 +22,7 @@ export function DiscoverCard({
   index?: number;
   openedFrom?: string;
 }) {
+  const { timeAgo } = useTranslation();
   return (
     <motion.article
       layout

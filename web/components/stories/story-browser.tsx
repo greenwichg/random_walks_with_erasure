@@ -3,6 +3,7 @@
 import * as React from "react";
 import type { LucideIcon } from "lucide-react";
 import { useStories, useDiscover } from "@/hooks/use-data";
+import { useTranslation } from "@/lib/i18n";
 import type { StoryQuery } from "@/types/domain";
 import { PageContainer } from "@/components/layout/page-container";
 import { StoryCard } from "@/components/stories/story-card";
@@ -44,6 +45,7 @@ export function StoryBrowser({
   defaultSort?: string;
   emptyDescription: string;
 }) {
+  const { t } = useTranslation();
   const [topic, setTopic] = React.useState("all");
   const [publisher, setPublisher] = React.useState("all");
   const [lean, setLean] = React.useState("all");
@@ -77,15 +79,15 @@ export function StoryBrowser({
       </div>
 
       <div className="mb-6 flex flex-wrap items-center gap-2">
-        <FilterSelect label="Topic" value={topic} options={opt(facets.data?.topics ?? [])} onChange={setTopic} />
+        <FilterSelect label={t("filter.topic")} value={topic} options={opt(facets.data?.topics ?? [])} onChange={setTopic} />
         <FilterSelect
-          label="Publisher"
+          label={t("filter.publisher")}
           value={publisher}
           options={opt(facets.data?.publishers ?? [])}
           onChange={setPublisher}
         />
-        <FilterSelect label="Lean" value={lean} options={LEAN_OPTIONS} onChange={setLean} />
-        <FilterSelect label="Sort" value={sort} options={SORT_OPTIONS} onChange={setSort} allLabel="Top" />
+        <FilterSelect label={t("filter.lean")} value={lean} options={LEAN_OPTIONS} onChange={setLean} />
+        <FilterSelect label={t("filter.sort")} value={sort} options={SORT_OPTIONS} onChange={setSort} allLabel={t("filter.top")} />
         {total > 0 && (
           <span className="ml-auto text-sm text-muted-foreground">
             {total} {total === 1 ? "story" : "stories"}
@@ -103,7 +105,7 @@ export function StoryBrowser({
       {isError && <ErrorState onRetry={() => refetch()} />}
 
       {data && stories.length === 0 && (
-        <EmptyState icon={icon} title="No stories yet" description={emptyDescription} className="mt-4" />
+        <EmptyState icon={icon} title={t("stories.empty.title")} description={emptyDescription} className="mt-4" />
       )}
 
       <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">

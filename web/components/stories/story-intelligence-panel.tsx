@@ -21,7 +21,9 @@ import { FreshnessBadge } from "@/components/stories/freshness-badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { StoryLifecycle, StoryMomentum, StoryTimelineEventType } from "@/types/domain";
 import { LEAN_META } from "@/lib/metrics";
-import { cn, timeAgo } from "@/lib/utils";
+import { cn } from "@/lib/utils";
+import { useTranslation } from "@/lib/i18n";
+import { activeLang, formatDate } from "@/lib/i18n-core";
 
 const LIFECYCLE_STYLE: Record<StoryLifecycle, string> = {
   Breaking: "bg-red-500/12 text-red-600 dark:text-red-400 ring-1 ring-red-500/20",
@@ -44,13 +46,8 @@ const TIMELINE_ICON: Record<StoryTimelineEventType, LucideIcon> = {
   latest: Clock,
 };
 
-const fmtDate = (iso?: string) => {
-  if (!iso) return "";
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime())
-    ? ""
-    : d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-};
+const fmtDate = (iso?: string) =>
+  iso ? formatDate(iso, activeLang(), { month: "short", day: "numeric" }) : "";
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
@@ -68,6 +65,7 @@ function Stat({ label, value }: { label: string; value: string }) {
  * coverage list stands on its own). Read-only: it changes no recommendation, report, or read tracking.
  */
 export function StoryIntelligencePanel({ storyId }: { storyId: string }) {
+  const { t, timeAgo } = useTranslation();
   const { data, isLoading } = useStoryIntelligence(storyId);
 
   if (isLoading) {
@@ -84,10 +82,10 @@ export function StoryIntelligencePanel({ storyId }: { storyId: string }) {
     <section className="mt-6 rounded-lg border bg-card p-5 shadow-soft">
       <div className="flex items-center justify-between gap-2">
         <h2 className="inline-flex items-center gap-1.5 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-          <Activity className="h-4 w-4" /> Story intelligence
+          <Activity className="h-4 w-4" /> {t("storyIntel.title")}
         </h2>
         {data.lastUpdated && (
-          <span className="text-xs text-muted-foreground">Latest coverage {timeAgo(data.lastUpdated)}</span>
+          <span className="text-xs text-muted-foreground">{t("storyIntel.latestCoverage", { time: timeAgo(data.lastUpdated) })}</span>
         )}
       </div>
 
@@ -100,12 +98,12 @@ export function StoryIntelligencePanel({ storyId }: { storyId: string }) {
             LIFECYCLE_STYLE[lifecycle],
           )}
         >
-          {lifecycle}
+          {t(`storyIntel.lifecycle.${lifecycle}`)}
         </span>
         <span className={cn("inline-flex items-center gap-1 text-xs font-medium", mo.className)}>
-          <MoIcon className="h-3.5 w-3.5" /> {momentum.state}
+          <MoIcon className="h-3.5 w-3.5" /> {t(`storyIntel.momentum.${momentum.state}`)}
           {momentum.newPublishers > 0 && (
-            <span className="text-muted-foreground">· +{momentum.newPublishers} new</span>
+            <span className="text-muted-foreground">· {t("storyIntel.plusNew", { n: momentum.newPublishers })}</span>
           )}
         </span>
       </div>
@@ -115,9 +113,11 @@ export function StoryIntelligencePanel({ storyId }: { storyId: string }) {
         <div className="mt-4 rounded-md border border-primary/20 bg-primary/5 p-3">
           <div className="flex items-center gap-1.5 text-sm font-medium text-primary">
             <Sparkles className="h-4 w-4" />
-            {nsv.count} new {nsv.count === 1 ? "article" : "articles"} since your last visit
+            {nsv.count === 1
+              ? t("storyIntel.newArticleOne", { n: nsv.count })
+              : t("storyIntel.newArticles", { n: nsv.count })}
             {nsv.lastVisited && (
-              <span className="font-normal text-muted-foreground">· you last read this {timeAgo(nsv.lastVisited)}</span>
+              <span className="font-normal text-muted-foreground">· {t("storyIntel.lastRead", { time: timeAgo(nsv.lastVisited) })}</span>
             )}
           </div>
           {(nsv.publishers.length > 0 || nsv.perspectives.length > 0) && (
@@ -133,7 +133,7 @@ export function StoryIntelligencePanel({ storyId }: { storyId: string }) {
                   className="rounded-full px-2 py-0.5 font-medium ring-1"
                   style={{ color: LEAN_META[b]?.color, borderColor: LEAN_META[b]?.color }}
                 >
-                  New: {LEAN_META[b]?.label ?? b}
+                  {t("storyIntel.newPerspective", { label: t(`filter.${b}`) })}
                 </span>
               ))}
             </div>
@@ -155,14 +155,14 @@ export function StoryIntelligencePanel({ storyId }: { storyId: string }) {
 
       {/* Coverage statistics */}
       <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <Stat label="Articles" value={String(cs.articleCount)} />
-        <Stat label="Per day" value={cs.coverageVelocityPerDay.toFixed(1)} />
+        <Stat label={t("storyIntel.articles")} value={String(cs.articleCount)} />
+        <Stat label={t("storyIntel.perDay")} value={cs.coverageVelocityPerDay.toFixed(1)} />
         <Stat
-          label="Recent vs prior"
+          label={t("storyIntel.recentVsPrior")}
           value={`${cs.coverageGrowth.recent}/${cs.coverageGrowth.prior}`}
         />
         <Stat
-          label="Span"
+          label={t("storyIntel.span")}
           value={cs.coverageDurationHours >= 24 ? `${(cs.coverageDurationHours / 24).toFixed(1)}d` : `${Math.round(cs.coverageDurationHours)}h`}
         />
       </div>
@@ -171,7 +171,7 @@ export function StoryIntelligencePanel({ storyId }: { storyId: string }) {
       {timeline.length > 0 && (
         <div className="mt-5">
           <h3 className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            <Gauge className="h-3.5 w-3.5" /> Coverage timeline
+            <Gauge className="h-3.5 w-3.5" /> {t("storyIntel.coverageTimeline")}
           </h3>
           <ol className="relative space-y-3 border-l border-border pl-4">
             {timeline.map((e, i) => {
