@@ -1205,10 +1205,13 @@ def test_sliders_shape_the_feed_end_to_end(client):
     # defaults (50/50) -> identical to the anonymous feed, byte for byte
     assert _feed_ids(client, headers=hdr) == anonymous
 
-    # move Political openness to 0 -> the rwe-b feed changes for this reader only
+    # move Political openness to 0 -> the slider reaches the reader's rwe-b model, visible in the
+    # explain trace. Since Commit R1.5 the rwe-b slice is cross-cutting-first, which is robust to
+    # epsilon on a cross-rich corpus, so the FEED may not reorder — paramsUsed is the honest probe.
     client.post("/api/me/settings", json={"politicalOpenness": 0}, headers=hdr)
-    moved = _feed_ids(client, headers=hdr)
-    assert moved != anonymous
+    used = client.get("/api/internal/recommendations/explain",
+                      headers=hdr).json()["trace"]["strategies"]["rwe-b"]["paramsUsed"]
+    assert used["source"] == "sliders" and used["epsilon"] == pytest.approx(0.70)
     assert _feed_ids(client) == anonymous                          # anonymous unaffected
 
     # move Recommendation strength -> the rwe-d feed changes too

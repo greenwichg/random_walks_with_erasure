@@ -96,6 +96,26 @@ def test_cross_of_requires_political():
     assert not api_server._cross_of(0.0, 1.6, True)              # sideless reader: never
 
 
+def test_slice_select_orders_cross_first_with_same_side_fallback():
+    """Commit R1.5: the rwe-b slice serves opposing-viewpoint items first, same-side political
+    items only as fallback; rank order is preserved within each tier and for every other case."""
+    class _Mind:
+        # cols:            0     1     2     3     4
+        item_positions = np.array([1.6, -1.4, 1.2, -0.9, 0.2])
+    left_reader = -1.0
+    admitted = [1, 0, 3, 2, 4]          # rank order (all political by admission)
+    # cross for a left reader = right items (0, 2); same-side/centre (1, 3, 4) fall back, rank order
+    assert api_server.Backend._slice_select(_Mind, "rwe-b", admitted, 5, left_reader) == [0, 2, 1, 3, 4]
+    # enough cross candidates -> the slice is cross-only
+    assert api_server.Backend._slice_select(_Mind, "rwe-b", admitted, 2, left_reader) == [0, 2]
+    # fewer cross than k -> same-side fallback fills the remainder
+    assert api_server.Backend._slice_select(_Mind, "rwe-b", admitted, 3, left_reader) == [0, 2, 1]
+    # sideless reader: no cross direction -> pure rank order
+    assert api_server.Backend._slice_select(_Mind, "rwe-b", admitted, 3, 0.0) == [1, 0, 3]
+    # other strategies: pure rank order regardless of side
+    assert api_server.Backend._slice_select(_Mind, "rwe-d", admitted, 3, left_reader) == [1, 0, 3]
+
+
 def test_slice_admission_is_rwe_b_only():
     class _Mind:
         political = np.array([True, False, True])

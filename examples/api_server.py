@@ -1187,12 +1187,32 @@ class Backend:
         return bool(np.asarray(pol, dtype=bool)[col])
 
     @staticmethod
+    def _slice_select(mind, strategy: str, cols: list, k: int, user_side: float) -> list:
+        """The ``k`` slice slot-holders from already-ADMITTED candidates in rank order.
+
+        Commit R1.5: the Bridge strategy preferentially exposes opposing viewpoints — rwe-b takes
+        cross-cutting political items first (in rank order) and falls back to same-side political
+        items only when fewer than ``k`` cross candidates exist. Every other strategy keeps pure
+        rank order, as does rwe-b for a sideless reader (user_side == 0: no cross direction
+        exists). The article's ACTUAL crossCutting fact is still computed at serialization; this
+        only orders the slice. Shared by serving and the explain observer (the parity guarantee)."""
+        if strategy != "rwe-b" or not user_side:
+            return cols[:k]
+        pos = np.asarray(mind.item_positions, dtype=float)
+        cross, same = [], []
+        for c in cols:
+            lean = float(pos[c]) if np.isfinite(pos[c]) else 0.0
+            (cross if _cross_of(user_side, lean, True) else same).append(c)
+        return (cross + same)[:k]
+
+    @staticmethod
     def _rec_cols_of(mind, rec: "_Recommenders", u: int, strategy: str, k: int = 12,
-                     params: "dict | None" = None) -> list:
+                     params: "dict | None" = None, user_side: float = 0.0) -> list:
         """Top-k *admitted* item columns (in ``mind`` space) recommender ``strategy`` surfaces for
-        row ``u``, so we can serialise full articles. Ranks the full list and takes the first ``k``
-        columns that pass :meth:`_slice_admits` (rwe-b: political only), so a filtered slot is
-        backfilled by the next-ranked admissible item instead of shrinking the slice.
+        row ``u``, so we can serialise full articles. Ranks the full list, keeps the columns that
+        pass :meth:`_slice_admits` (rwe-b: political only) — so a filtered slot is backfilled by
+        the next-ranked admissible item instead of shrinking the slice — and orders the slice via
+        :meth:`_slice_select` (rwe-b: cross-cutting first, Commit R1.5; needs ``user_side``).
         Corpus-parametric so a real user's augmented recommender selects columns exactly as the
         base one does; ``params`` (slider-mapped hyperparameters) swaps in a per-request model via
         :meth:`_model_for`. Returns [] on any failure (caller falls back)."""
@@ -1203,16 +1223,18 @@ class Backend:
                 return []
             model = Backend._model_for(rec, strategy, params)
             ranked = model.recommend(np.array([rows[0]]), top_k=int(len(rec.rec_ids)))[0]
-            cols = []
+            # cross-first selection partitions the WHOLE admitted list; plain slices stop at k
+            need_all = strategy == "rwe-b" and bool(user_side)
+            admitted = []
             for j in ranked:
                 if int(j) < 0:
                     continue
                 col = rec.id2col.get(str(rec.rec_ids[int(j)]))
                 if col is not None and Backend._slice_admits(mind, strategy, col):
-                    cols.append(col)
-                    if len(cols) >= k:
+                    admitted.append(col)
+                    if not need_all and len(admitted) >= k:
                         break
-            return cols
+            return Backend._slice_select(mind, strategy, admitted, k, user_side)
         except Exception:
             return []
 
@@ -1291,7 +1313,8 @@ class Backend:
         # a single strategy, or a blend across the family for the default "all" view
         plan = ([(strategy, 12)] if strategy in ("rwe-b", "rwe-d", "adaptive")
                 else [("rwe-b", 6), ("rwe-d", 4), ("adaptive", 4)])
-        cols_by_strategy = [(strat, self._rec_cols_of(corpus.mind, rec, u, strat, k, params))
+        cols_by_strategy = [(strat, self._rec_cols_of(corpus.mind, rec, u, strat, k, params,
+                                                      user_side=float(user_side)))
                             for strat, k in plan]
         return self._serialize_recs(corpus, cols_by_strategy, user_side, familiarity)
 
@@ -1366,8 +1389,9 @@ class Backend:
                 content = None
         if not content:
             content = self._grounded_fallback(rep)
-        # attach up to two real bridging articles as suggestions
-        cols = self._rec_cols_of(corpus.mind, rec, u, "rwe-b", k=2)
+        # attach up to two real bridging articles as suggestions (cross-first, Commit R1.5)
+        side = float(np.sign(rep.get("mean_lean") or 0.0))
+        cols = self._rec_cols_of(corpus.mind, rec, u, "rwe-b", k=2, user_side=side)
         suggestions = [self._serialize_article(corpus, c) for c in cols[:2]]
         return {
             "id": f"msg_{_stable_int(message, u)}",

@@ -169,28 +169,32 @@ def explain(backend, corpus, rec, u: int, strategy: Optional[str] = None,
                   "rank_of": {j: i for i, j in enumerate(ranked)},
                   "params_used": _params_used(model, s, params)}
 
-    # --- replicate the serving selection (plan → slice admission → id2col → first-seen dedup) --
-    # Mirrors Backend._rec_cols_of exactly: walk the full ranking, keep the first kk columns the
-    # strategy's slice admits (Commit R1: rwe-b admits political items only — the SAME shared
-    # predicate, so the parity guarantee holds), then dedup first-seen across strategies.
-    # ``slice_js`` records which ranked items occupy each strategy's admitted slots — the honest
-    # meaning of "inSlice" now that admission can skip over non-admitted ranks.
+    # --- replicate the serving selection (plan → admission → slice order → first-seen dedup) --
+    # Mirrors Backend._rec_cols_of exactly: walk the full ranking, keep the columns the strategy's
+    # slice admits (Commit R1: rwe-b admits political items only), order the slice via the SAME
+    # Backend._slice_select (Commit R1.5: rwe-b serves cross-cutting items first), then dedup
+    # first-seen across strategies — the shared helpers keep the parity guarantee byte-exact.
+    # ``slice_js`` records which ranked items occupy each strategy's slots — the honest meaning
+    # of "inSlice" now that admission/ordering can skip over or reorder raw ranks.
     plan = ((strategy, SINGLE_K),) if strategy in STRATEGIES else BLEND_PLAN
     chosen, seen_cols, dedup_dropped = [], set(), 0
     slice_js: dict = {s: set() for s in STRATEGIES}
     for s, kk in plan:
+        admitted, j_of_col = [], {}
         for j in per[s]["ranking"]:
-            if len(slice_js[s]) >= kk:
-                break
             col = rec.id2col.get(str(rec.rec_ids[j]))
             if col is None or not engine.Backend._slice_admits(mind, s, col):
                 continue
-            slice_js[s].add(int(j))          # an admitted slot, even if dedup then drops it
+            admitted.append(col)
+            j_of_col.setdefault(col, int(j))
+        for col in engine.Backend._slice_select(mind, s, admitted, kk, user_side):
+            j = j_of_col[col]
+            slice_js[s].add(j)               # an admitted slot, even if dedup then drops it
             if col in seen_cols:
                 dedup_dropped += 1
                 continue
             seen_cols.add(col)
-            chosen.append((col, int(j), s))
+            chosen.append((col, j, s))
 
     item_deg = np.asarray(fg.item_degrees, dtype=float)
 

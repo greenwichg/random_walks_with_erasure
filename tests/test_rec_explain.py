@@ -94,11 +94,17 @@ def test_rank_band_and_score_invariants(backend, user):
         assert 0.0 < r["scorePercentile"] <= 100.0
         n_cand = exp["trace"]["strategies"][chosen]["candidates"]
         assert r["match"] == rec_explain.match_band(own["rank"] - 1, n_cand)
-        # within one strategy, serving order is score order (deterministic argsort)
-        prev = per_strategy_last_rank.get(chosen)
+        # Within one strategy, serving order is score order — per preference tier. rwe-b serves
+        # cross-cutting items first (Commit R1.5), so its order is: all cross (rank-monotonic),
+        # then all non-cross (rank-monotonic). Other strategies stay strictly rank-monotonic.
+        tier = (chosen, bool(r["crossCutting"]["value"]) if chosen == "rwe-b" else None)
+        prev = per_strategy_last_rank.get(tier)
         if prev is not None:
             assert own["rank"] > prev
-        per_strategy_last_rank[chosen] = own["rank"]
+        per_strategy_last_rank[tier] = own["rank"]
+        if chosen == "rwe-b" and r["crossCutting"]["value"]:
+            assert per_strategy_last_rank.get(("rwe-b", False)) is None, \
+                "a cross-cutting rwe-b card must never follow a same-side one"
         for s in STRATEGIES:
             e = r["byStrategy"][s]
             assert (e["rank"] is None) or e["rank"] >= 1
