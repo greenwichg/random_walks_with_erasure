@@ -250,7 +250,12 @@ function SessionHeader({ session }: { session: ReadingSession }) {
   // Time-only (the day is already in the group header); formatDate uses toLocaleDateString, which
   // would append the date, so format the clock time directly in the active locale.
   const time = (iso: string) => new Date(iso).toLocaleTimeString(lang, { hour: "numeric", minute: "2-digit" });
-  const range = session.start === session.end ? time(session.start) : `${time(session.start)} – ${time(session.end)}`;
+  // Collapse to a single time when the session's reads fall in the same displayed minute — e.g. a
+  // batch recorded milliseconds apart. Compare the FORMATTED times, not the raw ISO (which differs at
+  // sub-minute precision); a "3:56 PM – 3:56 PM" range conveys nothing and reads as a bug.
+  const startTime = time(session.start);
+  const endTime = time(session.end);
+  const range = startTime === endTime ? startTime : `${startTime} – ${endTime}`;
   return (
     <div className="flex items-center gap-2 text-xs text-muted-foreground">
       <Clock className="h-3.5 w-3.5 shrink-0" />
