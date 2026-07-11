@@ -240,7 +240,23 @@ def main() -> int:
     ap.add_argument("--report", action="store_true",
                     help="the per-read sibling report: every read with same-story siblings, "
                          "each sibling's cluster + served/excluded verdict with the exact reason")
+    ap.add_argument("--list-users", action="store_true",
+                    help="list the store's users (id, email, reads) and exit — to pick --user")
     args = ap.parse_args()
+
+    if args.list_users:
+        st = store_mod.Store(args.db)
+        print(f"store: {st.url}")
+        from sqlalchemy import func, select
+        with st.session() as s:
+            rows = s.execute(
+                select(store_mod.User.id, store_mod.User.email, store_mod.User.display_name,
+                       func.count(store_mod.Read.id))
+                .outerjoin(store_mod.Read, store_mod.Read.user_id == store_mod.User.id)
+                .group_by(store_mod.User.id).order_by(store_mod.User.id)).all()
+        for uid, email, name, n in rows:
+            print(f"  --user {uid}   {email or '-':<32} {name or '-':<20} {n} reads")
+        return 0
 
     if args.report:
         st = store_mod.Store(args.db)
