@@ -14,7 +14,6 @@ import {
   Route,
 } from "lucide-react";
 import type { FeedbackAction, Recommendation } from "@/types/domain";
-import { METRICS } from "@/lib/metrics";
 import { useTranslation } from "@/lib/i18n";
 import { presentRecommendation } from "@/lib/rec-presentation";
 import { PublisherBadge, LeanBadge } from "@/components/shared/article-badges";
@@ -51,7 +50,6 @@ export function RecommendationCard({
   const [readLater, setReadLater] = React.useState(false);
   const [why, setWhy] = React.useState(false);
   const [vote, setVote] = React.useState<"up" | "down" | null>(null);
-  const helps = METRICS[rec.helpsMetric];
   // claim → receipt → proof (Commit 22): pure key selection from the resolver's structured
   // explanation — the module invents nothing, the drawer stays the proof layer.
   const pres = presentRecommendation(rec.explanation);
@@ -211,15 +209,9 @@ export function RecommendationCard({
             </div>
           </div>
         )}
-        {/* tappable receipt: the metric this read helps, deep-linked to its report row */}
-        <div className="mt-2.5 flex items-center gap-2 pl-6 text-xs">
-          <Link
-            href={`/report#${rec.helpsMetric}`}
-            className="inline-flex items-center gap-1 text-muted-foreground transition-colors hover:text-primary hover:underline"
-          >
-            <helps.icon className="h-3.5 w-3.5" /> {t("rec.helps", { metric: t(`metric.${rec.helpsMetric}.label`) })}
-          </Link>
-        </div>
+        {/* C6: the generic "Helps {metric}" chip is gone — it was a strategy-derived label, not
+            evidence. Every line above is a measured fact about THIS reader's history; estimated
+            effects live in the Why? drawer, explicitly labeled as estimates. */}
       </div>
 
       {/* actions — pills never break mid-word (buttons are nowrap); the row itself wraps so

@@ -1534,6 +1534,13 @@ M = {
                              "{topic} est l'un de vos sujets les plus lus.",
                              "{topic} gehört zu Ihren meistgelesenen Themen.",
                              "{topic} tem sido um dos seus temas mais lidos."),
+    # ---- C6 · concrete measured variants: the resolver emits these ONLY when the reader's real
+    #      shares are in its context (never estimated); missing shares fall back to the plain keys.
+    "rec.reader.top_topic_share": ("{topic} represents {percent}% of your recent reading.",
+                                   "{topic} representa el {percent}% de tu lectura reciente.",
+                                   "{topic} représente {percent}% de vos lectures récentes.",
+                                   "{topic} macht {percent}% Ihrer letzten Lektüre aus.",
+                                   "{topic} representa {percent}% da sua leitura recente."),
     "rec.reader.political_lean_left": ("Your political reading has leaned left.",
                                        "Tu lectura política se ha inclinado a la izquierda.",
                                        "Vos lectures politiques ont penché à gauche.",
@@ -1544,6 +1551,18 @@ M = {
                                         "Vos lectures politiques ont penché à droite.",
                                         "Ihre politische Lektüre neigte nach rechts.",
                                         "Sua leitura política tem pendido à direita."),
+    "rec.reader.political_lean_left_share": (
+        "{percent}% of your political reading has leaned left.",
+        "El {percent}% de tu lectura política se ha inclinado a la izquierda.",
+        "{percent}% de vos lectures politiques ont penché à gauche.",
+        "{percent}% Ihrer politischen Lektüre neigte nach links.",
+        "{percent}% da sua leitura política tem pendido à esquerda."),
+    "rec.reader.political_lean_right_share": (
+        "{percent}% of your political reading has leaned right.",
+        "El {percent}% de tu lectura política se ha inclinado a la derecha.",
+        "{percent}% de vos lectures politiques ont penché à droite.",
+        "{percent}% Ihrer politischen Lektüre neigte nach rechts.",
+        "{percent}% da sua leitura política tem pendido à direita."),
     "rec.contribution.covered_same_story": ("Here's how {publisher} covered it.",
                                             "Así lo cubrió {publisher}.",
                                             "Voici comment {publisher} l'a couvert.",

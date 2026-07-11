@@ -116,6 +116,33 @@ def _lean_bucket(pos: float, tau: float = hr.LEAN_TAU) -> str:
     return "center"
 
 
+def _topic_shares_of(rep: dict) -> dict:
+    """``{topic: share 0..1}`` for the reader's claimable top topics, straight from the report's
+    own ``top_categories`` (C6) — the measured facts behind "X represents N% of your reading".
+    Blank / legacy-"general" buckets are excluded exactly like ``top_topics``."""
+    out = {}
+    for t, share in (rep.get("top_categories") or []):
+        name = str(t).strip()
+        if name and name.lower() != "general" and share is not None and np.isfinite(float(share)):
+            out[_prettify(name)] = float(share)
+    return out
+
+
+def _lean_shares_of(rep: dict) -> dict:
+    """``{"lean_shares": {"left","center","right"}}`` from the report's confidence-weighted
+    viewpoint computation (C6), or ``{}`` when the reader is below the report's own political
+    minimum (NaN shares) — no share, no claim. Returned as a splattable dict so callers simply
+    ``**`` it into the context."""
+    vp = rep.get("viewpoint")
+    try:
+        l, c, r = float(vp[0]), float(vp[1]), float(vp[2])
+    except (TypeError, ValueError, IndexError):
+        return {}
+    if not (np.isfinite(l) and np.isfinite(c) and np.isfinite(r)):
+        return {}
+    return {"lean_shares": {"left": l, "center": c, "right": r}}
+
+
 def _cross_of(user_side: float, lean: float, political: bool) -> bool:
     """The cross-cutting gate, shared by the recommendation serializer and the explain observer
     (Commit 21a) — one definition, so an explanation can never disagree with the card it explains.
@@ -1286,6 +1313,9 @@ class Backend:
             "article": art,
             "reason": reason,
             "strategy": strategy,
+            # C6: no longer rendered — the card's generic "Helps {metric}" chip was a strategy-
+            # derived label, not evidence, so the UI now shows the resolver's concrete measured
+            # facts instead. Kept in the payload as a back-compat tag for older clients.
             "helpsMetric": "viewpointBalance" if cross else helps,
             "crossCutting": bool(cross),
         }
@@ -1352,7 +1382,11 @@ class Backend:
                 "familiarity": _familiarity_of(self.base_corpus.pop, u),
                 # Commit R2: blank / legacy-"general" buckets are not claimable topics.
                 "top_topics": [_prettify(t) for t, _ in (rep.get("top_categories") or [])
-                               if str(t).strip() and str(t).strip().lower() != "general"]}
+                               if str(t).strip() and str(t).strip().lower() != "general"],
+                # C6: the measured shares behind the CONCRETE readerFacts — the same
+                # user_report numbers the explain drawer shows, so surfaces cannot disagree.
+                "topic_shares": _topic_shares_of(rep),
+                **_lean_shares_of(rep)}
 
     # -- coach ------------------------------------------------------------- #
     def _facts_of(self, corpus: _Corpus, u: int):

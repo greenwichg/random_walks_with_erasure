@@ -90,6 +90,39 @@ def _hours_after(later: str, earlier: str) -> Optional[float]:
     except Exception:
         return None
 
+
+def _share_percent(share) -> Optional[int]:
+    """A 0..1 share as a whole display percent, or ``None`` when the share is missing, junk, or
+    would round to 0% (a "0% of your reading" claim is worse than the plain fact)."""
+    try:
+        v = float(share)
+    except (TypeError, ValueError):
+        return None
+    if not (0.0 <= v <= 1.0):
+        return None
+    pct = round(100.0 * v)
+    return int(pct) if pct >= 1 else None
+
+
+def _topic_shares(ctx: dict) -> dict:
+    ts = ctx.get("topic_shares")
+    return ts if isinstance(ts, dict) else {}
+
+
+def _lean_shares(ctx: dict) -> "dict | None":
+    """The context's political-lean shares, rounded to a stable 3 decimals — or ``None`` when
+    absent/malformed (so no share claim is ever minted from junk)."""
+    ls = ctx.get("lean_shares")
+    if not isinstance(ls, dict):
+        return None
+    try:
+        out = {k: round(float(ls[k]), 3) for k in ("left", "center", "right")}
+    except (KeyError, TypeError, ValueError):
+        return None
+    if any(not (0.0 <= v <= 1.0) for v in out.values()):
+        return None
+    return out
+
 # ---------------------------------------------------------------- story index (memoized)
 #: Rebuild at most once a minute per catalog size — clustering 128 articles costs ~40 ms, and
 #: the index only shifts when the catalog does (bounded staleness is stated, not hidden).
@@ -124,6 +157,15 @@ def resolve(rec: dict, ctx: dict, index: Optional[dict] = None) -> dict:
       reads          [{"url": canonical, "publisher": str, "publishedAt": str|None}], oldest first
       familiarity    callable(publisher) -> {"reads", "share", "band"}   (21a computation)
       top_topics     [str] — the reader's top reading categories
+      topic_shares   {topic: share 0..1} — the reader's measured topic shares (C6; the SAME
+                     ``hr.user_report`` numbers the explain drawer shows). When present, a
+                     topic_continuity readerFact upgrades to the concrete
+                     "{topic} represents {percent}% of your recent reading" — never estimated,
+                     never claimed when the share is missing
+      lean_shares    {"left","center","right": share 0..1} over the reader's POLITICAL reads
+                     (C6; the report's own confidence-weighted viewpoint computation). When
+                     present, an off-center bridge readerFact upgrades to
+                     "{percent}% of your political reading leans {side}"
     """
     art = rec.get("article") or {}
     url = _canon(str(art.get("url") or art.get("id") or ""))
@@ -188,7 +230,18 @@ def resolve(rec: dict, ctx: dict, index: Optional[dict] = None) -> dict:
                             "articlePolitical": art.get("political"),
                             "readerPoliticalProfile": profile}}
         if profile in ("leans_left", "leans_right"):
-            out["readerFact"] = {"key": f"political_lean_{profile.split('_')[1]}", "params": {}}
+            side = profile.split("_")[1]
+            # C6: prefer the CONCRETE measured fact over the generic label — "74% of your
+            # political reading leans left" — but only when the context carries the reader's
+            # real lean shares (the report's viewpoint computation). Never estimated.
+            shares = _lean_shares(ctx)
+            pct = _share_percent(shares.get(side)) if shares else None
+            if pct is not None:
+                out["evidence"]["readerLeanShares"] = shares
+                out["readerFact"] = {"key": f"political_lean_{side}_share",
+                                     "params": {"percent": pct}}
+            else:
+                out["readerFact"] = {"key": f"political_lean_{side}", "params": {}}
             out["contribution"] = {"key": "other_side_perspective", "params": {}}
         return out
 
@@ -215,11 +268,20 @@ def resolve(rec: dict, ctx: dict, index: Optional[dict] = None) -> dict:
         cross = bool(rec.get("crossCutting"))
         second = ("Here's another perspective." if cross
                   else "Here's more coverage from another outlet.")
-        return {"type": "topic_continuity", "priority": 4,
-                "message": f"You've been reading about {topic.lower()}. {second}",
-                "readerFact": {"key": "top_topic", "params": {"topic": topic}},
-                "contribution": {"key": "more_topic_coverage", "params": {}},
-                "evidence": {"topic": topic, "topTopics": tops, "crossCutting": cross}}
+        out = {"type": "topic_continuity", "priority": 4,
+               "message": f"You've been reading about {topic.lower()}. {second}",
+               "readerFact": {"key": "top_topic", "params": {"topic": topic}},
+               "contribution": {"key": "more_topic_coverage", "params": {}},
+               "evidence": {"topic": topic, "topTopics": tops, "crossCutting": cross}}
+        # C6: prefer the CONCRETE measured fact — "Politics represents 42% of your recent
+        # reading" — when the context carries the reader's real topic shares (the same
+        # hr.user_report numbers the explain drawer shows). Missing share → the plain fact.
+        pct = _share_percent(_topic_shares(ctx).get(topic))
+        if pct is not None:
+            out["evidence"]["topicShare"] = round(float(_topic_shares(ctx)[topic]), 3)
+            out["readerFact"] = {"key": "top_topic_share",
+                                 "params": {"topic": topic, "percent": pct}}
+        return out
 
     # -- P5 · long_tail --------------------------------------------------------
     if str(rec.get("strategy") or "") == "rwe-d":
@@ -341,8 +403,18 @@ def validate(explanation: dict, rec: dict, ctx: dict, index: Optional[dict] = No
         if co_key != "add_new_publisher":
             fails.append(f"new_publisher contribution key {co_key!r} not allowed")
     elif etype == "topic_continuity":
-        if rf_key != "top_topic" or rf_p.get("topic") != str(art.get("topic") or ""):
+        if rf_key not in ("top_topic", "top_topic_share") \
+                or rf_p.get("topic") != str(art.get("topic") or ""):
             fails.append("topic readerFact does not cite the article's topic")
+        elif rf_key == "top_topic_share":
+            # C6: the concrete percent must be the reader's REAL measured share, from the ctx
+            want_pct = _share_percent(_topic_shares(ctx).get(str(art.get("topic") or "")))
+            if want_pct is None:
+                fails.append("top_topic_share claimed but the context carries no such share")
+            elif int(rf_p.get("percent") or -1) != want_pct:
+                fails.append("top_topic_share percent does not match the reader's measured share")
+            if ev.get("topicShare") is None:
+                fails.append("top_topic_share readerFact without topicShare evidence")
         if co_key != "more_topic_coverage":
             fails.append(f"topic contribution key {co_key!r} not allowed")
     elif etype == "bridge":
@@ -355,7 +427,18 @@ def validate(explanation: dict, rec: dict, ctx: dict, index: Optional[dict] = No
             if rf is not None or co is not None:
                 fails.append("balanced bridge must not claim reader-first parts")
         else:
-            if rf_key != f"political_lean_{str(profile).split('_')[-1]}":
+            side = str(profile).split("_")[-1]
+            if rf_key == f"political_lean_{side}_share":
+                # C6: the concrete percent must be the reader's REAL lean share, from the ctx
+                shares = _lean_shares(ctx)
+                want_pct = _share_percent((shares or {}).get(side))
+                if want_pct is None:
+                    fails.append("political lean share claimed but the context carries no shares")
+                elif int(rf_p.get("percent") or -1) != want_pct:
+                    fails.append("political lean share percent does not match the reader's shares")
+                if ev.get("readerLeanShares") != shares:
+                    fails.append("readerLeanShares evidence does not match the context shares")
+            elif rf_key != f"political_lean_{side}":
                 fails.append(f"bridge readerFact {rf_key!r} does not match profile {profile!r}")
             if co_key != "other_side_perspective":
                 fails.append(f"bridge contribution key {co_key!r} not allowed")

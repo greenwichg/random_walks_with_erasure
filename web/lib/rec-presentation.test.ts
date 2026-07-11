@@ -115,6 +115,28 @@ test("new_publisher parts pass params through (never vs rarely)", () => {
   assert.deepEqual(rarely.reader!.params, { publisher: "The Hill", n: 2 });
 });
 
+test("C6 share-backed reader facts map to their concrete templates with params intact", () => {
+  const topicShare = presentRecommendation({
+    type: "topic_continuity", priority: 4, message: "m",
+    readerFact: { key: "top_topic_share", params: { topic: "Politics", percent: 42 } },
+    contribution: { key: "more_topic_coverage", params: {} },
+    evidence: { topic: "Politics", topicShare: 0.42 },
+  } as never);
+  assert.deepEqual(topicShare.reader,
+    { key: "rec.reader.top_topic_share", params: { topic: "Politics", percent: 42 } });
+
+  const leanShare = presentRecommendation({
+    type: "bridge", priority: 2, message: "m",
+    readerFact: { key: "political_lean_left_share", params: { percent: 74 } },
+    contribution: { key: "other_side_perspective", params: {} },
+    evidence: { crossCutting: true, readerPoliticalProfile: "leans_left",
+                readerLeanShares: { left: 0.74, center: 0.16, right: 0.1 } },
+  } as never);
+  assert.deepEqual(leanShare.reader,
+    { key: "rec.reader.political_lean_left_share", params: { percent: 74 } });
+  assert.equal(leanShare.ctaKey, "rec.cta.perspective");
+});
+
 test("topic renders reader-first; long_tail is the contribution-first exception", () => {
   const topic = presentRecommendation({
     type: "topic_continuity", priority: 4, message: "m",

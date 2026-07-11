@@ -63,6 +63,11 @@ def evidence_subset_of_context(exp: dict, rec: dict, ctx: dict, index: dict) -> 
         for tt in ev.get("topTopics") or []:
             if str(tt) not in facts["top_topics"]:
                 bad.append(f"topTopic {tt!r} not among the reader's top topics")
+        # C6: a claimed topic share must BE the context's measured share (rounded), never invented
+        if ev.get("topicShare") is not None:
+            want = (ctx.get("topic_shares") or {}).get(topic)
+            if want is None or round(float(want), 3) != float(ev["topicShare"]):
+                bad.append("topicShare is not the reader's measured share from the context")
     elif t == "new_publisher":
         band = (ctx.get("familiarity") or (lambda _p: {}))(pub).get("band")
         if ev.get("band") != band:
@@ -72,6 +77,11 @@ def evidence_subset_of_context(exp: dict, rec: dict, ctx: dict, index: dict) -> 
     elif t == "bridge":
         if bool(ev.get("crossCutting")) != bool(rec.get("crossCutting")):
             bad.append("evidence crossCutting disagrees with the recommendation")
+        # C6: claimed lean shares must BE the context's measured shares (rounded), never invented
+        if ev.get("readerLeanShares") is not None:
+            want = er._lean_shares(ctx)
+            if want is None or ev["readerLeanShares"] != want:
+                bad.append("readerLeanShares are not the reader's measured shares from the context")
     elif t == "long_tail":
         if ev.get("strategy") != "rwe-d":
             bad.append("evidence strategy is not rwe-d")

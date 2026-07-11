@@ -9,9 +9,12 @@
  * bridge's `readerPoliticalProfile` banding); presentation is layout + localization.
  *
  * The card's three layers:
- *   reader fact    the bold line — what the system noticed about YOUR reading
+ *   reader fact    the bold line — what the system noticed about YOUR reading (C6: the concrete
+ *                  measured share when the resolver's context carried it — never estimated)
  *   contribution   the supporting line — what this recommendation adds
- *   proof          the existing "Helps {metric}" link + the Why? drawer
+ *   proof          the Why? drawer (C6 removed the card's generic "Helps {metric}" chip: it was
+ *                  a strategy-derived label, not evidence; estimated effects live in the drawer,
+ *                  clearly labeled as estimates)
  *
  * Types without parts (coverage_breadth, a balanced-profile bridge, unknown/missing
  * explanations) return nulls and the card falls back to the resolver's validated sentence via
@@ -68,6 +71,11 @@ const READER_TEMPLATES: Record<string, string> = {
   top_topic: "rec.reader.top_topic",
   political_lean_left: "rec.reader.political_lean_left",
   political_lean_right: "rec.reader.political_lean_right",
+  // C6 · concrete measured variants — emitted only when the resolver's context carried the
+  // reader's real shares ("Politics represents 42% of your recent reading").
+  top_topic_share: "rec.reader.top_topic_share",
+  political_lean_left_share: "rec.reader.political_lean_left_share",
+  political_lean_right_share: "rec.reader.political_lean_right_share",
 };
 const CONTRIBUTION_TEMPLATES: Record<string, string> = {
   covered_same_story: "rec.contribution.covered_same_story",

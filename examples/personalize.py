@@ -295,7 +295,13 @@ class Personalizer:
                 # Commit 23: the reader's mean political lean for the resolver's SEMANTIC
                 # readerPoliticalProfile banding (the raw number never reaches presentation).
                 # `rep` is already computed above — no new computation runs.
-                "reader_mean_lean": round(float(rep.get("mean_lean") or 0.0), 3)}
+                "reader_mean_lean": round(float(rep.get("mean_lean") or 0.0), 3),
+                # C6: the measured shares behind the CONCRETE readerFacts ("Politics represents
+                # 42% of your recent reading" / "74% of your political reading leans left") —
+                # the same user_report numbers the explain drawer shows, so the card, the
+                # drawer, and the validation pipeline read one source.
+                "topic_shares": engine._topic_shares_of(rep),
+                **engine._lean_shares_of(rep)}
 
     def coach_greeting(self, user_id: int) -> list:
         """Coach greeting grounded on the user's Measured report."""
