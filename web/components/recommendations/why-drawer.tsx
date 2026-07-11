@@ -1,8 +1,9 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
-import type { Recommendation, RecommendationEvidence, RecommendationExplain } from "@/types/domain";
+import type { EmotionShare, Recommendation, RecommendationEvidence, RecommendationExplain } from "@/types/domain";
 import { useRecommendationExplain } from "@/hooks/use-data";
 import { useTranslation } from "@/lib/i18n";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -64,12 +65,28 @@ function EvidenceSections({
   ev: RecommendationEvidence;
   explain: RecommendationExplain;
 }) {
-  const { t, localizeExplanation } = useTranslation();
+  const { t, localizeExplanation, formatDate } = useTranslation();
   const chosen = explain.trace.strategies[ev.chosenBy];
   const params = (chosen?.paramsUsed ?? {}) as Record<string, unknown>;
   const fam = ev.outletFamiliarity;
   const reads = explain.trace.reader.reads;
   const explanation = ev.explanation ?? rec.explanation;
+  // Story relationship rows (Commit 22): rendered only when the resolver proved membership —
+  // the values below are the same evidence fields validate() re-derives, never re-inferred here.
+  const sev = (explanation?.type === "story_match" ? explanation.evidence : null) as
+    | Record<string, unknown>
+    | null;
+  const withDate = (publisher: unknown, iso: unknown) => {
+    const p = String(publisher ?? "—");
+    const d = typeof iso === "string" && iso ? formatDate(iso, { month: "short", day: "numeric" }) : "";
+    return d ? `${p} · ${d}` : p;
+  };
+  // Dominant emotion for the demoted card chip's new home (same rule the badge used).
+  const dominant =
+    rec.article.dominantEmotion ??
+    (Object.keys(rec.article.emotion) as (keyof EmotionShare)[]).reduce((a, b) =>
+      rec.article.emotion[a] >= rec.article.emotion[b] ? a : b,
+    );
   return (
     <>
       {explanation && (
@@ -77,6 +94,24 @@ function EvidenceSections({
           <p className="text-xs leading-snug text-foreground/90">{localizeExplanation(explanation)}</p>
           {DEV_DETAIL && (
             <Row label="Type" value={`${explanation.type} (P${explanation.priority})`} />
+          )}
+        </Section>
+      )}
+
+      {sev && (
+        <Section title={t("why.story")}>
+          <Row label={t("rec.receipt.youRead")} value={withDate(sev.readPublisher, sev.readPublishedAt)} mono={false} />
+          <Row label={t("why.thisCoverage")} value={withDate(sev.recPublisher, sev.recPublishedAt)} mono={false} />
+          <Row label={t("why.storyReads")} value={String(sev.storyReads ?? 1)} />
+          {typeof sev.storyId === "string" && sev.storyId && (
+            <div className="pt-1 text-right">
+              <Link
+                href={`/stories/${encodeURIComponent(sev.storyId)}`}
+                className="text-xs font-medium text-primary hover:underline"
+              >
+                {t("rec.viewStory")} →
+              </Link>
+            </div>
           )}
         </Section>
       )}
@@ -90,28 +125,6 @@ function EvidenceSections({
           <Row label="Match" value={ev.match} mono={false} />
         </Section>
       )}
-
-      <Section title={t("why.bridge")}>
-        <Row
-          label={t("why.yourPosition")}
-          value={`${t(sideOf(ev.crossCutting.userMeanLean))} (${ev.crossCutting.userMeanLean.toFixed(2)})`}
-        />
-        <Row
-          label={t("why.article")}
-          value={`${t(sideOf(ev.crossCutting.articleLean))} (${ev.crossCutting.articleLean.toFixed(2)})`}
-        />
-        <Row label={t("why.gap")} value={ev.leanGap.toFixed(2)} />
-        <Row label={t("why.crossCutting")} value={ev.crossCutting.value ? t("common.yes") : t("common.no")} mono={false} />
-      </Section>
-
-      <Section title={t("why.articleMeta")}>
-        <Row label={t("why.leaning")} value={t(`filter.${rec.article.leanBucket}`)} mono={false} />
-        {DEV_DETAIL && (
-          <Row label="Classifier confidence" value={`${Math.round(rec.article.confidence * 100)}%`} />
-        )}
-        <Row label={t("filter.publisher")} value={rec.article.publisher} mono={false} />
-        <Row label={t("why.category")} value={rec.article.topic} mono={false} />
-      </Section>
 
       <Section title={t("why.history")}>
         {ev.topicShare && (
@@ -132,6 +145,19 @@ function EvidenceSections({
         )}
       </Section>
 
+      <Section title={t("why.bridge")}>
+        <Row
+          label={t("why.yourPosition")}
+          value={`${t(sideOf(ev.crossCutting.userMeanLean))} (${ev.crossCutting.userMeanLean.toFixed(2)})`}
+        />
+        <Row
+          label={t("why.article")}
+          value={`${t(sideOf(ev.crossCutting.articleLean))} (${ev.crossCutting.articleLean.toFixed(2)})`}
+        />
+        <Row label={t("why.gap")} value={ev.leanGap.toFixed(2)} />
+        <Row label={t("why.crossCutting")} value={ev.crossCutting.value ? t("common.yes") : t("common.no")} mono={false} />
+      </Section>
+
       <Section title={t("why.estEffect")}>
         {ev.viewpointShift ? (
           <>
@@ -144,6 +170,18 @@ function EvidenceSections({
         ) : (
           <p className="text-[10px] leading-snug text-muted-foreground">{t("why.noProjection")}</p>
         )}
+      </Section>
+
+      <Section title={t("why.articleMeta")}>
+        <Row label={t("why.leaning")} value={t(`filter.${rec.article.leanBucket}`)} mono={false} />
+        {DEV_DETAIL && (
+          <Row label="Classifier confidence" value={`${Math.round(rec.article.confidence * 100)}%`} />
+        )}
+        <Row label={t("filter.publisher")} value={rec.article.publisher} mono={false} />
+        <Row label={t("why.category")} value={rec.article.topic} mono={false} />
+        {/* register + emotion live here now — demoted from the card face (Commit 22) */}
+        <Row label={t("why.coverageType")} value={t(`register.${rec.article.register}`)} mono={false} />
+        <Row label={t("filter.emotion")} value={t(`emotion.${dominant}`)} mono={false} />
       </Section>
 
       {DEV_DETAIL && (

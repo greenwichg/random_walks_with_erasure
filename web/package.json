@@ -2,7 +2,7 @@
   "name": "information-health",
   "version": "0.1.0",
   "private": true,
-  "description": "Information Health \u2014 a reading-diet intelligence product. Frontend for the RWE recommender + Information Health Report backend.",
+  "description": "Information Health — a reading-diet intelligence product. Frontend for the RWE recommender + Information Health Report backend.",
   "scripts": {
     "dev": "next dev",
     "check:i18n": "node scripts/check-i18n.mjs",
@@ -10,7 +10,7 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "test": "node --test lib/i18n-core.test.ts"
+    "test": "node --test lib/i18n-core.test.ts lib/rec-presentation.test.ts"
   },
   "dependencies": {
     "@radix-ui/react-avatar": "^1.1.1",

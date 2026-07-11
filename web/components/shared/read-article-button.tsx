@@ -24,11 +24,14 @@ export function ReadArticleButton({
   article,
   openedFrom,
   onOpen,
+  label,
   className,
 }: {
   article: Pick<Article, "url"> & Partial<Pick<Article, "id" | "headline" | "description">>;
   openedFrom?: string;
   onOpen?: () => void;
+  /** Context-aware CTA label (Commit 22, recommendations); defaults to the shared "Read article". */
+  label?: string;
   className?: string;
 }) {
   const { t } = useTranslation();
@@ -76,7 +79,7 @@ export function ReadArticleButton({
       ) : (
         <BookOpen className="h-3.5 w-3.5" />
       )}
-      {opened ? t("read.opened") : href ? t("read.readArticle") : t("read.noLink")}
+      {opened ? t("read.opened") : href ? label ?? t("read.readArticle") : t("read.noLink")}
     </button>
   );
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { motion } from "framer-motion";
 import {
   Clock,
@@ -14,12 +15,8 @@ import {
 import type { FeedbackAction, Recommendation } from "@/types/domain";
 import { METRICS } from "@/lib/metrics";
 import { useTranslation } from "@/lib/i18n";
-import {
-  PublisherBadge,
-  LeanBadge,
-  RegisterBadge,
-  EmotionBadge,
-} from "@/components/shared/article-badges";
+import { presentRecommendation } from "@/lib/rec-presentation";
+import { PublisherBadge, LeanBadge } from "@/components/shared/article-badges";
 import { ReadArticleButton } from "@/components/shared/read-article-button";
 import { SaveButton } from "@/components/shared/save-button";
 import { ArticleImage } from "@/components/shared/article-image";
@@ -49,11 +46,14 @@ export function RecommendationCard({
   onDismiss?: () => void;
 }) {
   const { article } = rec;
-  const { t, localizeExplanation, timeAgo } = useTranslation();
+  const { t, localizeExplanation, timeAgo, formatDate } = useTranslation();
   const [readLater, setReadLater] = React.useState(false);
   const [why, setWhy] = React.useState(false);
   const [vote, setVote] = React.useState<"up" | "down" | null>(null);
   const helps = METRICS[rec.helpsMetric];
+  // claim → receipt → proof (Commit 22): pure key selection from the resolver's structured
+  // explanation — the module invents nothing, the drawer stays the proof layer.
+  const pres = presentRecommendation(rec.explanation);
 
   const act = (action: FeedbackAction) => onAction?.(action);
 
@@ -101,33 +101,105 @@ export function RecommendationCard({
         </h3>
       </div>
 
-      {/* attributes */}
+      {/* attributes — lean only on the invitation layer (decision-critical for this product);
+          register + emotion moved into the drawer's Article metadata (Commit 22) */}
       <div className="mt-3 flex flex-wrap items-center gap-1.5">
         {/* classifier confidence moved into the Why? drawer (21a.2): a bare % on a
             recommendation card reads as a recommendation score, which it never was */}
         <LeanBadge lean={article.lean} bucket={article.leanBucket} />
-        <RegisterBadge register={article.register} />
-        <EmotionBadge emotion={article.emotion} dominant={article.dominantEmotion} />
       </div>
 
-      {/* the ONE explanation the Evidence Resolver's evidence licenses (21a.3) — no
-          technical vocabulary on the consumer card; the drawer carries the evidence */}
+      {/* claim → receipt → proof (Commit 22): the evidence block SHOWS the resolver's evidence —
+          the two-publisher comparison for story matches, structured receipts elsewhere; the
+          claim-free fallback keeps the validated sentence. The drawer stays the proof layer. */}
       <div className="mt-4 rounded-lg border bg-muted/30 p-3">
-        <div className="flex items-start gap-2">
-          <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-          <div className="min-w-0">
-            <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/80">
-              {t("rec.whyThisArticle")}
+        {pres.comparison ? (
+          <div>
+            <div className="flex items-start gap-2">
+              <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+              <p className="min-w-0 text-sm font-medium leading-snug">{t(pres.claimKey ?? "rec.whyThisArticle")}</p>
             </div>
-            <p className="mt-0.5 text-sm text-muted-foreground">
-              {localizeExplanation(rec.explanation ?? { message: rec.reason })}
-            </p>
+            {/* the receipt: You read {A} ✓ → Compare with / Update from {B} — evidence the
+                resolver already proved (story membership, publishers, dates) shown as structure */}
+            <div className="mt-2.5 divide-y overflow-hidden rounded-md border bg-background/60">
+              <div className="flex items-baseline gap-2 px-2.5 py-1.5 text-xs">
+                <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  {t("rec.receipt.youRead")}
+                </span>
+                <span className="min-w-0 flex-1 truncate text-right font-medium">
+                  {pres.comparison.readPublisher}
+                </span>
+                {pres.comparison.readAt && (
+                  <span className="shrink-0 text-muted-foreground">
+                    ✓ {formatDate(pres.comparison.readAt, { month: "short", day: "numeric" })}
+                  </span>
+                )}
+              </div>
+              <div className="flex items-baseline gap-2 bg-primary/5 px-2.5 py-1.5 text-xs">
+                <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-primary">
+                  {t(pres.comparison.variant === "follow_up" ? "rec.receipt.updateFrom" : "rec.receipt.compareWith")}
+                </span>
+                <span className="min-w-0 flex-1 truncate text-right font-semibold">
+                  {pres.comparison.recPublisher}
+                </span>
+                {pres.comparison.variant === "follow_up" &&
+                  pres.comparison.hoursAfterRead != null &&
+                  pres.comparison.hoursAfterRead > 0 && (
+                    <span className="shrink-0 text-muted-foreground">
+                      {t("rec.receipt.hoursLater", { n: pres.comparison.hoursAfterRead })}
+                    </span>
+                  )}
+              </div>
+            </div>
+            {(pres.storyHref || pres.comparison.variant === "following") && (
+              <div className="mt-2 flex items-center justify-between gap-2 text-xs">
+                <span className="text-muted-foreground">
+                  {pres.comparison.variant === "following"
+                    ? t("rec.receipt.readsSoFar", { n: pres.comparison.storyReads })
+                    : null}
+                </span>
+                {pres.storyHref && (
+                  <Link href={pres.storyHref} className="shrink-0 font-medium text-primary hover:underline">
+                    {t("rec.viewStory")} →
+                  </Link>
+                )}
+              </div>
+            )}
           </div>
-        </div>
+        ) : (
+          <div className="flex items-start gap-2">
+            <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+            <div className="min-w-0">
+              {pres.claimKey ? (
+                <>
+                  <p className="text-sm font-medium leading-snug">{t(pres.claimKey)}</p>
+                  {pres.receipts.length > 0 && (
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      {pres.receipts.map((r) => t(r.key, r.params)).join(" · ")}
+                    </p>
+                  )}
+                </>
+              ) : (
+                <>
+                  <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/80">
+                    {t("rec.whyThisArticle")}
+                  </div>
+                  <p className="mt-0.5 text-sm text-muted-foreground">
+                    {localizeExplanation(rec.explanation ?? { message: rec.reason })}
+                  </p>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+        {/* tappable receipt: the metric this read helps, deep-linked to its report row */}
         <div className="mt-2.5 flex items-center gap-2 pl-6 text-xs">
-          <span className="inline-flex items-center gap-1 text-muted-foreground">
+          <Link
+            href={`/report#${rec.helpsMetric}`}
+            className="inline-flex items-center gap-1 text-muted-foreground transition-colors hover:text-primary hover:underline"
+          >
             <helps.icon className="h-3.5 w-3.5" /> {t("rec.helps", { metric: t(`metric.${rec.helpsMetric}.label`) })}
-          </span>
+          </Link>
         </div>
       </div>
 
@@ -138,7 +210,13 @@ export function RecommendationCard({
             so the browser extension captures the read and Dashboard/History/Analytics/Health update
             naturally. The shared control only navigates to an absolute publisher URL — never a
             relative value that would resolve to the app's own origin. */}
-        <ReadArticleButton article={article} openedFrom="recommendations" onOpen={onOpen} className="mr-1" />
+        <ReadArticleButton
+          article={article}
+          openedFrom="recommendations"
+          onOpen={onOpen}
+          label={pres.ctaKey ? t(pres.ctaKey) : undefined}
+          className="mr-1"
+        />
         <SaveButton article={article} />
         <ActionButton
           label={t("rec.why")}
