@@ -106,6 +106,12 @@ test("timeAgo uses localized unit words", () => {
   assert.equal(timeAgo(now, "es", t), "ahora mismo");
 });
 
+test("timeAgo renders nothing for an unknown date (C4: real articles never get a fabricated time)", () => {
+  const t = makeT(load("en"), load("en"));
+  assert.equal(timeAgo("", "en", t), "");
+  assert.equal(timeAgo("not-a-date", "en", t), "");
+});
+
 test("all five catalogs share identical keys with non-empty values (no missing translations)", () => {
   const cats = Object.fromEntries(SUPPORTED.map((l) => [l, load(l)]));
   const enKeys = Object.keys(cats.en).sort();

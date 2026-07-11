@@ -888,7 +888,9 @@ def _seed_feed(store_, n=60):
         store_.upsert_feed_article(
             canonical_url=u, url=u, publisher="Fox News", source_publisher="Fox News",
             title=f"story {i}", description="x", body=None,
-            published_at="2024-10-02T00:00:00+00:00", source_feed="feed://x",
+            # now-relative: the C4 freshness gate (default 60 days) must see these as candidates
+            published_at=(datetime.now(timezone.utc) - timedelta(days=1)).isoformat(),
+            source_feed="feed://x",
             scored={"article_id": u, "outlet": "Fox News", "category": "Politics", "lean": 1.4})
 
 

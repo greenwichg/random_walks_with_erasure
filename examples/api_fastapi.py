@@ -1551,15 +1551,40 @@ def add_reads(request: Request, req: ReadsRequest) -> dict:
             "sufficient": total >= engine.ESTIMATE_MIN_READS}
 
 
+def _attach_published_at(arts: list) -> None:
+    """Attach the REAL publication timestamp from the ``FeedArticle`` catalog to already-serialised
+    Article dicts (matched by canonical URL). The serialiser emits ``""`` for a real article's
+    ``publishedAt`` rather than fabricate one (Commit C4); articles the catalog doesn't know keep
+    ``""`` and the UI hides the date segment. Timestamp only — deliberately narrower than the
+    recommendation enrichment, so history rows don't sprout images/logos as a side effect."""
+    if not arts or state.store is None:
+        return
+    try:
+        urls = [ingest.canonical_url(a["url"]) for a in arts
+                if isinstance(a, dict) and a.get("url")]
+        by_url = state.store.feed_article_media(urls) if urls else {}
+    except Exception:
+        return
+    for a in arts:
+        if isinstance(a, dict) and a.get("url") and not a.get("publishedAt"):
+            m = by_url.get(ingest.canonical_url(a["url"]))
+            if m and m.get("publishedAt"):
+                a["publishedAt"] = m["publishedAt"]
+
+
 @app.get("/api/me/history", response_model=list[HistoryEntryModel], response_model_exclude_none=True,
          tags=["report"], summary="The signed-in user's reading history (their stored scored reads)",
          responses=_ERR_RESPONSES)
 def my_history(request: Request) -> list:
     """The reader's own reading history: every article they've recorded, newest first, rendered as
     the same Article shape used across the product. Reuses the stored, already-scored reads — no
-    re-scoring, no augmented model. Same trust boundary as the other /api/me endpoints."""
+    re-scoring, no augmented model. Same trust boundary as the other /api/me endpoints. Each
+    article's ``publishedAt`` is the real publication timestamp when the catalog knows the article
+    (Commit C4) — never a synthesized date."""
     uid = _require_real_user(request)
-    return _require_backend().serialize_history(_require_store().list_reads(uid))
+    entries = _require_backend().serialize_history(_require_store().list_reads(uid))
+    _attach_published_at([e.get("article") for e in entries])
+    return entries
 
 
 @app.get("/api/me/analytics", response_model=AnalyticsModel, response_model_exclude_none=True,
@@ -1759,23 +1784,26 @@ def recommendations(
 
 
 def _enrich_rec_media(recs: list) -> None:
-    """Attach media + a publisher logo to already-serialised recommendation articles **after** the
-    (protected) recommender serialiser has run — so recommendation cards can show an image without any
-    change to ``api_server``. The image comes from the live ``FeedArticle`` catalog (recs whose URL
-    matches an ingested article); the logo is derived from the publisher URL. Best-effort + additive:
-    a lookup failure or a rec with no matching article simply leaves it image-less (text-only card)."""
+    """Attach media, the REAL publication timestamp, and a publisher logo to already-serialised
+    recommendation articles **after** the (protected) recommender serialiser has run — so
+    recommendation cards can show an image and a truthful date without any change to ``api_server``.
+    Everything comes from the live ``FeedArticle`` catalog (recs whose URL matches an ingested
+    article); the serialiser no longer fabricates ``publishedAt`` for a real article (Commit C4), so
+    this join is the only source of a rec card's date — and it runs BEFORE the Evidence Resolver,
+    so story explanations (e.g. follow_up) reason over real timestamps. Best-effort + additive: a
+    lookup failure or a rec with no matching article leaves the card image-less / date-less."""
     if not recs or state.store is None:
         return
+    arts = [r["article"] for r in recs if isinstance(r.get("article"), dict)]
+    # The catalog is keyed by CANONICAL URL while a serialized article carries the original
+    # publisher URL (e.g. with "www.") — canonicalize before the join or every lookup misses.
     try:
-        urls = [r["article"].get("url") for r in recs if r.get("article", {}).get("url")]
+        urls = [ingest.canonical_url(a["url"]) for a in arts if a.get("url")]
         by_url = state.store.feed_article_media(urls) if urls else {}
     except Exception:
         by_url = {}
-    for r in recs:
-        a = r.get("article")
-        if not isinstance(a, dict):
-            continue
-        m = by_url.get(a.get("url"))
+    for a in arts:
+        m = by_url.get(ingest.canonical_url(a["url"])) if a.get("url") else None
         if m:
             a.update({k: v for k, v in m.items() if v is not None})
         a.update(media.pick_best_logo(a.get("publisher", ""), a.get("url")))

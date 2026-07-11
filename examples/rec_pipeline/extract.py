@@ -34,7 +34,11 @@ import store as store_mod          # noqa: E402
 #: Feed-mode env for a small controlled catalog — the same knobs the value-chain / explain tests use,
 #: so the qbias-simulated base population over the catalog gives the walk real structure.
 _ENV = {"RWE_RECS_SOURCE": "feed", "RWE_FEED_MIN_ARTICLES": "5", "RWE_CORPUS_MIN_ARTICLES": "5",
-        "RWE_FEED_MAX_PER_OUTLET": "40", "RWE_N_USERS": "80", "RWE_MAX_ITEMS": "200", "RWE_SEED": "0"}
+        "RWE_FEED_MAX_PER_OUTLET": "40", "RWE_N_USERS": "80", "RWE_MAX_ITEMS": "200", "RWE_SEED": "0",
+        # Fixtures carry fixed publication dates; the freshness gate (C4) is age-relative to *now*,
+        # so it is pinned OFF here to keep the golden scenarios deterministic forever. Freshness has
+        # its own unit tests (tests/test_freshness.py).
+        "RWE_FEED_MAX_AGE_DAYS": "0"}
 
 
 @dataclasses.dataclass
@@ -143,6 +147,16 @@ def build(fixture: dict, *, keep_env: bool = False) -> Case:
             recs = be.recommendations(be.demo_user)
         ctx["_mean_lean"] = _mean_lean(reads, catalog_by_url)
         idx = er.story_index(st)
+
+        # Mirror the API's serialization-time enrichment (api_fastapi feed-article join): attach the
+        # catalog's REAL publication timestamp to each served article, so explanation resolution
+        # sees the same truthful dates production sees — the serializer itself no longer fabricates
+        # a date for a real (URL-resolved) article (Commit C4).
+        for r in recs:
+            a = r.get("article") or {}
+            ca = catalog_by_url.get(er._canon(str(a.get("url") or a.get("id") or "")))
+            if ca and ca.get("publishedAt"):
+                a["publishedAt"] = ca["publishedAt"]
 
         return Case(name=fixture["name"], description=fixture.get("description", ""),
                     expected=fixture.get("expected", {}), store=st, backend=be, personalizer=pers,

@@ -131,6 +131,9 @@ export function formatCompact(n: number, lang: Lang): string {
  * locale-aware. `t` supplies the localized unit words; a caller passes the active `t`/`lang`.
  */
 export function timeAgo(iso: string, lang: Lang, t: TFunction): string {
+  // An unknown date renders as nothing — never "Invalid Date" and never a fabricated "just now".
+  // Real articles whose publication time the catalog doesn't know arrive with publishedAt: "".
+  if (!iso || Number.isNaN(new Date(iso).getTime())) return "";
   const diff = Date.now() - new Date(iso).getTime();
   const mins = Math.round(diff / 60000);
   if (mins < 1) return t("time.justNow");

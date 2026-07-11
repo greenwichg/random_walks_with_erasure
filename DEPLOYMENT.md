@@ -131,6 +131,7 @@ switching data never touches the frontend.
 | `RWE_RSS_FEEDS` | — | RSS/Atom feeds for `rss_ingest.py` — a feeds file path or a comma-list of `url` / `Name\|url` (see "News ingestion") |
 | `RWE_RECS_SOURCE` | — | `feed` sources the recommender's catalog from the RSS `FeedArticle` store (else the static corpus) |
 | `RWE_FEED_MIN_ARTICLES` | — | min catalog size before the feed source activates (default `50`; below it, falls back to the static corpus) |
+| `RWE_FEED_MAX_AGE_DAYS` | `60` | recommendation-candidate freshness window: articles published (or, undated, fetched) more than this many days ago never enter the recommendation corpus. `0` disables. Composition only — stale articles stay stored and visible to Search/Stories/History. Distinct from `RWE_RETENTION_MAX_AGE_DAYS`, which deletes rows. |
 | `RWE_FEED_CORPUS_CSV` | — | where the `FeedArticle`→qbias export is written (default `data/feed_corpus.csv`) |
 | `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` | — | enable the live coach narrative |
 

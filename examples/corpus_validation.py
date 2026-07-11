@@ -48,13 +48,21 @@ def _sort_key(a: dict):
 
 
 def build_candidate(articles: list, *, max_per_publisher: Optional[int] = None,
-                    now: Optional[datetime] = None) -> list:
-    """A candidate corpus: the newest-first subset of ``articles`` keeping at most
+                    now: Optional[datetime] = None,
+                    max_age_days: Optional[float] = None) -> list:
+    """A candidate corpus: the **fresh**, newest-first subset of ``articles`` keeping at most
     ``max_per_publisher`` per publisher (0 / ``None`` = no cap).
+
+    Freshness (Commit C4) gates candidate *selection*: articles older than ``max_age_days``
+    (default ``RWE_FEED_MAX_AGE_DAYS``, 60 days; ``0`` disables) never enter the candidate, so a
+    stale article can never be recommended. The gate runs before the publisher cap, so caps are
+    spent on recommendable articles only. Stale articles are untouched in storage — Search,
+    Stories, and Reading History still see them.
 
     The result is a **subset of the same row objects** — never mutated, copied, duplicated, or
     synthesised — so URLs, titles, descriptions, and timestamps are exactly those of ``FeedArticle``.
     Articles with no resolvable publisher are always kept (they count toward no publisher's cap)."""
+    articles = ch.fresh_articles(articles, now=now, max_age_days=max_age_days)
     ordered = sorted(articles, key=_sort_key, reverse=True)
     if not max_per_publisher or max_per_publisher <= 0:
         return list(ordered)

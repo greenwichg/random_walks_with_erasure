@@ -668,11 +668,18 @@ class Backend:
         and the reading-history serialiser (:meth:`serialize_history`) feed this, so a catalog
         article and a real reader's stored read render identically. Missing lean/confidence degrade
         to the same neutral defaults the corpus path already used. ``political`` (Commit R1) is the
-        article-level classification — included when known, omitted when unknown (never fabricated)."""
+        article-level classification — included when known, omitted when unknown (never fabricated).
+
+        ``publishedAt`` (Commit C4) is never fabricated for a REAL article — one with a verified
+        URL (a live-feed corpus item or a reader's stored read): it serialises as ``""`` here and
+        the API layer joins the real publication timestamp from the ``FeedArticle`` catalog. Only
+        a demo/synthetic corpus item (no URL exists anywhere) keeps the deterministic
+        ``_iso_recent`` estimate, so demo data stays plausible without ever lying about live news."""
         item_id = str(item_id)
         pos = float(lean) if lean is not None and np.isfinite(lean) else 0.0
         conf = float(confidence) if confidence is not None and np.isfinite(confidence) else 0.7
         dom = max(emotion, key=emotion.get) if emotion else "neutral"
+        url = self._resolve_url(item_id)
         payload = {
             "id": item_id,
             "headline": str(headline),
@@ -685,14 +692,13 @@ class Backend:
             "emotion": emotion,
             "dominantEmotion": dom,
             "register": _register_enum(register),
-            "publishedAt": _iso_recent(item_id),
+            "publishedAt": "" if url else _iso_recent(item_id),
             "readingMinutes": 2 + (_stable_int(item_id) % 8),
         }
         if political is not None:
             payload["political"] = bool(political)
         # Additive: include the canonical publisher URL only when one is verified (never fabricated),
         # so the frontend can open the real article. Omitted otherwise (response_model_exclude_none).
-        url = self._resolve_url(item_id)
         if url:
             payload["url"] = url
         return payload
@@ -724,8 +730,11 @@ class Backend:
         Rows arrive newest-first from the store and are preserved in that order.
 
         ``readAt`` is the reader's observed timestamp; ``completed`` is ``True`` (opening a read is
-        the only signal we have — real completion tracking is future work), and ``readingMinutes`` /
-        ``publishedAt`` are the same deterministic estimates the article serialiser already uses."""
+        the only signal we have — real completion tracking is future work); ``readingMinutes`` is
+        the same deterministic estimate the article serialiser already uses. ``publishedAt`` (C4)
+        is ``""`` here — a stored read is a real article, so the API layer attaches the real
+        publication timestamp from the catalog when the article is known there, and the UI hides
+        the segment otherwise (never a fabricated date)."""
         out = []
         for row in reads:
             sc = row.get("scored", {}) or {}

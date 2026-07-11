@@ -690,9 +690,12 @@ class Store:
                 "fetchedAt": r.fetched_at.isoformat() if r.fetched_at else None}
 
     def feed_article_media(self, canonical_urls) -> dict:
-        """Media metadata for a set of catalog articles, keyed by canonical URL — the batched lookup the
-        recommendation layer uses to enrich recs (whose corpus carries no media) at serialization time.
-        Only rows that carry an image are returned."""
+        """Media + publication metadata for a set of catalog articles, keyed by canonical URL — the
+        batched lookup the API layer uses to enrich already-serialised articles (whose corpus carries
+        neither media nor timestamps) at serialization time. Every matched row returns its REAL
+        ``publishedAt`` (the article's publication timestamp, else ``fetchedAt`` — the observed
+        discovery time, same fallback Discover uses; never fabricated); image keys are present only
+        when the row carries an image."""
         urls = [u for u in dict.fromkeys(canonical_urls) if u]
         if not urls:
             return {}
@@ -702,11 +705,14 @@ class Store:
                 rows = s.scalars(select(FeedArticle)
                                  .where(FeedArticle.canonical_url.in_(urls[i:i + 500]))).all()
                 for r in rows:
+                    rec = {"publishedAt": r.published_at
+                           or (r.fetched_at.isoformat() if r.fetched_at else None)}
                     if r.image:
-                        out[r.canonical_url] = {
+                        rec.update({
                             "image": r.image, "imageWidth": r.image_width, "imageHeight": r.image_height,
                             "imageMimeType": r.image_mime, "imageSource": r.image_source,
-                            "imageAttribution": r.image_attribution}
+                            "imageAttribution": r.image_attribution})
+                    out[r.canonical_url] = rec
         return out
 
     def _ensure_media_columns(self) -> None:

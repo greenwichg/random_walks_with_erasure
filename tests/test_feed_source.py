@@ -8,6 +8,7 @@ import csv as _csv
 import os
 import pathlib
 import sys
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -21,7 +22,9 @@ def _add(st, canonical, url, publisher, lean, *, title="A story about the vote a
          category="Politics"):
     st.upsert_feed_article(
         canonical_url=canonical, url=url, publisher=publisher, source_publisher=publisher,
-        title=title, description="context", body=None, published_at="2024-10-02T00:00:00+00:00",
+        title=title, description="context", body=None,
+        # now-relative: the C4 freshness gate (default 60 days) must see these as candidates
+        published_at=(datetime.now(timezone.utc) - timedelta(days=1)).isoformat(),
         source_feed="feed://x",
         scored={"article_id": canonical, "outlet": publisher, "category": category,
                 "lean": lean, "political": True, "title": title})

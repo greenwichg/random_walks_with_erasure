@@ -18,8 +18,12 @@ from __future__ import annotations
 import csv
 import math
 import os
+import sys
 from pathlib import Path
 from typing import Optional
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # import sibling modules
+import corpus_health                 # shared freshness gate (fresh_articles) — metrics only
 
 # Enough of a catalog to sample a population + build a non-degenerate click matrix. Configurable.
 DEFAULT_MIN_ARTICLES = 50
@@ -109,12 +113,20 @@ def export_catalog_csv(store_, path: str, *, max_items: Optional[int] = None,
     only (like ``max_items``); it does not touch ranking, scoring, diversity, or selection. Serializes
     through :func:`export_candidate_csv` so the CSV format is single-sourced.
 
+    Freshness gate (Commit C4): articles older than ``RWE_FEED_MAX_AGE_DAYS`` (default 60 days;
+    ``0`` disables) are excluded from the export, so a stale article can never become a
+    recommendation candidate. Age comes from the real publication timestamp (``fetchedAt`` when
+    the feed carried none); the gate is corpus *composition* only — stale articles stay stored
+    and visible to Search / Stories / History.
+
     Read-demand exemption (Commit 18): an article a user actually **read** is never trimmed out —
-    neither by the ``max_items`` recency window nor by the per-outlet cap — because trimming a read
-    article would disconnect that reader from the recommendation graph. Composition only, bounded by
-    the distinct-read-URL set."""
+    not by the ``max_items`` recency window, the freshness gate, or the per-outlet cap — because
+    trimming a read article would disconnect that reader from the recommendation graph (it can
+    still never be re-recommended to that reader: already-read articles are excluded per reader).
+    Composition only, bounded by the distinct-read-URL set."""
     rows = store_.list_feed_articles(limit=max_items or 1_000_000)
     read_urls = store_.distinct_read_urls()
+    rows = corpus_health.fresh_articles(rows, exempt=read_urls)
     if read_urls:                            # union in read articles the recency window missed
         have = {a.get("canonicalUrl") for a in rows}
         missing = [u for u in read_urls if u not in have]

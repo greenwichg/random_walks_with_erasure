@@ -41,8 +41,12 @@ export function DiscoverCard({
             <span className="text-xs font-medium text-muted-foreground">{article.topic}</span>
           </>
         )}
-        <span className="text-xs text-muted-foreground">·</span>
-        <span className="text-xs text-muted-foreground">{timeAgo(article.publishedAt)}</span>
+        {timeAgo(article.publishedAt) && (
+          <>
+            <span className="text-xs text-muted-foreground">·</span>
+            <span className="text-xs text-muted-foreground">{timeAgo(article.publishedAt)}</span>
+          </>
+        )}
       </div>
 
       <h3 className="mt-2 text-[1.05rem] font-semibold leading-snug tracking-tight">

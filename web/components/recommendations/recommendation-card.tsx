@@ -78,7 +78,9 @@ export function RecommendationCard({
             {rec.crossCutting ? <Route className="h-3 w-3" /> : <Sparkles className="h-3 w-3" />}
             {t(STRATEGY_LABEL_KEY[rec.strategy])}
           </Badge>
-          <span className="text-xs text-muted-foreground">{timeAgo(article.publishedAt)}</span>
+          {timeAgo(article.publishedAt) && (
+            <span className="text-xs text-muted-foreground">{timeAgo(article.publishedAt)}</span>
+          )}
         </div>
         <button
           onClick={() => {

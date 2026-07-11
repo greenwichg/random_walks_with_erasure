@@ -15,6 +15,9 @@ effort) and never makes it worse; the later validation gate then rejects the can
 current corpus keeps serving.
 
 Config (env, all optional):
+    RWE_FEED_MAX_AGE_DAYS        recommendation-candidate age window in days (default 60; 0 = off).
+                                 Composition only — stale articles stay stored and visible to
+                                 Search / Stories / History, they just stop being rec candidates.
     RWE_RETENTION_MAX_AGE_DAYS   prune articles older than this           (0/unset = no age prune)
     RWE_RETENTION_MAX_COUNT      keep at most this many, newest-first      (0/unset = no count prune)
     RWE_CORPUS_MIN_ARTICLES      floor: min total (default RWE_FEED_MIN_ARTICLES, 50)
@@ -39,7 +42,7 @@ import logging
 import math
 import os
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 _BUCKETS = ("left", "center", "right")
@@ -130,6 +133,47 @@ def _missing_metadata(a: dict) -> bool:
     """Missing metadata = no title or no publication date — the same rule ``rss_ingest`` uses for its
     per-feed quality metric, so a corpus-level count and a per-feed count mean the same thing."""
     return (not (a.get("title") or "").strip()) or (not _has_publication_date(a))
+
+
+# --------------------------------------------------------------------------- #
+# Recommendation-candidate freshness (Commit C4) — composition only, storage untouched.
+# --------------------------------------------------------------------------- #
+def feed_max_age_days() -> Optional[float]:
+    """The recommendation-candidate age window in days (``RWE_FEED_MAX_AGE_DAYS``), or ``None``
+    when the gate is disabled. Default **60**; ``0`` (or negative, or a non-number) disables.
+
+    Distinct from ``RWE_RETENTION_MAX_AGE_DAYS`` (which *deletes* catalog rows): this window only
+    keeps stale articles out of the recommendation corpus — they stay stored and remain visible
+    to Search, Stories, and Reading History."""
+    v = _float_env("RWE_FEED_MAX_AGE_DAYS", 60.0)
+    return v if v > 0 else None
+
+
+def fresh_articles(articles: list, *, now: Optional[datetime] = None,
+                   max_age_days: Optional[float] = None,
+                   exempt: "frozenset[str] | set[str]" = frozenset()) -> list:
+    """The subset of ``articles`` fresh enough to be recommendation candidates — a filter, never a
+    mutation (the same row objects are returned).
+
+    An article's age comes from :func:`_published` (``publishedAt``, else ``fetchedAt`` — so an
+    undated article is as old as its discovery, not immortal); a row with no parseable time at all
+    is kept (staleness can't be proven). Canonical URLs in ``exempt`` are always kept — the
+    read-demand articles whose removal would disconnect a reader from the recommendation graph.
+    ``max_age_days`` defaults to :func:`feed_max_age_days`; ``None``/``<=0`` disables (returns
+    ``articles`` unchanged)."""
+    window = feed_max_age_days() if max_age_days is None else (max_age_days if max_age_days > 0 else None)
+    if window is None:
+        return list(articles)
+    cutoff = (now or datetime.now(timezone.utc)) - timedelta(days=float(window))
+    kept = []
+    for a in articles:
+        if _canonical(a) in exempt:
+            kept.append(a)
+            continue
+        dt = _published(a)
+        if dt is None or dt >= cutoff:
+            kept.append(a)
+    return kept
 
 
 # --------------------------------------------------------------------------- #
