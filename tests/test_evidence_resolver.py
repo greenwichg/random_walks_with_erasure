@@ -121,13 +121,24 @@ def test_variant_following_when_reader_read_two_members():
     assert out["message"] == "You've been following this story. Here's CNN's coverage."
 
 
-def test_topic_continuity_second_sentence_gating():
+def test_bridge_and_new_publisher_outrank_topic_continuity():
+    """21a.4 priority: a cross-cutting or unfamiliar-publisher reason beats a mere shared topic."""
     ctx = _ctx(bands={"CNN": (9, 0.3)}, tops=["Politics"])
-    cross = er.resolve(_rec("https://cnn.example.com/x", "CNN", cross=True), ctx, {})
+    # cross-cutting + top-topic → bridge (P2), not topic_continuity (P4)
+    assert er.resolve(_rec("https://cnn.example.com/x", "CNN", cross=True), ctx, {})["type"] == "bridge"
+    # new/rarely-read publisher + top-topic → new_publisher (P3), not topic_continuity
+    ctx_new = _ctx(bands={"CNN": (0, 0.0)}, tops=["Politics"])
+    assert er.resolve(_rec("https://cnn.example.com/x", "CNN"), ctx_new, {})["type"] == "new_publisher"
+    # only a plain, familiar-publisher topic match falls through to topic_continuity
     plain = er.resolve(_rec("https://cnn.example.com/x", "CNN", cross=False), ctx, {})
-    assert cross["type"] == plain["type"] == "topic_continuity"
-    assert "another perspective" in cross["message"]
-    assert "another outlet" in plain["message"]
+    assert plain["type"] == "topic_continuity" and "another outlet" in plain["message"]
+
+
+def test_story_match_overrides_topic_continuity():
+    """A provable same-story read wins even when the article's topic is a top topic (Case 4)."""
+    ctx = _ctx(reads=[(FOX, "Fox News")], tops=["Politics"])
+    out = er.resolve(_rec(CNN, "CNN"), ctx, INDEX)
+    assert out["type"] == "story_match"
 
 
 # ---------------------------------------------------------------- discipline
@@ -181,13 +192,13 @@ def test_validate_catches_tampering_and_over_claims():
     wrong_variant = dict(good, variant="follow_up")   # sentence says "same story"
     assert any("sentence not allowed" in f for f in er.validate(wrong_variant, rec, ctx, INDEX))
 
-    fake_bridge = {"type": "bridge", "priority": 4, "message": "x", "evidence": {}}
+    fake_bridge = {"type": "bridge", "priority": 2, "message": "x", "evidence": {}}
     assert er.validate(fake_bridge, _rec(CNN, "CNN", cross=False), ctx, INDEX)
 
     fake_tail = {"type": "long_tail", "priority": 5, "message": "x", "evidence": {}}
     assert er.validate(fake_tail, _rec(CNN, "CNN", strategy="rwe-b"), ctx, INDEX)
 
-    fake_topic = {"type": "topic_continuity", "priority": 2, "message": "x", "evidence": {}}
+    fake_topic = {"type": "topic_continuity", "priority": 4, "message": "x", "evidence": {}}
     assert er.validate(fake_topic, _rec(CNN, "CNN", topic="Energy"), _ctx(tops=["Politics"]), INDEX)
 
 

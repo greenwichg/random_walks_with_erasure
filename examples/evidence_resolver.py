@@ -10,15 +10,18 @@ Contract (structured, so tooling never parses prose):
      "message": "You already read this story from Fox News. Here's how CNN covered the same story.",
      "evidence": {...the computed facts that license the sentence...}}
 
-Priorities (first match wins; explanations are NEVER combined):
+Priorities (first match wins; explanations are NEVER combined). Ordered so the most personal,
+most provable reason always wins — a same-story relationship, a cross-cutting read, or an
+unfamiliar publisher outranks a mere shared topic (21a.4):
 
     1 story_match        you read another article of the SAME story, from a DIFFERENT publisher
                          (variants: following >= 2 story reads; follow_up rec newer than your
                          read; else same_event) — story membership from the Story Service's own
                          clusters (coverage carries the URLs), no re-clustering logic here
-    2 topic_continuity   the article's topic is one of your top reading topics
+    2 bridge             the recommendation is cross-cutting (the 21a computation)
     3 new_publisher      you never/rarely read this outlet (the 21a familiarity computation)
-    4 bridge             the recommendation is cross-cutting (the 21a computation)
+    4 topic_continuity   the article's topic is one of your top reading topics — fallback only;
+                         never displaces a provable story / publisher / cross-cutting reason
     5 long_tail          chosen by RWE-D (long-tail discovery)
     6 coverage_breadth   claim-free fallback so no priority is ever forced to over-claim
 
@@ -128,15 +131,12 @@ def resolve(rec: dict, ctx: dict, index: Optional[dict] = None) -> dict:
                                  "readPublishedAt": read_at or None,
                                  "recPublishedAt": rec_at or None}}
 
-    # -- P2 · topic_continuity ----------------------------------------------
-    tops = [str(t) for t in (ctx.get("top_topics") or [])]
-    if topic and topic in tops:
-        cross = bool(rec.get("crossCutting"))
-        second = ("Here's another perspective." if cross
-                  else "Here's more coverage from another outlet.")
-        return {"type": "topic_continuity", "priority": 2,
-                "message": f"You've been reading about {topic.lower()}. {second}",
-                "evidence": {"topic": topic, "topTopics": tops, "crossCutting": cross}}
+    # -- P2 · bridge (a cross-cutting read is a stronger, more personal reason than a merely
+    #                 shared topic — so it outranks topic_continuity as of 21a.4) -----------
+    if bool(rec.get("crossCutting")):
+        return {"type": "bridge", "priority": 2,
+                "message": "This article offers another political perspective.",
+                "evidence": {"crossCutting": True, "articleLean": art.get("lean")}}
 
     # -- P3 · new_publisher --------------------------------------------------
     fam_of: Optional[Callable] = ctx.get("familiarity")
@@ -148,11 +148,16 @@ def resolve(rec: dict, ctx: dict, index: Optional[dict] = None) -> dict:
                 "message": f"{first} This broadens your source diversity.",
                 "evidence": dict(fam, publisher=publisher)}
 
-    # -- P4 · bridge ----------------------------------------------------------
-    if bool(rec.get("crossCutting")):
-        return {"type": "bridge", "priority": 4,
-                "message": "This article offers another political perspective.",
-                "evidence": {"crossCutting": True, "articleLean": art.get("lean")}}
+    # -- P4 · topic_continuity (fallback only — reached only after story, cross-cutting, and
+    #    publisher reasons are exhausted, so a shared topic never displaces a provable one) --
+    tops = [str(t) for t in (ctx.get("top_topics") or [])]
+    if topic and topic in tops:
+        cross = bool(rec.get("crossCutting"))
+        second = ("Here's another perspective." if cross
+                  else "Here's more coverage from another outlet.")
+        return {"type": "topic_continuity", "priority": 4,
+                "message": f"You've been reading about {topic.lower()}. {second}",
+                "evidence": {"topic": topic, "topTopics": tops, "crossCutting": cross}}
 
     # -- P5 · long_tail --------------------------------------------------------
     if str(rec.get("strategy") or "") == "rwe-d":
