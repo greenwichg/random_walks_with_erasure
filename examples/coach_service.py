@@ -1,9 +1,9 @@
 """coach_service.py — Coach v2: the intent-routed, tool-using coaching layer (RWE_COACH_V2).
 
-M1 scope: the ROUTER and the INTENT REGISTRY only — pure functions over the message and the
-structured echo, imported by no production module yet. Tools (M2), templates + composer + gate
-(M3), and API wiring (M4) land in later milestones per the approved plan in
-docs/COACH_REDESIGN.md.
+Scope so far — M1: the ROUTER and the INTENT REGISTRY (pure functions over the message and the
+structured echo). M2: the TOOL LAYER — typed ToolResults from thin wrappers over existing PUBLIC
+engine surfaces, plus the within-turn plan executor. Still imported by no production module;
+templates + composer + gate (M3) and API wiring (M4) land next per docs/COACH_REDESIGN.md.
 
 The prime invariant (D0), binding on everything in this module, forever:
 
@@ -345,3 +345,335 @@ def classify(message: str, echo: "dict | None" = None) -> Intent:
     if _has(t, "hello", "hi ", "hey", "thanks", "thank you"):
         return intent("CHAT", "general")
     return Intent("CHAT", "general", frozenset(mods), dict(e), "unresolved")
+
+
+# --------------------------------------------------------------------------- #
+# M2 — the tool layer: typed evidence from EXISTING engine surfaces only.
+#
+# D0 in practice: every tool below is a THIN WRAPPER over a named public surface —
+# Personalizer.report / explanation_context / recommendations / explain / openmindedness,
+# Backend.build_analytics, store.report_metric_series / get_reads / get_settings /
+# list_rec_events / feed_article_facets, evidence_resolver.resolve / story_index.
+# The only operations tools perform on engine outputs are SELECTION (picking fields,
+# filtering, min/max/sort) and PRESENTATION aggregation (Counter over stored rows, the
+# same class of formatting the auditor does). No score, rank, cluster, projection, or
+# explanation is ever computed here. Forecasts expose the engine's existing PER-ARTICLE
+# viewpointShift projections verbatim; aggregate multi-read forecasts would require new
+# engine computation and are deliberately NOT provided.
+# --------------------------------------------------------------------------- #
+from collections import Counter
+from datetime import datetime, timezone
+
+
+@dataclasses.dataclass(frozen=True)
+class Citation:
+    """One number the composer may state, with the engine surface it came from."""
+    key: str
+    value: object
+    source: str
+
+
+@dataclasses.dataclass(frozen=True)
+class ToolResult:
+    """The uniform tool envelope (D4): JSON-safe facts, machine-checkable citations, cards
+    that are VERBATIM serializer payloads, explicit caveats, and provenance."""
+    tool: str
+    facts: dict
+    citations: tuple = ()
+    cards: tuple = ()
+    caveats: tuple = ()
+    provenance: dict = dataclasses.field(default_factory=dict)
+
+
+def _prov(store, uid: int) -> dict:
+    return {"computedAt": datetime.now(timezone.utc).isoformat(),
+            "reads": int(store.count_reads(uid))}
+
+
+def _canon(url: str) -> str:
+    from ingest import canonical_url
+    return canonical_url(str(url or ""))
+
+
+def _report_metrics(report: dict) -> dict:
+    return {m["key"]: int(m["score"]) for m in report.get("metrics") or [] if "key" in m}
+
+
+def _tool_report(pers, store, uid, deps, **_):
+    """The Measured report exactly as the report page serves it (Personalizer.report ->
+    api_server._serialize_report -> health_report.user_report)."""
+    rep = pers.report(uid)
+    scores = _report_metrics(rep)
+    facts = {"overall": rep.get("overall"), "band": rep.get("band"), "scores": scores,
+             "viewpoint": rep.get("viewpoint"), "coverage": rep.get("coverage"),
+             "sources": (rep.get("sources") or [])[:5], "topics": (rep.get("topics") or [])[:5],
+             "blindSpots": rep.get("blindSpots") or [],
+             "improvements": rep.get("improvements") or []}
+    cites = [Citation("overall", rep.get("overall"), "api_server._serialize_report")]
+    cites += [Citation(k, v, "api_server._serialize_report") for k, v in scores.items()]
+    return ToolResult("report", facts, tuple(cites), provenance=_prov(store, uid))
+
+
+def _tool_shares(pers, store, uid, deps, **_):
+    """The C6 parity shares — the same numbers the recommendation cards cite
+    (Personalizer.explanation_context)."""
+    ctx = pers.explanation_context(uid)
+    facts = {"topicShares": ctx.get("topic_shares") or {},
+             "leanShares": ctx.get("lean_shares") or {},
+             "topTopics": ctx.get("top_topics") or [],
+             "readerMeanLean": ctx.get("reader_mean_lean")}
+    cites = [Citation(f"topicShare.{t}", round(float(v), 3), "Personalizer.explanation_context")
+             for t, v in (facts["topicShares"] or {}).items()]
+    cites += [Citation(f"leanShare.{side}", round(float(v), 3),
+                       "Personalizer.explanation_context")
+              for side, v in (facts["leanShares"] or {}).items()]
+    cites.append(Citation("readerMeanLean", facts["readerMeanLean"],
+                          "Personalizer.explanation_context"))
+    return ToolResult("shares", facts, tuple(cites), provenance=_prov(store, uid))
+
+
+def _tool_metric(pers, store, uid, deps, name=None, mode="value", **_):
+    """One metric selected from the report; ``mode="cause"`` attaches the ENGINE's own driver
+    surfaces for that metric (lean shares / top sources / attention / reception). ``name=None``
+    selects the reader's lowest-scoring metric (the improvement-plan entry point)."""
+    rep_res = deps.get("report") or _tool_report(pers, store, uid, deps)
+    scores = rep_res.facts["scores"]
+    if not scores:
+        raise LookupError("no measured metrics yet")
+    key = name if name in scores else ("overall" if name == "overall" else None)
+    if key is None:
+        key = min(scores, key=scores.get)          # selection, not computation
+    value = rep_res.facts["overall"] if key == "overall" else scores[key]
+    facts = {"metric": key, "score": value, "mode": mode, "lowestSelected": name not in scores}
+    cites = [Citation(key, value, "api_server._serialize_report")]
+    caveats = []
+    if mode == "cause":
+        if key in ("viewpointBalance", "echoChamber"):
+            sh = _tool_shares(pers, store, uid, deps)
+            facts["drivers"] = {"leanShares": sh.facts["leanShares"],
+                                "viewpoint": rep_res.facts["viewpoint"]}
+            cites += list(sh.citations)
+        elif key == "sourceDiversity":
+            facts["drivers"] = {"topSources": rep_res.facts["sources"]}
+            cites += [Citation(f"sourceShare.{d.get('name')}", d.get("share"),
+                               "api_server._serialize_report")
+                      for d in rep_res.facts["sources"] if isinstance(d, dict)]
+        elif key == "emotionalBalance":
+            facts["drivers"] = {"attention": (pers.report(uid).get("attention") or {})}
+        elif key == "openMindedness":
+            om = pers.openmindedness(uid)
+            facts["drivers"] = {"reception": om}
+            cites += [Citation("openedCross", om.get("openedCross"),
+                               "Personalizer.openmindedness"),
+                      Citation("shownCross", om.get("shownCross"),
+                               "Personalizer.openmindedness")]
+    return ToolResult("metric", facts, tuple(cites), caveats=tuple(caveats),
+                      provenance=_prov(store, uid))
+
+
+def _tool_recommendations(pers, store, uid, deps, want=None, **_):
+    """The LIVE feed (story slot included) with each card's resolver explanation — verbatim
+    Personalizer.recommendations + evidence_resolver.resolve. ``want`` filters by resolved
+    explanation type (bridge / story_match / new_publisher / ...) or topic name."""
+    import evidence_resolver as er
+    served = pers.recommendations(uid)
+    idx = er.story_index(store)
+    ctx = pers.explanation_context(uid)
+    resolved = []
+    for r in served:
+        exp = er.resolve(r, ctx, idx)
+        r = dict(r)
+        r["explanation"] = exp
+        resolved.append(r)
+    by_type = Counter((r["explanation"] or {}).get("type") for r in resolved)
+    if want:
+        w = str(want).lower()
+        picked = [r for r in resolved
+                  if (r["explanation"] or {}).get("type") == w
+                  or str((r.get("article") or {}).get("topic", "")).lower() == w]
+    else:
+        picked = resolved
+    cards = tuple(picked[:3])
+    facts = {"served": len(served), "byType": dict(by_type), "want": want,
+             "matched": len(picked), "returned": len(cards)}
+    cites = [Citation("served", len(served), "Personalizer.recommendations"),
+             Citation("matched", len(picked), "evidence_resolver.resolve")]
+    caveats = () if picked else (f"no served card currently matches '{want}'",)
+    return ToolResult("recommendations", facts, tuple(cites), cards=cards, caveats=caveats,
+                      provenance=_prov(store, uid))
+
+
+def _tool_why_article(pers, store, uid, deps, article=None, **_):
+    """The engine's truthful per-article verdict (Personalizer.explain(article=...)):
+    served -> 'recommended' with the serving strategy; unserved -> the exclusion taxonomy
+    (seen_excluded / below_cutoff with per-strategy ranks / not_in_graph / not_in_catalog)."""
+    if not article:
+        raise LookupError("no article bound — ask about a specific card or URL")
+    ex = (pers.explain(uid, article=str(article)) or {}).get("exclusion") or {}
+    if not ex:
+        raise LookupError("the engine returned no verdict for this article")
+    facts = {"article": ex.get("article"), "resolvedId": ex.get("resolvedId"),
+             "verdict": ex.get("verdict"), "detail": ex.get("detail"),
+             "byStrategy": ex.get("byStrategy") or {}}
+    cites = [Citation("verdict", ex.get("verdict"), "Personalizer.explain")]
+    for strat, d in (ex.get("byStrategy") or {}).items():
+        if isinstance(d, dict) and d.get("rank") is not None:
+            cites.append(Citation(f"rank.{strat}", d["rank"], "rec_explain._exclusion"))
+    return ToolResult("why_article", facts, tuple(cites), provenance=_prov(store, uid))
+
+
+def _tool_history(pers, store, uid, deps, days=None, **_):
+    """Presentation aggregation (Counter) over the reader's STORED reads — the same class of
+    tallying the auditor does; no scoring."""
+    reads = store.get_reads(uid) or []
+    outlets = Counter(str(r.get("outlet") or "?") for r in reads)
+    topics = Counter(str(r.get("category") or "").strip() or "(uncategorized)" for r in reads)
+    facts = {"totalReads": len(reads),
+             "topOutlets": outlets.most_common(5), "topTopics": topics.most_common(5),
+             "distinctOutlets": len(outlets)}
+    cites = [Citation("totalReads", len(reads), "store.get_reads"),
+             Citation("distinctOutlets", len(outlets), "store.get_reads")]
+    return ToolResult("history", facts, tuple(cites), provenance=_prov(store, uid))
+
+
+def _tool_trend(pers, store, uid, deps, metric=None, **_):
+    """Score trends exactly as the analytics page computes them (Backend.build_analytics over
+    stored report snapshots). No deltas are computed here — first/last points are cited and the
+    composer phrases 'X -> Y'."""
+    snaps = store.report_metric_series(uid)
+    analytics = pers.backend.build_analytics(snaps, store.get_reads(uid),
+                                             store.list_rec_events(uid))
+    series_keys = {"viewpointBalance": "politicalDiversity", "sourceDiversity":
+                   "publisherDiversity", "topicDiversity": "topicDiversity",
+                   "overall": "healthImprovement"}
+    wanted = ([series_keys[metric]] if metric in series_keys
+              else ["healthImprovement", "politicalDiversity", "publisherDiversity"])
+    facts, cites = {"series": {}, "snapshots": len(snaps)}, []
+    for key in wanted:
+        pts = analytics.get(key) or []
+        if not pts:
+            continue
+        facts["series"][key] = {"first": pts[0], "last": pts[-1], "points": len(pts)}
+        cites += [Citation(f"{key}.first", pts[0].get("overall"), "Backend.build_analytics"),
+                  Citation(f"{key}.last", pts[-1].get("overall"), "Backend.build_analytics")]
+    caveats = () if facts["series"] else ("no report snapshots recorded yet",)
+    cites.append(Citation("snapshots", len(snaps), "store.report_metric_series"))
+    return ToolResult("trend", facts, tuple(cites), caveats=caveats,
+                      provenance=_prov(store, uid))
+
+
+def _tool_blind_spots(pers, store, uid, deps, **_):
+    """The ENGINE's blind spots (health_report computes them; the report page serves them)
+    plus never-read publishers = catalog facets MINUS read outlets (set difference)."""
+    rep_res = deps.get("report") or _tool_report(pers, store, uid, deps)
+    spots = rep_res.facts["blindSpots"]
+    read_outlets = {str(r.get("outlet") or "") for r in store.get_reads(uid) or []}
+    facets = store.feed_article_facets(include_provisional=False)
+    never_read = [p for p in facets.get("publishers") or [] if p and p not in read_outlets][:5]
+    facts = {"blindSpots": spots, "neverReadPublishers": never_read,
+             "catalogPublishers": len(facets.get("publishers") or [])}
+    cites = [Citation("blindSpots", len(spots), "api_server._serialize_report"),
+             Citation("neverReadPublishers", len(never_read), "store.feed_article_facets"),
+             Citation("catalogPublishers", facts["catalogPublishers"],
+                      "store.feed_article_facets")]
+    cites += [Citation(f"gap.{s.get('topic')}", round(float(s.get("gap", 0)), 2),
+                       "health_report.user_report") for s in spots if isinstance(s, dict)]
+    return ToolResult("blind_spots", facts, tuple(cites), provenance=_prov(store, uid))
+
+
+def _tool_forecast(pers, store, uid, deps, action=None, k=3, **_):
+    """The engine's OWN per-article projections, verbatim: each candidate card's
+    ``viewpointShift`` (rec_explain — the report's viewpoint computation with that one article
+    appended). Always estimated. Aggregate multi-read forecasts are deliberately not offered —
+    the engine has no such primitive and the coach never invents one (D0)."""
+    diag = (pers.explain(uid) or {}).get("recommendations") or []
+    cands = [{"headline": d.get("headline"), "publisher": d.get("publisher"),
+              "url": d.get("url"), "shift": d.get("viewpointShift")}
+             for d in diag if d.get("viewpointShift")]
+    if not cands:
+        raise LookupError("the engine has no projectable candidates for this reader right now")
+    cands = cands[: max(1, int(k))]
+    current = cands[0]["shift"].get("current") or {}
+    facts = {"action": action, "current": current,
+             "candidates": [{"headline": c["headline"], "publisher": c["publisher"],
+                             "after": c["shift"].get("after")} for c in cands],
+             "estimated": True}
+    cites = [Citation(f"current.{side}", current.get(side), "rec_explain._viewpoint_shift")
+             for side in ("left", "center", "right") if side in current]
+    for i, c in enumerate(cands):
+        after = c["shift"].get("after") or {}
+        for side in ("left", "right"):
+            if side in after:
+                cites.append(Citation(f"candidate{i}.after.{side}", after[side],
+                                      "rec_explain._viewpoint_shift"))
+    return ToolResult("forecast", facts, tuple(cites),
+                      caveats=("estimated — the report's own computation with one article "
+                               "appended; not a promise",),
+                      provenance=_prov(store, uid))
+
+
+def _tool_goals(pers, store, uid, deps, **_):
+    """Stored settings, read-only (goal persistence stays in the existing settings flow)."""
+    settings = store.get_settings(uid) or {}
+    facts = {"readingGoalMinutes": settings.get("readingGoalMinutes", 20),
+             "coachGoals": settings.get("coachGoals"),
+             "hasStoredSettings": bool(settings)}
+    return ToolResult("goals", facts,
+                      (Citation("readingGoalMinutes", facts["readingGoalMinutes"],
+                                "store.get_settings"),),
+                      provenance=_prov(store, uid))
+
+
+def _tool_story_context(pers, store, uid, deps, article=None, **_):
+    """The Story Service cluster behind an article (evidence_resolver.story_index)."""
+    import evidence_resolver as er
+    if not article:
+        raise LookupError("no article bound")
+    story = (er.story_index(store) or {}).get(_canon(article))
+    if not story:
+        return ToolResult("story_context", {"story": None},
+                          (Citation("clusterMembers", 0, "evidence_resolver.story_index"),),
+                          caveats=("this article is not part of a multi-publisher story",),
+                          provenance=_prov(store, uid))
+    pubs = sorted({m.get("publisher") for m in story.get("coverage") or [] if m.get("publisher")})
+    facts = {"story": {"storyId": story.get("storyId"), "publishers": pubs,
+                       "members": len(story.get("coverage") or [])}}
+    return ToolResult("story_context", facts,
+                      (Citation("clusterMembers", facts["story"]["members"],
+                                "evidence_resolver.story_index"),
+                       Citation("clusterPublishers", len(pubs),
+                                "evidence_resolver.story_index")),
+                      provenance=_prov(store, uid))
+
+
+TOOLS = {"report": _tool_report, "shares": _tool_shares, "metric": _tool_metric,
+         "recommendations": _tool_recommendations, "why_article": _tool_why_article,
+         "history": _tool_history, "trend": _tool_trend, "blind_spots": _tool_blind_spots,
+         "forecast": _tool_forecast, "goals": _tool_goals, "story_context": _tool_story_context}
+
+MAX_PLAN_STEPS = 4
+
+
+def run_plan(intent: Intent, pers, store, uid: int):
+    """Execute the intent's MicroPlan (plus a bounded secondary) with a within-turn memo.
+    Returns ``(results, gaps)``: a failed tool becomes an ADMITTED gap — never a fabricated
+    result (D0). Read-only end to end."""
+    steps = list(INTENTS[intent.name].plan)
+    if intent.secondary and intent.secondary in INTENTS:
+        extra = list(INTENTS[intent.secondary].plan)
+        if len(steps) + len(extra) <= MAX_PLAN_STEPS:
+            steps += extra
+    done: dict = {}
+    results, gaps = [], []
+    for tool, args_builder in steps[:MAX_PLAN_STEPS]:
+        args = args_builder(intent.entities)
+        memo_key = (tool, tuple(sorted((k, str(v)) for k, v in args.items())))
+        if memo_key in done:
+            continue
+        try:
+            res = TOOLS[tool](pers, store, uid, {r.tool: r for r in results}, **args)
+            done[memo_key] = res
+            results.append(res)
+        except Exception as e:                        # admitted gap, never invention
+            gaps.append({"tool": tool, "reason": f"{type(e).__name__}: {e}"})
+    return results, gaps
