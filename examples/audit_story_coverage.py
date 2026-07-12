@@ -132,25 +132,31 @@ def serve_and_diagnose(st, user_id: int) -> dict:
         return out
     diag = pers.explain(user_id)
     recs = diag.get("recommendations") or []
-    out["served"] = len(recs)
+    # slice-level Story-Match diagnostics from the explain MIRROR (why each slice-chosen card is
+    # or isn't a story match). The mirror deliberately excludes the RWE_STORY_SLOT post-pass, so
+    # everything the reader actually SEES is accounted from the true served feed below instead.
     out["storyMatchReasons"] = dict(Counter(
         (d.get("storyMatch") or {}).get("reason") for d in recs))
-    out["servedStoryMatches"] = [d["headline"] for d in recs
-                                 if (d.get("storyMatch") or {}).get("matched")]
-    # the user-facing feed: engine strategies + resolved explanation types (same post-pass
-    # the API runs, so this breakdown matches the cards a reader actually sees)
+    # the user-facing feed: engine strategies + resolved explanation types (same post-pass the
+    # API runs — INCLUDING the conditional Story-Match slot when RWE_STORY_SLOT is enabled — so
+    # this breakdown matches the cards a reader actually sees)
     er._INDEX_CACHE.update(key=None, index=None)
     idx = er.story_index(st)
     ctx = pers.explanation_context(user_id)
     served = pers.recommendations(user_id)
+    resolved = [er.resolve(r, ctx, idx) for r in served]
+    out["served"] = len(served)
     out["byStrategy"] = dict(Counter(str(r.get("strategy")) for r in served))
-    out["byExplanation"] = dict(Counter(er.resolve(r, ctx, idx).get("type") for r in served))
+    out["byExplanation"] = dict(Counter(e.get("type") for e in resolved))
+    out["servedStoryMatches"] = [str((r.get("article") or {}).get("headline") or "")
+                                 for r, e in zip(served, resolved)
+                                 if e.get("type") == "story_match"]
     # each available sibling that was NOT served: the truthful exclusion verdict + raw ranks
     coverage = audit(st, user_id)
     pol_of = {a["canonicalUrl"]: (a.get("scored") or {}).get("political")
               for a in st.list_feed_articles(limit=1_000_000)}
     exclusions = []
-    served_urls = {er._canon(str(d.get("url") or "")) for d in recs}
+    served_urls = {er._canon(str((r.get("article") or {}).get("url") or "")) for r in served}
     for p in coverage["perRead"]:
         for m in p.get("siblings") or []:
             if not m["fresh"] or er._canon(str(m["url"])) in served_urls:

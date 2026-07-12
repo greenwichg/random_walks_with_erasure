@@ -233,3 +233,21 @@ def test_explain_reports_the_slot_decision(stack, monkeypatch):
     assert slot.get("enabled") is True and slot.get("fired") is True
     assert slot.get("inserted") == er._canon(SIBLING)
     assert (slot.get("displaced") or {}).get("explanation") in personalize._EXPLANATION_PRIORITY
+
+
+def test_auditor_accounts_the_slot_card_as_served(stack, monkeypatch):
+    """The story-coverage auditor must count the slot card in the TRUE served feed: Story Match
+    cards served >= 1, the sibling absent from unservedSiblings, conversion 1/1, and the health
+    verdict clearing to 'none' — the exact before/after a beta operator validates the flag with."""
+    import audit_story_coverage as asc
+    st, pers, uid = stack
+    monkeypatch.setenv("RWE_STORY_SLOT", "1")
+    er._INDEX_CACHE.update(key=None, index=None)
+    doc = asc.full_report(st, uid)
+    feed = doc["feed"] or {}
+    assert feed.get("byStrategy", {}).get("story") == 1
+    assert feed.get("storyMatchCards", 0) >= 1
+    assert (doc["conversion"] or {}).get("ratePercent") == 100.0
+    assert doc["verdict"]["code"] == "none"
+    missed_urls = {x["sibling"] for x in doc["missed"]}
+    assert SIBLING not in missed_urls and er._canon(SIBLING) not in missed_urls
