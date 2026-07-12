@@ -65,7 +65,7 @@ A clean, tested Python implementation of
 > invent facts (`evidence ⊆ context`), deterministic, and history-sensitive. Nine scenarios mapped to
 > explanation types, plus a *run-on-your-own-reading-history* mode. Offline; reuses the production
 > ranking (independent RWE recompute is a later phase):
-> [![Open Recommendation Validation in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/greenwichg/random_walks_with_erasure/blob/e6c3ca4c3124fa95988ab36bb817454b0e47be38/deploy/rec_validation_colab.ipynb)
+> [![Open Recommendation Validation in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/greenwichg/random_walks_with_erasure/blob/7f74176ed56063dfa32143658332cc14ecbc14e3/deploy/rec_validation_colab.ipynb)
 > **Recommendation validation notebook**.
 >
 > 🩺 **Audit Story-Match coverage on real data** — a read-only Story Coverage & Recommendation Health
@@ -74,7 +74,7 @@ A clean, tested Python implementation of
 > verdict (coverage / ranking / freshness / retention / none). Reuses the CLI's shared functions
 > (`audit_story_coverage.py` → `full_report` / `print_report`), so the notebook and `--report` are
 > byte-identical. Point it at a copy of your beta's `ih_beta.db`, or run the built-in golden demo:
-> [![Open Story Coverage Audit in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/greenwichg/random_walks_with_erasure/blob/claude%2Fsleepy-gates-oecof1/deploy/story_coverage_audit_colab.ipynb)
+> [![Open Story Coverage Audit in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/greenwichg/random_walks_with_erasure/blob/7f74176ed56063dfa32143658332cc14ecbc14e3/deploy/story_coverage_audit_colab.ipynb)
 > **Story Coverage audit notebook**.
 
 RWE is a modified random-walk exploration of the bipartite user–item feedback
