@@ -97,6 +97,35 @@ def test_same_event_sibling_is_detected_with_publisher_gate(tmp_path):
     assert pubs == {"Fox News"}                      # the same-publisher CNN sibling never counts
 
 
+def test_full_report_document_and_printer_parity(tmp_path, capsys):
+    """The Colab surface consumes full_report() and the CLI prints it — one computation, two
+    renderers. sibling_report must be exactly print_report(full_report(...)), and the document
+    must carry the same metrics the printed report shows."""
+    st = store_mod.Store(f"sqlite:///{tmp_path / 'p.db'}")
+    title = "Mayor Adams corruption ruling reshapes the race"
+    _feed(st, "https://cnn.example.com/story/adams", "CNN", title)
+    _feed(st, "https://fox.example.com/story/adams", "Fox News", title,
+          when="2026-07-10T11:00:00+00:00")
+    uid = st.upsert_user_by_identity("dev", "t6").id
+    _read(st, uid, "https://cnn.example.com/story/adams", "CNN", title)
+    er._INDEX_CACHE.update(key=None, index=None)
+
+    doc = asc.full_report(st, uid)
+    asc.print_report(doc)
+    printed = capsys.readouterr().out
+    er._INDEX_CACHE.update(key=None, index=None)
+    asc.sibling_report(st, uid)
+    wrapped = capsys.readouterr().out
+    assert printed == wrapped                                   # the CLI is the thin wrapper
+
+    assert doc["coverageRatePercent"] == doc["coverage"]["siblingCoverage"]["percent"]
+    assert f"Story Coverage Rate: {doc['coverageRatePercent']}%" in printed
+    assert doc["verdict"]["message"] in printed
+    assert doc["verdict"]["code"] in ("insufficient_data", "coverage", "freshness",
+                                      "ranking", "none")
+    assert doc["perRead"] and doc["perRead"][0]["siblings"][0]["publisher"] == "Fox News"
+
+
 def test_stale_siblings_are_named(tmp_path, monkeypatch):
     """A sibling still inside the story cluster's own time window can nonetheless be outside the
     recommendation freshness window (C4) — the auditor must name that as the blocker, since the
