@@ -134,8 +134,18 @@ def serve_and_diagnose(st, user_id: int) -> dict:
         (d.get("storyMatch") or {}).get("reason") for d in recs))
     out["servedStoryMatches"] = [d["headline"] for d in recs
                                  if (d.get("storyMatch") or {}).get("matched")]
-    # each available sibling that was NOT served: the truthful exclusion verdict
+    # the user-facing feed: engine strategies + resolved explanation types (same post-pass
+    # the API runs, so this breakdown matches the cards a reader actually sees)
+    er._INDEX_CACHE.update(key=None, index=None)
+    idx = er.story_index(st)
+    ctx = pers.explanation_context(user_id)
+    served = pers.recommendations(user_id)
+    out["byStrategy"] = dict(Counter(str(r.get("strategy")) for r in served))
+    out["byExplanation"] = dict(Counter(er.resolve(r, ctx, idx).get("type") for r in served))
+    # each available sibling that was NOT served: the truthful exclusion verdict + raw ranks
     coverage = audit(st, user_id)
+    pol_of = {a["canonicalUrl"]: (a.get("scored") or {}).get("political")
+              for a in st.list_feed_articles(limit=1_000_000)}
     exclusions = []
     served_urls = {er._canon(str(d.get("url") or "")) for d in recs}
     for p in coverage["perRead"]:
@@ -144,7 +154,11 @@ def serve_and_diagnose(st, user_id: int) -> dict:
                 continue
             ex = pers.explain(user_id, article=str(m["url"])).get("exclusion") or {}
             exclusions.append({"sibling": m["url"], "publisher": m["publisher"],
-                               "verdict": ex.get("verdict"), "detail": ex.get("detail")})
+                               "headline": m.get("headline"),
+                               "anchor": p["url"], "storyId": p.get("storyId"),
+                               "verdict": ex.get("verdict"), "detail": ex.get("detail"),
+                               "byStrategy": ex.get("byStrategy") or {},
+                               "political": pol_of.get(er._canon(str(m["url"])))})
     out["unservedSiblings"] = exclusions
     return out
 
@@ -171,10 +185,12 @@ def sibling_report(st, user_id: int) -> None:
     with_siblings = [p for p in cov["perRead"]
                      if p["verdict"] in ("sibling_available", "siblings_all_stale")]
     sc = cov["siblingCoverage"]
+    stale_only = cov["verdicts"].get("siblings_all_stale", 0)
     print(f"reads: {cov['reads']}   catalog: {cov['catalogArticles']}   "
           f"story clusters: {cov['storyClusters']} ({cov['multiPublisherClusters']} multi-publisher)")
     print(f"sibling coverage: {sc['withSibling']}/{sc['reads']} reads "
           f"({sc['percent']}%) have >= 1 unread same-story sibling available as a candidate")
+    print(f"Story Coverage Rate: {sc['percent']}%")
     if not with_siblings:
         also_read = cov["verdicts"].get("all_siblings_read", 0)
         extra = (f" ({also_read} read(s) whose only cross-publisher coverage you ALREADY read)"
@@ -183,6 +199,14 @@ def sibling_report(st, user_id: int) -> None:
               "catalog — the current corpus lacks cross-publisher coverage for those "
               f"stories{extra}. Story Match is impossible from this data; this is corpus "
               "coverage, not recommendation logic.")
+        print("\n==== Health summary ====")
+        if cov["reads"] == 0:
+            print("verdict: INSUFFICIENT DATA — no reads in this history.")
+        else:
+            print("verdict: PRIMARILY LIMITED BY CORPUS COVERAGE — "
+                  f"{cov['catalogArticles']} catalog articles, "
+                  f"{cov['multiPublisherClusters']} multi-publisher clusters, "
+                  "0 live story opportunities.")
         return
 
     s = serve_and_diagnose(st, user_id)
@@ -192,6 +216,39 @@ def sibling_report(st, user_id: int) -> None:
     excl_by_url = {x["sibling"]: x for x in s.get("unservedSiblings", [])} if measured else {}
     pol_of = {a["canonicalUrl"]: (a.get("scored") or {}).get("political")
               for a in st.list_feed_articles(limit=1_000_000)}
+
+    _LABEL = {"bridge": "Bridge", "story_match": "Story Match", "long_tail": "Discovery",
+              "new_publisher": "New Publisher", "topic_continuity": "Topic Continuity",
+              "coverage_breadth": "Coverage Breadth"}
+    story_cards = converted = 0
+    live = sc["withSibling"]
+    if measured:
+        story_cards = len(s.get("servedStoryMatches") or [])
+        # an opportunity converts when at least one of ITS fresh siblings is NOT in the
+        # unserved list (serve_and_diagnose lists every fresh-but-unserved sibling)
+        unserved_by_anchor: dict = {}
+        for x in s.get("unservedSiblings", []):
+            unserved_by_anchor.setdefault(x["anchor"], set()).add(er._canon(str(x["sibling"])))
+        for p in cov["perRead"]:
+            if p["verdict"] != "sibling_available":
+                continue
+            fresh = {er._canon(str(m["url"])) for m in p["siblings"] if m["fresh"]}
+            if fresh - unserved_by_anchor.get(p["url"], set()):
+                converted += 1
+        print("\n==== Recommendation feed ====")
+        print(f"total recommendations served: {s['served']}")
+        print(f"by engine strategy: {s.get('byStrategy')}")
+        pretty = {f"{_LABEL.get(k, k)}": v for k, v in (s.get("byExplanation") or {}).items()}
+        print(f"by explanation type: {pretty}")
+        print(f"Story Match cards served: {story_cards}")
+        print("\n==== Story conversion ====")
+        if live:
+            print(f"live story opportunities: {live}   opportunities with a served sibling: "
+                  f"{converted}")
+            print(f"Story Conversion Rate: {converted}/{live} "
+                  f"({round(100.0 * converted / live, 1)}%)")
+        else:
+            print("live story opportunities: 0   Story Conversion Rate: n/a")
 
     for p in with_siblings:
         art = st.get_feed_article(p["url"]) or {}
@@ -228,6 +285,66 @@ def sibling_report(st, user_id: int) -> None:
     if measured and s.get("servedStoryMatches"):
         print(f"\nserved story_match cards this cycle: {s['servedStoryMatches']}")
 
+    # ---- top missed opportunities (closest-to-serving first) --------------------------------
+    missed = []
+    if measured:
+        for x in s.get("unservedSiblings", []):
+            gaps = []
+            for strat, k in (("rwe-b", 6), ("rwe-d", 4), ("adaptive", 4)):
+                by = (x.get("byStrategy") or {}).get(strat) or {}
+                r = by.get("rank")
+                if r is None or (strat == "rwe-b" and x.get("political") is False):
+                    continue                     # non-political: rwe-b slice inadmissible
+                gaps.append((r - k, strat, r, k))
+            reason = ("RANKING CUTOFF" if x.get("verdict") == "below_cutoff"
+                      else str(x.get("verdict") or "unknown").upper())
+            missed.append({"gap": min(gaps)[0] if gaps else 10**9, "gaps": sorted(gaps),
+                           "reason": reason, "x": x})
+    for p in cov["perRead"]:
+        if p["verdict"] == "siblings_all_stale":
+            for m in p.get("siblings") or []:
+                missed.append({"gap": 10**9, "gaps": [], "reason": "FRESHNESS",
+                               "x": {"sibling": m["url"], "publisher": m["publisher"],
+                                     "headline": m.get("headline"), "anchor": p["url"],
+                                     "storyId": p.get("storyId")}})
+    if missed:
+        print("\n==== Top missed Story Match opportunities ====")
+        for i, mrec in enumerate(sorted(missed, key=lambda d: d["gap"])[:10], start=1):
+            x = mrec["x"]
+            ranks = ", ".join(f"{strat} #{r}/(top {k})" for _g, strat, r, k in mrec["gaps"]) or "-"
+            print(f"{i:>2}. {str(x.get('headline') or x['sibling'])[:70]}  ({x.get('publisher')})")
+            print(f"      story {x.get('storyId')}  anchor read: {x.get('anchor')}")
+            print(f"      reason: {mrec['reason']}   ranks: {ranks}")
+
+    # ---- health summary ----------------------------------------------------------------------
+    print("\n==== Health summary ====")
+    if not measured:
+        print("verdict: INSUFFICIENT DATA — reader below the measured threshold; the personal "
+              "feed does not serve yet.")
+        return
+    ranking_lost = live - converted
+    if live == 0 and stale_only > 0:
+        print(f"verdict: PRIMARILY LIMITED BY FRESHNESS — every existing sibling "
+              f"({stale_only} read(s)) has aged past the candidate window.")
+    elif live == 0:
+        print("verdict: PRIMARILY LIMITED BY CORPUS COVERAGE — no live story opportunities "
+              f"({cov['multiPublisherClusters']} multi-publisher clusters).")
+    elif converted / live >= 0.8:
+        print(f"verdict: NO SIGNIFICANT LIMITATION — {converted}/{live} live opportunities "
+              "served as Story Match.")
+    elif ranking_lost >= max(stale_only, 1):
+        print(f"verdict: PRIMARILY LIMITED BY RANKING — {ranking_lost}/{live} live "
+              f"opportunities exist but their siblings rank below every served slice "
+              f"(freshness-lost: {stale_only}).")
+    else:
+        print(f"verdict: PRIMARILY LIMITED BY FRESHNESS — {stale_only} opportunities aged out "
+              f"vs {ranking_lost} ranking-lost (served {converted}/{live}).")
+    ret_age = os.environ.get("RWE_RETENTION_MAX_AGE_DAYS")
+    if ret_age and ret_age.isdigit() and int(ret_age) > 0:
+        print(f"note: retention is ENABLED ({ret_age}d) — read anchors older than that are "
+              "deleted with no read exemption, which dissolves their clusters (see the "
+              "lifecycle audit); anchors within ~7d of the limit put their opportunities at risk.")
+
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
@@ -238,8 +355,10 @@ def main() -> int:
                     help="also build the serving stack: per-card storyMatch diagnostics + "
                          "exclusion verdicts for unserved siblings")
     ap.add_argument("--report", action="store_true",
-                    help="the per-read sibling report: every read with same-story siblings, "
-                         "each sibling's cluster + served/excluded verdict with the exact reason")
+                    help="the full report: feed breakdown (total + by strategy/explanation), "
+                         "Story Coverage + Conversion rates, per-read sibling verdicts, top-10 "
+                         "missed opportunities with reasons + per-strategy ranks, and a health "
+                         "verdict (coverage / ranking / freshness / none)")
     ap.add_argument("--list-users", action="store_true",
                     help="list the store's users (id, email, reads) and exit — to pick --user")
     args = ap.parse_args()
