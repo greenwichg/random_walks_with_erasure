@@ -18,6 +18,11 @@ Config (env, all optional):
     RWE_FEED_MAX_AGE_DAYS        recommendation-candidate age window in days (default 60; 0 = off).
                                  Composition only — stale articles stay stored and visible to
                                  Search / Stories / History, they just stop being rec candidates.
+    RWE_FEED_REQUIRE_DATED       when truthy (and the age window is active), candidacy requires a
+                                 parseable ``publishedAt`` — the ``fetchedAt`` fallback is not
+                                 trusted, so a legacy feed re-serving undated cached items can't
+                                 keep them "fresh" forever (re-polls refresh ``fetchedAt``).
+                                 Default off. Composition only; read articles stay exempt.
     RWE_RETENTION_MAX_AGE_DAYS   prune articles older than this           (0/unset = no age prune)
     RWE_RETENTION_MAX_COUNT      keep at most this many, newest-first      (0/unset = no count prune)
     RWE_CORPUS_MIN_ARTICLES      floor: min total (default RWE_FEED_MIN_ARTICLES, 50)
@@ -149,26 +154,44 @@ def feed_max_age_days() -> Optional[float]:
     return v if v > 0 else None
 
 
+def feed_require_dated() -> bool:
+    """Whether recommendation candidacy requires a parseable ``publishedAt``
+    (``RWE_FEED_REQUIRE_DATED``, default off).
+
+    Defends against stale/legacy feeds that re-serve old items without dates: every re-poll
+    refreshes ``fetchedAt`` (``store.upsert_feed_article``), so such an item's fallback age never
+    grows and it would pass the age window forever. Only consulted while the
+    :func:`feed_max_age_days` window is active — disabling the window disables this gate too."""
+    return _bool_env("RWE_FEED_REQUIRE_DATED", False)
+
+
 def fresh_articles(articles: list, *, now: Optional[datetime] = None,
                    max_age_days: Optional[float] = None,
-                   exempt: "frozenset[str] | set[str]" = frozenset()) -> list:
+                   exempt: "frozenset[str] | set[str]" = frozenset(),
+                   require_dated: Optional[bool] = None) -> list:
     """The subset of ``articles`` fresh enough to be recommendation candidates — a filter, never a
     mutation (the same row objects are returned).
 
     An article's age comes from :func:`_published` (``publishedAt``, else ``fetchedAt`` — so an
     undated article is as old as its discovery, not immortal); a row with no parseable time at all
-    is kept (staleness can't be proven). Canonical URLs in ``exempt`` are always kept — the
-    read-demand articles whose removal would disconnect a reader from the recommendation graph.
-    ``max_age_days`` defaults to :func:`feed_max_age_days`; ``None``/``<=0`` disables (returns
-    ``articles`` unchanged)."""
+    is kept (staleness can't be proven). With ``require_dated`` (default: the
+    ``RWE_FEED_REQUIRE_DATED`` env flag) an article with no parseable ``publishedAt`` is excluded
+    instead — the ``fetchedAt`` fallback is not trusted for candidacy. Canonical URLs in
+    ``exempt`` are always kept — the read-demand articles whose removal would disconnect a reader
+    from the recommendation graph. ``max_age_days`` defaults to :func:`feed_max_age_days`;
+    ``None``/``<=0`` disables the gate entirely (returns ``articles`` unchanged), including
+    ``require_dated``."""
     window = feed_max_age_days() if max_age_days is None else (max_age_days if max_age_days > 0 else None)
     if window is None:
         return list(articles)
+    need_dated = feed_require_dated() if require_dated is None else bool(require_dated)
     cutoff = (now or datetime.now(timezone.utc)) - timedelta(days=float(window))
     kept = []
     for a in articles:
         if _canonical(a) in exempt:
             kept.append(a)
+            continue
+        if need_dated and not _has_publication_date(a):
             continue
         dt = _published(a)
         if dt is None or dt >= cutoff:

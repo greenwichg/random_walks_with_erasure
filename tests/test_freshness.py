@@ -116,8 +116,8 @@ def test_build_candidate_disabled_keeps_everything():
 # --------------------------------------------------------------------------- #
 # Startup path: feed_source.export_catalog_csv (through a real store).
 # --------------------------------------------------------------------------- #
-def _seed(st, url, days_ago, publisher="Pub"):
-    a = _art(url, days_ago=days_ago, publisher=publisher)
+def _seed(st, url, days_ago, publisher="Pub", published=True):
+    a = _art(url, days_ago=days_ago, publisher=publisher, published=published)
     st.upsert_feed_article(
         canonical_url=url, url=url, publisher=publisher, source_publisher=publisher,
         title=a["title"], description="d", body=None, published_at=a["publishedAt"],
@@ -151,6 +151,76 @@ def test_export_catalog_csv_gate_disabled(tmp_path, monkeypatch):
     feed_source.export_catalog_csv(st, str(out))
     urls = {row["url"] for row in csv.DictReader(open(out, encoding="utf-8"))}
     assert "https://ex.com/ancient" in urls
+
+
+# --------------------------------------------------------------------------- #
+# RWE_FEED_REQUIRE_DATED — candidacy requires a real publishedAt (default off).
+# --------------------------------------------------------------------------- #
+def test_require_dated_flag_default_off(monkeypatch):
+    monkeypatch.delenv("RWE_FEED_REQUIRE_DATED", raising=False)
+    assert ch.feed_require_dated() is False
+    monkeypatch.setenv("RWE_FEED_REQUIRE_DATED", "1")
+    assert ch.feed_require_dated() is True
+    monkeypatch.setenv("RWE_FEED_REQUIRE_DATED", "off")
+    assert ch.feed_require_dated() is False
+
+
+def test_require_dated_excludes_undated_from_candidacy():
+    """The stale-cache defense: re-polls refresh fetchedAt, so an undated item's fallback age
+    never grows — with the flag on, candidacy demands a parseable publishedAt (unparseable
+    counts as undated; 'staleness can't be proven' no longer keeps it)."""
+    undated = _art("https://ex.com/undated", published=False, fetched_days_ago=0)  # looks brand new
+    dated = _art("https://ex.com/dated", days_ago=2)
+    junk = _art("https://ex.com/junk", days_ago=1)
+    junk["publishedAt"], junk["fetchedAt"] = "not-a-date", "also-junk"
+    kept = ch.fresh_articles([undated, dated, junk], now=NOW, max_age_days=60, require_dated=True)
+    assert [a["canonicalUrl"] for a in kept] == ["https://ex.com/dated"]
+
+
+def test_require_dated_keeps_exempt_and_respects_disabled_window():
+    undated = _art("https://ex.com/undated-read", published=False, fetched_days_ago=0)
+    assert ch.fresh_articles([undated], now=NOW, max_age_days=60, require_dated=True,
+                             exempt={"https://ex.com/undated-read"}) == [undated]
+    # windowing disabled -> the whole gate (this flag included) is off — today's escape hatch,
+    # which is also what keeps the golden pipeline (RWE_FEED_MAX_AGE_DAYS=0) untouched
+    assert ch.fresh_articles([undated], now=NOW, max_age_days=0, require_dated=True) == [undated]
+
+
+def test_require_dated_off_is_byte_compatible(monkeypatch):
+    monkeypatch.delenv("RWE_FEED_REQUIRE_DATED", raising=False)
+    undated = _art("https://ex.com/u1", published=False, fetched_days_ago=2)
+    assert ch.fresh_articles([undated], now=NOW, max_age_days=60) == [undated]  # pre-flag policy
+
+
+def test_build_candidate_require_dated_env(monkeypatch):
+    """The hot-refresh path resolves the flag from the env through the shared filter."""
+    monkeypatch.setenv("RWE_FEED_REQUIRE_DATED", "1")
+    arts = [_art("https://ex.com/dated", days_ago=1),
+            _art("https://ex.com/undated", published=False, fetched_days_ago=0)]
+    got = {a["canonicalUrl"] for a in cv.build_candidate(arts, now=NOW, max_age_days=60)}
+    assert got == {"https://ex.com/dated"}
+
+
+def test_export_catalog_csv_require_dated_env(tmp_path, monkeypatch):
+    """The startup path, end-to-end on a real store: undated rows leave candidacy but stay
+    stored, and a read undated article keeps its exemption (graph connectivity)."""
+    monkeypatch.delenv("RWE_FEED_MAX_AGE_DAYS", raising=False)      # default 60
+    monkeypatch.setenv("RWE_FEED_REQUIRE_DATED", "1")
+    st = store_mod.Store(f"sqlite:///{tmp_path / 'rd.db'}")
+    _seed(st, "https://ex.com/dated", days_ago=2)
+    _seed(st, "https://ex.com/undated", days_ago=0, published=False)
+    _seed(st, "https://ex.com/undated-read", days_ago=0, published=False)
+    uid = st.upsert_user_by_identity("dev", "require-dated-test").id
+    st.add_read(uid, "https://ex.com/undated-read",
+                {"article_id": "https://ex.com/undated-read", "outlet": "Pub",
+                 "category": "Politics", "lean": 0.0, "political": True})
+    out = tmp_path / "corpus.csv"
+    feed_source.export_catalog_csv(st, str(out))
+    urls = {row["url"] for row in csv.DictReader(open(out, encoding="utf-8"))}
+    assert "https://ex.com/dated" in urls
+    assert "https://ex.com/undated" not in urls                    # no date -> not a candidate
+    assert "https://ex.com/undated-read" in urls                   # read-demand exemption
+    assert st.count_feed_articles() == 3                           # storage untouched
 
 
 # --------------------------------------------------------------------------- #
