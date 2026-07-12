@@ -71,10 +71,10 @@ A clean, tested Python implementation of
 > 🩺 **Audit Story-Match coverage on real data** — a read-only Story Coverage & Recommendation Health
 > audit: Story Coverage Rate, the served feed by strategy / explanation type, Story Conversion Rate,
 > the top missed Story-Match opportunities with the exact reason each was excluded, and a health
-> verdict (coverage / ranking / freshness / retention / none). Reuses the CLI's shared functions
+> verdict (coverage / ranking / freshness / graph / cap / none). Reuses the CLI's shared functions
 > (`audit_story_coverage.py` → `full_report` / `print_report`), so the notebook and `--report` are
 > byte-identical. Point it at a copy of your beta's `ih_beta.db`, or run the built-in golden demo:
-> [![Open Story Coverage Audit in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/greenwichg/random_walks_with_erasure/blob/7f74176ed56063dfa32143658332cc14ecbc14e3/deploy/story_coverage_audit_colab.ipynb)
+> [![Open Story Coverage Audit in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/greenwichg/random_walks_with_erasure/blob/ddb24917d0d08954bb820093472cd248eb65e864/deploy/story_coverage_audit_colab.ipynb)
 > **Story Coverage audit notebook**.
 
 RWE is a modified random-walk exploration of the bipartite user–item feedback
