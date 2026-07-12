@@ -29,7 +29,10 @@ import os
 import sys
 from collections import Counter
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # import sibling modules
+_HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, _HERE)                     # import sibling modules (evidence_resolver, store, …)
+sys.path.insert(0, os.path.dirname(_HERE))    # repo root, so `import rwe` works from a bare checkout
+                                              # (no reliance on `pip install -e` having run first)
 
 import corpus_health
 import evidence_resolver as er
