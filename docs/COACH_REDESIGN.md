@@ -1,259 +1,346 @@
-# AI Coach Redesign — from report narrator to tool-using assistant
+# AI Coach v2 — Architecture Review & Final Design
 
-**Status:** design (no code changed). Implementation gated on approval, behind `RWE_COACH_V2` (default off), following the repo's flag → beta-validate → default-on pattern.
+**Status:** design, post architecture-review (v2 supersedes the v1 draft that previously lived in this file). No production code exists yet; implementation is gated on approval behind `RWE_COACH_V2` (default off).
+
+**How to read this:** the review's twelve binding decisions are labeled **D1–D12**, each with *Why / Alternatives / Tradeoffs / Why it wins*. The twenty numbered sections map 1:1 to the review deliverables. A new engineer should be able to build the system from this document alone.
 
 ---
 
-## 1. The problem, precisely
+## 1. Executive summary
 
-Today's coach (`api_server._serialize_coach_reply`, served by `POST /api/coach` → `Personalizer.coach_reply`) computes `hr.user_report` → `narrate_report.report_facts` → `narrate()` (or `_grounded_fallback`) **regardless of what the user asked** — the `message` parameter arrives and is never routed. Every answer is the same report summary plus up to two rwe‑b suggestions. `GET /api/coach` returns only a canned greeting; there is no conversational state, so a follow-up question re-narrates the same report.
+The coach today is a narrator: `POST /api/coach` → `Personalizer.coach_reply` → `api_server._serialize_coach_reply`, which computes the full report and narrates it **without ever reading the question** (the `message` argument is accepted and ignored). The redesign turns the coach into a thin, deterministic *interface* over the already-production-grade engine: a **hierarchical intent router** feeds **static micro-plans** that call a **typed tool layer** (thin wrappers over existing functions), producing a canonical **Evidence Pack** that a **composer** phrases — LLM optional, per-intent grounded templates always available, and a **grounding gate** guaranteeing no number is ever invented.
 
-The redesign keeps everything this product is right about — every number measured, LLM optional, grounded fallback always available — and adds the missing layer: **intent routing over a tool registry, with conversational memory.**
+The architecture review changed four v1 decisions:
 
-## 2. Design principles (inherited from the codebase)
+| v1 decision | review verdict | replacement |
+|---|---|---|
+| flat list of 17 intents | doesn't scale, duplicates plans/templates | **D1:** 6 intent families × leaves, registry-based |
+| intent → single tool call → template | can't express compound asks or shared data | **D3:** static micro-plans with declared dependencies |
+| tools return ad-hoc dicts | uncheckable grounding, copy-paste drift | **D4:** one typed `ToolResult` envelope (facts + citations + cards + caveats + provenance) |
+| memory = client-carried *prose* transcript | re-interpreting prose each turn is the hallucination vector | **D6:** memory = structured *machine* echoes (intent, entities, card ids, goals); the composer never re-reads prior prose |
 
-1. **Route first, generate last.** A deterministic classifier picks the intent; tools compute an *evidence pack*; the composer only phrases it. The LLM never invents a number — enforced by reusing `narrate_report.check_grounding` / `extract_numbers` on the composed reply.
-2. **No-LLM path is first-class.** Every intent has a grounded template fallback (the `_grounded_fallback` pattern, per intent), so the coach works with no API key.
-3. **Reuse, never reimplement.** Every tool below is a thin wrapper over an existing function (`user_report`, `Personalizer.explain`, `er.resolve`, `list_report_snapshots`, `feed_article_facets`, …).
-4. **Answer the question; never dump the report** unless the intent is explicitly "explain my metrics/report".
-5. **Evidence in the payload.** Replies carry structured `citations` (metric values used) and `cards` (real articles with resolver reasons) so the UI can render proof, exactly like recommendation cards do.
+And it added three things v1 lacked: a **canonical Explanation model** (D7), an explicit **`RWE_COACH_LLM` flag** separating "v2 on" from "LLM on" (D11), and a **ToolResult cache** keyed by the existing model-version keys (D12).
 
-## 3. Architecture
+## 2. Current architecture (what exists, verbatim)
+
+```
+POST /api/coach {message}                      (examples/api_fastapi.py:1822)
+  -> Personalizer.coach_reply(uid, message)    (examples/personalize.py)
+  -> Backend._serialize_coach_reply(corpus, rec, u, message)   (examples/api_server.py)
+       rep, facts = _facts_of(corpus, u)       # hr.user_report -> narrate_report.report_facts
+       content = narrate(facts_to_text(facts), caller, recs)   # iff ANTHROPIC/GEMINI key
+       if not content: content = _grounded_fallback(rep)       # deterministic summary
+       suggestions = 2 x rwe-b cards           # _rec_cols_of(..., "rwe-b", k=2)
+```
+
+Properties worth keeping: grounded fallback; `narrate_report.check_grounding` (numbers in prose must exist in facts); real cards from the real serializer. Properties to fix: question-blind; stateless (GET is a canned greeting); one response shape.
+
+## 3. Proposed architecture
+
+```
+CoachTurn(message, echoes[]) 
+  -> IntentRouter (rule cascade over families -> leaf; tri-state resolution)   [D1, D2]
+  -> ConversationState (entities bound from STRUCTURED echoes)                 [D6]
+  -> MicroPlan (static per-leaf tool list + declared dependencies)             [D3]
+  -> ToolLayer (typed ToolResults; memoized; thin wrappers over the engine)    [D4, D12]
+  -> EvidencePack (canonical, deduplicated)                                    [D5]
+  -> Composer (LLM iff RWE_COACH_LLM, else per-leaf template)                  [D11]
+  -> GroundingGate (reply numbers ⊆ pack citations, else template fallback)
+  -> CoachMessage {text, intent, citations, cards, followUps, echo}
+```
+
+New module: `examples/coach_service.py` (router, registry, tools, composer, gate — one module, same style as `evidence_resolver.py`). `narrate_report.py` untouched (the report page legitimately narrates). `_serialize_coach_reply` retained as the v1 path while the flag is off.
+
+## 4. High-level architecture diagram
 
 ```mermaid
 flowchart TD
-    M["user message + transcript window (CoachRequest.history)"] --> IR["Intent Router - coach_service.classify: rule cascade; optional LLM fallback"]
-    IR --> CS["ConversationState - last intent, entities (metric / article / topic), last citations"]
-    CS --> IR
-    IR --> TP["Tool plan per intent (static table INTENTS)"]
-    TP --> TL["Tool layer - thin wrappers over Personalizer / Store / health_report / evidence_resolver"]
-    TL --> EP["EvidencePack - only the numbers/articles this answer needs"]
-    EP --> CO["Composer - LLM phrasing (ANTHROPIC/GEMINI key) with per-intent grounded template fallback"]
-    CO --> GG["Grounding gate - narrate_report.check_grounding: every number in reply must exist in EvidencePack"]
-    GG --> R["CoachMessageModel + intent + citations + cards + followUps"]
+    Q["user message + structured echoes"] --> RT["IntentRouter (rules; optional LLM classify)"]
+    RT --> ST["ConversationState (entities: metric / cards / topic / goals)"]
+    ST --> RT
+    RT --> PL["MicroPlan for the leaf (static, dependency-ordered)"]
+    PL --> TL["Tool layer - wrappers over Personalizer / Store / health_report / evidence_resolver / rec_explain"]
+    TL --> CA[("ToolResult cache - keyed by uid + args + reading_version + corpus signature")]
+    TL --> EP["EvidencePack"]
+    EP --> CO["Composer: template (always) / LLM phrasing (flagged)"]
+    CO --> GG["GroundingGate (check_grounding)"]
+    GG --> OUT["CoachMessage: text + intent + citations + cards + followUps + echo"]
 ```
 
-New module: **`examples/coach_service.py`** (router + tool registry + composers). `narrate_report.py` stays untouched (the report page's narrative is a different, legitimate use). `Backend._serialize_coach_reply` remains as the v1 fallback while the flag is off.
+## 5. Low-level architecture diagram
 
-## 4. Conversational memory
+```mermaid
+flowchart LR
+    subgraph registry ["INTENTS registry (data, not code paths)"]
+        F1["EXPLAIN: metrics | metric | ih_score | echo | viewpoint | recommendations | why_article"]
+        F2["ANALYZE: political | sources | topics | blind_spots"]
+        F3["COMPARE: over_time"]
+        F4["ACT: suggest | weekly_goals | improvement_plan"]
+        F5["PROJECT: forecast | compare_candidates"]
+        F6["CHAT: general"]
+    end
+    registry --> PLANS["per-leaf MicroPlan: [tool, args_from(entities), needs]"]
+    PLANS --> TOOLS["tools: report | shares | metric | recommendations | why_article | history | trend | blind_spots | forecast | goals | story_context"]
+    TOOLS --> ENGINE["existing engine: user_report, _topic/_lean_shares_of, Personalizer.explain/recommendations, er.resolve/story_index, rec_explain.match_band, list_report_snapshots, feed_article_facets, user_settings"]
+```
 
-- **Transport:** the client already holds the thread; `CoachRequest` gains `history: list[{role, content}]` (bounded by the existing `reqlimits` "ai" cap of 16 KB — oldest turns dropped first). No new table, no server session state; stateless server preserved. (A persisted `coach_messages` table is a compatible later step if cross-device threads are wanted.)
-- **Derived state:** the router derives a `ConversationState` from the window each turn: `last_intent`, `entities` (last metric named, last article URL/headline discussed, last topic), `last_citations`.
-- **Follow-up rules:**
-  - Pronoun/ellipsis resolution: "why is *it* low?" → entity = last metric → `explain_specific_metric(cause_mode)`.
-  - "what about *sources*?" after a balance answer → same intent family, new metric.
-  - "show me" / "suggest some" after any analysis → `suggest_articles` scoped to that analysis (e.g., after blind-spot analysis → suggestions from the named blind spot).
-  - Repetition guard: if the same intent+entity was answered in the window, the composer is told `already_covered=True` → it deltas ("as I mentioned, 34/100 — the new part is…") instead of re-stating.
+## 6. Sequence diagrams
 
-## 5. Function interfaces (the tool layer)
+Simple turn:
 
-All tools take `(pers: Personalizer, store: Store, uid: int)` plus intent-specific args, and return plain dicts (the EvidencePack pieces). Existing functions they wrap are named on the right.
+```mermaid
+sequenceDiagram
+    participant U as user
+    participant A as /api/coach
+    participant R as Router
+    participant T as Tools
+    participant C as Composer
+    U->>A: "why is my source diversity low?" + echoes
+    A->>R: classify -> EXPLAIN.metric(sourceDiversity, mode=cause)
+    R->>T: plan [report, metric(sourceDiversity, cause)]
+    T->>T: report cached (reading_version unchanged)
+    T-->>C: EvidencePack {value 55, drivers: top-2 outlets 62%, 4 unread majors}
+    C->>C: template or LLM phrase; GroundingGate check
+    C-->>U: answer + citations + followUps ["suggest unread outlets"]
+```
+
+Follow-up using structured memory:
+
+```mermaid
+sequenceDiagram
+    participant U as user
+    participant R as Router
+    participant T as Tools
+    U->>R: "yes, show me" + echo{lastIntent: EXPLAIN.metric(sourceDiversity), followUps}
+    R->>R: bind: ACT.suggest(want=new_publisher)   %% from last answer's offer
+    R->>T: plan [recommendations(want=new_publisher)]
+    T-->>U: 2 cards (real feed, resolver reasons) + echo{lastCards:[ids]}
+    U->>R: "why the first one?"
+    R->>R: bind "first one" -> lastCards[0].url -> EXPLAIN.why_article
+```
+
+## 7. Component responsibilities
+
+| component | owns | never does |
+|---|---|---|
+| IntentRouter | family→leaf resolution, modifier flags (cause/plan/suggest), entity binding, clarification decision | tool calls, prose |
+| INTENTS registry | leaf → matchers, MicroPlan, template, word budget, followUps | logic |
+| Tool layer | computing facts via existing functions; caveats; provenance | prose, invention, raw ORM/np types |
+| EvidencePack | deduplicated results + state for the composer | mutation |
+| Composer | phrasing within budget; delta-mode when `already_covered` | numbers not in the pack (gate-enforced) |
+| GroundingGate | `narrate_report.check_grounding(reply, pack)`; on failure swap to template | silent acceptance |
+| Memory (echoes) | structured last-N turn artifacts | storing/re-reading prior prose |
+
+## 8. Tool interfaces
+
+**D4 — one typed envelope.**
+*Why:* ad-hoc dicts (v1) make the grounding gate unenforceable (nothing says which numbers are citable) and invite drift. *Alternatives:* raw model objects (leaks SQLAlchemy/NumPy, un-serializable, tempts the composer to compute); free-form dicts (v1; uncheckable); a full pydantic tool-calling schema for LLM function-calls (heavier, and the LLM is optional here — the ROUTER calls tools, not the model). *Tradeoff:* a little ceremony per tool. *Wins because:* citations become machine-checkable, caching gets a natural key, and every tool looks the same to tests.
 
 ```python
-def tool_report(pers, uid) -> dict
-    # hr.user_report via pers._model: scores {overall, echoChamber, viewpointBalance,
-    # emotionalBalance, openMindedness, sourceDiversity}, viewpoint (L/C/R), mean_lean,
-    # top_categories.  == the numbers the dashboard shows (parity by construction).
+@dataclasses.dataclass(frozen=True)
+class Citation:
+    key: str          # "sourceDiversity", "leanShares.left", "trend.viewpointBalance.delta"
+    value: float | int | str
+    source: str       # the computing function, e.g. "health_report.user_report"
 
-def tool_shares(pers, uid) -> dict
-    # api_server._topic_shares_of + _lean_shares_of over the same report -> topicShares,
-    # leanShares.  (C6 — the same shares the cards cite.)
-
-def tool_metric(pers, uid, metric: str, mode: Literal["value","cause"]) -> dict
-    # one metric extracted from tool_report; cause mode adds its drivers:
-    # echoChamber/viewpointBalance -> leanShares + top one-sided outlets (familiarity);
-    # sourceDiversity -> outlet counts (explanation_context familiarity);
-    # openMindedness -> pers.openmindedness(uid) (shownCross/openedCross/thresholds).
-
-def tool_recommendations(pers, uid, want: str | None) -> list[dict]
-    # pers.recommendations(uid) + er.resolve per card (the REAL feed, story slot included).
-    # want filters by resolved type: "bridge"|"story_match"|"new_publisher"|topic name.
-
-def tool_why_article(pers, uid, article: str) -> dict
-    # pers.explain(uid, article=url): served -> strategy + resolver explanation + evidence;
-    # unserved -> exclusion verdict (seen_excluded / below_cutoff+ranks / not_in_graph).
-
-def tool_history(store, uid, days: int = 30) -> dict
-    # store.get_reads -> per-topic/outlet/lean counts for the window (the analytics slices).
-
-def tool_trend(pers, store, uid, metric: str | None) -> dict
-    # store.list_report_snapshots + api_server.build_analytics.metric_trend ->
-    # first/last/delta per metric between snapshot windows.
-
-def tool_blind_spots(pers, store, uid) -> dict
-    # reader's topicShares + familiarity vs store.feed_article_facets() ->
-    # topics with catalog coverage but 0 reads; outlets never read; the lean side
-    # with the lowest share.  Every gap carries its catalog count (provable).
-
-def tool_forecast(pers, uid, action: str, k: int = 3) -> dict
-    # the rec_explain viewpointShift primitive generalized: recompute hr.user_report
-    # with k hypothetical reads appended (e.g. k bridge cards from the live feed)
-    # -> current vs "after" viewpoint/lean deltas, ALWAYS labeled estimated=True.
-
-def tool_goals(store, uid) -> dict
-    # user_settings JSON (reading goal, politicalOpenness, recommendationStrength)
-    # + tool_trend deltas -> inputs for goal/plan composition.
-
-def tool_story_context(store, uid, article: str) -> dict
-    # evidence_resolver.story_index -> the cluster behind an article (for "what else
-    # covers this story" follow-ups).
+@dataclasses.dataclass(frozen=True)
+class ToolResult:
+    tool: str                       # registry name
+    facts: dict                     # JSON-safe payload the composer may verbalize
+    citations: tuple[Citation, ...] # EVERY number the composer may state
+    cards: tuple[dict, ...] = ()    # real rec payloads (serializer output only)
+    caveats: tuple[str, ...] = ()   # "estimated", "n=4 (small sample)", "snapshots span 6 days"
+    provenance: dict = ...          # {readingVersion, corpusSignature, computedAt}
 ```
 
-## 6. Routing logic
+Tool registry (all thin wrappers; the right column is the ONLY place numbers come from):
 
-Deterministic rule cascade — evaluated top-down, first match wins; the optional LLM classifier runs **only** if nothing matches and a key is configured (prompt in §8.1); otherwise fall through to `general_conversation`.
+| tool(args) | wraps |
+|---|---|
+| `report()` | `hr.user_report` via `Personalizer._model` (scores, viewpoint, mean_lean, top_categories) |
+| `shares()` | `api_server._topic_shares_of` + `_lean_shares_of` (C6 parity numbers) |
+| `metric(name, mode)` | slice of `report()`; cause mode adds drivers: lean shares, `explanation_context` familiarity, `Personalizer.openmindedness` |
+| `recommendations(want?)` | `Personalizer.recommendations` + `er.resolve` per card (story slot included); `want` filters by resolved type/topic |
+| `why_article(ref)` | `Personalizer.explain(uid, article=url)` → served evidence or exclusion verdict (+ `story_context` via `er.story_index`) |
+| `history(days)` | `store.get_reads` aggregated to topic/outlet/lean counts |
+| `trend(metric?)` | `store.list_report_snapshots` + the `build_analytics.metric_trend` computation |
+| `blind_spots()` | reader shares/familiarity vs `store.feed_article_facets` (each gap carries its catalog count) |
+| `forecast(action, k)` | report recomputation with k hypothetical reads appended — the shipped `viewpointShift` primitive, generalized; always `caveats=("estimated",)` |
+| `goals(read/write)` | `user_settings.settings` JSON under a `coachGoals` key (existing table, no schema change) |
+
+## 9. Intent interfaces
+
+**D1 — hierarchical intents.** *Why:* the flat 17 duplicated plans and templates across near-identical leaves (echo/viewpoint/IH are one behavior with a parameter) and made growth O(intents). *Alternatives:* keep flat (v1); free-text intents scored by embedding similarity (non-deterministic, new dependency — rejected). *Tradeoff:* one more indirection level. *Wins because:* families carry the plan/template skeletons; adding a leaf is a registry entry.
+
+**D2 — tri-state resolution, no numeric confidence.** *Why:* a rule cascade has no honest probability to report; a fake 0.87 would violate the never-invent rule *inside our own telemetry*. Resolution ∈ {`rule`, `llm`, `unresolved`} (unresolved → one-line clarification with chips). *Alternative:* calibrated classifier scores — real work, no consumer. *Wins because:* observable, honest, and sufficient to route.
 
 ```python
-def classify(msg, state) -> Intent:
-    t = normalize(msg)                                   # lowercase, strip
-    if has_url(t) or refers_to_card(t, state):           # "this article", headline echo
-        if any(w in t for w in ("why", "how come")):     return WHY_ARTICLE
-        if "story" in t:                                  return WHY_ARTICLE  # story ctx variant
-    if mentions(t, METRIC_LEXICON):                       # "echo chamber", "viewpoint", ...
-        m = extract_metric(t, state)                      # state resolves "it"/"that score"
-        if m == "information_health":                     return EXPLAIN_IH_SCORE
-        if m == "echo_chamber":                           return EXPLAIN_ECHO
-        if m == "viewpoint_balance":                      return EXPLAIN_VIEWPOINT
-        if asks_future(t):                                return FORECAST      # "could improve"
-        return EXPLAIN_SPECIFIC_METRIC
-    if asks(t, "suggest", "recommend", "show me", "give me articles"):  return SUGGEST_ARTICLES
-    if asks(t, "why") and mentions(t, "recommend"):       return EXPLAIN_RECOMMENDATIONS
-    if mentions(t, "blind spot", "missing", "not reading", "haven't read"): return FIND_BLIND_SPOTS
-    if mentions(t, "balance", "left", "right", "political") and asks_analysis(t): return ANALYZE_POLITICAL
-    if mentions(t, "source", "outlet", "publisher") and asks_analysis(t):  return ANALYZE_SOURCES
-    if mentions(t, "topic", "subject", "category") and asks_analysis(t):   return ANALYZE_TOPICS
-    if mentions(t, "compare", "last week", "last month", "trend", "changed"): return COMPARE_OVER_TIME
-    if mentions(t, "goal") and mentions(t, "week"):       return WEEKLY_GOALS
-    if asks(t, "how") and mentions(t, "improve", "better", "fix"):        return IMPROVEMENT_PLAN
-    if asks_future(t) and mentions(t, "score", "improve"):                return FORECAST
-    if mentions(t, "metric", "score", "report") and asks(t, "explain", "what do"): return EXPLAIN_METRICS
-    if mentions(t, "recommendation", "feed") and asks(t, "explain", "what", "how work"): return EXPLAIN_RECOMMENDATIONS
-    return llm_classify(msg, state) or GENERAL_CONVERSATION
+@dataclasses.dataclass(frozen=True)
+class IntentSpec:
+    family: str                     # EXPLAIN | ANALYZE | COMPARE | ACT | PROJECT | CHAT
+    leaf: str
+    matchers: tuple[Matcher, ...]   # ordered keyword/pattern predicates (pure functions)
+    plan: tuple[PlanStep, ...]      # static MicroPlan (see §12)
+    template: str                   # grounded fallback, str.format over the pack
+    budget: int                     # composer word budget
+    follow_ups: tuple[str, ...]     # default offers (may be overridden by tools)
+
+INTENTS: dict[str, IntentSpec]      # "EXPLAIN.metric", "ACT.suggest", ...  (D10: plugin point)
 ```
 
-Global modifiers (apply to whatever intent wins): **"why" → cause mode** (drivers, not just values); **"how" → plan mode** (actions, not description); **"suggest" → attach cards**. Ambiguity between two matches is resolved by `state.last_intent` affinity, then by asking a one-line clarifying question (a legitimate `general_conversation` reply).
+**Modifiers** (orthogonal to leaf, set by the router): `mode=cause` ("why…"), `mode=plan` ("how…"), `attach_cards` ("suggest/show"). **Multi-intent questions** ("am I balanced and what should I read?"): the router picks the *primary* leaf (first match), and if a second family matches, appends that leaf's plan steps **only when the combined plan stays ≤ 4 steps**; otherwise answers the primary and offers the secondary as a followUp chip. This is the deliberate, bounded alternative to a free planner.
 
-## 7. Intent catalog
+## 10. Evidence Pack schema
 
-Summary table, then per-intent detail with an example. (Numbers in examples are illustrative.)
+**D5 — canonical, deduplicated.** Tools declare needs (`metric` needs `report`); the executor resolves shared results once (§12). The pack is what the composer sees — nothing else.
 
-| # | intent | tools | response shape |
+```python
+EvidencePack = {
+  "intent":   {"family": str, "leaf": str, "modifiers": [...], "entities": {...},
+               "resolution": "rule" | "llm" | "unresolved"},
+  "results":  [ToolResult, ...],          # plan order; shared deps appear once
+  "state":    {"already_covered": bool,   # same leaf+entities answered in echo window
+               "prior_citations": [Citation, ...]},   # for delta phrasing
+  "budget":   int,
+}
+```
+
+It expresses all six required content kinds without special cases: explanations (`why_article`/`metric`), recommendations (`recommendations.cards`), trends (`trend`), blind spots (`blind_spots`), projections (`forecast` + caveat), recommendation reasoning (cards carry their resolver explanation verbatim).
+
+## 11. Conversation flow (memory)
+
+**D6 — structured echoes, never prose re-reading.** *Why:* the hallucination vector in chat systems is re-interpreting prior free text. Every coach reply already computes structure (intent, citations, cards, goals); the client echoes back the last N of exactly those (`echo` field), and the router binds pronouns against them: "it" → `entities.metric`; "those recommendations"/"the first one" → `lastCards[i]`; "my goals" → `goals`. The composer receives the current pack + `prior_citations` — never the previous prose. *Alternatives:* (a) v1 prose transcript — rejected as the hallucination vector; (b) server-side `coach_messages` table — durable cross-device threads, but new schema, retention policy, privacy surface; deferred, compatible later; (c) LLM-summarized memory — non-deterministic, rejected. *Tradeoff:* stylistic continuity is weaker (the coach can't quote its own phrasing). *Wins because:* every follow-up binds to machine-verifiable artifacts; a follow-up can not import an unverified fact.
+
+Bounds: echoes capped by the existing `reqlimits` "ai" budget (16 KB); oldest dropped first; `goals` persisted in `user_settings` so truncation never loses them. Clarification: unresolved entity or unresolved intent → deterministic one-liner + chips (counts as `CHAT.general`).
+
+## 12. Planner flow
+
+**D3 — static micro-plans, not an LLM planner.** *Why:* the coach's task space is enumerable (this document enumerates it); determinism and the no-LLM path are product invariants; plans-as-data are unit-testable. A planner (LLM emits a tool sequence) buys open-ended composition at the cost of all three, plus latency and prompt-injection surface. *Alternatives:* (a) v1 intent→single-tool→template — too rigid for compound asks and shared deps; (b) full agent loop — rejected above; (c) **chosen:** per-leaf `PlanStep` lists with `needs`, executed by a tiny dependency resolver (a fixed DAG, no search). *Tradeoff:* genuinely novel compositions need a registry edit. *Wins because:* it is exactly as dynamic as the product needs and no more.
+
+```python
+@dataclasses.dataclass(frozen=True)
+class PlanStep:
+    tool: str
+    args: Callable[[Entities], dict]    # pure; reads router entities
+    needs: tuple[str, ...] = ()         # tools whose results this step may read
+
+def execute(plan, ctx) -> list[ToolResult]:
+    done: dict[str, ToolResult] = {}
+    for step in plan:                    # already dependency-ordered at registry-build time
+        done[step.tool] = CACHE.get_or_compute(ctx.uid, step, deps={k: done[k] for k in step.needs})
+    return list(done.values())
+```
+
+Example plans: `EXPLAIN.metric` → `[report, metric]`; `ACT.improvement_plan` → `[report, metric(lowest, cause), recommendations(want=driver), goals(read)]`; `PROJECT.compare_candidates` → `[recommendations, forecast(per-card, k≤5)]`.
+
+## 13. Data flow
+
+```
+user_settings/reads/rec_events/report_snapshots/feed_articles   (existing tables; coach ADDS NO TABLE)
+        │ read-only (except goals under user_settings.settings["coachGoals"])
+        ▼
+Personalizer._model (cached per reading_version)  ->  tools  ->  ToolResult cache (D12)
+        ▼
+EvidencePack -> Composer -> GroundingGate -> CoachMessage(JSON) -> web coach page
+                                                   │
+                                        structured echo returns next turn
+```
+
+**D12 — ToolResult cache.** Key: `(uid, tool, args_hash, reading_version, corpus_signature)` — the same invalidation keys the codebase already trusts (`Personalizer._cache`, `candidate_signature`). TTL irrelevant (keys change when inputs change); LRU-bounded per process. *Why:* `report` is needed by most plans; forecasts recompute it k times. *Alternative:* no cache (fine at beta scale) — accepted as v1-of-v2 if simpler, but the key design costs nothing now.
+
+## 14. Request lifecycle
+
+1. `POST /api/coach` (auth exactly as today: session header / internal secret / token).
+2. `reqlimits` bounds message+echo; `ratelimit` unchanged.
+3. Router: normalize → entity binding from echoes → family/leaf/modifiers (tri-state).
+4. Plan lookup → executor (cache-aware) → EvidencePack.
+5. Composer: if `RWE_COACH_LLM` and key → LLM phrase (temperature 0.3, budget-capped) → GroundingGate; any failure/timeout (2 s) → per-leaf template.
+6. Reply assembled: `{content, intent, citations, cards, followUps, echo}`; structured log event `{"event":"coach_turn", intent, resolution, tools, ms, grounded, fallback}`.
+7. Failure ladder: tool exception → omit its result, template acknowledges the gap ("I can't compute trends right now") — **never** invents; router unresolved → clarification; total-turn deadline → template on whatever the pack holds.
+
+## 15. API contracts
+
+```jsonc
+// POST /api/coach   (request)
+{ "message": "why is it low?",
+  "echo": {                       // OPTIONAL; absent = cold turn (back-compatible)
+    "turns": [ { "role": "coach", "intent": "EXPLAIN.metric",
+                 "entities": {"metric": "sourceDiversity"},
+                 "citations": [{"key":"sourceDiversity","value":55}],
+                 "cardIds": ["<canonical-url>", "..."] } ],
+    "goals": { "week": "2026-W28", "items": [ ... ] }   // echoed if client holds them
+  } }
+
+// response (CoachMessageModel, additive fields)
+{ "role": "coach", "content": "...",
+  "intent": "EXPLAIN.metric",
+  "resolution": "rule",
+  "citations": [ {"key": "sourceDiversity", "value": 55, "source": "health_report.user_report"} ],
+  "cards": [ /* RecommendationModel, verbatim serializer output */ ],
+  "followUps": ["Suggest outlets I've never read"],
+  "echo": { /* the structured artifact the client should send back next turn */ } }
+```
+
+Back-compat: old clients send `{message}` and render `content` — unchanged behavior; `GET /api/coach` greeting gains `followUps` seeded from the weakest metric.
+
+## 16. Deployment architecture
+
+No new services, containers, threads, or tables. `coach_service.py` runs in-process in the API container (compose `api` service unchanged); flags via env like every other feature; LLM calls use the existing key plumbing (`ANTHROPIC_API_KEY`/`GEMINI_API_KEY` through `narrate_report.make_text_caller`). The Colab beta validates it exactly like `RWE_STORY_SLOT` (env in cell 2).
+
+## 17. Technology stack
+
+Unchanged: Python/FastAPI/SQLAlchemy/SQLite; optional Anthropic/Gemini text call (already a dependency path); no embeddings, no vector store, no new framework. The single new "technology" is a design discipline: plans-as-data + typed evidence.
+
+## 18. Testing strategy
+
+- **Router table tests** (pure, offline): every leaf × 3 phrasings; modifier detection; entity binding incl. pronouns and "first one"; multi-intent bounding; unresolved → clarification. One parametrized file, `tests/test_coach_router.py`.
+- **Tool parity tests:** each tool's citations equal the surface it mirrors (report numbers == dashboard; shares == C6 card facts; why_article == explain endpoint) on a seeded store — parity by construction, verified anyway. `tests/test_coach_tools.py`.
+- **Grounding-gate test:** a stub composer emitting an un-cited number must be replaced by the template.
+- **Golden conversations:** one fixture per leaf + the two memory flows from §6 (suggest→why-first-one; goals→next-week-progress), asserted on intent, cited keys, card presence — not prose bytes (templates may be reworded). `tests/test_coach_conversations.py`.
+- **Live smoke:** TestClient turn with flag on/off — off is byte-identical to v1 (the same guarantee the story-slot tests pin).
+
+## 19. Rollout plan
+
+1. Commit A: `coach_service.py` (router+registry+tools+templates+gate) + router/tool tests — no wiring.
+2. Commit B: API wiring behind `RWE_COACH_V2` + payload additions + golden conversations + off-is-identical test.
+3. Commit C: web coach page renders cards/followUps/chips + echo plumbing (tsc + i18n catalogs ×5).
+4. Beta: flag on in Colab cell 2; walk the §6 flows + all leaves against the real corpus; log review (`coach_turn` events).
+5. `RWE_COACH_LLM` on (if keys) after template paths are proven; default-on decision afterwards — the same ladder `RWE_FEED_REQUIRE_DATED` and `RWE_STORY_SLOT` used.
+
+## 20. Future roadmap (extensibility proofs, D10)
+
+Each future feature = registry entry + at most one new tool; core untouched:
+
+| feature | family.leaf | tools it composes | new engine capability needed? |
 |---|---|---|---|
-| 1 | explain_metrics | tool_report | one line per metric + what it measures; ≤120 words |
-| 2 | explain_specific_metric | tool_metric(value/cause) | value + 2–3 drivers + 1 follow-up offer |
-| 3 | explain_recommendations | tool_recommendations | feed mix by explanation type + how slots work |
-| 4 | suggest_articles | tool_recommendations(want) | 2–3 cards, each with its resolver reason |
-| 5 | why_article | tool_why_article (+tool_story_context) | the card's evidence chain, or the truthful exclusion |
-| 6 | analyze_political | tool_shares + tool_metric(cause) | L/C/R split + strongest driver + optional bridge offer |
-| 7 | analyze_sources | tool_metric(sourceDiversity,cause) + tool_history | outlet counts, concentration, never-read majors |
-| 8 | analyze_topics | tool_shares + tool_history | top topics with %, thin topics with catalog counts |
-| 9 | find_blind_spots | tool_blind_spots | 2–3 gaps, each with catalog-count proof + card offer |
-| 10 | compare_over_time | tool_trend | per-metric first→last deltas; only metrics that moved |
-| 11 | weekly_goals | tool_goals + tool_blind_spots | 2–3 SMART goals bound to real gaps + current goal setting |
-| 12 | improvement_plan | tool_metric(cause) + tool_recommendations + tool_goals | lowest metric → 3 concrete actions with cards/sliders |
-| 13 | explain_ih_score | tool_report | composition of overall + the one dominant drag |
-| 14 | explain_echo | tool_metric(echoChamber,cause) | score + one-sidedness drivers |
-| 15 | explain_viewpoint | tool_metric(viewpointBalance,cause) + tool_shares | score + L/C/R shares |
-| 16 | forecast | tool_forecast | current → estimated-after deltas, labeled estimates |
-| 17 | general_conversation | none (or tool_report if pivotable) | short helpful reply + 2 capability follow-ups |
+| debate mode ("argue both sides of this story") | PROJECT.debate | `story_context` (cluster's L/R members) + `why_article` ×2 | none — clusters + lean already exist |
+| source comparison ("Guardian vs Fox for me") | ANALYZE.source_compare | `history` + `shares` + `outlet_registry` lean/familiarity | none |
+| article comparison ("which of these two?") | PROJECT.compare_candidates | `why_article` ×2 + `forecast` per candidate | none |
+| richer rec explanation | EXPLAIN.why_article (exists) | + `rec_explain.match_band`, byStrategy table | none |
+| timeline replay ("how did my month evolve?") | COMPARE.replay | `trend` + `history` bucketed by week | none |
+| misinformation coaching | (honest caveat) | — | **yes — claim/fact-check data does not exist in this system**; the architecture holds (new tool + leaf) but the data layer must come first. Do not promise this until an upstream source exists. |
 
-**1 · explain_metrics** — the only intent allowed to survey the report, and still compact.
-> U: “What do all these metrics mean?”
-> C: “Five measurements of your reading, all from your recorded articles: **Information Health 61/100** (the roll-up), **Echo Chamber 34** (how one-sided your political reading is — lower is more one-sided), **Viewpoint Balance 41** (your left/center/right spread), **Source Diversity 55** (how many distinct outlets), **Open-Mindedness n/a** (activates after you've opened 3 cross-perspective recommendations; you've opened 1). Ask about any of them — or ‘how do I improve’ for a plan.”
+### Explainability appendix (D7 — canonical Explanation model)
 
-**2 · explain_specific_metric** (with cause mode on "why")
-> U: “Why is my source diversity low?”
-> C: “55/100. Two drivers: 62% of your reads come from just two outlets (The Guardian 9, Fox News 5), and you haven't read 4 of the catalog's major publishers at all (NPR, BBC, AP, The Hill). Want suggestions from outlets you've never read?” *(cards offered, not dumped)*
-> U: “yes” → routed to suggest_articles(want="new_publisher") via memory.
+Every card the coach surfaces carries, and every "why" answer is composed from, one shape — all fields **measured or explicitly estimated**, none LLM-generated:
 
-**3 · explain_recommendations**
-> U: “How does my feed get picked?”
-> C: “Three ranking strategies fill your feed — Bridging (6 slots, political articles from your opposite side), Discovery (4, widens sources), For-you (4, balanced blend) — then one ‘Same story’ card can replace the weakest slot when another outlet covers a story you read. Right now your feed is 6 Bridging, 2 Discovery, 1 Topic, 1 Same-story. Each card's explanation is provable — ask ‘why was X recommended’ about any of them.”
-
-**4 · suggest_articles** — always invokes the real engine, never invents.
-> U: “Suggest something outside my bubble.”
-> C: “From your live feed, the two strongest cross-perspective cards: **Fox News — ‘Platner terminates Senate bid’** (right-leaning; your political reading is 72% left) and **NY Post — ‘Michigan Senate hopeful on AIPAC’** (right; an outlet you've never read). Both are in your Recommendations tab.” *(cards attached with resolver reasons)*
-
-**5 · why_article** — the drawer's answer, conversationally; unserved gets the truthful exclusion.
-> U: “Why did you recommend the BBC Graham piece?”
-> C: “It's a ‘Same story’ card: you read this story 3 times (Fox Jul 12, NYT, Guardian) and BBC is a publisher you haven't seen on it — same validated story cluster, different outlet, newest coverage. That's the strongest evidence type we have.”
-> U: “And why not the Reuters one?” → tool_why_article: “Reuters' piece ranked #68 by Discovery against a top-4 cutoff — it lost on ranking, and the story card for that cluster was already taken.”
-
-**6 · analyze_political**
-> U: “Am I politically balanced?”
-> C: “Not currently: your political reads split 72% left / 8% center / 20% right (Viewpoint Balance 41/100). The imbalance is concentrated in Politics — your World reading is nearly even. One good-faith right-side read per day would move the split fastest. Want the two best candidates from your feed?”
-
-**7 · analyze_sources**
-> U: “How diverse are my sources?”
-> C: “12 outlets in 30 days, but concentrated: Guardian 34%, Fox 19% — the top two are over half. You've never read NPR, BBC, AP or The Hill despite full catalog coverage. Source Diversity 55/100.”
-
-**8 · analyze_topics**
-> U: “What topics do I read?”
-> C: “Politics 42%, Sports 30%, World 12% — those three are 84% of your month. Thin: Business (1 read) and Science/Health (0) despite 40+ catalog articles each. Topic spread is what your Discovery slots widen.”
-
-**9 · find_blind_spots**
-> U: “What am I missing?”
-> C: “Three measurable gaps: (1) center outlets — 8% of your political reading, though AP/BBC/The Hill publish daily here; (2) Science & Health — 0 reads vs 47 catalog articles this month; (3) right-side coverage of stories you followed — you read the Graham story 3× from left/right tabloid, never a center wire. Want a card for any of these?”
-
-**10 · compare_over_time**
-> U: “Am I improving?”
-> C: “Since June 12: Viewpoint Balance 33 → 41 (+8, your biggest gain), Echo Chamber 29 → 34 (+5), Source Diversity flat at 55, overall 56 → 61. The 4 cross-perspective cards you opened account for most of the viewpoint move.”
-
-**11 · weekly_goals**
-> U: “Give me goals for this week.”
-> C: “Three, sized to your data: (1) open 2 Bridging cards (you open ~1/week; Open-Mindedness needs 3 total to activate); (2) read 1 article from an outlet you've never used — NPR or AP; (3) 1 Science/Health read (currently 0%). Your reading goal is set to 5 articles/week — these fit inside it.”
-
-**12 · improvement_plan**
-> U: “How do I get my score up?”
-> C: “Your overall 61 is dragged mainly by Viewpoint Balance (41). Plan: (a) one right-of-center read per day — the feed keeps 6 ready; (b) raise Political openness one notch in Settings (it widens the bridge slice); (c) finish the Graham story from BBC (center) — story follow-ups are the easiest cross-reads. Re-check ‘compare over time’ in a week; +6–10 viewpoint points is realistic at that pace.” *(estimated, and labeled so)*
-
-**13 · explain_ih_score**
-> U: “What's my Information Health score actually made of?”
-> C: “61/100 — a weighted roll-up of the four sub-scores; your Emotional Balance (74) and Echo Chamber (34) are the top and bottom. It's computed only from your recorded reads (n=23 this month), nothing inferred.”
-
-**14 · explain_echo / 15 · explain_viewpoint** — as intent 2, pinned to that metric; viewpoint always includes the L/C/R shares (the same numbers the bridge cards cite).
-
-**16 · forecast**
-> U: “What would happen if I read more center sources?”
-> C: “Estimated: appending 3 center reads to your current history moves your split from 72/8/20 to about 62/21/17 and Viewpoint Balance from 41 to ≈49. That's the same ‘after’ computation your card drawer shows — an estimate, not a promise.”
-
-**17 · general_conversation** — greeting/thanks/off-topic: short, friendly, and steers to capabilities; never dumps the report.
-
-## 8. Prompts
-
-**8.1 Classifier fallback prompt** (only when rules don't match AND a key exists; temperature 0; output = one label):
-> You route questions for a reading-health coach. Choose exactly one intent for the LAST user message, given the conversation. Intents: [17 labels + one-line definitions]. Prefer the more specific intent. If the message references “it/that” use the conversation to resolve what it refers to. Reply with the label only.
-
-**8.2 Composer system prompt** (phrasing only; the numbers are already computed):
-> You are the Information Health reading coach. You receive an EVIDENCE pack (measured numbers, article cards with reasons) and an intent. Write a reply that answers ONLY the user's question, in ≤ {intent_budget} words. Rules: every number you state must appear verbatim in EVIDENCE; never invent articles, scores, or causes; estimates must be called estimates; do not summarize the whole report unless intent=explain_metrics; if already_covered=true, acknowledge and add only what's new; end with at most one concrete follow-up offer.
-> *(The reply is then checked with `narrate_report.check_grounding` — any ungrounded number falls back to the template.)*
-
-**8.3 Grounded templates** — one per intent, `str.format` over the EvidencePack (the no-key path and the grounding-failure path). Same discipline as `_grounded_fallback` today, but per intent instead of one-size-fits-all.
-
-## 9. API and payload changes (additive, back-compatible)
-
+```python
+Explanation = {
+  "why":        er.resolve(rec, ctx, index),          # P1..P6 type + message + evidence (verbatim)
+  "strategy":   {"chosenBy", "byStrategy": {s: {rank, inSlice}}},   # rec_explain
+  "improves":   {"metric", "current", "projected", "delta", "estimated": True},  # viewpointShift-style recompute
+  "confidence": {"band": rec_explain.match_band(rank, n),           # strong|good|candidate
+                 "basis": "rank percentile"},                        # measured, never a made-up %
+  "provenance": {"storyId?", "readUrl?", "readingVersion", "corpusSignature"},
+}
 ```
-POST /api/coach
-  request:  { message: str, history?: [{role: "user"|"coach", content: str}] }   # bounded by reqlimits "ai"
-  response: CoachMessageModel + {
-      intent: str,                       # the routed label (also great for analytics)
-      citations: [{metric, value}],      # numbers used, for the UI to chip
-      cards: [RecommendationModel],      # real articles, when suggested
-      followUps: [str]                   # tappable next questions
-  }
-```
-Old clients ignore the new fields; `GET /api/coach` greeting gains `followUps` seeded from the reader's weakest metric. Web: `web/app/coach` renders `cards` with the existing card component and `followUps` as chips.
 
-## 10. Rollout & validation
+*Why this shape:* it is the union of three things that already exist (resolver output, explain diagnostics, the drawer's projection) — the design names the composite rather than inventing a parallel one. *Alternative:* a new free-text "explanation generator" — rejected; it would be the narrator problem reborn.
 
-- **Flag:** `RWE_COACH_V2` (default off) selects `coach_service.reply()` over `_serialize_coach_reply`; off = byte-identical current behavior.
-- **Tests:** router unit tests (every intent + follow-up resolution + modifier rules — fully offline); tool tests against a seeded store (numbers equal the report/dashboard — parity by construction); grounding-gate test (a composer that invents a number must fall back); golden conversations (one fixture per intent, `tests/test_coach_service.py`, same style as the rec goldens).
-- **Beta validation:** flag on in the Colab beta; walk the 17 example conversations against the real corpus; verify no reply restates the full report unprompted.
-- **Out of scope:** persisted threads (table sketched, not needed for v1), voice/UI redesign, multi-user memory, new metrics.
+### Forecasting appendix (D8)
 
-## 11. Risks
+`forecast` = recompute `hr.user_report` over the augmented history plus k hypothetical reads (the exact computation the drawer's `viewpointShift.after` ships today), diff the scores, label `estimated`. "Which helps more?" ranks candidates by projected delta (k ≤ 5 recomputes; report math, not model retraining — cheap). Explicitly rejected: reusing `rwe/opinion_dynamics.py` or `agent_sim` for user-facing forecasts — research simulators with different semantics; presenting their outputs as personal predictions would violate the grounding rules.
 
-- **Rule router misroutes** → the follow-up chips make recovery one tap; `intent` in the payload makes misroutes measurable from logs.
-- **LLM latency/cost on classify** → rules handle the overwhelming majority; the LLM path is rare and optional.
-- **Forecast over-trust** → every forecast phrase carries "estimated", and the tool reuses the drawer's existing, already-shipped computation rather than a new model.
-- **Memory cap** → 16 KB window ≈ 20–30 turns; the derived state keeps follow-ups working even after truncation.
+### Coaching-without-gamification appendix (D9)
+
+Rules: every coaching statement is a measured fact or a labeled estimate; **no points, badges, or streak mechanics**. "Streaks" are reported as *consistency facts* ("you've read 5+ articles four weeks running — your goal is 5/week") from `reads` + the existing reading goal in `user_settings`; "achievements" are *factual milestones* surfaced by `trend`/`history` ("first center-outlet read this month"); progress is snapshot deltas (`report_snapshots`). Goals are 2–3 items, each bound to a measured gap and checkable next week by `COMPARE.over_time` — which is what makes them coaching rather than gamification: the reward is the evidence.
