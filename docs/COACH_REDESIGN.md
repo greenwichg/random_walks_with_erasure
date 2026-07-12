@@ -394,7 +394,7 @@ any composed number not present in the evidence.
   explicit user confirmation; a coach turn has zero side effects.
 - Echoes are versioned (`{"v": 1, ...}`; unknown version = ignored) and BINDING-ONLY — never
   citable; every stated number is recomputed each turn.
-- Metric leaves collapsed into parameterized `EXPLAIN.metric` (14 leaves total).
+- Metric leaves collapsed into parameterized `EXPLAIN.metric` (15 leaves total).
 - Proactive seams reserved at zero cost: `coach_turn(intent, entities, echo)` is the internal
   entry point (the router is one caller); the greeting later runs the same pipeline via a
   deterministic trigger ladder (M6). Proactive content always passes the same tools -> gate path.
@@ -405,7 +405,7 @@ any composed number not present in the evidence.
 | milestone | Definition of Done (objective, all required) |
 |---|---|
 | M0 contract pin | `tests/test_coach_v1_contract.py` passes on HEAD with NO production change; it pins greeting shape, reply shape, and message-blindness (identical content/citations/suggestions for different questions, no LLM key); full suite green |
-| M1 router+registry | `examples/coach_service.py` exists, imported by NO production module; router tests cover all 14 leaves (>=3 phrasings each), modifiers, pronoun/ordinal/affirmative binding, echo version guard, multi-intent bounding, unresolved->clarify; full suite green |
+| M1 router+registry | `examples/coach_service.py` exists, imported by NO production module; router tests cover all 15 leaves (>=3 phrasings each), modifiers, pronoun/ordinal/affirmative binding, echo version guard, multi-intent bounding, unresolved->clarify; full suite green |
 | M2 tools | every tool returns a ToolResult with >=1 citation; parity tests prove citations equal their source surfaces; a coach turn performs ZERO store writes; full suite green |
 | M3 composer+gate | one golden conversation per leaf passes offline (structure asserted, never prose); registry self-check green (template fields ⊆ plan keys); partial-failure test shows an admitted gap with no invented number; `coach_turn(intent, entities, echo)` entry point exists; full suite green |
 | M4 API wiring | flag OFF: M0 contract suite passes byte-identically; flag ON: payload carries intent/resolution/followUps/echo + populated content/citations/suggestions; live TestClient turn verified both states; full suite green |
