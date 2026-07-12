@@ -1,18 +1,37 @@
 "use client";
 
-import { motion } from "framer-motion";
+import * as React from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import { Bot } from "lucide-react";
-import type { CoachMessage as TMessage } from "@/types/domain";
+import type { CoachMessage as TMessage, FeedbackAction, Recommendation } from "@/types/domain";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { LeanBadge } from "@/components/shared/article-badges";
+import { RecommendationCard } from "@/components/recommendations/recommendation-card";
+import { citationLabelKey } from "@/lib/coach-presentation";
 import { useTranslation } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
-/** One chat bubble. Assistant messages can carry grounded citations + article suggestions. */
-export function CoachMessageBubble({ message }: { message: TMessage }) {
+/** One chat bubble. Assistant messages can carry grounded citations + article suggestions;
+ * Coach v2 replies (RWE_COACH_V2) may additionally carry full recommendation cards — rendered
+ * with the SAME RecommendationCard as the feed (no parallel card UI). Every v2 field is
+ * optional: a v1 message renders exactly as before. */
+export function CoachMessageBubble({
+  message,
+  onCardAction,
+  onCardOpen,
+}: {
+  message: TMessage;
+  /** Feedback for an embedded card (same wiring as the recommendations page). */
+  onCardAction?: (articleId: string, action: FeedbackAction) => void;
+  /** Reception signal when an embedded card is opened. */
+  onCardOpen?: (rec: Recommendation) => void;
+}) {
   const { t } = useTranslation();
   const isUser = message.role === "user";
+  // dismissing an embedded card hides it from THIS bubble only (the ignore signal still fires)
+  const [dismissed, setDismissed] = React.useState<Set<string>>(new Set());
+  const cards = (message.cards ?? []).filter((c) => !dismissed.has(c.article.id));
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
@@ -44,15 +63,41 @@ export function CoachMessageBubble({ message }: { message: TMessage }) {
 
         {message.citations && message.citations.length > 0 && (
           <div className="flex flex-wrap gap-1.5">
-            {message.citations.map((c) => (
-              <Badge key={c.metric} variant="secondary" className="font-normal">
-                {t(`metric.${c.metric}.label`)}: <span className="font-semibold">{c.value}</span>
-              </Badge>
-            ))}
+            {message.citations.map((c, i) => {
+              // v1 cites report metrics (catalog label); v2 may cite any engine evidence key,
+              // shown as the raw key — honest and greppable, never a broken catalog lookup.
+              const labelKey = citationLabelKey(c.metric);
+              return (
+                <Badge key={`${c.metric}-${i}`} variant="secondary" className="font-normal">
+                  {labelKey ? t(labelKey) : c.metric}: <span className="font-semibold">{c.value}</span>
+                </Badge>
+              );
+            })}
           </div>
         )}
 
-        {message.suggestions && message.suggestions.length > 0 && (
+        {/* Coach v2: full recommendation cards — the feed's own card component, so Read /
+            Save / Why? / feedback all behave identically to the recommendations page. */}
+        {cards.length > 0 && (
+          <div className="mt-1 w-full space-y-3">
+            <AnimatePresence mode="popLayout">
+              {cards.map((rec, i) => (
+                <RecommendationCard
+                  key={rec.article.id}
+                  rec={rec}
+                  index={i}
+                  onAction={(action) => onCardAction?.(rec.article.id, action)}
+                  onOpen={() => onCardOpen?.(rec)}
+                  onDismiss={() => setDismissed((prev) => new Set(prev).add(rec.article.id))}
+                />
+              ))}
+            </AnimatePresence>
+          </div>
+        )}
+
+        {/* v1 suggestions (compact rows). v2 mirrors its cards here too — skip the duplicate
+            (also when every card was dismissed: a dismissal must not resurface the article). */}
+        {!message.cards?.length && message.suggestions && message.suggestions.length > 0 && (
           <div className="mt-1 w-full space-y-2">
             {message.suggestions.map((a) => (
               <div key={a.id} className="rounded-lg border bg-muted/30 p-3">

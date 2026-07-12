@@ -565,6 +565,10 @@ M = {
     "coach.s6": ("Generate my weekly goals", "Genera mis objetivos semanales",
                  "Générez mes objectifs hebdomadaires", "Erstellen Sie meine Wochenziele",
                  "Gere minhas metas semanais"),
+    # Coach v2 (M5): accessible name for the reply-specific follow-up chip row (the chip texts
+    # themselves come from the engine reply verbatim, like the message content).
+    "coach.followUps": ("Suggested follow-ups", "Preguntas sugeridas", "Questions suggérées",
+                        "Vorgeschlagene Anschlussfragen", "Perguntas sugeridas"),
 
     # ---- discover ----
     "discover.title": ("Discover", "Descubrir", "Découvrir", "Entdecken", "Descobrir"),

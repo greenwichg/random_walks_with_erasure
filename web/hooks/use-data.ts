@@ -238,11 +238,12 @@ export function useRevokeApiToken() {
   });
 }
 
-/** Sends a coach message and appends the reply to the cached transcript. */
+/** Sends a coach message (+ the carried echo, Coach v2) and appends the reply to the cache. */
 export function useCoachSend() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (message: string) => services.coachSend(message),
+    mutationFn: ({ message, echo }: { message: string; echo?: Record<string, unknown> }) =>
+      services.coachSend(message, echo),
     onSuccess: (reply) => {
       qc.setQueryData<import("@/types/domain").CoachMessage[]>(queryKeys.coach, (prev) => [
         ...(prev ?? []),

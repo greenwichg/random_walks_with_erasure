@@ -5,7 +5,8 @@ import { Send, Sparkles } from "lucide-react";
 import type { CoachMessage } from "@/types/domain";
 import { services } from "@/services";
 import { useTranslation } from "@/lib/i18n";
-import { useCoachHistory } from "@/hooks/use-data";
+import { useCoachHistory, useFeedback, useOpenRecommendation } from "@/hooks/use-data";
+import { lastEcho, activeFollowUps } from "@/lib/coach-presentation";
 import { CoachMessageBubble, CoachTyping } from "@/components/coach/coach-message";
 import { Button } from "@/components/ui/button";
 
@@ -19,6 +20,9 @@ export default function CoachPage() {
   const [thinking, setThinking] = React.useState(false);
   const scrollRef = React.useRef<HTMLDivElement>(null);
   const seeded = React.useRef(false);
+  // embedded-card feedback + reception: the SAME mutations the recommendations page uses
+  const feedback = useFeedback();
+  const openRec = useOpenRecommendation();
 
   // Seed the transcript from history once.
   React.useEffect(() => {
@@ -41,11 +45,14 @@ export default function CoachPage() {
       content,
       createdAt: new Date().toISOString(),
     };
+    // Coach v2: round-trip the latest structured echo so "it" / "the first one" resolve
+    // server-side. Undefined on v1 transcripts — the request stays exactly today's shape.
+    const echo = lastEcho(messages);
     setMessages((m) => [...m, userMsg]);
     setInput("");
     setThinking(true);
     try {
-      const reply = await services.coachSend(content);
+      const reply = await services.coachSend(content, echo);
       setMessages((m) => [...m, reply]);
     } catch {
       setMessages((m) => [
@@ -62,7 +69,10 @@ export default function CoachPage() {
     }
   };
 
-  const showSuggestions = messages.length <= 1;
+  // Coach v2 offers reply-specific follow-ups; the static starters keep their exact v1
+  // behaviour (first turn only) and never compete with a live offer.
+  const followUps = thinking ? null : activeFollowUps(messages);
+  const showSuggestions = messages.length <= 1 && !followUps;
 
   return (
     <div className="mx-auto flex h-[calc(100vh-4rem)] w-full max-w-3xl flex-col px-4 sm:px-6">
@@ -77,13 +87,33 @@ export default function CoachPage() {
         </div>
 
         {messages.map((m) => (
-          <CoachMessageBubble key={m.id} message={m} />
+          <CoachMessageBubble
+            key={m.id}
+            message={m}
+            onCardAction={(articleId, action) => feedback.mutate({ articleId, action })}
+            onCardOpen={(rec) =>
+              openRec.mutate({ articleId: rec.article.id, crossCutting: rec.crossCutting })
+            }
+          />
         ))}
         {thinking && <CoachTyping />}
       </div>
 
       {/* suggestions + input */}
       <div className="space-y-3 pb-6">
+        {followUps && (
+          <div className="flex flex-wrap gap-2" aria-label={t("coach.followUps")}>
+            {followUps.map((f) => (
+              <button
+                key={f}
+                onClick={() => send(f)}
+                className="rounded-full border bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              >
+                {f}
+              </button>
+            ))}
+          </div>
+        )}
         {showSuggestions && (
           <div className="flex flex-wrap gap-2">
             {SUGGESTION_KEYS.map((key) => (

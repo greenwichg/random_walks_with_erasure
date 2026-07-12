@@ -25,8 +25,16 @@ export async function GET() {
 export async function POST(request: Request) {
   const tooLarge = rejectIfTooLarge(request, "ai");
   if (tooLarge) return tooLarge;
-  const { message } = (await request.json().catch(() => ({ message: "" }))) as { message: string };
-  const reply = await backendPost<CoachMessage>("/api/coach", { message: message ?? "" }, await engineAuthHeaders());
+  const { message, echo } = (await request.json().catch(() => ({ message: "" }))) as {
+    message: string;
+    echo?: unknown;
+  };
+  // Coach v2 (RWE_COACH_V2): pass the client-carried structured echo through verbatim —
+  // binding-only state the engine validates itself; forwarded only when it is a plain object,
+  // so a v1 client's body reaches the engine exactly as it does today.
+  const body: Record<string, unknown> = { message: message ?? "" };
+  if (echo && typeof echo === "object" && !Array.isArray(echo)) body.echo = echo;
+  const reply = await backendPost<CoachMessage>("/api/coach", body, await engineAuthHeaders());
   if (reply) return NextResponse.json(reply);
   if (MOCK_FALLBACK_ENABLED) return NextResponse.json(coachReply(message ?? ""));
   return engineUnavailable();

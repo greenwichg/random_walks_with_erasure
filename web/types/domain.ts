@@ -531,16 +531,29 @@ export interface SearchResponse {
   ftsAvailable?: boolean; // debug only
 }
 
-/** AI Coach chat message. */
+/** AI Coach chat message. Every field beyond the v1 core is OPTIONAL: a v1 engine
+ * (RWE_COACH_V2 off) never sends them, and the UI renders exactly as before. */
 export interface CoachMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
   createdAt: string;
-  /** Grounding: metric values the coach cited (so the UI can verify/link them). */
-  citations?: { metric: MetricKey; value: number }[];
+  /** Grounding: values the coach cited. v1 cites the report metrics; Coach v2 may cite any
+   * engine evidence key ("served", "sourceShare.NPR", …) and names the surface it came from. */
+  citations?: { metric: string; value: number | string; source?: string }[];
   /** Optional article suggestions attached to an answer. */
   suggestions?: Article[];
+  // ---- Coach v2 (RWE_COACH_V2) — additive; absent on v1 replies ----
+  /** Routed intent ("EXPLAIN.metric") + how it was resolved ("rule" | "llm" | "unresolved"). */
+  intent?: string;
+  resolution?: string;
+  /** Suggested next questions, offered as tappable chips. */
+  followUps?: string[];
+  /** Full recommendation cards (same contract as /api/recommendations — reuse the card UI). */
+  cards?: Recommendation[];
+  /** Client-carried structured conversation state (binding-only, opaque): round-trip the most
+   * recent one verbatim on the next send so "it" / "the first one" resolve server-side. */
+  echo?: Record<string, unknown>;
 }
 
 export interface Achievement {

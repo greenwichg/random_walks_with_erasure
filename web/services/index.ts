@@ -66,7 +66,10 @@ export const services = {
   updateSettings: (patch: Partial<Settings>) => postJson<Settings>("/settings", patch),
   analytics: () => getJson<AnalyticsSeries>("/analytics"),
   coachHistory: () => getJson<CoachMessage[]>("/coach"),
-  coachSend: (message: string) => postJson<CoachMessage>("/coach", { message }),
+  // Coach v2: round-trips the last reply's structured echo verbatim (binding-only); omitted for
+  // v1 transcripts so the request body stays exactly today's shape.
+  coachSend: (message: string, echo?: Record<string, unknown>) =>
+    postJson<CoachMessage>("/coach", echo ? { message, echo } : { message }),
   // Live catalog search — text + facet + date filters, sorting, and offset pagination.
   search: (params: SearchParams) => {
     const clean: Record<string, string> = {};
