@@ -65,7 +65,7 @@ A clean, tested Python implementation of
 > invent facts (`evidence ⊆ context`), deterministic, and history-sensitive. Nine scenarios mapped to
 > explanation types, plus a *run-on-your-own-reading-history* mode. Offline; reuses the production
 > ranking (independent RWE recompute is a later phase):
-> [![Open Recommendation Validation in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/greenwichg/random_walks_with_erasure/blob/ad6a478c1c2d260d8c05c8ad3102e9f4d80f0289/deploy/rec_validation_colab.ipynb)
+> [![Open Recommendation Validation in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/greenwichg/random_walks_with_erasure/blob/e6c3ca4c3124fa95988ab36bb817454b0e47be38/deploy/rec_validation_colab.ipynb)
 > **Recommendation validation notebook**.
 
 RWE is a modified random-walk exploration of the bipartite user–item feedback
