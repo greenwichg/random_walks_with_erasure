@@ -24,18 +24,14 @@ def _text():
 def test_notebook_is_valid_nbformat():
     nb = _nb()
     assert nb["nbformat"] == 4
-    # 7 original cells + the Story Coverage & Health audit section (1 md + 4 code)
-    assert len(nb["cells"]) == 12 and all("cell_type" in c for c in nb["cells"])
+    assert len(nb["cells"]) == 7 and all("cell_type" in c for c in nb["cells"])
 
 
 def test_notebook_has_the_expected_sections():
     text = _text()
     for marker in ("Recommendation Validation Pipeline", "1 · Setup", "2 · Run the validation",
                    "3 · Full stage-by-stage report", "4 · Understand one recommendation",
-                   "5 · Explanation-type coverage",
-                   "6 · Story Coverage & Recommendation Health audit",
-                   "6a · Build the audit document", "6b · The canonical text report",
-                   "6c · Tables", "6d · Charts", "7 · Scope"):
+                   "5 · Explanation-type coverage", "6 · Scope"):
         assert marker in text, "missing notebook section: " + marker
 
 
@@ -53,16 +49,11 @@ def test_notebook_defaults_are_safe_and_offline():
     assert 'SCENARIO = "all"' in text
     assert "FAST = True" in text
     assert 'GITHUB_TOKEN = ""' in text
-    # offline: no web app / server / tunnel like the playground (D4). The audit section (6d)
-    # deliberately amends the original no-matplotlib rule: Colab preinstalls matplotlib+pandas,
-    # so charts add ZERO installs — the invariant that matters is "no extra pip deps".
+    # offline: no web app / server / tunnel like the playground (D4); pure-Python, no matplotlib
+    # (the Story Coverage audit + its charts live in the dedicated story_coverage_audit_colab.ipynb).
     assert "npm " not in text and "cloudflared" not in text and "next-server" not in text
+    assert "matplotlib" not in text
     assert text.count('"install"') == 1 and '".[serve]"' in text   # the ONE engine install, nothing else
-    # the audit section defaults to the offline golden-scenario demo (no DB required)
-    assert 'DB_URL = ""' in text
-    # ...and imports the SHARED auditor functions rather than reimplementing the analysis
-    assert "import audit_story_coverage as asc" in text
-    assert "asc.full_report" in text and "asc.print_report" in text
 
 
 def test_all_code_cells_compile():
