@@ -146,6 +146,9 @@ class _State:
     limiter: "ratelimit.RateLimiter | None" = None
     poller: "feed_service.FeedPoller | None" = None
     refresh: "corpus_refresh.RefreshManager | None" = None
+    # The designated read-only exhibit account (RWE_DEMO_ACCOUNT, "provider:accountId").
+    # None = feature off; everything behaves exactly as before the demo account existed.
+    demo_uid: "int | None" = None
 
     @property
     def backend(self) -> "engine.Backend | None":
@@ -199,6 +202,17 @@ async def lifespan(app: FastAPI):
     state.store = st
     state.scorer = ingest.Scorer(enricher=enrich.make_enricher())   # baseline register+emotion
     state.limiter = ratelimit.RateLimiter()          # per-process token-bucket limiter
+    # The read-only exhibit account (Option E): when RWE_DEMO_ACCOUNT=provider:accountId is set,
+    # anonymous / below-threshold requests are served this account's MEASURED report once it is
+    # seeded past the read threshold (see _serve/_report_for); its writes are locked at the
+    # middleware. Upsert is idempotent — pre-seeding, the account exists empty and everything
+    # falls back to the synthetic demo reader exactly as before.
+    demo_account = os.environ.get("RWE_DEMO_ACCOUNT", "").strip()
+    if demo_account and ":" in demo_account:
+        provider_name, account_id = demo_account.split(":", 1)
+        state.demo_uid = st.upsert_user_by_identity(provider_name, account_id,
+                                                    display_name="Demo Reader").id
+        _log(logging.INFO, "demo_account", uid=state.demo_uid, identity=demo_account)
     # Live recommendation source (opt-in): build the recommender's catalog from the RSS FeedArticle
     # store instead of the static qbias CSV / synthetic generator. Additive — it just points RWE_QBIAS
     # at a FeedArticle-derived qbias-format CSV, so the ENGINE and the protected simulator are unchanged
@@ -308,7 +322,7 @@ async def _observability(request: Request, call_next):
     try:
         # Reject a too-large body (413) before buffering it; then apply the rate limiter (429). The
         # first non-None short-circuits the handler; otherwise run it. Headers are set uniformly below.
-        resp = _body_limit_check(request) or _rate_limit_check(request)
+        resp = _body_limit_check(request) or _rate_limit_check(request) or _demo_write_check(request)
         if resp is None:
             resp = await call_next(request)
         status = resp.status_code
@@ -1163,6 +1177,40 @@ def _body_limit_check(request: Request) -> "JSONResponse | None":
     return None
 
 
+#: Interaction telemetry fired by normal browsing — exempt from the 403 guard; these routes
+#: no-op successfully for the exhibit account instead (a visitor must never see an error for
+#: simply using the product). Future interaction telemetry endpoints belong in this set.
+_DEMO_INTERACTION_PATHS = {"/api/me/recommendations/opened"}
+
+
+def _is_demo_account(uid: "int | None") -> bool:
+    """Whether ``uid`` is the designated read-only exhibit account (constant False when the
+    ``RWE_DEMO_ACCOUNT`` feature is off)."""
+    return state.demo_uid is not None and uid == state.demo_uid
+
+
+def _demo_write_check(request: Request) -> "JSONResponse | None":
+    """The exhibit account is immutable ONCE SEEDED: administrative mutations under ``/api/me/*``
+    (reads, settings, saved, tokens, onboarding — and every future writer, by construction)
+    return a typed 403 when the caller IS the measured demo account. While the account is still
+    empty (below the read threshold) provisioning flows through the normal public pipeline —
+    and the flip is one-way, because no route deletes reads. Interaction telemetry
+    (``_DEMO_INTERACTION_PATHS``) is exempted here and no-ops successfully in its route.
+    ONE enforcement site; no per-route logic anywhere."""
+    if state.demo_uid is None or request.method not in {"POST", "PUT", "PATCH", "DELETE"}:
+        return None
+    path = request.url.path
+    if not path.startswith("/api/me/") or path in _DEMO_INTERACTION_PATHS:
+        return None
+    if not _is_demo_account(_real_uid(request)):
+        return None
+    if state.active is None or not state.personalizer.has_measured(state.demo_uid):
+        return None                          # the pre-seed provisioning window
+    _log(logging.WARNING, "demo_account_write_blocked", method=request.method, path=path)
+    return _error(403, "demo_account_read_only",
+                  "The demo account is read-only. Sign in with your own account to make changes.")
+
+
 def _rate_limit_check(request: Request) -> "JSONResponse | None":
     """Apply the token-bucket limiter to a request. Returns a typed ``429`` (with ``Retry-After``)
     when the caller has exceeded the scope's rate, else ``None`` to let the request proceed. Never
@@ -1222,19 +1270,33 @@ def _anon_row(active: "corpus_refresh.Active", request: Request, user: str | Non
     return active.backend.resolve_user({"user": [user]} if user is not None else {})
 
 
+def _demo_personal(active: "corpus_refresh.Active") -> "int | None":
+    """The exhibit account's uid when it can actually carry a Measured report (configured via
+    ``RWE_DEMO_ACCOUNT`` and seeded past the read threshold), else ``None`` — the cold-start
+    fallback stays the synthetic demo reader, byte-identical to the pre-feature behaviour."""
+    uid = state.demo_uid
+    if uid is not None and active.personalizer.has_measured(uid):
+        return uid
+    return None
+
+
 def _serve(active: "corpus_refresh.Active", request: Request, user: str | None):
     """Routing for recommendations + coach (which have no Estimate form). Reads the single captured
     ``active`` bundle so the whole request stays on one corpus generation across a hot swap.
 
     Returns ``("personal", uid)`` when the signed-in reader has crossed the read threshold — the
-    request is served from their augmented corpus — else ``("row", row)``: the demo reader for a
-    below-threshold real user (the existing behaviour), or the ``?user=`` selection for an
-    anonymous request (unchanged for the frontend and contract tests)."""
+    request is served from their augmented corpus. Otherwise the seeded exhibit account
+    (``_demo_personal``) is preferred — the same measured pipeline every real user gets — falling
+    back to ``("row", row)``: the synthetic demo reader, or the ``?user=`` selection, which always
+    wins for an anonymous request (the row picker is a deliberate exhibit browser)."""
     uid = _real_uid(request)
     if uid is not None and active.personalizer.has_measured(uid):
         return "personal", uid
+    demo = _demo_personal(active)
     if uid is not None:
-        return "row", active.backend.demo_user
+        return ("personal", demo) if demo is not None else ("row", active.backend.demo_user)
+    if user is None and demo is not None:
+        return "personal", demo
     return "row", _anon_row(active, request, user)
 
 
@@ -1294,7 +1356,11 @@ def _report_for(active: "corpus_refresh.Active", request: Request, user: str | N
     be = active.backend
     uid = _real_uid(request)
     if uid is None:
-        return be.report(_anon_row(active, request, user))
+        # anonymous: the seeded exhibit account's measured report when available (an explicit
+        # ?user= selection always wins — the row picker is a deliberate exhibit browser)
+        demo = _demo_personal(active) if user is None else None
+        return (active.personalizer.report(demo) if demo is not None
+                else be.report(_anon_row(active, request, user)))
     if active.personalizer.has_measured(uid):
         return active.personalizer.report(uid)
     outlets = _require_store().get_onboarding(uid)
@@ -1303,7 +1369,8 @@ def _report_for(active: "corpus_refresh.Active", request: Request, user: str | N
             return be.estimate(outlets)
         except ValueError:
             pass
-    return be.report(be.demo_user)
+    demo = _demo_personal(active)
+    return active.personalizer.report(demo) if demo is not None else be.report(be.demo_user)
 
 
 @app.get("/api/dashboard", response_model=DashboardModel, response_model_exclude_none=True,
@@ -1670,9 +1737,10 @@ def open_recommendation(request: Request, req: RecOpenRequest) -> dict:
     so the next report reflects the new reception."""
     uid = _require_real_user(request)
     st = _require_store()
-    st.record_recommendation_open(uid, req.articleId, cross_cutting=req.crossCutting)
     p = _require_personalizer()
-    p.invalidate(uid)                       # next /api/report rebuilds with the new reception
+    if not _is_demo_account(uid):           # exhibit account: a successful NO-OP (interaction
+        st.record_recommendation_open(uid, req.articleId, cross_cutting=req.crossCutting)
+        p.invalidate(uid)                   # next /api/report rebuilds with the new reception
     om = p.openmindedness(uid)
     return {"shownCross": om["shownCross"], "openedCross": om["openedCross"],
             "rate": om["rate"], "threshold": om["minShown"], "active": om["active"]}
@@ -1788,7 +1856,7 @@ def recommendations(
     # A recommendation the engine surfaced to a signed-in reader becomes a measurable event: record
     # which (cross-cutting) recs were shown — the denominator for Open-Mindedness. Best-effort; a
     # recording failure must never fail the recommendations response. No new recommender is created.
-    if uid is not None and state.store is not None:
+    if uid is not None and state.store is not None and not _is_demo_account(uid):
         try:
             state.store.record_recommendations_shown(
                 uid, ((r["article"]["id"], r["crossCutting"]) for r in recs))
