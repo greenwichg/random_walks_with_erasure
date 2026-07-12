@@ -393,6 +393,49 @@ def test_build_analytics_empty_is_honest(backend):
                  "recommendationAcceptance": [], "healthImprovement": []}
 
 
+def test_recommendation_acceptance_reconciles_with_stored_interactions(backend):
+    """Store -> aggregation reconciliation through the REAL writers (not hand-built dicts):
+    every surfaced recommendation lands in exactly one state (opened -> accepted on its opened
+    day; unopened -> ignored on its LATEST shown day), re-surfacing is idempotent (moves the
+    ignored bucket day, never duplicates), a double open counts once, an open that races the
+    surfacing still counts once, and the day totals reconcile with the stored rows."""
+    sys.path.insert(0, str(ROOT / "examples"))
+    import store as store_mod
+    st = store_mod.Store("sqlite://")
+    uid = st.upsert_user_by_identity("dev", "acceptance-audit").id
+
+    d = lambda day, hour=8: f"2026-06-{day:02d}T{hour:02d}:00:00+00:00"
+    # day 1: A, B, C surfaced
+    assert st.record_recommendations_shown(
+        uid, [("A", False), ("B", True), ("C", False)], shown_at=d(1)) == 3
+    # day 2: A and B re-surfaced -> idempotent (0 new rows); their ignored bucket moves to day 2
+    assert st.record_recommendations_shown(uid, [("A", False), ("B", False)], shown_at=d(2)) == 0
+    # day 3: B opened (ignored -> accepted); D opened before any surfacing was recorded (race)
+    assert st.record_recommendation_open(uid, "B", opened_at=d(3)) is True
+    assert st.record_recommendation_open(uid, "D", cross_cutting=False, opened_at=d(3)) is True
+    # day 4: B opened again -> no-op, stays accepted on day 3
+    assert st.record_recommendation_open(uid, "B", opened_at=d(4)) is False
+
+    events = st.list_rec_events(uid)
+    acc = {p["date"]: p for p in backend.build_analytics([], [], events)["recommendationAcceptance"]}
+
+    assert acc == {
+        "2026-06-01": {"date": "2026-06-01", "accepted": 0, "ignored": 1},   # C
+        "2026-06-02": {"date": "2026-06-02", "accepted": 0, "ignored": 1},   # A (moved from day 1)
+        "2026-06-03": {"date": "2026-06-03", "accepted": 2, "ignored": 0},   # B + D
+    }
+    # reconciliation: exactly one state per stored recommendation, nothing dropped or doubled
+    opened_rows = [e for e in events if e["openedAt"]]
+    unopened_rows = [e for e in events if not e["openedAt"]]
+    assert len(events) == 4                                    # A, B, C, D — one row each
+    assert sum(p["accepted"] for p in acc.values()) == len(opened_rows) == 2
+    assert sum(p["ignored"] for p in acc.values()) == len(unopened_rows) == 2
+    assert all(e["shownAt"] for e in events)                   # the writers never leave a bare row
+    # cross-cutting reception (Open-Mindedness) reads the SAME rows consistently
+    rec = st.recommendation_reception(uid)
+    assert rec == {"shownCross": 1, "openedCross": 1, "rate": 1.0}   # B was the one cross rec
+
+
 # --------------------------------------------------------------------------- #
 # profile — identity + streaks + score history from persisted data; honest empties
 # --------------------------------------------------------------------------- #

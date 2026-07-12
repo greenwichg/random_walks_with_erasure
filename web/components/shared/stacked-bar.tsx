@@ -10,7 +10,7 @@ export interface BarSeries {
   color: string;
 }
 
-/** A measured stacked/grouped bar chart (emotion, reporting, acceptance…). */
+/** A measured stacked/grouped bar chart (reporting, acceptance…). */
 export function StackedBar({
   data,
   series,
@@ -18,6 +18,7 @@ export function StackedBar({
   stacked = true,
   percent = false,
   xKey = "date",
+  showLegend = false,
 }: {
   data: Record<string, number | string>[];
   series: BarSeries[];
@@ -25,11 +26,15 @@ export function StackedBar({
   stacked?: boolean;
   percent?: boolean;
   xKey?: string;
+  /** SpectrumBar-style chip legend (identity never color-alone); off by default so existing
+   * cards render byte-identically. */
+  showLegend?: boolean;
 }) {
   const { formatDate } = useTranslation();
   const { ref, width } = useMeasure<HTMLDivElement>();
 
   return (
+    <div className={showLegend ? "space-y-2.5" : undefined}>
     <div ref={ref} className="w-full" style={{ height }}>
       <BarChart width={width} height={height} data={data} margin={{ top: 8, right: 12, left: 0, bottom: 0 }} barCategoryGap={stacked ? "18%" : "26%"}>
         <XAxis
@@ -79,6 +84,17 @@ export function StackedBar({
           />
         ))}
       </BarChart>
+    </div>
+    {showLegend && (
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+        {series.map((s) => (
+          <div key={s.key} className="flex items-center gap-1.5">
+            <span className="h-2 w-2 rounded-full" style={{ background: s.color }} />
+            <span className="text-muted-foreground">{s.label}</span>
+          </div>
+        ))}
+      </div>
+    )}
     </div>
   );
 }

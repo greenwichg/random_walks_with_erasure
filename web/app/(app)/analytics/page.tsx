@@ -87,14 +87,19 @@ export default function AnalyticsPage() {
           </SectionCard>
 
           <SectionCard title={t("analytics.recAcceptance")} info={t("analytics.recAcceptanceInfo")}>
+            {/* ignored uses --muted-foreground, not --muted: the latter is ~the card background
+                in BOTH themes (dark: 15% vs 10% lightness), which rendered the ignored bar as an
+                invisible ghost. Emphasis pattern: accepted carries the accent, ignored a visible
+                de-emphasis gray; the legend keeps the pair off color-alone identity. */}
             <StackedBar
               data={data.recommendationAcceptance}
               series={[
                 { key: "accepted", label: t("analytics.accepted"), color: "hsl(var(--positive))" },
-                { key: "ignored", label: t("analytics.ignored"), color: "hsl(var(--muted))" },
+                { key: "ignored", label: t("analytics.ignored"), color: "hsl(var(--muted-foreground))" },
               ]}
               stacked={false}
-              height={220}
+              height={200}
+              showLegend
             />
           </SectionCard>
         </div>
