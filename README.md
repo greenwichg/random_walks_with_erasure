@@ -33,7 +33,7 @@ A clean, tested Python implementation of
 > [![Open Politosphere in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/greenwichg/random_walks_with_erasure/blob/c41d26fccfa261f7b23a0666d3fa1756f3345f85/notebooks/run_politosphere_eval.ipynb)
 > **Politosphere** (Reddit; behavioral ideal-point axis).
 >
-> 🧪 **Product PoC — synthetic users, *not* research evidence** — an agent-based simulator
+> 🤖 **Product PoC — synthetic users, *not* research evidence** — an agent-based simulator
 > drives the whole product (RWE recommender → Information Health Report → AI Coach → closed
 > loop) on **synthetic** traffic over a real article catalog, to stress-test before real
 > users exist (strict research/product separation; see [`docs/PRODUCT_SIMULATION.md`](docs/PRODUCT_SIMULATION.md)):
@@ -46,34 +46,28 @@ A clean, tested Python implementation of
 > [![Open the app in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/greenwichg/random_walks_with_erasure/blob/cd96ce7485bed00d0434b7aa3d127c14fe9cb180/deploy/information_health_colab.ipynb)
 > **Full-stack app demo**.
 >
-> 🧪 **Validate Information Health metrics independently** — recomputes metrics from Reading History,
-> verifies raw calculations, compares dashboard metrics, detects drift, and generates PASS / FAIL
-> reports. Runs offline by default with an optional *Dashboard Verification* mode:
+> 🧪 **Validate Information Health metrics independently** — recomputes every dashboard metric from
+> Reading History and prints PASS / FAIL drift reports; offline, with an optional *Dashboard
+> Verification* mode:
 > [![Open Metric Validation in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/greenwichg/random_walks_with_erasure/blob/da845429e9e200a8db2f2347b8a057f5fbcaf13a/deploy/metric_validation_colab.ipynb)
 > **Developer validation notebook** (see [`docs/METRIC_PIPELINE.md`](docs/METRIC_PIPELINE.md)).
 >
-> 🔌 **Browser Extension Playground** — install the InfoDiet browser extension, connect it to a
-> live Colab-hosted copy of the app (public tunnel + one-click token), and watch a real article you
-> read travel the whole pipeline — Read → provisional FeedArticle → Search / Stories → refresh →
-> recommendation graph → Discover promotion — on a live status dashboard, with one-click
-> inspectors, the automated PASS / WAIT / FAIL experiment kit, and a reset cell:
+> 🔌 **Browser Extension Playground** — connect the InfoDiet extension to a live Colab-hosted copy
+> of the app and watch one real read travel the whole pipeline on a live status dashboard, with
+> one-click inspectors and an automated PASS / WAIT / FAIL experiment kit:
 > [![Open the Extension Playground in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/greenwichg/random_walks_with_erasure/blob/e65b8fb2878e7999b966c2b70d498d923ba6a436/deploy/browser_extension_playground.ipynb)
 > **Extension onboarding & E2E playground** (see [`docs/EXTENSION_E2E_EXPERIMENT.md`](docs/EXTENSION_E2E_EXPERIMENT.md)).
 >
-> 🎯 **Prove recommendations are justified** — validates that every recommendation is a deterministic
-> consequence of the reading history: evidence-backed, explanations that re-derive clean and never
-> invent facts (`evidence ⊆ context`), deterministic, and history-sensitive. Nine scenarios mapped to
-> explanation types, plus a *run-on-your-own-reading-history* mode. Offline; reuses the production
-> ranking (independent RWE recompute is a later phase):
+> 🎯 **Prove recommendations are justified** (*why was this served?*) — PASS / FAIL invariants over
+> nine golden scenarios or your own exported reads: `evidence ⊆ context`, explanations re-derive
+> clean, deterministic, history-sensitive. Offline:
 > [![Open Recommendation Validation in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/greenwichg/random_walks_with_erasure/blob/7f74176ed56063dfa32143658332cc14ecbc14e3/deploy/rec_validation_colab.ipynb)
 > **Recommendation validation notebook**.
 >
-> 🩺 **Audit Story-Match coverage on real data** — a read-only Story Coverage & Recommendation Health
-> audit: Story Coverage Rate, the served feed by strategy / explanation type, Story Conversion Rate,
-> the top missed Story-Match opportunities with the exact reason each was excluded, and a health
-> verdict (coverage / ranking / freshness / graph / cap / none). Reuses the CLI's shared functions
-> (`audit_story_coverage.py` → `full_report` / `print_report`), so the notebook and `--report` are
-> byte-identical. Point it at a copy of your beta's `ih_beta.db`, or run the built-in golden demo:
+> 🩺 **Audit Story-Match coverage on real data** (*why wasn't more served?* — the 🎯 notebook's
+> complement) — a read-only audit of your corpus: coverage & conversion rates, missed opportunities
+> with the exact excluding reason, and a limiter verdict (coverage / ranking / freshness / graph /
+> cap / none); byte-identical to `audit_story_coverage.py --report`:
 > [![Open Story Coverage Audit in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/greenwichg/random_walks_with_erasure/blob/ddb24917d0d08954bb820093472cd248eb65e864/deploy/story_coverage_audit_colab.ipynb)
 > **Story Coverage audit notebook**.
 
