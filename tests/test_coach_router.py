@@ -23,8 +23,11 @@ def _echo(**last_turn):
 # --------------------------------------------------------------------------- #
 # Registry sanity.
 # --------------------------------------------------------------------------- #
-def test_registry_has_the_15_leaves_across_6_families():
-    assert len(cs.INTENTS) == 15
+def test_registry_has_the_16_leaves_across_6_families():
+    """15 router-reachable leaves + COMPARE.weekly_review (M6: proactive-only — reached via
+    the greeting ladder's ready-made Intent, never classify())."""
+    assert len(cs.INTENTS) == 16
+    assert "COMPARE.weekly_review" in cs.INTENTS
     assert {s.family for s in cs.INTENTS.values()} == {
         "EXPLAIN", "ANALYZE", "COMPARE", "ACT", "PROJECT", "CHAT"}
     for name, spec in cs.INTENTS.items():

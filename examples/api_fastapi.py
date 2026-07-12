@@ -1823,11 +1823,43 @@ def _enrich_rec_media(recs: list) -> None:
         a.update(media.pick_best_logo(a.get("publisher", ""), a.get("url")))
 
 
+def _v2_message(turn: dict, mid: str) -> dict:
+    """The ONE wire mapping from a coach_turn dict to the CoachMessageModel envelope — shared
+    by the reply route (M4) and the proactive greeting (M6) so the two can never drift."""
+    arts = [c.get("article") for c in turn["cards"] if isinstance(c, dict) and c.get("article")]
+    return {"id": mid, "role": "assistant", "content": turn["content"],
+            "createdAt": datetime.now(timezone.utc).isoformat(),
+            "citations": [{"metric": c["key"], "value": c["value"], "source": c["source"]}
+                          for c in turn["citations"][:8]] or None,
+            "suggestions": arts[:3] or None,
+            "intent": turn["intent"], "resolution": turn["resolution"],
+            "followUps": turn["followUps"] or None,
+            "cards": turn["cards"] or None,
+            "echo": turn["echo"]}
+
+
 @app.get("/api/coach", response_model=list[CoachMessageModel], response_model_exclude_none=True,
          tags=["coach"], summary="Coach greeting for a reader", responses=_ERR_RESPONSES)
 def coach(request: Request, user: str | None = Query(None)) -> list:
+    """v1: the canned grounded greeting. With ``RWE_COACH_V2`` on, the MEASURED path runs the
+    M6 deterministic trigger ladder (coach_service.greeting_turn): a stored-goals / weekly-recap
+    review through the same coach_turn pipeline, else today's greeting + weakest-metric chips.
+    The metric-change and story-update triggers run in SHADOW — logged here, never rendered.
+    Flag off is byte-identical to v1 (pinned by tests/test_coach_v1_contract.py)."""
     active = _active()
     kind, val = _serve(active, request, user)
+    if kind == "personal" and coach_service.coach_v2_enabled():
+        pers = active.personalizer
+        g = coach_service.greeting_turn(pers, pers.store, val)
+        turn = g["turn"]
+        _log(logging.INFO, "coach_greeting", trigger=g["trigger"],
+             intent=(turn or {}).get("intent"), tools=(turn or {}).get("toolsRun") or [],
+             fallback=(turn or {}).get("fallback"), shadow=g["shadow"], ms=g["ms"])
+        if turn is not None:
+            return [_v2_message(turn, f"msg_{engine._stable_int('greeting', val)}")]
+        msg = g["base"]
+        msg["followUps"] = g["followUps"] or None
+        return [msg]
     if kind == "personal":
         return active.personalizer.coach_greeting(val)
     return active.backend.coach_greeting(val)
@@ -1850,18 +1882,7 @@ def coach_reply(request: Request, req: CoachRequest) -> dict:
         _log(logging.INFO, "coach_turn", intent=turn["intent"], resolution=turn["resolution"],
              tools=turn["toolsRun"], failures=[g["tool"] for g in turn["gaps"]],
              fallback=turn["fallback"], ms=turn["ms"])
-        arts = [c.get("article") for c in turn["cards"]
-                if isinstance(c, dict) and c.get("article")]
-        return {"id": f"msg_{engine._stable_int(req.message or '', val)}", "role": "assistant",
-                "content": turn["content"],
-                "createdAt": datetime.now(timezone.utc).isoformat(),
-                "citations": [{"metric": c["key"], "value": c["value"], "source": c["source"]}
-                              for c in turn["citations"][:8]] or None,
-                "suggestions": arts[:3] or None,
-                "intent": turn["intent"], "resolution": turn["resolution"],
-                "followUps": turn["followUps"] or None,
-                "cards": turn["cards"] or None,
-                "echo": turn["echo"]}
+        return _v2_message(turn, f"msg_{engine._stable_int(req.message or '', val)}")
     if kind == "personal":
         return active.personalizer.coach_reply(val, req.message or "")
     return active.backend.coach_reply(val, req.message or "")

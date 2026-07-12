@@ -156,6 +156,13 @@ INTENTS: dict[str, IntentSpec] = {s.family + "." + s.leaf: s for s in (
     # -- COMPARE ---------------------------------------------------------- #
     IntentSpec("COMPARE", "over_time", plan=(("trend", _args(metric="$metric")),),
                follow_ups=("What moved my scores?",)),
+    # Proactive-only leaf (M6): reached via the greeting ladder's ready-made Intent, never the
+    # router — the Weekly Review composes the reader's stored goal, their past-week reads, and
+    # the snapshot trend, all from existing tools.
+    IntentSpec("COMPARE", "weekly_review",
+               plan=(("goals", _args()), ("history", _args(days=7)),
+                     ("trend", _args(metric=None))),
+               follow_ups=("Suggest something to read", "How do I improve my viewpoint balance?")),
     # -- ACT --------------------------------------------------------------- #
     IntentSpec("ACT", "suggest", plan=(("recommendations", _args(want="$want")),),
                budget=90, follow_ups=("Why the first one?",)),
@@ -526,13 +533,27 @@ def _tool_why_article(pers, store, uid, deps, article=None, **_):
 
 def _tool_history(pers, store, uid, deps, days=None, **_):
     """Presentation aggregation (Counter) over the reader's STORED reads — the same class of
-    tallying the auditor does; no scoring."""
-    reads = store.get_reads(uid) or []
+    tallying the auditor does; no scoring. ``days`` (M6) restricts to a rolling window using
+    the row timestamps via api_server._read_at — the ONE shared day-bucketing definition —
+    so the Weekly Review counts exactly the reads the history/analytics pages would."""
+    if days:
+        from datetime import datetime, timedelta, timezone
+
+        import api_server as engine
+        from feed_service import _parse_iso
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        reads = []
+        for row in store.list_reads(uid) or []:
+            at = _parse_iso(engine._read_at(row))
+            if at is not None and at >= cutoff:
+                reads.append(row.get("scored") or {})
+    else:
+        reads = store.get_reads(uid) or []
     outlets = Counter(str(r.get("outlet") or "?") for r in reads)
     topics = Counter(str(r.get("category") or "").strip() or "(uncategorized)" for r in reads)
     facts = {"totalReads": len(reads),
              "topOutlets": outlets.most_common(5), "topTopics": topics.most_common(5),
-             "distinctOutlets": len(outlets)}
+             "distinctOutlets": len(outlets), "windowDays": days}
     cites = [Citation("totalReads", len(reads), "store.get_reads"),
              Citation("distinctOutlets", len(outlets), "store.get_reads")]
     return ToolResult("history", facts, tuple(cites), provenance=_prov(store, uid))
@@ -768,6 +789,10 @@ def _present(res: ToolResult) -> dict:
         ns["history_distinct"] = f.get("distinctOutlets")
         ns["history_outlets_line"] = ", ".join(f"{o} {n}" for o, n in (f.get("topOutlets") or []))
         ns["history_topics_line"] = ", ".join(f"{t} {n}" for t, n in (f.get("topTopics") or []))
+        tops = ", ".join(f"{o} ({n})" for o, n in (f.get("topOutlets") or [])[:3])
+        ns["history_week_line"] = (f"{f.get('totalReads')} reads across "
+                                   f"{f.get('distinctOutlets')} outlets"
+                                   + (f" — most from {tops}" if tops else ""))
     elif res.tool == "trend":
         lines = [f"{_label(k)}: {v['first'].get('overall')} → {v['last'].get('overall')} "
                  f"({v['points']} snapshots)" for k, v in (f.get("series") or {}).items()]
@@ -815,6 +840,9 @@ TEMPLATES = {
     "ANALYZE.blind_spots": ("Measured gaps: {bs_spots_line} Publishers in the catalog you've "
                             "never read: {bs_never_line}."),
     "COMPARE.over_time": "{trend_lines}.",
+    "COMPARE.weekly_review": ("Your weekly review — this past week: {history_week_line}. "
+                              "Score trend: {trend_lines}. Your daily reading goal is "
+                              "{goals_minutes} minutes; stored coach goals: {goals_line}"),
     "ACT.suggest": "From your live feed: {recs_offer_line}.",
     "ACT.weekly_goals": ("Grounded in your data — gaps: {bs_spots_line} {trend_lines}. Stored "
                          "goals: {goals_line} Your reading goal is {goals_minutes} minutes/day."),
@@ -922,3 +950,136 @@ def coach_turn(pers, store, uid: int, message: str = None, intent: Intent = None
             # observability (M4): read-only turn telemetry, logged by the API layer
             "toolsRun": [r.tool for r in results], "fallback": fallback,
             "ms": round((_time.perf_counter() - t0) * 1000.0, 1)}
+
+
+# --------------------------------------------------------------------------- #
+# M6 — the proactive greeting: deterministic trigger ladder over coach_turn.
+# --------------------------------------------------------------------------- #
+#: Chip text per metric for the default greeting — each phrase is IN _METRIC_LEXICON, so a
+#: click routes back to EXPLAIN.metric with the right metric bound (round-trip by construction,
+#: pinned by tests). Data, not code paths.
+_METRIC_CHIP = {
+    "echoChamber": "Why is my echo chamber score low?",
+    "viewpointBalance": "Why is my viewpoint balance low?",
+    "emotionalBalance": "Why is my emotional balance low?",
+    "sourceDiversity": "Why is my source diversity low?",
+    "openMindedness": "Why is my open-mindedness low?",
+}
+
+
+def _read_within_days(store, uid: int, days: int) -> bool:
+    """Whether the reader's most recent read falls inside the rolling window — the recap gate.
+    Timestamps via api_server._read_at (the shared day-bucketing definition); list_reads is
+    newest-first, so the first parseable row decides."""
+    from datetime import datetime, timedelta, timezone
+
+    import api_server as engine
+    from feed_service import _parse_iso
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    for row in store.list_reads(uid) or []:
+        at = _parse_iso(engine._read_at(row))
+        if at is not None:
+            return at >= cutoff
+    return False
+
+
+def _greeting_follow_ups(pers, store, uid: int) -> list:
+    """Weakest-metric chips for the default greeting: the report tool's own scores, min()
+    SELECTION only (the same rule the metric tool uses for name=None). Never raises — a
+    reader without a report gets the CHAT capability chips instead."""
+    try:
+        scores = TOOLS["report"](pers, store, uid, {}).facts.get("scores") or {}
+        # weakest among the ROUTABLE metrics only (the report also scores e.g. topicDiversity,
+        # which the lexicon can't bind yet — a chip that can't route is worse than none)
+        routable = {k: scores[k] for k in _METRIC_CHIP if k in scores}
+        weakest = min(sorted(routable), key=routable.get)   # deterministic on ties
+        chip = _METRIC_CHIP[weakest]
+    except Exception:
+        return list(INTENTS["CHAT.general"].follow_ups)
+    return [chip, "Suggest reads that would help"]
+
+
+def _shadow_metric_change(store, uid: int) -> dict:
+    """SHADOW ONLY (never rendered): the last two report snapshots' raw values, so real beta
+    logs can answer "how often and how far do metrics move?" WITHOUT guessing a threshold
+    here. Engine values verbatim — no deltas, no arithmetic, no judgement."""
+    snaps = store.report_metric_series(uid) or []
+    out = {"snapshots": len(snaps), "wouldEvaluate": len(snaps) >= 2}
+    if len(snaps) >= 2:
+        prev, last = snaps[-2], snaps[-1]
+        pm, lm = prev.get("metrics") or {}, last.get("metrics") or {}
+        values = {"overall": {"prev": prev.get("overall"), "last": last.get("overall")}}
+        for k in sorted(set(pm) & set(lm)):
+            values[k] = {"prev": pm[k], "last": lm[k]}
+        out.update(prevDate=prev.get("date"), lastDate=last.get("date"), values=values)
+    return out
+
+
+def _shadow_story_update(store, uid: int) -> dict:
+    """SHADOW ONLY (never rendered): how many stories the reader has read into currently carry
+    UNREAD coverage newer than the member they read — the story-update trigger's would-fire
+    signal. Same read-urls -> story_index walk the story slot and auditor use; counting only."""
+    import evidence_resolver as er
+    from feed_service import _parse_iso
+    idx = er.story_index(store)
+    read_urls = {er._canon(str(r.get("article_id") or "")) for r in store.get_reads(uid) or []}
+    read_urls.discard("")
+    followed = with_newer = newer_unread = 0
+    seen = set()
+    for ru in sorted(read_urls):
+        story = idx.get(ru)
+        if not story or story["storyId"] in seen:
+            continue
+        seen.add(story["storyId"])
+        followed += 1
+        anchor_at = _parse_iso(next((m.get("publishedAt") for m in story["coverage"]
+                                     if er._canon(str(m.get("url") or "")) == ru), None))
+        if anchor_at is None:
+            continue
+        fresh = [m for m in story["coverage"]
+                 if er._canon(str(m.get("url") or "")) not in read_urls
+                 and (_parse_iso(m.get("publishedAt")) or anchor_at) > anchor_at]
+        if fresh:
+            with_newer += 1
+            newer_unread += len(fresh)
+    return {"followedStories": followed, "storiesWithNewCoverage": with_newer,
+            "unreadNewerSiblings": newer_unread, "wouldFire": with_newer > 0}
+
+
+def greeting_turn(pers, store, uid: int) -> dict:
+    """The M6 greeting: a deterministic trigger ladder over the SAME coach_turn pipeline.
+
+    Ladder (approved scope, at most ONE proactive item):
+      1. stored coachGoals            -> Weekly Review (ungated: goals are the opt-in)
+      2. settings row + read this week -> Weekly Review (the reading recap form)
+      3. otherwise                     -> the v1 greeting VERBATIM + weakest-metric chips
+
+    The metric-change and story-update triggers run in SHADOW: their would-fire evidence is
+    returned for the API layer to log and never touches the message. Read-only; no LLM."""
+    import time as _time
+    t0 = _time.perf_counter()
+    settings = store.get_settings(uid) or {}
+    trigger = None
+    if settings.get("coachGoals"):
+        trigger = "weekly_review_goals"
+    elif settings and _read_within_days(store, uid, 7):
+        trigger = "weekly_review_recap"
+    turn = base = follow_ups = None
+    if trigger:
+        turn = coach_turn(pers, store, uid,
+                          intent=Intent("COMPARE", "weekly_review", entities={}))
+    else:
+        base = dict(pers.coach_greeting(uid)[0])       # today's greeting, byte-for-byte
+        follow_ups = _greeting_follow_ups(pers, store, uid)
+
+    def _safe(fn):
+        # a shadow failure must never touch the greeting — degrade to an error marker
+        try:
+            return fn(store, uid)
+        except Exception as e:                          # pragma: no cover - defensive
+            return {"error": type(e).__name__}
+
+    shadow = {"metricChange": _safe(_shadow_metric_change),
+              "storyUpdate": _safe(_shadow_story_update)}
+    return {"trigger": trigger, "turn": turn, "base": base, "followUps": follow_ups,
+            "shadow": shadow, "ms": round((_time.perf_counter() - t0) * 1000.0, 1)}

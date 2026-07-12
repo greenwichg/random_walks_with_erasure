@@ -102,7 +102,9 @@ def test_flag_off_reply_carries_no_v2_fields(client, measured, no_llm, v2_off):
 
 def test_flag_off_emits_no_coach_turn_telemetry(client, measured, no_llm, v2_off, api_log):
     client.post("/api/coach", json={"message": "am I improving?"}, headers=measured)
-    assert not [e for e in api_log if e.get("event") == "coach_turn"]
+    client.get("/api/coach", headers=measured)
+    assert not [e for e in api_log
+                if e.get("event") in ("coach_turn", "coach_greeting")]
 
 
 # --------------------------------------------------------------------------- #
@@ -157,6 +159,46 @@ def test_echo_round_trip_binds_the_offer(client, measured, no_llm, v2_on):
     for card in b["cards"]:                          # resolver-explained, RecommendationModel-valid
         assert card["explanation"]["type"] and card["strategy"]
     assert [s["id"] for s in b["suggestions"]] == [c["article"]["id"] for c in b["cards"]][:3]
+
+
+# --------------------------------------------------------------------------- #
+# M6 — the proactive greeting over the wire.
+# --------------------------------------------------------------------------- #
+def test_flag_on_default_greeting_keeps_v1_body_and_adds_chips(client, measured, no_llm,
+                                                               v2_on, api_log):
+    """No settings row -> the ladder falls through: today's greeting verbatim + chips, and one
+    coach_greeting telemetry record carrying the shadow-trigger evidence."""
+    body = client.get("/api/coach", headers=measured).json()
+    assert isinstance(body, list) and len(body) == 1
+    msg = body[0]
+    assert msg["content"].startswith("Hi — I'm your Information Health coach.")
+    assert msg["followUps"], "the default greeting must offer weakest-metric chips"
+    assert "intent" not in msg and "echo" not in msg    # no proactive turn fired
+    for c in msg.get("citations") or []:
+        assert "source" not in c                        # v1 greeting citations, untouched
+    events = [e for e in api_log if e.get("event") == "coach_greeting"]
+    assert len(events) == 1
+    rec = events[0]
+    assert rec["trigger"] is None and rec["intent"] is None
+    assert set(rec["shadow"]) == {"metricChange", "storyUpdate"}
+    assert isinstance(rec["ms"], (int, float))
+
+
+def test_flag_on_greeting_fires_weekly_review_after_settings(client, measured, no_llm,
+                                                             v2_on, api_log):
+    """A stored settings row + this week's reads -> the greeting IS a weekly-review coach turn.
+    (Runs last against this measured user: the settings write persists in the module store.)"""
+    r = client.post("/api/me/settings", json={"readingGoalMinutes": 25}, headers=measured)
+    assert r.status_code == 200
+    body = client.get("/api/coach", headers=measured).json()
+    msg = body[0]
+    assert msg["intent"] == "COMPARE.weekly_review"
+    assert msg["citations"] and all(c.get("source") for c in msg["citations"])
+    assert msg["echo"]["turns"][-1]["intent"] == "COMPARE.weekly_review"
+    assert "25" in msg["content"]
+    events = [e for e in api_log if e.get("event") == "coach_greeting"]
+    assert events and events[-1]["trigger"] == "weekly_review_recap"
+    assert events[-1]["tools"] == ["goals", "history", "trend"]
 
 
 # --------------------------------------------------------------------------- #
