@@ -43,7 +43,7 @@ A clean, tested Python implementation of
 > 🚀 **Run the full product (web app + engine) live** — clones the branch, boots the FastAPI
 > engine + the Next.js frontend, and opens a public URL. Onboarding → your **Initial
 > Information Health Estimate** works with no credentials (Google sign-in is an optional cell):
-> [![Open the app in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/greenwichg/random_walks_with_erasure/blob/1296d336af8456e0073dea8a4a8d0bb522a94264/deploy/information_health_colab.ipynb)
+> [![Open the app in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/greenwichg/random_walks_with_erasure/blob/cd96ce7485bed00d0434b7aa3d127c14fe9cb180/deploy/information_health_colab.ipynb)
 > **Full-stack app demo**.
 >
 > 🧪 **Validate Information Health metrics independently** — recomputes metrics from Reading History,
