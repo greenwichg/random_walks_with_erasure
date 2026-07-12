@@ -122,7 +122,7 @@ def test_full_report_document_and_printer_parity(tmp_path, capsys):
     assert f"Story Coverage Rate: {doc['coverageRatePercent']}%" in printed
     assert doc["verdict"]["message"] in printed
     assert doc["verdict"]["code"] in ("insufficient_data", "coverage", "freshness",
-                                      "ranking", "none")
+                                      "ranking", "graph", "cap", "none")
     assert doc["perRead"] and doc["perRead"][0]["siblings"][0]["publisher"] == "Fox News"
 
 

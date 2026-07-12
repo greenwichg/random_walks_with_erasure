@@ -81,7 +81,7 @@ def test_the_shared_auditor_path_produces_the_report():
     doc = asc.full_report(case.store, case.reader_uid)
     assert doc["coverageRatePercent"] is not None
     assert doc["verdict"]["code"] in ("insufficient_data", "coverage", "freshness",
-                                      "ranking", "none")
+                                      "ranking", "graph", "cap", "none")
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         asc.print_report(doc)

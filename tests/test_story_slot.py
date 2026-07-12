@@ -238,7 +238,9 @@ def test_explain_reports_the_slot_decision(stack, monkeypatch):
 def test_auditor_accounts_the_slot_card_as_served(stack, monkeypatch):
     """The story-coverage auditor must count the slot card in the TRUE served feed: Story Match
     cards served >= 1, the sibling absent from unservedSiblings, conversion 1/1, and the health
-    verdict clearing to 'none' — the exact before/after a beta operator validates the flag with."""
+    verdict clearing to 'none' — the exact before/after a beta operator validates the flag with.
+    The second (unserved) sibling of the converted story is ALREADY REPRESENTED — not a miss —
+    so the missed list is empty and the opportunity bucket reads converted."""
     import audit_story_coverage as asc
     st, pers, uid = stack
     monkeypatch.setenv("RWE_STORY_SLOT", "1")
@@ -249,5 +251,106 @@ def test_auditor_accounts_the_slot_card_as_served(stack, monkeypatch):
     assert feed.get("storyMatchCards", 0) >= 1
     assert (doc["conversion"] or {}).get("ratePercent") == 100.0
     assert doc["verdict"]["code"] == "none"
+    assert doc["opportunities"]["converted"] == 1
     missed_urls = {x["sibling"] for x in doc["missed"]}
     assert SIBLING not in missed_urls and er._canon(SIBLING) not in missed_urls
+    # Guardian (in-graph, fresh, unserved — same story already served) = already_represented
+    outcomes = {er._canon(m["url"]): m["outcome"]
+                for p in doc["perRead"] for m in p["siblings"]}
+    assert outcomes.get(er._canon(SIBLING2)) == "already_represented"
+    assert er._canon(SIBLING2) not in missed_urls
+    # Servable Story Coverage: 1 of 5 reads has a graph-eligible sibling
+    assert doc["servableCoverage"] == {"withServableSibling": 1, "reads": 5, "percent": 20.0}
+
+
+def _seed_and_read(st, entries, reader_reads):
+    for url, pub, title, days, kw in entries:
+        sc = {"article_id": er._canon(url), "outlet": pub, "category": "Politics",
+              "political": True, "title": title, **kw}
+        st.upsert_feed_article(canonical_url=er._canon(url), url=url, publisher=pub,
+                               source_publisher=pub, title=title, description="d", body=None,
+                               published_at=_iso(days), source_feed="f", scored=sc)
+    uid = st.upsert_user_by_identity("dev", "bucket-reader").id
+    for url, pub, title in reader_reads:
+        _read(st, uid, url, pub, title)
+    return uid
+
+
+def _fillers(n=120):
+    pubs = ["AP", "Reuters", "NPR", "BBC News", "The Guardian", "The Hill"]
+    rows = []
+    for k in range(n):
+        pub = pubs[k % len(pubs)]
+        rows.append((f"https://{pub.split()[0].lower()}{k % 6}.example.com/x/{k}", pub,
+                     f"filing{k} memo{k} briefing{k} notice{k} dossier{k}",
+                     1.0 + (k % 5) * 0.1, {"lean": (-1.0, 0.0, 1.0)[k % 3]}))
+    return rows
+
+
+def test_auditor_not_in_graph_bucket_and_servable_coverage(tmp_path, monkeypatch):
+    """A sibling whose outlet never resolved a lean is in the CATALOG but not in the GRAPH: the
+    opportunity lands in the notInGraph bucket (never 'ranking'), the verdict names the graph
+    gap, and Servable Story Coverage excludes it while catalog-level Story Coverage counts it."""
+    import audit_story_coverage as asc
+    monkeypatch.setenv("RWE_RECS_SOURCE", "feed")
+    monkeypatch.setenv("RWE_FEED_MIN_ARTICLES", "5")
+    monkeypatch.setenv("RWE_STORY_SLOT", "1")
+    monkeypatch.delenv("RWE_QBIAS", raising=False)
+    monkeypatch.delenv("RWE_PROFILE", raising=False)
+    st = store_mod.Store(f"sqlite:///{tmp_path / 'graph.db'}")
+    T = "landmark ruling reshapes the harbor oversight case"
+    rows = [("https://cnn.example.com/g/anchor", "CNN", T, 1.2, {"lean": -0.5}),
+            # the sibling's scored dict has NO lean -> dropped by the corpus builder (the
+            # documented unknown-outlet gap) -> not_in_graph
+            ("https://zvqx.example.com/g/sib", "Zvqx Chronicle", T + " again", 1.0, {})]
+    uid = _seed_and_read(st, rows + _fillers(),
+                         [("https://cnn.example.com/g/anchor", "CNN", T)]
+                         + [(f"https://ap0.example.com/x/{k}", "AP",
+                             f"filing{k} memo{k} briefing{k} notice{k} dossier{k}")
+                            for k in (0, 6, 12, 18)])
+    er._INDEX_CACHE.update(key=None, index=None)
+    doc = asc.full_report(st, uid)
+    assert doc["opportunities"] == {"converted": 0, "capSatisfied": 0, "rankedBelowCutoff": 0,
+                                    "notInGraph": 1, "freshness": 0}
+    assert doc["verdict"]["code"] == "graph"
+    assert doc["coverageRatePercent"] == 20.0            # catalog-level: unchanged semantics
+    assert doc["servableCoverage"]["withServableSibling"] == 0   # graph-level: truthfully zero
+    assert doc["missed"] and doc["missed"][0]["reason"].startswith("NOT IN GRAPH")
+
+
+def test_auditor_cap_bucket_vs_ranking_bucket(tmp_path, monkeypatch):
+    """Two live stories, one story card: with the slot ON the unconverted story is CAP-SATISFIED
+    (a servable sibling existed; the feed's one story card was taken); with the slot OFF the
+    same store truthfully reports RANKING (no cap exists to blame)."""
+    import audit_story_coverage as asc
+    monkeypatch.setenv("RWE_RECS_SOURCE", "feed")
+    monkeypatch.setenv("RWE_FEED_MIN_ARTICLES", "5")
+    monkeypatch.delenv("RWE_QBIAS", raising=False)
+    monkeypatch.delenv("RWE_PROFILE", raising=False)
+    st = store_mod.Store(f"sqlite:///{tmp_path / 'cap.db'}")
+    T1 = "landmark ruling reshapes the harbor oversight case"
+    T2 = "senate committee subpoenas the refinery inspection records"
+    rows = [("https://cnn.example.com/c/a1", "CNN", T1, 1.2, {"lean": -0.5}),
+            ("https://fox.example.com/c/s1", "Fox News", T1 + " again", 1.0, {"lean": 1.0}),
+            ("https://thehill.example.com/c/a2", "The Hill", T2, 1.4, {"lean": 0.1}),
+            ("https://reuters.example.com/c/s2", "Reuters", T2 + " today", 1.5, {"lean": 0.0})]
+    uid = _seed_and_read(st, rows + _fillers(),
+                         [("https://cnn.example.com/c/a1", "CNN", T1),
+                          ("https://thehill.example.com/c/a2", "The Hill", T2)]
+                         + [(f"https://ap0.example.com/x/{k}", "AP",
+                             f"filing{k} memo{k} briefing{k} notice{k} dossier{k}")
+                            for k in (0, 6, 12)])
+    monkeypatch.setenv("RWE_STORY_SLOT", "1")
+    er._INDEX_CACHE.update(key=None, index=None)
+    doc = asc.full_report(st, uid)
+    assert doc["opportunities"] == {"converted": 1, "capSatisfied": 1, "rankedBelowCutoff": 0,
+                                    "notInGraph": 0, "freshness": 0}
+    assert doc["verdict"]["code"] == "cap"
+    assert "cap-satisfied" in doc["verdict"]["message"]
+    # the same store with the slot OFF: no cap exists, so the truthful bucket is ranking
+    monkeypatch.delenv("RWE_STORY_SLOT", raising=False)
+    er._INDEX_CACHE.update(key=None, index=None)
+    doc_off = asc.full_report(st, uid)
+    assert doc_off["opportunities"]["capSatisfied"] == 0
+    assert doc_off["opportunities"]["rankedBelowCutoff"] == 2
+    assert doc_off["verdict"]["code"] == "ranking"
