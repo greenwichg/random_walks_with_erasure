@@ -320,6 +320,32 @@ Each future feature = registry entry + at most one new tool; core untouched:
 | timeline replay ("how did my month evolve?") | COMPARE.replay | `trend` + `history` bucketed by week | none |
 | misinformation coaching | (honest caveat) | — | **yes — claim/fact-check data does not exist in this system**; the architecture holds (new tool + leaf) but the data layer must come first. Do not promise this until an upstream source exists. |
 
+
+### Build catalog appendix (every leaf, one line each)
+
+`plan` steps reference §8 tools; `mode`/`attach_cards` modifiers apply per §9; worked example conversations for each leaf are in the v1 draft (git history of this file, commit a9a8860) and become the golden-conversation fixtures of §18.
+
+| leaf | matcher hints | plan | template sketch |
+|---|---|---|---|
+| EXPLAIN.metrics | "what do these metrics mean", "explain my report" | [report] | one line per score + what it measures |
+| EXPLAIN.metric | metric name or bound "it" (+why→cause) | [report, metric] | value + 2–3 drivers + one offer |
+| EXPLAIN.ih_score | "information health", "overall score" | [report] | roll-up composition + dominant drag |
+| EXPLAIN.echo | "echo chamber" | [report, metric(echoChamber)] | score + one-sidedness drivers |
+| EXPLAIN.viewpoint | "viewpoint", "balance score" | [report, metric(viewpointBalance), shares] | score + L/C/R shares |
+| EXPLAIN.recommendations | "how does my feed work" | [recommendations] | mix by explanation type + slot rule + why_article offer |
+| EXPLAIN.why_article | URL / "this article" / lastCards[i] + "why" | [why_article(, story_context)] | evidence chain, or truthful exclusion verdict |
+| ANALYZE.political | "am I balanced", "left/right" | [shares, metric(viewpointBalance, cause)] | split + concentration + bridge offer |
+| ANALYZE.sources | "source/outlet diversity" | [metric(sourceDiversity, cause), history] | outlet counts, concentration, unread majors |
+| ANALYZE.topics | "what topics do I read" | [shares, history] | top shares + thin topics with catalog counts |
+| ANALYZE.blind_spots | "missing", "blind spot", "not reading" | [blind_spots] | 2–3 gaps, each with catalog-count proof + card offer |
+| COMPARE.over_time | "improving", "trend", "last month" | [trend] | only metrics that moved, first→last deltas |
+| ACT.suggest | "suggest/recommend/show me" (+want from context) | [recommendations(want)] | 2–3 cards with resolver reasons, nothing invented |
+| ACT.weekly_goals | "goals", "this week" | [goals(read), blind_spots, trend] | 2–3 goals bound to measured gaps, sized to the reading goal |
+| ACT.improvement_plan | "how do I improve/fix" | [report, metric(lowest, cause), recommendations(want=driver), goals(read)] | lowest metric → 3 concrete actions (cards / slider / story follow-up) |
+| PROJECT.forecast | "what if I read…", "could improve" | [report, forecast(action, k)] | current → estimated-after deltas, labeled estimates |
+| PROJECT.compare_candidates | "which helps more" | [recommendations, forecast(per-card)] | ranked by projected delta, each labeled estimated |
+| CHAT.general | greeting / unresolved | [] | short reply + two capability chips; clarification lives here |
+
 ### Explainability appendix (D7 — canonical Explanation model)
 
 Every card the coach surfaces carries, and every "why" answer is composed from, one shape — all fields **measured or explicitly estimated**, none LLM-generated:
