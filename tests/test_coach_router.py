@@ -177,12 +177,13 @@ def test_router_never_raises_on_junk():
         assert it.family in {"EXPLAIN", "ANALYZE", "COMPARE", "ACT", "PROJECT", "CHAT"}
 
 
-def test_no_production_module_imports_coach_service():
-    """M1 DoD: the module is dead code until M4 — imported by tests only."""
+def test_coach_service_is_wired_only_through_the_api_layer():
+    """M4 contract: api_fastapi is the ONE sanctioned production consumer (the flag-gated
+    route); no other production module may import the coach."""
     import subprocess
     r = subprocess.run(
         ["grep", "-rl", "--exclude-dir=__pycache__", "--exclude-dir=node_modules",
          "coach_service", str(ROOT / "examples"), str(ROOT / "web")],
         capture_output=True, text=True)
-    hits = [l for l in r.stdout.splitlines() if not l.endswith("coach_service.py")]
-    assert hits == [], f"coach_service must stay unwired in M1, found: {hits}"
+    hits = {pathlib.Path(l).name for l in r.stdout.splitlines()}
+    assert hits <= {"coach_service.py", "api_fastapi.py"}, f"unexpected consumers: {hits}"

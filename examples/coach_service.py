@@ -852,34 +852,37 @@ def _fallback_content(results, gaps) -> str:
     return line
 
 
-def compose(intent: Intent, results: list, gaps: list, already_covered: bool = False) -> str:
+def compose(intent: Intent, results: list, gaps: list,
+            already_covered: bool = False) -> "tuple[str, str | None]":
     """Deterministic phrasing of the evidence — the no-LLM path that must always work.
     Renders the leaf template over the presentation namespace; a missing key (failed/absent
     tool) or a grounding violation falls back to the citation fact-list; gaps are ADMITTED in
-    one clause; nothing is ever inferred (D0)."""
+    one clause; nothing is ever inferred (D0). Returns ``(content, fallback_reason)`` where
+    fallback_reason is None | "missing_evidence" | "gate" — the observability signal M4 logs."""
     if intent.needs_clarification:
-        return _CLARIFY
+        return _CLARIFY, None
     spec = INTENTS[intent.name]
     ns: dict = {}
     for r in results:
         for k, v in _present(r).items():
             ns.setdefault(k, v)                       # first result per key wins (merge rule)
+    fallback = None
     try:
         content = spec.template.format(**ns) if spec.template else _fallback_content(results, gaps)
     except (KeyError, IndexError):
-        content = _fallback_content(results, gaps)
+        content, fallback = _fallback_content(results, gaps), "missing_evidence"
     # grounding gate: every number in the reply must exist in the evidence
     evidence = " ".join([_json.dumps([dataclasses.asdict(c) for r in results
                                       for c in r.citations]),
                          _json.dumps([r.facts for r in results]),
                          " ".join(str(v) for v in ns.values())])
     if not _numbers(content) <= _numbers(evidence):
-        content = _fallback_content(results, gaps)
+        content, fallback = _fallback_content(results, gaps), "gate"
     if gaps and "Unavailable" not in content:
         content += " (I couldn't compute: " + ", ".join(g["tool"] for g in gaps) + " right now.)"
     if already_covered:
         content = "As covered a moment ago — " + content
-    return content
+    return content, fallback
 
 
 def _template_fields(template: str) -> set:
@@ -891,6 +894,8 @@ def coach_turn(pers, store, uid: int, message: str = None, intent: Intent = None
     """ONE coach turn — the internal entry point (and the proactive seam: callers may pass a
     ready-made ``intent`` instead of a ``message``; the router is just one producer). Read-only;
     returns the structured reply the API serializes at M4."""
+    import time as _time
+    t0 = _time.perf_counter()
     if intent is None:
         intent = classify(message or "", echo)
     valid = _valid_echo(echo)
@@ -899,7 +904,7 @@ def coach_turn(pers, store, uid: int, message: str = None, intent: Intent = None
                and (last.get("entities") or {}) == {k: v for k, v in intent.entities.items()
                                                     if k in ("metric", "article", "want")})
     results, gaps = run_plan(intent, pers, store, uid)
-    content = compose(intent, results, gaps, already_covered=already)
+    content, fallback = compose(intent, results, gaps, already_covered=already)
     citations = [dataclasses.asdict(c) for r in results for c in r.citations]
     cards = [c for r in results for c in r.cards]
     follow_ups = list(INTENTS[intent.name].follow_ups)
@@ -913,4 +918,7 @@ def coach_turn(pers, store, uid: int, message: str = None, intent: Intent = None
                 "goals": valid.get("goals")}
     return {"content": content, "intent": intent.name, "resolution": intent.resolution,
             "citations": citations, "cards": cards, "followUps": follow_ups,
-            "echo": out_echo, "gaps": gaps}
+            "echo": out_echo, "gaps": gaps,
+            # observability (M4): read-only turn telemetry, logged by the API layer
+            "toolsRun": [r.tool for r in results], "fallback": fallback,
+            "ms": round((_time.perf_counter() - t0) * 1000.0, 1)}

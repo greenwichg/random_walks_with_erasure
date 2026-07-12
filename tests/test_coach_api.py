@@ -1,0 +1,178 @@
+"""M4 — the flag-gated API wiring for Coach v2 (POST /api/coach + RWE_COACH_V2).
+
+DoD: with the flag OFF the wire reply is byte-identical to v1 — none of the additive fields
+leak (the M0 characterization suite, tests/test_coach_v1_contract.py, stays green untouched
+and remains the primary proof). With the flag ON, only the MEASURED (personal) path routes
+through coach_service.coach_turn; the demo path and below-threshold readers stay v1. Every
+v2 turn emits ONE structured observability record (event=coach_turn on logger "ih.api")
+carrying intent / resolution / tools / failures / fallback / ms — read-only telemetry that
+never changes the reply.
+"""
+import json
+import logging
+import os
+import pathlib
+import sys
+
+import pytest
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "examples"))
+
+os.environ.setdefault("RWE_DB_URL", "sqlite://")     # ephemeral store for the app lifespan
+
+from fastapi.testclient import TestClient  # noqa: E402
+
+import api_fastapi  # noqa: E402
+
+V2_FIELDS = {"intent", "resolution", "followUps", "cards", "echo"}
+
+
+@pytest.fixture(scope="module")
+def client():
+    with TestClient(api_fastapi.app) as c:
+        yield c
+
+
+@pytest.fixture(scope="module")
+def measured(client):
+    """A real (measured) reader: internal upsert + enough reads to cross the personal threshold."""
+    uid = client.post("/api/internal/users",
+                      json={"provider": "dev", "providerAccountId": "coach-api",
+                            "email": "coach-api@x", "displayName": "Coach Api"}).json()["userId"]
+    h = {"X-IH-User-Id": str(uid)}
+    reads = [{"url": f"https://coach-api.example/politics/{k}",
+              "title": f"coach api read {k}", "outlet": "The Guardian"} for k in range(6)]
+    r = client.post("/api/me/reads", json={"reads": reads}, headers=h)
+    assert r.status_code == 200 and r.json()["sufficient"] is True
+    return h
+
+
+@pytest.fixture()
+def no_llm(monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+
+
+@pytest.fixture()
+def v2_off(monkeypatch):
+    monkeypatch.delenv("RWE_COACH_V2", raising=False)
+
+
+@pytest.fixture()
+def v2_on(monkeypatch):
+    monkeypatch.setenv("RWE_COACH_V2", "1")
+
+
+class _JsonLogCapture(logging.Handler):
+    """logger "ih.api" has propagate=False, so caplog never sees it — attach directly."""
+
+    def __init__(self):
+        super().__init__(level=logging.INFO)
+        self.events = []
+
+    def emit(self, record):
+        try:
+            self.events.append(json.loads(record.getMessage()))
+        except (ValueError, TypeError):
+            pass
+
+
+@pytest.fixture()
+def api_log():
+    h = _JsonLogCapture()
+    logging.getLogger("ih.api").addHandler(h)
+    yield h.events
+    logging.getLogger("ih.api").removeHandler(h)
+
+
+# --------------------------------------------------------------------------- #
+# Flag OFF: nothing additive leaks onto the v1 wire (M0 remains the full proof).
+# --------------------------------------------------------------------------- #
+def test_flag_off_reply_carries_no_v2_fields(client, measured, no_llm, v2_off):
+    msg = client.post("/api/coach", json={"message": "how am I doing?"}, headers=measured).json()
+    assert msg["role"] == "assistant" and msg["content"]
+    assert not (V2_FIELDS & set(msg)), f"v2 fields leaked with the flag off: {V2_FIELDS & set(msg)}"
+    for c in msg.get("citations") or []:
+        assert "source" not in c                     # CitationModel.source stays v2-only
+
+    greeting = client.get("/api/coach", headers=measured).json()
+    assert not (V2_FIELDS & set(greeting[0]))
+
+
+def test_flag_off_emits_no_coach_turn_telemetry(client, measured, no_llm, v2_off, api_log):
+    client.post("/api/coach", json={"message": "am I improving?"}, headers=measured)
+    assert not [e for e in api_log if e.get("event") == "coach_turn"]
+
+
+# --------------------------------------------------------------------------- #
+# Flag ON, measured path: the intent-routed reply.
+# --------------------------------------------------------------------------- #
+def test_flag_on_measured_reply_is_intentful(client, measured, no_llm, v2_on):
+    r = client.post("/api/coach", json={"message": "why is my source diversity low?"},
+                    headers=measured)
+    assert r.status_code == 200
+    msg = r.json()
+    assert msg["role"] == "assistant" and msg["content"].strip()
+    assert msg["intent"] == "EXPLAIN.metric" and msg["resolution"] == "rule"
+    assert isinstance(msg["followUps"], list) and msg["followUps"]
+    assert msg["echo"]["v"] == 1
+    assert msg["echo"]["turns"][-1]["intent"] == "EXPLAIN.metric"
+    assert msg["citations"], "EXPLAIN.metric must cite engine numbers"
+    for c in msg["citations"]:
+        assert set(c) >= {"metric", "value", "source"} and c["source"]
+
+    again = client.post("/api/coach", json={"message": "why is my source diversity low?"},
+                        headers=measured).json()
+    assert again["id"] == msg["id"]                  # ids stay hash-stable, like v1
+
+
+def test_flag_on_demo_path_stays_v1(client, no_llm, v2_on):
+    msg = client.post("/api/coach", json={"message": "why is my source diversity low?"}).json()
+    assert msg["role"] == "assistant" and msg["content"]
+    assert not (V2_FIELDS & set(msg))
+    assert len(msg.get("citations") or []) <= 2      # the v1 demo narrator shape
+
+
+def test_flag_on_below_threshold_reader_stays_v1(client, no_llm, v2_on):
+    uid = client.post("/api/internal/users",
+                      json={"provider": "dev", "providerAccountId": "coach-api-thin",
+                            "email": "coach-api-thin@x", "displayName": "Thin"}).json()["userId"]
+    msg = client.post("/api/coach", json={"message": "am I balanced?"},
+                      headers={"X-IH-User-Id": str(uid)}).json()
+    assert not (V2_FIELDS & set(msg))                # no reads -> row path -> v1
+
+
+# --------------------------------------------------------------------------- #
+# The echo round-trip over the wire (D6: binding-only).
+# --------------------------------------------------------------------------- #
+def test_echo_round_trip_binds_the_offer(client, measured, no_llm, v2_on):
+    a = client.post("/api/coach", json={"message": "why is my source diversity low?"},
+                    headers=measured).json()
+    b = client.post("/api/coach", json={"message": "yes, show me", "echo": a["echo"]},
+                    headers=measured).json()
+    assert b["intent"] == "ACT.suggest"
+    assert b["echo"]["turns"][-1]["intent"] == "ACT.suggest"
+    assert b["cards"], "the live feed serves recs here, so the offer must attach cards"
+    for card in b["cards"]:                          # resolver-explained, RecommendationModel-valid
+        assert card["explanation"]["type"] and card["strategy"]
+    assert [s["id"] for s in b["suggestions"]] == [c["article"]["id"] for c in b["cards"]][:3]
+
+
+# --------------------------------------------------------------------------- #
+# Observability: one structured record per v2 turn, read-only.
+# --------------------------------------------------------------------------- #
+def test_v2_turn_emits_structured_observability(client, measured, no_llm, v2_on, api_log):
+    msg = client.post("/api/coach", json={"message": "am I improving?"},
+                      headers=measured).json()
+    events = [e for e in api_log if e.get("event") == "coach_turn"]
+    assert len(events) == 1, f"expected exactly one coach_turn record, got {len(events)}"
+    rec = events[0]
+    assert set(rec) >= {"event", "requestId", "intent", "resolution",
+                        "tools", "failures", "fallback", "ms"}
+    assert rec["intent"] == msg["intent"] == "COMPARE.over_time"
+    assert rec["resolution"] == msg["resolution"]
+    assert isinstance(rec["tools"], list) and all(isinstance(t, str) for t in rec["tools"])
+    assert rec["failures"] == []                     # no tool failed on this turn
+    assert rec["fallback"] in (None, "missing_evidence", "gate")
+    assert isinstance(rec["ms"], (int, float)) and rec["ms"] >= 0

@@ -28,6 +28,7 @@ import sys
 import time
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any, Optional
 
@@ -38,6 +39,7 @@ import ingest                 # reading-event scorer + cache (Milestone C)
 import enrich                 # headline enrichment (register + emotion) behind ingest.Enricher
 import personalize            # per-user augmented Measured report / recs / coach
 import evidence_resolver      # ONE human explanation per rec, chosen from evidence (21a.3)
+import coach_service          # Coach v2: intent-routed, tool-using coach (RWE_COACH_V2, M4)
 import ratelimit              # dependency-free token-bucket rate limiter (Private Alpha hardening)
 import reqlimits              # request-body size / batch-shape limits (Private Alpha hardening)
 import feed_source            # optional: source the recommender catalog from the RSS FeedArticle store
@@ -780,7 +782,9 @@ class StoriesResponseModel(BaseModel):
 
 class CitationModel(BaseModel):
     metric: str
-    value: int
+    value: int | float | str
+    # Coach v2: the engine surface the number came from (absent on v1 replies)
+    source: str | None = None
 
 
 class CoachMessageModel(BaseModel):
@@ -790,6 +794,13 @@ class CoachMessageModel(BaseModel):
     createdAt: str
     citations: Optional[list[CitationModel]] = None
     suggestions: Optional[list[ArticleModel]] = None
+    # Coach v2 (RWE_COACH_V2) — additive; absent (exclude_none) on the v1 path, so old
+    # clients and the M0 characterization contract are untouched with the flag off.
+    intent: Optional[str] = None
+    resolution: Optional[str] = None
+    followUps: Optional[list[str]] = None
+    cards: Optional[list[RecommendationModel]] = None
+    echo: Optional[dict] = None
 
 
 class HealthStatusModel(BaseModel):
@@ -809,6 +820,9 @@ class HealthStatusModel(BaseModel):
 class CoachRequest(BaseModel):
     message: str = ""
     user: str | None = None
+    # Coach v2 (RWE_COACH_V2): the client-carried STRUCTURED conversation echo ({"v": 1, ...}).
+    # Binding-only — it resolves references ("it", "the first one"); nothing in it is citable.
+    echo: dict | None = None
 
 
 class UpsertUserRequest(BaseModel):
@@ -1822,8 +1836,32 @@ def coach(request: Request, user: str | None = Query(None)) -> list:
 @app.post("/api/coach", response_model=CoachMessageModel, response_model_exclude_none=True,
           tags=["coach"], summary="Send a message; get a grounded reply", responses=_ERR_RESPONSES)
 def coach_reply(request: Request, req: CoachRequest) -> dict:
+    """v1: the grounded narrator (_serialize_coach_reply). With ``RWE_COACH_V2`` enabled, the
+    MEASURED (personal) path routes through the intent-routed coach (examples/coach_service);
+    the demo path stays v1 regardless — Coach v2 needs a real reader's Personalizer surfaces.
+    Flag off is byte-identical to v1 (pinned by tests/test_coach_v1_contract.py)."""
     active = _active()
     kind, val = _serve(active, request, req.user)
+    if kind == "personal" and coach_service.coach_v2_enabled():
+        pers = active.personalizer
+        turn = coach_service.coach_turn(pers, pers.store, val,
+                                        message=req.message or "", echo=req.echo)
+        # read-only structured observability for every v2 turn (low overhead: one log line)
+        _log(logging.INFO, "coach_turn", intent=turn["intent"], resolution=turn["resolution"],
+             tools=turn["toolsRun"], failures=[g["tool"] for g in turn["gaps"]],
+             fallback=turn["fallback"], ms=turn["ms"])
+        arts = [c.get("article") for c in turn["cards"]
+                if isinstance(c, dict) and c.get("article")]
+        return {"id": f"msg_{engine._stable_int(req.message or '', val)}", "role": "assistant",
+                "content": turn["content"],
+                "createdAt": datetime.now(timezone.utc).isoformat(),
+                "citations": [{"metric": c["key"], "value": c["value"], "source": c["source"]}
+                              for c in turn["citations"][:8]] or None,
+                "suggestions": arts[:3] or None,
+                "intent": turn["intent"], "resolution": turn["resolution"],
+                "followUps": turn["followUps"] or None,
+                "cards": turn["cards"] or None,
+                "echo": turn["echo"]}
     if kind == "personal":
         return active.personalizer.coach_reply(val, req.message or "")
     return active.backend.coach_reply(val, req.message or "")
