@@ -6,6 +6,7 @@ import { PageContainer } from "@/components/layout/page-container";
 import { SectionCard } from "@/components/shared/section-card";
 import { TrendChart } from "@/components/shared/trend-chart";
 import { StackedBar } from "@/components/shared/stacked-bar";
+import { MultiLineChart } from "@/components/shared/multi-line-chart";
 import { ErrorState } from "@/components/shared/states";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EMOTION_META } from "@/lib/metrics";
@@ -58,7 +59,10 @@ export default function AnalyticsPage() {
           </SectionCard>
 
           <SectionCard title={t("analytics.emotionalTone")} info={t("analytics.emotionalToneInfo")}>
-            <StackedBar
+            {/* Trends of 5 shares: a multi-line chart gives every series a common baseline
+                (a 100% stack can't for its middle segments); the shared tooltip keeps the
+                composition-at-a-point reading; the legend keeps identity off color-alone. */}
+            <MultiLineChart
               data={data.emotion}
               series={(Object.keys(EMOTION_META) as (keyof typeof EMOTION_META)[]).map((k) => ({
                 key: k,
@@ -66,7 +70,7 @@ export default function AnalyticsPage() {
                 color: EMOTION_META[k].color,
               }))}
               percent
-              height={220}
+              height={200}
             />
           </SectionCard>
 
