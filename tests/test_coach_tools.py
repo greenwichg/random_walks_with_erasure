@@ -6,6 +6,7 @@ verdicts, analytics trends, engine blind spots, per-article projections, stored 
 index); a coach turn performs ZERO store writes; failed tools become admitted gaps. The module
 stays unwired (pinned in test_coach_router).
 """
+import dataclasses
 import json
 import pathlib
 import sys
@@ -115,7 +116,9 @@ def test_every_tool_returns_cited_json_safe_toolresult(stack):
         res = cs.TOOLS[name](pers, st, uid, {}, **args)
         assert isinstance(res, cs.ToolResult) and res.tool == name
         assert len(res.citations) >= 1, f"{name} must cite"
-        json.dumps({"facts": res.facts, "cards": list(res.cards)})   # JSON-safe end to end
+        json.dumps({"facts": res.facts, "cards": list(res.cards),
+                    "citations": [dataclasses.asdict(c) for c in res.citations],
+                    "caveats": list(res.caveats), "provenance": res.provenance})  # JSON-safe
         assert res.provenance.get("reads") == 5
 
 

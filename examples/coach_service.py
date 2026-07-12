@@ -2,8 +2,10 @@
 
 Scope so far — M1: the ROUTER and the INTENT REGISTRY (pure functions over the message and the
 structured echo). M2: the TOOL LAYER — typed ToolResults from thin wrappers over existing PUBLIC
-engine surfaces, plus the within-turn plan executor. Still imported by no production module;
-templates + composer + gate (M3) and API wiring (M4) land next per docs/COACH_REDESIGN.md.
+engine surfaces, plus the within-turn plan executor. M3: the COMPOSER — per-leaf grounded
+templates, the grounding gate (reusing narrate_report.check-style number extraction), admitted
+gaps, and the ``coach_turn`` entry point (the proactive seam: the router is just one producer of
+intents). Still imported by no production module; API wiring is M4 per docs/COACH_REDESIGN.md.
 
 The prime invariant (D0), binding on everything in this module, forever:
 
@@ -677,3 +679,238 @@ def run_plan(intent: Intent, pers, store, uid: int):
         except Exception as e:                        # admitted gap, never invention
             gaps.append({"tool": tool, "reason": f"{type(e).__name__}: {e}"})
     return results, gaps
+
+
+# --------------------------------------------------------------------------- #
+# M3 — composer: per-leaf grounded templates + the grounding gate + coach_turn.
+#
+# The composer only PHRASES evidence. The render NAMESPACE is presentation of tool facts
+# (joining lists, percent-formatting shares); the grounding gate then requires every number in
+# the reply to appear in that namespace / the citations / the raw facts — so a template (or,
+# in M7, an LLM) that states an un-evidenced number is replaced by the safe fact-list fallback.
+# Merge rule: the namespace takes the FIRST result per tool name (plans are registry-controlled,
+# so a same-tool collision is avoidable by construction and ignored thereafter).
+# --------------------------------------------------------------------------- #
+import json as _json
+import string as _string
+
+
+def _pct(x) -> str:
+    try:
+        return f"{round(float(x) * 100)}%"
+    except (TypeError, ValueError):
+        return "n/a"
+
+
+def _label(key: str) -> str:
+    return str(key).replace("_", " ")
+
+
+def _present(res: ToolResult) -> dict:
+    """Flatten one ToolResult into template-ready strings/numbers (presentation ONLY)."""
+    f = res.facts
+    ns: dict = {}
+    if res.tool == "report":
+        ns["report_overall"] = f.get("overall")
+        ns["report_band"] = f.get("band")
+        ns["report_scores_line"] = ", ".join(f"{k} {v}" for k, v in (f.get("scores") or {}).items())
+    elif res.tool == "metric":
+        ns["metric_label"] = f.get("metric")
+        ns["metric_score"] = f.get("score")
+        d = f.get("drivers") or {}
+        line = ""
+        if "leanShares" in d and d["leanShares"]:
+            sh = d["leanShares"]
+            line = (" Driven by your political mix: "
+                    + " / ".join(f"{side} {_pct(sh[side])}" for side in ("left", "center", "right")
+                                 if side in sh) + ".")
+        elif "topSources" in d and d["topSources"]:
+            tops = ", ".join(f"{x.get('name')} {_pct(x.get('share'))}" for x in d["topSources"][:3]
+                             if isinstance(x, dict))
+            line = f" Your most-read outlets: {tops}."
+        elif "reception" in d:
+            r = d["reception"]
+            line = (f" Cross-perspective cards shown: {r.get('shownCross')}, opened: "
+                    f"{r.get('openedCross')} (activates at {r.get('minOpened')} opened / "
+                    f"{r.get('minShown')} shown).")
+        ns["metric_drivers_line"] = line
+    elif res.tool == "shares":
+        lean = f.get("leanShares") or {}
+        ns["shares_lean_line"] = (" / ".join(f"{s} {_pct(lean[s])}" for s in ("left", "center", "right")
+                                             if s in lean) or "not yet measurable")
+        tops = list((f.get("topicShares") or {}).items())[:3]
+        ns["shares_topics_line"] = (", ".join(f"{t} {_pct(v)}" for t, v in tops)
+                                    or "no topic shares yet")
+    elif res.tool == "recommendations":
+        ns["recs_served"] = f.get("served")
+        ns["recs_matched"] = f.get("matched")
+        ns["recs_bytype_line"] = ", ".join(f"{_label(k)} {v}"
+                                           for k, v in (f.get("byType") or {}).items() if k)
+        offers = []
+        for i, c in enumerate(res.cards, 1):
+            a = c.get("article") or {}
+            offers.append(f"{i}. {a.get('publisher')} — “{a.get('headline')}” "
+                          f"({_label((c.get('explanation') or {}).get('type'))})")
+        ns["recs_offer_line"] = ("; ".join(offers) if offers
+                                 else "no matching card is in your live feed right now")
+    elif res.tool == "why_article":
+        ranks = "; ".join(f"{s} #{d.get('rank')}" for s, d in (f.get("byStrategy") or {}).items()
+                          if isinstance(d, dict) and d.get("rank") is not None)
+        ns["why_line"] = (f"The engine's verdict for this article: {f.get('verdict')} — "
+                          f"{f.get('detail')}." + (f" Ranks: {ranks}." if ranks else ""))
+    elif res.tool == "story_context":
+        st_ = f.get("story")
+        ns["story_line"] = ((f" It belongs to story {st_['storyId']} with {st_['members']} "
+                             f"articles across {len(st_['publishers'])} publishers.")
+                            if st_ else " It is not part of a multi-publisher story.")
+    elif res.tool == "history":
+        ns["history_total"] = f.get("totalReads")
+        ns["history_distinct"] = f.get("distinctOutlets")
+        ns["history_outlets_line"] = ", ".join(f"{o} {n}" for o, n in (f.get("topOutlets") or []))
+        ns["history_topics_line"] = ", ".join(f"{t} {n}" for t, n in (f.get("topTopics") or []))
+    elif res.tool == "trend":
+        lines = [f"{_label(k)}: {v['first'].get('overall')} → {v['last'].get('overall')} "
+                 f"({v['points']} snapshots)" for k, v in (f.get("series") or {}).items()]
+        ns["trend_lines"] = "; ".join(lines) if lines else \
+            "no report snapshots recorded yet — trends appear once a few reports are saved"
+    elif res.tool == "blind_spots":
+        notes = [s.get("note") for s in (f.get("blindSpots") or []) if isinstance(s, dict)]
+        ns["bs_spots_line"] = (" ".join(notes[:3]) if notes
+                               else "no measured topic gaps right now.")
+        never = f.get("neverReadPublishers") or []
+        ns["bs_never_line"] = ", ".join(never) if never else "none"
+    elif res.tool == "forecast":
+        cur = f.get("current") or {}
+        ns["fc_current_line"] = " / ".join(f"{s} {cur[s]}" for s in ("left", "center", "right")
+                                           if s in cur)
+        cands = []
+        for c in (f.get("candidates") or [])[:2]:
+            after = c.get("after") or {}
+            aft = " / ".join(f"{s} {after[s]}" for s in ("left", "center", "right") if s in after)
+            cands.append(f"after {c.get('publisher')} — “{c.get('headline')}”: {aft}")
+        ns["fc_candidates_line"] = "; ".join(cands)
+    elif res.tool == "goals":
+        ns["goals_minutes"] = f.get("readingGoalMinutes")
+        stored = f.get("coachGoals")
+        ns["goals_line"] = (_json.dumps(stored) if stored
+                            else "no stored coach goals yet — the gaps above are the candidates.")
+    return ns
+
+
+TEMPLATES = {
+    "EXPLAIN.metrics": ("Your Information Health is {report_overall}/100 ({report_band}). "
+                        "The measured pieces: {report_scores_line}. Ask about any one of them — "
+                        "or ask how to improve."),
+    "EXPLAIN.metric": "Your {metric_label} is {metric_score}/100.{metric_drivers_line}",
+    "EXPLAIN.recommendations": ("Your feed currently serves {recs_served} cards: "
+                                "{recs_bytype_line}. Every card's explanation is provable — ask "
+                                "why any specific one was picked."),
+    "EXPLAIN.why_article": "{why_line}{story_line}",
+    "ANALYZE.political": ("Your political reading splits {shares_lean_line} — Viewpoint Balance "
+                          "{metric_score}/100."),
+    "ANALYZE.sources": ("You've read {history_distinct} distinct outlets ({history_outlets_line})."
+                        " Source Diversity {metric_score}/100.{metric_drivers_line}"),
+    "ANALYZE.topics": ("Your reading by topic share: {shares_topics_line}. By stored reads: "
+                       "{history_topics_line}."),
+    "ANALYZE.blind_spots": ("Measured gaps: {bs_spots_line} Publishers in the catalog you've "
+                            "never read: {bs_never_line}."),
+    "COMPARE.over_time": "{trend_lines}.",
+    "ACT.suggest": "From your live feed: {recs_offer_line}.",
+    "ACT.weekly_goals": ("Grounded in your data — gaps: {bs_spots_line} {trend_lines}. Stored "
+                         "goals: {goals_line} Your reading goal is {goals_minutes} minutes/day."),
+    "ACT.improvement_plan": ("Your lowest metric is {metric_label} ({metric_score}/100)."
+                             "{metric_drivers_line} Concrete, measured next steps from your live "
+                             "feed: {recs_offer_line}. Stored goals: {goals_line}"),
+    "PROJECT.forecast": ("Estimated — the report's own computation with one article appended, "
+                         "not a promise. Now: {fc_current_line}. {fc_candidates_line}."),
+    "PROJECT.compare_candidates": ("Estimated per candidate (the report's own computation): now "
+                                   "{fc_current_line}; {fc_candidates_line}."),
+    "CHAT.general": ("I can explain your metrics, analyze your political balance, sources or "
+                     "topics, find blind spots, track your progress, or suggest reads — every "
+                     "number measured, never invented. What would you like?"),
+}
+INTENTS = {k: dataclasses.replace(v, template=TEMPLATES.get(k, "")) for k, v in INTENTS.items()}
+
+_CLARIFY = ("I want to answer precisely, but I'm not sure what you're asking. I can explain "
+            "your metrics, analyze balance, find blind spots, track progress, or suggest reads "
+            "— which would you like?")
+
+
+def _numbers(text: str) -> set:
+    """Number extraction for the grounding gate (same discipline as narrate_report's checker)."""
+    return set(re.findall(r"\d+(?:\.\d+)?", str(text)))
+
+
+def _fallback_content(results, gaps) -> str:
+    """The always-safe reply: a fact list built ONLY from citations (grounded by construction),
+    plus admitted gaps."""
+    bits = [f"{c.key} = {c.value}" for r in results for c in r.citations][:8]
+    line = ("Here's what I can measure right now: " + "; ".join(bits) + "."
+            if bits else "I can't compute that right now.")
+    if gaps:
+        line += " (Unavailable: " + ", ".join(g["tool"] for g in gaps) + ".)"
+    return line
+
+
+def compose(intent: Intent, results: list, gaps: list, already_covered: bool = False) -> str:
+    """Deterministic phrasing of the evidence — the no-LLM path that must always work.
+    Renders the leaf template over the presentation namespace; a missing key (failed/absent
+    tool) or a grounding violation falls back to the citation fact-list; gaps are ADMITTED in
+    one clause; nothing is ever inferred (D0)."""
+    if intent.needs_clarification:
+        return _CLARIFY
+    spec = INTENTS[intent.name]
+    ns: dict = {}
+    for r in results:
+        for k, v in _present(r).items():
+            ns.setdefault(k, v)                       # first result per key wins (merge rule)
+    try:
+        content = spec.template.format(**ns) if spec.template else _fallback_content(results, gaps)
+    except (KeyError, IndexError):
+        content = _fallback_content(results, gaps)
+    # grounding gate: every number in the reply must exist in the evidence
+    evidence = " ".join([_json.dumps([dataclasses.asdict(c) for r in results
+                                      for c in r.citations]),
+                         _json.dumps([r.facts for r in results]),
+                         " ".join(str(v) for v in ns.values())])
+    if not _numbers(content) <= _numbers(evidence):
+        content = _fallback_content(results, gaps)
+    if gaps and "Unavailable" not in content:
+        content += " (I couldn't compute: " + ", ".join(g["tool"] for g in gaps) + " right now.)"
+    if already_covered:
+        content = "As covered a moment ago — " + content
+    return content
+
+
+def _template_fields(template: str) -> set:
+    return {f for _, f, _, _ in _string.Formatter().parse(template or "") if f}
+
+
+def coach_turn(pers, store, uid: int, message: str = None, intent: Intent = None,
+               echo: "dict | None" = None) -> dict:
+    """ONE coach turn — the internal entry point (and the proactive seam: callers may pass a
+    ready-made ``intent`` instead of a ``message``; the router is just one producer). Read-only;
+    returns the structured reply the API serializes at M4."""
+    if intent is None:
+        intent = classify(message or "", echo)
+    valid = _valid_echo(echo)
+    last = _last_coach_turn(valid)
+    already = (last.get("intent") == intent.name
+               and (last.get("entities") or {}) == {k: v for k, v in intent.entities.items()
+                                                    if k in ("metric", "article", "want")})
+    results, gaps = run_plan(intent, pers, store, uid)
+    content = compose(intent, results, gaps, already_covered=already)
+    citations = [dataclasses.asdict(c) for r in results for c in r.citations]
+    cards = [c for r in results for c in r.cards]
+    follow_ups = list(INTENTS[intent.name].follow_ups)
+    turn_artifact = {"role": "coach", "intent": intent.name,
+                     "entities": {k: v for k, v in intent.entities.items()
+                                  if k in ("metric", "article", "want")},
+                     "cardIds": [str((c.get("article") or {}).get("url") or "")
+                                 for c in cards if isinstance(c, dict)]}
+    out_echo = {"v": ECHO_VERSION,
+                "turns": (valid.get("turns") or [])[-4:] + [turn_artifact],
+                "goals": valid.get("goals")}
+    return {"content": content, "intent": intent.name, "resolution": intent.resolution,
+            "citations": citations, "cards": cards, "followUps": follow_ups,
+            "echo": out_echo, "gaps": gaps}
