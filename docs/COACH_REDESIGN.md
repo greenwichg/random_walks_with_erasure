@@ -370,3 +370,47 @@ Explanation = {
 ### Coaching-without-gamification appendix (D9)
 
 Rules: every coaching statement is a measured fact or a labeled estimate; **no points, badges, or streak mechanics**. "Streaks" are reported as *consistency facts* ("you've read 5+ articles four weeks running — your goal is 5/week") from `reads` + the existing reading goal in `user_settings`; "achievements" are *factual milestones* surfaced by `trend`/`history` ("first center-outlet read this month"); progress is snapshot deltas (`report_snapshots`). Goals are 2–3 items, each bound to a measured gap and checkable next week by `COMPARE.over_time` — which is what makes them coaching rather than gamification: the reward is the evidence.
+
+---
+
+## D0 — The prime invariant (approved, binding on every milestone)
+
+**The AI Coach must never compute recommendations, scores, forecasts, explanations, or metrics.
+It may only orchestrate and explain outputs produced by existing engine components.
+If the required evidence is unavailable, it must explicitly acknowledge that rather than infer
+or fabricate information.**
+
+Enforcement, concretely: every tool is a thin wrapper over a named engine function (code-review
+rule: no arithmetic in `coach_service.py` beyond formatting/rounding of engine outputs); tool
+parity tests prove each citation equals the surface it mirrors; a failed/absent tool renders as
+an admitted gap in the template (tested in M3) and never as inference; the grounding gate rejects
+any composed number not present in the evidence.
+
+## Final refinements folded in from the production review (approved)
+
+- Evidence pack is a plain dict (no class); cross-turn ToolResult cache deferred (within-turn
+  memo only); ConversationState is a pure `bind_entities()` function; plan steps are plain tuples.
+- The coach is strictly READ-ONLY: goal persistence only via the existing settings flow on
+  explicit user confirmation; a coach turn has zero side effects.
+- Echoes are versioned (`{"v": 1, ...}`; unknown version = ignored) and BINDING-ONLY — never
+  citable; every stated number is recomputed each turn.
+- Metric leaves collapsed into parameterized `EXPLAIN.metric` (14 leaves total).
+- Proactive seams reserved at zero cost: `coach_turn(intent, entities, echo)` is the internal
+  entry point (the router is one caller); the greeting later runs the same pipeline via a
+  deterministic trigger ladder (M6). Proactive content always passes the same tools -> gate path.
+- Tools source narration-ready facts from `narrate_report.report_facts` where they already exist.
+
+## Approved phased plan — Definitions of Done
+
+| milestone | Definition of Done (objective, all required) |
+|---|---|
+| M0 contract pin | `tests/test_coach_v1_contract.py` passes on HEAD with NO production change; it pins greeting shape, reply shape, and message-blindness (identical content/citations/suggestions for different questions, no LLM key); full suite green |
+| M1 router+registry | `examples/coach_service.py` exists, imported by NO production module; router tests cover all 14 leaves (>=3 phrasings each), modifiers, pronoun/ordinal/affirmative binding, echo version guard, multi-intent bounding, unresolved->clarify; full suite green |
+| M2 tools | every tool returns a ToolResult with >=1 citation; parity tests prove citations equal their source surfaces; a coach turn performs ZERO store writes; full suite green |
+| M3 composer+gate | one golden conversation per leaf passes offline (structure asserted, never prose); registry self-check green (template fields ⊆ plan keys); partial-failure test shows an admitted gap with no invented number; `coach_turn(intent, entities, echo)` entry point exists; full suite green |
+| M4 API wiring | flag OFF: M0 contract suite passes byte-identically; flag ON: payload carries intent/resolution/followUps/echo + populated content/citations/suggestions; live TestClient turn verified both states; full suite green |
+| M5 web | tsc, check:i18n, node --test, production build all green; against a flag-off server the rendered coach page is unchanged |
+| M6 greeting | greeting goldens pass (fresh reader -> canned; trigger -> proactive turn with correct citations); flag OFF greeting byte-identical per M0 |
+| M7 LLM | identity-except-content test green (stub LLM vs template: all payload fields equal except `content`); gate-fallback test green (stub emitting an uncited number is replaced by the template); both flags off = v1 bytes |
+| M8a beta | every leaf + the two memory flows walked against the real beta corpus; `coach_turn` log events reviewed (intent mix, resolution, fallback rate) |
+| M8b default-on | `RWE_COACH_V2` defaults on; `_serialize_coach_reply` and the v1 branch deleted; M0 characterization tests retired; full suite green |
