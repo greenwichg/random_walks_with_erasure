@@ -60,6 +60,24 @@ def _scored_read_from_row(row: dict) -> ac.ScoredRead:
     return ac.ScoredRead(**{k: v for k, v in row.items() if k in _SCORED_READ_FIELDS})
 
 
+def story_slot_enabled() -> bool:
+    """Whether the conditional Story-Match slot is on (``RWE_STORY_SLOT``, default off).
+
+    When enabled, the default feed reserves AT MOST ONE card for a validated story sibling —
+    another publisher's coverage of a story the reader actually read — inserted only when such an
+    opportunity exists and no organically-selected card already explains as ``story_match``
+    (an organic card counts toward the cap). Off by default so the beta can validate it before
+    it becomes the default, mirroring the RWE_FEED_REQUIRE_DATED rollout pattern."""
+    return os.environ.get("RWE_STORY_SLOT", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+#: The Evidence Resolver's own priority ladder (P1..P6) — the product's established definition of
+#: "most provable reason". The slot displaces the served card whose explanation sits LOWEST here,
+#: so displacement is semantic, never an artifact of feed ordering.
+_EXPLANATION_PRIORITY = ("story_match", "bridge", "new_publisher", "topic_continuity",
+                         "long_tail", "coverage_breadth")
+
+
 @dataclass
 class PersonalModel:
     """A real user's augmented model, cached by ``reading_version``.
@@ -245,9 +263,85 @@ class Personalizer:
         """RWE recommendations computed on the user's augmented feedback graph. ``params`` (the
         reader's slider-mapped hyperparameters, from ``api_server.rec_params_from_settings``) is a
         per-request override — the cached augmented model and its recommender stack are untouched,
-        so preference changes never churn the model cache."""
+        so preference changes never churn the model cache.
+
+        With ``RWE_STORY_SLOT`` enabled, the DEFAULT feed (no explicit ``strategy``) additionally
+        applies the conditional Story-Match slot post-pass (:meth:`_apply_story_slot`). An explicit
+        strategy request stays a faithful single-model view and never gets the slot."""
         m = self._model(user_id)
-        return self.backend._serialize_recommendations(m.corpus, m.rec, m.reader_row, strategy, params)
+        recs = self.backend._serialize_recommendations(m.corpus, m.rec, m.reader_row, strategy, params)
+        if strategy is None and story_slot_enabled():
+            recs, _diag = self._apply_story_slot(user_id, m, recs)
+        return recs
+
+    def _apply_story_slot(self, user_id: int, m: PersonalModel, recs: list) -> "tuple[list, dict]":
+        """The conditional Story-Match slot (``RWE_STORY_SLOT``): insert AT MOST ONE validated
+        story sibling at the top of the served feed. Returns ``(feed, diagnostic)``; the feed is
+        returned unchanged (with the reason in the diagnostic) whenever any gate fails.
+
+        Gates — each one is exactly what ``evidence_resolver.validate()`` re-derives for a
+        ``story_match`` explanation, so the inserted card is P1-explainable by construction:
+        the reader has a read inside a validated multi-publisher story cluster; the sibling is
+        unread, from a different publisher than that read, not already served, and a recommendable
+        node of the CURRENT corpus (so freshness/candidacy gates are inherited, never bypassed).
+
+        Cap: one card, and an organically-selected ``story_match`` card counts toward it (the slot
+        then no-ops; organic cards are never removed). Selection among qualifying siblings is
+        deterministic and order-free: newest ``publishedAt`` first, ties by canonical URL.
+        Displacement is semantic: the served card whose resolved explanation sits lowest on the
+        resolver's own priority ladder leaves the feed (ties by canonical URL) — never dependent
+        on feed ordering. The card is serialized by the SAME ``_serialize_rec`` as every other
+        card, with the truthful provenance ``strategy="story"`` (never a fabricated RWE label)."""
+        import evidence_resolver as er
+        diag: dict = {"enabled": True, "fired": False}
+        idx = er.story_index(self.store)
+        if not recs or not idx:
+            return recs, {**diag, "reason": "empty feed" if not recs else "no story clusters"}
+        read_urls = {_canonical_url(str(r.get("article_id") or ""))
+                     for r in self.store.get_reads(user_id)}
+        served = {_canonical_url(str((r.get("article") or {}).get("url") or "")) for r in recs}
+        item_of = {str(m.rec.rec_ids[j]): j for j in range(len(m.rec.rec_ids))}
+        candidates: dict = {}
+        for ru in read_urls:
+            story = idx.get(ru)
+            if not story:
+                continue
+            anchor_pub = next((str(c.get("publisher") or "") for c in story["coverage"]
+                               if _canonical_url(str(c.get("url") or "")) == ru), "")
+            for member in story["coverage"]:
+                cu = _canonical_url(str(member.get("url") or ""))
+                if (not cu or cu in read_urls or cu in served
+                        or str(member.get("publisher") or "") == anchor_pub):
+                    continue
+                col = item_of.get(str(self._catalog_ids.get(cu)))
+                if col is None:                      # not a recommendable corpus node -> never fabricate
+                    continue
+                candidates.setdefault(cu, {"col": int(col), "url": cu,
+                                           "publishedAt": str(member.get("publishedAt") or "")})
+        if not candidates:
+            return recs, {**diag, "reason": "no qualifying story sibling in the current corpus"}
+        ctx = self.explanation_context(user_id)
+        types = [er.resolve(r, ctx, idx).get("type") for r in recs]
+        if "story_match" in types:
+            return recs, {**diag, "reason": "an organic story_match card is served (cap 1)"}
+        best = max(candidates.values(), key=lambda c: (c["publishedAt"], c["url"]))
+        prio = {t: i for i, t in enumerate(_EXPLANATION_PRIORITY)}
+        drop = max(range(len(recs)), key=lambda i: (
+            prio.get(types[i], len(prio)),
+            _canonical_url(str((recs[i].get("article") or {}).get("url") or ""))))
+        rep = hr.user_report(m.corpus.pop, m.corpus.mind, m.reader_row)
+        user_side = float(np.sign(rep.get("mean_lean") or 0.0))
+        try:
+            familiarity = engine._familiarity_of(m.corpus.pop, m.reader_row)
+        except Exception:
+            familiarity = None
+        card = self.backend._serialize_rec(m.corpus, best["col"], "story", user_side, familiarity)
+        out = [card] + [r for i, r in enumerate(recs) if i != drop]
+        diag.update(fired=True, inserted=best["url"],
+                    displaced={"url": _canonical_url(str((recs[drop].get("article") or {})
+                                                         .get("url") or "")),
+                               "explanation": types[drop]})
+        return out, diag
 
     def explain(self, user_id: int, strategy: "str | None" = None,
                 params: "dict | None" = None, article: "str | None" = None) -> dict:
@@ -274,6 +368,14 @@ class Personalizer:
         # version and reception version the cached augmented model was built from (21a.2).
         out["modelVersion"] = {"readingVersion": m.reading_version,
                                "receptionVersion": m.reception_version}
+        # Story-slot transparency: report the slot decision (fired / inserted / displaced / why
+        # not) for the default feed, so audits see the post-pass explicitly. The per-strategy
+        # tables above remain the slice mirror — the slot card's own ranks are available via the
+        # article=<url> exclusion query.
+        if story_slot_enabled() and strategy is None and article is None:
+            base = self.backend._serialize_recommendations(m.corpus, m.rec, m.reader_row,
+                                                           None, params)
+            _, out["storySlot"] = self._apply_story_slot(user_id, m, base)
         return out
 
     def explanation_context(self, user_id: int) -> dict:

@@ -1293,7 +1293,14 @@ class Backend:
         band = (familiarity(art["publisher"]) if familiarity is not None else {}).get("band")
         novelty = {"never": "an outlet you've never read",
                    "rarely": "an outlet you rarely read"}.get(band)
-        if strategy == "rwe-d":
+        if strategy == "story":
+            # The conditional Story-Match slot (RWE_STORY_SLOT). Every claim is guaranteed by the
+            # slot's own gates (personalize._apply_story_slot): the reader read an article of the
+            # same validated story cluster, and this sibling is from a different publisher.
+            reason = (f"Another outlet's coverage of a story you read — {novelty}."
+                      if novelty else "Another outlet's coverage of a story you read.")
+            helps = "sourceDiversity"
+        elif strategy == "rwe-d":
             reason = (f"A long-tail read on {topic} from {novelty} — RWE-D widens your sources."
                       if novelty else
                       f"A long-tail read on {topic} — RWE-D reaches past the popular head to "

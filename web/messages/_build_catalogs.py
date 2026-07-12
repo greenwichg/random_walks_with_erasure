@@ -315,6 +315,8 @@ M = {
     "rec.strategy.rwe-b": ("Bridging", "Puente", "Passerelle", "Brücke", "Ponte"),
     "rec.strategy.rwe-d": ("Discovery", "Descubrimiento", "Découverte", "Entdeckung", "Descoberta"),
     "rec.strategy.adaptive": ("For you", "Para ti", "Pour vous", "Für Sie", "Para você"),
+    "rec.strategy.story": ("Same story", "Misma historia", "Même histoire", "Gleiche Story",
+                           "Mesma história"),
     "rec.readLater": ("Read later", "Leer después", "Lire plus tard", "Später lesen", "Ler depois"),
     "rec.like": ("Like", "Me gusta", "J'aime", "Gefällt mir", "Curtir"),
     "rec.dislike": ("Dislike", "No me gusta", "Je n'aime pas", "Gefällt mir nicht", "Não curtir"),

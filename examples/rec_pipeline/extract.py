@@ -38,7 +38,10 @@ _ENV = {"RWE_RECS_SOURCE": "feed", "RWE_FEED_MIN_ARTICLES": "5", "RWE_CORPUS_MIN
         # Fixtures carry fixed publication dates; the freshness gate (C4) is age-relative to *now*,
         # so it is pinned OFF here to keep the golden scenarios deterministic forever. Freshness has
         # its own unit tests (tests/test_freshness.py).
-        "RWE_FEED_MAX_AGE_DAYS": "0"}
+        "RWE_FEED_MAX_AGE_DAYS": "0",
+        # The conditional Story-Match slot is pinned OFF so the golden scenarios keep validating
+        # the ORGANIC feed; the slot has its own tests (tests/test_story_slot.py).
+        "RWE_STORY_SLOT": "0"}
 
 
 @dataclasses.dataclass

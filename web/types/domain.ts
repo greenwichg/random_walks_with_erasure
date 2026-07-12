@@ -233,8 +233,8 @@ export interface Recommendation {
   article: Article;
   /** Mirrors `explanation.message` (kept for back-compat with older payloads). */
   reason: string;
-  /** Which extension produced it. */
-  strategy: "rwe-b" | "rwe-d" | "adaptive";
+  /** Which extension produced it ("story" = the conditional Story-Match slot, RWE_STORY_SLOT). */
+  strategy: "rwe-b" | "rwe-d" | "adaptive" | "story";
   /** Which metric it most helps. */
   helpsMetric: MetricKey;
   /** Whether it bridges the reader across the centre. */

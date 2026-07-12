@@ -29,6 +29,7 @@ const STRATEGY_LABEL_KEY: Record<Recommendation["strategy"], string> = {
   "rwe-b": "rec.strategy.rwe-b",
   "rwe-d": "rec.strategy.rwe-d",
   adaptive: "rec.strategy.adaptive",
+  story: "rec.strategy.story",
 };
 
 /** A single recommendation with full transparency + the five feedback actions. */
