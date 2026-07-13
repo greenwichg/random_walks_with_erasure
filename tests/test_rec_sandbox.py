@@ -1,0 +1,298 @@
+"""The Recommendation Evaluation Engine (rec_sandbox) — S1 contract tests.
+
+Pins the four properties the architecture review promised, each against the REAL engine stack
+(no mocks): ZERO WRITES (the store's bytes, the repo's data/ directory, and the tempdir are
+untouched by a full evaluation), DETERMINISM (same store + spec -> byte-identical report),
+LAYER PARITY (a zero-injection evaluation serves exactly what the engine's own entry points
+serve — the sandbox adds no recommendation logic), and HONEST GATES (freshness drops, the
+qbias builder's lean-resolvability drop, corpus-validation failures, and below-threshold
+readers are reported, never bypassed). Also pins the baseline-reuse rule: a provided baseline
+object is consulted for its ``.backend`` ONLY.
+"""
+import glob
+import hashlib
+import json
+import os
+import pathlib
+import sys
+import tempfile
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
+
+import pytest
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "examples"))
+
+import corpus_health                                        # noqa: E402
+import corpus_refresh                                       # noqa: E402
+import evidence_resolver as er                              # noqa: E402
+import rec_sandbox                                          # noqa: E402
+import store as store_mod                                   # noqa: E402
+
+_ENV = {"RWE_N_USERS": "120", "RWE_MAX_ITEMS": "300"}
+
+PUBS = ["AP", "Reuters", "NPR", "BBC News", "The Guardian", "The Hill", "Fox News", "CNN"]
+STORY = [("AP", "senate budget vote reaches bipartisan deal"),
+         ("CNN", "senate passes budget vote after bipartisan deal"),
+         ("Fox News", "bipartisan budget deal clears senate vote")]
+
+
+def _iso(days_ago: float) -> str:
+    return (datetime.now(timezone.utc) - timedelta(days=days_ago)).isoformat()
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _sized_population():
+    """Pin the synthetic-population sizing for every build in this module (and restore)."""
+    old = {k: os.environ.get(k) for k in _ENV}
+    os.environ.update(_ENV)
+    yield
+    for k, v in old.items():
+        os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+
+
+@pytest.fixture(scope="module")
+def db_path(tmp_path_factory):
+    """A frozen catalog: 61 token-disjoint articles + one 3-publisher story cluster, one
+    measured reader (6 reads) and one empty reader."""
+    p = tmp_path_factory.mktemp("sandbox") / "sandbox.db"
+    st = store_mod.Store(f"sqlite:///{p}")
+    for k in range(61):
+        pub = PUBS[k % 8]
+        url = f"https://{pub.split()[0].lower()}{k % 8}.example.com/sbx/{k}"
+        st.upsert_feed_article(
+            canonical_url=er._canon(url), url=url, publisher=pub, source_publisher=pub,
+            title=f"sbx{k}a sbx{k}b sbx{k}c sbx{k}d", description="d", body=None,
+            published_at=_iso(0.5 + (k % 6) * 0.4), source_feed="f",
+            scored={"article_id": er._canon(url), "outlet": pub, "category": "Politics",
+                    "lean": (-1.0, 0.0, 1.0)[k % 3], "political": True, "title": f"sbx{k}"})
+    for i, (pub, title) in enumerate(STORY):
+        url = f"https://{pub.split()[0].lower()}.example.com/story/{i}"
+        st.upsert_feed_article(
+            canonical_url=er._canon(url), url=url, publisher=pub, source_publisher=pub,
+            title=title, description="d", body=None, published_at=_iso(1.0 + 0.1 * i),
+            source_feed="f",
+            scored={"article_id": er._canon(url), "outlet": pub, "category": "Politics",
+                    "lean": (-1.0, 0.0, 1.0)[i % 3], "political": True, "title": title})
+    return p
+
+
+@pytest.fixture(scope="module")
+def store(db_path):
+    return store_mod.Store(f"sqlite:///{db_path}")
+
+
+@pytest.fixture(scope="module")
+def reader(store):
+    uid = store.upsert_user_by_identity("dev", "sandbox-reader", display_name="Reader").id
+    for k in range(6):
+        url = f"https://ap0.example.com/sbx/{k * 8}"
+        store.add_read(uid, er._canon(url),
+                       {"article_id": er._canon(url), "outlet": "AP", "category": "Politics",
+                        "lean": -1.0, "political": True, "title": f"sbx{k * 8}"},
+                       _iso(0.2 + k * 0.1), read_source="test")
+    return uid
+
+
+@pytest.fixture(scope="module")
+def empty_reader(store):
+    return store.upsert_user_by_identity("dev", "sandbox-empty", display_name="Empty").id
+
+
+INJECT_STORY = {"url": "https://apnews.com/article/senate-budget-analysis",
+                "title": "senate budget vote bipartisan deal analysis"}
+INJECT_UNKNOWN = {"url": "https://unknown-blog.example/post", "title": "mystery post"}
+INJECT_STALE = {"url": "https://reuters.com/very/old", "title": "ancient news"}
+INJECT_LONER = {"url": "https://npr.org/exclusive/zebra",
+                "title": "zebra quartet wins improbable chess marathon"}
+
+
+@pytest.fixture(scope="module")
+def full(store, reader, db_path):
+    """ONE full evaluation (compare mode, every question, four injection archetypes) shared by
+    the assertion tests — with the isolation evidence captured around it."""
+    spec = {
+        "inject": [dict(INJECT_STORY, publishedAt=_iso(0.3)),
+                   dict(INJECT_UNKNOWN, publishedAt=_iso(0.2)),
+                   dict(INJECT_STALE, publishedAt=_iso(400)),
+                   dict(INJECT_LONER, publishedAt=_iso(0.4))],
+        "ask": ["https://cnn7.example.com/sbx/7"],
+        "readers": [{"kind": "demo"}, {"kind": "user", "id": reader}],
+        "strategies": [None],
+        "params": [None],
+        "compare": True,
+    }
+    db_before = hashlib.sha256(db_path.read_bytes()).hexdigest()
+    data_dir = ROOT / "data"
+    data_before = sorted((f.name, f.stat().st_mtime_ns, f.stat().st_size)
+                         for f in data_dir.glob("*")) if data_dir.exists() else []
+    tmp_before = set(glob.glob(os.path.join(tempfile.gettempdir(), "ih_refresh_*.csv")))
+
+    report = rec_sandbox.evaluate(store, spec)
+
+    return SimpleNamespace(
+        report=report, spec=spec,
+        db_before=db_before,
+        db_after=hashlib.sha256(db_path.read_bytes()).hexdigest(),
+        data_before=data_before,
+        data_after=sorted((f.name, f.stat().st_mtime_ns, f.stat().st_size)
+                          for f in data_dir.glob("*")) if data_dir.exists() else [],
+        tmp_leftover=set(glob.glob(os.path.join(tempfile.gettempdir(),
+                                                "ih_refresh_*.csv"))) - tmp_before)
+
+
+def _injected(full, url):
+    return next(e for e in full.report["injected"] if e["url"] == url)
+
+
+# --------------------------------------------------------------------------- #
+# Zero writes, ephemerality, JSON safety.
+# --------------------------------------------------------------------------- #
+def test_evaluation_writes_nothing_anywhere(full):
+    assert full.db_after == full.db_before          # the store's bytes are untouched
+    assert full.data_after == full.data_before      # data/ (the serving CSV home) untouched
+    assert full.tmp_leftover == set()               # build_active cleaned its tempfile CSV
+    json.dumps(full.report, allow_nan=False)        # strictly JSON-safe (no NaN leaks)
+
+
+def test_report_is_deterministic_across_runs(store, reader):
+    spec = {"inject": [dict(INJECT_STORY, publishedAt=_iso(0.3))],
+            "readers": [{"kind": "demo"}, {"kind": "user", "id": reader}],
+            "params": [None, {"beta": 0.8}]}
+    a = rec_sandbox.evaluate(store, spec)
+    b = rec_sandbox.evaluate(store, spec)
+    assert json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)
+
+
+# --------------------------------------------------------------------------- #
+# Layer parity: the sandbox serves EXACTLY what the engine's entry points serve.
+# --------------------------------------------------------------------------- #
+def test_zero_injection_feeds_match_the_engines_own_entry_points(store):
+    spec = {"inject": [], "readers": [{"kind": "demo"}],
+            "strategies": [None, "rwe-d"], "params": [{"beta": 0.8}]}
+    report = rec_sandbox.evaluate(store, spec)
+
+    th = corpus_health.thresholds_from_env()
+    candidate = corpus_refresh.build_candidate_for(store, th)
+    active, _result, err = rec_sandbox._detached_build(store, candidate, th, generation=-9)
+    assert err is None
+    be = active.backend
+    for feed in report["feeds"]:
+        assert feed["status"] == "ok"
+        direct = be.recommendations(int(be.demo_user), feed["strategy"], {"beta": 0.8})
+        assert [c["id"] for c in feed["served"]] == [r["article"]["id"] for r in direct]
+
+
+# --------------------------------------------------------------------------- #
+# Honest gates + the injection archetypes.
+# --------------------------------------------------------------------------- #
+def test_fresh_known_outlet_article_becomes_a_ranked_graph_node(full):
+    e = _injected(full, INJECT_STORY["url"])
+    assert e["disposition"] == "evaluated"
+    assert e["resolvedId"] and e["graphNode"] is True
+    # the registry canonicalized apnews.com -> its canonical outlet, and the lean resolved
+    assert e["scored"]["outlet"] == "Associated Press" and e["scored"]["lean"] is not None
+    for x in e["exclusions"]:
+        assert x["status"] == "ok"
+        assert x["verdict"] in {"recommended", "below_cutoff"}
+        if x["verdict"] == "below_cutoff":                    # per-strategy evidence attached
+            assert set(x["byStrategy"]) == {"rwe-b", "rwe-d", "adaptive"}
+            assert all("rank" in v and "score" in v for v in x["byStrategy"].values())
+        assert set(x["paramsUsed"]) == {"rwe-b", "rwe-d", "adaptive"}
+
+
+def test_story_clustering_detects_the_injected_sibling(full):
+    e = _injected(full, INJECT_STORY["url"])
+    assert e["story"]["matched"] is True
+    assert e["story"]["publisherCount"] >= 3                  # AP + CNN + Fox already covered it
+    loner = _injected(full, INJECT_LONER["url"])
+    assert loner["story"] == {"matched": False}               # token-disjoint article: no cluster
+
+
+def test_unknown_outlet_is_dropped_by_the_builder_not_ranked(full):
+    e = _injected(full, INJECT_UNKNOWN["url"])
+    assert e["disposition"] == "evaluated"                    # it DID enter the composition
+    assert e["graphNode"] is False                            # lean unresolved -> no graph node
+    assert e["scored"]["lean"] is None
+    assert all(x["verdict"] == "not_in_graph" for x in e["exclusions"])
+
+
+def test_stale_article_is_dropped_by_the_freshness_gate(full):
+    e = _injected(full, INJECT_STALE["url"])
+    assert e["disposition"] == "dropped_freshness"            # C4: production would never rank it
+    assert e["exclusions"] == [] and e["graphNode"] is None
+    for feed in full.report["feeds"]:                         # and it never appears in a feed
+        assert all(c["url"] != INJECT_STALE["url"] for c in feed["served"])
+
+
+def test_asked_article_gets_the_same_truthful_verdicts(full):
+    assert full.report["asked"], "the ask section must be populated"
+    for x in full.report["asked"]:
+        assert x["article"] == "https://cnn7.example.com/sbx/7"
+        assert x["status"] == "ok" and x["verdict"] in {"recommended", "below_cutoff",
+                                                        "seen_excluded"}
+
+
+def test_below_threshold_reader_is_reported_not_guessed(store, empty_reader):
+    spec = {"inject": [dict(INJECT_STORY, publishedAt=_iso(0.3))],
+            "readers": [{"kind": "user", "id": empty_reader}]}
+    report = rec_sandbox.evaluate(store, spec)
+    assert all(f["status"] == "below_threshold" and f["served"] == []
+               for f in report["feeds"])
+    assert all(x["status"] == "below_threshold"
+               for x in report["injected"][0]["exclusions"])
+
+
+def test_validation_failure_is_the_answer_not_an_exception(store, monkeypatch):
+    monkeypatch.setenv("RWE_CORPUS_MIN_ARTICLES", "5000")
+    report = rec_sandbox.evaluate(store, {"inject": [dict(INJECT_STORY,
+                                                          publishedAt=_iso(0.3))]})
+    ev = report["corpus"]["evaluated"]
+    assert ev["built"] is False and ev["error"] == "validation_failed"
+    assert ev["validation"]["failures"]
+    assert all(f["status"] == "not_built" for f in report["feeds"])
+    json.dumps(report, allow_nan=False)
+
+
+# --------------------------------------------------------------------------- #
+# Compare mode: diff semantics + the baseline-reuse rule.
+# --------------------------------------------------------------------------- #
+def test_compare_without_injection_is_identical_by_construction(store, reader):
+    report = rec_sandbox.evaluate(store, {"inject": [], "compare": True,
+                                          "readers": [{"kind": "user", "id": reader}]})
+    assert report["corpus"]["baseline"]["candidateSig"] == \
+        report["corpus"]["evaluated"]["candidateSig"]
+    assert report["diff"]["perFeed"], "compare mode must produce a per-feed diff"
+    assert all(d["identical"] for d in report["diff"]["perFeed"])
+
+
+class _Poison:
+    """Any attribute access proves the sandbox touched a provided personalizer."""
+    def __getattr__(self, name):
+        raise AssertionError(f"provided baseline personalizer was consulted: .{name}")
+
+
+def test_provided_baseline_is_consulted_for_its_backend_only(store, reader, full):
+    th = corpus_health.thresholds_from_env()
+    candidate = corpus_refresh.build_candidate_for(store, th)
+    active, _res, err = rec_sandbox._detached_build(store, candidate, th, generation=-8)
+    assert err is None
+    baseline = SimpleNamespace(backend=active.backend, personalizer=_Poison(),
+                               candidate_sig="sig:provided", item_count=active.item_count)
+    report = rec_sandbox.evaluate(
+        store, {"inject": [dict(INJECT_STORY, publishedAt=_iso(0.3))], "compare": True,
+                "readers": [{"kind": "user", "id": reader}]},
+        baseline=baseline)
+    base_block = report["corpus"]["baseline"]
+    assert base_block["provided"] is True
+    assert base_block["candidateSig"] == "sig:provided"       # the baseline's own identity
+    assert report["diff"]["perFeed"]                          # diff ran through the poison — via
+    for d in report["diff"]["perFeed"]:                       # a fresh persist=False personalizer
+        assert set(d) >= {"identical", "entered", "left", "moved"}
+
+
+def test_diff_is_keyed_by_canonical_url_never_q_ids(full):
+    for d in (full.report["diff"] or {}).get("perFeed", []):
+        for key in d["entered"] + d["left"] + [m["id"] for m in d["moved"]]:
+            assert not key.startswith("Q"), f"corpus-relative id leaked into the diff: {key}"
