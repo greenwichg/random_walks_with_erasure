@@ -379,6 +379,42 @@ def test_measured_reader_shows_history_and_relationship_analysis(db_path, reader
     assert "synthetic reader" not in out.split("2. Reader Context")[1].split("4. Experiment")[0]
 
 
+def test_reading_history_and_feed_share_a_stacked_layout(db_path, reader, capsys):
+    # Presentation contract for the side-by-side view: Reading History and the Recommendation
+    # Feed both render each article stacked — Title / Publisher / "Category {bullet} Lean" on
+    # their own lines — so a developer can compare the reader's reads against the current
+    # recommendations line-for-line. This pins LAYOUT only (structural + glyph-derived, never a
+    # pinned rank); the byte-identity test above guards the report/JSON itself.
+    code = rec_sandbox.main(["--db", f"sqlite:///{db_path}", "--reader", f"user:{reader}"])
+    out = capsys.readouterr().out
+    assert code == 0
+    g = rec_sandbox._glyphs()                         # same stdout as the render -> same glyphs
+    bul = g["bul"]
+
+    # ---- Reading History: header carries the true total, entries are stacked --------------- #
+    hist = out.split("3. Reading History")[1].split("5. Recommendation Feed")[0]
+    assert "Reading History (6 reads), newest first" in hist        # true count, not "N of M"
+    hlines = [ln.strip() for ln in hist.splitlines() if ln.strip()]
+    num_idx = [i for i, ln in enumerate(hlines) if ln.rstrip(".").isdigit()]
+    assert len(num_idx) == 6                                        # every stored read is listed
+    for i in num_idx:                                              # number -> Title / Pub / meta
+        title, pub, meta = hlines[i + 1], hlines[i + 2], hlines[i + 3]
+        assert title and pub and (bul in meta)                     # 'Category {bullet} Lean'
+    assert rec_sandbox._meta_line("Politics", -1.0, g) in hist      # e.g. "Politics • Left"
+
+    # ---- Recommendation Feed: same stacking + a "Why" block with short reasons -------------- #
+    feed = out.split("5. Recommendation Feed")[1].split("6. Relationship Analysis")[0]
+    flines = [ln.strip() for ln in feed.splitlines() if ln.strip()]
+    why_idx = [i for i, ln in enumerate(flines) if ln == "Why"]
+    assert why_idx                                                 # the explanation header is "Why"
+    for i in why_idx:                                             # each Why sits under Title/Pub/meta
+        assert bul in flines[i - 1]                                # 'Category {bullet} Lean' line
+        assert flines[i - 2] and flines[i - 3]                     # publisher then title above it
+    short_vocab = set(rec_sandbox._WHY_SHORT.values()) | {"Cross-cutting"}
+    assert any(v in feed for v in short_vocab)                     # short labels, matching the reads' style
+    assert "Why this article?" not in feed                         # the long header/labels are gone
+
+
 def test_synthetic_row_reader_shows_honest_no_history(db_path, capsys):
     # a TRUE synthetic reader (row:N — also the demo keyword) has no persisted history
     code = rec_sandbox.main(["--db", f"sqlite:///{db_path}", "--reader", "row:3"])

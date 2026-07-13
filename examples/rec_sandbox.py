@@ -661,14 +661,15 @@ _STATUS_TEXT = {
 _STRATEGY_FULL = {None: "blended feed", "rwe-b": "RWE-B (bridging) only",
                   "rwe-d": "RWE-D (discovery) only", "adaptive": "Adaptive only"}
 _STRATEGY_TAG = {"rwe-b": "RWE-B", "rwe-d": "RWE-D", "adaptive": "Adaptive", "story": "Story"}
-# explanation.type -> a plain-English "why", derived only from existing engine explanations
-_WHY_TEXT = {
-    "bridge": "Bridges you across the political spectrum",
-    "story_match": "Same story, covered by a different outlet",
-    "new_publisher": "From a publisher you haven't read",
-    "topic_continuity": "Matches topics you read",
-    "long_tail": "Long-tail discovery (a less-recommended source)",
-    "coverage_breadth": "Broadens your coverage",
+# explanation.type -> a short "Why" label for the stacked feed cards. Display only: derived
+# straight from the report's existing explanation.type (an engine output), never recomputed.
+_WHY_SHORT = {
+    "bridge": "Bridge Article",
+    "story_match": "Story Match",
+    "new_publisher": "New Publisher",
+    "topic_continuity": "Matches Your Topics",
+    "long_tail": "Long-tail Discovery",
+    "coverage_breadth": "Broadens Coverage",
 }
 
 
@@ -713,6 +714,14 @@ def _lean_phrase(lean) -> str:
     if b == "unknown":
         return "political lean unknown"
     return {"left": "Left", "center": "Center", "right": "Right"}[b] + f" (lean {lean})"
+
+
+def _meta_line(category: str, lean, g: dict) -> str:
+    """One stacked-card descriptor line, ``Category {bullet} Lean`` (e.g. ``Politics • Right``),
+    so a read and a recommendation line up field-for-field. Falls back to just the lean word when
+    a card has no category. Read-only display; nothing here is computed from the ranking."""
+    lean_word = _lean_bucket(lean).capitalize()          # Left / Center / Right / Unknown
+    return f"{category} {g['bul']} {lean_word}" if category else lean_word
 
 
 def _status_phrase(status: str) -> str:
@@ -923,6 +932,9 @@ def _render(report: dict, store=None, db: "str | None" = None,
                    + (", ".join(f"{t} ({n})" for t, n in s["topics"].most_common(5)) or "—"))
 
     # ---- 3. READING HISTORY ------------------------------------------------- #
+    # Stacked (Title / Publisher / Category • Lean) so each read lines up field-for-field with
+    # the Recommendation Feed below, for a direct visual comparison. The actual stored titles
+    # are shown, never a summary. Read-only; the report and evaluation are untouched.
     sub("3. Reading History")
     for r in spec["readers"]:
         reads = history_of(r)
@@ -934,14 +946,16 @@ def _render(report: dict, store=None, db: "str | None" = None,
             out.append(f"  {_reader_label(r)}: no stored reads for this measured reader yet.")
             continue
         shown = reads[:10]
-        out.append(f"  {_reader_label(r)} — Reading History ({len(shown)} of {len(reads)}), "
-                   "newest first")
+        head = f"Reading History ({len(reads)} reads)"
+        head += (", newest first" if len(shown) == len(reads)
+                 else f", showing the newest {len(shown)}")
+        out.append(f"  {_reader_label(r)} — {head}")
         for i, a in enumerate(shown, 1):
             out.append("")
-            out.append(f"    {i}.  {a['title']}")
-            meta = a["publisher"] + (f"   {g['dot']}   {a['category']}" if a["category"] else "")
-            meta += f"   {g['dot']}   {_lean_bucket(a['lean']).capitalize()}"
-            out.append(f"        {meta}")
+            out.append(f"    {i:>2}.")
+            out.append(f"        {a['title']}")
+            out.append(f"        {a['publisher']}")
+            out.append(f"        {_meta_line(a['category'], a['lean'], g)}")
         out.append("")
 
     # ---- 4. EXPERIMENT ------------------------------------------------------ #
@@ -974,6 +988,10 @@ def _render(report: dict, store=None, db: "str | None" = None,
                     out.append(f"          {rl}")
 
     # ---- 5. RECOMMENDATION FEED --------------------------------------------- #
+    # Same stacked layout as Reading History (Title / Publisher / Category • Lean) so the reader's
+    # reads and the current recommendations can be read side by side, plus the engine's own
+    # explanation reasons under "Why". Enrichment is read-only; ranking/explanations are the
+    # report's, shown verbatim.
     sub("5. Recommendation Feed")
     for f in feeds:
         out.append(f"  {_reader_label(f['reader'])}, "
@@ -991,19 +1009,19 @@ def _render(report: dict, store=None, db: "str | None" = None,
             publisher = (a and a.get("publisher")) or c.get("publisher") or "Unknown"
             category = a.get("category") if a else ""
             lean = a.get("lean") if a else None
+            tag = _STRATEGY_TAG.get(c.get("strategy"), c.get("strategy"))
             out.append("")
-            out.append(f"    {c['rank']:>2}.  {title}")
-            meta = publisher + (f"   {g['dot']}   {category}" if category else "")
-            if lean is not None:
-                meta += f"   {g['dot']}   {_lean_bucket(lean).capitalize()}"
-            out.append(f"         {meta}   [{_STRATEGY_TAG.get(c.get('strategy'), c.get('strategy'))}]")
+            out.append(f"    {c['rank']:>2}.")
+            out.append(f"        {title}")
+            out.append(f"        {publisher}")
+            out.append(f"        {_meta_line(category, lean, g)}" + (f"   [{tag}]" if tag else ""))
             ex = c.get("explanation") or {}
-            whys = (["Cross-cutting viewpoint"] if c.get("crossCutting") else []) \
-                + ([_WHY_TEXT[ex["type"]]] if ex.get("type") in _WHY_TEXT else [])
+            whys = (["Cross-cutting"] if c.get("crossCutting") else []) \
+                + ([_WHY_SHORT[ex["type"]]] if ex.get("type") in _WHY_SHORT else [])
             if whys:
-                out.append("         Why this article?")
+                out.append("        Why")
                 for w in whys:
-                    out.append(f"           {g['ok']} {w}")
+                    out.append(f"          {g['ok']} {w}")
 
     # ---- 6. RELATIONSHIP ANALYSIS ------------------------------------------- #
     sub("6. Relationship Analysis")
