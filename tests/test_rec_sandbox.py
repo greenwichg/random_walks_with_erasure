@@ -330,7 +330,7 @@ def test_cli_json_is_byte_identical_to_the_library_report(store, db_path, reader
     assert json.loads((tmp_path / "report.json").read_text()) == cli_report
 
 
-def test_cli_human_render_covers_the_report_sections(db_path, reader, capsys):
+def test_cli_human_render_covers_the_investigation_sections(db_path, reader, capsys):
     code = rec_sandbox.main(["--db", f"sqlite:///{db_path}",
                              "--inject-url", INJECT_STORY["url"],
                              "--inject-title", INJECT_STORY["title"],
@@ -339,15 +339,16 @@ def test_cli_human_render_covers_the_report_sections(db_path, reader, capsys):
                              "--ask", "https://cnn7.example.com/sbx/7", "--compare"])
     out = capsys.readouterr().out
     assert code == 0
-    # the plain-English section grouping (the redesign's contract with the reader)
-    for header in ("SCENARIO", "CORPUS", "INJECTED ARTICLE", "ASKED ARTICLES",
-                   "RECOMMENDATION CHANGES", "CURRENT RECOMMENDATIONS", "INTERPRETATION"):
+    # the investigation report reads top-to-bottom through its nine numbered sections
+    for header in ("Recommendation Investigation Report",
+                   "1. Evaluation Summary", "2. Reader Context", "3. Reading History",
+                   "4. Experiment", "5. Recommendation Feed", "6. Feed Changes",
+                   "7. Recommendation Assessment", "8. Recommendation Explanation Matrix",
+                   "9. Technical Diagnostics"):
         assert header in out, f"missing section: {header}"
-    # the articles are still identified by URL, in their sections
-    assert INJECT_STORY["url"] in out
-    assert "https://cnn7.example.com/sbx/7" in out
-    # a plain-English reader label, not the raw kind token
+    # plain-English reader labels; --ask verdict is kept (in diagnostics), no data lost
     assert "demo reader" in out and "reader #" in out
+    assert "https://cnn7.example.com/sbx/7" in out
 
 
 def test_cli_exit_code_2_when_the_corpus_does_not_build(db_path, monkeypatch, capsys):
@@ -356,7 +357,49 @@ def test_cli_exit_code_2_when_the_corpus_does_not_build(db_path, monkeypatch, ca
     assert code == 2
     out = capsys.readouterr().out
     # plain-English failure, with the raw reason kept visible for diagnosis
-    assert "could not build the corpus" in out and "validation_failed" in out
+    assert "The corpus did not build" in out and "validation_failed" in out
+
+
+# --------------------------------------------------------------------------- #
+# Read-only presentation enrichment: the renderer displays richer info via store
+# lookups, without ever altering the report or evaluation (the JSON test above is
+# the byte-identity guardrail).
+# --------------------------------------------------------------------------- #
+def test_render_enriches_real_reader_reading_history(db_path, reader, capsys):
+    code = rec_sandbox.main(["--db", f"sqlite:///{db_path}", "--reader", f"user:{reader}"])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "2. Reader Context" in out and "Total reads:" in out
+    assert "3. Reading History" in out
+    assert "sbx0" in out                       # a real stored read title, enriched into history
+    assert "not available for synthetic readers" not in out
+
+
+def test_render_synthetic_reader_shows_honest_no_history(db_path, capsys):
+    code = rec_sandbox.main(["--db", f"sqlite:///{db_path}", "--reader", "demo"])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "No persistent reading history exists for this reader" in out
+    assert "not available for synthetic readers" in out
+    assert "Total reads:" not in out           # no fabricated stats for a synthetic reader
+
+
+def test_card_enrichment_resolves_catalog_metadata(store):
+    # a catalog URL enriches to its title/category/lean; not the raw publisher/url
+    a = rec_sandbox._catalog_article(store, "https://ap0.example.com/sbx/0")
+    assert a is not None
+    assert a["title"].startswith("sbx0") and a["category"] == "Politics"
+    assert a["lean"] is not None
+
+
+def test_card_enrichment_graceful_fallback(store):
+    # a URL absent from the catalog, and a None store, both degrade to None (no crash) —
+    # the renderer then falls back to the report's publisher/url
+    assert rec_sandbox._catalog_article(store, "https://not-in-catalog.example/x") is None
+    assert rec_sandbox._catalog_article(None, "https://ap0.example.com/sbx/0") is None
+    # the reader-history helper degrades the same way for synthetic readers / no store
+    assert rec_sandbox._reader_history(store, {"kind": "demo"}) is None
+    assert rec_sandbox._reader_history(None, {"kind": "user", "id": 1}) is None
 
 
 def test_cli_presets_are_valid_spec_inputs(db_path, capsys):
