@@ -314,6 +314,13 @@ conditions. Nothing here is required for launch.
 
 ## 8. Definition of Launch
 
+> **Sequencing decision (2026-07-13, post-M8a):** all five launch conditions below are met
+> (see [`AI_COACH_M8A_BETA_REPORT.md`](AI_COACH_M8A_BETA_REPORT.md)), but the default flip and
+> the M8b cleanup are **deliberately held** while the project is being demoed/evaluated: the
+> flag costs nothing and preserves a one-variable escape hatch during early real-world usage.
+> Coach v2 ships **opt-in** (the beta notebook enables it), M8b becomes the **first
+> post-launch cleanup milestone**, and the Article Analyzer is the next build priority.
+
 "Launch" means **enabling `RWE_COACH_V2` by default** (flag flips from opt-in to opt-out; the
 M8b cleanup may follow but is not part of the gate). All of the following must be true first:
 
