@@ -41,6 +41,12 @@ opposing-viewpoint communities while browsing — see
 > echo + reporting/emotion); [`docs/HEALTH_REPORT_PLAN.md`](docs/HEALTH_REPORT_PLAN.md)
 > is its feasibility/scope analysis.
 >
+> 🔬 **Debugging or regression-testing the recommender?**
+> [`docs/RECOMMENDATION_EVALUATION_ENGINE.md`](docs/RECOMMENDATION_EVALUATION_ENGINE.md) — the
+> internal evaluation sandbox: inject articles into an ephemeral corpus copy, run the real
+> engine, and get rankings, verdicts, and explanations as one frozen-contract JSON report
+> (zero production writes, deterministic).
+>
 > 🎞️ **Comparing against the talk?** [`docs/RWE_talk.pptx`](docs/RWE_talk.pptx)
 > is an editable slide deck recreating Bibek Paudel's WWW'21 presentation with a
 > code-mapping on each slide (regenerate with `python docs/make_deck.py`), and
