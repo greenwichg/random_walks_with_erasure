@@ -91,6 +91,51 @@ def test_parse_skips_entry_without_link():
     assert [e.url for e in entries] == ["https://x.com/a"]        # linkless entry dropped
 
 
+# --------------------------------------------------------------------------- #
+# Channel selection (maintenance fix: replaced `_first(root, "channel") or root`
+# with an explicit `is None` check — Element truthiness is deprecated and reflects
+# child count, not existence). These pin BOTH selection branches unchanged.
+# --------------------------------------------------------------------------- #
+def test_parse_selects_channel_when_present():
+    """A document with a <channel> reads its title + items FROM that channel — not from a
+    stray root-level title (proves the channel Element is selected, not root)."""
+    feed = b"""<rss version="2.0">
+      <title>ROOT TITLE (must be ignored)</title>
+      <channel>
+        <title>Channel Title</title>
+        <item><title>Inside channel</title><link>https://ex.example/a</link></item>
+      </channel>
+    </rss>"""
+    title, entries = rss.parse_feed(feed)
+    assert title == "Channel Title"
+    assert [e.url for e in entries] == ["https://ex.example/a"]
+
+
+def test_parse_falls_back_to_root_without_channel():
+    """A non-Atom document with NO <channel> (RSS 1.0 <rdf:RDF>, items at the root) falls back
+    to the root so its items are still parsed."""
+    feed = b"""<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+                        xmlns="http://purl.org/rss/1.0/">
+      <item><title>Root item A</title><link>https://ex.example/a</link></item>
+      <item><title>Root item B</title><link>https://ex.example/b</link></item>
+    </rdf:RDF>"""
+    title, entries = rss.parse_feed(feed)
+    assert title == ""                                            # no channel/title -> empty
+    assert [e.url for e in entries] == ["https://ex.example/a", "https://ex.example/b"]
+
+
+def test_parse_emits_no_deprecation_warning():
+    """The whole point of the fix: parsing must no longer depend on deprecated Element
+    truthiness, for both the channel-present and channel-absent shapes."""
+    import warnings
+    rdf = b"""<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+      <item><title>t</title><link>https://ex.example/a</link></item></rdf:RDF>"""
+    for feed in (RSS2, rdf):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", DeprecationWarning)   # any DeprecationWarning -> failure
+            rss.parse_feed(feed)
+
+
 def test_to_iso():
     assert rss._to_iso("Wed, 02 Oct 2024 08:00:00 GMT").startswith("2024-10-02")   # RFC 822
     assert rss._to_iso("2024-10-02T12:00:00Z").startswith("2024-10-02")            # RFC 3339

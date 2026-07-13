@@ -238,7 +238,11 @@ def parse_feed(data: bytes) -> "tuple[str, list[FeedEntry]]":
         title = _text(_first(root, "title"))
         entries = [_atom_entry(e) for e in _children(root, "entry")]
     else:                                               # RSS 2.0 (<rss><channel>) or RSS 1.0 (<rdf:RDF>)
-        channel = _first(root, "channel") or root
+        # ``_first`` returns an Element or None; test that explicitly rather than the Element's
+        # truthiness (deprecated in ElementTree — it reflects child count, not existence).
+        channel = _first(root, "channel")
+        if channel is None:                             # RSS 1.0 <rdf:RDF> carries items at the root
+            channel = root
         title = _text(_first(channel, "title"))
         items = _children(channel, "item") or _children(root, "item")
         entries = [_rss_item(it) for it in items]
