@@ -1,5 +1,9 @@
 # Recommendation Evaluation Engine
 
+> **Looking for how to *use* it?** This is the architecture reference (design, contract,
+> invariants). For the day-to-day CLI how-to — commands, workflows, troubleshooting — see
+> [`RECOMMENDATION_EVALUATION_ENGINE_USAGE.md`](RECOMMENDATION_EVALUATION_ENGINE_USAGE.md).
+
 **Status: FEATURE COMPLETE (v1)** — approved 2026-07-13.
 
 - **S1 (library)** — complete: `evaluate(store, spec, baseline=None)` in
