@@ -339,17 +339,24 @@ def test_cli_human_render_covers_the_report_sections(db_path, reader, capsys):
                              "--ask", "https://cnn7.example.com/sbx/7", "--compare"])
     out = capsys.readouterr().out
     assert code == 0
-    assert "corpus[evaluated]" in out and "corpus[baseline]" in out
-    assert f"injected: {INJECT_STORY['url']}" in out and "verdict[" in out
-    assert "asked: https://cnn7.example.com/sbx/7" in out
-    assert "feed[demo strategy=blend" in out and "diff[" in out and "note:" in out
+    # the plain-English section grouping (the redesign's contract with the reader)
+    for header in ("SCENARIO", "CORPUS", "INJECTED ARTICLE", "ASKED ARTICLES",
+                   "RECOMMENDATION CHANGES", "CURRENT RECOMMENDATIONS", "INTERPRETATION"):
+        assert header in out, f"missing section: {header}"
+    # the articles are still identified by URL, in their sections
+    assert INJECT_STORY["url"] in out
+    assert "https://cnn7.example.com/sbx/7" in out
+    # a plain-English reader label, not the raw kind token
+    assert "demo reader" in out and "reader #" in out
 
 
 def test_cli_exit_code_2_when_the_corpus_does_not_build(db_path, monkeypatch, capsys):
     monkeypatch.setenv("RWE_CORPUS_MIN_ARTICLES", "5000")
     code = rec_sandbox.main(["--db", f"sqlite:///{db_path}", "--preset", "left"])
     assert code == 2
-    assert "error=validation_failed" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    # plain-English failure, with the raw reason kept visible for diagnosis
+    assert "could not build the corpus" in out and "validation_failed" in out
 
 
 def test_cli_presets_are_valid_spec_inputs(db_path, capsys):

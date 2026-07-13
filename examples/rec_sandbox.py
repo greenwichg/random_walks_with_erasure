@@ -630,73 +630,230 @@ def _parse_reader(text: str) -> dict:
     raise SystemExit(f"--reader must be demo, user:<id>, or row:<n> (got {text!r})")
 
 
-def _fmt_reader(r: dict) -> str:
-    return r["kind"] + (f":{r.get('id', r.get('row'))}" if r["kind"] != "demo" else "")
+# =========================================================================== #
+# Human render — plain-English, sectioned presentation of the SAME report the
+# --json path emits. Display only: it reads report fields and relabels them; it
+# never recomputes, filters, or transforms data (the JSON contract is the source
+# of truth and stays byte-identical). Every mapping below is a synonym table.
+# =========================================================================== #
+_DISPOSITION_TEXT = {
+    "evaluated": "scored and added to the evaluated corpus",
+    "already_in_candidate": "already present in the corpus",
+    "dropped_freshness": "dropped — older than the freshness window (never recommendable)",
+}
+_VERDICT_TEXT = {
+    "recommended": "Recommended to this reader",
+    "seen_excluded": "Already read by this reader (never re-recommended)",
+    "below_cutoff": "Ranked, but below every strategy's cutoff (not shown)",
+    "not_in_graph": "In the catalog but not a recommendable node (e.g. unknown outlet / unresolved lean)",
+    "not_in_catalog": "Not found in the catalog",
+}
+_STATUS_TEXT = {
+    "below_threshold": "this reader hasn't read enough for a measured feed",
+    "not_built": "the corpus did not build, so there is no feed",
+}
+_STRATEGY_FULL = {None: "blended feed", "rwe-b": "RWE-B (bridging) only",
+                  "rwe-d": "RWE-D (discovery) only", "adaptive": "Adaptive only"}
+_STRATEGY_TAG = {"rwe-b": "RWE-B", "rwe-d": "RWE-D", "adaptive": "Adaptive", "story": "Story"}
+_EXPLANATION_TEXT = {
+    "bridge": "opposing viewpoint (bridge)",
+    "story_match": "same story, a different outlet",
+    "new_publisher": "a new outlet for you",
+    "topic_continuity": "matches your usual topics",
+    "long_tail": "long-tail discovery",
+    "coverage_breadth": "broadens your coverage",
+}
 
 
-def _fmt_params(p) -> str:
-    import json as _json
-    return "-" if not p else _json.dumps(p, sort_keys=True)
+def _reader_label(r: dict) -> str:
+    if r["kind"] == "demo":
+        return "demo reader"
+    if r["kind"] == "user":
+        return f"reader #{r.get('id')} (signed-in)"
+    return f"synthetic reader (row {r.get('row')})"
+
+
+def _params_label(p) -> str:
+    if not p:
+        return "default settings"
+    names = {"beta": "strength", "epsilon": "openness"}
+    return ", ".join(f"{names.get(k, k)} {v}" for k, v in sorted(p.items()))
+
+
+def _lean_phrase(lean) -> str:
+    if lean is None:
+        return "political lean unknown"
+    if lean <= -0.5:
+        return f"left-leaning (lean {lean})"
+    if lean >= 0.5:
+        return f"right-leaning (lean {lean})"
+    return f"centrist (lean {lean})"
+
+
+def _status_phrase(status: str) -> str:
+    if status in _STATUS_TEXT:
+        return _STATUS_TEXT[status]
+    if str(status).startswith("error:"):
+        return f"the engine raised {str(status).split(':', 1)[1]}"
+    return str(status)
+
+
+def _verdict_phrase(x: dict) -> str:
+    if x.get("status") != "ok":
+        return _status_phrase(x.get("status"))
+    return _VERDICT_TEXT.get(x.get("verdict"), str(x.get("verdict")))
+
+
+def _ranks_line(by_strategy: dict) -> "str | None":
+    parts = [f"{s} #{v['rank']}" for s, v in sorted((by_strategy or {}).items())
+             if v.get("rank") is not None]
+    return ("ranked " + " · ".join(parts)) if parts else None
 
 
 def _render(report: dict) -> str:
-    """Human formatting of the report — display truncation only, no data transformation."""
-    L: list = []
-    for label in ("evaluated", "baseline"):
+    """Plain-English, sectioned render of the report. Presentation only — reads report
+    fields and relabels them into human sections; never recomputes or drops data. The
+    --json output is unaffected (main() serialises the report directly)."""
+    out: list = []
+
+    def section(title: str) -> None:
+        out.append(("" if not out else "\n") + title)
+
+    # ---- SCENARIO — what was evaluated -------------------------------------- #
+    spec = report["spec"]
+    section("SCENARIO")
+    out.append(f"  Readers:      {', '.join(_reader_label(r) for r in spec['readers'])}")
+    out.append("  Strategies:   "
+               + ", ".join(_STRATEGY_FULL.get(s, str(s)) for s in spec["strategies"]))
+    if any(spec["params"]):
+        out.append("  Settings:     " + " | ".join(_params_label(p) for p in spec["params"]))
+    inj = spec.get("inject") or []
+    out.append(f"  Injected:     {len(inj)} article" + ("" if len(inj) == 1 else "s")
+               + (" (counterfactual)" if inj else ""))
+    if spec.get("ask"):
+        out.append(f"  Asked about:  {len(spec['ask'])} article(s)")
+    out.append("  Compare mode: "
+               + ("on — baseline corpus vs the evaluated corpus" if spec.get("compare")
+                  else "off"))
+
+    # ---- CORPUS — did an evaluable graph build? ----------------------------- #
+    section("CORPUS")
+    for label, title in (("evaluated", "Evaluated"), ("baseline", "Baseline")):
         c = report["corpus"].get(label)
         if not c:
             continue
+        prefix = f"  {title}: " if report["corpus"].get("baseline") else "  "
+        if not c.get("built"):
+            reason = c.get("error") or "unknown"
+            fails = (c.get("validation") or {}).get("failures") or []
+            out.append(prefix + "could not build the corpus "
+                       f"({reason}{': ' + ', '.join(fails) if fails else ''})")
+            continue
+        g = c.get("graph") or {}
+        out.append(prefix + "built OK"
+                   + (" (supplied serving corpus)" if c.get("provided") else ""))
+        out.append(f"    Articles in the recommendation graph: {c.get('items')}")
+        if g:
+            out.append(f"    Graph size: {g.get('users')} simulated readers "
+                       f"· {g.get('items')} articles · {g.get('edges')} clicks")
         v = c.get("validation") or {}
-        L.append(f"corpus[{label}]{' (provided)' if c.get('provided') else ''}: "
-                 f"built={c['built']} items={c['items']} graph={c['graph']} "
-                 f"eligible={v.get('eligible')} failures={v.get('failures')}"
-                 + (f" error={c['error']}" if c.get("error") else ""))
-    for e in report["injected"]:
-        sc = e["scored"]
-        L.append(f"\ninjected: {e['url']}")
-        L.append(f"  disposition={e['disposition']} graphNode={e['graphNode']} "
-                 f"resolvedId={e['resolvedId']} outlet={sc['outlet']!r} "
-                 f"lean={sc['lean']} topic={sc['category']!r}")
-        if e.get("story") is not None:
-            st = e["story"]
-            L.append(f"  story: matched={st['matched']}"
-                     + (f" id={st.get('storyId')} articles={st.get('articleCount')} "
-                        f"publishers={st.get('publisherCount')}" if st["matched"] else ""))
-        for x in e["exclusions"]:
-            head = (f"  verdict[{_fmt_reader(x['reader'])} params={_fmt_params(x['params'])}]"
-                    f": {x.get('verdict') or x['status']}")
-            L.append(head)
-            for sname, bs in sorted((x.get("byStrategy") or {}).items()):
-                L.append(f"    {sname}: rank={bs.get('rank')} score={bs.get('score'):.4g} "
-                         f"inSlice={bs.get('inSlice')}")
-    for x in report["asked"]:
-        L.append(f"\nasked: {x['article']} [{_fmt_reader(x['reader'])} "
-                 f"params={_fmt_params(x['params'])}] -> {x.get('verdict') or x['status']}")
+        if v:
+            pb = v.get("perBucket") or {}
+            bucket = (f" (left {pb.get('left')} / center {pb.get('center')} / "
+                      f"right {pb.get('right')})" if pb else "")
+            out.append("    Validation: "
+                       + ("passed" + bucket if v.get("eligible")
+                          else f"failed: {', '.join(v.get('failures') or [])}"))
+
+    # ---- INJECTED ARTICLE — the counterfactual article(s) ------------------- #
+    if report["injected"]:
+        section("INJECTED ARTICLE" + ("S" if len(report["injected"]) > 1 else ""))
+        for e in report["injected"]:
+            sc = e["scored"]
+            gn = e["graphNode"]
+            graph_phrase = ("added to the recommendation graph as " + str(e["resolvedId"])
+                            if gn is True else
+                            "not added — not a recommendable node (unresolved lean)"
+                            if gn is False else "n/a (dropped before the graph)")
+            out.append(f"  {e['url']}")
+            out.append(f"    Scored as:  {sc['outlet'] or 'unknown outlet'} · "
+                       f"{_lean_phrase(sc['lean'])} · {sc['category'] or 'no topic'}")
+            out.append(f"    Disposition: {_DISPOSITION_TEXT.get(e['disposition'], e['disposition'])}")
+            out.append(f"    In the graph: {graph_phrase}")
+            st = e.get("story")
+            if st is not None:
+                if st.get("matched"):
+                    out.append(f"    Story: part of a cluster ({st.get('articleCount')} articles "
+                               f"across {st.get('publisherCount')} publishers)")
+                elif st.get("similarStory"):
+                    out.append("    Story: not in a cluster; closest match "
+                               f"{st['similarStory']['storyId']} "
+                               f"(similarity {st['similarStory']['similarity']})")
+                else:
+                    out.append("    Story: not part of any story cluster")
+            for x in e["exclusions"]:
+                out.append(f"    For {_reader_label(x['reader'])} "
+                           f"({_params_label(x['params'])}): {_verdict_phrase(x)}")
+                ranks = _ranks_line(x.get("byStrategy"))
+                if ranks:
+                    out.append(f"        {ranks}")
+
+    # ---- ASKED ARTICLES — "why (not) this article?" ------------------------- #
+    if report["asked"]:
+        section("ASKED ARTICLES")
+        for x in report["asked"]:
+            out.append(f"  {x['article']}")
+            out.append(f"    For {_reader_label(x['reader'])} "
+                       f"({_params_label(x['params'])}): {_verdict_phrase(x)}")
+            ranks = _ranks_line(x.get("byStrategy"))
+            if ranks:
+                out.append(f"        {ranks}")
+
+    # ---- RECOMMENDATION CHANGES — the baseline vs evaluated diff ------------- #
+    if report.get("diff"):
+        section("RECOMMENDATION CHANGES  (baseline -> this corpus)")
+        for d in report["diff"]["perFeed"]:
+            head = (f"  {_reader_label(d['reader'])}, "
+                    f"{_STRATEGY_FULL.get(d['strategy'], str(d['strategy']))}: ")
+            if d["identical"]:
+                out.append(head + "no change")
+                continue
+            out.append(head + f"{len(d['entered'])} added, {len(d['left'])} removed, "
+                       f"{len(d['moved'])} moved")
+            for k in d["entered"][:5]:
+                out.append(f"    added:   {k}")
+            for k in d["left"][:5]:
+                out.append(f"    removed: {k}")
+            for m in d["moved"][:5]:
+                out.append(f"    moved:   {m['key']}  (#{m['from']} -> #{m['to']})")
+
+    # ---- CURRENT RECOMMENDATIONS — the served feed(s) ----------------------- #
+    section("CURRENT RECOMMENDATIONS")
     for f in report["feeds"]:
-        L.append(f"\nfeed[{_fmt_reader(f['reader'])} strategy={f['strategy'] or 'blend'} "
-                 f"params={_fmt_params(f['params'])}]: {f['status']}")
+        out.append(f"  {_reader_label(f['reader'])}, "
+                   f"{_STRATEGY_FULL.get(f['strategy'], str(f['strategy']))}"
+                   + (f", {_params_label(f['params'])}" if f["params"] else ""))
+        if f["status"] != "ok":
+            out.append(f"    ({_status_phrase(f['status'])})")
+            continue
+        if not f["served"]:
+            out.append("    (no cards)")
         for c in f["served"]:
             ex = c.get("explanation") or {}
-            L.append(f"  #{c['rank']:>2} [{c['strategy']}] {c['publisher']} — "
-                     f"{(c.get('url') or c.get('id') or '')[:72]}"
-                     + (" (cross)" if c.get("crossCutting") else "")
-                     + (f"  <{ex['type']}>" if ex else ""))
-    if report.get("diff"):
-        for d in report["diff"]["perFeed"]:
-            L.append(f"\ndiff[{_fmt_reader(d['reader'])} strategy={d['strategy'] or 'blend'} "
-                     f"params={_fmt_params(d['params'])}]: "
-                     + ("identical" if d["identical"] else
-                        f"+{len(d['entered'])} entered / -{len(d['left'])} left / "
-                        f"~{len(d['moved'])} moved"))
-            for k in d["entered"][:5]:
-                L.append(f"  + {k}")
-            for k in d["left"][:5]:
-                L.append(f"  - {k}")
-            for m in d["moved"][:5]:
-                L.append(f"  ~ {m['key']} #{m['from']} -> #{m['to']}")
-    for n in report["notes"]:
-        L.append(f"\nnote: {n}")
-    return "\n".join(L)
+            why = _EXPLANATION_TEXT.get(ex.get("type"), ex.get("type") or "recommended")
+            tag = _STRATEGY_TAG.get(c.get("strategy"), c.get("strategy") or "")
+            out.append(f"    {c['rank']:>2}. {c.get('publisher') or '?'} — {why}"
+                       + ("  (cross-cutting)" if c.get("crossCutting") else "")
+                       + (f"   [{tag}]" if tag else ""))
+            out.append(f"        {c.get('url') or c.get('id') or ''}")
+
+    # ---- INTERPRETATION — how to read the numbers --------------------------- #
+    if report["notes"]:
+        section("INTERPRETATION")
+        for n in report["notes"]:
+            out.append(f"  - {n}")
+
+    return "\n".join(out)
 
 
 def main(argv=None) -> int:
