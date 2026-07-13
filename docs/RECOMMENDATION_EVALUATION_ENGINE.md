@@ -1,11 +1,28 @@
 # Recommendation Evaluation Engine
 
-**Status:** S1 (library) + S2 (CLI) + S3 (regression suite) shipped and approved; REPORT
-CONTRACT v1 **frozen** (2026-07-13). Code: [`examples/rec_sandbox.py`](../examples/rec_sandbox.py);
-tests: [`tests/test_rec_sandbox.py`](../tests/test_rec_sandbox.py) (18, the engine's own
-invariants) + [`tests/test_rec_regression.py`](../tests/test_rec_regression.py) (15, the
-Recommendation Regression Suite). This is engineering documentation for people extending or
-consuming the engine — not user documentation.
+**Status: FEATURE COMPLETE (v1)** — approved 2026-07-13.
+
+- **S1 (library)** — complete: `evaluate(store, spec, baseline=None)` in
+  [`examples/rec_sandbox.py`](../examples/rec_sandbox.py).
+- **S2 (CLI client)** — complete: `rec_sandbox.main()` (same module; provably thin).
+- **Documentation** — complete: this document.
+- **S3 (behavioral regression suite)** — complete:
+  [`tests/test_rec_regression.py`](../tests/test_rec_regression.py) (15 structural-invariant
+  tests), alongside [`tests/test_rec_sandbox.py`](../tests/test_rec_sandbox.py) (18 tests
+  pinning the engine's own invariants).
+- **REPORT CONTRACT v1** — frozen; evolution per §4 (additive within v1, breaking → v2).
+- The evaluation engine is **the supported mechanism for recommendation experimentation and
+  regression validation**. New recommendation-behavior experiments and regressions should be
+  expressed as `evaluate()` specs / regression-suite tests, not as ad-hoc scripts against the
+  serving stack.
+
+S4 (internal API + hidden developer page) is deliberately **post-launch** (§9): the CLI and
+the regression suite already satisfy the engineering needs; a developer page is a convenience
+layer that would add maintenance surface before launch. No further internal-tooling expansion
+is planned pre-launch — focus returns to production-facing features and launch readiness.
+
+This is engineering documentation for people extending or consuming the engine — not user
+documentation.
 
 ---
 
@@ -226,12 +243,14 @@ probes (matching a real cluster's tokens), craft the article via `--spec` / `--i
   byte-identical reports from two independently built stores. No overlap with the 21d
   pipeline was found to promote — injection counterfactuals are orthogonal to its
   recorded-persona validation.
-- **Hidden developer page (S4, demand-driven).** A trusted internal route
-  (`_require_trusted`) behind `RWE_REC_SANDBOX` (default off, flag-off byte-identity suite),
-  returning the report dict verbatim as the response body. Requirements recorded at review
-  time: single-flight (one build at a time; seconds-long request; transient second stack in
-  memory — precedented by the hot swap), and `baseline=app.state.active` for cheap diffs
-  under the `.backend`-only rule.
+- **Hidden developer page (S4, POST-LAUNCH).** Deferred by decision (2026-07-13): the CLI +
+  regression suite satisfy current engineering needs, and a developer page is purely a
+  convenience layer that adds maintenance surface before launch. Requirements recorded for
+  when it is picked up: a trusted internal route (`_require_trusted`) behind
+  `RWE_REC_SANDBOX` (default off, flag-off byte-identity suite), returning the report dict
+  verbatim as the response body; single-flight (one build at a time; seconds-long request;
+  transient second stack in memory — precedented by the hot swap); and
+  `baseline=app.state.active` for cheap diffs under the `.backend`-only rule.
 - **Article Analyzer.** Shares the URL→scored front-end today (`ingest.Scorer` via
   `rss_ingest.make_scorer`); a potential dev-mode counterfactual panel ("what if this article
   were in the corpus?") would call `evaluate()` — the analyzer's *user-facing* surface stays
@@ -318,15 +337,27 @@ report is golden-ready; exit code 2 gates scripts on corpus health.
 
 ---
 
-## 9. Future roadmap
+## 9. Roadmap
+
+### v1 — COMPLETE (2026-07-13)
 
 | Phase | Content | Status |
 |---|---|---|
 | S1 | `evaluate()` library + REPORT CONTRACT v1 + 13 invariant tests | ✅ shipped (`764e034`) |
 | S2 | Thin CLI client (presets, `--json`/`--out`, exit codes) + contract freeze + 5 tests | ✅ shipped (`242800f`) |
-| S3 | Recommendation Regression Suite as the second client (`tests/test_rec_regression.py`: 15 structural-invariant tests over contract v1) | ✅ shipped |
-| S4 | Flag-gated internal API + hidden developer page (`RWE_REC_SANDBOX`, trusted, single-flight, flag-off byte-identity) | demand-driven |
-| — | Article Analyzer counterfactual dev panel over `evaluate()` | after the Analyzer ships |
+| Docs | This engineering guide + README index entry | ✅ shipped (`48565d7`) |
+| S3 | Recommendation Regression Suite as the second client (`tests/test_rec_regression.py`: 15 structural-invariant tests over contract v1) | ✅ shipped (`d29afe3`) |
+
+v1 is the supported mechanism for recommendation experimentation and regression validation.
+Pre-launch, the subsystem is in maintenance-only mode: contract-additive fixes and new
+regression-suite scenarios are in scope; new clients and new capabilities are not.
+
+### Post-launch roadmap
+
+| Item | Content | Rationale for deferral |
+|---|---|---|
+| S4 | Flag-gated internal API + hidden developer page (`RWE_REC_SANDBOX`, trusted, single-flight, flag-off byte-identity; requirements in §6) | CLI + regression suite already satisfy engineering needs; a developer page is a convenience layer that adds maintenance surface before launch |
+| — | Article Analyzer counterfactual dev panel over `evaluate()` | depends on the Analyzer shipping |
 
 **Permanently out of scope:** any recommendation logic in Layer 2 or any client; any
 persistence introduced by evaluation; any client-specific report structure. Contract changes
