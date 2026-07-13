@@ -80,3 +80,37 @@ def test_main_seeds_and_resolves(tmp_path, capsys):
     assert "demo@infodiet.local" in out and "total 8" in out
     # and rec_sandbox now resolves it
     assert rec_sandbox._persisted_demo_user_id(store_mod.Store(dburl)) is not None
+
+
+def test_reset_replaces_history_instead_of_accumulating(tmp_path):
+    import random
+    st = store_mod.Store(f"sqlite:///{tmp_path/'seed.db'}")
+    _catalog(st)
+    first = seeder.seed(st)                                  # deterministic 8, no reset
+    assert first["totalReads"] == 8 and first["cleared"] == 0
+    again = seeder.seed(st, rng=random.Random(1), reset=True)   # clear + re-pick
+    assert again["cleared"] == 8                            # the old reads were removed
+    assert again["totalReads"] == 8                         # replaced, NOT accumulated to 16
+    assert again["added"] == again["picked"]               # everything is fresh after the clear
+
+
+def test_random_seed_is_reproducible_and_varies(tmp_path):
+    import random
+    st = store_mod.Store(f"sqlite:///{tmp_path/'seed.db'}")
+    _catalog(st)
+
+    def picks(seed):
+        r = seeder.seed(st, rng=random.Random(seed), reset=True)
+        return tuple(sorted(rd["canonicalUrl"] for rd in st.list_reads(r["userId"])))
+
+    assert picks(1) == picks(1)                             # same seed -> same set (reproducible)
+    variants = {picks(sd) for sd in range(6)}
+    assert len(variants) >= 2                               # different seeds -> different histories
+
+
+def test_count_controls_history_size(tmp_path):
+    import random
+    st = store_mod.Store(f"sqlite:///{tmp_path/'seed.db'}")
+    _catalog(st)
+    r = seeder.seed(st, target_reads=12, rng=random.Random(3), reset=True)
+    assert r["totalReads"] == 12
