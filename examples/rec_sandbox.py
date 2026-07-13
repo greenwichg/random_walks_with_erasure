@@ -630,6 +630,48 @@ def _parse_reader(text: str) -> dict:
     raise SystemExit(f"--reader must be demo, user:<id>, or row:<n> (got {text!r})")
 
 
+# --------------------------------------------------------------------------- #
+# CLI reader resolution: prefer the persisted demo account over the synthetic one.
+# The notebook provisions a demo account (provider "dev" / demo@infodiet.local) with seeded
+# reading history. When it exists, the CLI's "demo" reader should resolve to that MEASURED user
+# so the report shows real history + relationship analysis; otherwise it falls back to the
+# synthetic Backend.demo_user. This is CLI-only and READ-ONLY: it rewrites the spec's readers
+# before evaluate() runs — the engine, evaluate(), and the report contract are untouched (at the
+# library level ``{"kind": "demo"}`` still means the synthetic reader).
+# --------------------------------------------------------------------------- #
+_DEMO_PROVIDER = "dev"
+_DEMO_ACCOUNT_ID = "demo@infodiet.local"
+
+
+def _persisted_demo_user_id(store) -> "int | None":
+    """The user id of the notebook-provisioned demo account, or None if it hasn't been
+    provisioned. Read-only: it SELECTs the identity and NEVER creates one (unlike
+    ``upsert_user_by_identity``), so it is safe even against a read-only store. Never raises."""
+    try:
+        import store as store_mod
+        with store.session() as s:
+            ident = s.scalar(store_mod.select(store_mod.Identity).where(
+                store_mod.Identity.provider == _DEMO_PROVIDER,
+                store_mod.Identity.provider_account_id == _DEMO_ACCOUNT_ID))
+            return int(ident.user_id) if ident is not None else None
+    except Exception:
+        return None
+
+
+def _resolve_demo_readers(readers: list, store) -> "tuple[list, str | None]":
+    """Rewrite each synthetic ``demo`` reader to the persisted demo account when it exists, so the
+    CLI shows the seeded history instead of the synthetic ``Backend.demo_user``. Returns
+    ``(readers, note)`` — ``note`` is a short human line, or None when there is no ``demo`` reader
+    to resolve. Read-only; every other reader kind passes through untouched."""
+    if not any(r.get("kind") == "demo" for r in readers):
+        return readers, None
+    uid = _persisted_demo_user_id(store)
+    if uid is None:
+        return readers, "Persisted demo account not found; using synthetic demo reader."
+    resolved = [{"kind": "user", "id": uid} if r.get("kind") == "demo" else r for r in readers]
+    return resolved, f"Resolved persisted demo account (user:{uid})."
+
+
 # =========================================================================== #
 # Human render — the Recommendation Investigation Report.
 #
@@ -1241,7 +1283,8 @@ def main(argv=None) -> int:
     ap.add_argument("--ask", action="append", default=[],
                     help="extra 'why (not) this article?' URL/id (repeatable)")
     ap.add_argument("--reader", action="append", default=[],
-                    help="demo | user:<id> | row:<n> (repeatable; default demo)")
+                    help="demo (persisted demo account if present, else synthetic) | user:<id> | "
+                         "row:<n> (repeatable; default demo)")
     ap.add_argument("--strategy", action="append", default=[],
                     help="blend | rwe-b | rwe-d | adaptive (repeatable; default blend)")
     ap.add_argument("--params", action="append", default=[],
@@ -1286,6 +1329,14 @@ def main(argv=None) -> int:
     import store as store_mod
     import time as _time
     store_ = store_mod.Store(args.db)
+    # CLI-only reader resolution (read-only): prefer the notebook's persisted demo account — a
+    # measured user with seeded history — over the synthetic demo reader. Rewrites the spec's
+    # readers BEFORE evaluate(), so --json remains the faithful serialization of evaluate()'s
+    # report for the resolved spec. The note goes to stderr, keeping --json's stdout pure.
+    spec["readers"], _demo_note = _resolve_demo_readers(
+        spec.get("readers") or [{"kind": "demo"}], store_)
+    if _demo_note:
+        print(_demo_note, file=sys.stderr)
     _t0 = _time.perf_counter()
     report = evaluate(store_, spec)          # the report is the source of truth (unchanged)
     elapsed_ms = (_time.perf_counter() - _t0) * 1000.0

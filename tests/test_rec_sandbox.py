@@ -416,7 +416,8 @@ def test_reading_history_and_feed_share_a_stacked_layout(db_path, reader, capsys
 
 
 def test_synthetic_row_reader_shows_honest_no_history(db_path, capsys):
-    # a TRUE synthetic reader (row:N — also the demo keyword) has no persisted history
+    # a TRUE synthetic reader (row:N is always synthetic — unlike demo, which now prefers the
+    # persisted demo account when one exists) has no persisted history
     code = rec_sandbox.main(["--db", f"sqlite:///{db_path}", "--reader", "row:3"])
     out = capsys.readouterr().out
     assert code == 0
@@ -424,6 +425,80 @@ def test_synthetic_row_reader_shows_honest_no_history(db_path, capsys):
     assert "--reader user:<id>" in out                            # guides to the persisted account
     assert "not available — synthetic reader" in out
     assert "Total reads:" not in out                             # no fabricated stats
+
+
+# --------------------------------------------------------------------------- #
+# CLI reader resolution: --reader demo prefers the notebook's persisted demo account
+# (provider "dev" / demo@infodiet.local) over the synthetic Backend.demo_user, falling back
+# when it is absent. CLI-only + read-only; evaluate()/the contract/--json are untouched.
+# --------------------------------------------------------------------------- #
+def test_reader_demo_prefers_persisted_account_when_present(db_path, tmp_path, capsys):
+    # provision the persisted demo account with seeded history in a COPY of the catalog, then
+    # --reader demo must resolve to THAT measured user (real history + relationship analysis),
+    # announcing it on stderr — not the synthetic reader.
+    import shutil
+    dbc = tmp_path / "demo_present.db"
+    for suf in ("", "-wal", "-shm"):                  # copy WAL sidecars -> a COMPLETE catalog copy
+        src = pathlib.Path(f"{db_path}{suf}")
+        if src.exists():
+            shutil.copy(src, tmp_path / f"demo_present.db{suf}")
+    st = store_mod.Store(f"sqlite:///{dbc}")
+    demo = st.upsert_user_by_identity("dev", "demo@infodiet.local", display_name="Demo").id
+    for k in range(4):
+        url = f"https://ap0.example.com/sbx/{k * 8}"
+        st.add_read(demo, er._canon(url),
+                    {"article_id": er._canon(url), "outlet": "AP", "category": "Politics",
+                     "lean": -1.0, "political": True, "title": f"sbx{k * 8}"},
+                    _iso(0.2 + k * 0.1), read_source="notebook")
+    code = rec_sandbox.main(["--db", f"sqlite:///{dbc}", "--reader", "demo"])
+    cap = capsys.readouterr()
+    assert code == 0
+    assert f"Resolved persisted demo account (user:{demo})." in cap.err     # the note, on stderr
+    assert "3. Reading History" in cap.out and "sbx0" in cap.out            # measured history
+    assert "Total reads:" in cap.out and "6. Relationship Analysis" in cap.out
+    assert "No persisted reading history exists for this reader" not in cap.out
+
+
+def test_reader_demo_falls_back_to_synthetic_when_absent(db_path, capsys):
+    # no persisted demo account in this catalog -> --reader demo keeps the synthetic reader and
+    # says so on stderr; stdout is the unchanged synthetic behaviour.
+    code = rec_sandbox.main(["--db", f"sqlite:///{db_path}", "--reader", "demo"])
+    cap = capsys.readouterr()
+    assert code == 0
+    assert "Persisted demo account not found; using synthetic demo reader." in cap.err
+    assert "demo reader" in cap.out                                         # synthetic label
+    assert "No persisted reading history exists for this reader" in cap.out
+
+
+def test_persisted_demo_lookup_is_read_only_and_resolution_is_targeted(db_path, tmp_path):
+    # the identity lookup is READ-ONLY (a SELECT that never creates the account), and
+    # _resolve_demo_readers rewrites ONLY demo readers — user:/row: pass through untouched.
+    import shutil
+    dbc = tmp_path / "ro.db"
+    for suf in ("", "-wal", "-shm"):
+        src = pathlib.Path(f"{db_path}{suf}")
+        if src.exists():
+            shutil.copy(src, tmp_path / f"ro.db{suf}")
+    st = store_mod.Store(f"sqlite:///{dbc}")
+
+    def _identity_count():
+        with st.session() as s:
+            return len(s.scalars(store_mod.select(store_mod.Identity)).all())
+
+    n0 = _identity_count()
+    assert rec_sandbox._persisted_demo_user_id(st) is None                  # absent -> None
+    assert _identity_count() == n0                                          # lookup created nothing
+    uid = st.upsert_user_by_identity("dev", "demo@infodiet.local").id       # explicit create
+    assert _identity_count() == n0 + 1
+    assert rec_sandbox._persisted_demo_user_id(st) == uid                   # present -> the id
+    assert _identity_count() == n0 + 1                                      # lookup created nothing
+    readers = [{"kind": "demo"}, {"kind": "user", "id": 5}, {"kind": "row", "row": 2}]
+    resolved, note = rec_sandbox._resolve_demo_readers(readers, st)
+    assert resolved == [{"kind": "user", "id": uid}, {"kind": "user", "id": 5},
+                        {"kind": "row", "row": 2}]                          # only demo rewritten
+    assert note == f"Resolved persisted demo account (user:{uid})."
+    assert rec_sandbox._resolve_demo_readers([{"kind": "user", "id": 5}], st) == \
+        ([{"kind": "user", "id": 5}], None)                                 # no demo -> no note
 
 
 def test_card_enrichment_resolves_catalog_metadata(store):
