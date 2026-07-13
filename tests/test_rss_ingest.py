@@ -188,6 +188,29 @@ def test_ingest_is_idempotent_dedup():
     assert st.count_feed_articles() == 3                          # no growth
 
 
+def test_run_summary_is_human_readable_and_preserves_every_metric():
+    """Presentation-only guard for the CLI summary: it must keep ALL metrics
+    (feeds/ok/failed/new/duplicates/skipped), show previous->current catalog size with growth
+    and elapsed time, and carry the repeat-poll reassurance note — without recomputing anything
+    (growth == after - before; the counts pass through verbatim)."""
+    agg = {"feeds": 9, "ok": 8, "failed": 1, "entries": 300,
+           "new": 3, "duplicates": 250, "skipped": 2, "errors": []}
+    out = rss._format_run_summary(agg, before=248, after=251, seconds=5.0)
+    # feed processing + elapsed
+    assert "9 feed(s)" in out and "5.0s" in out and "8 ok, 1 failed" in out
+    # every count is present and labelled
+    assert "new articles" in out and "existing (duplicate)" in out and "skipped" in out
+    for value in ("3", "250", "2"):
+        assert value in out
+    # previous -> current (+growth), growth derived from the counts, not invented
+    assert "248 -> 251" in out and "(+3)" in out
+    assert (251 - 248) == agg["new"]                     # growth reconciles with the new-count
+    # the reassurance note about repeated polling
+    assert "expected on repeat RSS polls" in out
+    # a multi-line summary, not the former single line
+    assert out.count("\n") >= 4
+
+
 def test_one_failing_feed_does_not_abort_the_rest():
     st = store.Store("sqlite://")
 

@@ -381,19 +381,37 @@ def ingest_all(feeds, scorer, store_, fetch: Callable[[str], bytes] = fetch_feed
 # --------------------------------------------------------------------------- #
 # CLI
 # --------------------------------------------------------------------------- #
+def _format_run_summary(agg: dict, before: int, after: int, seconds: float) -> str:
+    """Render one ingest run's aggregate stats as a human-friendly multi-line summary.
+
+    Presentation ONLY: every number is taken verbatim from ``agg`` (the counts
+    :func:`ingest_all` returns) and the catalog size before/after — nothing is recomputed
+    or reinterpreted. Kept pure (data in, string out) so the format is trivially testable
+    without touching the store or the network."""
+    rows = [("new articles", agg["new"]),
+            ("existing (duplicate)", agg["duplicates"]),
+            ("skipped", agg["skipped"])]
+    w = max(len(str(v)) for v in (agg["new"], agg["duplicates"], agg["skipped"], before, after))
+    lines = [f"RSS ingest: {agg['feeds']} feed(s) in {seconds:.1f}s  "
+             f"({agg['ok']} ok, {agg['failed']} failed)"]
+    lines += [f"  {label:<24}{value:>{w}}" for label, value in rows]
+    lines.append(f"  {'catalog':<24}{before:>{w}} -> {after}  (+{after - before})")
+    lines.append('  note: high "existing" counts are expected on repeat RSS polls;')
+    lines.append("        dedup by canonical URL adds only genuinely new articles.")
+    return "\n".join(lines)
+
+
 def cmd_run(args) -> int:
     feeds = load_feeds(args.feeds)
     if not feeds:
         print("no feeds configured (use --feeds FILE|LIST, or set RWE_RSS_FEEDS)", file=sys.stderr)
         return 1
     store_ = store.Store(args.db)
+    before = store_.count_feed_articles()               # read-only; presentation baseline
     t0 = time.perf_counter()
     agg = ingest_all(feeds, make_scorer(), store_)
     dt = time.perf_counter() - t0
-    print(f"ingested {agg['feeds']} feed(s) in {dt:.1f}s: {agg['new']} new, "
-          f"{agg['duplicates']} duplicate, {agg['skipped']} skipped "
-          f"({agg['ok']} ok / {agg['failed']} failed); "
-          f"catalog now {store_.count_feed_articles()} articles")
+    print(_format_run_summary(agg, before, store_.count_feed_articles(), dt))
     for err in agg["errors"]:
         print(f"  ! {err['feed']}: {err['error']}", file=sys.stderr)
     return 0 if agg["failed"] == 0 else 2
