@@ -339,12 +339,12 @@ def test_cli_human_render_covers_the_investigation_sections(db_path, reader, cap
                              "--ask", "https://cnn7.example.com/sbx/7", "--compare"])
     out = capsys.readouterr().out
     assert code == 0
-    # the investigation report reads top-to-bottom through its nine numbered sections
+    # the investigation report reads top-to-bottom through its numbered sections
     for header in ("Recommendation Investigation Report",
                    "1. Evaluation Summary", "2. Reader Context", "3. Reading History",
-                   "4. Experiment", "5. Recommendation Feed", "6. Feed Changes",
-                   "7. Recommendation Assessment", "8. Recommendation Explanation Matrix",
-                   "9. Technical Diagnostics"):
+                   "4. Experiment", "5. Recommendation Feed", "6. Relationship Analysis",
+                   "7. Feed Changes", "8. Developer Observations",
+                   "9. Recommendation Explanation Matrix", "10. Technical Diagnostics"):
         assert header in out, f"missing section: {header}"
     # plain-English reader labels; --ask verdict is kept (in diagnostics), no data lost
     assert "demo reader" in out and "reader #" in out
@@ -365,23 +365,29 @@ def test_cli_exit_code_2_when_the_corpus_does_not_build(db_path, monkeypatch, ca
 # lookups, without ever altering the report or evaluation (the JSON test above is
 # the byte-identity guardrail).
 # --------------------------------------------------------------------------- #
-def test_render_enriches_real_reader_reading_history(db_path, reader, capsys):
+def test_measured_reader_shows_history_and_relationship_analysis(db_path, reader, capsys):
+    # a store user with reads (the same path the persisted demo / exhibit ACCOUNT uses when
+    # investigated as user:<id>) is detected as MEASURED — full history + relationship analysis
     code = rec_sandbox.main(["--db", f"sqlite:///{db_path}", "--reader", f"user:{reader}"])
     out = capsys.readouterr().out
     assert code == 0
     assert "2. Reader Context" in out and "Total reads:" in out
-    assert "3. Reading History" in out
-    assert "sbx0" in out                       # a real stored read title, enriched into history
-    assert "not available for synthetic readers" not in out
+    assert "3. Reading History" in out and "sbx0" in out          # real stored read titles
+    assert "6. Relationship Analysis" in out and "Reading Pattern" in out
+    assert "Avoids already-read articles" in out                  # history↔feed cross-analysis
+    assert "8. Developer Observations" in out
+    assert "synthetic reader" not in out.split("2. Reader Context")[1].split("4. Experiment")[0]
 
 
-def test_render_synthetic_reader_shows_honest_no_history(db_path, capsys):
-    code = rec_sandbox.main(["--db", f"sqlite:///{db_path}", "--reader", "demo"])
+def test_synthetic_row_reader_shows_honest_no_history(db_path, capsys):
+    # a TRUE synthetic reader (row:N — also the demo keyword) has no persisted history
+    code = rec_sandbox.main(["--db", f"sqlite:///{db_path}", "--reader", "row:3"])
     out = capsys.readouterr().out
     assert code == 0
-    assert "No persistent reading history exists for this reader" in out
-    assert "not available for synthetic readers" in out
-    assert "Total reads:" not in out           # no fabricated stats for a synthetic reader
+    assert "No persisted reading history exists for this reader" in out
+    assert "--reader user:<id>" in out                            # guides to the persisted account
+    assert "not available — synthetic reader" in out
+    assert "Total reads:" not in out                             # no fabricated stats
 
 
 def test_card_enrichment_resolves_catalog_metadata(store):

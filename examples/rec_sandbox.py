@@ -774,7 +774,8 @@ def _reader_history(store, reader: dict) -> "list | None":
         out.append({"title": sc.get("title") or "(untitled)",
                     "publisher": engine._prettify(sc.get("outlet") or "") or "Unknown",
                     "category": engine._prettify(sc.get("category")) if sc.get("category") else "",
-                    "lean": sc.get("lean")})
+                    "lean": sc.get("lean"),
+                    "url": ingest.canonical_url(str(r.get("canonicalUrl") or ""))})
     return out
 
 
@@ -807,13 +808,14 @@ def _render(report: dict, store=None, db: "str | None" = None,
             elapsed_ms: "float | None" = None) -> str:
     """The Recommendation Investigation Report — a plain-English, sectioned view of the
     report, optionally enriched (read-only) from ``store``. Presentation only; the report,
-    ranking, explanations, and evaluation are never altered, and --json is unaffected."""
+    ranking, explanations, and evaluation are never altered, and --json is unaffected.
+
+    Reader-type detection is DATA-DRIVEN: a reader that resolves to a store user with reads is
+    "measured" (real user, or the persisted demo / exhibit ACCOUNT accessed as ``user:<id>``);
+    one with an id but no reads is "measured, no reads yet"; a synthetic corpus reader
+    (``demo`` / ``row`` in the sandbox) has no persisted history and says so honestly."""
     g = _glyphs()
     out: list = []
-
-    def rule(title: str) -> None:
-        bar = g["rule"] * 70
-        out.append(("" if not out else "\n") + bar + f"\n {title}\n" + bar)
 
     def sub(title: str) -> None:
         out.append(f"\n{title}\n" + g["sub"] * len(title))
@@ -823,19 +825,24 @@ def _render(report: dict, store=None, db: "str | None" = None,
 
     spec = report["spec"]
     feeds = report["feeds"]
+    inj = report["injected"]
     ev = report["corpus"].get("evaluated") or {}
-
-    # canonical URLs served anywhere (to decide if an injected article "appears in the feed")
     served_urls = {ingest.canonical_url(str(c.get("url") or c.get("id") or ""))
                    for f in feeds for c in (f.get("served") or [])}
 
-    def enriched_title(url, fallback_publisher=None) -> str:
-        a = _catalog_article(store, url)
-        if a and a.get("title"):
-            return a["title"]
-        return fallback_publisher or (str(url or "")[:70])
+    # reader reads, resolved ONCE per reader (read-only store lookup), keyed by reader identity
+    hist = {(_reader_label(r)): _reader_history(store, r) for r in spec["readers"]}
 
-    rule("Recommendation Investigation Report")
+    def history_of(reader) -> "list | None":
+        return hist.get(_reader_label(reader))
+
+    def enriched_title(url, fallback=None) -> str:
+        a = _catalog_article(store, url)
+        return (a and a.get("title")) or fallback or (str(url or "")[:70])
+
+    out.append(g["rule"] * 70)
+    out.append(" Recommendation Investigation Report")
+    out.append(g["rule"] * 70)
 
     # ---- 1. EVALUATION SUMMARY --------------------------------------------- #
     sub("1. Evaluation Summary")
@@ -843,7 +850,6 @@ def _render(report: dict, store=None, db: "str | None" = None,
     out.append(f"  Reader(s):    {', '.join(_reader_label(r) for r in spec['readers'])}")
     out.append("  Strategy:     "
                + ", ".join(_STRATEGY_FULL.get(s, str(s)) for s in spec["strategies"]))
-    inj = report["injected"]
     out.append(f"  Injected:     {len(inj)} article" + ("" if len(inj) == 1 else "s"))
     out.append("  Comparison:   " + ("on (baseline vs evaluated)" if spec.get("compare") else "off"))
     if any(spec["params"]):
@@ -851,12 +857,12 @@ def _render(report: dict, store=None, db: "str | None" = None,
 
     for e in inj:
         appears = e["canonicalUrl"] in served_urls
+        st = e.get("story") or {}
         out.append("")
         out.append(f"  Injected Article   {mark(e['disposition'] != 'dropped_freshness')} "
                    + ("Accepted" if e["disposition"] != "dropped_freshness" else "Rejected (stale)"))
         out.append(f"  Recommendation     {mark(appears)} "
                    + ("Appears in recommendation feed" if appears else "Not in the feed"))
-        st = e.get("story") or {}
         out.append(f"  Story Match        {mark(st.get('matched'))} "
                    + ("Matched a story cluster" if st.get("matched") else "None"))
         out.append(f"  Graph              {mark(e['graphNode'] is True)} "
@@ -864,8 +870,8 @@ def _render(report: dict, store=None, db: "str | None" = None,
 
     out.append("\n  Overall Result")
     if not ev.get("built"):
-        out.append(f"    {g['no']} The corpus did not build "
-                   f"({ev.get('error')}), so no recommendations were produced.")
+        out.append(f"    {g['no']} The corpus did not build ({ev.get('error')}), so no "
+                   "recommendations were produced.")
     elif inj:
         e = inj[0]
         if e["graphNode"] is True:
@@ -878,53 +884,65 @@ def _render(report: dict, store=None, db: "str | None" = None,
             out.append("    The injected article did not become a recommendable graph node.")
     else:
         out.append("    Evaluated the reader's recommendation feed (no article injected).")
-
     if report.get("diff"):
         tot = {"entered": 0, "left": 0, "moved": 0}
         for d in report["diff"]["perFeed"]:
             for k in tot:
                 tot[k] += len(d[k])
-        out.append(f"    Feed change: Entered {tot['entered']} · Left {tot['left']} "
-                   f"· Moved {tot['moved']} (across {len(report['diff']['perFeed'])} feed(s))")
+        out.append(f"    Feed change: Entered {tot['entered']} {g['dot']} Left {tot['left']} "
+                   f"{g['dot']} Moved {tot['moved']} (across {len(report['diff']['perFeed'])} feed(s))")
     if elapsed_ms is not None:
         out.append(f"    Execution time: {elapsed_ms / 1000.0:.2f}s")
 
     # ---- 2. READER CONTEXT -------------------------------------------------- #
     sub("2. Reader Context")
     for r in spec["readers"]:
+        reads = history_of(r)
         out.append(f"  {_reader_label(r)}")
-        reads = _reader_history(store, r)
         if reads is None:
             out.append("    This evaluation uses a synthetic reader generated from the "
                        "recommendation corpus.")
-            out.append("    No persistent reading history exists for this reader.")
+            out.append("    No persisted reading history exists for this reader.")
+            out.append("    (The persisted demo / exhibit account is a measured user — "
+                       "investigate it with --reader user:<id>.)")
+            continue
+        if not reads:
+            out.append("    Measured reader with no stored reads yet — the feed below comes "
+                       "from the corpus, not a reading history.")
             continue
         s = _history_stats(reads)
         d = s["leanDist"]
-        out.append(f"    Total reads:           {s['total']}")
-        out.append(f"    Political profile:     {_profile_phrase(d)}")
-        out.append(f"    Political distribution: Left {d['left']} · Center {d['center']} "
-                   f"· Right {d['right']}" + (f" · Unknown {d['unknown']}" if d['unknown'] else ""))
-        out.append("    Top publishers:        "
+        out.append(f"    Total reads:            {s['total']}")
+        out.append(f"    Political profile:      {_profile_phrase(d)}")
+        out.append(f"    Political distribution: Left {d['left']} {g['dot']} Center {d['center']} "
+                   f"{g['dot']} Right {d['right']}"
+                   + (f" {g['dot']} Unknown {d['unknown']}" if d['unknown'] else ""))
+        out.append("    Top publishers:         "
                    + (", ".join(f"{p} ({n})" for p, n in s["publishers"].most_common(5)) or "—"))
-        out.append("    Top topics:            "
+        out.append("    Top topics:             "
                    + (", ".join(f"{t} ({n})" for t, n in s["topics"].most_common(5)) or "—"))
 
     # ---- 3. READING HISTORY ------------------------------------------------- #
     sub("3. Reading History")
     for r in spec["readers"]:
-        reads = _reader_history(store, r)
+        reads = history_of(r)
         if reads is None:
-            out.append(f"  {_reader_label(r)}: not available for synthetic readers.")
+            out.append(f"  {_reader_label(r)}: not available — synthetic reader "
+                       "(see Reader Context).")
+            continue
+        if not reads:
+            out.append(f"  {_reader_label(r)}: no stored reads for this measured reader yet.")
             continue
         shown = reads[:10]
-        out.append(f"  {_reader_label(r)} — {len(shown)} of {len(reads)}, newest first")
+        out.append(f"  {_reader_label(r)} — Reading History ({len(shown)} of {len(reads)}), "
+                   "newest first")
         for i, a in enumerate(shown, 1):
             out.append("")
-            out.append(f"    {i}. {a['title']}")
-            out.append(f"       {a['publisher']}"
-                       + (f"  {g['dot']}  {a['category']}" if a['category'] else "")
-                       + f"  {g['dot']}  {_lean_bucket(a['lean']).capitalize()}")
+            out.append(f"    {i}.  {a['title']}")
+            meta = a["publisher"] + (f"   {g['dot']}   {a['category']}" if a["category"] else "")
+            meta += f"   {g['dot']}   {_lean_bucket(a['lean']).capitalize()}"
+            out.append(f"        {meta}")
+        out.append("")
 
     # ---- 4. EXPERIMENT ------------------------------------------------------ #
     if inj:
@@ -962,10 +980,11 @@ def _render(report: dict, store=None, db: "str | None" = None,
                    f"{_STRATEGY_FULL.get(f['strategy'], str(f['strategy']))}"
                    + (f", {_params_label(f['params'])}" if f["params"] else ""))
         if f["status"] != "ok":
-            out.append(f"    ({_status_phrase(f['status'])})")
+            out.append(f"    No recommendations — {_status_phrase(f['status'])}.")
             continue
         if not f["served"]:
-            out.append("    (no cards)")
+            out.append("    No recommendations were generated for this reader/strategy.")
+            continue
         for c in f["served"]:
             a = _catalog_article(store, c.get("url"))
             title = (a and a.get("title")) or c.get("publisher") or "(untitled)"
@@ -973,30 +992,92 @@ def _render(report: dict, store=None, db: "str | None" = None,
             category = a.get("category") if a else ""
             lean = a.get("lean") if a else None
             out.append("")
-            out.append(f"    {c['rank']:>2}. {title}")
-            meta = publisher + (f"  {g['dot']}  {category}" if category else "")
+            out.append(f"    {c['rank']:>2}.  {title}")
+            meta = publisher + (f"   {g['dot']}   {category}" if category else "")
             if lean is not None:
-                meta += f"  {g['dot']}  {_lean_bucket(lean).capitalize()}"
-            out.append(f"        {meta}   [{_STRATEGY_TAG.get(c.get('strategy'), c.get('strategy'))}]")
+                meta += f"   {g['dot']}   {_lean_bucket(lean).capitalize()}"
+            out.append(f"         {meta}   [{_STRATEGY_TAG.get(c.get('strategy'), c.get('strategy'))}]")
             ex = c.get("explanation") or {}
-            whys = []
-            if c.get("crossCutting"):
-                whys.append("Cross-cutting viewpoint")
-            if ex.get("type") in _WHY_TEXT:
-                whys.append(_WHY_TEXT[ex["type"]])
+            whys = (["Cross-cutting viewpoint"] if c.get("crossCutting") else []) \
+                + ([_WHY_TEXT[ex["type"]]] if ex.get("type") in _WHY_TEXT else [])
             if whys:
-                out.append("        Why this article?")
+                out.append("         Why this article?")
                 for w in whys:
-                    out.append(f"          {g['ok']} {w}")
+                    out.append(f"           {g['ok']} {w}")
 
-    # ---- 6. FEED CHANGES ---------------------------------------------------- #
-    if report.get("diff"):
-        sub("6. Feed Changes")
+    # ---- 6. RELATIONSHIP ANALYSIS ------------------------------------------- #
+    sub("6. Relationship Analysis")
+    _any_rel = False
+    for r in spec["readers"]:
+        reads = history_of(r)
+        rfeeds = [f for f in feeds if f["reader"] == _reader_echo(r)
+                  and f["status"] == "ok" and f["served"]]
+        if not rfeeds:
+            continue
+        _any_rel = True
+        out.append(f"  {_reader_label(r)}")
+        # enrich the served cards once
+        cards = [{"publisher": (_catalog_article(store, c.get("url")) or {}).get("publisher")
+                  or c.get("publisher") or "Unknown",
+                  "category": (_catalog_article(store, c.get("url")) or {}).get("category") or "",
+                  "lean": (_catalog_article(store, c.get("url")) or {}).get("lean"),
+                  "cross": bool(c.get("crossCutting")),
+                  "type": (c.get("explanation") or {}).get("type"),
+                  "url": ingest.canonical_url(str(c.get("url") or ""))}
+                 for f in rfeeds for c in f["served"]]
+        feed_pubs = {c["publisher"] for c in cards}
+        feed_cats = {c["category"] for c in cards if c["category"]}
+        if reads:
+            s = _history_stats(reads)
+            read_pubs = set(s["publishers"])
+            read_cats = [t for t, _ in s["topics"].most_common()]
+            read_urls = {a["url"] for a in reads if a["url"]}
+            out.append("    Reading Pattern")
+            out.append(f"      {g['bul']} {_profile_phrase(s['leanDist'])} political reading")
+            heavy = ", ".join(p for p, _ in s["publishers"].most_common(3))
+            if heavy:
+                out.append(f"      {g['bul']} Heavy exposure to {heavy}")
+            if read_cats:
+                out.append(f"      {g['bul']} Strong interest in {', '.join(read_cats[:3])}")
+            new_pubs = sorted(feed_pubs - read_pubs)
+            maintained = [t for t in read_cats[:4] if t in feed_cats]
+            overlap = read_urls & {c["url"] for c in cards}
+            out.append("    Recommendation Behaviour")
+            cross = any(c["cross"] for c in cards)
+            out.append(f"      {mark(cross)} Introduces cross-cutting / opposing viewpoints")
+            out.append(f"      {mark(new_pubs)} Introduces {len(new_pubs)} new publisher(s)"
+                       + (f": {', '.join(new_pubs[:4])}" if new_pubs else ""))
+            for t in maintained:
+                out.append(f"      {g['ok']} Maintains {t} coverage")
+            out.append(f"      {mark(any(c['type'] == 'bridge' for c in cards))} "
+                       "Includes bridge articles")
+            out.append(f"      {mark(not overlap)} Avoids already-read articles"
+                       + ("" if not overlap else f" ({len(overlap)} overlap!)"))
+        else:
+            out.append("    Reading Pattern")
+            out.append("      (this reader is synthetic or has no reads — no history to compare "
+                       "against; the recommendation behaviour below is described on its own)")
+            out.append("    Recommendation Behaviour")
+            out.append(f"      {mark(any(c['cross'] for c in cards))} "
+                       "Includes cross-cutting viewpoints")
+            out.append(f"      {mark(any(c['type'] == 'bridge' for c in cards))} "
+                       "Includes bridge articles")
+            out.append(f"      {g['bul']} Publishers in the feed: "
+                       + ", ".join(sorted(feed_pubs)[:5]))
+    if not _any_rel:
+        out.append("  No served feed to analyse (no recommendations were produced).")
+
+    # ---- 7. FEED CHANGES ---------------------------------------------------- #
+    sub("7. Feed Changes")
+    if not report.get("diff"):
+        out.append("  No baseline to compare against — run with --compare to see how the "
+                   "feed changes.")
+    else:
         for d in report["diff"]["perFeed"]:
             out.append(f"  {_reader_label(d['reader'])}, "
                        f"{_STRATEGY_FULL.get(d['strategy'], str(d['strategy']))}")
             if d["identical"]:
-                out.append("    No change.")
+                out.append("    No change — the feed is identical to the baseline.")
                 continue
             if d["entered"]:
                 out.append("    New Recommendations")
@@ -1012,50 +1093,53 @@ def _render(report: dict, store=None, db: "str | None" = None,
                     out.append(f"      Position {m['from']} {g['arrow']} {m['to']}   "
                                f"{enriched_title(m['key'])}")
 
-    # ---- 7. RECOMMENDATION ASSESSMENT --------------------------------------- #
-    sub("7. Recommendation Assessment")
-    # feed-derived facts (existing engine explanations only — nothing invented)
-    types = {ex.get("type") for f in feeds for c in (f.get("served") or [])
-             for ex in [c.get("explanation") or {}]}
-    cross = any(c.get("crossCutting") for f in feeds for c in (f.get("served") or []))
-    real_reads = next((_reader_history(store, r) for r in spec["readers"]
-                       if _reader_history(store, r) is not None), None)
-    if real_reads:
-        d = _history_stats(real_reads)["leanDist"]
-        out.append("  Reading history")
-        out.append(f"    {g['bul']} {_profile_phrase(d)} political reading")
-        heavy = ", ".join(p for p, _ in _history_stats(real_reads)["publishers"].most_common(3))
-        if heavy:
-            out.append(f"    {g['bul']} Heaviest exposure: {heavy}")
+    # ---- 8. DEVELOPER OBSERVATIONS ------------------------------------------ #
+    sub("8. Developer Observations")
+    out.append("  (engineering observations, not objective measurements)")
+    measured = next(((r, history_of(r)) for r in spec["readers"] if history_of(r)), None)
+    any_cards = any(f["served"] for f in feeds if f["status"] == "ok")
+    if not any_cards:
+        out.append("  No recommendations were generated, so there is nothing to observe about "
+                   "the feed.")
+    elif measured:
+        r, reads = measured
+        s = _history_stats(reads)
+        rfeeds = [f for f in feeds if f["reader"] == _reader_echo(r) and f["status"] == "ok"]
+        cards = [{"publisher": (_catalog_article(store, c.get("url")) or {}).get("publisher")
+                  or c.get("publisher"), "cross": bool(c.get("crossCutting")),
+                  "url": ingest.canonical_url(str(c.get("url") or ""))}
+                 for f in rfeeds for c in f["served"]]
+        new_pubs = sorted({c["publisher"] for c in cards} - set(s["publishers"]))
+        overlap = {a["url"] for a in reads if a["url"]} & {c["url"] for c in cards}
+        out.append(f"  The reader's political reading is {_profile_phrase(s['leanDist'])}.")
+        if new_pubs:
+            out.append(f"  The engine introduced {len(new_pubs)} publisher(s) the reader has "
+                       f"not read ({', '.join(new_pubs[:4])})"
+                       + (" while surfacing cross-cutting viewpoints."
+                          if any(c["cross"] for c in cards) else "."))
+        out.append("  No already-read articles were recommended."
+                   if not overlap else
+                   f"  WARNING: {len(overlap)} already-read article(s) appeared in the feed.")
+        out.append("  Recommendation behaviour appears consistent with the observed reading "
+                   "history.")
     else:
-        out.append("  Reading history")
-        out.append("    (synthetic reader — assessment uses the engine's recommendation "
-                   "profile, not a stored history)")
-    out.append("  Recommendations")
-    out.append(f"    {mark(cross)} Introduces cross-cutting / opposing viewpoints")
-    out.append(f"    {mark('new_publisher' in types)} Adds new publishers")
-    out.append(f"    {mark('bridge' in types)} Includes bridge articles")
-    out.append(f"    {mark(True)} Avoids already-read articles (seen-exclusion is guaranteed)")
-    out.append("  Assessment")
-    injected_seen = any(x.get("verdict") == "seen_excluded"
-                        for e in inj for x in e["exclusions"])
-    if injected_seen:
-        out.append("    The injected article was excluded because this reader had already "
-                   "read it (seen-exclusion).")
-    out.append("    The recommendation behavior appears consistent with "
-               + ("the reader's historical reading pattern." if real_reads
-                  else "the synthetic reader's engine-generated profile."))
+        out.append("  This evaluation uses a synthetic reader, so there is no stored reading "
+                   "history to compare against.")
+        out.append("  The observations above describe the engine's recommendation profile for "
+                   "the synthetic reader.")
 
-    # ---- 8. RECOMMENDATION EXPLANATION MATRIX ------------------------------- #
-    sub("8. Recommendation Explanation Matrix")
+    # ---- 9. RECOMMENDATION EXPLANATION MATRIX ------------------------------- #
+    sub("9. Recommendation Explanation Matrix")
     cols = [("Bridge", lambda c, e: e.get("type") == "bridge"),
             ("Cross-cutting", lambda c, e: bool(c.get("crossCutting"))),
             ("New Pub", lambda c, e: e.get("type") == "new_publisher"),
             ("Long-tail", lambda c, e: e.get("type") == "long_tail"),
             ("Story", lambda c, e: e.get("type") == "story_match")]
+    _any_matrix = False
     for f in feeds:
         if f["status"] != "ok" or not f["served"]:
             continue
+        _any_matrix = True
         out.append(f"  {_reader_label(f['reader'])}, "
                    f"{_STRATEGY_FULL.get(f['strategy'], str(f['strategy']))}")
         out.append("    #   " + "  ".join(f"{name:^13}" for name, _ in cols))
@@ -1063,9 +1147,11 @@ def _render(report: dict, store=None, db: "str | None" = None,
             ex = c.get("explanation") or {}
             cells = "  ".join(f"{(g['ok'] if fn(c, ex) else ' '):^13}" for _, fn in cols)
             out.append(f"    {c['rank']:>2}  {cells}")
+    if not _any_matrix:
+        out.append("  No recommendations were generated, so there is no explanation matrix.")
 
-    # ---- 9. TECHNICAL DIAGNOSTICS ------------------------------------------- #
-    sub("9. Technical Diagnostics")
+    # ---- 10. TECHNICAL DIAGNOSTICS ------------------------------------------ #
+    sub("10. Technical Diagnostics")
     for label, title in (("evaluated", "Evaluated corpus"), ("baseline", "Baseline corpus")):
         c = report["corpus"].get(label)
         if not c:
@@ -1076,7 +1162,7 @@ def _render(report: dict, store=None, db: "str | None" = None,
                        f"({', '.join(v.get('failures') or []) or 'no detail'})")
             continue
         gph = c.get("graph") or {}
-        out.append(f"  {title}: built · items={c.get('items')} · "
+        out.append(f"  {title}: built {g['dot']} items={c.get('items')} {g['dot']} "
                    f"candidateSig={c.get('candidateSig')}")
         if gph:
             out.append(f"    Graph: users={gph.get('users')} items={gph.get('items')} "
