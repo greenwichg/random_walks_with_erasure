@@ -190,8 +190,13 @@ INTENTS: dict[str, IntentSpec] = {s.family + "." + s.leaf: s for s in (
 # Echo (structured memory) — BINDING-ONLY, versioned, never citable.
 # --------------------------------------------------------------------------- #
 def _valid_echo(echo: "dict | None") -> dict:
-    """An echo with an unknown/missing version is ignored wholesale (cold turn)."""
-    if isinstance(echo, dict) and echo.get("v") == ECHO_VERSION:
+    """An echo with an unknown/missing version — or a malformed ``turns`` (anything but a
+    list) — is ignored wholesale (cold turn). The echo is untrusted client input: a
+    non-list ``turns`` must degrade exactly like a missing echo, never reach the
+    turn-append path (M8a finding: ``turns: "garbage"`` crashed the turn with a
+    ``str + list`` TypeError instead of degrading)."""
+    if (isinstance(echo, dict) and echo.get("v") == ECHO_VERSION
+            and isinstance(echo.get("turns"), list)):
         return echo
     return {}
 
@@ -464,7 +469,8 @@ def _tool_metric(pers, store, uid, deps, name=None, mode="value", **_):
             cites += list(sh.citations)
         elif key == "sourceDiversity":
             facts["drivers"] = {"topSources": rep_res.facts["sources"]}
-            cites += [Citation(f"sourceShare.{d.get('name')}", d.get("share"),
+            # report `sources` rows key the outlet under "source" (api_server serializer)
+            cites += [Citation(f"sourceShare.{d.get('source')}", d.get("share"),
                                "api_server._serialize_report")
                       for d in rep_res.facts["sources"] if isinstance(d, dict)]
         elif key == "emotionalBalance":
@@ -746,8 +752,8 @@ def _present(res: ToolResult) -> dict:
                     + " / ".join(f"{side} {_pct(sh[side])}" for side in ("left", "center", "right")
                                  if side in sh) + ".")
         elif "topSources" in d and d["topSources"]:
-            tops = ", ".join(f"{x.get('name')} {_pct(x.get('share'))}" for x in d["topSources"][:3]
-                             if isinstance(x, dict))
+            tops = ", ".join(f"{x.get('source')} {_pct(x.get('share'))}"
+                             for x in d["topSources"][:3] if isinstance(x, dict))
             line = f" Your most-read outlets: {tops}."
         elif "reception" in d:
             r = d["reception"]

@@ -119,10 +119,11 @@ Status as of 2026-07-12. Unchecked items are the open launch gate, not discovere
 - [x] **M0–M6 complete** — commits in §2; each milestone's Definition of Done met.
 - [x] **Full test suite passing** — 1,061 passed (`RWE_COACH_V2` unset), of which 122 are
       coach tests (M0 5, router 57, tools 14, conversations 22, API 9, greeting 15).
-- [ ] **M8a beta validation complete** — walk all 15 routable leaves + the two memory flows
-      ("suggest → yes → why the first one", repeat-question) on the real beta corpus; review
-      `coach_turn` / `coach_greeting` logs (intent mix, resolution, fallback rate, shadow
-      payloads). **This is the launch gate.**
+- [x] **M8a beta validation complete** (2026-07-13) — all 15 routable leaves + both memory
+      flows walked through the public API on a beta-replica corpus; telemetry reviewed
+      (zero tool failures, `fallback: None` on every turn); two defects found and fixed
+      (malformed-echo 500; `None` outlet names), regression-pinned. Full evidence and the
+      **READY FOR LAUNCH** verdict: [`AI_COACH_M8A_BETA_REPORT.md`](AI_COACH_M8A_BETA_REPORT.md).
 - [x] **Ops/runbook available** — §4 of this document.
 - [x] **Rollback verified** — M0 suite green with the flag unset on every milestone commit;
       explicit no-leak + telemetry-absence tests.

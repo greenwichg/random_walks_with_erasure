@@ -218,3 +218,38 @@ def test_v2_turn_emits_structured_observability(client, measured, no_llm, v2_on,
     assert rec["failures"] == []                     # no tool failed on this turn
     assert rec["fallback"] in (None, "missing_evidence", "gate")
     assert isinstance(rec["ms"], (int, float)) and rec["ms"] >= 0
+
+
+# --------------------------------------------------------------------------- #
+# M8a beta-walk regressions (2026-07-13): two defects found through the public
+# API against the beta-replica corpus, fixed minimally, pinned here.
+# --------------------------------------------------------------------------- #
+def test_malformed_echo_turns_degrades_cold_never_500(client, measured, no_llm, v2_on):
+    """M8a defect 1: the echo is untrusted client input, but only its version was
+    validated — {"v": 1, "turns": "garbage"} reached the turn-append and crashed the
+    request (str + list TypeError -> HTTP 500). A malformed ``turns`` must degrade
+    exactly like a missing echo: cold turn, fresh echo rebuilt from scratch."""
+    for bad in ("garbage", {"role": "coach"}, 42):
+        r = client.post("/api/coach", json={"message": "why is it low?",
+                                            "echo": {"v": 1, "turns": bad}},
+                        headers=measured)
+        assert r.status_code == 200, f"turns={bad!r} -> {r.status_code}"
+        body = r.json()
+        assert body["resolution"] == "unresolved"        # cold: the pronoun has no binding
+        assert len(body["echo"]["turns"]) == 1           # rebuilt, not concatenated onto junk
+        assert body["echo"]["turns"][-1]["role"] == "coach"
+
+
+def test_source_diversity_cause_names_real_outlets(client, measured, no_llm, v2_on):
+    """M8a defect 2: the report's ``sources`` rows key the outlet under "source", but the
+    metric tool's citation labels and the drivers line both read .get("name") — the reply
+    rendered "Your most-read outlets: None 25%, ..." and citations were labeled
+    sourceShare.None. Pin the fix end-to-end over the wire."""
+    body = client.post("/api/coach", json={"message": "why is my source diversity low?"},
+                       headers=measured).json()
+    assert body["intent"] == "EXPLAIN.metric"
+    assert "None" not in body["content"]
+    assert "The Guardian" in body["content"]             # the fixture reader's real outlet
+    # wire citations are the top-8 curation, so sourceShare.* may not surface here — but any
+    # citation label that does surface must never carry a None-keyed name again
+    assert all(not str(c["metric"]).endswith(".None") for c in body["citations"] or [])
