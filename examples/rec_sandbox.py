@@ -89,11 +89,34 @@ evaluate() returns one JSON-safe dict::
       ],
       "diff": {                       # only when spec.compare and both corpora built
         "perFeed": [{"reader", "strategy", "params", "identical": bool,
-                     "entered": [id], "left": [id],
-                     "moved": [{"id", "from": rank, "to": rank}]}]
-      } | null,
+                     "entered": [key], "left": [key],
+                     "moved": [{"key", "from": rank, "to": rank}]}]
+      } | null,                       # key = CANONICAL URL (raw id fallback on URL-less corpora)
       "notes": [str],                 # honest caveats (e.g. max_items subsampling in effect)
     }
+
+FROZEN (v1, 2026-07-13). Evolution policy: additive-only within v1 (new optional fields, new
+``notes``); any breaking change (rename, removal, meaning change) bumps ``reportVersion`` to 2
+— clients dispatch on ``reportVersion`` and must never rely on unknown-field absence.
+
+Field stability classes:
+
+    STRUCTURAL — stable within v1: every identity, verdict, rank, count, flag, and section
+        shape above. Regression goldens should be built from these.
+    COPY — carried verbatim from Layer 1 and may evolve with product copy without a version
+        bump: ``served[].reason`` (the serializer's evidence-gated template), ``served[]
+        .explanation.message`` (the resolver's final sentence — the public API mirrors THIS
+        into its own ``reason``; the sandbox deliberately reports both), exclusion ``detail``
+        strings, and ``notes``. Goldens should avoid pinning these unless copy itself is under
+        test.
+    CORPUS-RELATIVE VALUES — the ``resolvedId`` / feed ``id`` fields are stable *fields* whose
+        Q{i} values are meaningful only within one report's evaluated corpus; cross-report and
+        cross-corpus identity is ALWAYS the canonical URL.
+
+``injected[].publisher`` vs ``injected[].scored.outlet``: deliberately both — ``publisher`` is
+the row identity the corpus builder consumes (its precedence: row publisher, else scored
+outlet), ``scored.outlet`` is the scorer's registry resolution; they differ only for
+pre-shaped FeedArticle inputs whose row publisher overrides the scored payload.
 
 Reader kinds: ``demo`` = the corpus's synthetic demo reader (``Backend.demo_user``); ``row`` =
 an explicit synthetic reader row; ``user`` = a real stored reader, served through the measured
@@ -347,7 +370,7 @@ def _diff_feed(evaluated: list, base: list) -> dict:
     b = {_card_key(c): c["rank"] for c in evaluated if _card_key(c)}
     entered = [k for k in b if k not in a]
     left = [k for k in a if k not in b]
-    moved = [{"id": k, "from": a[k], "to": b[k]} for k in b if k in a and a[k] != b[k]]
+    moved = [{"key": k, "from": a[k], "to": b[k]} for k in b if k in a and a[k] != b[k]]
     return {"identical": not entered and not left and not moved,
             "entered": entered, "left": left, "moved": moved}
 
@@ -555,3 +578,201 @@ def evaluate(store_, spec: Optional[dict] = None, baseline=None) -> dict:
         "notes": notes,
     }
     return _json_safe(report)
+
+
+# =========================================================================== #
+# S2 — the first client: a thin CLI. Orchestration + rendering ONLY: it builds
+# a spec from flags (optionally merged over a --spec JSON file), calls
+# evaluate(), and formats the returned report. It never recomputes, filters,
+# reorders, or augments report data — the --json output IS the library's
+# report, byte-for-byte (pinned by tests).
+# =========================================================================== #
+def _now_minus(days: float) -> str:
+    from datetime import datetime, timedelta, timezone
+    return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+
+def _presets() -> dict:
+    """Spec-side injection templates (synthetic probes, fresh by construction). These are
+    INPUTS — article dicts handed to evaluate() — not report logic. For story-specific
+    probes (matching a real cluster's tokens), craft the article via --spec / --inject-url."""
+    return {
+        "left": [{"url": "https://theguardian.com/politics/sandbox-left-probe",
+                  "title": "government policy debate over election reform bill",
+                  "publishedAt": _now_minus(0.2)}],
+        "right": [{"url": "https://foxnews.com/politics/sandbox-right-probe",
+                   "title": "senate republicans challenge white house border policy",
+                   "publishedAt": _now_minus(0.2)}],
+        "center": [{"url": "https://reuters.com/world/sandbox-center-probe",
+                    "title": "lawmakers reach compromise on federal budget measure",
+                    "publishedAt": _now_minus(0.2)}],
+        "breaking": [{"url": "https://apnews.com/article/sandbox-breaking-probe",
+                      "title": "breaking supreme court issues major ruling on voting rights",
+                      "publishedAt": _now_minus(0.02)}],
+        "duplicate": [{"url": "https://reuters.com/world/sandbox-dup-a",
+                       "title": "wildfire evacuation orders expand across northern county",
+                       "publishedAt": _now_minus(0.3)},
+                      {"url": "https://bbc.com/news/sandbox-dup-b",
+                       "title": "evacuation orders expand as northern county wildfire grows",
+                       "publishedAt": _now_minus(0.25)}],
+        "low_quality": [{"url": "https://totally-unknown-blog.example/hot-take",
+                         "title": "you will not believe this one weird trick",
+                         "publishedAt": _now_minus(0.1)}],
+    }
+
+
+def _parse_reader(text: str) -> dict:
+    kind, _, val = text.partition(":")
+    if kind == "demo":
+        return {"kind": "demo"}
+    if kind in ("user", "row") and val.lstrip("-").isdigit():
+        return {"kind": kind, ("id" if kind == "user" else "row"): int(val)}
+    raise SystemExit(f"--reader must be demo, user:<id>, or row:<n> (got {text!r})")
+
+
+def _fmt_reader(r: dict) -> str:
+    return r["kind"] + (f":{r.get('id', r.get('row'))}" if r["kind"] != "demo" else "")
+
+
+def _fmt_params(p) -> str:
+    import json as _json
+    return "-" if not p else _json.dumps(p, sort_keys=True)
+
+
+def _render(report: dict) -> str:
+    """Human formatting of the report — display truncation only, no data transformation."""
+    L: list = []
+    for label in ("evaluated", "baseline"):
+        c = report["corpus"].get(label)
+        if not c:
+            continue
+        v = c.get("validation") or {}
+        L.append(f"corpus[{label}]{' (provided)' if c.get('provided') else ''}: "
+                 f"built={c['built']} items={c['items']} graph={c['graph']} "
+                 f"eligible={v.get('eligible')} failures={v.get('failures')}"
+                 + (f" error={c['error']}" if c.get("error") else ""))
+    for e in report["injected"]:
+        sc = e["scored"]
+        L.append(f"\ninjected: {e['url']}")
+        L.append(f"  disposition={e['disposition']} graphNode={e['graphNode']} "
+                 f"resolvedId={e['resolvedId']} outlet={sc['outlet']!r} "
+                 f"lean={sc['lean']} topic={sc['category']!r}")
+        if e.get("story") is not None:
+            st = e["story"]
+            L.append(f"  story: matched={st['matched']}"
+                     + (f" id={st.get('storyId')} articles={st.get('articleCount')} "
+                        f"publishers={st.get('publisherCount')}" if st["matched"] else ""))
+        for x in e["exclusions"]:
+            head = (f"  verdict[{_fmt_reader(x['reader'])} params={_fmt_params(x['params'])}]"
+                    f": {x.get('verdict') or x['status']}")
+            L.append(head)
+            for sname, bs in sorted((x.get("byStrategy") or {}).items()):
+                L.append(f"    {sname}: rank={bs.get('rank')} score={bs.get('score'):.4g} "
+                         f"inSlice={bs.get('inSlice')}")
+    for x in report["asked"]:
+        L.append(f"\nasked: {x['article']} [{_fmt_reader(x['reader'])} "
+                 f"params={_fmt_params(x['params'])}] -> {x.get('verdict') or x['status']}")
+    for f in report["feeds"]:
+        L.append(f"\nfeed[{_fmt_reader(f['reader'])} strategy={f['strategy'] or 'blend'} "
+                 f"params={_fmt_params(f['params'])}]: {f['status']}")
+        for c in f["served"]:
+            ex = c.get("explanation") or {}
+            L.append(f"  #{c['rank']:>2} [{c['strategy']}] {c['publisher']} — "
+                     f"{(c.get('url') or c.get('id') or '')[:72]}"
+                     + (" (cross)" if c.get("crossCutting") else "")
+                     + (f"  <{ex['type']}>" if ex else ""))
+    if report.get("diff"):
+        for d in report["diff"]["perFeed"]:
+            L.append(f"\ndiff[{_fmt_reader(d['reader'])} strategy={d['strategy'] or 'blend'} "
+                     f"params={_fmt_params(d['params'])}]: "
+                     + ("identical" if d["identical"] else
+                        f"+{len(d['entered'])} entered / -{len(d['left'])} left / "
+                        f"~{len(d['moved'])} moved"))
+            for k in d["entered"][:5]:
+                L.append(f"  + {k}")
+            for k in d["left"][:5]:
+                L.append(f"  - {k}")
+            for m in d["moved"][:5]:
+                L.append(f"  ~ {m['key']} #{m['from']} -> #{m['to']}")
+    for n in report["notes"]:
+        L.append(f"\nnote: {n}")
+    return "\n".join(L)
+
+
+def main(argv=None) -> int:
+    """CLI client of :func:`evaluate`. Exit codes: 0 = report produced and the evaluated
+    corpus built; 2 = report produced but the evaluated corpus did NOT build (the report's
+    ``corpus.evaluated.error`` says why) — useful for scripting gates."""
+    import argparse
+    import json as _json
+
+    ap = argparse.ArgumentParser(
+        prog="rec_sandbox", description="Recommendation Evaluation Sandbox (internal tool): "
+        "evaluate counterfactual corpus compositions against the unchanged engine, ephemerally "
+        "and read-only. Tip: pass a read-only SQLite URL "
+        "(sqlite:///file:path.db?mode=ro&uri=true) to make isolation kernel-enforced.")
+    ap.add_argument("--db", required=True, help="store URL (e.g. sqlite:///data/ih.db)")
+    ap.add_argument("--spec", help="JSON spec file ('-' = stdin); flags below EXTEND it")
+    ap.add_argument("--preset", action="append", default=[], choices=sorted(_presets()),
+                    help="append a canned injection scenario (repeatable)")
+    ap.add_argument("--inject-url", help="ad-hoc single injection: article URL")
+    ap.add_argument("--inject-title", default="", help="ad-hoc injection: title")
+    ap.add_argument("--inject-published", default=None, help="ad-hoc injection: ISO timestamp")
+    ap.add_argument("--inject-outlet", default="", help="ad-hoc injection: outlet override")
+    ap.add_argument("--ask", action="append", default=[],
+                    help="extra 'why (not) this article?' URL/id (repeatable)")
+    ap.add_argument("--reader", action="append", default=[],
+                    help="demo | user:<id> | row:<n> (repeatable; default demo)")
+    ap.add_argument("--strategy", action="append", default=[],
+                    help="blend | rwe-b | rwe-d | adaptive (repeatable; default blend)")
+    ap.add_argument("--params", action="append", default=[],
+                    help='JSON params dict, e.g. {"beta": 0.8} (repeatable)')
+    ap.add_argument("--questions", action="append", default=[], choices=list(QUESTIONS),
+                    help="restrict computed sections (repeatable; default all)")
+    ap.add_argument("--compare", action="store_true", help="also build a baseline and diff")
+    ap.add_argument("--json", action="store_true", help="print the raw report JSON")
+    ap.add_argument("--out", help="also write the report JSON to this file")
+    args = ap.parse_args(argv)
+
+    spec: dict = {}
+    if args.spec:
+        text = (sys.stdin.read() if args.spec == "-"
+                else pathlib.Path(args.spec).read_text(encoding="utf-8"))
+        spec = _json.loads(text)
+    inject = list(spec.get("inject") or [])
+    for name in args.preset:
+        inject.extend(_presets()[name])
+    if args.inject_url:
+        one = {"url": args.inject_url, "title": args.inject_title}
+        if args.inject_published:
+            one["publishedAt"] = args.inject_published
+        if args.inject_outlet:
+            one["outlet"] = args.inject_outlet
+        inject.append(one)
+    spec["inject"] = inject
+    spec["ask"] = list(spec.get("ask") or []) + args.ask
+    if args.reader:
+        spec["readers"] = list(spec.get("readers") or []) + [_parse_reader(r)
+                                                             for r in args.reader]
+    if args.strategy:
+        spec["strategies"] = list(spec.get("strategies") or []) + \
+            [None if s == "blend" else s for s in args.strategy]
+    if args.params:
+        spec["params"] = list(spec.get("params") or []) + [_json.loads(p) for p in args.params]
+    if args.questions:
+        spec["questions"] = args.questions
+    if args.compare:
+        spec["compare"] = True
+
+    import store as store_mod
+    report = evaluate(store_mod.Store(args.db), spec)
+
+    payload = _json.dumps(report, indent=1, sort_keys=True)
+    if args.out:
+        pathlib.Path(args.out).write_text(payload + "\n", encoding="utf-8")
+    print(payload if args.json else _render(report))
+    return 0 if report["corpus"]["evaluated"]["built"] else 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

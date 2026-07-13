@@ -294,5 +294,71 @@ def test_provided_baseline_is_consulted_for_its_backend_only(store, reader, full
 
 def test_diff_is_keyed_by_canonical_url_never_q_ids(full):
     for d in (full.report["diff"] or {}).get("perFeed", []):
-        for key in d["entered"] + d["left"] + [m["id"] for m in d["moved"]]:
+        for key in d["entered"] + d["left"] + [m["key"] for m in d["moved"]]:
             assert not key.startswith("Q"), f"corpus-relative id leaked into the diff: {key}"
+
+
+def test_report_contract_v1_is_pinned(full):
+    """The frozen surface: version + top-level sections. Additive evolution stays v1; any
+    rename/removal must bump reportVersion — this test is the tripwire."""
+    assert full.report["reportVersion"] == 1
+    assert set(full.report) == {"reportVersion", "spec", "corpus", "injected", "asked",
+                                "feeds", "diff", "notes"}
+    assert set(full.report["corpus"]) == {"evaluated", "baseline"}
+    for e in full.report["injected"]:
+        assert {"url", "canonicalUrl", "title", "publisher", "scored", "disposition",
+                "resolvedId", "graphNode", "story", "exclusions"} <= set(e)
+
+
+# --------------------------------------------------------------------------- #
+# S2 — the CLI client: a THIN renderer over evaluate(), never a transformer.
+# --------------------------------------------------------------------------- #
+def test_cli_json_is_byte_identical_to_the_library_report(store, db_path, reader,
+                                                          tmp_path, capsys):
+    """The no-transformation proof: for the same spec, the CLI's --json output IS the
+    library's report."""
+    spec = {"inject": [dict(INJECT_STORY, publishedAt=_iso(0.3))],
+            "readers": [{"kind": "user", "id": reader}], "params": [None, {"beta": 0.8}]}
+    spec_file = tmp_path / "spec.json"
+    spec_file.write_text(json.dumps(spec), encoding="utf-8")
+    code = rec_sandbox.main(["--db", f"sqlite:///{db_path}", "--spec", str(spec_file),
+                             "--json", "--out", str(tmp_path / "report.json")])
+    assert code == 0
+    cli_report = json.loads(capsys.readouterr().out)
+    lib_report = rec_sandbox.evaluate(store, spec)
+    assert json.dumps(cli_report, sort_keys=True) == json.dumps(lib_report, sort_keys=True)
+    assert json.loads((tmp_path / "report.json").read_text()) == cli_report
+
+
+def test_cli_human_render_covers_the_report_sections(db_path, reader, capsys):
+    code = rec_sandbox.main(["--db", f"sqlite:///{db_path}",
+                             "--inject-url", INJECT_STORY["url"],
+                             "--inject-title", INJECT_STORY["title"],
+                             "--inject-published", _iso(0.3),
+                             "--reader", "demo", "--reader", f"user:{reader}",
+                             "--ask", "https://cnn7.example.com/sbx/7", "--compare"])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "corpus[evaluated]" in out and "corpus[baseline]" in out
+    assert f"injected: {INJECT_STORY['url']}" in out and "verdict[" in out
+    assert "asked: https://cnn7.example.com/sbx/7" in out
+    assert "feed[demo strategy=blend" in out and "diff[" in out and "note:" in out
+
+
+def test_cli_exit_code_2_when_the_corpus_does_not_build(db_path, monkeypatch, capsys):
+    monkeypatch.setenv("RWE_CORPUS_MIN_ARTICLES", "5000")
+    code = rec_sandbox.main(["--db", f"sqlite:///{db_path}", "--preset", "left"])
+    assert code == 2
+    assert "error=validation_failed" in capsys.readouterr().out
+
+
+def test_cli_presets_are_valid_spec_inputs(db_path, capsys):
+    code = rec_sandbox.main(["--db", f"sqlite:///{db_path}", "--preset", "left",
+                             "--preset", "duplicate", "--preset", "low_quality", "--json"])
+    assert code == 0
+    report = json.loads(capsys.readouterr().out)
+    assert len(report["injected"]) == 4                      # left(1) + duplicate(2) + junk(1)
+    left = report["injected"][0]
+    assert left["disposition"] == "evaluated" and left["scored"]["lean"] is not None
+    junk = report["injected"][3]
+    assert junk["graphNode"] is False                        # unknown outlet stays un-ranked
