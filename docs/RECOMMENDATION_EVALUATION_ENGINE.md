@@ -366,3 +366,23 @@ regression-suite scenarios are in scope; new clients and new capabilities are no
 **Permanently out of scope:** any recommendation logic in Layer 2 or any client; any
 persistence introduced by evaluation; any client-specific report structure. Contract changes
 follow §4's versioning policy.
+
+### Scope freeze — ratified 2026-07-14
+
+`rec_sandbox.py` is **frozen as the Recommendation Evaluation Tool**. Its job — single-reader,
+read-only, counterfactual *investigation* of the unchanged engine — is considered done and coherent.
+
+- **In scope (keep the investigation experience excellent):** bug fixes, presentation/readability
+  polish of the investigation report, new regression-suite scenarios, and contract-additive fixes
+  under §4's versioning policy.
+- **Not added on anticipation:** new capabilities or clients — *including* the S4 developer page and
+  any population/aggregate-evaluation mode. (The synthetic `row:N` population + REPORT CONTRACT v1
+  already make aggregation a small, additive change *if and when* it is genuinely needed — so nothing
+  is lost by waiting.)
+- **The expansion rule:** **future usage — not anticipation — justifies any expansion.** A demonstrated,
+  recurring need is the trigger; a hypothetical one is not. The post-launch roadmap items above are
+  candidates, not commitments.
+
+Rationale: the tool already surfaces what it was built to surface (every W1–W8 finding in the
+recommendation design review came out of the existing single-reader workflow). Expanding scope before
+a real need would trade a narrow, honest promise for maintenance surface.
