@@ -235,13 +235,17 @@ def thresholds_from_env() -> dict:
         "maxArticleAgeDays": _int_env("RWE_CORPUS_MAX_ARTICLE_AGE_DAYS", 0),
         "maxDuplicatePct": _float_env("RWE_CORPUS_MAX_DUPLICATE_PERCENT", 0.0),
         "maxMissingMetadataPct": _float_env("RWE_CORPUS_MAX_MISSING_METADATA_PERCENT", 0.0),
+        # Advisory only (warn, never fails): unknown-outlet share above this emits a corpus-validation
+        # warning so operators know to expand outlet_registry.csv. 0 = off. See examples/outlet_coverage.py.
+        "maxUnknownOutletPct": _float_env("RWE_CORPUS_MAX_UNKNOWN_OUTLET_PERCENT", 0.0),
         "requireHealthyFeeds": _bool_env("RWE_CORPUS_REQUIRE_HEALTHY_FEEDS", False),
     }
 
 
 def corpus_metrics(articles: list, *, now: Optional[datetime] = None,
                    fresh_max_age_days: Optional[int] = None) -> dict:
-    """Health snapshot of a catalog/corpus: totals, diversity, duplicates, freshness, age span."""
+    """Health snapshot of a catalog/corpus: totals, diversity, duplicates, unknown outlets (NaN
+    lean → not recommendable), freshness, age span."""
     now = now or datetime.now(timezone.utc)
     fresh_days = fresh_max_age_days if fresh_max_age_days is not None \
         else _int_env("RWE_CORPUS_FRESH_MAX_AGE_DAYS", 3)
@@ -253,6 +257,7 @@ def corpus_metrics(articles: list, *, now: Optional[datetime] = None,
     seen = set()
     dups = 0
     missing = 0
+    unknown = 0
     for a in articles:
         o = _outlet(a)
         if o:
@@ -260,6 +265,8 @@ def corpus_metrics(articles: list, *, now: Optional[datetime] = None,
         b = _bucket(a)
         if b:
             bkt[b] += 1
+        else:
+            unknown += 1        # NaN/unresolved lean == outlet the registry doesn't know -> not a candidate
         dt = _published(a)
         if dt:
             times.append(dt)
@@ -277,6 +284,10 @@ def corpus_metrics(articles: list, *, now: Optional[datetime] = None,
         "publishers": len(pub),
         "perPublisher": dict(pub),
         "perBucket": bkt,
+        # Observability (W4): articles whose outlet the registry doesn't know (NaN lean) — they never
+        # become recommendation candidates (dropped at catalog_from_qbias + mind.recommender_inputs).
+        "unknownOutlet": unknown,
+        "unknownOutletPct": round(100.0 * unknown / total, 2) if total else 0.0,
         "duplicatePct": round(100.0 * dups / total, 2) if total else 0.0,
         "fresh": fresh,
         "freshMaxAgeDays": fresh_days,

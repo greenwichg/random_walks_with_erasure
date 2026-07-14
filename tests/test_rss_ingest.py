@@ -188,6 +188,31 @@ def test_ingest_is_idempotent_dedup():
     assert st.count_feed_articles() == 3                          # no growth
 
 
+def test_ingest_counts_unknown_outlets_without_dropping_them():
+    """W4 observability: ingest counts articles whose outlet the registry doesn't know (NaN lean),
+    with a per-outlet breakdown — additive only; scoring, storage, and dedup are unchanged."""
+    st = store.Store("sqlite://")
+    entries = [rss.FeedEntry(url="https://www.foxnews.com/p/a", title="known",
+                             published_at="2026-07-01T00:00:00+00:00"),
+               rss.FeedEntry(url="https://blog-unknown.example/x", title="unknown one",
+                             published_at="2026-07-01T00:00:00+00:00"),
+               rss.FeedEntry(url="https://blog-unknown.example/y", title="unknown two",
+                             published_at="2026-07-01T00:00:00+00:00")]
+    stats = rss.ingest_entries(entries, "Mixed", "feed://mixed", rss.make_scorer(), st)
+    assert stats["unknown_outlet"] == 2                           # the two unknown-outlet articles
+    assert sum(stats["unknown_outlets"].values()) == 2           # per-outlet breakdown accounts for them
+    assert st.count_feed_articles() == 3                         # nothing dropped
+
+
+def test_run_summary_reports_unknown_outlets():
+    """The CLI run summary surfaces the unknown-outlet count and, when nonzero, points at the tool."""
+    agg = {"feeds": 2, "ok": 2, "failed": 0, "entries": 10, "new": 8, "duplicates": 0,
+           "skipped": 0, "unknown_outlet": 3, "errors": []}
+    out = rss._format_run_summary(agg, before=0, after=8, seconds=1.0)
+    assert "unknown outlets" in out and "3" in out
+    assert "excluded from recommendations" in out and "outlet_coverage.py" in out
+
+
 def test_run_summary_is_human_readable_and_preserves_every_metric():
     """Presentation-only guard for the CLI summary: it must keep ALL metrics
     (feeds/ok/failed/new/duplicates/skipped), show previous->current catalog size with growth

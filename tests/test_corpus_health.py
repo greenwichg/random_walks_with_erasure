@@ -42,6 +42,17 @@ def test_corpus_metrics():
     assert m["duplicatePct"] == 25.0
 
 
+def test_corpus_metrics_counts_unknown_outlets():
+    """W4 observability: articles whose outlet has no registry lean (NaN) are counted separately —
+    they never become recommendation candidates. The accounting closes: bucketed + unknown == total."""
+    arts = [_a("k1", "NPR", -1.0, 0), _a("k2", "Fox News", 1.5, 1),
+            _a("u1", "randomblog.example", float("nan"), 0),
+            _a("u2", "another.example", float("nan"), 1)]
+    m = ch.corpus_metrics(arts, now=NOW)
+    assert m["unknownOutlet"] == 2 and m["unknownOutletPct"] == 50.0
+    assert sum(m["perBucket"].values()) + m["unknownOutlet"] == m["total"]
+
+
 # --------------------------------------------------------------------------- #
 # Raw policy
 # --------------------------------------------------------------------------- #

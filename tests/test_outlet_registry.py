@@ -140,3 +140,40 @@ def test_module_level_helpers_and_caching():
 def test_bare_domain_with_path_no_scheme(reg):
     assert reg.resolve("nytimes.com/2026/us/politics/x").canonical == "New York Times"
     assert reg.resolve("foxnews.com/politics").canonical == "Fox News"
+
+
+# --------------------------------------------------------------------------- #
+# Registry lint (W4 maintainability) — CSV well-formedness, read-only.
+# --------------------------------------------------------------------------- #
+def test_lint_passes_on_the_bundled_registry():
+    """A CI tripwire: the shipped registry is well-formed, so lint returns no issues."""
+    assert orx.lint_registry() == []
+
+
+def test_lint_catches_every_defect_class(tmp_path):
+    """Invalid lean, duplicate canonical, duplicate alias, and a malformed row are each reported."""
+    csv = tmp_path / "reg.csv"
+    csv.write_text("canonical,lean,aliases\n"
+                   "Foo,9,foo.com\n"       # invalid lean (outside [-2, 2])
+                   "Foo,-1,bar.com\n"      # duplicate canonical (Foo again)
+                   "Baz,-1,foo.com\n"      # duplicate alias (foo.com already -> Foo)
+                   "OnlyOneColumn\n",      # malformed row
+                   encoding="utf-8")
+    codes = {i["code"] for i in orx.lint_registry(str(csv))}
+    assert {"invalid_lean", "duplicate_canonical", "duplicate_alias", "malformed_row"} <= codes
+
+
+def test_lint_warns_on_repeated_alias_in_a_row(tmp_path):
+    csv = tmp_path / "reg.csv"
+    csv.write_text("canonical,lean,aliases\nFoo,-1,foo.com|foo.com\n", encoding="utf-8")
+    issues = orx.lint_registry(str(csv))
+    assert any(i["code"] == "repeated_alias_in_row" and i["severity"] == "warning" for i in issues)
+
+
+def test_lint_never_raises_on_a_broken_file(tmp_path):
+    """The whole point: it diagnoses a file too broken for ``load`` to parse, without raising."""
+    csv = tmp_path / "reg.csv"
+    csv.write_text("canonical,lean,aliases\nGood,-2,good.com\nBadLeanRow,not-a-number,x.com\n",
+                   encoding="utf-8")
+    issues = orx.lint_registry(str(csv))
+    assert any(i["code"] == "invalid_lean" for i in issues)

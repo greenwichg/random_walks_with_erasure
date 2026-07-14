@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import email.utils
+import math
 import os
 import sys
 import time
@@ -295,14 +296,18 @@ def make_scorer() -> "ingest.Scorer":
 def ingest_entries(entries, source_publisher, source_feed, scorer, store_, *,
                    source_type=None, source_provider=None) -> dict:
     """Score + upsert a list of :class:`FeedEntry` into the catalog. Returns per-batch stats plus
-    observational quality metrics (``missing_metadata`` = no title or no publication date; ``newest`` /
-    ``oldest`` publication dates). Quality metrics are collected only — they never drop an article.
+    observational quality metrics (``missing_metadata`` = no title or no publication date;
+    ``unknown_outlet`` = count whose outlet the registry doesn't know, so ``scored.lean`` is NaN and
+    the article is not a recommendation candidate — with ``unknown_outlets`` a ``{outlet: count}``
+    breakdown; ``newest`` / ``oldest`` publication dates). Quality metrics are collected only — they
+    never drop an article, and outlet resolution / scoring is unchanged.
 
     ``source_type`` / ``source_provider`` are the batch-level attribution a non-RSS adapter passes; a
     per-entry value on the :class:`FeedEntry` (set by the adapter during normalization) overrides them.
     RSS callers pass neither and their entries carry no per-entry values, so behaviour is unchanged."""
     stats = {"entries": 0, "new": 0, "duplicates": 0, "skipped": 0,
-             "missing_metadata": 0, "newest": None, "oldest": None}
+             "missing_metadata": 0, "unknown_outlet": 0, "unknown_outlets": {},
+             "newest": None, "oldest": None}
     for e in entries:
         stats["entries"] += 1
         if not (e.title or "").strip() or not (e.published_at or "").strip():
@@ -320,6 +325,11 @@ def ingest_entries(entries, source_publisher, source_feed, scorer, store_, *,
         raw = ingest.RawRead(url=url, title=e.title or "", description=e.description or "",
                              outlet=e.publisher_hint or "", category=e.category or "")
         scored = ingest.score_with_cache(raw, scorer, store_)      # same scorer + shared cache as reads
+        _lean = scored.lean                                        # NaN when the registry doesn't know the outlet
+        if _lean is None or not math.isfinite(_lean):              # observational: the article still ingests
+            stats["unknown_outlet"] += 1
+            _o = scored.outlet or "(unresolved)"
+            stats["unknown_outlets"][_o] = stats["unknown_outlets"].get(_o, 0) + 1
         created = store_.upsert_feed_article(
             canonical_url=scored.article_id, url=url, publisher=scored.outlet,
             source_publisher=source_publisher, title=e.title or scored.title,
@@ -353,7 +363,7 @@ def ingest_all(feeds, scorer, store_, fetch: Callable[[str], bytes] = fetch_feed
     with its per-feed result + wall-clock latency — the seam feed-health monitoring records from. It is
     observational: an exception in ``on_feed`` is swallowed so it can never break polling."""
     agg = {"feeds": 0, "ok": 0, "failed": 0, "entries": 0, "new": 0, "duplicates": 0,
-           "skipped": 0, "errors": []}
+           "skipped": 0, "unknown_outlet": 0, "errors": []}
     for name, url in feeds:
         agg["feeds"] += 1
         t0 = time.perf_counter()
@@ -365,8 +375,8 @@ def ingest_all(feeds, scorer, store_, fetch: Callable[[str], bytes] = fetch_feed
         latency_ms = (time.perf_counter() - t0) * 1000.0
         if error is None:
             agg["ok"] += 1
-            for k in ("entries", "new", "duplicates", "skipped"):
-                agg[k] += result[k]
+            for k in ("entries", "new", "duplicates", "skipped", "unknown_outlet"):
+                agg[k] += result.get(k, 0)
         else:
             agg["failed"] += 1
             agg["errors"].append({"feed": url, "error": f"{type(error).__name__}: {error}"})
@@ -388,16 +398,22 @@ def _format_run_summary(agg: dict, before: int, after: int, seconds: float) -> s
     :func:`ingest_all` returns) and the catalog size before/after — nothing is recomputed
     or reinterpreted. Kept pure (data in, string out) so the format is trivially testable
     without touching the store or the network."""
+    unknown = agg.get("unknown_outlet", 0)
     rows = [("new articles", agg["new"]),
             ("existing (duplicate)", agg["duplicates"]),
-            ("skipped", agg["skipped"])]
-    w = max(len(str(v)) for v in (agg["new"], agg["duplicates"], agg["skipped"], before, after))
+            ("skipped", agg["skipped"]),
+            ("unknown outlets", unknown)]
+    w = max(len(str(v)) for v in (agg["new"], agg["duplicates"], agg["skipped"], unknown, before, after))
     lines = [f"RSS ingest: {agg['feeds']} feed(s) in {seconds:.1f}s  "
              f"({agg['ok']} ok, {agg['failed']} failed)"]
     lines += [f"  {label:<24}{value:>{w}}" for label, value in rows]
     lines.append(f"  {'catalog':<24}{before:>{w}} -> {after}  (+{after - before})")
     lines.append('  note: high "existing" counts are expected on repeat RSS polls;')
     lines.append("        dedup by canonical URL adds only genuinely new articles.")
+    if unknown:
+        lines.append(f"  note: {unknown} article(s) have an unresolved outlet (no lean) and are "
+                     "excluded from recommendations;")
+        lines.append("        run outlet_coverage.py to see which outlets to add to outlet_registry.csv.")
     return "\n".join(lines)
 
 

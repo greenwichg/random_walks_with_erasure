@@ -27,6 +27,7 @@ the Qbias preprocessor, and onboarding. **Not wired into anything yet.**
 from __future__ import annotations
 
 import csv
+import math
 import os
 import re
 from dataclasses import dataclass
@@ -176,3 +177,69 @@ def default_registry() -> OutletRegistry:
 def resolve(text: "str | None") -> Optional[Outlet]:
     """Convenience: resolve against the default registry."""
     return default_registry().resolve(text)
+
+
+def lint_registry(path: "str | None" = None) -> List[dict]:
+    """Read-only well-formedness check on the registry CSV. Returns a list of issue dicts
+    ``{severity, code, line, message}`` (empty ⇒ clean); NEVER raises on a malformed file (that is
+    the point) and never mutates anything. Mirrors :meth:`OutletRegistry.load`'s parsing (``#`` and
+    blank lines skipped, the first content line is the column header) and checks:
+
+      * ``malformed_row``      — fewer than two columns, or a blank canonical
+      * ``invalid_lean``       — column 2 is not a finite number in ``[-2, 2]``
+      * ``duplicate_canonical``— the same canonical name defined on two rows
+      * ``duplicate_alias``    — one alias key mapped to two different canonicals (resolution would
+                                 depend on row order — a real bug)
+      * ``repeated_alias_in_row`` (warning) — the same alias listed twice in one row's alias list
+    """
+    path = path or _DATA
+    issues: List[dict] = []
+    seen_canonical: Dict[str, int] = {}     # canonical -> first line number
+    alias_owner: Dict[str, str] = {}        # normalized alias key -> canonical
+    with open(path, encoding="utf-8") as f:
+        lines = list(enumerate(f, 1))
+    header_skipped = False
+    for lineno, raw in lines:
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        if not header_skipped:              # the loader consumes the first content line as the header
+            header_skipped = True
+            continue
+        cells = next(csv.reader([raw]), [])
+        if len(cells) < 2 or not cells[0].strip():
+            issues.append({"severity": "error", "code": "malformed_row", "line": lineno,
+                           "message": f"line {lineno}: expected 'canonical,lean,aliases', got {raw.strip()!r}"})
+            continue
+        canonical = cells[0].strip()
+        try:
+            lean = float(cells[1])
+            if not math.isfinite(lean) or not (-2.0 <= lean <= 2.0):
+                raise ValueError
+        except ValueError:
+            issues.append({"severity": "error", "code": "invalid_lean", "line": lineno,
+                           "message": f"line {lineno} ({canonical}): lean {cells[1].strip()!r} "
+                                      "is not a finite number in [-2, 2]"})
+        if canonical in seen_canonical:
+            issues.append({"severity": "error", "code": "duplicate_canonical", "line": lineno,
+                           "message": f"line {lineno}: canonical {canonical!r} already defined at "
+                                      f"line {seen_canonical[canonical]}"})
+        else:
+            seen_canonical[canonical] = lineno
+        alias_cell = cells[2] if len(cells) >= 3 else ""
+        local: set = set()
+        for alias in alias_cell.split("|"):
+            alias = alias.strip()
+            if not alias:
+                continue
+            if alias in local:
+                issues.append({"severity": "warning", "code": "repeated_alias_in_row", "line": lineno,
+                               "message": f"line {lineno} ({canonical}): alias {alias!r} repeated in the row"})
+            local.add(alias)
+            key = _host_of(alias) if _looks_like_host(alias) else _name_key(alias)
+            if key in alias_owner and alias_owner[key] != canonical:
+                issues.append({"severity": "error", "code": "duplicate_alias", "line": lineno,
+                               "message": f"line {lineno}: alias {alias!r} maps to {canonical!r} but "
+                                          f"already maps to {alias_owner[key]!r}"})
+            else:
+                alias_owner[key] = canonical
+    return issues

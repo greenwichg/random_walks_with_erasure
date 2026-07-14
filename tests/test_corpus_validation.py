@@ -32,7 +32,8 @@ def TH(**kw):
     """A full threshold dict with every check off, overridable per test."""
     t = {"minArticles": 0, "minPublishers": 0, "minPerBucket": 0, "minFresh": 0, "freshMaxAgeDays": 3,
          "maxPerPublisher": 0, "maxBucketPercent": 0.0, "maxArticleAgeDays": 0,
-         "maxDuplicatePct": 0.0, "maxMissingMetadataPct": 0.0, "requireHealthyFeeds": False}
+         "maxDuplicatePct": 0.0, "maxMissingMetadataPct": 0.0, "maxUnknownOutletPct": 0.0,
+         "requireHealthyFeeds": False}
     t.update(kw)
     return t
 
@@ -44,6 +45,23 @@ def _codes(result):
 # --------------------------------------------------------------------------- #
 # Healthy corpus passes
 # --------------------------------------------------------------------------- #
+def test_unknown_outlet_warning_is_advisory_only():
+    """W4 observability: an unknown-outlet share over ``maxUnknownOutletPct`` WARNS (with the
+    excluded count) but never blocks eligibility — these articles ingest fine and only fall out of
+    the recommendation corpus. Off (0) or below the limit emits nothing."""
+    arts = ([_a(f"k{i}", "Fox News", 1.5, i) for i in range(8)]                 # known outlet
+            + [_a(f"u{i}", "randomblog.example", float("nan"), i) for i in range(4)])  # unknown (NaN lean)
+    off = cv.validate_corpus(arts, [], thresholds=TH(minArticles=1), now=NOW)           # threshold off
+    assert "unknown_outlet_high" not in {w["code"] for w in off.warnings}
+    below = cv.validate_corpus(arts, [], thresholds=TH(minArticles=1, maxUnknownOutletPct=90), now=NOW)
+    assert "unknown_outlet_high" not in {w["code"] for w in below.warnings}    # 33% < 90%
+    over = cv.validate_corpus(arts, [], thresholds=TH(minArticles=1, maxUnknownOutletPct=10), now=NOW)
+    hits = [w for w in over.warnings if w["code"] == "unknown_outlet_high"]
+    assert len(hits) == 1 and over.eligible is True                            # warns, never blocks
+    assert hits[0]["excluded"] == 4                                            # operational impact reported
+    assert over.to_dict()["unknownOutlet"] == {"count": 4, "pct": round(100 * 4 / 12, 2)}
+
+
 def test_healthy_corpus_passes():
     arts = ([_a(f"l{i}", "Guardian", -1.5, i) for i in range(4)]
             + [_a(f"c{i}", "AP", 0.0, i) for i in range(4)]

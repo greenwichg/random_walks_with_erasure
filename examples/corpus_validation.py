@@ -105,6 +105,7 @@ class ValidationResult:
             "metrics": m,
             "publisherDistribution": m.get("perPublisher", {}),
             "politicalDistribution": m.get("perBucket", {}),
+            "unknownOutlet": {"count": m.get("unknownOutlet", 0), "pct": m.get("unknownOutletPct", 0.0)},
             "freshness": {
                 "fresh": m.get("fresh"),
                 "freshMaxAgeDays": m.get("freshMaxAgeDays"),
@@ -202,6 +203,15 @@ def validate_corpus(articles: list, feed_health: Optional[list] = None, *,
     if th["maxMissingMetadataPct"] > 0 and metrics["missingMetadataPct"] > th["maxMissingMetadataPct"]:
         fail("max_missing_metadata_pct", "Too many articles are missing title or publication date.",
              observed=metrics["missingMetadataPct"], limit=th["maxMissingMetadataPct"])
+    # Advisory only (W4): unknown-outlet share over the configured limit warns — it never blocks
+    # eligibility, since these articles ingest fine and only fall out of the recommendation corpus.
+    max_unknown = th.get("maxUnknownOutletPct", 0.0)
+    if max_unknown > 0 and metrics.get("unknownOutletPct", 0.0) > max_unknown:
+        warn("unknown_outlet_high",
+             "Many articles have an unresolved outlet (no registry lean) and are excluded from "
+             "recommendations; expand outlet_registry.csv (see examples/outlet_coverage.py).",
+             observed=metrics.get("unknownOutletPct", 0.0), limit=max_unknown,
+             excluded=metrics.get("unknownOutlet", 0))
 
     # -- feed-health requirement (fail-closed) ------------------------------ #
     if th["requireHealthyFeeds"]:
@@ -231,6 +241,7 @@ def validate_corpus(articles: list, feed_health: Optional[list] = None, *,
 
 def _error_metrics(th: dict) -> dict:
     return {"total": 0, "publishers": 0, "perPublisher": {}, "perBucket": {b: 0 for b in ch._BUCKETS},
+            "unknownOutlet": 0, "unknownOutletPct": 0.0,
             "duplicatePct": 0.0, "fresh": 0, "freshMaxAgeDays": th["freshMaxAgeDays"],
             "missingMetadata": 0, "missingMetadataPct": 0.0, "oldest": None, "newest": None,
             "healthyFeeds": 0, "unhealthyFeeds": 0}
