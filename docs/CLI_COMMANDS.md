@@ -88,6 +88,12 @@ Consistent online backup (server can stay up) and safe restore. **Subcommands:**
 | `status` | storage diagnostics + list backups | `--db`, `--out <dir>` |
 | `restore <file>` | restore from a backup (**stop the engine first**) | `--db` |
 
+### `export_reading_history.py` — export reading history to portable JSON (developer-only)
+Read-only export of one or more users' reading history to a **versioned** JSON file for offline
+notebook experimentation (reuses `Store.list_reads` + `get_user`; never writes). Selectors are
+mutually exclusive. Flags: `--user <demo|N|user:N>` \| `--all-users`, `--db`, `--out <path|->`
+(default `reading_history.json`). Full guide: **`docs/EXPORT_READING_HISTORY.md`**.
+
 ### `migrate_topics.py` — one-shot topic reclassification
 Re-run every stored article through the canonical `ingest.classify_topic`. Flags: `--db`, `--dry-run`
 (report changes without writing).
@@ -251,6 +257,7 @@ Normalize QBias outlet labels for the Qbias reference profile. Flags: `--in`, `-
 | `api_server.py` | dependency-free JSON API |
 | `app.py` | thin web UI for the health report |
 | `db_backup.py` | backup / restore / status of the store |
+| `export_reading_history.py` | export reading history → portable JSON (read-only, dev) |
 | `migrate_topics.py` | one-shot topic reclassification |
 | `corpus_health.py` | catalog health + retention (ops) |
 | `corpus_validation.py` | catalog→corpus eligibility (ops) |
