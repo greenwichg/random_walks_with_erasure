@@ -415,6 +415,23 @@ def test_reading_history_and_feed_share_a_stacked_layout(db_path, reader, capsys
     assert "Why this article?" not in feed                         # the long header/labels are gone
 
 
+def test_why_labels_dedupe_bridge_and_cross_cutting():
+    """W7 (presentation-only): a cross-cutting bridge card shows the single, clearer 'Cross-cutting'
+    reason — not both 'Cross-cutting' and 'Bridge Article', which mean the same thing on top of the
+    [RWE-B] tag. Other combinations are untouched: a non-cross-cutting bridge still reads 'Bridge
+    Article', and distinct types (Story Match, New Publisher) still show alongside Cross-cutting."""
+    wl = rec_sandbox._why_labels
+    assert wl({"crossCutting": True,  "explanation": {"type": "bridge"}}) == ["Cross-cutting"]        # de-duped
+    assert wl({"crossCutting": False, "explanation": {"type": "bridge"}}) == ["Bridge Article"]       # kept
+    assert wl({"crossCutting": True,  "explanation": {"type": "story_match"}}) == ["Cross-cutting", "Story Match"]
+    assert wl({"crossCutting": False, "explanation": {"type": "new_publisher"}}) == ["New Publisher"]
+    assert wl({"crossCutting": True,  "explanation": {}}) == ["Cross-cutting"]
+    assert wl({"crossCutting": False, "explanation": {}}) == []
+    # the redundant "Bridge Article" is never emitted together with "Cross-cutting"
+    both = wl({"crossCutting": True, "explanation": {"type": "bridge"}})
+    assert not ("Cross-cutting" in both and "Bridge Article" in both)
+
+
 def test_synthetic_row_reader_shows_honest_no_history(db_path, capsys):
     # a TRUE synthetic reader (row:N is always synthetic — unlike demo, which now prefers the
     # persisted demo account when one exists) has no persisted history

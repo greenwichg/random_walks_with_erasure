@@ -715,6 +715,24 @@ _WHY_SHORT = {
 }
 
 
+def _why_labels(card: dict) -> list:
+    """The short "Why" chips for a served feed card — DISPLAY ONLY, derived straight from the
+    report's own ``crossCutting`` flag + ``explanation.type`` (engine outputs), never recomputed.
+
+    De-duplicates the one redundant pair: a cross-cutting rwe-b card whose explanation type is
+    ``bridge`` would otherwise show both "Cross-cutting" and "Bridge Article" — the same reason twice,
+    on top of the ``[RWE-B]`` tag that already marks the bridging strategy. Since the bridge IS the
+    cross-cutting mechanism, it collapses to the single, clearer "Cross-cutting" chip. A
+    non-cross-cutting bridge still reads "Bridge Article", and every other explanation type still
+    shows alongside "Cross-cutting"."""
+    cross = bool(card.get("crossCutting"))
+    extype = (card.get("explanation") or {}).get("type")
+    labels = ["Cross-cutting"] if cross else []
+    if extype in _WHY_SHORT and not (extype == "bridge" and cross):
+        labels.append(_WHY_SHORT[extype])
+    return labels
+
+
 def _glyphs():
     """✓/✗/rules etc. on a UTF-8 console; ASCII fallback elsewhere (no encode crash on a
     legacy Windows code page)."""
@@ -1057,9 +1075,7 @@ def _render(report: dict, store=None, db: "str | None" = None,
             out.append(f"        {title}")
             out.append(f"        {publisher}")
             out.append(f"        {_meta_line(category, lean, g)}" + (f"   [{tag}]" if tag else ""))
-            ex = c.get("explanation") or {}
-            whys = (["Cross-cutting"] if c.get("crossCutting") else []) \
-                + ([_WHY_SHORT[ex["type"]]] if ex.get("type") in _WHY_SHORT else [])
+            whys = _why_labels(c)
             if whys:
                 out.append("        Why")
                 for w in whys:
