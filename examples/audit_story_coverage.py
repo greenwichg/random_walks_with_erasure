@@ -341,13 +341,14 @@ def full_report(st, user_id: int) -> dict:
     # design working), not misses, and a sibling reachable from several anchor reads counts once.
     missed, seen_sib = [], set()
     if measured:
+        from api_server import DEFAULT_BLEND_PLAN   # single source of the blend cutoffs
         for x in s.get("unservedSiblings", []):
             curl = er._canon(str(x["sibling"]))
             if x.get("storyId") in converted_stories or curl in seen_sib:
                 continue
             seen_sib.add(curl)
             gaps = []
-            for strat, k in (("rwe-b", 6), ("rwe-d", 4), ("adaptive", 4)):
+            for strat, k in DEFAULT_BLEND_PLAN:
                 by = (x.get("byStrategy") or {}).get(strat) or {}
                 r = by.get("rank")
                 if r is None or (strat == "rwe-b" and x.get("political") is False):

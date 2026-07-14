@@ -143,6 +143,17 @@ def _lean_shares_of(rep: dict) -> dict:
     return {"lean_shares": {"left": l, "center": c, "right": r}}
 
 
+#: The default recommendation blend — how many columns each RWE strategy contributes to the
+#: "all" feed (deduped first-seen; a single-strategy request uses ``(strategy, 12)`` instead).
+#: Rationale (W5 audit): for a reader with a side, EVERY rwe-b (Bridging) column is an
+#: opposite-viewpoint / cross-cutting article, so the rwe-b budget is the guaranteed
+#: cross-cutting-cards-per-feed floor — "6" is the viewpoint-diversity dial — while the rwe-d
+#: (Discovery) + adaptive columns buy source diversity (distinct outlets). Reader-invariant by
+#: design. Single source of truth: imported by rec_explain and audit_story_coverage, and pinned
+#: equal to the served feed by the parity tests.
+DEFAULT_BLEND_PLAN = (("rwe-b", 6), ("rwe-d", 4), ("adaptive", 4))
+
+
 def _cross_of(user_side: float, lean: float, political: bool) -> bool:
     """The cross-cutting gate, shared by the recommendation serializer and the explain observer
     (Commit 21a) — one definition, so an explanation can never disagree with the card it explains.
@@ -1358,7 +1369,7 @@ class Backend:
             familiarity = None                             # best-effort: claims are then omitted
         # a single strategy, or a blend across the family for the default "all" view
         plan = ([(strategy, 12)] if strategy in ("rwe-b", "rwe-d", "adaptive")
-                else [("rwe-b", 6), ("rwe-d", 4), ("adaptive", 4)])
+                else DEFAULT_BLEND_PLAN)
         cols_by_strategy = [(strat, self._rec_cols_of(corpus.mind, rec, u, strat, k, params,
                                                       user_side=float(user_side)))
                             for strat, k in plan]

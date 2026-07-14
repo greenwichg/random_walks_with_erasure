@@ -43,8 +43,8 @@ import health_report as hr   # noqa: E402
 from ingest import canonical_url as _canonical_url  # noqa: E402
 
 STRATEGIES = ("rwe-b", "rwe-d", "adaptive")
-#: Must mirror ``Backend._serialize_recommendations`` — pinned equal by the parity tests.
-BLEND_PLAN = (("rwe-b", 6), ("rwe-d", 4), ("adaptive", 4))
+#: The served feed's blend, single-sourced from the engine (still pinned equal by the parity tests).
+BLEND_PLAN = engine.DEFAULT_BLEND_PLAN
 SINGLE_K = 12
 
 
