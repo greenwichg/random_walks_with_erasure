@@ -105,8 +105,20 @@ def _bucket(a: dict) -> Optional[str]:
     return _lean_bucket((a.get("scored") or {}).get("lean"))
 
 
-def _published(a: dict) -> Optional[datetime]:
-    for key in ("publishedAt", "fetchedAt"):
+#: Candidate-age fallback order (C4.1): after the article's own ``publishedAt``, prefer ``createdAt``
+#: — the row's STABLE first-seen time, stamped once at ingest — over ``fetchedAt``, which every
+#: re-poll refreshes. Anchoring to the refreshed ``fetchedAt`` let an undated article reset its age
+#: on each poll and stay a candidate forever; ``createdAt`` ages it out ``feed_max_age_days`` after
+#: first discovery instead. ONLY candidate freshness uses this order; the health metrics keep
+#: :func:`_published`'s default (``publishedAt`` then ``fetchedAt``), so no reported metric shifts.
+_CANDIDACY_TIME_KEYS = ("publishedAt", "createdAt", "fetchedAt")
+
+
+def _published(a: dict, keys: "tuple[str, ...]" = ("publishedAt", "fetchedAt")) -> Optional[datetime]:
+    """First parseable timestamp among ``keys`` (as tz-aware UTC), or ``None``. Default order is the
+    observed time (``publishedAt`` else ``fetchedAt``); candidacy passes :data:`_CANDIDACY_TIME_KEYS`
+    to anchor an undated article's age to its stable first-seen ``createdAt`` (see that constant)."""
+    for key in keys:
         s = (a.get(key) or "").strip()
         if s:
             try:
@@ -172,9 +184,11 @@ def fresh_articles(articles: list, *, now: Optional[datetime] = None,
     """The subset of ``articles`` fresh enough to be recommendation candidates — a filter, never a
     mutation (the same row objects are returned).
 
-    An article's age comes from :func:`_published` (``publishedAt``, else ``fetchedAt`` — so an
-    undated article is as old as its discovery, not immortal); a row with no parseable time at all
-    is kept (staleness can't be proven). With ``require_dated`` (default: the
+    An article's age comes from :func:`_published` with :data:`_CANDIDACY_TIME_KEYS` (``publishedAt``,
+    else the stable first-seen ``createdAt``, else ``fetchedAt``) — so an undated article is as old as
+    its FIRST discovery and genuinely ages out, instead of resetting to fresh every time a re-poll
+    refreshes ``fetchedAt`` (C4.1); a row with no parseable time at all is kept (staleness can't be
+    proven). With ``require_dated`` (default: the
     ``RWE_FEED_REQUIRE_DATED`` env flag) an article with no parseable ``publishedAt`` is excluded
     instead — the ``fetchedAt`` fallback is not trusted for candidacy. Canonical URLs in
     ``exempt`` are always kept — the read-demand articles whose removal would disconnect a reader
@@ -193,7 +207,7 @@ def fresh_articles(articles: list, *, now: Optional[datetime] = None,
             continue
         if need_dated and not _has_publication_date(a):
             continue
-        dt = _published(a)
+        dt = _published(a, _CANDIDACY_TIME_KEYS)
         if dt is None or dt >= cutoff:
             kept.append(a)
     return kept

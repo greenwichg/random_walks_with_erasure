@@ -687,7 +687,8 @@ class Store:
                 "imageAttribution": r.image_attribution,
                 "sourceType": r.source_type, "sourceProvider": r.source_provider,
                 "externalId": r.external_id, "articleState": r.article_state,
-                "fetchedAt": r.fetched_at.isoformat() if r.fetched_at else None}
+                "fetchedAt": r.fetched_at.isoformat() if r.fetched_at else None,
+                "createdAt": r.created_at.isoformat() if r.created_at else None}
 
     def feed_article_media(self, canonical_urls) -> dict:
         """Media + publication metadata for a set of catalog articles, keyed by canonical URL — the

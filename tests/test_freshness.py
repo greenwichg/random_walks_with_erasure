@@ -78,6 +78,28 @@ def test_fresh_articles_unparseable_time_is_kept():
     assert ch.fresh_articles([a], now=NOW, max_age_days=60) == [a]   # staleness can't be proven
 
 
+def test_fresh_articles_undated_ages_out_from_stable_created_at():
+    """C4.1: an undated article's candidacy age is its STABLE first-seen ``createdAt``, not the
+    re-poll-refreshed ``fetchedAt`` — so a long-known undated item ages out even while re-polls keep
+    ``fetchedAt`` fresh (the 'immortal undated' fix), while a genuinely new undated item stays."""
+    old_seen = _art("https://ex.com/wayday", published=False, fetched_days_ago=1)  # re-polled: fresh fetch
+    old_seen["createdAt"] = (NOW - timedelta(days=400)).isoformat()                # but first seen 400d ago
+    new_seen = _art("https://ex.com/brandnew", published=False, fetched_days_ago=1)
+    new_seen["createdAt"] = (NOW - timedelta(days=2)).isoformat()                  # just discovered
+    kept = ch.fresh_articles([old_seen, new_seen], now=NOW, max_age_days=60)
+    assert [a["canonicalUrl"] for a in kept] == ["https://ex.com/brandnew"]        # old-seen aged out
+
+
+def test_published_default_order_is_unchanged_for_metrics():
+    """The default :func:`_published` order (health metrics + the newest-first sort) is untouched —
+    ``publishedAt`` then ``fetchedAt``, never ``createdAt`` — so only candidate freshness opts into the
+    ``createdAt``-anchored order and no reported metric shifts."""
+    a = {"publishedAt": None, "createdAt": (NOW - timedelta(days=400)).isoformat(),
+         "fetchedAt": (NOW - timedelta(days=1)).isoformat()}
+    assert ch._published(a) == datetime.fromisoformat(a["fetchedAt"])                          # default
+    assert ch._published(a, ch._CANDIDACY_TIME_KEYS) == datetime.fromisoformat(a["createdAt"])  # candidacy
+
+
 def test_fresh_articles_exempt_and_disabled():
     old = _art("https://ex.com/read-old", days_ago=200)
     assert ch.fresh_articles([old], now=NOW, max_age_days=60,
