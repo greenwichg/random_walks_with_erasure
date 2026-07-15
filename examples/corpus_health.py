@@ -46,9 +46,11 @@ import json
 import logging
 import math
 import os
+import re
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+from urllib.parse import urlsplit
 
 _BUCKETS = ("left", "center", "right")
 _EPOCH = datetime.min.replace(tzinfo=timezone.utc)   # undated articles sort oldest (pruned first)
@@ -129,6 +131,47 @@ def _published(a: dict, keys: "tuple[str, ...]" = ("publishedAt", "fetchedAt")) 
     return None
 
 
+#: Publication-date-in-URL patterns (C4.2). Matched against the URL *path* only (query/fragment
+#: dropped) so a host or tracking param can't false-trigger. In precedence order:
+#:   * ``/YYYY/MM/DD/`` path segments — the dominant news convention (CNN opinions, NYT, WaPo,
+#:     Guardian, Politico, …). Year ``19``/``20`` + calendar-valid month/day.
+#:   * ``/YYYY/MM/`` path segments — month-precision archives (day defaults to the 1st).
+#:   * a trailing ``-MM-DD-YY`` slug before ``/``, ``.`` or end — CNN live-news blogs
+#:     (``…-04-18-23/index.html``). ``YY`` is restricted to ``00``–``39`` → ``2000``–``2039`` so an
+#:     arbitrary ``-NN-NN-NN`` id can't masquerade as a date; a genuinely recent page carries a
+#:     recent slug year (``…-26``) and stays fresh, so this never over-excludes new content.
+_URL_YMD = re.compile(r"/((?:19|20)\d\d)/(0[1-9]|1[0-2])/(0[1-9]|[12]\d|3[01])(?:/|$)")
+_URL_YM = re.compile(r"/((?:19|20)\d\d)/(0[1-9]|1[0-2])(?:/|$)")
+_URL_MDY = re.compile(r"-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])-([0-3]\d)(?:[/.]|$)")
+
+
+def _url_date(url: str) -> Optional[datetime]:
+    """A publication date embedded in the URL path (as tz-aware UTC midnight), or ``None``.
+
+    This is the most tamper-resistant publication-date signal we have for candidacy: unlike the
+    feed's ``pubDate`` it can't be refreshed by a re-poll, and unlike the ``createdAt`` fallback it
+    doesn't reset to "today" for an undated archived page — so it catches an archived ``/2023/…``
+    article whether the feed left it undated (→ today's ``createdAt``) or re-dated it recent. Only
+    unambiguous, calendar-valid matches count; anything else returns ``None`` (no URL-date signal,
+    existing age behaviour unchanged), so a dateless evergreen URL is never affected."""
+    path = urlsplit((url or "").strip()).path
+    if not path:
+        return None
+    m = _URL_YMD.search(path)
+    if m:
+        y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    elif (m := _URL_YM.search(path)):
+        y, mo, d = int(m.group(1)), int(m.group(2)), 1
+    elif (m := _URL_MDY.search(path)):
+        mo, d, y = int(m.group(1)), int(m.group(2)), 2000 + int(m.group(3))
+    else:
+        return None
+    try:
+        return datetime(y, mo, d, tzinfo=timezone.utc)
+    except ValueError:                 # e.g. 2023/02/30 — treat as no signal, not a crash
+        return None
+
+
 def _canonical(a: dict) -> str:
     return a.get("canonicalUrl") or a.get("url") or ""
 
@@ -177,14 +220,31 @@ def feed_require_dated() -> bool:
     return _bool_env("RWE_FEED_REQUIRE_DATED", False)
 
 
+def feed_url_date() -> bool:
+    """Whether candidacy trusts a date embedded in the article URL as its authoritative age
+    (``RWE_FEED_URL_DATE``, default **on**) — see :func:`_url_date`.
+
+    This closes the freshness gate's blind spot: the age keys (``publishedAt`` → ``createdAt`` →
+    ``fetchedAt``) all trust dates the *feed* supplies or that we stamp at first-sight, so an
+    archived article the feed left undated (→ today's ``createdAt``) or re-dated recent (a
+    re-surfaced live blog) reads as fresh. A ``/2023/…`` or ``…-04-18-23`` URL proves otherwise.
+    Default-on so it takes effect immediately; set ``RWE_FEED_URL_DATE=0`` for an instant rollback.
+    Only consulted while the :func:`feed_max_age_days` window is active."""
+    return _bool_env("RWE_FEED_URL_DATE", True)
+
+
 def fresh_articles(articles: list, *, now: Optional[datetime] = None,
                    max_age_days: Optional[float] = None,
                    exempt: "frozenset[str] | set[str]" = frozenset(),
-                   require_dated: Optional[bool] = None) -> list:
+                   require_dated: Optional[bool] = None,
+                   url_date: Optional[bool] = None) -> list:
     """The subset of ``articles`` fresh enough to be recommendation candidates — a filter, never a
     mutation (the same row objects are returned).
 
-    An article's age comes from :func:`_published` with :data:`_CANDIDACY_TIME_KEYS` (``publishedAt``,
+    An article's age is the URL-embedded publication date when the URL carries one
+    (:func:`_url_date`, gated by ``url_date`` / the ``RWE_FEED_URL_DATE`` env flag, default on) —
+    the one signal a re-poll can't refresh and an undated archive can't reset to "today" (C4.2).
+    Otherwise it comes from :func:`_published` with :data:`_CANDIDACY_TIME_KEYS` (``publishedAt``,
     else the stable first-seen ``createdAt``, else ``fetchedAt``) — so an undated article is as old as
     its FIRST discovery and genuinely ages out, instead of resetting to fresh every time a re-poll
     refreshes ``fetchedAt`` (C4.1); a row with no parseable time at all is kept (staleness can't be
@@ -194,11 +254,12 @@ def fresh_articles(articles: list, *, now: Optional[datetime] = None,
     ``exempt`` are always kept — the read-demand articles whose removal would disconnect a reader
     from the recommendation graph. ``max_age_days`` defaults to :func:`feed_max_age_days`;
     ``None``/``<=0`` disables the gate entirely (returns ``articles`` unchanged), including
-    ``require_dated``."""
+    ``require_dated`` and the URL-date signal."""
     window = feed_max_age_days() if max_age_days is None else (max_age_days if max_age_days > 0 else None)
     if window is None:
         return list(articles)
     need_dated = feed_require_dated() if require_dated is None else bool(require_dated)
+    use_url = feed_url_date() if url_date is None else bool(url_date)
     cutoff = (now or datetime.now(timezone.utc)) - timedelta(days=float(window))
     kept = []
     for a in articles:
@@ -207,7 +268,9 @@ def fresh_articles(articles: list, *, now: Optional[datetime] = None,
             continue
         if need_dated and not _has_publication_date(a):
             continue
-        dt = _published(a, _CANDIDACY_TIME_KEYS)
+        dt = (_url_date(a.get("canonicalUrl") or "") or _url_date(a.get("url") or "")) if use_url else None
+        if dt is None:                 # no URL-date signal -> the existing feed/first-seen age
+            dt = _published(a, _CANDIDACY_TIME_KEYS)
         if dt is None or dt >= cutoff:
             kept.append(a)
     return kept
