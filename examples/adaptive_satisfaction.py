@@ -59,6 +59,22 @@ def measured_exposure(rows: dict, user_ids, min_cross: int = 1, default: float =
     return exp, measured
 
 
+def shrunk_exposure(rate, n, kappa: float = 10.0, prior: float = 0.5) -> float:
+    """Bayesian shrinkage of a measured cross-cutting reception ``rate`` (openedCross/shownCross)
+    toward the neutral ``prior`` (W2): ``(n·rate + kappa·prior)/(n + kappa)``, clipped to ``[0, 1]``.
+
+    ``n`` = shownCross is the observation count; ``kappa`` is the prior's pseudo-impression weight
+    (Beta(kappa/2, kappa/2) centred at ``prior``). ``n == 0`` or a null ``rate`` returns ``prior``
+    exactly, so a new / no-signal reader is byte-identical to the neutral default. **Driven by the
+    RATE, never the raw opened count** — showing more cross-cutting (a bigger bridge budget) raises
+    ``n`` but not ``E[rate]``, so it cannot inflate the estimate (W2 feedback-loop audit)."""
+    if rate is None or n is None:
+        return float(prior)
+    n = max(0.0, float(n))
+    x = (n * float(rate) + float(kappa) * float(prior)) / (n + float(kappa))
+    return float(min(1.0, max(0.0, x)))
+
+
 def opposite_reach(model, users, theta, item_pos, k: int = 10) -> np.ndarray:
     """Per-user **rank-weighted** reach into opposite-side territory in the top-``k``
     (DCG-style: opposite content ranked *higher* scores more). A plain opposite-*fraction*

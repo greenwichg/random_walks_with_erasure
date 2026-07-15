@@ -131,6 +131,10 @@ class Personalizer:
         # single stray click can't fabricate the metric. Release-pinned, tunable via env.
         self._openmind_min_shown = max(1, int(os.environ.get("RWE_OPENMIND_MIN_SHOWN", "3")))
         self._openmind_min_opened = max(1, int(os.environ.get("RWE_OPENMIND_MIN_OPENED", "1")))
+        # W2: κ = the neutral-prior pseudo-impression weight in the exposure shrinkage. Reuses the
+        # Open-Mindedness gate above (same signal), so adaptive dosing activates exactly when the
+        # metric does. Env-tunable; default 10 (a nudge — half-weight at ~10 cross-cutting impressions).
+        self._adaptive_kappa = max(1.0, float(os.environ.get("RWE_ADAPTIVE_KAPPA", "10")))
 
     # -- threshold gate ----------------------------------------------------
     def has_measured(self, user_id: int) -> bool:
@@ -172,6 +176,23 @@ class Personalizer:
         aug[reader_row] = float(r["rate"])
         return aug
 
+    def _reader_exposure(self, user_id: int) -> "float | None":
+        """W2: the reader's AdaptiveRWEB exposure — their measured cross-cutting reception RATE
+        (openedCross/shownCross) shrunk toward the neutral 0.5 prior by shownCross (κ pseudo-
+        impressions, :func:`adaptive_satisfaction.shrunk_exposure`). Returns ``None`` (→ the neutral
+        0.5 default, byte-identical to pre-W2) until the SAME Open-Mindedness gate the metric uses
+        (``min_shown`` / ``min_opened``). Driven by the RATE, never the raw opened count, so a larger
+        bridge budget (W1) cannot inflate it (feedback-loop audit). Best-effort."""
+        try:
+            r = self.store.recommendation_reception(user_id)
+        except Exception:
+            return None
+        if not (r["shownCross"] >= self._openmind_min_shown
+                and r["openedCross"] >= self._openmind_min_opened):
+            return None                     # honest neutral default until enough cross-cutting reception
+        import adaptive_satisfaction as asf
+        return asf.shrunk_exposure(r["rate"], r["shownCross"], self._adaptive_kappa)
+
     # -- model build + cache ----------------------------------------------
     def _build_model(self, user_id: int, reading_version: int,
                      reception_version: Tuple[int, int]) -> PersonalModel:
@@ -205,7 +226,12 @@ class Personalizer:
         corpus = engine._Corpus(mind=b.mind, pop=pop, register=b.register, emotion=b.emotion,
                                 confidence=b.confidence,
                                 outlet_lean=self.backend._build_outlet_lean(b.mind))
-        rec = self.backend._build_recommenders(b.mind)            # neutral exposure (no probe)
+        # W2: give the real reader their measured adaptive exposure (gated + shrunk toward 0.5);
+        # everyone else in the augmented population keeps the neutral prior. Only the reader is served.
+        rexp = self._reader_exposure(user_id)
+        ruid = str(b.mind.dataset.user_ids[aug.reader_row])
+        rec = self.backend._build_recommenders(
+            b.mind, reader_exposure=((ruid, rexp) if rexp is not None else None))
         model = PersonalModel(reading_version=reading_version, reception_version=reception_version,
                               corpus=corpus, reader_row=aug.reader_row, rec=rec)
 

@@ -629,11 +629,18 @@ class Backend:
         return lean
 
     @staticmethod
-    def _build_recommenders(mind, probe_csv: "str | None" = None) -> "_Recommenders":
+    def _build_recommenders(mind, probe_csv: "str | None" = None,
+                            reader_exposure: "tuple[str, float] | None" = None) -> "_Recommenders":
         """Build the RWE recommender stack over ``mind``. Shared by the base corpus (startup)
         and a real user's augmented corpus (``personalize.py``) so both construct RWE-B / RWE-D
         / Adaptive with identical inputs and hyperparameters. The RWE algorithms are unchanged —
-        this only assembles their inputs, exactly as ``__init__`` did inline before."""
+        this only assembles their inputs, exactly as ``__init__`` did inline before.
+
+        ``reader_exposure`` (W2) is an optional ``(user_id, exposure)`` for a single real reader whose
+        measured cross-cutting reception ``personalize`` computed (gated + shrunk); it splices only
+        that reader's **AdaptiveRWEB** exposure. Every other user keeps the neutral 0.5 prior, so the
+        base corpus, anonymous/demo, and the eval fixtures stay byte-identical. RWE-B / RWE-D are
+        never touched by it (adaptive-slice-only)."""
         from rwe import FeedbackGraph, RWEB, RWED
         from rwe.satisfaction import AdaptiveRWEB
         # Recommender inputs, shared by all RWE variants (drops NaN-pos items + empty users).
@@ -652,6 +659,14 @@ class Backend:
                                                     rec_dataset.user_ids)
             except Exception:
                 pass
+        # W2: splice one real reader's measured adaptive exposure (personalize computed it from the
+        # store — gated by the Open-Mindedness thresholds, shrunk toward the 0.5 prior by shownCross).
+        # Only that reader's row moves; RWE-B / RWE-D below are untouched (adaptive-slice-only).
+        if reader_exposure is not None:
+            ruid, rexp = reader_exposure
+            rows = np.flatnonzero(np.asarray(rec_dataset.user_ids) == ruid)
+            if rows.size:
+                exposure[int(rows[0])] = float(np.clip(rexp, 0.0, 1.0))
         models = {
             "rwe-b": RWEB(fg, theta, item_pos, epsilon=0.9),
             "rwe-d": RWED(fg, beta=0.5),
