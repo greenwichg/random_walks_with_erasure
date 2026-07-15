@@ -64,8 +64,8 @@ cross-dataset), to be confirmed by measurement — not asserted as results.
 |---|---|---|---|---|---|---|
 | 1 | **Recommendation quality** | Ranking accuracy on held-out clicks | `ndcg_at_k` (`rwe/metrics.py:132`), `hit_rate_at_k` (`:98`), `auc` (`:54`) — RQ2 set (`eval_mind.py:331`) | RWE ≈ best CF baseline on MIND (may trail RP3β slightly) | RWE within noise of the top baseline; not significantly worse (p<0.05) on ndcg@10 | RWE significantly below **all** baselines across ≥7 seeds |
 | 2 | **Viewpoint diversity** | Ideological spread of a user's top-k | `rec_range_at_k` (`:213`); long-tail `gini_diversity` (`:148`), `catalog_coverage` (`:163`) — RQ3 (`eval_mind.py:333`) | RWE-B > baselines on `rec_range`, as on synthetic | RWE-B `rec_range@20` significantly > RWE-D & popularity | No significant diversity edge over popularity |
-| 3 | **Bridge quality** | Reach into the *opposite* latent region | `directed_shift`/`weighted_shift` (`:281`,`:296`), `rec_range_at_k` — **sign-invariant** (axis unlabelled) | RWE-B reaches distant-region items others don't | RWE-B distant-region reach significantly > RWE-D | Bridge slice collapses to the same region as popularity |
-| 4 | **Graph connectivity** | Reachability of the walk substrate | *New:* `scipy.sparse.csgraph.connected_components` over `FeedbackGraph.A_G` (`rwe/graph.py:60`); isolate share via `item_degrees` (`:83`) | One dominant component after k-core | Largest component ≥ 0.90 of nodes; item isolates < 5% (post `_filter_min` 5/5, `rwe/mind.py:140`) | Largest component < 0.70, or > 15% isolates |
+| 3 | **Bridge quality** | Reach into the *opposite* latent region | **Primary: `directed_shift`** (`:281`); `rec_range_at_k` (`:213`) is **secondary** — a *directional* bridger can show LOW `rec_range` with HIGH shift (Phase-1 finding), so `rec_range` alone must not be read as bridge quality. Both sign-invariant (axis unlabelled) | RWE-B reaches distant-region items others don't | RWE-B `directed_shift` significantly > RWE-D | Bridge slice collapses to the same region as popularity |
+| 4 | **Graph connectivity** | Reachability of the walk substrate | *New:* `scipy.sparse.csgraph.connected_components` over `FeedbackGraph.A_G` (`rwe/graph.py:60`); isolate share via `item_degrees` (`:83`) | One dominant component after k-core, **read relative to the synthetic baseline (~0.97 LCC, itself fragmented) — not absolute 1.0** | Largest component ≥ 0.90 of nodes; item isolates < 5% (post `_filter_min` 5/5, `rwe/mind.py:140`) | Largest component < 0.70, or > 15% isolates |
 | 5 | **Graph density** | Click-matrix fill + degree shape | `A.nnz/(m·n)`; median + Gini of `user_degrees`/`item_degrees` (`rwe/graph.py:78-85`) | Sparse but non-degenerate | Median item degree ≥ 2 after k-core | Median item degree < 2 (no collaborative signal) |
 | 6 | **Cold-start behaviour** | Quality vs training-click count | Bucket users (1–2, 3–5, 6–10, >10); accuracy + coverage per bucket | Graceful; cold users fall back to RWE-D popularity | Every bucket non-empty, no errors; monotone-ish improvement | Cold buckets get empty/degenerate lists |
 | 7 | **Stability** | Robustness of the axis/recs | *New:* mean top-k **Jaccard** across ≥7 fit seeds/`restarts` (`rwe/ideology.py:138-154`) | High overlap under best-likelihood restarts | Mean Jaccard ≥ 0.70 | Mean Jaccard < 0.50 (axis seed-sensitive) |
@@ -83,6 +83,23 @@ other metric, because the product's promise is a transparent, replayable feed.
 baselines** (ItemKNN / BPRMF / P3 / RP3-β + RWE-D/RWE-B, `eval_mind.py:42` `_recommenders`),
 never across datasets. The A/B/C comparison is *"does the method retain its properties as the
 graph becomes more real?"*
+
+**Post-audit refinements — implemented in `examples/w8a_prototype.py`, see
+`docs/W8A_PHASE2_READINESS.md`:**
+- **No leakage.** Ideology is refit on **each training split**, never the full matrix — held-out
+  clicks never inform the positions used to recommend/score. (`eval_mind._eval_across_seeds`
+  reuses fixed full-dataset positions, so it is *mirrored* with a per-split refit, not called.)
+- **Fitted-vs-fitted, symmetric.** A and B run the **same** leak-free refit path, removing the
+  Phase-1 gold-vs-fitted asymmetry so the comparison isolates *graph* quality, not label quality.
+- **Scale preconditions (G2 evidence).** A MIND-full fit requires `--political-only` + k-core
+  (`--min-user-clicks/--min-item-clicks 5`) + `--sample-users` to sit under the `max_cells`
+  guard; a `--preflight` reports cells vs `max_cells` and estimated dense-fit memory, and
+  post-filter data yield is recorded before any long run.
+- **Axis interpretability (substitute for `lean_corr`).** `lean_corr` is structurally `None` on
+  label-free MIND, so the prototype reports an **axis-proxy** — |corr with the political flag| and
+  category η² (variance explained by category). High category η² ⇒ the axis is *topical*, not
+  necessarily ideological — a required caveat on H1/H3 (the ideological claim defers to corpus C,
+  which has registry lean).
 
 ### A. Current synthetic graph (control, known labels)
 - Build exactly as production does: `simulate_users.run(cfg, qbias=…)` → `MINDData`
