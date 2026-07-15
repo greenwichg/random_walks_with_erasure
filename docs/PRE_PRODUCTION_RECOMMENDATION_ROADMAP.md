@@ -12,6 +12,22 @@
 > shift where feeds change, the *schema* never does), determinism, explain↔served parity, and the
 > product philosophy: **transparent, explainable, viewpoint-aware, user-steerable** recommendations.
 
+## Revision history
+
+- **R1 (2026-07-15) — W3 pulled from the pre-production critical path.** Review surfaced that the
+  text-lean classifier is **not accurate enough at the article level** to serve as a confidence-gated
+  adjustment. The repo already documented this: two BERT bias models agree at **Cohen's κ = 0.14 exact
+  (L/C/R)**, 0.575 side-only (`lean_agreement.py`; `docs/HEALTH_REPORT_PLAN.md:158`); text-lean is
+  **~0.27 vs human** (`docs/PRODUCT_SIMULATION.md:79`) — a "**weak, model-sensitive proxy**"
+  (`docs/TODO.md:139`) the repo had **already chosen to replace with an outlet-first axis**
+  (`docs/TODO.md:204`). Crucially, `classify_lean` is **not in the production path** (production lean is
+  the outlet registry only — `examples/ingest.py:6,410,429`), so **no current behaviour is affected** —
+  only the proposed W3 and W8's classifier-lean *fidelity bonus*. **Effect:** W3 is **deferred /
+  redesigned** (outlet-first — see the R1 banner in §W3); the recommended order becomes **W1 → W2 →
+  W8**; W8 proceeds using **outlet lean** for its lean component (its behavioural `fit_ideology` core
+  never depended on the classifier). The original W3 proposal is retained below, superseded and
+  annotated, for decision-history integrity.
+
 ## Reading guide & conventions
 
 - **Run from the repo root.** All algorithms live in `rwe/`; orchestration/serving in
@@ -30,8 +46,8 @@
 |---|---|---|---|:--:|:--:|:--:|
 | **W1** | Openness (ε) control is inert on the served feed | Defect (dead control) | Re-map openness to **bridge-slot budget + `max_distance`** (I1) | orchestration + 1 algo input | Low–Med | — |
 | **W2** | Adaptive dosing uses a constant `exposure=0.5` | Incomplete feature | **Prior + online per-user exposure**, wired into `AdaptiveRWEB` (I8) | input wiring | Med | **W1** |
-| **W3** | Ideology is outlet-level & coarse | Design limitation | **Confidence-gated article-level lean** around the outlet prior (I10) | preprocessing (positions) | Med | — |
-| **W8** | Collaborative base is synthetic | Stage-of-product | **Transfer warm-start** from real public behaviour (MIND) + content/KG edges, decaying under real reads (I11) | data + positions | High | benefits from W3 |
+| **W3** ⚠️ | Ideology is outlet-level & coarse | Design limitation | **DEFERRED (R1)** — classifier too weak at article level (κ 0.14); stay **outlet-first**, revisit behind a validated signal | preprocessing (positions) | — (deferred) | validated lean signal |
+| **W8** | Collaborative base is synthetic | Stage-of-product | **Transfer warm-start** from real public behaviour (MIND) + content/KG edges, decaying under real reads (I11) | data + positions | High | — (uses outlet lean) |
 
 ---
 
@@ -259,6 +275,48 @@ during long inactivity. Not needed to close W2.
 
 # W3 — Ideology is outlet-level and coarse
 
+> ### ⚠️ REVISED (R1, 2026-07-15) — W3 is DEFERRED, not scheduled before production
+>
+> **What changed.** The preferred fix below (confidence-gated article-level lean via `classify_lean`)
+> assumed the classifier is accurate enough at the article level. **It is not**, and the repo already
+> documented this:
+> - two BERT bias models agree at **Cohen's κ = 0.14 exact (L/C/R)**, 0.575 side-only
+>   (`lean_agreement.py`; `docs/HEALTH_REPORT_PLAN.md:158`) — near-chance on the full label, and the
+>   disagreement is **centre-vs-lean** (`docs/TODO.md:108`), *exactly* the NYT-news-vs-NYT-op-ed
+>   distinction W3 needed;
+> - **~0.27 vs human** (`docs/PRODUCT_SIMULATION.md:79`); "**weak, model-sensitive proxy**"
+>   (`docs/TODO.md:139`); the repo had **already chosen outlet-first** (`docs/TODO.md:204`).
+>
+> **Why the design fails.** (a) The classifier is weakest precisely where W3 needed it (centre-vs-lean).
+> (b) `confidence` = top-2 softmax margin (`classify_lean.py:62`) measures **self-certainty, not
+> accuracy** — a confidently-wrong article gets the *largest* adjustment, injecting error where you trust
+> it most. That confidence signal is validated only for **aggregate** down-weighting in the health report
+> (`docs/HEALTH_REPORT_PLAN.md:154–158`), never for per-article point decisions like bridge status.
+>
+> **Scope of impact.** `classify_lean` is **not in the production path** — production lean is the outlet
+> registry only (`examples/ingest.py:6,410,429`), so **no current behaviour is affected.** Only this
+> proposal and W8's classifier-lean *fidelity bonus* are.
+>
+> **Revised direction — outlet-first (do no harm):**
+> 1. **Keep outlet-registry lean as the sole production lean signal.** Trusted, AllSides-validated,
+>    explainable; do not degrade the anchor with an unreliable classifier.
+> 2. **If article-level nuance is wanted, gate on *register* (news vs opinion), not lean magnitude —
+>    and only after `classify_register` clears its own agreement/human validation** (the finding concerns
+>    *lean*; register accuracy is currently **unproven**). Register can raise extremity within an outlet
+>    ("an opinion piece reads more strongly than the outlet's news piece") without needing an accurate
+>    per-article lean *position*, and stays explainable.
+> 3. **Treat a trustworthy article-level lean as a research prerequisite** (ensemble via
+>    `ensemble_lean.py`, LLM labelling via `llm_label.py` with agreement thresholds, a human-labelled
+>    calibration set), **not a pre-production deliverable**.
+> 4. **Confine the existing classifier to its validated use** — aggregate, confidence-down-weighted
+>    health-report inputs — never per-article bridge decisions.
+>
+> **Order impact:** W3 leaves the critical path; the sequence is now **W1 → W2 → W8** (§Conclusion). W8
+> is **unaffected at its core** (its `fit_ideology` warm-start is behavioural, not text-lean) and uses
+> **outlet lean** for its lean component.
+>
+> _The original proposal is preserved below (superseded) for decision-history integrity._
+
 ## 1. Current implementation
 
 Item positions used by RWE-B/Adaptive come from **outlet house lean**: `_build_recommenders` calls
@@ -277,11 +335,11 @@ the ideology axis, which (a) mis-labels bridges, (b) skews the health report's v
 (c) makes explanations wrong for those articles. `QBIAS_VALIDATION.md:79` records the coarseness
 ("corpus article leans are coarse … vs the reads' registry leans").
 
-**Key finding that reclassifies this:** the hard artifact **already exists and is validated.**
-`classify_lean.py` runs a QBias/AllSides-validated text classifier producing per-article
-`position` (`_positions_from_probs`, line 55) **and** a calibrated `confidence` (top-2 softmax margin,
-`_confidence_from_probs`, line 62). `classify_register.py` gives news-vs-opinion. So W3 is **integration,
-not research.**
+**Key finding that reclassifies this:** ~~the hard artifact **already exists and is validated.**~~
+**[CORRECTED — R1]** `classify_lean.py` exists, but this claim was wrong: only its *confidence* signal is
+validated (for **aggregate** down-weighting), while its **article-level positions are not accurate**
+(κ 0.14 exact; ~0.27 vs human — see the R1 banner). So W3 is **not** the low-risk integration claimed
+here; it is deferred behind a validated article-level signal.
 
 ## 3. Production impact
 
@@ -352,8 +410,9 @@ classifier *can* place get a finite position instead of being dropped at
 
 ## 8. Rollout strategy
 
-Independent of W1/W2; parallelizable with W1. **Precedes W8** (article-level lean improves the content
-mapping W8's transfer relies on). Ship behind a flag; validate the golden shift before default-on.
+**[SUPERSEDED — R1: W3 is deferred; it no longer precedes W8, which uses outlet lean.]** ~~Independent of
+W1/W2; parallelizable with W1. Precedes W8 (article-level lean improves the content mapping).~~ When
+revisited behind a validated signal, ship behind a flag and validate the golden shift before default-on.
 
 ## 9. Future work
 
@@ -407,7 +466,7 @@ Three layers, each grounded in real signal or interpretable content, feeding the
 ```
  (a) MIND real clicks ─► fit_ideology ─► real-behaviour item/user positions
                                           + real co-read structure
-                          │  (content map: lean, topic, entities, register)
+                          │  (content map: OUTLET lean, topic, entities, register)  [R1: outlet, not classifier]
                           ▼
  (b) content edges  ── lean-proximity + shared-topic  ──►┐
  (c) event KG       ── same real event, diff outlet   ──►│  seed FeedbackGraph
@@ -418,9 +477,10 @@ Three layers, each grounded in real signal or interpretable content, feeding the
 ```
 
 - **(a)** Run `fit_ideology` on MIND's real clicks → real-behaviour positions; map onto the catalog by
-  content (article-level lean from W3, topic, entities). Because `fit_ideology(orient_by_lean=True)`
-  yields an **interpretable 1-D** position (`rwe/mind.py:355`), the transferred signal stays on the
-  lean axis, not a black box.
+  content (**outlet** lean [R1: article-level lean deferred — W3], topic, entities). Because
+  `fit_ideology(orient_by_lean=True)` yields an **interpretable 1-D** position (`rwe/mind.py:355`) and is
+  learned from **click behaviour, not text**, the transferred signal is independent of the classifier and
+  stays on the lean axis, not a black box.
 - **(b)** Content item–item edges from attributes we already compute — a graph with **no users**.
 - **(c)** A news-event knowledge graph linking same-event articles across outlets — the most
   **defensible, explainable** cross-cutting bridge.
@@ -432,8 +492,9 @@ index *every* article (including zero-read fresh ones) for a retrieval stage, wi
 keeping the transparent RWE core. Scoped as a follow-on, not required to close W8.
 
 **Why this approach.** It supplies the real, non-circular co-read structure the walk needs before a
-single user exists, reuses machinery we've already built and tested (`fit_ideology`, MIND ingest,
-`classify_lean`), and converges to your population as reads arrive.
+single user exists, reuses machinery we've already built and tested (`fit_ideology`, MIND ingest, the
+outlet registry), and converges to your population as reads arrive. **(R1: it does not depend on
+`classify_lean` — the behavioural `fit_ideology` axis is the validated primary, `lean_corr 0.57±0.19`.)**
 
 ## 5. Alternatives considered
 
@@ -477,9 +538,10 @@ single user exists, reuses machinery we've already built and tested (`fit_ideolo
 ## 8. Rollout strategy
 
 **Largest; land last, but prototype the offline fit EARLY** — it is the long pole, it de-risks the
-biggest claim, and it **produces W2's population prior**. **Benefits from W3** (article-level lean
-sharpens the content mapping). Independent of W1. Keep it entirely offline until the homogenization test
-passes; never touch serving or goldens during the spike.
+biggest claim, and it **produces W2's population prior**. ~~Benefits from W3~~ **(R1: W3 deferred — W8
+uses outlet lean; its `fit_ideology` core never depended on the classifier, so nothing here is blocked).**
+Independent of W1. Keep it entirely offline until the homogenization test passes; never touch serving or
+goldens during the spike.
 
 ## 9. Future work
 
@@ -512,13 +574,18 @@ break the explainability philosophy).
 
 ### W3 — Article-level ideology
 - **Originally believed:** "major modeling research," high effort/risk (I10).
-- **Discovered:** the validated artifact already exists — `classify_lean.py` (QBias/AllSides-validated,
-  with a calibrated per-article confidence) and `classify_register.py`. It is integration, not research.
-- **Experiments proved:** QBias activation showed outlet-lean resolution materially changes the measured
-  report (`QBIAS_VALIDATION.md`); lean-classifier agreement is low exactly on centre-boundary cases
-  (the confidence signal is meaningful).
-- **Final direction:** confidence-gated shrinkage around the outlet prior — answering the I4 objection by
-  making the classifier an adjustment, never a replacement.
+- **Then believed (roadmap v0 — since corrected):** the validated artifact already exists
+  (`classify_lean.py` + `classify_register.py`), so W3 is integration, not research.
+- **Discovered (R1):** that was wrong. `classify_lean`'s article-level positions are **weak** — κ 0.14
+  exact / 0.575 side-only (`lean_agreement.py`), ~0.27 vs human (`PRODUCT_SIMULATION.md:79`); its
+  `confidence` measures **self-certainty, not accuracy**, and is validated only for aggregate
+  down-weighting. The repo had **already chosen outlet-first** (`TODO.md:204`), and `classify_lean` is
+  **not in production** (`ingest.py:429`).
+- **Experiments proved:** the two BERT bias models disagree at chance-corrected κ 0.14 on the exact
+  L/C/R label, worst precisely at the centre-vs-lean boundary W3 targeted (`TODO.md:108`).
+- **Final direction:** **deferred.** Keep outlet-first; revisit article-level nuance only behind a
+  validated signal (register — pending its own validation — or an ensemble/LLM/human-calibrated lean).
+  W3 leaves the pre-production critical path.
 
 ### W8 — Collaborative base
 - **Originally believed:** "fundamentally requires real production traffic."
@@ -539,25 +606,29 @@ break the explainability philosophy).
 ## Recommended implementation order
 
 ```
-   ┌─────────────┐        ┌─────────────┐
-   │  W1 (first) │        │  W3 (parallel)
-   │  openness   │        │  article lean │
-   └──────┬──────┘        └──────┬──────┘
-          │ unblocks              │ sharpens content map
-          ▼                       ▼
+   ┌─────────────┐
+   │  W1 (first) │   openness — pure orchestration, unblocks W2
+   └──────┬──────┘
+          │ unblocks
+          ▼
    ┌─────────────┐         ┌───────────────────────────┐
    │  W2          │◄────────│  W8 offline fit (spike early)
    │  exposure    │ prior   │  → land last (largest)     │
    └─────────────┘         └───────────────────────────┘
+
+   W3 — DEFERRED (R1): off the critical path until a validated article-level lean
+        signal exists; production stays outlet-first. Not a dependency of W8.
 ```
 
 1. **W1** — first: low-risk, honest control, and it **unblocks W2**.
-2. **W3** — in parallel with W1: independent; **precedes W8** (better content mapping).
-3. **W2** — after W1; sources its prior from W8's offline fit.
-4. **W8** — prototype the offline MIND fit **early** (it de-risks the biggest claim and feeds W2), land
-   the warm-start **last**; keep offline until the homogenization test passes.
+2. **W2** — after W1; sources its prior from W8's offline fit.
+3. **W8** — prototype the offline MIND fit **early** (it de-risks the biggest claim and feeds W2), land
+   the warm-start **last**; keep offline until the homogenization test passes. Uses **outlet lean**.
+4. **W3** — **deferred (R1):** not before production; revisit behind a validated article-level lean
+   signal (§W3). Production stays outlet-first.
 
-**Independent:** W1 ⟂ W3. **Dependencies:** W2 ← W1 (and ← W8 prior); W8 ← W3 (soft).
+**Independent:** W1 ⟂ (W8 offline fit). **Dependencies:** W2 ← W1 (and ← W8 prior). **W3 is deferred —
+no longer a dependency of W8.**
 
 ## Estimated implementation complexity
 
@@ -565,26 +636,29 @@ break the explainability philosophy).
 |---|---|---|
 | W1 | **Low–Med** | re-pin blend/parity goldens |
 | W2 | **Med** | per-user reception read-path + shrinkage; gated by W1 |
-| W3 | **Med** | offline classification pass + confidence gating + large golden re-pin |
-| W8 | **High** | transfer + content-mapping + decay + homogenization validation (+ optional retrieval) |
+| W3 | **Deferred (R1)** | blocked on a validated article-level lean signal; not costed pre-production |
+| W8 | **High** | transfer + content-mapping (outlet lean) + decay + homogenization validation (+ optional retrieval) |
 
 ## Expected impact (qualitative — validate the magnitudes with the §7 tests)
 
-| Dimension | W1 | W2 | W3 | W8 |
+| Dimension | W1 | W2 | W3 (deferred) | W8 |
 |---|:--:|:--:|:--:|:--:|
-| **Recommendation quality** | ○ (control, not feed) | ▲ dosing | ▲▲ accurate bridges | ▲▲▲ real collaboration + cold-start |
-| **Information Health** | ▲▲ real agency | ▲▲ adaptive Open-Mindedness | ▲▲ accurate viewpoint metrics | ▲▲ earned (not manufactured) diversity |
-| **Explainability** | ▲▲ honest control | ▲ dosing rationale | ▲▲ truer lean + confidence | ▽ needs provenance labels to *hold* |
-| **Production readiness** | ▲ feature-complete control | ▲ personalization live | ▲ correctness on ingest | ▲▲▲ real substrate + cold-start warm-start |
+| **Recommendation quality** | ○ (control, not feed) | ▲ dosing | — (deferred) | ▲▲▲ real collaboration + cold-start |
+| **Information Health** | ▲▲ real agency | ▲▲ adaptive Open-Mindedness | — (outlet granularity retained) | ▲▲ earned (not manufactured) diversity |
+| **Explainability** | ▲▲ honest control | ▲ dosing rationale | ○ honest by *not* asserting unreliable leans | ▽ needs provenance labels to *hold* |
+| **Production readiness** | ▲ feature-complete control | ▲ personalization live | — (deferred) | ▲▲▲ real substrate + cold-start warm-start |
 
-*(○ neutral · ▲ positive · ▲▲/▲▲▲ larger · ▽ at-risk-without-mitigation)*
+*(○ neutral · ▲ positive · ▲▲/▲▲▲ larger · ▽ at-risk-without-mitigation · — deferred)*
 
-- **Recommendation quality:** dominated by **W8** (real collaborative signal) then **W3** (accuracy).
-- **Information Health:** **W1 + W2** restore real, adaptive agency; **W3** makes the metrics accurate.
-- **Explainability:** **W1/W3 improve** it; **W8 preserves** it *only if* provenance is labelled — the
-  one place to hold the line.
+- **Recommendation quality:** dominated by **W8** (real collaborative signal); **W3 deferred (R1)** — no
+  accuracy gain is available from the current classifier.
+- **Information Health:** **W1 + W2** restore real, adaptive agency; viewpoint-metric accuracy stays at
+  **outlet granularity** (W3 deferred).
+- **Explainability:** **W1 improves** it; **W8 preserves** it *only if* provenance is labelled — the one
+  place to hold the line. Outlet-first W3 keeps explanations honest by *not* asserting unreliable
+  per-article leans.
 - **Production readiness:** **W8** is the largest step (real substrate, cold-start warm-start), with
-  W1/W2/W3 making the surface feature-complete and correct.
+  **W1 + W2** making the surface feature-complete.
 
 ## Standing constraints (all four)
 
@@ -592,5 +666,7 @@ REPORT CONTRACT v1 schema is preserved throughout (golden *values* shift where f
 change; schema/invariants hold); determinism and explain↔served parity are validated on every change;
 and the transparent, viewpoint-aware, user-steerable philosophy is the acceptance bar — most sharply
 for W8, where the transfer prior must be labelled, ranked by the explainable RWE walk, and bridged by
-interpretable (event/lean) edges. **Two hard gates:** clear the **MIND licence** before any production
-use (W8), and keep W3's classifier a **confidence-gated adjustment** around the trusted outlet anchor.
+interpretable (event/outlet-lean) edges. **Hard gate:** clear the **MIND licence** before any production
+use (W8). **W3's classifier gate is now moot (R1)** — W3 is deferred, production lean stays outlet-first,
+and any future article-level signal must clear article-level validation *before* it is trusted (the
+current classifier's κ 0.14 does not).
