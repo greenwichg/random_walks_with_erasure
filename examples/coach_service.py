@@ -490,8 +490,13 @@ def _tool_recommendations(pers, store, uid, deps, want=None, **_):
     """The LIVE feed (story slot included) with each card's resolver explanation — verbatim
     Personalizer.recommendations + evidence_resolver.resolve. ``want`` filters by resolved
     explanation type (bridge / story_match / new_publisher / ...) or topic name."""
+    import api_server as engine
     import evidence_resolver as er
-    served = pers.recommendations(uid)
+    # Honor the reader's recommendation sliders (openness → RWE-B bridge budget, W1; strength → RWE-D
+    # beta) — the SAME params the recommendation endpoints use — so the coach's live feed is verbatim
+    # the served feed, never a different one.
+    params = engine.rec_params_from_settings(store.get_settings(uid))
+    served = pers.recommendations(uid, params=params)
     idx = er.story_index(store)
     ctx = pers.explanation_context(uid)
     resolved = []

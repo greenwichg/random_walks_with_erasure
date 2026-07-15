@@ -282,3 +282,37 @@ def test_why_article_without_binding_is_a_gap(stack):
     intent = cs.Intent("EXPLAIN", "why_article", entities={})
     results, gaps = cs.run_plan(intent, pers, st, uid)
     assert any(g["tool"] == "why_article" for g in gaps)
+
+
+def test_coach_recommendations_honor_reader_settings(stack):
+    """W1 follow-up: the coach's "live feed" tool must serve the SAME feed the recommendation
+    endpoints serve for the reader's settings (openness -> RWE-B bridge budget) — explain<->served
+    parity through the coach. Before the fix the tool passed no params and ignored settings; this
+    reader is left-sided, so maxing openness reshapes their feed and the tool must track it.
+    Snapshot + restore keeps the module-scoped fixture's settings unchanged for other tests."""
+    import api_server as engine
+    st, pers, uid = stack
+    ids = lambda recs: [r["article"]["id"] for r in recs]
+    orig = st.get_settings(uid)
+    try:
+        # openness maxed (bridge budget 8): the endpoint's feed for these exact settings
+        st.save_settings(uid, {"politicalOpenness": 100, "recommendationStrength": 50})
+        params = engine.rec_params_from_settings(st.get_settings(uid))
+        served_open = ids(pers.recommendations(uid, params=params))
+        r_open = _run(stack, "recommendations")
+        coach_open = [c["article"]["id"] for c in r_open.cards]
+        # PARITY: the coach's live cards are the top of the served feed for these settings
+        assert coach_open and coach_open == served_open[:len(coach_open)]
+
+        # default openness (bridge budget 6)
+        st.save_settings(uid, {"politicalOpenness": 50, "recommendationStrength": 50})
+        served_def = ids(pers.recommendations(uid, params=None))
+        r_def = _run(stack, "recommendations")
+
+        # MEANINGFUL: openness measurably changes this sided reader's served feed, and the coach
+        # TRACKS it (pre-fix the tool ignored settings, so r_open == r_def — this is the regression).
+        assert served_open != served_def
+        assert (r_open.cards, r_open.facts["byType"]) != (r_def.cards, r_def.facts["byType"])
+    finally:
+        st.save_settings(uid, orig if orig is not None
+                         else {"politicalOpenness": 50, "recommendationStrength": 50})

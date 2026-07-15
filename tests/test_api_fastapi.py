@@ -1207,11 +1207,13 @@ def test_sliders_shape_the_feed_end_to_end(client):
     # defaults (50/50) -> identical to the anonymous feed, byte for byte
     assert _feed_ids(client, headers=hdr) == anonymous
 
-    # Political openness maps to the RWE-B bridge-slot budget (W1). Its *visible* effect on the
-    # blended feed is reader-dependent — only a reader with cross-cutting bridges gains/loses cards,
-    # and the demo reader here is centered — so the feed-reshape is proven on a sided reader in
-    # test_api_server::test_openness_reshapes_the_served_feed. End-to-end we assert the plumbing: the
-    # setting round-trips through settings→params→blend_plan_for and never leaks to the anonymous feed.
+    # Political openness maps to the RWE-B bridge-slot budget (W1), and it DOES reshape a sided
+    # reader's served feed end-to-end (the cross-cutting card count tracks the 4/6/8 budget) — proven
+    # in test_api_server::test_openness_reshapes_the_served_feed. We assert only the plumbing here
+    # (round-trip + no leak to anonymous), NOT a feed change, because this `client` fixture is
+    # module-scoped: state accumulated by earlier tests in this file can route a fresh signed-in user
+    # (via _serve) to a reader whose feed is openness-insensitive at this point — a fixture-ordering
+    # artifact, not a centered reader and not a serving bug.
     client.post("/api/me/settings", json={"politicalOpenness": 0}, headers=hdr)
     assert _feed_ids(client) == anonymous                          # anonymous unaffected
 
