@@ -608,18 +608,49 @@ def test_rec_params_mapper_anchors_and_clamps():
     assert f(None) is None                                        # no settings at all
     assert f({}) is None                                          # defaults everywhere
     assert f({"politicalOpenness": 50, "recommendationStrength": 50}) is None
-    assert f({"politicalOpenness": 0}) == {"epsilon": 0.70}
-    assert f({"politicalOpenness": 100}) == {"epsilon": 0.97}
+    assert f({"politicalOpenness": 0}) == {"openness": 0}
+    assert f({"politicalOpenness": 100}) == {"openness": 100}
     assert f({"recommendationStrength": 0}) == {"beta": 0.30}
     assert f({"recommendationStrength": 100}) == {"beta": 0.80}
     both = f({"politicalOpenness": 100, "recommendationStrength": 0})
-    assert both == {"epsilon": 0.97, "beta": 0.30}
+    assert both == {"openness": 100, "beta": 0.30}
     # clamped by normalize_settings before mapping
-    assert f({"politicalOpenness": 999}) == {"epsilon": 0.97}
-    assert f({"politicalOpenness": -5}) == {"epsilon": 0.70}
-    # monotone: more openness never lowers epsilon
-    eps = [f({"politicalOpenness": v})["epsilon"] for v in (0, 25, 75, 100)]
-    assert eps == sorted(eps)
+    assert f({"politicalOpenness": 999}) == {"openness": 100}
+    assert f({"politicalOpenness": -5}) == {"openness": 0}
+    # monotone: more openness never lowers the RWE-B bridge budget (W1)
+    budgets = [dict(api_server.blend_plan_for(f({"politicalOpenness": v})))["rwe-b"]
+               for v in (0, 25, 50, 75, 100)]
+    assert budgets == [4, 5, 6, 7, 8]
+
+
+def test_blend_plan_for_openness_budget():
+    """W1: openness moves the RWE-B bridge budget; slider-50 / absent is byte-identical to the
+    historical DEFAULT_BLEND_PLAN; the total slot count and strategy order are preserved."""
+    D = api_server.DEFAULT_BLEND_PLAN
+    total = sum(k for _, k in D)
+    assert api_server.blend_plan_for(None) is D                       # no params → default (identity)
+    assert api_server.blend_plan_for({"beta": 0.3}) is D              # no openness key → default
+    assert api_server.blend_plan_for({"openness": 50}) == D           # slider 50 → byte-identical
+    assert dict(api_server.blend_plan_for({"openness": 0})) == {"rwe-b": 4, "rwe-d": 5, "adaptive": 5}
+    assert dict(api_server.blend_plan_for({"openness": 100})) == {"rwe-b": 8, "rwe-d": 3, "adaptive": 3}
+    for op in (0, 25, 50, 75, 100):
+        p = api_server.blend_plan_for({"openness": op})
+        assert sum(k for _, k in p) == total                         # total slots preserved
+        assert [n for n, _ in p] == [n for n, _ in D]                # order preserved
+
+
+def test_openness_reshapes_the_served_feed(backend, user):
+    """W1: the openness slider now VISIBLY moves a (sided) reader's served feed via the RWE-B
+    bridge-slot budget — the reshape the W1 audit proved epsilon could NOT do (identical=True →
+    identical=False). Slider 50 stays byte-identical to the untouched default; deterministic."""
+    def ids(op):
+        params = api_server.rec_params_from_settings({"politicalOpenness": op}) if op != 50 else None
+        return [r["article"]["id"] for r in backend.recommendations(user, None, params)]
+    default = [r["article"]["id"] for r in backend.recommendations(user, None, None)]
+    assert ids(50) == default                                        # untouched slider → byte-identical
+    assert ids(0) != default and ids(100) != default                # openness now MOVES the feed (W1)
+    assert ids(0) != ids(100)                                        # the two extremes differ
+    assert ids(0) == ids(0)                                          # deterministic
 
 
 def _rec_ids(backend, u, strategy, params):

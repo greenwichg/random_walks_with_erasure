@@ -216,7 +216,7 @@ def explain(backend, corpus, rec, u: int, strategy: Optional[str] = None,
     # first-seen across strategies — the shared helpers keep the parity guarantee byte-exact.
     # ``slice_js`` records which ranked items occupy each strategy's slots — the honest meaning
     # of "inSlice" now that admission/ordering can skip over or reorder raw ranks.
-    plan = ((strategy, SINGLE_K),) if strategy in STRATEGIES else BLEND_PLAN
+    plan = ((strategy, SINGLE_K),) if strategy in STRATEGIES else engine.blend_plan_for(params)
     chosen, seen_cols, dedup_dropped = [], set(), 0
     slice_js: dict = {s: set() for s in STRATEGIES}
     for s, kk in plan:

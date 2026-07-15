@@ -342,12 +342,17 @@ def normalize_settings(stored: "dict | None", patch: "dict | None" = None) -> di
     }
 
 
-# Slider → recommender-parameter mapping. Piecewise-linear through three anchors, pinned so
-# **slider 50 maps exactly to the constants the stack has always used** (RWE-B epsilon 0.9,
-# RWE-D beta 0.5): an untouched slider changes nothing, byte for byte. The ranges are deliberately
-# gentle — Political openness rides the weak text-lean axis (directional, not a measurement; see
-# docs/HEALTH_REPORT.md), so its reach is a nudge, never a hard flip.
-_OPENNESS_EPSILON = (0.70, 0.90, 0.97)    # slider 0 / 50 / 100 → RWE-B epsilon (non-bridge erasure)
+# Slider → recommender mapping. Piecewise-linear through three anchors, pinned so **slider 50 maps
+# exactly to the values the stack has always used**: an untouched slider changes nothing, byte for
+# byte. Ranges are deliberately gentle — a nudge, never a hard flip.
+#
+# Political openness → the RWE-B **bridge-slot budget** in the blend (W1): how many of the feed's
+# slots surface cross-cutting "bridge" articles (the remaining slots split evenly across the other
+# strategies; see :func:`blend_plan_for`). This replaced the historical openness→epsilon mapping,
+# which the W1 audit proved inert on the *served* feed (docs/W1_OPENNESS_SLIDER_AUDIT.md): epsilon
+# only rescales same-side erasure, which the per-user argsort and the cross-first slice both cancel.
+# Tunable — change these anchors to retune openness without touching the implementation.
+_OPENNESS_BRIDGE_BUDGET = (4, 6, 8)       # slider 0 / 50 / 100 → RWE-B slots (DEFAULT_BLEND_PLAN total = 14)
 _STRENGTH_BETA = (0.30, 0.50, 0.80)       # slider 0 / 50 / 100 → RWE-D beta (popularity suppression)
 
 
@@ -360,20 +365,38 @@ def _piecewise(v: float, lo: float, mid: float, hi: float) -> float:
 def rec_params_from_settings(settings: "dict | None") -> "dict | None":
     """Per-request recommender parameters from a reader's stored preferences, or ``None``.
 
-    The two sliders map to hyperparameters the RWE classes have always accepted — Political
-    openness → RWE-B ``epsilon`` (how strongly same-side items are erased, i.e. how far the walk
-    reaches for cross-cutting reads) and Recommendation strength → RWE-D ``beta`` (how strongly
-    popular items are suppressed, i.e. how far the feed diversifies from the usual diet). Only a
-    *moved* slider contributes a key, and ``None`` means "use the shared default stack" — so demo,
-    anonymous, and untouched-slider requests are provably identical to the pre-slider behaviour.
-    The algorithms themselves are untouched; this only chooses constructor arguments."""
+    Two sliders contribute — Political openness → the RWE-B **bridge-slot budget** (carried as the
+    ``openness`` key, consumed by :func:`blend_plan_for`; W1) and Recommendation strength → RWE-D
+    ``beta`` (how strongly popular items are suppressed). Only a *moved* slider contributes a key,
+    and ``None`` means "use the shared default stack" — so demo, anonymous, and untouched-slider
+    requests are provably identical to the pre-slider behaviour. The algorithms themselves are
+    untouched; openness reshapes only the blend's slot allocation, beta only a constructor arg."""
     s = normalize_settings(settings)
     params = {}
     if s["politicalOpenness"] != 50:
-        params["epsilon"] = _piecewise(s["politicalOpenness"], *_OPENNESS_EPSILON)
+        params["openness"] = int(s["politicalOpenness"])     # W1: drives the RWE-B bridge budget
     if s["recommendationStrength"] != 50:
         params["beta"] = _piecewise(s["recommendationStrength"], *_STRENGTH_BETA)
     return params or None
+
+
+def blend_plan_for(params: "dict | None") -> tuple:
+    """The per-request blend plan. **Political openness (W1)** moves the RWE-B bridge-slot budget
+    (:data:`_OPENNESS_BRIDGE_BUDGET`); the remaining slots split evenly across the other strategies,
+    in ``DEFAULT_BLEND_PLAN`` order and preserving its total. Absent / slider-50 → the shared
+    ``DEFAULT_BLEND_PLAN`` (byte-identical to the historical feed). Shared by the serving path
+    (:meth:`Backend._serialize_recommendations`) and the explain observer (:mod:`rec_explain`) so the
+    replicated plan stays byte-exact — the W1 / 21a parity guarantee."""
+    if not params or "openness" not in params:
+        return DEFAULT_BLEND_PLAN
+    total = sum(k for _, k in DEFAULT_BLEND_PLAN)
+    budget = max(0, min(total, int(round(_piecewise(params["openness"], *_OPENNESS_BRIDGE_BUDGET)))))
+    others = [name for name, _ in DEFAULT_BLEND_PLAN if name != "rwe-b"]
+    base, extra = divmod(total - budget, len(others)) if others else (0, 0)
+    counts = {"rwe-b": budget}
+    for i, name in enumerate(others):
+        counts[name] = base + (1 if i < extra else 0)
+    return tuple((name, counts[name]) for name, _ in DEFAULT_BLEND_PLAN)
 
 
 # ------------------------------------------------------------------ #
@@ -1367,9 +1390,10 @@ class Backend:
             familiarity = _familiarity_of(corpus.pop, u)   # evidence for the reason templates
         except Exception:
             familiarity = None                             # best-effort: claims are then omitted
-        # a single strategy, or a blend across the family for the default "all" view
+        # a single strategy, or a blend across the family for the default "all" view. The blend's
+        # slot budget follows the reader's openness slider (W1); absent/50 → DEFAULT_BLEND_PLAN.
         plan = ([(strategy, 12)] if strategy in ("rwe-b", "rwe-d", "adaptive")
-                else DEFAULT_BLEND_PLAN)
+                else blend_plan_for(params))
         cols_by_strategy = [(strat, self._rec_cols_of(corpus.mind, rec, u, strat, k, params,
                                                       user_side=float(user_side)))
                             for strat, k in plan]
