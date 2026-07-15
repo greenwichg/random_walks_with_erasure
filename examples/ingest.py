@@ -56,22 +56,20 @@ _SECTIONS = {
     "sports": "Sports", "sport": "Sports", "football": "Sports", "soccer": "Sports",
     "entertainment": "Entertainment", "arts": "Arts", "culture": "Culture",
 }
-# Path substrings that flag a read as political when the source doesn't say.
-_POLITICAL_HINTS = ("politic", "election", "/opinion")
-# Category substrings that flag an article as political (case-insensitive).
-_POLITICAL_CATEGORY_HINTS = ("politic", "election", "opinion")
+def looks_political(url: str = "", category: str = "", title: str = "") -> bool:
+    """The shared article-level political flag — now derived from the canonical topic classifier
+    (W3A), not a raw substring test.
 
-
-def looks_political(url: str = "", category: str = "") -> bool:
-    """The shared article-level political heuristic: URL path hints or a political category.
-
-    ONE definition product-wide — the read scorer and the corpus loaders both use it, so the
-    Information Health metrics, the cross-cutting gate, and the bridge explanations can never
-    disagree about what "political" means. Deterministic; no network."""
-    path = urlsplit(url).path.lower() if url else ""
-    cat = (category or "").lower()
-    return (any(h in path for h in _POLITICAL_HINTS)
-            or any(h in cat for h in _POLITICAL_CATEGORY_HINTS))
+    ONE definition product-wide (:func:`_political_from_topic`): the read scorer and the corpus
+    loaders share it, so the Information Health metrics, the cross-cutting gate, and the bridge
+    explanations can never disagree about what "political" means. Delegating to
+    :func:`classify_topic` fixes the substring test's false positives (``"election"`` inside
+    ``"selection"``) and false negatives (``"congress"`` / ``"white house"`` never contained the
+    literal ``politic`` / ``election``). Deterministic; no network, no new model, no LLM.
+    ``title`` is optional and, when supplied, lets a political op-ed be recognised (see
+    :func:`_political_from_topic`)."""
+    return _political_from_topic(
+        classify_topic(url=url, source_category=category, title=title), title)
 
 
 # --------------------------------------------------------------------------- #
@@ -321,6 +319,16 @@ def classify_topic(url: str = "", source_category: str = "", title: str = "",
     return section
 
 
+def _political_from_topic(topic: str, title: str = "") -> bool:
+    """W3A: the political flag derived from the canonical topic (already computed by
+    :func:`classify_topic`). Political ⇔ the topic is ``"Politics"``, OR it is an ``"Opinion"``
+    piece whose headline is itself about politics — so a political op-ed stays political while a
+    sports / entertainment / business op-ed does not. Reuses the existing precision-first lexicon
+    (:func:`_lexicon_topic`); no new model, no network. The single source of truth for the mask,
+    shared by :func:`looks_political` and the scorer."""
+    return topic == "Politics" or (topic == "Opinion" and _lexicon_topic(title or "") == "Politics")
+
+
 @dataclass(frozen=True)
 class RawRead:
     """A reading event as an ingestion source observes it — before scoring.
@@ -405,8 +413,7 @@ class Scorer:
         category = classify_topic(url=raw.url, source_category=raw.category, title=raw.title,
                                   description=f"{raw.subtitle} {raw.description}".strip())
         political = (raw.political if raw.political is not None
-                     else (looks_political(raw.url, raw.category)
-                           or looks_political(category=category)))
+                     else _political_from_topic(category, raw.title))   # reuse the topic just computed (W3A)
         outlet, lean = self._resolve_outlet(raw)
         scored = ScoredRead(
             article_id=canonical_url(raw.url),

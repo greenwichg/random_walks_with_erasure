@@ -28,12 +28,18 @@ from simulate_users import catalog_from_qbias  # noqa: E402
 
 # --------------------------------------------------------------------------- heuristic
 def test_looks_political_url_and_category_hints():
-    assert looks_political(url="https://ex.com/politics/story")
-    assert looks_political(url="https://ex.com/2026/election-night")
-    assert looks_political(url="https://ex.com/opinion/columnist")     # "/opinion" path hint
-    assert looks_political(url="https://ex.com/a", category="Politics")
-    assert looks_political(url="", category="Opinion")
+    # W3A: looks_political now delegates to classify_topic (word-boundary lexicon), not a raw
+    # substring test. A recognized political section/category or a political headline flags it; a
+    # bare /opinion/ URL or an Opinion category no longer does (that was the false-positive source),
+    # and a political op-ed is kept via the headline.
+    assert looks_political(url="https://ex.com/politics/story")            # /politics/ section
+    assert looks_political(url="https://ex.com/a", category="Politics")     # Politics category
+    assert looks_political(title="Election results certified")             # political headline
+    assert looks_political(category="opinion", title="Congress must act")   # political op-ed kept
+    assert not looks_political(url="https://ex.com/opinion/columnist")      # bare opinion: not auto-political
+    assert not looks_political(url="", category="Opinion")                  # bare Opinion category: not political
     assert not looks_political(url="https://ex.com/sports/final", category="Sports")
+    assert not looks_political(category="opinion", title="The best films of the year")  # non-political op-ed
     assert not looks_political(url="https://ex.com/betting/promo-code", category="")
     assert not looks_political()
 
@@ -82,9 +88,11 @@ def test_loader_derives_when_column_absent(tmp_path):
         w.writerow(["Column on the race", "AP", "center", "", "https://ex.com/opinion/c"])
     cat = catalog_from_qbias(path)
     flags = dict(zip(cat.titles.tolist(), cat.political.tolist()))
-    assert flags["Vote splits senate"] is np.True_ or flags["Vote splits senate"] is True
-    assert not flags["Cup final recap"]
-    assert flags["Column on the race"]          # "/opinion" URL hint
+    assert flags["Vote splits senate"] is np.True_ or flags["Vote splits senate"] is True   # ['Politics'] tag
+    assert not flags["Cup final recap"]                                                      # ['Sports']
+    # W3A: a bare /opinion/ URL with no political tag/headline is no longer auto-political
+    # (the old "/opinion" substring hint was a false-positive source).
+    assert not flags["Column on the race"]
 
 
 # --------------------------------------------------------------------------- the gate
