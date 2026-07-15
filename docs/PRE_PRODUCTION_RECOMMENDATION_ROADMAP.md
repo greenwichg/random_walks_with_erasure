@@ -277,6 +277,9 @@ during long inactivity. Not needed to close W2.
 
 > ### ⚠️ REVISED (R1, 2026-07-15) — W3 is DEFERRED, not scheduled before production
 >
+> **Canonical W3 doc:** `docs/W3_ROADMAP_REVISION.md` supersedes this section (W3-Core deferred +
+> W3-Lite tracks); `docs/REGISTER_VALIDATION_EXPERIMENT.md` is the gate for register-gated extremity.
+>
 > **What changed.** The preferred fix below (confidence-gated article-level lean via `classify_lean`)
 > assumed the classifier is accurate enough at the article level. **It is not**, and the repo already
 > documented this:
