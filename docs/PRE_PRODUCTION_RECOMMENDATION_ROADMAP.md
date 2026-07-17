@@ -28,6 +28,14 @@
   never depended on the classifier). The original W3 proposal is retained below, superseded and
   annotated, for decision-history integrity.
 
+- **R2 (2026-07-16) — W1 and W2 are shipped; both leave this roadmap.** W1 re-mapped openness onto
+  the RWE-B **bridge-slot budget** (I1; commit `8be5e55`) and W2 wired the measured, κ-shrunk
+  cross-cutting reception into `AdaptiveRWEB` (I8 wiring; commit `3f29c7f`). The remaining W2 scope —
+  the dosing-policy *retune* — is traffic-gated, as §W2's analysis argued. **Effect:** of the
+  recommended order **W1 → W2 → W8**, only **W8** remains, unchanged in status (paused pending real
+  traffic — `docs/W8_FINAL_ARCHITECTURE_DECISION.md`). §W1/§W2 below are retained as the design
+  record (see the R2 banners).
+
 ## Reading guide & conventions
 
 - **Run from the repo root.** All algorithms live in `rwe/`; orchestration/serving in
@@ -52,6 +60,9 @@
 ---
 
 # W1 — Openness control is inert on the served feed
+
+> **R2 (2026-07-16): SHIPPED** as proposed (openness → bridge-slot budget, commit `8be5e55`). This
+> section is retained as the design record — see the revision history.
 
 ## 1. Current implementation
 
@@ -167,6 +178,10 @@ not part of closing W1.
 ---
 
 # W2 — Adaptive dosing uses a constant (`exposure = 0.5`)
+
+> **R2 (2026-07-16): WIRING SHIPPED** (measured shrunk reception → `AdaptiveRWEB`, commit `3f29c7f`);
+> the dosing-policy retune remains traffic-gated. Retained as the design record — see the revision
+> history.
 
 ## 1. Current implementation
 

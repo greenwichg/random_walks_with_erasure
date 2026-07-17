@@ -67,8 +67,8 @@ document; the per-item sections are just these principles applied.
 | W6 | Discovery can surface stale / undated-immortal items | Defect (candidacy) | **Implemented (Tier A)**; topic-aware deferred | `482fdd9` |
 | W5 | Static 6/4/4 blend, triple-hardcoded | Maintainability defect + policy | **Implemented (Tier 0)**; reader-adaptive deferred | `6b17424` |
 | W4 | Unknown outlets silently dropped | Latent risk (0% today) | **Observability implemented**; fix deferred | `96c33ce` |
-| W1 | "Openness" (ε) slider does nothing | Defect (inert control) | **Audited & documented; deferred** | `7611c84` |
-| W2 | Adaptive isn't adaptive (`exposure=0.5`) | Incomplete feature | **Deferred** (traffic-gated) | — |
+| W1 | "Openness" (ε) slider does nothing | Defect (inert control) | **Implemented** — openness re-mapped to the RWE-B bridge-slot budget (I1) | `8be5e55` |
+| W2 | Adaptive isn't adaptive (`exposure=0.5`) | Incomplete feature | **Implemented (wiring)** — measured reception, shrunk toward the neutral prior; the dosing *retune* stays traffic-gated | `3f29c7f` |
 | W3 | Ideology is outlet-level & coarse | Design limitation | **Deferred** (major research) | — |
 | W8 | Collaborative base is synthetic | Stage-of-product | **Deferred** (needs traffic) | — |
 
@@ -189,6 +189,10 @@ re-opens the W5 blend surface and its parity tests). Choosing and building eithe
 reflex to a trust-only control. Deferring here is principle 2 (don't tune a broken lever) plus a
 sequencing call.
 
+> **Update (2026-07-16):** the fork was resolved and **shipped** — openness now drives the RWE-B
+> **bridge-slot budget** (4/6/8 via `blend_plan_for`; I1, commit `8be5e55`), which also makes the
+> slider honest by construction (I2 absorbed). The audit above is retained as the motivating record.
+
 ### W2 — Adaptive isn't adaptive (`exposure = 0.5` constant)
 
 **Finding.** `AdaptiveRWEB` is served with a constant exposure, so per-user dosing does nothing in
@@ -201,6 +205,11 @@ Compounding this, Adaptive's exposure feeds an ε-like mechanism, so its *visibl
 by the same inertness proven in W1 — meaning even a correctly-wired exposure would move the served
 feed less than expected until W1's slice interaction is addressed. Wiring W2 is therefore both
 premature (no data) and partially blocked (by W1). It should follow real engagement data.
+
+> **Update (2026-07-16):** the **wiring shipped** (I8, commit `3f29c7f`) — the reader's measured
+> cross-cutting reception, shrunk toward the neutral prior (`shrunk_exposure`, κ=10, cold-start-safe),
+> now feeds `AdaptiveRWEB` per reader; the W1 re-map removed the blocking slice interaction. The
+> *dosing policy* (κ / anchor tuning) remains traffic-gated exactly as argued above.
 
 ### W3 — Ideology is outlet-level and coarse
 
@@ -235,14 +244,14 @@ deterministic *simulated* population and are engine behavior, not audience predi
 
 | ID | Improvement | Weakness | Disposition & reasoning |
 |----|-------------|----------|--------------------------|
-| I1 | Re-map "openness" to a real lever (rwe-b budget / `max_distance`) | W1 | Deferred — fork option; re-opens the W5 blend surface |
-| I2 | Make the openness slider honest | W1 | Deferred — fork option; the zero-risk alternative to I1 |
+| I1 | Re-map "openness" to a real lever (rwe-b budget / `max_distance`) | W1 | **Shipped** (`8be5e55`) — openness drives the rwe-b slot budget via `blend_plan_for`; parity goldens updated with it |
+| I2 | Make the openness slider honest | W1 | **Resolved by I1** — the slider now moves the served feed, honest by construction |
 | I3 | Expand `outlet_registry.csv` | W4 | Deferred (data task) — the W4 coverage CLI produces the worklist; do it when the unknown rate is non-trivial |
 | I4 | Text-classifier fallback for unknown lean | W3/W4 | **Rejected** — injects model error into the trusted lean signal; registry stays the anchor |
 | I5 | Freshness / recency shaping of discovery | W6 | **Partially shipped** — the undated-immortal defect is fixed (Tier A); broader recency *boosting* remains open |
 | I6 | Topic-aware discovery | W6 | Deferred (Tier B) — a serendipity *policy*, not a defect |
 | I7 | Reader-adaptive blend | W5 | Deferred — speculative policy; needs an engagement signal |
-| I8 | Wire Adaptive `exposure` to reception signal | W2 | Deferred — traffic-gated and partially blocked by W1 |
+| I8 | Wire Adaptive `exposure` to reception signal | W2 | **Shipped (wiring)** (`3f29c7f`) — per-reader shrunk reception feeds `AdaptiveRWEB`; the dosing-policy *retune* remains traffic-gated |
 | I9 | De-duplicate the bridge labels | W7 | **Shipped** (`d619539`) |
 | I10 | Article-level lean | W3 | Deferred — major research; large golden shift |
 | I11 | Real graph + learned ideology at scale | W8 | Deferred — needs traffic |
@@ -286,7 +295,7 @@ the repo root:
 - **W7** — `rec_sandbox._why_labels` collapses the cross-cutting bridge case to `['Cross-cutting']`;
   a live rwe-b render shows zero "Bridge Article" chips. Test: `tests/test_rec_sandbox.py`.
 
-Full suite: `python -m pytest -q` (1155 passing as of `d619539`).
+Full suite: `python -m pytest -q` (1201 passing as of 2026-07-16, `4bc0863`).
 
 ## Maintenance note
 

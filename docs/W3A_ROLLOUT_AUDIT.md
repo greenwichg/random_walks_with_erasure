@@ -87,10 +87,11 @@ flags on a known FN case; run the regression suite.
 | 0 | **Back up the DB** | `python examples/db_backup.py backup` | `…/backups/ih_beta-<ts>.db` written; `status` shows it | — (this *is* the rollback artifact) |
 | 1 | **Preview (shadow)** | `python examples/migrate_topics.py --dry-run` | Prints `changed/rows` per table + before/after category dist; **writes nothing** | n/a (read-only) |
 | 2 | **Political-count baseline** | read-only count of `political=True` across `feed_articles`/`reads`/`scored_articles` (SQL/one-liner) | A baseline number to diff against step 5 | n/a (read-only) |
+| 2a | **Preflight: blob validity** *(added 2026-07-16, post-rehearsal)* | read-only scan: every `scored` blob in the three tables parses as JSON | **0 malformed rows.** If >0: **STOP** — the migration walker `json.loads`es each row unguarded, so one bad blob aborts that table's pass; a defensive fix must land before migrating | n/a (read-only) |
 | 3 | **Run the migration** | `python examples/migrate_topics.py` | `changed/rows` per table (matches step 1); `scored` rewritten in place | `db_backup.py restore <backup>` **+ restart** |
 | 4 | **Idempotence check** | `python examples/migrate_topics.py --dry-run` | **0 changed** in every table | n/a |
 | 5 | **Political-count after** | same query as step 2 | ≈ the qbias-proportional increase (dominated by FN recovery); no unexpected drops | restore + restart if anomalous |
-| 6 | **Rebuild serving corpus** | **restart the engine** (or force a `corpus_refresh` swap) | New base corpus built from the migrated DB; in-memory caches cleared | restart on the restored backup |
+| 6 | **Rebuild serving corpus** | **restart the engine** (or force a `corpus_refresh` swap) | New base corpus built from the migrated DB; in-memory caches cleared; URL resolver re-attached — verify `source: "feed"` and `resolvedUrls > 0` on the diagnostics endpoint *(added 2026-07-16: the rebuild is Backend **plus** `attach_url_resolver`, `api_fastapi.py:226` — rehearsal-confirmed)* | restart on the restored backup |
 | 7 | **Verify live** | `GET /api/recommendations` / `/api/report` for a known FN case (a Congress / Supreme Court story) + run the test suite | The story now reads political / cross-cutting; suites green | restore + restart |
 | 8 | **Monitor** | watch Open-Mindedness / cross-cutting + the W1 bridge mix | Moves as the shadow (§ readiness doc) predicted; no error spike | restore + restart |
 

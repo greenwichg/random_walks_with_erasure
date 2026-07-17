@@ -132,6 +132,8 @@ switching data never touches the frontend.
 | `RWE_RECS_SOURCE` | — | `feed` sources the recommender's catalog from the RSS `FeedArticle` store (else the static corpus) |
 | `RWE_FEED_MIN_ARTICLES` | — | min catalog size before the feed source activates (default `50`; below it, falls back to the static corpus) |
 | `RWE_FEED_MAX_AGE_DAYS` | `60` | recommendation-candidate freshness window: articles published (or, undated, fetched) more than this many days ago never enter the recommendation corpus. `0` disables. Composition only — stale articles stay stored and visible to Search/Stories/History. Distinct from `RWE_RETENTION_MAX_AGE_DAYS`, which deletes rows. |
+| `RWE_FEED_URL_DATE` | `1` (on) | trust a publication date embedded in the article URL path (`/YYYY/MM/DD/`, `/YYYY/MM/`, trailing `-MM-DD-YY`) as the authoritative candidacy age — catches archived items a feed left undated or re-dated (C4.2). `0` disables — the instant rollback to pre-C4.2 candidacy. |
+| `RWE_FEED_REQUIRE_DATED` | `0` (off) | require a parseable `publishedAt` for recommendation candidacy — excludes undated items instead of falling back to first-seen/fetch time. Only consulted while the age window is active. |
 | `RWE_FEED_CORPUS_CSV` | — | where the `FeedArticle`→qbias export is written (default `data/feed_corpus.csv`) |
 | `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` | — | enable the live coach narrative |
 
@@ -266,6 +268,10 @@ python examples/rss_ingest.py run --feeds deploy/rss_feeds.example.txt
 #   or:  RWE_RSS_FEEDS=deploy/rss_feeds.example.txt python examples/rss_ingest.py run
 python examples/rss_ingest.py status                 # catalog size + most-recent articles
 ```
+
+> Note: the one-shot `run` records **no per-feed health** (that is the poller's job — `RWE_FEED_POLL`
+> / the multi-source poller), so a corpus-validation read right after a CLI ingest correctly reports
+> `healthyFeeds: 0, unhealthyFeeds: 0`. Health rows appear once polling starts.
 
 Schedule `run` from cron/systemd (feeds are operator-configured, not user input, so fetching them is
 not a user-facing SSRF surface). Each catalog article preserves the real publisher URL, publisher,
