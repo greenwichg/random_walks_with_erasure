@@ -647,14 +647,19 @@ def _tool_forecast(pers, store, uid, deps, action=None, k=3, **_):
 
 
 def _tool_goals(pers, store, uid, deps, **_):
-    """Stored settings, read-only (goal persistence stays in the existing settings flow)."""
+    """Stored settings, read-only (goal persistence stays in the existing settings flow). The reading
+    goal is NORMALISED to the settings contract (clamped 0–600, coerced to int, junk → default) so the
+    coach reports exactly what the Settings page and dashboard show — never a raw, unclamped stored
+    value. ``coachGoals`` is an out-of-contract field the normaliser doesn't know about, so it (and the
+    has-any-settings flag) is read from the raw stored object, unchanged."""
+    import settings_service
     settings = store.get_settings(uid) or {}
-    facts = {"readingGoalMinutes": settings.get("readingGoalMinutes", 20),
+    facts = {"readingGoalMinutes": settings_service.normalize_settings(settings)["readingGoalMinutes"],
              "coachGoals": settings.get("coachGoals"),
              "hasStoredSettings": bool(settings)}
     return ToolResult("goals", facts,
                       (Citation("readingGoalMinutes", facts["readingGoalMinutes"],
-                                "store.get_settings"),),
+                                "settings_service.normalize_settings"),),
                       provenance=_prov(store, uid))
 
 

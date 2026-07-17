@@ -21,6 +21,7 @@ sys.path.insert(0, str(ROOT / "examples"))
 
 import coach_service as cs   # noqa: E402
 import evidence_resolver as er  # noqa: E402
+import settings_service as ss   # noqa: E402
 import store as store_mod    # noqa: E402
 
 
@@ -213,14 +214,76 @@ def test_forecast_tool_exposes_engine_projections_verbatim(stack):
 def test_goals_and_story_context_tools(stack):
     st, pers, uid = stack
     g = _run(stack, "goals")
-    assert g.facts["readingGoalMinutes"] == (st.get_settings(uid) or {}).get(
-        "readingGoalMinutes", 20)
+    # C2b: the coach reports the NORMALISED goal (clamped/coerced to the settings contract), so it
+    # matches the Settings page and dashboard — not the old raw ``.get("readingGoalMinutes", 20)``.
+    assert g.facts["readingGoalMinutes"] == ss.normalize_settings(
+        st.get_settings(uid))["readingGoalMinutes"]
     sc = _run(stack, "story_context", article=ANCHOR)
     story = er.story_index(st)[er._canon(ANCHOR)]
     assert sc.facts["story"]["storyId"] == story["storyId"]
     assert sc.facts["story"]["members"] == len(story["coverage"])
     none = _run(stack, "story_context", article="https://ap0.example.com/x/0")
     assert none.facts["story"] is None and none.caveats
+
+
+# --------------------------------------------------------------------------- #
+# C2b: the goals tool reports the NORMALISED reading goal (drift-bug fix), while coachGoals and
+# hasStoredSettings keep their raw semantics.
+# --------------------------------------------------------------------------- #
+def _goals(st, uid):
+    """Invoke the goals tool in isolation (it uses only store + uid; pers/deps are unused)."""
+    return cs.TOOLS["goals"](None, st, uid, {})
+
+
+def test_goals_reading_goal_is_normalized_drift_fixed():
+    """The reading goal is clamped/coerced to the settings contract, so the coach agrees with the
+    Settings API and dashboard. This is the ONE C2b behaviour change; every case below that is
+    already in-range/valid is unchanged from the old raw read."""
+    st = store_mod.Store("sqlite://")                       # in-memory
+    uid = st.upsert_user_by_identity("dev", "goals-norm").id
+
+    # (missing value) — no settings row at all -> honest default
+    assert _goals(st, uid).facts["readingGoalMinutes"] == 20
+
+    # (stored values) each save REPLACES the blob; the coach reports the NORMALISED goal.
+    cases = [
+        ({"readingGoalMinutes": 99999}, 600),   # out-of-range integer -> clamped high
+        ({"readingGoalMinutes": -5}, 0),         # negative integer     -> clamped low
+        ({"readingGoalMinutes": "45"}, 45),      # numeric string       -> coerced to int
+        ({"readingGoalMinutes": "abc"}, 20),     # invalid string       -> default
+        ({"readingGoalMinutes": 30}, 30),        # normal integer       -> unchanged
+    ]
+    for stored, expected in cases:
+        st.save_settings(uid, stored)
+        res = _goals(st, uid)
+        assert res.facts["readingGoalMinutes"] == expected, (stored, res.facts["readingGoalMinutes"])
+        # the citation must attribute the value to the normaliser, not the raw store read
+        cite = [c for c in res.citations if c.key == "readingGoalMinutes"][0]
+        assert cite.value == expected
+        assert cite.source == "settings_service.normalize_settings"
+
+
+def test_goals_coachgoals_and_hasstored_are_raw_and_unchanged():
+    """C2b must NOT touch the raw-read semantics of ``coachGoals`` (an out-of-contract field the
+    normaliser would drop) or ``hasStoredSettings`` (a has-any-row flag)."""
+    st = store_mod.Store("sqlite://")
+    uid = st.upsert_user_by_identity("dev", "goals-raw").id
+
+    # no row -> no goals, not stored
+    res = _goals(st, uid)
+    assert res.facts["coachGoals"] is None
+    assert res.facts["hasStoredSettings"] is False
+
+    # a stored blob carrying an out-of-contract coachGoals list -> read RAW, verbatim (the normaliser
+    # would drop it, so this proves the read still bypasses normalisation for these two fields).
+    goals = ["Read 2 center outlets this week", "Follow one story to resolution"]
+    st.save_settings(uid, {"coachGoals": goals, "readingGoalMinutes": 25})
+    res = _goals(st, uid)
+    assert res.facts["coachGoals"] == goals            # verbatim — NOT dropped
+    assert res.facts["hasStoredSettings"] is True
+    assert res.facts["readingGoalMinutes"] == 25       # in-range value passes through unchanged
+    # coachGoals is never citable (only the reading goal is cited); its provenance stays raw settings.
+    assert [c.key for c in res.citations] == ["readingGoalMinutes"]
 
 
 # --------------------------------------------------------------------------- #
