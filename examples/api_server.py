@@ -49,6 +49,15 @@ import numpy as np
 import health_report as hr
 import narrate_report as nr
 from rwe.mind import MINDData
+# Re-export the settings schema + normaliser from the dependency-free ``settings_service`` leaf, so
+# this module's public surface (``api_server.DEFAULT_SETTINGS`` / ``normalize_settings`` / ...) is
+# unchanged for every existing caller while the definitions live in one place. What STAYS here is the
+# only settings code that depends on recommender vocabulary — ``rec_params_from_settings`` (below).
+from settings_service import (       # noqa: F401  (re-exported for callers)
+    DEFAULT_SETTINGS, normalize_settings,
+    _SETTINGS_THEMES, _SETTINGS_LANGUAGES,
+    _clamp_int, _layered, _merge_bool_group,
+)
 
 # ------------------------------------------------------------------ #
 # Domain mapping — engine labels -> frontend MetricKey (web/types/domain.ts)
@@ -271,75 +280,15 @@ def _handle_from(name: str, email: str) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# Product preferences (settings). Three of these now shape product behaviour —
-# ``politicalOpenness`` / ``recommendationStrength`` map to per-request RWE-B/RWE-D
-# hyperparameters (see :func:`rec_params_from_settings`) and ``readingGoalMinutes``
-# drives the dashboard's today-vs-goal progress. Settings still wire NOTHING into
-# the health report or its metrics.
+# Product preferences (settings). The schema, defaults and normaliser now live in the
+# dependency-free ``settings_service`` leaf and are re-exported at the top of this module
+# (``DEFAULT_SETTINGS`` / ``normalize_settings`` / the allowlists / the private coercers), so
+# ``api_server``'s public surface is byte-for-byte what callers already import. What STAYS here is
+# the piece that depends on recommender vocabulary: the two sliders — ``politicalOpenness`` /
+# ``recommendationStrength`` — map to per-request RWE-B/RWE-D hyperparameters (see
+# :func:`rec_params_from_settings`); ``readingGoalMinutes`` drives the dashboard's today-vs-goal
+# progress. Settings still wire NOTHING into the health report or its metrics.
 # --------------------------------------------------------------------------- #
-DEFAULT_SETTINGS = {
-    "theme": "system",
-    "language": "en",
-    "politicalOpenness": 50,          # 50 = the stack's default RWE-B epsilon (0.9)
-    "recommendationStrength": 50,     # 50 = the stack's default RWE-D beta (0.5)
-    "readingGoalMinutes": 20,
-    "weeklyReport": True,
-    "monthlyReport": False,
-    "notifications": {"recommendations": True, "weeklyDigest": True,
-                      "streakReminders": False, "blindSpotAlerts": False},
-    "privacy": {"shareAnonymizedMetrics": False, "personalizedAds": False},
-}
-_SETTINGS_THEMES = ("light", "dark", "system")
-# Supported interface languages (Commit 20). An unsupported/garbage value falls back to English —
-# the same allowlist the web LanguageProvider enforces, so the two never disagree.
-_SETTINGS_LANGUAGES = ("en", "es", "fr", "de", "pt")
-
-
-def _clamp_int(value, lo, hi, default):
-    try:
-        n = int(round(float(value)))
-    except (TypeError, ValueError):
-        return default
-    return max(lo, min(hi, n))
-
-
-def _layered(key, layers, default):
-    """The value of ``key`` from the last layer (dict) that defines it — defaults < stored < patch."""
-    v = default
-    for layer in layers:
-        if isinstance(layer, dict) and key in layer:
-            v = layer[key]
-    return v
-
-
-def _merge_bool_group(defaults: dict, layers, group: str) -> dict:
-    subs = [layer[group] for layer in layers
-            if isinstance(layer, dict) and isinstance(layer.get(group), dict)]
-    return {k: bool(_layered(k, subs, dv)) for k, dv in defaults.items()}
-
-
-def normalize_settings(stored: "dict | None", patch: "dict | None" = None) -> dict:
-    """A complete, type-safe preferences object = server defaults, overlaid with the user's stored
-    preferences, overlaid with an optional incoming ``patch``. Unknown keys are dropped and every
-    value is coerced / clamped to the contract, so a partial update from any client (web, iOS,
-    Android, extension, RSS) is safe and the response shape is always stable. ``patch=None`` reads
-    (with honest defaults for anything unset); a patch merges an update. Normalisation only — the
-    behavioural mapping of the two recommendation sliders lives in
-    :func:`rec_params_from_settings`, and nothing here ever shapes the health report."""
-    layers = [DEFAULT_SETTINGS, stored or {}, patch or {}]
-    theme = _layered("theme", layers, DEFAULT_SETTINGS["theme"])
-    return {
-        "theme": theme if theme in _SETTINGS_THEMES else DEFAULT_SETTINGS["theme"],
-        "language": (lambda v: v if v in _SETTINGS_LANGUAGES else "en")(
-            str(_layered("language", layers, "en")).strip().lower()),
-        "politicalOpenness": _clamp_int(_layered("politicalOpenness", layers, 50), 0, 100, 50),
-        "recommendationStrength": _clamp_int(_layered("recommendationStrength", layers, 50), 0, 100, 50),
-        "readingGoalMinutes": _clamp_int(_layered("readingGoalMinutes", layers, 20), 0, 600, 20),
-        "weeklyReport": bool(_layered("weeklyReport", layers, True)),
-        "monthlyReport": bool(_layered("monthlyReport", layers, False)),
-        "notifications": _merge_bool_group(DEFAULT_SETTINGS["notifications"], layers, "notifications"),
-        "privacy": _merge_bool_group(DEFAULT_SETTINGS["privacy"], layers, "privacy"),
-    }
 
 
 # Slider → recommender mapping. Piecewise-linear through three anchors, pinned so **slider 50 maps
