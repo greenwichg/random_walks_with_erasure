@@ -35,6 +35,7 @@ from typing import Any, Optional
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # import sibling api_server
 import api_server as engine   # Backend, DatasetProfile, resolve_profile, BUILTIN_PROFILES
 import store                  # beta persistence layer (users + identities)
+import settings_service       # settings schema + normaliser (leaf); the canonical settings accessors
 import ingest                 # reading-event scorer + cache (Milestone C)
 import enrich                 # headline enrichment (register + emotion) behind ingest.Enricher
 import personalize            # per-user augmented Measured report / recs / coach
@@ -1388,7 +1389,7 @@ def dashboard(request: Request,
     snaps = st.list_report_snapshots(uid) if uid is not None else []
     # A signed-in reader's stored daily reading goal drives the today-vs-goal progress (their
     # settings always normalise to a goal, so every real user gets one); anonymous/demo has none.
-    goal = (engine.normalize_settings(st.get_settings(uid))["readingGoalMinutes"]
+    goal = (settings_service.reading_goal_minutes(st, uid)
             if uid is not None else None)
     return active.backend.build_dashboard(rep, reads, snaps, goal_minutes=goal)
 
@@ -1705,7 +1706,7 @@ def get_my_settings(request: Request) -> dict:
     (per-request RWE-B epsilon / RWE-D beta) and the reading goal shapes the dashboard's
     today-vs-goal progress; nothing here ever influences the health report."""
     uid = _require_real_user(request)
-    return engine.normalize_settings(_require_store().get_settings(uid))
+    return settings_service.get(_require_store(), uid)
 
 
 @app.post("/api/me/settings", response_model=SettingsModel, tags=["meta"],
@@ -1719,9 +1720,7 @@ def update_my_settings(request: Request, req: SettingsUpdateModel) -> dict:
     report."""
     uid = _require_real_user(request)
     st = _require_store()
-    updated = engine.normalize_settings(st.get_settings(uid), req.model_dump(exclude_none=True))
-    st.save_settings(uid, updated)
-    return updated
+    return settings_service.update(st, uid, req.model_dump(exclude_none=True))
 
 
 @app.post("/api/me/recommendations/opened", response_model=RecReceptionModel,
