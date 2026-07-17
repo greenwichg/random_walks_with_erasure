@@ -1,5 +1,10 @@
 # Freshness Source Audit — URL-date trust per configured RSS source (read-only)
 
+> **C4.3 update (2026-07-16):** the parser now reads the 3-letter-month form `/YYYY/mon/DD/` —
+> the Guardian / Washington Times rows below marked *"not parsed today / currently inert"* are
+> **superseded**; both feeds' URL dates are active. The audit is retained unchanged as the record
+> that motivated the fix.
+
 **Status:** Read-only audit. No code modified. Follows the C4.2 URL-date fix
 (`docs/FRESHNESS_FIX_SHADOW.md`), which makes candidacy trust a date embedded in the **article** URL.
 This audit asks, per configured source: does that trust hold?

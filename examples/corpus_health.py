@@ -131,16 +131,24 @@ def _published(a: dict, keys: "tuple[str, ...]" = ("publishedAt", "fetchedAt")) 
     return None
 
 
-#: Publication-date-in-URL patterns (C4.2). Matched against the URL *path* only (query/fragment
-#: dropped) so a host or tracking param can't false-trigger. In precedence order:
+#: Publication-date-in-URL patterns (C4.2, month names C4.3). Matched against the URL *path* only
+#: (query/fragment dropped) so a host or tracking param can't false-trigger. In precedence order:
 #:   * ``/YYYY/MM/DD/`` path segments — the dominant news convention (CNN opinions, NYT, WaPo,
-#:     Guardian, Politico, …). Year ``19``/``20`` + calendar-valid month/day.
+#:     Politico, …). Year ``19``/``20`` + calendar-valid month/day.
+#:   * ``/YYYY/mon/DD/`` path segments — 3-letter English month (Guardian, Washington Times;
+#:     C4.3). Case-insensitive, exactly the 12 abbreviations, day may be unpadded
+#:     (``/2012/oct/2/``); the token must be the whole segment, so ``/2023/mayhem/18/`` or a
+#:     name slug like ``/theresa-may/`` can never match.
 #:   * ``/YYYY/MM/`` path segments — month-precision archives (day defaults to the 1st).
 #:   * a trailing ``-MM-DD-YY`` slug before ``/``, ``.`` or end — CNN live-news blogs
 #:     (``…-04-18-23/index.html``). ``YY`` is restricted to ``00``–``39`` → ``2000``–``2039`` so an
 #:     arbitrary ``-NN-NN-NN`` id can't masquerade as a date; a genuinely recent page carries a
 #:     recent slug year (``…-26``) and stays fresh, so this never over-excludes new content.
+_URL_MONTHS = {m: i for i, m in enumerate(
+    ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"), 1)}
 _URL_YMD = re.compile(r"/((?:19|20)\d\d)/(0[1-9]|1[0-2])/(0[1-9]|[12]\d|3[01])(?:/|$)")
+_URL_YMON_D = re.compile(r"/((?:19|20)\d\d)/(" + "|".join(_URL_MONTHS) +
+                         r")/(0?[1-9]|[12]\d|3[01])(?:/|$)", re.IGNORECASE)
 _URL_YM = re.compile(r"/((?:19|20)\d\d)/(0[1-9]|1[0-2])(?:/|$)")
 _URL_MDY = re.compile(r"-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])-([0-3]\d)(?:[/.]|$)")
 
@@ -160,6 +168,8 @@ def _url_date(url: str) -> Optional[datetime]:
     m = _URL_YMD.search(path)
     if m:
         y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    elif (m := _URL_YMON_D.search(path)):
+        y, mo, d = int(m.group(1)), _URL_MONTHS[m.group(2).lower()], int(m.group(3))
     elif (m := _URL_YM.search(path)):
         y, mo, d = int(m.group(1)), int(m.group(2)), 1
     elif (m := _URL_MDY.search(path)):

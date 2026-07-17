@@ -96,6 +96,110 @@ def test_url_date_is_pure_and_deterministic():
 
 
 # --------------------------------------------------------------------------- #
+# C4.3 — 3-letter-month URL dates (/YYYY/mon/D(D)/ — Guardian, Washington Times).
+# --------------------------------------------------------------------------- #
+# Real Washington Times URLs from the qbias corpus (21,754 real articles): ALL /YYYY/<3alpha>/DD/
+# shapes found in it are exactly these three — every one a genuine month token on a genuine date,
+# including the unpadded day. Encoded verbatim so the corpus evidence is a permanent regression.
+WT_QBIAS_FIXTURES = [
+    ("http://www.washingtontimes.com/news/2012/oct/2/judge-blocks-pas-new-vote-id-law",
+     datetime(2012, 10, 2, tzinfo=timezone.utc)),
+    ("http://www.washingtontimes.com/news/2013/feb/12/hurt-obamas-agenda-simple",
+     datetime(2013, 2, 12, tzinfo=timezone.utc)),
+    ("http://www.washingtontimes.com/news/2013/may/10/the-moment-of-responsibility",
+     datetime(2013, 5, 10, tzinfo=timezone.utc)),
+]
+
+
+def test_c43_guardian_and_wt_current_urls_parse():
+    assert ch._url_date("https://www.theguardian.com/us-news/2026/jul/15/senate-vote") == \
+        datetime(2026, 7, 15, tzinfo=timezone.utc)
+    assert ch._url_date("https://www.washingtontimes.com/news/2026/jul/15/budget-battle/") == \
+        datetime(2026, 7, 15, tzinfo=timezone.utc)
+
+
+def test_c43_real_corpus_wt_fixtures():
+    for url, expected in WT_QBIAS_FIXTURES:
+        assert ch._url_date(url) == expected, url
+
+
+def test_c43_all_twelve_month_abbreviations():
+    for i, mon in enumerate(ch._URL_MONTHS, 1):
+        assert ch._url_date(f"https://ex.com/2026/{mon}/15/story") == \
+            datetime(2026, i, 15, tzinfo=timezone.utc), mon
+
+
+def test_c43_case_insensitive_month_token():
+    expected = datetime(2026, 7, 15, tzinfo=timezone.utc)
+    for tok in ("jul", "Jul", "JUL", "jUl"):
+        assert ch._url_date(f"https://ex.com/2026/{tok}/15/story") == expected, tok
+
+
+def test_c43_unpadded_and_padded_day_are_equivalent():
+    expected = datetime(2026, 7, 2, tzinfo=timezone.utc)
+    assert ch._url_date("https://ex.com/2026/jul/2/s") == expected
+    assert ch._url_date("https://ex.com/2026/jul/02/s") == expected
+
+
+def test_c43_false_positive_guards():
+    # non-month token; full month name (out of scope by design); token embedded in a longer
+    # segment; invalid calendar day; regex-invalid day; month token without a year flank
+    for url in ("https://ex.com/2023/foo/18/x", "https://ex.com/2023/january/18/x",
+                "https://ex.com/2023/mayhem/18/x", "https://ex.com/2023/feb/30/x",
+                "https://ex.com/2023/jan/32/x", "https://ex.com/section/jan/18/x"):
+        assert ch._url_date(url) is None, url
+
+
+def test_c43_precedence_is_unchanged():
+    """Numeric /YYYY/MM/DD/ still wins over an alpha date; an alpha FULL date beats the
+    month-precision numeric /YYYY/MM/ (full dates before partial ones)."""
+    assert ch._url_date("https://ex.com/2023/04/18/y/2024/jul/20/") == \
+        datetime(2023, 4, 18, tzinfo=timezone.utc)
+    assert ch._url_date("https://ex.com/archive/2023/04/x/2024/jul/20/y") == \
+        datetime(2024, 7, 20, tzinfo=timezone.utc)
+
+
+def test_c43_nine_publisher_fp_sweep():
+    """The freshness source-audit table as an executable test: a date exactly where each shipped
+    publisher's URL convention carries one, None everywhere else (no false positives)."""
+    expects = {
+        "https://www.theguardian.com/us-news/2026/jul/15/senate-vote": datetime(2026, 7, 15, tzinfo=timezone.utc),
+        "https://www.npr.org/2026/07/15/nx-s1-5301234/congress-vote": datetime(2026, 7, 15, tzinfo=timezone.utc),
+        "https://www.cnn.com/2026/07/15/politics/senate-vote/index.html": datetime(2026, 7, 15, tzinfo=timezone.utc),
+        CNN_LIVEBLOG_2023: datetime(2023, 4, 18, tzinfo=timezone.utc),
+        "https://www.nytimes.com/2026/07/15/us/politics/budget-deal.html": datetime(2026, 7, 15, tzinfo=timezone.utc),
+        "https://www.bbc.com/news/articles/c0jq4z8lz9po": None,
+        "https://thehill.com/homenews/senate/5301234-budget-fight-heats-up/": None,
+        "https://www.foxnews.com/politics/senate-passes-budget-bill": None,
+        "https://nypost.com/2026/07/15/us-news/senate-budget-vote/": datetime(2026, 7, 15, tzinfo=timezone.utc),
+        "https://www.washingtontimes.com/news/2026/jul/15/budget-battle/": datetime(2026, 7, 15, tzinfo=timezone.utc),
+    }
+    for url, expected in expects.items():
+        assert ch._url_date(url) == expected, url
+
+
+def test_c43_scenario_stale_alpha_dated_archive_is_excluded():
+    """The incident class, Guardian/WT edition: an archived /2019/jan/01/ article the feed left
+    UNDATED (createdAt=today) is now excluded by its URL date; a current alpha-dated article and a
+    dateless evergreen are kept; the kill-switch restores pre-C4.3 behaviour byte-for-byte."""
+    stale = _art("https://www.theguardian.com/politics/2019/jan/01/old-analysis",
+                 published_days_ago=None, created_days_ago=0, fetched_days_ago=0)
+    fresh = _art("https://www.washingtontimes.com/news/2026/jul/14/new-story/",
+                 published_days_ago=1)
+    evergreen = _art("https://ex.com/guides/media-literacy", published_days_ago=None,
+                     created_days_ago=3)
+    kept_on = _kept([stale, fresh, evergreen], url_date=True)
+    assert kept_on == [fresh["canonicalUrl"], evergreen["canonicalUrl"]]
+    kept_off = _kept([stale, fresh, evergreen], url_date=False)      # kill-switch: pre-C4.3
+    assert stale["canonicalUrl"] in kept_off
+
+
+def test_c43_deterministic():
+    u = WT_QBIAS_FIXTURES[0][0]
+    assert ch._url_date(u) == ch._url_date(u) == WT_QBIAS_FIXTURES[0][1]
+
+
+# --------------------------------------------------------------------------- #
 # The env toggle.
 # --------------------------------------------------------------------------- #
 def test_url_date_toggle_defaults_on(monkeypatch):

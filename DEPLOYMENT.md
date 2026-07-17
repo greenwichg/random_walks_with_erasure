@@ -132,7 +132,7 @@ switching data never touches the frontend.
 | `RWE_RECS_SOURCE` | — | `feed` sources the recommender's catalog from the RSS `FeedArticle` store (else the static corpus) |
 | `RWE_FEED_MIN_ARTICLES` | — | min catalog size before the feed source activates (default `50`; below it, falls back to the static corpus) |
 | `RWE_FEED_MAX_AGE_DAYS` | `60` | recommendation-candidate freshness window: articles published (or, undated, fetched) more than this many days ago never enter the recommendation corpus. `0` disables. Composition only — stale articles stay stored and visible to Search/Stories/History. Distinct from `RWE_RETENTION_MAX_AGE_DAYS`, which deletes rows. |
-| `RWE_FEED_URL_DATE` | `1` (on) | trust a publication date embedded in the article URL path (`/YYYY/MM/DD/`, `/YYYY/MM/`, trailing `-MM-DD-YY`) as the authoritative candidacy age — catches archived items a feed left undated or re-dated (C4.2). `0` disables — the instant rollback to pre-C4.2 candidacy. |
+| `RWE_FEED_URL_DATE` | `1` (on) | trust a publication date embedded in the article URL path (`/YYYY/MM/DD/`, `/YYYY/mon/DD/` — 3-letter month, C4.3 —, `/YYYY/MM/`, trailing `-MM-DD-YY`) as the authoritative candidacy age — catches archived items a feed left undated or re-dated (C4.2). `0` disables — the instant rollback to pre-C4.2 candidacy. |
 | `RWE_FEED_REQUIRE_DATED` | `0` (off) | require a parseable `publishedAt` for recommendation candidacy — excludes undated items instead of falling back to first-seen/fetch time. Only consulted while the age window is active. |
 | `RWE_FEED_CORPUS_CSV` | — | where the `FeedArticle`→qbias export is written (default `data/feed_corpus.csv`) |
 | `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` | — | enable the live coach narrative |
