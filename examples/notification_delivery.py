@@ -76,12 +76,11 @@ def build_context(store, uid: int, now: "datetime | None" = None) -> "ns.Notific
             has_report=report is not None,
             overall=(_opt_int(report.get("overall")) if report else None),
             blind_spots=_blind_spot_topics(report)),
-        # Recommendations: the product has NO canonical definition of "new recommendations" — the
-        # recommendation store records what was *surfaced* / *opened* (``RecEvent``), not what is
-        # "new", and the only "new since last visit" concept is story-domain (story_intelligence).
-        # Per the N2 scope we do NOT invent notification-specific semantics here: new_count stays 0,
-        # so the ``new_recommendations`` kind never fires until a canonical definition is chosen.
-        recommendations=ns.RecommendationInputs(new_count=0),
+        # Recommendations: "recommendations waiting" = recs the reader was SURFACED but hasn't opened
+        # yet (``RecEvent.opened_at IS NULL``). A pure count over already-recorded reception events —
+        # no recommender is invoked, nothing is ranked, and no feed is generated on this path.
+        recommendations=ns.RecommendationInputs(
+            unopened_count=store.count_unopened_recommendations(uid)),
         reading=reading)
 
 

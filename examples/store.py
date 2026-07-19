@@ -1181,6 +1181,18 @@ class Store:
             return [{"shownAt": r.shown_at, "openedAt": r.opened_at,
                      "crossCutting": bool(r.cross_cutting)} for r in rows]
 
+    def count_unopened_recommendations(self, user_id: int, since: "str | None" = None) -> int:
+        """How many recommendations were **surfaced but not opened** — ``RecEvent`` rows with no
+        ``opened_at`` (optionally restricted to those surfaced at/after ``since``, an ISO string). A
+        pure count over reception events the serving path already recorded: **no recommender is
+        invoked, nothing is ranked, and no feed is generated.**"""
+        with self.session() as s:
+            q = select(func.count()).select_from(RecEvent).where(
+                RecEvent.user_id == user_id, RecEvent.opened_at.is_(None))
+            if since is not None:
+                q = q.where(RecEvent.shown_at >= since)
+            return int(s.scalar(q) or 0)
+
     # -- notifications (delivery-boundary persistence) ------------------
     def record_notifications(self, user_id: int, notifications: "list[dict]") -> int:
         """Persist due notifications for a user — the materialisation primitive behind the delivery

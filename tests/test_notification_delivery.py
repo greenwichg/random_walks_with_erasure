@@ -55,7 +55,7 @@ def test_build_context_empty_user():
     assert ctx.report.has_report is False and ctx.report.overall is None and ctx.report.blind_spots == ()
     assert ctx.reading.streak_days == 0 and ctx.reading.read_today is False
     assert ctx.reading.reads_this_week == 0
-    assert ctx.recommendations.new_count == 0
+    assert ctx.recommendations.unopened_count == 0
     assert isinstance(ctx.settings, dict) and ctx.delivery.delivered_keys == frozenset()
 
 
@@ -133,12 +133,25 @@ def test_materialize_generates_no_reports_or_rec_events():
 # --------------------------------------------------------------------------- #
 # Intentionally-inert kinds (pinned + reported, not silently broken).
 # --------------------------------------------------------------------------- #
-def test_new_recommendations_is_inert_no_canonical_definition():
+def test_recommendations_waiting_fires_on_unopened_recs():
+    """recommendations_waiting = recs surfaced but not opened (``RecEvent.opened_at IS NULL``) — a
+    pure reception count, no recommender. It fires when unopened recs exist and clears when opened."""
     st, uid = _store_user(); _all_on(st, uid)
-    _report(st, uid); _read(st, uid, "u", 0)
+    # no rec events yet -> unopened_count 0 -> kind does not fire
     nd.materialize_notifications(st, uid)
-    assert nd.build_context(st, uid).recommendations.new_count == 0
-    assert "new_recommendations" not in _kinds(st, uid)
+    assert nd.build_context(st, uid).recommendations.unopened_count == 0
+    assert "recommendations_waiting" not in _kinds(st, uid)
+    # surface two recs (unopened) -> the kind now fires, with a truthful count
+    st.record_recommendations_shown(uid, [("a1", False), ("a2", True)])
+    assert nd.build_context(st, uid).recommendations.unopened_count == 2
+    assert nd.materialize_notifications(st, uid) >= 1
+    waiting = next(x for x in st.list_notifications(uid, limit=100)
+                   if x["kind"] == "recommendations_waiting")
+    assert waiting["payload"]["count"] == 2
+    # opening them drops the unopened count back to 0 (self-quiescing)
+    st.record_recommendation_open(uid, "a1")
+    st.record_recommendation_open(uid, "a2")
+    assert nd.build_context(st, uid).recommendations.unopened_count == 0
 
 
 def test_streak_reminder_is_inert_under_reading_streak():

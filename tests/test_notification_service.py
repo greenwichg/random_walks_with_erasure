@@ -22,7 +22,7 @@ import settings_service as ss       # noqa: E402
 
 
 NOW = datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc)
-ALL_KINDS = {"weekly_report", "monthly_deep_dive", "new_recommendations",
+ALL_KINDS = {"weekly_report", "monthly_deep_dive", "recommendations_waiting",
              "weekly_digest", "streak_reminder", "blind_spot_alert"}
 
 
@@ -35,7 +35,7 @@ def _settings(weekly=True, monthly=True, recs=True, digest=True, streak=True, bl
 
 
 def _ctx(settings=None, delivered=(), now=NOW, *, has_report=True, overall=72,
-         blind_spots=("topic:economy",), new_count=4, streak_days=5, read_today=False,
+         blind_spots=("topic:economy",), unopened_count=4, streak_days=5, read_today=False,
          reads_this_week=6):
     """A context in which — with all toggles on and nothing delivered — every kind fires."""
     return ns.NotificationContext(
@@ -43,7 +43,7 @@ def _ctx(settings=None, delivered=(), now=NOW, *, has_report=True, overall=72,
         settings=settings if settings is not None else _settings(),
         delivery=ns.DeliveryState(delivered_keys=frozenset(delivered)),
         report=ns.ReportInputs(has_report=has_report, overall=overall, blind_spots=blind_spots),
-        recommendations=ns.RecommendationInputs(new_count=new_count),
+        recommendations=ns.RecommendationInputs(unopened_count=unopened_count),
         reading=ns.ReadingInputs(streak_days=streak_days, read_today=read_today,
                                  reads_this_week=reads_this_week))
 
@@ -89,7 +89,7 @@ def test_output_is_in_registry_order():
 @pytest.mark.parametrize("kind,setting_path", [
     ("weekly_report", "weeklyReport"),
     ("monthly_deep_dive", "monthlyReport"),
-    ("new_recommendations", "notifications.recommendations"),
+    ("recommendations_waiting", "notifications.recommendations"),
     ("weekly_digest", "notifications.weeklyDigest"),
     ("streak_reminder", "notifications.streakReminders"),
     ("blind_spot_alert", "notifications.blindSpotAlerts"),
@@ -107,7 +107,7 @@ def test_each_kind_records_its_gate_and_a_json_safe_payload(kind, setting_path):
 @pytest.mark.parametrize("flag,kind", [
     ("weekly", "weekly_report"),
     ("monthly", "monthly_deep_dive"),
-    ("recs", "new_recommendations"),
+    ("recs", "recommendations_waiting"),
     ("digest", "weekly_digest"),
     ("streak", "streak_reminder"),
     ("blind", "blind_spot_alert"),
@@ -156,7 +156,7 @@ def test_blind_spot_dedupe_is_keyed_on_the_set():
 def test_predicate_negatives():
     assert "weekly_report" not in _kinds(ns.evaluate(_ctx(has_report=False)))
     assert "monthly_deep_dive" not in _kinds(ns.evaluate(_ctx(has_report=False)))
-    assert "new_recommendations" not in _kinds(ns.evaluate(_ctx(new_count=0)))
+    assert "recommendations_waiting" not in _kinds(ns.evaluate(_ctx(unopened_count=0)))
     assert "weekly_digest" not in _kinds(ns.evaluate(_ctx(reads_this_week=0)))
     assert "blind_spot_alert" not in _kinds(ns.evaluate(_ctx(blind_spots=())))
     # streak reminder needs an active streak AND nothing read today
@@ -190,6 +190,6 @@ def test_dedupe_keys_have_expected_periods():
     assert by["weekly_report"] == f"weekly_report:{wk}"
     assert by["weekly_digest"] == f"weekly_digest:{wk}"
     assert by["monthly_deep_dive"] == "monthly_deep_dive:2026-07"
-    assert by["new_recommendations"] == "new_recommendations:2026-07-15"
+    assert by["recommendations_waiting"] == "recommendations_waiting:2026-07-15"
     assert by["streak_reminder"] == "streak_reminder:2026-07-15"
     assert by["blind_spot_alert"].startswith("blind_spot_alert:")

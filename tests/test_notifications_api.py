@@ -7,6 +7,7 @@ invariant that fetching notifications generates neither a recommendation nor a r
 
 import pathlib
 import sys
+import uuid
 from datetime import datetime, timezone
 
 import pytest
@@ -23,9 +24,13 @@ def client():
         yield c
 
 
+_RUN = uuid.uuid4().hex[:8]   # unique per run: notifications persist in the file DB across runs, so
+                             # fresh accounts keep exact-count assertions isolated from prior state
+
+
 def _user(client, acct):
     uid = client.post("/api/internal/users",
-                      json={"provider": "google", "providerAccountId": acct}).json()["userId"]
+                      json={"provider": "google", "providerAccountId": f"{acct}-{_RUN}"}).json()["userId"]
     return uid, {"X-IH-User-Id": str(uid)}
 
 
@@ -43,7 +48,9 @@ def _seed(uid, *, topics=("Economy",)):
 
 
 LIVE = {"weekly_report", "monthly_deep_dive", "weekly_digest", "blind_spot_alert"}
-INERT = {"new_recommendations", "streak_reminder"}
+# Not expected from the base _seed: recommendations_waiting needs unopened rec events (none seeded
+# here); streak_reminder can't fire under the current streak predicate.
+ABSENT = {"recommendations_waiting", "streak_reminder"}
 
 
 def test_notifications_require_auth(client):
@@ -58,12 +65,22 @@ def test_get_materialises_and_returns_model_shape(client):
     assert r.status_code == 200
     data = r.json()
     kinds = {d["kind"] for d in data}
-    assert LIVE <= kinds and kinds.isdisjoint(INERT)     # 4 live kinds; the 2 inert kinds never appear
+    assert LIVE <= kinds and kinds.isdisjoint(ABSENT)    # 4 live kinds; neither absent kind appears
     one = data[0]
     assert set(one) == {"id", "kind", "titleKey", "payload", "createdAt", "seenAt", "gatedBy"}
     assert one["seenAt"] is None and isinstance(one["payload"], dict)
     # idempotent materialise: a second GET does not duplicate rows
     assert len(client.get("/api/me/notifications", headers=hdr).json()) == len(data)
+
+
+def test_recommendations_waiting_appears_with_unopened_recs(client):
+    uid, hdr = _user(client, "napi-waiting")
+    _seed(uid)
+    # surface two recs (unopened) directly on the store — no recommender is run
+    api_fastapi.state.store.record_recommendations_shown(uid, [("art-1", False), ("art-2", True)])
+    data = client.get("/api/me/notifications", headers=hdr).json()
+    waiting = [d for d in data if d["kind"] == "recommendations_waiting"]
+    assert len(waiting) == 1 and waiting[0]["payload"]["count"] == 2
 
 
 def test_unseen_only_and_limit(client):

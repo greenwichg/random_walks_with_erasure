@@ -53,8 +53,8 @@ class ReportInputs:
 @dataclasses.dataclass(frozen=True)
 class RecommendationInputs:
     """Facts about recommendations the engine has ALREADY produced (never re-ranked here).
-    ``new_count`` is the number of distinct recs surfaced since the reader's last delivery marker."""
-    new_count: int = 0
+    ``unopened_count`` is how many recs the reader was surfaced but has not opened yet."""
+    unopened_count: int = 0
 
 
 @dataclasses.dataclass(frozen=True)
@@ -170,11 +170,11 @@ NOTIFICATION_KINDS = (
         dedupe_key=lambda c: f"monthly_deep_dive:{c.now:%Y-%m}",
         payload=lambda c: {"overall": c.report.overall, "period": f"{c.now:%Y-%m}"}),
     NotificationKind(
-        kind="new_recommendations", setting_path="notifications.recommendations", mode="event",
-        title_key="notifications.new_recommendations.title",
-        predicate=lambda c: c.recommendations.new_count > 0,
-        dedupe_key=lambda c: f"new_recommendations:{c.now:%Y-%m-%d}",
-        payload=lambda c: {"count": c.recommendations.new_count}),
+        kind="recommendations_waiting", setting_path="notifications.recommendations", mode="event",
+        title_key="notifications.recommendations_waiting.title",
+        predicate=lambda c: c.recommendations.unopened_count > 0,
+        dedupe_key=lambda c: f"recommendations_waiting:{c.now:%Y-%m-%d}",
+        payload=lambda c: {"count": c.recommendations.unopened_count}),
     NotificationKind(
         kind="weekly_digest", setting_path="notifications.weeklyDigest", mode="cadence",
         title_key="notifications.weekly_digest.title",
