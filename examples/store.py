@@ -38,6 +38,7 @@ from typing import Iterator, Optional
 
 from sqlalchemy import (ForeignKey, String, Text, UniqueConstraint, and_, create_engine,
                         delete, event, func, or_, select, text)
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import (DeclarativeBase, Mapped, Session, mapped_column,
                             relationship, sessionmaker)
 from sqlalchemy.pool import StaticPool
@@ -1200,8 +1201,10 @@ class Store:
         as ``dataclasses.asdict``); this store never imports that module — it only writes dicts, the
         same way :meth:`save_report` / :meth:`save_settings` do. Idempotent per
         ``(user_id, kind, dedupe_key)``: a notification already recorded (this batch or an earlier
-        one) is skipped, never duplicated and never overwritten. Returns how many rows were newly
-        created."""
+        one) is skipped, never duplicated and never overwritten. Concurrency-safe: the DB-level
+        ``UNIQUE(user_id, kind, dedupe_key)`` constraint is the source of truth, so if a concurrent
+        request materialises the same notification first, our losing insert is caught and skipped
+        rather than failing the whole call. Returns how many rows were newly created."""
         new = 0
         seen: set = set()                       # in-batch guard (independent of autoflush)
         with self.session() as s:
@@ -1216,10 +1219,20 @@ class Store:
                     Notification.dedupe_key == dedupe))
                 if exists is not None:
                     continue                    # already delivered -> idempotent skip
-                s.add(Notification(user_id=user_id, kind=kind, dedupe_key=dedupe,
-                                   body=json.dumps(_json_safe(n)),
-                                   created_at=str(n.get("created_at") or _utcnow().isoformat())))
-                new += 1
+                try:
+                    # Savepoint per insert so a UNIQUE violation isolates to *this* row: a concurrent
+                    # request may have inserted the same (user_id, kind, dedupe_key) between the
+                    # SELECT above and this flush. The DB constraint is the arbiter; the loser's
+                    # savepoint rolls back while rows already added in this batch survive.
+                    with s.begin_nested():
+                        s.add(Notification(
+                            user_id=user_id, kind=kind, dedupe_key=dedupe,
+                            body=json.dumps(_json_safe(n)),
+                            created_at=str(n.get("created_at") or _utcnow().isoformat())))
+                        s.flush()
+                    new += 1
+                except IntegrityError:
+                    continue                    # concurrent writer won -> idempotent skip
         return new
 
     def list_notifications(self, user_id: int, *, unseen_only: bool = False,
@@ -1227,7 +1240,8 @@ class Store:
         """A user's notifications, **newest-first**, capped at ``limit``. Each entry is the stored
         body (the notification dict) plus its persistent ``id`` and ``seenAt`` read-state.
         ``unseen_only`` restricts to notifications not yet marked seen. Read-only — no evaluation and
-        no producers are touched."""
+        no producers are touched. The persisted row metadata (``id`` / ``seenAt``) is spread last, so
+        a payload that happens to carry those keys can never shadow the real row identity."""
         with self.session() as s:
             q = select(Notification).where(Notification.user_id == user_id)
             if unseen_only:
@@ -1239,7 +1253,7 @@ class Store:
                 body = dict(json.loads(r.body))
             except (TypeError, ValueError):
                 body = {}
-            out.append({"id": r.id, "seenAt": r.seen_at, **body})
+            out.append({**body, "id": r.id, "seenAt": r.seen_at})
         return out
 
     def delivered_notification_keys(self, user_id: int) -> "set[str]":

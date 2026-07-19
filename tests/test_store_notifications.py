@@ -11,6 +11,7 @@ persists — proving the store stays decoupled from that module (it only ever wr
 import dataclasses
 import pathlib
 import sys
+import threading
 from datetime import datetime, timezone
 
 import pytest
@@ -183,3 +184,110 @@ def test_unseen_only_filter():
     unseen = st.list_notifications(uid, unseen_only=True, limit=100)
     assert len(unseen) == 5 and all_ids[0] not in {d["id"] for d in unseen}
     assert len(st.list_notifications(uid, limit=100)) == 6    # unfiltered still returns all six
+
+
+# --------------------------------------------------------------------------- #
+# R1 — concurrency-safe recording. The DB-level UNIQUE constraint is the source of
+# truth; a request that loses the race to insert a duplicate must skip it (idempotent)
+# instead of failing, so ``GET /api/me/notifications`` never 500s because a concurrent
+# request won. These use a *file-backed* SQLite URL so two Store instances open two real
+# connections (the in-memory ``sqlite://`` shares one connection via ``StaticPool``).
+# --------------------------------------------------------------------------- #
+def test_concurrent_duplicate_insertion_is_idempotent(tmp_path):
+    """Two requests materialise the *same* six-notification batch at once. Every key is created
+    exactly once across the two calls, neither call raises, and no row is duplicated — the losing
+    inserts hit the UNIQUE constraint and are skipped. Assertions hold under any interleaving."""
+    url = f"sqlite:///{tmp_path / 'race.db'}"
+    st = store_mod.Store(url)
+    uid = st.upsert_user_by_identity("dev", "race").id
+    dicts = _dicts(_ctx())
+    assert len(dicts) == 6
+
+    barrier = threading.Barrier(2)
+    results: dict = {}
+    errors: dict = {}
+
+    def worker(name):
+        s = store_mod.Store(url)             # its own pool -> a genuine second connection
+        barrier.wait()                       # both threads start the write together
+        try:
+            results[name] = s.record_notifications(uid, dicts)
+        except Exception as exc:             # a race loser must skip, never raise
+            errors[name] = exc
+
+    t1 = threading.Thread(target=worker, args=("a",))
+    t2 = threading.Thread(target=worker, args=("b",))
+    t1.start(); t2.start(); t1.join(); t2.join()
+
+    assert errors == {}                                  # neither request failed
+    assert results["a"] + results["b"] == 6              # each key created exactly once, total
+    listed = st.list_notifications(uid, limit=100)
+    assert len(listed) == 6                              # exactly six rows — no duplicates
+    assert len({d["dedupe_key"] for d in listed}) == 6
+
+
+def test_batch_survives_a_racing_duplicate(tmp_path, monkeypatch):
+    """Deterministic simulation of the race window: a concurrent writer commits the *first*
+    notification's key between our pre-check ``SELECT`` and our ``flush``. The losing insert raises
+    ``IntegrityError``, is skipped, and every *other* notification in the batch still persists — the
+    call returns normally (so a real request would not 500)."""
+    url = f"sqlite:///{tmp_path / 'batch.db'}"
+    st = store_mod.Store(url)
+    uid = st.upsert_user_by_identity("dev", "batch").id
+    dicts = _dicts(_ctx())
+    target = dicts[0]                        # first-positioned: no write lock is held yet at inject
+    real_json_safe = store_mod._json_safe
+    fired = {"done": False}
+
+    def racing_json_safe(obj):
+        # Called while building the target row (after its pre-check, before its flush). A concurrent
+        # request commits the same (user_id, kind, dedupe_key) via its own connection right here.
+        if (not fired["done"] and isinstance(obj, dict)
+                and obj.get("dedupe_key") == target["dedupe_key"]):
+            fired["done"] = True
+            other = store_mod.Store(url)
+            assert other.record_notifications(uid, [target]) == 1   # the concurrent winner
+        return real_json_safe(obj)
+
+    monkeypatch.setattr(store_mod, "_json_safe", racing_json_safe)
+
+    created = st.record_notifications(uid, dicts)        # must not raise
+    assert fired["done"] is True                          # the race window really was exercised
+    assert created == 5                                   # the target lost the race -> skipped
+    listed = st.list_notifications(uid, limit=100)
+    assert len(listed) == 6                               # 5 from this batch + the racing winner
+    assert len({d["dedupe_key"] for d in listed}) == 6    # every kind present exactly once
+
+
+def test_batch_skips_an_existing_duplicate_and_persists_the_rest():
+    """A batch that overlaps an already-delivered notification: the duplicate is skipped via the
+    idempotency pre-check and the remaining five are still recorded (batch never fails)."""
+    st, uid = _store_user("notif-batch")
+    dicts = _dicts(_ctx())
+    assert st.record_notifications(uid, [dicts[2]]) == 1     # one already delivered earlier
+    assert st.record_notifications(uid, dicts) == 5          # the rest of the batch still persists
+    assert len(st.list_notifications(uid, limit=100)) == 6
+
+
+# --------------------------------------------------------------------------- #
+# R1 — list_notifications() row metadata is authoritative. The persisted ``id`` / ``seenAt`` are
+# spread last, so a body whose payload happens to carry those keys can never shadow the real row.
+# --------------------------------------------------------------------------- #
+def test_list_notifications_row_metadata_not_shadowed_by_payload():
+    st, uid = _store_user("notif-shadow")
+    poisoned = {
+        "kind": "weekly_report",
+        "dedupe_key": "weekly_report:2026-W29",
+        "created_at": NOW.isoformat(),
+        "title_key": "notif.weeklyReport.title",
+        "payload": {"overall": 72},
+        "gated_by": "weeklyReport",
+        "id": 999999,                                   # a body key that must NOT win over the row id
+        "seenAt": "1999-01-01T00:00:00+00:00",          # ditto for the read-state
+    }
+    assert st.record_notifications(uid, [poisoned]) == 1
+    [row] = st.list_notifications(uid, limit=100)
+    assert isinstance(row["id"], int) and row["id"] != 999999   # the real DB id, not the payload's
+    assert row["seenAt"] is None                                 # the real read-state, not the body's
+    assert row["kind"] == "weekly_report"                        # harmless body fields still survive
+    assert row["payload"] == {"overall": 72}
