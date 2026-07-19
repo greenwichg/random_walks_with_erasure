@@ -128,12 +128,32 @@ export const useRecommendationExplain = (enabled: boolean) =>
 export const useCoachHistory = () =>
   useQuery({ queryKey: queryKeys.coach, queryFn: services.coachHistory });
 
+/** Persists the reader's explicit feedback on a recommendation card (like / dislike / ignore /
+ *  read_later). On success it refreshes the persisted-feedback cache so an ignore stays reflected
+ *  (e.g. the Recommendations page keeps that card dismissed across a reload). "save" is handled by
+ *  the Saved pipeline and records nothing here. */
 export function useFeedback() {
+  const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ articleId, action }: { articleId: string; action: FeedbackAction }) =>
       services.sendFeedback(articleId, action),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.recommendationFeedback }),
   });
 }
+
+/** The signed-in reader's recorded recommendation feedback — the persisted set the Recommendations
+ *  page reads to keep an *ignored* card dismissed across a reload. Authenticated only (anonymous /
+ *  demo readers record nothing, and the endpoint 401s for them); cached, no polling. */
+export const useRecommendationFeedback = () => {
+  const { status } = useSession();
+  return useQuery({
+    queryKey: queryKeys.recommendationFeedback,
+    queryFn: services.recommendationFeedback,
+    enabled: status === "authenticated",
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+  });
+};
 
 /**
  * Records an in-app read (the PRIMARY reading source) into the canonical `/api/me/reads` pipeline,

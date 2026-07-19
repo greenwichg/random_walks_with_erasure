@@ -29,8 +29,5 @@ export async function GET(request: Request) {
   return NextResponse.json(fallback);
 }
 
-/** Record feedback (save / ignore / like / …). Mock: echo it back (no persistence yet). */
-export async function POST(request: Request) {
-  const body = await request.json().catch(() => ({}));
-  return NextResponse.json({ ok: true, ...body });
-}
+// Feedback (like / dislike / ignore / read_later) is no longer echoed here: it is persisted through
+// the authenticated `/api/me/recommendations/feedback` route (real account state, no mock). B1.

@@ -310,6 +310,32 @@ class RecEvent(Base):
     created_at: Mapped[datetime] = mapped_column(default=_utcnow)
 
 
+# The explicit feedback a reader can give a recommendation card. Canonical (snake_case) wire values;
+# the web tier maps its own "read-later" hyphen form onto "read_later" before calling.
+RECOMMENDATION_FEEDBACK_TYPES = ("like", "dislike", "ignore", "read_later")
+
+
+class RecFeedback(Base):
+    """A reader's explicit feedback on a recommendation the engine already produced — ``like`` /
+    ``dislike`` / ``ignore`` / ``read_later``. One row per ``(user_id, article_id, feedback)``:
+    repeating the same signal is idempotent (refreshes ``updated_at``), while distinct feedback types
+    on one article are distinct rows, so a reader's full set of signals is preserved without collapsing
+    contradictory ones. **Recorded only** (B1): no recommender, ranking, report, or personalization
+    path reads this table — it is a truthful capture of an interaction the card already exposes, kept
+    for a future consumer to decide how (if at all) to weigh it."""
+
+    __tablename__ = "rec_feedback"
+    __table_args__ = (UniqueConstraint("user_id", "article_id", "feedback",
+                                       name="uq_recfeedback_user_article_type"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    article_id: Mapped[str] = mapped_column(String(2048))
+    feedback: Mapped[str] = mapped_column(String(16))       # one of RECOMMENDATION_FEEDBACK_TYPES
+    created_at: Mapped[str] = mapped_column(String(64))     # ISO — first time this signal was given
+    updated_at: Mapped[str] = mapped_column(String(64))     # ISO — last time it was (re)submitted
+
+
 class SavedArticle(Base):
     """An article a user explicitly **saved** — the single "Saved" concept (there is no separate
     bookmark). One row per ``(user_id, article_id)``: saving the same article twice is idempotent
@@ -1193,6 +1219,40 @@ class Store:
             if since is not None:
                 q = q.where(RecEvent.shown_at >= since)
             return int(s.scalar(q) or 0)
+
+    # -- recommendation feedback (explicit like/dislike/ignore/read_later) ----
+    def record_recommendation_feedback(self, user_id: int, article_id: str, feedback: str,
+                                       at: "str | None" = None) -> bool:
+        """Persist one explicit feedback signal on a recommendation (``like`` / ``dislike`` /
+        ``ignore`` / ``read_later``). Idempotent per ``(user, article, feedback)``: repeating the same
+        signal refreshes ``updated_at`` and returns ``False``; a new signal creates a row and returns
+        ``True``. **Records only** — nothing here is read by any recommender, ranking, report, or
+        personalization path (B1). Raises ``ValueError`` for an unknown feedback type (the API layer
+        also rejects it at the edge, so this is defence in depth)."""
+        if feedback not in RECOMMENDATION_FEEDBACK_TYPES:
+            raise ValueError(f"unknown recommendation feedback type: {feedback!r}")
+        stamp = at or _utcnow().isoformat()
+        aid = str(article_id)
+        with self.session() as s:
+            row = s.scalar(select(RecFeedback).where(RecFeedback.user_id == user_id,
+                                                     RecFeedback.article_id == aid,
+                                                     RecFeedback.feedback == feedback))
+            if row is None:
+                s.add(RecFeedback(user_id=user_id, article_id=aid, feedback=feedback,
+                                  created_at=stamp, updated_at=stamp))
+                return True
+            row.updated_at = stamp
+            return False
+
+    def list_recommendation_feedback(self, user_id: int) -> list:
+        """All of a user's recommendation feedback, oldest-first: ``{articleId, feedback, createdAt,
+        updatedAt}``. A read-only projection for the web tier (e.g. to keep an *ignored* card
+        dismissed across a reload); it drives no ranking and invokes no recommender."""
+        with self.session() as s:
+            rows = s.scalars(select(RecFeedback).where(RecFeedback.user_id == user_id)
+                             .order_by(RecFeedback.id)).all()
+            return [{"articleId": r.article_id, "feedback": r.feedback,
+                     "createdAt": r.created_at, "updatedAt": r.updated_at} for r in rows]
 
     # -- notifications (delivery-boundary persistence) ------------------
     def record_notifications(self, user_id: int, notifications: "list[dict]") -> int:

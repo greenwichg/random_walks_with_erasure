@@ -248,6 +248,26 @@ export interface Recommendation {
 
 export type FeedbackAction = "save" | "ignore" | "read-later" | "like" | "dislike";
 
+/** The canonical (snake_case) recommendation-feedback signals the backend records. The card's
+ *  `FeedbackAction` "read-later" maps to "read_later" at the service boundary; "save" is a separate
+ *  concept (the Saved pipeline) and is never sent here. */
+export type RecFeedbackType = "like" | "dislike" | "ignore" | "read_later";
+
+/** One recorded feedback signal from `GET /api/me/recommendations/feedback`. */
+export interface RecFeedbackEntry {
+  articleId: string;
+  feedback: RecFeedbackType;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Ack from `POST /api/me/recommendations/feedback`. `changed` is false for an idempotent repeat. */
+export interface RecFeedbackAck {
+  ok: boolean;
+  feedback: RecFeedbackType;
+  changed: boolean;
+}
+
 /* ------------------------------------------------------------------ *
  * Recommendation explainability (21a.2) — the payload behind the card's
  * "Why?" drawer, proxied from the engine's internal explain endpoint.

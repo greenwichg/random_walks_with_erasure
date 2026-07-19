@@ -30,7 +30,7 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # import sibling api_server
 import api_server as engine   # Backend, DatasetProfile, resolve_profile, BUILTIN_PROFILES
@@ -985,6 +985,30 @@ class RecReceptionModel(BaseModel):
     active: bool            # whether the reader now has enough reception for Open-Mindedness
 
 
+# The four canonical (snake_case) feedback signals — mirrors store.RECOMMENDATION_FEEDBACK_TYPES.
+RecFeedbackType = Literal["like", "dislike", "ignore", "read_later"]
+
+
+class RecFeedbackRequest(BaseModel):
+    # the recommended article and the reader's explicit signal; an unknown feedback value is rejected
+    # here (422) by the Literal, so the store only ever sees a canonical type.
+    articleId: str
+    feedback: RecFeedbackType
+
+
+class RecFeedbackAckModel(BaseModel):
+    ok: bool
+    feedback: RecFeedbackType
+    changed: bool           # True when newly recorded; False for an idempotent repeat of the same signal
+
+
+class RecFeedbackEntryModel(BaseModel):
+    articleId: str
+    feedback: RecFeedbackType
+    createdAt: str
+    updatedAt: str
+
+
 class SaveArticleRequest(BaseModel):
     articleId: str
     article: dict = {}      # the Article snapshot the reader saw (rendered later in the saved list)
@@ -1865,6 +1889,35 @@ def open_recommendation(request: Request, req: RecOpenRequest) -> dict:
     om = p.openmindedness(uid)
     return {"shownCross": om["shownCross"], "openedCross": om["openedCross"],
             "rate": om["rate"], "threshold": om["minShown"], "active": om["active"]}
+
+
+@app.post("/api/me/recommendations/feedback", response_model=RecFeedbackAckModel,
+          tags=["recommendations"],
+          summary="Record the signed-in user's explicit feedback on a recommendation",
+          responses=_ERR_RESPONSES)
+def recommendation_feedback(request: Request, req: RecFeedbackRequest) -> dict:
+    """Record an explicit feedback signal (like / dislike / ignore / read_later) on a recommendation
+    the engine already produced — the same trust boundary as the other ``/api/me`` endpoints
+    (``_require_real_user`` → 401 for anonymous). **Recorded only** (B1): unlike
+    ``/api/me/recommendations/opened``, this feeds no metric — so it deliberately does NOT invalidate
+    the cached measured model, is NOT skipped for the exhibit account (there is no metric to keep
+    pristine), and drives no recommender, ranking, or personalization path. ``changed`` is ``False``
+    for an idempotent repeat of the same signal on the same article."""
+    uid = _require_real_user(request)
+    changed = _require_store().record_recommendation_feedback(uid, req.articleId, req.feedback)
+    return {"ok": True, "feedback": req.feedback, "changed": bool(changed)}
+
+
+@app.get("/api/me/recommendations/feedback", response_model=list[RecFeedbackEntryModel],
+         tags=["recommendations"],
+         summary="The signed-in user's recorded recommendation feedback (oldest first)",
+         responses=_ERR_RESPONSES)
+def my_recommendation_feedback(request: Request) -> list:
+    """The reader's own recorded feedback, oldest-first — a read-only projection the web tier uses to
+    keep an *ignored* card dismissed across a reload. Per-user (``_require_real_user`` → 401 anon); it
+    reads only the ``rec_feedback`` table and drives no ranking or recommender."""
+    uid = _require_real_user(request)
+    return _require_store().list_recommendation_feedback(uid)
 
 
 @app.get("/api/me/saved", response_model=list[SavedArticleModel], tags=["meta"],

@@ -4,7 +4,12 @@ import * as React from "react";
 import { AnimatePresence } from "framer-motion";
 import { Sparkles, Route, Compass, Wand2 } from "lucide-react";
 import type { FeedbackAction, Recommendation } from "@/types/domain";
-import { useRecommendations, useFeedback, useOpenRecommendation } from "@/hooks/use-data";
+import {
+  useRecommendations,
+  useFeedback,
+  useOpenRecommendation,
+  useRecommendationFeedback,
+} from "@/hooks/use-data";
 import { useTranslation } from "@/lib/i18n";
 import { PageContainer } from "@/components/layout/page-container";
 import { RecommendationCard } from "@/components/recommendations/recommendation-card";
@@ -30,9 +35,19 @@ export default function RecommendationsPage() {
   const [filter, setFilter] = React.useState<Filter>("all");
   const [dismissed, setDismissed] = React.useState<Set<string>>(new Set());
 
+  // Persisted "ignore" feedback keeps a dismissed card gone across reloads. The engine still serves
+  // the same feed in the same order (this is a presentation filter, not ranking); it merely hides
+  // what the reader already ignored — the same effect as the session-local `dismissed` set, seeded
+  // from the backend so it survives a reload.
+  const { data: feedbackLog } = useRecommendationFeedback();
+  const persistedIgnored = React.useMemo(
+    () => new Set((feedbackLog ?? []).filter((f) => f.feedback === "ignore").map((f) => f.articleId)),
+    [feedbackLog],
+  );
+
   const visible = (data ?? [])
     .filter((r) => (filter === "all" ? true : r.strategy === filter))
-    .filter((r) => !dismissed.has(r.article.id));
+    .filter((r) => !dismissed.has(r.article.id) && !persistedIgnored.has(r.article.id));
 
   const handleAction = (articleId: string, action: FeedbackAction) => {
     feedback.mutate({ articleId, action });

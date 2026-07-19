@@ -16,6 +16,9 @@ import type {
   Recommendation,
   RecommendationExplain,
   RecommendationReception,
+  RecFeedbackAck,
+  RecFeedbackEntry,
+  RecFeedbackType,
   SavableArticle,
   SavedArticle,
   SaveResult,
@@ -34,6 +37,15 @@ import type {
  * directly — so the transport is centralised and the return types are enforced.
  * Each function maps 1:1 to a backend endpoint (mock today, Python tomorrow).
  */
+/** Card FeedbackAction → the backend's canonical feedback type. Only the four recorded signals are
+ *  mapped; "save" is intentionally absent (the Saved pipeline handles it) so it records nothing. */
+const FEEDBACK_WIRE: Partial<Record<FeedbackAction, RecFeedbackType>> = {
+  like: "like",
+  dislike: "dislike",
+  ignore: "ignore",
+  "read-later": "read_later",
+};
+
 export const services = {
   dashboard: () => getJson<DashboardSummary>("/dashboard"),
   report: () => getJson<MeasuredHealthReport>("/report"),
@@ -41,8 +53,18 @@ export const services = {
     getJson<Recommendation[]>("/recommendations", strategy ? { strategy } : undefined),
   // 21a.2: the evidence behind the card's "Why?" drawer — fetched lazily on first open (D1).
   recommendationExplain: () => getJson<RecommendationExplain>("/recommendations/explain"),
-  sendFeedback: (articleId: string, action: FeedbackAction) =>
-    postJson<{ ok: boolean }>("/recommendations", { articleId, action }),
+  // Persist the reader's explicit feedback on a recommendation card. Maps the card's FeedbackAction
+  // onto the backend's canonical type ("read-later" → "read_later") and posts to the authenticated
+  // /api/me/recommendations/feedback route (real account state, no mock). "save" is a separate
+  // concept (the Saved pipeline) and never reaches here, so it records nothing.
+  sendFeedback: (articleId: string, action: FeedbackAction): Promise<RecFeedbackAck | null> => {
+    const feedback = FEEDBACK_WIRE[action];
+    if (!feedback) return Promise.resolve(null);
+    return postJson<RecFeedbackAck>("/me/recommendations/feedback", { articleId, feedback });
+  },
+  // The reader's recorded feedback (oldest first) — used to keep an *ignored* card dismissed across
+  // a page reload. Authenticated; anonymous readers have recorded nothing.
+  recommendationFeedback: () => getJson<RecFeedbackEntry[]>("/me/recommendations/feedback"),
   // Record that the reader opened a recommended article — the Open-Mindedness reception signal.
   openRecommendation: (articleId: string, crossCutting: boolean) =>
     postJson<RecommendationReception>("/me/recommendations/opened", { articleId, crossCutting }),
@@ -148,4 +170,7 @@ export const queryKeys = {
       params.offset ?? 0,
     ] as const,
   apiTokens: ["apiTokens"] as const,
+  // Distinct top-level key (NOT under ["recommendations"]) so a slider-save invalidation of the feed
+  // never churns the persisted-feedback cache the page reads to keep ignored cards dismissed.
+  recommendationFeedback: ["recommendation-feedback"] as const,
 };

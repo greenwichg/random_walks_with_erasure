@@ -502,6 +502,34 @@ def test_recommendation_acceptance_reconciles_with_stored_interactions(backend):
     assert rec == {"shownCross": 1, "openedCross": 1, "rate": 1.0}   # B was the one cross rec
 
 
+def test_recommendation_feedback_records_per_type_idempotently():
+    """Explicit recommendation feedback (B1) persists one row per (user, article, feedback): each of
+    the four signals on one article is its own row, a repeat is idempotent (moves updated_at, adds no
+    row), the list is oldest-first with the wire shape, an unknown type is rejected, and it is
+    user-scoped. Recorded only — this store method touches no recommender, reception, or report path."""
+    sys.path.insert(0, str(ROOT / "examples"))
+    import store as store_mod
+    st = store_mod.Store("sqlite://")
+    uid = st.upsert_user_by_identity("dev", "feedback-store").id
+    other = st.upsert_user_by_identity("dev", "feedback-store-other").id
+
+    for fb in ("like", "dislike", "ignore", "read_later"):                     # each distinct type → a row
+        assert st.record_recommendation_feedback(uid, "https://a/x", fb, at="2026-06-01T00:00:00+00:00") is True
+    # a repeat of the same (user, article, feedback) is idempotent: no new row, returns False
+    assert st.record_recommendation_feedback(uid, "https://a/x", "like", at="2026-06-02T00:00:00+00:00") is False
+
+    rows = st.list_recommendation_feedback(uid)
+    assert [r["feedback"] for r in rows] == ["like", "dislike", "ignore", "read_later"]   # oldest-first
+    assert set(rows[0]) == {"articleId", "feedback", "createdAt", "updatedAt"}
+    assert rows[0]["createdAt"] == "2026-06-01T00:00:00+00:00"                  # created stays put
+    assert rows[0]["updatedAt"] == "2026-06-02T00:00:00+00:00"                  # updated moves on repeat
+
+    assert st.list_recommendation_feedback(other) == []                        # per-user isolation
+    import pytest as _pt
+    with _pt.raises(ValueError):                                               # unknown type rejected
+        st.record_recommendation_feedback(uid, "https://a/x", "love")
+
+
 # --------------------------------------------------------------------------- #
 # profile — identity + streaks + score history from persisted data; honest empties
 # --------------------------------------------------------------------------- #
