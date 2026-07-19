@@ -75,7 +75,7 @@ def test_normalize_settings_defaults_and_coercion():
     stored = {"theme": "dark", "readingGoalMinutes": 45,
               "notifications": {"weeklyDigest": False}, "bogus": 123}     # unknown key
     patch = {"politicalOpenness": 999, "language": " FR ",
-             "notifications": {"streakReminders": True}, "privacy": {"personalizedAds": True}}
+             "notifications": {"streakReminders": True, "blindSpotAlerts": True}}
     m = ss.normalize_settings(stored, patch)
 
     assert m["theme"] == "dark" and m["readingGoalMinutes"] == 45          # from stored
@@ -83,8 +83,8 @@ def test_normalize_settings_defaults_and_coercion():
     assert m["language"] == "fr"                                          # trimmed + lower-cased
     assert m["notifications"]["weeklyDigest"] is False                    # stored (deep-merged)
     assert m["notifications"]["streakReminders"] is True                  # patch (deep-merged)
+    assert m["notifications"]["blindSpotAlerts"] is True                  # a 2nd patch key, same group
     assert m["notifications"]["recommendations"] is True                  # untouched default survives
-    assert m["privacy"]["personalizedAds"] is True                        # patch
     assert "bogus" not in m                                               # unknown key dropped
     assert set(m) == set(ss.DEFAULT_SETTINGS)                             # stable shape
 
@@ -99,8 +99,27 @@ def test_normalize_settings_does_not_mutate_defaults():
     import copy
     snapshot = copy.deepcopy(ss.DEFAULT_SETTINGS)
     ss.normalize_settings({"notifications": {"recommendations": False}},
-                          {"privacy": {"personalizedAds": True}})
+                          {"notifications": {"blindSpotAlerts": True}})
     assert ss.DEFAULT_SETTINGS == snapshot
+
+
+def test_legacy_privacy_keys_normalize_away_safely():
+    """S1.2 backward-compat: the removed ``privacy`` group (shareAnonymizedMetrics /
+    personalizedAds) is handled like any unknown key — a stored blob OR a patch carrying it
+    normalizes without error and simply drops it, so old data and old clients keep working."""
+    # An old stored blob (written before S1.2) still loads cleanly.
+    legacy_stored = {"theme": "dark",
+                     "privacy": {"shareAnonymizedMetrics": True, "personalizedAds": True}}
+    m = ss.normalize_settings(legacy_stored)
+    assert "privacy" not in m                        # dropped like any unknown key
+    assert m["theme"] == "dark"                       # surviving fields untouched
+    assert set(m) == set(ss.DEFAULT_SETTINGS)         # stable, privacy-free shape
+
+    # An old client still PATCHing the removed keys is ignored — no error, and the real part of the
+    # patch still applies.
+    m2 = ss.normalize_settings(None, {"privacy": {"personalizedAds": True}, "weeklyReport": False})
+    assert "privacy" not in m2
+    assert m2["weeklyReport"] is False
 
 
 # --------------------------------------------------------------------------- #

@@ -569,11 +569,10 @@ class NotificationPrefsModel(BaseModel):
     blindSpotAlerts: bool
 
 
-class PrivacyPrefsModel(BaseModel):
-    shareAnonymizedMetrics: bool
-    personalizedAds: bool
-
-
+# NOTE: a `privacy` group (shareAnonymizedMetrics / personalizedAds) was removed from the settings
+# contract in S1.2 — neither field was consumed by any behavior. Legacy stored blobs and legacy
+# PATCH payloads carrying those keys normalize away safely (dropped like any unknown key), so old
+# data and old clients keep working without a migration.
 class SettingsModel(BaseModel):
     theme: str
     language: str
@@ -583,7 +582,6 @@ class SettingsModel(BaseModel):
     weeklyReport: bool
     monthlyReport: bool
     notifications: NotificationPrefsModel
-    privacy: PrivacyPrefsModel
 
 
 # Update model — every field optional so any client can PATCH a subset; the engine merges it over
@@ -595,11 +593,8 @@ class NotificationPrefsUpdate(BaseModel):
     blindSpotAlerts: bool | None = None
 
 
-class PrivacyPrefsUpdate(BaseModel):
-    shareAnonymizedMetrics: bool | None = None
-    personalizedAds: bool | None = None
-
-
+# A legacy client that still sends a `privacy` object is not an error: it's an undeclared field,
+# ignored by Pydantic's default `extra="ignore"`, so the merge simply never sees it (see S1.2).
 class SettingsUpdateModel(BaseModel):
     theme: str | None = None
     language: str | None = None
@@ -609,7 +604,6 @@ class SettingsUpdateModel(BaseModel):
     weeklyReport: bool | None = None
     monthlyReport: bool | None = None
     notifications: NotificationPrefsUpdate | None = None
-    privacy: PrivacyPrefsUpdate | None = None
 
 
 class NotificationModel(BaseModel):

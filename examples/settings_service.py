@@ -36,7 +36,10 @@ DEFAULT_SETTINGS = {
     "monthlyReport": False,
     "notifications": {"recommendations": True, "weeklyDigest": True,
                       "streakReminders": False, "blindSpotAlerts": False},
-    "privacy": {"shareAnonymizedMetrics": False, "personalizedAds": False},
+    # A `privacy` group (shareAnonymizedMetrics / personalizedAds) was removed in S1.2: neither
+    # field was consumed by any behavior, and one contradicted the product's privacy policy. Legacy
+    # stored blobs / patches carrying those keys normalize away safely — dropped like any unknown
+    # key (see ``normalize_settings``), so no migration is needed.
 }
 _SETTINGS_THEMES = ("light", "dark", "system")
 # Supported interface languages (Commit 20). An unsupported/garbage value falls back to English —
@@ -90,7 +93,8 @@ def normalize_settings(stored: "dict | None", patch: "dict | None" = None) -> di
         "weeklyReport": bool(_layered("weeklyReport", layers, True)),
         "monthlyReport": bool(_layered("monthlyReport", layers, False)),
         "notifications": _merge_bool_group(DEFAULT_SETTINGS["notifications"], layers, "notifications"),
-        "privacy": _merge_bool_group(DEFAULT_SETTINGS["privacy"], layers, "privacy"),
+        # The output is built ONLY from the keys above, so any layer key outside this set — an
+        # unknown field, or the removed ``privacy`` group — is simply never read (dropped).
     }
 
 

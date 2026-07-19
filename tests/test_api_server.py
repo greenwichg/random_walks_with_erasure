@@ -487,15 +487,15 @@ def test_normalize_settings_defaults_merge_and_coerce():
     stored = {"theme": "dark", "readingGoalMinutes": 45,
               "notifications": {"weeklyDigest": False}, "bogus": 123}          # unknown key
     patch = {"politicalOpenness": 999, "language": "x" * 40,
-             "notifications": {"streakReminders": True}, "privacy": {"personalizedAds": True}}
+             "notifications": {"streakReminders": True, "blindSpotAlerts": True}}
     m = api_server.normalize_settings(stored, patch)
     assert m["theme"] == "dark" and m["readingGoalMinutes"] == 45              # from stored
     assert m["politicalOpenness"] == 100                                      # patch, clamped [0,100]
     assert m["language"] == "en"                    # Commit 20: unsupported value falls back to English
     assert m["notifications"]["weeklyDigest"] is False                        # stored (deep-merged)
     assert m["notifications"]["streakReminders"] is True                      # patch
+    assert m["notifications"]["blindSpotAlerts"] is True                      # 2nd patch key, same group
     assert m["notifications"]["recommendations"] is True                      # untouched default
-    assert m["privacy"]["personalizedAds"] is True                            # patch
     assert "bogus" not in m                                                   # unknown key dropped
 
     # Commit 20: every supported language passes through; case/whitespace normalized; junk → en.

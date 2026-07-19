@@ -599,9 +599,10 @@ def test_settings_persist_and_merge(client):
                       json={"provider": "google", "providerAccountId": "route-set"}).json()["userId"]
     hdr = {"X-IH-User-Id": str(uid)}
     full_keys = {"theme", "language", "politicalOpenness", "recommendationStrength",
-                 "readingGoalMinutes", "weeklyReport", "monthlyReport", "notifications", "privacy"}
+                 "readingGoalMinutes", "weeklyReport", "monthlyReport", "notifications"}
 
     d = client.get("/api/me/settings", headers=hdr).json()
+    # S1.2: `privacy` is gone from the contract — the response carries exactly the surviving keys.
     assert set(d) == full_keys and d["theme"] == "system" and d["politicalOpenness"] == 50  # defaults
 
     saved = client.post("/api/me/settings",
@@ -619,6 +620,23 @@ def test_settings_persist_and_merge(client):
 
     assert client.get("/api/me/settings").status_code == 401                 # auth required
     assert client.post("/api/me/settings", json={"theme": "light"}).status_code == 401
+
+
+def test_legacy_privacy_patch_is_accepted_and_ignored(client):
+    """S1.2 backward-compat at the API boundary: an old client PATCHing the removed ``privacy``
+    keys must not 422 — the undeclared field is ignored (Pydantic ``extra='ignore'``), the real
+    part of the patch still applies, and the response carries no ``privacy`` key."""
+    uid = client.post("/api/internal/users",
+                      json={"provider": "google", "providerAccountId": "route-legacy-priv"}
+                      ).json()["userId"]
+    hdr = {"X-IH-User-Id": str(uid)}
+    r = client.post("/api/me/settings",
+                    json={"privacy": {"personalizedAds": True, "shareAnonymizedMetrics": True},
+                          "weeklyReport": False}, headers=hdr)
+    assert r.status_code == 200                                              # ignored, not rejected
+    body = r.json()
+    assert "privacy" not in body                                            # removed from the contract
+    assert body["weeklyReport"] is False                                    # the real part applied
 
 
 def test_dashboard_anonymous_is_demo_with_empty_activity(client):
