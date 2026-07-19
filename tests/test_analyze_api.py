@@ -183,9 +183,17 @@ _MEASURED_CTX = {"reads": [], "familiarity": lambda p: {"reads": 0, "share": 0.0
                  "topic_shares": {"Politics": 0.8}, "lean_shares": {"left": 0.1, "center": 0.1, "right": 0.8}}
 
 
-def _measured(client, monkeypatch, ctx=_MEASURED_CTX):
+# A3.3a: the deterministic "engine" for the endpoint tests — the feed's fixed top pick.
+_FEED_TOP = {"article": {"id": "https://apnews.com/top-pick", "url": "https://apnews.com/top-pick",
+                         "publisher": "Associated Press", "topic": "Politics", "lean": 0.0,
+                         "leanBucket": "center", "publishedAt": "2026-07-18T08:00:00+00:00"},
+             "crossCutting": False, "strategy": "rwe-b", "reason": "r"}
+
+
+def _measured(client, monkeypatch, ctx=_MEASURED_CTX, feed=(_FEED_TOP,)):
     """Create a real user and make the app's personalizer treat ONLY that uid as measured, with a
-    fixed context — so the endpoint enriches without a heavy model build (no report snapshot)."""
+    fixed context and a fixed, deterministic feed — so the endpoint enriches without a heavy model
+    build (no report snapshot) and the A3.3a fallback is reproducible."""
     if api_fastapi.state.personalizer is None:
         pytest.skip("personalizer not built in this environment")
     uid = client.post("/api/internal/users",
@@ -193,6 +201,8 @@ def _measured(client, monkeypatch, ctx=_MEASURED_CTX):
                       ).json()["userId"]
     monkeypatch.setattr(api_fastapi.state.personalizer, "has_measured", lambda u, _id=uid: u == _id)
     monkeypatch.setattr(api_fastapi.state.personalizer, "explanation_context", lambda u: ctx)
+    monkeypatch.setattr(api_fastapi.state.personalizer, "recommendations",
+                        lambda u, s=None, p=None: list(feed))
     return uid, {"X-IH-User-Id": str(uid)}
 
 
@@ -205,9 +215,49 @@ def test_measured_reader_receives_enrichment(client, monkeypatch, catalog_url):
     assert body["explanation"]["type"] in {"bridge", "new_publisher", "topic_continuity",
                                            "story_match", "long_tail", "coverage_breadth"}
     assert body["personal"] is None                                 # A4, still null
+    # A3.3a: the catalog_url article is a cluster singleton -> the feed fallback fires, and the
+    # pick IS the (stubbed) feed's top — the engine's ranking, verbatim.
+    na = body["recommendation"]["nextArticle"]
+    assert na["source"] == "feed" and na["article"] == _FEED_TOP["article"]
+    assert set(na) == {"source", "article", "explanation"}          # no fabricated engine metadata
     # the SAME url anonymously stays null (byte-identical A2)
     anon = client.post("/api/analyze", json={"url": catalog_url}).json()
     assert anon["recommendation"] is None and anon["explanation"] is None
+
+
+def test_measured_story_path_via_endpoint_ignores_the_feed(client, monkeypatch):
+    """Seed a per-run 3-publisher cluster on the app's store, analyze one member as a measured
+    reader whose 'feed' stub RECORDS calls: the pick must be a story sibling (different publisher)
+    and the feed must never be consulted."""
+    st = api_fastapi.state.store
+    members = [("The Guardian", "theguardian.com", -1.0), ("AP", "apnews.com", 0.0),
+               ("Reuters", "reuters.com", 0.0)]
+    for i, (pub, dom, lean) in enumerate(members):
+        url = f"https://{dom}/story/a33-{_RUN}-{i}"
+        canon = ingest.canonical_url(url)
+        st.upsert_feed_article(
+            canonical_url=canon, url=url, publisher=pub, source_publisher=pub,
+            title=f"senate budget vote a33x{_RUN} bipartisan deal {i}", description="d", body=None,
+            published_at="2026-07-18T12:00:00+00:00", source_feed="t",
+            scored={"article_id": canon, "outlet": pub, "category": "Politics", "lean": lean,
+                    "political": True, "title": f"t{i}"})
+    calls = {"n": 0}
+
+    def counting_feed(u, s=None, p=None):
+        calls["n"] += 1
+        return [_FEED_TOP]
+
+    _uid, hdr = _measured(client, monkeypatch)
+    monkeypatch.setattr(api_fastapi.state.personalizer, "recommendations", counting_feed)
+    import evidence_resolver as er
+    er._INDEX_CACHE.update(key=None, index=None)     # fresh story index over the just-seeded rows
+    body = client.post("/api/analyze",
+                       json={"url": f"https://theguardian.com/story/a33-{_RUN}-0"},
+                       headers=hdr).json()
+    na = body["recommendation"]["nextArticle"]
+    assert na is not None and na["source"] == "story"
+    assert na["article"]["publisher"] in {"AP", "Reuters"}          # a sibling, never The Guardian
+    assert calls["n"] == 0                                          # the engine was not consulted
 
 
 def test_authed_enrichment_creates_no_reads_or_rec_events(client, monkeypatch, catalog_url):

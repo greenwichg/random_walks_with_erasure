@@ -64,6 +64,62 @@
   "personal": null,
   "recommendation": {
     "blindSpotTopic": null,
+    "nextArticle": {
+      "article": {
+        "confidence": 0.72,
+        "description": "Lawmakers reached a deal.",
+        "dominantEmotion": "neutral",
+        "emotion": {
+          "analysis": 0.3,
+          "fear": 0.1,
+          "neutral": 0.4,
+          "outrage": 0.1,
+          "positive": 0.1
+        },
+        "headline": "senate passes budget vote after bipartisan deal",
+        "id": "https://apnews.com/story/an-cluster-1",
+        "image": null,
+        "imageAttribution": null,
+        "imageHeight": null,
+        "imageMimeType": null,
+        "imageSource": null,
+        "imageWidth": null,
+        "lean": 0.0,
+        "leanBucket": "center",
+        "publishedAt": "2026-07-18T12:00:00+00:00",
+        "publisher": "AP",
+        "publisherLean": 0.0,
+        "publisherLogo": "https://apnews.com/favicon.ico",
+        "publisherLogoDark": null,
+        "publisherLogoSource": "favicon",
+        "readingMinutes": 2,
+        "register": "reporting",
+        "topic": "Politics",
+        "url": "https://apnews.com/story/an-cluster-1"
+      },
+      "explanation": {
+        "contribution": {
+          "key": "add_new_publisher",
+          "params": {}
+        },
+        "evidence": {
+          "band": "never",
+          "publisher": "AP",
+          "reads": 0,
+          "share": 0.0
+        },
+        "message": "You've never read AP before. This broadens your source diversity.",
+        "priority": 3,
+        "readerFact": {
+          "key": "never_read_publisher",
+          "params": {
+            "publisher": "AP"
+          }
+        },
+        "type": "new_publisher"
+      },
+      "source": "story"
+    },
     "reasons": [
       "familiar_topic"
     ],

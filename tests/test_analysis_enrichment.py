@@ -44,7 +44,7 @@ def _rec(analysis, explanation):
 def test_enrich_bridge_cross_cutting(store, index):
     ctx = fx._authed_contexts()["authed_bridge"]     # right reader, never read The Guardian
     analysis = aa.analyze(store, fx.GUARDIAN_URL)     # the left cluster member
-    out = ae.enrich(analysis, ctx, index=index, blind_spot_topics=fx._BLIND_SPOTS)
+    out = ae.enrich(analysis, ctx, index=index, blind_spot_topics=fx._BLIND_SPOTS, store=store)
 
     assert out["explanation"]["type"] == "bridge"
     assert out["recommendation"]["wouldBroaden"] is True
@@ -53,6 +53,8 @@ def test_enrich_bridge_cross_cutting(store, index):
     assert out["recommendation"]["blindSpotTopic"] is None
     # the shown sentence is licensed by real evidence (no over-claim)
     assert er.validate(out["explanation"], _rec(analysis, out["explanation"]), ctx, index) == []
+    # A3.3a: the story-relative pick rides along (details pinned in the dedicated tests below)
+    assert out["recommendation"]["nextArticle"]["source"] == "story"
 
 
 def test_enrich_familiar_not_broadening(store, index):
@@ -139,3 +141,174 @@ def test_blind_spot_topics_read_from_stored_report(store):
                                            {"topic": "Science", "gap": 0.3, "note": "n"}]})
     assert ae._blind_spot_topics(store, uid) == ("Economy", "Science")
     assert ae._blind_spot_topics(store, 999_999) == ()     # no report -> empty, never a guess
+
+
+# --------------------------------------------------------------------------- #
+# A3.3a — recommendation.nextArticle: story selection.
+# --------------------------------------------------------------------------- #
+CTX = None  # set per test via fx._authed_contexts()
+
+
+def test_story_pick_deterministic_with_canonical_tiebreak(store, index):
+    """Guardian analyzed; siblings AP + Reuters (both center, equal publishedAt in the seed):
+    different-bucket preference keeps both, dates tie, canonical URL decides -> AP."""
+    ctx = fx._authed_contexts()["authed_bridge"]
+    out = ae.enrich(aa.analyze(store, fx.GUARDIAN_URL), ctx, index=index, store=store)
+    na = out["recommendation"]["nextArticle"]
+    assert na["source"] == "story"
+    assert na["article"]["publisher"] == "AP"                       # apnews.com < reuters.com
+    assert na["article"]["publisher"] != "The Guardian"             # different publisher, always
+    assert na["explanation"]["type"] in er.TYPES
+
+
+def test_story_pick_prefers_cross_viewpoint_then_newest():
+    """A 4-member cluster: analyzed LEFT; siblings center-old, center-new, LEFT-newest. The
+    cross-viewpoint preference beats recency (center-new wins over left-newest), and within the
+    preferred bucket the newest wins."""
+    er._INDEX_CACHE.update(key=None, index=None)
+    st = fx.store_mod.Store("sqlite://")
+    members = [  # (publisher, domain, lean, hour) — shared title tokens so they cluster
+        ("The Guardian", "theguardian.com", -1.0, "12"),   # the analyzed article
+        ("AP", "apnews.com", 0.0, "09"),                   # center, old
+        ("Reuters", "reuters.com", 0.0, "11"),             # center, new  <- expected pick
+        ("CNN", "cnn.com", -1.0, "11:30"),                 # left, newest (same bucket -> demoted)
+    ]
+    for pub, dom, lean, hh in members:
+        url = f"https://{dom}/story/cv-case"
+        t = f"{hh.replace(':','')}"
+        st.upsert_feed_article(
+            canonical_url=er._canon(url), url=url, publisher=pub, source_publisher=pub,
+            title=f"city council budget vote sparks debate {t}", description="d", body=None,
+            published_at=f"2026-07-18T{hh if ':' in hh else hh + ':00'}:00+00:00", source_feed="t",
+            scored={"article_id": er._canon(url), "outlet": pub, "category": "Politics",
+                    "lean": lean, "political": True, "title": "t"})
+    er._INDEX_CACHE.update(key=None, index=None)
+    idx = er.story_index(st)
+    analysis = aa.analyze(st, "https://theguardian.com/story/cv-case")
+    assert analysis["story"]["matched"] is True                     # the cluster actually formed
+    ctx = fx._authed_contexts()["authed_bridge"]
+    na = ae.enrich(analysis, ctx, index=idx, store=st)["recommendation"]["nextArticle"]
+    assert na["source"] == "story"
+    assert na["article"]["publisher"] == "Reuters"                  # center beats left; 11:00 beats 09:00
+
+
+def test_story_pick_excludes_read_and_same_publisher(store, index):
+    """A sibling the reader already read is excluded; if every sibling is read or same-publisher,
+    the story path yields nothing (and with no feed fallback, nextArticle is null)."""
+    base = fx._authed_contexts()["authed_bridge"]
+    read_all = dict(base)
+    read_all["reads"] = [{"url": er._canon("https://apnews.com/story/an-cluster-1"),
+                          "publisher": "AP", "publishedAt": "2026-07-18T13:00:00+00:00"},
+                         {"url": er._canon("https://reuters.com/story/an-cluster-2"),
+                          "publisher": "Reuters", "publishedAt": "2026-07-18T13:00:00+00:00"}]
+    analysis = aa.analyze(store, fx.GUARDIAN_URL)
+    na = ae.enrich(analysis, read_all, index=index, store=store)["recommendation"]["nextArticle"]
+    assert na is None                                               # both siblings read -> no pick
+
+    one_read = dict(base)
+    one_read["reads"] = [read_all["reads"][0]]                      # AP read -> Reuters remains
+    na2 = ae.enrich(analysis, one_read, index=index, store=store)["recommendation"]["nextArticle"]
+    assert na2["article"]["publisher"] == "Reuters"
+
+
+def test_story_path_never_consults_the_feed(store, index):
+    """Story path independent of feed ranking: when a sibling exists, the lazy feed callable is
+    never invoked."""
+    called = {"feed": False}
+
+    def feed_next():
+        called["feed"] = True
+        return None
+
+    ctx = fx._authed_contexts()["authed_bridge"]
+    na = ae.enrich(aa.analyze(store, fx.GUARDIAN_URL), ctx, index=index, store=store,
+                   feed_next=feed_next)["recommendation"]["nextArticle"]
+    assert na["source"] == "story" and called["feed"] is False
+
+
+def test_story_pick_explanation_is_licensed_and_never_unearned_story_match(store, index):
+    """The pick's explanation passes evidence_resolver.validate(); with no cluster read in the
+    reader's history it must not be story_match (the story relation is provenance, not a claim)."""
+    ctx = fx._authed_contexts()["authed_bridge"]                    # no cluster reads
+    na = ae.enrich(aa.analyze(store, fx.GUARDIAN_URL), ctx, index=index, store=store)[
+        "recommendation"]["nextArticle"]
+    exp = na["explanation"]
+    assert exp["type"] != "story_match"
+    row = store.get_feed_article(er._canon(str(na["article"]["id"])))
+    sc = row.get("scored") or {}
+    rec = ae._resolver_rec({"url": na["article"]["url"], "id": na["article"]["id"],
+                            "publisher": na["article"]["publisher"], "topic": na["article"]["topic"],
+                            "lean": sc.get("lean"), "political": sc.get("political"),
+                            "publishedAt": na["article"]["publishedAt"]}, ctx)
+    assert er.validate(exp, rec, ctx, index) == []
+
+
+# --------------------------------------------------------------------------- #
+# A3.3a — feed fallback.
+# --------------------------------------------------------------------------- #
+class _FeedPersonalizer:
+    """A stub whose recommendations are a fixed, ordered list — the 'engine' for fallback tests."""
+    def __init__(self, recs):
+        self._recs, self.calls = recs, 0
+
+    def has_measured(self, uid):
+        return True
+
+    def explanation_context(self, uid):
+        return fx._authed_contexts()["authed_bridge"]
+
+    def recommendations(self, uid, strategy=None, params=None):
+        self.calls += 1
+        return self._recs
+
+
+def _top(url, publisher, lean=0.0):
+    return {"article": {"id": url, "url": url, "publisher": publisher, "topic": "Politics",
+                        "lean": lean, "leanBucket": "center", "publishedAt": "2026-07-18T08:00:00+00:00"},
+            "crossCutting": False, "strategy": "rwe-b", "reason": "r"}
+
+
+def test_feed_fallback_reflects_feed_ranking(store, index):
+    """No cluster (scored-url-only miss) -> the pick IS recommendations[0]; reordering the feed
+    changes the pick accordingly."""
+    ctx = fx._authed_contexts()["authed_bridge"]
+    a, b = _top("https://apnews.com/top-a", "Associated Press"), _top("https://reuters.com/top-b", "Reuters")
+
+    n1 = ae._feed_next(_FeedPersonalizer([a, b]), store, 1, ctx, index)
+    assert n1["source"] == "feed" and n1["article"] == a["article"]
+    n2 = ae._feed_next(_FeedPersonalizer([b, a]), store, 1, ctx, index)
+    assert n2["article"] == b["article"]                            # ranking is the selection
+    assert n1["explanation"]["type"] in er.TYPES                    # resolved with the shared resolver
+    assert ae._feed_next(_FeedPersonalizer([]), store, 1, ctx, index) is None
+
+
+def test_enrich_for_reader_feed_fallback_wiring(store):
+    """End-to-end through enrich_for_reader: a clusterless analysis falls back to the stub feed's
+    top; a clustered analysis never calls the stub."""
+    er._INDEX_CACHE.update(key=None, index=None)
+    top = _top("https://apnews.com/top-a", "Associated Press")
+    p = _FeedPersonalizer([top])
+    uid = store.upsert_user_by_identity("dev", "a33-feed").id
+
+    miss = aa.analyze(store, "https://apnews.com/article/not-in-any-cluster",
+                      metadata={"title": "zebra chess quartet marathon"})
+    out = ae.enrich_for_reader(p, store, uid, miss)
+    assert out["recommendation"]["nextArticle"]["source"] == "feed"
+    assert out["recommendation"]["nextArticle"]["article"] == top["article"]
+    assert p.calls == 1
+
+    clustered = aa.analyze(store, fx.GUARDIAN_URL)
+    out2 = ae.enrich_for_reader(p, store, uid, clustered)
+    assert out2["recommendation"]["nextArticle"]["source"] == "story"
+    assert p.calls == 1                                             # the feed was not consulted again
+
+
+def test_no_candidate_yields_null_next_article(store):
+    """Clusterless analysis + no feed available -> the verdict still carries the key, value null."""
+    er._INDEX_CACHE.update(key=None, index=None)
+    idx = er.story_index(store)
+    ctx = fx._authed_contexts()["authed_familiar"]
+    miss = aa.analyze(store, "https://apnews.com/article/lonely", metadata={"title": "a lonely piece"})
+    out = ae.enrich(miss, ctx, index=idx, store=store, feed_next=lambda: None)
+    assert "nextArticle" in out["recommendation"]
+    assert out["recommendation"]["nextArticle"] is None

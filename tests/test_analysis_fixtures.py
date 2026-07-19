@@ -72,6 +72,13 @@ def test_authed_goldens_carry_reader_sections():
     assert bridge["explanation"]["type"] == "bridge" and bridge["recommendation"]["wouldBroaden"] is True
     assert familiar["explanation"]["type"] == "topic_continuity"
     assert familiar["recommendation"]["wouldBroaden"] is False
+    # A3.3a: both goldens pin the story-relative nextArticle (AP via the canonical-URL tie-break),
+    # with exactly the contract's three keys — no fabricated engine metadata.
+    for g in (bridge, familiar):
+        na = g["recommendation"]["nextArticle"]
+        assert set(na) == {"source", "article", "explanation"}
+        assert na["source"] == "story" and na["article"]["publisher"] == "AP"
+        assert na["explanation"]["type"] == "new_publisher"
 
 
 def test_goldens_cover_the_three_source_states():

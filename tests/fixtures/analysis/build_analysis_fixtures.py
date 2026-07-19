@@ -126,7 +126,9 @@ def build_authed_from_fresh_store() -> "dict[str, dict]":
     out = {}
     for name, ctx in _authed_contexts().items():
         analysis = aa.analyze(st, GUARDIAN_URL)
-        sections = ae.enrich(analysis, ctx, index=index, blind_spot_topics=_BLIND_SPOTS)
+        # A3.3a: store supplies the story-sibling hydration; no feed fallback in the goldens (the
+        # Guardian member always has cluster siblings, so the story path is the pinned one).
+        sections = ae.enrich(analysis, ctx, index=index, blind_spot_topics=_BLIND_SPOTS, store=st)
         out[name] = {**analysis, **sections}
     return out
 
