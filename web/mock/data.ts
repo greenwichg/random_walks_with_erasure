@@ -416,18 +416,21 @@ export const PROFILE: Profile = {
   ],
 };
 
+// Kept in sync with the engine's settings_service.DEFAULT_SETTINGS (S1.5) so the dev mock fallback
+// and production expose identical defaults — a signed-in reader who's never saved sees the same
+// values whether the engine is up or the mock stands in for it.
 export const SETTINGS: Settings = {
   theme: "system",
   language: "en",
-  politicalOpenness: 62,
-  recommendationStrength: 55,
-  readingGoalMinutes: 30,
+  politicalOpenness: 50,
+  recommendationStrength: 50,
+  readingGoalMinutes: 20,
   weeklyReport: true,
-  monthlyReport: true,
+  monthlyReport: false,
   notifications: {
     recommendations: true,
     weeklyDigest: true,
-    streakReminders: true,
+    streakReminders: false,
     blindSpotAlerts: false,
   },
   // `privacy` intentionally omitted — it's absent from the frontend Settings type (nothing reads

@@ -16,10 +16,14 @@ function unauthorized() {
   );
 }
 
-/** The signed-in reader's stored preferences (server defaults where unset). Mock only as a dev
- *  fallback when the engine is down; a typed 503 in production. */
+/** The signed-in reader's stored preferences (server defaults where unset). Auth is required —
+ *  parity with POST: no session → 401 (never mock). The mock is only a dev fallback for an
+ *  authenticated reader when the engine is unreachable; a typed 503 in production. */
 export async function GET() {
-  const settings = await backendGet<Settings>("/api/me/settings", await engineAuthHeaders());
+  const headers = await engineAuthHeaders();
+  if (!headers["X-IH-User-Id"]) return unauthorized();
+
+  const settings = await backendGet<Settings>("/api/me/settings", headers);
   if (settings) return NextResponse.json(settings);
 
   if (MOCK_FALLBACK_ENABLED) return NextResponse.json(SETTINGS);
