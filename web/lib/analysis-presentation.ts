@@ -8,12 +8,14 @@
  *   - provenance ("Catalog" vs "Scored from URL only") is always derived from `source`;
  *   - an unknown outlet (`leanBucket: null`) maps to the explicit "unknown" lean — never a guess;
  *   - `register` and `confidence` are deliberately NOT surfaced (deferred; see A2-Web plan);
- *   - `recommendation` / `explanation` / `personal` are never modelled here (A3/A4);
+ *   - the reader sections (`recommendation` / `explanation` A3, `personal` A4) map ONLY when the
+ *     engine filled them — anonymous / non-measured input maps to null, nothing renders;
  *   - every KNOWN backend note maps to a localized message, and any UNRECOGNIZED note is preserved
  *     as a "technical" note (rendered under a "Technical note" label) rather than silently dropped.
  */
 import type {
   AnalysisNextArticle,
+  AnalysisPersonal,
   AnalysisRecommendation,
   AnalysisResult,
   AnalysisScoring,
@@ -80,17 +82,38 @@ export interface RecommendationPresentation {
   next: NextArticlePresentation | null;
 }
 
+/**
+ * A4.2 — the renderable reader standing. Values pass through verbatim; the only presentation
+ * choices are DISPLAY ones, documented here so they read as deliberate:
+ *   - `publisher` renders only the "familiar" band — the never/rarely bands are already rendered
+ *     as verdict reasons (same server-side band, computed once), so re-stating them would
+ *     duplicate the card;
+ *   - `topic.blindSpot` is not re-rendered — the verdict's blind-spot reason (with the topic
+ *     param) already carries it;
+ *   - the share becomes a whole display percent by the SAME rule the resolver's readerFacts use
+ *     (round; a <1% share is no claim).
+ */
+export interface PersonalPresentation {
+  alreadyRead: { at: string | null } | null;
+  familiarPublisher: { name: string } | null;
+  topicShare: { topic: string; percent: number } | null;
+  viewpoint: { shares: ViewpointDistribution; addsMissing: boolean } | null;
+  story: { readCount: number; bucketsRead: LeanBucket[]; addsBucket: LeanBucket | null } | null;
+}
+
 export interface AnalysisPresentation {
   status: "analyzed" | "invalid_url";
   provenance: AnalysisProvenance | null;
   scoring: ScoringPresentation | null;
   story: StoryPresentation | null;
   notes: NotePresentation[];
-  // A3 (present only for a signed-in measured reader; null for anonymous / non-measured):
+  // A3/A4 (present only for a signed-in measured reader; null for anonymous / non-measured):
   recommendation: RecommendationPresentation | null;
   /** The raw resolver explanation, passed through for the component's reused renderer
    *  (`presentRecommendation` + `localizeExplanation`) — never re-implemented here. */
   explanation: RecommendationExplanation | null;
+  /** The reader standing, or null (anonymous / non-measured / nothing renderable). */
+  personal: PersonalPresentation | null;
 }
 
 /** Verdict reason code → catalog key. Literal keys on purpose (check:i18n scans them); a code
@@ -151,6 +174,64 @@ function mapRecommendation(rec: AnalysisRecommendation | null): RecommendationPr
 function mapExplanation(exp: unknown): RecommendationExplanation | null {
   return exp && typeof exp === "object" && typeof (exp as { type?: unknown }).type === "string"
     ? (exp as RecommendationExplanation)
+    : null;
+}
+
+/** The closed lean-bucket vocabulary — an unexpected value never renders as a bucket. */
+const BUCKETS: readonly LeanBucket[] = ["left", "center", "right"];
+
+function isBucket(v: unknown): v is LeanBucket {
+  return typeof v === "string" && (BUCKETS as readonly string[]).includes(v);
+}
+
+/** A4.2 — total mapping of the reader standing. Values pass through verbatim (the backend is the
+ *  source of truth); anything unexpected degrades to a null block, and a `personal` with nothing
+ *  renderable maps to null so the component renders nothing at all. */
+function mapPersonal(p: AnalysisPersonal | null | undefined): PersonalPresentation | null {
+  if (!p || typeof p !== "object") return null;
+
+  const ar = p.alreadyRead;
+  const alreadyRead =
+    ar && typeof ar === "object"
+      ? { at: typeof ar.at === "string" && ar.at.trim() ? ar.at : null }
+      : null;
+
+  // Only the "familiar" band is new information here — never/rarely already render as verdict
+  // reasons (the same server-side band, computed once), so re-stating them would duplicate.
+  const pub = p.publisher;
+  const familiarPublisher =
+    pub && typeof pub === "object" && pub.band === "familiar" &&
+    typeof pub.name === "string" && pub.name.trim()
+      ? { name: pub.name }
+      : null;
+
+  // Display formatting only: the resolver's whole-percent rule (round; <1% is no claim).
+  let topicShare: PersonalPresentation["topicShare"] = null;
+  const tp = p.topic;
+  if (tp && typeof tp === "object" && typeof tp.topic === "string" && tp.topic.trim() &&
+      typeof tp.share === "number" && tp.share >= 0 && tp.share <= 1) {
+    const percent = Math.round(tp.share * 100);
+    if (percent >= 1) topicShare = { topic: tp.topic, percent };
+  }
+
+  const vp = p.viewpoint;
+  const viewpoint =
+    vp && typeof vp === "object" && isDistribution(vp.readerShares)
+      ? { shares: vp.readerShares, addsMissing: vp.addsMissing === true }
+      : null;
+
+  let story: PersonalPresentation["story"] = null;
+  const st = p.story;
+  if (st && typeof st === "object" && typeof st.readCount === "number" && st.readCount >= 1) {
+    story = {
+      readCount: st.readCount,
+      bucketsRead: Array.isArray(st.bucketsRead) ? st.bucketsRead.filter(isBucket) : [],
+      addsBucket: isBucket(st.addsBucket) ? st.addsBucket : null,
+    };
+  }
+
+  return alreadyRead || familiarPublisher || topicShare || viewpoint || story
+    ? { alreadyRead, familiarPublisher, topicShare, viewpoint, story }
     : null;
 }
 
@@ -260,7 +341,7 @@ export function analysisPresentation(result: AnalysisResult): AnalysisPresentati
   const notes = Array.isArray(result?.notes) ? result.notes.map(mapNote) : [];
   if (result?.status !== "analyzed") {
     return { status: "invalid_url", provenance: null, scoring: null, story: null, notes,
-             recommendation: null, explanation: null };
+             recommendation: null, explanation: null, personal: null };
   }
   return {
     status: "analyzed",
@@ -268,8 +349,9 @@ export function analysisPresentation(result: AnalysisResult): AnalysisPresentati
     scoring: mapScoring(result.scoring),
     story: mapStory(result.story),
     notes,
-    // A3 — non-null only when the engine enriched (a signed-in measured reader).
+    // A3/A4 — non-null only when the engine enriched (a signed-in measured reader).
     recommendation: mapRecommendation(result.recommendation),
     explanation: mapExplanation(result.explanation),
+    personal: mapPersonal(result.personal),
   };
 }

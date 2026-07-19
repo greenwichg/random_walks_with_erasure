@@ -20,9 +20,10 @@ function golden(name: string): AnalysisResult {
 const catalogHit = golden("catalog_hit");
 const scoredUrlOnly = golden("scored_url_only");
 const invalid = golden("invalid_url");
-// A3 authenticated (measured-reader) goldens — the SAME fixtures the backend enrichment test pins.
+// A3/A4 authenticated (measured-reader) goldens — the SAME fixtures the backend enrichment test pins.
 const authedBridge = golden("authed_bridge");
 const authedFamiliar = golden("authed_familiar");
+const authedFollowing = golden("authed_following");
 
 /** Override the (untyped-at-runtime) story with an arbitrary value — for the F1 malformed cases. */
 function withStory(base: AnalysisResult, story: unknown): AnalysisResult {
@@ -97,13 +98,13 @@ test("empty topic collapses to null (row hidden)", () => {
   assert.equal(p.scoring?.topic, null);
 });
 
-test("personal is never modelled; anonymous reader sections are null (A2 preserved)", () => {
+test("anonymous reader sections are null (A2 preserved); the presentation key set is closed", () => {
   const p = analysisPresentation(catalogHit);
-  assert.ok(!("personal" in p)); // A4 — never modelled
   assert.equal(p.recommendation, null); // anonymous / non-measured → no reader sections
   assert.equal(p.explanation, null);
+  assert.equal(p.personal, null); // A4 — mapped, and null for anonymous input
   assert.deepEqual(Object.keys(p).sort(),
-    ["explanation", "notes", "provenance", "recommendation", "scoring", "status", "story"]);
+    ["explanation", "notes", "personal", "provenance", "recommendation", "scoring", "status", "story"]);
 });
 
 // --------------------------------------------------------------------------- //
@@ -183,6 +184,7 @@ test("anonymous goldens carry no reader sections (A2 preserved)", () => {
     const p = analysisPresentation(r);
     assert.equal(p.recommendation, null);
     assert.equal(p.explanation, null);
+    assert.equal(p.personal, null);
   }
 });
 
@@ -289,4 +291,115 @@ test("next labels are the closed analyze.next.* set (localization coverage)", ()
       .labelKey;
     assert.match(key, /^analyze\.next\.[a-z]+$/i);
   }
+});
+
+// --------------------------------------------------------------------------- //
+// A4.2 — `personal` (reader standing), driven by the authed goldens. Values pass through
+// verbatim; the only presentation choices are display ones (never/rarely bands and blindSpot are
+// already rendered as verdict reasons; shares become the resolver's whole-percent rule).
+// --------------------------------------------------------------------------- //
+function withPersonal(base: AnalysisResult, personal: unknown): AnalysisResult {
+  return { ...base, personal: personal as AnalysisResult["personal"] };
+}
+
+test("authed bridge/familiar: topic share + viewpoint map; story stays null (no member read)", () => {
+  const bridge = analysisPresentation(authedBridge).personal!;
+  assert.deepEqual(bridge.topicShare, { topic: "Politics", percent: 85 });
+  assert.deepEqual(bridge.viewpoint, {
+    shares: { left: 0.1, center: 0.05, right: 0.85 },
+    addsMissing: false,
+  });
+  assert.equal(bridge.alreadyRead, null);
+  assert.equal(bridge.familiarPublisher, null); // "never" renders as the newPublisher reason, not here
+  assert.equal(bridge.story, null);
+
+  const familiar = analysisPresentation(authedFamiliar).personal!;
+  assert.deepEqual(familiar.familiarPublisher, { name: "The Guardian" }); // the one NEW standing fact
+  assert.deepEqual(familiar.topicShare, { topic: "Politics", percent: 90 });
+});
+
+test("authed following: story standing + a claimed addsMissing (the A4.1 pinned scenario)", () => {
+  const p = analysisPresentation(authedFollowing).personal!;
+  assert.deepEqual(p.story, { readCount: 1, bucketsRead: ["center"], addsBucket: "left" });
+  assert.deepEqual(p.viewpoint, {
+    shares: { left: 0.0, center: 0.25, right: 0.75 },
+    addsMissing: true,
+  });
+  assert.deepEqual(p.topicShare, { topic: "Politics", percent: 75 });
+  // and the A3 sections still map alongside (one card, three sections)
+  const full = analysisPresentation(authedFollowing);
+  assert.equal(full.explanation?.type, "story_match");
+  assert.ok(full.recommendation!.reasons.map((r) => r.key).includes("analyze.rec.reason.following"));
+});
+
+test("alreadyRead maps with and without a timestamp", () => {
+  const base = authedFollowing.personal!;
+  const withAt = analysisPresentation(
+    withPersonal(authedFollowing, { ...base, alreadyRead: { at: "2026-07-18T14:00:00+00:00" } }),
+  ).personal!;
+  assert.deepEqual(withAt.alreadyRead, { at: "2026-07-18T14:00:00+00:00" });
+  const noAt = analysisPresentation(
+    withPersonal(authedFollowing, { ...base, alreadyRead: { at: null } }),
+  ).personal!;
+  assert.deepEqual(noAt.alreadyRead, { at: null });
+  const junkAt = analysisPresentation(
+    withPersonal(authedFollowing, { ...base, alreadyRead: { at: 42 } }),
+  ).personal!;
+  assert.deepEqual(junkAt.alreadyRead, { at: null }); // read known; junk timestamp degrades to null
+});
+
+test("display dedup: never/rarely bands and a sub-1% share render nothing", () => {
+  const base = authedFollowing.personal!;
+  const p = analysisPresentation(
+    withPersonal(authedFollowing, {
+      ...base,
+      publisher: { name: "The Guardian", band: "rarely" },
+      topic: { topic: "Politics", share: 0.004, blindSpot: null },
+    }),
+  ).personal!;
+  assert.equal(p.familiarPublisher, null); // the verdict reason already says it
+  assert.equal(p.topicShare, null); // <1% is no claim (the resolver's own display rule)
+});
+
+test("malformed personal degrades: junk blocks null out; nothing renderable maps to null", () => {
+  const base = authedFollowing.personal!;
+  // Every block junked (alreadyRead/publisher are already null in this golden) -> the whole
+  // section maps to null, so the component renders nothing rather than an empty heading.
+  const allJunk = analysisPresentation(
+    withPersonal(authedFollowing, {
+      ...base,
+      viewpoint: { articleBucket: "up", readerShares: { left: "x" }, addsMissing: true },
+      story: { readCount: 0, bucketsRead: ["center"], addsBucket: "left" },
+      topic: { topic: "", share: 0.5, blindSpot: null },
+    }),
+  ).personal;
+  assert.equal(allJunk, null);
+
+  const partial = analysisPresentation(
+    withPersonal(authedFollowing, {
+      ...base, // topic stays valid (Politics, 75%)
+      viewpoint: { articleBucket: "up", readerShares: { left: "x" }, addsMissing: true },
+      story: { readCount: 0, bucketsRead: ["center"], addsBucket: "left" },
+    }),
+  ).personal!;
+  assert.equal(partial.viewpoint, null); // bad shares -> no spectrum, no addsMissing claim
+  assert.equal(partial.story, null); // readCount < 1 is never a story claim
+  assert.deepEqual(partial.topicShare, { topic: "Politics", percent: 75 }); // valid block survives
+
+  for (const junk of [null, undefined, 42, "x", {}, { alreadyRead: null, publisher: null,
+       topic: null, viewpoint: null, story: null }]) {
+    assert.equal(analysisPresentation(withPersonal(authedFollowing, junk)).personal, null,
+      `personal ${JSON.stringify(junk)} must map to null`);
+  }
+});
+
+test("story standing filters unknown buckets; an unknown addsBucket never renders", () => {
+  const base = authedFollowing.personal!;
+  const p = analysisPresentation(
+    withPersonal(authedFollowing, {
+      ...base,
+      story: { readCount: 2, bucketsRead: ["center", "sideways"], addsBucket: "diagonal" },
+    }),
+  ).personal!;
+  assert.deepEqual(p.story, { readCount: 2, bucketsRead: ["center"], addsBucket: null });
 });

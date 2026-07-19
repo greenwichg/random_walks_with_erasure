@@ -1,7 +1,8 @@
 "use client";
 
 import * as React from "react";
-import { AlertCircle, Building2, Check, ExternalLink, Info, Layers, Globe, Sparkles } from "lucide-react";
+import { AlertCircle, BarChart3, Building2, Check, ExternalLink, History, Info, Layers, Globe,
+         Sparkles, type LucideIcon } from "lucide-react";
 import type { AnalysisResult, LeanBucket } from "@/types/domain";
 import { analysisPresentation } from "@/lib/analysis-presentation";
 import { presentRecommendation } from "@/lib/rec-presentation";
@@ -20,8 +21,10 @@ import { cn } from "@/lib/utils";
  * `explanation` + `recommendation` (A3) render ONLY when the engine enriched them — a signed-in
  * measured reader; anonymous / non-measured readers get exactly the A2 sections, no placeholder.
  * The explanation reuses the recommendation-card renderer (`presentRecommendation` +
- * `localizeExplanation`); `personal` (A4) is still never read. Known backend notes are localized; an
- * unrecognized note is preserved under a "Technical note" label rather than dropped.
+ * `localizeExplanation`); `personal` (A4) renders as the compact "You and this article" standing
+ * inside the same card — facts only, each line present only when the engine licensed it. Known
+ * backend notes are localized; an unrecognized note is preserved under a "Technical note" label
+ * rather than dropped.
  */
 export function AnalysisResult({ result }: { result: AnalysisResult }) {
   const { t } = useTranslation();
@@ -163,8 +166,9 @@ export function AnalysisResult({ result }: { result: AnalysisResult }) {
         </SectionCard>
       )}
 
-      {/* A3 — reader-relative "For you": present only when the engine enriched (measured reader). */}
-      {(view.recommendation || view.explanation) && <ForYouCard view={view} />}
+      {/* A3/A4 — reader-relative "For you": present only when the engine enriched (measured
+          reader). Anonymous / non-measured input maps every section to null → nothing renders. */}
+      {(view.recommendation || view.explanation || view.personal) && <ForYouCard view={view} />}
 
       <NotesPanel notes={view.notes} />
 
@@ -207,11 +211,107 @@ function ForYouCard({ view }: { view: ReturnType<typeof analysisPresentation> })
           </ul>
         ) : null}
 
+        {/* A4 — "You and this article": the reader-standing facts (each line only when present). */}
+        {view.personal ? <PersonalStanding personal={view.personal} /> : null}
+
         {/* A3.3 — "Read next": the reader's next pick. Nothing renders when there is no honest
             pick (null / malformed). The explanation reuses the SAME renderer as above. */}
         {rec?.next ? <NextArticleBlock next={rec.next} /> : null}
       </div>
     </SectionCard>
+  );
+}
+
+/** One standing fact line: a small leading icon + a localized sentence (the reasons-list idiom). */
+function Fact({ icon: Icon, children }: { icon: LucideIcon; children: React.ReactNode }) {
+  return (
+    <p className="flex items-start gap-2 text-xs text-muted-foreground">
+      <Icon className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+      <span>{children}</span>
+    </p>
+  );
+}
+
+/**
+ * A4.2 — the reader-standing block: verbatim engine facts rendered compactly. Already-read (with
+ * a locale date when known), the familiar-publisher standing, the reader's measured topic share
+ * (the SAME `rec.reader.top_topic_share` sentence the recommendation cards use), their political
+ * reading mix (the shared SpectrumBar), and their own coverage of this story. Sub-blocks the
+ * mapper nulled render nothing.
+ */
+function PersonalStanding({
+  personal,
+}: {
+  personal: NonNullable<ReturnType<typeof analysisPresentation>["personal"]>;
+}) {
+  const { t, formatDate } = useTranslation();
+  const story = personal.story;
+  return (
+    <div className="space-y-2 border-t pt-3">
+      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        {t("analyze.personal.title")}
+      </p>
+
+      {personal.alreadyRead ? (
+        <Fact icon={History}>
+          {personal.alreadyRead.at
+            ? t("analyze.personal.alreadyReadOn", {
+                date: formatDate(personal.alreadyRead.at, {
+                  year: "numeric", month: "short", day: "numeric",
+                }),
+              })
+            : t("analyze.personal.alreadyRead")}
+        </Fact>
+      ) : null}
+
+      {personal.familiarPublisher ? (
+        <Fact icon={Building2}>
+          {t("analyze.personal.familiarPublisher", { publisher: personal.familiarPublisher.name })}
+        </Fact>
+      ) : null}
+
+      {personal.topicShare ? (
+        <Fact icon={BarChart3}>
+          {t("rec.reader.top_topic_share", personal.topicShare)}
+        </Fact>
+      ) : null}
+
+      {personal.viewpoint ? (
+        <div className="space-y-1.5">
+          <p className="text-xs text-muted-foreground">{t("analyze.personal.readingMix")}</p>
+          <SpectrumBar distribution={personal.viewpoint.shares} />
+          {personal.viewpoint.addsMissing ? (
+            <p className="flex items-start gap-2 text-xs font-medium text-positive">
+              <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+              <span>{t("analyze.personal.addsMissing")}</span>
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
+      {story ? (
+        <div className="space-y-1.5">
+          <Fact icon={Layers}>{t("analyze.personal.storyRead", { count: story.readCount })}</Fact>
+          {story.bucketsRead.length > 0 || story.addsBucket ? (
+            <div className="flex flex-wrap items-center gap-1.5 pl-5">
+              {story.bucketsRead.map((b) => (
+                <Badge key={b} variant={b}>
+                  {t(`filter.${b}`)}
+                </Badge>
+              ))}
+              {story.addsBucket ? (
+                <>
+                  <span className="text-xs text-muted-foreground">
+                    {t("analyze.personal.storyAdds")}
+                  </span>
+                  <Badge variant={story.addsBucket}>{t(`filter.${story.addsBucket}`)}</Badge>
+                </>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
   );
 }
 

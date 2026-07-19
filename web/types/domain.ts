@@ -664,9 +664,9 @@ export interface NotificationItem {
 /**
  * Article Analyzer (A2) — ANALYSIS CONTRACT v1, the anonymous analysis of one news URL. Mirrors
  * the engine's `article_analyzer.analyze` verbatim; the web treats the nulls as meaningful (an
- * unknown outlet is `lean: null`, never a guess). The reader-relative sections
- * (`recommendation` / `explanation` / `personal`) are typed but intentionally NOT rendered — they
- * arrive in A3/A4.
+ * unknown outlet is `lean: null`, never a guess). The reader-relative sections are filled for a
+ * signed-in measured reader (`recommendation` / `explanation` in A3, `personal` in A4) and null
+ * otherwise — the anonymous shape is exactly the A2 analysis.
  */
 export type AnalysisSource = "catalog" | "scored_url_only";
 
@@ -722,6 +722,34 @@ export interface AnalysisRecommendation {
   nextArticle?: AnalysisNextArticle | null;
 }
 
+/** The reader's three-tier outlet familiarity — the engine's closed band vocabulary. */
+export type FamiliarityBand = "never" | "rarely" | "familiar";
+
+/**
+ * A4 — the reader's standing relative to the analyzed article: facts the engine read verbatim
+ * from the measured context / stored report (set membership, counts, shares — never derived
+ * projections). Every block nulls independently when its licensing data was absent.
+ */
+export interface AnalysisPersonal {
+  /** The analyzed canonical URL is in the reader's history; `at` when the read time is known. */
+  alreadyRead: { at: string | null } | null;
+  /** The reader's familiarity band for the outlet — the same lookup behind the verdict reasons. */
+  publisher: { name: string; band: FamiliarityBand } | null;
+  /** The reader's measured share of the topic (null when their report claims none) + the stored
+   *  report's blind-spot gap when the verdict flagged the topic. */
+  topic: { topic: string; share: number | null; blindSpot: { gap: number | null } | null } | null;
+  /** The article's lean bucket vs the reader's measured viewpoint shares; `addsMissing` only for
+   *  a political article whose bucket share is exactly zero. */
+  viewpoint: {
+    articleBucket: LeanBucket;
+    readerShares: ViewpointDistribution | null;
+    addsMissing: boolean;
+  } | null;
+  /** The reader's own coverage of the article's story cluster (analyzed article excluded);
+   *  present only when they have read at least one member. */
+  story: { readCount: number; bucketsRead: LeanBucket[]; addsBucket: LeanBucket | null } | null;
+}
+
 export interface AnalysisResult {
   analysisVersion: number;
   input: { url: string; canonicalUrl: string | null };
@@ -730,11 +758,12 @@ export interface AnalysisResult {
   article: Article | null;
   scoring: AnalysisScoring | null;
   story: AnalysisStory | null;
-  // A3 — filled for a signed-in measured reader; null for anonymous / non-measured (the A2 shape).
-  // The explanation reuses the recommendation-card renderer (presentRecommendation / localizeExplanation).
+  // A3/A4 — filled for a signed-in measured reader; null for anonymous / non-measured (the A2
+  // shape). The explanation reuses the recommendation-card renderer (presentRecommendation /
+  // localizeExplanation); `personal` is the reader-standing section.
   recommendation: AnalysisRecommendation | null;
   explanation: RecommendationExplanation | null;
-  personal: unknown | null;    // A4 — still unread/unrendered
+  personal: AnalysisPersonal | null;
   notes: string[];
 }
 
