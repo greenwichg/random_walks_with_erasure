@@ -9,6 +9,7 @@ import type {
   FeedbackAction,
   MeasuredHealthReport,
   HistoryEntry,
+  NotificationItem,
   Profile,
   Recommendation,
   RecommendationExplain,
@@ -64,6 +65,11 @@ export const services = {
   settings: () => getJson<Settings>("/settings"),
   // Persist a (partial) preferences patch; the engine merges + returns the full normalised settings.
   updateSettings: (patch: Partial<Settings>) => postJson<Settings>("/settings", patch),
+  // Notifications (N3): the signed-in reader's materialised notifications, newest first.
+  notifications: () => getJson<NotificationItem[]>("/me/notifications"),
+  // Mark one notification seen (idempotent, user-scoped engine-side).
+  markNotificationSeen: (id: number) =>
+    postJson<{ ok: boolean; changed: boolean }>(`/me/notifications/${id}/seen`),
   analytics: () => getJson<AnalyticsSeries>("/analytics"),
   coachHistory: () => getJson<CoachMessage[]>("/coach"),
   // Coach v2: round-trips the last reply's structured echo verbatim (binding-only); omitted for
@@ -122,6 +128,7 @@ export const queryKeys = {
   profile: ["profile"] as const,
   saved: ["saved"] as const,
   settings: ["settings"] as const,
+  notifications: ["notifications"] as const,
   analytics: ["analytics"] as const,
   coach: ["coach"] as const,
   search: (params: SearchParams) =>

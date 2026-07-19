@@ -4,9 +4,10 @@ import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useSession, signOut } from "next-auth/react";
-import { Menu, Search, Bell } from "lucide-react";
+import { Menu, Search } from "lucide-react";
 import { Logo } from "@/components/layout/logo";
 import { NavLinks } from "@/components/layout/nav-links";
+import { NotificationsMenu } from "@/components/layout/notifications-menu";
 import { SearchCommand } from "@/components/layout/search-command";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
@@ -87,10 +88,7 @@ export function Header() {
           <Search className="h-5 w-5" />
         </Button>
 
-        <Button variant="ghost" size="icon" className="relative text-muted-foreground" aria-label={t("header.notifications")}>
-          <Bell className="h-[1.15rem] w-[1.15rem]" />
-          <span className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full bg-primary" />
-        </Button>
+        <NotificationsMenu />
 
         <ThemeToggle />
 

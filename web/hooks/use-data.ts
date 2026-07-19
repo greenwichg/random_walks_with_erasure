@@ -1,10 +1,12 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useSession } from "next-auth/react";
 import { queryKeys, services } from "@/services";
 import { recordRead, type RecordReadInput } from "@/lib/record-read";
 import type {
   FeedbackAction,
+  NotificationItem,
   Profile,
   Recommendation,
   SavableArticle,
@@ -64,6 +66,37 @@ export function useUpdateSettings() {
   });
 }
 export const useAnalytics = () => useQuery({ queryKey: queryKeys.analytics, queryFn: services.analytics });
+
+/** N3: the signed-in reader's notifications, fetched once for the header bell (badge + panel).
+ * Cached (`staleTime`) and not refetched on focus, so navigating between pages reuses the cache
+ * rather than re-materialising on the engine each time. Gated to authenticated sessions — anonymous
+ * / demo have none (the endpoint returns an empty list). No polling. */
+export const useNotifications = () => {
+  const { status } = useSession();
+  return useQuery({
+    queryKey: queryKeys.notifications,
+    queryFn: services.notifications,
+    enabled: status === "authenticated",
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+  });
+};
+
+/** Mark one notification seen and update the cache in place (no refetch): the badge and the unread
+ * emphasis derive from the cached list, so flipping `seenAt` locally is sufficient. */
+export function useMarkNotificationSeen() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => services.markNotificationSeen(id),
+    onSuccess: (_res, id) => {
+      qc.setQueryData<NotificationItem[]>(queryKeys.notifications, (prev) =>
+        prev
+          ? prev.map((n) => (n.id === id && !n.seenAt ? { ...n, seenAt: new Date().toISOString() } : n))
+          : prev,
+      );
+    },
+  });
+}
 
 export const useRecommendations = (strategy?: Recommendation["strategy"]) =>
   useQuery({

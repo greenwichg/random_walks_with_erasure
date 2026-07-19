@@ -10,7 +10,7 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "test": "node --test lib/i18n-core.test.ts lib/rec-presentation.test.ts lib/history-insights.test.ts lib/hero-copy.test.ts lib/coach-presentation.test.ts"
+    "test": "node --test lib/i18n-core.test.ts lib/rec-presentation.test.ts lib/history-insights.test.ts lib/hero-copy.test.ts lib/coach-presentation.test.ts lib/notifications.test.ts"
   },
   "dependencies": {
     "@radix-ui/react-avatar": "^1.1.1",

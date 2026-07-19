@@ -643,3 +643,20 @@ export interface AnalyticsSeries {
   recommendationAcceptance: { date: string; accepted: number; ignored: number }[];
   healthImprovement: TrendPoint[];
 }
+
+/**
+ * A materialised notification for the signed-in reader (from `GET /api/me/notifications`, newest
+ * first). `kind` is mapped to icon / title / body / destination by `NotificationPresentation` (the
+ * ONLY kind→UI layer); an unknown kind degrades gracefully. `payload` carries the kind's structured
+ * fields (e.g. `count`, `overall`, `streakDays`, `reads`) used to interpolate the localized body.
+ * `seenAt` is null until the reader opens/clicks it (the unread signal).
+ */
+export interface NotificationItem {
+  id: number;
+  kind: string;
+  titleKey: string;
+  payload: Record<string, unknown>;
+  createdAt: string;
+  seenAt: string | null;
+  gatedBy: string;
+}
