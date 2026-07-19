@@ -374,6 +374,8 @@
  "onboarding.value3.d": "Cross-cutting, never whiplash.",
  "onboarding.buildReport": "Build my report",
  "onboarding.sampleFirst": "See a sample first",
+ "onboarding.analyzePrompt": "Just checking one article?",
+ "onboarding.analyzeLink": "Analyze a link →",
  "onboarding.takesMinute": "Takes about a minute · No account needed to start",
  "onboarding.haveAccount": "Already have an account?",
  "onboarding.signIn": "Sign in",

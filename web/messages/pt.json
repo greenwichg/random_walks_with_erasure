@@ -374,6 +374,8 @@
  "onboarding.value3.d": "Transversal, nunca brusco.",
  "onboarding.buildReport": "Criar meu relatório",
  "onboarding.sampleFirst": "Ver um exemplo primeiro",
+ "onboarding.analyzePrompt": "Só quer verificar um artigo?",
+ "onboarding.analyzeLink": "Analisar um link →",
  "onboarding.takesMinute": "Leva cerca de um minuto · Nenhuma conta necessária para começar",
  "onboarding.haveAccount": "Já tem uma conta?",
  "onboarding.signIn": "Entrar",

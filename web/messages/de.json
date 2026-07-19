@@ -374,6 +374,8 @@
  "onboarding.value3.d": "Übergreifend, nie abrupt.",
  "onboarding.buildReport": "Meinen Bericht erstellen",
  "onboarding.sampleFirst": "Zuerst ein Beispiel ansehen",
+ "onboarding.analyzePrompt": "Nur einen Artikel prüfen?",
+ "onboarding.analyzeLink": "Einen Link analysieren →",
  "onboarding.takesMinute": "Dauert etwa eine Minute · Kein Konto zum Start nötig",
  "onboarding.haveAccount": "Haben Sie bereits ein Konto?",
  "onboarding.signIn": "Anmelden",

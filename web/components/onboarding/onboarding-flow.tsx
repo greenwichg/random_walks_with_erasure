@@ -212,6 +212,16 @@ function Welcome({ onBuild, onSample }: { onBuild: () => void; onSample: () => v
       <Button className="mt-2 w-full" size="lg" variant="outline" onClick={onSample}>
         {t("onboarding.sampleFirst")}
       </Button>
+      {/* Tertiary escape hatch: the anonymous, zero-commitment single-article analyzer. */}
+      <p className="mt-3 text-center text-xs text-muted-foreground">
+        {t("onboarding.analyzePrompt")}{" "}
+        <button
+          onClick={() => window.location.assign("/analyze")}
+          className="font-medium text-primary underline-offset-2 hover:underline"
+        >
+          {t("onboarding.analyzeLink")}
+        </button>
+      </p>
       <p className="mt-3 text-center text-xs text-muted-foreground">{t("onboarding.takesMinute")}</p>
       <p className="mt-4 text-center text-xs text-muted-foreground">
         {t("onboarding.haveAccount")}{" "}
