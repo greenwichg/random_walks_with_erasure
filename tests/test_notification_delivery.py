@@ -54,7 +54,7 @@ def test_build_context_empty_user():
     ctx = nd.build_context(st, uid)
     assert ctx.report.has_report is False and ctx.report.overall is None and ctx.report.blind_spots == ()
     assert ctx.reading.streak_days == 0 and ctx.reading.read_today is False
-    assert ctx.reading.reads_this_week == 0
+    assert ctx.reading.reads_this_week == 0 and ctx.reading.streak_through_yesterday == 0
     assert ctx.recommendations.unopened_count == 0
     assert isinstance(ctx.settings, dict) and ctx.delivery.delivered_keys == frozenset()
 
@@ -77,6 +77,7 @@ def test_build_context_reading_signals():
     assert ctx.reading.read_today is True
     assert ctx.reading.streak_days >= 1                 # a read today -> current streak >= 1
     assert ctx.reading.reads_this_week == 2             # today + 3d within the window; 10d excluded
+    assert ctx.reading.streak_through_yesterday == 0    # nothing read yesterday -> not at risk
 
 
 # --------------------------------------------------------------------------- #
@@ -154,16 +155,51 @@ def test_recommendations_waiting_fires_on_unopened_recs():
     assert nd.build_context(st, uid).recommendations.unopened_count == 0
 
 
-def test_streak_reminder_is_inert_under_reading_streak():
-    """`_reading_streak` counts days ENDING TODAY, so streak_days >= 1 iff the user read today — but
-    the D0 predicate also requires `not read_today`. The two are contradictory, so the kind never
-    materialises in production. Pinned in both states so the interaction stays visible."""
+def test_build_context_populates_both_streak_signals():
+    """streak_days = the current streak ending today (unchanged); streak_through_yesterday = the run
+    ending yesterday (the at-risk signal). They differ exactly when the reader read yesterday but not
+    today."""
+    st, uid = _store_user()
+    _read(st, uid, "u-y", 1)                             # yesterday
+    _read(st, uid, "u-2d", 2)                            # the day before
+    ctx = nd.build_context(st, uid)
+    assert ctx.reading.read_today is False
+    assert ctx.reading.streak_days == 0                 # ending-today streak: nothing read today
+    assert ctx.reading.streak_through_yesterday == 2    # yesterday + the day before
+
+
+def test_streak_reminder_fires_when_streak_at_risk():
+    """Active streak through yesterday + nothing read today -> the reminder fires; the payload carries
+    the at-risk length."""
     st, uid = _store_user(); _all_on(st, uid)
-    _read(st, uid, "u-today", 0)                        # read today -> streak>=1 but read_today True
+    _read(st, uid, "u-y", 1)                             # read yesterday, not today
+    nd.materialize_notifications(st, uid)
+    assert "streak_reminder" in _kinds(st, uid)
+    sr = next(x for x in st.list_notifications(uid, limit=100) if x["kind"] == "streak_reminder")
+    assert sr["payload"]["streakDays"] == 1
+
+
+def test_streak_reminder_suppressed_when_read_today():
+    """Read yesterday AND today -> the streak is safe -> no reminder."""
+    st, uid = _store_user(); _all_on(st, uid)
+    _read(st, uid, "u-y", 1); _read(st, uid, "u-today", 0)
     nd.materialize_notifications(st, uid)
     assert "streak_reminder" not in _kinds(st, uid)
 
-    st2, uid2 = _store_user("nd-streak2"); _all_on(st2, uid2)
-    _read(st2, uid2, "u-yest", 1)                       # read only yesterday -> read_today False, streak 0
-    nd.materialize_notifications(st2, uid2)
-    assert "streak_reminder" not in _kinds(st2, uid2)
+
+def test_streak_reminder_no_prior_streak():
+    """A read only 3 days ago -> nothing read yesterday -> no at-risk streak -> no reminder."""
+    st, uid = _store_user(); _all_on(st, uid)
+    _read(st, uid, "u-3d", 3)
+    nd.materialize_notifications(st, uid)
+    assert "streak_reminder" not in _kinds(st, uid)
+
+
+def test_weekly_digest_streak_days_unchanged():
+    """The digest keeps reporting streak_days (ending today) — NOT streak_through_yesterday."""
+    st, uid = _store_user(); _all_on(st, uid)
+    _read(st, uid, "u-today", 0); _read(st, uid, "u-y", 1)   # read today + yesterday -> streak_days == 2
+    nd.materialize_notifications(st, uid)
+    digest = next(x for x in st.list_notifications(uid, limit=100) if x["kind"] == "weekly_digest")
+    assert digest["payload"]["streakDays"] == 2
+    assert digest["payload"]["streakDays"] == nd.build_context(st, uid).reading.streak_days

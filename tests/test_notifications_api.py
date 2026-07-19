@@ -49,7 +49,7 @@ def _seed(uid, *, topics=("Economy",)):
 
 LIVE = {"weekly_report", "monthly_deep_dive", "weekly_digest", "blind_spot_alert"}
 # Not expected from the base _seed: recommendations_waiting needs unopened rec events (none seeded
-# here); streak_reminder can't fire under the current streak predicate.
+# here); streak_reminder needs a streak through yesterday with nothing read today (the seed reads today).
 ABSENT = {"recommendations_waiting", "streak_reminder"}
 
 

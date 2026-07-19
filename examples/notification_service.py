@@ -59,10 +59,16 @@ class RecommendationInputs:
 
 @dataclasses.dataclass(frozen=True)
 class ReadingInputs:
-    """Facts about the reader's reading activity (streak / recency / weekly volume)."""
+    """Facts about the reader's reading activity (streak / recency / weekly volume).
+
+    ``streak_days`` is the current streak **ending today** (matches the dashboard). It is >= 1 only if
+    the reader read today — which is why the streak-at-risk reminder needs a separate signal:
+    ``streak_through_yesterday`` is the run of consecutive days ending **yesterday**, so it is > 0
+    exactly when there is an active streak that today's silence would break."""
     streak_days: int = 0
     read_today: bool = False
     reads_this_week: int = 0
+    streak_through_yesterday: int = 0
 
 
 @dataclasses.dataclass(frozen=True)
@@ -185,9 +191,9 @@ NOTIFICATION_KINDS = (
     NotificationKind(
         kind="streak_reminder", setting_path="notifications.streakReminders", mode="event",
         title_key="notifications.streak_reminder.title",
-        predicate=lambda c: c.reading.streak_days >= 1 and not c.reading.read_today,
+        predicate=lambda c: c.reading.streak_through_yesterday >= 1 and not c.reading.read_today,
         dedupe_key=lambda c: f"streak_reminder:{c.now:%Y-%m-%d}",
-        payload=lambda c: {"streakDays": c.reading.streak_days}),
+        payload=lambda c: {"streakDays": c.reading.streak_through_yesterday}),
     NotificationKind(
         kind="blind_spot_alert", setting_path="notifications.blindSpotAlerts", mode="event",
         title_key="notifications.blind_spot_alert.title",

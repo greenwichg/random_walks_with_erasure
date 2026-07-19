@@ -36,7 +36,7 @@ def _settings(weekly=True, monthly=True, recs=True, digest=True, streak=True, bl
 
 def _ctx(settings=None, delivered=(), now=NOW, *, has_report=True, overall=72,
          blind_spots=("topic:economy",), unopened_count=4, streak_days=5, read_today=False,
-         reads_this_week=6):
+         reads_this_week=6, streak_through_yesterday=4):
     """A context in which — with all toggles on and nothing delivered — every kind fires."""
     return ns.NotificationContext(
         now=now,
@@ -45,7 +45,8 @@ def _ctx(settings=None, delivered=(), now=NOW, *, has_report=True, overall=72,
         report=ns.ReportInputs(has_report=has_report, overall=overall, blind_spots=blind_spots),
         recommendations=ns.RecommendationInputs(unopened_count=unopened_count),
         reading=ns.ReadingInputs(streak_days=streak_days, read_today=read_today,
-                                 reads_this_week=reads_this_week))
+                                 reads_this_week=reads_this_week,
+                                 streak_through_yesterday=streak_through_yesterday))
 
 
 def _kinds(notifications):
@@ -159,10 +160,10 @@ def test_predicate_negatives():
     assert "recommendations_waiting" not in _kinds(ns.evaluate(_ctx(unopened_count=0)))
     assert "weekly_digest" not in _kinds(ns.evaluate(_ctx(reads_this_week=0)))
     assert "blind_spot_alert" not in _kinds(ns.evaluate(_ctx(blind_spots=())))
-    # streak reminder needs an active streak AND nothing read today
-    assert "streak_reminder" not in _kinds(ns.evaluate(_ctx(streak_days=0)))
+    # streak reminder needs an active streak THROUGH YESTERDAY AND nothing read today
+    assert "streak_reminder" not in _kinds(ns.evaluate(_ctx(streak_through_yesterday=0)))
     assert "streak_reminder" not in _kinds(ns.evaluate(_ctx(read_today=True)))
-    assert "streak_reminder" in _kinds(ns.evaluate(_ctx(streak_days=1, read_today=False)))
+    assert "streak_reminder" in _kinds(ns.evaluate(_ctx(streak_through_yesterday=1, read_today=False)))
 
 
 # --------------------------------------------------------------------------- #

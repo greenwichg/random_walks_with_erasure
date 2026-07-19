@@ -47,7 +47,8 @@ def _ctx(now=NOW, delivered=(), blind_spots=("topic:economy",)):
         delivery=ns.DeliveryState(delivered_keys=frozenset(delivered)),
         report=ns.ReportInputs(has_report=True, overall=72, blind_spots=blind_spots),
         recommendations=ns.RecommendationInputs(unopened_count=4),
-        reading=ns.ReadingInputs(streak_days=5, read_today=False, reads_this_week=6))
+        reading=ns.ReadingInputs(streak_days=5, read_today=False, reads_this_week=6,
+                                 streak_through_yesterday=5))
 
 
 def _dicts(ctx):

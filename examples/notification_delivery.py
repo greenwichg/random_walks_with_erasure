@@ -44,6 +44,22 @@ def _blind_spot_topics(report: "dict | None") -> tuple:
                  if isinstance(s, dict) and s.get("topic"))
 
 
+def _streak_through_yesterday(read_ats, now) -> int:
+    """The run of consecutive UTC days with >= 1 read ending **yesterday** — an "active streak at
+    risk" signal that, unlike ``api_server._reading_streak`` (which ends *today* and so drops to 0 the
+    moment today has no read), survives today's silence. Same day-prefix (``YYYY-MM-DD``) comparison
+    as the streak definition, but anchored at yesterday and driven by the injected ``now`` (so it is
+    deterministic). ``_reading_streak`` is neither called nor modified."""
+    days = {ra[:10] for ra in read_ats if isinstance(ra, str) and len(ra) >= 10}
+    if not days:
+        return 0
+    streak, d = 0, now.date() - timedelta(days=1)              # anchor at yesterday, count backwards
+    while d.isoformat() in days:
+        streak += 1
+        d = d - timedelta(days=1)
+    return streak
+
+
 def build_context(store, uid: int, now: "datetime | None" = None) -> "ns.NotificationContext":
     """Assemble a NotificationContext from PERSISTED producer state only. Reads: the latest *saved*
     report snapshot (``latest_report``), the reader's stored reads (``list_reads`` + the shared
@@ -63,9 +79,10 @@ def build_context(store, uid: int, now: "datetime | None" = None) -> "ns.Notific
         return dt is not None and dt >= week_ago
 
     reading = ns.ReadingInputs(
-        streak_days=engine._reading_streak(read_ats),          # reuse the existing streak logic verbatim
+        streak_days=engine._reading_streak(read_ats),          # UNCHANGED: current streak ending today
         read_today=any(isinstance(ra, str) and ra[:10] == today for ra in read_ats),
-        reads_this_week=sum(1 for ra in read_ats if _within_week(ra)))
+        reads_this_week=sum(1 for ra in read_ats if _within_week(ra)),
+        streak_through_yesterday=_streak_through_yesterday(read_ats, now))
 
     return ns.NotificationContext(
         now=now,
