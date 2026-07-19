@@ -157,9 +157,10 @@ def test_identical_requests_get_identical_json(client, catalog_url):
         assert a.content == b.content                    # bytes, not just parsed equality
 
 
-def test_anonymous_and_authenticated_identical(client, catalog_url):
-    """A2 has no reader-relative behaviour: a signed-in reader gets exactly the anonymous
-    analysis (divergence begins in A3-Enrich)."""
+def test_non_measured_reader_matches_anonymous(client, catalog_url):
+    """A3 gates enrichment on ``has_measured``: a signed-in reader who isn't measured yet (a fresh
+    account with no reads) gets the byte-identical anonymous analysis — null reader sections.
+    Measured divergence is covered by the enrichment tests below."""
     uid = client.post("/api/internal/users",
                       json={"provider": "google",
                             "providerAccountId": f"an2-{_RUN}"}).json()["userId"]
@@ -168,6 +169,70 @@ def test_anonymous_and_authenticated_identical(client, catalog_url):
                          headers={"X-IH-User-Id": str(uid)})
     assert anon.status_code == authed.status_code == 200
     assert anon.json() == authed.json()
+    assert authed.json()["recommendation"] is None and authed.json()["explanation"] is None
+
+
+# --------------------------------------------------------------------------- #
+# A3 — reader-relative enrichment for a signed-in MEASURED reader. The measured model is stubbed on
+# the app's personalizer (a fixed context) so the endpoint's auth-aware branch + the real enrichment
+# run without building the heavy augmented model; the enrichment math is unit-tested separately.
+# --------------------------------------------------------------------------- #
+# A right-leaning reader who has never read the seeded AP publisher.
+_MEASURED_CTX = {"reads": [], "familiarity": lambda p: {"reads": 0, "share": 0.0, "band": "never"},
+                 "top_topics": ["Politics"], "reader_mean_lean": 1.0,
+                 "topic_shares": {"Politics": 0.8}, "lean_shares": {"left": 0.1, "center": 0.1, "right": 0.8}}
+
+
+def _measured(client, monkeypatch, ctx=_MEASURED_CTX):
+    """Create a real user and make the app's personalizer treat ONLY that uid as measured, with a
+    fixed context — so the endpoint enriches without a heavy model build (no report snapshot)."""
+    if api_fastapi.state.personalizer is None:
+        pytest.skip("personalizer not built in this environment")
+    uid = client.post("/api/internal/users",
+                      json={"provider": "google", "providerAccountId": f"a3m-{uuid.uuid4().hex[:8]}"}
+                      ).json()["userId"]
+    monkeypatch.setattr(api_fastapi.state.personalizer, "has_measured", lambda u, _id=uid: u == _id)
+    monkeypatch.setattr(api_fastapi.state.personalizer, "explanation_context", lambda u: ctx)
+    return uid, {"X-IH-User-Id": str(uid)}
+
+
+def test_measured_reader_receives_enrichment(client, monkeypatch, catalog_url):
+    _uid, hdr = _measured(client, monkeypatch)
+    body = client.post("/api/analyze", json={"url": catalog_url}, headers=hdr).json()
+    assert body["recommendation"] is not None and body["explanation"] is not None
+    assert body["recommendation"]["wouldBroaden"] is True          # a never-read publisher broadens
+    assert "new_publisher" in body["recommendation"]["reasons"]
+    assert body["explanation"]["type"] in {"bridge", "new_publisher", "topic_continuity",
+                                           "story_match", "long_tail", "coverage_breadth"}
+    assert body["personal"] is None                                 # A4, still null
+    # the SAME url anonymously stays null (byte-identical A2)
+    anon = client.post("/api/analyze", json={"url": catalog_url}).json()
+    assert anon["recommendation"] is None and anon["explanation"] is None
+
+
+def test_authed_enrichment_creates_no_reads_or_rec_events(client, monkeypatch, catalog_url):
+    """The named zero-write invariant: enrichment reads reader state, it creates no reads or
+    recommendation/feedback events (rec_events)."""
+    _uid, hdr = _measured(client, monkeypatch)
+
+    def counts():
+        st = api_fastapi.state.store
+        with st.session() as s:
+            return {t: s.execute(text(f'SELECT COUNT(*) FROM "{t}"')).scalar()
+                    for t in ("reads", "rec_events")}
+
+    before = counts()
+    body = client.post("/api/analyze", json={"url": catalog_url}, headers=hdr).json()
+    assert body["recommendation"] is not None                       # enrichment actually ran
+    assert counts() == before                                       # no reads / rec_events created
+
+
+def test_authed_enrichment_is_deterministic(client, monkeypatch, catalog_url):
+    _uid, hdr = _measured(client, monkeypatch)
+    a = client.post("/api/analyze", json={"url": catalog_url}, headers=hdr)
+    b = client.post("/api/analyze", json={"url": catalog_url}, headers=hdr)
+    assert a.status_code == b.status_code == 200
+    assert a.content == b.content                                   # identical reader state → identical bytes
 
 
 # --------------------------------------------------------------------------- #

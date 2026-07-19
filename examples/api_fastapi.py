@@ -55,6 +55,7 @@ import search                 # live full-text + faceted search over the FeedArt
 import story_service          # the single owner of Story construction (Discover + Stories consume it)
 import story_intelligence     # deterministic intelligence computed ON TOP of Story objects (Commit 10)
 import article_analyzer       # anonymous URL analysis (A1 service: catalog-first, fetchless, zero-write)
+import analysis_enrichment    # A3: reader-relative explanation + recommendation layered on an analysis
 import media                  # centralised media + publisher-logo selection (rec enrichment, Commit 9)
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -1586,17 +1587,29 @@ def estimate(req: EstimateRequest) -> dict:
 
 
 @app.post("/api/analyze", response_model=AnalysisModel, tags=["analysis"],
-          summary="Analyze a news-article URL (anonymous)", responses=_ERR_RESPONSES)
-def analyze_article(req: AnalyzeRequest) -> dict:
+          summary="Analyze a news-article URL (anonymous; reader-enriched when signed in)",
+          responses=_ERR_RESPONSES)
+def analyze_article(request: Request, req: AnalyzeRequest) -> dict:
     """The Information Health analysis of one article URL — ANALYSIS CONTRACT v1, verbatim from
-    the ``article_analyzer`` service (A2-API exposes; it never reinterprets). Anonymous by design:
-    no identity is read and the reader-relative sections stay null until A3. Catalog-first
+    the ``article_analyzer`` service (the endpoint exposes; it never reinterprets). Catalog-first
     (a known article reuses its stored scoring), fetchless (a miss is scored in memory from the
     URL + the optional client-supplied ``metadata``), and **zero-write** — analysis alone never
     influences Information Health, recommendations, or analytics. An unparseable URL is a contract
-    outcome (``status: "invalid_url"``), not an HTTP error."""
+    outcome (``status: "invalid_url"``), not an HTTP error.
+
+    A3 (auth-aware, additive): the analyzer output is unchanged, but a signed-in **measured**
+    reader additionally receives the reader-relative ``explanation`` + ``recommendation`` sections
+    (``analysis_enrichment``). Anonymous and non-measured readers get the byte-identical A2
+    analysis (sections null). Enrichment is read-only — it creates no reads, recommendation events,
+    or feedback."""
     md = req.metadata.model_dump() if req.metadata is not None else None
-    return article_analyzer.analyze(_require_store(), req.url, metadata=md)
+    analysis = article_analyzer.analyze(_require_store(), req.url, metadata=md)
+    uid = _real_uid(request)                       # None for anonymous → analysis stays untouched
+    if uid is not None:
+        sections = analysis_enrichment.enrich_for_reader(state.personalizer, state.store, uid, analysis)
+        if sections.get("explanation") is not None or sections.get("recommendation") is not None:
+            analysis = {**analysis, **sections}
+    return analysis
 
 
 @app.post("/api/me/onboarding", response_model=HealthReportModel, response_model_exclude_none=True,

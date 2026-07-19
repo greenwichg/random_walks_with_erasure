@@ -23,11 +23,18 @@ ROOT = pathlib.Path(__file__).resolve().parents[3]   # tests/fixtures/analysis/ 
 sys.path.insert(0, str(ROOT / "examples"))
 
 import article_analyzer as aa          # noqa: E402
+import analysis_enrichment as ae       # noqa: E402
 import evidence_resolver as er         # noqa: E402
 import store as store_mod              # noqa: E402
 
 HERE = pathlib.Path(__file__).resolve().parent
 CASES = ("catalog_hit", "scored_url_only", "invalid_url")
+#: Authenticated (measured-reader) enrichment goldens — the FULL analysis with the reader-relative
+#: explanation + recommendation sections filled. Built from a fixed reader context (not the heavy
+#: model) so they're deterministic; the endpoint's measured path is covered by the enrichment tests.
+AUTHED_CASES = ("authed_bridge", "authed_familiar")
+GUARDIAN_URL = "https://theguardian.com/story/an-cluster-0"   # the seeded left cluster member
+_BLIND_SPOTS = ("Economy",)                                   # a fixed blind spot (not the article's topic)
 
 # A deterministic 3-publisher story (left + two center, NO right) so the catalog hit exercises a real
 # membership with a derived missing "right" viewpoint. Mirrors the shape the analyzer's own tests use.
@@ -72,12 +79,66 @@ def build_from_fresh_store() -> "dict[str, dict]":
     return build(st)
 
 
+# --------------------------------------------------------------------------- #
+# Authenticated (measured-reader) enrichment fixtures.
+# --------------------------------------------------------------------------- #
+def _familiarity(shares: "dict[str, dict]"):
+    """A fixed familiarity lookup (the Evidence Resolver's context contract): publisher -> band."""
+    def fam(publisher: str) -> dict:
+        s = shares.get(publisher) or {"reads": 0, "share": 0.0}
+        band = "never" if s["reads"] <= 0 else ("rarely" if s["share"] < 0.05 else "familiar")
+        return {"reads": s["reads"], "share": s["share"], "band": band}
+    return fam
+
+
+def _reader_ctx(*, mean_lean, reads, fam_shares, top_topics, topic_shares, lean_shares) -> dict:
+    """A deterministic measured-reader context in the exact shape ``explanation_context`` returns."""
+    return {"reads": [{"url": er._canon(u), "publisher": p, "publishedAt": t} for (u, p, t) in reads],
+            "familiarity": _familiarity(fam_shares), "top_topics": list(top_topics),
+            "reader_mean_lean": mean_lean, "topic_shares": dict(topic_shares),
+            "lean_shares": dict(lean_shares)}
+
+
+def _authed_contexts() -> "dict[str, dict]":
+    # bridge: a RIGHT reader analysing the LEFT Guardian article they've never read -> cross-cutting.
+    right = _reader_ctx(
+        mean_lean=1.5,
+        reads=[("https://foxnews.com/politics/older-take", "Fox News", "2026-07-10T12:00:00+00:00")],
+        fam_shares={"Fox News": {"reads": 20, "share": 0.8}},   # Guardian absent -> "never"
+        top_topics=["Politics"], topic_shares={"Politics": 0.85},
+        lean_shares={"left": 0.10, "center": 0.05, "right": 0.85})
+    # familiar: a LEFT reader who reads the Guardian often -> not cross-cutting, a top-topic read.
+    left = _reader_ctx(
+        mean_lean=-1.5,
+        reads=[("https://theguardian.com/politics/unrelated-older", "The Guardian", "2026-07-10T12:00:00+00:00")],
+        fam_shares={"The Guardian": {"reads": 30, "share": 0.9}},
+        top_topics=["Politics"], topic_shares={"Politics": 0.90},
+        lean_shares={"left": 0.85, "center": 0.10, "right": 0.05})
+    return {"authed_bridge": right, "authed_familiar": left}
+
+
+def build_authed_from_fresh_store() -> "dict[str, dict]":
+    """The full enriched analyses for the authenticated cases, from a fresh seed + fixed contexts."""
+    st = store_mod.Store("sqlite://")
+    seed(st)
+    er._INDEX_CACHE.update(key=None, index=None)     # force a fresh story index for this store
+    index = er.story_index(st)
+    out = {}
+    for name, ctx in _authed_contexts().items():
+        analysis = aa.analyze(st, GUARDIAN_URL)
+        sections = ae.enrich(analysis, ctx, index=index, blind_spot_topics=_BLIND_SPOTS)
+        out[name] = {**analysis, **sections}
+    return out
+
+
 def main() -> None:
     cases = build_from_fresh_store()
     assert set(cases) == set(CASES)
-    for name in CASES:
+    authed = build_authed_from_fresh_store()
+    assert set(authed) == set(AUTHED_CASES)
+    for name, data in {**cases, **authed}.items():
         path = HERE / f"{name}.json"
-        path.write_text(json.dumps(cases[name], indent=2, sort_keys=True) + "\n")
+        path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
         print("wrote", path.relative_to(ROOT))
 
 

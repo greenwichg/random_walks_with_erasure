@@ -32,6 +32,12 @@ def produced():
     return fx.build_from_fresh_store()
 
 
+@pytest.fixture(scope="module")
+def produced_authed():
+    """What the analyzer + reader enrichment produce right now (measured-reader contexts)."""
+    return fx.build_authed_from_fresh_store()
+
+
 @pytest.mark.parametrize("name", fx.CASES)
 def test_analyzer_reproduces_golden(produced, name):
     golden = json.loads((FIX / f"{name}.json").read_text())
@@ -40,12 +46,32 @@ def test_analyzer_reproduces_golden(produced, name):
         f"is intentional, regenerate: python tests/fixtures/analysis/build_analysis_fixtures.py")
 
 
+@pytest.mark.parametrize("name", fx.AUTHED_CASES)
+def test_analyzer_and_enrichment_reproduce_authed_golden(produced_authed, name):
+    """A3: the full enriched analysis (analysis + reader-relative sections) still matches its
+    committed golden — so a change to analysis_enrichment breaks a test on the backend side, and
+    the web mapper (A3.2) consumes the SAME fixtures."""
+    golden = json.loads((FIX / f"{name}.json").read_text())
+    assert produced_authed[name] == golden, (
+        f"{name}: the enriched analysis drifted from the committed golden. If intentional, "
+        f"regenerate: python tests/fixtures/analysis/build_analysis_fixtures.py")
+
+
 def test_supported_analysis_version():
-    """The analyzer and every golden are the version the web mapper is written against."""
+    """The analyzer and every golden (anonymous + authed) are the version the web is written against."""
     assert aa.ANALYSIS_VERSION == SUPPORTED_ANALYSIS_VERSION
-    for name in fx.CASES:
+    for name in (*fx.CASES, *fx.AUTHED_CASES):
         golden = json.loads((FIX / f"{name}.json").read_text())
         assert golden["analysisVersion"] == SUPPORTED_ANALYSIS_VERSION
+
+
+def test_authed_goldens_carry_reader_sections():
+    """Guard the authed fixtures: sections are present and the two scenarios stay distinct."""
+    bridge = json.loads((FIX / "authed_bridge.json").read_text())
+    familiar = json.loads((FIX / "authed_familiar.json").read_text())
+    assert bridge["explanation"]["type"] == "bridge" and bridge["recommendation"]["wouldBroaden"] is True
+    assert familiar["explanation"]["type"] == "topic_continuity"
+    assert familiar["recommendation"]["wouldBroaden"] is False
 
 
 def test_goldens_cover_the_three_source_states():

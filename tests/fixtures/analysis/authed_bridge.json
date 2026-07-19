@@ -1,0 +1,108 @@
+{
+  "analysisVersion": 1,
+  "article": {
+    "confidence": 0.72,
+    "description": "Lawmakers reached a deal.",
+    "dominantEmotion": "neutral",
+    "emotion": {
+      "analysis": 0.3,
+      "fear": 0.1,
+      "neutral": 0.4,
+      "outrage": 0.1,
+      "positive": 0.1
+    },
+    "headline": "senate budget vote reaches bipartisan deal",
+    "id": "https://theguardian.com/story/an-cluster-0",
+    "image": null,
+    "imageAttribution": null,
+    "imageHeight": null,
+    "imageMimeType": null,
+    "imageSource": null,
+    "imageWidth": null,
+    "lean": -1.0,
+    "leanBucket": "left",
+    "publishedAt": "2026-07-18T12:00:00+00:00",
+    "publisher": "The Guardian",
+    "publisherLean": -1.0,
+    "publisherLogo": "https://theguardian.com/favicon.ico",
+    "publisherLogoDark": null,
+    "publisherLogoSource": "favicon",
+    "readingMinutes": 2,
+    "register": "reporting",
+    "topic": "Politics",
+    "url": "https://theguardian.com/story/an-cluster-0"
+  },
+  "explanation": {
+    "contribution": {
+      "key": "other_side_perspective",
+      "params": {}
+    },
+    "evidence": {
+      "articleLean": -1.0,
+      "articlePolitical": true,
+      "crossCutting": true,
+      "readerLeanShares": {
+        "center": 0.05,
+        "left": 0.1,
+        "right": 0.85
+      },
+      "readerPoliticalProfile": "leans_right"
+    },
+    "message": "This article offers another political perspective.",
+    "priority": 2,
+    "readerFact": {
+      "key": "political_lean_right_share",
+      "params": {
+        "percent": 85
+      }
+    },
+    "type": "bridge"
+  },
+  "input": {
+    "canonicalUrl": "https://theguardian.com/story/an-cluster-0",
+    "url": "https://theguardian.com/story/an-cluster-0"
+  },
+  "notes": [],
+  "personal": null,
+  "recommendation": {
+    "blindSpotTopic": null,
+    "reasons": [
+      "cross_cutting",
+      "new_publisher",
+      "familiar_topic"
+    ],
+    "wouldBroaden": true
+  },
+  "scoring": {
+    "confidence": 0.72,
+    "emotion": {
+      "analysis": 0.3,
+      "fear": 0.1,
+      "neutral": 0.4,
+      "outrage": 0.1,
+      "positive": 0.1
+    },
+    "lean": -1.0,
+    "leanBucket": "left",
+    "outlet": "The Guardian",
+    "political": true,
+    "register": 0.8,
+    "topic": "Politics"
+  },
+  "source": "catalog",
+  "status": "analyzed",
+  "story": {
+    "articleCount": 3,
+    "distribution": {
+      "center": 0.667,
+      "left": 0.333,
+      "right": 0.0
+    },
+    "matched": true,
+    "missingViewpoints": [
+      "right"
+    ],
+    "publisherCount": 3,
+    "storyId": "st_247465da46f57b23"
+  }
+}
