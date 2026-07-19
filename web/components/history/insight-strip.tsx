@@ -1,11 +1,14 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { motion } from "framer-motion";
 import Link from "next/link";
 import { Layers, Newspaper, FileText, ArrowRight } from "lucide-react";
 import { StatCard } from "@/components/dashboard/stat-card";
 import { DistributionBar } from "@/components/history/distribution-bar";
+import { Skeleton } from "@/components/ui/skeleton";
 import { LEAN_META } from "@/lib/metrics";
+import { useReport } from "@/hooks/use-data";
 import { useTranslation } from "@/lib/i18n";
 import type { HistoryInsights } from "@/lib/history-insights";
 
@@ -32,23 +35,52 @@ export function InsightStrip({ insights }: { insights: HistoryInsights }) {
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard icon={Layers} label={t("history.ih.topics")} value={`${insights.topicCount}`} hue="primary" index={0} />
         <StatCard icon={Newspaper} label={t("history.ih.sources")} value={`${insights.publisherCount}`} hue="left" index={1} />
-        <BalanceTile insights={insights} index={2} />
+        <BalanceTile index={2} />
         <StatCard icon={FileText} label={t("history.ih.reporting")} value={`${pct(insights.reportingShare)}%`} hue="positive" index={3} />
       </div>
     </section>
   );
 }
 
-/** Political-balance tile: the shared left/center/right distribution bar, in StatCard chrome. */
-function BalanceTile({ insights, index }: { insights: HistoryInsights; index: number }) {
+/**
+ * Political-balance tile: renders the CANONICAL Lean Distribution — the measured report's own
+ * `viewpoint` (`report.viewpoint`), the exact numbers the Information Health Report shows — never a
+ * separate frontend recomputation. While the report loads, a skeleton keeps the tile's place; below
+ * the measured threshold (an estimate, whose viewpoint describes onboarding outlets, not reads) or
+ * when the report is unavailable, the tile hides rather than falling back to a divergent computation.
+ */
+function BalanceTile({ index }: { index: number }) {
   const { t } = useTranslation();
-  const { leanShare } = insights;
+  const { data: report, isLoading } = useReport();
+
+  if (isLoading) {
+    return (
+      <TileShell index={index}>
+        <Skeleton className="h-2 w-full rounded-full" />
+      </TileShell>
+    );
+  }
+  // Only a measured report's viewpoint is a truthful "your reading" distribution; anything else hides.
+  if (!report || report.mode !== "measured") return null;
+
+  const vp = report.viewpoint;
   const segments = (["left", "center", "right"] as const).map((k) => ({
     key: k,
     label: t(`filter.${k}`),
-    value: leanShare[k],
+    value: vp[k],
     color: LEAN_META[k].color,
   }));
+  return (
+    <TileShell index={index}>
+      <DistributionBar segments={segments} showLabels={false} />
+    </TileShell>
+  );
+}
+
+/** The tile chrome shared by the loading and loaded states — preserves the label, layout, and the
+ *  StatCard-matching entrance animation. */
+function TileShell({ index, children }: { index: number; children: ReactNode }) {
+  const { t } = useTranslation();
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
@@ -57,7 +89,7 @@ function BalanceTile({ insights, index }: { insights: HistoryInsights; index: nu
       className="flex flex-col justify-center gap-2 rounded-lg border bg-card p-4 shadow-soft"
     >
       <p className="text-xs font-medium text-muted-foreground">{t("history.ih.balance")}</p>
-      <DistributionBar segments={segments} showLabels={false} />
+      {children}
     </motion.div>
   );
 }
