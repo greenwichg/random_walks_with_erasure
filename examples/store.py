@@ -326,6 +326,32 @@ class SavedArticle(Base):
     created_at: Mapped[datetime] = mapped_column(default=_utcnow)
 
 
+class Notification(Base):
+    """A materialised notification for a user — one row per due notification the delivery boundary
+    produced. Idempotent per ``(user_id, kind, dedupe_key)`` (enforced by the DB constraint below):
+    re-evaluating on every fetch never duplicates a row, and the set of stored ``dedupe_key``s is the
+    idempotency **ledger** the boundary reads back to suppress re-delivery. ``body`` is the JSON-safe
+    notification object stored **verbatim** — this table persists dicts, exactly like
+    ``report_snapshots`` / ``user_settings``, so nothing about the ``notification_service`` leaf is
+    imported here. ``created_at`` is the notification's own (injected, deterministic) timestamp, kept
+    verbatim; ``seen_at`` is the read-state (set by the in-app inbox later, never in this milestone);
+    ``recorded_at`` is when the row was physically written. Product state only — it touches no
+    recommender, report, or corpus path."""
+
+    __tablename__ = "notifications"
+    __table_args__ = (UniqueConstraint("user_id", "kind", "dedupe_key",
+                                       name="uq_notification_user_kind_key"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(48), index=True)
+    dedupe_key: Mapped[str] = mapped_column(String(255))
+    body: Mapped[str] = mapped_column(Text)              # JSON of the notification (payload/title/gate)
+    created_at: Mapped[str] = mapped_column(String(64))  # the notification's own (injected) timestamp
+    seen_at: Mapped[Optional[str]] = mapped_column(String(64), default=None)   # read-state (set later)
+    recorded_at: Mapped[datetime] = mapped_column(default=_utcnow)             # DB write time
+
+
 class FeedArticle(Base):
     """An article discovered via RSS ingestion — the news **catalog** (distinct from per-user
     ``reads``). Deduplicated by ``canonical_url`` (the same key ``reads`` and the scoring cache use),
@@ -1154,6 +1180,64 @@ class Store:
                              .order_by(RecEvent.id)).all()
             return [{"shownAt": r.shown_at, "openedAt": r.opened_at,
                      "crossCutting": bool(r.cross_cutting)} for r in rows]
+
+    # -- notifications (delivery-boundary persistence) ------------------
+    def record_notifications(self, user_id: int, notifications: "list[dict]") -> int:
+        """Persist due notifications for a user — the materialisation primitive behind the delivery
+        boundary. Each item is a JSON-safe notification dict (a ``notification_service.Notification``
+        as ``dataclasses.asdict``); this store never imports that module — it only writes dicts, the
+        same way :meth:`save_report` / :meth:`save_settings` do. Idempotent per
+        ``(user_id, kind, dedupe_key)``: a notification already recorded (this batch or an earlier
+        one) is skipped, never duplicated and never overwritten. Returns how many rows were newly
+        created."""
+        new = 0
+        seen: set = set()                       # in-batch guard (independent of autoflush)
+        with self.session() as s:
+            for n in notifications:
+                kind = str(n.get("kind") or "")
+                dedupe = str(n.get("dedupe_key") or "")
+                if (kind, dedupe) in seen:
+                    continue
+                seen.add((kind, dedupe))
+                exists = s.scalar(select(Notification.id).where(
+                    Notification.user_id == user_id, Notification.kind == kind,
+                    Notification.dedupe_key == dedupe))
+                if exists is not None:
+                    continue                    # already delivered -> idempotent skip
+                s.add(Notification(user_id=user_id, kind=kind, dedupe_key=dedupe,
+                                   body=json.dumps(_json_safe(n)),
+                                   created_at=str(n.get("created_at") or _utcnow().isoformat())))
+                new += 1
+        return new
+
+    def list_notifications(self, user_id: int, *, unseen_only: bool = False,
+                           limit: int = 50) -> "list[dict]":
+        """A user's notifications, **newest-first**, capped at ``limit``. Each entry is the stored
+        body (the notification dict) plus its persistent ``id`` and ``seenAt`` read-state.
+        ``unseen_only`` restricts to notifications not yet marked seen. Read-only — no evaluation and
+        no producers are touched."""
+        with self.session() as s:
+            q = select(Notification).where(Notification.user_id == user_id)
+            if unseen_only:
+                q = q.where(Notification.seen_at.is_(None))
+            rows = s.scalars(q.order_by(Notification.id.desc()).limit(limit)).all()
+        out = []
+        for r in rows:
+            try:
+                body = dict(json.loads(r.body))
+            except (TypeError, ValueError):
+                body = {}
+            out.append({"id": r.id, "seenAt": r.seen_at, **body})
+        return out
+
+    def delivered_notification_keys(self, user_id: int) -> "set[str]":
+        """The set of ``dedupe_key``s already delivered to a user — the idempotency **ledger** the
+        delivery boundary reads to suppress re-delivery (it feeds ``notification_service``'s
+        ``delivered_keys``). Returns the raw dedupe keys, matching what ``evaluate`` compares against."""
+        with self.session() as s:
+            rows = s.scalars(select(Notification.dedupe_key)
+                             .where(Notification.user_id == user_id)).all()
+        return set(rows)
 
     # -- per-user API tokens (browser extension / non-browser clients) --
     _TOKEN_PREFIX = "ih_"
