@@ -20,6 +20,9 @@ function golden(name: string): AnalysisResult {
 const catalogHit = golden("catalog_hit");
 const scoredUrlOnly = golden("scored_url_only");
 const invalid = golden("invalid_url");
+// A3 authenticated (measured-reader) goldens — the SAME fixtures the backend enrichment test pins.
+const authedBridge = golden("authed_bridge");
+const authedFamiliar = golden("authed_familiar");
 
 /** Override the (untyped-at-runtime) story with an arbitrary value — for the F1 malformed cases. */
 function withStory(base: AnalysisResult, story: unknown): AnalysisResult {
@@ -94,9 +97,13 @@ test("empty topic collapses to null (row hidden)", () => {
   assert.equal(p.scoring?.topic, null);
 });
 
-test("deferred sections (recommendation/explanation/personal) are never modelled", () => {
-  const keys = Object.keys(analysisPresentation(catalogHit)).sort();
-  assert.deepEqual(keys, ["notes", "provenance", "scoring", "status", "story"]);
+test("personal is never modelled; anonymous reader sections are null (A2 preserved)", () => {
+  const p = analysisPresentation(catalogHit);
+  assert.ok(!("personal" in p)); // A4 — never modelled
+  assert.equal(p.recommendation, null); // anonymous / non-measured → no reader sections
+  assert.equal(p.explanation, null);
+  assert.deepEqual(Object.keys(p).sort(),
+    ["explanation", "notes", "provenance", "recommendation", "scoring", "status", "story"]);
 });
 
 // --------------------------------------------------------------------------- //
@@ -164,4 +171,62 @@ test("story: advisory, none, and absent variants (valid contract v1)", () => {
 // --------------------------------------------------------------------------- //
 test("pure + deterministic: identical input → deep-equal output", () => {
   assert.deepEqual(analysisPresentation(catalogHit), analysisPresentation(catalogHit));
+});
+
+// --------------------------------------------------------------------------- //
+// A3 — reader-relative sections. Absent (null) for the anonymous goldens; present + mapped for the
+// authenticated goldens. The verdict maps the closed reason vocabulary to catalog keys (never raw
+// codes); the explanation is passed through raw for the component's reused renderer.
+// --------------------------------------------------------------------------- //
+test("anonymous goldens carry no reader sections (A2 preserved)", () => {
+  for (const r of [catalogHit, scoredUrlOnly, invalid]) {
+    const p = analysisPresentation(r);
+    assert.equal(p.recommendation, null);
+    assert.equal(p.explanation, null);
+  }
+});
+
+test("authed bridge: broaden verdict + localized cross-cutting/new-publisher reasons", () => {
+  const p = analysisPresentation(authedBridge);
+  assert.ok(p.recommendation);
+  assert.equal(p.recommendation!.wouldBroaden, true);
+  assert.equal(p.recommendation!.headlineKey, "analyze.rec.broadens");
+  const keys = p.recommendation!.reasons.map((r) => r.key);
+  assert.ok(keys.includes("analyze.rec.reason.crossCutting"));
+  assert.ok(keys.includes("analyze.rec.reason.newPublisher"));
+  // explanation is passed through raw (the component reuses presentRecommendation on it)
+  assert.equal(p.explanation?.type, "bridge");
+});
+
+test("authed familiar: not-broaden verdict + familiar-topic reason", () => {
+  const p = analysisPresentation(authedFamiliar);
+  assert.equal(p.recommendation!.wouldBroaden, false);
+  assert.equal(p.recommendation!.headlineKey, "analyze.rec.familiar");
+  assert.deepEqual(p.recommendation!.reasons.map((r) => r.key), ["analyze.rec.reason.familiarTopic"]);
+  assert.equal(p.explanation?.type, "topic_continuity");
+});
+
+test("blind_spot reason carries the topic param; unknown codes are dropped (no raw signal)", () => {
+  const p = analysisPresentation({
+    ...authedBridge,
+    recommendation: { wouldBroaden: true, reasons: ["blind_spot", "totally_new_code"], blindSpotTopic: "Economy" },
+  });
+  const reasons = p.recommendation!.reasons;
+  assert.deepEqual(reasons, [{ key: "analyze.rec.reason.blindSpot", params: { topic: "Economy" } }]);
+});
+
+test("reason keys are the closed analyze.rec.reason.* set (localization coverage)", () => {
+  const all = new Set<string>();
+  for (const g of [authedBridge, authedFamiliar]) {
+    for (const r of analysisPresentation(g).recommendation!.reasons) all.add(r.key);
+  }
+  for (const k of all) assert.match(k, /^analyze\.rec\.reason\.[a-zA-Z]+$/);
+});
+
+test("a malformed recommendation degrades to null (mapper stays total)", () => {
+  assert.equal(analysisPresentation({ ...authedBridge, recommendation: 42 as never }).recommendation, null);
+  assert.equal(
+    analysisPresentation({ ...authedBridge, explanation: { nope: true } as never }).explanation,
+    null,
+  );
 });

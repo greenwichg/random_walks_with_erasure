@@ -701,6 +701,15 @@ export interface AnalysisStoryAdvisory {
 
 export type AnalysisStory = AnalysisStoryMember | AnalysisStoryAdvisory;
 
+/** A3 reader-relative verdict — the STABLE object the engine emits (never raw implementation
+ *  signals). ``reasons`` is a closed vocabulary; ``blindSpotTopic`` is set when a "blind_spot"
+ *  reason is present. Filled only for a signed-in measured reader; null otherwise. */
+export interface AnalysisRecommendation {
+  wouldBroaden: boolean;
+  reasons: string[];
+  blindSpotTopic: string | null;
+}
+
 export interface AnalysisResult {
   analysisVersion: number;
   input: { url: string; canonicalUrl: string | null };
@@ -709,10 +718,11 @@ export interface AnalysisResult {
   article: Article | null;
   scoring: AnalysisScoring | null;
   story: AnalysisStory | null;
-  // A3/A4 — present in the envelope, never read or rendered in A2.
-  recommendation: unknown | null;
-  explanation: unknown | null;
-  personal: unknown | null;
+  // A3 — filled for a signed-in measured reader; null for anonymous / non-measured (the A2 shape).
+  // The explanation reuses the recommendation-card renderer (presentRecommendation / localizeExplanation).
+  recommendation: AnalysisRecommendation | null;
+  explanation: RecommendationExplanation | null;
+  personal: unknown | null;    // A4 — still unread/unrendered
   notes: string[];
 }
 

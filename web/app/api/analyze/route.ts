@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import type { AnalysisResult } from "@/types/domain";
 import { backendPost, engineUnavailable } from "@/lib/backend";
+import { engineAuthHeaders } from "@/lib/engine-auth";
 import { rejectIfTooLarge } from "@/lib/body-limit";
 
 // The analysis is computed live per request and used before (or without) sign-in — public, no caching.
@@ -25,7 +26,9 @@ export async function POST(request: Request) {
     url: typeof body.url === "string" ? body.url : "",
     metadata: body.metadata && typeof body.metadata === "object" ? body.metadata : undefined,
   };
-  const analysis = await backendPost<AnalysisResult>("/api/analyze", payload);
+  // Forward the signed-in identity so a measured reader gets the A3 reader-relative sections; an
+  // anonymous request sends no user header, so the engine returns the byte-identical A2 analysis.
+  const analysis = await backendPost<AnalysisResult>("/api/analyze", payload, await engineAuthHeaders());
   if (analysis) return NextResponse.json(analysis);
   return engineUnavailable();
 }

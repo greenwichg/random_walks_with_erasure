@@ -13,12 +13,14 @@
  *     as a "technical" note (rendered under a "Technical note" label) rather than silently dropped.
  */
 import type {
+  AnalysisRecommendation,
   AnalysisResult,
   AnalysisScoring,
   AnalysisSource,
   AnalysisStory,
   EmotionShare,
   LeanBucket,
+  RecommendationExplanation,
   ViewpointDistribution,
 } from "../types/domain";
 
@@ -51,12 +53,65 @@ export type StoryPresentation =
 /** A known note resolves to a catalog key; an unrecognized one is preserved verbatim as technical. */
 export type NotePresentation = { kind: "known"; key: string } | { kind: "technical"; text: string };
 
+/** One localized reader-facing statement built from a verdict reason code (never the raw code). */
+export interface VerdictReason {
+  key: string;
+  params?: Record<string, unknown>;
+}
+
+/** The A3 reader verdict, mapped to catalog keys — the ONLY place the closed reason vocabulary is
+ *  translated to copy. Unknown codes are dropped, so an implementation signal never reaches the UI. */
+export interface RecommendationPresentation {
+  wouldBroaden: boolean;
+  headlineKey: string;
+  reasons: VerdictReason[];
+}
+
 export interface AnalysisPresentation {
   status: "analyzed" | "invalid_url";
   provenance: AnalysisProvenance | null;
   scoring: ScoringPresentation | null;
   story: StoryPresentation | null;
   notes: NotePresentation[];
+  // A3 (present only for a signed-in measured reader; null for anonymous / non-measured):
+  recommendation: RecommendationPresentation | null;
+  /** The raw resolver explanation, passed through for the component's reused renderer
+   *  (`presentRecommendation` + `localizeExplanation`) — never re-implemented here. */
+  explanation: RecommendationExplanation | null;
+}
+
+/** Verdict reason code → catalog key. Literal keys on purpose (check:i18n scans them); a code
+ *  outside this closed set is skipped, so the UI never shows a raw signal like "cross_cutting". */
+const REASON_KEYS: Record<string, string> = {
+  cross_cutting: "analyze.rec.reason.crossCutting",
+  new_publisher: "analyze.rec.reason.newPublisher",
+  rarely_read_publisher: "analyze.rec.reason.rarelyRead",
+  blind_spot: "analyze.rec.reason.blindSpot",
+  following_story: "analyze.rec.reason.following",
+  familiar_topic: "analyze.rec.reason.familiarTopic",
+};
+
+function mapRecommendation(rec: AnalysisRecommendation | null): RecommendationPresentation | null {
+  if (!rec || typeof rec !== "object") return null;
+  const codes = Array.isArray(rec.reasons) ? rec.reasons : [];
+  const reasons: VerdictReason[] = [];
+  for (const code of codes) {
+    const key = REASON_KEYS[code];
+    if (!key) continue; // unknown / future code → never rendered as a raw signal
+    reasons.push(
+      code === "blind_spot" && rec.blindSpotTopic
+        ? { key, params: { topic: rec.blindSpotTopic } }
+        : { key },
+    );
+  }
+  const wouldBroaden = Boolean(rec.wouldBroaden);
+  return { wouldBroaden, headlineKey: wouldBroaden ? "analyze.rec.broadens" : "analyze.rec.familiar", reasons };
+}
+
+function mapExplanation(exp: unknown): RecommendationExplanation | null {
+  return exp && typeof exp === "object" && typeof (exp as { type?: unknown }).type === "string"
+    ? (exp as RecommendationExplanation)
+    : null;
 }
 
 /** The valid emotion keys — a dominant outside this set degrades to "no emotion chip". */
@@ -164,7 +219,8 @@ function mapStory(story: AnalysisStory | null): StoryPresentation | null {
 export function analysisPresentation(result: AnalysisResult): AnalysisPresentation {
   const notes = Array.isArray(result?.notes) ? result.notes.map(mapNote) : [];
   if (result?.status !== "analyzed") {
-    return { status: "invalid_url", provenance: null, scoring: null, story: null, notes };
+    return { status: "invalid_url", provenance: null, scoring: null, story: null, notes,
+             recommendation: null, explanation: null };
   }
   return {
     status: "analyzed",
@@ -172,5 +228,8 @@ export function analysisPresentation(result: AnalysisResult): AnalysisPresentati
     scoring: mapScoring(result.scoring),
     story: mapStory(result.story),
     notes,
+    // A3 — non-null only when the engine enriched (a signed-in measured reader).
+    recommendation: mapRecommendation(result.recommendation),
+    explanation: mapExplanation(result.explanation),
   };
 }

@@ -1,9 +1,10 @@
 "use client";
 
 import * as React from "react";
-import { AlertCircle, Building2, ExternalLink, Info, Layers, Globe } from "lucide-react";
+import { AlertCircle, Building2, Check, ExternalLink, Info, Layers, Globe, Sparkles } from "lucide-react";
 import type { AnalysisResult, LeanBucket } from "@/types/domain";
 import { analysisPresentation } from "@/lib/analysis-presentation";
+import { presentRecommendation } from "@/lib/rec-presentation";
 import { Badge } from "@/components/ui/badge";
 import { SectionCard } from "@/components/shared/section-card";
 import { SpectrumBar } from "@/components/shared/spectrum-bar";
@@ -14,9 +15,12 @@ import { cn } from "@/lib/utils";
 /**
  * Renders one ANALYSIS CONTRACT v1 result, honestly. Everything shown is derived through
  * `analysisPresentation` (the pure mapper): provenance is always explicit, an unknown outlet shows
- * "unknown" (never a guessed lean), `register` / `confidence` are deferred, and the reader-relative
- * sections (recommendation / explanation / personal) are never rendered. Known backend notes are
- * localized; an unrecognized note is preserved under a "Technical note" label rather than dropped.
+ * "unknown" (never a guessed lean), and `register` / `confidence` are deferred. The reader-relative
+ * `explanation` + `recommendation` (A3) render ONLY when the engine enriched them — a signed-in
+ * measured reader; anonymous / non-measured readers get exactly the A2 sections, no placeholder.
+ * The explanation reuses the recommendation-card renderer (`presentRecommendation` +
+ * `localizeExplanation`); `personal` (A4) is still never read. Known backend notes are localized; an
+ * unrecognized note is preserved under a "Technical note" label rather than dropped.
  */
 export function AnalysisResult({ result }: { result: AnalysisResult }) {
   const { t } = useTranslation();
@@ -158,11 +162,73 @@ export function AnalysisResult({ result }: { result: AnalysisResult }) {
         </SectionCard>
       )}
 
+      {/* A3 — reader-relative "For you": present only when the engine enriched (measured reader). */}
+      {(view.recommendation || view.explanation) && <ForYouCard view={view} />}
+
       <NotesPanel notes={view.notes} />
 
       {/* Zero-write invariant, surfaced to the reader. */}
       <p className="text-xs text-muted-foreground">{t("analyze.disclaimer")}</p>
     </div>
+  );
+}
+
+/**
+ * The A3 "For you" section: the reader-relative verdict + explanation. The verdict headline and
+ * reason statements come from the pure mapper (localized, closed vocabulary — never a raw signal);
+ * the explanation SENTENCE reuses the recommendation-card renderer verbatim (`presentRecommendation`
+ * for the readerFact / contribution parts, `localizeExplanation` as the fallback), so there is one
+ * explanation vocabulary product-wide and no duplicated logic.
+ */
+function ForYouCard({ view }: { view: ReturnType<typeof analysisPresentation> }) {
+  const { t, localizeExplanation } = useTranslation();
+  const rec = view.recommendation;
+  const pres = presentRecommendation(view.explanation);
+  return (
+    <SectionCard title={t("analyze.rec.title")}>
+      <div className="space-y-3">
+        {rec ? (
+          <Badge variant={rec.wouldBroaden ? "positive" : "secondary"} className="gap-1">
+            <Sparkles className="h-3 w-3" aria-hidden />
+            {t(rec.headlineKey)}
+          </Badge>
+        ) : null}
+
+        {view.explanation ? (
+          pres.reader || pres.contribution ? (
+            <div>
+              {pres.reader ? (
+                <p className="text-sm font-medium leading-snug">{t(pres.reader.key, pres.reader.params)}</p>
+              ) : null}
+              {pres.contribution ? (
+                <p
+                  className={
+                    pres.reader
+                      ? "mt-0.5 text-xs text-muted-foreground"
+                      : "text-sm font-medium leading-snug"
+                  }
+                >
+                  {t(pres.contribution.key, pres.contribution.params)}
+                </p>
+              ) : null}
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">{localizeExplanation(view.explanation)}</p>
+          )
+        ) : null}
+
+        {rec && rec.reasons.length > 0 ? (
+          <ul className="space-y-1">
+            {rec.reasons.map((r, i) => (
+              <li key={i} className="flex items-start gap-2 text-xs text-muted-foreground">
+                <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-positive" aria-hidden />
+                <span>{t(r.key, r.params)}</span>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </div>
+    </SectionCard>
   );
 }
 
