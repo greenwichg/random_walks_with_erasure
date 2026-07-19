@@ -611,10 +611,10 @@ export interface Settings {
     streakReminders: boolean;
     blindSpotAlerts: boolean;
   };
-  privacy: {
-    shareAnonymizedMetrics: boolean;
-    personalizedAds: boolean;
-  };
+  // NOTE: the engine's settings contract still carries a `privacy` group
+  // (shareAnonymizedMetrics / personalizedAds); it is intentionally omitted from the frontend
+  // type because nothing here reads it. A real backend response's extra `privacy` key is
+  // harmlessly ignored (structural typing) and round-trips untouched on save — no data loss.
 }
 
 /** A per-user API token for the browser extension (metadata only — the plaintext is never stored). */

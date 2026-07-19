@@ -430,10 +430,8 @@ export const SETTINGS: Settings = {
     streakReminders: true,
     blindSpotAlerts: false,
   },
-  privacy: {
-    shareAnonymizedMetrics: true,
-    personalizedAds: false,
-  },
+  // `privacy` intentionally omitted — it's absent from the frontend Settings type (nothing reads
+  // it). The engine still stores/returns it; a live response's extra key is ignored structurally.
 };
 
 /* ------------------------------------------------------------------ *

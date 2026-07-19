@@ -14,6 +14,7 @@ import {
   Target,
   FileText,
   ShieldCheck,
+  ExternalLink,
   RotateCcw,
 } from "lucide-react";
 import type { Settings } from "@/types/domain";
@@ -78,10 +79,6 @@ export default function SettingsPage() {
   }
   function setNotif<K extends keyof Settings["notifications"]>(key: K, value: boolean) {
     setDraft((d) => (d ? { ...d, notifications: { ...d.notifications, [key]: value } } : d));
-    setSaved(false);
-  }
-  function setPrivacy<K extends keyof Settings["privacy"]>(key: K, value: boolean) {
-    setDraft((d) => (d ? { ...d, privacy: { ...d.privacy, [key]: value } } : d));
     setSaved(false);
   }
 
@@ -256,24 +253,28 @@ export default function SettingsPage() {
             </div>
           </SectionCard>
 
-          {/* Privacy */}
+          {/* Privacy & data — the two former toggles (share-anonymized-metrics, personalized-ads)
+              were removed: neither was consumed by any behavior, and an "ads" toggle contradicted
+              our published privacy policy. The section now links to that policy, the honest source
+              of truth for what we collect. */}
           <SectionCard title={t("settings.privacy")} info={t("settings.privacyInfo")}>
-            <div className="divide-y">
-              <ToggleRow
-                icon={ShieldCheck}
-                title={t("settings.privacy.share")}
-                description={t("settings.privacy.shareDesc")}
-                checked={draft.privacy.shareAnonymizedMetrics}
-                onChange={(v) => setPrivacy("shareAnonymizedMetrics", v)}
-              />
-              <ToggleRow
-                icon={ShieldCheck}
-                title={t("settings.privacy.ads")}
-                description={t("settings.privacy.adsDesc")}
-                checked={draft.privacy.personalizedAds}
-                onChange={(v) => setPrivacy("personalizedAds", v)}
-              />
-            </div>
+            <a
+              href="/privacy"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="-mx-2 flex items-center justify-between gap-4 rounded-lg px-2 py-3 transition-colors hover:bg-accent"
+            >
+              <div className="flex min-w-0 items-start gap-3">
+                <span className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground">
+                  <ShieldCheck className="h-4 w-4" />
+                </span>
+                <div className="min-w-0">
+                  <p className="text-sm font-medium">{t("settings.privacy.policy")}</p>
+                  <p className="mt-0.5 text-sm text-muted-foreground">{t("settings.privacy.policyDesc")}</p>
+                </div>
+              </div>
+              <ExternalLink className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+            </a>
           </SectionCard>
 
           {/* Browser extension — real per-user tokens (talks to the engine, not mock) */}
