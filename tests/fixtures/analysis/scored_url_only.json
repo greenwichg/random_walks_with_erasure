@@ -1,0 +1,30 @@
+{
+  "analysisVersion": 1,
+  "article": null,
+  "explanation": null,
+  "input": {
+    "canonicalUrl": "https://apnews.com/live/budget-liveblog",
+    "url": "https://apnews.com/live/budget-liveblog"
+  },
+  "notes": [
+    "no page metadata supplied \u2014 scoring degrades to URL-level signals (outlet, path section)"
+  ],
+  "personal": null,
+  "recommendation": null,
+  "scoring": {
+    "confidence": null,
+    "emotion": null,
+    "lean": 0.0,
+    "leanBucket": "center",
+    "outlet": "Associated Press",
+    "political": false,
+    "register": null,
+    "topic": ""
+  },
+  "source": "scored_url_only",
+  "status": "analyzed",
+  "story": {
+    "matched": false,
+    "similarStory": null
+  }
+}

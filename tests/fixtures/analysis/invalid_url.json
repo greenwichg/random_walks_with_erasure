@@ -1,0 +1,18 @@
+{
+  "analysisVersion": 1,
+  "article": null,
+  "explanation": null,
+  "input": {
+    "canonicalUrl": null,
+    "url": "https://not a url"
+  },
+  "notes": [
+    "not a fetchable URL (no plausible host)"
+  ],
+  "personal": null,
+  "recommendation": null,
+  "scoring": null,
+  "source": null,
+  "status": "invalid_url",
+  "story": null
+}

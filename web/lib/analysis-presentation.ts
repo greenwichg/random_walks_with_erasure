@@ -133,16 +133,27 @@ function mapScoring(s: AnalysisScoring | null): ScoringPresentation | null {
   };
 }
 
+/** A contract-v1 membership always carries a numeric left/center/right distribution. Verify it at
+ *  runtime so a malformed or future variant can't reach ``SpectrumBar`` and crash on ``.left`` (F1). */
+function isDistribution(d: unknown): d is ViewpointDistribution {
+  if (typeof d !== "object" || d === null) return false;
+  const r = d as Record<string, unknown>;
+  return typeof r.left === "number" && typeof r.center === "number" && typeof r.right === "number";
+}
+
 function mapStory(story: AnalysisStory | null): StoryPresentation | null {
-  if (!story) return null;
-  if (story.matched) {
+  if (!story || typeof story !== "object") return null;
+  // Strictly ``matched === true`` AND a well-formed distribution ⇒ membership; anything short of
+  // that degrades to the advisory/none presentation rather than rendering a broken bar (F1). Valid
+  // contract-v1 responses are unaffected.
+  if (story.matched === true && isDistribution(story.distribution)) {
     return {
       kind: "member",
       distribution: story.distribution,
-      missingViewpoints: story.missingViewpoints ?? [],
+      missingViewpoints: Array.isArray(story.missingViewpoints) ? story.missingViewpoints : [],
     };
   }
-  return story.similarStory ? { kind: "similar" } : { kind: "none" };
+  return "similarStory" in story && story.similarStory ? { kind: "similar" } : { kind: "none" };
 }
 
 /**
