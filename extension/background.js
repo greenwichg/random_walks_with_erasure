@@ -147,6 +147,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
 });
 
+// The toolbar button's one job (there is no popup): open the Options page, where the
+// connection status and configuration live.
+chrome.action.onClicked.addListener(() => {
+  chrome.runtime.openOptionsPage();
+});
+
 // On first install, open the setup page so configuration is never skipped; keep the toolbar
 // indicator accurate on install/update and whenever the saved config changes.
 chrome.runtime.onInstalled.addListener(async (details) => {
