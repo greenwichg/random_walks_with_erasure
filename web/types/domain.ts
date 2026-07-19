@@ -660,3 +660,67 @@ export interface NotificationItem {
   seenAt: string | null;
   gatedBy: string;
 }
+
+/**
+ * Article Analyzer (A2) — ANALYSIS CONTRACT v1, the anonymous analysis of one news URL. Mirrors
+ * the engine's `article_analyzer.analyze` verbatim; the web treats the nulls as meaningful (an
+ * unknown outlet is `lean: null`, never a guess). The reader-relative sections
+ * (`recommendation` / `explanation` / `personal`) are typed but intentionally NOT rendered — they
+ * arrive in A3/A4.
+ */
+export type AnalysisSource = "catalog" | "scored_url_only";
+
+/** Provenance of the scored facts + the flat scoring projection. `register` / `confidence` are
+ *  carried for contract completeness but deferred from the A2 UI (see analysis-presentation). */
+export interface AnalysisScoring {
+  outlet: string;
+  lean: number | null;
+  leanBucket: LeanBucket | null;
+  topic: string;
+  political: boolean;
+  emotion: Partial<EmotionShare> | null;
+  register: number | null;
+  confidence: number | null;
+}
+
+/** A catalog-backed story membership: real distribution + honestly-derived missing viewpoints. */
+export interface AnalysisStoryMember {
+  matched: true;
+  storyId: string;
+  articleCount: number | null;
+  publisherCount: number | null;
+  distribution: ViewpointDistribution;
+  missingViewpoints: LeanBucket[];
+}
+
+/** A non-catalog article: at most a "resembles a tracked story" advisory, never membership. */
+export interface AnalysisStoryAdvisory {
+  matched: false;
+  similarStory: { storyId: string; similarity: number } | null;
+}
+
+export type AnalysisStory = AnalysisStoryMember | AnalysisStoryAdvisory;
+
+export interface AnalysisResult {
+  analysisVersion: number;
+  input: { url: string; canonicalUrl: string | null };
+  status: "analyzed" | "invalid_url";
+  source: AnalysisSource | null;
+  article: Article | null;
+  scoring: AnalysisScoring | null;
+  story: AnalysisStory | null;
+  // A3/A4 — present in the envelope, never read or rendered in A2.
+  recommendation: unknown | null;
+  explanation: unknown | null;
+  personal: unknown | null;
+  notes: string[];
+}
+
+/** The optional client-supplied page context that improves fetchless scoring (a subset of the
+ *  read metadata the extension captures). All optional; never trusted for canonicalization. */
+export interface AnalyzeMetadata {
+  title?: string;
+  description?: string;
+  outlet?: string;
+  category?: string;
+}

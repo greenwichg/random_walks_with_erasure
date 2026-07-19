@@ -5,6 +5,7 @@ import { useSession } from "next-auth/react";
 import { queryKeys, services } from "@/services";
 import { recordRead, type RecordReadInput } from "@/lib/record-read";
 import type {
+  AnalyzeMetadata,
   FeedbackAction,
   NotificationItem,
   Profile,
@@ -95,6 +96,16 @@ export function useMarkNotificationSeen() {
           : prev,
       );
     },
+  });
+}
+
+/** Article Analyzer (A2): analyze one URL (+ optional page metadata) on demand. A mutation, not a
+ * query — it's submit-triggered and the result is rendered from the mutation state (like the
+ * coach send). Anonymous; the endpoint is read-only, so there is no cache to invalidate. */
+export function useAnalyzeUrl() {
+  return useMutation({
+    mutationFn: ({ url, metadata }: { url: string; metadata?: AnalyzeMetadata }) =>
+      services.analyze(url, metadata),
   });
 }
 

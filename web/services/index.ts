@@ -1,5 +1,7 @@
 import { getJson, postJson, deleteJson } from "@/services/api";
 import type {
+  AnalysisResult,
+  AnalyzeMetadata,
   AnalyticsSeries,
   ApiToken,
   ApiTokenMint,
@@ -95,6 +97,10 @@ export const services = {
   // article ids are URLs, so pass the id as an encoded query param (never a path segment).
   unsaveArticle: (articleId: string) =>
     deleteJson<SaveResult>(`/me/saved?articleId=${encodeURIComponent(articleId)}`),
+  // Article Analyzer (A2): anonymous analysis of one URL (+ optional page metadata). ANALYSIS
+  // CONTRACT v1, verbatim from the engine; read-only — nothing is stored.
+  analyze: (url: string, metadata?: AnalyzeMetadata) =>
+    postJson<AnalysisResult>("/analyze", metadata ? { url, metadata } : { url }),
 };
 
 /** React Query cache keys, colocated so invalidation stays consistent. */
