@@ -41,6 +41,7 @@ import enrich                 # headline enrichment (register + emotion) behind 
 import personalize            # per-user augmented Measured report / recs / coach
 import evidence_resolver      # ONE human explanation per rec, chosen from evidence (21a.3)
 import coach_service          # Coach v2: intent-routed, tool-using coach (RWE_COACH_V2, M4)
+import notification_delivery   # orchestration: build context -> evaluate -> record notifications (N2)
 import ratelimit              # dependency-free token-bucket rate limiter (Private Alpha hardening)
 import reqlimits              # request-body size / batch-shape limits (Private Alpha hardening)
 import feed_source            # optional: source the recommender catalog from the RSS FeedArticle store
@@ -607,6 +608,18 @@ class SettingsUpdateModel(BaseModel):
     monthlyReport: bool | None = None
     notifications: NotificationPrefsUpdate | None = None
     privacy: PrivacyPrefsUpdate | None = None
+
+
+class NotificationModel(BaseModel):
+    """A materialised notification (from ``store.list_notifications``). ``payload`` is the kind's
+    structured content; ``titleKey`` is an i18n key (rendering is the client's job)."""
+    id: int
+    kind: str
+    titleKey: str
+    payload: dict
+    createdAt: str
+    seenAt: str | None = None
+    gatedBy: str
 
 
 class ArticleModel(BaseModel):
@@ -1721,6 +1734,42 @@ def update_my_settings(request: Request, req: SettingsUpdateModel) -> dict:
     uid = _require_real_user(request)
     st = _require_store()
     return settings_service.update(st, uid, req.model_dump(exclude_none=True))
+
+
+def _notification_view(n: dict) -> dict:
+    """Map a stored notification (a ``store.list_notifications`` row) to the NotificationModel wire
+    shape (snake_case body keys -> camelCase fields)."""
+    return {"id": n["id"], "kind": n.get("kind"), "titleKey": n.get("title_key"),
+            "payload": n.get("payload") or {}, "createdAt": n.get("created_at"),
+            "seenAt": n.get("seenAt"), "gatedBy": n.get("gated_by")}
+
+
+@app.get("/api/me/notifications", response_model=list[NotificationModel], tags=["meta"],
+         summary="The signed-in user's notifications (materialised on read, newest first)",
+         responses=_ERR_RESPONSES)
+def my_notifications(request: Request, unseenOnly: bool = Query(False),
+                     limit: int = Query(50, ge=1, le=200)) -> list:
+    """Evaluate the reader's due notifications from their **persisted** state, persist any new ones
+    (idempotent — the dedupe ledger suppresses repeats), then return the stored list, newest-first.
+    Every kind is gated by the reader's own preferences; nothing here generates a recommendation, a
+    report, an explanation, or a coach turn."""
+    uid = _require_real_user(request)
+    st = _require_store()
+    notification_delivery.materialize_notifications(st, uid)          # evaluate-on-fetch (idempotent)
+    return [_notification_view(n)
+            for n in st.list_notifications(uid, unseen_only=unseenOnly, limit=limit)]
+
+
+@app.post("/api/me/notifications/{notification_id}/seen", tags=["meta"],
+          summary="Mark one of the signed-in user's notifications as seen (idempotent, user-scoped)",
+          responses=_ERR_RESPONSES)
+def mark_my_notification_seen(request: Request, notification_id: int) -> dict:
+    """Idempotent and user-scoped: stamps ``seenAt`` on the notification iff it belongs to the caller
+    and isn't already seen. ``changed`` is ``True`` only the first time; another user's id (or an
+    already-seen one) returns ``changed=False`` and is never modified."""
+    uid = _require_real_user(request)
+    st = _require_store()
+    return {"ok": True, "changed": bool(st.mark_notification_seen(uid, notification_id))}
 
 
 @app.post("/api/me/recommendations/opened", response_model=RecReceptionModel,

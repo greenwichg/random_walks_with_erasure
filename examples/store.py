@@ -1239,6 +1239,21 @@ class Store:
                              .where(Notification.user_id == user_id)).all()
         return set(rows)
 
+    def mark_notification_seen(self, user_id: int, notification_id: int,
+                              seen_at: "str | None" = None) -> bool:
+        """Mark one of a user's notifications as seen — **idempotent** and **user-scoped**. Stamps
+        ``seen_at`` on the row only if it belongs to ``user_id`` and isn't already seen. Returns
+        ``True`` when this call changed the row (first time seen), and ``False`` when it was already
+        seen or does not belong to this user (another user's id is never touched)."""
+        stamp = seen_at or _utcnow().isoformat()
+        with self.session() as s:
+            row = s.scalar(select(Notification).where(Notification.id == notification_id,
+                                                      Notification.user_id == user_id))
+            if row is None or row.seen_at is not None:
+                return False
+            row.seen_at = stamp
+            return True
+
     # -- per-user API tokens (browser extension / non-browser clients) --
     _TOKEN_PREFIX = "ih_"
 
