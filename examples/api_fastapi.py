@@ -54,6 +54,7 @@ import discover               # Discover: product-layer exploration over the Fee
 import search                 # live full-text + faceted search over the FeedArticle catalog (Commit 6)
 import story_service          # the single owner of Story construction (Discover + Stories consume it)
 import story_intelligence     # deterministic intelligence computed ON TOP of Story objects (Commit 10)
+import article_analyzer       # anonymous URL analysis (A1 service: catalog-first, fetchless, zero-write)
 import media                  # centralised media + publisher-logo selection (rec enrichment, Commit 9)
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -887,6 +888,53 @@ class MeModel(BaseModel):
     report: Optional[HealthReportModel] = None
 
 
+class AnalyzeMetadata(BaseModel):
+    """Optional client-supplied page context for fetchless scoring — the documented metadata
+    vocabulary of ``article_analyzer.analyze`` (a subset of :class:`ReadInput`'s fields)."""
+    title: str | None = None
+    description: str | None = None
+    outlet: str | None = None
+    category: str | None = None
+    subtitle: str | None = None
+    political: bool | None = None
+    publishedAt: str | None = None    # accepted per the contract; unused by scoring today
+
+
+class AnalyzeRequest(BaseModel):
+    url: str
+    metadata: AnalyzeMetadata | None = None
+
+
+class AnalysisInputModel(BaseModel):
+    """ANALYSIS CONTRACT v1 ``input`` — both keys always present (``canonicalUrl`` null when the
+    URL is invalid)."""
+    url: str
+    canonicalUrl: Optional[str] = None
+
+
+class AnalysisModel(BaseModel):
+    """ANALYSIS CONTRACT v1, passed through verbatim. Serialised WITHOUT ``exclude_none``: the
+    nulls are the contract (``recommendation``/``personal``/``explanation`` are pinned null until
+    A3/A4, and an honest analysis reports ``lean: null`` rather than omitting it). The nested
+    sections stay untyped dicts on purpose — ``article`` is the canonical Article shape owned by
+    ``discover``; ``story`` is a discriminated union (membership vs advisory) whose variants have
+    disjoint keys; and ``scoring``'s contract field ``register`` collides with a Pydantic
+    ``BaseModel`` attribute, so typing it would need an alias workaround for zero contract gain.
+    Typing any of them would risk injecting or dropping keys and breaking byte-level parity with
+    the service (pinned by ``test_catalog_hit_parity_with_service``)."""
+    analysisVersion: int
+    input: AnalysisInputModel
+    status: str                              # "analyzed" | "invalid_url"
+    source: Optional[str] = None             # "catalog" | "scored_url_only" | null
+    article: Optional[dict] = None
+    scoring: Optional[dict] = None
+    story: Optional[dict] = None
+    recommendation: Optional[dict] = None    # pinned null until A3-Enrich
+    personal: Optional[dict] = None          # pinned null until A4
+    explanation: Optional[dict] = None       # pinned null until A3-Enrich
+    notes: list[str] = []
+
+
 class ReadInput(BaseModel):
     url: str
     title: str | None = None
@@ -1535,6 +1583,20 @@ def estimate(req: EstimateRequest) -> dict:
         return _require_backend().estimate(req.outlets)
     except ValueError:
         raise HTTPException(status_code=400, detail="Select at least one known publisher.")
+
+
+@app.post("/api/analyze", response_model=AnalysisModel, tags=["analysis"],
+          summary="Analyze a news-article URL (anonymous)", responses=_ERR_RESPONSES)
+def analyze_article(req: AnalyzeRequest) -> dict:
+    """The Information Health analysis of one article URL — ANALYSIS CONTRACT v1, verbatim from
+    the ``article_analyzer`` service (A2-API exposes; it never reinterprets). Anonymous by design:
+    no identity is read and the reader-relative sections stay null until A3. Catalog-first
+    (a known article reuses its stored scoring), fetchless (a miss is scored in memory from the
+    URL + the optional client-supplied ``metadata``), and **zero-write** — analysis alone never
+    influences Information Health, recommendations, or analytics. An unparseable URL is a contract
+    outcome (``status: "invalid_url"``), not an HTTP error."""
+    md = req.metadata.model_dump() if req.metadata is not None else None
+    return article_analyzer.analyze(_require_store(), req.url, metadata=md)
 
 
 @app.post("/api/me/onboarding", response_model=HealthReportModel, response_model_exclude_none=True,
