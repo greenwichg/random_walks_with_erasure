@@ -5,10 +5,9 @@ import { useRouter } from "next/navigation";
 import { Search, FileText, Loader2, CornerDownLeft, ArrowRight } from "lucide-react";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
+import { LeanBadge } from "@/components/shared/article-badges";
 import { useSearch } from "@/hooks/use-data";
 import type { Article } from "@/types/domain";
-import { leanBucket, leanLabelKey } from "@/lib/political";
 import { useTranslation } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
@@ -83,9 +82,7 @@ export function SearchCommand({ open, onOpenChange }: { open: boolean; onOpenCha
                 {results.map((a) => (
                   <Row key={a.id} icon={FileText} onClick={() => openArticle(a)}>
                     <span className="truncate">{a.headline}</span>
-                    <Badge variant={leanBucket(a.lean)} className="ml-auto shrink-0">
-                      {t(leanLabelKey(a.lean))}
-                    </Badge>
+                    <LeanBadge lean={a.lean} className="ml-auto shrink-0" />
                   </Row>
                 ))}
                 <Row icon={ArrowRight} onClick={seeAll}>

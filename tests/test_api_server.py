@@ -172,9 +172,16 @@ def _assert_article(a):
         "leanBucket", "confidence", "emotion", "dominantEmotion", "register",
         "publishedAt", "readingMinutes",
     }
-    assert a["leanBucket"] in BUCKETS
+    # Lean is nullable (L2.2): a reading-history article from an outlet the registry doesn't know
+    # serialises lean/leanBucket as null — never a fabricated centre. The pair is consistent: both
+    # null (unknown) or both present (known). Every other path (corpus/rec/report) always emits a
+    # known number, so it still takes the strict branch — no relaxation for the known case.
+    if a["lean"] is None:
+        assert a["leanBucket"] is None
+    else:
+        assert a["leanBucket"] in BUCKETS
+        assert -2.0001 <= a["lean"] <= 2.0001
     assert a["register"] in REGISTERS
-    assert -2.0001 <= a["lean"] <= 2.0001
     assert 0.0 <= a["confidence"] <= 1.0
     assert set(a["emotion"]) == EMOTIONS
     assert abs(sum(a["emotion"].values()) - 1.0) < 1e-6
@@ -222,7 +229,8 @@ def test_recommenders_built_once(backend):
 # --------------------------------------------------------------------------- #
 def test_serialize_history_shape_and_degradation(backend):
     """serialize_history renders each stored read as the same Article shape, preserving order and
-    degrading a sparse read (no title / NaN lean / no emotion) to safe neutral defaults."""
+    degrading a sparse read (no title / no emotion) to safe neutral defaults. A NaN lean from an
+    unknown outlet degrades to null (L2.2) — never a fabricated centre."""
     rows = [
         {"id": 2, "canonicalUrl": "https://cnn.com/x", "observedAt": "2026-07-01T10:00:00Z",
          "createdAt": "2026-07-01T10:00:01Z",
@@ -247,8 +255,9 @@ def test_serialize_history_shape_and_degradation(backend):
     assert hist[0]["article"]["headline"] == "Senate passes the bill, official says"
     assert hist[0]["article"]["leanBucket"] == "left"
     assert hist[0]["readAt"] == "2026-07-01T10:00:00Z"
-    # sparse read degrades safely and still validates
-    assert hist[1]["article"]["lean"] == 0.0
+    # sparse read from an unknown outlet degrades safely: unknown lean → null, not fabricated centre
+    assert hist[1]["article"]["lean"] is None
+    assert hist[1]["article"]["leanBucket"] is None
     assert hist[1]["article"]["emotion"]["neutral"] == 1.0
     assert hist[1]["readAt"] == "2026-06-30T09:00:00Z"               # falls back to createdAt
 
@@ -269,6 +278,63 @@ def test_history_article_reuses_catalog_serializer(backend):
     # readingMinutes is the id-derived deterministic field: identical => both use one _article_payload
     # (publishedAt is _iso_recent(now-relative), so it is intentionally not id-stable to compare).
     assert h_art["readingMinutes"] == art["readingMinutes"]
+
+
+def test_serialize_history_unknown_outlet_lean_is_null(backend):
+    """An unknown outlet (lean missing or NaN) serialises lean/leanBucket as JSON null in reading
+    history — the L2.2 fix that stops an unknown outlet being fabricated (and later aggregated) as
+    a centre read. Both encodings — a missing lean (None) and a NaN — degrade the same way."""
+    rows = [
+        {"id": 1, "canonicalUrl": "https://unknown.example/a", "observedAt": "2026-07-01T10:00:00Z",
+         "scored": {"article_id": "a", "outlet": "Unknown Outlet", "category": "Politics",
+                    "title": "Missing-lean read", "lean": None, "register": 0.8,
+                    "confidence": 0.7, "emotion": None, "read_at": "2026-07-01T10:00:00Z"}},
+        {"id": 2, "canonicalUrl": "https://unknown.example/b", "observedAt": "2026-07-01T11:00:00Z",
+         "scored": {"article_id": "b", "outlet": "Another Unknown", "category": "Politics",
+                    "title": "NaN-lean read", "lean": float("nan"), "register": 0.8,
+                    "confidence": 0.7, "emotion": None, "read_at": "2026-07-01T11:00:00Z"}},
+    ]
+    hist = backend.serialize_history(rows)
+    for h in hist:
+        _assert_article(h["article"])                 # full Article contract, now nullable-lean aware
+        assert h["article"]["lean"] is None            # unknown → null, never a fabricated 0.0
+        assert h["article"]["leanBucket"] is None      # and no bucket claim ("center") is invented
+    _assert_json_roundtrips(hist)                      # emits literal JSON null, no NaN leak
+
+
+def test_serialize_history_mixed_known_and_unknown_lean(backend):
+    """Mixed history: a known-lean read keeps its exact lean/bucket; an unknown-lean read is null.
+    Known values are untouched by the L2.2 change — only the unknown case is corrected, so a reader
+    with any known reads sees those unchanged alongside a truthful null for the unknown ones."""
+    rows = [
+        {"id": 3, "canonicalUrl": "https://cnn.com/z", "observedAt": "2026-07-02T10:00:00Z",
+         "scored": {"article_id": "z", "outlet": "CNN", "category": "Politics", "title": "Known left",
+                    "lean": -1.2, "register": 0.8, "confidence": 0.7, "emotion": None,
+                    "read_at": "2026-07-02T10:00:00Z"}},
+        {"id": 4, "canonicalUrl": "https://unknown.example/w", "observedAt": "2026-07-02T09:00:00Z",
+         "scored": {"article_id": "w", "outlet": "Mystery Wire", "category": "Politics",
+                    "title": "Unknown outlet", "lean": None, "register": 0.8, "confidence": 0.7,
+                    "emotion": None, "read_at": "2026-07-02T09:00:00Z"}},
+    ]
+    hist = backend.serialize_history(rows)
+    known, unknown = hist[0]["article"], hist[1]["article"]
+    assert known["lean"] == -1.2 and known["leanBucket"] == "left"     # known lean preserved exactly
+    assert unknown["lean"] is None and unknown["leanBucket"] is None   # unknown lean → null
+    _assert_json_roundtrips(hist)
+
+
+def test_article_payload_unknown_lean_flag_scopes_null_to_history(backend):
+    """The ``unknown_lean_to_null`` flag is the exact L2.2 seam: reading history (flag on) nulls an
+    unknown lean, while the corpus/recommendation/story path (flag off — the default) keeps the
+    legacy neutral 0.0/'center'. Same builder, same inputs — only the flag differs, so the canonical
+    corpus serialisation is provably unchanged by this fix."""
+    kw = dict(item_id="x", headline="H", outlet="Nowhere", topic="Politics",
+              lean=float("nan"), register=0.7, emotion={"neutral": 1.0}, confidence=0.7,
+              outlet_lean={})
+    corpus = backend._article_payload(**kw)                            # flag defaults to False
+    history = backend._article_payload(**kw, unknown_lean_to_null=True)
+    assert corpus["lean"] == 0.0 and corpus["leanBucket"] == "center"  # legacy corpus path unchanged
+    assert history["lean"] is None and history["leanBucket"] is None   # history nulls the unknown
 
 
 # --------------------------------------------------------------------------- #

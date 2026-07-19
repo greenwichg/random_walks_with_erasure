@@ -40,7 +40,11 @@ export interface HistoryInsights {
   topicCount: number;
   publisherCount: number;
   leanCounts: { left: number; center: number; right: number };
-  /** Fractions (0..1) of reads in each lean bucket; all 0 when there are no reads. */
+  /**
+   * Fractions (0..1) of the KNOWN-lean reads in each bucket — the denominator is the number of reads
+   * whose outlet lean is known, so unknown-lean reads (null) are excluded, never counted as centre
+   * (L2.2). All 0 when there are no known-lean reads (incl. the empty history).
+   */
   leanShare: { left: number; center: number; right: number };
   reportingShare: number; // 0..1
   opinionShare: number; // 0..1
@@ -109,12 +113,20 @@ export function summarizeHistory(entries: HistoryEntry[]): HistoryInsights {
   const topics = tally(arts.map((a) => a.topic));
   const publishers = tally(arts.map((a) => a.publisher));
 
+  // Lean distribution over KNOWN-lean reads only: an unknown lean (an outlet the registry doesn't
+  // know) is excluded, never bucketed as "center" (L2.2). Shares sum to 1 over the known-lean reads,
+  // so a reader with all-known reads is unchanged; the denominator drops only the unknowns.
   const leanCounts = { left: 0, center: 0, right: 0 };
-  for (const a of arts) leanCounts[bucketOf(a.lean)]++;
+  let leanKnown = 0;
+  for (const a of arts) {
+    if (a.lean == null) continue;
+    leanKnown++;
+    leanCounts[bucketOf(a.lean)]++;
+  }
   const leanShare = {
-    left: share(leanCounts.left),
-    center: share(leanCounts.center),
-    right: share(leanCounts.right),
+    left: leanKnown ? leanCounts.left / leanKnown : 0,
+    center: leanKnown ? leanCounts.center / leanKnown : 0,
+    right: leanKnown ? leanCounts.right / leanKnown : 0,
   };
 
   const reportingShare = share(arts.filter((a) => a.register === "reporting").length);

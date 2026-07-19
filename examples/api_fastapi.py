@@ -636,8 +636,12 @@ class ArticleModel(BaseModel):
     political: Optional[bool] = None
     # short summary — populated for Discover/Stories (from the feed); omitted for recommendations.
     description: Optional[str] = None
-    lean: float
-    leanBucket: str
+    # Nullable (L2.2): a real reader's stored read from an outlet the registry doesn't know has an
+    # unknown political lean — serialised null rather than a fabricated centre. The corpus /
+    # recommendation / story path always fills both (0.0/"center" default), so only reading-history
+    # articles ever carry null here; `response_model_exclude_none` omits the null fields on the wire.
+    lean: Optional[float] = None
+    leanBucket: Optional[str] = None
     confidence: float
     emotion: EmotionShareModel
     dominantEmotion: str

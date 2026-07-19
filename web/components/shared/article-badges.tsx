@@ -11,8 +11,25 @@ import { useTranslation } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 /** Political viewpoint pill, coloured by bucket. Prefers the engine's `bucket` when given. */
-export function LeanBadge({ lean, bucket, className }: { lean: Lean; bucket?: LeanBucket; className?: string }) {
+export function LeanBadge({
+  lean,
+  bucket,
+  className,
+}: {
+  lean: Lean | null;
+  bucket?: LeanBucket | null;
+  className?: string;
+}) {
   const { t } = useTranslation();
+  // Unknown lean (an outlet the registry doesn't know — only reading-history reads): show a neutral
+  // "Unknown" badge, never a fabricated Center (L2.2).
+  if (lean == null) {
+    return (
+      <Badge variant="secondary" className={className}>
+        {t("lean.unknown")}
+      </Badge>
+    );
+  }
   return (
     <Badge variant={bucket ?? leanBucket(lean)} className={className}>
       {t(leanLabelKey(lean))}

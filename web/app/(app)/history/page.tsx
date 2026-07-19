@@ -52,7 +52,7 @@ export default function HistoryPage() {
     if (q && !`${a.headline} ${a.publisher} ${a.topic}`.toLowerCase().includes(q.toLowerCase())) return false;
     if (topic !== "all" && a.topic !== topic) return false;
     if (publisher !== "all" && a.publisher !== publisher) return false;
-    if (lean !== "all" && leanBucket(a.lean) !== lean) return false;
+    if (lean !== "all" && (a.lean == null || leanBucket(a.lean) !== lean)) return false;
     if (emotion !== "all" && dominantEmotion(a.emotion) !== emotion) return false;
     return true;
   });

@@ -186,8 +186,12 @@ export interface Article {
   imageUrl?: string;
   /** Short summary — populated for Discover/Stories (from the feed); omitted for recommendations. */
   description?: string;
-  lean: Lean;
-  leanBucket: LeanBucket;
+  /** Article political lean, and its bucket. `null` when the lean is unknown (an outlet the
+   *  registry doesn't know) — only ever null for reading-history reads (L2.2); the corpus /
+   *  recommendation / story path always fills both. Rendered as "Unknown", never Center, and
+   *  excluded from lean aggregations. */
+  lean: Lean | null;
+  leanBucket: LeanBucket | null;
   confidence: number; // 0–1
   emotion: EmotionShare;
   dominantEmotion: keyof EmotionShare;

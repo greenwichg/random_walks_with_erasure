@@ -18,7 +18,7 @@ import {
   readingPattern,
 } from "./history-insights.ts";
 
-type Art = { topic: string; publisher: string; lean: number; register: string; readingMinutes: number;
+type Art = { topic: string; publisher: string; lean: number | null; register: string; readingMinutes: number;
              emotion?: Record<string, number> };
 const NEUTRAL = { fear: 0, outrage: 0, analysis: 0, positive: 0, neutral: 1 };
 const entry = (a: Art, i: number) =>
@@ -77,6 +77,36 @@ test("lean buckets use the tau=0.5 boundary (matches backend)", () => {
     { topic: "T", publisher: "S", lean: 0.5, register: "reporting", readingMinutes: 3 },  // center (== tau)
   ]));
   assert.deepEqual(s.leanCounts, { left: 1, center: 2, right: 1 });
+});
+
+test("unknown (null) lean is excluded from counts and shares (L2.2), not bucketed as center", () => {
+  // Two known-left reads + two unknown-outlet reads (lean null). The unknowns must NOT become
+  // "center": counts drop them and shares use the KNOWN-lean denominator (2), so a reader whose
+  // known reads are all left reads as fully left — the unknowns neither dilute nor tilt the mix.
+  const s = summarizeHistory(make([
+    { topic: "T", publisher: "P", lean: -1.4, register: "reporting", readingMinutes: 3 }, // left
+    { topic: "T", publisher: "Q", lean: -0.8, register: "reporting", readingMinutes: 3 }, // left
+    { topic: "T", publisher: "R", lean: null, register: "reporting", readingMinutes: 3 }, // unknown
+    { topic: "T", publisher: "S", lean: null, register: "reporting", readingMinutes: 3 }, // unknown
+  ]));
+  assert.deepEqual(s.leanCounts, { left: 2, center: 0, right: 0 }); // unknowns excluded, not center
+  assert.deepEqual(s.leanShare, { left: 1, center: 0, right: 0 });  // denominator = 2 known, not 4
+  assert.equal(s.politicalTilt, "left");                            // Reflection/Daily-Summary copy
+});
+
+test("all-unknown lean history degrades to zero shares (no divide-by-zero), balanced tilt", () => {
+  // The day-scoped Daily Summary + Reflection copy read `leanShare`; with every read from an unknown
+  // outlet it must be all-zero (not NaN) and the tilt balanced, while non-lean insights (volume,
+  // reporting mix) are untouched — an unknown lean silences only the political signal.
+  const s = summarizeHistory(make([
+    { topic: "T", publisher: "P", lean: null, register: "reporting", readingMinutes: 3 },
+    { topic: "T", publisher: "Q", lean: null, register: "opinion", readingMinutes: 3 },
+  ]));
+  assert.deepEqual(s.leanCounts, { left: 0, center: 0, right: 0 });
+  assert.deepEqual(s.leanShare, { left: 0, center: 0, right: 0 });
+  assert.equal(s.politicalTilt, "balanced");
+  assert.equal(s.count, 2);                              // reads still count for volume/other insights
+  assert.ok(Math.abs(s.reportingShare - 0.5) < 1e-9);   // non-lean insights unaffected by unknown lean
 });
 
 test("classifiers: tilt, breadth, reporting", () => {

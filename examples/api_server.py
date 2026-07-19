@@ -687,7 +687,8 @@ class Backend:
 
     def _article_payload(self, *, item_id, headline, outlet, topic, lean, register,
                          emotion: dict, confidence, outlet_lean: dict,
-                         political: "bool | None" = None) -> dict:
+                         political: "bool | None" = None,
+                         unknown_lean_to_null: bool = False) -> dict:
         """Build one article payload from already-resolved fields — the SINGLE source of the
         ``Article`` shape (web/types/domain.ts). Both the corpus serialiser (:meth:`_serialize_article`)
         and the reading-history serialiser (:meth:`serialize_history`) feed this, so a catalog
@@ -701,7 +702,13 @@ class Backend:
         a demo/synthetic corpus item (no URL exists anywhere) keeps the deterministic
         ``_iso_recent`` estimate, so demo data stays plausible without ever lying about live news."""
         item_id = str(item_id)
-        pos = float(lean) if lean is not None and np.isfinite(lean) else 0.0
+        known_lean = lean is not None and np.isfinite(lean)
+        pos = float(lean) if known_lean else 0.0
+        # ``unknown_lean_to_null`` (the reading-history path, L2.2): when the article's lean is
+        # unknown (missing/NaN), emit ``lean``/``leanBucket`` as ``null`` rather than a fabricated
+        # centre — so an unknown outlet is never shown, filtered, or aggregated as "center". The
+        # corpus/recommendation/story path (flag off) keeps the neutral 0.0 default unchanged.
+        lean_out = pos if (known_lean or not unknown_lean_to_null) else None
         conf = float(confidence) if confidence is not None and np.isfinite(confidence) else 0.7
         dom = max(emotion, key=emotion.get) if emotion else "neutral"
         url = self._resolve_url(item_id)
@@ -711,8 +718,8 @@ class Backend:
             "publisher": _prettify(outlet),
             "publisherLean": float(outlet_lean.get(str(outlet), 0.0)),
             "topic": _prettify(topic),
-            "lean": pos,
-            "leanBucket": _lean_bucket(pos, self.lean_tau),
+            "lean": lean_out,
+            "leanBucket": _lean_bucket(pos, self.lean_tau) if lean_out is not None else None,
             "confidence": conf,
             "emotion": emotion,
             "dominantEmotion": dom,
@@ -751,7 +758,9 @@ class Backend:
         Each read is rendered as the SAME ``Article`` shape as a recommendation or report article
         (via :meth:`_article_payload`), so history reuses one serialiser and stays contract-identical
         for a future mobile client. No corpus or augmented model is needed — a stored read already
-        carries its scored fields; outlet house-lean comes from the base corpus map (unknown → 0).
+        carries its scored fields. An article whose political lean is unknown (an outlet the registry
+        doesn't know) serialises ``lean``/``leanBucket`` as **null** (``unknown_lean_to_null``, L2.2)
+        — never a fabricated centre, so history never shows, filters, or aggregates it as "center".
         Rows arrive newest-first from the store and are preserved in that order.
 
         ``readAt`` is the reader's observed timestamp; ``completed`` is ``True`` (opening a read is
@@ -774,7 +783,8 @@ class Backend:
                 emotion=self._emotion_from_dict(sc.get("emotion")),
                 confidence=sc.get("confidence"),
                 outlet_lean=self.outlet_lean,
-                political=sc.get("political"))
+                political=sc.get("political"),
+                unknown_lean_to_null=True)
             out.append({
                 "id": str(row.get("id")),
                 "article": article,

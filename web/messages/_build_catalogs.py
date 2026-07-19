@@ -1298,6 +1298,8 @@ M = {
     "lean.right": ("Right", "Derecha", "Droite", "Rechts", "Direita"),
     "lean.strongRight": ("Strong right", "Muy de derecha", "Fortement à droite", "Stark rechts",
                          "Fortemente à direita"),
+    "lean.unknown": ("Unknown lean", "Sesgo desconocido", "Orientation inconnue",
+                     "Ausrichtung unbekannt", "Viés desconhecido"),
     "emotion.fear": ("Fear", "Miedo", "Peur", "Angst", "Medo"),
     "emotion.outrage": ("Outrage", "Indignación", "Indignation", "Empörung", "Indignação"),
     "emotion.analysis": ("Analysis", "Análisis", "Analyse", "Analyse", "Análise"),
