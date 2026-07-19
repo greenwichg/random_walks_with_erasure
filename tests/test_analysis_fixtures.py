@@ -66,19 +66,31 @@ def test_supported_analysis_version():
 
 
 def test_authed_goldens_carry_reader_sections():
-    """Guard the authed fixtures: sections are present and the two scenarios stay distinct."""
+    """Guard the authed fixtures: sections are present and the three scenarios stay distinct."""
     bridge = json.loads((FIX / "authed_bridge.json").read_text())
     familiar = json.loads((FIX / "authed_familiar.json").read_text())
+    following = json.loads((FIX / "authed_following.json").read_text())
     assert bridge["explanation"]["type"] == "bridge" and bridge["recommendation"]["wouldBroaden"] is True
     assert familiar["explanation"]["type"] == "topic_continuity"
     assert familiar["recommendation"]["wouldBroaden"] is False
-    # A3.3a: both goldens pin the story-relative nextArticle (AP via the canonical-URL tie-break),
-    # with exactly the contract's three keys — no fabricated engine metadata.
-    for g in (bridge, familiar):
+    assert following["explanation"]["type"] == "story_match"
+    assert "following_story" in following["recommendation"]["reasons"]
+    # A3.3a: every golden pins the story-relative nextArticle with exactly the contract's three
+    # keys — no fabricated engine metadata. The following reader already read AP, so their pick
+    # advances to the next unread sibling (Reuters).
+    for g, pub in ((bridge, "AP"), (familiar, "AP"), (following, "Reuters")):
         na = g["recommendation"]["nextArticle"]
         assert set(na) == {"source", "article", "explanation"}
-        assert na["source"] == "story" and na["article"]["publisher"] == "AP"
-        assert na["explanation"]["type"] == "new_publisher"
+        assert na["source"] == "story" and na["article"]["publisher"] == pub
+    # A4.1: every authed golden carries the closed `personal` standing shape, and the three cases
+    # pin three distinct states (bands never/familiar; real story standing; a claimed addsMissing).
+    for g in (bridge, familiar, following):
+        assert set(g["personal"]) == {"alreadyRead", "publisher", "topic", "viewpoint", "story"}
+    assert bridge["personal"]["publisher"]["band"] == "never"
+    assert familiar["personal"]["publisher"]["band"] == "familiar"
+    assert following["personal"]["story"] == {"readCount": 1, "bucketsRead": ["center"],
+                                              "addsBucket": "left"}
+    assert following["personal"]["viewpoint"]["addsMissing"] is True
 
 
 def test_goldens_cover_the_three_source_states():
@@ -87,3 +99,6 @@ def test_goldens_cover_the_three_source_states():
     assert got["catalog_hit"]["source"] == "catalog" and got["catalog_hit"]["article"] is not None
     assert got["scored_url_only"]["source"] == "scored_url_only" and got["scored_url_only"]["article"] is None
     assert got["invalid_url"]["status"] == "invalid_url" and got["invalid_url"]["scoring"] is None
+    # A4.1 anonymous invariant: the reader sections stay null in every anonymous golden.
+    for g in got.values():
+        assert g["recommendation"] is None and g["explanation"] is None and g["personal"] is None

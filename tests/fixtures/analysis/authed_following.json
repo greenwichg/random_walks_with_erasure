@@ -34,29 +34,31 @@
   },
   "explanation": {
     "contribution": {
-      "key": "other_side_perspective",
-      "params": {}
-    },
-    "evidence": {
-      "articleLean": -1.0,
-      "articlePolitical": true,
-      "crossCutting": true,
-      "readerLeanShares": {
-        "center": 0.05,
-        "left": 0.1,
-        "right": 0.85
-      },
-      "readerPoliticalProfile": "leans_right"
-    },
-    "message": "This article offers another political perspective.",
-    "priority": 2,
-    "readerFact": {
-      "key": "political_lean_right_share",
+      "key": "covered_same_story",
       "params": {
-        "percent": 85
+        "publisher": "The Guardian"
       }
     },
-    "type": "bridge"
+    "evidence": {
+      "readHeadline": "senate passes budget vote after bipartisan deal",
+      "readPublishedAt": "2026-07-18T12:00:00+00:00",
+      "readPublisher": "AP",
+      "readUrl": "https://apnews.com/story/an-cluster-1",
+      "recPublishedAt": "2026-07-18T12:00:00+00:00",
+      "recPublisher": "The Guardian",
+      "storyId": "st_247465da46f57b23",
+      "storyReads": 1
+    },
+    "message": "You already read this story from AP. Here's how The Guardian covered the same story.",
+    "priority": 1,
+    "readerFact": {
+      "key": "read_story_from",
+      "params": {
+        "publisher": "AP"
+      }
+    },
+    "type": "story_match",
+    "variant": "same_event"
   },
   "input": {
     "canonicalUrl": "https://theguardian.com/story/an-cluster-0",
@@ -69,19 +71,25 @@
       "band": "never",
       "name": "The Guardian"
     },
-    "story": null,
+    "story": {
+      "addsBucket": "left",
+      "bucketsRead": [
+        "center"
+      ],
+      "readCount": 1
+    },
     "topic": {
       "blindSpot": null,
-      "share": 0.85,
+      "share": 0.75,
       "topic": "Politics"
     },
     "viewpoint": {
-      "addsMissing": false,
+      "addsMissing": true,
       "articleBucket": "left",
       "readerShares": {
-        "center": 0.05,
-        "left": 0.1,
-        "right": 0.85
+        "center": 0.25,
+        "left": 0.0,
+        "right": 0.75
       }
     }
   },
@@ -99,8 +107,8 @@
           "outrage": 0.1,
           "positive": 0.1
         },
-        "headline": "senate passes budget vote after bipartisan deal",
-        "id": "https://apnews.com/story/an-cluster-1",
+        "headline": "bipartisan budget deal clears senate vote",
+        "id": "https://reuters.com/story/an-cluster-2",
         "image": null,
         "imageAttribution": null,
         "imageHeight": null,
@@ -110,40 +118,48 @@
         "lean": 0.0,
         "leanBucket": "center",
         "publishedAt": "2026-07-18T12:00:00+00:00",
-        "publisher": "AP",
+        "publisher": "Reuters",
         "publisherLean": 0.0,
-        "publisherLogo": "https://apnews.com/favicon.ico",
+        "publisherLogo": "https://reuters.com/favicon.ico",
         "publisherLogoDark": null,
         "publisherLogoSource": "favicon",
         "readingMinutes": 2,
         "register": "reporting",
         "topic": "Politics",
-        "url": "https://apnews.com/story/an-cluster-1"
+        "url": "https://reuters.com/story/an-cluster-2"
       },
       "explanation": {
         "contribution": {
-          "key": "add_new_publisher",
-          "params": {}
+          "key": "covered_same_story",
+          "params": {
+            "publisher": "Reuters"
+          }
         },
         "evidence": {
-          "band": "never",
-          "publisher": "AP",
-          "reads": 0,
-          "share": 0.0
+          "readHeadline": "senate passes budget vote after bipartisan deal",
+          "readPublishedAt": "2026-07-18T12:00:00+00:00",
+          "readPublisher": "AP",
+          "readUrl": "https://apnews.com/story/an-cluster-1",
+          "recPublishedAt": "2026-07-18T12:00:00+00:00",
+          "recPublisher": "Reuters",
+          "storyId": "st_247465da46f57b23",
+          "storyReads": 1
         },
-        "message": "You've never read AP before. This broadens your source diversity.",
-        "priority": 3,
+        "message": "You already read this story from AP. Here's how Reuters covered the same story.",
+        "priority": 1,
         "readerFact": {
-          "key": "never_read_publisher",
+          "key": "read_story_from",
           "params": {
             "publisher": "AP"
           }
         },
-        "type": "new_publisher"
+        "type": "story_match",
+        "variant": "same_event"
       },
       "source": "story"
     },
     "reasons": [
+      "following_story",
       "cross_cutting",
       "new_publisher",
       "familiar_topic"

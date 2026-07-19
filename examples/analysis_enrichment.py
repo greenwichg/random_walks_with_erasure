@@ -2,7 +2,7 @@
 analysis WITHOUT touching the analyzer.
 
 ``article_analyzer.analyze`` stays deterministic, anonymous, and zero-write; this module consumes
-its output and, for a signed-in **measured** reader, fills the two contract slots the analyzer pins
+its output and, for a signed-in **measured** reader, fills the contract slots the analyzer pins
 null:
 
   * ``explanation``    — the Evidence Resolver's ONE licensed explanation for the analyzed article,
@@ -36,6 +36,29 @@ vocabulary as every card); the story relation travels as ``source`` provenance, 
 claim. No recommendation-engine metadata is fabricated for story picks (the object carries only
 ``source`` / ``article`` / ``explanation``).
 
+A4.1 fills the third reserved slot, ``personal`` — the reader's STANDING relative to the analyzed
+article: facts read verbatim from the same measured context, never scores or projections (the
+``healthImpact`` lesson — nothing here is derived arithmetic over denominators the context doesn't
+carry):
+
+  * ``alreadyRead`` — the analyzed canonical URL is in the reader's history (and when);
+  * ``publisher``   — the reader's familiarity band for the outlet (the SAME lookup the verdict's
+                      new/rarely-read reasons use);
+  * ``topic``       — the topic + the reader's measured share of it (only when their report claims
+                      one) + the stored report's blind-spot ``gap`` when the verdict flagged it;
+  * ``viewpoint``   — the article's lean bucket vs the reader's measured viewpoint shares;
+                      ``addsMissing`` is claimed only when the article is political, its bucket is
+                      known, and the reader's share of that bucket is exactly zero — a set-
+                      membership fact, not a forecast;
+  * ``story``       — the reader's own coverage of the analyzed article's cluster, from the SAME
+                      memoized story index (no extra store pass): members read, buckets covered,
+                      and the bucket this article would add. Present only when they have actually
+                      read part of the story.
+
+One pass, one vocabulary: the reads map, familiarity band, and blind-spot mapping are computed once
+in ``enrich`` and shared by the verdict, the story-sibling pick, and ``personal``, so the sections
+can never disagree with each other.
+
 Read-only. It reads the reader's (cached) measured context and stored report; it creates no reads,
 recommendation events, or feedback. Anonymous / non-measured callers get null sections, so the
 anonymous analysis stays byte-identical to A2.
@@ -44,6 +67,7 @@ from __future__ import annotations
 
 import pathlib
 import sys
+from collections.abc import Mapping
 from typing import Callable, Optional
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
@@ -60,7 +84,10 @@ _REASON_ORDER = ("following_story", "cross_cutting", "blind_spot",
 #: and "familiar_topic" explain relevance without claiming the article broadens anything.
 _BROADENING = frozenset({"cross_cutting", "blind_spot", "new_publisher", "rarely_read_publisher"})
 
-_NULL = {"explanation": None, "recommendation": None}
+_NULL = {"explanation": None, "recommendation": None, "personal": None}
+
+#: Stable presentation order for lean buckets (matches the analyzer's vocabulary).
+_BUCKET_ORDER = ("left", "center", "right")
 
 
 def _num(v, default: float = 0.0) -> float:
@@ -112,6 +139,15 @@ def _is_num(v) -> bool:
     return isinstance(v, (int, float)) and v == v
 
 
+def _blind_spot_gaps(blind_spot_topics) -> dict:
+    """Normalise the blind-spot input to ``{topic: gap|None}`` — a mapping (the stored report's
+    topic -> gap, the production shape) or a bare sequence of topics (gap unknown) both work, so
+    the ONE normalisation feeds the verdict (membership) and ``personal`` (membership + gap)."""
+    if isinstance(blind_spot_topics, Mapping):
+        return {str(t): (float(g) if _is_num(g) else None) for t, g in blind_spot_topics.items()}
+    return {str(t): None for t in (blind_spot_topics or ())}
+
+
 def _resolver_rec(article: dict, ctx: dict) -> dict:
     """A synthetic resolver ``rec`` for a candidate next-article: the resolver article vocabulary
     plus the cross-cutting flag via the ONE shared gate (same construction as the analyzed
@@ -122,12 +158,14 @@ def _resolver_rec(article: dict, ctx: dict) -> dict:
     return {"article": article, "crossCutting": cross}
 
 
-def _select_story_sibling(analysis: dict, ctx: dict, store, index: Optional[dict]) -> "dict | None":
+def _select_story_sibling(analysis: dict, ctx: dict, store, index: Optional[dict],
+                          read: "Mapping | set") -> "dict | None":
     """The deterministic story-relative pick: a sibling of the analyzed article's own cluster —
     different publisher, unread, the analyzed article excluded; prefer a different lean bucket than
     the analyzed article's (only when both buckets are known — no preference is ever derived from
     an unknown lean), newest first, canonical-URL tie-break. Selection runs on the Story Service's
-    own coverage (the index); only the WINNER is hydrated from the store. Returns
+    own coverage (the index); only the WINNER is hydrated from the store. ``read`` is the reader's
+    canonical-URL membership (built ONCE in ``enrich`` and shared with ``_personal``). Returns
     ``{"source": "story", "article", "explanation"}`` or ``None``. Bypasses the recommendation
     engine by design (the claim is story membership, not rank)."""
     if store is None:
@@ -138,7 +176,6 @@ def _select_story_sibling(analysis: dict, ctx: dict, store, index: Optional[dict
         return None
     my_pub = engine._prettify(str((analysis.get("article") or {}).get("publisher") or ""))
     my_bucket = (analysis.get("scoring") or {}).get("leanBucket")
-    read = {str(r.get("url")) for r in (ctx.get("reads") or [])}
 
     cands = []
     for m in entry.get("coverage") or []:
@@ -211,11 +248,12 @@ def _feed_next(personalizer, store, uid: int, ctx: dict, index: Optional[dict]) 
 
 
 def _verdict(article: dict, explanation: dict, ctx: dict, cross_cutting: bool,
-             blind_spot_topics) -> dict:
-    """The stable reader-relative verdict, assembled from existing signals only."""
+             blind_gaps: dict, band: Optional[str]) -> dict:
+    """The stable reader-relative verdict, assembled from existing signals only. ``blind_gaps`` and
+    ``band`` are the enrich-level shared computations (one pass — ``personal`` reads the same
+    values, so the sections can never disagree)."""
     topic = str(article.get("topic") or "")
-    blind_topics = {str(t) for t in (blind_spot_topics or [])}
-    blind_topic = topic if topic and topic in blind_topics else None
+    blind_topic = topic if topic and topic in blind_gaps else None
 
     reasons = set()
     if (explanation or {}).get("type") == "story_match":
@@ -224,7 +262,6 @@ def _verdict(article: dict, explanation: dict, ctx: dict, cross_cutting: bool,
         reasons.add("cross_cutting")
     if blind_topic:
         reasons.add("blind_spot")
-    band = _familiarity_band(ctx, str(article.get("publisher") or ""))
     if band == "never":
         reasons.add("new_publisher")
     elif band == "rarely":
@@ -239,62 +276,150 @@ def _verdict(article: dict, explanation: dict, ctx: dict, cross_cutting: bool,
             "reasons": ordered, "blindSpotTopic": blind_topic}
 
 
+def _personal(analysis: dict, ctx: dict, article: dict, band: Optional[str],
+              reads_by_url: dict, index: Optional[dict], blind_gaps: dict,
+              recommendation: dict) -> dict:
+    """A4.1 — the reader's standing relative to the analyzed article: a closed five-key object of
+    facts read verbatim from the shared context / index / stored-report inputs. Every block nulls
+    independently when its licensing data is absent (unknown outlet -> no ``publisher``; NaN-gated
+    viewpoint shares -> no ``readerShares`` and never an ``addsMissing`` claim; no cluster reads ->
+    no ``story``). No derived "after reading" arithmetic — projections are set-membership facts
+    only. Consistency by construction: ``band`` is the verdict's band, blind-spot membership IS the
+    verdict's ``blindSpotTopic``, and ``reads_by_url`` is the same map the sibling pick excluded
+    against."""
+    sc = analysis.get("scoring") or {}
+    canon = (analysis.get("input") or {}).get("canonicalUrl")
+
+    # alreadyRead — canonical identity, so a catalog hit and a URL-only miss both resolve.
+    row = reads_by_url.get(canon) if canon else None
+    already = ({"at": str(row["publishedAt"]) if row.get("publishedAt") else None}
+               if row is not None else None)
+
+    pub = str(article.get("publisher") or "")
+    publisher = ({"name": pub, "band": band}
+                 if pub and band in ("never", "rarely", "familiar") else None)
+
+    topic = str(article.get("topic") or "")
+    topic_block = None
+    if topic:
+        shares = ctx.get("topic_shares")
+        share = shares.get(topic) if isinstance(shares, Mapping) else None
+        blind = ({"gap": blind_gaps.get(topic)}
+                 if recommendation.get("blindSpotTopic") == topic else None)
+        topic_block = {"topic": topic,
+                       "share": float(share) if _is_num(share) else None,
+                       "blindSpot": blind}
+
+    bucket = sc.get("leanBucket") if sc.get("leanBucket") in _BUCKET_ORDER else None
+    viewpoint = None
+    if bucket:
+        ls = ctx.get("lean_shares")
+        reader_shares = ({b: float(ls[b]) for b in _BUCKET_ORDER}
+                         if isinstance(ls, Mapping) and all(_is_num(ls.get(b)) for b in _BUCKET_ORDER)
+                         else None)
+        adds_missing = bool(bool(article.get("political")) and reader_shares is not None
+                            and reader_shares[bucket] == 0.0)
+        viewpoint = {"articleBucket": bucket, "readerShares": reader_shares,
+                     "addsMissing": adds_missing}
+
+    story = None
+    entry = (index or {}).get(canon) if canon else None
+    if entry:
+        buckets, count = set(), 0
+        for m in entry.get("coverage") or []:
+            u = m.get("url")
+            if not u:
+                continue
+            c = er._canon(str(u))
+            if c == canon or c not in reads_by_url:      # the analyzed article itself never counts
+                continue
+            count += 1
+            if m.get("leanBucket") in _BUCKET_ORDER:
+                buckets.add(m["leanBucket"])
+        if count >= 1:                                   # a real relationship, or no story claim
+            story = {"readCount": count,
+                     "bucketsRead": [b for b in _BUCKET_ORDER if b in buckets],
+                     "addsBucket": bucket if bucket and bucket not in buckets else None}
+
+    return {"alreadyRead": already, "publisher": publisher, "topic": topic_block,
+            "viewpoint": viewpoint, "story": story}
+
+
 def enrich(analysis: dict, ctx: dict, *, index: Optional[dict] = None,
            blind_spot_topics=(), store=None,
            feed_next: "Callable[[], dict | None] | None" = None) -> dict:
-    """The reader-enrichment assembler: ``{"explanation", "recommendation"}`` for an analyzed
-    article given a measured reader's ``ctx`` (the Evidence Resolver's documented context). Total
-    and deterministic over its inputs — an ``invalid_url`` analysis or an article with no resolvable
-    URL yields null sections; it never raises and never writes.
+    """The reader-enrichment assembler: ``{"explanation", "recommendation", "personal"}`` for an
+    analyzed article given a measured reader's ``ctx`` (the Evidence Resolver's documented
+    context). Total and deterministic over its inputs — an ``invalid_url`` analysis or an article
+    with no resolvable URL yields null sections; it never raises and never writes.
 
     A3.3a: the verdict additionally carries ``nextArticle`` — the story-relative pick when the
     analyzed article sits in a cluster (``store`` supplies the winner's hydration; the engine is
     never consulted), else the value of the LAZY ``feed_next`` callable (the engine-licensed
-    fallback, invoked only when the story path yields nothing), else ``None``."""
+    fallback, invoked only when the story path yields nothing), else ``None``.
+
+    A4.1: ``personal`` — the reader's standing (see ``_personal``). The familiarity band, the
+    blind-spot mapping, and the reader's canonical-URL reads map are computed HERE, once, and
+    shared by the verdict, the sibling pick, and ``personal`` — single-pass consistency."""
     if not isinstance(analysis, dict) or analysis.get("status") != "analyzed":
         return dict(_NULL)
     article = _rec_article(analysis)
     if not article.get("url"):
         return dict(_NULL)
 
+    band = _familiarity_band(ctx, str(article.get("publisher") or ""))
+    blind_gaps = _blind_spot_gaps(blind_spot_topics)
+    reads_by_url: dict = {}                       # canonical URL -> its (first) read row
+    for r in (ctx.get("reads") or []):
+        u = str(r.get("url") or "")
+        if u and u not in reads_by_url:
+            reads_by_url[u] = r
+
     rec = _resolver_rec(article, ctx)
     explanation = er.resolve(rec, ctx, index)
-    recommendation = _verdict(article, explanation, ctx, rec["crossCutting"], blind_spot_topics)
+    recommendation = _verdict(article, explanation, ctx, rec["crossCutting"], blind_gaps, band)
 
-    next_article = _select_story_sibling(analysis, ctx, store, index)
+    next_article = _select_story_sibling(analysis, ctx, store, index, reads_by_url)
     if next_article is None and feed_next is not None:
         try:
             next_article = feed_next()
         except Exception:
             next_article = None
     recommendation["nextArticle"] = next_article
-    return {"explanation": explanation, "recommendation": recommendation}
+
+    personal = _personal(analysis, ctx, article, band, reads_by_url, index, blind_gaps,
+                         recommendation)
+    return {"explanation": explanation, "recommendation": recommendation, "personal": personal}
 
 
-def _blind_spot_topics(store, uid: int) -> tuple:
-    """The reader's blind-spot topics from their latest stored report (read-only). Defensive: any
-    missing/odd shape yields ``()`` so a ``blind_spot`` reason is only ever claimed from real data.
-    The topics are already prettified in the stored report, matching the analysis ``scoring.topic``."""
+def _blind_spot_topics(store, uid: int) -> dict:
+    """The reader's blind spots from their latest stored report (read-only), as ``{topic: gap}``
+    (gap ``None`` when the stored entry has no usable number — membership is the fact, the gap is
+    enrichment). Defensive: any missing/odd shape yields ``{}`` so a ``blind_spot`` claim only ever
+    comes from real data. Topics are already prettified in the stored report, matching the analysis
+    ``scoring.topic``."""
     if store is None:
-        return ()
+        return {}
     try:
         rep = store.latest_report(uid) or {}
-        out = []
+        out = {}
         for b in rep.get("blindSpots") or []:
             t = b.get("topic") if isinstance(b, dict) else None
             if t and str(t).strip():
-                out.append(str(t))
-        return tuple(out)
+                g = b.get("gap")
+                out[str(t)] = float(g) if _is_num(g) else None
+        return out
     except Exception:
-        return ()
+        return {}
 
 
 def enrich_for_reader(personalizer, store, uid: "int | None", analysis: dict) -> dict:
     """The reader-relative sections for a signed-in **measured** reader, else null sections.
 
     Gated on ``has_measured`` (the same routing switch the report/recommendations use), so an
-    anonymous or non-measured caller gets ``{"explanation": None, "recommendation": None}`` and the
-    base analysis stays byte-identical to A2. Best-effort: any failure degrades to null sections —
+    anonymous or non-measured caller gets null ``explanation`` / ``recommendation`` / ``personal``
+    sections and the base analysis stays byte-identical to A2. Best-effort: any failure degrades to
+    null sections —
     enrichment never breaks the analysis. Read-only: it materialises only the reader's own (cached)
     measured context + report and creates no reads / recommendation events / feedback."""
     if uid is None or personalizer is None:

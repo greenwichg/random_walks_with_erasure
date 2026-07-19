@@ -61,7 +61,28 @@
     "url": "https://theguardian.com/story/an-cluster-0"
   },
   "notes": [],
-  "personal": null,
+  "personal": {
+    "alreadyRead": null,
+    "publisher": {
+      "band": "familiar",
+      "name": "The Guardian"
+    },
+    "story": null,
+    "topic": {
+      "blindSpot": null,
+      "share": 0.9,
+      "topic": "Politics"
+    },
+    "viewpoint": {
+      "addsMissing": false,
+      "articleBucket": "left",
+      "readerShares": {
+        "center": 0.1,
+        "left": 0.85,
+        "right": 0.05
+      }
+    }
+  },
   "recommendation": {
     "blindSpotTopic": null,
     "nextArticle": {

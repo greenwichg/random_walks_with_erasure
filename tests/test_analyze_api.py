@@ -170,6 +170,7 @@ def test_non_measured_reader_matches_anonymous(client, catalog_url):
     assert anon.status_code == authed.status_code == 200
     assert anon.json() == authed.json()
     assert authed.json()["recommendation"] is None and authed.json()["explanation"] is None
+    assert authed.json()["personal"] is None
 
 
 # --------------------------------------------------------------------------- #
@@ -214,7 +215,16 @@ def test_measured_reader_receives_enrichment(client, monkeypatch, catalog_url):
     assert "new_publisher" in body["recommendation"]["reasons"]
     assert body["explanation"]["type"] in {"bridge", "new_publisher", "topic_continuity",
                                            "story_match", "long_tail", "coverage_breadth"}
-    assert body["personal"] is None                                 # A4, still null
+    # A4.1: `personal` merges through the SAME endpoint branch (no endpoint change) — the closed
+    # standing shape, consistent with the verdict (the "never" band IS the new_publisher reason).
+    p = body["personal"]
+    assert set(p) == {"alreadyRead", "publisher", "topic", "viewpoint", "story"}
+    assert p["publisher"] == {"name": "AP", "band": "never"}
+    assert p["topic"] == {"topic": "Politics", "share": 0.8, "blindSpot": None}
+    assert p["viewpoint"] == {"articleBucket": "center",
+                              "readerShares": {"left": 0.1, "center": 0.1, "right": 0.8},
+                              "addsMissing": False}
+    assert p["alreadyRead"] is None and p["story"] is None
     # A3.3a: the catalog_url article is a cluster singleton -> the feed fallback fires, and the
     # pick IS the (stubbed) feed's top — the engine's ranking, verbatim.
     na = body["recommendation"]["nextArticle"]
@@ -223,6 +233,7 @@ def test_measured_reader_receives_enrichment(client, monkeypatch, catalog_url):
     # the SAME url anonymously stays null (byte-identical A2)
     anon = client.post("/api/analyze", json={"url": catalog_url}).json()
     assert anon["recommendation"] is None and anon["explanation"] is None
+    assert anon["personal"] is None
 
 
 def test_measured_story_path_via_endpoint_ignores_the_feed(client, monkeypatch):

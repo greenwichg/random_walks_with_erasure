@@ -97,10 +97,11 @@ def test_reasons_are_a_stable_closed_vocabulary(store, index):
 # Totality, determinism, gating.
 # --------------------------------------------------------------------------- #
 def test_invalid_and_urlless_yield_null_sections(store, index):
+    null = {"explanation": None, "recommendation": None, "personal": None}
     assert ae.enrich(aa.analyze(store, "not a url"), fx._authed_contexts()["authed_bridge"],
-                     index=index) == {"explanation": None, "recommendation": None}
+                     index=index) == null
     assert ae.enrich({"status": "analyzed", "article": None, "scoring": None, "input": {}},
-                     {}, index=index) == {"explanation": None, "recommendation": None}
+                     {}, index=index) == null
 
 
 def test_enrich_is_deterministic(store, index):
@@ -125,22 +126,25 @@ class _StubPersonalizer:
 def test_enrich_for_reader_gates_on_measured(store):
     ctx = fx._authed_contexts()["authed_bridge"]
     analysis = aa.analyze(store, fx.GUARDIAN_URL)
-    null = {"explanation": None, "recommendation": None}
+    null = {"explanation": None, "recommendation": None, "personal": None}
 
     assert ae.enrich_for_reader(_StubPersonalizer(True, ctx), store, None, analysis) == null   # anon
     assert ae.enrich_for_reader(None, store, 1, analysis) == null                              # no personalizer
     assert ae.enrich_for_reader(_StubPersonalizer(False, ctx), store, 1, analysis) == null     # not measured
     measured = ae.enrich_for_reader(_StubPersonalizer(True, ctx), store, 1, analysis)          # measured
     assert measured["explanation"]["type"] == "bridge" and measured["recommendation"]["wouldBroaden"] is True
+    assert measured["personal"]["publisher"] == {"name": "The Guardian", "band": "never"}      # A4.1
 
 
 def test_blind_spot_topics_read_from_stored_report(store):
     uid = store.upsert_user_by_identity("dev", "a3-blind").id
     store.save_report(uid, {"mode": "measured", "overall": 60,
                             "blindSpots": [{"topic": "Economy", "gap": 0.4, "note": "n"},
-                                           {"topic": "Science", "gap": 0.3, "note": "n"}]})
-    assert ae._blind_spot_topics(store, uid) == ("Economy", "Science")
-    assert ae._blind_spot_topics(store, 999_999) == ()     # no report -> empty, never a guess
+                                           {"topic": "Science", "gap": 0.3, "note": "n"},
+                                           {"topic": "Health", "gap": float("nan"), "note": "n"}]})
+    # A4.1: topic -> gap, verbatim from the stored report; a junk gap degrades to membership-only.
+    assert ae._blind_spot_topics(store, uid) == {"Economy": 0.4, "Science": 0.3, "Health": None}
+    assert ae._blind_spot_topics(store, 999_999) == {}     # no report -> empty, never a guess
 
 
 # --------------------------------------------------------------------------- #
@@ -312,3 +316,98 @@ def test_no_candidate_yields_null_next_article(store):
     out = ae.enrich(miss, ctx, index=idx, store=store, feed_next=lambda: None)
     assert "nextArticle" in out["recommendation"]
     assert out["recommendation"]["nextArticle"] is None
+
+
+# --------------------------------------------------------------------------- #
+# A4.1 — the `personal` standing section (facts only; every block independently null).
+# --------------------------------------------------------------------------- #
+def test_personal_closed_shape_and_bridge_standing(store, index):
+    ctx = fx._authed_contexts()["authed_bridge"]
+    p = ae.enrich(aa.analyze(store, fx.GUARDIAN_URL), ctx, index=index,
+                  blind_spot_topics=fx._BLIND_SPOTS)["personal"]
+    assert set(p) == {"alreadyRead", "publisher", "topic", "viewpoint", "story"}
+    assert p["alreadyRead"] is None                       # never read the analyzed article
+    assert p["publisher"] == {"name": "The Guardian", "band": "never"}
+    assert p["topic"] == {"topic": "Politics", "share": 0.85, "blindSpot": None}
+    assert p["viewpoint"] == {"articleBucket": "left",
+                              "readerShares": {"left": 0.1, "center": 0.05, "right": 0.85},
+                              "addsMissing": False}
+    assert p["story"] is None                             # no cluster member read -> no story claim
+
+
+def test_personal_already_read_on_catalog_and_url_only(store, index):
+    """`alreadyRead` matches on canonical identity, so it works for a catalog hit AND a
+    scored-url-only miss; the analyzed article itself never counts as story coverage."""
+    miss_url = "https://apnews.com/live/a4-miss"
+    ctx = fx._reader_ctx(
+        mean_lean=0.0,
+        reads=[(fx.GUARDIAN_URL, "The Guardian", "2026-07-18T14:00:00+00:00"),
+               (miss_url, "AP", None)],
+        fam_shares={"The Guardian": {"reads": 1, "share": 0.03}, "AP": {"reads": 1, "share": 0.03}},
+        top_topics=["Politics"], topic_shares={"Politics": 0.5},
+        lean_shares={"left": 0.4, "center": 0.3, "right": 0.3})
+
+    hit = ae.enrich(aa.analyze(store, fx.GUARDIAN_URL), ctx, index=index)["personal"]
+    assert hit["alreadyRead"] == {"at": "2026-07-18T14:00:00+00:00"}
+    assert hit["story"] is None                           # the self-read is not story coverage
+
+    miss = ae.enrich(aa.analyze(store, miss_url, metadata={"title": "budget liveblog"}),
+                     ctx, index=index)["personal"]
+    assert miss["alreadyRead"] == {"at": None}            # read known; timestamp honestly unknown
+
+
+def test_personal_story_standing_counts_read_members(store, index):
+    """Read cluster members (excluding the analyzed article) -> count + buckets covered + the
+    bucket this article would add; the addsMissing claim needs an exactly-zero measured share."""
+    ctx = fx._authed_contexts()["authed_following"]       # read the AP (center) member; left 0.0
+    p = ae.enrich(aa.analyze(store, fx.GUARDIAN_URL), ctx, index=index)["personal"]
+    assert p["story"] == {"readCount": 1, "bucketsRead": ["center"], "addsBucket": "left"}
+    assert p["viewpoint"]["addsMissing"] is True
+
+    both = dict(ctx)
+    both["reads"] = ctx["reads"] + [{"url": er._canon("https://reuters.com/story/an-cluster-2"),
+                                     "publisher": "Reuters",
+                                     "publishedAt": "2026-07-18T15:00:00+00:00"}]
+    p2 = ae.enrich(aa.analyze(store, fx.GUARDIAN_URL), both, index=index)["personal"]
+    assert p2["story"] == {"readCount": 2, "bucketsRead": ["center"], "addsBucket": "left"}
+
+
+def test_personal_band_and_blind_spot_agree_with_verdict(store, index):
+    """Single-pass consistency: ONE band and ONE blind-spot mapping feed both sections, so the
+    verdict and the standing can never disagree; a legacy sequence input keeps membership with an
+    honestly-unknown gap."""
+    ctx = fx._authed_contexts()["authed_bridge"]
+    out = ae.enrich(aa.analyze(store, fx.GUARDIAN_URL), ctx, index=index,
+                    blind_spot_topics={"Politics": 0.6})
+    assert "new_publisher" in out["recommendation"]["reasons"]
+    assert out["personal"]["publisher"]["band"] == "never"
+    assert out["recommendation"]["blindSpotTopic"] == "Politics"
+    assert out["personal"]["topic"]["blindSpot"] == {"gap": 0.6}
+
+    seq = ae.enrich(aa.analyze(store, fx.GUARDIAN_URL), ctx, index=index,
+                    blind_spot_topics=("Politics",))
+    assert seq["recommendation"]["blindSpotTopic"] == "Politics"
+    assert seq["personal"]["topic"]["blindSpot"] == {"gap": None}
+
+
+def test_personal_rarely_band_matches_rarely_read_reason(store, index):
+    ctx = dict(fx._authed_contexts()["authed_bridge"])
+    ctx["familiarity"] = fx._familiarity({"The Guardian": {"reads": 1, "share": 0.02},
+                                          "Fox News": {"reads": 20, "share": 0.8}})
+    out = ae.enrich(aa.analyze(store, fx.GUARDIAN_URL), ctx, index=index)
+    assert "rarely_read_publisher" in out["recommendation"]["reasons"]
+    assert out["personal"]["publisher"] == {"name": "The Guardian", "band": "rarely"}
+
+
+def test_personal_blocks_null_without_licensing_data(store, index):
+    """Honesty gates: no lean bucket -> no viewpoint block at all; missing lean_shares ->
+    readerShares null and addsMissing NEVER claimed (a zero-share claim needs real shares)."""
+    ctx = dict(fx._authed_contexts()["authed_bridge"])
+    del ctx["lean_shares"]                                # below the report's political minimum
+    unknown = aa.analyze(store, "https://unknown-blog.example/post",
+                         metadata={"title": "a take on the budget", "category": "Politics"})
+    assert ae.enrich(unknown, ctx, index=index)["personal"]["viewpoint"] is None
+
+    guardian = ae.enrich(aa.analyze(store, fx.GUARDIAN_URL), ctx, index=index)["personal"]
+    assert guardian["viewpoint"]["readerShares"] is None
+    assert guardian["viewpoint"]["addsMissing"] is False

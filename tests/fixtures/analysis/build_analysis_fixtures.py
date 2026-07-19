@@ -32,9 +32,11 @@ CASES = ("catalog_hit", "scored_url_only", "invalid_url")
 #: Authenticated (measured-reader) enrichment goldens — the FULL analysis with the reader-relative
 #: explanation + recommendation sections filled. Built from a fixed reader context (not the heavy
 #: model) so they're deterministic; the endpoint's measured path is covered by the enrichment tests.
-AUTHED_CASES = ("authed_bridge", "authed_familiar")
+AUTHED_CASES = ("authed_bridge", "authed_familiar", "authed_following")
 GUARDIAN_URL = "https://theguardian.com/story/an-cluster-0"   # the seeded left cluster member
-_BLIND_SPOTS = ("Economy",)                                   # a fixed blind spot (not the article's topic)
+#: A fixed blind spot (not the article's topic), in the production shape (`_blind_spot_topics`
+#: returns topic -> gap from the stored report).
+_BLIND_SPOTS = {"Economy": 0.4}
 
 # A deterministic 3-publisher story (left + two center, NO right) so the catalog hit exercises a real
 # membership with a derived missing "right" viewpoint. Mirrors the shape the analyzer's own tests use.
@@ -114,7 +116,18 @@ def _authed_contexts() -> "dict[str, dict]":
         fam_shares={"The Guardian": {"reads": 30, "share": 0.9}},
         top_topics=["Politics"], topic_shares={"Politics": 0.90},
         lean_shares={"left": 0.85, "center": 0.10, "right": 0.05})
-    return {"authed_bridge": right, "authed_familiar": left}
+    # following (A4.1): a RIGHT reader who already read the AP member of the SAME cluster ->
+    # story_match explanation, and a `personal` with real story standing (1 center member read;
+    # this left article would add a bucket) plus an honestly-zero left share -> addsMissing.
+    # Internally consistent: reads are AP once + Fox often; no left read, so left share 0.0.
+    following = _reader_ctx(
+        mean_lean=1.5,
+        reads=[("https://apnews.com/story/an-cluster-1", "AP", "2026-07-18T13:00:00+00:00"),
+               ("https://foxnews.com/politics/an-older-take", "Fox News", "2026-07-12T09:00:00+00:00")],
+        fam_shares={"AP": {"reads": 1, "share": 0.03}, "Fox News": {"reads": 30, "share": 0.9}},
+        top_topics=["Politics"], topic_shares={"Politics": 0.75},
+        lean_shares={"left": 0.0, "center": 0.25, "right": 0.75})
+    return {"authed_bridge": right, "authed_familiar": left, "authed_following": following}
 
 
 def build_authed_from_fresh_store() -> "dict[str, dict]":
