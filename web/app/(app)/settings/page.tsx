@@ -57,6 +57,7 @@ function strengthLabelKey(v: number) {
 export default function SettingsPage() {
   const { data, isLoading, isError, refetch } = useSettings();
   const updateSettings = useUpdateSettings();
+  const persistTheme = useUpdateSettings(); // theme's own write-through — separate from the Save button
   const { theme, setTheme } = useTheme();
   const { t } = useTranslation();
 
@@ -67,6 +68,26 @@ export default function SettingsPage() {
   React.useEffect(() => {
     if (data && !draft) setDraft(data);
   }, [data, draft]);
+
+  // Restore the account's saved theme ONCE per mount, only if this device currently shows something
+  // different (next-themes reads localStorage). Runs client-side after both the settings and
+  // next-themes are ready, so it never fights the device preference, never runs before hydration,
+  // and — with the provider's disableTransitionOnChange — the cross-device apply is an instant swap,
+  // not a fade. Same-device revisits match localStorage and no-op (no flicker).
+  const appliedStoredTheme = React.useRef(false);
+  React.useEffect(() => {
+    if (appliedStoredTheme.current || !data?.theme || !theme) return;
+    appliedStoredTheme.current = true;
+    if (data.theme !== theme) setTheme(data.theme);
+  }, [data?.theme, theme, setTheme]);
+
+  // A theme click applies instantly (as before) AND writes through to the account — never via the
+  // Save button. The mutation updates the settings cache on success, so `data.theme` stays current.
+  function applyTheme(value: Settings["theme"]) {
+    if (value === theme) return; // already applied (and already persisted) — skip the redundant write
+    setTheme(value);
+    persistTheme.mutate({ theme: value });
+  }
 
   const dirty = React.useMemo(
     () => !!data && !!draft && JSON.stringify(data) !== JSON.stringify({ ...draft, theme: data.theme }),
@@ -84,8 +105,13 @@ export default function SettingsPage() {
 
   function save() {
     if (!draft) return;
-    // Persist to the engine; sync the draft to the normalised server result so the form is clean.
-    updateSettings.mutate(draft, {
+    // Theme is owned by its own instant write-through (applyTheme), so the Save button excludes it —
+    // otherwise a stale draft.theme could clobber a just-applied theme. Persist the rest; sync the
+    // draft to the normalised server result (which carries the current persisted theme) so the form
+    // is clean.
+    const patch: Partial<Settings> = { ...draft };
+    delete patch.theme;
+    updateSettings.mutate(patch, {
       onSuccess: (persisted) => {
         setDraft(persisted);
         setSaved(true);
@@ -129,7 +155,7 @@ export default function SettingsPage() {
                   ).map((opt) => (
                     <button
                       key={opt.value}
-                      onClick={() => setTheme(opt.value)}
+                      onClick={() => applyTheme(opt.value)}
                       className={cn(
                         "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
                         theme === opt.value
