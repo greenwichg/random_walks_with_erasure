@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { SectionCard } from "@/components/shared/section-card";
 import { SpectrumBar } from "@/components/shared/spectrum-bar";
 import { LeanBadge, PublisherBadge } from "@/components/shared/article-badges";
+import { ReadArticleButton } from "@/components/shared/read-article-button";
 import { useTranslation } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
@@ -181,9 +182,8 @@ export function AnalysisResult({ result }: { result: AnalysisResult }) {
  * explanation vocabulary product-wide and no duplicated logic.
  */
 function ForYouCard({ view }: { view: ReturnType<typeof analysisPresentation> }) {
-  const { t, localizeExplanation } = useTranslation();
+  const { t } = useTranslation();
   const rec = view.recommendation;
-  const pres = presentRecommendation(view.explanation);
   return (
     <SectionCard title={t("analyze.rec.title")}>
       <div className="space-y-3">
@@ -194,28 +194,7 @@ function ForYouCard({ view }: { view: ReturnType<typeof analysisPresentation> })
           </Badge>
         ) : null}
 
-        {view.explanation ? (
-          pres.reader || pres.contribution ? (
-            <div>
-              {pres.reader ? (
-                <p className="text-sm font-medium leading-snug">{t(pres.reader.key, pres.reader.params)}</p>
-              ) : null}
-              {pres.contribution ? (
-                <p
-                  className={
-                    pres.reader
-                      ? "mt-0.5 text-xs text-muted-foreground"
-                      : "text-sm font-medium leading-snug"
-                  }
-                >
-                  {t(pres.contribution.key, pres.contribution.params)}
-                </p>
-              ) : null}
-            </div>
-          ) : (
-            <p className="text-sm text-muted-foreground">{localizeExplanation(view.explanation)}</p>
-          )
-        ) : null}
+        {view.explanation ? <ExplanationLines explanation={view.explanation} /> : null}
 
         {rec && rec.reasons.length > 0 ? (
           <ul className="space-y-1">
@@ -227,8 +206,69 @@ function ForYouCard({ view }: { view: ReturnType<typeof analysisPresentation> })
             ))}
           </ul>
         ) : null}
+
+        {/* A3.3 — "Read next": the reader's next pick. Nothing renders when there is no honest
+            pick (null / malformed). The explanation reuses the SAME renderer as above. */}
+        {rec?.next ? <NextArticleBlock next={rec.next} /> : null}
       </div>
     </SectionCard>
+  );
+}
+
+/**
+ * The ONE explanation renderer for this card, reused by the analyzed article and the next pick:
+ * `presentRecommendation` for the readerFact / contribution parts (the recommendation-card
+ * pattern), `localizeExplanation` as the validated-sentence fallback.
+ */
+function ExplanationLines({
+  explanation,
+  compact = false,
+}: {
+  explanation: NonNullable<ReturnType<typeof analysisPresentation>["explanation"]>;
+  compact?: boolean;
+}) {
+  const { t, localizeExplanation } = useTranslation();
+  const pres = presentRecommendation(explanation);
+  const lead = compact ? "text-xs font-medium leading-snug" : "text-sm font-medium leading-snug";
+  if (pres.reader || pres.contribution) {
+    return (
+      <div>
+        {pres.reader ? <p className={lead}>{t(pres.reader.key, pres.reader.params)}</p> : null}
+        {pres.contribution ? (
+          <p className={pres.reader ? "mt-0.5 text-xs text-muted-foreground" : lead}>
+            {t(pres.contribution.key, pres.contribution.params)}
+          </p>
+        ) : null}
+      </div>
+    );
+  }
+  return <p className={compact ? "text-xs text-muted-foreground" : "text-sm text-muted-foreground"}>{localizeExplanation(explanation)}</p>;
+}
+
+/** The "Read next" block: headline + publisher + lean + source label + explanation + Read button. */
+function NextArticleBlock({
+  next,
+}: {
+  next: NonNullable<NonNullable<ReturnType<typeof analysisPresentation>["recommendation"]>["next"]>;
+}) {
+  const { t } = useTranslation();
+  const a = next.article;
+  return (
+    <div className="space-y-2 border-t pt-3">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          {t("analyze.next.title")}
+        </p>
+        <span className="text-xs text-muted-foreground">{t(next.labelKey)}</span>
+      </div>
+      <p className="text-sm font-medium leading-snug">{a.headline}</p>
+      <div className="flex flex-wrap items-center gap-2">
+        <PublisherBadge name={a.publisher} lean={a.publisherLean} logo={a.publisherLogo} />
+        {typeof a.lean === "number" ? <LeanBadge lean={a.lean} bucket={a.leanBucket} /> : null}
+      </div>
+      {next.explanation ? <ExplanationLines explanation={next.explanation} compact /> : null}
+      <ReadArticleButton article={a} openedFrom="analyze" className="mt-1" />
+    </div>
   );
 }
 

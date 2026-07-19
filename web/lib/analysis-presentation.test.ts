@@ -230,3 +230,63 @@ test("a malformed recommendation degrades to null (mapper stays total)", () => {
     null,
   );
 });
+
+// --------------------------------------------------------------------------- //
+// A3.3 — recommendation.nextArticle ("Read next"), driven by the authed goldens.
+// --------------------------------------------------------------------------- //
+function withNext(base: AnalysisResult, nextArticle: unknown): AnalysisResult {
+  return {
+    ...base,
+    recommendation: { ...base.recommendation!, nextArticle: nextArticle as never },
+  };
+}
+
+test("authed goldens carry the story pick: label, article, explanation passthrough", () => {
+  for (const g of [authedBridge, authedFamiliar]) {
+    const next = analysisPresentation(g).recommendation!.next;
+    assert.ok(next);
+    assert.equal(next!.labelKey, "analyze.next.story");
+    assert.equal(next!.article.publisher, "AP");                    // the golden's deterministic pick
+    assert.ok(next!.article.headline.length > 0 && next!.article.url!.length > 0);
+    assert.equal(next!.explanation?.type, "new_publisher");         // raw resolver dict, passed through
+  }
+});
+
+test("feed source maps to the feed label; unknown source degrades to the generic label", () => {
+  const na = authedBridge.recommendation!.nextArticle!;
+  assert.equal(
+    analysisPresentation(withNext(authedBridge, { ...na, source: "feed" })).recommendation!.next!.labelKey,
+    "analyze.next.feed",
+  );
+  assert.equal(
+    analysisPresentation(withNext(authedBridge, { ...na, source: "brand_new_source" })).recommendation!
+      .next!.labelKey,
+    "analyze.next.generic",                                         // never a raw source value
+  );
+});
+
+test("null / malformed nextArticle renders nothing (next is null; verdict untouched)", () => {
+  const cases: unknown[] = [
+    null,
+    undefined,
+    42,
+    { source: "story" },                                             // no article
+    { source: "story", article: 7 },                                 // article not an object
+    { source: "story", article: { ...authedBridge.recommendation!.nextArticle!.article, headline: "" } },
+    { source: "story", article: { ...authedBridge.recommendation!.nextArticle!.article, url: "" } },
+  ];
+  for (const c of cases) {
+    const rec = analysisPresentation(withNext(authedBridge, c)).recommendation!;
+    assert.equal(rec.next, null, `case ${JSON.stringify(c)} must not render`);
+    assert.equal(rec.wouldBroaden, true);                            // the verdict itself survives
+  }
+});
+
+test("next labels are the closed analyze.next.* set (localization coverage)", () => {
+  const na = authedBridge.recommendation!.nextArticle!;
+  for (const source of ["story", "feed", "???"]) {
+    const key = analysisPresentation(withNext(authedBridge, { ...na, source })).recommendation!.next!
+      .labelKey;
+    assert.match(key, /^analyze\.next\.[a-z]+$/i);
+  }
+});

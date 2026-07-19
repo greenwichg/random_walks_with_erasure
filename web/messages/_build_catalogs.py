@@ -1678,6 +1678,17 @@ M = {
                                          "Sur un sujet que vous lisez souvent",
                                          "Zu einem Thema, das Sie oft lesen",
                                          "Sobre um tema que você lê com frequência"),
+    # ---- article analyzer: "Read next" (A3.3; the reader's next pick) ----
+    "analyze.next.title": ("Read next", "Lee a continuación", "À lire ensuite", "Als Nächstes lesen",
+                           "Leia a seguir"),
+    "analyze.next.story": ("More coverage of this story", "Más cobertura de esta noticia",
+                           "Plus de couverture de ce sujet", "Mehr Berichterstattung zu diesem Thema",
+                           "Mais cobertura desta história"),
+    "analyze.next.feed": ("From your recommendations", "De tus recomendaciones",
+                          "De vos recommandations", "Aus Ihren Empfehlungen",
+                          "Das suas recomendações"),
+    "analyze.next.generic": ("Suggested for you", "Sugerido para ti", "Suggéré pour vous",
+                             "Für Sie vorgeschlagen", "Sugerido para você"),
 
     # ---- coach residual ----
     "coach.send": ("Send", "Enviar", "Envoyer", "Senden", "Enviar"),

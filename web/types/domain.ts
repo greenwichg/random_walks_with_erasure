@@ -701,6 +701,16 @@ export interface AnalysisStoryAdvisory {
 
 export type AnalysisStory = AnalysisStoryMember | AnalysisStoryAdvisory;
 
+/** A3.3 — the reader's "read next" pick. `source` says which system licensed the selection:
+ *  "story" (a sibling of the analyzed article's own story cluster) or "feed" (the reader's real
+ *  recommendation feed's top pick). `explanation` is the resolver's licensed sentence for the
+ *  pick, rendered by the SAME reused recommendation renderer. */
+export interface AnalysisNextArticle {
+  source: string;
+  article: Article;
+  explanation: RecommendationExplanation | null;
+}
+
 /** A3 reader-relative verdict — the STABLE object the engine emits (never raw implementation
  *  signals). ``reasons`` is a closed vocabulary; ``blindSpotTopic`` is set when a "blind_spot"
  *  reason is present. Filled only for a signed-in measured reader; null otherwise. */
@@ -708,6 +718,8 @@ export interface AnalysisRecommendation {
   wouldBroaden: boolean;
   reasons: string[];
   blindSpotTopic: string | null;
+  /** A3.3 (additive): the "read next" pick, or null when no honest pick exists. */
+  nextArticle?: AnalysisNextArticle | null;
 }
 
 export interface AnalysisResult {

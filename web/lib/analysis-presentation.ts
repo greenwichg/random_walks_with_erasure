@@ -13,11 +13,13 @@
  *     as a "technical" note (rendered under a "Technical note" label) rather than silently dropped.
  */
 import type {
+  AnalysisNextArticle,
   AnalysisRecommendation,
   AnalysisResult,
   AnalysisScoring,
   AnalysisSource,
   AnalysisStory,
+  Article,
   EmotionShare,
   LeanBucket,
   RecommendationExplanation,
@@ -59,12 +61,23 @@ export interface VerdictReason {
   params?: Record<string, unknown>;
 }
 
+/** A3.3 — the renderable "read next" pick: a validated Article, a localized source label (closed
+ *  set; an unknown source degrades to the generic label, never a raw value), and the pick's raw
+ *  resolver explanation for the component's reused renderer. */
+export interface NextArticlePresentation {
+  labelKey: string;
+  article: Article;
+  explanation: RecommendationExplanation | null;
+}
+
 /** The A3 reader verdict, mapped to catalog keys — the ONLY place the closed reason vocabulary is
  *  translated to copy. Unknown codes are dropped, so an implementation signal never reaches the UI. */
 export interface RecommendationPresentation {
   wouldBroaden: boolean;
   headlineKey: string;
   reasons: VerdictReason[];
+  /** The "read next" pick, or null (absent / malformed / no honest pick — nothing renders). */
+  next: NextArticlePresentation | null;
 }
 
 export interface AnalysisPresentation {
@@ -91,6 +104,28 @@ const REASON_KEYS: Record<string, string> = {
   familiar_topic: "analyze.rec.reason.familiarTopic",
 };
 
+/** Next-pick source → localized label key. Literal keys on purpose (check:i18n scans them);
+ *  anything outside the closed set gets the generic label — a raw source value never renders. */
+const NEXT_SOURCE_KEYS: Record<string, string> = {
+  story: "analyze.next.story",
+  feed: "analyze.next.feed",
+};
+
+function mapNextArticle(na: AnalysisNextArticle | null | undefined): NextArticlePresentation | null {
+  if (!na || typeof na !== "object") return null;
+  const art = na.article;
+  // A renderable pick needs at least a real headline and an absolute-ish URL for the Read button;
+  // anything short of that is malformed and renders nothing (never a placeholder).
+  if (!art || typeof art !== "object") return null;
+  if (typeof art.headline !== "string" || !art.headline.trim()) return null;
+  if (typeof art.url !== "string" || !art.url.trim()) return null;
+  return {
+    labelKey: NEXT_SOURCE_KEYS[String(na.source)] ?? "analyze.next.generic",
+    article: art,
+    explanation: mapExplanation(na.explanation),
+  };
+}
+
 function mapRecommendation(rec: AnalysisRecommendation | null): RecommendationPresentation | null {
   if (!rec || typeof rec !== "object") return null;
   const codes = Array.isArray(rec.reasons) ? rec.reasons : [];
@@ -105,7 +140,12 @@ function mapRecommendation(rec: AnalysisRecommendation | null): RecommendationPr
     );
   }
   const wouldBroaden = Boolean(rec.wouldBroaden);
-  return { wouldBroaden, headlineKey: wouldBroaden ? "analyze.rec.broadens" : "analyze.rec.familiar", reasons };
+  return {
+    wouldBroaden,
+    headlineKey: wouldBroaden ? "analyze.rec.broadens" : "analyze.rec.familiar",
+    reasons,
+    next: mapNextArticle(rec.nextArticle),
+  };
 }
 
 function mapExplanation(exp: unknown): RecommendationExplanation | null {
