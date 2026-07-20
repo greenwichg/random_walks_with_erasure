@@ -32,6 +32,10 @@ opposing-viewpoint communities while browsing — see
 > walkthrough of what this project is, why it exists, and how it was built. This
 > README is the technical reference.
 >
+> 🚀 **Shipping the Information Health product?** [`docs/RC1/`](docs/RC1/README.md) is the Release
+> Candidate hub — architecture, operations, engineering, and release notes for the web app + engine +
+> extension, with the RC1 readiness verdict.
+>
 > 📐 **Want the derivations?** [`docs/MATH.md`](docs/MATH.md) works through every
 > formula we implement — the erasure closed form, the ideal-point gradients, and
 > all the metrics — each mapped to the exact code that computes it.
