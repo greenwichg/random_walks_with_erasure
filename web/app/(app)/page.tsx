@@ -33,7 +33,12 @@ export default function DashboardPage() {
   // Confidence is a reliability meta-metric, not a lever, so it's excluded).
   const band = scoreBand(data?.overall ?? 0);
   const hero = heroCopyKeys(band.label);
-  const byScore = [...(data?.metrics ?? [])].filter((m) => m.key !== "confidence").sort((a, b) => a.score - b.score);
+  // Strongest / biggest-opportunity metric for the hero copy: measured metrics only. An unavailable
+  // metric (empty state, score 0) is not the reader's "biggest opportunity" — exclude it, and
+  // exclude Confidence (a reliability meta-metric, not a lever).
+  const byScore = [...(data?.metrics ?? [])]
+    .filter((m) => m.key !== "confidence" && m.available !== false)
+    .sort((a, b) => a.score - b.score);
   const lowest = byScore[0];
   const strongest = byScore[byScore.length - 1];
   const heroParams = {
@@ -151,10 +156,14 @@ export default function DashboardPage() {
               animate="show"
             >
               {METRIC_ORDER.map((key, i) => {
-                const metric = data.metrics.find((m) => m.key === key);
-                return metric ? (
-                  <MetricCard key={key} metric={metric} href={metricHref(key)} index={i} />
-                ) : null;
+                // Always render all eight cards. The backend now emits every metric — an
+                // unmeasurable one carries `available: false` (an empty-state card, not a hidden or
+                // zero card). The `??` is a defensive fallback for an older payload that omits one:
+                // synthesize the same explicit empty state rather than collapse the card.
+                const metric =
+                  data.metrics.find((m) => m.key === key) ??
+                  { key, score: 0, delta: 0, available: false as const, reason: "insufficient_data" };
+                return <MetricCard key={key} metric={metric} href={metricHref(key)} index={i} />;
               })}
             </motion.div>
           </div>

@@ -6,6 +6,7 @@ import { ChevronDown } from "lucide-react";
 import type { Metric } from "@/types/domain";
 import { METRIC_ORDER, METRICS } from "@/lib/metrics";
 import { DeltaBadge } from "@/components/shared/delta-badge";
+import { MetricEmptyState } from "@/components/shared/metric-empty-state";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/lib/i18n";
 
@@ -34,11 +35,16 @@ export function MetricAccordion({ metrics }: { metrics: Metric[] }) {
   return (
     <div className="divide-y rounded-lg border bg-card">
       {METRIC_ORDER.map((key) => {
-        const metric = metrics.find((m) => m.key === key);
-        if (!metric) return null;
+        // Never collapse a row: the backend emits every metric (unmeasurable ones as an explicit
+        // empty state); the `??` defends against an older payload that omits one.
+        const metric =
+          metrics.find((m) => m.key === key) ??
+          ({ key, score: 0, delta: 0, available: false as const, reason: "insufficient_data" } as Metric);
         const meta = METRICS[key];
         const Icon = meta.icon;
         const isOpen = open === key;
+        // Explicit backend signal — never inferred from score === 0.
+        const isEmpty = metric.available === false;
         return (
           <div key={key} id={key} className="scroll-mt-24">
             <button
@@ -52,16 +58,22 @@ export function MetricAccordion({ metrics }: { metrics: Metric[] }) {
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
                   <span className="font-medium">{t(`metric.${meta.key}.label`)}</span>
-                  <DeltaBadge value={metric.delta} />
+                  {!isEmpty && <DeltaBadge value={metric.delta} />}
                 </div>
-                <div className="mt-1.5 h-1.5 w-full max-w-sm overflow-hidden rounded-full bg-muted">
-                  <div
-                    className={cn("h-full rounded-full", HUE_BAR[meta.hue])}
-                    style={{ width: `${Math.max(0, Math.min(100, metric.score))}%` }}
-                  />
-                </div>
+                {isEmpty ? (
+                  <span className="mt-1 block text-xs text-muted-foreground">{t("metric.emptyState.title")}</span>
+                ) : (
+                  <div className="mt-1.5 h-1.5 w-full max-w-sm overflow-hidden rounded-full bg-muted">
+                    <div
+                      className={cn("h-full rounded-full", HUE_BAR[meta.hue])}
+                      style={{ width: `${Math.max(0, Math.min(100, metric.score))}%` }}
+                    />
+                  </div>
+                )}
               </div>
-              <span className="shrink-0 text-lg font-semibold tabular-nums">{Math.round(metric.score)}</span>
+              {!isEmpty && (
+                <span className="shrink-0 text-lg font-semibold tabular-nums">{Math.round(metric.score)}</span>
+              )}
               <ChevronDown
                 className={cn("h-4 w-4 shrink-0 text-muted-foreground transition-transform", isOpen && "rotate-180")}
               />
@@ -77,22 +89,26 @@ export function MetricAccordion({ metrics }: { metrics: Metric[] }) {
                 >
                   <div className="px-4 pb-4 pl-16 text-sm text-muted-foreground">
                     <p>{t(`metric.${meta.key}.description`)}</p>
-                    <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-xs">
-                      {metric.raw && (
-                        <span>
-                          Your value:{" "}
-                          <span className="font-medium text-foreground">
-                            {metric.raw.value} {metric.raw.unit}
+                    {isEmpty ? (
+                      <MetricEmptyState />
+                    ) : (
+                      <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-xs">
+                        {metric.raw && (
+                          <span>
+                            Your value:{" "}
+                            <span className="font-medium text-foreground">
+                              {metric.raw.value} {metric.raw.unit}
+                            </span>
                           </span>
-                        </span>
-                      )}
-                      {typeof metric.benchmark === "number" && (
-                        <span>
-                          Typical reader:{" "}
-                          <span className="font-medium text-foreground">{metric.benchmark}</span>
-                        </span>
-                      )}
-                    </div>
+                        )}
+                        {typeof metric.benchmark === "number" && (
+                          <span>
+                            Typical reader:{" "}
+                            <span className="font-medium text-foreground">{metric.benchmark}</span>
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </motion.div>
               )}

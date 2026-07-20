@@ -242,7 +242,11 @@ def test_estimate_endpoint_is_labeled(client):
     assert est["mode"] == "estimate"
     assert est["coverage"]["sufficient"] is False
     assert "axisConfidence" not in est                      # omitted for an estimate
-    assert {m["key"] for m in est["metrics"]} <= (METRIC_KEYS - {"confidence", "openMindedness"})
+    keys = {m["key"] for m in est["metrics"]}
+    assert keys == METRIC_KEYS                               # every card present (empty-state when n/a)
+    avail = {m["key"] for m in est["metrics"] if m["available"]}
+    assert "confidence" not in avail and "openMindedness" not in avail   # not measurable from outlets alone
+    assert avail <= (METRIC_KEYS - {"confidence", "openMindedness"})
     assert 0 <= est["overall"] <= 100
 
 
@@ -655,7 +659,8 @@ def test_open_mindedness_completes_the_metric_set(client):
     uid = client.post("/api/internal/users",
                       json={"provider": "google", "providerAccountId": "route-openmind"}).json()["userId"]
     # titled, known-outlet, two-sided political reads -> a Measured report with the 7 read-derived
-    # metrics (topic/source/reporting/emotional/echo/viewpoint + confidence), but no Open-Mindedness.
+    # metrics (topic/source/reporting/emotional/echo/viewpoint + confidence) available, and the
+    # Open-Mindedness card present but not yet available (an empty state until reception arrives).
     reads = [
         {"url": "https://www.nytimes.com/2026/us/politics/a", "title": "Senate advances the bill, leaders say"},
         {"url": "https://www.foxnews.com/politics/b", "title": "Outrage as officials slam the deadly crisis"},
@@ -669,7 +674,9 @@ def test_open_mindedness_completes_the_metric_set(client):
     before = client.get("/api/report", headers=_signed(uid)).json()
     before_keys = {m["key"] for m in before["metrics"]}
     assert before["mode"] == "measured"
-    assert "openMindedness" not in before_keys                         # 7/8: no reception yet
+    om_before = next(m for m in before["metrics"] if m["key"] == "openMindedness")
+    assert om_before["available"] is False                             # 7/8: empty-state card, not hidden
+    assert om_before["reason"] == "insufficient_data"                  # explicit backend signal
 
     # surfacing recs is a measurable event (records the shown denominator); must not error
     assert client.get("/api/recommendations", headers=_signed(uid)).status_code == 200
@@ -684,8 +691,9 @@ def test_open_mindedness_completes_the_metric_set(client):
 
     after = client.get("/api/report", headers=_signed(uid)).json()
     after_keys = {m["key"] for m in after["metrics"]}
-    assert "openMindedness" in after_keys                              # 8/8: the metric appears
-    assert after_keys == before_keys | {"openMindedness"}             # additive: only OM was added
+    om_after = next(m for m in after["metrics"] if m["key"] == "openMindedness")
+    assert om_after["available"] is True                              # 8/8: the metric is now measured
+    assert after_keys == before_keys                                  # same cards throughout; availability changed
     # recommendations + coach stay consistent (served, valid) with the metric now present
     assert client.get("/api/recommendations", headers=_signed(uid)).status_code == 200
     assert client.get("/api/coach", headers=_signed(uid)).json()[0]["role"] == "assistant"

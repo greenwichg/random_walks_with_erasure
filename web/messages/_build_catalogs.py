@@ -91,6 +91,23 @@ M = {
     "dashboard.healthMetrics": ("Your health metrics", "Tus indicadores de salud",
                                 "Vos indicateurs de santé", "Ihre Gesundheitskennzahlen",
                                 "Seus indicadores de saúde"),
+    # -------- metric empty state (shown inside a card the backend can't measure yet) --------
+    "metric.emptyState.title": ("Not enough data yet", "Aún no hay datos suficientes",
+                                "Pas encore assez de données", "Noch nicht genug Daten",
+                                "Ainda não há dados suficientes"),
+    "metric.emptyState.description": (
+        "Continue exploring articles, saving stories, and reading recommendations. This insight will "
+        "be available once there's enough activity to measure it reliably.",
+        "Sigue explorando artículos, guardando noticias y leyendo recomendaciones. Este indicador "
+        "estará disponible cuando haya suficiente actividad para medirlo de forma fiable.",
+        "Continuez à explorer des articles, à enregistrer des sujets et à lire des recommandations. "
+        "Cet indicateur sera disponible dès qu'il y aura assez d'activité pour le mesurer de façon fiable.",
+        "Erkunden Sie weiter Artikel, speichern Sie Beiträge und lesen Sie Empfehlungen. Diese Kennzahl "
+        "wird verfügbar, sobald genügend Aktivität vorliegt, um sie zuverlässig zu messen.",
+        "Continue explorando artigos, salvando notícias e lendo recomendações. Este indicador ficará "
+        "disponível quando houver atividade suficiente para medi-lo com confiança."),
+    "metric.emptyState.cta": ("Explore Articles", "Explorar artículos", "Explorer les articles",
+                              "Artikel entdecken", "Explorar artigos"),
     # -------- settings --------
     "settings.title": ("Settings", "Ajustes", "Paramètres", "Einstellungen", "Configurações"),
     "settings.subtitle": ("Tune the app to your reading.", "Ajusta la app a tu lectura.",

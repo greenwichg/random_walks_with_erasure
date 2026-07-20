@@ -96,6 +96,7 @@ def test_report_contract(backend, user):
         assert 0 <= m["score"] <= 100
         assert "delta" in m
         assert m["band"] in BANDS
+        assert m["available"] is True  # synthetic corpus measures every metric — none is an empty state
         keys_seen.add(m["key"])
     assert keys_seen == METRIC_KEYS  # synthetic corpus populates all eight
 
@@ -146,16 +147,37 @@ def test_estimate_is_labeled_and_grounded(backend):
     # explicitly an estimate, with zero-read coverage — never presented as measured
     assert est["mode"] == "estimate"
     assert est["coverage"]["reads"] == 0 and est["coverage"]["sufficient"] is False
-    # no fabricated behaviour: axis confidence + Open-Mindedness are n/a from outlets, so omitted
+    # no fabricated behaviour: axis confidence is n/a from outlets, so the report-level field is omitted
     assert "axisConfidence" not in est
+    # every metric card is emitted (none hidden) — confidence + Open-Mindedness need measured reads, so
+    # they carry an EXPLICIT empty-state signal rather than being dropped (Metric Empty State).
     keys = {m["key"] for m in est["metrics"]}
-    assert keys <= (METRIC_KEYS - {"confidence", "openMindedness"})
+    assert keys == METRIC_KEYS
+    avail = {m["key"]: m["available"] for m in est["metrics"]}
+    assert avail["confidence"] is False and avail["openMindedness"] is False
     for m in est["metrics"]:
         assert 0 <= m["score"] <= 100 and m["band"] in BANDS
+        assert isinstance(m["available"], bool)
+        if not m["available"]:                                   # unavailable → truthful, non-fabricated
+            assert m["reason"] == "insufficient_data" and m["minimumActivity"] == 5
     assert 0 <= est["overall"] <= 100
     assert set(est["viewpoint"]) == BUCKETS and abs(sum(est["viewpoint"].values()) - 1.0) < 1e-6
     assert set(est["attention"]) == EMOTIONS
     _assert_json_roundtrips(est)
+
+
+def test_unavailable_metric_contract():
+    """The empty-state card the UI renders when a metric cannot be measured yet. It is an explicit,
+    truthful signal — available False + a reason + the activity threshold — never a fabricated score,
+    so the frontend never has to guess "unavailable" from score == 0 (Metric Empty State)."""
+    m = api_server._unavailable_metric("openMindedness")
+    assert m["key"] == "openMindedness"
+    assert m["available"] is False
+    assert m["reason"] == "insufficient_data"
+    assert m["minimumActivity"] == api_server.ESTIMATE_MIN_READS == 5
+    assert m["band"] == "Unknown" and m["band"] in BANDS   # no health band without a real score
+    assert m["score"] == 0 and m["delta"] == 0             # neutral placeholders the UI does not render
+    json.dumps(m)                                          # serialises cleanly (no numpy scalars)
 
 
 def test_estimate_requires_known_outlets(backend):

@@ -419,6 +419,12 @@ class MetricModel(BaseModel):
     band: str
     benchmark: Optional[int] = None
     raw: Optional[RawModel] = None
+    # Availability (Metric Empty State): explicit backend signal for whether this metric could be
+    # computed from the reader's activity. When False the UI shows a "not enough data yet" empty state
+    # inside the card rather than hiding it or implying a real 0. Defaults keep older payloads valid.
+    available: bool = True
+    reason: Optional[str] = None          # e.g. "insufficient_data" (only set when not available)
+    minimumActivity: Optional[int] = None # reads that typically unlock the metric (informational)
 
 
 class ViewpointModel(BaseModel):

@@ -181,7 +181,11 @@ def test_persist_writes_measured_snapshot(backend, store):
 # Open-Mindedness feedback loop: cross-cutting recommendation reception -> the 8th metric.
 # --------------------------------------------------------------------------- #
 def _om(rep):
-    return next((m["score"] for m in rep["metrics"] if m["key"] == "openMindedness"), None)
+    # The Open-Mindedness card is always present now; return its score only when it is actually
+    # available (measured), so ``_om(...) is None`` still reads as "not yet measured" for the
+    # empty-state card the reader sees before any recommendation reception.
+    return next((m["score"] for m in rep["metrics"]
+                 if m["key"] == "openMindedness" and m.get("available", True)), None)
 
 
 def _surface_and_open(store, p, uid, n_open):
@@ -197,20 +201,24 @@ def _surface_and_open(store, p, uid, n_open):
 
 
 def test_open_mindedness_populates_after_reception(backend, store):
-    """A measured reader is 7/8 until they open cross-cutting recommendations; opening one adds
-    Open-Mindedness (8/8), and opening more only raises it — the whole point of the milestone."""
+    """A measured reader's Open-Mindedness card is an empty state (available: False) until they open
+    cross-cutting recommendations; opening one flips it to a real score, and opening more only raises
+    it. The card is always present — reception changes its availability, not the set of cards shown."""
     p = personalize.Personalizer(backend, store, persist=False)
     uid = _new_user(store, "om-1")
     _store_reads(store, uid, _catalog_reads(backend, n=8))
 
     rep0 = p.report(uid)
     keys0 = {m["key"] for m in rep0["metrics"]}
-    assert _om(rep0) is None and "openMindedness" not in keys0     # 7/8: no reception yet
+    om0 = next(m for m in rep0["metrics"] if m["key"] == "openMindedness")
+    assert _om(rep0) is None                                        # 7/8: no reception yet, not measured
+    assert om0["available"] is False and om0["reason"] == "insufficient_data"  # empty-state card, not hidden
 
     cross = _surface_and_open(store, p, uid, n_open=1)
     rep1 = p.report(uid)                                            # rebuilds on reception change
-    assert _om(rep1) is not None                                   # 8/8: Open-Mindedness populated
-    assert {m["key"] for m in rep1["metrics"]} == keys0 | {"openMindedness"}
+    assert _om(rep1) is not None                                   # 8/8: Open-Mindedness now measured
+    assert next(m for m in rep1["metrics"] if m["key"] == "openMindedness")["available"] is True
+    assert {m["key"] for m in rep1["metrics"]} == keys0            # same cards; only availability changed
     assert json.loads(json.dumps(rep1)) == rep1                    # still valid JSON, no NaN leak
 
     for aid in cross[1:]:                                          # open the rest
@@ -221,13 +229,16 @@ def test_open_mindedness_populates_after_reception(backend, store):
 
 def test_open_mindedness_stays_na_when_only_surfaced(backend, store):
     """Surfacing cross-cutting recs is not enough — Open-Mindedness needs the reader to actually
-    open one (an *interaction*), else it stays an honest n/a (7/8)."""
+    open one (an *interaction*), else the card stays an honest empty state (available: False)."""
     p = personalize.Personalizer(backend, store, persist=False)
     uid = _new_user(store, "om-surface-only")
     _store_reads(store, uid, _catalog_reads(backend, n=8))
     recs = p.recommendations(uid)
     store.record_recommendations_shown(uid, [(r["article"]["id"], r["crossCutting"]) for r in recs])
-    assert _om(p.report(uid)) is None                             # shown but never opened
+    rep = p.report(uid)
+    assert _om(rep) is None                                       # shown but never opened: not measured
+    om = next(m for m in rep["metrics"] if m["key"] == "openMindedness")
+    assert om["available"] is False                              # present as an empty-state card
 
 
 def test_model_rebuilds_on_reception_change(backend, store):

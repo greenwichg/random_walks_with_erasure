@@ -222,10 +222,15 @@ def _measured(backend, enricher):
 
 
 def test_enrichment_populates_reporting_and_emotional(backend):
-    plain = {m["key"] for m in _measured(backend, None)["metrics"]}          # no enricher
-    enriched = {m["key"] for m in _measured(backend, enrich.BaselineEnricher())["metrics"]}
-    assert "reportingRatio" not in plain and "emotionalBalance" not in plain  # n/a without enrichment
-    assert {"reportingRatio", "emotionalBalance"} <= enriched                 # populated with it
+    def _available(report):
+        return {m["key"] for m in report["metrics"] if m["available"]}
+    plain = _measured(backend, None)                                         # no enricher
+    enriched = _measured(backend, enrich.BaselineEnricher())
+    plain_keys = {m["key"] for m in plain["metrics"]}
+    assert {"reportingRatio", "emotionalBalance"} <= plain_keys               # cards present (empty state)
+    assert "reportingRatio" not in _available(plain)                         # but n/a without enrichment
+    assert "emotionalBalance" not in _available(plain)
+    assert {"reportingRatio", "emotionalBalance"} <= _available(enriched)     # populated with it
 
 
 def test_measured_report_is_deterministic_with_enrichment(backend):

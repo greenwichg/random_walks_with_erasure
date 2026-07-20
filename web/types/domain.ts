@@ -41,6 +41,16 @@ export interface Metric {
   raw?: { value: number; unit: string };
   /** Population median for the same metric (the "typical reader"). */
   benchmark?: number;
+  /**
+   * Whether the backend could measure this metric from the reader's activity. When `false`, the
+   * card renders the "not enough data yet" empty state instead of a score — an EXPLICIT backend
+   * signal, never inferred from `score === 0`. Absent on older payloads → treated as available.
+   */
+  available?: boolean;
+  /** Why the metric is unavailable (e.g. "insufficient_data"); only set when `available` is false. */
+  reason?: string | null;
+  /** Reads that typically unlock the metric — informational, drives the empty-state hint. */
+  minimumActivity?: number | null;
 }
 
 export interface EmotionShare {
@@ -134,9 +144,10 @@ export interface MeasuredHealthReport extends HealthReportBase {
   axisConfidence: number;
 }
 
-/** An Initial Information Health Estimate — computed from selected outlets only. Metrics that
- *  cannot be honestly estimated from outlets are absent: there is no `axisConfidence`, and the
- *  behavioral Open-Mindedness metric does not appear in `metrics`. */
+/** An Initial Information Health Estimate — computed from selected outlets only. There is no
+ *  `axisConfidence`. Metrics that cannot be honestly estimated from outlets (the behavioral
+ *  Open-Mindedness and Confidence metrics) are still present in `metrics`, carrying
+ *  `available: false` so the UI shows a consistent empty-state card rather than hiding them. */
 export interface EstimateHealthReport extends HealthReportBase {
   mode: "estimate";
 }

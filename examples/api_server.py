@@ -427,6 +427,19 @@ def resolve_profile(args) -> DatasetProfile:
 ESTIMATE_MIN_READS = 5
 
 
+def _unavailable_metric(key: str) -> dict:
+    """A metric card the backend cannot compute yet — there isn't enough of the reader's activity to
+    measure it reliably (e.g. no political reads for Viewpoint Balance, or no recommendation reception
+    for Open-Mindedness). Carries an EXPLICIT ``available: False`` (+ ``reason`` / ``minimumActivity``)
+    so the UI shows a consistent "not enough data yet" empty state INSTEAD of hiding the card or
+    implying a real 0. No score is fabricated — ``score`` is a neutral placeholder the UI never renders
+    for an unavailable metric, and ``band`` is ``"Unknown"``. This is metadata only: no scoring logic
+    or metric calculation changes, and the overall score / improvements are computed from the
+    available metrics exactly as before."""
+    return {"key": key, "score": 0, "delta": 0, "band": _score_band(None),
+            "available": False, "reason": "insufficient_data", "minimumActivity": ESTIMATE_MIN_READS}
+
+
 @dataclass(frozen=True)
 class _Corpus:
     """The corpus-varying inputs the JSON serialisers read.
@@ -961,14 +974,15 @@ class Backend:
         for key, label in _METRIC_KEYS:
             s = scores.get(label)
             if s is None:
-                continue
-            metrics.append({"key": key, "score": int(s), "delta": 0, "benchmark": 50,
-                            "band": _score_band(int(s))})
+                metrics.append(_unavailable_metric(key))   # show an empty-state card, never hide it
+            else:
+                metrics.append({"key": key, "score": int(s), "delta": 0, "benchmark": 50,
+                                "band": _score_band(int(s)), "available": True})
         vc = rep.get("viewpoint_confidence")
         axis_conf = float(vc) if vc is not None else 0.7
         conf_score = round(axis_conf * 100)
         metrics.append({"key": "confidence", "score": conf_score, "delta": 0, "benchmark": 70,
-                        "band": _score_band(conf_score),
+                        "band": _score_band(conf_score), "available": True,
                         "raw": {"value": round(axis_conf, 2), "unit": "axis margin"}})
 
         # per-user topic + source distributions (real shares from the click matrix)
@@ -1002,8 +1016,10 @@ class Backend:
                           "note": f"{_prettify(cat)} is {round(cat_share*100)}% of what's available, "
                                   f"but barely shows up in your reading."})
 
-        # improvements from the lowest real metrics
-        ranked = sorted((m for m in metrics if m["key"] != "confidence"), key=lambda m: m["score"])
+        # improvements from the lowest real metrics (available only — an unavailable metric has no
+        # real score to rank, so the suggestion set is unchanged from before)
+        ranked = sorted((m for m in metrics if m["key"] != "confidence" and m["available"]),
+                        key=lambda m: m["score"])
         improvements = []
         for m in ranked[:3]:
             tpl = _IMPROVEMENTS.get(m["key"])
@@ -1138,13 +1154,16 @@ class Backend:
                "reportingRatio": self._pct_vs_pop(reporting_raw, "reporting"),
                "emotionalBalance": self._pct_vs_pop(balance_raw, "balance")}
         metrics = []
-        for key, _label in _METRIC_KEYS:          # Open-Mindedness has no raw here -> skipped
+        for key, _label in _METRIC_KEYS:
             s = raw.get(key)
-            if s is None:
-                continue
-            metrics.append({"key": key, "score": int(s), "delta": 0, "benchmark": 50,
-                            "band": _score_band(int(s))})
-        have = [m["score"] for m in metrics]
+            if s is None:                          # Open-Mindedness has no raw here — empty-state card
+                metrics.append(_unavailable_metric(key))
+            else:
+                metrics.append({"key": key, "score": int(s), "delta": 0, "benchmark": 50,
+                                "band": _score_band(int(s)), "available": True})
+        # Confidence is a measured-reads metric; from onboarding outlets alone it is not yet available.
+        metrics.append(_unavailable_metric("confidence"))
+        have = [m["score"] for m in metrics if m["available"]]   # overall from the available metrics only
         overall = int(round(sum(have) / len(have))) if have else 0
 
         topics = sorted(({"topic": _prettify(cat_u[i]), "share": float(topic_share[i]),
@@ -1165,7 +1184,7 @@ class Backend:
                  for (c, us, qc) in gaps[:2]]
 
         improvements = []
-        for m in sorted(metrics, key=lambda d: d["score"])[:3]:
+        for m in sorted((m for m in metrics if m["available"]), key=lambda d: d["score"])[:3]:
             tpl = _IMPROVEMENTS.get(m["key"])
             if tpl:
                 improvements.append({"id": f"imp_{m['key']}", "title": tpl[0], "detail": tpl[1],

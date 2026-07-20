@@ -12,7 +12,10 @@ export function MetricRadar({ metrics, size = 320 }: { metrics: Metric[]; size?:
 
   const data = RADAR_METRICS.map((key) => {
     const m = metrics.find((x) => x.key === key);
-    return { metric: METRICS[key].short, score: m?.score ?? 0, full: 100 };
+    // An unavailable metric (empty-state card) has no real score — plot a gap (null), never a
+    // fabricated 0 that would read as a genuinely low score.
+    const score = m && m.available !== false ? m.score : null;
+    return { metric: METRICS[key].short, score, full: 100 };
   });
 
   return (
