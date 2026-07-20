@@ -48,7 +48,7 @@ jobs:
           if-no-files-found: ignore
 
   web:
-    name: Web typecheck + build
+    name: Web typecheck + tests + build
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -57,17 +57,25 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          # Node 22 runs the TypeScript unit suite directly (native type stripping), so `npm test`
+          # (the .test.ts files) is gated in CI, not just the two .mjs files it ran before.
+          node-version: "22"
           cache: npm # cache ~/.npm keyed on the lockfile
           cache-dependency-path: web/package-lock.json
       - name: Install (clean, from lockfile)
         run: npm ci
       - name: Typecheck
         run: npm run typecheck
-      - name: Web unit tests (node --test)
+      - name: i18n catalog parity
+        run: npm run check:i18n
+      - name: Frontend unit tests (logic suite)
+        run: npm test
+      - name: Frontend unit tests (env validation + security headers)
         run: node --test lib/*.test.mjs
       - name: Production build
         run: npm run build 2>&1 | tee ../web-build.log
+      - name: Verify build artifact
+        run: test -f .next/BUILD_ID && echo "web build artifact present ($(cat .next/BUILD_ID))"
       - name: Upload build log on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -88,12 +96,52 @@ jobs:
       - name: Run extension tests
         run: node --test extension/common.test.js
 
+  e2e:
+    name: Playwright e2e (real engine + web)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install engine (the e2e webServer boots the real FastAPI engine)
+        run: pip install -e ".[serve]"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install web deps
+        working-directory: web
+        run: npm ci
+      - name: Install Playwright Chromium
+        working-directory: web
+        run: npx playwright install --with-deps chromium
+      - name: Run e2e (builds the app, boots engine + web, drives the real stack)
+        working-directory: web
+        run: npm run e2e
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: web/.e2e-tmp/report
+          if-no-files-found: ignore
+
   docker:
-    name: Docker builds
+    name: Docker builds + compose validation
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
+      - name: Validate docker-compose (incl. the backup-scheduler profile)
+        run: |
+          docker compose -f deploy/docker-compose.yml config -q
+          docker compose -f deploy/docker-compose.yml --profile scheduler config -q
+          docker compose -f deploy/docker-compose.yml --profile backup config -q
       - name: Build engine image (no push)
         uses: docker/build-push-action@v6
         with:
@@ -119,13 +167,14 @@ jobs:
   ci-success:
     name: CI success
     if: always()
-    needs: [python, web, extension, docker]
+    needs: [python, web, extension, e2e, docker]
     runs-on: ubuntu-latest
     steps:
       - name: Verify all jobs passed
         run: |
-          echo "python=${{ needs.python.result }} web=${{ needs.web.result }} extension=${{ needs.extension.result }} docker=${{ needs.docker.result }}"
+          echo "python=${{ needs.python.result }} web=${{ needs.web.result }} extension=${{ needs.extension.result }} e2e=${{ needs.e2e.result }} docker=${{ needs.docker.result }}"
           test "${{ needs.python.result }}" = "success" \
             && test "${{ needs.web.result }}" = "success" \
             && test "${{ needs.extension.result }}" = "success" \
+            && test "${{ needs.e2e.result }}" = "success" \
             && test "${{ needs.docker.result }}" = "success"

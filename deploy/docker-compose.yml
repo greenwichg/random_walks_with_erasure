@@ -113,5 +113,42 @@ services:
       - ih-data:/app/data
     command: ["python", "examples/db_backup.py", "backup"]
 
+  # BR1 — RECURRING backups (opt-in): `docker compose -f deploy/docker-compose.yml --profile scheduler up -d backup-scheduler`.
+  # Loops the same integrity-checked db_backup.py on BACKUP_INTERVAL and prunes to BACKUP_KEEP most-recent
+  # — self-contained, reuses examples/db_backup.py, no application change. For OFF-HOST copies (a lost
+  # volume must not take the only copy), EITHER set BACKUP_OFFHOST_CMD below (with credentials), OR
+  # bind-mount /app/data/backups to a host path and sync it from the host. Recovery + verification:
+  # deploy/ops/verify-restore.sh and docs/BETA_LAUNCH_CHECKLIST.md. `$$` escapes compose interpolation
+  # so the container shell (not compose) expands the variables at runtime.
+  backup-scheduler:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.api
+    profiles: ["scheduler"]            # not started by `up`; opt-in
+    restart: unless-stopped
+    environment:
+      BACKUP_INTERVAL: "3600"          # seconds between backups (hourly)
+      BACKUP_KEEP: "48"                # retain the newest N local backups (~2 days hourly)
+      # BACKUP_OFFHOST_CMD: 'aws s3 cp "$1" s3://acme-ih-backups/'   # optional off-host shipment ($1 = file)
+    volumes:
+      - ih-data:/app/data
+    command:
+      - sh
+      - -c
+      - |
+        echo "backup-scheduler: every $${BACKUP_INTERVAL}s, keep $${BACKUP_KEEP} local"
+        while true; do
+          if python examples/db_backup.py backup; then
+            dest=$$(ls -1t /app/data/backups/*.db 2>/dev/null | head -1)
+            if [ -n "$$dest" ] && [ -n "$${BACKUP_OFFHOST_CMD:-}" ]; then
+              sh -c "$$BACKUP_OFFHOST_CMD" _ "$$dest" || echo "backup-scheduler: off-host failed (local kept)"
+            fi
+            ls -1t /app/data/backups/*.db 2>/dev/null | tail -n +$$(( $${BACKUP_KEEP} + 1 )) | xargs -r rm -f
+          else
+            echo "backup-scheduler: backup failed this cycle"
+          fi
+          sleep "$${BACKUP_INTERVAL}"
+        done
+
 volumes:
   ih-data:                             # named volume: the durable SQLite store + local backups
