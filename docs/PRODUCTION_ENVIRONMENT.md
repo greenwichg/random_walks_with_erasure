@@ -54,9 +54,14 @@ access-controlled box.
 | Variable | Value | Used by |
 |---|---|---|
 | `IH_DATA_DIR` | `/opt/ih/data` (default) | Host dir bind-mounted to `/app/data` (DB + backups). Created by `bootstrap-ec2.sh`. |
-| `IH_S3_BUCKET` | `my-ih-beta-backups` | Off-host target for `deploy/ops/backup.sh` / `restore.sh` (host `aws s3`, instance IAM role). |
+| `IH_DATA_MOUNT` | `0` (root EBS) / `1` (dedicated volume) | `1` makes `deploy.sh` refuse to start unless `IH_DATA_DIR` is a **mounted** filesystem — prevents a boot-before-mount race from creating a fresh empty DB. |
+| `IH_S3_BUCKET` | `my-ih-beta-backups` | Off-host target for the hourly `deploy/ops/backup-offhost.sh` cron + `restore.sh` (host `aws s3`, instance IAM role). Bucket name only. |
 | `BACKUP_KEEP` | `48` | Local backups to retain (~2 days hourly). |
 | `BACKUP_INTERVAL` | `3600` | Seconds between scheduler backups. |
+
+> **Automated by `bootstrap-ec2.sh`:** an hourly off-host-backup cron (`ih-offhost-backup` → `backup-offhost.sh`)
+> and a 5-minute health-monitor cron (`ih-monitor` → `monitor.sh`, alerting to `ALERT_WEBHOOK`). Both read
+> this file. Fill `IH_S3_BUCKET` and `ALERT_WEBHOOK` or they no-op.
 
 ### Monitoring
 | Variable | Value | Used by |

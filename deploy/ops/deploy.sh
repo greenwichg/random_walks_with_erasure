@@ -15,8 +15,11 @@ source "$(dirname "$0")/_compose.sh"
 
 need_env
 
-# Host data dir must exist before the bind-mount (idempotent).
+# Host data dir must exist before the bind-mount (idempotent), and — if the DB lives on a DEDICATED EBS
+# volume (IH_DATA_MOUNT=1) — must actually be mounted, so a boot-before-mount race can't make the app
+# start on an empty database.
 DATA_DIR="$(env_val IH_DATA_DIR)"; DATA_DIR="${DATA_DIR:-/opt/ih/data}"
+assert_data_mount "$DATA_DIR"
 mkdir -p "$DATA_DIR/backups"
 
 echo "== deploy: building + starting the stack =="
@@ -46,6 +49,9 @@ Next steps:
   • Run the full production preflight (env + secrets + live probes):
         set -a; . $ENV_FILE; set +a
         IH_BASE_URL=http://127.0.0.1:8000 deploy/ops/preflight.sh
-  • Verify a backup round-trips:  deploy/ops/backup.sh && deploy/ops/verify-restore.sh
+  • Take + verify + ship a backup off-host (container-based; no host Python):
+        deploy/ops/backup-offhost.sh --backup-now
+  • Confirm the health monitor + off-host backup crons are installed (by bootstrap-ec2.sh):
+        ls -l /etc/cron.d/ih-monitor /etc/cron.d/ih-offhost-backup
   • Then follow docs/WAVE0_GO_LIVE_CHECKLIST.md before sending invites.
 EOF

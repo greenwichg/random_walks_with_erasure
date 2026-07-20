@@ -14,8 +14,12 @@ app's own consistent online backup) — no application change.
 | Layer | Mechanism | Retention |
 |---|---|---|
 | **Local, scheduled** | compose `backup-scheduler` profile (hourly `db_backup.py backup` + prune to `BACKUP_KEEP`) — started by `deploy/ops/deploy.sh` | newest `BACKUP_KEEP` (default 48 ≈ 2 days hourly) |
-| **Off-host, S3** | host cron `deploy/ops/backup.sh` (or `aws s3 sync`) → versioned private S3 bucket via the instance IAM role | S3 lifecycle (default 30 days) |
-| **On demand** | `docker compose … run --rm backup` or `deploy/ops/backup.sh` | as above |
+| **Off-host, S3 (automatic)** | **hourly cron** `deploy/ops/backup-offhost.sh` (installed by `bootstrap-ec2.sh`): verifies the newest backup **in the container**, then `aws s3 sync … → s3://$IH_S3_BUCKET/backups/` via the instance IAM role | S3 lifecycle (default 30 days) |
+| **On demand** | `deploy/ops/backup-offhost.sh --backup-now` (backup + verify + ship) | as above |
+
+> **No host Python.** Backups and the integrity check run **inside the `backup` container** (which has
+> Python + SQLAlchemy); the EC2 host only runs `aws s3 sync`. The host-Python scripts (`deploy/ops/backup.sh`,
+> `verify-restore.sh`) remain for the *non-Docker* path and are **not** used on EC2.
 
 ## One-time S3 setup
 
@@ -30,35 +34,37 @@ aws s3api put-public-access-block --bucket my-ih-beta-backups \
 Set `IH_S3_BUCKET=my-ih-beta-backups` in `deploy/.env`. The instance IAM role needs
 `s3:PutObject`/`s3:GetObject`/`s3:ListBucket` on `arn:aws:s3:::my-ih-beta-backups[/*]` (deployment guide §2.2).
 
-## Scheduled backups
+## Scheduled backups (automatic)
 
-Local recurring backups start with the deploy (scheduler profile). For the **off-host** copy, add a host
-cron (survives even if Docker is down):
+Two cooperating layers are set up automatically — **no manual cron editing**:
+1. **Local backups**: the compose `backup-scheduler` profile (started by `deploy/ops/deploy.sh`) makes and
+   prunes local backups hourly, in-container.
+2. **Off-host S3**: `bootstrap-ec2.sh` installs `/etc/cron.d/ih-offhost-backup`, which runs
+   `deploy/ops/backup-offhost.sh` hourly (at :23). That script **verifies** the newest backup inside the
+   container, then `aws s3 sync`s the backups dir to `s3://$IH_S3_BUCKET/backups/` via the instance IAM role.
+
+Confirm both after deploy:
 ```bash
-# /etc/cron.d/ih-backup  — hourly local backup + S3 sync (instance IAM role supplies creds)
-17 * * * * ubuntu cd /opt/ih && set -a && . deploy/.env && set +a && \
-  IH_S3_BUCKET="$IH_S3_BUCKET" BACKUP_OFFHOST_CMD='aws s3 cp "$1" s3://'"$IH_S3_BUCKET"'/backups/' \
-  deploy/ops/backup.sh >> /var/log/ih-backup.log 2>&1
+ls -l /etc/cron.d/ih-offhost-backup            # the off-host cron
+tail -f /var/log/ih-backup.log                 # its output
 ```
-`deploy/ops/backup.sh` writes one integrity-checked backup, ships it off-host (`BACKUP_OFFHOST_CMD`), and
-prunes to `BACKUP_KEEP`. Alternatively, sync the whole dir: `aws s3 sync /opt/ih/data/backups s3://$IH_S3_BUCKET/backups/`.
 
 ## Manual backup (anytime)
 ```bash
 cd /opt/ih
-deploy/ops/backup.sh                       # host path: writes + prunes + off-host (if configured)
-# or, purely in-container:
-docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.aws.yml --env-file deploy/.env \
-  run --rm backup python examples/db_backup.py backup
-aws s3 ls s3://$IH_S3_BUCKET/backups/       # confirm the object landed off-host
+deploy/ops/backup-offhost.sh --backup-now      # in-container backup + integrity check + S3 sync (no host Python)
+aws s3 ls s3://$IH_S3_BUCKET/backups/           # confirm the object landed off-host
 ```
 
-## Verify a backup (non-destructive — do this regularly)
+## Verify a backup (non-destructive — done every hour by the cron, or on demand)
 ```bash
-deploy/ops/verify-restore.sh               # newest local backup: copies to scratch, PRAGMA quick_check, opens the store
-deploy/ops/verify-restore.sh /opt/ih/data/backups/ih_beta-<ts>.db   # a specific file
+deploy/ops/backup-offhost.sh                   # verifies the NEWEST local backup in the container + syncs to S3
+# a specific file, directly in the container:
+docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.aws.yml --env-file deploy/.env \
+  --profile backup run --rm backup python examples/db_backup.py --db sqlite:////app/data/backups/ih_beta-<ts>.db status
 ```
-Exit 0 = the backup is intact and restorable. This never touches the live DB.
+`quickCheck ok` = the backup is intact and restorable; this never touches the live DB. (The host-Python
+`deploy/ops/verify-restore.sh` is for the non-Docker path only — the EC2 host has no `python`/SQLAlchemy.)
 
 ## Restore (recover from data loss / corruption)
 
@@ -75,12 +81,13 @@ if it fails — live DB untouched), asks for confirmation (skip with `FORCE=1`),
 writes, runs the app's safe restore (which snapshots the current DB to `*.pre-restore`, then swaps), brings
 the stack back, and runs `smoke-test.sh`.
 
-Manual equivalent (if you prefer step-by-step): stop `web`+`api`, `verify-restore.sh <file>`, then
-`… run --rm backup python examples/db_backup.py restore /app/data/<file>`, then `up -d`.
+Manual equivalent (if you prefer step-by-step): stop `web`+`api`, verify with `… --profile backup run --rm
+backup python examples/db_backup.py --db sqlite:////app/data/<file> status`, then `… run --rm backup python
+examples/db_backup.py restore /app/data/<file>`, then `up -d`.
 
 ## Restore drill (rehearse before go-live — a required gate)
-1. Take a backup: `deploy/ops/backup.sh`.
-2. Prove it restores non-destructively: `deploy/ops/verify-restore.sh` → exit 0.
+1. Take + verify + ship a backup: `deploy/ops/backup-offhost.sh --backup-now` → exit 0.
+2. Confirm it's intact off-host: `aws s3 ls s3://$IH_S3_BUCKET/backups/`.
 3. (Optional, thorough) On a **scratch** copy of the instance or a temp `IH_DATA_DIR`, run a full
    `deploy/ops/restore.sh <backup>` and confirm the app comes up + a known user's data is present.
 4. Record the **RTO** (how long the restore took) in the go-live checklist.
@@ -98,7 +105,7 @@ Manual equivalent (if you prefer step-by-step): stop `web`+`api`, `verify-restor
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `verify-restore.sh` non-zero | Backup corrupt/truncated | Use an older backup or the S3 copy; investigate the source |
+| `backup-offhost.sh` verify FAIL | Backup corrupt/truncated | Use an older backup or the S3 copy; investigate the source |
 | `restore.sh` aborts at "integrity check" | Chosen backup failed quick_check | Pick another (older / S3) backup |
 | No objects in S3 | IAM role missing `s3:PutObject`, or `IH_S3_BUCKET` unset | Fix the role/policy; set `IH_S3_BUCKET`; re-run `backup.sh` |
 | Disk filling | `BACKUP_KEEP` too high / no S3 offload / logs | Lower `BACKUP_KEEP`; enable S3 sync; log rotation (`deploy/host/daemon.json`) |

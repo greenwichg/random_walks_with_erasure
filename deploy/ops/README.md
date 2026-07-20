@@ -16,6 +16,8 @@ These wrap `docker compose -f deploy/docker-compose.yml -f deploy/docker-compose
 | `update.sh [ref]` | Checks out a release tag (or the previous good tag for **rollback**), rebuilds, re-validates. Data untouched. | Ship a new version / roll back. |
 | `restart.sh [svc]` | Restarts all services (or one) via `up -d` so a `deploy/.env` change is re-read. | After editing env (e.g. allowlist). |
 | `restore.sh [src]` | **Verify-first** restore from an `s3://…` URI or a local backup (integrity check → halt writes → safe swap → re-validate). | Recover from data loss/corruption. |
+| `backup-offhost.sh [--backup-now]` | **Container-based** backup + integrity check + `aws s3 sync` off-host (no host Python). | Hourly cron (installed by `bootstrap-ec2.sh`); go-live/manual. |
+| `monitor.sh` | **Container-based** health monitor: edge containers running + engine live/ready (internal network) → `ALERT_WEBHOOK`. Catches the web crash-loop. | 5-min cron (installed by `bootstrap-ec2.sh`). |
 | `smoke-test.sh` | Validates the **running** stack: containers up, engine live/ready (internal Docker network), PA1 gating (200 with secret / 404 without), OBS1 metrics, public HTTPS + TLS + HTTP→HTTPS redirect. | Auto-run post-deploy; anytime. |
 
 ### Host-side probes & backup (Python path — also used inside the containers)
@@ -27,9 +29,11 @@ These wrap `docker compose -f deploy/docker-compose.yml -f deploy/docker-compose
 | `healthcheck.sh` | Probes the engine's OBS1 `/api/health/{live,ready}` (and optionally the web app); alerts via `ALERT_WEBHOOK` on failure. | cron / systemd, or as the vendor-neutral fallback behind an external uptime monitor. |
 
 The `preflight.sh` / `backup.sh` / `verify-restore.sh` / `healthcheck.sh` scripts `cd` to the repo root
-and select the database exactly as the engine does (`RWE_DB_URL` → default). Run them from a host that
-has Python + the repo and access to the DB, or via the compose services. Environment knobs are
-documented in each script's header. `_compose.sh` is a **sourced helper** (not run directly).
+and select the database exactly as the engine does (`RWE_DB_URL` → default). They need **host Python +
+SQLAlchemy**, so they are for the **non-Docker** path only. **On the EC2 Docker host (no Python) use the
+container-based `backup-offhost.sh` / `monitor.sh` / `restore.sh` instead** — they run the same
+`db_backup.py`/OBS1 tooling inside the `backup`/`api` containers. `_compose.sh` is a **sourced helper**
+(not run directly).
 
 **Not shipped in the container image** (`deploy/` is excluded from the Docker build context) — these
 are host-side operator tools. The Docker path gets recurring backups from the compose `backup-scheduler`

@@ -61,12 +61,13 @@ Engine + web (in `deploy/.env`, prod-hardening lines uncommented in the override
 - [ ] **OBS1:** `/api/health/live` alive; `/api/metrics` (with the secret) shows `request_ms`/`db_query_ms` timers.
 
 ## G · Backups & monitoring wired (guide §2, §7)
-- [ ] `deploy/ops/backup.sh` writes a backup; `deploy/ops/verify-restore.sh` exits 0.
+- [ ] `deploy/ops/backup-offhost.sh --backup-now` → exit 0 (container backup + integrity check + S3 sync; **no host Python**).
 - [ ] Backup object present **in S3** (`aws s3 ls s3://<bucket>/backups/`).
-- [ ] `db_backup.py status` → `quickCheck ok`.
-- [ ] `deploy/ops/healthcheck.sh` scheduled (cron/systemd) with a working alert path; a **test alert reached a human**.
-- [ ] CloudWatch: agent running; alarms on **StatusCheckFailed** + high CPU + low disk → SNS.
-- [ ] A **restore drill** rehearsed into a scratch path; recovery RTO recorded.
+- [ ] Off-host backup cron installed: `ls -l /etc/cron.d/ih-offhost-backup` (hourly).
+- [ ] **Health monitor cron** installed + working: `ls -l /etc/cron.d/ih-monitor`; `deploy/ops/monitor.sh` → `healthy`; a **test alert reached a human** (temporarily point `ALERT_WEBHOOK` at a test channel, stop `web`, confirm the alert fires, restart).
+- [ ] CloudWatch (optional, additive): agent + alarms on **StatusCheckFailed** + high CPU + low disk → SNS.
+- [ ] **EBS data volume:** on ROOT EBS → `IH_DATA_MOUNT=0`. On a DEDICATED volume → mounted at `IH_DATA_DIR` via `/etc/fstab` (with `nofail`), `IH_DATA_MOUNT=1`, and a **reboot test** confirms data persists.
+- [ ] A **restore drill** rehearsed (`deploy/ops/restore.sh` from an S3 backup); recovery RTO recorded.
 
 ## H · Rollback readiness (guide §5, §7)
 - [ ] Previous good **release tag** known and reachable (`git tag`).
@@ -87,9 +88,9 @@ Engine + web (in `deploy/.env`, prod-hardening lines uncommented in the override
 | 4 | BA1 armed | `BETA_ACCESS_ENABLED=1` + exactly the 5 emails |
 | 5 | PA1 capturing | funnel reachers > 0, gated 404/200 |
 | 6 | OBS1 healthy | readiness 200; metrics present |
-| 7 | Backups verified + off-host | `verify-restore.sh` 0 + object in S3 |
+| 7 | Backups verified + off-host + automated | `backup-offhost.sh --backup-now` 0 + object in S3 + `ih-offhost-backup` cron |
 | 8 | Restore rehearsed | drill done, RTO known |
-| 9 | Monitoring alerts | test alert received |
+| 9 | Monitoring automated + alerts | `ih-monitor` cron + test alert received |
 | 10 | Rollback staged | previous tag + backup path ready |
 
 **Any NO → hold and remediate. All YES → send the 5 invites**, then follow the Wave-0 monitoring cadence

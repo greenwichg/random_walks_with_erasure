@@ -25,6 +25,14 @@ dc() {
   docker compose -f "$BASE_COMPOSE" -f "$AWS_COMPOSE" --env-file "$ENV_FILE" "$@"
 }
 
+# Run examples/db_backup.py INSIDE the one-shot `backup` container. That container already has Python +
+# the store dependencies (SQLAlchemy) + the same bind-mounted /app/data — so backups, integrity checks,
+# and restores never depend on host Python (which the EC2 host does not have). `--profile backup` enables
+# the profiled service regardless of Compose version.
+backup_run() {
+  dc --profile backup run --rm -T backup python examples/db_backup.py "$@"
+}
+
 # Read a scalar KEY=value from the env-file, stripping one layer of surrounding quotes. Empty if absent.
 # (Avoids sourcing the whole file, which could choke on values with special characters.)
 env_val() {
@@ -64,4 +72,33 @@ wait_ready() {
     fi
     sleep 5
   done
+}
+
+# Send an alert to ALERT_WEBHOOK (Slack/Discord-compatible {"text":…}) if it is configured; always log to
+# stderr. Used by monitor.sh and backup-offhost.sh so unattended failures reach a human.
+alert() {
+  local msg="$1" hook
+  echo "ALERT: $msg" >&2
+  hook="$(env_val ALERT_WEBHOOK)"
+  [ -n "$hook" ] || return 0
+  curl -fsS -m 10 -X POST -H 'content-type: application/json' \
+    -d "{\"text\":\"[Information Health · hidden-view.com] $msg\"}" "$hook" >/dev/null 2>&1 \
+    || echo "alert: webhook POST to ALERT_WEBHOOK failed" >&2
+}
+
+# Reboot-safety guard against the "dedicated EBS data volume not mounted yet" disaster: if the operator
+# runs the DB on a SEPARATE volume (IH_DATA_MOUNT=1 in deploy/.env), refuse to start unless $1 is actually
+# a mounted filesystem — otherwise the bind-mount would hit an empty directory on the root disk and the
+# app would silently create a fresh, EMPTY database. On the default (root-EBS) layout IH_DATA_MOUNT is 0
+# and this is a no-op beyond checking the directory exists.
+assert_data_mount() {
+  local dir="$1" want
+  [ -d "$dir" ] || { echo "ERROR: data dir '$dir' does not exist — run sudo deploy/ops/bootstrap-ec2.sh first." >&2; exit 1; }
+  want="$(env_val IH_DATA_MOUNT)"
+  if [ "${want:-0}" = "1" ] && ! mountpoint -q "$dir"; then
+    echo "ERROR: IH_DATA_MOUNT=1 but '$dir' is NOT a mounted filesystem." >&2
+    echo "  Refusing to start: a fresh EMPTY database would be created on the root disk (data-loss risk)." >&2
+    echo "  Mount the data volume first (check /etc/fstab), e.g.:  sudo mount '$dir'   then retry." >&2
+    exit 1
+  fi
 }

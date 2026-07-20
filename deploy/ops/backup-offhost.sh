@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# Off-host backup + integrity verification for the AWS deployment. DEPLOYMENT-ONLY.
+#
+# NO host Python: the backup and the PRAGMA integrity check run INSIDE the `backup` container (which has
+# Python + SQLAlchemy + the same bind-mounted /app/data); the off-host copy is plain `aws s3 sync` on the
+# host using the instance IAM role. This replaces the host-Python deploy/ops/backup.sh + verify-restore.sh
+# on the Docker/EC2 path (the EC2 host has neither `python` nor SQLAlchemy).
+#
+# Used by the hourly cron installed by bootstrap-ec2.sh, and manually at go-live / on demand:
+#   deploy/ops/backup-offhost.sh              # verify the newest local backup + sync all backups → S3
+#   deploy/ops/backup-offhost.sh --backup-now # ALSO take a fresh consistent backup first (go-live/manual)
+#
+# Env (deploy/.env): IH_S3_BUCKET (off-host target, bucket name only), IH_DATA_DIR (default /opt/ih/data),
+# ALERT_WEBHOOK (optional — failures are alerted). The in-container `backup-scheduler` profile still makes
+# and prunes local backups on its own schedule; this script verifies + ships them off-host.
+set -uo pipefail
+# shellcheck source=deploy/ops/_compose.sh
+source "$(dirname "$0")/_compose.sh"
+need_env
+
+DATA_DIR="$(env_val IH_DATA_DIR)"; DATA_DIR="${DATA_DIR:-/opt/ih/data}"
+S3="$(env_val IH_S3_BUCKET)"
+mkdir -p "$DATA_DIR/backups"
+
+fail() { alert "backup-offhost: $1"; exit 1; }
+
+# 1) Optionally take a fresh consistent, integrity-checked backup (in-container → /app/data/backups).
+if [ "${1:-}" = "--backup-now" ]; then
+  echo "== backup-offhost: taking a fresh in-container backup =="
+  backup_run backup || fail "in-container backup failed"
+fi
+
+# 2) Verify the NEWEST local backup non-destructively, INSIDE the container (reads the backup copy only).
+newest="$(ls -1t "$DATA_DIR"/backups/*.db 2>/dev/null | head -1 || true)"
+if [ -z "$newest" ]; then
+  echo "backup-offhost: no local backups yet (scheduler may not have run) — nothing to verify/ship."
+else
+  base="$(basename "$newest")"
+  echo "== backup-offhost: verifying $base (container, non-destructive) =="
+  status="$(backup_run --db "sqlite:////app/data/backups/$base" status 2>&1)" || fail "verify command failed for $base"
+  echo "$status"
+  echo "$status" | grep -i quickcheck | grep -qiw ok || fail "integrity check FAILED for $base"
+fi
+
+# 3) Ship all local backups off-host to S3 (instance IAM role; no --delete so S3 keeps full history until
+#    its own lifecycle expires objects).
+if [ -n "$S3" ]; then
+  echo "== backup-offhost: syncing $DATA_DIR/backups → s3://$S3/backups/ =="
+  aws s3 sync "$DATA_DIR/backups/" "s3://$S3/backups/" || fail "aws s3 sync to s3://$S3/backups/ failed"
+else
+  echo "backup-offhost: IH_S3_BUCKET unset — skipping off-host sync (set it in deploy/.env before go-live)."
+fi
+
+echo "backup-offhost: done."

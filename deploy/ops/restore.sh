@@ -48,7 +48,7 @@ CONTAINER_DB_URL="sqlite:///$CONTAINER_PATH"          # 3 slashes + absolute pat
 
 # 2) Prove the backup is intact BEFORE touching the live DB (non-destructive; reads the copy only).
 echo "== restore: integrity check on $CONTAINER_PATH =="
-status="$(dc run --rm -T backup python examples/db_backup.py --db "$CONTAINER_DB_URL" status)"
+status="$(backup_run --db "$CONTAINER_DB_URL" status)"
 echo "$status"
 echo "$status" | grep -i quickcheck | grep -qiw ok || {
   echo "restore: ABORT — backup failed the integrity check; live DB untouched." >&2; exit 2; }
@@ -64,7 +64,7 @@ echo "== restore: stopping web + api to halt writes =="
 dc stop web api
 
 echo "== restore: swapping in the backup (snapshots current → *.pre-restore) =="
-dc run --rm -T backup python examples/db_backup.py restore "$CONTAINER_PATH"
+backup_run restore "$CONTAINER_PATH"
 
 echo "== restore: restarting the stack =="
 dc up -d

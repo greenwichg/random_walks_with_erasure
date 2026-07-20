@@ -96,13 +96,55 @@ else
   echo "seeded deploy/.env from the template (chmod 600) — FILL IN THE REQUIRED VALUES"
 fi
 
+step "Reboot safety: Docker starts AFTER the data mount"
+# If the DB lives on a DEDICATED EBS volume mounted at $DATA_DIR, this makes dockerd (and therefore the
+# restart:unless-stopped containers) wait for that mount at boot — so a boot-before-mount race can never
+# start the app on an empty root-disk directory. On the default root-EBS layout $DATA_DIR resolves to the
+# root mount and this is a harmless no-op.
+mkdir -p /etc/systemd/system/docker.service.d
+DROPIN=/etc/systemd/system/docker.service.d/10-ih-data-mount.conf
+printf '[Unit]\nRequiresMountsFor=%s\n' "$DATA_DIR" > "$DROPIN.tmp"
+if ! cmp -s "$DROPIN.tmp" "$DROPIN" 2>/dev/null; then
+  mv "$DROPIN.tmp" "$DROPIN" && systemctl daemon-reload
+  echo "installed $DROPIN (docker requires the $DATA_DIR mount before start)"
+else
+  rm -f "$DROPIN.tmp"; echo "$DROPIN already up to date — skipping"
+fi
+
+step "Scheduled off-host backup + health monitoring (cron)"
+# Off-host S3 backup (hourly, at :23) and health monitor (every 5 min). Both run as $TARGET_USER, which is
+# in the docker group, and read deploy/.env for IH_S3_BUCKET / ALERT_WEBHOOK. They no-op quietly until the
+# stack is deployed and deploy/.env is filled in.
+install -d -m 755 /etc/cron.d
+CRON_PATH='PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+{
+  echo "# Wave 0 — off-host backup verify + S3 sync, hourly. Installed by bootstrap-ec2.sh."
+  echo "$CRON_PATH"
+  echo "23 * * * * $TARGET_USER $REPO_ROOT/deploy/ops/backup-offhost.sh >> /var/log/ih-backup.log 2>&1"
+} > /etc/cron.d/ih-offhost-backup
+{
+  echo "# Wave 0 — deployment health monitor, every 5 minutes. Installed by bootstrap-ec2.sh."
+  echo "$CRON_PATH"
+  echo "*/5 * * * * $TARGET_USER $REPO_ROOT/deploy/ops/monitor.sh >> /var/log/ih-monitor.log 2>&1"
+} > /etc/cron.d/ih-monitor
+chmod 644 /etc/cron.d/ih-offhost-backup /etc/cron.d/ih-monitor
+touch /var/log/ih-backup.log /var/log/ih-monitor.log
+chown "$TARGET_USER":"$TARGET_USER" /var/log/ih-backup.log /var/log/ih-monitor.log
+echo "cron installed: hourly off-host backup (ih-offhost-backup), 5-min health monitor (ih-monitor)"
+
 cat <<EOF
 
 ✅ bootstrap complete (idempotent — safe to re-run).
+   Installed: Docker+Compose, AWS CLI, swap, log rotation, data dir, docker-after-mount ordering,
+   and cron for off-host S3 backup (hourly) + health monitoring (5-min). The crons stay quiet until the
+   stack is deployed and deploy/.env is filled.
 
 Next:
   1. Edit deploy/.env — set the REQUIRED secrets, APP_DOMAIN, NEXTAUTH_URL, Google OAuth, BETA_ALLOWLIST,
-     IH_S3_BUCKET, ALERT_WEBHOOK.  (openssl rand -base64 32 for the secrets.)
+     IH_S3_BUCKET (off-host backups), ALERT_WEBHOOK (monitoring).  (openssl rand -base64 32 for secrets.)
+     • Data on the ROOT EBS volume (default): leave IH_DATA_MOUNT=0.
+     • Data on a DEDICATED EBS volume: mount it at $DATA_DIR via /etc/fstab (add 'nofail'), then set
+       IH_DATA_MOUNT=1 so deploy refuses to start if the volume isn't mounted (prevents an empty DB).
   2. Point Route 53 A records (apex + www) for your domain at this host's Elastic IP, and confirm:
         dig +short <your-domain>
   3. Deploy:   deploy/ops/deploy.sh

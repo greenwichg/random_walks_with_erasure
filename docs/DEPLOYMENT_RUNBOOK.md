@@ -16,9 +16,11 @@ This is the "how"; `docs/AWS_EC2_DEPLOYMENT_GUIDE.md` is the "why" (architecture
 | `update.sh [ref]` | Deploy a release tag; with a previous tag = **rollback**. Data untouched. |
 | `restart.sh [svc]` | Restart all / one service (re-reads `deploy/.env`). |
 | `restore.sh [src]` | Verify-first restore from S3 or a local backup (see `docs/BACKUP_AND_RESTORE.md`). |
+| `backup-offhost.sh [--backup-now]` | **Container-based** backup + integrity check + `aws s3 sync` off-host (no host Python). Runs hourly via cron. |
+| `monitor.sh` | **Container-based** health monitor (OBS1 + edge containers) → `ALERT_WEBHOOK`. Runs every 5 min via cron. |
 | `smoke-test.sh` | Validate the running stack end-to-end (internal + public). |
 | `preflight.sh` | Deterministic PASS/WARN/FAIL of prod prerequisites. |
-| `backup.sh` / `verify-restore.sh` / `healthcheck.sh` | Backup + off-host, non-destructive restore check, health probe. |
+| `backup.sh` / `verify-restore.sh` / `healthcheck.sh` | Host-Python probes for the **non-Docker** path (need `python`+SQLAlchemy; **not** used on the EC2 host). |
 
 All wrap: `docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.aws.yml --env-file deploy/.env …`.
 
@@ -112,26 +114,27 @@ chmod 600 deploy/.env
 Reuse the **same** `RWE_INTERNAL_SECRET`, `NEXTAUTH_SECRET`, and Google OAuth client. (A new
 `NEXTAUTH_SECRET` just forces everyone to sign in again — acceptable, not required.)
 
-### F.5 Restore data, then start
+### F.5 Start, then restore data (verify-first)
 ```bash
-# Bring back the newest off-host backup FIRST so the app starts on real data:
-mkdir -p /opt/ih/data
-aws s3 cp "s3://$IH_S3_BUCKET/backups/$(aws s3 ls s3://$IH_S3_BUCKET/backups/ | sort | tail -1 | awk '{print $4}')" \
-  /opt/ih/data/ih_beta.db
-deploy/ops/verify-restore.sh /opt/ih/data/ih_beta.db    # prove it's intact
-
-deploy/ops/deploy.sh                        # build + start + readiness + scheduler + smoke test
+deploy/ops/deploy.sh                          # build + start + readiness + scheduler + smoke test
+                                              #   (starts on a fresh empty DB — replaced next)
+# Restore the newest off-host backup through the verify-first path (container integrity check → safe swap):
+newest="$(aws s3 ls s3://$IH_S3_BUCKET/backups/ | sort | tail -1 | awk '{print $4}')"
+FORCE=1 deploy/ops/restore.sh "s3://$IH_S3_BUCKET/backups/$newest"
 ```
-(If you start before restoring, `deploy.sh` creates a fresh empty DB; then use `deploy/ops/restore.sh`.)
+`restore.sh` verifies the backup **inside the container** (no host Python), snapshots, swaps, restarts,
+and re-runs the smoke test. Reuse the same `RWE_INTERNAL_SECRET` so nothing else changes.
 
-### F.6 Verify + reconnect monitoring
+### F.6 Verify — monitoring & backups are already automatic
 ```bash
 set -a; . deploy/.env; set +a
 IH_BASE_URL=http://127.0.0.1:8000 deploy/ops/preflight.sh      # exit 0
 deploy/ops/smoke-test.sh                                        # exit 0
+ls -l /etc/cron.d/ih-offhost-backup /etc/cron.d/ih-monitor     # crons re-installed by bootstrap-ec2.sh
 ```
-Re-create the host cron for S3 backups (`docs/BACKUP_AND_RESTORE.md`) and the CloudWatch agent/alarms +
-`healthcheck.sh` cron (deployment guide §7). Done — the rebuild is live.
+`bootstrap-ec2.sh` already re-installed the hourly off-host-backup and 5-minute health-monitor crons and
+the docker-after-mount ordering, so there is **no host cron to hand-wire**. (CloudWatch alarms, if you use
+them, are the one thing to re-attach — deployment guide §7.) Done — the rebuild is live.
 
 **Rebuild RTO** is dominated by DNS propagation (if the EIP changed) and image build (~a few minutes);
 plan for well under an hour.
