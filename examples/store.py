@@ -665,6 +665,43 @@ class Store:
                         "attention": rep.get("attention") or {}})
         return out
 
+    def report_eval_snapshots(self, user_id: int, limit: int = 120) -> list:
+        """Per-snapshot inputs for recommendation evaluation (RC2.5), **oldest-first**: each saved
+        report's full-ISO ``date`` (createdAt), real ``reads`` (from ``coverage``), ``mode``, per-metric
+        ``{key: score}``, and the per-metric estimated-impact band ``{metric: {low, high}}`` taken from
+        the stored improvements' ``impactEstimate``. Read-only — it parses the stored JSON and recomputes
+        **nothing** (the same discipline as :meth:`report_metric_series`)."""
+        with self.session() as s:
+            rows = s.scalars(select(ReportSnapshot)
+                             .where(ReportSnapshot.user_id == user_id)
+                             .order_by(ReportSnapshot.id)).all()
+        rows = rows[-limit:] if limit else rows
+        out = []
+        for r in rows:
+            try:
+                rep = json.loads(r.snapshot)
+            except (TypeError, ValueError):
+                continue
+            metrics = {m.get("key"): m.get("score") for m in (rep.get("metrics") or [])
+                       if m.get("key") is not None and m.get("score") is not None}
+            estimates = {}
+            for imp in (rep.get("improvements") or []):
+                est, mk = imp.get("impactEstimate"), imp.get("metric")
+                if est and mk is not None and est.get("low") is not None and est.get("high") is not None:
+                    estimates[mk] = {"low": int(est["low"]), "high": int(est["high"])}
+            cov = rep.get("coverage") or {}
+            out.append({"date": r.created_at.isoformat() if r.created_at else None,
+                        "reads": int(cov["reads"]) if cov.get("reads") is not None else None,
+                        "mode": rep.get("mode"), "metrics": metrics, "estimates": estimates})
+        return out
+
+    def list_users_with_improvement_lifecycle(self) -> list:
+        """Distinct user ids that have any improvement-lifecycle row — the cohort the offline rule-quality
+        evaluation (RC2.5) iterates. Read-only."""
+        with self.session() as s:
+            rows = s.scalars(select(ImprovementLifecycle.user_id).distinct()).all()
+        return [int(u) for u in rows]
+
     # -- scored-article cache -------------------------------------------
     def get_scored_article(self, url: str) -> "dict | None":
         """Cached scoring for a canonical URL, or ``None`` if it hasn't been scored yet."""

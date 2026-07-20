@@ -42,6 +42,7 @@ import personalize            # per-user augmented Measured report / recs / coac
 import evidence_resolver      # ONE human explanation per rec, chosen from evidence (21a.3)
 import improvement_ledger     # improvement-recommendation lifecycle state machine (leaf, RC2.3)
 import improvement_ranking    # feedback-aware ranking/filtering of improvements (leaf, RC2.4)
+import recommendation_eval     # deterministic evaluation + attribution of improvements (leaf, RC2.5)
 import coach_service          # Coach v2: intent-routed, tool-using coach (RWE_COACH_V2, M4)
 import notification_delivery   # orchestration: build context -> evaluate -> record notifications (N2)
 import ratelimit              # dependency-free token-bucket rate limiter (Private Alpha hardening)
@@ -1138,6 +1139,38 @@ class ImprovementLifecycleEntryModel(BaseModel):
     updatedAt: Optional[str] = None
 
 
+# RC2.5 — recommendation evaluation & attribution (read-only projections).
+class AttributionModel(BaseModel):
+    recommendationAttributed: float
+    organic: float
+    populationDrift: float
+
+
+class RecommendationEvalModel(BaseModel):
+    recKey: str
+    metric: str
+    outcome: Optional[str] = None
+    estimatedGain: Optional[int] = None
+    realizedGain: Optional[int] = None
+    attribution: AttributionModel
+    attributionConfidence: str
+    calibrationError: Optional[float] = None
+    sustainedImprovement: Optional[bool] = None
+
+
+class ReaderEvaluationModel(BaseModel):
+    recommendations: list[RecommendationEvalModel]
+    outcomes: dict[str, int]
+
+
+class CohortRuleQualityModel(BaseModel):
+    # ruleQuality is an open-ended {metric: {rates + calibration}} map — kept permissive so new quality
+    # fields need no model change; the deterministic contract lives in recommendation_eval.rule_quality.
+    model_config = ConfigDict(extra="allow")
+    cohortSize: int
+    ruleQuality: dict[str, dict]
+
+
 class SaveArticleRequest(BaseModel):
     articleId: str
     article: dict = {}      # the Article snapshot the reader saw (rendered later in the saved list)
@@ -2138,6 +2171,23 @@ def my_improvement_lifecycle(request: Request) -> list:
     return _require_store().list_improvement_lifecycle(uid)
 
 
+@app.get("/api/me/recommendations/evaluation", response_model=ReaderEvaluationModel,
+         tags=["recommendations"],
+         summary="The signed-in reader's improvement-recommendation evaluation (attribution + calibration)",
+         responses=_ERR_RESPONSES)
+def my_recommendation_evaluation(request: Request) -> dict:
+    """Deterministic, read-only evaluation of the reader's own improvement recommendations (RC2.5):
+    per recommendation, the lifecycle outcome, the RC2.2 estimated gain, the realized metric change, its
+    three-way attribution (recommendation-attributed / organic / population drift), an attribution
+    confidence tier, and the calibration error (attributed − estimated). Reuses the lifecycle ledger and
+    the report-snapshot history — nothing is recomputed and no ranking is touched."""
+    uid = _require_real_user(request)
+    st = _require_store()
+    rows = st.list_improvement_lifecycle(uid)
+    snaps = st.report_eval_snapshots(uid)
+    return recommendation_eval.evaluate_reader(snaps, rows)
+
+
 @app.get("/api/me/saved", response_model=list[SavedArticleModel], tags=["meta"],
          summary="The signed-in user's saved articles (newest first)", responses=_ERR_RESPONSES)
 def list_my_saved(request: Request) -> list:
@@ -2541,6 +2591,29 @@ def dev_diagnostics(request: Request, token: str | None = None) -> dict:
         "readCount": st.count_reads(who) if who is not None else 0,
         "devToken": _dev_token(),
     }
+
+
+@app.get("/api/dev/recommendations/quality", response_model=CohortRuleQualityModel, tags=["meta"],
+         summary="[dev only] Cohort recommendation quality & calibration, per rule", responses=_ERR_RESPONSES)
+def dev_recommendation_quality(request: Request) -> dict:
+    """Development/operator-only: the deterministic per-rule (per-metric) quality and calibration across
+    **all** readers who have improvement-recommendation history — acceptance / completion / dismissal /
+    abandonment rates, mean realized improvement, mean estimated impact, and the mean calibration error
+    with its over/under direction (RC2.5). Read-only over the lifecycle ledger + report snapshots;
+    returns **404 in production** (an internal analytics view, like ``/api/dev/diagnostics``)."""
+    if _production():
+        raise HTTPException(status_code=404, detail="Not found.")
+    st = _require_store()
+    uids = st.list_users_with_improvement_lifecycle()
+    all_evals, all_rows = [], []
+    for uid in uids:
+        rows = st.list_improvement_lifecycle(uid)
+        snaps = st.report_eval_snapshots(uid)
+        for row in rows:
+            all_evals.append(recommendation_eval.evaluate_recommendation(snaps, row))
+            all_rows.append(row)
+    return {"cohortSize": len(uids),
+            "ruleQuality": recommendation_eval.rule_quality(all_evals, all_rows)}
 
 
 def main() -> None:
