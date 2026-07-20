@@ -181,14 +181,14 @@ def _expected_improvement_metrics(report):
     return [m["key"] for m in ranked[:3] if api_server._IMPROVEMENTS.get(m["key"])]
 
 
-def test_improvements_selection_and_impact_unchanged(backend, user):
-    """RC2.1 must NOT touch which recommendations appear, their order, or the (static) impact — it only
-    binds evidence. Selection is re-derived from the metrics and the impact from the template table."""
+def test_improvements_selection_and_copy_unchanged(backend, user):
+    """RC2.1/RC2.2 must NOT touch which recommendations appear, their order, or the static title/detail.
+    (RC2.2 intentionally replaces the fixed impact with a dynamic band — see the impact tests below.)"""
     r = backend.report(user)
     assert [imp["metric"] for imp in r["improvements"]] == _expected_improvement_metrics(r)
     for imp in r["improvements"]:
         tpl = api_server._IMPROVEMENTS[imp["metric"]]
-        assert imp["title"] == tpl[0] and imp["detail"] == tpl[1] and imp["impact"] == tpl[2]
+        assert imp["title"] == tpl[0] and imp["detail"] == tpl[1]
 
 
 def test_improvements_carry_bound_evidence(backend, user):
@@ -366,6 +366,103 @@ def test_estimate_evidence_basis_still_traceable(backend):
                 assert topic_share.get(label) == pytest.approx(val)
             elif f == "metric.score":
                 assert score_by_key[imp["metric"]] == pytest.approx(val)
+
+
+# --------------------------------------------------------------------------- #
+# RC2.2 — dynamic impact estimation
+# --------------------------------------------------------------------------- #
+_IMPACT_FIELDS = {"low", "high", "method", "metric", "confidence", "fromScore", "toScore",
+                  "explanation"}
+
+
+def _mini_pop():
+    """A tiny hand-built population for unit-testing the estimator (reader 0 = concentrated diet)."""
+    UC = np.array([[8., 1., 1., 0.], [3., 3., 2., 2.], [2., 2., 3., 3.]])
+    UO = np.array([[6., 4., 0.], [3., 3., 4.], [2., 2., 2.]])
+    return {
+        "UC": UC, "UO": UO, "n_clicks": UC.sum(axis=1),
+        "cat_u": np.array(["a", "b", "c", "d"]),
+        "topic": np.array([0.30, 0.90, 0.95]),
+        "eff_src": np.array([1.8, 2.9, 3.0]),
+        "reporting": np.array([0.40, 0.60, 0.70]),
+        "balance": np.array([0.50, 0.70, 0.80]),
+        "cross": np.array([0.10, 0.40, 0.50]),
+        "n_pol": np.array([5, 6, 7]),
+    }
+
+
+def test_impact_estimate_present_and_well_formed(backend, user):
+    """Every improvement carries a dynamic impact estimate; the scalar impact is the band midpoint;
+    fromScore/toScore are internally consistent; the band is bounded and non-degenerate."""
+    r = backend.report(user)
+    for imp in r["improvements"]:
+        est = imp["impactEstimate"]
+        assert _IMPACT_FIELDS <= set(est)
+        assert 0 <= est["low"] <= est["high"] <= 100
+        assert est["high"] <= api_server._MAX_IMPACT           # credibility cap
+        assert est["method"] in {"simulated", "deficit"}
+        assert est["confidence"] in {"high", "medium", "low"}
+        assert est["metric"] == imp["metric"]
+        assert est["toScore"]["low"] == min(100, est["fromScore"] + est["low"])
+        assert est["toScore"]["high"] == min(100, est["fromScore"] + est["high"])
+        assert est["explanation"].strip()
+        assert imp["impact"] == round((est["low"] + est["high"]) / 2)   # backward-compat scalar
+    _assert_json_roundtrips(r)
+
+
+def test_impact_is_dynamic_not_fixed_constant(backend):
+    """The band is computed from each reader's data, not the old _IMPROVEMENTS constant: across readers
+    with different diets the same metric produces a variety of bands (a fixed constant would not)."""
+    bands_by_metric: dict = {}
+    for u in range(120):
+        try:
+            r = backend.report(u)
+        except Exception:
+            continue
+        for imp in r["improvements"]:
+            bands_by_metric.setdefault(imp["metric"], set()).add(
+                (imp["impactEstimate"]["low"], imp["impactEstimate"]["high"]))
+    # at least one metric shows more than one distinct band across the population
+    assert any(len(v) > 1 for v in bands_by_metric.values()), bands_by_metric
+
+
+def test_impact_method_split_simulated_vs_deficit():
+    """Distribution metrics simulate; graph metrics (echoChamber, openMindedness) fall back to deficit;
+    an estimate report (no reads) always uses deficit."""
+    pop = _mini_pop()
+    for key in ("topicDiversity", "sourceDiversity", "reportingRatio", "emotionalBalance",
+                "viewpointBalance"):
+        assert api_server._impact_estimate(key, score=30, benchmark=50, measured=True,
+                                           pop=pop, u=0)["method"] == "simulated"
+    for key in ("echoChamber", "openMindedness"):
+        assert api_server._impact_estimate(key, score=30, benchmark=50, measured=True,
+                                           pop=pop, u=0)["method"] == "deficit"
+    # estimate mode: no reads to simulate → deficit regardless of metric
+    assert api_server._impact_estimate("topicDiversity", score=30, benchmark=50,
+                                       measured=False)["method"] == "deficit"
+
+
+def test_impact_estimate_mode_uses_deficit(backend):
+    """A real (zero-read) estimate report never claims a simulated per-action impact."""
+    est = backend.estimate([o["id"] for o in backend.outlets()[:6]])
+    assert est["improvements"]
+    for imp in est["improvements"]:
+        assert imp["impactEstimate"]["method"] == "deficit"
+
+
+def test_impact_is_deterministic(backend, user):
+    """Same corpus + reader → byte-identical impact estimates (no randomness, no clock)."""
+    a = [imp["impactEstimate"] for imp in backend.report(user)["improvements"]]
+    b = [imp["impactEstimate"] for imp in backend.report(user)["improvements"]]
+    assert json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)
+
+
+def test_impact_addition_left_selection_and_evidence_intact(backend, user):
+    """Adding the impact estimate didn't disturb selection/order or the RC2.1 evidence fields."""
+    r = backend.report(user)
+    assert [imp["metric"] for imp in r["improvements"]] == _expected_improvement_metrics(r)
+    for imp in r["improvements"]:
+        assert _EVIDENCE_FIELDS <= set(imp)                    # evidence still present alongside impact
 
 
 def test_unavailable_metric_contract():

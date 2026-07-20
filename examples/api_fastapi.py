@@ -460,6 +460,27 @@ class EvidenceBasisModel(BaseModel):
     value: float
 
 
+class ToScoreModel(BaseModel):
+    low: int
+    high: int
+
+
+class ImpactEstimateModel(BaseModel):
+    """RC2.2 — a deterministic, evidence-based estimated impact **range** (percentile points) that
+    replaces the old fixed ``+5``. ``method`` is ``simulated`` (the reader's own distribution perturbed
+    by the suggested action and re-percentiled) or ``deficit`` (a coarse guide from the score's distance
+    below the typical reader — graph metrics and estimate reports). ``fromScore``/``toScore`` show the
+    percentile it would move from → to, and ``explanation`` states how it was derived."""
+    low: int
+    high: int
+    method: str                 # "simulated" | "deficit"
+    metric: str
+    confidence: str             # "high" | "medium" | "low"
+    fromScore: int
+    toScore: ToScoreModel
+    explanation: str
+
+
 class ImprovementModel(BaseModel):
     id: str
     title: str
@@ -474,6 +495,9 @@ class ImprovementModel(BaseModel):
     suggestedAction: Optional[str] = None
     expectedBenefit: Optional[str] = None
     evidenceBasis: Optional[list[EvidenceBasisModel]] = None
+    # RC2.2 — optional dynamic impact estimate; ``impact`` (above) stays as the band midpoint for
+    # backward compatibility with consumers that read a single scalar.
+    impactEstimate: Optional[ImpactEstimateModel] = None
 
 
 class CoverageModel(BaseModel):

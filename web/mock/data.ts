@@ -247,6 +247,17 @@ export const REPORT: MeasuredHealthReport = {
         { field: "viewpoint", label: "center", value: 0.22 },
         { field: "viewpoint", label: "right", value: 0.14 },
       ],
+      impactEstimate: {
+        low: 4,
+        high: 7,
+        method: "simulated",
+        metric: "viewpointBalance",
+        confidence: "medium",
+        fromScore: 38,
+        toScore: { low: 42, high: 45 },
+        explanation:
+          "Simulated: taking this step would move your Viewpoint Balance percentile from 38 to about 42–45 (+4–7).",
+      },
     },
     {
       id: "imp_2",
@@ -263,6 +274,17 @@ export const REPORT: MeasuredHealthReport = {
         { field: "attention", label: "outrage", value: 0.14 },
         { field: "attention", label: "analysis", value: 0.21 },
       ],
+      impactEstimate: {
+        low: 3,
+        high: 6,
+        method: "simulated",
+        metric: "emotionalBalance",
+        confidence: "high",
+        fromScore: 45,
+        toScore: { low: 48, high: 51 },
+        explanation:
+          "Simulated: taking this step would move your Emotional Balance percentile from 45 to about 48–51 (+3–6).",
+      },
     },
     {
       id: "imp_3",
@@ -278,6 +300,17 @@ export const REPORT: MeasuredHealthReport = {
         { field: "sources", label: "Reuters", value: 0.41 },
         { field: "sources", label: "BBC", value: 0.31 },
       ],
+      impactEstimate: {
+        low: 5,
+        high: 8,
+        method: "simulated",
+        metric: "sourceDiversity",
+        confidence: "medium",
+        fromScore: 34,
+        toScore: { low: 39, high: 42 },
+        explanation:
+          "Simulated: taking this step would move your Source Diversity percentile from 34 to about 39–42 (+5–8).",
+      },
     },
   ],
 };

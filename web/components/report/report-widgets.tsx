@@ -80,8 +80,15 @@ export function Improvements({ items }: { items: Improvement[] }) {
                   <p className="mt-1 text-sm text-muted-foreground">{imp.detail}</p>
                 )}
               </div>
-              <Badge variant="positive" className="shrink-0">
-                <TrendingUp className="h-3 w-3" /> +{imp.impact}
+              <Badge
+                variant="positive"
+                className="shrink-0"
+                title={imp.impactEstimate?.explanation}
+              >
+                <TrendingUp className="h-3 w-3" />{" "}
+                {imp.impactEstimate && imp.impactEstimate.low !== imp.impactEstimate.high
+                  ? `+${imp.impactEstimate.low}–${imp.impactEstimate.high}`
+                  : `+${imp.impactEstimate?.high ?? imp.impact}`}
               </Badge>
             </div>
             <div className="mt-3 flex items-center justify-between">

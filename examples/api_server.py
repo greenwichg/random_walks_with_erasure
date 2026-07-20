@@ -313,6 +313,164 @@ def _attach_evidence(item, key, *, metric, topics, sources, viewpoint, attention
     return item
 
 
+# --------------------------------------------------------------------------- #
+# RC2.2 — deterministic dynamic impact estimation
+# --------------------------------------------------------------------------- #
+# The five metrics whose raw value is a closed-form function of the reader's own distribution, so a
+# hypothetical read can be simulated with health_report's OWN raw functions and re-percentiled against
+# the population raw array already in the cached model. Graph metrics (echoChamber, openMindedness) and
+# any estimate report (no reads to perturb) use the deterministic deficit-band fallback instead.
+_SIMULATABLE = {"topicDiversity", "sourceDiversity", "reportingRatio",
+                "emotionalBalance", "viewpointBalance"}
+#: population raw array (in ``pop``) that each metric's percentile is ranked against.
+_RAW_POP_KEY = {"topicDiversity": "topic", "sourceDiversity": "eff_src",
+                "reportingRatio": "reporting", "emotionalBalance": "balance",
+                "viewpointBalance": "cross"}
+#: how many times the suggested action is applied for the low / high ends of the band (matched to the
+#: recommendation's own cadence — "one" vs "a couple / a few").
+_ACTION_APPS = {"topicDiversity": (1, 3), "sourceDiversity": (1, 2), "reportingRatio": (1, 3),
+                "emotionalBalance": (1, 3), "viewpointBalance": (1, 2)}
+#: credibility cap on a single recommendation's estimated percentile gain. A few reads can swing a
+#: sparse reader's raw metric a long way; an unbounded band (e.g. +25–43) reads as a bug and breaks
+#: parity with the prior +4–8 scale, so the band is scaled into [0, _MAX_IMPACT] and its confidence is
+#: lowered when it had to be capped (the honest signal that the underlying estimate was volatile).
+_MAX_IMPACT = 10
+
+
+def _sim_raw(key, pop, u, apps):
+    """The reader's raw metric value after applying the suggested action ``apps`` times, computed with
+    the SAME ``health_report`` raw functions the engine uses (no scoring change). Returns ``None`` when
+    the inputs aren't clean enough to simulate honestly."""
+    nclicks = pop.get("n_clicks")
+    n = float(nclicks[u]) if nclicks is not None else 0.0
+    if key == "topicDiversity":
+        uc = np.asarray(pop["UC"][u], dtype=float).copy()
+        if uc.sum() <= 0:
+            return None
+        uc[int(np.argmin(uc))] += apps                     # read into the most under-covered category
+        return hr.normalized_entropy(hr.shares(uc), len(pop["cat_u"]))
+    if key == "sourceDiversity":
+        uo = np.asarray(pop["UO"][u], dtype=float)
+        if uo.sum() <= 0:
+            return None
+        uo2 = np.concatenate([uo, np.ones(apps)])          # `apps` new outlets, one read each
+        return hr.effective_number(hr.shares(uo2))
+    if key == "reportingRatio":
+        arr = pop.get("reporting")
+        v0 = None if arr is None else float(arr[u])
+        if v0 is None or not np.isfinite(v0) or n <= 0:
+            return None
+        return (v0 * n + 1.0 * apps) / (n + apps)          # add `apps` straight-reporting reads (=1.0)
+    if key == "emotionalBalance":
+        arr = pop.get("balance")
+        v0 = None if arr is None else float(arr[u])
+        if v0 is None or not np.isfinite(v0) or n <= 0:
+            return None
+        charged = max(0.0, 1.0 - v0)                       # charged share = 1 − balance
+        return 1.0 - (charged * n) / (n + apps)            # add `apps` analysis reads (charged mass fixed)
+    if key == "viewpointBalance":
+        arr = pop.get("cross")
+        v0 = None if arr is None else float(arr[u])
+        npol_arr = pop.get("n_pol")
+        npol = float(npol_arr[u]) if npol_arr is not None else 0.0
+        if v0 is None or not np.isfinite(v0) or npol <= 0:
+            return None
+        return (v0 * npol + 1.0 * apps) / (npol + apps)    # add `apps` cross-cutting reads
+    return None
+
+
+def _sim_percentile(pop_raw, v):
+    """Percentile of a hypothetical raw value ``v`` within the population's finite raw distribution —
+    the same "fraction below" ranking the scores use (``_pct_vs_pop`` / ``percentiles``)."""
+    if pop_raw is None or v is None or not np.isfinite(v):
+        return None
+    arr = np.asarray(pop_raw, dtype=float)
+    arr = arr[np.isfinite(arr)]
+    if arr.size == 0:
+        return None
+    return 100.0 * float((arr < v).mean())
+
+
+def _impact_estimate(key, *, score, benchmark, measured, pop=None, u=None):
+    """Deterministic estimated-impact band (percentile points) for one improvement.
+
+    **Simulated** for the five distribution metrics of a *measured* report: perturb the reader's own
+    distribution by the suggested action (1× for the low end, a few× for the high end), recompute the
+    raw metric with ``health_report``'s functions, and re-percentile against the population raw array —
+    every input is already in the cached model, so there is no new query and no scoring change.
+    **Deficit-banded fallback** for graph metrics (echoChamber, openMindedness) and any estimate report
+    (no reads to perturb): a coarse guide from how far the score sits below the typical reader.
+
+    Returns a dict with ``low``/``high`` (the band), ``method``, ``metric``, ``confidence``,
+    ``fromScore``/``toScore`` (the percentile it would move from → to, anchored to the score shown on
+    the card), and a plain-language ``explanation``. Fully deterministic."""
+    label = _METRIC_LABEL.get(key, _prettify(key))
+    s = int(score)
+    bench = 50 if benchmark is None else int(benchmark)
+    head = max(0, 100 - s)
+
+    band = None
+    if measured and pop is not None and u is not None and key in _SIMULATABLE:
+        try:
+            raw_key = _RAW_POP_KEY[key]
+            pr = pop.get(raw_key)
+            v0 = float(pop[raw_key][u]) if pr is not None else float("nan")
+            p0 = _sim_percentile(pr, v0)
+            lo_apps, hi_apps = _ACTION_APPS[key]
+            plo = _sim_percentile(pr, _sim_raw(key, pop, u, lo_apps))
+            phi = _sim_percentile(pr, _sim_raw(key, pop, u, hi_apps))
+            if None not in (p0, plo, phi):
+                lo = int(round(max(0.0, plo - p0)))
+                hi = int(round(max(0.0, phi - p0)))
+                lo, hi = min(lo, hi), max(lo, hi)
+                hi = min(hi, head)
+                lo = min(lo, hi)
+                band = (lo, hi)
+        except Exception:
+            band = None
+
+    if band is not None:
+        lo, hi = band
+        capped = hi > _MAX_IMPACT
+        if capped:                                     # scale into the credible range, keep the shape
+            lo = int(round(lo * _MAX_IMPACT / hi)) if hi > 0 else 0
+            hi = _MAX_IMPACT
+            lo = min(lo, hi)
+        n = int(pop["n_clicks"][u])
+        method = "simulated"
+        conf = "high" if (n >= 20 and not capped) else ("medium" if (n >= 8 and not capped) else "low")
+        to_low, to_high = min(100, s + lo), min(100, s + hi)
+        rng = f"+{lo}" if lo == hi else f"+{lo}–{hi}"
+        explanation = (f"Simulated: taking this step would move your {label} percentile from {s} to "
+                       f"about {to_low}–{to_high} ({rng}), by recomputing the metric with the added "
+                       f"reading against the reference population.")
+    else:
+        gap = max(0, bench - s)
+        mag = min(head, max(gap, 4))
+        lo = max(0, min(head, _MAX_IMPACT, int(round(mag * 0.10))))
+        hi = max(lo, min(head, _MAX_IMPACT, int(round(mag * 0.25))))
+        if hi == 0:
+            hi = min(2, head)
+            lo = min(lo, hi)
+        method, conf = "deficit", "low"
+        to_low, to_high = min(100, s + lo), min(100, s + hi)
+        explanation = (f"Estimated from how far your {label} ({s}) sits below the typical reader "
+                       f"({bench}) — a rough guide; this metric isn't simulated per action yet.")
+
+    return {"low": lo, "high": hi, "method": method, "metric": key, "confidence": conf,
+            "fromScore": s, "toScore": {"low": to_low, "high": to_high},
+            "explanation": explanation}
+
+
+def _attach_impact(item, key, *, score, benchmark, measured, pop=None, u=None):
+    """Attach the RC2.2 dynamic impact estimate to an improvement ``item`` and refresh the backward-compat
+    scalar ``impact`` to the band midpoint (selection/order untouched — only the impact value changes)."""
+    est = _impact_estimate(key, score=score, benchmark=benchmark, measured=measured, pop=pop, u=u)
+    item["impact"] = int(round((est["low"] + est["high"]) / 2))
+    item["impactEstimate"] = est
+    return item
+
+
 def _stable_int(*parts) -> int:
     h = hashlib.md5("|".join(str(p) for p in parts).encode()).hexdigest()
     return int(h[:8], 16)
@@ -1246,10 +1404,14 @@ class Backend:
                 item = {"id": f"imp_{m['key']}", "title": tpl[0], "detail": tpl[1],
                         "metric": m["key"], "impact": tpl[2]}
                 # RC2.1 — bind user-specific evidence from fields already in this report (additive;
-                # selection/order/impact above are unchanged).
+                # selection/order above are unchanged).
                 _attach_evidence(item, m["key"], metric=m, topics=topics, sources=sources,
                                  viewpoint={"left": left, "center": center, "right": right},
                                  attention=attention, blind=blind, measured=True)
+                # RC2.2 — replace the fixed impact with a simulated band (distribution metrics) or a
+                # deficit-band fallback (graph metrics), from the cached model — no new query.
+                _attach_impact(item, m["key"], score=m["score"], benchmark=m.get("benchmark"),
+                               measured=True, pop=corpus.pop, u=u)
                 improvements.append(item)
 
         overall = rep.get("overall") or 0
@@ -1421,6 +1583,10 @@ class Backend:
                                             "right": float(right)},
                                  attention={l: float(attention[l]) for l in labels},
                                  blind=blind, measured=False)
+                # RC2.2 — an estimate has no reads to simulate, so impact uses the deterministic
+                # deficit-band fallback (measured=False, no pop/u).
+                _attach_impact(item, m["key"], score=m["score"], benchmark=m.get("benchmark"),
+                               measured=False)
                 improvements.append(item)
 
         return {

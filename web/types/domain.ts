@@ -103,13 +103,29 @@ export interface EvidenceBasis {
   value: number;
 }
 
+/** RC2.2 — a deterministic estimated impact range (percentile points) that replaces the old fixed +5.
+ *  `method` is "simulated" (the reader's distribution perturbed by the action and re-percentiled) or
+ *  "deficit" (a coarse guide from the score's distance below the typical reader). */
+export interface ImpactEstimate {
+  low: number;
+  high: number;
+  method: "simulated" | "deficit";
+  metric: MetricKey;
+  confidence: "high" | "medium" | "low";
+  fromScore: number;
+  toScore: { low: number; high: number };
+  explanation: string;
+}
+
 export interface Improvement {
   id: string;
   title: string;
   detail: string;
   metric: MetricKey;
-  /** Expected points gained if followed. */
+  /** Backward-compat scalar: the midpoint of `impactEstimate` when present. */
   impact: number;
+  /** RC2.2 — dynamic estimated impact range; optional (absent on older payloads). */
+  impactEstimate?: ImpactEstimate;
   /** RC2.1 — user-specific evidence bound from data already in the report. All optional: absent on
    *  older payloads / when the report lacked grounded data, in which case `detail` stands alone. */
   /** The behaviour that surfaced this recommendation, e.g. "82% of your reading came from Reuters and BBC." */
