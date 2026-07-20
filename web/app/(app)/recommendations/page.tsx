@@ -12,6 +12,7 @@ import {
   useRecommendationFeedback,
 } from "@/hooks/use-data";
 import { useTranslation } from "@/lib/i18n";
+import { track } from "@/lib/analytics";
 import { PageContainer } from "@/components/layout/page-container";
 import { RecommendationCard } from "@/components/recommendations/recommendation-card";
 import { ErrorState, EmptyState } from "@/components/shared/states";
@@ -51,11 +52,20 @@ export default function RecommendationsPage() {
     .filter((r) => (filter === "all" ? true : r.strategy === filter))
     .filter((r) => !dismissed.has(r.article.id) && !persistedIgnored.has(r.article.id));
 
+  // PA1: the reader saw a recommendation feed — the funnel's "Recommendation Viewed" stage. Fires
+  // once when the feed first loads (best-effort).
+  React.useEffect(() => {
+    if (data && data.length) track("recommendations_viewed", { count: data.length });
+  }, [data]);
+
   const handleAction = (articleId: string, action: FeedbackAction) => {
+    track("recommendation_feedback", { action }); // PA1 (best-effort)
     feedback.mutate({ articleId, action });
   };
 
   const handleOpen = (rec: Recommendation) => {
+    // PA1: opening a recommended read — the "Recommendation Accepted" signal (best-effort).
+    track("recommendation_opened", { strategy: rec.strategy, crossCutting: rec.crossCutting });
     // Records reception of a recommended read; the hook refreshes the report so Open-Mindedness
     // (driven by cross-cutting reception) updates automatically.
     openRec.mutate({ articleId: rec.article.id, crossCutting: rec.crossCutting });

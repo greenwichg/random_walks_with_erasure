@@ -4,6 +4,7 @@ import { signIn } from "next-auth/react";
 import { Logo } from "@/components/layout/logo";
 import { Button } from "@/components/ui/button";
 import { useTranslation } from "@/lib/i18n";
+import { track } from "@/lib/analytics";
 
 /**
  * Sign-in page — the only auth entry point for the closed beta (Google OAuth).
@@ -35,6 +36,7 @@ export default function SignInPage() {
               className="mt-6 w-full"
               size="lg"
               onClick={async () => {
+                track("signin_started", { method: "dev" });
                 // redirect:false keeps NextAuth from building an absolute redirect to the server's
                 // own origin (which is `localhost` behind a tunnel and unreachable from the browser).
                 // The CSRF + callback requests are same-origin, so this works over the tunnel; we
@@ -52,7 +54,10 @@ export default function SignInPage() {
             <Button
               className="mt-6 w-full"
               size="lg"
-              onClick={() => signIn("google", { callbackUrl: "/" })}
+              onClick={() => {
+                track("signin_started", { method: "google" });
+                signIn("google", { callbackUrl: "/" });
+              }}
             >
               {t("signin.continueGoogle")}
             </Button>

@@ -9,6 +9,7 @@ import { ScoreRing } from "@/components/shared/score-ring";
 import { SpectrumBar } from "@/components/shared/spectrum-bar";
 import { PENDING_ONBOARDING_KEY } from "@/components/onboarding/onboarding-sync";
 import { useTranslation } from "@/lib/i18n";
+import { track } from "@/lib/analytics";
 import { cn } from "@/lib/utils";
 
 type Step = "welcome" | "pick" | "building" | "estimate";
@@ -44,6 +45,11 @@ export function OnboardingFlow() {
   const [estimate, setEstimate] = React.useState<EstimateHealthReport | null>(null);
   const [error, setError] = React.useState(false);
 
+  // PA1: the visitor entered the onboarding funnel (once per mount, best-effort).
+  React.useEffect(() => {
+    track("onboarding_started", { step: "welcome" });
+  }, []);
+
   React.useEffect(() => {
     let alive = true;
     fetch("/api/outlets")
@@ -67,6 +73,7 @@ export function OnboardingFlow() {
   }, []);
 
   const build = React.useCallback(async (ids: string[]) => {
+    track("onboarding_step_completed", { step: "pick", stepIndex: 2 }); // PA1 (best-effort)
     setError(false);
     setEstimate(null);
     setStep("building");
@@ -342,6 +349,7 @@ function Estimate({
   const takeaway = report.improvements[0];
   // Stash the selection so it survives the sign-in redirect; OnboardingSync persists it post-auth.
   const save = () => {
+    track("source_connected", { outletCount: outletIds.length }); // PA1 funnel event (best-effort)
     try {
       window.localStorage.setItem(PENDING_ONBOARDING_KEY, JSON.stringify({ outlets: outletIds }));
     } catch {

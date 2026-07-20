@@ -5,6 +5,7 @@ import { BookOpen, Check, ExternalLink } from "lucide-react";
 import type { Article } from "@/types/domain";
 import { useRecordRead } from "@/hooks/use-data";
 import { useTranslation } from "@/lib/i18n";
+import { track } from "@/lib/analytics";
 import { cn } from "@/lib/utils";
 
 /**
@@ -57,6 +58,7 @@ export function ReadArticleButton({
               description: article.description,
               openedFrom,
             });
+            track("article_read", { source: openedFrom }); // PA1 activation event (best-effort)
           }
           onOpen?.();
         }

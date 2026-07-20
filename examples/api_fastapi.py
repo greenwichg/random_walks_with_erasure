@@ -45,6 +45,7 @@ import improvement_ranking    # feedback-aware ranking/filtering of improvements
 import recommendation_eval     # deterministic evaluation + attribution of improvements (leaf, RC2.5)
 import obs_metrics             # OBS1: in-process request/latency metrics (dependency-free, observational)
 import error_reporting         # OBS1: vendor-agnostic exception-reporting abstraction (default: logging)
+import product_analytics       # PA1: event taxonomy + funnel/metric/retention maths (pure, deterministic)
 import coach_service          # Coach v2: intent-routed, tool-using coach (RWE_COACH_V2, M4)
 import notification_delivery   # orchestration: build context -> evaluate -> record notifications (N2)
 import ratelimit              # dependency-free token-bucket rate limiter (Private Alpha hardening)
@@ -1009,6 +1010,33 @@ class ClientErrorAckModel(BaseModel):
     ok: bool
 
 
+# PA1 — product analytics. One inbound event; the client always posts a batch (even of one). The
+# authoritative identity/time (userId, serverTs, requestId) are stamped server-side, never trusted
+# from the client, so only the descriptive fields appear here.
+class AnalyticsEventIn(BaseModel):
+    event: str
+    props: Optional[dict] = None
+    anonId: Optional[str] = None
+    sessionId: Optional[str] = None
+    clientTs: Optional[str] = None
+
+
+class AnalyticsBatchIn(BaseModel):
+    events: list[AnalyticsEventIn]
+
+
+class AnalyticsAckModel(BaseModel):
+    ok: bool
+    accepted: int
+    dropped: int
+
+
+class AnalyticsResultModel(BaseModel):
+    """Open-ended container for the internal analytics read-backs (funnel / metrics / retention /
+    counts) — the shapes are defined by :mod:`product_analytics`."""
+    model_config = ConfigDict(extra="allow")
+
+
 class CoachRequest(BaseModel):
     message: str = ""
     user: str | None = None
@@ -1694,6 +1722,83 @@ def client_error(request: Request, req: ClientErrorRequest) -> dict:
                                    digest=_clip(req.digest, 120), stack=_clip(req.stack, 4000),
                                    requestId=_request_id.get())
     return {"ok": True}
+
+
+# ------------------------------------------------------------------ #
+# PA1 — product analytics: the event sink + the internal read-back dashboard. Measurement only;
+# no recommender/report/ranking/lifecycle/eval path reads these, and nothing here changes behavior.
+# ------------------------------------------------------------------ #
+_MAX_EVENTS_PER_BATCH = 50
+
+
+@app.post("/api/events", response_model=AnalyticsAckModel, tags=["meta"],
+          summary="Product-analytics event sink (PA1)", responses=_ERR_RESPONSES)
+def analytics_events(request: Request, batch: AnalyticsBatchIn) -> dict:
+    """PA1 — the sink the web tier's analytics beacon posts to. Each event is validated against the
+    taxonomy allow-list (:mod:`product_analytics`); the **user id is resolved server-side** from the
+    trusted web tier (never client-asserted); the authoritative ``server_ts`` + correlation
+    ``request_id`` are stamped here. Best-effort and additive: unknown events are dropped, the batch is
+    capped, and a storage failure never fails the caller. **No user auth** — anonymous (pre-account)
+    events are exactly what the pre-activation funnel needs."""
+    uid = _real_uid(request)
+    now = datetime.now(timezone.utc).isoformat()
+    rid = _request_id.get()
+    accepted: list[dict] = []
+    dropped = 0
+    for ev in batch.events[:_MAX_EVENTS_PER_BATCH]:
+        norm = product_analytics.normalize(ev.model_dump())
+        if norm is None:
+            dropped += 1
+            continue
+        norm["user_id"] = uid                    # authoritative: from X-IH-User-Id, not the client
+        norm["server_ts"] = now
+        norm["request_id"] = rid
+        accepted.append(norm)
+    dropped += max(0, len(batch.events) - _MAX_EVENTS_PER_BATCH)
+    written = 0
+    if accepted and state.store is not None:
+        try:
+            written = state.store.record_analytics_events(accepted)
+        except Exception as exc:                 # analytics must never break a request
+            error_reporting.report_exception(exc, where="analytics_events", requestId=rid)
+            written = 0
+    obs_metrics.incr("analytics_events_total", written)
+    return {"ok": True, "accepted": written, "dropped": dropped}
+
+
+def _analytics_rows(request: Request) -> list:
+    """Guard + fetch for the internal analytics dashboard: **internal-only** (trusted web tier / an
+    operator with the internal secret), 404 to anyone else — the exact posture of ``/api/metrics``."""
+    if not _trusted(request):
+        raise HTTPException(status_code=404, detail="Not found.")
+    return state.store.list_analytics_events() if state.store is not None else []
+
+
+@app.get("/api/analytics/funnel", response_model=AnalyticsResultModel, tags=["meta"],
+         summary="[internal] Activation funnel + conversions", responses=_ERR_RESPONSES)
+def analytics_funnel(request: Request) -> dict:
+    """The ten-stage activation funnel with per-stage reachers, stage/overall conversion, and the top
+    drop-off. Deterministic (pure :mod:`product_analytics`); internal-only."""
+    return product_analytics.funnel(_analytics_rows(request))
+
+
+@app.get("/api/analytics/metrics", response_model=AnalyticsResultModel, tags=["meta"],
+         summary="[internal] Product metrics (activation, time-to-value, engagement, retention)",
+         responses=_ERR_RESPONSES)
+def analytics_product_metrics(request: Request) -> dict:
+    return product_analytics.product_metrics(_analytics_rows(request))
+
+
+@app.get("/api/analytics/retention", response_model=AnalyticsResultModel, tags=["meta"],
+         summary="[internal] D1/D7 cohort retention", responses=_ERR_RESPONSES)
+def analytics_retention(request: Request) -> dict:
+    return product_analytics.retention(_analytics_rows(request))
+
+
+@app.get("/api/analytics/events", response_model=AnalyticsResultModel, tags=["meta"],
+         summary="[internal] Event counts by name", responses=_ERR_RESPONSES)
+def analytics_event_counts(request: Request) -> dict:
+    return product_analytics.event_counts(_analytics_rows(request))
 
 
 @app.get("/api/report", response_model=HealthReportModel, response_model_exclude_none=True,

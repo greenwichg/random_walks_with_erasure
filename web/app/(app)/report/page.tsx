@@ -1,8 +1,10 @@
 "use client";
 
+import { useEffect } from "react";
 import { Download, Gauge, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { useReport } from "@/hooks/use-data";
+import { track } from "@/lib/analytics";
 import { PageContainer } from "@/components/layout/page-container";
 import { ScoreRing } from "@/components/shared/score-ring";
 import { DeltaBadge } from "@/components/shared/delta-badge";
@@ -26,6 +28,12 @@ import { leanBucket } from "@/lib/political";
 export default function ReportPage() {
   const { data: report, isLoading, isError, refetch } = useReport();
   const { t, formatDate } = useTranslation();
+
+  // PA1: the reader saw their Information Health Report — the funnel's "Health Report Generated"
+  // stage (and "Measured Report" when mode=measured). Best-effort; fires once per report load.
+  useEffect(() => {
+    if (report) track("health_report_viewed", { mode: report.mode, coverage: report.coverage });
+  }, [report]);
 
   // axisConfidence is a MEASURED-only field — narrow on `mode` before reading it so an Estimate report
   // (a signed-in reader below the read threshold) never renders "NaN%".

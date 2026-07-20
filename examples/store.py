@@ -509,6 +509,32 @@ class FeedHealth(Base):
     updated_at: Mapped[datetime] = mapped_column(default=_utcnow)
 
 
+class AnalyticsEvent(Base):
+    """A single product-analytics event (PA1) — the raw material for the activation funnel + metrics.
+
+    **Measurement only.** No recommender, report, ranking, lifecycle, or personalization path reads
+    this table; it is a pseudonymous record of a UI moment (see ``product_analytics.EVENTS``), written
+    by the ``/api/events`` sink and read back only by the internal analytics dashboard. ``user_id`` is
+    resolved server-side from the trusted web tier (never client-asserted); ``anon_id`` carries the
+    anonymous (pre-account) identity so the funnel spans the sign-in boundary. Properties are a small,
+    allow-listed, truncated scalar set (``product_analytics.PROPS``) — no PII, no free-form blob. The
+    ``user_id`` FK is intentionally omitted so an event is never coupled to a user's lifecycle (and an
+    anonymous event has none); isolation identical to :class:`FeedHealth`."""
+
+    __tablename__ = "analytics_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    event: Mapped[str] = mapped_column(String(64), index=True)
+    user_id: Mapped[Optional[int]] = mapped_column(index=True, default=None)  # resolved server-side; nullable (anon)
+    anon_id: Mapped[Optional[str]] = mapped_column(String(64), index=True, default=None)
+    session_id: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+    props: Mapped[Optional[str]] = mapped_column(Text, default=None)          # JSON of the allow-listed props
+    client_ts: Mapped[Optional[str]] = mapped_column(String(64), default=None)  # client ISO (advisory)
+    server_ts: Mapped[str] = mapped_column(String(64), index=True)            # authoritative receive time (ISO)
+    request_id: Mapped[Optional[str]] = mapped_column(String(32), default=None)  # OBS1 correlation id
+    created_at: Mapped[datetime] = mapped_column(default=_utcnow)
+
+
 class Store:
     """A durable store bound to one database URL.
 
@@ -1361,6 +1387,53 @@ class Store:
             if feedback in counts:
                 counts[feedback] = int(n)
         return counts
+
+    # -- product analytics events (PA1) ---------------------------------
+    def record_analytics_events(self, events: "list[dict]") -> int:
+        """Persist a batch of already-normalized analytics events (PA1). Each dict carries
+        ``event`` + optional ``user_id / anon_id / session_id / props(dict) / client_ts /
+        server_ts / request_id`` (the sink stamps the authoritative fields). Returns the count
+        written. Measurement only — no consumer of users/reads/reports/recs reads this table."""
+        if not events:
+            return 0
+        with self.session() as s:
+            for e in events:
+                props = e.get("props")
+                s.add(AnalyticsEvent(
+                    event=e["event"],
+                    user_id=e.get("user_id"),
+                    anon_id=e.get("anon_id"),
+                    session_id=e.get("session_id"),
+                    props=json.dumps(props, default=str) if props else None,
+                    client_ts=e.get("client_ts"),
+                    server_ts=e.get("server_ts") or _utcnow().isoformat(),
+                    request_id=e.get("request_id"),
+                ))
+        return len(events)
+
+    def list_analytics_events(self, *, since: "str | None" = None, limit: int = 100000) -> list:
+        """Analytics events as plain dicts for :mod:`product_analytics` — oldest first, props parsed
+        back to a dict. ``since`` (ISO) bounds by ``server_ts``; ``limit`` caps the scan. Read-only."""
+        with self.session() as s:
+            q = select(AnalyticsEvent).order_by(AnalyticsEvent.id)
+            if since:
+                q = q.where(AnalyticsEvent.server_ts >= since)
+            rows = s.scalars(q.limit(limit)).all()
+            out = []
+            for r in rows:
+                try:
+                    props = json.loads(r.props) if r.props else {}
+                except (ValueError, TypeError):
+                    props = {}
+                out.append({"event": r.event, "userId": r.user_id, "anonId": r.anon_id,
+                            "sessionId": r.session_id, "props": props,
+                            "clientTs": r.client_ts, "serverTs": r.server_ts})
+            return out
+
+    def count_analytics_events(self) -> int:
+        """Total analytics events recorded (a cheap dashboard/health counter)."""
+        with self.session() as s:
+            return int(s.scalar(select(func.count()).select_from(AnalyticsEvent)) or 0)
 
     # -- improvement-recommendation lifecycle ledger (RC2.3) ------------
     def list_improvement_lifecycle(self, user_id: int) -> list:
