@@ -66,17 +66,20 @@ else
     nu="$(env_val NEXTAUTH_URL)"; nu="${nu#*://}"; DOMAIN="${nu%%/*}"   # host from NEXTAUTH_URL
   fi
   DOMAIN="${DOMAIN:-hidden-view.com}"
-  echo "   (domain: $DOMAIN)"
-  # Valid TLS is implied: curl WITHOUT -k fails on an invalid/absent cert (code 000).
-  hcode="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 "https://$DOMAIN" 2>/dev/null || echo 000)"
+  echo "   (domain: $DOMAIN — probing the local Caddy)"
+  # Probe the LOCAL Caddy via --resolve so this works FROM THE BOX: an EC2 instance often can't hairpin to
+  # its own Elastic IP, which would false-FAIL a plain `curl https://$DOMAIN`. Using $DOMAIN for SNI/Host/
+  # cert-name still proves valid TLS (curl WITHOUT -k fails on an invalid/absent cert → code 000). True
+  # off-box reachability (SG/EIP/DNS) should be spot-checked from a laptop separately.
+  hcode="$(curl -sS -o /dev/null -w '%{http_code}' --resolve "$DOMAIN:443:127.0.0.1" --max-time 15 "https://$DOMAIN" 2>/dev/null || echo 000)"
   case "$hcode" in
-    200|301|302|307|308) P "https://$DOMAIN reachable over valid TLS (HTTP $hcode)" ;;
-    000) F "https://$DOMAIN unreachable / invalid certificate (is DNS live + Caddy up? cert issued?)" ;;
+    200|301|302|307|308) P "https://$DOMAIN reachable over valid TLS (HTTP $hcode, local Caddy)" ;;
+    000) F "https://$DOMAIN unreachable / invalid certificate (is Caddy up? cert issued? DNS live for ACME?)" ;;
     *) W "https://$DOMAIN returned HTTP $hcode" ;;
   esac
-  # HTTP must redirect to HTTPS.
-  rcode="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "http://$DOMAIN" 2>/dev/null || echo 000)"
-  rloc="$(curl -sS -o /dev/null -D - --max-time 10 "http://$DOMAIN" 2>/dev/null | tr -d '\r' | awk 'tolower($1)=="location:"{print $2}' | head -1)"
+  # HTTP must redirect to HTTPS (probed locally too).
+  rcode="$(curl -sS -o /dev/null -w '%{http_code}' --resolve "$DOMAIN:80:127.0.0.1" --max-time 10 "http://$DOMAIN" 2>/dev/null || echo 000)"
+  rloc="$(curl -sS -o /dev/null -D - --resolve "$DOMAIN:80:127.0.0.1" --max-time 10 "http://$DOMAIN" 2>/dev/null | tr -d '\r' | awk 'tolower($1)=="location:"{print $2}' | head -1)"
   case "$rcode:$rloc" in
     30[128]:https://*) P "http://$DOMAIN → HTTPS redirect ($rcode)" ;;
     *) W "http://$DOMAIN did not clearly redirect to https (code=$rcode loc=${rloc:-none})" ;;

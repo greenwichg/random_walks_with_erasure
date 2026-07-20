@@ -284,10 +284,14 @@ until docker compose -f deploy/docker-compose.yml exec -T api \
 # 3) Enable recurring local backups (BR1 scheduler profile)
 $COMPOSE --profile scheduler up -d backup-scheduler
 
-# 4) Verify (see §6) — the one-command gate:
+# 4) Verify (see §6) — the two gates:
 set -a; . deploy/.env; set +a
-IH_BASE_URL=http://127.0.0.1:8000 deploy/ops/preflight.sh     # must exit 0
+deploy/ops/preflight.sh          # CONFIG gate: env/secrets/HTTPS/OAuth/DB checks — must exit 0
+deploy/ops/smoke-test.sh         # LIVE gate: containers + engine ready + PA1/OBS1 + public TLS — must exit 0
 ```
+> Do **not** pass `IH_BASE_URL=http://127.0.0.1:8000` to `preflight.sh` on this stack — the engine port is
+> unpublished (only Caddy is exposed), so a host-side probe of `127.0.0.1:8000` would false-FAIL. The live
+> engine/OBS1/PA1 checks are done **inside the container** by `smoke-test.sh` (`docker compose exec`).
 
 **Verification** = §6. **Smoke test** = the Smoke checklist in `docs/BETA_LAUNCH_CHECKLIST.md`
 (sign-in, report, recommendation, mobile).
@@ -304,7 +308,8 @@ $COMPOSE up -d --build
 
 ## 6 · Production verification
 
-Run after every deploy (most is one command — `deploy/ops/preflight.sh` — plus a manual sign-in).
+Run after every deploy: two gates — `deploy/ops/preflight.sh` (config) and `deploy/ops/smoke-test.sh`
+(live, container-based) — plus a manual sign-in.
 
 | Target | Command | Expected |
 |---|---|---|
@@ -313,11 +318,13 @@ Run after every deploy (most is one command — `deploy/ops/preflight.sh` — pl
 | **Authentication** | Sign in with an **allowlisted** Google account → dashboard; then a **non-allowlisted** account → `/signin?error=AccessDenied` invite-only message (BA1) | both behave as expected |
 | **PA1 analytics** | `curl -fsS -H "X-IH-Auth:$RWE_INTERNAL_SECRET" http://127.0.0.1:8000/api/analytics/funnel` (via the api container/localhost); and `…/api/analytics/funnel` **without** the header | 200 with reachers > 0 after the smoke session; **404** unauthenticated (internal-only) |
 | **OBS1 metrics** | `curl -fsS -H "X-IH-Auth:$RWE_INTERNAL_SECRET" …/api/metrics` | `request_ms` / `report_generate_ms` / `db_query_ms` timers present |
-| **Backups** | `deploy/ops/backup.sh` then `deploy/ops/verify-restore.sh`; `aws s3 ls s3://acme-ih-backups/backups/` | backup written + `verify-restore` exit 0 + object in S3 |
-| **DB integrity** | `docker compose … run --rm backup python examples/db_backup.py status` | `quickCheck ok` |
+| **Backups (container-based)** | `deploy/ops/backup-offhost.sh --backup-now`; `aws s3 ls s3://<bucket>/backups/` | backup + integrity `quickCheck ok` + object in S3 |
+| **DB integrity** | `docker compose … --profile backup run --rm backup python examples/db_backup.py status` | `quickCheck ok` |
 
-`preflight.sh` bundles the env/secret/HTTPS/OAuth/DB/backup/monitoring checks and the live health +
-analytics-gating probes — treat **its exit 0** as the go signal.
+Two go-signals: **`preflight.sh` exit 0** (config — env/secret/HTTPS/OAuth/DB) **and `smoke-test.sh` exit 0**
+(live — containers, engine readiness, PA1 gating, OBS1 metrics, public TLS + redirect, all via the
+container). Do **not** set `IH_BASE_URL` for `preflight.sh` here — the engine port is unpublished, so a
+host-side `127.0.0.1:8000` probe would false-FAIL; `smoke-test.sh` does the live checks correctly.
 
 ---
 
@@ -325,9 +332,12 @@ analytics-gating probes — treat **its exit 0** as the go signal.
 
 **Deploy a new version**
 ```bash
+# Prefer the wrapper (checkout + rebuild + readiness gate + smoke test):
+deploy/ops/update.sh <new-tag>
+# Manual equivalent:
 cd /opt/ih && git fetch --tags && git checkout <new-tag>
 $COMPOSE up -d --build           # rebuilds changed images; ingest→api→web→caddy
-# gate on readiness (see §5 step 2), then: IH_BASE_URL=http://127.0.0.1:8000 deploy/ops/preflight.sh
+# gate on readiness (see §5 step 2), then: deploy/ops/preflight.sh && deploy/ops/smoke-test.sh
 ```
 
 **Restart services**

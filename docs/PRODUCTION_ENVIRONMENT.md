@@ -66,8 +66,8 @@ access-controlled box.
 ### Monitoring
 | Variable | Value | Used by |
 |---|---|---|
-| `IH_BASE_URL` | `http://127.0.0.1:8000` | `deploy/ops/healthcheck.sh` / `preflight.sh` engine probe. |
-| `ALERT_WEBHOOK` | Slack/Discord webhook, or an SNS wrapper | `healthcheck.sh` alert destination. |
+| `IH_BASE_URL` | `http://127.0.0.1:8000` | **Non-Docker path only.** On the EC2 stack the engine port is unpublished, so `preflight.sh`'s live probes can't reach it — **leave `IH_BASE_URL` unset** and let `smoke-test.sh` (in-container) do the live checks. |
+| `ALERT_WEBHOOK` | Slack/Discord webhook, or an SNS wrapper | `deploy/ops/monitor.sh` (5-min cron) + `backup-offhost.sh` alert destination. |
 
 ## Optional / must-NOT-set
 - `BETA_ALLOWLIST_FILE` — a file re-read per sign-in (add testers with no restart); mount under the data volume.
@@ -87,7 +87,9 @@ access-controlled box.
 
 ```bash
 set -a; . deploy/.env; set +a
-IH_BASE_URL=http://127.0.0.1:8000 deploy/ops/preflight.sh   # env + secrets + HTTPS + OAuth + DB + backup + monitoring
-deploy/ops/smoke-test.sh                                     # the RUNNING stack, end-to-end
+deploy/ops/preflight.sh     # CONFIG gate: env + secrets + HTTPS + OAuth + DB (no IH_BASE_URL — see below)
+deploy/ops/smoke-test.sh    # LIVE gate: the RUNNING stack end-to-end, probed inside the container
 ```
-Both must exit 0 before go-live. See `docs/WAVE0_GO_LIVE_CHECKLIST.md`.
+Both must exit 0 before go-live. **Do not set `IH_BASE_URL`** for `preflight.sh` on the EC2 stack — the
+engine port is unpublished, so a host-side `127.0.0.1:8000` probe would false-FAIL; `smoke-test.sh` does
+the live engine/OBS1/PA1 checks correctly via `docker compose exec`. See `docs/WAVE0_GO_LIVE_CHECKLIST.md`.

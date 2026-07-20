@@ -52,7 +52,7 @@ Engine + web (in `deploy/.env`, prod-hardening lines uncommented in the override
 
 ## F · Verification (guide §6) — the go signals are `smoke-test.sh` + `preflight.sh` exit 0
 - [ ] **`deploy/ops/smoke-test.sh`** → **0 FAIL** (containers up; engine live/ready over the internal Docker network; PA1 gated 200-with-secret / 404-without; OBS1 metrics; public HTTPS + valid TLS + HTTP→HTTPS redirect).
-- [ ] `IH_BASE_URL=http://127.0.0.1:8000 deploy/ops/preflight.sh` → **0 FAIL, exit 0**.
+- [ ] `deploy/ops/preflight.sh` (config gate — env/secrets/HTTPS/OAuth/DB) → **0 FAIL, exit 0**. Do **not** set `IH_BASE_URL` (the engine port is unpublished; live checks are `smoke-test.sh`'s job, done in-container).
 - [ ] **Application:** load `https://hidden-view.com` → onboarding/sign-in renders; charts fit on mobile.
 - [ ] **Authentication (allow):** sign in with an **allowlisted** Google account → dashboard.
 - [ ] **Authentication (deny):** sign in with an **off-list** account → `/signin?error=AccessDenied` invite-only message; log shows `{"event":"beta_access_denied",…}`.

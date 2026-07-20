@@ -46,9 +46,10 @@ fi
 cat <<EOF
 
 Next steps:
-  • Run the full production preflight (env + secrets + live probes):
+  • Run the production config preflight (env + secrets + HTTPS + OAuth + DB):
         set -a; . $ENV_FILE; set +a
-        IH_BASE_URL=http://127.0.0.1:8000 deploy/ops/preflight.sh
+        deploy/ops/preflight.sh          # do NOT set IH_BASE_URL — the engine port is unpublished;
+                                         # smoke-test.sh (already run above) does the live checks in-container
   • Take + verify + ship a backup off-host (container-based; no host Python):
         deploy/ops/backup-offhost.sh --backup-now
   • Confirm the health monitor + off-host backup crons are installed (by bootstrap-ec2.sh):
