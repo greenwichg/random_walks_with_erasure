@@ -38,6 +38,11 @@ access-controlled box.
 | `RWE_INTERNAL_SECRET` | `openssl rand -base64 32` | The only thing that authenticates web→engine calls. **Identical** on `api` and `web`. |
 | `RWE_DB_URL` | `sqlite:////app/data/ih_beta.db` | Persistent path on the bind-mounted volume. Prod rejects in-memory / `/tmp`. |
 
+### Engine feature flags (optional)
+| Variable | Default | Notes |
+|---|---|---|
+| `RWE_COACH_V2` | `0` (off) | `1` routes a **measured** reader's AI Coach through the v2 intent pipeline (trigger-ladder greeting, weekly recap, intent-routed replies). Off is byte-identical to v1 (pinned by `test_coach_v1_contract.py`). Engine-side only — wired onto the `api` service in `docker-compose.aws.yml`. Only engages once an account has **≥ 5 reads** (`ESTIMATE_MIN_READS`); below that, and with no seeded demo account, the coach serves v1. **Production runs with `RWE_COACH_V2=1`.** |
+
 ### Web (Next.js `web`) — validated at startup (`web/instrumentation.ts`)
 | Variable | Value | Notes |
 |---|---|---|
@@ -63,11 +68,37 @@ access-controlled box.
 > and a 5-minute health-monitor cron (`ih-monitor` → `monitor.sh`, alerting to `ALERT_WEBHOOK`). Both read
 > this file. Fill `IH_S3_BUCKET` and `ALERT_WEBHOOK` or they no-op.
 
-### Monitoring
+### Monitoring & alerting
 | Variable | Value | Used by |
 |---|---|---|
 | `IH_BASE_URL` | `http://127.0.0.1:8000` | **Non-Docker path only.** On the EC2 stack the engine port is unpublished, so `preflight.sh`'s live probes can't reach it — **leave `IH_BASE_URL` unset** and let `smoke-test.sh` (in-container) do the live checks. |
-| `ALERT_WEBHOOK` | Slack/Discord webhook, or an SNS wrapper | `deploy/ops/monitor.sh` (5-min cron) + `backup-offhost.sh` alert destination. |
+| `ALERT_WEBHOOK` | Slack / Discord / other webhook | Destination for `deploy/ops/monitor.sh` (5-min health cron) + `backup-offhost.sh` failures. **Unset = log-only** (see Alerting below). |
+
+#### Alerting
+
+`deploy/ops/monitor.sh` (every 5 min) and `backup-offhost.sh` (hourly) call one `alert()` helper
+(`deploy/ops/_compose.sh`). Its contract:
+
+- **`ALERT_WEBHOOK` unset →** the problem is written to the cron log **only** (`/var/log/ih-monitor.log`,
+  `/var/log/ih-backup.log`). The stack never depends on an alert channel — a missing webhook is safe.
+- **`ALERT_WEBHOOK` set →** one concise JSON POST per problem, domain-prefixed and JSON-escaped, carrying
+  **both** `text` (Slack, Mattermost, Google Chat) and `content` (Discord) — so a **single** URL works with
+  either service, no format flag. A failed POST is itself logged and never breaks the cron.
+
+Configure by pasting one webhook URL into `deploy/.env`:
+
+| Service | How to get the URL | Paste into `deploy/.env` |
+|---|---|---|
+| **Slack** | Workspace → *Incoming Webhooks* app → *Add to Slack* → pick a channel → copy the `https://hooks.slack.com/services/…` URL | `ALERT_WEBHOOK=https://hooks.slack.com/services/T…/B…/…` |
+| **Discord** | Server → *Edit Channel* → *Integrations* → *Webhooks* → *New Webhook* → *Copy Webhook URL* | `ALERT_WEBHOOK=https://discord.com/api/webhooks/…/…` |
+| **Other** | Any endpoint accepting `{"text":…}` or `{"content":…}` (e.g. an SNS/Lambda or PagerDuty proxy) | `ALERT_WEBHOOK=https://…` |
+
+No redeploy is needed — the crons read `deploy/.env` each run. **Live-test** it end-to-end:
+
+```bash
+cd /opt/ih && source deploy/ops/_compose.sh && alert "test alert from hidden-view.com $(date -u +%FT%TZ)"
+# → the message appears in your Slack/Discord channel; `alert:` on stderr means the POST failed (check URL/egress).
+```
 
 ## Optional / must-NOT-set
 - `BETA_ALLOWLIST_FILE` — a file re-read per sign-in (add testers with no restart); mount under the data volume.

@@ -74,16 +74,31 @@ wait_ready() {
   done
 }
 
-# Send an alert to ALERT_WEBHOOK (Slack/Discord-compatible {"text":…}) if it is configured; always log to
-# stderr. Used by monitor.sh and backup-offhost.sh so unattended failures reach a human.
+# JSON-escape a string for safe embedding in a webhook payload. Pure bash — the EC2 host has no python,
+# and an alert message can contain a container name, a quoted path, or a newline; an unescaped one would
+# produce invalid JSON and the POST would silently fail. Handles backslash, double-quote, CR, LF, tab.
+_json_escape() {
+  local s="$1"
+  s="${s//\\/\\\\}"; s="${s//\"/\\\"}"; s="${s//$'\r'/\\r}"; s="${s//$'\n'/\\n}"; s="${s//$'\t'/\\t}"
+  printf '%s' "$s"
+}
+
+# Send an alert to ALERT_WEBHOOK if it is configured; ALWAYS log to stderr first. When ALERT_WEBHOOK is
+# UNSET the only effect is the stderr log (unchanged behavior) — the stack never depends on an alert
+# channel. When SET, POST a concise JSON message carrying BOTH "text" (Slack, Mattermost, Google Chat) and
+# "content" (Discord), so one ALERT_WEBHOOK works with either service without a format flag. The message is
+# prefixed with the app domain (from deploy/.env) and JSON-escaped. Used by monitor.sh (5-min health cron)
+# and backup-offhost.sh so unattended failures reach a human. See docs/PRODUCTION_ENVIRONMENT.md → Alerting.
 alert() {
-  local msg="$1" hook
+  local msg="$1" hook domain esc
   echo "ALERT: $msg" >&2
   hook="$(env_val ALERT_WEBHOOK)"
-  [ -n "$hook" ] || return 0
+  [ -n "$hook" ] || return 0                      # unset → log-only (documented default)
+  domain="$(env_val APP_DOMAIN)"; domain="${domain:-hidden-view.com}"
+  esc="$(_json_escape "[Information Health · ${domain}] ${msg}")"
   curl -fsS -m 10 -X POST -H 'content-type: application/json' \
-    -d "{\"text\":\"[Information Health · hidden-view.com] $msg\"}" "$hook" >/dev/null 2>&1 \
-    || echo "alert: webhook POST to ALERT_WEBHOOK failed" >&2
+    -d "{\"text\":\"${esc}\",\"content\":\"${esc}\"}" "$hook" >/dev/null 2>&1 \
+    || echo "alert: webhook POST to ALERT_WEBHOOK failed (check the URL / egress)" >&2
 }
 
 # Reboot-safety guard against the "dedicated EBS data volume not mounted yet" disaster: if the operator

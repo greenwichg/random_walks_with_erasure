@@ -1,5 +1,13 @@
 # AWS EC2 Deployment Guide — Information Health (Wave 0 closed beta, 5–150 users)
 
+> ✅ **DEPLOYED — Wave 0 is live on `hidden-view.com` (2026-07-20).** This guide is the "why". The
+> **as-built** record is [`WAVE0_DEPLOYMENT_CLOSEOUT.md`](WAVE0_DEPLOYMENT_CLOSEOUT.md) (architecture, AWS
+> resources, runtime topology, security, DR, GA roadmap); the execution log is
+> [`WAVE0_PRODUCTION_DEPLOYMENT_REPORT.md`](WAVE0_PRODUCTION_DEPLOYMENT_REPORT.md) (validation + fixes).
+> Post-deploy hardening already folded into the repo artifacts: the web→engine sign-in auth header,
+> `RWE_COACH_V2` wired onto the `api` service, the Caddy admin-API healthcheck, and full `ALERT_WEBHOOK`
+> (Slack/Discord) support.
+
 Senior-DevOps guide to running this project on a single AWS EC2 instance for the closed beta. It reuses
 the repo's existing artifacts — `deploy/docker-compose.yml`, `deploy/Dockerfile.{api,web}`, the
 `deploy/ops/*` scripts (`preflight.sh`, `backup.sh`, `verify-restore.sh`, `healthcheck.sh`), the OBS1

@@ -1,5 +1,10 @@
 # Wave 0 Go-Live Checklist — AWS EC2 (first 5 users)
 
+> ✅ **This checklist was executed end-to-end on 2026-07-20 — all gates green, `hidden-view.com` live.**
+> Results: [`WAVE0_PRODUCTION_DEPLOYMENT_REPORT.md`](WAVE0_PRODUCTION_DEPLOYMENT_REPORT.md). As-built
+> system of record: [`WAVE0_DEPLOYMENT_CLOSEOUT.md`](WAVE0_DEPLOYMENT_CLOSEOUT.md). Keep this checklist
+> for the next environment rebuild.
+
 The exact, sequential checklist to run **before inviting the first five beta users**, on the AWS EC2
 deployment. Follow top-to-bottom; do not send invites until the final **GO gate** is all-green. Grounded
 in `docs/AWS_EC2_DEPLOYMENT_GUIDE.md` (§ references below), the `deploy/ops/*` scripts, and the BA1/PA1/

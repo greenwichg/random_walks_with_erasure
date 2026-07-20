@@ -41,7 +41,13 @@ services:
     depends_on:
       - web
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:80"]
+      # Probe Caddy's admin API (localhost:2019, enabled by default) — a GET of /config/ returns 200 once
+      # the process is up and its config is loaded. This is a true liveness signal that changes NO serving
+      # behavior. The previous probe (`wget --spider http://127.0.0.1:80`) false-reported "unhealthy":
+      # port 80 issues the 80→443 redirect, which busybox wget follows to the public HTTPS URL and cannot
+      # complete from inside the container (the instance can't hairpin to its own Elastic IP). Caddy was
+      # serving fine the whole time — only the health status was wrong.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:2019/config/"]
       interval: 30s
       timeout: 5s
       retries: 5

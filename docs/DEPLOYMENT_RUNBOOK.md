@@ -1,5 +1,12 @@
 # Deployment Runbook — Wave 0 (AWS EC2, hidden-view.com)
 
+> ✅ **Executed successfully — Wave 0 live on `hidden-view.com` (2026-07-20).** As-built system of record:
+> [`WAVE0_DEPLOYMENT_CLOSEOUT.md`](WAVE0_DEPLOYMENT_CLOSEOUT.md). Validation + fixes:
+> [`WAVE0_PRODUCTION_DEPLOYMENT_REPORT.md`](WAVE0_PRODUCTION_DEPLOYMENT_REPORT.md). All ten verification
+> phases (provision → bootstrap → env → deploy → HTTPS → OAuth → backup → monitoring → reboot → restore)
+> passed. Alerting: set `ALERT_WEBHOOK` in `deploy/.env` to turn health/backup failures into Slack/Discord
+> messages (unset = log-only) — see `docs/PRODUCTION_ENVIRONMENT.md` → Alerting.
+
 The operational runbook for the closed beta: the exact commands to stand up, update, roll back, restart,
 restore, and **rebuild from scratch**. Everything is script-driven and **idempotent** — safe to re-run.
 This is the "how"; `docs/AWS_EC2_DEPLOYMENT_GUIDE.md` is the "why" (architecture + AWS resources).
