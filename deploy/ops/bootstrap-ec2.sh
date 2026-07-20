@@ -69,6 +69,9 @@ else
 fi
 
 step "Container log rotation (/etc/docker/daemon.json)"
+# Caps container log growth (json-file max-size/max-file) so a long-running beta can't fill the 30 GiB
+# root volume. deploy/host/daemon.json must be PURE Docker config — no "//" comment keys, or dockerd
+# refuses to start ("directives don't match any configuration option"). Alternative: log-driver=awslogs.
 SAMPLE="deploy/host/daemon.json"
 TARGET="/etc/docker/daemon.json"
 if [ ! -f "$TARGET" ]; then

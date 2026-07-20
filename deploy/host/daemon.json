@@ -1,5 +1,4 @@
 {
-  "//": "Docker daemon config for the EC2 host. DEPLOYMENT-ONLY. Caps container log growth so a long-running beta cannot fill the 30 GiB root volume. Installed to /etc/docker/daemon.json by deploy/ops/bootstrap-ec2.sh (which restarts Docker only if the file changed). Alternative: switch log-driver to awslogs to ship container logs to CloudWatch Logs instead.",
   "log-driver": "json-file",
   "log-opts": {
     "max-size": "20m",
