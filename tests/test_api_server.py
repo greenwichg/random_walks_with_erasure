@@ -265,6 +265,109 @@ def test_estimate_improvements_carry_evidence_without_false_concentration(backen
     _assert_json_roundtrips(est)
 
 
+# --------------------------------------------------------------------------- #
+# RC2.1.1 — evidence honesty fixes (mode-aware wording, ties, rounding, benefit)
+# --------------------------------------------------------------------------- #
+# Phrases that assert the reader has ALREADY read something — forbidden in estimate mode (0 reads).
+_READING_PHRASES = ("you've read", "your reading", "your political reading", "of your reading")
+
+
+def _ev(key, *, measured, metric=None, topics=None, sources=None, viewpoint=None,
+        attention=None, blind=None):
+    """Call the binder directly with crafted, fully-controlled inputs (F2/F4/F5 unit coverage)."""
+    return api_server._improvement_evidence(
+        key, metric=metric or {"score": 30, "benchmark": 50}, topics=topics or [],
+        sources=sources or [], viewpoint=viewpoint or {}, attention=attention or {},
+        blind=blind or [], measured=measured)
+
+
+def test_estimate_wording_never_implies_reading(backend):
+    """F1: no estimate-mode trigger or evidence may claim the reader has already read anything."""
+    est = backend.estimate([o["id"] for o in backend.outlets()[:6]])
+    assert est["coverage"]["reads"] == 0                       # a genuine zero-read estimate
+    for imp in est["improvements"]:
+        blob = f"{imp['trigger']} {imp['evidence']}".lower()
+        for phrase in _READING_PHRASES:
+            assert phrase not in blob, f"{imp['metric']} leaked reading-language: {blob!r}"
+
+
+def test_measured_wording_may_describe_reading_and_never_uses_outlet_framing(backend, user):
+    """F1 (converse): the measured path may say 'your reading' and must never borrow the estimate's
+    'outlets you picked' framing."""
+    r = backend.report(user)
+    for imp in r["improvements"]:
+        blob = f"{imp['trigger']} {imp['evidence']}".lower()
+        assert "outlets you picked" not in blob and "based on the outlets" not in blob
+    # the demo reader's diet is concentrated, so at least one card does describe real reading
+    assert any(p in f"{imp['trigger']} {imp['evidence']}".lower()
+               for imp in r["improvements"] for p in _READING_PHRASES)
+
+
+def test_reporting_ratio_estimate_wording(backend):
+    """F3: reportingRatio evidence must not presume reading in estimate mode."""
+    est = api_server._improvement_evidence(
+        "reportingRatio", metric={"score": 40, "benchmark": 50}, topics=[], sources=[],
+        viewpoint={}, attention={}, blind=[], measured=False)
+    trigger, evidence = est[0], est[1]
+    assert "outlets you picked" in evidence
+    for phrase in _READING_PHRASES:
+        assert phrase not in f"{trigger} {evidence}".lower()
+
+
+def test_viewpoint_left_right_tie_is_neutral():
+    """F2: on an exact left==right tie, wording is neutral and the action never names a single side."""
+    trigger, evidence, action, benefit, _ = _ev(
+        "viewpointBalance", measured=True, viewpoint={"left": 0.4, "center": 0.2, "right": 0.4})
+    assert "leans" not in evidence.lower()                     # no false lean claim
+    assert "left-leaning" not in action.lower() and "right-leaning" not in action.lower()
+    assert "evenly split" in evidence.lower() and "cross-cutting" in action.lower()
+
+
+def test_trigger_percentage_equals_sum_of_displayed_parts():
+    """F4: the trigger total is the sum of the rounded parts shown in the evidence, so they always agree
+    on screen (0.474 + 0.474 → 47 + 47 = 94, not round(94.8)=95)."""
+    trigger, evidence, *_ = _ev(
+        "sourceDiversity", measured=True,
+        sources=[{"source": "A", "share": 0.474}, {"source": "B", "share": 0.474}])
+    assert trigger.startswith("94%")
+    assert "A (47%)" in evidence and "B (47%)" in evidence
+    # emotionalBalance sums the same way
+    trg, ev, *_ = _ev("emotionalBalance", measured=True,
+                      attention={"fear": 0.204, "outrage": 0.204, "analysis": 0.1})
+    assert trg.startswith("40%") and "Fear 20%" in ev and "outrage 20%" in ev
+
+
+def test_benefit_wording_is_non_guaranteeing(backend, user):
+    """F5: expectedBenefit must not assert a guaranteed effect; it uses 'Can improve/broaden …'."""
+    for report in (backend.report(user),
+                   backend.estimate([o["id"] for o in backend.outlets()[:6]])):
+        for imp in report["improvements"]:
+            b = imp["expectedBenefit"]
+            assert b.startswith("Can "), b
+            assert not any(b.startswith(v) for v in ("Broadens", "Improves", "Raises",
+                                                     "Lifts", "Loosens"))
+
+
+def test_estimate_evidence_basis_still_traceable(backend):
+    """Basis integrity survives the wording changes: every estimate basis value equals the exact number
+    in the report field it names (viewpoint/attention/topics/metric)."""
+    est = backend.estimate([o["id"] for o in backend.outlets()[:6]])
+    vp, att = est["viewpoint"], est["attention"]
+    topic_share = {t["topic"]: t["share"] for t in est["topics"]}
+    score_by_key = {m["key"]: m["score"] for m in est["metrics"]}
+    for imp in est["improvements"]:
+        for b in imp["evidenceBasis"]:
+            f, label, val = b["field"], b["label"], b["value"]
+            if f == "viewpoint":
+                assert vp[label] == pytest.approx(val)
+            elif f == "attention":
+                assert att[label] == pytest.approx(val)
+            elif f == "topics":
+                assert topic_share.get(label) == pytest.approx(val)
+            elif f == "metric.score":
+                assert score_by_key[imp["metric"]] == pytest.approx(val)
+
+
 def test_unavailable_metric_contract():
     """The empty-state card the UI renders when a metric cannot be measured yet. It is an explicit,
     truthful signal — available False + a reason + the activity threshold — never a fabricated score,

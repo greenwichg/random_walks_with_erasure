@@ -241,7 +241,7 @@ export const REPORT: MeasuredHealthReport = {
       trigger: "Your political reading is 64% left, 22% center, 14% right.",
       evidence: "Your reading leans left; the other side is thin.",
       suggestedAction: "Adding a couple of right-leaning reads would balance your viewpoints.",
-      expectedBenefit: "Improves your Viewpoint Balance.",
+      expectedBenefit: "Can improve your Viewpoint Balance.",
       evidenceBasis: [
         { field: "viewpoint", label: "left", value: 0.64 },
         { field: "viewpoint", label: "center", value: 0.22 },
@@ -257,7 +257,7 @@ export const REPORT: MeasuredHealthReport = {
       trigger: "33% of your reading leans on fear and outrage.",
       evidence: "Fear 19% and outrage 14%; analysis is 21%.",
       suggestedAction: "Swapping one charged read a day for calm analysis raises the balance.",
-      expectedBenefit: "Raises your Emotional Balance.",
+      expectedBenefit: "Can improve your Emotional Balance.",
       evidenceBasis: [
         { field: "attention", label: "fear", value: 0.19 },
         { field: "attention", label: "outrage", value: 0.14 },
@@ -273,7 +273,7 @@ export const REPORT: MeasuredHealthReport = {
       trigger: "72% of your reading came from Reuters and BBC.",
       evidence: "Reuters (41%) and BBC (31%) account for most of your reading.",
       suggestedAction: "Reading from an outlet beyond Reuters and BBC would widen your sources.",
-      expectedBenefit: "Broadens your Source Diversity.",
+      expectedBenefit: "Can broaden your Source Diversity.",
       evidenceBasis: [
         { field: "sources", label: "Reuters", value: 0.41 },
         { field: "sources", label: "BBC", value: 0.31 },

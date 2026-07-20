@@ -135,19 +135,26 @@ def _improvement_evidence(key, *, metric, topics, sources, viewpoint, attention,
     field passed in (the same ``topics``/``sources``/``viewpoint``/``attention``/``blind`` that go into
     the payload, and the metric's own ``score``/``benchmark``), and ``basis`` records exactly which
     field fed each claim. No value is invented — in particular no alternate outlet the reader hasn't
-    used is ever named (the catalog isn't in the report). The concrete "X% of your reading came from …"
-    claim is made only for a *measured* report, where the source shares are real; an estimate's
-    equal-weighted source shares are never dressed up as a reading mix. No impact is estimated here."""
+    used is ever named (the catalog isn't in the report).
+
+    **Mode-aware wording (RC2.1.1):** a *measured* report may describe the reader's actual reading; an
+    *estimate* is built from the CHARACTER of the chosen outlets with **zero reads** (see
+    :meth:`Backend.estimate`), so estimate wording never says "you've read"/"your reading" — it speaks
+    to "the outlets you picked", mirroring the estimate's own blind-spot note. Displayed percentages are
+    derived from the same rounded parts the evidence shows (so a trigger total always equals the sum of
+    the parts on screen), and benefits use non-guaranteeing "Can improve/broaden …" wording — no impact
+    is estimated here."""
     label = _METRIC_LABEL.get(key, _prettify(key))
     score = metric.get("score")
     benchmark = metric.get("benchmark")
 
-    def _score_fallback(observation):
+    def _score_fallback(obs_measured, obs_estimate=None):
         """Always-grounded evidence from the metric's own score vs the typical reader — used when the
         distribution this metric would quote isn't meaningfully present (a raw ratio not on the report,
-        or a low-political reader). The comparison is honest: the selection surfaces a reader's *lowest*
-        metrics, which can still sit at or above the median, so it never claims 'below typical' unless
-        the score truly is below the benchmark (that false claim is the bug this guards)."""
+        or a low-political reader). The score-vs-benchmark trigger is a *score* statement, not a reading
+        claim, so it is honest in both modes; the ``obs_*`` observation is chosen by mode. The comparison
+        never claims 'below typical' unless the score truly is below the benchmark (the selection
+        surfaces a reader's *lowest* metrics, which can still sit at or above the median)."""
         b = [{"field": "metric.score", "label": label, "value": float(score)}]
         trig = f"Your {label} is {score}"
         if benchmark is not None:
@@ -160,17 +167,19 @@ def _improvement_evidence(key, *, metric, topics, sources, viewpoint, attention,
                 trig += f", above the typical reader's {benchmark} but still among your lowest metrics."
         else:
             trig += "."
-        return trig, observation, b
+        obs = obs_measured if measured else (obs_estimate or obs_measured)
+        return trig, obs, b
 
     if key == "sourceDiversity":
         if measured and sources:
             top = sources[:2]
-            share = sum(float(s["share"]) for s in top)
-            names = _join_names([s["source"] for s in top])
-            labeled = _join_names([f"{s['source']} ({_pct_whole(s['share'])}%)" for s in top])
+            pairs = [(str(s["source"]), _pct_whole(s["share"])) for s in top]
+            names = _join_names([p[0] for p in pairs])
+            labeled = _join_names([f"{p[0]} ({p[1]}%)" for p in pairs])
             basis = [{"field": "sources", "label": str(s["source"]), "value": float(s["share"])}
                      for s in top]
-            trigger = f"{_pct_whole(share)}% of your reading came from {names}."
+            share_pct = sum(p[1] for p in pairs)            # sum the DISPLAYED parts so totals agree
+            trigger = f"{share_pct}% of your reading came from {names}."
             evidence = f"{labeled} account for most of your reading."
             action = f"Reading from an outlet beyond {names} would widen your sources."
         elif sources:
@@ -181,9 +190,10 @@ def _improvement_evidence(key, *, metric, topics, sources, viewpoint, attention,
             action = "Add a couple of outlets outside your usual set."
         else:
             trigger, evidence, basis = _score_fallback(
-                "This tracks how many different outlets your reading draws on.")
+                "This tracks how many different outlets your reading draws on.",
+                "This tracks how many different outlets your chosen sources span.")
             action = "Broaden beyond your top outlets."
-        return trigger, evidence, action, f"Broadens your {label}.", basis
+        return trigger, evidence, action, f"Can broaden your {label}.", basis
 
     if key == "topicDiversity":
         basis = []
@@ -192,20 +202,33 @@ def _improvement_evidence(key, *, metric, topics, sources, viewpoint, attention,
             top = topics[:2]
             basis += [{"field": "topics", "label": str(t["topic"]), "value": float(t["share"])}
                       for t in top]
-            labeled = _join_names([f"{_pct_whole(t['share'])}% {t['topic']}" for t in top])
-            trigger = f"You've read {labeled}."
+            pairs = [(str(t["topic"]), _pct_whole(t["share"])) for t in top]
+            if measured:
+                trigger = f"You've read {_join_names([f'{p[1]}% {p[0]}' for p in pairs])}."
+            else:
+                if len(pairs) == 1:
+                    body = f"about {pairs[0][1]}% of the available content is {pairs[0][0]}"
+                else:
+                    body = (f"about {pairs[0][1]}% of the available content is {pairs[0][0]} "
+                            f"and {pairs[1][1]}% is {pairs[1][0]}")
+                trigger = f"Based on the outlets you picked, {body}."
         under = [str(b["topic"]) for b in (blind or [])][:2]
         if under:
             basis += [{"field": "blindSpots", "label": str(b["topic"]), "value": float(b["gap"])}
                       for b in (blind or [])[:2]]
-            evidence = f"{_join_names(under)} {'is' if len(under) == 1 else 'are'} underrepresented in your reading."
+            verb = ("underrepresented in your reading" if measured
+                    else "lightly covered by the outlets you picked")
+            evidence = f"{_join_names(under)} {'is' if len(under) == 1 else 'are'} {verb}."
             action = f"Reading a {under[0]} piece would broaden your topics."
         else:
-            evidence = "This tracks how many different subjects your reading spans."
+            evidence = ("This tracks how many different subjects your reading spans." if measured
+                        else "This reflects the range of subjects across the outlets you picked.")
             action = "Deliberately read an unfamiliar subject."
         if trigger is None:
-            trigger, evidence, basis = _score_fallback(evidence)
-        return trigger, evidence, action, f"Broadens your {label}.", basis
+            trigger, evidence, basis = _score_fallback(
+                "This tracks how many different subjects your reading spans.",
+                "This reflects the range of subjects across the outlets you picked.")
+        return trigger, evidence, action, f"Can broaden your {label}.", basis
 
     if key in ("viewpointBalance", "echoChamber"):
         vp = viewpoint or {}
@@ -213,22 +236,31 @@ def _improvement_evidence(key, *, metric, topics, sources, viewpoint, attention,
         if (l + c + r) > 0:
             basis = [{"field": "viewpoint", "label": side, "value": val}
                      for side, val in (("left", l), ("center", c), ("right", r))]
-            trigger = f"Your political reading is {_pct_whole(l)}% left, {_pct_whole(c)}% center, {_pct_whole(r)}% right."
-            weak = "right" if r <= l else "left"
+            lp, cp, rp = _pct_whole(l), _pct_whole(c), _pct_whole(r)
+            subject = "Your political reading is" if measured else "The outlets you picked lean"
+            trigger = f"{subject} {lp}% left, {cp}% center, {rp}% right."
             if key == "viewpointBalance":
-                evidence = f"Your reading leans {'left' if l > r else 'right'}; the other side is thin."
-                action = f"Adding a couple of {weak}-leaning reads would balance your viewpoints."
-                benefit = f"Improves your {label}."
+                if l == r:                              # neutral, non-contradictory tie wording
+                    evidence = ("Your left and right reading are evenly split." if measured
+                                else "The outlets you picked are evenly split between left and right.")
+                    action = "Adding cross-cutting reads would strengthen your viewpoint balance."
+                else:
+                    lean, weak = ("left", "right") if l > r else ("right", "left")
+                    who = "Your reading leans" if measured else "The outlets you picked lean"
+                    evidence = f"{who} {lean}; the other side is thin."
+                    action = f"Adding a couple of {weak}-leaning reads would balance your viewpoints."
             else:
-                evidence = f"About {max(_pct_whole(l), _pct_whole(r))}% of your political reading sits on one side."
+                evidence = (f"About {max(lp, rp)}% of your political reading sits on one side."
+                            if measured
+                            else f"The outlets you picked sit mostly on one side (about {max(lp, rp)}%).")
                 action = "A good-faith opposite-side read loosens the echo chamber."
-                benefit = f"Loosens your {label}."
-            return trigger, evidence, action, benefit, basis
+            return trigger, evidence, action, f"Can improve your {label}.", basis
         trigger, evidence, basis = _score_fallback(
-            "This tracks how balanced your political reading is across the spectrum.")
+            "This tracks how balanced your political reading is across the spectrum.",
+            "This reflects how balanced the outlets you picked are across the spectrum.")
         action = ("Add a couple of cross-cutting reads." if key == "viewpointBalance"
                   else "Hear the other side on a contested topic.")
-        return trigger, evidence, action, f"Improves your {label}.", basis
+        return trigger, evidence, action, f"Can improve your {label}.", basis
 
     if key == "emotionalBalance":
         att = attention or {}
@@ -237,23 +269,33 @@ def _improvement_evidence(key, *, metric, topics, sources, viewpoint, attention,
         if (fear + outrage) > 0 or analysis > 0:
             basis = [{"field": "attention", "label": k, "value": float(att.get(k, 0))}
                      for k in ("fear", "outrage", "analysis")]
-            trigger = f"{_pct_whole(fear + outrage)}% of your reading leans on fear and outrage."
-            evidence = f"Fear {_pct_whole(fear)}% and outrage {_pct_whole(outrage)}%; analysis is {_pct_whole(analysis)}%."
-            action = "Swapping one charged read a day for calm analysis raises the balance."
+            fp, op, ap = _pct_whole(fear), _pct_whole(outrage), _pct_whole(analysis)
+            charged = fp + op                               # sum the DISPLAYED parts so totals agree
+            if measured:
+                trigger = f"{charged}% of your reading leans on fear and outrage."
+                action = "Swapping one charged read a day for calm analysis raises the balance."
+            else:
+                trigger = (f"About {charged}% of the content in the outlets you picked "
+                           f"leans on fear and outrage.")
+                action = "Favouring analysis over charged pieces would support a healthier balance."
+            evidence = f"Fear {fp}% and outrage {op}%; analysis is {ap}%."
         else:
             trigger, evidence, basis = _score_fallback(
-                "This tracks how much of your reading leans on fear and outrage rather than analysis.")
+                "This tracks how much of your reading leans on fear and outrage rather than analysis.",
+                "This reflects how much of the outlets you picked lean on fear and outrage "
+                "rather than analysis.")
             action = "Trade one charged read a day for analysis."
-        return trigger, evidence, action, f"Raises your {label}.", basis
+        return trigger, evidence, action, f"Can improve your {label}.", basis
 
     if key == "reportingRatio":
         trigger, evidence, basis = _score_fallback(
-            "This tracks how much of your reading is straight reporting rather than opinion.")
-        return trigger, evidence, "Pair commentary with a straight-reporting source.", f"Raises your {label}.", basis
+            "This tracks how much of your reading is straight reporting rather than opinion.",
+            "This reflects how much of the outlets you picked is straight reporting rather than opinion.")
+        return trigger, evidence, "Pair commentary with a straight-reporting source.", f"Can improve your {label}.", basis
 
-    if key == "openMindedness":
+    if key == "openMindedness":                             # never reached in estimate mode (unavailable)
         trigger, evidence, basis = _score_fallback("This measures how often you engage views that challenge your own.")
-        return trigger, evidence, "Open the cross-cutting reads we surface.", f"Lifts your {label}.", basis
+        return trigger, evidence, "Open the cross-cutting reads we surface.", f"Can improve your {label}.", basis
 
     return None
 
