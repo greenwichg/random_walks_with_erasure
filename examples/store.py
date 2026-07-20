@@ -48,6 +48,18 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _improvement_lifecycle_to_dict(r) -> dict:
+    """One ``ImprovementLifecycle`` row → the camelCase dict the reconciler and web tier speak (RC2.3)."""
+    return {"recKey": r.rec_key, "metric": r.metric, "state": r.state,
+            "firstScore": r.first_score, "currentScore": r.current_score,
+            "completedScore": r.completed_score,
+            "generatedAt": r.generated_at, "shownAt": r.shown_at, "viewedAt": r.viewed_at,
+            "acceptedAt": r.accepted_at, "dismissedAt": r.dismissed_at,
+            "completedAt": r.completed_at, "expiredAt": r.expired_at,
+            "supersededAt": r.superseded_at, "supersededBy": r.superseded_by,
+            "updatedAt": r.updated_at}
+
+
 def _json_safe(obj):
     """Recursively replace non-finite floats (``NaN`` / ``Infinity`` / ``-Infinity``) with
     ``None`` so the value serialises to RFC-8259-valid JSON. Recurses ``dict`` values and
@@ -334,6 +346,50 @@ class RecFeedback(Base):
     feedback: Mapped[str] = mapped_column(String(16))       # one of RECOMMENDATION_FEEDBACK_TYPES
     created_at: Mapped[str] = mapped_column(String(64))     # ISO — first time this signal was given
     updated_at: Mapped[str] = mapped_column(String(64))     # ISO — last time it was (re)submitted
+
+
+class ImprovementLifecycle(Base):
+    """The lifecycle ledger for one improvement recommendation for one reader (RC2.3).
+
+    Identity is ``(user_id, rec_key)`` where ``rec_key`` is the recommendation's stable id
+    (``imp_<metric>``): the recommendation to improve a given metric keeps the **same row** across
+    report regenerations, so its whole history lives in one place (and survives the Estimate→Measured
+    transition, since the key is metric-based). Each transition stamps its own timestamp column and a
+    stamped column is never cleared, so a future evaluation can reconstruct the ordered history from the
+    columns. ``first_score`` is the metric score when the recommendation was first generated and
+    ``completed_score`` the score at completion — the two ends of the deterministic completion rule.
+    Product/lifecycle state only: it drives no recommender, ranking, selection, or report computation
+    (RC2.3 records; later RC2 phases may consume)."""
+
+    __tablename__ = "improvement_lifecycle"
+    __table_args__ = (UniqueConstraint("user_id", "rec_key", name="uq_improvement_user_reckey"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    rec_key: Mapped[str] = mapped_column(String(64))
+    metric: Mapped[str] = mapped_column(String(32))
+    state: Mapped[str] = mapped_column(String(16))
+    first_score: Mapped[Optional[int]] = mapped_column(default=None)
+    current_score: Mapped[Optional[int]] = mapped_column(default=None)
+    completed_score: Mapped[Optional[int]] = mapped_column(default=None)
+    generated_at: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+    shown_at: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+    viewed_at: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+    accepted_at: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+    dismissed_at: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+    completed_at: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+    expired_at: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+    superseded_at: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+    superseded_by: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+    created_at: Mapped[datetime] = mapped_column(default=_utcnow)
+    updated_at: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+
+
+#: The canonical lifecycle events an improvement recommendation can receive via the API (RC2.3). The
+#: reconciler owns the derived states (generated/shown/in_progress/completed/expired/superseded); these
+#: three are the explicit reader signals the endpoints record.
+IMPROVEMENT_LIFECYCLE_EVENTS = {"accepted": "accepted_at", "dismissed": "dismissed_at",
+                                "viewed": "viewed_at"}
 
 
 class SavedArticle(Base):
@@ -1253,6 +1309,86 @@ class Store:
                              .order_by(RecFeedback.id)).all()
             return [{"articleId": r.article_id, "feedback": r.feedback,
                      "createdAt": r.created_at, "updatedAt": r.updated_at} for r in rows]
+
+    # -- improvement-recommendation lifecycle ledger (RC2.3) ------------
+    def list_improvement_lifecycle(self, user_id: int) -> list:
+        """Every improvement-recommendation lifecycle row for a user (one per ``rec_key``), oldest
+        first, as camelCase dicts — the shape :mod:`improvement_ledger` reconciles over and the web
+        tier reads. Read-only; drives no recommender, ranking, selection, or report computation."""
+        with self.session() as s:
+            rows = s.scalars(select(ImprovementLifecycle)
+                             .where(ImprovementLifecycle.user_id == user_id)
+                             .order_by(ImprovementLifecycle.id)).all()
+            return [_improvement_lifecycle_to_dict(r) for r in rows]
+
+    def save_improvement_lifecycle(self, user_id: int, rows: "list[dict]") -> int:
+        """Upsert reconciled lifecycle rows for a user (idempotent per ``rec_key``). Scalar fields
+        (metric/state/scores) are authoritative from the reconciler; timestamp columns are only ever
+        *set* — a stamped transition time is never cleared — so the history stays reconstructable.
+        Returns the number of rows written."""
+        stamp = _utcnow().isoformat()
+        written = 0
+        with self.session() as s:
+            for row in rows:
+                rk = str(row["recKey"])
+                r = s.scalar(select(ImprovementLifecycle).where(
+                    ImprovementLifecycle.user_id == user_id, ImprovementLifecycle.rec_key == rk))
+                if r is None:
+                    r = ImprovementLifecycle(user_id=user_id, rec_key=rk,
+                                             metric=str(row.get("metric") or ""),
+                                             state=str(row.get("state") or "generated"))
+                    s.add(r)
+                r.metric = str(row.get("metric") or r.metric)
+                if row.get("state") is not None:
+                    r.state = str(row["state"])
+                if row.get("firstScore") is not None and r.first_score is None:
+                    r.first_score = int(row["firstScore"])
+                if row.get("currentScore") is not None:
+                    r.current_score = int(row["currentScore"])
+                if row.get("completedScore") is not None and r.completed_score is None:
+                    r.completed_score = int(row["completedScore"])
+                for cam, col in (("generatedAt", "generated_at"), ("shownAt", "shown_at"),
+                                 ("viewedAt", "viewed_at"), ("acceptedAt", "accepted_at"),
+                                 ("dismissedAt", "dismissed_at"), ("completedAt", "completed_at"),
+                                 ("expiredAt", "expired_at"), ("supersededAt", "superseded_at")):
+                    val = row.get(cam)
+                    # shown_at legitimately refreshes each serve; every other stamp is set-once.
+                    if val is not None and (col == "shown_at" or getattr(r, col) is None):
+                        setattr(r, col, val)
+                if row.get("supersededBy") is not None and r.superseded_by is None:
+                    r.superseded_by = str(row["supersededBy"])
+                r.updated_at = stamp
+                written += 1
+        return written
+
+    def record_improvement_lifecycle_event(self, user_id: int, rec_key: str, metric: str,
+                                           event: str, at: "str | None" = None) -> bool:
+        """Record one explicit reader lifecycle signal — ``accepted`` / ``dismissed`` / ``viewed`` — on
+        an improvement recommendation, creating the ledger row if this is the first time it is seen.
+        Idempotent: re-sending the same event refreshes its timestamp. Returns ``True`` when the row was
+        newly created. The derived states (completed/expired/superseded/in_progress) are owned by the
+        reconciler, not this method — here we only stamp the reader's own signal and reflect it in the
+        state (unless the row is already completed)."""
+        col = IMPROVEMENT_LIFECYCLE_EVENTS.get(event)
+        if col is None:
+            raise ValueError(f"unknown improvement lifecycle event: {event!r}")
+        stamp = at or _utcnow().isoformat()
+        with self.session() as s:
+            r = s.scalar(select(ImprovementLifecycle).where(
+                ImprovementLifecycle.user_id == user_id, ImprovementLifecycle.rec_key == str(rec_key)))
+            created = r is None
+            if created:
+                r = ImprovementLifecycle(user_id=user_id, rec_key=str(rec_key),
+                                         metric=str(metric or ""), state="generated",
+                                         generated_at=stamp)
+                s.add(r)
+            setattr(r, col, stamp)
+            if metric and not r.metric:
+                r.metric = str(metric)
+            if r.state != "completed":
+                r.state = event                          # accepted | dismissed | viewed
+            r.updated_at = stamp
+            return created
 
     # -- notifications (delivery-boundary persistence) ------------------
     def record_notifications(self, user_id: int, notifications: "list[dict]") -> int:

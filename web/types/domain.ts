@@ -117,6 +117,36 @@ export interface ImpactEstimate {
   explanation: string;
 }
 
+/** RC2.3 — the signed-in reader's lifecycle state for one improvement recommendation. Present only on
+ *  a signed-in report; absent for anonymous/demo and older payloads. */
+export type ImprovementLifecycleState =
+  | "generated"
+  | "shown"
+  | "viewed"
+  | "accepted"
+  | "in_progress"
+  | "completed"
+  | "dismissed"
+  | "expired"
+  | "superseded";
+
+export interface ImprovementLifecycle {
+  recKey: string;
+  state: ImprovementLifecycleState;
+  firstScore?: number;
+  currentScore?: number;
+  completedScore?: number;
+  generatedAt?: string;
+  shownAt?: string;
+  viewedAt?: string;
+  acceptedAt?: string;
+  dismissedAt?: string;
+  completedAt?: string;
+  expiredAt?: string;
+  supersededAt?: string;
+  supersededBy?: string;
+}
+
 export interface Improvement {
   id: string;
   title: string;
@@ -126,6 +156,8 @@ export interface Improvement {
   impact: number;
   /** RC2.2 — dynamic estimated impact range; optional (absent on older payloads). */
   impactEstimate?: ImpactEstimate;
+  /** RC2.3 — lifecycle state for the signed-in reader; optional. */
+  lifecycle?: ImprovementLifecycle;
   /** RC2.1 — user-specific evidence bound from data already in the report. All optional: absent on
    *  older payloads / when the report lacked grounded data, in which case `detail` stands alone. */
   /** The behaviour that surfaced this recommendation, e.g. "82% of your reading came from Reuters and BBC." */

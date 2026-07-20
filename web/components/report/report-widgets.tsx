@@ -40,9 +40,15 @@ export function BlindSpots({ items }: { items: BlindSpot[] }) {
 }
 
 /** Improvement recommendations — interactive: add to weekly goals. */
+const ACCEPTED_STATES = new Set(["accepted", "in_progress", "completed"]);
+
 export function Improvements({ items }: { items: Improvement[] }) {
   const { t } = useTranslation();
-  const [added, setAdded] = React.useState<Set<string>>(new Set());
+  // RC2.3 — seed the "added to goals" state from the persisted lifecycle so an accepted recommendation
+  // stays reflected across reloads (the acceptance now lives in the ledger, not just local state).
+  const [added, setAdded] = React.useState<Set<string>>(
+    () => new Set(items.filter((i) => i.lifecycle && ACCEPTED_STATES.has(i.lifecycle.state)).map((i) => i.id)),
+  );
   const toggle = (id: string) =>
     setAdded((prev) => {
       const next = new Set(prev);

@@ -40,6 +40,7 @@ import ingest                 # reading-event scorer + cache (Milestone C)
 import enrich                 # headline enrichment (register + emotion) behind ingest.Enricher
 import personalize            # per-user augmented Measured report / recs / coach
 import evidence_resolver      # ONE human explanation per rec, chosen from evidence (21a.3)
+import improvement_ledger     # improvement-recommendation lifecycle state machine (leaf, RC2.3)
 import coach_service          # Coach v2: intent-routed, tool-using coach (RWE_COACH_V2, M4)
 import notification_delivery   # orchestration: build context -> evaluate -> record notifications (N2)
 import ratelimit              # dependency-free token-bucket rate limiter (Private Alpha hardening)
@@ -481,6 +482,25 @@ class ImpactEstimateModel(BaseModel):
     explanation: str
 
 
+class ImprovementLifecycleStateModel(BaseModel):
+    """RC2.3 — the signed-in reader's lifecycle state for one improvement recommendation. Every field
+    but ``recKey``/``state`` is optional (a freshly-shown rec has no accepted/completed timestamps)."""
+    recKey: str
+    state: str                  # one of improvement_ledger.LIFECYCLE_STATES
+    firstScore: Optional[int] = None
+    currentScore: Optional[int] = None
+    completedScore: Optional[int] = None
+    generatedAt: Optional[str] = None
+    shownAt: Optional[str] = None
+    viewedAt: Optional[str] = None
+    acceptedAt: Optional[str] = None
+    dismissedAt: Optional[str] = None
+    completedAt: Optional[str] = None
+    expiredAt: Optional[str] = None
+    supersededAt: Optional[str] = None
+    supersededBy: Optional[str] = None
+
+
 class ImprovementModel(BaseModel):
     id: str
     title: str
@@ -498,6 +518,9 @@ class ImprovementModel(BaseModel):
     # RC2.2 — optional dynamic impact estimate; ``impact`` (above) stays as the band midpoint for
     # backward compatibility with consumers that read a single scalar.
     impactEstimate: Optional[ImpactEstimateModel] = None
+    # RC2.3 — optional lifecycle state for the signed-in reader (absent for anonymous/demo reports and
+    # older payloads). Additive; drives no selection/ordering.
+    lifecycle: Optional[ImprovementLifecycleStateModel] = None
 
 
 class CoverageModel(BaseModel):
@@ -1063,6 +1086,37 @@ class RecFeedbackEntryModel(BaseModel):
     updatedAt: str
 
 
+# RC2.3 — the explicit reader lifecycle signals on an improvement recommendation.
+ImprovementEventType = Literal["accept", "dismiss", "view"]
+_IMPROVEMENT_EVENT_TO_STATE = {"accept": "accepted", "dismiss": "dismissed", "view": "viewed"}
+
+
+class ImprovementEventAckModel(BaseModel):
+    ok: bool
+    recKey: str
+    event: str               # the recorded lifecycle event (accepted | dismissed | viewed)
+    created: bool            # True when the ledger row was newly created by this event
+
+
+class ImprovementLifecycleEntryModel(BaseModel):
+    recKey: str
+    metric: str
+    state: str
+    firstScore: Optional[int] = None
+    currentScore: Optional[int] = None
+    completedScore: Optional[int] = None
+    generatedAt: Optional[str] = None
+    shownAt: Optional[str] = None
+    viewedAt: Optional[str] = None
+    acceptedAt: Optional[str] = None
+    dismissedAt: Optional[str] = None
+    completedAt: Optional[str] = None
+    expiredAt: Optional[str] = None
+    supersededAt: Optional[str] = None
+    supersededBy: Optional[str] = None
+    updatedAt: Optional[str] = None
+
+
 class SaveArticleRequest(BaseModel):
     articleId: str
     article: dict = {}      # the Article snapshot the reader saw (rendered later in the saved list)
@@ -1484,7 +1538,38 @@ def report(request: Request,
       Information Health Estimate, recomputed server-side from their stored onboarding outlets.
     * **Demo** — a signed-in reader with no usable onboarding, or an anonymous / ``?user=``
       request: the reference reader (unchanged for the frontend and contract tests)."""
-    return _report_for(_active(), request, user)
+    rep = _report_for(_active(), request, user)
+    # RC2.3 — for a signed-in reader, reconcile the improvement-recommendation lifecycle ledger and
+    # annotate each improvement with its state. Reuses the report just built (no recompute); a no-op
+    # for anonymous/demo reports (no real uid). Never fails the request.
+    uid = _real_uid(request)
+    if uid is not None and rep.get("mode") in ("measured", "estimate") and rep.get("improvements"):
+        _annotate_improvement_lifecycle(uid, rep)
+    return rep
+
+
+def _annotate_improvement_lifecycle(uid: int, rep: dict) -> None:
+    """Reconcile the lifecycle ledger against the report's improvements and attach each rec's state.
+    Store I/O only; the state machine itself lives in the pure :mod:`improvement_ledger` leaf."""
+    st = state.store
+    if st is None:
+        return
+    improvements = rep.get("improvements") or []
+    try:
+        ledger = {r["recKey"]: r for r in st.list_improvement_lifecycle(uid)}
+        current = [{"recKey": imp["id"], "metric": imp["metric"]} for imp in improvements]
+        scores = {m["key"]: m.get("score") for m in (rep.get("metrics") or [])
+                  if m.get("available") and m.get("score") is not None}
+        now = datetime.now(timezone.utc).isoformat()
+        annotated, updates = improvement_ledger.reconcile(current, ledger, scores, now)
+        if updates:
+            st.save_improvement_lifecycle(uid, list(updates.values()))
+        for imp in improvements:
+            row = annotated.get(imp["id"])
+            if row is not None:
+                imp["lifecycle"] = improvement_ledger.public_view(row)
+    except Exception:                       # lifecycle is auxiliary — never break the report
+        logging.getLogger("api").warning("improvement lifecycle annotation failed", exc_info=True)
 
 
 def _report_for(active: "corpus_refresh.Active", request: Request, user: str | None) -> dict:
@@ -1982,6 +2067,37 @@ def my_recommendation_feedback(request: Request) -> list:
     reads only the ``rec_feedback`` table and drives no ranking or recommender."""
     uid = _require_real_user(request)
     return _require_store().list_recommendation_feedback(uid)
+
+
+@app.post("/api/me/recommendations/improvements/{rec_key}/{event}",
+          response_model=ImprovementEventAckModel, tags=["recommendations"],
+          summary="Record a lifecycle signal (accept / dismiss / view) on an improvement recommendation",
+          responses=_ERR_RESPONSES)
+def improvement_lifecycle_event(request: Request, rec_key: str, event: ImprovementEventType) -> dict:
+    """Record the signed-in reader's explicit lifecycle signal on an improvement recommendation
+    (``accept`` → accepted, ``dismiss`` → dismissed, ``view`` → viewed). Idempotent per
+    ``(user, rec_key, event)``. **Recorded only** (RC2.3): it drives no selection, ordering, ranking, or
+    report computation — the derived states (completed / expired / superseded / in_progress) are owned
+    by the report-time reconciler, not this endpoint. ``rec_key`` is the improvement's stable id
+    (``imp_<metric>``); the metric is derived from it."""
+    uid = _require_real_user(request)
+    ev = _IMPROVEMENT_EVENT_TO_STATE[event]
+    metric = rec_key[len("imp_"):] if rec_key.startswith("imp_") else ""
+    created = _require_store().record_improvement_lifecycle_event(uid, rec_key, metric, ev)
+    return {"ok": True, "recKey": rec_key, "event": ev, "created": bool(created)}
+
+
+@app.get("/api/me/recommendations/improvements", response_model=list[ImprovementLifecycleEntryModel],
+         tags=["recommendations"],
+         summary="The signed-in reader's improvement-recommendation lifecycle ledger (oldest first)",
+         responses=_ERR_RESPONSES)
+def my_improvement_lifecycle(request: Request) -> list:
+    """The reader's full improvement-recommendation lifecycle history — one row per recommendation
+    (``imp_<metric>``) with its state and transition timestamps, oldest first. A read-only projection
+    for the web tier and future evaluation; it reads only the ``improvement_lifecycle`` table and
+    drives no ranking or recommender."""
+    uid = _require_real_user(request)
+    return _require_store().list_improvement_lifecycle(uid)
 
 
 @app.get("/api/me/saved", response_model=list[SavedArticleModel], tags=["meta"],
