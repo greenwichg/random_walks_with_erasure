@@ -77,6 +77,11 @@ services:
       RWE_ENV: production
       RWE_INTERNAL_SECRET: ${RWE_INTERNAL_SECRET:?set RWE_INTERNAL_SECRET in deploy/.env}
       RWE_DB_URL: ${RWE_DB_URL:-sqlite:////app/data/ih_beta.db}
+      # Coach v2 (M6): the MEASURED reader's coach routes through the intent-routed pipeline
+      # (trigger ladder / weekly recap / grounded replies). Engine-side only; the demo path stays
+      # v1 regardless. Default 0 = OFF (byte-identical to v1, pinned by test_coach_v1_contract.py),
+      # so an unset var never changes behavior — opt in by setting RWE_COACH_V2=1 in deploy/.env.
+      RWE_COACH_V2: ${RWE_COACH_V2:-0}
     volumes: !override
       - ${IH_DATA_DIR:-/opt/ih/data}:/app/data   # host-visible DB + backups (for off-host S3 sync)
 
