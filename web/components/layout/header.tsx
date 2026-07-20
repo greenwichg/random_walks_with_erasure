@@ -73,7 +73,9 @@ export function Header() {
         </SheetContent>
       </Sheet>
 
-      <h1 className="hidden text-lg font-semibold tracking-tight sm:block">{t(current?.labelKey ?? "nav.dashboard")}</h1>
+      {/* Current-page label — NOT an <h1>: each page renders its own primary heading, so this stays a
+          plain label to keep a single <h1> landmark per page (accessibility). */}
+      <span className="hidden text-lg font-semibold tracking-tight sm:block">{t(current?.labelKey ?? "nav.dashboard")}</span>
 
       <div className="ml-auto flex items-center gap-1.5">
         <button

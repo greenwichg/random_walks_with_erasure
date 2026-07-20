@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { AnimatePresence } from "framer-motion";
 import { Sparkles, Route, Compass, Wand2 } from "lucide-react";
 import type { FeedbackAction, Recommendation } from "@/types/domain";
@@ -15,6 +16,7 @@ import { PageContainer } from "@/components/layout/page-container";
 import { RecommendationCard } from "@/components/recommendations/recommendation-card";
 import { ErrorState, EmptyState } from "@/components/shared/states";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 
 type Filter = "all" | Recommendation["strategy"];
@@ -94,6 +96,11 @@ export default function RecommendationsPage() {
           title={t("rec.empty.title")}
           description={t("rec.empty.body")}
           className="mt-4"
+          action={
+            <Button asChild>
+              <Link href="/discover">{t("rec.empty.cta")}</Link>
+            </Button>
+          }
         />
       )}
 

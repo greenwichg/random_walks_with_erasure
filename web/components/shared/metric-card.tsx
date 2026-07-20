@@ -92,7 +92,7 @@ export function MetricCard({
 
           {typeof metric.benchmark === "number" && (
             <p className="mt-2 text-xs text-muted-foreground">
-              Typical reader: <span className="font-medium text-foreground">{metric.benchmark}</span>
+              {t("metric.typicalReader")} <span className="font-medium text-foreground">{metric.benchmark}</span>
             </p>
           )}
         </>

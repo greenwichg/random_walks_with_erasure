@@ -87,7 +87,9 @@ export function RecommendationCard({
             onDismiss?.();
           }}
           aria-label={t("rec.ignore")}
-          className="grid h-7 w-7 place-items-center rounded-md text-muted-foreground opacity-0 transition-all hover:bg-muted hover:text-foreground group-hover:opacity-100"
+          // Always visible on touch (no hover); hover-reveal only from `sm` up so the desktop card
+          // stays clean but the dismiss is never unreachable on a phone.
+          className="grid h-7 w-7 place-items-center rounded-md text-muted-foreground opacity-100 transition-all hover:bg-muted hover:text-foreground sm:opacity-0 sm:group-hover:opacity-100"
         >
           <X className="h-4 w-4" />
         </button>

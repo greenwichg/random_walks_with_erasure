@@ -95,7 +95,7 @@ export function MetricAccordion({ metrics, coverage }: { metrics: Metric[]; cove
                       <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-xs">
                         {metric.raw && (
                           <span>
-                            Your value:{" "}
+                            {t("metric.yourValue")}{" "}
                             <span className="font-medium text-foreground">
                               {metric.raw.value} {metric.raw.unit}
                             </span>
@@ -103,7 +103,7 @@ export function MetricAccordion({ metrics, coverage }: { metrics: Metric[]; cove
                         )}
                         {typeof metric.benchmark === "number" && (
                           <span>
-                            Typical reader:{" "}
+                            {t("metric.typicalReader")}{" "}
                             <span className="font-medium text-foreground">{metric.benchmark}</span>
                           </span>
                         )}

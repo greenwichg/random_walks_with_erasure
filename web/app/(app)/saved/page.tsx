@@ -1,12 +1,14 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { Bookmark } from "lucide-react";
 import { useSaved } from "@/hooks/use-data";
 import { useTranslation } from "@/lib/i18n";
 import { PageContainer } from "@/components/layout/page-container";
 import { DiscoverCard } from "@/components/discover/discover-card";
 import { EmptyState, ErrorState } from "@/components/shared/states";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { Article, SavedArticle } from "@/types/domain";
 
@@ -66,6 +68,11 @@ export default function SavedPage() {
           title={t("saved.empty.title")}
           description={t("saved.empty.body")}
           className="mt-4"
+          action={
+            <Button asChild>
+              <Link href="/discover">{t("saved.empty.cta")}</Link>
+            </Button>
+          }
         />
       )}
 

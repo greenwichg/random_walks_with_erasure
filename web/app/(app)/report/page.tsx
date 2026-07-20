@@ -46,17 +46,17 @@ export default function ReportPage() {
       };
     }) ?? [];
 
-  // Data-driven captions (derived from the live report, not hardcoded to any diet).
+  // Data-driven captions (derived from the live report, not hardcoded to any diet) — localized.
   const vp = report?.viewpoint;
   const tiltText = !vp
     ? ""
     : Math.abs(vp.left - vp.right) < 0.06
-      ? "Your reading is well balanced across the spectrum."
+      ? t("report.tilt.balanced")
       : (() => {
           const side = vp.left > vp.right ? "left" : "right";
           return Math.min(vp.left, vp.right) >= 0.15
-            ? `You do hear both sides — the tilt is toward the ${side}.`
-            : `Your reading leans heavily ${side}; the other side is thin.`;
+            ? t("report.tilt.bothSides", { side: t(`filter.${side}`) })
+            : t("report.tilt.leansHeavily", { side: t(`filter.${side}`) });
         })();
 
   // Health band comes from the engine (source of truth); fall back to local thresholds.
@@ -64,10 +64,10 @@ export default function ReportPage() {
   const dietSummary = !overallBand
     ? ""
     : overallBand.label === "Healthy"
-      ? "A broad, balanced reading diet — keep it up."
+      ? t("report.diet.healthy")
       : overallBand.label === "Fair"
-        ? "A reasonable diet, with clear room to broaden and balance it."
-        : "Your reading is fairly narrow right now — a few changes would help a lot.";
+        ? t("report.diet.fair")
+        : t("report.diet.needsWork");
 
   return (
     <PageContainer>
@@ -141,11 +141,11 @@ export default function ReportPage() {
               <div className="pt-2">
                 <SpectrumBar distribution={report.viewpoint} height={16} />
                 <p className="mt-4 text-sm text-muted-foreground">
-                  You read{" "}
-                  <span className="font-medium text-foreground">{Math.round(report.viewpoint.left * 100)}% left</span>,{" "}
-                  <span className="font-medium text-foreground">{Math.round(report.viewpoint.center * 100)}% center</span>,
-                  and{" "}
-                  <span className="font-medium text-foreground">{Math.round(report.viewpoint.right * 100)}% right</span>.{" "}
+                  {t("report.viewpointCaption", {
+                    left: Math.round(report.viewpoint.left * 100),
+                    center: Math.round(report.viewpoint.center * 100),
+                    right: Math.round(report.viewpoint.right * 100),
+                  })}{" "}
                   {tiltText}
                 </p>
               </div>
