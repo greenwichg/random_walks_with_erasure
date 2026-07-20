@@ -1,0 +1,112 @@
+# Production override for the AWS EC2 closed-beta deployment (Wave 0).
+#
+#   docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.aws.yml --env-file deploy/.env up -d --build
+#   (deploy/ops/deploy.sh wraps exactly this.)
+#
+# DEPLOYMENT-ONLY. This file changes no application code or behavior. It layers operator concerns on top
+# of the base compose:
+#   • adds Caddy as the single internet-facing service (TLS + reverse proxy) — §caddy
+#   • turns on the app's OWN fail-closed production mode (RWE_ENV=production + secrets) — the engine and
+#     web tier already implement this; here we only supply the values
+#   • unpublishes the app/engine host ports so ONLY Caddy is reachable, and Caddy reaches the app over the
+#     private Docker network (service name `web:3000`), never host networking
+#   • adds restart policies so the stack self-heals after a crash or an EC2 reboot
+#   • bind-mounts the SQLite store + backups to a host path so scheduled `aws s3 sync` can ship them
+#     off-host (the DB engine and file are unchanged — only the mount source moves from a named volume
+#     to a host directory)
+#
+# `!reset []` clears a list set by the base file; `!override` replaces a list instead of appending to it
+# (Compose merges list-valued keys by concatenation otherwise). Requires Docker Compose v2.24+ — the
+# standard Ubuntu 24.04 `get.docker.com` install provides a newer version. Host data dir defaults to
+# /opt/ih/data; override with IH_DATA_DIR in deploy/.env.
+
+services:
+  # ── Internet-facing edge: the ONLY service with published ports ────────────────────────────────────
+  # Terminates TLS (automatic Let's Encrypt) and reverse-proxies to the web app over the private Docker
+  # network. Certs live in the caddy_data volume so they survive redeploys (no rate-limit churn).
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"      # ACME HTTP-01 challenge + HTTP→HTTPS redirect
+      - "443:443"    # HTTPS
+    environment:
+      # Substituted into deploy/Caddyfile. Apex is served; www redirects to it (operator choice).
+      APP_DOMAIN: ${APP_DOMAIN:-hidden-view.com}
+      ACME_EMAIL: ${ACME_EMAIL:-ops@hidden-view.com}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data       # issued certificates — persist across redeploys
+      - caddy_config:/config
+    depends_on:
+      - web
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:80"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # ── Next.js web tier (BA1 / NextAuth / OAuth live here) ────────────────────────────────────────────
+  web:
+    restart: unless-stopped
+    ports: !reset []           # not published to the host — reachable only via Caddy on the Docker network
+    environment:
+      # Turns ON the app's existing fail-closed production mode. The web container validates these at
+      # startup (web/instrumentation.ts) and refuses to boot if any required value is missing.
+      RWE_ENV: production
+      RWE_INTERNAL_SECRET: ${RWE_INTERNAL_SECRET:?set RWE_INTERNAL_SECRET in deploy/.env}
+      RWE_BACKEND_URL: http://api:8000
+      NEXTAUTH_URL: ${NEXTAUTH_URL:?set NEXTAUTH_URL (e.g. https://hidden-view.com) in deploy/.env}
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:?set NEXTAUTH_SECRET in deploy/.env}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:?set GOOGLE_CLIENT_ID in deploy/.env}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:?set GOOGLE_CLIENT_SECRET in deploy/.env}
+      # BA1 invite-only gate. Defaults ON in production; set explicitly + supply the allowlist (an
+      # enabled-but-empty allowlist is fail-closed = everyone denied, by design).
+      BETA_ACCESS_ENABLED: ${BETA_ACCESS_ENABLED:-1}
+      BETA_ALLOWLIST: ${BETA_ALLOWLIST:-}
+      BETA_ALLOWLIST_FILE: ${BETA_ALLOWLIST_FILE:-}
+
+  # ── FastAPI recommendation engine (never internet-reachable) ───────────────────────────────────────
+  api:
+    restart: unless-stopped
+    ports: !reset []           # engine is private: only `web` (same Docker network) calls it
+    environment:
+      # Fail-closed engine auth: with RWE_ENV=production it refuses per-user calls without the shared
+      # secret, and refuses to boot if the secret is unset.
+      RWE_ENV: production
+      RWE_INTERNAL_SECRET: ${RWE_INTERNAL_SECRET:?set RWE_INTERNAL_SECRET in deploy/.env}
+      RWE_DB_URL: ${RWE_DB_URL:-sqlite:////app/data/ih_beta.db}
+    volumes: !override
+      - ${IH_DATA_DIR:-/opt/ih/data}:/app/data   # host-visible DB + backups (for off-host S3 sync)
+
+  # ── One-shot RSS seed (unchanged behavior; only its data mount follows the bind-mount) ─────────────
+  ingest:
+    volumes: !override
+      - ${IH_DATA_DIR:-/opt/ih/data}:/app/data
+      - ./rss_feeds.example.txt:/app/feeds/rss_feeds.txt:ro
+
+  # ── On-demand backup (profile: backup) — writes into the same host-visible data dir ────────────────
+  backup:
+    environment:
+      RWE_DB_URL: ${RWE_DB_URL:-sqlite:////app/data/ih_beta.db}
+    volumes: !override
+      - ${IH_DATA_DIR:-/opt/ih/data}:/app/data
+
+  # ── Recurring backups (profile: scheduler) — local retention + optional off-host shipment ──────────
+  backup-scheduler:
+    environment:
+      RWE_DB_URL: ${RWE_DB_URL:-sqlite:////app/data/ih_beta.db}
+      BACKUP_INTERVAL: ${BACKUP_INTERVAL:-3600}
+      BACKUP_KEEP: ${BACKUP_KEEP:-48}
+      # Off-host shipment runs inside the container with the backup file as "$1". For AWS we ship from the
+      # HOST instead (deploy/ops/backup.sh cron or `aws s3 sync` — see the runbook) so no AWS CLI is added
+      # to the image and the instance IAM role supplies credentials. Set this only if you prefer the
+      # in-container path AND add an AWS CLI / rclone to the image.
+      BACKUP_OFFHOST_CMD: ${BACKUP_OFFHOST_CMD:-}
+    volumes: !override
+      - ${IH_DATA_DIR:-/opt/ih/data}:/app/data
+
+volumes:
+  caddy_data:      # persisted Let's Encrypt certificates
+  caddy_config:

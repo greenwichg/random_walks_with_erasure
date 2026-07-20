@@ -7,7 +7,11 @@ services:
       context: ..                      # repo root
       dockerfile: deploy/Dockerfile.api
     ports:
-      - "8000:8000"
+      # Loopback-only publish: the engine is never on the box's public interface. Dev still reaches it
+      # at http://127.0.0.1:8000; the AWS prod override unpublishes it entirely (only Caddy, over the
+      # private Docker network, can reach it). Inter-container calls use the `api` service name, so this
+      # host publish is for local debugging only and does not affect web→engine traffic.
+      - "127.0.0.1:8000:8000"
     environment:
       RWE_PROFILE: synthetic           # synthetic | qbias | mind | politosphere
       RWE_LOG_LEVEL: INFO
@@ -84,7 +88,10 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile.web
     ports:
-      - "3000:3000"
+      # Loopback-only publish (see the api service above). Dev reaches the app at http://127.0.0.1:3000;
+      # in the AWS prod stack Caddy proxies to `web:3000` over the private Docker network and the override
+      # unpublishes this host port entirely, so the browser only ever talks to Caddy on 443.
+      - "127.0.0.1:3000:3000"
     environment:
       RWE_BACKEND_URL: http://api:8000
       NODE_ENV: production

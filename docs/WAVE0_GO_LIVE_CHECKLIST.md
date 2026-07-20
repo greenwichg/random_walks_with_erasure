@@ -5,7 +5,7 @@ deployment. Follow top-to-bottom; do not send invites until the final **GO gate*
 in `docs/AWS_EC2_DEPLOYMENT_GUIDE.md` (§ references below), the `deploy/ops/*` scripts, and the BA1/PA1/
 OBS1 endpoints. Documentation only — running it changes no application code.
 
-**Fill first:** domain `beta.example.com` · region `us-east-1` · app dir `/opt/ih` · release tag
+**Fill first:** domain `hidden-view.com` · region `us-east-1` · app dir `/opt/ih` · release tag
 `________` · the **5 Wave-0 emails** `________________________________________`.
 On the box: `export COMPOSE="docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.aws.yml --env-file deploy/.env"`; `set -a; . deploy/.env; set +a`.
 
@@ -17,10 +17,11 @@ On the box: `export COMPOSE="docker compose -f deploy/docker-compose.yml -f depl
 - [ ] **Security Group**: inbound **443** + **80** from anywhere, **22** from your IP only (or **SSM**, no SSH). 3000/8000 **not** exposed.
 - [ ] **IAM instance role** attached: S3 PutObject to the backup bucket + `AmazonSSMManagedInstanceCore` + `CloudWatchAgentServerPolicy`.
 - [ ] **S3 bucket** created, **versioned**, public access blocked, 30-day lifecycle.
-- [ ] **Route 53** A record `beta.example.com → EIP`; `dig +short beta.example.com` returns the EIP.
+- [ ] **Route 53** A record `hidden-view.com → EIP`; `dig +short hidden-view.com` returns the EIP.
 
 ## B · Host preparation (guide §2.5–2.7)
-- [ ] Docker Engine + Compose v2 installed (`docker compose version`); user in `docker` group.
+- [ ] **`sudo deploy/ops/bootstrap-ec2.sh`** run (idempotent — installs Docker + Compose, AWS CLI, 2 GB swap, container log rotation, creates `/opt/ih/data`, seeds `deploy/.env`). Safe to re-run.
+- [ ] Docker Engine + Compose **v2.24+** installed (`docker compose version` — the override needs `!reset`/`!override`); user in `docker` group.
 - [ ] 2 GB **swap** enabled (`free -m` shows swap) — OOM insurance for builds.
 - [ ] `awscli` installed; `aws sts get-caller-identity` shows the instance role.
 - [ ] Repo cloned to `/opt/ih`, **checked out at the release tag** (not a moving branch).
@@ -28,9 +29,9 @@ On the box: `export COMPOSE="docker compose -f deploy/docker-compose.yml -f depl
 - [ ] `deploy/.env` written and **`chmod 600`**.
 
 ## C · HTTPS / DNS / OAuth (guide §4)
-- [ ] `deploy/Caddyfile` + `deploy/docker-compose.aws.yml` created (Caddy on 80/443; 3000/8000 unpublished; data bind-mounted).
-- [ ] Google OAuth **redirect URI** = `https://beta.example.com/api/auth/callback/google`; JS origin = `https://beta.example.com`.
-- [ ] `NEXTAUTH_URL=https://beta.example.com` (https, exact).
+- [ ] `deploy/Caddyfile` + `deploy/docker-compose.aws.yml` are in the repo (Caddy on 80/443; 3000/8000 unpublished; Caddy→`web:3000` over the internal Docker network; data bind-mounted). Values come from `deploy/.env`. `www.hidden-view.com` redirects to the apex.
+- [ ] Google OAuth **redirect URI** = `https://hidden-view.com/api/auth/callback/google`; JS origin = `https://hidden-view.com`.
+- [ ] `NEXTAUTH_URL=https://hidden-view.com` (https, exact).
 
 ## D · Configuration (guide §3)
 Engine + web (in `deploy/.env`, prod-hardening lines uncommented in the override):
@@ -45,14 +46,14 @@ Engine + web (in `deploy/.env`, prod-hardening lines uncommented in the override
 - [ ] Monitoring env: `IH_BASE_URL=http://127.0.0.1:8000`, `ALERT_WEBHOOK=<slack/SNS>`.
 
 ## E · Deploy + readiness (guide §5)
-- [ ] `$COMPOSE up -d --build` — ingest → api → web → caddy come up.
-- [ ] Engine **readiness 200**: `$COMPOSE exec -T api curl -fsS http://127.0.0.1:8000/api/health/ready` → `ready`.
-- [ ] `$COMPOSE --profile scheduler up -d backup-scheduler` (recurring local backups).
-- [ ] TLS valid: `curl -I https://beta.example.com` → `HTTP/2 200`/redirect, valid cert.
+- [ ] **`deploy/ops/deploy.sh`** run — idempotent: builds + starts ingest→api→web→caddy, gates on engine readiness, enables the backup scheduler, then runs the smoke test. (Manual equivalent: `$COMPOSE up -d --build`.)
+- [ ] Engine **readiness 200**: `$COMPOSE exec -T api python -c "import urllib.request;print(urllib.request.urlopen('http://127.0.0.1:8000/api/health/ready').status)"` → `200`.
+- [ ] TLS valid: `curl -I https://hidden-view.com` → `HTTP/2 200`/redirect, valid cert; `curl -I http://hidden-view.com` → 308 → https.
 
-## F · Verification (guide §6) — the go signal is `preflight.sh` exit 0
+## F · Verification (guide §6) — the go signals are `smoke-test.sh` + `preflight.sh` exit 0
+- [ ] **`deploy/ops/smoke-test.sh`** → **0 FAIL** (containers up; engine live/ready over the internal Docker network; PA1 gated 200-with-secret / 404-without; OBS1 metrics; public HTTPS + valid TLS + HTTP→HTTPS redirect).
 - [ ] `IH_BASE_URL=http://127.0.0.1:8000 deploy/ops/preflight.sh` → **0 FAIL, exit 0**.
-- [ ] **Application:** load `https://beta.example.com` → onboarding/sign-in renders; charts fit on mobile.
+- [ ] **Application:** load `https://hidden-view.com` → onboarding/sign-in renders; charts fit on mobile.
 - [ ] **Authentication (allow):** sign in with an **allowlisted** Google account → dashboard.
 - [ ] **Authentication (deny):** sign in with an **off-list** account → `/signin?error=AccessDenied` invite-only message; log shows `{"event":"beta_access_denied",…}`.
 - [ ] **Smoke:** report renders; a recommendation opens the real publisher URL; feedback works.
@@ -80,7 +81,7 @@ Engine + web (in `deploy/.env`, prod-hardening lines uncommented in the override
 
 | # | Gate | Check |
 |---|---|---|
-| 1 | HTTPS + DNS live | `curl -I https://beta.example.com` valid TLS |
+| 1 | HTTPS + DNS live | `curl -I https://hidden-view.com` valid TLS |
 | 2 | Preflight clean | `deploy/ops/preflight.sh` exit 0 |
 | 3 | Auth works both ways | allowlisted in ✓ / off-list denied ✓ |
 | 4 | BA1 armed | `BETA_ACCESS_ENABLED=1` + exactly the 5 emails |

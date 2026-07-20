@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+# One-time (idempotent) EC2 host preparation for the Wave 0 deployment. DEPLOYMENT-ONLY.
+#
+# Safe to re-run on a brand-new Ubuntu 24.04 instance or an existing one — every step is guarded, so
+# nothing is duplicated and Docker is restarted only if its config actually changed. Run it from the
+# checked-out repo:
+#
+#   sudo deploy/ops/bootstrap-ec2.sh
+#
+# It installs Docker + Compose, an AWS CLI, 2 GB swap, container log rotation, creates the host data
+# directory, and seeds deploy/.env from the template. It does NOT start the app — run deploy/ops/deploy.sh
+# after filling in deploy/.env and pointing DNS at this host.
+set -euo pipefail
+
+[ "$(id -u)" -eq 0 ] || { echo "run with sudo: sudo deploy/ops/bootstrap-ec2.sh" >&2; exit 1; }
+
+REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+cd "$REPO_ROOT"
+TARGET_USER="${SUDO_USER:-ubuntu}"
+DATA_DIR="${IH_DATA_DIR:-/opt/ih/data}"
+step() { printf '\n== %s ==\n' "$1"; }
+
+step "System packages"
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -y
+apt-get upgrade -y
+apt-get install -y ca-certificates curl gnupg unzip
+
+step "Swap (2 GB — OOM insurance for builds on small instances)"
+if swapon --show 2>/dev/null | grep -q '/swapfile'; then
+  echo "swap already active — skipping"
+else
+  fallocate -l 2G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=2048
+  chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
+  echo "swap enabled"
+fi
+grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+
+step "Docker Engine + Compose plugin"
+if command -v docker >/dev/null 2>&1; then
+  echo "docker already installed: $(docker --version)"
+else
+  curl -fsSL https://get.docker.com | sh
+fi
+systemctl enable --now docker
+# Compose v2.24+ is required for the !reset/!override tags in docker-compose.aws.yml.
+cver="$(docker compose version --short 2>/dev/null || echo 0)"
+echo "docker compose version: ${cver:-unknown}"
+awk -v v="$cver" 'BEGIN{split(v,a,".");exit !((a[1]>2)||(a[1]==2&&a[2]>=24))}' \
+  && echo "compose supports !reset/!override ✓" \
+  || echo "WARNING: docker compose < 2.24 — the AWS override needs 2.24+ for !reset/!override; upgrade Docker."
+
+step "AWS CLI (off-host S3 backups via the instance IAM role)"
+if command -v aws >/dev/null 2>&1; then
+  echo "aws already installed: $(aws --version 2>&1)"
+else
+  apt-get install -y awscli || {
+    curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" -o /tmp/awscliv2.zip
+    unzip -q -o /tmp/awscliv2.zip -d /tmp && /tmp/aws/install --update && rm -rf /tmp/aws /tmp/awscliv2.zip
+  }
+fi
+
+step "docker group for $TARGET_USER"
+if id -nG "$TARGET_USER" 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
+  echo "$TARGET_USER already in the docker group"
+else
+  usermod -aG docker "$TARGET_USER"
+  echo "added $TARGET_USER to docker (re-login or 'newgrp docker' to take effect)"
+fi
+
+step "Container log rotation (/etc/docker/daemon.json)"
+SAMPLE="deploy/host/daemon.json"
+TARGET="/etc/docker/daemon.json"
+if [ ! -f "$TARGET" ]; then
+  install -m 644 "$SAMPLE" "$TARGET" && echo "installed $TARGET" && systemctl restart docker
+elif cmp -s "$SAMPLE" "$TARGET"; then
+  echo "$TARGET already up to date — skipping"
+else
+  echo "NOTE: $TARGET exists and differs from $SAMPLE — not overwriting."
+  echo "      Merge these log-opts in manually, then: sudo systemctl restart docker"
+  echo "      Recommended: $(tr -d '\n' < "$SAMPLE")"
+fi
+
+step "Host data directory ($DATA_DIR)"
+mkdir -p "$DATA_DIR/backups"
+chown -R "$TARGET_USER":"$TARGET_USER" "$(dirname "$DATA_DIR")" 2>/dev/null || chown -R "$TARGET_USER":"$TARGET_USER" "$DATA_DIR"
+echo "data dir ready (bind-mounted to /app/data)"
+
+step "Environment file (deploy/.env)"
+if [ -f deploy/.env ]; then
+  echo "deploy/.env already exists — leaving it untouched"
+else
+  cp deploy/.env.production.example deploy/.env
+  chmod 600 deploy/.env
+  chown "$TARGET_USER":"$TARGET_USER" deploy/.env
+  echo "seeded deploy/.env from the template (chmod 600) — FILL IN THE REQUIRED VALUES"
+fi
+
+cat <<EOF
+
+✅ bootstrap complete (idempotent — safe to re-run).
+
+Next:
+  1. Edit deploy/.env — set the REQUIRED secrets, APP_DOMAIN, NEXTAUTH_URL, Google OAuth, BETA_ALLOWLIST,
+     IH_S3_BUCKET, ALERT_WEBHOOK.  (openssl rand -base64 32 for the secrets.)
+  2. Point Route 53 A records (apex + www) for your domain at this host's Elastic IP, and confirm:
+        dig +short <your-domain>
+  3. Deploy:   deploy/ops/deploy.sh
+EOF

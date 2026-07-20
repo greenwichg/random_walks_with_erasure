@@ -1,0 +1,39 @@
+# Caddy reverse proxy for the Wave 0 closed beta. DEPLOYMENT-ONLY (operator config; no app change).
+#
+# Caddy is the single internet-facing process. It:
+#   • obtains + auto-renews Let's Encrypt certificates (needs port 80 for the ACME HTTP-01 challenge and
+#     the DNS A record resolving to this host BEFORE first start),
+#   • redirects http:// → https:// automatically,
+#   • redirects the www host to the bare apex (canonical URL), and
+#   • reverse-proxies to the Next.js app at `web:3000` over the PRIVATE Docker network (service name, not
+#     a host port) — the app and engine are never published to the internet.
+#
+# {$APP_DOMAIN} / {$ACME_EMAIL} are injected from the caddy service environment (deploy/docker-compose.aws.yml),
+# which reads them from deploy/.env. Defaults target hidden-view.com.
+
+{
+	# Account email for Let's Encrypt (expiry notices + recovery). Change via ACME_EMAIL in deploy/.env.
+	email {$ACME_EMAIL:ops@hidden-view.com}
+}
+
+# ── Canonical apex: the app ────────────────────────────────────────────────────────────────────────
+{$APP_DOMAIN:hidden-view.com} {
+	encode zstd gzip
+
+	# Reverse-proxy to the web tier over the internal Docker network. `web` resolves via Docker's
+	# embedded DNS on the shared compose network; 3000 is the container port, not a host port.
+	reverse_proxy web:3000
+
+	# Lightweight access logging to stdout (captured by the Docker json-file driver, rotated via
+	# deploy/host/daemon.json). Application-level structured logs remain OBS1's responsibility.
+	log {
+		output stdout
+		format console
+	}
+}
+
+# ── www → apex redirect (permanent) ────────────────────────────────────────────────────────────────
+# Caddy provisions a certificate for the www host too, then 308-redirects every path to the apex.
+www.{$APP_DOMAIN:hidden-view.com} {
+	redir https://{$APP_DOMAIN:hidden-view.com}{uri} permanent
+}

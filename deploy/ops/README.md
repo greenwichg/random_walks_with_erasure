@@ -1,9 +1,24 @@
-# Operations toolbox (BR1)
+# Operations toolbox (BR1 + AWS deployment)
 
-Turnkey operational scripts for the closed beta. Every one is a **read-only wrapper over existing
-tooling** (`examples/db_backup.py`, the OBS1 `/api/health/*` endpoints) — they change **no application
-behavior**. See **`docs/BETA_LAUNCH_CHECKLIST.md`** for the launch runbook that drives these.
+Turnkey operational scripts for the closed beta. Every one is a **thin wrapper over existing tooling**
+(`docker compose`, `examples/db_backup.py`, the OBS1 `/api/health/*` endpoints) — they change **no
+application behavior**. See **`docs/DEPLOYMENT_RUNBOOK.md`** (AWS EC2) and
+**`docs/BETA_LAUNCH_CHECKLIST.md`** for the runbooks that drive these.
 
+### AWS deployment lifecycle (Docker Compose path)
+These wrap `docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.aws.yml --env-file deploy/.env …`
+(centralised in `_compose.sh`). Every one is **idempotent** — safe to re-run on a brand-new EC2 instance.
+
+| Script | What it does | Typical use |
+|---|---|---|
+| `bootstrap-ec2.sh` | Idempotent host prep: Docker + Compose, AWS CLI, 2 GB swap, container log rotation, data dir, seeds `deploy/.env`. `sudo` required. | Once per new instance (safe to re-run). |
+| `deploy.sh` | Builds + starts ingest→api→web→caddy, gates on engine readiness, enables the backup scheduler, then runs `smoke-test.sh`. | First deploy and every redeploy. |
+| `update.sh [ref]` | Checks out a release tag (or the previous good tag for **rollback**), rebuilds, re-validates. Data untouched. | Ship a new version / roll back. |
+| `restart.sh [svc]` | Restarts all services (or one) via `up -d` so a `deploy/.env` change is re-read. | After editing env (e.g. allowlist). |
+| `restore.sh [src]` | **Verify-first** restore from an `s3://…` URI or a local backup (integrity check → halt writes → safe swap → re-validate). | Recover from data loss/corruption. |
+| `smoke-test.sh` | Validates the **running** stack: containers up, engine live/ready (internal Docker network), PA1 gating (200 with secret / 404 without), OBS1 metrics, public HTTPS + TLS + HTTP→HTTPS redirect. | Auto-run post-deploy; anytime. |
+
+### Host-side probes & backup (Python path — also used inside the containers)
 | Script | What it does | Typical use |
 |---|---|---|
 | `preflight.sh` | Deterministic PASS/WARN/FAIL of env, secrets, HTTPS, OAuth, persistent DB, recent backup, monitoring, and (optionally) live health + analytics gating. Exit 0 only if no FAILs. | Before every launch / redeploy, with the prod env loaded. |
@@ -11,10 +26,10 @@ behavior**. See **`docs/BETA_LAUNCH_CHECKLIST.md`** for the launch runbook that 
 | `verify-restore.sh` | Proves the newest backup is intact **and restorable** — non-destructively (restores a copy to a scratch path, runs `quick_check`, opens the store). | Daily, and always before a real restore. |
 | `healthcheck.sh` | Probes the engine's OBS1 `/api/health/{live,ready}` (and optionally the web app); alerts via `ALERT_WEBHOOK` on failure. | cron / systemd, or as the vendor-neutral fallback behind an external uptime monitor. |
 
-All scripts `cd` to the repo root and select the database exactly as the engine does
-(`RWE_DB_URL` → default). Run them from a host that has Python + the repo and access to the DB (the
-non-Docker production path), or adapt via the compose services. Environment knobs are documented in
-each script's header.
+The `preflight.sh` / `backup.sh` / `verify-restore.sh` / `healthcheck.sh` scripts `cd` to the repo root
+and select the database exactly as the engine does (`RWE_DB_URL` → default). Run them from a host that
+has Python + the repo and access to the DB, or via the compose services. Environment knobs are
+documented in each script's header. `_compose.sh` is a **sourced helper** (not run directly).
 
 **Not shipped in the container image** (`deploy/` is excluded from the Docker build context) — these
 are host-side operator tools. The Docker path gets recurring backups from the compose `backup-scheduler`

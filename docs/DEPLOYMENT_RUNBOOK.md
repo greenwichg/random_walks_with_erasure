@@ -1,0 +1,173 @@
+# Deployment Runbook — Wave 0 (AWS EC2, hidden-view.com)
+
+The operational runbook for the closed beta: the exact commands to stand up, update, roll back, restart,
+restore, and **rebuild from scratch**. Everything is script-driven and **idempotent** — safe to re-run.
+This is the "how"; `docs/AWS_EC2_DEPLOYMENT_GUIDE.md` is the "why" (architecture + AWS resources).
+
+> DEPLOYMENT-ONLY: no application behavior changes. The scripts wrap `docker compose`, the app's own
+> `db_backup.py`, and the OBS1 health endpoints.
+
+## The lifecycle scripts (`deploy/ops/`)
+
+| Script | Purpose |
+|---|---|
+| `bootstrap-ec2.sh` | Idempotent host prep (Docker, AWS CLI, swap, log rotation, data dir, seeds `deploy/.env`). `sudo`. |
+| `deploy.sh` | Build + start the stack, gate on readiness, enable the backup scheduler, run the smoke test. |
+| `update.sh [ref]` | Deploy a release tag; with a previous tag = **rollback**. Data untouched. |
+| `restart.sh [svc]` | Restart all / one service (re-reads `deploy/.env`). |
+| `restore.sh [src]` | Verify-first restore from S3 or a local backup (see `docs/BACKUP_AND_RESTORE.md`). |
+| `smoke-test.sh` | Validate the running stack end-to-end (internal + public). |
+| `preflight.sh` | Deterministic PASS/WARN/FAIL of prod prerequisites. |
+| `backup.sh` / `verify-restore.sh` / `healthcheck.sh` | Backup + off-host, non-destructive restore check, health probe. |
+
+All wrap: `docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.aws.yml --env-file deploy/.env …`.
+
+---
+
+## A · First deploy (existing, bootstrapped instance)
+
+Assumes the AWS resources exist (deployment guide §2): EC2 (Ubuntu 24.04), Elastic IP, Security Group
+(443/80 open, 22 from your IP or SSM), IAM role (S3 + SSM + CloudWatch), S3 backup bucket, repo cloned to
+`/opt/ih`.
+
+```bash
+cd /opt/ih
+sudo deploy/ops/bootstrap-ec2.sh        # 1) idempotent host prep; seeds deploy/.env
+
+$EDITOR deploy/.env                       # 2) fill REQUIRED values (see docs/PRODUCTION_ENVIRONMENT.md)
+chmod 600 deploy/.env
+
+# 3) DNS must resolve to this host BEFORE deploy (Caddy needs it for the ACME cert):
+dig +short hidden-view.com                # → the Elastic IP  (docs/ROUTE53_CONFIGURATION.md)
+
+deploy/ops/deploy.sh                      # 4) build + start + readiness gate + scheduler + smoke test
+
+# 5) full production preflight + a real sign-in, then the go-live checklist:
+set -a; . deploy/.env; set +a
+IH_BASE_URL=http://127.0.0.1:8000 deploy/ops/preflight.sh
+```
+Then work through `docs/WAVE0_GO_LIVE_CHECKLIST.md` and do not invite users until its GO gate is all-green.
+
+---
+
+## B · Deploy a new version
+```bash
+cd /opt/ih
+deploy/ops/update.sh <new-tag>            # fetch + checkout + rebuild + readiness + smoke test
+```
+Data is untouched (it lives on the host bind-mount, independent of the code checkout). Tag releases so
+rollback targets are explicit (`git tag`).
+
+## C · Rollback (app fault)
+```bash
+deploy/ops/update.sh <previous-good-tag>  # redeploy the last known-good release
+```
+For a **data** fault (corruption), roll back data instead — section E.
+
+## D · Restart / change config (e.g. add a beta tester)
+```bash
+$EDITOR deploy/.env                       # e.g. append an email to BETA_ALLOWLIST
+deploy/ops/restart.sh web                 # re-reads env (or restart.sh for all services)
+```
+(If you use `BETA_ALLOWLIST_FILE`, edit the file — it's re-read per sign-in, **no restart** needed.)
+
+## E · Restore data
+See `docs/BACKUP_AND_RESTORE.md`. Short form:
+```bash
+deploy/ops/restore.sh s3://$IH_S3_BUCKET/backups/ih_beta-<ts>.db   # verify-first, safe swap, re-validate
+```
+
+---
+
+## F · EC2 Rebuild Runbook — brand-new instance from scratch
+
+Recover the whole deployment onto a **fresh Ubuntu 24.04 instance** with no prior state. Assumes only:
+the AWS account, the S3 backup bucket (with your latest backup), and the domain. No tribal knowledge.
+
+### F.1 Provision AWS (console or CLI — deployment guide §2)
+1. **IAM role** `ih-ec2-role`: S3 (`PutObject`/`GetObject`/`ListBucket` on the backup bucket) +
+   `AmazonSSMManagedInstanceCore` + `CloudWatchAgentServerPolicy`; make an instance profile.
+2. **Security Group**: inbound 443 + 80 from `0.0.0.0/0`; 22 from your IP only (or SSM, no SSH). Nothing else.
+3. **Launch** t3.medium (or t3.small for ≤30 users), Ubuntu 24.04 LTS, 30 GiB gp3, the IAM instance profile, the SG.
+4. **Elastic IP**: allocate + associate (or **re-associate the existing EIP** — then DNS & OAuth need no change).
+
+### F.2 DNS
+If you kept the EIP, DNS already points here. Otherwise update the A records `hidden-view.com` + `www` →
+new EIP and wait for propagation (`dig +short hidden-view.com`). See `docs/ROUTE53_CONFIGURATION.md`.
+
+### F.3 Host prep + code
+```bash
+ssh ubuntu@<eip>            # or: aws ssm start-session --target <instance-id>
+sudo mkdir -p /opt/ih && sudo chown ubuntu:ubuntu /opt/ih
+git clone <repo-url> /opt/ih && cd /opt/ih
+git checkout <release-tag>                 # the version you were running
+sudo deploy/ops/bootstrap-ec2.sh           # Docker, swap, AWS CLI, log rotation, /opt/ih/data, seeds deploy/.env
+```
+
+### F.4 Configuration
+```bash
+$EDITOR deploy/.env                         # restore the SAME values (secrets from your secret store)
+chmod 600 deploy/.env
+```
+Reuse the **same** `RWE_INTERNAL_SECRET`, `NEXTAUTH_SECRET`, and Google OAuth client. (A new
+`NEXTAUTH_SECRET` just forces everyone to sign in again — acceptable, not required.)
+
+### F.5 Restore data, then start
+```bash
+# Bring back the newest off-host backup FIRST so the app starts on real data:
+mkdir -p /opt/ih/data
+aws s3 cp "s3://$IH_S3_BUCKET/backups/$(aws s3 ls s3://$IH_S3_BUCKET/backups/ | sort | tail -1 | awk '{print $4}')" \
+  /opt/ih/data/ih_beta.db
+deploy/ops/verify-restore.sh /opt/ih/data/ih_beta.db    # prove it's intact
+
+deploy/ops/deploy.sh                        # build + start + readiness + scheduler + smoke test
+```
+(If you start before restoring, `deploy.sh` creates a fresh empty DB; then use `deploy/ops/restore.sh`.)
+
+### F.6 Verify + reconnect monitoring
+```bash
+set -a; . deploy/.env; set +a
+IH_BASE_URL=http://127.0.0.1:8000 deploy/ops/preflight.sh      # exit 0
+deploy/ops/smoke-test.sh                                        # exit 0
+```
+Re-create the host cron for S3 backups (`docs/BACKUP_AND_RESTORE.md`) and the CloudWatch agent/alarms +
+`healthcheck.sh` cron (deployment guide §7). Done — the rebuild is live.
+
+**Rebuild RTO** is dominated by DNS propagation (if the EIP changed) and image build (~a few minutes);
+plan for well under an hour.
+
+---
+
+## G · Routine operations
+
+**Logs** (capped by `deploy/host/daemon.json`, rotated):
+```bash
+docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.aws.yml --env-file deploy/.env logs -f api
+# correlate by requestId in the structured JSON (OBS1)
+```
+**Disk / memory:** `df -h`, `free -m`, `docker system prune -f` (reclaim image space).
+
+**Rotate secrets:**
+```bash
+# NEXTAUTH_SECRET (invalidates ALL sessions → everyone re-signs-in):
+openssl rand -base64 32     # set in deploy/.env, then: deploy/ops/restart.sh web
+# RWE_INTERNAL_SECRET (change on BOTH tiers together):
+openssl rand -base64 32     # set once (shared) in deploy/.env, then: deploy/ops/restart.sh
+```
+
+## H · Troubleshooting
+
+| Symptom | Check | Fix |
+|---|---|---|
+| `docker compose up` errors `RWE_INTERNAL_SECRET … must be set` | `deploy/.env` incomplete | Fill REQUIRED values (`docs/PRODUCTION_ENVIRONMENT.md`) |
+| web container crash-loops | `… logs web` → env validation error | Set the missing var; `restart.sh web` |
+| No HTTPS / cert pending | `dig +short hidden-view.com`; SG 80 open; `… logs caddy` | Fix DNS/SG; Caddy retries automatically |
+| `smoke-test.sh` public checks FAIL | DNS not live / SG / Caddy down | Section above; internal checks isolate app vs edge |
+| engine not ready | `… logs api`; ingest completed? | Wait; a flaky feed doesn't block (falls back to profile) |
+| `!reset`/`!override` error at `config` | Compose < 2.24 | Upgrade Docker (`bootstrap-ec2.sh` warns) |
+
+---
+
+*Related: `docs/AWS_EC2_DEPLOYMENT_GUIDE.md` (architecture), `docs/PRODUCTION_ENVIRONMENT.md` (env),
+`docs/BACKUP_AND_RESTORE.md`, `docs/GOOGLE_OAUTH_CONFIGURATION.md`, `docs/ROUTE53_CONFIGURATION.md`,
+`docs/WAVE0_GO_LIVE_CHECKLIST.md`.*

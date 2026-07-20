@@ -142,6 +142,15 @@ jobs:
           docker compose -f deploy/docker-compose.yml config -q
           docker compose -f deploy/docker-compose.yml --profile scheduler config -q
           docker compose -f deploy/docker-compose.yml --profile backup config -q
+      - name: Validate the AWS production override (base + override merge)
+        # Dummy secrets satisfy the override's fail-fast ${VAR:?} guards so `config` can render the
+        # merged model (this validates the !reset/!override tags + interpolation, not the secrets).
+        run: |
+          RWE_INTERNAL_SECRET=ci NEXTAUTH_URL=https://ci.example.com NEXTAUTH_SECRET=ci \
+          GOOGLE_CLIENT_ID=ci GOOGLE_CLIENT_SECRET=ci BETA_ALLOWLIST=ci@example.com \
+          docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.aws.yml config -q
+      - name: Lint the ops scripts (syntax)
+        run: bash -n deploy/ops/*.sh
       - name: Build engine image (no push)
         uses: docker/build-push-action@v6
         with:

@@ -4,11 +4,18 @@ Senior-DevOps guide to running this project on a single AWS EC2 instance for the
 the repo's existing artifacts — `deploy/docker-compose.yml`, `deploy/Dockerfile.{api,web}`, the
 `deploy/ops/*` scripts (`preflight.sh`, `backup.sh`, `verify-restore.sh`, `healthcheck.sh`), the OBS1
 health/metrics endpoints, the PA1 analytics endpoints, and the BA1 allowlist — and adds only *operator
-configuration you create on the box* (a Caddy reverse proxy + a compose override). **No application code
-is changed.** Pairs with `DEPLOYMENT.md`, `docs/BETA_LAUNCH_PLAYBOOK.md`, `docs/BETA_ACCESS_CONTROL.md`.
+configuration* (a Caddy reverse proxy + a compose override). **No application code is changed.**
 
-Conventions: region `us-east-1` (adjust as needed), domain `beta.example.com`, app dir `/opt/ih`,
-`$` = shell on the instance. Replace every `example.com` / bracketed value.
+> **These artifacts now live in the repo** (they are no longer hand-created on the box): the compose
+> override `deploy/docker-compose.aws.yml`, the reverse proxy `deploy/Caddyfile`, the env template
+> `deploy/.env.production.example`, the log-rotation sample `deploy/host/daemon.json`, and the idempotent
+> lifecycle scripts `deploy/ops/{bootstrap-ec2,deploy,update,restart,restore,smoke-test}.sh`. The
+> **step-by-step, script-driven workflow is `docs/DEPLOYMENT_RUNBOOK.md`** (this guide is the architecture
+> + rationale reference). Pairs with `DEPLOYMENT.md`, `docs/PRODUCTION_ENVIRONMENT.md`,
+> `docs/BACKUP_AND_RESTORE.md`, `docs/GOOGLE_OAUTH_CONFIGURATION.md`, `docs/ROUTE53_CONFIGURATION.md`.
+
+Conventions: region `us-east-1` (adjust as needed), domain **`hidden-view.com`** (apex; `www` redirects
+to it), app dir `/opt/ih`, host data dir `/opt/ih/data`, `$` = shell on the instance.
 
 ---
 
@@ -38,7 +45,7 @@ app already uses is the right size for a beta.
 | **Root EBS** | **30 GiB gp3** (20 GiB floor) | Holds the OS + two container images (~1.5 GB) + the SQLite DB & WAL (small) + local backups + logs. gp3's baseline 3000 IOPS / 125 MB/s is plenty for SQLite; you pay only for size. Off-host backups keep local growth bounded. |
 | **Security Group** | Inbound: **443** and **80** from `0.0.0.0/0`; **22** from **your IP only** (or use **SSM Session Manager** and open no SSH). Everything else denied. Do **not** expose 3000/8000. Outbound: allow 443/80 (OAuth, Let's Encrypt, S3, RSS feeds). | Least exposure. 80 is required for Let's Encrypt HTTP-01 + an HTTPS redirect. The engine (8000) and web (3000) are never internet-reachable — only Caddy is. |
 | **Elastic IP** | **Yes** — allocate one, associate to the instance. | A stable public IP survives stop/start so the Route 53 A record and the Google OAuth callback URL never change. (Note: AWS now bills ~$3.65/mo per in-use public IPv4 — see §8.) |
-| **Route 53** | Hosted zone for your domain + an **A record** `beta.example.com → EIP`. | AWS-native DNS; low TTL makes cutovers fast. If your domain lives at another registrar, an A record there works identically — Route 53 is convenient, not required. |
+| **Route 53** | Hosted zone for your domain + an **A record** `hidden-view.com → EIP`. | AWS-native DNS; low TTL makes cutovers fast. If your domain lives at another registrar, an A record there works identically — Route 53 is convenient, not required. |
 | **HTTPS** | **Caddy** container (see §4), automatic Let's Encrypt certs + renewal. | Zero-config TLS; one line per host. (Nginx + certbot is the alternative if you need fine-grained control — more moving parts.) |
 | **S3 backups** | Private, **versioned** bucket with a lifecycle rule; write via the instance **IAM role** (no static keys). | 11-nines durability, off-host — a lost EBS volume or terminated instance never loses user data. This satisfies the BR1 "off-host backups" launch blocker. |
 | **CloudWatch** | CloudWatch **agent** (mem + disk), **alarms** on StatusCheckFailed / high CPU / low disk → **SNS** email/SMS; plus `deploy/ops/healthcheck.sh` on cron probing the OBS1 endpoints. | AWS-native alerting closes the BR1 "nobody is paged" gap. Basic EC2 metrics are free; the agent adds memory/disk which EC2 doesn't emit by default. |
@@ -83,11 +90,11 @@ aws ec2 run-instances \
   --security-group-ids <sg-id> \
   --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=ih-beta}]'
 ```
-Then allocate + associate an **Elastic IP**, and point Route 53 `beta.example.com` at it:
+Then allocate + associate an **Elastic IP**, and point Route 53 `hidden-view.com` at it:
 ```bash
 aws ec2 allocate-address --domain vpc
 aws ec2 associate-address --instance-id <i-...> --allocation-id <eipalloc-...>
-# Route 53: create an A record beta.example.com -> <EIP> (console or change-resource-record-sets)
+# Route 53: create an A record hidden-view.com -> <EIP> (console or change-resource-record-sets)
 ```
 
 ### 2.4 Security group rules
@@ -101,7 +108,7 @@ Prefer **SSM Session Manager** (`aws ssm start-session --target <i-...>`) over o
 SSH, audited sessions. If you keep SSH, add `~/.ssh/config`:
 ```
 Host ih-beta
-  HostName beta.example.com
+  HostName hidden-view.com
   User ubuntu
   IdentityFile ~/.ssh/<your-keypair>.pem
 ```
@@ -163,7 +170,7 @@ in your copy of the compose (config edit on your box, not an app-code change). F
 | `RWE_ENV` | `production` | Disables the dev demo-login; enables BA1 by default; the web tier **refuses to boot** if the vars below are missing. |
 | `RWE_INTERNAL_SECRET` | *(same as engine)* | Sent as `X-IH-Auth` on server-to-server calls. |
 | `RWE_BACKEND_URL` | `http://api:8000` | The engine's service name on the Docker network (never public). |
-| `NEXTAUTH_URL` | `https://beta.example.com` | **https**, exact public URL. Drives OAuth callbacks + `Secure` cookies. |
+| `NEXTAUTH_URL` | `https://hidden-view.com` | **https**, exact public URL. Drives OAuth callbacks + `Secure` cookies. |
 | `NEXTAUTH_SECRET` | `openssl rand -base64 32` | Signs session JWTs. Rotating it invalidates all sessions (see §7). |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | from Google Cloud Console | The only sign-in method in prod. |
 | **`BETA_ACCESS_ENABLED`** | `1` | BA1 invite-only gate (defaults on in prod; set explicitly to be sure). |
@@ -184,14 +191,23 @@ in your copy of the compose (config edit on your box, not an app-code change). F
 
 ## 4 · HTTPS with Caddy (automatic Let's Encrypt)
 
-**Recommended: Caddy** — automatic certificate issuance + renewal, one line of config. Create these two
-files on the instance (operator config; not part of the app):
+**Caddy** — automatic certificate issuance + renewal, one line of config. Both files below are **committed
+to the repo** (`deploy/Caddyfile` and `deploy/docker-compose.aws.yml`); you no longer hand-write them —
+you just supply values in `deploy/.env`. Caddy is the **only** internet-facing service and it reaches the
+app at `web:3000` over the **private Docker network** (service name, not a host port), so 3000/8000 are
+never exposed.
 
-`/opt/ih/deploy/Caddyfile`
+`deploy/Caddyfile` (apex served; `www` 308-redirects to it; `{$APP_DOMAIN}` comes from `deploy/.env`):
 ```
-beta.example.com {
+{
+    email {$ACME_EMAIL:ops@hidden-view.com}
+}
+{$APP_DOMAIN:hidden-view.com} {
     encode zstd gzip
-    reverse_proxy web:3000
+    reverse_proxy web:3000          # internal Docker network — never a host port
+}
+www.{$APP_DOMAIN:hidden-view.com} {
+    redir https://{$APP_DOMAIN:hidden-view.com}{uri} permanent
 }
 ```
 
@@ -234,12 +250,12 @@ volumes:
 > from `ih-data:/app/data` to `/opt/ih/data:/app/data` (bind mount). Keep it consistent across `api`,
 > `backup`, and `backup-scheduler`.
 
-**DNS:** the Route 53 A record `beta.example.com → EIP` (from §2) must resolve **before** first start so
-Caddy can complete the ACME HTTP-01 challenge (port 80 open). Verify: `dig +short beta.example.com`.
+**DNS:** the Route 53 A record `hidden-view.com → EIP` (from §2) must resolve **before** first start so
+Caddy can complete the ACME HTTP-01 challenge (port 80 open). Verify: `dig +short hidden-view.com`.
 
 **Google OAuth:** in the Google console set the **Authorized redirect URI** to
-`https://beta.example.com/api/auth/callback/google` and Authorized JavaScript origin to
-`https://beta.example.com`; set `NEXTAUTH_URL=https://beta.example.com`.
+`https://hidden-view.com/api/auth/callback/google` and Authorized JavaScript origin to
+`https://hidden-view.com`; set `NEXTAUTH_URL=https://hidden-view.com`.
 
 *(Nginx alternative: run `nginx` + `certbot --nginx` with a server block `proxy_pass
 http://127.0.0.1:3000;` and a cron `certbot renew`. Caddy removes all of that.)*
@@ -248,7 +264,12 @@ http://127.0.0.1:3000;` and a cron `certbot renew`. Caddy removes all of that.)*
 
 ## 5 · Deployment
 
-Run everything from `/opt/ih`, layering the override so `-f` order matters (later wins):
+**The one-liner:** `deploy/ops/deploy.sh` — it is **idempotent** (safe to re-run on a fresh instance),
+builds + starts the stack, gates on engine readiness, enables the backup scheduler, and runs
+`deploy/ops/smoke-test.sh`. First-time host prep is `sudo deploy/ops/bootstrap-ec2.sh`; new releases and
+rollbacks are `deploy/ops/update.sh [tag]`. See `docs/DEPLOYMENT_RUNBOOK.md` for the full sequence.
+
+Under the hood it runs (from `/opt/ih`, layering the override so `-f` order matters — later wins):
 ```bash
 export COMPOSE="docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.aws.yml --env-file deploy/.env"
 
@@ -287,7 +308,7 @@ Run after every deploy (most is one command — `deploy/ops/preflight.sh` — pl
 
 | Target | Command | Expected |
 |---|---|---|
-| **Application** | `curl -fsS -o /dev/null -w '%{http_code}\n' https://beta.example.com` | 200 (or an auth redirect) over valid TLS |
+| **Application** | `curl -fsS -o /dev/null -w '%{http_code}\n' https://hidden-view.com` | 200 (or an auth redirect) over valid TLS |
 | **Health endpoints (OBS1)** | `docker compose … exec -T api curl -fsS http://127.0.0.1:8000/api/health/ready` | `{"status":"ready",…}` (live also `alive`) |
 | **Authentication** | Sign in with an **allowlisted** Google account → dashboard; then a **non-allowlisted** account → `/signin?error=AccessDenied` invite-only message (BA1) | both behave as expected |
 | **PA1 analytics** | `curl -fsS -H "X-IH-Auth:$RWE_INTERNAL_SECRET" http://127.0.0.1:8000/api/analytics/funnel` (via the api container/localhost); and `…/api/analytics/funnel` **without** the header | 200 with reachers > 0 after the smoke session; **404** unauthenticated (internal-only) |
@@ -382,8 +403,8 @@ a few dollars.
 
 The full, checkbox version is **`docs/WAVE0_GO_LIVE_CHECKLIST.md`**. In brief, do not send invites until:
 
-- [ ] Route 53 A record resolves to the EIP; HTTPS valid (`curl -I https://beta.example.com`).
-- [ ] Google OAuth redirect URI = `https://beta.example.com/api/auth/callback/google`; `NEXTAUTH_URL` matches.
+- [ ] Route 53 A record resolves to the EIP; HTTPS valid (`curl -I https://hidden-view.com`).
+- [ ] Google OAuth redirect URI = `https://hidden-view.com/api/auth/callback/google`; `NEXTAUTH_URL` matches.
 - [ ] `deploy/.env` complete (RWE_ENV=production, matching `RWE_INTERNAL_SECRET`, `NEXTAUTH_SECRET`,
       Google creds, `RWE_DB_URL` on the volume) and `chmod 600`.
 - [ ] **BA1**: `BETA_ACCESS_ENABLED=1` and `BETA_ALLOWLIST` contains the **5 Wave-0 emails** (verified: an

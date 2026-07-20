@@ -44,6 +44,11 @@ backups/
 /polito_axis.png
 /health_report.html
 
+# Deployment secrets — the filled-in production env is NEVER committed. The tracked, secret-free
+# templates (deploy/.env.production.example, deploy/qbias.env.example) do not match these patterns.
+/deploy/.env
+/deploy/.env.local
+
 # OS / editor
 .DS_Store
 .idea/
