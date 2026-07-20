@@ -26,3 +26,9 @@ yarn-error.log*
 
 # typescript
 *.tsbuildinfo
+
+# e2e regression suite — runtime artifacts (temp engine DB, traces, HTML report)
+/.e2e-tmp/
+/test-results/
+/playwright-report/
+/playwright/.cache/

@@ -10,7 +10,11 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "test": "node --test lib/i18n-core.test.ts lib/rec-presentation.test.ts lib/history-insights.test.ts lib/hero-copy.test.ts lib/coach-presentation.test.ts lib/notifications.test.ts lib/analysis-presentation.test.ts lib/settings-diff.test.ts lib/engine-fallback.test.ts"
+    "test": "node --test lib/i18n-core.test.ts lib/rec-presentation.test.ts lib/history-insights.test.ts lib/hero-copy.test.ts lib/coach-presentation.test.ts lib/notifications.test.ts lib/analysis-presentation.test.ts lib/settings-diff.test.ts lib/engine-fallback.test.ts",
+    "build:e2e": "NEXT_PUBLIC_DEV_LOGIN=1 next build",
+    "e2e": "npm run build:e2e && playwright test",
+    "e2e:run": "playwright test",
+    "e2e:report": "playwright show-report .e2e-tmp/report"
   },
   "dependencies": {
     "@radix-ui/react-avatar": "^1.1.1",
@@ -41,6 +45,7 @@
     "tailwindcss-animate": "^1.0.7"
   },
   "devDependencies": {
+    "@playwright/test": "^1.56.1",
     "@types/node": "^20.16.13",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
