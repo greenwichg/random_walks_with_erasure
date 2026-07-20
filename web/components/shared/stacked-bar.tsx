@@ -35,7 +35,8 @@ export function StackedBar({
 
   return (
     <div className={showLegend ? "space-y-2.5" : undefined}>
-    <div ref={ref} className="w-full" style={{ height }}>
+    {/* MB1: min-w-0 + overflow-hidden — see TrendChart. */}
+    <div ref={ref} className="w-full min-w-0 overflow-hidden" style={{ height }}>
       <BarChart width={width} height={height} data={data} margin={{ top: 8, right: 12, left: 0, bottom: 0 }} barCategoryGap={stacked ? "18%" : "26%"}>
         <XAxis
           dataKey={xKey}

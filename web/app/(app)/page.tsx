@@ -64,7 +64,7 @@ export default function DashboardPage() {
           <ProfileProgress mode={data.mode} coverage={data.coverage} />
 
           {/* Hero: overall score + trend */}
-          <div className="grid gap-6 lg:grid-cols-3">
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
             <Card className="overflow-hidden lg:col-span-2">
               <CardContent className="flex flex-col items-center gap-6 p-6 sm:flex-row sm:p-8">
                 <ScoreRing score={data.overall} size={148} label={t("common.of100")} />
@@ -116,7 +116,7 @@ export default function DashboardPage() {
                 {t("nav.history")}
               </Link>
             </div>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <StatCard icon={BookOpen} label={t("dashboard.articlesRead")} value={`${data.today.articlesRead}`} hue="primary" index={0} />
               <StatCard
                 icon={Clock}
@@ -156,7 +156,7 @@ export default function DashboardPage() {
               </Link>
             </div>
             <motion.div
-              className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4"
+              className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4"
               initial="hidden"
               animate="show"
             >

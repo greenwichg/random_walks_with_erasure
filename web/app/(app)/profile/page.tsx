@@ -103,7 +103,7 @@ export default function ProfilePage() {
         </CardContent>
       </Card>
 
-      <div className="grid gap-6 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         {/* Health journey */}
         <SectionCard
           title={t("profile.healthJourney")}
@@ -161,7 +161,7 @@ export default function ProfilePage() {
             {t("profile.unlockedCount", { unlocked: unlocked.length, total: data.achievements.length })}
           </span>
         </div>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {[...unlocked, ...locked].map((a, i) => (
             <AchievementCard key={a.id} achievement={a} index={i} />
           ))}
@@ -294,11 +294,11 @@ function ProfileSkeleton() {
   return (
     <PageContainer>
       <Skeleton className="mb-6 h-56 rounded-lg" />
-      <div className="grid gap-6 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <Skeleton className="h-72 rounded-lg lg:col-span-2" />
         <Skeleton className="h-72 rounded-lg" />
       </div>
-      <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {Array.from({ length: 6 }).map((_, i) => (
           <Skeleton key={i} className="h-28 rounded-lg" />
         ))}

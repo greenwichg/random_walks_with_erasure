@@ -84,10 +84,28 @@
   * {
     @apply border-border;
   }
+  html {
+    /* MB1 H1: guarantee zero horizontal scrolling. `clip` (not `hidden`) contains any stray
+     * overflow WITHOUT establishing a scroll container, so `position: sticky` (the header) and
+     * fixed/portaled overlays (dialogs, dropdowns, tooltips) keep working. Vertical scrolling is
+     * untouched. This is the safety net; the real chart/card fixes remove the overflow at source. */
+    overflow-x: clip;
+  }
   body {
     @apply bg-background text-foreground antialiased;
     font-feature-settings: "cv11", "ss01";
     text-rendering: optimizeLegibility;
+    overflow-x: clip;
+    /* MB1 M3: kill the grey tap-flash on Android and let controls opt out of double-tap zoom. */
+    -webkit-tap-highlight-color: transparent;
+  }
+  /* MB1 M3: interactive controls respond immediately to taps (no 300ms double-tap-zoom delay). */
+  button,
+  a,
+  [role="button"],
+  label,
+  summary {
+    touch-action: manipulation;
   }
   ::selection {
     @apply bg-primary/20;
@@ -123,5 +141,33 @@
       hsl(var(--card)) 0%,
       hsl(var(--muted) / 0.4) 100%
     );
+  }
+}
+
+/*
+ * MB1 mobile utilities — safe-area insets + comfortable touch targets.
+ * These are plain CSS (outside @layer) so they always win over utility classes when applied.
+ */
+
+/* MB1 H2: honor the device's safe areas (notch, rounded corners, home indicator). Only take
+ * effect where `viewport-fit=cover` exposes non-zero insets (set in app/layout.tsx); on a device
+ * with no insets env() resolves to 0, so these are no-ops on a rectangular screen. These two are
+ * applied only to elements with no existing padding on that side (the sticky header's top, the
+ * nav drawer); sites that already carry base padding compose the inset inline via Tailwind's
+ * `max(<base>, env(...))` arbitrary values, so nothing is clobbered. */
+.safe-top {
+  padding-top: env(safe-area-inset-top);
+}
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* MB1 H3 / Phase 6: guarantee a ≥44px comfortable touch target on real touch devices, WITHOUT
+ * inflating the same compact control under a precise mouse pointer. Applied to icon-only and
+ * small pill controls. `pointer: coarse` is the touch/stylus case. */
+@media (pointer: coarse) {
+  .touch-target {
+    min-height: 2.75rem;
+    min-width: 2.75rem;
   }
 }

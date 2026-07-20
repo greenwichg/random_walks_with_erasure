@@ -33,7 +33,10 @@ export function TrendChart({
   const gradientId = `grad-${dataKey}`;
 
   return (
-    <div ref={ref} className="w-full" style={{ height }}>
+    // MB1: `min-w-0 overflow-hidden` lets this wrapper shrink below the seeded SVG width inside a
+    // grid/flex parent (defeats the `min-width:auto` floor) and clips the pre-measure frame, so a
+    // chart can never drag the page into horizontal scroll.
+    <div ref={ref} className="w-full min-w-0 overflow-hidden" style={{ height }}>
       <AreaChart
         width={width}
         height={height}

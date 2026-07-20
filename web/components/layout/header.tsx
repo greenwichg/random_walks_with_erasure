@@ -57,7 +57,7 @@ export function Header() {
   }, []);
 
   return (
-    <header className="glass sticky top-0 z-20 flex h-16 items-center gap-3 border-b px-4 lg:px-8">
+    <header className="glass safe-top sticky top-0 z-20 flex min-h-[4rem] items-center gap-3 border-b px-4 lg:px-8">
       {/* Mobile nav */}
       <Sheet open={mobileNav} onOpenChange={setMobileNav}>
         <SheetTrigger asChild>
@@ -65,7 +65,7 @@ export function Header() {
             <Menu className="h-5 w-5" />
           </Button>
         </SheetTrigger>
-        <SheetContent side="left" className="w-72 p-0">
+        <SheetContent side="left" className="safe-top w-72 p-0">
           <div className="flex h-16 items-center px-6">
             <Logo />
           </div>
@@ -96,7 +96,7 @@ export function Header() {
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <button className="ml-1 rounded-full outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring">
+            <button className="touch-target ml-1 grid place-items-center rounded-full outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring">
               <Avatar>
                 <AvatarImage src={image} alt={name} />
                 <AvatarFallback>{initials}</AvatarFallback>

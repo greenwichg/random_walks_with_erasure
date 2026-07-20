@@ -21,6 +21,9 @@ export const viewport: Viewport = {
   ],
   width: "device-width",
   initialScale: 1,
+  // MB1 H2: expose the device safe-area insets to `env(safe-area-inset-*)` so the sticky header,
+  // the mobile drawer, and the settings save bar can clear the notch / home indicator.
+  viewportFit: "cover",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

@@ -105,7 +105,7 @@ export default function ReportPage() {
           <ProfileProgress mode={report.mode} coverage={report.coverage} />
 
           {/* Overall + radar */}
-          <div className="grid gap-6 lg:grid-cols-3">
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
             <Card>
               <CardContent className="flex flex-col items-center p-6 text-center">
                 <ScoreRing score={report.overall} size={150} label={t("common.of100")} band={report.band} />
@@ -136,7 +136,7 @@ export default function ReportPage() {
           </div>
 
           {/* Political distribution + attention */}
-          <div className="grid gap-6 lg:grid-cols-2">
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
             <SectionCard title={t("report.politicalDist")} info={t("report.politicalDistInfo")}>
               <div className="pt-2">
                 <SpectrumBar distribution={report.viewpoint} height={16} />
@@ -157,7 +157,7 @@ export default function ReportPage() {
           </div>
 
           {/* Reading + source distribution */}
-          <div className="grid gap-6 lg:grid-cols-2">
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
             <SectionCard title={t("report.readingDist")} info={t("report.readingDistInfo")}>
               <BarList items={topicItems} />
             </SectionCard>
@@ -167,7 +167,7 @@ export default function ReportPage() {
           </div>
 
           {/* Blind spots + improvements */}
-          <div className="grid gap-6 lg:grid-cols-2">
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
             <SectionCard title={t("report.blindSpotsTitle")} info={t("report.blindSpotsInfo")}>
               <BlindSpots items={report.blindSpots} />
             </SectionCard>

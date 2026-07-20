@@ -50,7 +50,7 @@ export function ReflectionInsights({ insights }: { insights: HistoryInsights }) 
 
   return (
     <SectionCard title={t("history.insightsTitle")}>
-      <ul className="grid gap-x-6 gap-y-2 sm:grid-cols-2">
+      <ul className="grid grid-cols-1 gap-x-6 gap-y-2 sm:grid-cols-2">
         {notes.map(({ Icon, text }, i) => (
           <li key={i} className="flex items-center gap-2 text-sm text-muted-foreground">
             <Icon className="h-4 w-4 shrink-0 opacity-70" />

@@ -38,7 +38,7 @@ export function DailySummary({ insights, dayLabel }: { insights: HistoryInsights
       title={dayLabel}
       action={<span className="text-xs text-muted-foreground">{t("history.articlesCount", { n: insights.count })}</span>}
     >
-      <div className="grid gap-x-8 gap-y-5 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-x-8 gap-y-5 sm:grid-cols-2">
         <div className="space-y-4">
           <Exposure label={t("history.daily.political")}>
             <DistributionBar segments={leanSegs} />

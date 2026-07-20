@@ -96,7 +96,7 @@ export function StoryBrowser({
       </div>
 
       {isLoading && (
-        <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+        <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
           {Array.from({ length: 6 }).map((_, i) => (
             <Skeleton key={i} className="h-52 rounded-lg" />
           ))}
@@ -108,7 +108,7 @@ export function StoryBrowser({
         <EmptyState icon={icon} title={t("stories.empty.title")} description={emptyDescription} className="mt-4" />
       )}
 
-      <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+      <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
         {stories.map((story, i) => (
           <StoryCard key={story.id} story={story} index={i} />
         ))}

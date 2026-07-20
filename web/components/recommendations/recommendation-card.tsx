@@ -68,7 +68,9 @@ export function RecommendationCard({
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, scale: 0.97, transition: { duration: 0.2 } }}
       transition={{ delay: index * 0.04, duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
-      className="group relative flex flex-col rounded-lg border bg-card p-5 shadow-soft transition-shadow hover:shadow-card"
+      // MB1: min-w-0 lets the card shrink to its grid column on mobile (the `min-width:auto` floor
+      // was scrolling the recommendations page sideways by ~49px).
+      className="group relative flex min-w-0 flex-col rounded-lg border bg-card p-5 shadow-soft transition-shadow hover:shadow-card"
     >
       {/* top row: strategy + dismiss */}
       <div className="mb-3 flex items-center justify-between">
@@ -89,7 +91,7 @@ export function RecommendationCard({
           aria-label={t("rec.ignore")}
           // Always visible on touch (no hover); hover-reveal only from `sm` up so the desktop card
           // stays clean but the dismiss is never unreachable on a phone.
-          className="grid h-7 w-7 place-items-center rounded-md text-muted-foreground opacity-100 transition-all hover:bg-muted hover:text-foreground sm:opacity-0 sm:group-hover:opacity-100"
+          className="touch-target grid h-7 w-7 place-items-center rounded-md text-muted-foreground opacity-100 transition-all hover:bg-muted hover:text-foreground sm:opacity-0 sm:group-hover:opacity-100"
         >
           <X className="h-4 w-4" />
         </button>
@@ -301,7 +303,7 @@ function ActionButton({
           aria-label={label}
           aria-pressed={active}
           className={cn(
-            "grid h-8 w-8 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-muted",
+            "touch-target grid h-8 w-8 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-muted",
             active && activeClass,
           )}
         >

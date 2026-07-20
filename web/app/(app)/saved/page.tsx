@@ -54,7 +54,7 @@ export default function SavedPage() {
       </div>
 
       {isLoading && (
-        <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+        <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
           {Array.from({ length: 6 }).map((_, i) => (
             <Skeleton key={i} className="h-56 rounded-lg" />
           ))}
@@ -76,7 +76,7 @@ export default function SavedPage() {
         />
       )}
 
-      <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+      <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
         {saved.map((s, i) => (
           <DiscoverCard key={s.articleId} article={toArticle(s)} index={i} openedFrom="saved" />
         ))}

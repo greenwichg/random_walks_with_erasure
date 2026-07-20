@@ -71,7 +71,9 @@ export default function RecommendationsPage() {
       </div>
 
       <Tabs value={filter} onValueChange={(v) => setFilter(v as Filter)} className="mb-6">
-        <TabsList>
+        {/* MB1: the filter strip can exceed a phone's width (4 tabs + icons, longer in some locales) —
+            let it scroll horizontally and align left instead of overflowing the page. */}
+        <TabsList className="max-w-full justify-start overflow-x-auto">
           {FILTERS.map((f) => (
             <TabsTrigger key={f.value} value={f.value}>
               <f.icon className="h-3.5 w-3.5" />
@@ -82,7 +84,7 @@ export default function RecommendationsPage() {
       </Tabs>
 
       {isLoading && (
-        <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+        <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
           {Array.from({ length: 6 }).map((_, i) => (
             <Skeleton key={i} className="h-72 rounded-lg" />
           ))}
@@ -104,7 +106,7 @@ export default function RecommendationsPage() {
         />
       )}
 
-      <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+      <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
         <AnimatePresence mode="popLayout">
           {visible.map((rec, i) => (
             <RecommendationCard

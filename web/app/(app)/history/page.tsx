@@ -280,7 +280,7 @@ function ViewToggle({
     <button
       onClick={onClick}
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-md px-3 py-1 text-sm font-medium transition-colors",
+        "touch-target inline-flex items-center justify-center gap-1.5 rounded-md px-3 py-1 text-sm font-medium transition-colors",
         active ? "bg-background text-foreground shadow-soft" : "text-muted-foreground hover:text-foreground",
       )}
     >

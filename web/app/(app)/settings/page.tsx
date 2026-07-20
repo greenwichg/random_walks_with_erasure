@@ -148,7 +148,7 @@ export default function SettingsPage() {
       </div>
 
       {isLoading && (
-        <div className="grid gap-6">
+        <div className="grid grid-cols-1 gap-6">
           {Array.from({ length: 4 }).map((_, i) => (
             <Skeleton key={i} className="h-56 rounded-lg" />
           ))}
@@ -157,7 +157,7 @@ export default function SettingsPage() {
       {isError && <ErrorState onRetry={() => refetch()} />}
 
       {draft && (
-        <div className="grid gap-6 pb-24">
+        <div className="grid grid-cols-1 gap-6 pb-24">
           {/* Appearance */}
           <SectionCard title={t("settings.appearance")} info={t("settings.appearanceInfo")}>
             <div className="divide-y">
@@ -174,7 +174,7 @@ export default function SettingsPage() {
                       key={opt.value}
                       onClick={() => applyTheme(opt.value)}
                       className={cn(
-                        "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                        "touch-target inline-flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
                         theme === opt.value
                           ? "bg-background text-foreground shadow-soft"
                           : "text-muted-foreground hover:text-foreground",
@@ -192,7 +192,7 @@ export default function SettingsPage() {
                       key={l.value}
                       onClick={() => set("language", l.value)}
                       className={cn(
-                        "rounded-full border px-3 py-1 text-sm font-medium transition-colors",
+                        "touch-target inline-flex items-center justify-center rounded-full border px-3 py-1 text-sm font-medium transition-colors",
                         draft.language === l.value
                           ? "border-primary/40 bg-primary/10 text-primary"
                           : "text-muted-foreground hover:bg-accent",
@@ -334,7 +334,7 @@ export default function SettingsPage() {
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: 80, opacity: 0 }}
             transition={{ type: "spring", stiffness: 400, damping: 32 }}
-            className="fixed inset-x-0 bottom-4 z-30 flex justify-center px-4 lg:pl-64"
+            className="fixed inset-x-0 bottom-[max(1rem,env(safe-area-inset-bottom))] z-30 flex justify-center px-4 lg:pl-64"
           >
             <div
               role="status"

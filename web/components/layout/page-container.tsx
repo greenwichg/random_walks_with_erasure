@@ -16,7 +16,13 @@ export function PageContainer({
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
-      className={cn("mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8 lg:py-8", className)}
+      // MB1 H2: horizontal padding and the bottom edge honor the device safe areas (landscape
+      // notch on the sides, home indicator at the bottom) via max(base, env(...)); `sm:px-6`/`lg`
+      // take over at wider breakpoints where insets are irrelevant.
+      className={cn(
+        "mx-auto w-full max-w-7xl pt-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] sm:px-6 lg:px-8 lg:pb-8 lg:pt-8",
+        className,
+      )}
     >
       {children}
     </motion.div>

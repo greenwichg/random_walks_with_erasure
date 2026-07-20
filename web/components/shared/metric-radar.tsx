@@ -8,7 +8,10 @@ import { useMeasure } from "@/hooks/use-measure";
 /** Interactive radar of the six scored health metrics. */
 export function MetricRadar({ metrics, size = 320 }: { metrics: Metric[]; size?: number }) {
   const { ref, width } = useMeasure<HTMLDivElement>(size);
-  const dim = Math.min(width, size + 40);
+  // MB1: cap at the measured container width (never `size + 40`, which pushed the SVG past a
+  // narrow card's content box and scrolled the report page sideways). On a phone the radar fills
+  // the card; on desktop it caps at its natural `size`.
+  const dim = Math.min(width, size);
 
   const data = RADAR_METRICS.map((key) => {
     const m = metrics.find((x) => x.key === key);
@@ -19,7 +22,7 @@ export function MetricRadar({ metrics, size = 320 }: { metrics: Metric[]; size?:
   });
 
   return (
-    <div ref={ref} className="flex w-full justify-center" style={{ height: dim }}>
+    <div ref={ref} className="flex w-full min-w-0 justify-center overflow-hidden" style={{ height: dim }}>
       <RadarChart width={dim} height={dim} data={data} outerRadius="72%">
         <PolarGrid stroke="hsl(var(--border))" />
         <PolarAngleAxis dataKey="metric" tick={{ fontSize: 12, fill: "hsl(var(--muted-foreground))" }} />

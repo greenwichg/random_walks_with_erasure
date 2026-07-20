@@ -26,7 +26,7 @@ export function ReadingPatternStrip({ pattern }: { pattern: ReadingPattern }) {
   return (
     <section aria-label={t("history.pattern.title")}>
       <h3 className="mb-3 text-sm font-semibold text-muted-foreground">{t("history.pattern.title")}</h3>
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <StatCard icon={CalendarRange} label={t("history.pattern.thisWeek")} value={`${pattern.articlesThisWeek}`} hue="primary" index={0} />
         <StatCard
           icon={Layers}

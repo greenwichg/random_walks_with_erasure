@@ -41,10 +41,15 @@ export function MultiLineChart({
   const tickLabels = data.map((row, i) =>
     i > 0 && fmt(row[xKey]) === fmt(data[i - 1]?.[xKey]) ? "" : fmt(row[xKey]),
   );
+  // MB1 Phase 4: on a narrow (phone) width, thin the axis to ~6 labels so daily points don't
+  // collide into an unreadable smear; on wider screens keep every tick (interval 0). The
+  // tickFormatter keys off the real data index, so same-day de-duplication above still applies.
+  const tickInterval = width > 0 && width < 520 ? Math.max(1, Math.ceil(data.length / 6)) - 1 : 0;
 
   return (
     <div className="space-y-2.5">
-      <div ref={ref} className="w-full" style={{ height }}>
+      {/* MB1: min-w-0 + overflow-hidden — see TrendChart. */}
+      <div ref={ref} className="w-full min-w-0 overflow-hidden" style={{ height }}>
         <LineChart
           width={width}
           height={height}
@@ -53,7 +58,7 @@ export function MultiLineChart({
         >
           <XAxis
             dataKey={xKey}
-            interval={0}
+            interval={tickInterval}
             tickFormatter={(_: string, i: number) => tickLabels[i] ?? ""}
             tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
             tickLine={false}

@@ -24,7 +24,7 @@ export default function AnalyticsPage() {
       </div>
 
       {isLoading && (
-        <div className="grid gap-6 lg:grid-cols-2">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
           {Array.from({ length: 6 }).map((_, i) => (
             <Skeleton key={i} className="h-64 rounded-lg" />
           ))}
@@ -38,7 +38,7 @@ export default function AnalyticsPage() {
               still building their profile, the trends below fill in as they read. */}
           <ProfileProgress coverage={data.coverage} />
 
-          <div className="grid gap-6 lg:grid-cols-2">
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
           <SectionCard title={t("analytics.healthImprovement")} info={t("analytics.healthImprovementInfo")} className="lg:col-span-2">
             {/* Overall Information Health is a normalized 0–100 score: pin the axis to [0,100] so the
                 trend reads on the same fixed scale as the diversity metrics below — never auto-scaled. */}

@@ -32,7 +32,7 @@ export function InsightStrip({ insights }: { insights: HistoryInsights }) {
           {t("history.viewReport")} <ArrowRight className="h-3.5 w-3.5" />
         </Link>
       </div>
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard icon={Layers} label={t("history.ih.topics")} value={`${insights.topicCount}`} hue="primary" index={0} />
         <StatCard icon={Newspaper} label={t("history.ih.sources")} value={`${insights.publisherCount}`} hue="left" index={1} />
         <BalanceTile index={2} />
