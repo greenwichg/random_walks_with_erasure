@@ -1154,6 +1154,17 @@ M = {
                           "Nous utilisons votre compte Google uniquement pour vous connecter. Vos données de lecture restent privées.",
                           "Wir verwenden Ihr Google-Konto nur zur Anmeldung. Ihre Lesedaten bleiben privat.",
                           "Usamos sua conta do Google apenas para fazer login. Seus dados de leitura permanecem privados."),
+    # ---- BA1: beta access control (invite-only) ----
+    "signin.denied.title": ("This beta is invite-only",
+                            "Esta beta es solo por invitación",
+                            "Cette bêta est sur invitation uniquement",
+                            "Diese Beta ist nur mit Einladung zugänglich",
+                            "Este beta é apenas por convite"),
+    "signin.denied.body": ("Your account isn't on the approved list yet. If you were invited, make sure you're using the email you were invited with, or contact the beta organizer to request access.",
+                           "Tu cuenta aún no está en la lista de aprobados. Si te invitaron, asegúrate de usar el correo con el que te invitaron, o contacta con el organizador de la beta para solicitar acceso.",
+                           "Votre compte ne figure pas encore sur la liste approuvée. Si vous avez été invité, utilisez l'adresse e-mail de votre invitation, ou contactez l'organisateur de la bêta pour demander l'accès.",
+                           "Ihr Konto steht noch nicht auf der Freigabeliste. Falls Sie eingeladen wurden, verwenden Sie die E-Mail-Adresse Ihrer Einladung oder wenden Sie sich an den Beta-Organisator, um Zugang anzufragen.",
+                           "Sua conta ainda não está na lista de aprovados. Se você foi convidado, use o e-mail com o qual foi convidado ou entre em contato com o organizador do beta para solicitar acesso."),
 
     # ---- onboarding (20.1 additions) ----
     "onboarding.stepOf": ("Step {n} of 3", "Paso {n} de 3", "Étape {n} sur 3", "Schritt {n} von 3",

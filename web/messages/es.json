@@ -390,6 +390,8 @@
  "signin.demoNote": "Crea una cuenta de demostración temporal: no necesitas Google. Solo dev/demo.",
  "signin.continueGoogle": "Continuar con Google",
  "signin.googleNote": "Usamos tu cuenta de Google solo para iniciar sesión. Tus datos de lectura son privados.",
+ "signin.denied.title": "Esta beta es solo por invitación",
+ "signin.denied.body": "Tu cuenta aún no está en la lista de aprobados. Si te invitaron, asegúrate de usar el correo con el que te invitaron, o contacta con el organizador de la beta para solicitar acceso.",
  "onboarding.stepOf": "Paso {n} de 3",
  "onboarding.welcome.title": "Un chequeo de salud para tu dieta de noticias.",
  "onboarding.welcome.subtitle": "Ve lo que lees puntuado por diversidad, tono y equilibrio, y luego accede al otro lado con un toque.",

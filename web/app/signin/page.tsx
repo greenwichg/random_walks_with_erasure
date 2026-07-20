@@ -1,5 +1,6 @@
 "use client";
 
+import * as React from "react";
 import { signIn } from "next-auth/react";
 import { Logo } from "@/components/layout/logo";
 import { Button } from "@/components/ui/button";
@@ -17,6 +18,18 @@ export default function SignInPage() {
   // Google" would only dead-end. In that mode we show ONLY the demo login; a normal build shows
   // only Google. This is build-time gated by NEXT_PUBLIC_DEV_LOGIN and never on in production.
   const demoMode = process.env.NEXT_PUBLIC_DEV_LOGIN === "1";
+
+  // BA1: NextAuth redirects a beta-allowlist rejection here as `?error=AccessDenied`. Show a friendly
+  // invite-only message. Read from the URL on the client (no Suspense boundary needed).
+  const [denied, setDenied] = React.useState(false);
+  React.useEffect(() => {
+    try {
+      setDenied(new URLSearchParams(window.location.search).get("error") === "AccessDenied");
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   return (
     <main className="flex min-h-screen items-center justify-center px-4">
       <div className="w-full max-w-sm rounded-2xl border bg-card p-8 shadow-sm">
@@ -29,6 +42,18 @@ export default function SignInPage() {
         <p className="mx-auto mt-2 max-w-xs text-center text-sm text-muted-foreground">
           {demoMode ? t("signin.demoSubtitle") : t("signin.subtitle")}
         </p>
+
+        {denied && (
+          <div
+            role="alert"
+            className="mt-5 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-left"
+          >
+            <p className="text-sm font-semibold text-amber-700 dark:text-amber-400">
+              {t("signin.denied.title")}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">{t("signin.denied.body")}</p>
+          </div>
+        )}
 
         {demoMode ? (
           <>

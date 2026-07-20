@@ -390,6 +390,8 @@
  "signin.demoNote": "Crée un compte de démo jetable — pas besoin de Google. Dev/démo uniquement.",
  "signin.continueGoogle": "Continuer avec Google",
  "signin.googleNote": "Nous utilisons votre compte Google uniquement pour vous connecter. Vos données de lecture restent privées.",
+ "signin.denied.title": "Cette bêta est sur invitation uniquement",
+ "signin.denied.body": "Votre compte ne figure pas encore sur la liste approuvée. Si vous avez été invité, utilisez l'adresse e-mail de votre invitation, ou contactez l'organisateur de la bêta pour demander l'accès.",
  "onboarding.stepOf": "Étape {n} sur 3",
  "onboarding.welcome.title": "Un bilan de santé pour votre régime d'actualité.",
  "onboarding.welcome.subtitle": "Voyez vos lectures notées pour la diversité, le ton et l'équilibre — puis accédez à l'autre côté d'un simple geste.",

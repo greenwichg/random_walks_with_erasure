@@ -390,6 +390,8 @@
  "signin.demoNote": "Creates a throwaway demo account — no Google needed. Dev/demo only.",
  "signin.continueGoogle": "Continue with Google",
  "signin.googleNote": "We use your Google account only to sign you in. Your reading data stays private.",
+ "signin.denied.title": "This beta is invite-only",
+ "signin.denied.body": "Your account isn't on the approved list yet. If you were invited, make sure you're using the email you were invited with, or contact the beta organizer to request access.",
  "onboarding.stepOf": "Step {n} of 3",
  "onboarding.welcome.title": "A health check for your news diet.",
  "onboarding.welcome.subtitle": "See what you read scored for diversity, tone, and balance — then get the other side, one tap away.",

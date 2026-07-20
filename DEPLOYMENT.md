@@ -152,6 +152,9 @@ switching data never touches the frontend.
 | `RWE_CSP` | *(built-in)* | override the Content-Security-Policy string (build-time; see "Browser security") |
 | `RWE_DISABLE_CSP` | *(off)* | `1` removes the CSP header only (escape hatch); other security headers stay |
 | `NEXT_PUBLIC_API_BASE_URL` | *(empty)* | advanced: call a different API origin from the browser (folded into CSP `connect-src`) |
+| `BETA_ALLOWLIST` | *(empty)* | BA1 invite-only access: comma/newline/`;`-separated approved emails and/or `@domain` entries. In production the sign-in gate is **on** and **fail-closed** — an empty list denies everyone. See `docs/BETA_ACCESS_CONTROL.md`. |
+| `BETA_ALLOWLIST_FILE` | *(empty)* | optional file of the same format, appended to `BETA_ALLOWLIST`; re-read per sign-in (edit without a restart) |
+| `BETA_ACCESS_ENABLED` | *(prod on)* | `1`/`0` to force the beta gate on/off; defaults to on when `RWE_ENV=production` |
 
 ---
 

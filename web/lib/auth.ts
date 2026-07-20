@@ -14,6 +14,7 @@
 import type { NextAuthOptions } from "next-auth";
 import GoogleProvider from "next-auth/providers/google";
 import CredentialsProvider from "next-auth/providers/credentials";
+import { isEmailAllowed } from "@/lib/beta-access";
 
 const ENGINE_BASE = process.env.RWE_BACKEND_URL ?? "http://127.0.0.1:8000";
 
@@ -93,8 +94,27 @@ export const authOptions: NextAuthOptions = {
       : []),
   ],
   session: { strategy: "jwt" },
-  pages: { signIn: "/signin" },
+  // `error` routes NextAuth's AccessDenied (a beta-allowlist rejection) back to the sign-in page,
+  // which shows a friendly invite-only message (?error=AccessDenied).
+  pages: { signIn: "/signin", error: "/signin" },
   callbacks: {
+    // BA1 — beta access control. Gate Google sign-in behind the approved-email allowlist so a
+    // non-approved user never gets a session (and therefore never an engine account). The dev demo
+    // login (non-production only) is not gated. Returning `false` triggers the AccessDenied redirect.
+    // Access control only — no recommendation-engine, analytics, observability, or business-logic change.
+    async signIn({ user, account, profile }) {
+      if (account?.provider !== "google") return true; // dev credentials provider (dev-only) is exempt
+      const email = user?.email ?? (profile as { email?: string } | undefined)?.email ?? null;
+      const { allowed, reason } = isEmailAllowed(email);
+      if (!allowed) {
+        // OBS1-style structured line so the operator sees denied attempts (and who to approve). No
+        // analytics/PA1 event is added; a denied user never reaches the authenticated tracking path.
+        // eslint-disable-next-line no-console
+        console.warn(JSON.stringify({ event: "beta_access_denied", email: email ?? null, reason }));
+        return false;
+      }
+      return true;
+    },
     async jwt({ token, account, profile, user }) {
       // Google: upsert the identity into the engine on the initial sign-in (the one engine call).
       if (account?.provider === "google") {

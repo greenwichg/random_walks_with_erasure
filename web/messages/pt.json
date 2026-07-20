@@ -390,6 +390,8 @@
  "signin.demoNote": "Cria uma conta de demonstração descartável — sem Google. Apenas dev/demo.",
  "signin.continueGoogle": "Continuar com o Google",
  "signin.googleNote": "Usamos sua conta do Google apenas para fazer login. Seus dados de leitura permanecem privados.",
+ "signin.denied.title": "Este beta é apenas por convite",
+ "signin.denied.body": "Sua conta ainda não está na lista de aprovados. Se você foi convidado, use o e-mail com o qual foi convidado ou entre em contato com o organizador do beta para solicitar acesso.",
  "onboarding.stepOf": "Passo {n} de 3",
  "onboarding.welcome.title": "Um check-up de saúde para sua dieta de notícias.",
  "onboarding.welcome.subtitle": "Veja sua leitura pontuada por diversidade, tom e equilíbrio — e acesse o outro lado com um toque.",

@@ -390,6 +390,8 @@
  "signin.demoNote": "Erstellt ein temporäres Demo-Konto — kein Google nötig. Nur Dev/Demo.",
  "signin.continueGoogle": "Mit Google fortfahren",
  "signin.googleNote": "Wir verwenden Ihr Google-Konto nur zur Anmeldung. Ihre Lesedaten bleiben privat.",
+ "signin.denied.title": "Diese Beta ist nur mit Einladung zugänglich",
+ "signin.denied.body": "Ihr Konto steht noch nicht auf der Freigabeliste. Falls Sie eingeladen wurden, verwenden Sie die E-Mail-Adresse Ihrer Einladung oder wenden Sie sich an den Beta-Organisator, um Zugang anzufragen.",
  "onboarding.stepOf": "Schritt {n} von 3",
  "onboarding.welcome.title": "Ein Gesundheitscheck für Ihre Nachrichtendiät.",
  "onboarding.welcome.subtitle": "Sehen Sie Ihre Lektüre bewertet nach Vielfalt, Ton und Balance — und erreichen Sie die andere Seite mit einem Tipp.",
