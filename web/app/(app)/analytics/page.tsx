@@ -34,7 +34,9 @@ export default function AnalyticsPage() {
       {data && (
         <div className="grid gap-6 lg:grid-cols-2">
           <SectionCard title={t("analytics.healthImprovement")} info={t("analytics.healthImprovementInfo")} className="lg:col-span-2">
-            <TrendChart data={data.healthImprovement} height={240} />
+            {/* Overall Information Health is a normalized 0–100 score: pin the axis to [0,100] so the
+                trend reads on the same fixed scale as the diversity metrics below — never auto-scaled. */}
+            <TrendChart data={data.healthImprovement} height={240} domain={[0, 100]} />
           </SectionCard>
 
           <SectionCard title={t("analytics.readingVolume")} info={t("analytics.readingVolumeInfo")}>

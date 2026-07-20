@@ -50,6 +50,10 @@ export function StackedBar({
           minTickGap={24}
         />
         <YAxis
+          // A percentage chart is fixed to 0–100% (matching MultiLineChart's percent axis); a count
+          // chart keeps recharts' dynamic 0..max scaling. Never auto-scale a percentage axis.
+          domain={percent ? [0, 1] : undefined}
+          ticks={percent ? [0, 0.25, 0.5, 0.75, 1] : undefined}
           tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
           tickLine={false}
           axisLine={false}
