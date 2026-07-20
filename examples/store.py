@@ -1310,6 +1310,21 @@ class Store:
             return [{"articleId": r.article_id, "feedback": r.feedback,
                      "createdAt": r.created_at, "updatedAt": r.updated_at} for r in rows]
 
+    def recommendation_feedback_counts(self, user_id: int) -> dict:
+        """The reader's article-recommendation feedback tallied by type — ``{like, dislike, ignore,
+        read_later}`` (one grouped count query, missing types default to 0). The improvement ranker
+        (RC2.4) reads this as a cheap global receptivity prior; it drives no recommender or metric."""
+        counts = {t: 0 for t in RECOMMENDATION_FEEDBACK_TYPES}
+        with self.session() as s:
+            rows = s.execute(
+                select(RecFeedback.feedback, func.count())
+                .where(RecFeedback.user_id == user_id)
+                .group_by(RecFeedback.feedback)).all()
+        for feedback, n in rows:
+            if feedback in counts:
+                counts[feedback] = int(n)
+        return counts
+
     # -- improvement-recommendation lifecycle ledger (RC2.3) ------------
     def list_improvement_lifecycle(self, user_id: int) -> list:
         """Every improvement-recommendation lifecycle row for a user (one per ``rec_key``), oldest
@@ -1334,10 +1349,23 @@ class Store:
                 r = s.scalar(select(ImprovementLifecycle).where(
                     ImprovementLifecycle.user_id == user_id, ImprovementLifecycle.rec_key == rk))
                 if r is None:
-                    r = ImprovementLifecycle(user_id=user_id, rec_key=rk,
-                                             metric=str(row.get("metric") or ""),
-                                             state=str(row.get("state") or "generated"))
-                    s.add(r)
+                    try:
+                        # Savepoint per insert: two concurrent report requests for the same reader can
+                        # both miss the SELECT above and race to INSERT the same (user_id, rec_key). The
+                        # UNIQUE constraint is the arbiter; the loser's savepoint rolls back and we then
+                        # re-fetch the winner's row and update it, so the write is never lost.
+                        with s.begin_nested():
+                            r = ImprovementLifecycle(user_id=user_id, rec_key=rk,
+                                                     metric=str(row.get("metric") or ""),
+                                                     state=str(row.get("state") or "generated"))
+                            s.add(r)
+                            s.flush()
+                    except IntegrityError:
+                        r = s.scalar(select(ImprovementLifecycle).where(
+                            ImprovementLifecycle.user_id == user_id,
+                            ImprovementLifecycle.rec_key == rk))
+                        if r is None:
+                            continue
                 r.metric = str(row.get("metric") or r.metric)
                 if row.get("state") is not None:
                     r.state = str(row["state"])
@@ -1378,10 +1406,18 @@ class Store:
                 ImprovementLifecycle.user_id == user_id, ImprovementLifecycle.rec_key == str(rec_key)))
             created = r is None
             if created:
-                r = ImprovementLifecycle(user_id=user_id, rec_key=str(rec_key),
-                                         metric=str(metric or ""), state="generated",
-                                         generated_at=stamp)
-                s.add(r)
+                try:
+                    with s.begin_nested():          # isolate a concurrent-insert race (see save_ above)
+                        r = ImprovementLifecycle(user_id=user_id, rec_key=str(rec_key),
+                                                 metric=str(metric or ""), state="generated",
+                                                 generated_at=stamp)
+                        s.add(r)
+                        s.flush()
+                except IntegrityError:
+                    r = s.scalar(select(ImprovementLifecycle).where(
+                        ImprovementLifecycle.user_id == user_id,
+                        ImprovementLifecycle.rec_key == str(rec_key)))
+                    created = False
             setattr(r, col, stamp)
             if metric and not r.metric:
                 r.metric = str(metric)

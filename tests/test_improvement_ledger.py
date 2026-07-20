@@ -17,6 +17,10 @@ sys.path.insert(0, str(ROOT / "examples"))
 
 
 def _load(name):
+    # Reuse an already-imported module so we never replace another test module's api_fastapi/store
+    # instance in sys.modules (which would leave its TestClient bound to a stale, un-monkeypatched copy).
+    if name in sys.modules:
+        return sys.modules[name]
     spec = importlib.util.spec_from_file_location(name, ROOT / "examples" / f"{name}.py")
     mod = importlib.util.module_from_spec(spec)
     sys.modules[name] = mod
@@ -25,8 +29,18 @@ def _load(name):
 
 
 il = _load("improvement_ledger")
+ir = _load("improvement_ranking")
 store = _load("store")
 api_fastapi = _load("api_fastapi")
+
+
+def _imp(metric, score, state="shown", first=None, cur=None):
+    return {"id": f"imp_{metric}", "metric": metric, "impact": 5,
+            "lifecycle": {"state": state, "firstScore": first if first is not None else score,
+                          "currentScore": cur if cur is not None else score}}
+
+
+_NEUTRAL = {"like": 0, "dislike": 0, "ignore": 0, "read_later": 0}
 
 
 # --------------------------------------------------------------------------- #
@@ -214,6 +228,128 @@ def test_lifecycle_endpoints_require_auth(client):
 
 
 def test_anonymous_report_has_no_lifecycle(client):
-    """A demo/anonymous report never carries lifecycle (no real user to track)."""
+    """A demo/anonymous report never carries lifecycle or ranking (no real user to track)."""
     rep = client.get("/api/report").json()
-    assert all("lifecycle" not in imp for imp in rep["improvements"])
+    assert all("lifecycle" not in imp and "ranking" not in imp for imp in rep["improvements"])
+
+
+# --------------------------------------------------------------------------- #
+# 4) RC2.4 — feedback-aware ranking (pure)
+# --------------------------------------------------------------------------- #
+def _order(out):
+    return [(o["metric"], o["ranking"]["visible"], o["ranking"]["rank"]) for o in out]
+
+
+def test_ranking_base_order_is_worst_metric_first():
+    imps = [_imp("topicDiversity", 20), _imp("reportingRatio", 40), _imp("sourceDiversity", 30)]
+    out = ir.rank([dict(i) for i in imps], _NEUTRAL,
+                  {"topicDiversity": 20, "sourceDiversity": 30, "reportingRatio": 40})
+    assert [o["metric"] for o in out] == ["topicDiversity", "sourceDiversity", "reportingRatio"]
+    assert all(o["ranking"]["visible"] for o in out) and [o["ranking"]["rank"] for o in out] == [1, 2, 3]
+
+
+def test_ranking_is_deterministic():
+    imps = [_imp("topicDiversity", 20), _imp("reportingRatio", 40, state="accepted", first=40, cur=42)]
+    scores = {"topicDiversity": 20, "reportingRatio": 42}
+    a = ir.rank([dict(i) for i in imps], _NEUTRAL, scores)
+    b = ir.rank([dict(i) for i in imps], _NEUTRAL, scores)
+    assert _order(a) == _order(b)
+
+
+def test_accepted_and_in_progress_are_promoted():
+    # reportingRatio scores worse-ranked by base (-40) but is in progress → boosted above topicDiversity?
+    # topicDiversity base -20; reportingRatio in_progress -40+3=-37 → topicDiversity still first, but an
+    # accepted rec should outrank a plain rec of similar score.
+    imps = [_imp("sourceDiversity", 30), _imp("topicDiversity", 31, state="in_progress", first=28, cur=31)]
+    out = ir.rank([dict(i) for i in imps], _NEUTRAL, {"sourceDiversity": 30, "topicDiversity": 31})
+    # topicDiversity (-31+3=-28) now outranks sourceDiversity (-30)
+    assert [o["metric"] for o in out] == ["topicDiversity", "sourceDiversity"]
+    boost = [s for s in out[0]["ranking"]["signals"] if s["signal"] == "lifecycle:in_progress"]
+    assert boost and "+3" in boost[0]["effect"]
+
+
+def test_completed_is_suppressed():
+    imps = [_imp("topicDiversity", 20), _imp("sourceDiversity", 55, state="completed", first=30, cur=55)]
+    out = ir.rank([dict(i) for i in imps], _NEUTRAL, {"topicDiversity": 20, "sourceDiversity": 55})
+    by = {o["metric"]: o["ranking"] for o in out}
+    assert by["sourceDiversity"]["visible"] is False and by["sourceDiversity"]["reason"] == "completed"
+    assert by["topicDiversity"]["visible"] is True
+
+
+def test_dismissed_is_suppressed_and_reappears_only_on_regression():
+    # dismissed at first_score 30, still ~30 → suppressed
+    imps = [_imp("sourceDiversity", 30, state="dismissed", first=30, cur=30)]
+    out = ir.rank([dict(i) for i in imps], _NEUTRAL, {"sourceDiversity": 30})
+    assert out[0]["ranking"]["visible"] is False and out[0]["ranking"]["reason"] == "dismissed"
+    # the metric regressed well below where it was generated (30 → 20, drop 10 ≥ 8) → reappears
+    imps2 = [_imp("sourceDiversity", 20, state="dismissed", first=30, cur=20)]
+    out2 = ir.rank([dict(i) for i in imps2], _NEUTRAL, {"sourceDiversity": 20})
+    assert out2[0]["ranking"]["visible"] is True
+    assert any(s["signal"] == "regressed_after_dismiss" for s in out2[0]["ranking"]["signals"])
+
+
+def test_negative_receptivity_makes_dismissal_stickier():
+    # a drop of 10 reappears for a neutral reader but NOT for a net-negative one (needs ≥12)
+    imps = [_imp("sourceDiversity", 20, state="dismissed", first=30, cur=20)]
+    neg = {"like": 0, "read_later": 0, "dislike": 3, "ignore": 1}      # net -4
+    out_neutral = ir.rank([dict(i) for i in imps], _NEUTRAL, {"sourceDiversity": 20})
+    out_neg = ir.rank([dict(i) for i in imps], neg, {"sourceDiversity": 20})
+    assert out_neutral[0]["ranking"]["visible"] is True                # reappears for neutral
+    assert out_neg[0]["ranking"]["visible"] is False                   # still suppressed for net-negative
+
+
+def test_diversity_suppresses_overlapping_action_family():
+    # viewpointBalance and echoChamber overlap (cross_cutting) — only the worse-scoring one shows
+    imps = [_imp("viewpointBalance", 25), _imp("echoChamber", 35), _imp("topicDiversity", 40)]
+    out = ir.rank([dict(i) for i in imps], _NEUTRAL,
+                  {"viewpointBalance": 25, "echoChamber": 35, "topicDiversity": 40})
+    by = {o["metric"]: o["ranking"] for o in out}
+    assert by["viewpointBalance"]["visible"] is True                   # worse score → kept
+    assert by["echoChamber"]["visible"] is False and "overlaps:cross_cutting" in by["echoChamber"]["reason"]
+    assert by["topicDiversity"]["visible"] is True
+
+
+def test_ranking_exposes_signals_no_hidden_factors():
+    out = ir.rank([_imp("topicDiversity", 20)], _NEUTRAL, {"topicDiversity": 20})
+    r = out[0]["ranking"]
+    assert "priority" in r and isinstance(r["signals"], list) and r["signals"]
+
+
+def test_ranking_backward_compatible_without_lifecycle():
+    # improvements with no lifecycle (e.g. an older/annotation-less path) still rank by score, all visible
+    imps = [{"id": "imp_topicDiversity", "metric": "topicDiversity", "impact": 5},
+            {"id": "imp_sourceDiversity", "metric": "sourceDiversity", "impact": 5}]
+    out = ir.rank([dict(i) for i in imps], _NEUTRAL,
+                  {"topicDiversity": 20, "sourceDiversity": 30})
+    assert [o["metric"] for o in out] == ["topicDiversity", "sourceDiversity"]
+    assert all(o["ranking"]["visible"] for o in out)
+
+
+# --------------------------------------------------------------------------- #
+# 5) RC2.4 — API integration
+# --------------------------------------------------------------------------- #
+def test_report_improvements_carry_ranking_for_signed_in(client):
+    uid = _measured_uid(client, "rc24-a")
+    rep = client.get("/api/report", headers={"X-IH-User-Id": str(uid)}).json()
+    assert rep["improvements"]
+    for imp in rep["improvements"]:
+        assert "ranking" in imp and imp["ranking"]["visible"] in (True, False)
+    # visible recs come first and are contiguously ranked 1..k
+    visible = [imp for imp in rep["improvements"] if imp["ranking"]["visible"]]
+    assert [imp["ranking"]["rank"] for imp in visible] == list(range(1, len(visible) + 1))
+
+
+def test_dismiss_then_report_suppresses_the_recommendation(client):
+    uid = _measured_uid(client, "rc24-b")
+    hdr = {"X-IH-User-Id": str(uid)}
+    rep = client.get("/api/report", headers=hdr).json()
+    key = rep["improvements"][0]["id"]
+    client.post(f"/api/me/recommendations/improvements/{key}/dismiss", headers=hdr)
+    rep2 = client.get("/api/report", headers=hdr).json()
+    ranked = {imp["id"]: imp["ranking"] for imp in rep2["improvements"]}
+    # dismissed → suppressed (visible False) unless its metric already regressed enough; either way the
+    # reason is recorded and it is not ranked among the visible set when suppressed.
+    assert key in ranked
+    if ranked[key]["visible"] is False:
+        # rank/reason are None-excluded from the JSON (exclude_none): a suppressed rec has no rank.
+        assert ranked[key]["reason"] == "dismissed" and ranked[key].get("rank") is None

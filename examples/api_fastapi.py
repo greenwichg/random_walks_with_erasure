@@ -41,6 +41,7 @@ import enrich                 # headline enrichment (register + emotion) behind 
 import personalize            # per-user augmented Measured report / recs / coach
 import evidence_resolver      # ONE human explanation per rec, chosen from evidence (21a.3)
 import improvement_ledger     # improvement-recommendation lifecycle state machine (leaf, RC2.3)
+import improvement_ranking    # feedback-aware ranking/filtering of improvements (leaf, RC2.4)
 import coach_service          # Coach v2: intent-routed, tool-using coach (RWE_COACH_V2, M4)
 import notification_delivery   # orchestration: build context -> evaluate -> record notifications (N2)
 import ratelimit              # dependency-free token-bucket rate limiter (Private Alpha hardening)
@@ -501,6 +502,22 @@ class ImprovementLifecycleStateModel(BaseModel):
     supersededBy: Optional[str] = None
 
 
+class RankingSignalModel(BaseModel):
+    signal: str
+    effect: str
+
+
+class ImprovementRankingModel(BaseModel):
+    """RC2.4 — why a recommendation was ordered / suppressed. ``visible`` False means the ranker filtered
+    it out (``reason`` = completed | dismissed | overlaps:<family>); ``signals`` lists every applied
+    factor, so nothing about the ranking is hidden."""
+    rank: Optional[int] = None      # 1-based position among visible recs; None when suppressed
+    visible: bool
+    priority: float
+    reason: Optional[str] = None    # suppression reason when not visible
+    signals: list[RankingSignalModel] = []
+
+
 class ImprovementModel(BaseModel):
     id: str
     title: str
@@ -521,6 +538,10 @@ class ImprovementModel(BaseModel):
     # RC2.3 — optional lifecycle state for the signed-in reader (absent for anonymous/demo reports and
     # older payloads). Additive; drives no selection/ordering.
     lifecycle: Optional[ImprovementLifecycleStateModel] = None
+    # RC2.4 — optional feedback-aware ranking/suppression for the signed-in reader. Additive; a
+    # consumer that ignores it sees every generated rec (as before), one that honours it renders only
+    # `visible` recs in `rank` order.
+    ranking: Optional[ImprovementRankingModel] = None
 
 
 class CoverageModel(BaseModel):
@@ -1544,8 +1565,25 @@ def report(request: Request,
     # for anonymous/demo reports (no real uid). Never fails the request.
     uid = _real_uid(request)
     if uid is not None and rep.get("mode") in ("measured", "estimate") and rep.get("improvements"):
-        _annotate_improvement_lifecycle(uid, rep)
+        _annotate_improvement_lifecycle(uid, rep)       # RC2.3: attach lifecycle state
+        _rank_improvement_recommendations(uid, rep)     # RC2.4: reorder + suppress (filtering only)
     return rep
+
+
+def _rank_improvement_recommendations(uid: int, rep: dict) -> None:
+    """Feedback-aware ranking/filtering of the generated improvements (RC2.4). Reuses the lifecycle just
+    attached plus one cheap feedback-count query; the pure ranking lives in :mod:`improvement_ranking`.
+    Generation is untouched — this only reorders and suppresses. Never fails the request."""
+    st = state.store
+    if st is None:
+        return
+    try:
+        counts = st.recommendation_feedback_counts(uid)
+        scores = {m["key"]: m.get("score") for m in (rep.get("metrics") or [])
+                  if m.get("available") and m.get("score") is not None}
+        rep["improvements"] = improvement_ranking.rank(rep.get("improvements") or [], counts, scores)
+    except Exception:                       # ranking is auxiliary — never break the report
+        logging.getLogger("api").warning("improvement ranking failed", exc_info=True)
 
 
 def _annotate_improvement_lifecycle(uid: int, rep: dict) -> None:

@@ -258,6 +258,7 @@ export const REPORT: MeasuredHealthReport = {
         explanation:
           "Simulated: taking this step would move your Viewpoint Balance percentile from 38 to about 42–45 (+4–7).",
       },
+      ranking: { rank: 1, visible: true, priority: -29, reason: null, signals: [{ signal: "metricScore", effect: "base priority" }] },
     },
     {
       id: "imp_2",
@@ -285,6 +286,7 @@ export const REPORT: MeasuredHealthReport = {
         explanation:
           "Simulated: taking this step would move your Emotional Balance percentile from 45 to about 48–51 (+3–6).",
       },
+      ranking: { rank: 2, visible: true, priority: -28, reason: null, signals: [{ signal: "metricScore", effect: "base priority" }] },
     },
     {
       id: "imp_3",
@@ -311,6 +313,7 @@ export const REPORT: MeasuredHealthReport = {
         explanation:
           "Simulated: taking this step would move your Source Diversity percentile from 34 to about 39–42 (+5–8).",
       },
+      ranking: { rank: 3, visible: true, priority: -27, reason: null, signals: [{ signal: "metricScore", effect: "base priority" }] },
     },
   ],
 };

@@ -147,6 +147,17 @@ export interface ImprovementLifecycle {
   supersededBy?: string;
 }
 
+/** RC2.4 — why a recommendation was ordered or suppressed. `visible: false` means the feedback-aware
+ *  ranker filtered it out (`reason` = completed | dismissed | overlaps:<family>). Nothing is hidden:
+ *  `signals` lists every applied factor. */
+export interface ImprovementRanking {
+  rank: number | null;
+  visible: boolean;
+  priority: number;
+  reason?: string | null;
+  signals: { signal: string; effect: string }[];
+}
+
 export interface Improvement {
   id: string;
   title: string;
@@ -158,6 +169,8 @@ export interface Improvement {
   impactEstimate?: ImpactEstimate;
   /** RC2.3 — lifecycle state for the signed-in reader; optional. */
   lifecycle?: ImprovementLifecycle;
+  /** RC2.4 — feedback-aware ranking/suppression for the signed-in reader; optional. */
+  ranking?: ImprovementRanking;
   /** RC2.1 — user-specific evidence bound from data already in the report. All optional: absent on
    *  older payloads / when the report lacked grounded data, in which case `detail` stands alone. */
   /** The behaviour that surfaced this recommendation, e.g. "82% of your reading came from Reuters and BBC." */

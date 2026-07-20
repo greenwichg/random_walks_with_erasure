@@ -42,8 +42,12 @@ export function BlindSpots({ items }: { items: BlindSpot[] }) {
 /** Improvement recommendations — interactive: add to weekly goals. */
 const ACCEPTED_STATES = new Set(["accepted", "in_progress", "completed"]);
 
-export function Improvements({ items }: { items: Improvement[] }) {
+export function Improvements({ items: allItems }: { items: Improvement[] }) {
   const { t } = useTranslation();
+  // RC2.4 — the backend feedback-aware ranker already ordered these; render only the visible ones
+  // (a suppressed rec carries ranking.visible === false with a reason). Backward compatible: a payload
+  // without `ranking` keeps every rec.
+  const items = allItems.filter((i) => i.ranking?.visible !== false);
   // RC2.3 — seed the "added to goals" state from the persisted lifecycle so an accepted recommendation
   // stays reflected across reloads (the acceptance now lives in the ledger, not just local state).
   const [added, setAdded] = React.useState<Set<string>>(
