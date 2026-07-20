@@ -43,6 +43,8 @@ import evidence_resolver      # ONE human explanation per rec, chosen from evide
 import improvement_ledger     # improvement-recommendation lifecycle state machine (leaf, RC2.3)
 import improvement_ranking    # feedback-aware ranking/filtering of improvements (leaf, RC2.4)
 import recommendation_eval     # deterministic evaluation + attribution of improvements (leaf, RC2.5)
+import obs_metrics             # OBS1: in-process request/latency metrics (dependency-free, observational)
+import error_reporting         # OBS1: vendor-agnostic exception-reporting abstraction (default: logging)
 import coach_service          # Coach v2: intent-routed, tool-using coach (RWE_COACH_V2, M4)
 import notification_delivery   # orchestration: build context -> evaluate -> record notifications (N2)
 import ratelimit              # dependency-free token-bucket rate limiter (Private Alpha hardening)
@@ -86,6 +88,30 @@ _request_id: contextvars.ContextVar[str] = contextvars.ContextVar("request_id", 
 
 def _log(level: int, event: str, **fields) -> None:
     logger.log(level, json.dumps({"event": event, "requestId": _request_id.get(), **fields}))
+
+
+def _install_db_timing(st) -> None:
+    """OBS1 — record each SQL statement's latency into ``obs_metrics`` via SQLAlchemy cursor events.
+    Purely observational: the listeners only read the clock, never touch the statement, and are guarded
+    so a metrics failure can never affect a query. Keeps ``store`` free of any observability dependency."""
+    from sqlalchemy import event as _sa_event
+
+    def _before(conn, cursor, statement, params, context, executemany):
+        context._ih_t0 = time.perf_counter()
+
+    def _after(conn, cursor, statement, params, context, executemany):
+        t0 = getattr(context, "_ih_t0", None)
+        if t0 is not None:
+            obs_metrics.observe("db_query_ms", (time.perf_counter() - t0) * 1000.0)
+
+    try:
+        engine = getattr(st, "engine", None)
+        if engine is not None and not getattr(engine, "_ih_db_timing", False):
+            _sa_event.listen(engine, "before_cursor_execute", _before)
+            _sa_event.listen(engine, "after_cursor_execute", _after)
+            engine._ih_db_timing = True
+    except Exception:               # observability must never block startup
+        pass
 
 
 def _int_env(name: str):
@@ -207,6 +233,7 @@ async def lifespan(app: FastAPI):
     provider = os.environ.get("RWE_PROVIDER", "anthropic")
     st = store.Store()
     state.store = st
+    _install_db_timing(st)          # OBS1: observational per-query latency (never alters queries)
     state.scorer = ingest.Scorer(enricher=enrich.make_enricher())   # baseline register+emotion
     state.limiter = ratelimit.RateLimiter()          # per-process token-bucket limiter
     # The read-only exhibit account (Option E): when RWE_DEMO_ACCOUNT=provider:accountId is set,
@@ -342,9 +369,14 @@ async def _observability(request: Request, call_next):
             resp.headers.setdefault("Cache-Control", "no-store")
         return resp
     finally:
+        duration_ms = round((time.perf_counter() - start) * 1000, 1)
         _log(logging.INFO if status < 500 else logging.ERROR, "request",
-             method=request.method, path=request.url.path, status=status,
-             durationMs=round((time.perf_counter() - start) * 1000, 1))
+             method=request.method, path=request.url.path, status=status, durationMs=duration_ms)
+        # OBS1: aggregate by the matched route TEMPLATE (not the raw path) so metric cardinality stays
+        # bounded; unmatched requests (404) collapse to one series.
+        route = request.scope.get("route")
+        template = getattr(route, "path", None) or "unmatched"
+        obs_metrics.record_request(request.method, template, status, duration_ms)
 
 
 # ------------------------------------------------------------------ #
@@ -393,6 +425,10 @@ async def _on_http_error(request: Request, exc: StarletteHTTPException):
 async def _on_unhandled_error(request: Request, exc: Exception):
     # Log the failure (type + path) for correlation; never leak internals to the client.
     _log(logging.ERROR, "unhandled_exception", path=request.url.path, error=type(exc).__name__)
+    # OBS1: full capture through the vendor-agnostic reporter (traceback + correlation context). A later
+    # deployment swaps the reporter for Sentry / App Insights / OTel without touching this handler.
+    error_reporting.report_exception(exc, path=request.url.path, method=request.method,
+                                     requestId=_request_id.get(), status=500)
     return _error(500, "internal_error", "An unexpected error occurred.")
 
 
@@ -942,6 +978,35 @@ class HealthStatusModel(BaseModel):
     # publisher URLs — the Honest URL Pass-through) or the static corpus (no URLs)? Lets an operator
     # verify the deployment's URL state with a single GET /api/health.
     recommendationSource: dict[str, Any]
+
+
+# OBS1 — health split + metrics + client error sink.
+class LivenessModel(BaseModel):
+    status: str                      # "alive" — the process is up and serving
+
+
+class ReadinessModel(BaseModel):
+    status: str                      # "ready" | "starting"
+    store: bool                      # the persistence layer is built
+    backend: bool                    # the serving bundle (engine) is built
+
+
+class MetricsSnapshotModel(BaseModel):
+    model_config = ConfigDict(extra="allow")     # open-ended snapshot (counters + latency timers)
+    uptimeSeconds: float
+
+
+class ClientErrorRequest(BaseModel):
+    message: str
+    name: Optional[str] = None
+    stack: Optional[str] = None
+    digest: Optional[str] = None
+    url: Optional[str] = None
+    context: Optional[dict] = None
+
+
+class ClientErrorAckModel(BaseModel):
+    ok: bool
 
 
 class CoachRequest(BaseModel):
@@ -1580,6 +1645,57 @@ def health() -> dict:
     return h
 
 
+@app.get("/api/health/live", response_model=LivenessModel, tags=["meta"],
+         summary="Liveness probe — is the process up?")
+def health_live() -> dict:
+    """OBS1 **liveness**: the process is running and can serve. It does **no** dependency checks, so a
+    liveness probe never restarts the process for a slow/absent dependency (that's readiness's job)."""
+    return {"status": "alive"}
+
+
+@app.get("/api/health/ready", response_model=ReadinessModel, tags=["meta"],
+         summary="Readiness probe — are dependencies built?", responses=_ERR_RESPONSES)
+def health_ready() -> JSONResponse:
+    """OBS1 **readiness**: whether the store and the serving bundle (engine) are built. Returns **503**
+    until both are ready, so a load balancer holds traffic during startup / a corpus (re)build."""
+    store_ok = state.store is not None
+    backend_ok = state.active is not None and getattr(state.active, "backend", None) is not None
+    ready = store_ok and backend_ok
+    body = {"status": "ready" if ready else "starting", "store": store_ok, "backend": backend_ok}
+    return JSONResponse(status_code=200 if ready else 503, content=body)
+
+
+@app.get("/api/metrics", response_model=MetricsSnapshotModel, tags=["meta"],
+         summary="[internal] In-process application metrics snapshot", responses=_ERR_RESPONSES)
+def metrics_snapshot(request: Request) -> dict:
+    """OBS1 in-process metrics — request counts + latency (p50/p95/p99) by route, report-generation and
+    DB-query timings, and uptime. **Internal-only**: served to the trusted web tier / an operator with
+    the internal secret; any other caller gets 404 (it must not exist for the public, like the dev
+    endpoints). No external monitoring dependency — a later phase drains this into Prometheus/OTel."""
+    if not _trusted(request):
+        raise HTTPException(status_code=404, detail="Not found.")
+    return obs_metrics.snapshot()
+
+
+@app.post("/api/client-errors", response_model=ClientErrorAckModel, tags=["meta"],
+          summary="Sink for frontend error reports (structured log / reporter)", responses=_ERR_RESPONSES)
+def client_error(request: Request, req: ClientErrorRequest) -> dict:
+    """OBS1 — the backend sink the web tier's error reporter posts to (the "custom backend" provider), so
+    a browser crash lands in the same correlatable log stream + exception reporter as a server error.
+    Best-effort and additive: fields are truncated, it's covered by the existing size + rate limits, and
+    it never fails the caller. No auth (errors happen for anonymous visitors too)."""
+    def _clip(s, n):
+        return s[:n] if isinstance(s, str) else s
+    obs_metrics.incr("client_errors_total")
+    _log(logging.WARNING, "client_error", name=_clip(req.name, 120), message=_clip(req.message, 500),
+         url=_clip(req.url, 500), digest=_clip(req.digest, 120))
+    error_reporting.report_message("client_error", name=_clip(req.name, 120),
+                                   message=_clip(req.message, 500), url=_clip(req.url, 500),
+                                   digest=_clip(req.digest, 120), stack=_clip(req.stack, 4000),
+                                   requestId=_request_id.get())
+    return {"ok": True}
+
+
 @app.get("/api/report", response_model=HealthReportModel, response_model_exclude_none=True,
          tags=["report"], summary="Information Health Report for a reader", responses=_ERR_RESPONSES)
 def report(request: Request,
@@ -1592,7 +1708,8 @@ def report(request: Request,
       Information Health Estimate, recomputed server-side from their stored onboarding outlets.
     * **Demo** — a signed-in reader with no usable onboarding, or an anonymous / ``?user=``
       request: the reference reader (unchanged for the frontend and contract tests)."""
-    rep = _report_for(_active(), request, user)
+    with obs_metrics.timer("report_generate_ms"):     # OBS1: time generation (does not alter it)
+        rep = _report_for(_active(), request, user)
     # RC2.3 — for a signed-in reader, reconcile the improvement-recommendation lifecycle ledger and
     # annotate each improvement with its state. Reuses the report just built (no recompute); a no-op
     # for anonymous/demo reports (no real uid). Never fails the request.
@@ -1615,8 +1732,9 @@ def _rank_improvement_recommendations(uid: int, rep: dict) -> None:
         scores = {m["key"]: m.get("score") for m in (rep.get("metrics") or [])
                   if m.get("available") and m.get("score") is not None}
         rep["improvements"] = improvement_ranking.rank(rep.get("improvements") or [], counts, scores)
-    except Exception:                       # ranking is auxiliary — never break the report
-        logging.getLogger("api").warning("improvement ranking failed", exc_info=True)
+    except Exception as exc:                # ranking is auxiliary — never break the report
+        error_reporting.report_exception(exc, where="improvement_ranking", userId=uid,
+                                         requestId=_request_id.get())
 
 
 def _annotate_improvement_lifecycle(uid: int, rep: dict) -> None:
@@ -1639,8 +1757,9 @@ def _annotate_improvement_lifecycle(uid: int, rep: dict) -> None:
             row = annotated.get(imp["id"])
             if row is not None:
                 imp["lifecycle"] = improvement_ledger.public_view(row)
-    except Exception:                       # lifecycle is auxiliary — never break the report
-        logging.getLogger("api").warning("improvement lifecycle annotation failed", exc_info=True)
+    except Exception as exc:                # lifecycle is auxiliary — never break the report
+        error_reporting.report_exception(exc, where="improvement_lifecycle", userId=uid,
+                                         requestId=_request_id.get())
 
 
 def _report_for(active: "corpus_refresh.Active", request: Request, user: str | None) -> dict:

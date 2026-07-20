@@ -5,12 +5,13 @@ import { AlertTriangle, RefreshCw, Home } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { useTranslation } from "@/lib/i18n";
+import { reportError } from "@/lib/observability";
 
 /** App-level error boundary — catches render/runtime errors in any page. */
 export default function Error({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
   React.useEffect(() => {
-    // In production this would report to an error service (Sentry, etc.).
-    console.error(error);
+    // Report through the vendor-agnostic reporter (console in dev, beacon → backend in prod).
+    reportError(error, { digest: error.digest });
   }, [error]);
   const { t } = useTranslation();
 

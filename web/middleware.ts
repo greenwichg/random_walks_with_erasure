@@ -18,5 +18,9 @@ export const config = {
     "/profile/:path*",
     "/stories/:path*",
     "/discover/:path*",
+    // OBS1 / architecture-review M1: these authenticated shells were missing, so an unauthenticated
+    // visitor reached them instead of the onboarding funnel.
+    "/saved/:path*",
+    "/search/:path*",
   ],
 };
