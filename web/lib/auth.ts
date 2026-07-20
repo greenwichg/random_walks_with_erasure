@@ -42,7 +42,17 @@ async function upsertEngineUser(input: {
   try {
     const res = await fetch(`${ENGINE_BASE}/api/internal/users`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      // The engine's /api/internal/* surface is fail-closed in production: it trusts a call only when
+      // it carries the shared secret as X-IH-Auth (same header engineAuthHeaders sends for /api/me/*).
+      // Without it this sign-in upsert 401s in prod, engineUserId never resolves, and every per-user
+      // page falls through to a 401. Mirror lib/engine-auth.ts's internalSecretHeaders(): send the
+      // secret when configured, omit it in dev (RWE_INTERNAL_SECRET unset) where the engine is open.
+      headers: {
+        "Content-Type": "application/json",
+        ...(process.env.RWE_INTERNAL_SECRET
+          ? { "X-IH-Auth": process.env.RWE_INTERNAL_SECRET }
+          : {}),
+      },
       cache: "no-store",
       body: JSON.stringify({
         provider: input.provider,
