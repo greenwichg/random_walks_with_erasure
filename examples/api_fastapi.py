@@ -511,6 +511,11 @@ class DashboardModel(BaseModel):
     today: DashboardTodayModel
     metrics: list[MetricModel]          # the report's metrics, reused verbatim (not re-derived)
     streakDays: int
+    # Estimate vs Measured + coverage, lifted from the reader's report so the dashboard keeps the
+    # onboarding context (progress toward the measured threshold). Omitted (None) only if a report
+    # somehow lacks them; present for every real routing path.
+    mode: Optional[str] = None
+    coverage: Optional[CoverageModel] = None
 
 
 class EmotionPointModel(BaseModel):
@@ -535,6 +540,9 @@ class RecAcceptancePointModel(BaseModel):
 
 
 class AnalyticsModel(BaseModel):
+    # Reading coverage toward the measured threshold, so Analytics carries the same Estimate-vs-Measured
+    # context as the dashboard/report (trends grow as the reader builds their profile).
+    coverage: Optional[CoverageModel] = None
     readingOverTime: list[TrendPointModel]
     topicDiversity: list[TrendPointModel]
     politicalDiversity: list[TrendPointModel]
@@ -1457,7 +1465,17 @@ def _report_for(active: "corpus_refresh.Active", request: Request, user: str | N
     outlets = _require_store().get_onboarding(uid)
     if outlets:
         try:
-            return be.estimate(outlets)
+            rep = be.estimate(outlets)
+            # The estimate is computed from outlets (0 reads back the SCORE), but a signed-in reader
+            # may have partial reads on the way to Measured. Fill coverage.reads with their real stored
+            # count so "N of 5 reads" progress is honest — metadata only, the estimate score is
+            # untouched. (The anonymous POST /api/estimate path keeps reads=0: no user, no reads.)
+            cov = rep.get("coverage")
+            if isinstance(cov, dict):
+                cnt = _require_store().count_reads(uid)
+                cov["reads"] = cnt
+                cov["sufficient"] = cnt >= engine.ESTIMATE_MIN_READS
+            return rep
         except ValueError:
             pass
     demo = _demo_personal(active)

@@ -846,6 +846,12 @@ class Backend:
             today_block["goalMet"] = total_min >= int(goal_minutes)
 
         return {
+            # Estimate vs Measured + coverage, lifted verbatim from the report this reader would see
+            # (same routing as /api/report) so the dashboard keeps the onboarding context instead of
+            # dropping it — no new report serialisation, no algorithm. `coverage.reads` is the honest
+            # progress toward the measured threshold (accurate in both modes).
+            "mode": report.get("mode"),
+            "coverage": report.get("coverage"),
             "overall": overall,
             "overallDelta": delta,
             "trend": trend,
@@ -921,6 +927,11 @@ class Backend:
                                           for l in self._EMO_LABELS}}
                    for s in snapshots if s.get("date") and s.get("attention")]
         return {
+            # Reading coverage toward the measured threshold — the same progress the dashboard/report
+            # show, so Analytics carries the Estimate-vs-Measured context too (a low-coverage reader is
+            # still building their profile, and the trends grow as they read). Real read count, no calc.
+            "coverage": {"reads": len(reads), "threshold": ESTIMATE_MIN_READS,
+                         "sufficient": len(reads) >= ESTIMATE_MIN_READS},
             "readingOverTime": self._reads_per_day(reads),
             "topicDiversity": metric_trend("topicDiversity"),
             "politicalDiversity": metric_trend("viewpointBalance"),

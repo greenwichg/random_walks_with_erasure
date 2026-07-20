@@ -9,6 +9,7 @@ import { ScoreRing } from "@/components/shared/score-ring";
 import { DeltaBadge } from "@/components/shared/delta-badge";
 import { TrendChart } from "@/components/shared/trend-chart";
 import { MetricCard } from "@/components/shared/metric-card";
+import { ProfileProgress } from "@/components/shared/profile-progress";
 import { TopicChip } from "@/components/shared/topic-chip";
 import { StatCard } from "@/components/dashboard/stat-card";
 import { DashboardSkeleton } from "@/components/dashboard/dashboard-skeleton";
@@ -58,6 +59,10 @@ export default function DashboardPage() {
 
       {data && (
         <div className="space-y-6">
+          {/* Estimate vs Measured + coverage — carries the onboarding context so a new reader always
+              knows whether this is an Estimate and how many reads unlock their Measured profile. */}
+          <ProfileProgress mode={data.mode} coverage={data.coverage} />
+
           {/* Hero: overall score + trend */}
           <div className="grid gap-6 lg:grid-cols-3">
             <Card className="overflow-hidden lg:col-span-2">
@@ -163,7 +168,7 @@ export default function DashboardPage() {
                 const metric =
                   data.metrics.find((m) => m.key === key) ??
                   { key, score: 0, delta: 0, available: false as const, reason: "insufficient_data" };
-                return <MetricCard key={key} metric={metric} href={metricHref(key)} index={i} />;
+                return <MetricCard key={key} metric={metric} href={metricHref(key)} index={i} coverage={data.coverage} />;
               })}
             </motion.div>
           </div>

@@ -2,7 +2,7 @@
 
 import { motion } from "framer-motion";
 import Link from "next/link";
-import type { Metric } from "@/types/domain";
+import type { Coverage, Metric } from "@/types/domain";
 import { METRICS } from "@/lib/metrics";
 import { DeltaBadge } from "@/components/shared/delta-badge";
 import { InfoTooltip } from "@/components/shared/info-tooltip";
@@ -31,7 +31,19 @@ const HUE_BAR: Record<string, string> = {
  *  metric is not yet measurable (`metric.available === false`), the same card keeps its header
  *  (icon, label, tooltip) and swaps the score/bar/benchmark body for the "not enough data yet"
  *  empty state — the card is never hidden, collapsed, or shown as a real 0. */
-export function MetricCard({ metric, href, index = 0 }: { metric: Metric; href?: string; index?: number }) {
+export function MetricCard({
+  metric,
+  href,
+  index = 0,
+  coverage,
+}: {
+  metric: Metric;
+  href?: string;
+  index?: number;
+  /** Reads-toward-threshold coverage — passed to the empty state so an unmeasured metric can show
+   *  its unlock progress. */
+  coverage?: Coverage | null;
+}) {
   const { t } = useTranslation();
   const meta = METRICS[metric.key];
   const Icon = meta.icon;
@@ -60,7 +72,7 @@ export function MetricCard({ metric, href, index = 0 }: { metric: Metric; href?:
       </div>
 
       {isEmpty ? (
-        <MetricEmptyState />
+        <MetricEmptyState metricKey={metric.key} coverage={coverage} />
       ) : (
         <>
           <div className="mt-3 flex items-baseline gap-2">

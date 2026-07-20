@@ -3,7 +3,7 @@
 import * as React from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { ChevronDown } from "lucide-react";
-import type { Metric } from "@/types/domain";
+import type { Coverage, Metric } from "@/types/domain";
 import { METRIC_ORDER, METRICS } from "@/lib/metrics";
 import { DeltaBadge } from "@/components/shared/delta-badge";
 import { MetricEmptyState } from "@/components/shared/metric-empty-state";
@@ -28,7 +28,7 @@ const HUE_BAR: Record<string, string> = {
 };
 
 /** Expandable per-metric rows — the report's detailed breakdown. */
-export function MetricAccordion({ metrics }: { metrics: Metric[] }) {
+export function MetricAccordion({ metrics, coverage }: { metrics: Metric[]; coverage?: Coverage | null }) {
   const { t } = useTranslation();
   const [open, setOpen] = React.useState<string | null>(null);
 
@@ -90,7 +90,7 @@ export function MetricAccordion({ metrics }: { metrics: Metric[] }) {
                   <div className="px-4 pb-4 pl-16 text-sm text-muted-foreground">
                     <p>{t(`metric.${meta.key}.description`)}</p>
                     {isEmpty ? (
-                      <MetricEmptyState />
+                      <MetricEmptyState metricKey={key} coverage={coverage} />
                     ) : (
                       <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-xs">
                         {metric.raw && (

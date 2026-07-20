@@ -9,7 +9,7 @@ import type {
   DashboardSummary,
   DiscoverResponse,
   FeedbackAction,
-  MeasuredHealthReport,
+  HealthReport,
   HistoryEntry,
   NotificationItem,
   Profile,
@@ -48,7 +48,9 @@ const FEEDBACK_WIRE: Partial<Record<FeedbackAction, RecFeedbackType>> = {
 
 export const services = {
   dashboard: () => getJson<DashboardSummary>("/dashboard"),
-  report: () => getJson<MeasuredHealthReport>("/report"),
+  // The honest union: a signed-in reader below the read threshold receives an ESTIMATE (no
+  // axisConfidence), so callers must narrow on `mode` before touching measured-only fields.
+  report: () => getJson<HealthReport>("/report"),
   recommendations: (strategy?: Recommendation["strategy"]) =>
     getJson<Recommendation[]>("/recommendations", strategy ? { strategy } : undefined),
   // 21a.2: the evidence behind the card's "Why?" drawer — fetched lazily on first open (D1).

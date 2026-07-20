@@ -476,7 +476,10 @@ def test_build_analytics_from_stored_data(backend):
 
 def test_build_analytics_empty_is_honest(backend):
     a = backend.build_analytics([], [], [])
-    assert a == {"readingOverTime": [], "topicDiversity": [], "politicalDiversity": [],
+    # coverage reflects the real read count (0 here) toward the measured threshold — carried so
+    # Analytics shows the same Estimate-vs-Measured context as the dashboard/report.
+    assert a == {"coverage": {"reads": 0, "threshold": 5, "sufficient": False},
+                 "readingOverTime": [], "topicDiversity": [], "politicalDiversity": [],
                  "publisherDiversity": [], "emotion": [], "reporting": [],
                  "recommendationAcceptance": [], "healthImprovement": []}
 

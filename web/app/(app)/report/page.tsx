@@ -7,6 +7,7 @@ import { PageContainer } from "@/components/layout/page-container";
 import { ScoreRing } from "@/components/shared/score-ring";
 import { DeltaBadge } from "@/components/shared/delta-badge";
 import { MetricRadar } from "@/components/shared/metric-radar";
+import { ProfileProgress } from "@/components/shared/profile-progress";
 import { SpectrumBar } from "@/components/shared/spectrum-bar";
 import { BarList, type BarItem } from "@/components/shared/bar-list";
 import { SectionCard } from "@/components/shared/section-card";
@@ -25,6 +26,10 @@ import { leanBucket } from "@/lib/political";
 export default function ReportPage() {
   const { data: report, isLoading, isError, refetch } = useReport();
   const { t, formatDate } = useTranslation();
+
+  // axisConfidence is a MEASURED-only field — narrow on `mode` before reading it so an Estimate report
+  // (a signed-in reader below the read threshold) never renders "NaN%".
+  const confidence = report && report.mode === "measured" ? report.axisConfidence : null;
 
   const topicItems: BarItem[] =
     report?.topics.slice(0, 8).map((tp) => ({ label: tp.topic, value: tp.share, count: tp.count })) ?? [];
@@ -94,6 +99,11 @@ export default function ReportPage() {
 
       {report && (
         <div className="space-y-6">
+          {/* Estimate vs Measured + coverage — the report header now states whether this is an
+              Estimate and how many reads unlock the Measured profile, so the onboarding context
+              persists here too. */}
+          <ProfileProgress mode={report.mode} coverage={report.coverage} />
+
           {/* Overall + radar */}
           <div className="grid gap-6 lg:grid-cols-3">
             <Card>
@@ -104,12 +114,15 @@ export default function ReportPage() {
                   <DeltaBadge value={report.overallDelta} suffix={t("report.thisMonth")} />
                 </div>
                 <p className="mt-3 text-sm text-muted-foreground">{dietSummary}</p>
-                <div className="mt-4 flex w-full items-center justify-between rounded-lg border bg-muted/40 px-3 py-2 text-sm">
-                  <span className="flex items-center gap-2 text-muted-foreground">
-                    <Gauge className="h-4 w-4" /> {t("report.axisConfidence")}
-                  </span>
-                  <span className="font-medium tabular-nums">{Math.round(report.axisConfidence * 100)}%</span>
-                </div>
+                {/* Confidence is measured-only — guarded so an Estimate never renders NaN%. */}
+                {confidence != null && (
+                  <div className="mt-4 flex w-full items-center justify-between rounded-lg border bg-muted/40 px-3 py-2 text-sm">
+                    <span className="flex items-center gap-2 text-muted-foreground">
+                      <Gauge className="h-4 w-4" /> {t("report.axisConfidence")}
+                    </span>
+                    <span className="font-medium tabular-nums">{Math.round(confidence * 100)}%</span>
+                  </div>
+                )}
               </CardContent>
             </Card>
 
@@ -169,7 +182,7 @@ export default function ReportPage() {
               <h2 className="text-sm font-semibold">{t("report.detailedBreakdown")}</h2>
               <span className="text-xs text-muted-foreground">{t("report.tapMetric")}</span>
             </div>
-            <MetricAccordion metrics={report.metrics} />
+            <MetricAccordion metrics={report.metrics} coverage={report.coverage} />
           </div>
         </div>
       )}

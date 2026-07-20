@@ -7,6 +7,7 @@ import { SectionCard } from "@/components/shared/section-card";
 import { TrendChart } from "@/components/shared/trend-chart";
 import { StackedBar } from "@/components/shared/stacked-bar";
 import { MultiLineChart } from "@/components/shared/multi-line-chart";
+import { ProfileProgress } from "@/components/shared/profile-progress";
 import { ErrorState } from "@/components/shared/states";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EMOTION_META } from "@/lib/metrics";
@@ -32,7 +33,12 @@ export default function AnalyticsPage() {
       {isError && <ErrorState onRetry={() => refetch()} />}
 
       {data && (
-        <div className="grid gap-6 lg:grid-cols-2">
+        <div className="space-y-6">
+          {/* Estimate vs Measured + coverage — Analytics carries the same context; while the reader is
+              still building their profile, the trends below fill in as they read. */}
+          <ProfileProgress coverage={data.coverage} />
+
+          <div className="grid gap-6 lg:grid-cols-2">
           <SectionCard title={t("analytics.healthImprovement")} info={t("analytics.healthImprovementInfo")} className="lg:col-span-2">
             {/* Overall Information Health is a normalized 0–100 score: pin the axis to [0,100] so the
                 trend reads on the same fixed scale as the diversity metrics below — never auto-scaled. */}
@@ -104,6 +110,7 @@ export default function AnalyticsPage() {
               showLegend
             />
           </SectionCard>
+          </div>
         </div>
       )}
     </PageContainer>

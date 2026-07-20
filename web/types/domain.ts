@@ -166,6 +166,11 @@ export interface TrendPoint {
 export interface DashboardSummary {
   overall: number;
   overallDelta: number;
+  /** Estimate vs Measured for this reader, lifted verbatim from their report — so the Dashboard keeps
+   *  the onboarding context instead of dropping it. Absent only on older payloads. */
+  mode?: ReportMode;
+  /** Reading coverage toward the measured threshold (`reads` is the honest progress in both modes). */
+  coverage?: Coverage;
   trend: TrendPoint[];
   today: {
     articlesRead: number;
@@ -669,6 +674,9 @@ export interface ApiTokenMint {
 }
 
 export interface AnalyticsSeries {
+  /** Reading coverage toward the measured threshold — so Analytics carries the same Estimate-vs-Measured
+   *  context (trends fill in as the reader builds their profile). */
+  coverage?: Coverage;
   readingOverTime: TrendPoint[];
   topicDiversity: TrendPoint[];
   politicalDiversity: TrendPoint[];

@@ -422,10 +422,40 @@ def test_dashboard_reuses_report_and_reflects_reads(client):
     report = client.get("/api/report", headers=hdr).json()
     assert dash["overall"] == report["overall"]                                  # report reused verbatim
     assert {m["key"] for m in dash["metrics"]} == {m["key"] for m in report["metrics"]}
+    # Estimate-vs-Measured context is carried on the dashboard, lifted verbatim from the report, so
+    # the onboarding context never disappears (Progressive Information Health Journey).
+    assert dash["mode"] == report["mode"] == "measured"
+    assert dash["coverage"] == report["coverage"]
+    assert dash["coverage"]["sufficient"] is True                               # 6 reads >= threshold
     assert set(dash["today"]) == {"articlesRead", "avgReadingMinutes", "minutesRead",
                                   "politicalShare", "topTopics", "goalMinutes", "goalMet"}
     assert dash["today"]["articlesRead"] >= 1                                    # observedAt defaults to now
     assert isinstance(dash["streakDays"], int)
+
+
+def test_signed_in_estimate_carries_accurate_coverage(client):
+    """A signed-in reader who onboarded but hasn't crossed the read threshold gets an ESTIMATE report:
+    mode='estimate', NO axisConfidence (a measured-only field), and coverage.reads reflecting their
+    REAL partial read count (not the anonymous estimate's 0) — so 'N of 5 reads' progress is honest.
+    This is the contract the UI relies on to (a) label Estimate vs Measured and (b) never render a
+    measured-only field for an estimate."""
+    uid = client.post("/api/internal/users",
+                      json={"provider": "google", "providerAccountId": "route-estimate"}).json()["userId"]
+    hdr = {"X-IH-User-Id": str(uid)}
+    outlets = [o["id"] for o in client.get("/api/outlets").json()[:4]]
+    client.post("/api/me/onboarding", json={"outlets": outlets}, headers=hdr)
+    # two reads — below the threshold, so the reader stays on the Estimate
+    reads = [{"url": f"https://www.wsj.com/politics/e{i}", "title": f"Read {i}"} for i in range(2)]
+    client.post("/api/me/reads", json={"reads": reads}, headers=hdr)
+
+    rep = client.get("/api/report", headers=hdr).json()
+    assert rep["mode"] == "estimate"
+    assert "axisConfidence" not in rep                              # measured-only — never on an estimate
+    assert rep["coverage"]["reads"] == 2 and rep["coverage"]["threshold"] == 5
+    assert rep["coverage"]["sufficient"] is False                   # 2 < 5, still building
+    # the dashboard mirrors the same estimate context
+    dash = client.get("/api/dashboard", headers=hdr).json()
+    assert dash["mode"] == "estimate" and dash["coverage"]["reads"] == 2
 
 
 def test_analytics_from_the_users_stored_data(client):
@@ -434,17 +464,20 @@ def test_analytics_from_the_users_stored_data(client):
     uid = client.post("/api/internal/users",
                       json={"provider": "google", "providerAccountId": "route-ana"}).json()["userId"]
     hdr = {"X-IH-User-Id": str(uid)}
-    keys = {"readingOverTime", "topicDiversity", "politicalDiversity", "publisherDiversity",
+    keys = {"coverage", "readingOverTime", "topicDiversity", "politicalDiversity", "publisherDiversity",
             "emotion", "reporting", "recommendationAcceptance", "healthImprovement"}
 
     empty = client.get("/api/me/analytics", headers=hdr).json()
-    assert set(empty) == keys and all(v == [] for v in empty.values())   # honest empty, all series present
+    assert set(empty) == keys
+    assert empty["coverage"] == {"reads": 0, "threshold": 5, "sufficient": False}   # new reader, still building
+    assert all(v == [] for k, v in empty.items() if k != "coverage")   # honest empty series, all present
 
     reads = [{"url": f"https://www.foxnews.com/politics/s{i}", "title": f"Story {i}"} for i in range(6)]
     client.post("/api/me/reads", json={"reads": reads}, headers=hdr)
     client.get("/api/report", headers=hdr)                              # measured build -> saves a snapshot
 
     ana = client.get("/api/me/analytics", headers=hdr).json()
+    assert ana["coverage"]["reads"] == 6 and ana["coverage"]["sufficient"] is True   # crossed the threshold
     assert sum(p["overall"] for p in ana["readingOverTime"]) == 6       # every read counted by day
     assert len(ana["healthImprovement"]) >= 1                           # >=1 saved snapshot
 
