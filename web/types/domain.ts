@@ -96,6 +96,13 @@ export interface BlindSpot {
   note: string;
 }
 
+/** One report field that fed an improvement's evidence — traceability for the bound numbers (RC2.1). */
+export interface EvidenceBasis {
+  field: string;
+  label: string;
+  value: number;
+}
+
 export interface Improvement {
   id: string;
   title: string;
@@ -103,6 +110,18 @@ export interface Improvement {
   metric: MetricKey;
   /** Expected points gained if followed. */
   impact: number;
+  /** RC2.1 — user-specific evidence bound from data already in the report. All optional: absent on
+   *  older payloads / when the report lacked grounded data, in which case `detail` stands alone. */
+  /** The behaviour that surfaced this recommendation, e.g. "82% of your reading came from Reuters and BBC." */
+  trigger?: string;
+  /** The specific numbers behind it, e.g. "Reuters (47%) and BBC (35%) account for most of your reading." */
+  evidence?: string;
+  /** The concrete step, e.g. "Reading from an outlet beyond Reuters and BBC would widen your sources." */
+  suggestedAction?: string;
+  /** Which metric it improves, e.g. "Broadens your Source Diversity." */
+  expectedBenefit?: string;
+  /** Exactly which report fields populated the evidence (auditability). */
+  evidenceBasis?: EvidenceBasis[];
 }
 
 /** Whether a report is a measured result (real reads) or an initial estimate (outlets only). */

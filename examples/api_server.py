@@ -105,6 +105,172 @@ def _prettify(label: str) -> str:
     return s.replace("_", " ").strip().title() if ("_" in s or s.islower()) else s
 
 
+# Human labels for the improvable metrics, for evidence prose (frontend still owns localisation).
+_METRIC_LABEL = dict(_METRIC_KEYS)
+
+
+def _pct_whole(x) -> int:
+    """Whole-percent of a 0–1 share, matching how the report rounds shares in its own prose."""
+    return int(round(float(x) * 100))
+
+
+def _join_names(names) -> str:
+    """`A` · `A and B` · `A, B, and C` — Oxford-joined names for evidence prose."""
+    xs = [str(n) for n in names if str(n)]
+    if not xs:
+        return ""
+    if len(xs) == 1:
+        return xs[0]
+    if len(xs) == 2:
+        return f"{xs[0]} and {xs[1]}"
+    return ", ".join(xs[:-1]) + f", and {xs[-1]}"
+
+
+def _improvement_evidence(key, *, metric, topics, sources, viewpoint, attention, blind, measured):
+    """User-specific evidence for one improvement, bound ONLY from fields already in *this* report.
+
+    Returns ``(trigger, evidence, action, benefit, basis)`` — or ``None`` when the report lacks the
+    grounded data to say anything specific, in which case the caller leaves the static title/detail to
+    stand (backward compatible). This is **evidence binding, not generation**: every number traces to a
+    field passed in (the same ``topics``/``sources``/``viewpoint``/``attention``/``blind`` that go into
+    the payload, and the metric's own ``score``/``benchmark``), and ``basis`` records exactly which
+    field fed each claim. No value is invented — in particular no alternate outlet the reader hasn't
+    used is ever named (the catalog isn't in the report). The concrete "X% of your reading came from …"
+    claim is made only for a *measured* report, where the source shares are real; an estimate's
+    equal-weighted source shares are never dressed up as a reading mix. No impact is estimated here."""
+    label = _METRIC_LABEL.get(key, _prettify(key))
+    score = metric.get("score")
+    benchmark = metric.get("benchmark")
+
+    def _score_fallback(observation):
+        """Always-grounded evidence from the metric's own score vs the typical reader — used when the
+        distribution this metric would quote isn't meaningfully present (a raw ratio not on the report,
+        or a low-political reader). The comparison is honest: the selection surfaces a reader's *lowest*
+        metrics, which can still sit at or above the median, so it never claims 'below typical' unless
+        the score truly is below the benchmark (that false claim is the bug this guards)."""
+        b = [{"field": "metric.score", "label": label, "value": float(score)}]
+        trig = f"Your {label} is {score}"
+        if benchmark is not None:
+            b.append({"field": "metric.benchmark", "label": "typical reader", "value": float(benchmark)})
+            if score < benchmark:
+                trig += f", below the typical reader's {benchmark}."
+            elif score == benchmark:
+                trig += f", at the typical reader's {benchmark}."
+            else:
+                trig += f", above the typical reader's {benchmark} but still among your lowest metrics."
+        else:
+            trig += "."
+        return trig, observation, b
+
+    if key == "sourceDiversity":
+        if measured and sources:
+            top = sources[:2]
+            share = sum(float(s["share"]) for s in top)
+            names = _join_names([s["source"] for s in top])
+            labeled = _join_names([f"{s['source']} ({_pct_whole(s['share'])}%)" for s in top])
+            basis = [{"field": "sources", "label": str(s["source"]), "value": float(s["share"])}
+                     for s in top]
+            trigger = f"{_pct_whole(share)}% of your reading came from {names}."
+            evidence = f"{labeled} account for most of your reading."
+            action = f"Reading from an outlet beyond {names} would widen your sources."
+        elif sources:
+            n = len(sources)                       # estimate: speak to the RANGE of picks, not a mix
+            basis = [{"field": "sources", "label": "outlets", "value": float(n)}]
+            trigger = f"Your estimate is based on {n} outlet{'s' if n != 1 else ''}."
+            evidence = "A wider range of outlets would raise Source Diversity."
+            action = "Add a couple of outlets outside your usual set."
+        else:
+            trigger, evidence, basis = _score_fallback(
+                "This tracks how many different outlets your reading draws on.")
+            action = "Broaden beyond your top outlets."
+        return trigger, evidence, action, f"Broadens your {label}.", basis
+
+    if key == "topicDiversity":
+        basis = []
+        trigger = None
+        if topics:
+            top = topics[:2]
+            basis += [{"field": "topics", "label": str(t["topic"]), "value": float(t["share"])}
+                      for t in top]
+            labeled = _join_names([f"{_pct_whole(t['share'])}% {t['topic']}" for t in top])
+            trigger = f"You've read {labeled}."
+        under = [str(b["topic"]) for b in (blind or [])][:2]
+        if under:
+            basis += [{"field": "blindSpots", "label": str(b["topic"]), "value": float(b["gap"])}
+                      for b in (blind or [])[:2]]
+            evidence = f"{_join_names(under)} {'is' if len(under) == 1 else 'are'} underrepresented in your reading."
+            action = f"Reading a {under[0]} piece would broaden your topics."
+        else:
+            evidence = "This tracks how many different subjects your reading spans."
+            action = "Deliberately read an unfamiliar subject."
+        if trigger is None:
+            trigger, evidence, basis = _score_fallback(evidence)
+        return trigger, evidence, action, f"Broadens your {label}.", basis
+
+    if key in ("viewpointBalance", "echoChamber"):
+        vp = viewpoint or {}
+        l, c, r = float(vp.get("left", 0)), float(vp.get("center", 0)), float(vp.get("right", 0))
+        if (l + c + r) > 0:
+            basis = [{"field": "viewpoint", "label": side, "value": val}
+                     for side, val in (("left", l), ("center", c), ("right", r))]
+            trigger = f"Your political reading is {_pct_whole(l)}% left, {_pct_whole(c)}% center, {_pct_whole(r)}% right."
+            weak = "right" if r <= l else "left"
+            if key == "viewpointBalance":
+                evidence = f"Your reading leans {'left' if l > r else 'right'}; the other side is thin."
+                action = f"Adding a couple of {weak}-leaning reads would balance your viewpoints."
+                benefit = f"Improves your {label}."
+            else:
+                evidence = f"About {max(_pct_whole(l), _pct_whole(r))}% of your political reading sits on one side."
+                action = "A good-faith opposite-side read loosens the echo chamber."
+                benefit = f"Loosens your {label}."
+            return trigger, evidence, action, benefit, basis
+        trigger, evidence, basis = _score_fallback(
+            "This tracks how balanced your political reading is across the spectrum.")
+        action = ("Add a couple of cross-cutting reads." if key == "viewpointBalance"
+                  else "Hear the other side on a contested topic.")
+        return trigger, evidence, action, f"Improves your {label}.", basis
+
+    if key == "emotionalBalance":
+        att = attention or {}
+        fear, outrage, analysis = (float(att.get("fear", 0)), float(att.get("outrage", 0)),
+                                   float(att.get("analysis", 0)))
+        if (fear + outrage) > 0 or analysis > 0:
+            basis = [{"field": "attention", "label": k, "value": float(att.get(k, 0))}
+                     for k in ("fear", "outrage", "analysis")]
+            trigger = f"{_pct_whole(fear + outrage)}% of your reading leans on fear and outrage."
+            evidence = f"Fear {_pct_whole(fear)}% and outrage {_pct_whole(outrage)}%; analysis is {_pct_whole(analysis)}%."
+            action = "Swapping one charged read a day for calm analysis raises the balance."
+        else:
+            trigger, evidence, basis = _score_fallback(
+                "This tracks how much of your reading leans on fear and outrage rather than analysis.")
+            action = "Trade one charged read a day for analysis."
+        return trigger, evidence, action, f"Raises your {label}.", basis
+
+    if key == "reportingRatio":
+        trigger, evidence, basis = _score_fallback(
+            "This tracks how much of your reading is straight reporting rather than opinion.")
+        return trigger, evidence, "Pair commentary with a straight-reporting source.", f"Raises your {label}.", basis
+
+    if key == "openMindedness":
+        trigger, evidence, basis = _score_fallback("This measures how often you engage views that challenge your own.")
+        return trigger, evidence, "Open the cross-cutting reads we surface.", f"Lifts your {label}.", basis
+
+    return None
+
+
+def _attach_evidence(item, key, *, metric, topics, sources, viewpoint, attention, blind, measured):
+    """Bind the RC2.1 evidence onto an improvement ``item`` in place (additive; selection/order/impact
+    untouched). A no-op when :func:`_improvement_evidence` can't ground a claim, so the static
+    title/detail stand alone and the payload stays backward compatible."""
+    ev = _improvement_evidence(key, metric=metric, topics=topics, sources=sources,
+                               viewpoint=viewpoint, attention=attention, blind=blind, measured=measured)
+    if ev is not None:
+        trigger, evidence, action, benefit, basis = ev
+        item.update({"trigger": trigger, "evidence": evidence, "suggestedAction": action,
+                     "expectedBenefit": benefit, "evidenceBasis": basis})
+    return item
+
+
 def _stable_int(*parts) -> int:
     h = hashlib.md5("|".join(str(p) for p in parts).encode()).hexdigest()
     return int(h[:8], 16)
@@ -1035,8 +1201,14 @@ class Backend:
         for m in ranked[:3]:
             tpl = _IMPROVEMENTS.get(m["key"])
             if tpl:
-                improvements.append({"id": f"imp_{m['key']}", "title": tpl[0], "detail": tpl[1],
-                                     "metric": m["key"], "impact": tpl[2]})
+                item = {"id": f"imp_{m['key']}", "title": tpl[0], "detail": tpl[1],
+                        "metric": m["key"], "impact": tpl[2]}
+                # RC2.1 — bind user-specific evidence from fields already in this report (additive;
+                # selection/order/impact above are unchanged).
+                _attach_evidence(item, m["key"], metric=m, topics=topics, sources=sources,
+                                 viewpoint={"left": left, "center": center, "right": right},
+                                 attention=attention, blind=blind, measured=True)
+                improvements.append(item)
 
         overall = rep.get("overall") or 0
         n = int(n_clicks)
@@ -1198,8 +1370,16 @@ class Backend:
         for m in sorted((m for m in metrics if m["available"]), key=lambda d: d["score"])[:3]:
             tpl = _IMPROVEMENTS.get(m["key"])
             if tpl:
-                improvements.append({"id": f"imp_{m['key']}", "title": tpl[0], "detail": tpl[1],
-                                     "metric": m["key"], "impact": tpl[2]})
+                item = {"id": f"imp_{m['key']}", "title": tpl[0], "detail": tpl[1],
+                        "metric": m["key"], "impact": tpl[2]}
+                # RC2.1 — same evidence binding as the measured path; measured=False so the
+                # equal-weighted estimate source shares are never presented as a real reading mix.
+                _attach_evidence(item, m["key"], metric=m, topics=topics, sources=sources,
+                                 viewpoint={"left": float(left), "center": float(center),
+                                            "right": float(right)},
+                                 attention={l: float(attention[l]) for l in labels},
+                                 blind=blind, measured=False)
+                improvements.append(item)
 
         return {
             "mode": "estimate",

@@ -452,12 +452,28 @@ class BlindSpotModel(BaseModel):
     note: str
 
 
+class EvidenceBasisModel(BaseModel):
+    """One report field that fed an improvement's evidence — the traceability record (RC2.1).
+    ``value`` is the exact number used (a 0–1 share, a metric score, or a count)."""
+    field: str
+    label: str
+    value: float
+
+
 class ImprovementModel(BaseModel):
     id: str
     title: str
     detail: str
     metric: str
     impact: int
+    # RC2.1 — optional, user-specific evidence bound from fields already present in this report.
+    # Additive: absent on older payloads, and omitted (response_model_exclude_none) whenever the
+    # report lacked the grounded data to be specific — so the static title/detail still stand alone.
+    trigger: Optional[str] = None
+    evidence: Optional[str] = None
+    suggestedAction: Optional[str] = None
+    expectedBenefit: Optional[str] = None
+    evidenceBasis: Optional[list[EvidenceBasisModel]] = None
 
 
 class CoverageModel(BaseModel):

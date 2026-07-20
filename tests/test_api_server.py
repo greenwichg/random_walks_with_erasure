@@ -166,6 +166,105 @@ def test_estimate_is_labeled_and_grounded(backend):
     _assert_json_roundtrips(est)
 
 
+# --------------------------------------------------------------------------- #
+# RC2.1 — personalized recommendation evidence binding
+# --------------------------------------------------------------------------- #
+_EVIDENCE_FIELDS = {"trigger", "evidence", "suggestedAction", "expectedBenefit", "evidenceBasis"}
+
+
+def _expected_improvement_metrics(report):
+    """Recompute the CURRENT selection rule independently: the 3 lowest available, non-confidence
+    metrics by score, in ascending-score order — so a drift in selection/order is caught."""
+    ranked = sorted((m for m in report["metrics"]
+                     if m["key"] != "confidence" and m.get("available")),
+                    key=lambda m: m["score"])
+    return [m["key"] for m in ranked[:3] if api_server._IMPROVEMENTS.get(m["key"])]
+
+
+def test_improvements_selection_and_impact_unchanged(backend, user):
+    """RC2.1 must NOT touch which recommendations appear, their order, or the (static) impact — it only
+    binds evidence. Selection is re-derived from the metrics and the impact from the template table."""
+    r = backend.report(user)
+    assert [imp["metric"] for imp in r["improvements"]] == _expected_improvement_metrics(r)
+    for imp in r["improvements"]:
+        tpl = api_server._IMPROVEMENTS[imp["metric"]]
+        assert imp["title"] == tpl[0] and imp["detail"] == tpl[1] and imp["impact"] == tpl[2]
+
+
+def test_improvements_carry_bound_evidence(backend, user):
+    """Every improvement gains the four evidence parts + a traceability basis, all non-empty."""
+    r = backend.report(user)
+    assert r["improvements"], "the synthetic reader has weak metrics, so recommendations exist"
+    for imp in r["improvements"]:
+        assert _EVIDENCE_FIELDS <= set(imp)
+        for f in ("trigger", "evidence", "suggestedAction", "expectedBenefit"):
+            assert isinstance(imp[f], str) and imp[f].strip()
+        assert isinstance(imp["evidenceBasis"], list) and imp["evidenceBasis"]
+        for b in imp["evidenceBasis"]:
+            assert set(b) == {"field", "label", "value"}
+            assert isinstance(b["field"], str) and b["field"]
+            assert _is_number(b["value"])
+    _assert_json_roundtrips(r)
+
+
+def test_improvement_evidence_is_traceable_to_report_fields(backend, user):
+    """No fabrication: each basis value equals the exact number in the report field it names, so every
+    quoted figure is auditable back to the payload the same request returned."""
+    r = backend.report(user)
+    src_by_name = {s["source"]: s["share"] for s in r["sources"]}
+    topic_by_name = {t["topic"]: t["share"] for t in r["topics"]}
+    vp, att = r["viewpoint"], r["attention"]
+    metric_score = {m["key"]: m["score"] for m in r["metrics"]}
+    for imp in r["improvements"]:
+        for b in imp["evidenceBasis"]:
+            field, label, val = b["field"], b["label"], b["value"]
+            if field == "sources":
+                assert src_by_name.get(label) == pytest.approx(val)
+            elif field == "topics":
+                assert topic_by_name.get(label) == pytest.approx(val)
+            elif field == "viewpoint":
+                assert vp[label] == pytest.approx(val)
+            elif field == "attention":
+                assert att[label] == pytest.approx(val)
+            elif field == "metric.score":
+                assert metric_score[imp["metric"]] == pytest.approx(val)
+            elif field == "metric.benchmark":
+                assert val == pytest.approx(50.0)   # measured metrics benchmark to the population median
+
+
+def test_improvement_evidence_never_claims_false_comparison(backend, user):
+    """Honesty guard: the selection surfaces a reader's LOWEST metrics, which can still sit at/above the
+    population median — so an evidence trigger must never say 'below the typical reader' unless the
+    score genuinely is below its benchmark."""
+    r = backend.report(user)
+    score_by_key = {m["key"]: m["score"] for m in r["metrics"]}
+    bench_by_key = {m["key"]: m.get("benchmark") for m in r["metrics"]}
+    for imp in r["improvements"]:
+        bm = bench_by_key.get(imp["metric"])
+        if bm is not None and score_by_key[imp["metric"]] >= bm:
+            assert "below the typical" not in imp["trigger"]
+
+
+def test_improvement_evidence_is_deterministic(backend, user):
+    """Same corpus + reader → byte-identical improvements (evidence included)."""
+    a = backend.report(user)["improvements"]
+    b = backend.report(user)["improvements"]
+    assert json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)
+
+
+def test_estimate_improvements_carry_evidence_without_false_concentration(backend):
+    """The estimate binds evidence too, but must NOT present its equal-weighted source shares as a real
+    reading mix (no "X% of your reading came from …" claim on an estimate)."""
+    names = [o["id"] for o in backend.outlets()[:6]]
+    est = backend.estimate(names)
+    for imp in est["improvements"]:
+        assert _EVIDENCE_FIELDS <= set(imp)
+        assert imp["trigger"].strip() and imp["suggestedAction"].strip()
+        if imp["metric"] == "sourceDiversity":
+            assert "of your reading came from" not in imp["trigger"]
+    _assert_json_roundtrips(est)
+
+
 def test_unavailable_metric_contract():
     """The empty-state card the UI renders when a metric cannot be measured yet. It is an explicit,
     truthful signal — available False + a reason + the activity threshold — never a fabricated score,

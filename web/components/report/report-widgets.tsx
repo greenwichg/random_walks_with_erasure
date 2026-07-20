@@ -66,7 +66,19 @@ export function Improvements({ items }: { items: Improvement[] }) {
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className="font-medium">{imp.title}</p>
-                <p className="mt-1 text-sm text-muted-foreground">{imp.detail}</p>
+                {imp.trigger ? (
+                  // RC2.1 — user-specific evidence bound from the report. Falls back to `detail` below
+                  // whenever the backend couldn't ground a specific claim (older payloads / thin data).
+                  <div className="mt-1 space-y-1 text-sm text-muted-foreground">
+                    <p>{imp.trigger}</p>
+                    {imp.evidence ? <p>{imp.evidence}</p> : null}
+                    {imp.suggestedAction ? (
+                      <p className="font-medium text-foreground">{imp.suggestedAction}</p>
+                    ) : null}
+                  </div>
+                ) : (
+                  <p className="mt-1 text-sm text-muted-foreground">{imp.detail}</p>
+                )}
               </div>
               <Badge variant="positive" className="shrink-0">
                 <TrendingUp className="h-3 w-3" /> +{imp.impact}
