@@ -69,6 +69,15 @@ wiring*), so a drift like this fails the build before merge.
 
 ---
 
+## Provider trials (optional ingestion sources)
+
+A second live source, **GDELT**, is wired but **disabled by default** (`RWE_GDELT_ENABLED=0`). Enabling it
+is a deliberate operational decision with its own step-by-step runbook (baseline → enable → verify →
+monitor → rollback): **`docs/GDELT_TRIAL_RUNBOOK.md`**. Provider articles that aren't recommendable stay
+searchable by design — see `docs/CORPUS_ARCHITECTURE.md`.
+
+---
+
 ## A · First deploy (existing, bootstrapped instance)
 
 Assumes the AWS resources exist (deployment guide §2): EC2 (Ubuntu 24.04), Elastic IP, Security Group

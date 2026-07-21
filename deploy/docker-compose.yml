@@ -32,6 +32,17 @@ services:
       # uses. WITHOUT this (and the matching mount below) the poller loads ZERO feeds and silently no-ops,
       # so the catalog only ever refreshes at `up` time. Keep this pair in sync with the ingest service.
       RWE_RSS_FEEDS: /app/feeds/rss_feeds.txt
+      # --- GDELT ingestion (keyless; adapter already registered in default_registry) — OFF by default -
+      # A SECOND live source, wired but disabled. Enable a controlled trial via RWE_GDELT_ENABLED=1 in
+      # deploy/.env; the MultiSourcePoller picks it up with NO scheduler change (docs/GDELT_TRIAL_RUNBOOK.md).
+      # Conservative caps below. GDELT is high-volume + mostly unknown-outlet (searchable but NOT
+      # recommendable — no-lean rows drop from the qbias corpus; see docs/CORPUS_ARCHITECTURE.md), so
+      # RWE_RETENTION_MAX_COUNT bounds catalog growth (retention is OFF unless a count/age cap is set).
+      RWE_GDELT_ENABLED: ${RWE_GDELT_ENABLED:-0}
+      RWE_GDELT_QUERY: ${RWE_GDELT_QUERY:-}
+      RWE_GDELT_MAX_ARTICLES: ${RWE_GDELT_MAX_ARTICLES:-25}
+      RWE_GDELT_POLL_INTERVAL: ${RWE_GDELT_POLL_INTERVAL:-1800}
+      RWE_RETENTION_MAX_COUNT: ${RWE_RETENTION_MAX_COUNT:-0}
       # --- production hardening (fail-closed auth) --------------------------------
       # This compose file runs in dev mode by default (the engine trusts the local
       # web service) so `up` is one command. For a real, internet-facing deployment,

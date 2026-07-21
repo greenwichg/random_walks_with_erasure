@@ -64,6 +64,14 @@
       "require": { "mounts": ["/app/data"] },
       "why": "The engine's SQLite database and local backups live under /app/data; without the mount the DB would be created on the ephemeral container layer and lost on every recreation.",
       "fix": "On the `api` service keep a volume mounted at /app/data (named volume in dev, host bind-mount in prod)."
+    },
+    {
+      "id": "gdelt-bounded-catalog",
+      "categories": ["feature-flag", "required-env"],
+      "when": { "service": "api", "env_truthy": "RWE_GDELT_ENABLED" },
+      "require": { "env": ["RWE_RETENTION_MAX_COUNT"] },
+      "why": "GDELT is high-volume ingestion; catalog retention is OFF unless RWE_RETENTION_MAX_COUNT (or _MAX_AGE_DAYS) is set, so enabling GDELT without a bound lets feed_articles / the SQLite DB / every backup grow unbounded. (Guard checks the knob is WIRED; set a non-zero value in deploy/.env per the runbook.)",
+      "fix": "Wire RWE_RETENTION_MAX_COUNT into the api service and set a non-zero value in deploy/.env (e.g. 20000) whenever RWE_GDELT_ENABLED=1. See docs/GDELT_TRIAL_RUNBOOK.md."
     }
   ],
 
