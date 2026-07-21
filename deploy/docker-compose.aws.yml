@@ -90,6 +90,10 @@ services:
       RWE_COACH_V2: ${RWE_COACH_V2:-0}
     volumes: !override
       - ${IH_DATA_DIR:-/opt/ih/data}:/app/data   # host-visible DB + backups (for off-host S3 sync)
+      # The background poller's feed list (RWE_RSS_FEEDS, from the base compose) — the SAME file the
+      # `ingest` service mounts. Required here because !override replaces the api volume list, so without
+      # this line the mount from the base file is dropped and the poller loads zero feeds (INCIDENT fix).
+      - ./rss_feeds.example.txt:/app/feeds/rss_feeds.txt:ro
 
   # ── One-shot RSS seed (unchanged behavior; only its data mount follows the bind-mount) ─────────────
   ingest:

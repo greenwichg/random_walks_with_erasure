@@ -28,6 +28,10 @@ services:
       # The one-shot `ingest` service seeds the initial catalog; this re-polls every RWE_POLL_INTERVAL
       # (default 600s). Tune with RWE_POLL_INTERVAL / RWE_POLL_TIMEOUT / RWE_POLL_RETRIES.
       RWE_FEED_POLL: 1
+      # The background poller resolves its feeds from RWE_RSS_FEEDS — the SAME list the `ingest` service
+      # uses. WITHOUT this (and the matching mount below) the poller loads ZERO feeds and silently no-ops,
+      # so the catalog only ever refreshes at `up` time. Keep this pair in sync with the ingest service.
+      RWE_RSS_FEEDS: /app/feeds/rss_feeds.txt
       # --- production hardening (fail-closed auth) --------------------------------
       # This compose file runs in dev mode by default (the engine trusts the local
       # web service) so `up` is one command. For a real, internet-facing deployment,
@@ -52,6 +56,9 @@ services:
       # written by `db_backup.py` land in /app/data/backups on the same volume; copy them off-host
       # for real disaster recovery (see DEPLOYMENT.md).
       - ih-data:/app/data
+      # The RSS feed list the background poller reads (RWE_RSS_FEEDS above) — the SAME file the one-shot
+      # `ingest` service mounts, so seed + background refresh share one source of truth. Read-only.
+      - ./rss_feeds.example.txt:/app/feeds/rss_feeds.txt:ro
       # Datasets (MIND/Politosphere/Qbias) are read-only and separate from the writable DB volume:
       # - ./data:/datasets:ro          # then set e.g. RWE_NPZ=/datasets/mind.npz
     healthcheck:
