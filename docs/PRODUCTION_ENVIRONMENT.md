@@ -117,10 +117,16 @@ cd /opt/ih && source deploy/ops/_compose.sh && alert "test alert from hidden-vie
 ## Verifying the environment
 
 ```bash
+deploy/ops/validate-deployment.py   # WIRING gate: every enabled capability has its env/mounts/secrets/files (CI-enforced)
 set -a; . deploy/.env; set +a
 deploy/ops/preflight.sh     # CONFIG gate: env + secrets + HTTPS + OAuth + DB (no IH_BASE_URL — see below)
 deploy/ops/smoke-test.sh    # LIVE gate: the RUNNING stack end-to-end, probed inside the container
 ```
+
+> **Wiring gate (drift guard).** `validate-deployment.py` fails if a service turns a capability **on**
+> without the config it depends on — e.g. `RWE_FEED_POLL=1` without `RWE_RSS_FEEDS`/the feed mount (the
+> 2026-07-21 ingestion incident). Rules are data (`deploy/deployment-rules.json`) and it runs in CI on
+> every PR. Details: `docs/DEPLOYMENT_RUNBOOK.md` → *Deployment-dependency validation*.
 Both must exit 0 before go-live. **Do not set `IH_BASE_URL`** for `preflight.sh` on the EC2 stack — the
 engine port is unpublished, so a host-side `127.0.0.1:8000` probe would false-FAIL; `smoke-test.sh` does
 the live engine/OBS1/PA1 checks correctly via `docker compose exec`. See `docs/WAVE0_GO_LIVE_CHECKLIST.md`.

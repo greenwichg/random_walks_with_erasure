@@ -26,10 +26,46 @@ This is the "how"; `docs/AWS_EC2_DEPLOYMENT_GUIDE.md` is the "why" (architecture
 | `backup-offhost.sh [--backup-now]` | **Container-based** backup + integrity check + `aws s3 sync` off-host (no host Python). Runs hourly via cron. |
 | `monitor.sh` | **Container-based** health monitor (OBS1 + edge containers) → `ALERT_WEBHOOK`. Runs every 5 min via cron. |
 | `smoke-test.sh` | Validate the running stack end-to-end (internal + public). |
+| `validate-deployment.py` | **Drift guard** — fails if a service enables a capability without the env/mounts/secrets/config files it depends on (rules in `deploy/deployment-rules.json`). Runs in CI + locally. |
 | `preflight.sh` | Deterministic PASS/WARN/FAIL of prod prerequisites. |
 | `backup.sh` / `verify-restore.sh` / `healthcheck.sh` | Host-Python probes for the **non-Docker** path (need `python`+SQLAlchemy; **not** used on the EC2 host). |
 
 All wrap: `docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.aws.yml --env-file deploy/.env …`.
+
+---
+
+## Deployment-dependency validation (drift guard)
+
+`deploy/ops/validate-deployment.py` prevents one recurring class of production drift: a service turns a
+capability **on** but the config it **depends on** is missing, so the stack looks healthy while silently
+doing nothing. (The 2026-07-21 incident: `RWE_FEED_POLL=1` on `api` with no `RWE_RSS_FEEDS`/feed-mount →
+the poller resolved 0 feeds and ingested nothing.)
+
+**How it works.** It renders the *merged* compose model (`docker compose config`, base + AWS override,
+with its own dummy secrets — no real secrets needed) and applies **declarative rules** from
+`deploy/deployment-rules.json`. Each rule says *when a service declares a capability, it must require*
+certain **environment variables, bind mounts, secrets, and configuration files**. It also lints for
+**hardcoded secrets** (any secret-named key must be `${VAR}` from `deploy/.env`, never a literal). Exit 0
+= all satisfied; exit 1 = a human-readable report naming the service, what's missing, why it matters, and
+the fix.
+
+**Run it:**
+
+```bash
+deploy/ops/validate-deployment.py           # validates every stack in the rules file (prod merge + dev)
+```
+
+**Add a future check — no code change,** just a rule in `deploy/deployment-rules.json`:
+
+```jsonc
+{ "id": "my-feature-deps",
+  "when":    { "service": "api", "env_truthy": "RWE_MY_FLAG" },   // trigger: capability declared
+  "require": { "env": ["RWE_MY_INPUT"], "mounts": ["/app/x"], "secrets": ["RWE_MY_SECRET"], "files": ["deploy/x.conf"] },
+  "why": "…what breaks without it…", "fix": "…how to wire it…" }
+```
+
+**In CI:** the `docker` job runs it automatically (`.github/workflows/ci.yml` → *Validate deployment-dependency
+wiring*), so a drift like this fails the build before merge.
 
 ---
 

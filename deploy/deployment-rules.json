@@ -1,0 +1,71 @@
+{
+  "_comment": "Declarative deployment-dependency rules for deploy/ops/validate-deployment.py. Each rule says: WHEN a service declares a capability (a truthy flag / an env value / merely existing), it must REQUIRE the config that capability depends on — env vars, bind mounts, secrets, and config files. Adding a future check = adding a rule here (no code change). Categories covered: required-env, required-mount, feature-flag, secret, config-file. See docs/DEPLOYMENT_RUNBOOK.md -> Deployment-dependency validation.",
+
+  "stacks": [
+    { "name": "production (base + AWS override)", "files": ["deploy/docker-compose.yml", "deploy/docker-compose.aws.yml"] },
+    { "name": "dev (base only)", "files": ["deploy/docker-compose.yml"] }
+  ],
+
+  "rules": [
+    {
+      "id": "rss-poller-feeds",
+      "categories": ["feature-flag", "required-env", "required-mount", "config-file"],
+      "when": { "service": "api", "env_truthy": "RWE_FEED_POLL" },
+      "require": {
+        "env": ["RWE_RSS_FEEDS"],
+        "mounts": ["/app/feeds/rss_feeds.txt"],
+        "files": ["deploy/rss_feeds.example.txt"]
+      },
+      "why": "RWE_FEED_POLL=1 starts the engine's in-process RSS poller, which resolves its feed list from RWE_RSS_FEEDS and reads the mounted feed file. Without both, rss_ingest.load_feeds() returns 0 feeds and the poller silently ingests nothing while appearing healthy (prod incident 2026-07-21).",
+      "fix": "On the `api` service add `RWE_RSS_FEEDS: /app/feeds/rss_feeds.txt` and the bind-mount `./rss_feeds.example.txt:/app/feeds/rss_feeds.txt:ro` — in the AWS override too, because its `volumes: !override` replaces the list."
+    },
+    {
+      "id": "engine-failclosed-secret",
+      "categories": ["secret", "required-env"],
+      "when": { "service": "api", "env_equals": { "RWE_ENV": "production" } },
+      "require": { "secrets": ["RWE_INTERNAL_SECRET"] },
+      "why": "In production the engine fail-closes: it refuses per-user calls without RWE_INTERNAL_SECRET and refuses to boot if it is unset. It must be wired from deploy/.env (interpolated), never hardcoded into the compose file.",
+      "fix": "On the `api` service set `RWE_INTERNAL_SECRET: ${RWE_INTERNAL_SECRET:?set RWE_INTERNAL_SECRET in deploy/.env}`."
+    },
+    {
+      "id": "web-shared-secret",
+      "categories": ["secret", "required-env"],
+      "when": { "service": "web", "env_equals": { "RWE_ENV": "production" } },
+      "require": { "secrets": ["RWE_INTERNAL_SECRET"] },
+      "why": "The web tier signs engine calls with the same shared secret; it must be present, match the engine's, and be supplied from deploy/.env.",
+      "fix": "On the `web` service set `RWE_INTERNAL_SECRET: ${RWE_INTERNAL_SECRET:?...}` (identical to the engine)."
+    },
+    {
+      "id": "web-oauth-secrets",
+      "categories": ["secret", "required-env"],
+      "when": { "service": "web", "env_equals": { "RWE_ENV": "production" } },
+      "require": {
+        "secrets": ["NEXTAUTH_SECRET", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"],
+        "env": ["NEXTAUTH_URL"]
+      },
+      "why": "Google OAuth is the only production sign-in method; web/instrumentation.ts validates these at startup and process.exit(1)s if any is missing, so the web tier would crash-loop.",
+      "fix": "On the `web` service wire NEXTAUTH_URL + the three OAuth secrets from deploy/.env (`${NEXTAUTH_SECRET:?...}` etc.)."
+    },
+    {
+      "id": "caddy-tls-config",
+      "categories": ["config-file", "required-mount"],
+      "when": { "service": "caddy" },
+      "require": {
+        "mounts": ["/etc/caddy/Caddyfile"],
+        "files": ["deploy/Caddyfile"]
+      },
+      "why": "Caddy is the only internet-facing process; it terminates TLS and reverse-proxies using the mounted Caddyfile. Without that config file mounted, the edge serves nothing.",
+      "fix": "On the `caddy` service keep the mount `./Caddyfile:/etc/caddy/Caddyfile:ro`."
+    },
+    {
+      "id": "engine-db-persistence",
+      "categories": ["required-mount"],
+      "when": { "service": "api" },
+      "require": { "mounts": ["/app/data"] },
+      "why": "The engine's SQLite database and local backups live under /app/data; without the mount the DB would be created on the ephemeral container layer and lost on every recreation.",
+      "fix": "On the `api` service keep a volume mounted at /app/data (named volume in dev, host bind-mount in prod)."
+    }
+  ],
+
+  "secret_name_patterns": ["SECRET", "PASSWORD", "TOKEN", "API_KEY", "CLIENT_SECRET", "PRIVATE_KEY"]
+}
