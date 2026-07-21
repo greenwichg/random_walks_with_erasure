@@ -17,10 +17,58 @@ function originPattern(appUrl) {
   return `${u.protocol}//${u.hostname}/*`;
 }
 
+// The capture host permission: HTTPS-only, requested at the user's click (never at install). Kept in
+// sync with common.js CAPTURE_ORIGIN; hard-coded here because the options page doesn't import it.
+const CAPTURE_ORIGIN = "https://*/*";
+
 async function load() {
   const { appUrl, token } = await chrome.storage.local.get(["appUrl", "token"]);
   if (appUrl) $("appUrl").value = appUrl;
   if (token) $("token").value = token;
+  await refreshCapture();
+  await refreshStats();
+}
+
+/** Reflect whether capture (the broad host permission) is currently granted. */
+async function refreshCapture() {
+  let on = false;
+  try { on = await chrome.permissions.contains({ origins: [CAPTURE_ORIGIN] }); } catch { /* ignore */ }
+  const el = $("captureStatus");
+  el.className = `capture-status ${on ? "on" : "off"}`;
+  el.textContent = on
+    ? "Capture is ON — the articles you open will sync."
+    : "Capture is OFF — enable it to sync the pages you read.";
+  $("enableCapture").disabled = on;
+  $("disableCapture").disabled = !on;
+}
+
+async function enableCapture() {
+  let granted = false;
+  try {
+    // This click is the required user gesture for the runtime permission prompt.
+    granted = await chrome.permissions.request({ origins: [CAPTURE_ORIGIN] });
+  } catch { /* prompt unavailable */ }
+  if (granted) showStatus("ok", "Capture enabled. Open a news article or blog post and it will sync.");
+  else showStatus("err", "Capture needs permission to read article metadata on the sites you visit.");
+  await refreshCapture();               // the service worker registers the detector via permissions.onAdded
+}
+
+async function disableCapture() {
+  try { await chrome.permissions.remove({ origins: [CAPTURE_ORIGIN] }); } catch { /* ignore */ }
+  showStatus("info", "Capture turned off. The detector no longer runs on any page.");
+  await refreshCapture();
+}
+
+/** Render the anonymous local detection tally (accept-by-signal / reject-by-reason). */
+async function refreshStats() {
+  let stats = {};
+  try { stats = await chrome.runtime.sendMessage({ type: "stats" }); } catch { /* SW asleep */ }
+  const el = $("stats");
+  const keys = Object.keys(stats || {}).sort();
+  if (!keys.length) { el.textContent = "No pages classified yet."; return; }
+  el.innerHTML = keys
+    .map((k) => `<span class="k">${k}</span><span class="v">${stats[k]}</span>`)
+    .join("");
 }
 
 async function save() {
@@ -46,7 +94,7 @@ async function save() {
   }
 
   await chrome.storage.local.set({ appUrl, token });
-  showStatus("ok", "Saved. Now open a supported news article, or hit “Test connection”.");
+  showStatus("ok", "Saved. Next, enable capture below (or hit “Test connection”).");
 }
 
 async function test() {
@@ -86,4 +134,6 @@ async function test() {
 
 $("save").addEventListener("click", save);
 $("test").addEventListener("click", test);
+$("enableCapture").addEventListener("click", enableCapture);
+$("disableCapture").addEventListener("click", disableCapture);
 document.addEventListener("DOMContentLoaded", load);

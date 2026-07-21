@@ -1,8 +1,9 @@
 /**
- * Content script (supported news sites only). Its entire job: decide whether the current page
- * is an article and, if so, hand the service worker the URL + title. It reads *only* standard
- * metadata (OpenGraph / JSON-LD / <h1> / <article>) and the page URL — never article text,
- * form fields, cookies, or anything else. No scoring or classification happens here.
+ * Content script (registered on any HTTPS page once the user enables capture). Its entire job:
+ * decide whether the current page is a genuine article and, if so, hand the service worker the URL +
+ * standard metadata. It reads *only* standard metadata (OpenGraph / JSON-LD / <h1> / the page URL) —
+ * never article body text, form fields, cookies, or anything else. Non-article pages send only an
+ * anonymous outcome label (no URL). No scoring or classification of content happens here.
  */
 (() => {
   /** Collect JSON-LD `@type` values (handles arrays and `@graph`). */
@@ -33,12 +34,20 @@
   const signals = {
     ogType: metaContent('meta[property="og:type"]'),
     ldTypes: jsonLdTypes(),
-    hasArticleTag: !!document.querySelector("article"),
+    hasArticlePublishedTime: !!(metaContent('meta[property="article:published_time"]') ||
+                                metaContent('meta[name="article:published_time"]')),
     hasHeadline: !!document.querySelector("h1"),
   };
 
-  // `isArticlePage` comes from common.js (injected just before this file).
-  if (!isArticlePage(signals)) return;
+  // `classifyPage` comes from common.js (injected just before this file). It returns the decision and
+  // a closed-set signal/reason label — no URL, no free text — used for anonymous detection telemetry.
+  const verdict = classifyPage(signals);
+  if (!verdict.article) {
+    // Anonymous outcome only (why a page was NOT captured); the service worker keeps a local
+    // aggregate counter. Never carries the URL or any page content.
+    chrome.runtime.sendMessage({ type: "detect", article: false, signal: verdict.signal });
+    return;
+  }
 
   const canonical = document.querySelector('link[rel="canonical"]');
   const url = (canonical && canonical.href) || location.href;
@@ -61,5 +70,6 @@
     author: meta.author,
     language: meta.language,
     observedAt: new Date().toISOString(),
+    detectSignal: verdict.signal,   // closed-set label (og:type|jsonld|published_time) — anonymous telemetry
   });
 })();

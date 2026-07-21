@@ -53,22 +53,102 @@ async function flashBadge(text, color) {
   }
 }
 
+// --- Capture permission + dynamic content-script registration (Option B) ---------------------- //
+// The article detector is registered ONLY after the user grants the capture host permission
+// (`CAPTURE_ORIGIN`, https-only) — nothing runs on any page until then. Registration persists across
+// browser restarts; the permission events + startup reconcile keep it in lock-step with the grant.
+const DETECTOR_ID = "ih-article-detector";
+
+/** Whether the user has granted the broad capture host permission. */
+async function hasCapture() {
+  try {
+    return await chrome.permissions.contains({ origins: [CAPTURE_ORIGIN] });
+  } catch {
+    return false;
+  }
+}
+
+/** Register the detector across all HTTPS pages (minus the sensitive-origin exclude list). Idempotent. */
+async function registerDetector() {
+  try {
+    const existing = await chrome.scripting.getRegisteredContentScripts({ ids: [DETECTOR_ID] });
+    if (existing && existing.length) return;
+    await chrome.scripting.registerContentScripts([{
+      id: DETECTOR_ID,
+      matches: CAPTURE_MATCHES,          // ["https://*/*"] — from common.js
+      excludeMatches: CAPTURE_EXCLUDES,  // mainstream webmail/office (defence-in-depth)
+      js: ["common.js", "content.js"],
+      runAt: "document_idle",
+      allFrames: false,                  // top document only — no ad/embed iframes
+      persistAcrossSessions: true,       // survives browser restart automatically
+      world: "ISOLATED",
+    }]);
+  } catch (e) {
+    console.warn("[InfoDiet] could not register the article detector:", e && e.message);
+  }
+}
+
+/** Remove the detector registration (on revoke). Safe if it isn't registered. */
+async function unregisterDetector() {
+  try {
+    await chrome.scripting.unregisterContentScripts({ ids: [DETECTOR_ID] });
+  } catch {
+    /* nothing registered */
+  }
+}
+
+/** Bring the registration in line with the live permission (grant → register, revoke → unregister),
+ *  then refresh the toolbar state. Runs on grant/revoke, on startup, and on install/update — so a
+ *  persisted registration and the actual permission can never drift. */
+async function reconcileDetector() {
+  if (await hasCapture()) await registerDetector();
+  else await unregisterDetector();
+  await refreshConfigBadge();
+}
+
+// --- Anonymous detection telemetry (local aggregate only) ------------------------------------- //
+// A per-outcome counter histogram in local storage: which signal accepted a page, or why one was
+// rejected. NO URL, NO per-page timing leaves the browser — it is a local aggregate the Options page
+// reads. Signal/reason are the closed-set labels from common.classifyPage.
+const STATS_KEY = "detectStats";
+async function bumpDetectStat(outcome, signal) {
+  if (!signal) return;
+  try {
+    const store = await chrome.storage.local.get(STATS_KEY);
+    const stats = store[STATS_KEY] || {};
+    const key = `${outcome}:${signal}`;   // e.g. "accept:og:type", "reject:no-signal"
+    stats[key] = (stats[key] || 0) + 1;
+    await chrome.storage.local.set({ [STATS_KEY]: stats });
+  } catch {
+    /* telemetry is best-effort and must never affect capture */
+  }
+}
+
 /**
- * Reflect connection-config status on the toolbar icon (persistent badge + tooltip), so an
- * unconfigured extension states what's wrong instead of silently doing nothing. Called on install,
- * when the config changes, and whenever a read is skipped for lack of configuration.
+ * Reflect connection + capture status on the toolbar icon (persistent badge + tooltip), so the
+ * extension always states what's needed instead of silently doing nothing. Three states:
+ *   "!"  needs configuration (app URL + token)
+ *   "○"  connected but capture not yet enabled (grant the host permission in Options)
+ *   ""   fully configured and capturing
  */
 async function refreshConfigBadge() {
   const { appUrl, token } = await getConfig();
-  const ok = configStatus({ appUrl, token }) === "ok";
+  const configured = configStatus({ appUrl, token }) === "ok";
+  const capturing = await hasCapture();
+  let title, color, text;
+  if (!configured) {
+    title = "InfoDiet — open Options and set your app URL and API token to start syncing";
+    color = "#b45309"; text = "!";
+  } else if (!capturing) {
+    title = "InfoDiet — connected. Open Options and enable capture to sync the pages you read.";
+    color = "#b45309"; text = "○";
+  } else {
+    title = "InfoDiet — syncing the articles you read"; color = "#15803d"; text = "";
+  }
   try {
-    await chrome.action.setTitle({
-      title: ok
-        ? "InfoDiet — syncing your reads"
-        : "InfoDiet — open Options and set your app URL and API token to start syncing",
-    });
-    await chrome.action.setBadgeBackgroundColor({ color: ok ? "#15803d" : "#b45309" });
-    await chrome.action.setBadgeText({ text: ok ? "" : "!" });
+    await chrome.action.setTitle({ title });
+    await chrome.action.setBadgeBackgroundColor({ color });
+    await chrome.action.setBadgeText({ text });
   } catch {
     /* action API unavailable in this context */
   }
@@ -138,14 +218,30 @@ async function testConnection() {
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (!msg || typeof msg !== "object") return;
   if (msg.type === "article") {
+    bumpDetectStat("accept", msg.detectSignal);   // anonymous: which signal detected this article
     recordArticle(msg).then((status) => sendResponse({ status }));
     return true; // async response
+  }
+  if (msg.type === "detect" && msg.article === false) {
+    bumpDetectStat("reject", msg.signal);          // anonymous: why a page was not captured (no URL)
+    return;                                        // fire-and-forget, no response
   }
   if (msg.type === "test") {
     testConnection().then(sendResponse);
     return true;
   }
+  if (msg.type === "stats") {                      // Options page reads the local aggregate
+    chrome.storage.local.get(STATS_KEY).then((s) => sendResponse(s[STATS_KEY] || {}));
+    return true;
+  }
 });
+
+// Keep the dynamic detector in lock-step with the capture permission: register on grant, unregister
+// on revoke, and reconcile on browser startup (registration + grant both persist, but a policy/update
+// edge could desync them).
+chrome.permissions.onAdded.addListener(reconcileDetector);
+chrome.permissions.onRemoved.addListener(reconcileDetector);
+chrome.runtime.onStartup.addListener(reconcileDetector);
 
 // The toolbar button's one job (there is no popup): open the Options page, where the
 // connection status and configuration live.
@@ -163,7 +259,9 @@ chrome.runtime.onInstalled.addListener(async (details) => {
       /* options UI unavailable in this context */
     }
   }
-  await refreshConfigBadge();
+  // Reconcile the detector with the current permission (registers it after an update if the user had
+  // already granted capture) and refresh the badge.
+  await reconcileDetector();
 });
 
 chrome.storage.onChanged.addListener((changes, area) => {

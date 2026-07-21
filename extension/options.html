@@ -41,6 +41,15 @@
       }
       .privacy { margin-top: 24px; padding-top: 16px; border-top: 1px solid #e4e4e7; color: #71717a; font-size: 12.5px; }
       code { background: rgba(127,127,127,.15); padding: 1px 5px; border-radius: 4px; }
+      h2.section { font-size: 14px; margin: 28px 0 4px; padding-top: 18px; border-top: 1px solid #e4e4e7; }
+      @media (prefers-color-scheme: dark) { h2.section, .privacy { border-color: #3f3f46; } }
+      .capture-status { margin: 12px 0 0; font-size: 13px; font-weight: 600; }
+      .capture-status.on { color: #166534; } .capture-status.off { color: #b45309; }
+      @media (prefers-color-scheme: dark) { .capture-status.on { color: #86efac; } .capture-status.off { color: #fbbf24; } }
+      details.stats { margin-top: 16px; font-size: 12.5px; color: #71717a; }
+      details.stats summary { cursor: pointer; }
+      .stats-body { margin-top: 8px; display: grid; grid-template-columns: 1fr auto; gap: 2px 16px; font-variant-numeric: tabular-nums; }
+      .stats-body .k { color: inherit; } .stats-body .v { text-align: right; font-weight: 600; }
     </style>
   </head>
   <body>
@@ -60,12 +69,31 @@
 
     <div id="status" class="status"></div>
 
+    <h2 class="section">Capture</h2>
+    <p class="sub">
+      Let InfoDiet detect and sync the articles you open, on any news site or blog. It runs only on
+      pages that identify themselves as articles (via standard metadata) and reads no article text.
+      Nothing runs on any page until you enable this.
+    </p>
+    <div class="row">
+      <button id="enableCapture" class="primary" type="button">Enable capture</button>
+      <button id="disableCapture" class="ghost" type="button">Turn off capture</button>
+    </div>
+    <p id="captureStatus" class="capture-status"></p>
+
+    <details class="stats">
+      <summary>Detection activity (stored only in this browser)</summary>
+      <div id="stats" class="stats-body">No pages classified yet.</div>
+    </details>
+
     <div class="privacy">
       InfoDiet records the article URL and standard page metadata (such as title, description,
-      publisher, publication date, preview image, author, and language) for supported news sites.
-      It never collects article text, browsing history, passwords, or activity outside supported
-      news sites. Your token is stored only in this browser — revoke it any time from InfoDiet →
-      Settings.
+      publisher, publication date, preview image, author, and language) for the article pages you
+      open once capture is enabled. It never collects article text, passwords, or the content of
+      non-article pages, and it does not run on a short list of excluded sites (such as Gmail and
+      Google Docs). Detection activity above is an anonymous local tally (which signal matched / why a
+      page was skipped) that never leaves this browser. Your token is stored only in this browser —
+      revoke it any time from InfoDiet → Settings.
     </div>
 
     <script src="options.js"></script>
