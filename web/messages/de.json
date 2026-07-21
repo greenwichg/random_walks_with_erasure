@@ -51,6 +51,8 @@
  "metric.typicalReader": "Typische Leser:",
  "metric.yourValue": "Ihr Wert:",
  "report.viewpointCaption": "Sie lesen {left}% links, {center}% Mitte und {right}% rechts.",
+ "report.viewpointCoverage": "Die politische Balance spiegelt {authoritative} von {eligible} politischen Lektüren wider.",
+ "report.viewpointCoverageUnknown": "{unknown} aus Quellen ohne maßgebliche Ausrichtungsbewertung werden hier nicht angezeigt.",
  "report.tilt.balanced": "Ihre Lektüre ist über das gesamte Spektrum gut ausgewogen.",
  "report.tilt.bothSides": "Sie hören beide Seiten – die Tendenz geht zu {side}.",
  "report.tilt.leansHeavily": "Ihre Lektüre neigt stark zu {side}; die andere Seite ist dünn.",

@@ -196,6 +196,13 @@ export const REPORT: MeasuredHealthReport = {
   overallDelta: 6,
   updatedAt: new Date().toISOString(),
   axisConfidence: 0.74,
+  // Coverage pilot: the Viewpoint dimension's dimensional coverage (partial-coverage example).
+  viewpointCoverage: {
+    eligiblePoliticalReads: 28,
+    authoritativeLeanReads: 24,
+    unknownLeanReads: 4,
+    provenance: "outlet_registry",
+  },
   metrics: [
     { key: "topicDiversity", score: 78, delta: 4, raw: { value: 12, unit: "topics" }, benchmark: 61 },
     { key: "sourceDiversity", score: 64, delta: 9, raw: { value: 14, unit: "sources" }, benchmark: 52 },

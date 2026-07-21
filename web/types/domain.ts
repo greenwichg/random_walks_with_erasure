@@ -198,6 +198,23 @@ export interface Coverage {
   sufficient: boolean;
 }
 
+/**
+ * Dimensional coverage for the Viewpoint / Political-Lean dimension (coverage pilot). How much of the
+ * reader's *political* reading the Viewpoint mix could place on the authoritative (outlet-registry /
+ * AllSides) lean scale. This is COVERAGE (scope), not confidence: `unknownLeanReads` are political
+ * reads from unrated outlets — simply not represented in the mix, never guessed.
+ */
+export interface ViewpointCoverage {
+  /** Political reads — the honest denominator for the Viewpoint mix. */
+  eligiblePoliticalReads: number;
+  /** Of those, how many carry a finite outlet-registry lean. */
+  authoritativeLeanReads: number;
+  /** `eligible − authoritative`: political reads not represented in the mix. */
+  unknownLeanReads: number;
+  /** The lean's source of truth (e.g. "outlet_registry"). */
+  provenance: string;
+}
+
 /** Fields shared by every Information Health result — measured or estimated. */
 export interface HealthReportBase {
   overall: number;
@@ -222,6 +239,9 @@ export interface MeasuredHealthReport extends HealthReportBase {
   mode: "measured";
   /** Per-reader confidence in the political axis (top-2 softmax margin mean). */
   axisConfidence: number;
+  /** Coverage pilot: the Viewpoint dimension's dimensional coverage — present when the reader has
+   *  political reads. Additive; absent on older payloads and readers with no political reading. */
+  viewpointCoverage?: ViewpointCoverage;
 }
 
 /** An Initial Information Health Estimate — computed from selected outlets only. There is no

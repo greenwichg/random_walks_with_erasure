@@ -51,6 +51,8 @@
  "metric.typicalReader": "Lecteur type :",
  "metric.yourValue": "Votre valeur :",
  "report.viewpointCaption": "Vous lisez {left}% à gauche, {center}% au centre et {right}% à droite.",
+ "report.viewpointCoverage": "L'équilibre politique reflète {authoritative} sur {eligible} lectures politiques.",
+ "report.viewpointCoverageUnknown": "{unknown} provenant de sources sans classification de tendance fiable ne sont pas affichées ici.",
  "report.tilt.balanced": "Votre lecture est bien équilibrée sur tout le spectre.",
  "report.tilt.bothSides": "Vous entendez les deux camps — le penchant va vers {side}.",
  "report.tilt.leansHeavily": "Votre lecture penche fortement vers {side} ; l'autre camp est mince.",

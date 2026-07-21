@@ -56,6 +56,8 @@ export default function ReportPage() {
 
   // Data-driven captions (derived from the live report, not hardcoded to any diet) — localized.
   const vp = report?.viewpoint;
+  // Coverage pilot: the Viewpoint dimension's dimensional coverage (measured reports with political reads).
+  const vpCoverage = report?.mode === "measured" ? report.viewpointCoverage : undefined;
   const tiltText = !vp
     ? ""
     : Math.abs(vp.left - vp.right) < 0.06
@@ -156,6 +158,22 @@ export default function ReportPage() {
                   })}{" "}
                   {tiltText}
                 </p>
+                {vpCoverage ? (
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    {t("report.viewpointCoverage", {
+                      authoritative: vpCoverage.authoritativeLeanReads,
+                      eligible: vpCoverage.eligiblePoliticalReads,
+                    })}
+                    {vpCoverage.unknownLeanReads > 0 ? (
+                      <>
+                        {" "}
+                        {t("report.viewpointCoverageUnknown", {
+                          unknown: vpCoverage.unknownLeanReads,
+                        })}
+                      </>
+                    ) : null}
+                  </p>
+                ) : null}
               </div>
             </SectionCard>
 
