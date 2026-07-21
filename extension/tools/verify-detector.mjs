@@ -92,44 +92,87 @@ async function fetchHtml(url) {
   }
 }
 
+// TSV rows: "<accept|reject>\t<url>". A line `@ <category>` sets the category for the rows beneath it
+// (so a large list can be organised into blocks); `#` lines are comments. Category is inherited.
 function loadCorpus(argv) {
-  if (argv[0] === "--url" && argv[1]) return [["", argv[1]]];
-  if (argv[0]) {
-    const path = resolve(process.cwd(), argv[0]);
-    return readFileSync(path, "utf8").split(/\r?\n/).map((l) => l.trim())
-      .filter((l) => l && !l.startsWith("#"))
-      .map((l) => {
-        const parts = l.split(/\t+/);
-        return parts.length > 1 ? [parts[0].toLowerCase(), parts.slice(1).join("\t")] : ["", parts[0]];
-      });
+  if (argv[0] === "--url" && argv[1]) return [{ expect: "", url: argv[1], category: "single" }];
+  if (!argv[0]) {
+    console.error("(no corpus file — running the built-in SEED placeholders; pass a TSV to verify your own)\n");
+    return SEED.map(([expect, url]) => ({ expect, url, category: "seed" }));
   }
-  console.error("(no corpus file given — running the built-in SEED; pass a TSV of '<accept|reject>\\t<url>' to verify your own)\n");
-  return SEED;
+  const path = resolve(process.cwd(), argv[0]);
+  const rows = [];
+  let category = "uncategorized";
+  for (let line of readFileSync(path, "utf8").split(/\r?\n/)) {
+    line = line.trim();
+    if (!line) continue;
+    if (line.startsWith("@")) { category = line.slice(1).trim() || "uncategorized"; continue; }
+    if (line.startsWith("#")) continue;
+    const parts = line.split(/\t+/);
+    const expect = (parts.length > 1 ? parts[0] : "").toLowerCase();
+    const url = parts.length > 1 ? parts.slice(1).join("\t") : parts[0];
+    rows.push({ expect, url, category });
+  }
+  return rows;
 }
 
 const pad = (v, n) => String(v).padEnd(n).slice(0, n);
 
 (async () => {
   const corpus = loadCorpus(process.argv.slice(2));
-  console.log(pad("expect", 8), pad("got", 8), pad("signal", 16), "url");
-  console.log("-".repeat(100));
-  let fails = 0, fetchErrors = 0, accepted = 0;
-  for (const [expect, url] of corpus) {
-    const r = await fetchHtml(url);
-    if (r.error) {
-      fetchErrors++;
-      console.log(pad(expect || "—", 8), pad("ERR", 8), pad(r.error, 16), url);
-      continue;
+  const results = [];
+  console.error(`fetching ${corpus.length} URLs sequentially (a few minutes for a large list) — ` +
+                `progress: . ok  ! fetch-error  ✗ mismatch`);
+  for (const row of corpus) {
+    const r = await fetchHtml(row.url);
+    let got, signal, status;
+    if (r.error) { got = "ERR"; signal = r.error; status = "err"; }
+    else {
+      const v = classifyPage(signalsFrom(r.html));
+      got = v.article ? "accept" : "reject"; signal = v.signal;
+      status = row.expect ? (got === row.expect ? "ok" : "mismatch") : "unlabelled";
     }
-    const v = classifyPage(signalsFrom(r.html));
-    const got = v.article ? "accept" : "reject";
-    if (v.article) accepted++;
-    const mark = expect ? (got === expect ? "✓" : "✗ MISMATCH") : "";
-    if (expect && got !== expect) fails++;
-    console.log(pad(expect || "—", 8), pad(got, 8), pad(v.signal, 16), `${url}  ${mark}`);
+    results.push({ ...row, got, signal, status });
+    process.stderr.write(status === "mismatch" ? "✗" : status === "err" ? "!" : ".");
   }
-  console.log("-".repeat(100));
-  console.log(`total=${corpus.length}  accepted=${accepted}  fetch-errors=${fetchErrors}  labelled-mismatches=${fails}`);
-  if (fetchErrors) console.log("note: fetch errors are network/paywall/bot-wall issues, NOT detector rejections.");
-  process.exit(fails > 0 ? 1 : 0);
+  process.stderr.write("\n");
+
+  const cats = [...new Set(results.map((r) => r.category))];
+  for (const cat of cats) {
+    const rows = results.filter((r) => r.category === cat);
+    console.log(`\n### ${cat}  (${rows.length})`);
+    console.log(pad("expect", 8), pad("got", 8), pad("signal", 16), "url");
+    for (const r of rows) {
+      const mark = r.status === "mismatch" ? "  ✗ MISMATCH" : r.status === "err" ? "  (fetch err — inconclusive)" : "";
+      console.log(pad(r.expect || "—", 8), pad(r.got, 8), pad(r.signal, 16), `${r.url}${mark}`);
+    }
+    const acc = rows.filter((r) => r.got === "accept").length;
+    const mm = rows.filter((r) => r.status === "mismatch").length;
+    const er = rows.filter((r) => r.status === "err").length;
+    console.log(`  → ${cat}: n=${rows.length} accepted=${acc} mismatches=${mm} fetch-errors=${er}`);
+  }
+
+  const mism = results.filter((r) => r.status === "mismatch");
+  const errs = results.filter((r) => r.status === "err");
+  console.log(`\n==== TOTAL n=${results.length}  accepted=${results.filter((r) => r.got === "accept").length}` +
+              `  fetch-errors=${errs.length}  labelled-mismatches=${mism.length} ====`);
+  if (mism.length) {
+    console.log(`\nMISMATCHES — investigate every one (${mism.length}):`);
+    for (const r of mism) console.log(`  [${r.category}] expected ${r.expect}, got ${r.got} via "${r.signal}"\n     ${r.url}`);
+  }
+  if (errs.length) {
+    console.log(`\nFETCH ERRORS — inconclusive (bot-wall/paywall/network), NOT detector failures (${errs.length}):`);
+    for (const r of errs) console.log(`  [${r.category}] ${r.signal}  ${r.url}`);
+  }
+  console.log(`\nPer-category review checklist:`);
+  for (const cat of cats) {
+    const rows = results.filter((r) => r.category === cat);
+    const mm = rows.filter((r) => r.status === "mismatch").length;
+    const er = rows.filter((r) => r.status === "err").length;
+    const flag = mm ? "❌ MISMATCH — investigate"
+      : (er === rows.length && rows.length ? "⚠ all fetch-errors — re-source these URLs" : "✅ clean");
+    console.log(`  ${pad(cat, 18)} ${flag}  (n=${rows.length}, fetch-err=${er})`);
+  }
+  console.log(`\nExit non-zero if any labelled mismatch. Fetch errors do not fail the run.`);
+  process.exit(mism.length > 0 ? 1 : 0);
 })();
