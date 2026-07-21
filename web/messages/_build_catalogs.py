@@ -149,6 +149,13 @@ M = {
     "metric.typicalReader": ("Typical reader:", "Lector típico:", "Lecteur type :",
                              "Typische Leser:", "Leitor típico:"),
     "metric.yourValue": ("Your value:", "Tu valor:", "Votre valeur :", "Ihr Wert:", "Seu valor:"),
+    # Measurement coverage (ADR-001): the scope of a metric — how many eligible reads carried its
+    # signal. One generic line for every dimension that carries a measurement.
+    "metric.coverage": ("Measured from {observed} of {eligible} of your reads.",
+                        "Medido a partir de {observed} de {eligible} de tus lecturas.",
+                        "Mesuré à partir de {observed} sur {eligible} de vos lectures.",
+                        "Gemessen aus {observed} von {eligible} Ihrer Lektüren.",
+                        "Medido a partir de {observed} de {eligible} das suas leituras."),
     "report.viewpointCaption": ("You read {left}% left, {center}% center, and {right}% right.",
                                 "Lees {left}% de izquierda, {center}% de centro y {right}% de derecha.",
                                 "Vous lisez {left}% à gauche, {center}% au centre et {right}% à droite.",

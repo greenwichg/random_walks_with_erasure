@@ -22,9 +22,9 @@ recommendation. Computation lives here (pure) and is attached to the report by t
 (``api_server.Backend._serialize_report``) alongside the metric values, from the SAME read projection
 the values are computed over — never a second read load.
 
-The metric keys returned (``viewpointBalance`` / ``emotionalBalance``) are the frontend ``MetricKey``s
-(``api_server._METRIC_KEYS`` / ``web/types/domain.ts``), so a measurement attaches directly onto its
-metric card.
+The metric keys returned (``topicDiversity`` / ``reportingRatio`` / ``emotionalBalance`` /
+``viewpointBalance``) are the frontend ``MetricKey``s (``api_server._METRIC_KEYS`` /
+``web/types/domain.ts``), so a measurement attaches directly onto its metric card.
 """
 from __future__ import annotations
 
@@ -32,8 +32,10 @@ import math
 from typing import Any, Iterable, Optional
 
 # Provenance sources of truth.
-_VIEWPOINT_SOURCE = "outlet_registry"          # AllSides lean via examples/outlet_registry.py
-_DEFAULT_EMOTION_SOURCE = "baseline_lexical"   # the offline headline enricher (enrich.BaselineEnricher)
+_VIEWPOINT_SOURCE = "outlet_registry"           # AllSides lean via examples/outlet_registry.py
+_TOPIC_SOURCE = "topic_classifier"              # the deterministic classifier (ingest.classify_topic)
+_DEFAULT_ENRICHER_SOURCE = "baseline_lexical"   # the offline headline enricher (enrich.BaselineEnricher);
+                                                # derives BOTH register and emotion in one call
 
 
 def _get(read: Any, name: str):
@@ -45,10 +47,11 @@ def _get(read: Any, name: str):
     return getattr(read, name, None)
 
 
-def _finite_lean(value) -> bool:
-    """True iff ``value`` is a **finite** numeric lean — the exact signal the recommendation corpus
-    keeps and ``outlet_coverage._is_unknown`` / the qbias projection drop on. A missing, ``None``,
-    non-numeric, or ``NaN`` lean (an unrated outlet) is *unknown*, never a crash."""
+def _finite(value) -> bool:
+    """True iff ``value`` is a **finite** number — the signal the recommendation corpus keeps for a
+    lean (``outlet_coverage._is_unknown`` / the qbias projection drop on the complement) and the
+    enricher writes for a register (``enrich`` leaves it ``NaN`` when there is no text). A missing,
+    ``None``, non-numeric, or ``NaN`` value is *unknown*, never a crash."""
     if value is None:
         return False
     try:
@@ -91,7 +94,7 @@ def viewpoint_measurement(reads: Iterable[Any]) -> Optional[dict]:
         if not _get(r, "political"):
             continue
         eligible += 1
-        if _finite_lean(_get(r, "lean")):
+        if _finite(_get(r, "lean")):
             observed += 1
     if eligible == 0:
         return None
@@ -102,8 +105,62 @@ def viewpoint_measurement(reads: Iterable[Any]) -> Optional[dict]:
     )
 
 
+def topic_measurement(reads: Iterable[Any]) -> Optional[dict]:
+    """Measurement for the **Topic** dimension over a reader's scored ``reads``.
+
+    Coverage: of ALL the reader's reads (``basis = all_reads``), how many carry a resolved topic
+    (``observed``) — ``ingest.classify_topic`` returns a taxonomy member or ``""`` (uncategorized),
+    so a read with an empty ``category`` is eligible but not observed. Provenance is ``derived`` from
+    the deterministic ``topic_classifier``.
+
+    Returns ``None`` only when the reader has no reads at all (no dimension to describe).
+    """
+    eligible = observed = 0
+    for r in reads:
+        eligible += 1
+        cat = _get(r, "category")
+        if isinstance(cat, str) and cat.strip():       # a resolved taxonomy topic (not "" / uncategorized)
+            observed += 1
+    if eligible == 0:
+        return None
+    return _envelope(
+        dimension="topic",
+        coverage=_coverage(observed, eligible, basis="all_reads"),
+        provenance=_provenance(kind="derived", source=_TOPIC_SOURCE),
+    )
+
+
+def register_measurement(reads: Iterable[Any], *,
+                         source: str = _DEFAULT_ENRICHER_SOURCE) -> Optional[dict]:
+    """Measurement for the **Register** (reporting-vs-opinion) dimension over a reader's ``reads``.
+
+    Coverage: of ALL the reader's reads (``basis = all_reads``), how many carry a register score
+    (``observed``) — the enricher writes ``register`` = P(reporting) only when there is text, leaving
+    it ``NaN`` otherwise (exactly as Emotion), so a headline with no usable text is eligible but not
+    observed. Provenance is ``derived`` from the current enricher (``source``, shared with Emotion —
+    the same ``enrich`` call sets both).
+
+    Confidence is omitted, as for the other derived dimensions (ADR-001): the stored register is a
+    point estimate, not an uncertainty estimate.
+
+    Returns ``None`` only when the reader has no reads at all (no dimension to describe).
+    """
+    eligible = observed = 0
+    for r in reads:
+        eligible += 1
+        if _finite(_get(r, "register")):
+            observed += 1
+    if eligible == 0:
+        return None
+    return _envelope(
+        dimension="register",
+        coverage=_coverage(observed, eligible, basis="all_reads"),
+        provenance=_provenance(kind="derived", source=source),
+    )
+
+
 def emotion_measurement(reads: Iterable[Any], *,
-                        source: str = _DEFAULT_EMOTION_SOURCE) -> Optional[dict]:
+                        source: str = _DEFAULT_ENRICHER_SOURCE) -> Optional[dict]:
     """Measurement for the **Emotion** dimension over a reader's scored ``reads``.
 
     Coverage: of ALL the reader's reads (``basis = all_reads``), how many carry an emotion vector
@@ -134,19 +191,27 @@ def emotion_measurement(reads: Iterable[Any], *,
 
 
 def measurements_for_reads(reads: Iterable[Any], *,
-                           emotion_source: str = _DEFAULT_EMOTION_SOURCE) -> dict:
+                           enricher_source: str = _DEFAULT_ENRICHER_SOURCE) -> dict:
     """Compute every per-metric Measurement envelope for a reader's scored ``reads``.
 
-    Returns ``{metric_key: envelope}`` keyed by the frontend ``MetricKey`` (``viewpointBalance`` /
-    ``emotionalBalance``), so the serialiser attaches each envelope onto its metric card. A dimension
-    with nothing to describe (e.g. no political reads) is simply absent from the mapping. Pure and
-    read-only; the ``reads`` are consumed once (materialised, since two dimensions scan them)."""
+    Returns ``{metric_key: envelope}`` keyed by the frontend ``MetricKey`` (``topicDiversity`` /
+    ``reportingRatio`` / ``emotionalBalance`` / ``viewpointBalance``), so the serialiser attaches each
+    envelope onto its metric card. A dimension with nothing to describe (e.g. no political reads) is
+    simply absent from the mapping. ``enricher_source`` names the model behind the two enricher-derived
+    dimensions (register + emotion). Pure and read-only; the ``reads`` are materialised once (each
+    dimension scans them)."""
     reads = list(reads)
     out: dict = {}
+    topic = topic_measurement(reads)
+    if topic is not None:
+        out["topicDiversity"] = topic
+    reg = register_measurement(reads, source=enricher_source)
+    if reg is not None:
+        out["reportingRatio"] = reg
+    emo = emotion_measurement(reads, source=enricher_source)
+    if emo is not None:
+        out["emotionalBalance"] = emo
     vp = viewpoint_measurement(reads)
     if vp is not None:
         out["viewpointBalance"] = vp
-    emo = emotion_measurement(reads, source=emotion_source)
-    if emo is not None:
-        out["emotionalBalance"] = emo
     return out

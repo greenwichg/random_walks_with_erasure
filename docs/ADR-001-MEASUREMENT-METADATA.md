@@ -1,6 +1,7 @@
 # ADR-001 — Measurement Metadata Architecture
 
-**Status:** Accepted · Phase 1 (Viewpoint coverage pilot) and Phase 2 (generic model) implemented.
+**Status:** Accepted · Phase 1 (Viewpoint coverage pilot), Phase 2 (generic model + Emotion), and
+Phase 3 (Topic + Register) implemented — four dimensions live.
 **Scope:** how every Information Health metric reports the *scope* and *provenance* of its value.
 **Supersedes:** the report-level `viewpointCoverage` field of the coverage pilot (folded into this model).
 
@@ -63,16 +64,29 @@ distribution, and no recommendation. A client that ignores `measurement` behaves
 It is present only on the metrics that carry one, on a Measured report; absent on estimate/demo
 reports, other metrics, and older payloads.
 
-### Dimensions in Phase 2
+### Migrated dimensions
+
+Phase 2 migrated Viewpoint (refactored from the pilot) and Emotion (validation dimension); Phase 3
+migrated Topic and Register, exercising the model across four dimensions and both provenance kinds.
 
 | Metric | `basis` | `observed` | provenance | confidence |
 |---|---|---|---|---|
 | `viewpointBalance` | `political_reads` | political reads with a **finite** outlet-registry lean | `authoritative` / `outlet_registry` | omitted (certainty stays as `axisConfidence`) |
-| `emotionalBalance` | `all_reads` | reads carrying an emotion vector | `derived` / current emotion model | **omitted** (see note) |
+| `topicDiversity` | `all_reads` | reads with a resolved taxonomy topic (`classify_topic` ≠ `""`) | `derived` / `topic_classifier` | omitted |
+| `reportingRatio` | `all_reads` | reads carrying a register score (finite `P(reporting)`) | `derived` / current enricher | omitted |
+| `emotionalBalance` | `all_reads` | reads carrying an emotion vector | `derived` / current enricher | **omitted** (see note) |
 
-Viewpoint's coverage numbers are identical to the pilot's — this is a refactor of *where* the numbers
-live and *how* they're computed, not a change to *what* they are. Emotion is the second dimension,
-added to validate the model generalises.
+Viewpoint's coverage numbers are identical to the pilot's — the migrations refactor *where* the
+numbers live and *how* they're computed, not *what* they are.
+
+Two structural facts the four dimensions establish:
+
+- **Both provenance kinds are exercised.** Viewpoint is `authoritative` (a source-of-truth lookup);
+  Topic, Register, and Emotion are `derived` (model output). The `kind` field earns its place.
+- **Register and Emotion share one provenance `source`** (the enricher, named by
+  `enrich.enricher_source()`), because the same `enrich` call sets both — so the identifier is honest
+  by construction, not a coincidence to keep in sync. Only the *all-reads* dimensions are always
+  present when the reader has reads; Viewpoint alone is conditional on its `political_reads` basis.
 
 ## Consequences
 

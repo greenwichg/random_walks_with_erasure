@@ -167,10 +167,11 @@ def make_enricher(kind: Optional[str] = None):
     return BaselineEnricher()
 
 
-def emotion_model_source(kind: Optional[str] = None) -> str:
-    """A stable identifier for the emotion model currently configured — the ``provenance.source`` of
-    the Emotion Measurement envelope (``measurement.emotion_measurement`` / ADR-001). It names WHICH
-    model produces the stored emotion vectors, without leaking provider/model specifics:
+def enricher_source(kind: Optional[str] = None) -> str:
+    """A stable identifier for the enricher currently configured — the ``provenance.source`` of the
+    Measurement envelopes for the two dimensions it derives, **register** and **emotion** (both are
+    set together in the same ``enrich`` call, so they share one source; ``measurement`` / ADR-001).
+    It names WHICH model produces those stored values, without leaking provider/model specifics:
 
     * ``baseline`` (default) → ``"baseline_lexical"`` (the offline headline enricher)
     * ``llm``               → ``"llm_enricher"`` (the optional LLM enricher, when configured)

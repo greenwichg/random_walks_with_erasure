@@ -113,31 +113,35 @@ def test_measured_report_is_labeled_and_valid(backend, store):
 
 def test_measured_report_carries_metric_measurements(backend, store):
     """ADR-001: the measured path attaches per-metric Measurement envelopes (coverage + provenance)
-    onto Viewpoint and Emotion, computed from the SAME stored reads that built the corpus — and never
-    a confidence heuristic. Other metrics carry no measurement."""
+    onto all four migrated dimensions, computed from the SAME stored reads that built the corpus —
+    and never a confidence heuristic. Metrics without a measurement carry none."""
     p = personalize.Personalizer(backend, store, persist=False)
     uid = _new_user(store, "meas-1")
     _store_reads(store, uid, _catalog_reads(backend, n=8))          # 8 political reads
     rep = p.report(uid)
     by_key = {m["key"]: m for m in rep["metrics"]}
 
-    vp = by_key["viewpointBalance"]["measurement"]
-    assert vp["dimension"] == "viewpoint"
-    assert vp["provenance"] == {"kind": "authoritative", "source": "outlet_registry"}
-    assert vp["coverage"]["basis"] == "political_reads"
-    assert vp["coverage"]["eligible"] == 8                          # all 8 reads are political
-    assert 0 <= vp["coverage"]["observed"] <= vp["coverage"]["eligible"]
-    assert "confidence" not in vp                                   # certainty stays as axisConfidence
+    # Every migrated dimension carries a well-formed envelope with an honest denominator and no
+    # heuristic confidence. (basis, provenance) pin the per-dimension contract.
+    expected = {
+        "viewpointBalance": ("political_reads", {"kind": "authoritative", "source": "outlet_registry"}),
+        "topicDiversity":   ("all_reads", {"kind": "derived", "source": "topic_classifier"}),
+        "reportingRatio":   ("all_reads", {"kind": "derived", "source": "baseline_lexical"}),
+        "emotionalBalance": ("all_reads", {"kind": "derived", "source": "baseline_lexical"}),
+    }
+    for key, (basis, provenance) in expected.items():
+        meas = by_key[key]["measurement"]
+        assert meas["coverage"]["basis"] == basis
+        assert meas["provenance"] == provenance
+        assert meas["coverage"]["eligible"] == 8                    # all 8 reads are eligible/political
+        assert 0 <= meas["coverage"]["observed"] <= meas["coverage"]["eligible"]
+        assert "confidence" not in meas                             # never a heuristic (ADR-001)
 
-    emo = by_key["emotionalBalance"]["measurement"]
-    assert emo["dimension"] == "emotion"
-    assert emo["provenance"]["kind"] == "derived"
-    assert emo["coverage"]["basis"] == "all_reads"
-    assert emo["coverage"]["eligible"] == 8                         # every read is eligible for emotion
-    assert "confidence" not in emo                                  # intentionally omitted (ADR-001)
-
+    # Register and Emotion share the same enricher provenance (both set in one enrich call).
+    assert (by_key["reportingRatio"]["measurement"]["provenance"]
+            == by_key["emotionalBalance"]["measurement"]["provenance"])
     # A metric with no measurement is unchanged (no envelope invented for it).
-    assert "measurement" not in by_key["topicDiversity"]
+    assert "measurement" not in by_key["sourceDiversity"]
     # Still valid JSON (the frontend parses this).
     assert json.loads(json.dumps(rep)) == rep
 

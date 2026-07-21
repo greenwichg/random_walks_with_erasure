@@ -50,6 +50,7 @@
  "unlock.reception": "Ouvrez une recommandation qui sort de votre point de vue habituel pour débloquer cet indicateur.",
  "metric.typicalReader": "Lecteur type :",
  "metric.yourValue": "Votre valeur :",
+ "metric.coverage": "Mesuré à partir de {observed} sur {eligible} de vos lectures.",
  "report.viewpointCaption": "Vous lisez {left}% à gauche, {center}% au centre et {right}% à droite.",
  "report.viewpointCoverage": "L'équilibre politique reflète {authoritative} sur {eligible} lectures politiques.",
  "report.viewpointCoverageUnknown": "{unknown} provenant de sources sans classification de tendance fiable ne sont pas affichées ici.",

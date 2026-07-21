@@ -92,22 +92,36 @@ export function MetricAccordion({ metrics, coverage }: { metrics: Metric[]; cove
                     {isEmpty ? (
                       <MetricEmptyState metricKey={key} coverage={coverage} />
                     ) : (
-                      <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-xs">
-                        {metric.raw && (
-                          <span>
-                            {t("metric.yourValue")}{" "}
-                            <span className="font-medium text-foreground">
-                              {metric.raw.value} {metric.raw.unit}
+                      <>
+                        <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-xs">
+                          {metric.raw && (
+                            <span>
+                              {t("metric.yourValue")}{" "}
+                              <span className="font-medium text-foreground">
+                                {metric.raw.value} {metric.raw.unit}
+                              </span>
                             </span>
-                          </span>
+                          )}
+                          {typeof metric.benchmark === "number" && (
+                            <span>
+                              {t("metric.typicalReader")}{" "}
+                              <span className="font-medium text-foreground">{metric.benchmark}</span>
+                            </span>
+                          )}
+                        </div>
+                        {/* Measurement coverage (ADR-001): the honest scope of this metric — how many
+                            of the reader's eligible reads carried the dimension's signal. Uniform
+                            across every dimension that carries a measurement (Viewpoint / Topic /
+                            Register / Emotion); absent on metrics without one. */}
+                        {metric.measurement && (
+                          <p className="mt-2 text-xs">
+                            {t("metric.coverage", {
+                              observed: metric.measurement.coverage.observed,
+                              eligible: metric.measurement.coverage.eligible,
+                            })}
+                          </p>
                         )}
-                        {typeof metric.benchmark === "number" && (
-                          <span>
-                            {t("metric.typicalReader")}{" "}
-                            <span className="font-medium text-foreground">{metric.benchmark}</span>
-                          </span>
-                        )}
-                      </div>
+                      </>
                     )}
                   </div>
                 </motion.div>

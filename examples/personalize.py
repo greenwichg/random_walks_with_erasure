@@ -48,7 +48,7 @@ import health_report as hr
 import augmented_corpus as ac
 import api_server as engine
 import measurement                      # generic per-metric Measurement envelopes (ADR-001)
-from enrich import emotion_model_source  # names the emotion model for the Emotion measurement's provenance
+from enrich import enricher_source       # names the enricher for the register/emotion measurements' provenance
 from ingest import canonical_url as _canonical_url
 
 
@@ -220,7 +220,7 @@ class Personalizer:
         # from — coverage + provenance computed alongside the metric values, never a second read load.
         # The catalog-id join above only rewrites ``article_id``; political / lean / emotion (all a
         # measurement reads) are untouched, so this is the exact projection behind the metric values.
-        measurements = measurement.measurements_for_reads(reads, emotion_source=emotion_model_source())
+        measurements = measurement.measurements_for_reads(reads, enricher_source=enricher_source())
 
         base = ac.bundle_from_backend(self.backend)               # read-only view of the corpus
         aug = ac.augment(base, reads, user_id=f"__real_user_{user_id}__")

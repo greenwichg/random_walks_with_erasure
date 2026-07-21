@@ -50,6 +50,7 @@
  "unlock.reception": "Open a recommendation that crosses your usual viewpoint to unlock this.",
  "metric.typicalReader": "Typical reader:",
  "metric.yourValue": "Your value:",
+ "metric.coverage": "Measured from {observed} of {eligible} of your reads.",
  "report.viewpointCaption": "You read {left}% left, {center}% center, and {right}% right.",
  "report.viewpointCoverage": "Political balance reflects {authoritative} of {eligible} political reads.",
  "report.viewpointCoverageUnknown": "{unknown} from sources without an authoritative lean rating aren't shown here.",
