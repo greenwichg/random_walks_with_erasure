@@ -6,23 +6,92 @@
  */
 const { test } = require("node:test");
 const assert = require("node:assert");
-const { isArticlePage, collectArticleMeta, normalizeReadUrl, shouldSend, pruneCache, configStatus,
-        readsErrorReason } = require("./common.js");
+const { isArticlePage, classifyPage, collectArticleMeta, normalizeReadUrl, shouldSend, pruneCache,
+        configStatus, readsErrorReason, CAPTURE_MATCHES, CAPTURE_EXCLUDES } = require("./common.js");
 
-test("isArticlePage — positive signals", () => {
-  assert.equal(isArticlePage({ ogType: "article" }), true);
-  assert.equal(isArticlePage({ ogType: "Article" }), true); // case-insensitive
-  assert.equal(isArticlePage({ ldTypes: ["NewsArticle"] }), true);
-  assert.equal(isArticlePage({ ldTypes: ["ReportageNewsArticle"] }), true);
-  assert.equal(isArticlePage({ ldTypes: ["Report"] }), true);
-  assert.equal(isArticlePage({ hasArticleTag: true, hasHeadline: true }), true);
+test("classifyPage — strong signals accept with the right telemetry label", () => {
+  assert.deepEqual(classifyPage({ ogType: "article" }), { article: true, signal: "og:type" });
+  assert.deepEqual(classifyPage({ ogType: "Article" }), { article: true, signal: "og:type" }); // case-insensitive
+  assert.deepEqual(classifyPage({ ldTypes: ["NewsArticle"] }), { article: true, signal: "jsonld" });
+  assert.deepEqual(classifyPage({ ldTypes: ["ReportageNewsArticle"] }), { article: true, signal: "jsonld" });
+  assert.deepEqual(classifyPage({ ldTypes: ["OpinionNewsArticle"] }), { article: true, signal: "jsonld" }); // *NewsArticle subtree
+  assert.deepEqual(classifyPage({ ldTypes: ["BlogPosting"] }), { article: true, signal: "jsonld" }); // Substack/blogs
+  assert.deepEqual(classifyPage({ ldTypes: ["LiveBlogPosting"] }), { article: true, signal: "jsonld" });
+  assert.deepEqual(classifyPage({ ldTypes: ["Report"] }), { article: true, signal: "jsonld" });
 });
 
-test("isArticlePage — section/front pages are rejected", () => {
-  assert.equal(isArticlePage({ ogType: "website" }), false);
-  assert.equal(isArticlePage({ ldTypes: ["WebSite", "Organization"] }), false);
-  assert.equal(isArticlePage({ hasArticleTag: true, hasHeadline: false }), false); // <article> alone
-  assert.equal(isArticlePage({}), false);
+test("classifyPage — narrow published_time fallback (recovers minimal blogs, needs a headline)", () => {
+  assert.deepEqual(classifyPage({ hasArticlePublishedTime: true, hasHeadline: true }),
+                   { article: true, signal: "published_time" });
+  assert.equal(classifyPage({ hasArticlePublishedTime: true, hasHeadline: false }).article, false); // no headline
+});
+
+test("classifyPage — the bare <article>+<h1> DOM heuristic is REMOVED (open-web false positives)", () => {
+  // The single most important regression: GitHub/Wikipedia/SO/marketing pages all render <article>+<h1>.
+  assert.equal(isArticlePage({ hasArticleTag: true, hasHeadline: true }), false);
+});
+
+test("classifyPage — non-article og:type is a hard reject, overriding stray Article JSON-LD", () => {
+  for (const t of ["website", "profile", "product", "book", "game", "place", "video.other", "music.song"]) {
+    assert.deepEqual(classifyPage({ ogType: t }), { article: false, signal: "nonarticle-og" }, t);
+  }
+  // a section page that mis-emits NewsArticle JSON-LD but declares og:type=website is still rejected
+  assert.equal(classifyPage({ ogType: "website", ldTypes: ["NewsArticle"] }).article, false);
+});
+
+test("classifyPage — metadata-less pages reject as 'no-signal' (documented accepted limitation)", () => {
+  assert.deepEqual(classifyPage({}), { article: false, signal: "no-signal" });
+  assert.deepEqual(classifyPage({ ldTypes: ["WebPage", "Organization"] }), { article: false, signal: "no-signal" });
+  assert.deepEqual(classifyPage({ ldTypes: ["QAPage"] }), { article: false, signal: "no-signal" });
+});
+
+// -------- Regression corpus: platform-accurate signal profiles across every requested class -------- //
+// Outcomes mirror the compatibility report (docs/EXTENSION_ARTICLE_CAPTURE.md). Signals are what each
+// PLATFORM emits on a typical article page; this pins precision (no non-article leaks) and recall
+// (every metadata-emitting class captured) so a future detector edit can't silently regress either.
+const CORPUS = [
+  // class, label, signals, expectArticle
+  ["major-intl", "BBC/Reuters/Guardian/NYT/WaPo/CNN/AJE…", { ogType: "article", ldTypes: ["NewsArticle"] }, true],
+  ["regional", "Boston Globe / Texas Tribune (Newspack)", { ogType: "article", ldTypes: ["Article"] }, true],
+  ["regional", "Richmond Times-Dispatch (TownNews/BLOX)", { ogType: "article", ldTypes: ["NewsArticle"] }, true],
+  ["substack", "ACX / Platformer / Free Press", { ogType: "article", ldTypes: ["NewsArticle"] }, true],
+  ["ghost", "404 Media / Tangle / ghost.org", { ogType: "article", ldTypes: ["Article"] }, true],
+  ["wordpress", "TechCrunch / WP+Yoast", { ogType: "article", ldTypes: ["Article", "WebPage"] }, true],
+  ["wordpress", "WP+RankMath", { ogType: "article", ldTypes: ["NewsArticle"] }, true],
+  ["medium", "Medium publications (no JSON-LD, og only)", { ogType: "article", ldTypes: [] }, true],
+  ["multilingual", "Le Monde/Spiegel/El País/AJ-ar/Asahi", { ogType: "article", ldTypes: ["NewsArticle"] }, true],
+  ["indie-blog", "Jekyll+seo-tag / Hugo PaperMod (BlogPosting)", { ogType: "article", ldTypes: ["BlogPosting"] }, true],
+  ["indie-blog", "minimal blog stamping article:published_time", { hasArticlePublishedTime: true, hasHeadline: true }, true],
+  // documented limitation — metadata-less pages (bare CMS / no-SEO blogs) are NOT captured:
+  ["limitation", "Daring Fireball / bare Hugo / hand-rolled CMS", { hasArticleTag: true, hasHeadline: true }, false],
+  // negatives — news-site non-articles:
+  ["neg-news", "homepage / section / category", { ogType: "website" }, false],
+  ["neg-news", "author / tag page", { ogType: "profile" }, false],
+  ["neg-news", "on-site search results", { ogType: "website", ldTypes: ["SearchResultsPage"] }, false],
+  // negatives — the "Should NOT ingest" web:
+  ["neg-web", "Amazon product", { ogType: "product", ldTypes: ["Product"] }, false],
+  ["neg-web", "YouTube watch", { ogType: "video.other", ldTypes: ["VideoObject"] }, false],
+  ["neg-web", "YouTube home / X / Reddit / marketing", { ogType: "website" }, false],
+  ["neg-web", "GitHub repo README", { ogType: "object", hasArticleTag: true, hasHeadline: true }, false],
+  ["neg-web", "Stack Overflow question", { ogType: "website", ldTypes: ["QAPage"] }, false],
+  ["neg-web", "Gmail / Docs / dashboard / bank / Wikipedia (no signal)", { hasHeadline: true }, false],
+];
+
+test("detector regression corpus — precision (no non-article leaks) and recall (every metadata class)", () => {
+  const leaks = [], misses = [];
+  for (const [cls, label, sig, expect] of CORPUS) {
+    const got = isArticlePage(sig);
+    if (got && !expect) leaks.push(`${cls}: ${label}`);
+    if (!got && expect) misses.push(`${cls}: ${label}`);
+  }
+  assert.deepEqual(leaks, [], "non-article pages must never be classified as articles");
+  assert.deepEqual(misses, [], "every metadata-emitting article class must be captured");
+});
+
+test("capture scope — HTTPS-only, with a short sensitive-origin exclude list", () => {
+  assert.deepEqual(CAPTURE_MATCHES, ["https://*/*"]);           // no http://
+  assert.ok(CAPTURE_EXCLUDES.every((p) => p.startsWith("https://")));
+  assert.ok(CAPTURE_EXCLUDES.includes("https://mail.google.com/*"));
 });
 
 test("normalizeReadUrl — canonical-ish identity for local de-dup", () => {

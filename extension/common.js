@@ -8,28 +8,75 @@
  * `importScripts`-ed by the service worker, and `require`-d by common.test.js under Node.
  */
 
+// --- Strengthened, precision-first article detection (metadata-only) -------------------------- //
+// When the extension can run web-wide (any HTTPS page), `isArticlePage` is the SOLE guard that
+// separates the "Should ingest" set (genuine articles, any publisher) from the "Should NOT ingest"
+// set (search, category, home, product, video, webmail, dashboards, docs). It therefore relies only
+// on strong, publisher-declared structured signals — never the old `<article>+<h1>` DOM heuristic,
+// which self-identifies on GitHub/Wikipedia/Stack Overflow/marketing pages and would false-positive
+// across the open web. We read STANDARD METADATA ONLY and never inspect article body text.
+
+/** JSON-LD `@type`s (lower-cased) that denote an article. Exact set + the whole *NewsArticle subtree
+ *  (endsWith check), so Opinion/Analysis/Reportage/… subtypes and BlogPosting (Substack/blogs) match,
+ *  while WebPage / SearchResultsPage / QAPage / Product / VideoObject do not. */
+const _LD_ARTICLE_EXACT = new Set([
+  "article", "blogposting", "liveblogposting", "report", "reportagenewsarticle",
+]);
+/** OpenGraph `og:type`s that a publisher uses to declare a page is NOT an article. An explicit
+ *  non-article declaration overrides any stray Article JSON-LD (precision over recall). */
+const _OG_NONARTICLE = new Set(["website", "profile", "product", "book", "game", "place"]);
+
 /**
- * Decide whether a page is a news *article* from cheap, standard signals only:
- *   - OpenGraph `og:type == "article"`
- *   - JSON-LD `@type` of Article / NewsArticle / ReportageNewsArticle / etc.
- *   - a fallback `<article>` element *combined with* a plausible headline
- * Section/front pages (which set none of these, or only `og:type=website`) are rejected, so
- * we never fabricate a "read" for a page the user merely browsed past.
+ * Classify a page from standard metadata, returning both the decision and the (closed-set) signal
+ * or rejection reason — the reason doubles as the anonymous detection-telemetry label (no URL, no
+ * free text). Decision order (precision-first):
+ *   1. `og:type=article`                         → accept  (signal "og:type")   — the near-universal signal
+ *   2. `og:type` present & a non-article type    → reject  (reason "nonarticle-og")
+ *   3. an Article-family JSON-LD `@type`         → accept  (signal "jsonld")
+ *   4. `article:published_time` + a headline     → accept  (signal "published_time")  — narrow corroborated fallback
+ *   5. otherwise                                 → reject  (reason "no-signal")
+ * A page with no standard article metadata at all (reason "no-signal") is a documented, accepted
+ * limitation: it is indistinguishable from a non-article without reading body text, which we never do.
  *
- * @param {{ogType?: string|null, ldTypes?: string[], hasArticleTag?: boolean, hasHeadline?: boolean}} sig
+ * @param {{ogType?: string|null, ldTypes?: string[], hasArticlePublishedTime?: boolean, hasHeadline?: boolean}} sig
+ * @returns {{article: boolean, signal: "og:type"|"jsonld"|"published_time"|"nonarticle-og"|"no-signal"}}
  */
-function isArticlePage(sig) {
+function classifyPage(sig) {
   const ogType = (sig.ogType || "").toLowerCase();
-  if (ogType === "article") return true;
+  if (ogType === "article") return { article: true, signal: "og:type" };
+  if (ogType && (_OG_NONARTICLE.has(ogType) || ogType.startsWith("video.") || ogType.startsWith("music.")))
+    return { article: false, signal: "nonarticle-og" };
 
   const ld = (sig.ldTypes || []).map((t) => String(t).toLowerCase());
-  if (ld.some((t) => t.includes("article") || t === "report" || t.includes("liveblogposting"))) {
-    return true;
-  }
-  // Weakest signal: a real <article> element with a headline present. Requires both so a
-  // template that always renders <article> on section pages doesn't trip it.
-  return Boolean(sig.hasArticleTag && sig.hasHeadline);
+  if (ld.some((t) => t.endsWith("newsarticle") || _LD_ARTICLE_EXACT.has(t)))
+    return { article: true, signal: "jsonld" };
+
+  // Narrow corroborated fallback: a CMS that stamps an OpenGraph article publish-time is declaring an
+  // article; require a headline too. Recovers minimal blogs that emit `article:*` meta but no og:type,
+  // without the open-web false positives of a bare `<article>+<h1>` test.
+  if (sig.hasArticlePublishedTime && sig.hasHeadline)
+    return { article: true, signal: "published_time" };
+
+  return { article: false, signal: "no-signal" };
 }
+
+/** Boolean convenience wrapper over {@link classifyPage} (unchanged call-site contract). */
+function isArticlePage(sig) {
+  return classifyPage(sig).article;
+}
+
+// --- Capture scope (dynamic content-script registration) -------------------------------------- //
+// HTTPS-only (http news is effectively extinct; tighter surface). The detector runs on every page in
+// scope but only *sends* on a positive classification. `CAPTURE_EXCLUDES` is defence-in-depth, NOT a
+// security boundary — it keeps the detector off a few mainstream high-sensitivity origins even after
+// the user opts in; the real guarantees are opt-in + metadata-only + positive-detection-only.
+const CAPTURE_ORIGIN = "https://*/*";
+const CAPTURE_MATCHES = ["https://*/*"];
+const CAPTURE_EXCLUDES = [
+  "https://mail.google.com/*", "https://docs.google.com/*", "https://drive.google.com/*",
+  "https://calendar.google.com/*", "https://meet.google.com/*",
+  "https://outlook.live.com/*", "https://outlook.office.com/*", "https://*.office.com/*",
+];
 
 /**
  * Normalise a URL to the read's identity for *local* de-duplication: lowercase host, drop a
@@ -153,8 +200,9 @@ function readsErrorReason(status) {
   return `status-${status}`;
 }
 
-// Export for Node tests; harmless no-op in the browser (module is undefined there).
+// Export for Node tests + the local detector-verification utility; harmless no-op in the browser.
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { isArticlePage, collectArticleMeta, normalizeReadUrl, shouldSend, pruneCache,
-                     configStatus, readsErrorReason };
+  module.exports = { isArticlePage, classifyPage, collectArticleMeta, normalizeReadUrl, shouldSend,
+                     pruneCache, configStatus, readsErrorReason,
+                     CAPTURE_ORIGIN, CAPTURE_MATCHES, CAPTURE_EXCLUDES };
 }
