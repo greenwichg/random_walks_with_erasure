@@ -20,6 +20,13 @@ test("classifyPage — strong signals accept with the right telemetry label", ()
   assert.deepEqual(classifyPage({ ldTypes: ["Report"] }), { article: true, signal: "jsonld" });
 });
 
+test("classifyPage — inputs are trimmed before lowercasing (F4)", () => {
+  assert.deepEqual(classifyPage({ ogType: "  Article  " }), { article: true, signal: "og:type" });
+  assert.deepEqual(classifyPage({ ogType: "\tWEBSITE\n" }), { article: false, signal: "nonarticle-og" });
+  assert.deepEqual(classifyPage({ ldTypes: [" NewsArticle "] }), { article: true, signal: "jsonld" });
+  assert.deepEqual(classifyPage({ ldTypes: ["  BlogPosting"] }), { article: true, signal: "jsonld" });
+});
+
 test("classifyPage — narrow published_time fallback (recovers minimal blogs, needs a headline)", () => {
   assert.deepEqual(classifyPage({ hasArticlePublishedTime: true, hasHeadline: true }),
                    { article: true, signal: "published_time" });

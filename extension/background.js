@@ -215,14 +215,19 @@ async function testConnection() {
   }
 }
 
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || typeof msg !== "object") return;
+  // F1: never capture from an Incognito tab — no telemetry, no dedupe state, no upload. Applies only
+  // to the page-originated detector messages; the Options page ("test"/"stats") is unaffected.
+  const fromIncognito = !!(sender && sender.tab && sender.tab.incognito);
   if (msg.type === "article") {
+    if (fromIncognito) return;                     // ignore entirely (no bump, no recordArticle)
     bumpDetectStat("accept", msg.detectSignal);   // anonymous: which signal detected this article
     recordArticle(msg).then((status) => sendResponse({ status }));
     return true; // async response
   }
   if (msg.type === "detect" && msg.article === false) {
+    if (fromIncognito) return;                     // ignore entirely (no telemetry)
     bumpDetectStat("reject", msg.signal);          // anonymous: why a page was not captured (no URL)
     return;                                        // fire-and-forget, no response
   }

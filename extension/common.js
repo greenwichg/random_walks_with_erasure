@@ -42,12 +42,14 @@ const _OG_NONARTICLE = new Set(["website", "profile", "product", "book", "game",
  * @returns {{article: boolean, signal: "og:type"|"jsonld"|"published_time"|"nonarticle-og"|"no-signal"}}
  */
 function classifyPage(sig) {
-  const ogType = (sig.ogType || "").toLowerCase();
+  // Normalize before comparing: trim whitespace, then lower-case — so a padded `og:type=" article "`
+  // or a JSON-LD `@type` of `"NewsArticle "` is not misclassified (F4).
+  const ogType = (sig.ogType || "").trim().toLowerCase();
   if (ogType === "article") return { article: true, signal: "og:type" };
   if (ogType && (_OG_NONARTICLE.has(ogType) || ogType.startsWith("video.") || ogType.startsWith("music.")))
     return { article: false, signal: "nonarticle-og" };
 
-  const ld = (sig.ldTypes || []).map((t) => String(t).toLowerCase());
+  const ld = (sig.ldTypes || []).map((t) => String(t).trim().toLowerCase());
   if (ld.some((t) => t.endsWith("newsarticle") || _LD_ARTICLE_EXACT.has(t)))
     return { article: true, signal: "jsonld" };
 
