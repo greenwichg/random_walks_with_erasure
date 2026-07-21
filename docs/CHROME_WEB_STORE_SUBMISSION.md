@@ -31,10 +31,9 @@ and re-review.
 Sources: [Use of Permissions](https://developer.chrome.com/docs/webstore/program-policies/permissions) ·
 [Review process](https://developer.chrome.com/docs/webstore/review-process).
 
-> **Implementation status:** this records the committed decision. The `optional_host_permissions`
-> narrowing in `extension/manifest.json`, and the matching justification/reviewer-note updates in
-> §2–§3 below, are applied as the Phase 1 engineering step; until then, §2–§3 still describe the
-> broad-host case and are **superseded** by this decision.
+> **Implementation status:** applied. `extension/manifest.json` declares the scoped
+> `optional_host_permissions` (hidden-view.com + subdomains, plus localhost/127.0.0.1 for dev), and
+> §2–§3 below reflect the scoped model. The broad `https://*/*` is no longer requested.
 
 ---
 
@@ -93,7 +92,7 @@ Sources: [Use of Permissions](https://developer.chrome.com/docs/webstore/program
 | Field | Justification text |
 |---|---|
 | `storage` | Stores the user's configured InfoDiet app URL and API token, plus a short-lived, session-scoped duplicate-suppression cache of recently recorded article URLs. |
-| Host permissions (`https://*/*`, localhost — all optional) | Declared optional-only; nothing is granted at install. The InfoDiet app origin is user-configured (users run their own instance), so at setup the extension requests access to exactly the one origin the user enters (`chrome.permissions.request` with that origin pattern). The broad pattern exists solely so that per-origin request can succeed for any user-chosen server. |
+| Host permissions (`https://hidden-view.com/*`, `https://*.hidden-view.com/*`, localhost — all optional) | Declared optional-only and **scoped to the Hidden View service**; nothing is granted at install. The extension's only network call is the read-sync POST to the user's Hidden View app at hidden-view.com, so at setup it requests access to exactly that origin (`chrome.permissions.request` with that origin pattern). localhost / 127.0.0.1 are included only for local development. No broad `https://*/*` access is requested. |
 | Content scripts (24 news domains) | A small detector runs on the statically allowlisted news sites to decide whether the open page is an article (OpenGraph / JSON-LD / headline structure) and read standard head metadata. It reads no article text, no forms/cookies, and modifies nothing on the page. |
 | Remote code | **No** — all code ships in the package; the only network request is the read-sync POST to the user-configured origin. |
 
@@ -120,10 +119,10 @@ single purpose; no use for creditworthiness/lending.
 > syncs them to the user's own InfoDiet account. It is inert until configured — no network
 > requests and no data collection of any kind before setup.
 >
-> ABOUT THE BROAD OPTIONAL HOST PERMISSION: users run their own InfoDiet instance, so the app
-> origin is user-configured. `https://*/*` is declared optional-only so the runtime
-> `chrome.permissions.request` for exactly the one origin the user enters can succeed; nothing
-> is granted at install time.
+> ABOUT HOST PERMISSIONS: the optional host permissions are scoped to the Hidden View service
+> (`https://hidden-view.com/*`, `https://*.hidden-view.com/*`, plus localhost for development) —
+> there is no broad `https://*/*`. They are optional-only, so nothing is granted at install; at
+> setup the extension requests the hidden-view.com origin so the read-sync POST can reach it.
 >
 > NO REMOTE CODE. No analytics. The only endpoint contacted is `<origin>/api/me/reads` on the
 > origin the user configured.
@@ -202,6 +201,7 @@ Also required/optional listing art:
    three certifications, privacy policy URL (section 2).
 5. **Notes for reviewer**: paste section 3 with placeholders filled.
 6. **Distribution**: visibility (Unlisted recommended for beta), regions, free.
-7. **Submit for review**. Expect the deeper review track (broad optional host permission);
-   typical turnaround is days up to a couple of weeks.
+7. **Submit for review**. With host permissions scoped to hidden-view.com (no broad `https://*/*`),
+   the item should avoid the broad-host review track; typical turnaround is a few days, up to a
+   couple of weeks.
 8. After approval: revoke the reviewer token; keep the demo instance up for re-reviews.

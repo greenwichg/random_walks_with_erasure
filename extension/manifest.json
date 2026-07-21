@@ -13,7 +13,8 @@
     "storage"
   ],
   "optional_host_permissions": [
-    "https://*/*",
+    "https://hidden-view.com/*",
+    "https://*.hidden-view.com/*",
     "http://localhost/*",
     "http://127.0.0.1/*"
   ],
