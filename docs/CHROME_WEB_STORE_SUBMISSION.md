@@ -2,13 +2,39 @@
 
 Everything to paste into the developer dashboard, prepared from the approved release review
 and pre-submission audit. Placeholders in `<ANGLE_BRACKETS>` must be filled by the operator
-before submitting — they are the only missing pieces (no code work remains).
+before submitting. The only remaining code change is the host-permission narrowing recorded in §0.
 
 - **Item**: InfoDiet — Information Health
 - **Version**: 0.1.0
 - **Package**: `extension/dist/infodiet-extension-0.1.0.zip` (build with `bash extension/package.sh`)
 - **Category**: News & Weather · **Language**: English
 - **Visibility recommendation**: Unlisted for the beta (real store install flow, no public discovery)
+
+---
+
+## 0. Host-permission scope (release decision)
+
+**Decision:** for the **initial release**, the extension's host permissions are intentionally
+**scoped to hidden-view.com** (`https://hidden-view.com/*`, `https://*.hidden-view.com/*`, plus
+`localhost`/`127.0.0.1` for development) rather than the broad `https://*/*`. Hidden View is a
+single hosted service, so hidden-view.com is the only origin the extension needs, and scoping to it
+complies with Chrome Web Store **least-privilege guidance**: the *Use of Permissions* policy requires
+the narrowest permissions necessary and explicitly discourages requesting broad access to
+"future-proof" features not yet implemented. This also keeps the item off the broad-host review
+track, improving approval probability and review turnaround.
+
+**Future flexibility:** if **self-hosted deployments** at arbitrary origins become a supported
+feature later, broader host permissions can be reintroduced in a **future release** — the correct
+time to add that breadth is the update that actually ships the feature, via a normal manifest change
+and re-review.
+
+Sources: [Use of Permissions](https://developer.chrome.com/docs/webstore/program-policies/permissions) ·
+[Review process](https://developer.chrome.com/docs/webstore/review-process).
+
+> **Implementation status:** this records the committed decision. The `optional_host_permissions`
+> narrowing in `extension/manifest.json`, and the matching justification/reviewer-note updates in
+> §2–§3 below, are applied as the Phase 1 engineering step; until then, §2–§3 still describe the
+> broad-host case and are **superseded** by this decision.
 
 ---
 
