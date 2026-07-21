@@ -111,6 +111,37 @@ def test_measured_report_is_labeled_and_valid(backend, store):
     assert set(vp) == BUCKETS and all(np.isfinite(v) for v in vp.values())
 
 
+def test_measured_report_carries_metric_measurements(backend, store):
+    """ADR-001: the measured path attaches per-metric Measurement envelopes (coverage + provenance)
+    onto Viewpoint and Emotion, computed from the SAME stored reads that built the corpus — and never
+    a confidence heuristic. Other metrics carry no measurement."""
+    p = personalize.Personalizer(backend, store, persist=False)
+    uid = _new_user(store, "meas-1")
+    _store_reads(store, uid, _catalog_reads(backend, n=8))          # 8 political reads
+    rep = p.report(uid)
+    by_key = {m["key"]: m for m in rep["metrics"]}
+
+    vp = by_key["viewpointBalance"]["measurement"]
+    assert vp["dimension"] == "viewpoint"
+    assert vp["provenance"] == {"kind": "authoritative", "source": "outlet_registry"}
+    assert vp["coverage"]["basis"] == "political_reads"
+    assert vp["coverage"]["eligible"] == 8                          # all 8 reads are political
+    assert 0 <= vp["coverage"]["observed"] <= vp["coverage"]["eligible"]
+    assert "confidence" not in vp                                   # certainty stays as axisConfidence
+
+    emo = by_key["emotionalBalance"]["measurement"]
+    assert emo["dimension"] == "emotion"
+    assert emo["provenance"]["kind"] == "derived"
+    assert emo["coverage"]["basis"] == "all_reads"
+    assert emo["coverage"]["eligible"] == 8                         # every read is eligible for emotion
+    assert "confidence" not in emo                                  # intentionally omitted (ADR-001)
+
+    # A metric with no measurement is unchanged (no envelope invented for it).
+    assert "measurement" not in by_key["topicDiversity"]
+    # Still valid JSON (the frontend parses this).
+    assert json.loads(json.dumps(rep)) == rep
+
+
 def test_measured_report_handles_no_political_reads(backend, store):
     """A reader over the read floor but with no political reads still gets a valid report
     (undefined viewpoint renders as zeros, never NaN)."""

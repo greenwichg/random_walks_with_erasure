@@ -56,8 +56,19 @@ export default function ReportPage() {
 
   // Data-driven captions (derived from the live report, not hardcoded to any diet) — localized.
   const vp = report?.viewpoint;
-  // Coverage pilot: the Viewpoint dimension's dimensional coverage (measured reports with political reads).
-  const vpCoverage = report?.mode === "measured" ? report.viewpointCoverage : undefined;
+  // Per-metric Measurement metadata (ADR-001): coverage + provenance now ride on the metric itself.
+  // Viewpoint's coverage and Emotion's coverage each explain how much of the reader's reading the
+  // dimension reflects. Present only on a measured report; absent otherwise.
+  const measurementFor = (key: string) =>
+    report?.metrics.find((m) => m.key === key)?.measurement;
+  const vpMeasurement = measurementFor("viewpointBalance");
+  const vpUnknown = vpMeasurement
+    ? vpMeasurement.coverage.eligible - vpMeasurement.coverage.observed
+    : 0;
+  const emoMeasurement = measurementFor("emotionalBalance");
+  const emoUnknown = emoMeasurement
+    ? emoMeasurement.coverage.eligible - emoMeasurement.coverage.observed
+    : 0;
   const tiltText = !vp
     ? ""
     : Math.abs(vp.left - vp.right) < 0.06
@@ -158,17 +169,17 @@ export default function ReportPage() {
                   })}{" "}
                   {tiltText}
                 </p>
-                {vpCoverage ? (
+                {vpMeasurement ? (
                   <p className="mt-2 text-xs text-muted-foreground">
                     {t("report.viewpointCoverage", {
-                      authoritative: vpCoverage.authoritativeLeanReads,
-                      eligible: vpCoverage.eligiblePoliticalReads,
+                      authoritative: vpMeasurement.coverage.observed,
+                      eligible: vpMeasurement.coverage.eligible,
                     })}
-                    {vpCoverage.unknownLeanReads > 0 ? (
+                    {vpUnknown > 0 ? (
                       <>
                         {" "}
                         {t("report.viewpointCoverageUnknown", {
-                          unknown: vpCoverage.unknownLeanReads,
+                          unknown: vpUnknown,
                         })}
                       </>
                     ) : null}
@@ -179,6 +190,15 @@ export default function ReportPage() {
 
             <SectionCard title={t("report.attentionProfile")} info={t("report.attentionProfileInfo")}>
               <AttentionProfile attention={report.attention} />
+              {emoMeasurement && emoUnknown > 0 ? (
+                <p className="mt-4 text-xs text-muted-foreground">
+                  {t("report.emotionCoverage", {
+                    observed: emoMeasurement.coverage.observed,
+                    eligible: emoMeasurement.coverage.eligible,
+                  })}{" "}
+                  {t("report.emotionCoverageUnknown", { unknown: emoUnknown })}
+                </p>
+              ) : null}
             </SectionCard>
           </div>
 

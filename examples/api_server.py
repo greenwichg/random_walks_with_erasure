@@ -1335,26 +1335,38 @@ class Backend:
         """Base reference-corpus article (the demo / ``?user=`` path)."""
         return self._serialize_article(self.base_corpus, col)
 
-    def _serialize_report(self, corpus: _Corpus, u: int) -> dict:
+    def _serialize_report(self, corpus: _Corpus, u: int,
+                          measurements: "dict | None" = None) -> dict:
         """Serialise the Measured Information Health Report for reader row ``u`` of a corpus.
 
         Corpus-parametric: the base reference corpus (demo / ``?user=`` path) and a real
         user's augmented corpus both flow through this one path, so a Measured report is
         identical in shape and computation regardless of which reader it describes. Every
         number still comes from ``health_report.user_report`` on the corpus — this only
-        serialises what the unchanged engine computed."""
+        serialises what the unchanged engine computed.
+
+        ``measurements`` (ADR-001) is an optional ``{metric_key: envelope}`` of per-metric
+        coverage + provenance, computed by :mod:`measurement` from the reader's scored reads (the
+        real-user / `personalize` path supplies it; the demo path leaves it ``None``). Each envelope
+        is attached onto its metric card additively — a metric with no measurement is unchanged, and
+        the coverage of an *unavailable* metric still surfaces (it explains the empty state)."""
         rep = hr.user_report(corpus.pop, corpus.mind, u)
         scores = rep.get("scores", {}) or {}
         n_clicks = rep.get("n_clicks") or 0
+        measurements = measurements or {}
 
         metrics = []
         for key, label in _METRIC_KEYS:
             s = scores.get(label)
             if s is None:
-                metrics.append(_unavailable_metric(key))   # show an empty-state card, never hide it
+                metric = _unavailable_metric(key)          # show an empty-state card, never hide it
             else:
-                metrics.append({"key": key, "score": int(s), "delta": 0, "benchmark": 50,
-                                "band": _score_band(int(s)), "available": True})
+                metric = {"key": key, "score": int(s), "delta": 0, "benchmark": 50,
+                          "band": _score_band(int(s)), "available": True}
+            meas = measurements.get(key)
+            if meas is not None:
+                metric["measurement"] = meas               # coverage + provenance (additive)
+            metrics.append(metric)
         vc = rep.get("viewpoint_confidence")
         axis_conf = float(vc) if vc is not None else 0.7
         conf_score = round(axis_conf * 100)

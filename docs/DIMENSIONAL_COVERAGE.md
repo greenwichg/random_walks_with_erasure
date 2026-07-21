@@ -1,6 +1,16 @@
 # Dimensional coverage — the Viewpoint pilot
 
-**Status:** intentional architecture pilot · **Scope:** the Political Lean / Viewpoint dimension **only**.
+**Status:** superseded by the generic Measurement model — see **[ADR-001](ADR-001-MEASUREMENT-METADATA.md)**.
+**Scope (as shipped in the pilot):** the Political Lean / Viewpoint dimension **only**.
+
+> **Update.** This was the smallest viable first implementation of "coverage as a first-class concept".
+> It validated the idea, and coverage has since been **generalized** into a reusable per-metric
+> Measurement envelope (`{coverage, provenance, confidence?}`) attached on `Metric.measurement` and
+> computed engine-side in `examples/measurement.py` — see **[ADR-001](ADR-001-MEASUREMENT-METADATA.md)**.
+> Viewpoint's coverage numbers are unchanged; only *where they live* and *how they're computed*
+> changed (the report-level `viewpointCoverage` field is retired). The Emotion dimension is the second
+> to carry a measurement. This document is kept as the record of the pilot's motivation and reasoning,
+> which still holds.
 
 This is the smallest viable first implementation of "coverage as a first-class concept" (the RFC).
 It is deliberately limited to one dimension so we can validate the architecture before generalizing.
@@ -63,7 +73,12 @@ Explicitly **out of scope** for this pilot (and unchanged by it):
 
 ## Contract
 
-`viewpointCoverage` is **additive and optional** on the Measured report: present only for a signed-in
+> **Superseded shape.** The pilot attached a report-level `viewpointCoverage` field. Under
+> [ADR-001](ADR-001-MEASUREMENT-METADATA.md) this now lives on the metric itself as
+> `metrics[viewpointBalance].measurement` (`{coverage, provenance}`), alongside the new Emotion
+> measurement. The paragraph below describes the pilot's original shape for historical reference.
+
+`viewpointCoverage` was **additive and optional** on the Measured report: present only for a signed-in
 Measured reader who has political reads; **absent** on estimate/demo reports, older payloads, and
 readers with no political reading (so `response_model_exclude_none` omits it). Existing clients that
 ignore it behave exactly as before.

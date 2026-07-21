@@ -53,6 +53,8 @@
  "report.viewpointCaption": "Você lê {left}% de esquerda, {center}% de centro e {right}% de direita.",
  "report.viewpointCoverage": "O equilíbrio político reflete {authoritative} de {eligible} leituras políticas.",
  "report.viewpointCoverageUnknown": "{unknown} de fontes sem uma classificação de viés autorizada não são exibidas aqui.",
+ "report.emotionCoverage": "O tom emocional reflete {observed} de {eligible} leituras.",
+ "report.emotionCoverageUnknown": "{unknown} sem texto suficiente para avaliar o tom não são exibidas aqui.",
  "report.tilt.balanced": "Sua leitura está bem equilibrada em todo o espectro.",
  "report.tilt.bothSides": "Você ouve os dois lados — a inclinação é para {side}.",
  "report.tilt.leansHeavily": "Sua leitura pende fortemente para {side}; o outro lado é escasso.",

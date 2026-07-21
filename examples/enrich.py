@@ -167,6 +167,19 @@ def make_enricher(kind: Optional[str] = None):
     return BaselineEnricher()
 
 
+def emotion_model_source(kind: Optional[str] = None) -> str:
+    """A stable identifier for the emotion model currently configured — the ``provenance.source`` of
+    the Emotion Measurement envelope (``measurement.emotion_measurement`` / ADR-001). It names WHICH
+    model produces the stored emotion vectors, without leaking provider/model specifics:
+
+    * ``baseline`` (default) → ``"baseline_lexical"`` (the offline headline enricher)
+    * ``llm``               → ``"llm_enricher"`` (the optional LLM enricher, when configured)
+    * ``off``               → ``"baseline_lexical"`` (no enrichment runs; the honest default name)
+    """
+    kind = (kind or os.environ.get("RWE_ENRICH", "baseline")).strip().lower()
+    return "llm_enricher" if kind == "llm" else "baseline_lexical"
+
+
 def _default_llm_caller() -> Optional[Callable[[str], str]]:
     """Best-effort text caller from ``narrate_report`` (imported, never modified), or ``None`` when
     no provider key is configured — in which case the factory uses the baseline."""

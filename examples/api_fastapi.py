@@ -42,7 +42,6 @@ import personalize            # per-user augmented Measured report / recs / coac
 import evidence_resolver      # ONE human explanation per rec, chosen from evidence (21a.3)
 import improvement_ledger     # improvement-recommendation lifecycle state machine (leaf, RC2.3)
 import improvement_ranking    # feedback-aware ranking/filtering of improvements (leaf, RC2.4)
-import viewpoint_coverage      # Viewpoint dimensional coverage (leaf, coverage pilot; docs/DIMENSIONAL_COVERAGE.md)
 import recommendation_eval     # deterministic evaluation + attribution of improvements (leaf, RC2.5)
 import obs_metrics             # OBS1: in-process request/latency metrics (dependency-free, observational)
 import error_reporting         # OBS1: vendor-agnostic exception-reporting abstraction (default: logging)
@@ -453,6 +452,34 @@ class RawModel(BaseModel):
     unit: str
 
 
+class MeasurementCoverageModel(BaseModel):
+    """The *scope* of a metric (ADR-001): of the reads eligible for this dimension, how many carried
+    its signal. ``observed <= eligible``; ``basis`` names the eligibility population."""
+    observed: int          # eligible reads that carried this dimension's signal
+    eligible: int          # the honest denominator — reads the metric is about
+    basis: str             # the eligibility population (e.g. "political_reads", "all_reads")
+
+
+class MeasurementProvenanceModel(BaseModel):
+    """Where a metric's value comes from (ADR-001). ``kind``: ``authoritative`` (looked up from a
+    source of truth) | ``derived`` (inferred by a model). ``source`` names that source of truth / model."""
+    kind: str              # "authoritative" | "derived"
+    source: str            # e.g. "outlet_registry", "baseline_lexical"
+
+
+class MeasurementModel(BaseModel):
+    """Generic per-metric **Measurement metadata** (ADR-001): coverage (scope) + provenance, and an
+    optional confidence (certainty). Coverage != confidence — coverage says how many reads carried the
+    signal at all; confidence says how sure we are given the reads that did. ``confidence`` is omitted
+    unless a value genuinely represents prediction uncertainty (the current Emotion outputs do not, so
+    it is absent rather than a heuristic). Additive and optional — present only on the metrics that
+    carry a measurement (Viewpoint / Emotion) of a Measured report; older clients ignore it."""
+    dimension: str
+    coverage: MeasurementCoverageModel
+    provenance: MeasurementProvenanceModel
+    confidence: Optional[float] = None
+
+
 class MetricModel(BaseModel):
     key: str
     score: int
@@ -466,6 +493,11 @@ class MetricModel(BaseModel):
     available: bool = True
     reason: Optional[str] = None          # e.g. "insufficient_data" (only set when not available)
     minimumActivity: Optional[int] = None # reads that typically unlock the metric (informational)
+    # Measurement metadata (ADR-001): coverage + provenance for this metric, computed from the reader's
+    # scored reads by the engine (measurement.py). Present only on the dimensions that carry one
+    # (Viewpoint / Emotion) of a Measured report; additive — older clients ignore it. The coverage of an
+    # *unavailable* metric is meaningful (it explains the empty state), so it can appear with available=False.
+    measurement: Optional[MeasurementModel] = None
 
 
 class ViewpointModel(BaseModel):
@@ -589,19 +621,6 @@ class CoverageModel(BaseModel):
     sufficient: bool
 
 
-class ViewpointCoverageModel(BaseModel):
-    """Dimensional coverage for the Viewpoint / Political-Lean dimension (coverage pilot;
-    docs/DIMENSIONAL_COVERAGE.md). How much of the reader's *political* reading the Viewpoint mix
-    could actually place on the authoritative (outlet-registry / AllSides) lean scale. This is
-    COVERAGE (scope), *not* confidence (certainty): ``unknownLeanReads`` are political reads whose
-    outlet has no authoritative rating, so they are simply not represented in the mix. Additive and
-    optional — absent on estimate/demo reports, older payloads, and readers with no political reads."""
-    eligiblePoliticalReads: int   # political reads — the honest denominator for the Viewpoint mix
-    authoritativeLeanReads: int   # of those, how many carry a finite outlet-registry lean
-    unknownLeanReads: int         # eligible − authoritative: not represented in the mix
-    provenance: str               # the lean's source of truth (e.g. "outlet_registry")
-
-
 class HealthReportModel(BaseModel):
     overall: int
     overallDelta: int
@@ -619,11 +638,10 @@ class HealthReportModel(BaseModel):
     # mode + coverage make Estimate vs Measured explicit; an estimate omits axisConfidence
     mode: Optional[str] = None
     coverage: Optional[CoverageModel] = None
-    # Coverage pilot (docs/DIMENSIONAL_COVERAGE.md): the Viewpoint dimension's *dimensional* coverage —
-    # how much of the reader's political reading the mix could authoritatively place. Additive and
-    # optional; present only on a Measured report for a reader with political reads. Distinct from the
-    # volume `coverage` above (reads-vs-threshold) and from `axisConfidence` (certainty, not scope).
-    viewpointCoverage: Optional[ViewpointCoverageModel] = None
+    # Note (ADR-001): per-metric *dimensional* coverage now lives on each metric's `measurement`
+    # (MetricModel.measurement) — Viewpoint's coverage moved there and Emotion gained one — rather
+    # than a single report-level `viewpointCoverage`. The `coverage` above stays volume-only
+    # (reads-vs-threshold) and `axisConfidence` stays certainty (not scope).
 
 
 class TrendPointModel(BaseModel):
@@ -1838,8 +1856,9 @@ def report(request: Request,
     # annotate each improvement with its state. Reuses the report just built (no recompute); a no-op
     # for anonymous/demo reports (no real uid). Never fails the request.
     uid = _real_uid(request)
-    if uid is not None and rep.get("mode") == "measured":
-        _annotate_viewpoint_coverage(uid, rep)          # coverage pilot: Viewpoint dimensional coverage (additive)
+    # Per-metric Measurement metadata (ADR-001) — coverage + provenance for Viewpoint / Emotion — is
+    # now computed in the engine (measurement.py, via personalize) and attached onto each metric inside
+    # `_report_for`; there is no separate report-level annotation to load reads again here.
     if uid is not None and rep.get("mode") in ("measured", "estimate") and rep.get("improvements"):
         _annotate_improvement_lifecycle(uid, rep)       # RC2.3: attach lifecycle state
         _rank_improvement_recommendations(uid, rep)     # RC2.4: reorder + suppress (filtering only)
@@ -1885,29 +1904,6 @@ def _annotate_improvement_lifecycle(uid: int, rep: dict) -> None:
                 imp["lifecycle"] = improvement_ledger.public_view(row)
     except Exception as exc:                # lifecycle is auxiliary — never break the report
         error_reporting.report_exception(exc, where="improvement_lifecycle", userId=uid,
-                                         requestId=_request_id.get())
-
-
-def _annotate_viewpoint_coverage(uid: int, rep: dict) -> None:
-    """Coverage pilot (docs/DIMENSIONAL_COVERAGE.md): attach the Viewpoint dimension's *coverage* —
-    how many of the reader's political reads carry an authoritative (outlet-registry) lean vs. how many
-    are unknown-lean and therefore not represented in the Viewpoint mix. Read-only over the reader's
-    stored reads; **additive** — it never changes the viewpoint value, the Information Health scoring,
-    or recommendations. Attached only when there is political reading to describe (eligible > 0)."""
-    st = state.store
-    if st is None:
-        return
-    try:
-        cov = viewpoint_coverage.viewpoint_coverage(st.list_reads(uid))
-        if cov["eligiblePoliticalReads"] > 0:
-            rep["viewpointCoverage"] = {
-                "eligiblePoliticalReads": cov["eligiblePoliticalReads"],
-                "authoritativeLeanReads": cov["authoritativeLeanReads"],
-                "unknownLeanReads": cov["unknownLeanReads"],
-                "provenance": cov["provenance"],
-            }
-    except Exception as exc:                # auxiliary transparency — never break the report
-        error_reporting.report_exception(exc, where="viewpoint_coverage", userId=uid,
                                          requestId=_request_id.get())
 
 

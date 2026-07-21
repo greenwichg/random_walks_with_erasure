@@ -53,6 +53,8 @@
  "report.viewpointCaption": "Lees {left}% de izquierda, {center}% de centro y {right}% de derecha.",
  "report.viewpointCoverage": "El equilibrio político refleja {authoritative} de {eligible} lecturas políticas.",
  "report.viewpointCoverageUnknown": "{unknown} de fuentes sin una clasificación de sesgo autorizada no se muestran aquí.",
+ "report.emotionCoverage": "El tono emocional refleja {observed} de {eligible} lecturas.",
+ "report.emotionCoverageUnknown": "{unknown} sin suficiente texto para interpretar el tono no se muestran aquí.",
  "report.tilt.balanced": "Tu lectura está bien equilibrada en todo el espectro.",
  "report.tilt.bothSides": "Escuchas ambos lados: la inclinación es hacia {side}.",
  "report.tilt.leansHeavily": "Tu lectura se inclina mucho hacia {side}; el otro lado es escaso.",

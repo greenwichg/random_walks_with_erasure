@@ -196,20 +196,27 @@ export const REPORT: MeasuredHealthReport = {
   overallDelta: 6,
   updatedAt: new Date().toISOString(),
   axisConfidence: 0.74,
-  // Coverage pilot: the Viewpoint dimension's dimensional coverage (partial-coverage example).
-  viewpointCoverage: {
-    eligiblePoliticalReads: 28,
-    authoritativeLeanReads: 24,
-    unknownLeanReads: 4,
-    provenance: "outlet_registry",
-  },
+  // Per-metric Measurement metadata (ADR-001): coverage + provenance ride on the metric itself.
+  // Viewpoint carries a partial-coverage example (24 of 28 political reads authoritatively placed);
+  // Emotion carries near-full coverage (39 of 42 reads had enough text to read tone). Confidence is
+  // intentionally omitted on both (scope, not certainty).
   metrics: [
     { key: "topicDiversity", score: 78, delta: 4, raw: { value: 12, unit: "topics" }, benchmark: 61 },
     { key: "sourceDiversity", score: 64, delta: 9, raw: { value: 14, unit: "sources" }, benchmark: 52 },
     { key: "reportingRatio", score: 58, delta: -3, raw: { value: 0.58, unit: "P(reporting)" }, benchmark: 55 },
-    { key: "emotionalBalance", score: 51, delta: 7, raw: { value: 0.62, unit: "calm share" }, benchmark: 60 },
+    { key: "emotionalBalance", score: 51, delta: 7, raw: { value: 0.62, unit: "calm share" }, benchmark: 60,
+      measurement: {
+        dimension: "emotion",
+        coverage: { observed: 39, eligible: 42, basis: "all_reads" },
+        provenance: { kind: "derived", source: "baseline_lexical" },
+      } },
     { key: "echoChamber", score: 69, delta: 5, raw: { value: 0.71, unit: "balance" }, benchmark: 48 },
-    { key: "viewpointBalance", score: 61, delta: 8, raw: { value: 0.33, unit: "cross-cutting" }, benchmark: 40 },
+    { key: "viewpointBalance", score: 61, delta: 8, raw: { value: 0.33, unit: "cross-cutting" }, benchmark: 40,
+      measurement: {
+        dimension: "viewpoint",
+        coverage: { observed: 24, eligible: 28, basis: "political_reads" },
+        provenance: { kind: "authoritative", source: "outlet_registry" },
+      } },
     { key: "openMindedness", score: 82, delta: 3, raw: { value: 0.82, unit: "click-through" }, benchmark: 57 },
     { key: "confidence", score: 74, delta: 1, raw: { value: 0.74, unit: "axis margin" }, benchmark: 70 },
   ],

@@ -28,6 +28,31 @@ export type MetricKey =
  * thresholds; the frontend `scoreBand()` is a fallback for data that lacks it. */
 export type HealthBand = "Healthy" | "Fair" | "Needs work" | "Unknown";
 
+/**
+ * Measurement metadata for a metric (ADR-001). Wraps a metric's value with how much of the reader's
+ * reading it reflects (coverage = scope) and where the signal comes from (provenance), plus an
+ * optional confidence (certainty). Coverage ≠ confidence: coverage says how many reads carried the
+ * signal at all; confidence says how sure we are given the reads that did. `confidence` is omitted
+ * unless a value genuinely represents prediction uncertainty (the current Emotion outputs do not).
+ */
+export interface Measurement {
+  /** The dimension this measures, e.g. "viewpoint" | "emotion". */
+  dimension: string;
+  /** Scope: of the eligible reads, how many carried this dimension's signal. */
+  coverage: {
+    /** Eligible reads that carried the signal (the numerator). */
+    observed: number;
+    /** The honest denominator — reads the metric is about. */
+    eligible: number;
+    /** The eligibility population, e.g. "political_reads" | "all_reads". */
+    basis: string;
+  };
+  /** Where the value comes from: `kind` = "authoritative" (looked up) | "derived" (inferred). */
+  provenance: { kind: string; source: string };
+  /** Certainty (optional) — absent unless it genuinely represents prediction uncertainty. */
+  confidence?: number | null;
+}
+
 /** A single scored metric (0–100) with the context the UI needs to render it. */
 export interface Metric {
   key: MetricKey;
@@ -51,6 +76,13 @@ export interface Metric {
   reason?: string | null;
   /** Reads that typically unlock the metric — informational, drives the empty-state hint. */
   minimumActivity?: number | null;
+  /**
+   * Measurement metadata (ADR-001): coverage + provenance for this metric, from the reader's scored
+   * reads. Present only on the dimensions that carry one (Viewpoint / Emotion) of a measured report;
+   * additive — absent on older payloads and other metrics. Meaningful even when `available` is false
+   * (the coverage explains the empty state).
+   */
+  measurement?: Measurement;
 }
 
 export interface EmotionShare {
@@ -198,23 +230,6 @@ export interface Coverage {
   sufficient: boolean;
 }
 
-/**
- * Dimensional coverage for the Viewpoint / Political-Lean dimension (coverage pilot). How much of the
- * reader's *political* reading the Viewpoint mix could place on the authoritative (outlet-registry /
- * AllSides) lean scale. This is COVERAGE (scope), not confidence: `unknownLeanReads` are political
- * reads from unrated outlets — simply not represented in the mix, never guessed.
- */
-export interface ViewpointCoverage {
-  /** Political reads — the honest denominator for the Viewpoint mix. */
-  eligiblePoliticalReads: number;
-  /** Of those, how many carry a finite outlet-registry lean. */
-  authoritativeLeanReads: number;
-  /** `eligible − authoritative`: political reads not represented in the mix. */
-  unknownLeanReads: number;
-  /** The lean's source of truth (e.g. "outlet_registry"). */
-  provenance: string;
-}
-
 /** Fields shared by every Information Health result — measured or estimated. */
 export interface HealthReportBase {
   overall: number;
@@ -239,9 +254,8 @@ export interface MeasuredHealthReport extends HealthReportBase {
   mode: "measured";
   /** Per-reader confidence in the political axis (top-2 softmax margin mean). */
   axisConfidence: number;
-  /** Coverage pilot: the Viewpoint dimension's dimensional coverage — present when the reader has
-   *  political reads. Additive; absent on older payloads and readers with no political reading. */
-  viewpointCoverage?: ViewpointCoverage;
+  // Per-metric dimensional coverage (ADR-001) now lives on each metric's `measurement`
+  // (Metric.measurement) — Viewpoint's coverage moved there and Emotion gained one.
 }
 
 /** An Initial Information Health Estimate — computed from selected outlets only. There is no

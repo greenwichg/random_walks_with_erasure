@@ -154,7 +154,8 @@ M = {
                                 "Vous lisez {left}% à gauche, {center}% au centre et {right}% à droite.",
                                 "Sie lesen {left}% links, {center}% Mitte und {right}% rechts.",
                                 "Você lê {left}% de esquerda, {center}% de centro e {right}% de direita."),
-    # Coverage pilot (docs/DIMENSIONAL_COVERAGE.md): make the *scope* of the Viewpoint mix explicit.
+    # Measurement metadata (docs/ADR-001-MEASUREMENT-METADATA.md): make each dimension's *scope*
+    # (coverage) explicit. Viewpoint — how much of the political reading the mix could place.
     "report.viewpointCoverage": ("Political balance reflects {authoritative} of {eligible} political reads.",
                                  "El equilibrio político refleja {authoritative} de {eligible} lecturas políticas.",
                                  "L'équilibre politique reflète {authoritative} sur {eligible} lectures politiques.",
@@ -165,6 +166,18 @@ M = {
                                         "{unknown} provenant de sources sans classification de tendance fiable ne sont pas affichées ici.",
                                         "{unknown} aus Quellen ohne maßgebliche Ausrichtungsbewertung werden hier nicht angezeigt.",
                                         "{unknown} de fontes sem uma classificação de viés autorizada não são exibidas aqui."),
+    # Emotion — how much of the reading carried enough text to read tone (the second dimension on the
+    # generic Measurement model; scope, not confidence — confidence is intentionally omitted for tone).
+    "report.emotionCoverage": ("Emotional tone reflects {observed} of {eligible} reads.",
+                               "El tono emocional refleja {observed} de {eligible} lecturas.",
+                               "Le ton émotionnel reflète {observed} sur {eligible} lectures.",
+                               "Der emotionale Ton spiegelt {observed} von {eligible} Lektüren wider.",
+                               "O tom emocional reflete {observed} de {eligible} leituras."),
+    "report.emotionCoverageUnknown": ("{unknown} without enough text to read tone aren't shown here.",
+                                      "{unknown} sin suficiente texto para interpretar el tono no se muestran aquí.",
+                                      "{unknown} sans assez de texte pour évaluer le ton ne sont pas affichées ici.",
+                                      "{unknown} ohne ausreichenden Text zur Tonanalyse werden hier nicht angezeigt.",
+                                      "{unknown} sem texto suficiente para avaliar o tom não são exibidas aqui."),
     "report.tilt.balanced": ("Your reading is well balanced across the spectrum.",
                              "Tu lectura está bien equilibrada en todo el espectro.",
                              "Votre lecture est bien équilibrée sur tout le spectre.",

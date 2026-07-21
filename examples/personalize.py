@@ -47,6 +47,8 @@ import numpy as np
 import health_report as hr
 import augmented_corpus as ac
 import api_server as engine
+import measurement                      # generic per-metric Measurement envelopes (ADR-001)
+from enrich import emotion_model_source  # names the emotion model for the Emotion measurement's provenance
 from ingest import canonical_url as _canonical_url
 
 
@@ -96,6 +98,10 @@ class PersonalModel:
     corpus: "engine._Corpus"
     reader_row: int
     rec: "engine._Recommenders"
+    # Per-metric Measurement envelopes (ADR-001): coverage + provenance for the reader's Viewpoint /
+    # Emotion dimensions, computed from the SAME scored reads that built the corpus (no second load).
+    # Keyed by MetricKey; attached onto the matching metric card by the report serialiser.
+    measurements: Dict[str, dict] = None  # type: ignore[assignment]
 
 
 class Personalizer:
@@ -210,6 +216,12 @@ class Personalizer:
             reads = [(_dc_replace(r, article_id=self._catalog_ids[str(r.article_id)])
                       if str(r.article_id) in self._catalog_ids else r) for r in reads]
 
+        # Per-metric Measurement envelopes (ADR-001) from the SAME scored reads the corpus is built
+        # from — coverage + provenance computed alongside the metric values, never a second read load.
+        # The catalog-id join above only rewrites ``article_id``; political / lean / emotion (all a
+        # measurement reads) are untouched, so this is the exact projection behind the metric values.
+        measurements = measurement.measurements_for_reads(reads, emotion_source=emotion_model_source())
+
         base = ac.bundle_from_backend(self.backend)               # read-only view of the corpus
         aug = ac.augment(base, reads, user_id=f"__real_user_{user_id}__")
         b = aug.bundle
@@ -233,7 +245,8 @@ class Personalizer:
         rec = self.backend._build_recommenders(
             b.mind, reader_exposure=((ruid, rexp) if rexp is not None else None))
         model = PersonalModel(reading_version=reading_version, reception_version=reception_version,
-                              corpus=corpus, reader_row=aug.reader_row, rec=rec)
+                              corpus=corpus, reader_row=aug.reader_row, rec=rec,
+                              measurements=measurements)
 
         if self._persist:
             # Persist the Measured snapshot once per version so /api/me reflects the latest
@@ -241,7 +254,8 @@ class Personalizer:
             # compute above; a failure to persist must never fail the request.
             try:
                 self.store.save_report(user_id,
-                                       self.backend._serialize_report(corpus, aug.reader_row))
+                                       self.backend._serialize_report(corpus, aug.reader_row,
+                                                                      measurements=measurements))
             except Exception:
                 pass
         return model
@@ -282,7 +296,7 @@ class Personalizer:
     def report(self, user_id: int) -> dict:
         """The Measured Information Health Report from the user's augmented corpus."""
         m = self._model(user_id)
-        return self.backend._serialize_report(m.corpus, m.reader_row)
+        return self.backend._serialize_report(m.corpus, m.reader_row, measurements=m.measurements)
 
     def recommendations(self, user_id: int, strategy: "str | None" = None,
                         params: "dict | None" = None) -> list:

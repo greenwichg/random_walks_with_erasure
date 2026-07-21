@@ -53,6 +53,8 @@
  "report.viewpointCaption": "You read {left}% left, {center}% center, and {right}% right.",
  "report.viewpointCoverage": "Political balance reflects {authoritative} of {eligible} political reads.",
  "report.viewpointCoverageUnknown": "{unknown} from sources without an authoritative lean rating aren't shown here.",
+ "report.emotionCoverage": "Emotional tone reflects {observed} of {eligible} reads.",
+ "report.emotionCoverageUnknown": "{unknown} without enough text to read tone aren't shown here.",
  "report.tilt.balanced": "Your reading is well balanced across the spectrum.",
  "report.tilt.bothSides": "You do hear both sides — the tilt is toward the {side}.",
  "report.tilt.leansHeavily": "Your reading leans heavily {side}; the other side is thin.",
