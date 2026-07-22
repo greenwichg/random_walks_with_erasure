@@ -1,7 +1,33 @@
-# Group A — edge security group (ih-beta-sg): the Wave 0 public edge (80/443).
-# Lives in the default VPC (not managed). Config is generated via
-# `terraform plan -generate-config-out=generated.tf`, refined to match the live
-# rules exactly, and applied at plan-to-zero. Import is state-only.
+# Group A — edge security group (ih-beta-sg): the Wave 0 public edge.
+# In the default VPC (not managed). Rules (exclusive, inline): 80 + 443 in from
+# anywhere, all egress. Imported into state; import is state-only.
+resource "aws_security_group" "ih_beta_sg" {
+  name        = "ih-beta-sg"
+  description = "Information Health Wave0 edge (80/443 only)"
+  vpc_id      = "vpc-05239174d0b1c67ee"
+
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
 import {
   to = aws_security_group.ih_beta_sg
   id = "sg-02de782b0941bc1dd"
