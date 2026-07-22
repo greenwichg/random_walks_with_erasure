@@ -74,6 +74,11 @@ acceptable pre-traffic, e.g. "no analytics data yet").
       site → "Sign in with Google" → complete consent → land authenticated on the home feed. The Google
       OAuth **redirect URI** must include `https://hidden-view.com/...` and the OAuth consent screen must
       be **published** (or the tester's email added as an allowed test user).
+- [ ] **Beta allowlist is configured** — the invite-only gate is ON and populated. In production
+      `BETA_ACCESS_ENABLED=1` (default) and `BETA_ALLOWLIST` (or `BETA_ALLOWLIST_FILE`) contains at
+      least the first wave's emails. **Fail-closed:** gate on + empty allowlist ⇒ *everyone* is denied.
+      `preflight.sh` does **not** check this — confirm it manually (see §3.1 and
+      `docs/BETA_ACCESS_CONTROL.md`).
 - [ ] **Recommendations are loading** — the signed-in home feed renders cards in **Discovery** and/or
       **For You** with lean labels and "Why this article?" text (not an empty state or spinner-forever).
 - [ ] **Stories page is working** — `/stories` renders clustered events with a non-trivial **count**
@@ -105,11 +110,21 @@ invitee and their goodwill.
 ### 3.1 Process
 1. **Choose the channel** — a personal email or direct message (not a mass blast). Beta invites are
    1:1 and personal.
-2. **Send the invitation** using the template below. Include the URL, a one-line pitch, the beta caveat,
+2. **Grant access FIRST — add the invitee to the beta allowlist.** Hidden View is **invite-only**: a
+   Google sign-in is rejected unless the exact email is on the allowlist. The gate is enforced in the
+   NextAuth `signIn` callback (`web/lib/auth.ts`) via `isEmailAllowed` (`web/lib/beta-access.ts`); in
+   production it is **ON by default and fail-closed**, so an email that isn't listed completes Google
+   consent but then lands on the "invite-only" screen and **never gets an account**. Add them **before**
+   sending the invite:
+   - **Env var (needs a restart):** on the EC2 host, append the email — or `@theirdomain.com` to approve
+     a whole domain — to `BETA_ALLOWLIST` in `deploy/.env`, then `bash deploy/ops/restart.sh web`.
+   - **File (no restart):** if `BETA_ALLOWLIST_FILE` is set, add the email to that file; it is re-read on
+     each sign-in attempt, so they can sign in immediately.
+   - The invitee must sign in with **exactly** that Google email. Full reference + behavior matrix:
+     `docs/BETA_ACCESS_CONTROL.md`.
+3. **Send the invitation** using the template below. Include the URL, a one-line pitch, the beta caveat,
    and how to give feedback.
-3. **Share the website URL:** **https://hidden-view.com**
-4. **Confirm access model** — anyone with a Google account can sign in (no allowlist required for the
-   web app in beta). If you are gating access, add the invitee first.
+4. **Share the website URL:** **https://hidden-view.com**
 5. **Log the invite** — record name, email, date invited, cohort (web-only / +extension), in your beta
    tracker (a spreadsheet is fine).
 
@@ -309,6 +324,7 @@ Diagnose from the box via **SSM Session Manager**, repo root, prod env loaded.
 | Symptom (user-reported) | Likely cause | Operator action |
 |---|---|---|
 | **"Can't sign in with Google"** / OAuth error screen | Redirect URI mismatch; consent screen not published / tester not an allowed test user; clock skew | Confirm the Google OAuth client's authorized redirect URIs include the prod callback; publish the consent screen or add the tester's email; re-test in incognito |
+| **Completes Google sign-in but lands on an "invite-only" / access-denied screen** | Email isn't on the beta allowlist (or the allowlist is empty ⇒ fail-closed = everyone denied) | Add the exact email (or `@domain`) to `BETA_ALLOWLIST` in `deploy/.env`, then `bash deploy/ops/restart.sh web` — or to `BETA_ALLOWLIST_FILE` (no restart). Confirm the email matches exactly; check `web` logs for `beta_access_denied` (its `reason` says which). Ref: `docs/BETA_ACCESS_CONTROL.md` |
 | **Signed in but feed is empty** / "no recommendations" | Cold start (no history yet — expected); or ingestion/engine issue | If brand-new account: expected — ask them to read a few and revisit. Else check `/api/health/ready` (200?), `ingest` container running, article volume, engine logs |
 | **Stories page empty or count ~0** | Ingestion stalled, or too few multi-publisher clusters in the window | Verify recent article timestamps; confirm `ingest` running; check story diagnostics (`/api/stories?debug=1`); inspect `api` logs |
 | **Site won't load / 502 / 503** | A container down or crash-looping; engine not ready | `docker compose … ps`; `bash deploy/ops/smoke-test.sh`; `docker compose … logs --since=15m`; `bash deploy/ops/restart.sh` (or a specific service) |
