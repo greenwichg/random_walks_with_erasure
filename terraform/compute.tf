@@ -6,14 +6,14 @@
 # future-hardening item; the import had to match live exactly, so it's preserved
 # as-is here too.
 resource "aws_instance" "ih_beta" {
-  ami                          = "ami-052355af2a014bd2c"
-  instance_type                = "t3.medium"
-  availability_zone            = "us-east-1a"
-  subnet_id                    = "subnet-0cd45d252e74e5a94"
-  private_ip                   = "172.31.14.176"
-  associate_public_ip_address  = true
-  iam_instance_profile         = aws_iam_instance_profile.ih_ec2_role.name
-  vpc_security_group_ids       = [aws_security_group.ih_beta_sg.id]
+  ami                         = "ami-052355af2a014bd2c"
+  instance_type               = "t3.medium"
+  availability_zone           = "us-east-1a"
+  subnet_id                   = "subnet-0cd45d252e74e5a94"
+  private_ip                  = "172.31.14.176"
+  associate_public_ip_address = true
+  iam_instance_profile        = aws_iam_instance_profile.ih_ec2_role.name
+  vpc_security_group_ids      = [aws_security_group.ih_beta_sg.id]
 
   disable_api_stop                     = false
   disable_api_termination              = false
