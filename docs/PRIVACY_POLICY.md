@@ -1,6 +1,6 @@
 # InfoDiet Privacy Policy
 
-**Last updated: July 19, 2026**
+**Last updated: July 22, 2026**
 
 InfoDiet ("we", "our") is an Information Health service: it scores how diverse, calm, and
 cross-cutting your news reading is, from articles you choose to record. This policy covers the
@@ -13,17 +13,16 @@ document is its source.
 ## The short version
 
 - The browser extension records **only the URL and standard page metadata** of news articles you
-  open **on a fixed list of supported news sites** — never article text, never your general
-  browsing history.
-- It sends **nothing anywhere** until you explicitly connect it to your own InfoDiet account with
-  an API token.
+  open — never article text, and never the content of pages that aren't articles.
+- It runs on **no page and sends nothing anywhere** until you connect it to your own InfoDiet
+  account and turn on capture. Turning capture off stops it immediately.
 - Your data is used for exactly one purpose: your own Information Health report and
   recommendations. **We do not sell personal data and show no third-party advertising.**
 
 ## What the browser extension collects
 
-When — and only when — you open a page that is an **article** on one of the supported news sites
-listed in the extension's manifest, the extension records:
+Once you connect the extension and enable capture, then — and only when — you open a page that is
+an **article**, the extension records:
 
 - the article's URL,
 - standard page metadata already present in the page's head: title, description, preview-image
@@ -31,29 +30,43 @@ listed in the extension's manifest, the extension records:
   declared language,
 - the time you opened it.
 
-Article detection uses standard signals only (OpenGraph tags, JSON-LD types, and the page's
-`<article>`/headline structure). Section and front pages are not recorded.
+Article detection uses standard, publisher-declared metadata only: the page's OpenGraph type
+(`og:type`), JSON-LD article types, and an article-publication-time tag alongside a headline.
+Pages that do not identify themselves as articles — home, section, and search pages, and product,
+video, and app pages — are not recorded.
+
+## Running on the pages you read
+
+To detect articles on whatever news site or blog you choose, the extension asks — when you click
+**Enable capture** — for permission to run on the websites you visit. On each page you open it
+reads only the standard metadata above to decide whether the page is an article, and it records
+and sends data **only** when the page is an article. It never reads the body text of an article,
+and never reads the content of a non-article page. As an added safeguard, the detector never runs
+on a short list of sensitive sites (major webmail and office suites) even after you enable capture.
+Turning capture off removes this access and stops the detector on every page.
 
 ## What the extension never collects
 
 - Article body text.
-- Your browsing history, or any activity on sites outside the supported list.
+- The content of pages that aren't articles.
 - Passwords, form input, cookies, or other page data.
-- Analytics or telemetry of any kind: the extension contains no trackers and makes no requests to
-  anyone other than the InfoDiet app address you configure.
+- Networked analytics or tracking of any kind: the extension contains no trackers and makes no
+  requests to anyone other than the InfoDiet app address you configure. (It keeps an anonymous
+  local count of detection outcomes — which signal matched, or why a page was skipped — that stays
+  in your browser and is never sent anywhere.)
 
 ## When collection starts
 
-The extension is **inert until you connect it**. Out of the box it stores nothing and sends
-nothing. Collection begins only after you complete all three setup steps in the extension's
-Options page:
+The extension is **inert until you set it up**. Out of the box it stores nothing, runs on no page,
+and sends nothing. You turn it on in the extension's Options page:
 
 1. enter your InfoDiet app address,
 2. paste an API token generated in your InfoDiet account (Settings → Connect browser extension),
-3. approve the browser permission for exactly that one address.
+   and approve access to that address so your reads can be sent to it,
+3. click **Enable capture** and approve access to the sites you read, so articles can be detected.
 
-Completing this setup is how you consent to the collection described above. Removing the token
-(or uninstalling the extension) withdraws that consent.
+Completing this setup is how you consent to the collection described above. Turning off capture,
+removing the token, or uninstalling the extension withdraws that consent.
 
 ## API tokens
 
@@ -67,10 +80,11 @@ Completing this setup is how you consent to the collection described above. Remo
 
 ## Where your data is stored
 
-**In your browser (extension storage):** the app address and API token you configured, plus a
-short-lived duplicate-suppression cache of recently recorded article URLs. That cache is
-session-scoped and bounded: entries expire after 6 hours, the cache is capped in size, and it is
-cleared when your browser session ends. Uninstalling the extension deletes all of its local data.
+**In your browser (extension storage):** the app address and API token you configured, a
+short-lived duplicate-suppression cache of recently recorded article URLs, and an anonymous local
+count of detection outcomes. The dedupe cache is session-scoped and bounded: entries expire after
+6 hours, the cache is capped in size, and it is cleared when your browser session ends. None of
+this local data is ever sent anywhere; uninstalling the extension deletes all of it.
 
 **On the InfoDiet server (your account):** your recorded reads (the article data listed above,
 tagged with the source they came from, e.g. "extension" or "app"), your account profile from
@@ -95,8 +109,8 @@ for local, self-hosted testing addresses you choose yourself (such as `http://lo
 
 ## Your controls
 
-- **Disconnect:** revoke the token in InfoDiet → Settings, or clear it in the extension's
-  Options — recording stops immediately.
+- **Disconnect:** turn off capture, revoke the token in InfoDiet → Settings, or clear it in the
+  extension's Options — recording stops immediately.
 - **Uninstall:** removes everything the extension stored in your browser.
 - **Delete:** email us to have your account data deleted.
 
