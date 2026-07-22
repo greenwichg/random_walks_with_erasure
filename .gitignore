@@ -74,3 +74,21 @@ data/metric_validation_demo.db
 /web.log
 /cf.log
 /cloudflared
+
+# Terraform — remote state lives in S3, never in git. The provider lock
+# (.terraform.lock.hcl) is intentionally NOT ignored; it is committed.
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+# tfvars can hold secrets — ignore by default; commit *.tfvars.example instead.
+*.tfvars
+*.tfvars.json
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
