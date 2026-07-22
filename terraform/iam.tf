@@ -7,11 +7,6 @@ resource "aws_iam_instance_profile" "ih_ec2_role" {
   role = aws_iam_role.ih_ec2_role.name
 }
 
-import {
-  to = aws_iam_instance_profile.ih_ec2_role
-  id = "ih-ec2-role"
-}
-
 # IAM role the instance assumes (trusts the EC2 service).
 resource "aws_iam_role" "ih_ec2_role" {
   name                 = "ih-ec2-role"
@@ -28,30 +23,15 @@ resource "aws_iam_role" "ih_ec2_role" {
   })
 }
 
-import {
-  to = aws_iam_role.ih_ec2_role
-  id = "ih-ec2-role"
-}
-
 # SSM Session Manager (shell without SSH) + CloudWatch agent (metrics/logs).
 resource "aws_iam_role_policy_attachment" "ih_ec2_ssm_core" {
   role       = aws_iam_role.ih_ec2_role.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
-import {
-  to = aws_iam_role_policy_attachment.ih_ec2_ssm_core
-  id = "ih-ec2-role/arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
-}
-
 resource "aws_iam_role_policy_attachment" "ih_ec2_cloudwatch_agent" {
   role       = aws_iam_role.ih_ec2_role.name
   policy_arn = "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
-}
-
-import {
-  to = aws_iam_role_policy_attachment.ih_ec2_cloudwatch_agent
-  id = "ih-ec2-role/arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
 }
 
 # Inline policy: off-host S3 backups to the Wave 0 backup bucket.
@@ -70,9 +50,4 @@ resource "aws_iam_role_policy" "ih_s3_backup" {
       ]
     }]
   })
-}
-
-import {
-  to = aws_iam_role_policy.ih_s3_backup
-  id = "ih-ec2-role:ih-s3-backup"
 }

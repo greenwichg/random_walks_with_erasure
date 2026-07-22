@@ -1,6 +1,6 @@
 # Group A — edge security group (ih-beta-sg): the Wave 0 public edge.
 # In the default VPC (not managed). Rules (exclusive, inline): 80 + 443 in from
-# anywhere, all egress. Imported into state; import is state-only.
+# anywhere, all egress.
 resource "aws_security_group" "ih_beta_sg" {
   name        = "ih-beta-sg"
   description = "Information Health Wave0 edge (80/443 only)"
@@ -26,9 +26,4 @@ resource "aws_security_group" "ih_beta_sg" {
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
   }
-}
-
-import {
-  to = aws_security_group.ih_beta_sg
-  id = "sg-02de782b0941bc1dd"
 }
