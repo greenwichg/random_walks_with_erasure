@@ -22,11 +22,18 @@ created out-of-band by the admin — the exec role deliberately cannot create bu
 
 ## Usage
 
+The Terraform S3 backend **cannot prompt for MFA**, so we don't point Terraform at a
+`profile`. Instead, assume the exec role with the AWS CLI (which *can* prompt), export
+the resulting short-lived session credentials, and let Terraform use those:
+
 ```
 cd terraform
-terraform init      # initialise the S3 backend (prompts for your MFA code)
-terraform plan      # after imports, MUST be 0 add / 0 change / 0 destroy
+source ./assume.sh   # prompts for your MFA code; exports AWS_* session creds (~1h)
+terraform init       # initialise the S3 backend
+terraform plan       # after imports, MUST be 0 add / 0 change / 0 destroy
 ```
 
-Terraform assumes the exec role via the `hv-terraform` profile, so you are prompted
-for an MFA code on operations that touch AWS.
+`assume.sh` uses the `hv-terraform` profile under the hood (which assumes
+`HiddenViewTerraformExec` with MFA). Re-run `source ./assume.sh` when the ~1-hour
+session expires and Terraform reports an `ExpiredToken` error. Credentials live only
+in your shell — never commit them.
