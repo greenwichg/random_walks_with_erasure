@@ -8,6 +8,10 @@
 resource "aws_route53_zone" "hidden_view" {
   name    = "hidden-view.com"
   comment = "HostedZone created by Route53 Registrar"
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "aws_route53_record" "apex_a" {

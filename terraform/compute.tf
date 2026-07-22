@@ -71,4 +71,12 @@ resource "aws_instance" "ih_beta" {
     volume_size           = 30
     volume_type           = "gp3"
   }
+
+  lifecycle {
+    prevent_destroy = true
+    ignore_changes = [
+      ami,
+      user_data,
+    ]
+  }
 }
