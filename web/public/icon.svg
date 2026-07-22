@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Information Health">
+  <rect width="32" height="32" rx="9" fill="#463acb"/>
+  <path d="M3 12h3.5l2-5 3 10 2.5-7 1.5 2H21" transform="translate(3.2 3.2) scale(1.0667)"
+        fill="none" stroke="#ffffff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
