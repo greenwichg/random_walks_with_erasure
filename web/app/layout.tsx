@@ -4,13 +4,13 @@ import { Providers } from "@/components/providers";
 
 export const metadata: Metadata = {
   title: {
-    default: "Information Health",
-    template: "%s · Information Health",
+    default: "Hidden View",
+    template: "%s · Hidden View",
   },
   description:
-    "Understand and balance your news diet. Information Health scores how diverse, calm, and cross-cutting your reading is — and helps you improve it.",
-  applicationName: "Information Health",
-  authors: [{ name: "Information Health" }],
+    "Understand and balance your news diet. Hidden View scores how diverse, calm, and cross-cutting your reading is — and helps you improve it.",
+  applicationName: "Hidden View",
+  authors: [{ name: "Hidden View" }],
   keywords: ["news", "media literacy", "recommendations", "echo chamber", "reading diet"],
   icons: {
     icon: [

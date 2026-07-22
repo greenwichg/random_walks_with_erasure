@@ -144,7 +144,7 @@ def ico_bytes(entries):                    # entries: [(size, png_bytes), ...]
         datas += png
     return out + dirs + datas
 
-SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Information Health">
+SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Hidden View">
   <rect width="32" height="32" rx="9" fill="{primary}"/>
   <path d="M3 12h3.5l2-5 3 10 2.5-7 1.5 2H21" transform="translate(3.2 3.2) scale(1.0667)"
         fill="none" stroke="#ffffff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
@@ -152,8 +152,8 @@ SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" 
 """
 
 WEBMANIFEST = """{{
-  "name": "Information Health",
-  "short_name": "InfoHealth",
+  "name": "Hidden View",
+  "short_name": "Hidden View",
   "icons": [
     {{ "src": "/android-chrome-192x192.png", "sizes": "192x192", "type": "image/png" }},
     {{ "src": "/android-chrome-512x512.png", "sizes": "512x512", "type": "image/png" }}

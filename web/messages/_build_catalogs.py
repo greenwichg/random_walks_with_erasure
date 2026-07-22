@@ -854,9 +854,9 @@ M = {
     "profile.unlockedOn": ("Unlocked {date}", "Desbloqueado {date}", "Débloqué {date}",
                            "Freigeschaltet {date}", "Desbloqueado {date}"),
     "profile.milestones": ("Milestones", "Hitos", "Jalons", "Meilensteine", "Marcos"),
-    "profile.joined": ("Joined Information Health", "Te uniste a Information Health",
-                       "Inscription à Information Health", "Information Health beigetreten",
-                       "Entrou no Information Health"),
+    "profile.joined": ("Joined Hidden View", "Te uniste a Hidden View",
+                       "Inscription à Hidden View", "Hidden View beigetreten",
+                       "Entrou no Hidden View"),
 
     # ---- story detail ----
     "stories.back": ("All stories", "Todas las noticias", "Tous les sujets", "Alle Themen",
@@ -1140,9 +1140,9 @@ M = {
                   "Sem explicação para este cartão — o feed provavelmente foi atualizado desde o carregamento. Recarregue a página para ressincronizar cartões e evidências."),
 
     # ---- sidebar promo ----
-    "sidebar.homeAria": ("Information Health home", "Inicio de Information Health",
-                         "Accueil Information Health", "Information Health Startseite",
-                         "Início do Information Health"),
+    "sidebar.homeAria": ("Hidden View home", "Inicio de Hidden View",
+                         "Accueil Hidden View", "Hidden View Startseite",
+                         "Início do Hidden View"),
     # Real streak (replaces the old hardcoded "12 days strong"): active shows the true count, and a
     # 0/absent streak shows an honest empty state that invites the reader to start one.
     "sidebar.streakActive": ("{n}-day streak. Keep it going — read today.",
@@ -1157,9 +1157,9 @@ M = {
                             "Ainda sem sequência. Leia um artigo hoje para começar uma."),
 
     # ---- sign-in ----
-    "signin.welcome": ("Welcome to Information Health", "Bienvenido a Information Health",
-                       "Bienvenue sur Information Health", "Willkommen bei Information Health",
-                       "Bem-vindo ao Information Health"),
+    "signin.welcome": ("Welcome to Hidden View", "Bienvenido a Hidden View",
+                       "Bienvenue sur Hidden View", "Willkommen bei Hidden View",
+                       "Bem-vindo ao Hidden View"),
     "signin.demoSubtitle": ("Demo mode — sign in as a throwaway demo reader to explore the app. No account needed.",
                             "Modo demo: inicia sesión como lector de demostración temporal para explorar la app. No necesitas cuenta.",
                             "Mode démo — connectez-vous en tant que lecteur de démonstration jetable pour explorer l'app. Aucun compte requis.",

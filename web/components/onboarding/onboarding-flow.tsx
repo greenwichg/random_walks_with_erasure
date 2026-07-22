@@ -157,7 +157,7 @@ function Frame({ children, className }: { children: React.ReactNode; className?:
 }
 
 /** Brand mark. `label` defaults to the (untranslated) product name; callers pass a localized label. */
-function Brand({ label = "Information Health" }: { label?: string }) {
+function Brand({ label = "Hidden View" }: { label?: string }) {
   return (
     <div className="mb-5 flex items-center gap-2">
       <span className="grid h-8 w-8 place-items-center rounded-lg bg-primary text-primary-foreground shadow">

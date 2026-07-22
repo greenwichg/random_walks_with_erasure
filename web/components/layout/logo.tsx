@@ -1,6 +1,6 @@
 import { cn } from "@/lib/utils";
 
-/** The Information Health mark — a pulse inside a rounded shield. */
+/** The Hidden View mark — a pulse inside a rounded shield. */
 export function Logo({ className }: { className?: string }) {
   return (
     <div className={cn("flex items-center gap-2.5", className)}>
@@ -16,7 +16,7 @@ export function Logo({ className }: { className?: string }) {
         </svg>
       </div>
       <span className="text-[0.95rem] font-semibold tracking-tight">
-        Information <span className="text-primary">Health</span>
+        Hidden <span className="text-primary">View</span>
       </span>
     </div>
   );
