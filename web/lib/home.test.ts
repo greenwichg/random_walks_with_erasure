@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   blindspotStories,
   briefingFacts,
+  coverageMix,
   groupByTopic,
   latestStories,
   publisherStats,
@@ -123,6 +124,15 @@ test("latestStories does not mutate its input", () => {
   ];
   latestStories(stories);
   assert.deepEqual(stories.map((s) => s.id), ["old", "new"]);
+});
+
+test("coverageMix sums per-story distributions and is empty-safe", () => {
+  const mix = coverageMix([
+    story({ id: "a", distribution: { left: 3, center: 1, right: 2 } }),
+    story({ id: "b", distribution: { left: 1, center: 0, right: 4 } }),
+  ]);
+  assert.deepEqual(mix, { left: 4, center: 1, right: 6 });
+  assert.deepEqual(coverageMix([]), { left: 0, center: 0, right: 0 });
 });
 
 test("publisherStats counts each publisher once per story", () => {

@@ -14,7 +14,7 @@
  *
  * No React, no imports beyond types — runs under `node --test`.
  */
-import type { Story } from "../types/domain";
+import type { Story, ViewpointDistribution } from "../types/domain";
 
 /** Distinct publishers named by a story — the `publishers` list when the engine sent one, else the
  *  coverage rows (a story always carries coverage; `publishers` is a newer convenience field). */
@@ -125,6 +125,23 @@ export function latestStories(stories: Story[], limit = 8, exclude?: Iterable<st
     .slice()
     .sort((a, b) => (updatedOf(b) ?? "").localeCompare(updatedOf(a) ?? ""))
     .slice(0, Math.max(0, limit));
+}
+
+/**
+ * The aggregate left/centre/right split across every event on the page — "how is today being
+ * covered overall", summed from the same per-story distributions the spectrum bars render.
+ * Summed, never averaged: an event with 40 articles should weigh more than one with 2.
+ */
+export function coverageMix(stories: Story[]): ViewpointDistribution {
+  const mix: ViewpointDistribution = { left: 0, center: 0, right: 0 };
+  for (const story of stories) {
+    const d = story.distribution;
+    if (!d) continue;
+    mix.left += Number(d.left) || 0;
+    mix.center += Number(d.center) || 0;
+    mix.right += Number(d.right) || 0;
+  }
+  return mix;
 }
 
 /** A topic and how many of today's events it covers. */

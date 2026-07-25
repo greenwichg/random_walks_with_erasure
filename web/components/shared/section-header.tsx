@@ -30,8 +30,10 @@ export function SectionHeader({
   return (
     <div className={cn("mb-4 flex items-end justify-between gap-4 border-b pb-2.5", className)}>
       <div className="min-w-0">
+        {/* The kicker is a neutral editorial label, not an accent mark — accent colour is reserved
+            for interactive state, so a page of section headers doesn't read as branded chrome. */}
         {eyebrow && (
-          <p className="mb-0.5 text-[0.7rem] font-semibold uppercase tracking-wider text-primary">
+          <p className="mb-0.5 text-[0.7rem] font-semibold uppercase tracking-wider text-muted-foreground">
             {eyebrow}
           </p>
         )}

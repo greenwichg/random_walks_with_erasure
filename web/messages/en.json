@@ -1,7 +1,7 @@
 {
   "common.allChangesSaved": "All changes saved",
   "common.tryAgain": "Try again",
-  "nav.dashboard": "Dashboard",
+  "nav.dashboard": "Home",
   "nav.report": "Health Report",
   "nav.recommendations": "Recommendations",
   "nav.coach": "AI Coach",
@@ -14,7 +14,7 @@
   "nav.settings": "Settings",
   "nav.section.explore": "Explore",
   "nav.section.account": "Account",
-  "nav.hint.dashboard": "Your health at a glance",
+  "nav.hint.dashboard": "Today's coverage",
   "nav.hint.report": "The full reading-diet analysis",
   "nav.hint.recommendations": "Reads picked to balance your diet",
   "nav.hint.coach": "Ask about your reading",
@@ -690,5 +690,8 @@
   "home.empty.body": "Stories appear once ingestion has run. Check back shortly.",
   "home.blindspots.title": "Blind spots",
   "home.blindspots.eyebrow": "What you're not being shown",
-  "home.latest.title": "Latest stories"
+  "home.latest.title": "Latest stories",
+  "home.coverage.title": "Today's coverage mix",
+  "home.coverage.body": "Summed across all {n} events on this page.",
+  "home.blindspots.summary": "of {total} events are covered mainly from one side"
 }

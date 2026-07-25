@@ -1,7 +1,7 @@
 {
   "common.allChangesSaved": "Todas as alterações salvas",
   "common.tryAgain": "Tente novamente",
-  "nav.dashboard": "Painel",
+  "nav.dashboard": "Início",
   "nav.report": "Relatório de saúde",
   "nav.recommendations": "Recomendações",
   "nav.coach": "Assistente de IA",
@@ -14,7 +14,7 @@
   "nav.settings": "Configurações",
   "nav.section.explore": "Explorar",
   "nav.section.account": "Conta",
-  "nav.hint.dashboard": "Sua saúde num relance",
+  "nav.hint.dashboard": "A cobertura de hoje",
   "nav.hint.report": "A análise completa da sua dieta de leitura",
   "nav.hint.recommendations": "Leituras para equilibrar sua dieta",
   "nav.hint.coach": "Pergunte sobre sua leitura",
@@ -690,5 +690,8 @@
   "home.empty.body": "As notícias aparecem após a ingestão. Volte em breve.",
   "home.blindspots.title": "Pontos cegos",
   "home.blindspots.eyebrow": "O que não lhe estão a mostrar",
-  "home.latest.title": "Últimas notícias"
+  "home.latest.title": "Últimas notícias",
+  "home.coverage.title": "Cobertura de hoje",
+  "home.coverage.body": "Soma dos {n} temas desta página.",
+  "home.blindspots.summary": "de {total} temas cobertos sobretudo de um lado"
 }

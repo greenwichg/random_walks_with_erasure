@@ -1,7 +1,7 @@
 {
   "common.allChangesSaved": "Toutes les modifications enregistrées",
   "common.tryAgain": "Réessayer",
-  "nav.dashboard": "Tableau de bord",
+  "nav.dashboard": "Accueil",
   "nav.report": "Rapport de santé",
   "nav.recommendations": "Recommandations",
   "nav.coach": "Coach IA",
@@ -14,7 +14,7 @@
   "nav.settings": "Paramètres",
   "nav.section.explore": "Explorer",
   "nav.section.account": "Compte",
-  "nav.hint.dashboard": "Votre santé en un coup d'œil",
+  "nav.hint.dashboard": "L'actualité du jour",
   "nav.hint.report": "L'analyse complète de votre régime de lecture",
   "nav.hint.recommendations": "Des lectures pour équilibrer votre régime",
   "nav.hint.coach": "Posez des questions sur vos lectures",
@@ -690,5 +690,8 @@
   "home.empty.body": "Les sujets apparaissent après l'ingestion. Revenez bientôt.",
   "home.blindspots.title": "Angles morts",
   "home.blindspots.eyebrow": "Ce qu'on ne vous montre pas",
-  "home.latest.title": "Derniers sujets"
+  "home.latest.title": "Derniers sujets",
+  "home.coverage.title": "Répartition du jour",
+  "home.coverage.body": "Cumul des {n} sujets de cette page.",
+  "home.blindspots.summary": "sur {total} sujets couverts surtout d'un côté"
 }

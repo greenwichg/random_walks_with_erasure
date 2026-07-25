@@ -19,8 +19,14 @@ import { SiteFooter } from "@/components/home/site-footer";
 import { HomeSkeleton } from "@/components/home/home-skeleton";
 import { BlindspotModule } from "@/components/home/blindspot-module";
 import {
+  BlindspotSummary,
+  CoverageSnapshot,
+  TrendingTopicsPanel,
+} from "@/components/home/rail-modules";
+import {
   blindspotStories,
   briefingFacts,
+  coverageMix,
   groupByTopic,
   latestStories,
   publisherStats,
@@ -69,14 +75,21 @@ export default function HomePage() {
   const hero = visible[0];
   const topStories = React.useMemo(() => visible.slice(1, 1 + TOP_STORY_COUNT), [visible]);
   const blindspots = React.useMemo(() => blindspotStories(visible, 4), [visible]);
-  const categories = React.useMemo(() => {
-    const shown = new Set<string>(visible.slice(0, 1 + TOP_STORY_COUNT).map((s) => s.id));
-    return groupByTopic(visible, { exclude: shown });
-  }, [visible]);
-  // The closing run deliberately excludes only the lead + top block, so a reader who scrolls the
-  // whole page still meets events the category modules didn't surface.
+  const mix = React.useMemo(() => coverageMix(visible), [visible]);
+  const flagged = React.useMemo(() => visible.filter((s) => !!s.blindspotSide).length, [visible]);
+
+  // Downstream modules exclude only the LEAD. A topic section and a recency run are different
+  // editorial lenses on the same day, not a queue to be consumed — excluding everything already
+  // shown starved them to nothing on a small corpus (which is exactly what happened: 12 events in,
+  // no category modules out). Overlap between "most covered" and "most recent" is normal on a
+  // front page; repeating the single most prominent story is not, so the hero stays excluded.
+  const categories = React.useMemo(
+    () => groupByTopic(visible, { exclude: hero ? [hero.id] : [], minStories: 2 }),
+    [visible, hero],
+  );
   const latest = React.useMemo(() => {
-    const shown = new Set<string>(visible.slice(0, 1 + TOP_STORY_COUNT).map((s) => s.id));
+    // Skip the lead and the first few top rows so the closing run still feels like new ground.
+    const shown = new Set<string>(visible.slice(0, 5).map((s) => s.id));
     return latestStories(visible, LATEST_COUNT, shown);
   }, [visible]);
 
@@ -147,11 +160,16 @@ export default function HomePage() {
             )}
           </div>
 
-          {/* ---- Companion rail ---- */}
+          {/* ---- Companion rail ----
+              Ordered reader-first: what to read next, then how your diet looks, then the day's
+              shape, then browsable indexes. Every module below reads from data already fetched. */}
           <aside className="col-span-12 space-y-8 lg:col-span-4">
             {recommendations.data && <RecommendationPanel recs={recommendations.data} />}
             {dashboard.data && <InformationHealthPanel data={dashboard.data} />}
+            <CoverageSnapshot mix={mix} events={visible.length} />
+            <BlindspotSummary flagged={flagged} total={visible.length} />
             <PublisherSpotlight publishers={publishers} />
+            <TrendingTopicsPanel topics={rail} active={topic} onSelect={setTopic} />
           </aside>
         </div>
       )}

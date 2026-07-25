@@ -33,7 +33,7 @@ export function PublisherSpotlight({ publishers }: { publishers: PublisherCount[
             {/* Presentational only — the count beside it carries the same value for screen readers. */}
             <div aria-hidden className="mt-1.5 h-1 overflow-hidden rounded-full bg-muted">
               <div
-                className="h-full rounded-full bg-primary/60"
+                className="h-full rounded-full bg-foreground/30"
                 style={{ width: `${Math.max(4, (entry.stories / max) * 100)}%` }}
               />
             </div>

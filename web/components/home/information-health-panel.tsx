@@ -104,9 +104,11 @@ export function InformationHealthPanel({ data }: { data: DashboardSummary }) {
                 aria-hidden
                 className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted"
               >
+                {/* Neutral ink, not the brand hue: three meters in accent purple turned the panel
+                    into the loudest thing on the page. */}
                 {available && (
                   <div
-                    className="h-full rounded-full bg-primary"
+                    className="h-full rounded-full bg-foreground/55"
                     style={{ width: `${Math.max(2, Math.min(100, metric!.score))}%` }}
                   />
                 )}
