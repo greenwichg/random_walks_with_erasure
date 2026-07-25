@@ -40,7 +40,7 @@ export function BlindspotModule({ stories }: { stories: Story[] }) {
             <li key={story.id}>
               <Link
                 href={`/stories/${story.id}`}
-                className="group flex h-full gap-3 rounded-md border bg-card p-3.5 transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                className="group flex h-full gap-3 rounded-md border bg-card p-4 transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
               >
                 <span
                   aria-hidden

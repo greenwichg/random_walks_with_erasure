@@ -23,12 +23,13 @@ export function RecommendationPanel({ recs, limit = 4 }: { recs: Recommendation[
   const items = recs.slice(0, limit);
 
   return (
-    <section aria-labelledby="recs-heading">
+    <section aria-labelledby="recs-heading" className="rounded-lg border bg-card p-4">
       <SectionHeader
         id="recs-heading"
         title={t("home.recs.title")}
         href="/recommendations"
         actionLabel={t("home.viewAll")}
+        className="mb-3"
       />
 
       {items.length === 0 ? (

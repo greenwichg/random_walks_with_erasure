@@ -30,7 +30,7 @@ export function HeroStory({ story }: { story: Story }) {
           className="aspect-[16/9] w-full rounded-none border-0"
         />
 
-        <div className="p-5 sm:p-6">
+        <div className="p-5">
           <div className="mb-3 flex flex-wrap items-center gap-2">
             <span className="text-[0.7rem] font-semibold uppercase tracking-wider text-primary">
               {t("home.hero.eyebrow")}

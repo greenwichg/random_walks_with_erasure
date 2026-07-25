@@ -21,7 +21,7 @@ export function DailyBriefing({ facts }: { facts: BriefingFacts }) {
   return (
     <section
       aria-labelledby="briefing-heading"
-      className="rounded-lg border bg-card p-5 shadow-soft sm:p-6"
+      className="rounded-lg border bg-card p-5 shadow-soft"
     >
       <p className="text-[0.7rem] font-semibold uppercase tracking-wider text-primary">
         {t("home.briefing.eyebrow")}

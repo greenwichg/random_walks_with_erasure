@@ -49,7 +49,7 @@ export function InformationHealthPanel({ data }: { data: DashboardSummary }) {
   const hero = heroCopyKeys(band.label);
 
   return (
-    <section aria-labelledby="health-heading" className="rounded-lg border bg-card p-5 shadow-soft">
+    <section aria-labelledby="health-heading" className="rounded-lg border bg-card p-4">
       <SectionHeader
         id="health-heading"
         title={t("home.health.title")}

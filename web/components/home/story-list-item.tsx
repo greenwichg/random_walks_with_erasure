@@ -28,13 +28,13 @@ export function StoryListItem({
   showImage?: boolean;
   className?: string;
 }) {
-  const { t, formatCompact } = useTranslation();
+  const { t, formatCompact, timeAgo } = useTranslation();
 
   return (
     <li className={cn("group", className)}>
       <Link
         href={`/stories/${story.id}`}
-        className="flex gap-3.5 rounded-md py-2.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+        className="flex gap-4 rounded-md py-3 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
       >
         {rank != null && (
           <span
@@ -50,8 +50,12 @@ export function StoryListItem({
             {story.title}
           </h3>
 
+          {/* Topic + recency give each row an editorial dateline; without them the list read as
+              undifferentiated rows of headlines. */}
           <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+            <span className="font-medium text-foreground/70">{story.topic}</span>
             <span>{t("storyCard.sources", { n: formatCompact(story.totalCoverage) })}</span>
+            {story.updatedAt && <span>{timeAgo(story.updatedAt)}</span>}
             {story.blindspotSide && (
               <span
                 className="inline-flex items-center gap-1 font-medium"

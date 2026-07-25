@@ -11,6 +11,7 @@ import { TrendingTopicsRail } from "@/components/home/trending-topics-rail";
 import { DailyBriefing } from "@/components/home/daily-briefing";
 import { HeroStory } from "@/components/home/hero-story";
 import { StoryListItem } from "@/components/home/story-list-item";
+import { StoryFeatureCard } from "@/components/home/story-feature-card";
 import { CategorySection } from "@/components/home/category-section";
 import { RecommendationPanel } from "@/components/home/recommendation-panel";
 import { InformationHealthPanel } from "@/components/home/information-health-panel";
@@ -129,11 +130,20 @@ export default function HomePage() {
                   href="/stories"
                   actionLabel={t("home.viewAll")}
                 />
-                <ul className="divide-y">
-                  {topStories.map((story, i) => (
-                    <StoryListItem key={story.id} story={story} rank={i + 1} showImage />
+                {/* Lead pair, then a ranked tail: a section gets a first tier and a second tier
+                    instead of eight identical rows. */}
+                <div className="grid gap-4 sm:grid-cols-2">
+                  {topStories.slice(0, 2).map((story) => (
+                    <StoryFeatureCard key={story.id} story={story} />
                   ))}
-                </ul>
+                </div>
+                {topStories.length > 2 && (
+                  <ul className="mt-2 divide-y">
+                    {topStories.slice(2).map((story, i) => (
+                      <StoryListItem key={story.id} story={story} rank={i + 3} showImage />
+                    ))}
+                  </ul>
+                )}
               </section>
             )}
 
@@ -151,9 +161,11 @@ export default function HomePage() {
                   href="/stories"
                   actionLabel={t("home.viewAll")}
                 />
+                {/* Text-dense on purpose: the closing run contrasts with the image-heavy sections
+                    above and lets a scanning reader cover more ground per screen. */}
                 <ul className="divide-y">
                   {latest.map((story) => (
-                    <StoryListItem key={story.id} story={story} showImage />
+                    <StoryListItem key={story.id} story={story} />
                   ))}
                 </ul>
               </section>

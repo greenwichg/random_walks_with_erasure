@@ -85,8 +85,8 @@ export function TrendingTopicsPanel({
   if (topics.length === 0) return null;
 
   return (
-    <section aria-labelledby="topics-panel-heading">
-      <SectionHeader id="topics-panel-heading" title={t("home.trending.title")} />
+    <section aria-labelledby="topics-panel-heading" className="rounded-lg border bg-card p-4">
+      <SectionHeader id="topics-panel-heading" title={t("home.trending.title")} className="mb-3" />
       <ul className="space-y-0.5">
         {topics.map((entry) => {
           const on = active === entry.topic;

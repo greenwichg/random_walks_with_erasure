@@ -19,9 +19,9 @@ export function PublisherSpotlight({ publishers }: { publishers: PublisherCount[
   const max = publishers[0]?.stories || 1;
 
   return (
-    <section aria-labelledby="publishers-heading">
-      <SectionHeader id="publishers-heading" title={t("home.publishers.title")} />
-      <ul className="space-y-2.5">
+    <section aria-labelledby="publishers-heading" className="rounded-lg border bg-card p-4">
+      <SectionHeader id="publishers-heading" title={t("home.publishers.title")} className="mb-3" />
+      <ul className="space-y-3">
         {publishers.map((entry) => (
           <li key={entry.publisher}>
             <div className="flex items-baseline justify-between gap-3 text-sm">
