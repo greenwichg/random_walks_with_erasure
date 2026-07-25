@@ -17,13 +17,23 @@ import { InformationHealthPanel } from "@/components/home/information-health-pan
 import { PublisherSpotlight } from "@/components/home/publisher-spotlight";
 import { SiteFooter } from "@/components/home/site-footer";
 import { HomeSkeleton } from "@/components/home/home-skeleton";
-import { briefingFacts, groupByTopic, publisherStats, trendingTopics } from "@/lib/home";
+import { BlindspotModule } from "@/components/home/blindspot-module";
+import {
+  blindspotStories,
+  briefingFacts,
+  groupByTopic,
+  latestStories,
+  publisherStats,
+  trendingTopics,
+} from "@/lib/home";
 import { useTranslation } from "@/lib/i18n";
 
 /** How many clustered events back the whole page (hero + top stories + every category module). */
-const STORY_PAGE_SIZE = 40;
+const STORY_PAGE_SIZE = 60;
 /** Events listed under "Top stories" before the category modules begin. */
-const TOP_STORY_COUNT = 6;
+const TOP_STORY_COUNT = 8;
+/** Events in the closing "Latest" run — the page's scroll reward. */
+const LATEST_COUNT = 8;
 
 /**
  * The Hidden View home page — a news-intelligence front page.
@@ -58,21 +68,28 @@ export default function HomePage() {
 
   const hero = visible[0];
   const topStories = React.useMemo(() => visible.slice(1, 1 + TOP_STORY_COUNT), [visible]);
+  const blindspots = React.useMemo(() => blindspotStories(visible, 4), [visible]);
   const categories = React.useMemo(() => {
     const shown = new Set<string>(visible.slice(0, 1 + TOP_STORY_COUNT).map((s) => s.id));
     return groupByTopic(visible, { exclude: shown });
+  }, [visible]);
+  // The closing run deliberately excludes only the lead + top block, so a reader who scrolls the
+  // whole page still meets events the category modules didn't surface.
+  const latest = React.useMemo(() => {
+    const shown = new Set<string>(visible.slice(0, 1 + TOP_STORY_COUNT).map((s) => s.id));
+    return latestStories(visible, LATEST_COUNT, shown);
   }, [visible]);
 
   return (
     <PageContainer>
       <UtilityBar />
 
-      <div className="mb-5 mt-6 flex flex-col gap-1">
+      <div className="mb-3 mt-4 flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <h1 className="text-2xl font-semibold tracking-tight">{t("home.title")}</h1>
         <p className="text-sm text-muted-foreground">{t("home.subtitle")}</p>
       </div>
 
-      <div className="mb-7">
+      <div className="mb-5">
         <TrendingTopicsRail topics={rail} active={topic} onSelect={setTopic} />
       </div>
 
@@ -84,9 +101,9 @@ export default function HomePage() {
       )}
 
       {visible.length > 0 && (
-        <div className="grid grid-cols-12 gap-6 lg:gap-8">
+        <div className="grid grid-cols-12 gap-x-8 gap-y-8">
           {/* ---- Lead column ---- */}
-          <div className="col-span-12 space-y-10 lg:col-span-8">
+          <div className="col-span-12 space-y-8 lg:col-span-8">
             <DailyBriefing facts={facts} />
 
             {hero && <HeroStory story={hero} />}
@@ -107,13 +124,31 @@ export default function HomePage() {
               </section>
             )}
 
+            <BlindspotModule stories={blindspots} />
+
             {categories.map((group) => (
-              <CategorySection key={group.topic} group={group} />
+              <CategorySection key={group.topic} group={group} limit={6} />
             ))}
+
+            {latest.length > 0 && (
+              <section aria-labelledby="latest-heading">
+                <SectionHeader
+                  id="latest-heading"
+                  title={t("home.latest.title")}
+                  href="/stories"
+                  actionLabel={t("home.viewAll")}
+                />
+                <ul className="divide-y">
+                  {latest.map((story) => (
+                    <StoryListItem key={story.id} story={story} showImage />
+                  ))}
+                </ul>
+              </section>
+            )}
           </div>
 
           {/* ---- Companion rail ---- */}
-          <aside className="col-span-12 space-y-10 lg:col-span-4">
+          <aside className="col-span-12 space-y-8 lg:col-span-4">
             {recommendations.data && <RecommendationPanel recs={recommendations.data} />}
             {dashboard.data && <InformationHealthPanel data={dashboard.data} />}
             <PublisherSpotlight publishers={publishers} />

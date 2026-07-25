@@ -687,5 +687,8 @@
   "home.footer.tagline": "Ein Gesundheitscheck für Ihre Nachrichtendiät.",
   "home.footer.rights": "© {year} Hidden View",
   "home.empty.title": "Noch keine Themen",
-  "home.empty.body": "Themen erscheinen, sobald die Erfassung gelaufen ist. Schauen Sie bald wieder vorbei."
+  "home.empty.body": "Themen erscheinen, sobald die Erfassung gelaufen ist. Schauen Sie bald wieder vorbei.",
+  "home.blindspots.title": "Blinde Flecken",
+  "home.blindspots.eyebrow": "Was Ihnen nicht gezeigt wird",
+  "home.latest.title": "Neueste Themen"
 }

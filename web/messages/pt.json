@@ -687,5 +687,8 @@
   "home.footer.tagline": "Um check-up para a sua dieta de notícias.",
   "home.footer.rights": "© {year} Hidden View",
   "home.empty.title": "Ainda não há notícias",
-  "home.empty.body": "As notícias aparecem após a ingestão. Volte em breve."
+  "home.empty.body": "As notícias aparecem após a ingestão. Volte em breve.",
+  "home.blindspots.title": "Pontos cegos",
+  "home.blindspots.eyebrow": "O que não lhe estão a mostrar",
+  "home.latest.title": "Últimas notícias"
 }

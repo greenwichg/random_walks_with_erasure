@@ -687,5 +687,8 @@
   "home.footer.tagline": "A health check for your news diet.",
   "home.footer.rights": "© {year} Hidden View",
   "home.empty.title": "No stories yet",
-  "home.empty.body": "Stories appear once ingestion has run. Check back shortly."
+  "home.empty.body": "Stories appear once ingestion has run. Check back shortly.",
+  "home.blindspots.title": "Blind spots",
+  "home.blindspots.eyebrow": "What you're not being shown",
+  "home.latest.title": "Latest stories"
 }

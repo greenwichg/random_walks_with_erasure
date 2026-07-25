@@ -103,6 +103,30 @@ export function groupByTopic(stories: Story[], options: GroupByTopicOptions = {}
     .map(([topic, list]) => ({ topic, stories: list }));
 }
 
+/**
+ * The blind-spot module: events the Story Service flagged as covered mainly from one side.
+ *
+ * This is the product's own signal (`blindspotSide`), not a heuristic invented here — the same
+ * flag `StoryCard` already renders. Ordered by breadth of coverage, so the most consequential
+ * one-sided events lead.
+ */
+export function blindspotStories(stories: Story[], limit = 4): Story[] {
+  return stories
+    .filter((s) => !!s.blindspotSide)
+    .sort((a, b) => b.totalCoverage - a.totalCoverage || a.id.localeCompare(b.id))
+    .slice(0, Math.max(0, limit));
+}
+
+/** Newest-first by each event's own latest update. Events with no timestamp sort last. */
+export function latestStories(stories: Story[], limit = 8, exclude?: Iterable<string>): Story[] {
+  const skip = new Set(exclude ?? []);
+  return stories
+    .filter((s) => !skip.has(s.id))
+    .slice()
+    .sort((a, b) => (updatedOf(b) ?? "").localeCompare(updatedOf(a) ?? ""))
+    .slice(0, Math.max(0, limit));
+}
+
 /** A topic and how many of today's events it covers. */
 export interface TopicCount {
   topic: string;

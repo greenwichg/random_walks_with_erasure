@@ -687,5 +687,8 @@
   "home.footer.tagline": "Un chequeo para tu dieta informativa.",
   "home.footer.rights": "© {year} Hidden View",
   "home.empty.title": "Aún no hay noticias",
-  "home.empty.body": "Las noticias aparecen cuando se ejecuta la ingesta. Vuelve en breve."
+  "home.empty.body": "Las noticias aparecen cuando se ejecuta la ingesta. Vuelve en breve.",
+  "home.blindspots.title": "Puntos ciegos",
+  "home.blindspots.eyebrow": "Lo que no te están mostrando",
+  "home.latest.title": "Últimas noticias"
 }

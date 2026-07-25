@@ -1,6 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { briefingFacts, groupByTopic, publisherStats, trendingTopics } from "./home.ts";
+import {
+  blindspotStories,
+  briefingFacts,
+  groupByTopic,
+  latestStories,
+  publisherStats,
+  trendingTopics,
+} from "./home.ts";
 import type { Story } from "../types/domain.ts";
 
 /** A minimal but type-complete Story, so the derivations are exercised against the real contract. */
@@ -86,6 +93,36 @@ test("trendingTopics ranks by coverage depth and respects the limit", () => {
   ]);
   assert.equal(trendingTopics(stories, 1).length, 1);
   assert.deepEqual(trendingTopics([]), []);
+});
+
+test("blindspotStories keeps only flagged events, widest coverage first", () => {
+  const picked = blindspotStories([
+    story({ id: "a", totalCoverage: 4 }), // no flag
+    story({ id: "b", totalCoverage: 9, blindspotSide: "right" }),
+    story({ id: "c", totalCoverage: 12, blindspotSide: "left" }),
+  ]);
+  assert.deepEqual(picked.map((s) => s.id), ["c", "b"]);
+  assert.equal(blindspotStories([]).length, 0);
+});
+
+test("latestStories sorts newest first and honours exclusions", () => {
+  const stories = [
+    story({ id: "old", latestUpdate: "2026-07-18T00:00:00Z" }),
+    story({ id: "new", latestUpdate: "2026-07-22T00:00:00Z" }),
+    story({ id: "mid", latestUpdate: "2026-07-20T00:00:00Z" }),
+  ];
+  assert.deepEqual(latestStories(stories).map((s) => s.id), ["new", "mid", "old"]);
+  assert.deepEqual(latestStories(stories, 8, ["new"]).map((s) => s.id), ["mid", "old"]);
+  assert.equal(latestStories(stories, 1).length, 1);
+});
+
+test("latestStories does not mutate its input", () => {
+  const stories = [
+    story({ id: "old", latestUpdate: "2026-07-18T00:00:00Z" }),
+    story({ id: "new", latestUpdate: "2026-07-22T00:00:00Z" }),
+  ];
+  latestStories(stories);
+  assert.deepEqual(stories.map((s) => s.id), ["old", "new"]);
 });
 
 test("publisherStats counts each publisher once per story", () => {

@@ -687,5 +687,8 @@
   "home.footer.tagline": "Un bilan de santé pour votre régime d'information.",
   "home.footer.rights": "© {year} Hidden View",
   "home.empty.title": "Aucun sujet pour l'instant",
-  "home.empty.body": "Les sujets apparaissent après l'ingestion. Revenez bientôt."
+  "home.empty.body": "Les sujets apparaissent après l'ingestion. Revenez bientôt.",
+  "home.blindspots.title": "Angles morts",
+  "home.blindspots.eyebrow": "Ce qu'on ne vous montre pas",
+  "home.latest.title": "Derniers sujets"
 }

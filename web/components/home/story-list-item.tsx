@@ -34,7 +34,7 @@ export function StoryListItem({
     <li className={cn("group", className)}>
       <Link
         href={`/stories/${story.id}`}
-        className="flex gap-3.5 rounded-md py-3 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+        className="flex gap-3.5 rounded-md py-2.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
       >
         {rank != null && (
           <span
