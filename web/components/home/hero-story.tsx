@@ -24,15 +24,17 @@ export function HeroStory({ story }: { story: Story }) {
   return (
     <article className="group relative overflow-hidden rounded-lg border bg-card shadow-soft transition-shadow hover:shadow-card">
       <Link href={`/stories/${story.id}`} className="block focus-visible:outline-none">
+        {/* Slow, motion-safe zoom on hover — the card's overflow-hidden clips it. The one image
+            micro-interaction on the page; rows and modules stay still. */}
         <ArticleImage
           src={story.image}
           alt={story.title}
-          className="aspect-[16/9] w-full rounded-none border-0"
+          className="aspect-[16/9] w-full rounded-none border-0 transition-transform duration-700 ease-out motion-safe:group-hover:scale-[1.02]"
         />
 
         <div className="p-5">
           <div className="mb-3 flex flex-wrap items-center gap-2">
-            <span className="text-[0.7rem] font-semibold uppercase tracking-wider text-primary">
+            <span className="text-[0.7rem] font-semibold uppercase tracking-wider text-muted-foreground">
               {t("home.hero.eyebrow")}
             </span>
             <span className="inline-flex items-center rounded-full bg-accent px-2.5 py-0.5 text-xs font-medium text-accent-foreground">

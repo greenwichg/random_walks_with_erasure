@@ -29,7 +29,11 @@ export function StoryFeatureCard({ story }: { story: Story }) {
         href={`/stories/${story.id}`}
         className="flex h-full flex-col overflow-hidden rounded-lg border bg-card transition-colors hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
       >
-        <ArticleImage src={story.image} alt={story.title} className="rounded-none border-0" />
+        <ArticleImage
+          src={story.image}
+          alt=""
+          className="rounded-none border-0 transition-transform duration-700 ease-out motion-safe:group-hover:scale-[1.02]"
+        />
 
         <div className="flex flex-1 flex-col p-4">
           <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">

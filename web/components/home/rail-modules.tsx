@@ -17,10 +17,24 @@ import { cn } from "@/lib/utils";
  */
 
 /**
- * Today's aggregate left/centre/right split. The page's per-story bars answer "how is THIS event
- * covered"; this answers "how is today covered", which is the question the product exists to ask.
+ * Today's coverage at a glance — ONE insight module: the aggregate left/centre/right split, and
+ * how many of today's events are one-sided.
+ *
+ * These were two adjacent stat cards (a coverage card and a blind-spot card), which read as a
+ * widget stack; they are one editorial thought — "how is today covered, and where is it thin" —
+ * so they render as one module. The per-story bars elsewhere answer "how is THIS event covered";
+ * this answers "how is today covered", the question the product exists to ask.
  */
-export function CoverageSnapshot({ mix, events }: { mix: ViewpointDistribution; events: number }) {
+export function CoverageSnapshot({
+  mix,
+  events,
+  flagged,
+}: {
+  mix: ViewpointDistribution;
+  events: number;
+  /** Events the Story Service flagged as covered mainly from one side. */
+  flagged: number;
+}) {
   const { t, formatCompact } = useTranslation();
   const total = mix.left + mix.center + mix.right;
   if (total <= 0) return null;
@@ -32,37 +46,17 @@ export function CoverageSnapshot({ mix, events }: { mix: ViewpointDistribution; 
       <p className="mt-3 text-xs text-muted-foreground">
         {t("home.coverage.body", { n: formatCompact(events) })}
       </p>
-    </section>
-  );
-}
-
-/**
- * The blind-spot count as a standing figure. Deliberately a number and a sentence rather than a
- * gauge — it is a fact about today's corpus, not a score about the reader.
- */
-export function BlindspotSummary({ flagged, total }: { flagged: number; total: number }) {
-  const { t, formatCompact } = useTranslation();
-  if (total <= 0) return null;
-
-  return (
-    <section aria-labelledby="blindspot-summary-heading" className="rounded-lg border bg-card p-4">
-      <SectionHeader
-        id="blindspot-summary-heading"
-        title={t("home.blindspots.title")}
-        className="mb-3"
-      />
-      <p className="flex items-baseline gap-2">
-        <span className="text-3xl font-semibold tabular-nums tracking-tight">
-          {formatCompact(flagged)}
-        </span>
-        <span className="text-xs text-muted-foreground">
-          {t("home.blindspots.summary", { total: formatCompact(total) })}
-        </span>
-      </p>
-      <p className="mt-2 inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-        <EyeOff className="h-3.5 w-3.5 shrink-0" aria-hidden />
-        {t("home.blindspots.eyebrow")}
-      </p>
+      {flagged > 0 && (
+        <p className="mt-3 flex items-baseline gap-2 border-t pt-3">
+          <EyeOff className="h-3.5 w-3.5 shrink-0 translate-y-0.5 text-muted-foreground" aria-hidden />
+          <span className="text-xs text-muted-foreground">
+            <span className="mr-1 text-base font-semibold tabular-nums tracking-tight text-foreground">
+              {formatCompact(flagged)}
+            </span>
+            {t("home.blindspots.summary", { total: formatCompact(events) })}
+          </span>
+        </p>
+      )}
     </section>
   );
 }

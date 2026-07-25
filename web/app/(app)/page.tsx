@@ -19,11 +19,7 @@ import { PublisherSpotlight } from "@/components/home/publisher-spotlight";
 import { SiteFooter } from "@/components/home/site-footer";
 import { HomeSkeleton } from "@/components/home/home-skeleton";
 import { BlindspotModule } from "@/components/home/blindspot-module";
-import {
-  BlindspotSummary,
-  CoverageSnapshot,
-  TrendingTopicsPanel,
-} from "@/components/home/rail-modules";
+import { CoverageSnapshot, TrendingTopicsPanel } from "@/components/home/rail-modules";
 import {
   blindspotStories,
   briefingFacts,
@@ -149,8 +145,9 @@ export default function HomePage() {
 
             <BlindspotModule stories={blindspots} />
 
-            {categories.map((group) => (
-              <CategorySection key={group.topic} group={group} limit={6} />
+            {/* Alternating feature placement gives consecutive topic modules a magazine rhythm. */}
+            {categories.map((group, i) => (
+              <CategorySection key={group.topic} group={group} limit={6} flip={i % 2 === 1} />
             ))}
 
             {latest.length > 0 && (
@@ -161,11 +158,11 @@ export default function HomePage() {
                   href="/stories"
                   actionLabel={t("home.viewAll")}
                 />
-                {/* Text-dense on purpose: the closing run contrasts with the image-heavy sections
+                {/* Compact on purpose: the closing run contrasts with the image-heavy sections
                     above and lets a scanning reader cover more ground per screen. */}
                 <ul className="divide-y">
                   {latest.map((story) => (
-                    <StoryListItem key={story.id} story={story} />
+                    <StoryListItem key={story.id} story={story} variant="compact" />
                   ))}
                 </ul>
               </section>
@@ -178,8 +175,7 @@ export default function HomePage() {
           <aside className="col-span-12 space-y-8 lg:col-span-4">
             {recommendations.data && <RecommendationPanel recs={recommendations.data} />}
             {dashboard.data && <InformationHealthPanel data={dashboard.data} />}
-            <CoverageSnapshot mix={mix} events={visible.length} />
-            <BlindspotSummary flagged={flagged} total={visible.length} />
+            <CoverageSnapshot mix={mix} events={visible.length} flagged={flagged} />
             <PublisherSpotlight publishers={publishers} />
             <TrendingTopicsPanel topics={rail} active={topic} onSelect={setTopic} />
           </aside>

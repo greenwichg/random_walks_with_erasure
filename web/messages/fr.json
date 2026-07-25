@@ -693,5 +693,6 @@
   "home.latest.title": "Derniers sujets",
   "home.coverage.title": "Répartition du jour",
   "home.coverage.body": "Cumul des {n} sujets de cette page.",
-  "home.blindspots.summary": "sur {total} sujets couverts surtout d'un côté"
+  "home.blindspots.summary": "sur {total} sujets couverts surtout d'un côté",
+  "home.category.mix": "Couverture de {events} sujets par {publishers} médias."
 }

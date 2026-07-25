@@ -693,5 +693,6 @@
   "home.latest.title": "Últimas notícias",
   "home.coverage.title": "Cobertura de hoje",
   "home.coverage.body": "Soma dos {n} temas desta página.",
-  "home.blindspots.summary": "de {total} temas cobertos sobretudo de um lado"
+  "home.blindspots.summary": "de {total} temas cobertos sobretudo de um lado",
+  "home.category.mix": "Cobertura de {events} temas por {publishers} veículos."
 }

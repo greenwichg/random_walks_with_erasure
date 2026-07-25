@@ -693,5 +693,6 @@
   "home.latest.title": "Neueste Themen",
   "home.coverage.title": "Verteilung heute",
   "home.coverage.body": "Summiert über alle {n} Themen dieser Seite.",
-  "home.blindspots.summary": "von {total} Themen überwiegend von einer Seite"
+  "home.blindspots.summary": "von {total} Themen überwiegend von einer Seite",
+  "home.category.mix": "Berichterstattung zu {events} Themen von {publishers} Medien."
 }

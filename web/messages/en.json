@@ -693,5 +693,6 @@
   "home.latest.title": "Latest stories",
   "home.coverage.title": "Today's coverage mix",
   "home.coverage.body": "Summed across all {n} events on this page.",
-  "home.blindspots.summary": "of {total} events are covered mainly from one side"
+  "home.blindspots.summary": "of {total} events are covered mainly from one side",
+  "home.category.mix": "Coverage across {events} events from {publishers} publishers."
 }

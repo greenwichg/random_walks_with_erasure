@@ -43,18 +43,25 @@ export function StoryListItem({
   story,
   rank,
   showImage = false,
-  showSummary = true,
+  variant = "summary",
   className,
 }: {
   story: Story;
   /** 1-based position, rendered as a quiet ordinal when provided. */
   rank?: number;
   showImage?: boolean;
-  /** Opt out of the synopsis for a deliberately terse list. */
-  showSummary?: boolean;
+  /**
+   * Density variant (the component hierarchy's two lowest weights):
+   *  - "summary" — the full editorial summary: synopsis + the labelled L/C/R split. For a
+   *    section's primary list (Top Stories).
+   *  - "compact" — dateline, headline, bar and counts only. For supporting lists and the closing
+   *    run, where repeating the labelled split on every row would turn signal into noise.
+   */
+  variant?: "summary" | "compact";
   className?: string;
 }) {
   const { t, formatCompact, timeAgo } = useTranslation();
+  const compact = variant === "compact";
 
   const d = story.distribution;
   const total = (d?.left ?? 0) + (d?.center ?? 0) + (d?.right ?? 0);
@@ -67,7 +74,10 @@ export function StoryListItem({
         href={`/stories/${story.id}`}
         // Negative inline margin lets the hover tint bleed past the text column without shifting
         // the list's optical alignment.
-        className="-mx-2 flex gap-4 rounded-md px-2 py-4 transition-colors hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+        className={cn(
+          "-mx-2 flex gap-4 rounded-md px-2 transition-colors hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+          compact ? "py-3" : "py-4",
+        )}
       >
         {rank != null && (
           <span
@@ -94,26 +104,34 @@ export function StoryListItem({
           </div>
 
           {/* 2 — Headline */}
-          <h3 className="line-clamp-2 text-[0.9375rem] font-semibold leading-snug tracking-tight transition-colors group-hover:text-primary sm:text-base">
+          <h3
+            className={cn(
+              "line-clamp-2 font-semibold leading-snug tracking-tight transition-colors group-hover:text-primary",
+              compact ? "text-sm" : "text-[0.9375rem] sm:text-base",
+            )}
+          >
             {story.title}
           </h3>
 
-          {/* 3 — Synopsis */}
-          {showSummary && story.summary && (
+          {/* 3 — Synopsis (summary variant only) */}
+          {!compact && story.summary && (
             <p className="mt-1 line-clamp-2 text-[0.8125rem] leading-relaxed text-muted-foreground">
               {story.summary}
             </p>
           )}
 
-          {/* 4 — Coverage, then provenance */}
+          {/* 4 — Coverage, then provenance. The bar renders in both variants (it is the product's
+              signature); the LABELLED split renders only in the summary variant — repeated on every
+              compact row it would turn signal into noise. */}
           {total > 0 && (
-            <div className="mt-2.5" aria-hidden>
-              <SpectrumBar distribution={story.distribution} height={5} showLegend={false} />
+            <div className={compact ? "mt-2" : "mt-2.5"} aria-hidden>
+              <SpectrumBar distribution={story.distribution} height={compact ? 4 : 5} showLegend={false} />
             </div>
           )}
 
           <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-muted-foreground">
-            {total > 0 &&
+            {!compact &&
+              total > 0 &&
               BUCKETS.map((bucket) => (
                 <span key={bucket} className="inline-flex items-center gap-1">
                   <span
@@ -128,10 +146,10 @@ export function StoryListItem({
                 </span>
               ))}
 
-            {total > 0 && <span aria-hidden className="h-3 w-px bg-border" />}
+            {!compact && total > 0 && <span aria-hidden className="h-3 w-px bg-border" />}
 
             <span>{t("storyCard.sources", { n: formatCompact(story.totalCoverage) })}</span>
-            {publisherCount != null && (
+            {!compact && publisherCount != null && (
               <span>{t("stories.publishers", { n: formatCompact(publisherCount) })}</span>
             )}
 
