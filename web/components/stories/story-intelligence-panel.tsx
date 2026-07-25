@@ -1,9 +1,11 @@
 "use client";
 
+import * as React from "react";
 import {
   Activity,
   ArrowRight,
   Bell,
+  ChevronDown,
   Clock,
   Flag,
   Gauge,
@@ -17,6 +19,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useStoryIntelligence } from "@/hooks/use-data";
+import { condenseTimeline } from "@/lib/story-timeline";
 import { FreshnessBadge } from "@/components/stories/freshness-badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { StoryLifecycle, StoryMomentum, StoryTimelineEventType } from "@/types/domain";
@@ -49,6 +52,20 @@ const TIMELINE_ICON: Record<StoryTimelineEventType, LucideIcon> = {
 const fmtDate = (iso?: string) =>
   iso ? formatDate(iso, activeLang(), { month: "short", day: "numeric" }) : "";
 
+/** Locale time of day ("14:32" / "2:32 PM"). The day itself lives on the day divider above. */
+const fmtTime = (iso?: string) => {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime())
+    ? ""
+    : d.toLocaleTimeString(activeLang(), { hour: "numeric", minute: "2-digit" });
+};
+
+/** Condensed rows shown before "Show all" expands the log. */
+const TIMELINE_LIMIT = 10;
+/** How many publisher chips a grouped join row names before the "+n" overflow chip. */
+const GROUP_CHIP_LIMIT = 4;
+
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-md border bg-background/50 px-3 py-2">
@@ -67,13 +84,20 @@ function Stat({ label, value }: { label: string; value: string }) {
 export function StoryIntelligencePanel({ storyId }: { storyId: string }) {
   const { t, timeAgo } = useTranslation();
   const { data, isLoading } = useStoryIntelligence(storyId);
+  const [expanded, setExpanded] = React.useState(false);
+
+  // Condense the raw event log (day markers + collapsed join runs) — see lib/story-timeline.
+  const rows = React.useMemo(() => condenseTimeline(data?.timeline ?? []), [data?.timeline]);
 
   if (isLoading) {
     return <Skeleton className="mt-6 h-40 rounded-lg" />;
   }
   if (!data) return null;
 
-  const { freshness, lifecycle, momentum, newSinceLastVisit: nsv, timeline, alerts } = data;
+  const visibleRows = expanded ? rows : rows.slice(0, TIMELINE_LIMIT);
+  const hiddenCount = rows.length - visibleRows.length;
+
+  const { freshness, lifecycle, momentum, newSinceLastVisit: nsv, alerts } = data;
   const cs = data.coverageStatistics;
   const mo = MOMENTUM_META[momentum.state] ?? MOMENTUM_META.Stable;
   const MoIcon = mo.icon;
@@ -167,14 +191,59 @@ export function StoryIntelligencePanel({ storyId }: { storyId: string }) {
         />
       </div>
 
-      {/* Expanded timeline */}
-      {timeline.length > 0 && (
+      {/* Condensed timeline: day dividers carry the date ONCE, rows carry only a time of day, and
+          consecutive publisher joins collapse into one row of chips — a 20-event pile-on reads as
+          a handful of beats instead of twenty near-identical lines. */}
+      {rows.length > 0 && (
         <div className="mt-5">
           <h3 className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             <Gauge className="h-3.5 w-3.5" /> {t("storyIntel.coverageTimeline")}
           </h3>
           <ol className="relative space-y-3 border-l border-border pl-4">
-            {timeline.map((e, i) => {
+            {visibleRows.map((row, i) => {
+              if (row.kind === "day") {
+                return (
+                  <li key={`day-${row.iso}`} className="relative list-none pt-1 first:pt-0">
+                    <span className="text-[0.68rem] font-semibold uppercase tracking-wider text-muted-foreground">
+                      {fmtDate(row.iso)}
+                    </span>
+                  </li>
+                );
+              }
+
+              if (row.kind === "joins") {
+                const shown = row.publishers.slice(0, GROUP_CHIP_LIMIT);
+                const overflow = row.publishers.length - shown.length;
+                return (
+                  <li key={`joins-${row.date}-${i}`} className="relative">
+                    <span className="absolute -left-[1.35rem] flex h-4 w-4 items-center justify-center rounded-full bg-card ring-1 ring-border">
+                      <UserPlus className="h-3 w-3" />
+                    </span>
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className="text-sm">
+                        {t("storyIntel.joinedGroup", { n: row.publishers.length })}
+                      </span>
+                      <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                        {fmtTime(row.date)}
+                      </span>
+                    </div>
+                    <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs">
+                      {shown.map((p) => (
+                        <span key={p} className="rounded-full bg-background px-2 py-0.5 ring-1 ring-border">
+                          {p}
+                        </span>
+                      ))}
+                      {overflow > 0 && (
+                        <span className="rounded-full bg-background px-2 py-0.5 tabular-nums text-muted-foreground ring-1 ring-border">
+                          +{overflow}
+                        </span>
+                      )}
+                    </div>
+                  </li>
+                );
+              }
+
+              const e = row.event;
               const Icon = TIMELINE_ICON[e.type] ?? ArrowRight;
               const accent = e.type === "perspective_expansion" && e.perspective
                 ? LEAN_META[e.perspective]?.color
@@ -189,12 +258,23 @@ export function StoryIntelligencePanel({ storyId }: { storyId: string }) {
                   </span>
                   <div className="flex items-baseline justify-between gap-2">
                     <span className="text-sm">{e.label}</span>
-                    <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{fmtDate(e.date)}</span>
+                    <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{fmtTime(e.date)}</span>
                   </div>
                 </li>
               );
             })}
           </ol>
+
+          {hiddenCount > 0 && (
+            <button
+              type="button"
+              onClick={() => setExpanded(true)}
+              className="mt-3 inline-flex items-center gap-1 rounded text-xs font-medium text-primary transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            >
+              <ChevronDown className="h-3.5 w-3.5" aria-hidden />
+              {t("storyIntel.showAllEvents", { n: rows.length })}
+            </button>
+          )}
         </div>
       )}
     </section>

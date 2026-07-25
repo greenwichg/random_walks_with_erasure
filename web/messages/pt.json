@@ -700,5 +700,7 @@
   "story.registerSplit": "{reporting} reportagem · {opinion} opinião",
   "story.noCoverage": "Ainda sem cobertura de {side}",
   "story.noMatches": "Nenhum artigo corresponde a estes filtros.",
-  "story.publishersTitle": "Veículos nesta notícia"
+  "story.publishersTitle": "Veículos nesta notícia",
+  "storyIntel.joinedGroup": "{n} veículos juntaram-se à cobertura",
+  "storyIntel.showAllEvents": "Mostrar todos os {n} eventos"
 }

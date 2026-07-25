@@ -700,5 +700,7 @@
   "story.registerSplit": "{reporting} información · {opinion} opinión",
   "story.noCoverage": "Aún sin cobertura de {side}",
   "story.noMatches": "Ningún artículo coincide con estos filtros.",
-  "story.publishersTitle": "Medios en esta noticia"
+  "story.publishersTitle": "Medios en esta noticia",
+  "storyIntel.joinedGroup": "{n} medios se unieron a la cobertura",
+  "storyIntel.showAllEvents": "Mostrar los {n} eventos"
 }

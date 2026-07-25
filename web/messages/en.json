@@ -700,5 +700,7 @@
   "story.registerSplit": "{reporting} reporting · {opinion} opinion",
   "story.noCoverage": "No {side} coverage yet",
   "story.noMatches": "No articles match these filters.",
-  "story.publishersTitle": "Publishers on this story"
+  "story.publishersTitle": "Publishers on this story",
+  "storyIntel.joinedGroup": "{n} publishers joined the coverage",
+  "storyIntel.showAllEvents": "Show all {n} events"
 }

@@ -700,5 +700,7 @@
   "story.registerSplit": "{reporting} Bericht · {opinion} Meinung",
   "story.noCoverage": "Noch keine Berichterstattung von {side}",
   "story.noMatches": "Keine Artikel entsprechen diesen Filtern.",
-  "story.publishersTitle": "Medien zu diesem Thema"
+  "story.publishersTitle": "Medien zu diesem Thema",
+  "storyIntel.joinedGroup": "{n} Medien kamen zur Berichterstattung hinzu",
+  "storyIntel.showAllEvents": "Alle {n} Ereignisse anzeigen"
 }
