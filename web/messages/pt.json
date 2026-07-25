@@ -693,5 +693,12 @@
   "home.coverage.title": "Cobertura de hoje",
   "home.coverage.body": "Soma dos {n} temas desta página.",
   "home.category.mix": "Cobertura de {events} temas por {publishers} veículos.",
-  "home.briefing.blindspotHeadline": "{n} de {stories} temas têm cobertura sobretudo de um só lado."
+  "home.briefing.blindspotHeadline": "{n} de {stories} temas têm cobertura sobretudo de um só lado.",
+  "story.share": "Partilhar",
+  "story.breakdown": "Detalhe da cobertura",
+  "story.related": "Mais notícias",
+  "story.registerSplit": "{reporting} reportagem · {opinion} opinião",
+  "story.noCoverage": "Ainda sem cobertura de {side}",
+  "story.noMatches": "Nenhum artigo corresponde a estes filtros.",
+  "story.publishersTitle": "Veículos nesta notícia"
 }

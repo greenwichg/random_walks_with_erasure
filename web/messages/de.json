@@ -693,5 +693,12 @@
   "home.coverage.title": "Verteilung heute",
   "home.coverage.body": "Summiert über alle {n} Themen dieser Seite.",
   "home.category.mix": "Berichterstattung zu {events} Themen von {publishers} Medien.",
-  "home.briefing.blindspotHeadline": "{n} von {stories} Themen werden überwiegend von einer Seite abgedeckt."
+  "home.briefing.blindspotHeadline": "{n} von {stories} Themen werden überwiegend von einer Seite abgedeckt.",
+  "story.share": "Teilen",
+  "story.breakdown": "Aufschlüsselung der Berichterstattung",
+  "story.related": "Weitere Themen",
+  "story.registerSplit": "{reporting} Bericht · {opinion} Meinung",
+  "story.noCoverage": "Noch keine Berichterstattung von {side}",
+  "story.noMatches": "Keine Artikel entsprechen diesen Filtern.",
+  "story.publishersTitle": "Medien zu diesem Thema"
 }

@@ -693,5 +693,12 @@
   "home.coverage.title": "Cobertura de hoy",
   "home.coverage.body": "Suma de los {n} temas de esta página.",
   "home.category.mix": "Cobertura de {events} temas por {publishers} medios.",
-  "home.briefing.blindspotHeadline": "{n} de {stories} temas se cubren sobre todo desde un solo lado."
+  "home.briefing.blindspotHeadline": "{n} de {stories} temas se cubren sobre todo desde un solo lado.",
+  "story.share": "Compartir",
+  "story.breakdown": "Desglose de cobertura",
+  "story.related": "Más noticias",
+  "story.registerSplit": "{reporting} información · {opinion} opinión",
+  "story.noCoverage": "Aún sin cobertura de {side}",
+  "story.noMatches": "Ningún artículo coincide con estos filtros.",
+  "story.publishersTitle": "Medios en esta noticia"
 }

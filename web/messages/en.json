@@ -693,5 +693,12 @@
   "home.coverage.title": "Today's coverage mix",
   "home.coverage.body": "Summed across all {n} events on this page.",
   "home.category.mix": "Coverage across {events} events from {publishers} publishers.",
-  "home.briefing.blindspotHeadline": "{n} of {stories} stories are covered mainly from one side."
+  "home.briefing.blindspotHeadline": "{n} of {stories} stories are covered mainly from one side.",
+  "story.share": "Share",
+  "story.breakdown": "Coverage breakdown",
+  "story.related": "More stories",
+  "story.registerSplit": "{reporting} reporting · {opinion} opinion",
+  "story.noCoverage": "No {side} coverage yet",
+  "story.noMatches": "No articles match these filters.",
+  "story.publishersTitle": "Publishers on this story"
 }

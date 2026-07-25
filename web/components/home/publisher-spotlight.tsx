@@ -12,7 +12,17 @@ import { useTranslation } from "@/lib/i18n";
  * can't see in the corpus. There is no "Follow" affordance because there is no follow contract in
  * the engine — a button that silently did nothing would be worse than its absence.
  */
-export function PublisherSpotlight({ publishers }: { publishers: PublisherCount[] }) {
+export function PublisherSpotlight({
+  publishers,
+  titleKey = "home.publishers.title",
+  countKey = "home.publishers.count",
+}: {
+  publishers: PublisherCount[];
+  /** Override the heading/count copy so the same module serves other scopes (e.g. one story's
+   *  publishers, where the count means articles, not events). */
+  titleKey?: string;
+  countKey?: string;
+}) {
   const { t, formatCompact } = useTranslation();
   if (publishers.length === 0) return null;
 
@@ -20,14 +30,14 @@ export function PublisherSpotlight({ publishers }: { publishers: PublisherCount[
 
   return (
     <section aria-labelledby="publishers-heading" className="rounded-lg border bg-card p-4">
-      <SectionHeader id="publishers-heading" title={t("home.publishers.title")} className="mb-3" />
+      <SectionHeader id="publishers-heading" title={t(titleKey)} className="mb-3" />
       <ul className="space-y-3">
         {publishers.map((entry) => (
           <li key={entry.publisher}>
             <div className="flex items-baseline justify-between gap-3 text-sm">
               <span className="truncate font-medium">{entry.publisher}</span>
               <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-                {t("home.publishers.count", { n: formatCompact(entry.stories) })}
+                {t(countKey, { n: formatCompact(entry.stories) })}
               </span>
             </div>
             {/* Presentational only — the count beside it carries the same value for screen readers. */}
