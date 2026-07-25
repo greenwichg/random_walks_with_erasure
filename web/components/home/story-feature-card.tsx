@@ -20,7 +20,14 @@ import { useTranslation } from "@/lib/i18n";
  * Same `Story` contract and same signals as the other two, so a reader learns one visual language:
  * topic, freshness, coverage spectrum, and the blind-spot flag when the Story Service set one.
  */
-export function StoryFeatureCard({ story }: { story: Story }) {
+export function StoryFeatureCard({
+  story,
+  showTopic = true,
+}: {
+  story: Story;
+  /** Hide the topic label inside a single-topic section (the header already names it). */
+  showTopic?: boolean;
+}) {
   const { t, formatCompact, timeAgo } = useTranslation();
 
   return (
@@ -36,12 +43,14 @@ export function StoryFeatureCard({ story }: { story: Story }) {
         />
 
         <div className="flex flex-1 flex-col p-4">
-          <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
-            <span className="font-medium text-foreground/70">{story.topic}</span>
-            {story.freshness && (
-              <FreshnessBadge band={story.freshness.band} score={story.freshness.score} />
-            )}
-          </div>
+          {(showTopic || story.freshness) && (
+            <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
+              {showTopic && <span className="font-medium text-foreground/70">{story.topic}</span>}
+              {story.freshness && (
+                <FreshnessBadge band={story.freshness.band} score={story.freshness.score} />
+              )}
+            </div>
+          )}
 
           <h3 className="line-clamp-3 text-base font-semibold leading-snug tracking-tight transition-colors group-hover:text-primary">
             {story.title}

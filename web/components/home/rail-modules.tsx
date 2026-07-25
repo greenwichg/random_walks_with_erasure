@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { EyeOff } from "lucide-react";
 import type { ViewpointDistribution } from "@/types/domain";
 import type { TopicCount } from "@/lib/home";
 import { SectionHeader } from "@/components/shared/section-header";
@@ -17,24 +16,14 @@ import { cn } from "@/lib/utils";
  */
 
 /**
- * Today's coverage at a glance — ONE insight module: the aggregate left/centre/right split, and
- * how many of today's events are one-sided.
+ * Today's aggregate left/centre/right split — ONE question, answered once: "how balanced is
+ * today's coverage?". The per-story bars elsewhere answer "how is THIS event covered".
  *
- * These were two adjacent stat cards (a coverage card and a blind-spot card), which read as a
- * widget stack; they are one editorial thought — "how is today covered, and where is it thin" —
- * so they render as one module. The per-story bars elsewhere answer "how is THIS event covered";
- * this answers "how is today covered", the question the product exists to ask.
+ * The one-sided count deliberately does NOT appear here: the Daily Briefing leads the page with it,
+ * and repeating the same figure in the rail dilutes both. (This reverses the Phase-1.3 merge — the
+ * merge fixed a widget-stack problem but created a cross-section repetition problem.)
  */
-export function CoverageSnapshot({
-  mix,
-  events,
-  flagged,
-}: {
-  mix: ViewpointDistribution;
-  events: number;
-  /** Events the Story Service flagged as covered mainly from one side. */
-  flagged: number;
-}) {
+export function CoverageSnapshot({ mix, events }: { mix: ViewpointDistribution; events: number }) {
   const { t, formatCompact } = useTranslation();
   const total = mix.left + mix.center + mix.right;
   if (total <= 0) return null;
@@ -46,17 +35,6 @@ export function CoverageSnapshot({
       <p className="mt-3 text-xs text-muted-foreground">
         {t("home.coverage.body", { n: formatCompact(events) })}
       </p>
-      {flagged > 0 && (
-        <p className="mt-3 flex items-baseline gap-2 border-t pt-3">
-          <EyeOff className="h-3.5 w-3.5 shrink-0 translate-y-0.5 text-muted-foreground" aria-hidden />
-          <span className="text-xs text-muted-foreground">
-            <span className="mr-1 text-base font-semibold tabular-nums tracking-tight text-foreground">
-              {formatCompact(flagged)}
-            </span>
-            {t("home.blindspots.summary", { total: formatCompact(events) })}
-          </span>
-        </p>
-      )}
     </section>
   );
 }

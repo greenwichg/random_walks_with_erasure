@@ -58,14 +58,16 @@ export function CategorySection({
       />
 
       <div className="grid gap-5 lg:grid-cols-12">
+        {/* showTopic={false} throughout: the section header already names the topic, and repeating
+            it on the featured card and every supporting row was pure noise. */}
         <div className={cn("lg:col-span-5", flip && "lg:order-last")}>
-          <StoryFeatureCard story={featured} />
+          <StoryFeatureCard story={featured} showTopic={false} />
         </div>
 
         {supporting.length > 0 && (
           <ul className="divide-y lg:col-span-7">
             {supporting.map((story) => (
-              <StoryListItem key={story.id} story={story} variant="compact" />
+              <StoryListItem key={story.id} story={story} variant="compact" showTopic={false} />
             ))}
           </ul>
         )}

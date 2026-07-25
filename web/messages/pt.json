@@ -667,7 +667,6 @@
   "home.trending.all": "Todos os temas",
   "home.briefing.eyebrow": "Resumo de hoje",
   "home.briefing.headline": "{stories} notícias de {publishers} veículos",
-  "home.briefing.blindspot": "{n} têm cobertura sobretudo de um só lado.",
   "home.briefing.balanced": "Hoje todos os temas têm cobertura de mais de um lado.",
   "home.briefing.updated": "Atualizado {time}",
   "home.briefing.analyze": "Analisar um link",
@@ -693,6 +692,6 @@
   "home.latest.title": "Últimas notícias",
   "home.coverage.title": "Cobertura de hoje",
   "home.coverage.body": "Soma dos {n} temas desta página.",
-  "home.blindspots.summary": "de {total} temas cobertos sobretudo de um lado",
-  "home.category.mix": "Cobertura de {events} temas por {publishers} veículos."
+  "home.category.mix": "Cobertura de {events} temas por {publishers} veículos.",
+  "home.briefing.blindspotHeadline": "{n} de {stories} temas têm cobertura sobretudo de um só lado."
 }

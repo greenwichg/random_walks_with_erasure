@@ -667,7 +667,6 @@
   "home.trending.all": "Alle Themen",
   "home.briefing.eyebrow": "Das Briefing heute",
   "home.briefing.headline": "{stories} Themen von {publishers} Medien",
-  "home.briefing.blindspot": "{n} werden überwiegend von einer Seite abgedeckt.",
   "home.briefing.balanced": "Heute wird jedes Thema von mehr als einer Seite abgedeckt.",
   "home.briefing.updated": "Aktualisiert {time}",
   "home.briefing.analyze": "Link analysieren",
@@ -693,6 +692,6 @@
   "home.latest.title": "Neueste Themen",
   "home.coverage.title": "Verteilung heute",
   "home.coverage.body": "Summiert über alle {n} Themen dieser Seite.",
-  "home.blindspots.summary": "von {total} Themen überwiegend von einer Seite",
-  "home.category.mix": "Berichterstattung zu {events} Themen von {publishers} Medien."
+  "home.category.mix": "Berichterstattung zu {events} Themen von {publishers} Medien.",
+  "home.briefing.blindspotHeadline": "{n} von {stories} Themen werden überwiegend von einer Seite abgedeckt."
 }

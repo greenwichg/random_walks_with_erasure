@@ -667,7 +667,6 @@
   "home.trending.all": "All topics",
   "home.briefing.eyebrow": "Today's briefing",
   "home.briefing.headline": "{stories} stories across {publishers} publishers",
-  "home.briefing.blindspot": "{n} are covered mainly from one side.",
   "home.briefing.balanced": "Every event today carries coverage from more than one side.",
   "home.briefing.updated": "Updated {time}",
   "home.briefing.analyze": "Analyze a link",
@@ -693,6 +692,6 @@
   "home.latest.title": "Latest stories",
   "home.coverage.title": "Today's coverage mix",
   "home.coverage.body": "Summed across all {n} events on this page.",
-  "home.blindspots.summary": "of {total} events are covered mainly from one side",
-  "home.category.mix": "Coverage across {events} events from {publishers} publishers."
+  "home.category.mix": "Coverage across {events} events from {publishers} publishers.",
+  "home.briefing.blindspotHeadline": "{n} of {stories} stories are covered mainly from one side."
 }

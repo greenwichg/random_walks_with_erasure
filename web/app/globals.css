@@ -104,6 +104,13 @@
      * untouched. This is the safety net; the real chart/card fixes remove the overflow at source. */
     overflow-x: clip;
   }
+  /* Anchor jumps glide instead of teleporting — but only for users who haven't asked for
+   * reduced motion. */
+  @media (prefers-reduced-motion: no-preference) {
+    html {
+      scroll-behavior: smooth;
+    }
+  }
   body {
     @apply bg-background text-foreground antialiased;
     font-feature-settings: "cv11", "ss01";

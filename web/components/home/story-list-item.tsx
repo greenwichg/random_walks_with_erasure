@@ -44,6 +44,7 @@ export function StoryListItem({
   rank,
   showImage = false,
   variant = "summary",
+  showTopic = true,
   className,
 }: {
   story: Story;
@@ -58,6 +59,9 @@ export function StoryListItem({
    *    run, where repeating the labelled split on every row would turn signal into noise.
    */
   variant?: "summary" | "compact";
+  /** Hide the topic label — set false inside a single-topic section, where the section header
+   *  already names it and repeating it on every row is pure noise. */
+  showTopic?: boolean;
   className?: string;
 }) {
   const { t, formatCompact, timeAgo } = useTranslation();
@@ -89,19 +93,23 @@ export function StoryListItem({
         )}
 
         <div className="min-w-0 flex-1">
-          {/* 1 — Dateline */}
-          <div className="mb-1 flex flex-wrap items-center gap-2">
-            <span className="text-[0.7rem] font-semibold uppercase tracking-wide text-foreground/70">
-              {story.topic}
-            </span>
-            {urgent ? (
-              <FreshnessBadge band={story.freshness!.band} score={story.freshness!.score} />
-            ) : (
-              story.updatedAt && (
-                <span className="text-[0.7rem] text-muted-foreground">{timeAgo(story.updatedAt)}</span>
-              )
-            )}
-          </div>
+          {/* 1 — Dateline (hidden entirely when it has nothing to say) */}
+          {(showTopic || urgent || story.updatedAt) && (
+            <div className="mb-1 flex flex-wrap items-center gap-2">
+              {showTopic && (
+                <span className="text-[0.7rem] font-semibold uppercase tracking-wide text-foreground/70">
+                  {story.topic}
+                </span>
+              )}
+              {urgent ? (
+                <FreshnessBadge band={story.freshness!.band} score={story.freshness!.score} />
+              ) : (
+                story.updatedAt && (
+                  <span className="text-[0.7rem] text-muted-foreground">{timeAgo(story.updatedAt)}</span>
+                )
+              )}
+            </div>
+          )}
 
           {/* 2 — Headline */}
           <h3

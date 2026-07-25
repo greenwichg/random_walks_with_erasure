@@ -73,7 +73,6 @@ export default function HomePage() {
   const topStories = React.useMemo(() => visible.slice(1, 1 + TOP_STORY_COUNT), [visible]);
   const blindspots = React.useMemo(() => blindspotStories(visible, 4), [visible]);
   const mix = React.useMemo(() => coverageMix(visible), [visible]);
-  const flagged = React.useMemo(() => visible.filter((s) => !!s.blindspotSide).length, [visible]);
 
   // Downstream modules exclude only the LEAD. A topic section and a recency run are different
   // editorial lenses on the same day, not a queue to be consumed — excluding everything already
@@ -175,7 +174,7 @@ export default function HomePage() {
           <aside className="col-span-12 space-y-8 lg:col-span-4">
             {recommendations.data && <RecommendationPanel recs={recommendations.data} />}
             {dashboard.data && <InformationHealthPanel data={dashboard.data} />}
-            <CoverageSnapshot mix={mix} events={visible.length} flagged={flagged} />
+            <CoverageSnapshot mix={mix} events={visible.length} />
             <PublisherSpotlight publishers={publishers} />
             <TrendingTopicsPanel topics={rail} active={topic} onSelect={setTopic} />
           </aside>
