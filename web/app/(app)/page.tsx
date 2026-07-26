@@ -4,9 +4,9 @@ import * as React from "react";
 import { Newspaper } from "lucide-react";
 import { useDashboard, useRecommendations, useStories } from "@/hooks/use-data";
 import { PageContainer } from "@/components/layout/page-container";
+import { PageGrid } from "@/components/layout/page-grid";
 import { SectionHeader } from "@/components/shared/section-header";
 import { EmptyState, ErrorState } from "@/components/shared/states";
-import { UtilityBar } from "@/components/home/utility-bar";
 import { TrendingTopicsRail } from "@/components/home/trending-topics-rail";
 import { DailyBriefing } from "@/components/home/daily-briefing";
 import { HeroStory } from "@/components/home/hero-story";
@@ -16,7 +16,6 @@ import { CategorySection } from "@/components/home/category-section";
 import { RecommendationPanel } from "@/components/home/recommendation-panel";
 import { InformationHealthPanel } from "@/components/home/information-health-panel";
 import { PublisherSpotlight } from "@/components/home/publisher-spotlight";
-import { SiteFooter } from "@/components/home/site-footer";
 import { HomeSkeleton } from "@/components/home/home-skeleton";
 import { BlindspotModule } from "@/components/home/blindspot-module";
 import { CoverageSnapshot, TrendingTopicsPanel } from "@/components/home/rail-modules";
@@ -91,9 +90,7 @@ export default function HomePage() {
 
   return (
     <PageContainer>
-      <UtilityBar />
-
-      <div className="mb-3 mt-4 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+      <div className="mb-3 flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <h1 className="text-2xl font-semibold tracking-tight">{t("home.title")}</h1>
         <p className="text-sm text-muted-foreground">{t("home.subtitle")}</p>
       </div>
@@ -110,10 +107,20 @@ export default function HomePage() {
       )}
 
       {visible.length > 0 && (
-        <div className="grid grid-cols-12 gap-x-8 gap-y-8">
-          {/* ---- Lead column ---- */}
-          <div className="col-span-12 space-y-8 lg:col-span-8">
-            <DailyBriefing facts={facts} />
+        <PageGrid
+          rail={
+            /* Companion rail, reader-first: what to read next, then how your diet looks, then the
+               day's shape, then browsable indexes. Every module reads from data already fetched. */
+            <>
+              {recommendations.data && <RecommendationPanel recs={recommendations.data} />}
+              {dashboard.data && <InformationHealthPanel data={dashboard.data} />}
+              <CoverageSnapshot mix={mix} events={visible.length} />
+              <PublisherSpotlight publishers={publishers} />
+              <TrendingTopicsPanel topics={rail} active={topic} onSelect={setTopic} />
+            </>
+          }
+        >
+          <DailyBriefing facts={facts} />
 
             {hero && <HeroStory story={hero} />}
 
@@ -166,22 +173,8 @@ export default function HomePage() {
                 </ul>
               </section>
             )}
-          </div>
-
-          {/* ---- Companion rail ----
-              Ordered reader-first: what to read next, then how your diet looks, then the day's
-              shape, then browsable indexes. Every module below reads from data already fetched. */}
-          <aside className="col-span-12 space-y-8 lg:col-span-4">
-            {recommendations.data && <RecommendationPanel recs={recommendations.data} />}
-            {dashboard.data && <InformationHealthPanel data={dashboard.data} />}
-            <CoverageSnapshot mix={mix} events={visible.length} />
-            <PublisherSpotlight publishers={publishers} />
-            <TrendingTopicsPanel topics={rail} active={topic} onSelect={setTopic} />
-          </aside>
-        </div>
+        </PageGrid>
       )}
-
-      <SiteFooter />
     </PageContainer>
   );
 }

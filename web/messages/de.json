@@ -702,5 +702,6 @@
   "story.noMatches": "Keine Artikel entsprechen diesen Filtern.",
   "story.publishersTitle": "Medien zu diesem Thema",
   "storyIntel.joinedGroup": "{n} Medien kamen zur Berichterstattung hinzu",
-  "storyIntel.showAllEvents": "Alle {n} Ereignisse anzeigen"
+  "storyIntel.showAllEvents": "Alle {n} Ereignisse anzeigen",
+  "nav.section.insights": "Einblicke"
 }

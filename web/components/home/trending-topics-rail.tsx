@@ -1,8 +1,8 @@
 "use client";
 
 import type { TopicCount } from "@/lib/home";
+import { FilterChip } from "@/components/ui/filter-chip";
 import { useTranslation } from "@/lib/i18n";
-import { cn } from "@/lib/utils";
 
 /**
  * The trending rail — the real catalog topics carrying today's coverage, ranked by depth.
@@ -36,9 +36,9 @@ export function TrendingTopicsRail({
       // last chip flush with the page gutter instead of clipped against it.
       className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
     >
-      <Chip label={t("home.trending.all")} active={active === null} onClick={() => onSelect(null)} />
+      <FilterChip label={t("home.trending.all")} active={active === null} onClick={() => onSelect(null)} />
       {topics.map((entry) => (
-        <Chip
+        <FilterChip
           key={entry.topic}
           label={entry.topic}
           count={entry.count}
@@ -47,35 +47,5 @@ export function TrendingTopicsRail({
         />
       ))}
     </div>
-  );
-}
-
-function Chip({
-  label,
-  count,
-  active,
-  onClick,
-}: {
-  label: string;
-  count?: number;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      className={cn(
-        "inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
-        active
-          ? "border-primary bg-primary/10 text-primary"
-          : "border-border bg-card text-muted-foreground hover:bg-accent hover:text-foreground",
-      )}
-    >
-      {label}
-      {count != null && <span className="tabular-nums opacity-60">{count}</span>}
-    </button>
   );
 }

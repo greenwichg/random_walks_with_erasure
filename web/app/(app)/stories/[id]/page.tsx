@@ -6,6 +6,7 @@ import { useParams } from "next/navigation";
 import { ArrowLeft, EyeOff, Newspaper, Users } from "lucide-react";
 import { useRecommendations, useStories, useStory } from "@/hooks/use-data";
 import { PageContainer } from "@/components/layout/page-container";
+import { PageGrid } from "@/components/layout/page-grid";
 import { SectionHeader } from "@/components/shared/section-header";
 import { SpectrumBar } from "@/components/shared/spectrum-bar";
 import { ArticleImage } from "@/components/shared/article-image";
@@ -19,7 +20,6 @@ import { StoryCoveragePanel } from "@/components/stories/story-coverage-panel";
 import { StoryListItem } from "@/components/home/story-list-item";
 import { RecommendationPanel } from "@/components/home/recommendation-panel";
 import { PublisherSpotlight } from "@/components/home/publisher-spotlight";
-import { SiteFooter } from "@/components/home/site-footer";
 import { LEAN_META } from "@/lib/metrics";
 import { useTranslation } from "@/lib/i18n";
 import { activeLang, formatDate } from "@/lib/i18n-core";
@@ -67,8 +67,15 @@ export default function StoryDetailPage() {
     return (
       <PageContainer>
         <div className="mb-5">{back}</div>
-        <div className="grid grid-cols-12 gap-x-8 gap-y-8" aria-hidden>
-          <div className="col-span-12 space-y-8 lg:col-span-8">
+        <div aria-hidden>
+          <PageGrid
+            rail={
+              <>
+                <Skeleton className="h-48 w-full rounded-lg" />
+                <Skeleton className="h-72 w-full rounded-lg" />
+              </>
+            }
+          >
             <Skeleton className="aspect-[21/9] w-full rounded-lg" />
             <Skeleton className="h-40 w-full rounded-lg" />
             <div className="space-y-4">
@@ -76,11 +83,7 @@ export default function StoryDetailPage() {
                 <Skeleton key={i} className="h-20 rounded-md" />
               ))}
             </div>
-          </div>
-          <div className="col-span-12 space-y-8 lg:col-span-4">
-            <Skeleton className="h-48 w-full rounded-lg" />
-            <Skeleton className="h-72 w-full rounded-lg" />
-          </div>
+          </PageGrid>
         </div>
       </PageContainer>
     );
@@ -124,9 +127,20 @@ export default function StoryDetailPage() {
         <ShareButton title={story.title} />
       </div>
 
-      <div className="grid grid-cols-12 gap-x-8 gap-y-8">
-        {/* ---- Lead column ---- */}
-        <div className="col-span-12 space-y-8 lg:col-span-8">
+      <PageGrid
+        rail={
+          /* Companion rail: how balanced is THIS story, who's on it, what next for YOU. */
+          <>
+            <StoryCoveragePanel distribution={story.distribution} coverage={story.coverage} />
+            <PublisherSpotlight
+              publishers={publisherCounts}
+              titleKey="story.publishersTitle"
+              countKey="stories.articlesCount"
+            />
+            {recommendations.data && <RecommendationPanel recs={recommendations.data} />}
+          </>
+        }
+      >
           {/* What happened — the hero, with the cluster's real summary as the standfirst. */}
           <article className="overflow-hidden rounded-lg border bg-card shadow-soft">
             <ArticleImage
@@ -211,21 +225,7 @@ export default function StoryDetailPage() {
               </ul>
             </section>
           )}
-        </div>
-
-        {/* ---- Companion rail: how balanced is THIS story, who's on it, what next for YOU. ---- */}
-        <aside className="col-span-12 space-y-8 lg:col-span-4">
-          <StoryCoveragePanel distribution={story.distribution} coverage={story.coverage} />
-          <PublisherSpotlight
-            publishers={publisherCounts}
-            titleKey="story.publishersTitle"
-            countKey="stories.articlesCount"
-          />
-          {recommendations.data && <RecommendationPanel recs={recommendations.data} />}
-        </aside>
-      </div>
-
-      <SiteFooter />
+      </PageGrid>
     </PageContainer>
   );
 }

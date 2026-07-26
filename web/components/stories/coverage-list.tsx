@@ -7,8 +7,8 @@ import { LeanBadge, RegisterBadge } from "@/components/shared/article-badges";
 import { ReadArticleButton } from "@/components/shared/read-article-button";
 import { SaveButton } from "@/components/shared/save-button";
 import { Button } from "@/components/ui/button";
+import { FilterChip } from "@/components/ui/filter-chip";
 import { useTranslation } from "@/lib/i18n";
-import { cn } from "@/lib/utils";
 
 const LEAN_FILTERS: ("all" | LeanBucket)[] = ["all", "left", "center", "right"];
 
@@ -71,7 +71,7 @@ export function CoverageList({ coverage }: { coverage: StoryCoverage[] }) {
         className="mb-2 flex flex-wrap items-center gap-2"
       >
         {LEAN_FILTERS.map((value) => (
-          <Chip
+          <FilterChip
             key={value}
             active={lean === value}
             onClick={() => setLean(value)}
@@ -84,7 +84,7 @@ export function CoverageList({ coverage }: { coverage: StoryCoverage[] }) {
           <>
             <span aria-hidden className="h-4 w-px bg-border" />
             {registers.map((value) => (
-              <Chip
+              <FilterChip
                 key={value}
                 active={register === value}
                 onClick={() => setRegister(register === value ? "all" : value)}
@@ -95,7 +95,7 @@ export function CoverageList({ coverage }: { coverage: StoryCoverage[] }) {
         )}
 
         <span aria-hidden className="h-4 w-px bg-border" />
-        <Chip
+        <FilterChip
           active={false}
           onClick={() => setOldestFirst((v) => !v)}
           label={oldestFirst ? t("filter.oldest") : t("filter.newest")}
@@ -149,32 +149,3 @@ export function CoverageList({ coverage }: { coverage: StoryCoverage[] }) {
   );
 }
 
-function Chip({
-  label,
-  count,
-  active,
-  onClick,
-}: {
-  label: string;
-  count?: number;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      className={cn(
-        "inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
-        active
-          ? "border-primary bg-primary/10 text-primary"
-          : "border-border bg-card text-muted-foreground hover:bg-accent hover:text-foreground",
-      )}
-    >
-      {label}
-      {count != null && <span className="tabular-nums opacity-60">{count}</span>}
-    </button>
-  );
-}

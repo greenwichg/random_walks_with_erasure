@@ -113,6 +113,17 @@ export function Header() {
               </div>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
+            {/* The reader's own surfaces (Template-4 user panel) — every entry a real route. */}
+            <DropdownMenuItem asChild>
+              <Link href="/report">{t("nav.report")}</Link>
+            </DropdownMenuItem>
+            <DropdownMenuItem asChild>
+              <Link href="/saved">{t("nav.saved")}</Link>
+            </DropdownMenuItem>
+            <DropdownMenuItem asChild>
+              <Link href="/history">{t("nav.history")}</Link>
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
             <DropdownMenuItem asChild>
               <Link href="/profile">{t("nav.profile")}</Link>
             </DropdownMenuItem>
