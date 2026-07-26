@@ -1106,7 +1106,9 @@ def test_search_endpoint(client):
         assert body["total"] == 9 and body["pageSize"] == 4 and body["page"] == 1
         assert body["hasMore"] is True and body["remainingPages"] == 2 and len(body["results"]) == 4
         assert "queryMs" in body and isinstance(body["ftsAvailable"], bool)
-        assert body["results"][0]["url"].startswith("https://") and "register" in body["results"][0]
+        # Unenriched fixtures carry no register — the field is honestly ABSENT (L2.2 family),
+        # never a "reporting" default.
+        assert body["results"][0]["url"].startswith("https://") and "register" not in body["results"][0]
 
         left = client.get("/api/search", params={"lean": "left", "limit": 50}).json()
         assert {a["publisher"] for a in left["results"]} == {"SearchNPR"}

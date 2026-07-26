@@ -18,10 +18,10 @@ from typing import Optional
 
 import api_server as engine   # reuse the serializer helpers _prettify / _lean_bucket (no algorithm)
 import media                  # centralised image + publisher-logo selection (additive, presentation-only)
+import store as store_mod     # _register_bucket — the ONE numeric/label register bucketing (L2.2 family)
 
-# EmotionShare shape the web `Article` expects; a neutral default when the feed carries no emotion.
-_NEUTRAL_EMOTION = {"fear": 0.0, "outrage": 0.0, "analysis": 0.0, "positive": 0.0, "neutral": 1.0}
-_REGISTERS = {"reporting", "opinion", "mixed"}
+# The EmotionShare key set the web `Article` expects (when an article carries emotion at all).
+_EMOTION_KEYS = ("fear", "outrage", "analysis", "positive", "neutral")
 
 
 # --------------------------------------------------------------------------- #
@@ -52,16 +52,24 @@ def _absolute_url(u: "str | None") -> str:
     return s if s[:7].lower() == "http://" or s[:8].lower() == "https://" else ""
 
 
-def _emotion(scored: dict) -> dict:
+def _emotion(scored: dict) -> "dict | None":
+    """The article's emotion shares, or None when it carries no real vector — a fabricated
+    all-neutral emotion is never emitted (the lean rule's family: absence survives, L2.2)."""
     e = scored.get("emotion")
     if isinstance(e, dict) and e:
-        return {k: _num(e.get(k), 0.0) for k in _NEUTRAL_EMOTION}
-    return dict(_NEUTRAL_EMOTION)
+        vals = {k: _num_or_none(e.get(k)) for k in _EMOTION_KEYS}
+        if all(v is not None for v in vals.values()):
+            return vals
+    return None
 
 
-def _register(scored: dict) -> str:
-    r = str(scored.get("register") or "").strip().lower()
-    return r if r in _REGISTERS else "reporting"
+def _register(scored: dict) -> "str | None":
+    """The register enum, or None when the signal is absent. The enricher stores a NUMERIC
+    P(reporting); it must be bucketed (0.6/0.4 — the engine's own thresholds), not string-compared:
+    the old string path collapsed every numeric to "reporting", labelling opinion pieces as
+    reporting on all feed surfaces. One implementation (store._register_bucket) product-wide, so
+    the coverage rows and the publisher tone module can never disagree again."""
+    return store_mod._register_bucket(scored.get("register"))
 
 
 def _reading_minutes(row: dict) -> int:
@@ -92,9 +100,11 @@ def feed_article_to_article(row: dict) -> dict:
         "url": url,
         "lean": lean,
         "leanBucket": engine._lean_bucket(lean) if lean is not None else None,
-        "confidence": _num(scored.get("selective"), 0.7),
+        # Absent signals STAY absent (null) — no 0.7 confidence, no all-neutral emotion, no
+        # "reporting" register was ever measured for an unenriched article.
+        "confidence": _num_or_none(scored.get("selective")),
         "emotion": emo,
-        "dominantEmotion": max(emo, key=emo.get),
+        "dominantEmotion": max(emo, key=emo.get) if emo else None,
         "register": _register(scored),
         "description": row.get("description") or "",
         "publishedAt": row.get("publishedAt") or row.get("fetchedAt") or "",

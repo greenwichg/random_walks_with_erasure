@@ -190,5 +190,8 @@ def test_publisher_endpoint_serves_profile_and_404(tmp_path, monkeypatch):
         assert body["articles"]["total"] == 6
         assert body["registers"]["n"] == 5
         assert len(body["recent"]) == 6
-        assert body["recent"][0]["register"] in ("reporting", "opinion", "mixed")   # alias serialised
+        # a5 carries a NaN register -> the field is honestly ABSENT (exclude_none), while the
+        # enriched a4 (0.5) serialises the alias as a real enum. One bucketing product-wide.
+        assert "register" not in body["recent"][0]
+        assert body["recent"][1]["register"] == "mixed"
         assert c.get("/api/publishers/Completely%20Unknown%20Gazette").status_code == 404

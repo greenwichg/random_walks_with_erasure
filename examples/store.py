@@ -129,10 +129,12 @@ def _url_host(url) -> str:
 
 
 def _register_bucket(register) -> "str | None":
-    """Bucket a stored ``scored.register`` for counting: the enricher's label strings pass
-    through; a numeric P(reporting) uses the engine's own thresholds (``api_server._register_enum``:
-    >= 0.6 reporting, <= 0.4 opinion, else mixed). Absent / non-finite -> ``None`` — the row
-    carries no register signal and is EXCLUDED from tone counts (never defaulted)."""
+    """THE register bucketing for the feed/product layer — one implementation, so the Article
+    serializer (``discover._register``), the publisher tone module, and every future consumer
+    classify identically. Label strings pass through; a numeric P(reporting) uses the engine's
+    own thresholds (>= 0.6 reporting, <= 0.4 opinion, else mixed — ``api_server._register_enum``'s
+    numbers; that legacy helper also maps non-finite to "mixed" for the recommendation surface and
+    is deliberately untouched). Absent / non-finite -> ``None`` — no signal, never a default."""
     if isinstance(register, str):
         r = register.strip().lower()
         return r if r in ("reporting", "opinion", "mixed") else None

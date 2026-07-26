@@ -66,6 +66,34 @@ def test_serializer_unknown_lean_is_null_never_center():
     assert rated["leanBucket"] == "right" and rated["publisherLean"] == 1.6
 
 
+def test_absent_signals_serialise_null_never_defaults():
+    """L2.2 family: an unenriched article has NO register/emotion/confidence — serialised null,
+    never "reporting" / an all-neutral vector / a fabricated 0.7 confidence."""
+    a = discover.feed_article_to_article({
+        "canonicalUrl": "https://x.example/1", "url": "https://x.example/1",
+        "publisher": "P", "title": "t", "publishedAt": "2026-07-05T10:00:00+00:00",
+        "scored": {"lean": -1.0}})
+    assert a["register"] is None and a["emotion"] is None
+    assert a["dominantEmotion"] is None and a["confidence"] is None
+
+
+def test_numeric_register_buckets_with_engine_thresholds():
+    """The enricher stores NUMERIC P(reporting). The old string comparison collapsed every
+    numeric to "reporting" — an opinion piece (0.2) was labelled reporting on every feed
+    surface. Buckets must match the engine's own thresholds exactly."""
+    import api_server as engine_mod
+    base = {"canonicalUrl": "https://x.example/2", "url": "https://x.example/2",
+            "publisher": "P", "title": "t", "publishedAt": "2026-07-05T10:00:00+00:00"}
+    for raw, want in ((0.9, "reporting"), (0.6, "reporting"), (0.5, "mixed"),
+                      (0.4, "opinion"), (0.2, "opinion"), ("opinion", "opinion")):
+        a = discover.feed_article_to_article({**base, "scored": {"register": raw}})
+        assert a["register"] == want, (raw, a["register"])
+        if isinstance(raw, float):
+            assert a["register"] == engine_mod._register_enum(raw)   # one classification product-wide
+    junk = discover.feed_article_to_article({**base, "scored": {"register": "editorial"}})
+    assert junk["register"] is None                                  # unknown label: no signal, no guess
+
+
 def test_unrated_matches_no_lean_bucket_but_stays_in_all():
     """Fail-honest filter: an unrated article appears in the unfiltered feed but matches NO lean
     bucket — display (Unknown) and the SQL lean filter agree (mirrors the country-filter semantics)."""
@@ -186,11 +214,22 @@ def test_discover_stories_endpoints(tmp_path, monkeypatch):
     sys.modules["api_fastapi_disc"] = mod
     spec.loader.exec_module(mod)
 
+    # One enriched article proves the register ALIAS serialises to the wire key; the untouched
+    # fixtures prove an absent signal stays absent (no "reporting" default on the wire).
+    st.upsert_feed_article(
+        canonical_url="https://npr.org/reg", url="https://npr.org/reg", publisher="NPR",
+        source_publisher="NPR", title="Enriched senate analysis piece", description="d", body=None,
+        published_at="2026-07-05T13:00:00+00:00", source_feed="feed://x",
+        scored={"article_id": "https://npr.org/reg", "outlet": "NPR", "category": "Politics",
+                "lean": -1.0, "title": "Enriched senate analysis piece", "register": 0.2})
+
     with TestClient(mod.app) as c:
         disc = c.get("/api/discover").json()
-        assert len(disc["articles"]) == 7 and disc["articles"][0]["url"].startswith("http")
-        assert "register" in disc["articles"][0]           # alias serialised back to the wire key
-        assert len(c.get("/api/discover", params={"lean": "left"}).json()["articles"]) == 3
+        assert len(disc["articles"]) == 8 and disc["articles"][0]["url"].startswith("http")
+        by_id = {a["id"]: a for a in disc["articles"]}
+        assert by_id["https://npr.org/reg"]["register"] == "opinion"   # alias + numeric bucketing
+        assert "register" not in by_id["https://bbc.com/a3"]           # absent signal stays absent
+        assert len(c.get("/api/discover", params={"lean": "left"}).json()["articles"]) == 4
 
         # /api/stories is now a paginated envelope from the Story Service (Commit 7).
         body = c.get("/api/stories").json()

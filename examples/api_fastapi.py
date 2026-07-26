@@ -22,6 +22,7 @@ import argparse
 import contextvars
 import dataclasses
 import json
+import math
 import logging
 import os
 import sys
@@ -831,10 +832,13 @@ class ArticleModel(BaseModel):
     # `response_model_exclude_none` omits the null fields on the wire.
     lean: Optional[float] = None
     leanBucket: Optional[str] = None
-    confidence: float
-    emotion: EmotionShareModel
-    dominantEmotion: str
-    register_: str = Field(alias="register")
+    # Same nullability family (L2.2): an unenriched article HAS no confidence / emotion /
+    # register — null on the wire (omitted via exclude_none), never 0.7 / all-neutral /
+    # "reporting" defaults. The recommendation path still fills its own values.
+    confidence: Optional[float] = None
+    emotion: Optional[EmotionShareModel] = None
+    dominantEmotion: Optional[str] = None
+    register_: Optional[str] = Field(None, alias="register")
     # Location Intelligence Phase 0 — canonical publisher-level location; omitted when unknown.
     country: Optional[str] = None
     language: Optional[str] = None
@@ -923,11 +927,12 @@ class StoryCoverageModel(BaseModel):
     model_config = ConfigDict(populate_by_name=True)   # `register` alias, as ArticleModel
     publisher: str
     headline: str
-    # Nullable (L2.2) like ArticleModel: an unrated outlet's coverage row carries null, not centre.
+    # Nullable (L2.2) like ArticleModel: an unrated outlet's coverage row carries null, not centre,
+    # and an unenriched article's register/emotion are null, not defaults.
     lean: Optional[float] = None
     leanBucket: Optional[str] = None
-    register_: str = Field(alias="register")
-    emotion: EmotionShareModel
+    register_: Optional[str] = Field(None, alias="register")
+    emotion: Optional[EmotionShareModel] = None
     url: Optional[str] = None
     publishedAt: str
 
@@ -1149,10 +1154,11 @@ class ReaderGeographyModel(BaseModel):
 
 class PlacePublisherModel(BaseModel):
     """One publisher from the locality registry (Local News v1). Locality fields are curated
-    facts; anything unknown is omitted (`response_model_exclude_none`), never guessed."""
+    facts; anything unknown is omitted (`response_model_exclude_none`), never guessed. A
+    locality-only registry row (unrated) omits lean/leanBucket — L2.2, never a default."""
     name: str
-    lean: float
-    leanBucket: str
+    lean: Optional[float] = None
+    leanBucket: Optional[str] = None
     country: str | None = None
     region: str | None = None
     city: str | None = None
@@ -2098,7 +2104,9 @@ def place_countries() -> list:
     facets = {r["country"]: r for r in _require_store().feed_article_country_facets()}
     reg_counts: dict = {}
     for o in outlet_registry.default_registry().outlets():
-        if o.country:
+        # RATED rows only: the web renders this count under "Rated publishers", and locality-only
+        # (unrated, NaN-lean) registry rows exist now — counting them would make the label lie.
+        if o.country and math.isfinite(o.lean):
             reg_counts[o.country] = reg_counts.get(o.country, 0) + 1
     out = []
     for c in sorted(set(facets) | set(reg_counts)):
@@ -2153,8 +2161,9 @@ def place_publishers(
             continue
         if want_scope and _norm(o.scope) != want_scope:
             continue
-        out.append({"name": o.canonical, "lean": o.lean,
-                    "leanBucket": engine._lean_bucket(o.lean),
+        rated = math.isfinite(o.lean)
+        out.append({"name": o.canonical, "lean": o.lean if rated else None,
+                    "leanBucket": engine._lean_bucket(o.lean) if rated else None,
                     "country": o.country, "region": o.region, "city": o.city, "scope": o.scope})
     out.sort(key=lambda r: (r.get("country") or "~", r["name"].lower()))
     return out
