@@ -619,9 +619,12 @@ def test_gnews_normalizes_into_feedentry(monkeypatch):
     batch = a.normalize(GNEWS_JSON)
     e = batch.entries[0]
     assert e.url == "https://apnews.com/article/rates-1" and e.body == "full text"
-    assert e.publisher_hint == "https://apnews.com"         # domain URL preferred over display name
-    assert e.language == "en"                               # GNews' axis param is "lang"
+    assert e.publisher_hint == "apnews.com"                 # source.url reduced to its bare host —
+    assert e.language == "en"                               # never a scheme-bearing outlet name
     assert e.source_type == "gnews" and e.source_provider == "GNews"
+    named = dict(GNEWS_JSON["articles"][0], source={"name": "Associated Press", "url": ""})
+    e2 = sources.GNewsAdapter(fetch=lambda url: {})._entry(named, {})
+    assert e2.publisher_hint == "Associated Press"          # no URL -> display name fallback
 
 
 def test_mediastack_normalizes_into_feedentry():
@@ -663,7 +666,7 @@ def test_googlenews_normalizes_with_source_tags(monkeypatch):
     assert batch.provider == "GoogleNews" and batch.source_type == "googlenews"
     assert batch.raw_count == 3 and len(batch) == 2         # linkless item dropped
     e = batch.entries[0]
-    assert e.publisher_hint == "https://www.bbc.com"        # <source url=> names the REAL outlet
+    assert e.publisher_hint == "bbc.com"                    # <source url=> host names the REAL outlet
     assert e.title == "Ceasefire talks resume"              # " - BBC News" suffix stripped
     assert e.published_at is not None and e.published_at.startswith("2026-07-26T05:00")
     assert e.category == "World" and e.language == "en" and e.country == "US"

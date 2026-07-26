@@ -143,6 +143,22 @@ def _default_log(level: int, event: str, **fields) -> None:
     _logger.log(level, json.dumps({"event": event, **fields}, default=str))
 
 
+def _host_hint(value) -> Optional[str]:
+    """A publisher hint from a URL-or-name: URL forms reduce to their bare host, www-stripped
+    ("https://www.oricon.co.jp" -> "oricon.co.jp"). The registry resolves KNOWN outlets from either
+    form — this is about honest naming for the UNKNOWN ones, whose hint is stored verbatim as the
+    outlet name (and feeds the unrated-publishers worklist); a scheme-bearing URL there is noise
+    (observed in production with GNews sources, 2026-07-26)."""
+    v = (value or "").strip()
+    if not v:
+        return None
+    if "://" in v:
+        host = urllib.parse.urlsplit(v).netloc.lower()
+        host = host[4:] if host.startswith("www.") else host
+        return host or None
+    return v
+
+
 # --------------------------------------------------------------------------- #
 # SourceBatch — lightweight metadata around one adapter fetch (metrics/diagnostics/logging/replay).
 # It is NOT persisted and NO downstream consumer reads it — only its ``entries`` reach the pipeline.
@@ -665,7 +681,7 @@ class GNewsAdapter(KeyedJSONAdapter):
             source_type="gnews", source_provider="GNews",
             category=combo.get("category"), language=combo.get("lang"),
             country=combo.get("country"), external_id=url,
-            publisher_hint=src.get("url") or src.get("name") or None)
+            publisher_hint=_host_hint(src.get("url")) or src.get("name") or None)
 
 
 # --------------------------------------------------------------------------- #
@@ -759,8 +775,7 @@ class CurrentsAdapter(KeyedJSONAdapter):
         url = (a.get("url") or "").strip()
         if not url:
             return None
-        host = urllib.parse.urlsplit(url).netloc.lower()
-        host = host[4:] if host.startswith("www.") else host
+        host = _host_hint(url)
         image = a.get("image")
         image = None if (not image or str(image).strip().lower() == "none") else image
         img = media.pick_best_image([{"url": image, "source": "currents"}]) or {}
@@ -873,7 +888,7 @@ class GoogleNewsAdapter(SourceAdapter):
                 published_at=rss_ingest._to_iso(item.findtext("pubDate") or ""),
                 source_type="googlenews", source_provider="GoogleNews",
                 category=category, language=loc["hl"].split("-")[0], country=loc["gl"],
-                external_id=link, publisher_hint=src_url or src_name or None))
+                external_id=link, publisher_hint=_host_hint(src_url) or src_name or None))
         return SourceBatch(self.provider, self.source_type, _now_iso(), entries, raw_count=raw_count)
 
 
