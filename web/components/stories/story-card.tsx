@@ -1,5 +1,6 @@
 "use client";
 
+import * as React from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { Newspaper, ArrowRight, EyeOff } from "lucide-react";
@@ -21,6 +22,13 @@ import { cn } from "@/lib/utils";
 export function StoryCard({ story, index = 0 }: { story: Story; index?: number }) {
   const { t, formatCompact, timeAgo } = useTranslation();
   const hasImage = Boolean(story.image);
+  // Coverage line candidates: real outlet names only. GDELT's long-tail publishers are
+  // prettified domains ("1003Thepeak.Iheart.Com") — dots/digits give them away — and a line of
+  // those reads worse than whitespace. All sources stay counted in the header either way.
+  const cleanPublishers = React.useMemo(
+    () => (story.publishers ?? []).filter((p) => !/[.\d]/.test(p)),
+    [story.publishers],
+  );
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
@@ -60,23 +68,29 @@ export function StoryCard({ story, index = 0 }: { story: Story; index?: number }
         </h3>
         <p
           className={cn(
-            "mt-1.5 flex-1 text-sm text-muted-foreground",
+            "mt-1.5 text-sm text-muted-foreground",
             hasImage ? "line-clamp-2" : "line-clamp-6 leading-relaxed",
           )}
         >
           {story.summary}
         </p>
 
-        {/* Imageless: the coverage line — who is actually reporting this (counted facts the card
-            already holds; the header carries the full source count, so names + an ellipsis do). */}
-        {!hasImage && (story.publishers?.length ?? 0) > 0 && (
-          <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
+        {/* Imageless: the coverage line — who is actually reporting this. Real outlet names
+            only (a wall of prettified domains is noise, not evidence); enough of them to wrap
+            and fill, clamped so this card never out-stretches its row. */}
+        {!hasImage && cleanPublishers.length > 0 && (
+          <p className="mt-3 line-clamp-4 text-xs leading-relaxed text-muted-foreground">
             <span className="font-medium text-foreground/70">
-              {story.publishers!.slice(0, 4).join(" · ")}
+              {cleanPublishers.slice(0, 10).join(" · ")}
             </span>
-            {story.publishers!.length > 4 && " …"}
+            {(story.publishers?.length ?? 0) > Math.min(cleanPublishers.length, 10) && " …"}
           </p>
         )}
+
+        {/* One structural slack point: grid rows stretch cards to equal height, and whatever
+            space this card can't fill with content sits HERE, above the spectrum bar — an
+            anchored footer with grouped text above it, not a hole in the middle of the copy. */}
+        <div className="flex-1" />
 
         <div className="mt-4">
           <SpectrumBar distribution={story.distribution} height={8} showLegend={false} />

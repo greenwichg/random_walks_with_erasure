@@ -64,13 +64,17 @@ export function DiscoverCard({
       {article.description && (
         <p
           className={cn(
-            "mt-1.5 flex-1 text-sm text-muted-foreground",
+            "mt-1.5 text-sm text-muted-foreground",
             hasImage ? "line-clamp-3" : "line-clamp-6 leading-relaxed",
           )}
         >
           {article.description}
         </p>
       )}
+
+      {/* The one structural slack point (see StoryCard): grouped text above, anchored footer
+          below — never a void between the description and the badges. */}
+      <div className="flex-1" />
 
       <div className="mt-3 flex flex-wrap items-center gap-1.5">
         <LeanBadge lean={article.lean} bucket={article.leanBucket} />
