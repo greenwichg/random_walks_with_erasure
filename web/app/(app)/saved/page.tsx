@@ -7,6 +7,7 @@ import { useSaved } from "@/hooks/use-data";
 import { useTranslation } from "@/lib/i18n";
 import { PageContainer } from "@/components/layout/page-container";
 import { DiscoverCard } from "@/components/discover/discover-card";
+import { MasonryColumns } from "@/components/shared/masonry-columns";
 import { EmptyState, ErrorState } from "@/components/shared/states";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -76,13 +77,11 @@ export default function SavedPage() {
         />
       )}
 
-      <div className="columns-1 gap-5 md:columns-2 xl:columns-3">
-        {saved.map((s, i) => (
-          <div key={s.articleId} className="mb-5 break-inside-avoid">
-            <DiscoverCard article={toArticle(s)} index={i} openedFrom="saved" />
-          </div>
-        ))}
-      </div>
+      <MasonryColumns
+        items={saved}
+        itemKey={(s) => s.articleId}
+        render={(s, i) => <DiscoverCard article={toArticle(s)} index={i} openedFrom="saved" />}
+      />
     </PageContainer>
   );
 }

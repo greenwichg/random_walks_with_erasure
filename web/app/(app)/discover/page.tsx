@@ -6,6 +6,7 @@ import { useDiscover } from "@/hooks/use-data";
 import { useTranslation } from "@/lib/i18n";
 import { PageContainer } from "@/components/layout/page-container";
 import { DiscoverCard } from "@/components/discover/discover-card";
+import { MasonryColumns } from "@/components/shared/masonry-columns";
 import { FilterSelect, type FilterOption } from "@/components/shared/filter-select";
 import { EmptyState, ErrorState } from "@/components/shared/states";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -52,13 +53,7 @@ export default function DiscoverPage() {
 
   const articles = data?.articles ?? [];
   const total = articles.length;
-  // Each loaded batch is its OWN masonry block: CSS multicol balances globally, so appending
-  // into one container would reshuffle cards the reader already saw. Per-batch blocks append
-  // beneath the previous ones — earlier cards never move (the no-layout-shift requirement).
-  const batches: (typeof articles)[] = [];
-  for (let start = 0; start < Math.min(visible, total); start += PAGE) {
-    batches.push(articles.slice(start, Math.min(start + PAGE, visible, total)));
-  }
+  const shown = articles.slice(0, visible);
   const hasMore = visible < total;
 
   return (
@@ -102,15 +97,11 @@ export default function DiscoverPage() {
         />
       )}
 
-      {batches.map((batch, b) => (
-        <div key={b} className="columns-1 gap-5 md:columns-2 xl:columns-3">
-          {batch.map((article, i) => (
-            <div key={article.id} className="mb-5 break-inside-avoid">
-              <DiscoverCard article={article} index={i} />
-            </div>
-          ))}
-        </div>
-      ))}
+      <MasonryColumns
+        items={shown}
+        itemKey={(a) => a.id}
+        render={(article, i) => <DiscoverCard article={article} index={i % PAGE} />}
+      />
 
       {hasMore && (
         <div className="mt-4 flex justify-center">
