@@ -59,6 +59,7 @@ import corpus_refresh         # atomic hot activation of a validated corpus (bac
 import discover               # Discover: product-layer exploration over the FeedArticle catalog
 import search                 # live full-text + faceted search over the FeedArticle catalog (Commit 6)
 import story_service          # the single owner of Story construction (Discover + Stories consume it)
+import publisher_service      # Publisher Intelligence: counted catalog + curated registry profile
 import story_intelligence     # deterministic intelligence computed ON TOP of Story objects (Commit 10)
 import article_analyzer       # anonymous URL analysis (A1 service: catalog-first, fetchless, zero-write)
 import analysis_enrichment    # A3: reader-relative explanation + recommendation layered on an analysis
@@ -1158,6 +1159,71 @@ class PlacePublisherModel(BaseModel):
     scope: str | None = None
 
 
+# --- Publisher Intelligence (profile page) ------------------------------------------------------
+class LabelCountModel(BaseModel):
+    """One counted fact: a label (topic / ISO country / ISO language / host) + article count."""
+    label: str
+    count: int
+
+
+class PublisherRegistryModel(BaseModel):
+    """Curated registry locality — present only when the outlet is in the registry; unknown
+    fields are omitted, never guessed (the registry discipline)."""
+    country: Optional[str] = None
+    region: Optional[str] = None
+    city: Optional[str] = None
+    scope: Optional[str] = None
+
+
+class PublisherArticlesModel(BaseModel):
+    """Counted catalog volume. ``perDay`` only over a real observed window (>= 1 day)."""
+    total: int
+    firstSeen: Optional[str] = None
+    lastSeen: Optional[str] = None
+    perDay: Optional[float] = None
+
+
+class PublisherRegistersModel(BaseModel):
+    """Reporting/opinion/mixed counts over the ``n`` articles that carry a register signal."""
+    reporting: int
+    opinion: int
+    mixed: int
+    n: int
+
+
+class PublisherEmotionModel(BaseModel):
+    """Mean emotion shares over the ``n`` articles that carry a real emotion vector."""
+    fear: float
+    outrage: float
+    analysis: float
+    positive: float
+    neutral: float
+    n: int
+
+
+class PublisherProfileModel(BaseModel):
+    """The Publisher Intelligence profile: curated registry facts + counted catalog facts.
+    ``rated=false`` means the registry doesn't rate this outlet — lean/leanBucket are null
+    (L2.2: "Not rated", never a fabricated Center). Tone modules (registers/emotion) are
+    omitted below their signal floor — omit, don't thin-render."""
+    name: str
+    rated: bool
+    lean: Optional[float] = None
+    leanBucket: Optional[str] = None
+    registry: Optional[PublisherRegistryModel] = None
+    site: Optional[str] = None
+    articles: PublisherArticlesModel
+    topics: list[LabelCountModel] = []
+    languages: list[LabelCountModel] = []
+    eventCountries: list[LabelCountModel] = []
+    registers: Optional[PublisherRegistersModel] = None
+    emotion: Optional[PublisherEmotionModel] = None
+    recent: list[ArticleModel] = []
+    publisherLogo: Optional[str] = None
+    publisherLogoDark: Optional[str] = None
+    publisherLogoSource: Optional[str] = None
+
+
 class EstimateRequest(BaseModel):
     outlets: list[str] = []
 
@@ -2092,6 +2158,23 @@ def place_publishers(
                     "country": o.country, "region": o.region, "city": o.city, "scope": o.scope})
     out.sort(key=lambda r: (r.get("country") or "~", r["name"].lower()))
     return out
+
+
+@app.get("/api/publishers/{name}", response_model=PublisherProfileModel,
+         response_model_exclude_none=True, tags=["meta"],
+         summary="Publisher Intelligence profile (counted catalog + curated registry facts)",
+         responses=_ERR_RESPONSES)
+def publisher_profile(name: str) -> dict:
+    """The profile of ONE publisher: curated registry identity/lean/locality (honest absence when
+    the registry doesn't know the outlet — ``rated=false``, null lean, never a fabricated Center)
+    plus counted catalog facts (volume/window, topics, languages, event countries, tone-with-n)
+    and its recent articles via the same serializer Discover/Search use. ``name`` accepts the
+    display name, the stored catalog name, or any registry alias/domain. 404 when neither the
+    registry nor the catalog knows the name — a profile is never synthesised from nothing."""
+    prof = publisher_service.get_publisher(_require_store(), name)
+    if prof is None:
+        raise HTTPException(status_code=404, detail="Publisher not found.")
+    return prof
 
 
 # ---- Discover & Stories: read-only exploration over the RSS FeedArticle catalog ---------------- #

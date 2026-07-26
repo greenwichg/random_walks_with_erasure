@@ -35,6 +35,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator, Optional
+from urllib.parse import urlsplit
 
 from sqlalchemy import (ForeignKey, String, Text, UniqueConstraint, and_, create_engine,
                         delete, event, func, or_, select, text)
@@ -115,6 +116,33 @@ def _source_priority_map() -> dict:
 def _media_priority(source_type) -> int:
     """Media precedence for a ``source_type`` (higher wins on merge); unknown / ``None`` -> 0."""
     return _source_priority_map().get((source_type or "").lower(), 0)
+
+
+def _url_host(url) -> str:
+    """Bare lower-case host of an absolute URL ("https://www.NPR.org/x" -> "npr.org"); "" when
+    the value has no host. Used for counted per-publisher host facts, never for identity."""
+    try:
+        host = urlsplit(str(url or "")).netloc.split("@")[-1].split(":", 1)[0].strip().lower()
+    except ValueError:
+        return ""
+    return host[4:] if host.startswith("www.") else host
+
+
+def _register_bucket(register) -> "str | None":
+    """Bucket a stored ``scored.register`` for counting: the enricher's label strings pass
+    through; a numeric P(reporting) uses the engine's own thresholds (``api_server._register_enum``:
+    >= 0.6 reporting, <= 0.4 opinion, else mixed). Absent / non-finite -> ``None`` — the row
+    carries no register signal and is EXCLUDED from tone counts (never defaulted)."""
+    if isinstance(register, str):
+        r = register.strip().lower()
+        return r if r in ("reporting", "opinion", "mixed") else None
+    try:
+        v = float(register)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(v):
+        return None
+    return "reporting" if v >= 0.6 else ("opinion" if v <= 0.4 else "mixed")
 
 
 # The image_source tags RSS/Atom ingestion emits (via ``media.pick_best_image``): the ``media:`` media
@@ -1214,6 +1242,81 @@ class Store:
             pubs = [p for (p,) in s.execute(pq).all() if p]
             cats = [c for (c,) in s.execute(cq).all() if c]
         return {"publishers": sorted(set(pubs)), "topics": sorted(set(cats))}
+
+    def publisher_catalog_stats(self, publisher: str) -> "dict | None":
+        """Counted catalog facts for ONE publisher (Publisher Intelligence): volume + observed
+        window, per-topic / per-language / per-host / per-event-country counts, and tone splits
+        computed ONLY over rows that actually carry the signal — each with its own ``n``; a
+        missing signal is excluded, never defaulted (the serializer's fail-honest rule, L2.2).
+        Publisher match is case-insensitive (the catalog search filter's semantics); provisional
+        (uncorroborated extension-created) rows are excluded, like Discover. Returns ``None``
+        when the catalog holds no rows for the name — absence, not an empty profile."""
+        cond = and_(func.lower(FeedArticle.publisher) == (publisher or "").strip().lower(),
+                    or_(FeedArticle.article_state.is_(None), FeedArticle.article_state != "provisional"))
+        with self.session() as s:
+            rows = s.execute(select(FeedArticle.canonical_url, FeedArticle.url,
+                                    FeedArticle.publisher, FeedArticle.published_at,
+                                    FeedArticle.language, FeedArticle.scored)
+                             .where(cond)).all()
+            if not rows:
+                return None
+            urls = [r[0] for r in rows]
+            event_countries: dict = {}
+            for i in range(0, len(urls), 500):     # SQLite bound-parameter limit, as elsewhere
+                for c, n in s.execute(
+                        select(ArticleEventLocation.country,
+                               func.count(func.distinct(ArticleEventLocation.canonical_url)))
+                        .where(ArticleEventLocation.canonical_url.in_(urls[i:i + 500]))
+                        .group_by(ArticleEventLocation.country)).all():
+                    event_countries[c] = event_countries.get(c, 0) + int(n)
+        topics: dict = {}
+        languages: dict = {}
+        hosts: dict = {}
+        registers = {"reporting": 0, "opinion": 0, "mixed": 0}
+        register_n = 0
+        emotion_sum = {k: 0.0 for k in ("fear", "outrage", "analysis", "positive", "neutral")}
+        emotion_n = 0
+        first = last = None
+        for _cu, url, _pub, published, lang, scored_json in rows:
+            if published:
+                first = published if first is None or published < first else first
+                last = published if last is None or published > last else last
+            try:
+                scored = json.loads(scored_json) or {}
+            except (TypeError, ValueError):
+                scored = {}
+            cat = str(scored.get("category") or "").strip()
+            if cat:
+                topics[cat] = topics.get(cat, 0) + 1
+            if lang:
+                languages[lang] = languages.get(lang, 0) + 1
+            host = _url_host(url)
+            if host:
+                hosts[host] = hosts.get(host, 0) + 1
+            bucket = _register_bucket(scored.get("register"))
+            if bucket:
+                registers[bucket] += 1
+                register_n += 1
+            emo = scored.get("emotion")
+            if isinstance(emo, dict) and emo:
+                vals = {k: emo.get(k) for k in emotion_sum}
+                if all(isinstance(v, (int, float)) and math.isfinite(v) for v in vals.values()):
+                    for k, v in vals.items():
+                        emotion_sum[k] += float(v)
+                    emotion_n += 1
+
+        def _counted(d: dict) -> list:
+            return [{"label": k, "count": v}
+                    for k, v in sorted(d.items(), key=lambda kv: (-kv[1], kv[0]))]
+
+        emotion = ({**{k: round(v / emotion_n, 4) for k, v in emotion_sum.items()}, "n": emotion_n}
+                   if emotion_n else None)
+        return {"publisher": rows[0][2], "total": len(rows),
+                "firstSeen": first, "lastSeen": last,
+                "topics": _counted(topics), "languages": _counted(languages),
+                "hosts": _counted(hosts), "eventCountries": _counted(event_countries),
+                "registers": {**registers, "n": register_n} if register_n else None,
+                "emotion": emotion}
 
     # -- content lifecycle (Commit 18: extension-created articles) --------------------
     def maybe_promote_feed_article(self, canonical_url: str, min_readers: int) -> bool:
