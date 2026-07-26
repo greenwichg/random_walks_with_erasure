@@ -84,10 +84,15 @@ def test_location_backfills_when_empty_and_never_rewrites(st):
 
 
 def test_search_filters_by_country(st):
+    """?country= is the EVENT dimension (intended contract change): publisher-located-only
+    articles no longer match a country search — publisher home is provenance, not a filter."""
     _upsert(st, "https://x.test/gb", country="GB")
     _upsert(st, "https://x.test/us", country="US", publisher="Fox News")
+    st.replace_article_event_locations(
+        "https://x.test/gb", location.resolve_event_locations([{"country": "GB", "source": "gdelt-gkg"}]))
     rows, total = st.search_feed_articles(country="gb")
     assert total == 1 and rows[0]["canonicalUrl"] == "https://x.test/gb"
+    assert st.search_feed_articles(country="US")[1] == 0             # publisher home never matches
     rows, total = st.search_feed_articles()                          # no filter -> unchanged
     assert total == 2
 
@@ -167,23 +172,32 @@ def test_reader_geography_counts_countries_and_scope(st):
 # Phase 1.5 — Countries facts + endpoint merge logic.
 # --------------------------------------------------------------------------- #
 def test_feed_article_country_facets(st):
+    """Facets count the EVENT dimension (intended contract change): publisher-located-only
+    articles contribute to no country facet."""
     _upsert(st, "https://x.test/gb1", country="GB", publisher="BBC")
     _upsert(st, "https://x.test/gb2", country="GB", publisher="The Guardian")
     _upsert(st, "https://x.test/us1", country="US", publisher="Fox News")
     _upsert(st, "https://x.test/none")                                # unlocated -> absent
+    for url in ("https://x.test/gb1", "https://x.test/gb2"):
+        st.replace_article_event_locations(
+            url, location.resolve_event_locations([{"country": "GB", "source": "gdelt-gkg"}]))
     facets = st.feed_article_country_facets()
-    assert facets[0] == {"country": "GB", "articles": 2, "publishers": 2}
-    assert {f["country"] for f in facets} == {"GB", "US"}
+    assert facets == [{"country": "GB", "articles": 2, "publishers": 2}]  # US: publisher-only -> absent
 
 
 def test_place_countries_unions_registry_and_catalog(st, monkeypatch):
     import api_fastapi
-    _upsert(st, "https://x.test/fr", country="FR", publisher="Le Monde")   # catalog-only country
+    # An EVENT-located article in a non-registry country (the catalog side of the union).
+    _upsert(st, "https://x.test/fr", country="DE", publisher="Le Monde")
+    st.replace_article_event_locations(
+        "https://x.test/fr", location.resolve_event_locations([{"country": "FR", "source": "gdelt-gkg"}]))
     monkeypatch.setattr(api_fastapi, "_require_store", lambda: st)
     rows = {r["country"]: r for r in api_fastapi.place_countries()}
     assert rows["FR"]["articles"] == 1 and rows["FR"]["registryPublishers"] == 0
     # Registry-only countries appear with honest zero article counts (GB has rated publishers).
     assert rows["GB"]["registryPublishers"] >= 3 and rows["GB"]["articles"] == 0
+    # The publisher home (DE) is provenance, not a place facet.
+    assert "DE" not in rows or rows["DE"]["articles"] == 0
 
 
 # --------------------------------------------------------------------------- #
@@ -219,27 +233,30 @@ def test_event_locations_roundtrip_and_per_source_replace(st):
         "https://x.test/a": ["DE", "IT"]}
 
 
-def test_search_uses_best_known_location(st):
-    # A: US publisher, event in FR → matches FR, no longer US. B: US publisher, no events → US.
+def test_search_uses_event_location_only(st):
+    # A: US publisher, event in FR → matches FR only. B: US publisher, no events → matches
+    # NOTHING (appears only unfiltered): publisher home is never a content-filter substitute.
     _upsert(st, "https://x.test/a", country="US", publisher="CNN")
     _upsert(st, "https://x.test/b", country="US", publisher="Fox News")
     st.replace_article_event_locations(
         "https://x.test/a", location.resolve_event_locations([{"country": "FR", "source": "gdelt-gkg"}]))
     rows, total = st.search_feed_articles(country="fr")
     assert total == 1 and rows[0]["canonicalUrl"] == "https://x.test/a"
-    rows, total = st.search_feed_articles(country="US")
-    assert total == 1 and rows[0]["canonicalUrl"] == "https://x.test/b"
-    assert st.search_feed_articles()[1] == 2                         # no filter → unchanged
+    assert st.search_feed_articles(country="US")[1] == 0
+    assert st.search_feed_articles()[1] == 2                         # no filter → the whole feed
 
 
-def test_country_facets_blend_best_known(st):
-    _upsert(st, "https://x.test/a", country="US", publisher="CNN")     # event FR → counts FR
-    _upsert(st, "https://x.test/b", country="US", publisher="Fox News")  # no events → counts US
+def test_country_facets_are_event_dimension(st):
+    _upsert(st, "https://x.test/a", country="US", publisher="CNN")       # event FR → counts FR
+    _upsert(st, "https://x.test/b", country="US", publisher="Fox News")  # no events → counts nowhere
     st.replace_article_event_locations(
         "https://x.test/a", location.resolve_event_locations([{"country": "FR", "source": "gdelt-gkg"}]))
     facets = {f["country"]: f for f in st.feed_article_country_facets()}
-    assert facets["FR"] == {"country": "FR", "articles": 1, "publishers": 1}
-    assert facets["US"] == {"country": "US", "articles": 1, "publishers": 1}
+    assert facets == {"FR": {"country": "FR", "articles": 1, "publishers": 1}}
+    # publisher-located-only catalog → honestly EMPTY facets (pickers offer nothing, not wrong things)
+    st2 = store_mod.Store("sqlite://")
+    _upsert(st2, "https://x.test/c", country="US")
+    assert st2.feed_article_country_facets() == []
 
 
 def test_ingest_persists_event_locations(st):

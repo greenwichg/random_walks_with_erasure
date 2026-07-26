@@ -221,7 +221,8 @@ def test_source_registry_enabled_filtering(monkeypatch):
     monkeypatch.setenv("RWE_NEWSAPI_API_KEY", "k")
     monkeypatch.delenv("RWE_GDELT_ENABLED", raising=False)
     reg = sources.default_registry()
-    assert [a.provider for a in reg.adapters()] == ["RSS", "NewsAPI", "GDELT"]     # registered order
+    # registered order (GDELT-GKG = the Phase-2 event-geography enricher, intended addition)
+    assert [a.provider for a in reg.adapters()] == ["RSS", "NewsAPI", "GDELT", "GDELT-GKG"]
     assert [a.provider for a in reg.enabled()] == ["NewsAPI"]                      # only NewsAPI enabled
     monkeypatch.setenv("RWE_GDELT_ENABLED", "1")
     assert {a.provider for a in reg.enabled()} == {"NewsAPI", "GDELT"}

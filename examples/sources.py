@@ -38,6 +38,7 @@ from typing import Callable, Optional
 import rss_ingest      # reuse: FeedEntry, load_feeds/fetch_feed/parse_feed, ingest_entries, ingest_all
 import media           # reuse: pick_best_image (image SELECTION only — never modified, never downloads)
 import corpus_health   # reuse: validation-aware retention (post-cycle, exactly as FeedPoller runs it)
+import gdelt_gkg       # reuse: the Phase-2 event-geography enrichment logic (offline-testable)
 
 _USER_AGENT = "InformationHealth-Sources/0.1 (+https://code.claude.com)"
 _TRUE = {"1", "true", "yes", "on"}
@@ -99,6 +100,27 @@ def _get_json(url: str, *, headers=None, timeout: float = 15.0,
             if not transient or attempt > retries:
                 raise
             time.sleep(min(backoff * attempt, 60.0))     # 5s, 10s, 15s … (capped)
+
+
+def _get_bytes(url: str, *, headers=None, timeout: float = 30.0,
+               retries: Optional[int] = None, backoff: Optional[float] = None) -> bytes:
+    """HTTP GET -> raw bytes, with the SAME transient-retry discipline as :func:`_get_json`
+    (429 + 5xx retried with linear backoff; anything else raises immediately). Used for the GKG
+    zip + manifest, which are files, not JSON."""
+    retries = _int_env("RWE_SOURCE_RETRIES", 3) if retries is None else retries
+    backoff = _float_env("RWE_SOURCE_BACKOFF", 5.0) if backoff is None else backoff
+    req = urllib.request.Request(url, headers=headers or {"User-Agent": _USER_AGENT})
+    attempt = 0
+    while True:
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return resp.read()
+        except urllib.error.HTTPError as e:
+            attempt += 1
+            transient = e.code == 429 or 500 <= e.code < 600
+            if not transient or attempt > retries:
+                raise
+            time.sleep(min(backoff * attempt, 60.0))
 
 
 def _default_log(level: int, event: str, **fields) -> None:
@@ -424,6 +446,59 @@ class GDELTAdapter(SourceAdapter):
 
 
 # --------------------------------------------------------------------------- #
+# GDELT GKG enricher — event geography for articles ALREADY in the catalog (Phase 2 supply).
+# --------------------------------------------------------------------------- #
+class GDELTGKGEnricher(SourceAdapter):
+    """An ENRICHMENT source: produces no articles, so ``fetch``/``normalize`` are never used —
+    ``poll_once`` is overridden to run one :func:`gdelt_gkg.enrich_from_latest` cycle on the
+    poller's standard cadence/health machinery. Keyless, default OFF (``RWE_GDELT_GKG``);
+    independent of the DOC artlist adapter — it locates ANY provider's articles that GDELT
+    happens to monitor (RSS-ingested outlets included). Event countries land in the
+    ``article_event_locations`` side table with ``gdelt-gkg`` provenance via the shared
+    resolver; per-source replace means re-running a cycle is harmless."""
+
+    provider = "GDELT-GKG"
+    source_type = "gdelt-gkg"
+
+    def __init__(self, fetch_bytes: Optional[Callable[[str], bytes]] = None):
+        self._fetch_bytes = fetch_bytes                     # injectable (offline tests)
+
+    def enabled(self) -> bool:
+        return _bool_env("RWE_GDELT_GKG")
+
+    def interval(self) -> float:
+        return _float_env("RWE_GDELT_GKG_INTERVAL", 900.0)  # GKG publishes every 15 minutes
+
+    @property
+    def health_key(self) -> str:
+        return "gdelt://gkg"
+
+    def poll_once(self, store_, scorer, *, on_feed: Optional[Callable] = None) -> dict:
+        t0 = time.perf_counter()
+        error = None
+        stats: Optional[dict] = None
+        try:
+            stats = gdelt_gkg.enrich_from_latest(
+                store_, fetch_bytes=self._fetch_bytes or _get_bytes)
+        except Exception as e:                              # network / zip / parse error
+            error = e
+        latency_ms = (time.perf_counter() - t0) * 1000.0
+        agg = _agg(self.provider, self.source_type, None, None, latency_ms, error,
+                   key=self.health_key)
+        # Enrichment counters (not ingest counters): parsed records with a dominant country,
+        # catalog matches, and articles actually located this cycle.
+        s = stats or {}
+        agg.update({"records": s.get("records", 0), "matched": s.get("matched", 0),
+                    "located": s.get("located", 0)})
+        if on_feed is not None:
+            try:
+                on_feed(self.provider, self.health_key, stats, latency_ms, error)
+            except Exception:                               # health recording must never break polling
+                pass
+        return agg
+
+
+# --------------------------------------------------------------------------- #
 # SourceRegistry — the enabled adapters the poller iterates. Future providers register here only.
 # --------------------------------------------------------------------------- #
 class SourceRegistry:
@@ -442,12 +517,14 @@ class SourceRegistry:
 
 
 def default_registry(feeds_spec: Optional[str] = None) -> SourceRegistry:
-    """The standard three-source registry (RSS + NewsAPI + GDELT). Future adapters (Guardian API,
-    Reuters, AP, Reddit, Hacker News, …) register here without touching the poller."""
+    """The standard registry (RSS + NewsAPI + GDELT articles, + the GKG event-geography
+    enricher). Future adapters (Guardian API, Reuters, AP, Reddit, Hacker News, …) register here
+    without touching the poller."""
     reg = SourceRegistry()
     reg.register(RSSAdapter(feeds_spec=feeds_spec))
     reg.register(NewsAPIAdapter())
     reg.register(GDELTAdapter())
+    reg.register(GDELTGKGEnricher())
     return reg
 
 

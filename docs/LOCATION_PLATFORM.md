@@ -8,7 +8,8 @@ resolver — by construction.
 ## Architecture (as shipped)
 
 ```
-Provider adapter                sources.py — RSS / NewsAPI / GDELT (and future providers)
+Provider adapter                sources.py — RSS / NewsAPI / GDELT (+ the GKG event-geography
+                                enricher, which locates articles already in the catalog)
       ↓  FeedEntry.country / .language / .event_locations   (whatever form the provider uses)
 Location Resolver               examples/location.py — resolve_article_location() +
                                 resolve_event_locations()
@@ -40,15 +41,22 @@ Fail-honest: anything unresolvable is `None` (or, for event locations, simply ab
 guessed place. The registry row's docstring rule applies platform-wide: locality is a curated
 fact, never inferred from articles.
 
-### Best-known location (the one precedence every surface uses)
+### Two dimensions, two jobs (never mixed)
 
-An article is "about" its **event countries when a provider supplied them**, else its
-**publisher's home country**, else nothing. Search (`?country=`), the Stories filter, and the
-country facets all apply exactly this ladder in one place each (`store._search_conditions`,
-`story_service._located_countries`, `store.feed_article_country_facets`), so the product never
-disagrees with itself. The publisher dimension is not discarded — it remains its own stored
-fact (provenance, reading-geography analytics, registry features); best-known is a *read-time
-precedence*, not a rewrite.
+- **Content location = the EVENT dimension, only.** Search (`?country=`), the Stories filter,
+  and the country facets answer "what happened *in* X" from `article_event_locations` alone —
+  in one place each (`store._search_conditions`, `story_service._event_consensus`,
+  `store.feed_article_country_facets`), so the product never disagrees with itself. An article
+  or story with no event geography matches **no** country; it still appears unfiltered ("All").
+  Publisher homes are never a fallback: before event data flows, country pickers are honestly
+  empty rather than wrong.
+- **Provenance = the publisher dimension.** `feed_articles.country` (registry-beats-provider)
+  stays a first-class stored fact for publisher intelligence and analytics: reading-geography
+  (`/api/me/geography`), the registry features, and each story's `publisherCountries` fact.
+- **Story aggregation** is member consensus: each event-located member votes for its (already
+  dominance-filtered) event countries; the plurality leader(s) are the story's `countries`
+  (ties kept — a genuinely two-country event IS in both places), and the unique leader, when
+  one exists, is `primaryCountry`.
 
 ## Integrating a future provider (the whole procedure)
 
@@ -84,10 +92,11 @@ codes — its adapter needs zero resolver work.)
 ## What each feature reads
 
 - **Stories country filter (shipped — absorbed the Countries page, which absorbed Local v1):**
-  `/api/stories?country=` — a story matches when ≥1 member is connected to that country by
-  best-known location (event geography where a provider supplied it, publisher home otherwise;
-  each story carries derived `countries` + `eventCountries` facts, internal until a card
-  consumes them). The picker + per-country counted-facts line read `/api/places/countries`;
+  `/api/stories?country=` — a story matches when its member-consensus EVENT countries include
+  the selection ("stories happening in X"); "All" remains the whole feed, global and
+  multi-country stories included. Each story carries derived `countries` (the consensus),
+  `primaryCountry`, `eventCountries`, and `publisherCountries` facts, internal until a card
+  consumes them. The picker + per-country counted-facts line read `/api/places/countries`;
   deep link `/stories?country=XX` (the home place rail uses it). `/countries` and `/local`
   redirect to `/stories`.
 - **Registry publisher locality (`/api/places/publishers`):** remains a platform surface with no
@@ -140,17 +149,33 @@ per article, provider `source` on every row) → best-known search/stories/facet
 provider that supplies no geography never wipes another's rows (per-source replace — the same
 backfill discipline the dedup merge uses).
 
-**Coverage honesty:** at ship time no ingested payload carries per-article event geography, so
-the side table starts empty and every surface behaves exactly as before (the publisher fallback
-IS today's behavior). Coverage fills provider-by-provider, and surfaces self-heal as it does —
-no flag, no cutover:
+**The supply: the GDELT GKG enricher (shipped, default OFF — `RWE_GDELT_GKG=1` to enable).**
+The DOC artlist we ingest carries only `sourcecountry` (publisher-level); event geography lives
+in GDELT's GKG files. `examples/gdelt_gkg.py` + `sources.GDELTGKGEnricher` poll the latest
+15-minute `*.gkg.csv.zip` on the standard poller/health machinery and locate articles ALREADY
+in the catalog — any provider's (an RSS-ingested outlet GDELT also monitors gets located too).
+Enrichment only: it never creates articles. Provider-specific mapping stays in the adapter:
 
-- **GDELT (designated next):** the DOC artlist we ingest carries only `sourcecountry`
-  (publisher-level). Event geography lives in GDELT's GKG/GEO surfaces (V2Locations); the
-  integration point is the GDELT adapter emitting `event_locations` — an adapter concern, no
-  resolver/store/API change. Machine-extracted, so quality is imperfect: mitigate by ingesting
-  country-level only at first (the coarsest, most reliable tier); provenance + reserved
-  region/city/lat/lon columns are already in place.
+- **The FIPS trap:** GKG `V1Locations` country codes are FIPS 10-4, not ISO (FIPS `AS` =
+  Australia vs ISO American Samoa; FIPS `GM` = Germany vs ISO Gambia). The enricher resolves by
+  each block's trailing country NAME through `normalize_country` and never reads the code — an
+  unknown name is dropped, never mis-mapped (pinned by tests).
+- **Salience:** a GKG record lists every place an article mentions; only the dominant
+  country(-ies) by block count are kept, so one stray mention never locates an article. Story
+  consensus across members narrows further.
+- **Matching:** GKG URLs are canonicalized with the SAME `ingest.canonical_url` the catalog
+  dedup uses (plus a scheme-flipped candidate), so matches align by construction.
+- **Quality bounds:** country-level only (the coarsest, most reliable tier); provenance
+  (`gdelt-gkg`) on every row; per-source replace keeps re-runs harmless; a size cap
+  (`RWE_GDELT_GKG_MAX_BYTES`) guards the download.
+
+**Coverage honesty / deploy sequence:** until `RWE_GDELT_GKG=1` runs its first cycles the side
+table is empty — country pickers offer nothing and the filter matches nothing, deliberately
+(empty beats wrong). Enable the flag and coverage fills within cycles for GDELT-monitored
+articles; older/unmonitored articles simply stay unlocated. Live validation of the first cycles
+(match rate, located counts in the `gdelt://gkg` health row) is a deploy-time step — the suite
+pins the logic offline.
+
 - **GeoRSS / Dublin Core (evaluated, deferred):** mainstream news feeds almost never carry it,
   and `georss:point` gives coordinates without a country — turning them into countries means
   reverse geocoding, a new dependency for near-zero yield. Revisit only for verticals that

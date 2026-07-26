@@ -135,37 +135,42 @@ def test_filters_topic_publisher_lean():
     assert ss.list_stories(st, lean="right")["total"] == 1           # only the Senate event has right coverage
 
 
-def test_filter_country_over_member_locations():
-    """?country= keeps stories with ≥1 member located there (Location Intelligence): the story's
-    ``countries`` fact is the distinct located member countries; unlocated members contribute
-    nothing and an unlocated corpus matches no country (fail-honest, never guessed)."""
+def test_filter_country_is_event_dimension_only():
+    """?country= is EVENT location only (intended contract change): publisher homes are a
+    separate preserved fact (``publisherCountries``), never a filter substitute. A story with no
+    event-located members matches no country but stays in the unfiltered feed ("All")."""
     st = store_mod.Store("sqlite://")
-    # Senate event: one member located US, one GB, one unlocated. Wildfire event: fully unlocated.
+    # Senate event: publisher homes US/GB/GB-unlocated, EVENT located US (two member votes).
     _add(st, "https://npr.org/a1", "NPR", -1.0, "Senate passes the funding bill after debate",
          days=2, country="US")
     _add(st, "https://fox.com/a2", "Fox News", 1.5, "Senate passes funding bill averting shutdown",
-         days=1, country="gb")     # normalized to upper on the story fact
+         days=1, country="gb")
     _add(st, "https://bbc.com/a3", "BBC News", 0.0, "US Senate passes funding bill to avert shutdown", days=0)
+    for url in ("https://npr.org/a1", "https://fox.com/a2"):
+        st.replace_article_event_locations(
+            url, location.resolve_event_locations([{"country": "United States", "source": "gdelt-gkg"}]))
+    # Wildfire event: publisher-located only — no event geography anywhere.
     _add(st, "https://cnn.com/b1", "CNN", -1.2, "Wildfires spread across the western coast",
-         category="Climate", days=3)
+         category="Climate", days=3, country="US")
     _add(st, "https://guardian.com/b2", "The Guardian", -1.5, "Wildfires spread rapidly along western coast",
-         category="Climate", days=3)
+         category="Climate", days=3, country="GB")
 
     senate = next(s for s in ss.cluster_from_store(st) if "Senate" in s["title"])
-    assert senate["countries"] == ["GB", "US"]                        # counted, sorted, uppercased
+    assert senate["countries"] == ["US"] and senate["primaryCountry"] == "US"
+    assert senate["publisherCountries"] == ["GB", "US"]               # provenance preserved, upper
     assert ss.list_stories(st, country="US")["total"] == 1            # Senate only
-    assert ss.list_stories(st, country="gb")["total"] == 1            # case-insensitive query
-    assert ss.list_stories(st, country="FR")["total"] == 0            # no located coverage → none
-    assert ss.list_stories(st, country=None)["total"] == 2            # absent filter unchanged
+    assert ss.list_stories(st, country="us")["total"] == 1            # case-insensitive query
+    assert ss.list_stories(st, country="GB")["total"] == 0            # publisher homes never match
+    assert ss.list_stories(st, country=None)["total"] == 2            # "All" keeps the whole feed
     wildfire = next(s for s in ss.cluster_from_store(st) if "Wildfires" in s["title"])
-    assert wildfire["countries"] == []                                 # unlocated corpus stays honest
+    assert wildfire["countries"] == [] and wildfire["primaryCountry"] is None
+    assert wildfire["publisherCountries"] == ["GB", "US"]
 
 
 def test_filter_country_prefers_event_location_over_publisher():
-    """Phase 2 best-known semantics: a member with provider EVENT geography contributes its event
-    countries INSTEAD of its publisher's home; members without event data keep the publisher
-    fallback. So "France" finds the Paris story a US outlet reported, and that member no longer
-    matches under its publisher's country."""
+    """The consensus fact derives from EVENT geography alone: one event-located member (BBC,
+    event US) is all the evidence, so the story locates US; the other members' publisher homes
+    contribute nothing to the filter."""
     st = store_mod.Store("sqlite://")
     _add(st, "https://npr.org/a1", "NPR", -1.0, "Senate passes the funding bill after debate",
          days=2, country="US")

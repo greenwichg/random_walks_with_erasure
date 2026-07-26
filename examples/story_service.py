@@ -103,6 +103,7 @@ def _build_story(members: list) -> dict:
         timeline.append({"date": earliest, "label": "First report"})
     if latest and latest != earliest:
         timeline.append({"date": latest, "label": "Latest"})
+    consensus = _event_consensus(members)
     return {
         "id": _story_id(members),
         "title": rep["headline"],
@@ -131,28 +132,34 @@ def _build_story(members: list) -> dict:
         "coverage": _coverage(members),
         "timeline": timeline,
         "blindspotSide": _blindspot(dist),
-        # Location Intelligence — best-known located countries (counted facts, never guessed).
-        # Per member: EVENT countries when a provider supplied them, else the publisher's home —
-        # so "France" means "about France" wherever event geography exists and degrades to
-        # publisher locality where it doesn't. ``countries`` drives the ?country= filter;
-        # ``eventCountries`` is the pure event-side fact. Both internal until a card consumes
-        # them (the response model omits undeclared fields).
-        "countries": sorted(_located_countries(members)),
+        # Location Intelligence — the story's EVENT geography (counted facts, never guessed).
+        # ``countries`` is what ?country= matches: the member-consensus leaders of the EVENT
+        # dimension only — a story with no event-located members matches no country (it still
+        # appears under "All"). Publisher homes are deliberately NOT a fallback here: they are a
+        # PROVENANCE fact, preserved separately as ``publisherCountries`` for publisher
+        # intelligence/analytics. All internal until a card consumes them (the response model
+        # omits undeclared fields).
+        "countries": consensus,
+        "primaryCountry": consensus[0] if len(consensus) == 1 else None,
         "eventCountries": sorted({c for m in members for c in (m.get("eventCountries") or ())}),
+        "publisherCountries": sorted({str(m["country"]).upper() for m in members
+                                      if m.get("country")}),
     }
 
 
-def _located_countries(members: list) -> set:
-    """Best-known located countries across members: each article contributes its event
-    countries when present, else its publisher's home country, else nothing (fail-honest)."""
-    located: set = set()
+def _event_consensus(members: list) -> list:
+    """The story's event countries by member consensus: each event-located member votes for its
+    (already dominance-filtered) event countries; the plurality leader(s) win — ties are kept,
+    because a genuinely two-country event IS in both places. No event-located members → no
+    countries (fail-honest: publisher homes never substitute for where an event happened)."""
+    votes: dict = {}
     for m in members:
-        events = {str(c).upper() for c in (m.get("eventCountries") or ()) if c}
-        if events:
-            located |= events
-        elif m.get("country"):
-            located.add(str(m["country"]).upper())
-    return located
+        for c in {str(c).upper() for c in (m.get("eventCountries") or ()) if c}:
+            votes[c] = votes.get(c, 0) + 1
+    if not votes:
+        return []
+    top = max(votes.values())
+    return sorted(c for c, n in votes.items() if n == top)
 
 
 def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
@@ -219,9 +226,9 @@ def list_stories(store_, *, topic=None, publisher=None, lean=None, country=None,
     """The paginated, filtered Story envelope Discover + Stories consume:
     ``{stories, total, page, pageSize, hasMore, remainingPages, sort}`` (+ ``clusterMs`` +
     ``diagnostics`` when ``debug``). topic/date are pre-filtered in SQL; publisher/lean/country are
-    coverage post-filters on the built stories. ``country`` matches best-known location: ≥1 member
-    whose EVENT happened there (provider event geography), or — for members with no event data —
-    whose publisher is from there."""
+    coverage post-filters on the built stories. ``country`` matches EVENT location only — the
+    story's member-consensus event countries (``_event_consensus``); publisher homes never
+    substitute, so an unlocated story appears under "All" and under no country."""
     sort = sort if sort in SORTS else "top"
     pg = OffsetPagination.from_params(limit, offset)
     t0 = _time.perf_counter()

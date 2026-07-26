@@ -916,6 +916,18 @@ class Store:
                                            region=l.region, city=l.city, lat=l.lat, lon=l.lon,
                                            source=l.source))
 
+    def existing_feed_urls(self, canonical_urls) -> set:
+        """Which of these canonical URLs are catalog articles — the batched membership check the
+        GKG enricher uses so enrichment only ever touches articles we actually hold."""
+        urls = [u for u in dict.fromkeys(canonical_urls) if u]
+        out: set = set()
+        with self.session() as s:
+            for i in range(0, len(urls), 500):
+                rows = s.scalars(select(FeedArticle.canonical_url)
+                                 .where(FeedArticle.canonical_url.in_(urls[i:i + 500]))).all()
+                out.update(rows)
+        return out
+
     def event_countries_for_urls(self, canonical_urls) -> dict:
         """Distinct EVENT countries per catalog article, keyed by canonical URL — the batched
         lookup the Story Service uses to locate members. URLs without event rows are absent."""
@@ -933,26 +945,20 @@ class Store:
         return {u: sorted(cs) for u, cs in out.items()}
 
     def feed_article_country_facets(self) -> list:
-        """Per-country catalog facts (Location Intelligence 1.5, best-known since Phase 2):
-        article count + distinct publishers per country, most-covered first. An article counts
-        toward its EVENT countries when a provider supplied them, else toward its publisher's
-        home country — the same precedence search and stories use, so every surface agrees.
-        Rows with no location on either dimension are simply absent (fail-honest)."""
-        has_events = (select(ArticleEventLocation.id)
-                      .where(ArticleEventLocation.canonical_url == FeedArticle.canonical_url)
-                      .exists())
-        by_event = (select(ArticleEventLocation.canonical_url.label("u"),
-                           ArticleEventLocation.country.label("c")).distinct())
-        by_publisher = (select(FeedArticle.canonical_url.label("u"),
-                               func.upper(FeedArticle.country).label("c"))
-                        .where(FeedArticle.country.is_not(None), ~has_events))
-        best = by_event.union(by_publisher).subquery()
+        """Per-country catalog facts (EVENT dimension since Phase 2): article count + distinct
+        publishers per country, most-covered first. An article counts toward the countries its
+        EVENTS happened in (``article_event_locations``) — never toward its publisher's home,
+        which is a separate provenance fact. Before event geography flows (the GKG enricher),
+        this is honestly empty, so country pickers offer nothing rather than the wrong thing."""
+        located = (select(ArticleEventLocation.canonical_url.label("u"),
+                          ArticleEventLocation.country.label("c")).distinct().subquery())
         with self.session() as s:
             rows = s.execute(
-                select(best.c.c, func.count(func.distinct(best.c.u)),
+                select(located.c.c, func.count(func.distinct(located.c.u)),
                        func.count(func.distinct(FeedArticle.publisher)))
-                .select_from(best.join(FeedArticle, FeedArticle.canonical_url == best.c.u))
-                .group_by(best.c.c)).all()
+                .select_from(located.join(FeedArticle,
+                                          FeedArticle.canonical_url == located.c.u))
+                .group_by(located.c.c)).all()
         out = [{"country": c, "articles": int(n), "publishers": int(p)} for c, n, p in rows]
         out.sort(key=lambda r: (-r["articles"], r["country"]))
         return out
@@ -1114,18 +1120,14 @@ class Store:
         if source and source.strip():
             conds.append(FeedArticle.source_feed == source.strip())
         if country and str(country).strip():
-            # Best-known location (Phase 2): EVENT countries when a provider supplied them beat
-            # the publisher's home; publisher country answers only for articles with no event
-            # rows. Same precedence as stories + facets, so every surface agrees.
+            # EVENT location only (Phase 2): ?country= means "articles about events in that
+            # country". The publisher's home (FeedArticle.country) is a separate PROVENANCE
+            # dimension — reader analytics and publisher intelligence read it; content filters
+            # never do. Same rule as stories + facets, so every surface agrees.
             want = str(country).strip().upper()
-            event_match = (select(ArticleEventLocation.id)
-                           .where(ArticleEventLocation.canonical_url == FeedArticle.canonical_url,
-                                  ArticleEventLocation.country == want).exists())
-            has_events = (select(ArticleEventLocation.id)
-                          .where(ArticleEventLocation.canonical_url == FeedArticle.canonical_url)
-                          .exists())
-            conds.append(or_(event_match, and_(~has_events,
-                                               func.upper(FeedArticle.country) == want)))
+            conds.append(select(ArticleEventLocation.id)
+                         .where(ArticleEventLocation.canonical_url == FeedArticle.canonical_url,
+                                ArticleEventLocation.country == want).exists())
         if topic and topic.strip():
             conds.append(func.lower(self._category_expr()) == topic.strip().lower())
         if lean == "left":
