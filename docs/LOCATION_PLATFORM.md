@@ -8,8 +8,10 @@ resolver — by construction.
 ## Architecture (as shipped)
 
 ```
-Provider adapter                sources.py — RSS / NewsAPI / GDELT (+ the GKG event-geography
-                                enricher, which locates articles already in the catalog)
+Provider adapter                sources.py — RSS / NewsAPI / Guardian / NewsData / GNews /
+                                MediaStack / Currents / Google News RSS / GDELT (+ the GKG
+                                event-geography enricher, which locates articles already in
+                                the catalog)
       ↓  FeedEntry.country / .language / .event_locations   (whatever form the provider uses)
 Location Resolver               examples/location.py — resolve_article_location() +
                                 resolve_event_locations()

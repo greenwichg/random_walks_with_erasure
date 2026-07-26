@@ -221,8 +221,12 @@ def test_source_registry_enabled_filtering(monkeypatch):
     monkeypatch.setenv("RWE_NEWSAPI_API_KEY", "k")
     monkeypatch.delenv("RWE_GDELT_ENABLED", raising=False)
     reg = sources.default_registry()
-    # registered order (GDELT-GKG = the Phase-2 event-geography enricher, intended addition)
-    assert [a.provider for a in reg.adapters()] == ["RSS", "NewsAPI", "GDELT", "GDELT-GKG"]
+    # registered order (GDELT-GKG = the Phase-2 event-geography enricher, kept LAST — it
+    # annotates articles the others ingested; the six 2026-07 providers sit between NewsAPI
+    # and GDELT and are all disabled by default)
+    assert [a.provider for a in reg.adapters()] == [
+        "RSS", "NewsAPI", "Guardian", "NewsData", "GNews", "MediaStack", "Currents",
+        "GoogleNews", "GDELT", "GDELT-GKG"]
     assert [a.provider for a in reg.enabled()] == ["NewsAPI"]                      # only NewsAPI enabled
     monkeypatch.setenv("RWE_GDELT_ENABLED", "1")
     assert {a.provider for a in reg.enabled()} == {"NewsAPI", "GDELT"}
@@ -491,3 +495,240 @@ def test_get_json_reports_transient_429s_then_succeeds(monkeypatch):
     out = sources._get_json("https://newsapi.org/v2/top-headlines?country=us",
                             on_transient=events.append)
     assert out == {"status": "ok"} and events == [429, 429] and attempts["n"] == 3
+
+
+# --------------------------------------------------------------------------- #
+# Six-provider expansion on the shared chassis: Guardian, NewsData, GNews, MediaStack,
+# Currents (KeyedJSONAdapter) + Google News RSS (keyless XML). Same contract as every other
+# adapter: normalize into FeedEntry, resolve publishers through the registry downstream.
+# --------------------------------------------------------------------------- #
+GUARDIAN_JSON = {
+    "response": {"status": "ok", "total": 2, "results": [
+        {"id": "world/2026/jul/26/summit", "sectionName": "World news",
+         "webPublicationDate": "2026-07-26T09:00:00Z", "webTitle": "Summit opens in Geneva",
+         "webUrl": "https://www.theguardian.com/world/2026/jul/26/summit",
+         "fields": {"trailText": "Leaders gather.", "thumbnail": "https://media.guim.co.uk/x/500.jpg"}},
+        {"id": "politics/2026/jul/26/vote", "sectionName": "Politics",
+         "webPublicationDate": "2026-07-26T08:00:00Z", "webTitle": "Vote scheduled",
+         "webUrl": "https://www.theguardian.com/politics/2026/jul/26/vote"},
+    ]},
+}
+NEWSDATA_JSON = {
+    "status": "success", "results": [
+        {"article_id": "nd1", "title": "Grid upgrade announced", "link": "https://example-post.com/grid",
+         "description": "d", "pubDate": "2026-07-26 10:30:00", "image_url": "https://cdn.example-post.com/g.png",
+         "source_id": "example_post", "source_name": "Example Post",
+         "country": ["united states of america"], "category": ["technology"], "language": "english"},
+        {"article_id": "nd2", "title": "No link", "link": "", "pubDate": "2026-07-26 09:00:00"},
+    ],
+}
+GNEWS_JSON = {
+    "totalArticles": 1, "articles": [
+        {"title": "Rates held steady", "description": "d", "content": "full text",
+         "url": "https://apnews.com/article/rates-1", "image": "https://apnews.com/img/r.jpg",
+         "publishedAt": "2026-07-26T11:00:00Z",
+         "source": {"name": "Associated Press", "url": "https://apnews.com"}},
+    ],
+}
+MEDIASTACK_JSON = {
+    "pagination": {"count": 1}, "data": [
+        {"author": None, "title": "Port reopens", "description": "d",
+         "source": "Reuters", "url": "https://reuters.com/world/port-1",
+         "image": "https://reuters.com/img/p.jpg", "category": "general",
+         "language": "en", "country": "gb", "published_at": "2026-07-26T07:45:00+00:00"},
+    ],
+}
+CURRENTS_JSON = {
+    "status": "ok", "news": [
+        {"id": "cu1", "title": "Reactor milestone", "description": "d",
+         "url": "https://www.newscientist.com/article/reactor",
+         "author": "", "image": "None", "language": "en",
+         "category": ["science"], "published": "2026-07-26 06:15:00 +0000"},
+    ],
+}
+GOOGLENEWS_XML = b"""<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel><title>Top stories - Google News</title>
+<item>
+  <title>Ceasefire talks resume - BBC News</title>
+  <link>https://news.google.com/rss/articles/CBMiAbc?oc=5</link>
+  <pubDate>Sun, 26 Jul 2026 05:00:00 GMT</pubDate>
+  <description>snippet</description>
+  <source url="https://www.bbc.com">BBC News</source>
+</item>
+<item>
+  <title>Untitled wire item</title>
+  <link>https://news.google.com/rss/articles/CBMiDef?oc=5</link>
+  <pubDate>Sun, 26 Jul 2026 04:00:00 GMT</pubDate>
+</item>
+<item>
+  <title>No link item</title>
+</item>
+</channel></rss>"""
+
+
+def test_guardian_normalizes_into_feedentry():
+    batch = sources.GuardianAdapter(fetch=lambda url: GUARDIAN_JSON).normalize(GUARDIAN_JSON)
+    assert batch.provider == "Guardian" and batch.source_type == "guardian" and batch.raw_count == 2
+    e = batch.entries[0]
+    assert e.url == "https://www.theguardian.com/world/2026/jul/26/summit"
+    assert e.title == "Summit opens in Geneva" and e.description == "Leaders gather."
+    assert e.published_at.startswith("2026-07-26T09:00") and e.category == "World news"
+    assert e.image == "https://media.guim.co.uk/x/500.jpg" and e.image_source == "guardian"
+    assert e.external_id == "world/2026/jul/26/summit"
+    assert e.publisher_hint == "theguardian.com"            # single-outlet source: hint is FIXED
+    assert batch.entries[1].image is None                   # no fields block -> no fabricated image
+
+
+def test_guardian_resolves_registry_publisher_and_lean(store):
+    """The passthrough that makes the whole integration honest: a Guardian article lands with the
+    registry's CANONICAL outlet + verified lean — no per-provider publisher logic anywhere."""
+    agg = sources.GuardianAdapter(fetch=lambda url: GUARDIAN_JSON).poll_once(store, ri.make_scorer())
+    assert agg["new"] == 2 and agg["failed"] == 0
+    # canonical_url strips "www." — the same canonicalization every source shares (dedup key).
+    row = store.get_feed_article("https://theguardian.com/world/2026/jul/26/summit")
+    assert row["publisher"] == "The Guardian"               # canonical, via outlet_registry.csv
+    assert row["scored"]["lean"] == -1.0                    # verified Lean Left, from the registry
+    assert row["sourceType"] == "guardian" and row["sourceProvider"] == "Guardian"
+
+
+def test_unknown_publisher_stays_honest_no_lean(store):
+    """An outlet the registry does not know ingests fine but casts NO lean vote (NaN) — counted in
+    unknown_outlet stats, never guessed. This is the fail-honest contract for all new providers."""
+    agg = sources.NewsDataAdapter(fetch=lambda url: NEWSDATA_JSON).poll_once(store, ri.make_scorer())
+    assert agg["new"] == 1
+    row = store.get_feed_article("https://example-post.com/grid")
+    assert row["publisher"] == "Example Post"               # hint kept as the outlet name
+    lean = row["scored"]["lean"]
+    assert lean is None or lean != lean                     # NaN/None — honestly unknown, no default
+
+
+def test_newsdata_normalizes_into_feedentry():
+    batch = sources.NewsDataAdapter(fetch=lambda url: NEWSDATA_JSON).normalize(NEWSDATA_JSON)
+    assert batch.provider == "NewsData" and batch.raw_count == 2 and len(batch) == 1   # linkless dropped
+    e = batch.entries[0]
+    assert e.url == "https://example-post.com/grid" and e.external_id == "nd1"
+    assert e.published_at is not None and e.published_at.startswith("2026-07-26T10:30")  # space-date form
+    assert e.category == "technology" and e.country == "united states of america"
+    assert e.language == "english"                          # resolver normalizes names downstream
+    assert e.publisher_hint == "Example Post" and e.image == "https://cdn.example-post.com/g.png"
+
+
+def test_gnews_normalizes_into_feedentry(monkeypatch):
+    monkeypatch.setenv("RWE_GNEWS_LANGUAGE", "en")
+    a = sources.GNewsAdapter(fetch=lambda url: GNEWS_JSON)
+    batch = a.normalize(GNEWS_JSON)
+    e = batch.entries[0]
+    assert e.url == "https://apnews.com/article/rates-1" and e.body == "full text"
+    assert e.publisher_hint == "https://apnews.com"         # domain URL preferred over display name
+    assert e.language == "en"                               # GNews' axis param is "lang"
+    assert e.source_type == "gnews" and e.source_provider == "GNews"
+
+
+def test_mediastack_normalizes_into_feedentry():
+    batch = sources.MediaStackAdapter(fetch=lambda url: MEDIASTACK_JSON).normalize(MEDIASTACK_JSON)
+    e = batch.entries[0]
+    assert e.url == "https://reuters.com/world/port-1" and e.publisher_hint == "Reuters"
+    assert e.published_at is not None and e.published_at.startswith("2026-07-26T07:45")
+    assert e.category == "general" and e.language == "en" and e.country == "gb"
+    assert e.source_type == "mediastack" and e.source_provider == "MediaStack"
+
+
+def test_mediastack_url_scheme_and_plural_params(monkeypatch):
+    """Free-tier honesty: HTTPS is paid-only on MediaStack, so RWE_MEDIASTACK_HTTPS=0 switches to
+    http; axis params use MediaStack's PLURAL names (countries/categories/languages)."""
+    monkeypatch.setenv("RWE_MEDIASTACK_API_KEY", "k")
+    monkeypatch.setenv("RWE_MEDIASTACK_COUNTRY", "gb")
+    a = sources.MediaStackAdapter(fetch=lambda url: MEDIASTACK_JSON)
+    url = a._url(a._combos()[0])
+    assert url.startswith("https://") and "countries=gb" in url and "access_key=k" in url
+    monkeypatch.setenv("RWE_MEDIASTACK_HTTPS", "0")
+    assert a._url(a._combos()[0]).startswith("http://")
+    assert a.interval() == 5400.0                           # 90-min default fits ~500 req/MONTH
+
+
+def test_currents_normalizes_into_feedentry():
+    batch = sources.CurrentsAdapter(fetch=lambda url: CURRENTS_JSON).normalize(CURRENTS_JSON)
+    e = batch.entries[0]
+    assert e.url == "https://www.newscientist.com/article/reactor" and e.external_id == "cu1"
+    assert e.publisher_hint == "newscientist.com"           # no source field -> URL host, www-stripped
+    assert e.image is None                                  # literal "None" string dropped, never stored
+    assert e.published_at is not None and e.published_at.startswith("2026-07-26T06:15")  # "+0000" form
+    assert e.category == "science" and e.language == "en"
+
+
+def test_googlenews_normalizes_with_source_tags(monkeypatch):
+    monkeypatch.setenv("RWE_GOOGLENEWS_TOPICS", "WORLD")
+    a = sources.GoogleNewsAdapter(fetch_bytes=lambda url: GOOGLENEWS_XML)
+    batch = a.normalize(a.fetch())
+    assert batch.provider == "GoogleNews" and batch.source_type == "googlenews"
+    assert batch.raw_count == 3 and len(batch) == 2         # linkless item dropped
+    e = batch.entries[0]
+    assert e.publisher_hint == "https://www.bbc.com"        # <source url=> names the REAL outlet
+    assert e.title == "Ceasefire talks resume"              # " - BBC News" suffix stripped
+    assert e.published_at is not None and e.published_at.startswith("2026-07-26T05:00")
+    assert e.category == "World" and e.language == "en" and e.country == "US"
+    assert batch.entries[1].publisher_hint is None          # no source tag -> honestly unknown
+    assert batch.entries[1].title == "Untitled wire item"   # no matching suffix -> untouched
+
+
+def test_googlenews_feed_rotation_and_fallback(monkeypatch):
+    """TOPICS + QUERIES build the feed list (invalid topics dropped), rotated one per cycle;
+    with neither configured the single front-page feed is used."""
+    urls = []
+    a = sources.GoogleNewsAdapter(fetch_bytes=lambda url: (urls.append(url) or GOOGLENEWS_XML))
+    monkeypatch.setenv("RWE_GOOGLENEWS_TOPICS", "WORLD,BUSINESS,BOGUS")
+    monkeypatch.setenv("RWE_GOOGLENEWS_QUERIES", "climate change")
+    for _ in range(4):                                      # 3 feeds -> the 4th wraps
+        a.fetch()
+    assert "/headlines/section/topic/WORLD?" in urls[0]
+    assert "/headlines/section/topic/BUSINESS?" in urls[1]
+    assert "/rss/search?" in urls[2] and "q=climate+change" in urls[2]
+    assert urls[3] == urls[0] and not any("BOGUS" in u for u in urls)
+    assert all("hl=en-US" in u and "gl=US" in u and "ceid=US%3Aen" in u for u in urls)
+    monkeypatch.delenv("RWE_GOOGLENEWS_TOPICS")
+    monkeypatch.delenv("RWE_GOOGLENEWS_QUERIES")
+    feeds = a._feeds()
+    assert len(feeds) == 1 and feeds[0][2].startswith("https://news.google.com/rss?")
+
+
+@pytest.mark.parametrize("cls,prefix", [
+    (sources.GuardianAdapter, "GUARDIAN"), (sources.NewsDataAdapter, "NEWSDATA"),
+    (sources.GNewsAdapter, "GNEWS"), (sources.MediaStackAdapter, "MEDIASTACK"),
+    (sources.CurrentsAdapter, "CURRENTS"),
+])
+def test_keyed_adapter_enable_gating_and_config_warning(monkeypatch, cls, prefix):
+    """Every keyed adapter shares the chassis contract: flag alone -> disabled + a startup config
+    warning naming the missing key; flag+key -> enabled; neither -> silently disabled."""
+    for suffix in ("ENABLED", "API_KEY"):
+        monkeypatch.delenv(f"RWE_{prefix}_{suffix}", raising=False)
+    a = cls(fetch=lambda url: {})
+    assert not a.enabled() and a.config_warning() is None
+    monkeypatch.setenv(f"RWE_{prefix}_ENABLED", "1")
+    assert not a.enabled()
+    warning = a.config_warning()
+    assert warning and f"RWE_{prefix}_API_KEY" in warning
+    monkeypatch.setenv(f"RWE_{prefix}_API_KEY", "k")
+    assert a.enabled() and a.config_warning() is None
+
+
+@pytest.mark.parametrize("cls,auth_param,page_param", [
+    (sources.GuardianAdapter, "api-key=k", "page-size="),
+    (sources.NewsDataAdapter, "apikey=k", "size="),
+    (sources.GNewsAdapter, "apikey=k", "max="),
+    (sources.CurrentsAdapter, "apiKey=k", "page_size="),
+])
+def test_keyed_adapter_url_carries_auth_and_page_size(monkeypatch, cls, auth_param, page_param):
+    a = cls(fetch=lambda url: {})
+    monkeypatch.setenv(f"RWE_{a.env_prefix}_API_KEY", "k")
+    url = a._url(a._combos()[0])
+    assert auth_param in url and page_param in url
+
+
+def test_default_registry_registers_all_providers_with_unique_health_keys():
+    reg = sources.default_registry()
+    adapters = reg.adapters()
+    providers = [a.provider for a in adapters]
+    assert providers == ["RSS", "NewsAPI", "Guardian", "NewsData", "GNews", "MediaStack",
+                         "Currents", "GoogleNews", "GDELT", "GDELT-GKG"]
+    keys = [a.health_key for a in adapters if a.health_key]
+    assert len(keys) == len(set(keys))                      # health rows never collide across sources

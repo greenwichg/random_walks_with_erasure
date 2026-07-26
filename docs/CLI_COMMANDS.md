@@ -51,7 +51,7 @@ in the `FeedArticle` catalog. **Subcommands:**
 
 Example: `python examples/rss_ingest.py run --feeds deploy/rss_feeds.example.txt`
 
-### `sources.py` — multi-source ingestion (RSS + NewsAPI + GDELT)
+### `sources.py` — multi-source ingestion (RSS + NewsAPI + Guardian + NewsData + GNews + MediaStack + Currents + Google News RSS + GDELT)
 One-shot poll across every **enabled** source adapter into the catalog. **Commands:**
 `poll` (default — ingest once) · `check` (per-adapter enabled/config status, no ingest). Flag: `--db`.
 Example: `python examples/sources.py poll`

@@ -1,22 +1,30 @@
 """sources.py — the pluggable multi-source ingestion layer (Commit 11).
 
-Every ingestion source (RSS/Atom, NewsAPI, GDELT, and future providers) is a :class:`SourceAdapter`
-that **normalizes its data into the existing** :class:`rss_ingest.FeedEntry` and terminates at the
-existing ``rss_ingest.ingest_entries`` pipeline. After that boundary the whole platform — scoring,
+Every ingestion source (RSS/Atom, NewsAPI, The Guardian, NewsData.io, GNews, MediaStack, Currents,
+Google News RSS, GDELT, and future providers) is a :class:`SourceAdapter` that **normalizes its data
+into the existing** :class:`rss_ingest.FeedEntry` and terminates at the existing
+``rss_ingest.ingest_entries`` pipeline. After that boundary the whole platform — scoring,
 canonical-URL dedup, media selection, persistence, search, clustering, Story Intelligence,
 recommendations — behaves **exactly as it does for RSS today** and never learns where an article came
 from.
 
-    NewsAPI / GDELT / RSS  ->  SourceAdapter.fetch()  ->  normalize()  ->  SourceBatch(FeedEntry[])
-                            ->  ingest_entries()       ->  FeedArticle  ->  everything else
+    any provider  ->  SourceAdapter.fetch()  ->  normalize()  ->  SourceBatch(FeedEntry[])
+                  ->  ingest_entries()       ->  FeedArticle  ->  everything else
 
 Design:
   * Adapters reuse the ingestion pipeline; they never duplicate scoring/dedup/media/persistence.
   * RSS reuses ``rss_ingest.ingest_all`` verbatim (identical behaviour, per-feed health).
+  * Keyed JSON providers (NewsAPI, Guardian, NewsData, GNews, MediaStack, Currents) share one chassis,
+    :class:`KeyedJSONAdapter`: env-prefix config, combo rotation, daily budgets, 429 accounting, retry
+    with backoff. A concrete adapter is ~40 lines: URL + payload mapping.
   * A :class:`SourceRegistry` holds the adapters; :class:`MultiSourcePoller` iterates the enabled ones,
     so the poller is provider-agnostic and future adapters need no poller change.
   * Health reuses ``store.record_feed_health`` under a stable per-source key (``rss://…`` per feed,
-    ``newsapi://everything``, ``gdelt://doc``). ``feed_service.FeedPoller`` is left untouched.
+    ``newsapi://top-headlines``, ``guardian://search``, ``gdelt://doc``, …). ``feed_service.FeedPoller``
+    is left untouched.
+  * Publisher identity flows through ``FeedEntry.publisher_hint`` into the outlet registry — new
+    providers resolve publishers/leans through the same registry; unresolved outlets stay honest
+    (no lean) until curated.
 
 No network is contacted unless an adapter is enabled; ``fetch`` is injectable so tests run offline.
 """
@@ -316,27 +324,35 @@ class RSSAdapter(SourceAdapter):
 
 
 # --------------------------------------------------------------------------- #
-# NewsAPI adapter — https://newsapi.org/docs
+# KeyedJSONAdapter — the hardened chassis every keyed JSON news API rides.
 # --------------------------------------------------------------------------- #
-class NewsAPIAdapter(SourceAdapter):
-    """NewsAPI as one more source on the SHARED pipeline: ``normalize`` emits the same
-    ``FeedEntry`` every adapter does, so canonical-URL dedup (RSS↔NewsAPI included), scoring,
-    registry publisher/lean resolution, the location resolver, and story clustering all apply
-    with zero NewsAPI-specific downstream code.
+class KeyedJSONAdapter(SourceAdapter):
+    """The shared chassis for keyed JSON news APIs (NewsAPI, Guardian, NewsData, GNews,
+    MediaStack, Currents, …): env-prefixed configuration, enable-gating on flag+key with a
+    startup config warning, comma-separated combo lists polled by ROTATION (one request per
+    cycle — N combinations never multiply the request rate), a per-UTC-day request budget that
+    short-circuits cycles BEFORE any request (no fetch, no health-row touch — a cycle that did
+    nothing must not claim a lastSuccess), and HTTP-429 accounting (``rateLimited`` on every
+    aggregate). A concrete adapter supplies only its identity, its URL builder, and its
+    payload→``FeedEntry`` mapping — everything else is this chassis, once.
 
-    Config (env): ``RWE_NEWSAPI_ENABLED`` + ``RWE_NEWSAPI_API_KEY`` gate it; CATEGORY / COUNTRY /
-    LANGUAGE accept **comma-separated lists** — the cross-product of the lists is polled by
-    ROTATION, one combination per cycle, so N combinations cost the same one request per poll
-    (the free tier is ~100 requests/day and the default 900 s interval already spends 96 — a
-    fetch-all-combos design would blow the budget by construction). ``RWE_NEWSAPI_PAGE_SIZE``
-    is the per-request article count (1..100, NewsAPI's cap), decoupled from the
-    ``RWE_NEWSAPI_MAX_ARTICLES`` ingest quota. ``RWE_NEWSAPI_DAILY_BUDGET`` (0 = unlimited)
-    short-circuits the cycle BEFORE any request once the per-UTC-day request count is spent —
-    an in-process guard (resets on restart), advisory rather than a billing meter. Every cycle's
-    aggregate carries ``rateLimited`` (count of HTTP 429s the retry loop encountered)."""
+    Env surface (``RWE_<PREFIX>_*``): ENABLED, API_KEY, POLL_INTERVAL, PAGE_SIZE (1..page_cap,
+    decoupled from the MAX_ARTICLES ingest quota), MAX_ARTICLES, DAILY_BUDGET (0 = unlimited),
+    TIMEOUT, plus the adapter's combo axes (CATEGORY/COUNTRY/LANGUAGE by default)."""
 
-    provider = "NewsAPI"
-    source_type = "newsapi"
+    env_prefix = "?"
+    default_interval = 900.0
+    page_cap = 100                                          # the API's absolute per-request max
+    signup_hint = ""                                        # appended to the missing-key warning
+    endpoint_name = "?"                                     # the endpoint the health key names
+    # (env suffix, request param) per rotation axis, outermost first — the cross-product order.
+    combo_axes: tuple = (("COUNTRY", "country"), ("CATEGORY", "category"), ("LANGUAGE", "language"))
+
+    @property
+    def health_key(self) -> str:
+        # Stable per-endpoint identity (e.g. ``guardian://search``) — rotation combos share ONE
+        # health row per source, the same discipline as ``newsapi://top-headlines``.
+        return f"{self.source_type}://{self.endpoint_name}"
 
     def __init__(self, fetch: Optional[Callable[[str], dict]] = None):
         self._fetch_fn = fetch                              # injectable (offline tests)
@@ -346,68 +362,51 @@ class NewsAPIAdapter(SourceAdapter):
         self._req_day: Optional[str] = None                 # UTC day the request counter is for
         self._req_count = 0
 
+    # -- env plumbing ------------------------------------------------------ #
+    def _env(self, suffix: str, default: str = "") -> str:
+        return os.environ.get(f"RWE_{self.env_prefix}_{suffix}", default)
+
     def api_key(self) -> str:
-        return os.environ.get("RWE_NEWSAPI_API_KEY", "").strip()
+        return self._env("API_KEY").strip()
 
     def enabled(self) -> bool:
-        return _bool_env("RWE_NEWSAPI_ENABLED") and bool(self.api_key())
+        return _bool_env(f"RWE_{self.env_prefix}_ENABLED") and bool(self.api_key())
 
     def config_warning(self) -> Optional[str]:
-        if _bool_env("RWE_NEWSAPI_ENABLED") and not self.api_key():
-            return ("RWE_NEWSAPI_ENABLED is set but RWE_NEWSAPI_API_KEY is missing/empty — NewsAPI "
-                    "stays disabled. Get a free key at https://newsapi.org and set RWE_NEWSAPI_API_KEY.")
+        if _bool_env(f"RWE_{self.env_prefix}_ENABLED") and not self.api_key():
+            return (f"RWE_{self.env_prefix}_ENABLED is set but RWE_{self.env_prefix}_API_KEY is "
+                    f"missing/empty — {self.provider} stays disabled. {self.signup_hint}".rstrip())
         return None
 
     def interval(self) -> float:
-        return _float_env("RWE_NEWSAPI_POLL_INTERVAL", 900.0)
+        return _float_env(f"RWE_{self.env_prefix}_POLL_INTERVAL", self.default_interval)
 
     def max_articles(self) -> Optional[int]:
-        return _int_or_none("RWE_NEWSAPI_MAX_ARTICLES")
+        return _int_or_none(f"RWE_{self.env_prefix}_MAX_ARTICLES")
 
     def page_size(self) -> int:
-        """Articles per request (NewsAPI caps at 100). Explicit ``RWE_NEWSAPI_PAGE_SIZE`` wins;
-        otherwise don't fetch more than the ingest quota would keep."""
-        explicit = _int_or_none("RWE_NEWSAPI_PAGE_SIZE")
-        size = explicit if explicit is not None else min(self.max_articles() or 100, 100)
-        return max(1, min(size, 100))
+        """Articles per request (capped at the API's max). Explicit PAGE_SIZE wins; otherwise
+        don't fetch more than the ingest quota would keep."""
+        explicit = _int_or_none(f"RWE_{self.env_prefix}_PAGE_SIZE")
+        size = explicit if explicit is not None else min(self.max_articles() or self.page_cap,
+                                                         self.page_cap)
+        return max(1, min(size, self.page_cap))
 
     def daily_budget(self) -> int:
-        return _int_env("RWE_NEWSAPI_DAILY_BUDGET", 0)      # 0 = unlimited
+        return _int_env(f"RWE_{self.env_prefix}_DAILY_BUDGET", 0)   # 0 = unlimited
 
-    @property
-    def health_key(self) -> str:
-        return f"newsapi://{os.environ.get('RWE_NEWSAPI_ENDPOINT', 'top-headlines')}"
-
-    @staticmethod
-    def _split(env: str) -> list:
-        return [v.strip() for v in os.environ.get(env, "").split(",") if v.strip()]
+    # -- rotation + budget + 429 accounting -------------------------------- #
+    def _split(self, suffix: str) -> list:
+        return [v.strip() for v in self._env(suffix).split(",") if v.strip()]
 
     def _combos(self) -> list:
-        """The cross-product of the configured CATEGORY × COUNTRY × LANGUAGE lists (each list is
-        ``[None]`` when unset), as param dicts. Single values yield one combo — the pre-list
-        behaviour, unchanged."""
-        cats = self._split("RWE_NEWSAPI_CATEGORY") or [None]
-        countries = self._split("RWE_NEWSAPI_COUNTRY") or [None]
-        langs = self._split("RWE_NEWSAPI_LANGUAGE") or [None]
-        combos = []
-        for country in countries:
-            for cat in cats:
-                for lang in langs:
-                    combos.append({k: v for k, v in
-                                   (("category", cat), ("country", country), ("language", lang)) if v})
+        """The cross-product of the configured combo-axis lists (each ``[None]`` when unset), as
+        request-param dicts in axis order — single values yield exactly one combo."""
+        axes = [(param, self._split(suffix) or [None]) for suffix, param in self.combo_axes]
+        combos: list = [{}]
+        for param, values in axes:
+            combos = [{**c, **({param: v} if v else {})} for c in combos for v in values]
         return combos
-
-    def _url(self, combo: dict) -> str:
-        endpoint = os.environ.get("RWE_NEWSAPI_ENDPOINT", "top-headlines")
-        params = {"pageSize": str(self.page_size())}
-        q = os.environ.get("RWE_NEWSAPI_QUERY")
-        if q:
-            params["q"] = q
-        params.update(combo)
-        # top-headlines needs at least one of country/category/q/sources to be a valid request.
-        if endpoint == "top-headlines" and not ({"q", "category", "country"} & set(params)):
-            params["country"] = "us"
-        return f"https://newsapi.org/v2/{endpoint}?{urllib.parse.urlencode(params)}"
 
     def _budget_left(self) -> Optional[int]:
         budget = self.daily_budget()
@@ -422,6 +421,23 @@ class NewsAPIAdapter(SourceAdapter):
         if code == 429:
             self._rl_events += 1
 
+    # -- the concrete adapter's surface ------------------------------------ #
+    def _url(self, combo: dict) -> str:
+        raise NotImplementedError
+
+    def _headers(self) -> dict:
+        return {"User-Agent": _USER_AGENT}
+
+    def _articles(self, raw: dict) -> list:
+        """The payload's article list (provider-specific envelope)."""
+        raise NotImplementedError
+
+    def _entry(self, a: dict, combo: dict) -> "Optional[rss_ingest.FeedEntry]":
+        """One provider article -> FeedEntry (or None to drop). Provider-specific mapping ONLY —
+        publisher/lean/country resolution happens downstream in the shared pipeline."""
+        raise NotImplementedError
+
+    # -- chassis fetch / cycle --------------------------------------------- #
     def fetch(self) -> dict:
         combos = self._combos()
         combo = combos[self._combo_i % len(combos)]
@@ -432,19 +448,15 @@ class NewsAPIAdapter(SourceAdapter):
         self._req_count += 1
         if self._fetch_fn is not None:
             return self._fetch_fn(url)
-        return _get_json(url, headers={"X-Api-Key": self.api_key(), "User-Agent": _USER_AGENT},
-                         timeout=_float_env("RWE_NEWSAPI_TIMEOUT", 15.0),
+        return _get_json(url, headers=self._headers(),
+                         timeout=_float_env(f"RWE_{self.env_prefix}_TIMEOUT", 15.0),
                          on_transient=self._note_transient)
 
     def poll_once(self, store_, scorer, *, on_feed: Optional[Callable] = None) -> dict:
-        """The standard cycle plus NewsAPI's own accounting: the ``rateLimited`` counter on every
-        aggregate, and the daily-budget short-circuit — a spent budget SKIPS the cycle before any
-        request (no fetch, no health-row touch: a cycle that did nothing must not claim a
-        lastSuccess) and reports ``budgetExhausted`` instead of an error."""
         self._rl_events = 0
         left = self._budget_left()
         if left is not None and left <= 0:
-            _default_log(logging.INFO, "newsapi_budget_exhausted",
+            _default_log(logging.INFO, f"{self.source_type}_budget_exhausted",
                          budget=self.daily_budget(), day=self._req_day)
             agg = _agg(self.provider, self.source_type, None, None, 0.0, None, key=self.health_key)
             agg["budgetExhausted"] = True
@@ -455,28 +467,414 @@ class NewsAPIAdapter(SourceAdapter):
         return agg
 
     def normalize(self, raw: dict) -> SourceBatch:
-        arts = (raw or {}).get("articles") or []
-        # Stamp each entry with the COMBO the fetch actually used (rotation makes the env values
-        # ambiguous); a direct normalize() call without a prior fetch falls back to the first combo.
+        # Stamp entries from the COMBO the fetch actually used (rotation makes env values
+        # ambiguous); a direct normalize() without a prior fetch falls back to the first combo.
         combo = self._last_combo if self._last_combo is not None else self._combos()[0]
-        cat = combo.get("category")
-        lang = combo.get("language")
-        country = combo.get("country")
-        entries = []
-        for a in arts:
-            url = (a.get("url") or "").strip()
-            if not url:
-                continue
-            img = media.pick_best_image([{"url": a.get("urlToImage"), "source": "newsapi"}]) or {}
-            entries.append(rss_ingest.FeedEntry(
-                url=url, title=a.get("title") or "", description=a.get("description") or "",
-                body=a.get("content") or None, published_at=rss_ingest._to_iso(a.get("publishedAt") or ""),
-                image=img.get("url"), image_width=img.get("width"), image_height=img.get("height"),
-                image_mime=img.get("mime"), image_source=(img.get("source") if img else None),
-                source_type="newsapi", source_provider="NewsAPI", category=cat, language=lang,
-                country=country, external_id=url,
-                publisher_hint=((a.get("source") or {}).get("name") or None)))
+        arts = self._articles(raw or {})
+        entries = [e for e in (self._entry(a, combo) for a in arts) if e is not None]
         return SourceBatch(self.provider, self.source_type, _now_iso(), entries, raw_count=len(arts))
+
+
+# --------------------------------------------------------------------------- #
+# NewsAPI adapter — https://newsapi.org/docs (the chassis' first rider; behaviour unchanged).
+# --------------------------------------------------------------------------- #
+class NewsAPIAdapter(KeyedJSONAdapter):
+    """NewsAPI on the shared chassis. Free tier ≈ 100 requests/day (24 h article delay); the
+    default 900 s interval spends 96 — set RWE_NEWSAPI_DAILY_BUDGET accordingly (compose: 90)."""
+
+    provider = "NewsAPI"
+    source_type = "newsapi"
+    env_prefix = "NEWSAPI"
+    page_cap = 100
+    signup_hint = "Get a free key at https://newsapi.org and set RWE_NEWSAPI_API_KEY."
+
+    @property
+    def health_key(self) -> str:
+        return f"newsapi://{os.environ.get('RWE_NEWSAPI_ENDPOINT', 'top-headlines')}"
+
+    def _headers(self) -> dict:
+        return {"X-Api-Key": self.api_key(), "User-Agent": _USER_AGENT}
+
+    def _url(self, combo: dict) -> str:
+        endpoint = os.environ.get("RWE_NEWSAPI_ENDPOINT", "top-headlines")
+        params = {"pageSize": str(self.page_size())}
+        q = os.environ.get("RWE_NEWSAPI_QUERY")
+        if q:
+            params["q"] = q
+        params.update(combo)
+        # top-headlines needs at least one of country/category/q/sources to be a valid request.
+        if endpoint == "top-headlines" and not ({"q", "category", "country"} & set(params)):
+            params["country"] = "us"
+        return f"https://newsapi.org/v2/{endpoint}?{urllib.parse.urlencode(params)}"
+
+    def _articles(self, raw: dict) -> list:
+        return raw.get("articles") or []
+
+    def _entry(self, a: dict, combo: dict):
+        url = (a.get("url") or "").strip()
+        if not url:
+            return None
+        img = media.pick_best_image([{"url": a.get("urlToImage"), "source": "newsapi"}]) or {}
+        return rss_ingest.FeedEntry(
+            url=url, title=a.get("title") or "", description=a.get("description") or "",
+            body=a.get("content") or None, published_at=rss_ingest._to_iso(a.get("publishedAt") or ""),
+            image=img.get("url"), image_width=img.get("width"), image_height=img.get("height"),
+            image_mime=img.get("mime"), image_source=(img.get("source") if img else None),
+            source_type="newsapi", source_provider="NewsAPI", category=combo.get("category"),
+            language=combo.get("language"), country=combo.get("country"), external_id=url,
+            publisher_hint=((a.get("source") or {}).get("name") or None))
+
+
+# --------------------------------------------------------------------------- #
+# Guardian Open Platform — https://open-platform.theguardian.com/documentation/
+# --------------------------------------------------------------------------- #
+class GuardianAdapter(KeyedJSONAdapter):
+    """Single-outlet source: every article is The Guardian's own (publisher_hint fixed to its
+    domain, so the registry resolves the canonical outlet + its verified lean/locality).
+    Developer tier ≈ 500 calls/day. Rotation axis: SECTION (e.g. world,politics)."""
+
+    provider = "Guardian"
+    source_type = "guardian"
+    env_prefix = "GUARDIAN"
+    endpoint_name = "search"
+    page_cap = 50
+    signup_hint = "Get a free developer key at https://open-platform.theguardian.com/access/."
+    combo_axes = (("SECTION", "section"),)
+
+    def _url(self, combo: dict) -> str:
+        params = {"api-key": self.api_key(), "order-by": "newest",
+                  "show-fields": "trailText,thumbnail", "page-size": str(self.page_size())}
+        q = self._env("QUERY")
+        if q:
+            params["q"] = q
+        params.update(combo)
+        return f"https://content.guardianapis.com/search?{urllib.parse.urlencode(params)}"
+
+    def _articles(self, raw: dict) -> list:
+        return (raw.get("response") or {}).get("results") or []
+
+    def _entry(self, a: dict, combo: dict):
+        url = (a.get("webUrl") or "").strip()
+        if not url:
+            return None
+        fields = a.get("fields") or {}
+        img = media.pick_best_image([{"url": fields.get("thumbnail"), "source": "guardian"}]) or {}
+        return rss_ingest.FeedEntry(
+            url=url, title=a.get("webTitle") or "", description=fields.get("trailText") or "",
+            published_at=rss_ingest._to_iso(a.get("webPublicationDate") or ""),
+            image=img.get("url"), image_width=img.get("width"), image_height=img.get("height"),
+            image_mime=img.get("mime"), image_source=(img.get("source") if img else None),
+            source_type="guardian", source_provider="Guardian",
+            category=a.get("sectionName") or combo.get("section"), language="en",
+            external_id=a.get("id") or url, publisher_hint="theguardian.com")
+
+
+# --------------------------------------------------------------------------- #
+# NewsData.io — https://newsdata.io/documentation
+# --------------------------------------------------------------------------- #
+class NewsDataAdapter(KeyedJSONAdapter):
+    """NewsData.io ``latest``. Free tier ≈ 200 credits/day, ``size`` capped at 10 there (the
+    compose default matches; paid tiers may raise PAGE_SIZE up to 50). Country/language values
+    may arrive as English names — the shared Location Resolver normalizes both forms."""
+
+    provider = "NewsData"
+    source_type = "newsdata"
+    env_prefix = "NEWSDATA"
+    endpoint_name = "latest"
+    page_cap = 50
+    signup_hint = "Get a free key at https://newsdata.io and set RWE_NEWSDATA_API_KEY."
+
+    def _url(self, combo: dict) -> str:
+        params = {"apikey": self.api_key(), "size": str(self.page_size())}
+        q = self._env("QUERY")
+        if q:
+            params["q"] = q
+        params.update(combo)
+        return f"https://newsdata.io/api/1/latest?{urllib.parse.urlencode(params)}"
+
+    def _articles(self, raw: dict) -> list:
+        return raw.get("results") or []
+
+    @staticmethod
+    def _iso(pub: str) -> Optional[str]:
+        pub = (pub or "").strip()
+        if not pub:
+            return None
+        # "2026-07-26 10:00:00" (their format) -> RFC3339-ish for the shared parser.
+        return rss_ingest._to_iso(pub.replace(" ", "T", 1) if pub[:4].isdigit() else pub)
+
+    def _entry(self, a: dict, combo: dict):
+        url = (a.get("link") or "").strip()
+        if not url:
+            return None
+        img = media.pick_best_image([{"url": a.get("image_url"), "source": "newsdata"}]) or {}
+        cats = a.get("category") or []
+        countries = a.get("country") or []
+        return rss_ingest.FeedEntry(
+            url=url, title=a.get("title") or "", description=a.get("description") or "",
+            published_at=self._iso(a.get("pubDate") or ""),
+            image=img.get("url"), image_width=img.get("width"), image_height=img.get("height"),
+            image_mime=img.get("mime"), image_source=(img.get("source") if img else None),
+            source_type="newsdata", source_provider="NewsData",
+            category=(cats[0] if cats else combo.get("category")),
+            language=a.get("language") or combo.get("language"),
+            country=(countries[0] if countries else combo.get("country")),
+            external_id=a.get("article_id") or url,
+            publisher_hint=a.get("source_name") or a.get("source_id") or None)
+
+
+# --------------------------------------------------------------------------- #
+# GNews — https://gnews.io/docs/v4
+# --------------------------------------------------------------------------- #
+class GNewsAdapter(KeyedJSONAdapter):
+    """GNews ``top-headlines``. Free tier ≈ 100 requests/day with ``max`` capped at 10 (compose
+    default matches). The source URL (domain) is preferred as the publisher hint — the registry
+    resolves domains exactly."""
+
+    provider = "GNews"
+    source_type = "gnews"
+    env_prefix = "GNEWS"
+    endpoint_name = "top-headlines"
+    page_cap = 100
+    signup_hint = "Get a free key at https://gnews.io and set RWE_GNEWS_API_KEY."
+    combo_axes = (("COUNTRY", "country"), ("CATEGORY", "category"), ("LANGUAGE", "lang"))
+
+    def _url(self, combo: dict) -> str:
+        params = {"apikey": self.api_key(), "max": str(self.page_size())}
+        q = self._env("QUERY")
+        if q:
+            params["q"] = q
+        params.update(combo)
+        return f"https://gnews.io/api/v4/top-headlines?{urllib.parse.urlencode(params)}"
+
+    def _articles(self, raw: dict) -> list:
+        return raw.get("articles") or []
+
+    def _entry(self, a: dict, combo: dict):
+        url = (a.get("url") or "").strip()
+        if not url:
+            return None
+        src = a.get("source") or {}
+        img = media.pick_best_image([{"url": a.get("image"), "source": "gnews"}]) or {}
+        return rss_ingest.FeedEntry(
+            url=url, title=a.get("title") or "", description=a.get("description") or "",
+            body=a.get("content") or None,
+            published_at=rss_ingest._to_iso(a.get("publishedAt") or ""),
+            image=img.get("url"), image_width=img.get("width"), image_height=img.get("height"),
+            image_mime=img.get("mime"), image_source=(img.get("source") if img else None),
+            source_type="gnews", source_provider="GNews",
+            category=combo.get("category"), language=combo.get("lang"),
+            country=combo.get("country"), external_id=url,
+            publisher_hint=src.get("url") or src.get("name") or None)
+
+
+# --------------------------------------------------------------------------- #
+# MediaStack — https://mediastack.com/documentation
+# --------------------------------------------------------------------------- #
+class MediaStackAdapter(KeyedJSONAdapter):
+    """MediaStack ``news``. NOTE the tight free tier: ≈ 500 requests/MONTH (~16/day — the
+    compose defaults pick a 90-minute interval + budget 15) and HTTPS is paid-only there:
+    RWE_MEDIASTACK_HTTPS=0 switches to http for the free tier (documented trade-off)."""
+
+    provider = "MediaStack"
+    source_type = "mediastack"
+    env_prefix = "MEDIASTACK"
+    endpoint_name = "news"
+    default_interval = 5400.0
+    page_cap = 100
+    signup_hint = "Get a key at https://mediastack.com and set RWE_MEDIASTACK_API_KEY."
+    combo_axes = (("COUNTRY", "countries"), ("CATEGORY", "categories"), ("LANGUAGE", "languages"))
+
+    def _url(self, combo: dict) -> str:
+        scheme = "https" if _bool_env("RWE_MEDIASTACK_HTTPS", True) else "http"
+        params = {"access_key": self.api_key(), "sort": "published_desc",
+                  "limit": str(self.page_size())}
+        q = self._env("QUERY")
+        if q:
+            params["keywords"] = q
+        params.update(combo)
+        return f"{scheme}://api.mediastack.com/v1/news?{urllib.parse.urlencode(params)}"
+
+    def _articles(self, raw: dict) -> list:
+        return raw.get("data") or []
+
+    def _entry(self, a: dict, combo: dict):
+        url = (a.get("url") or "").strip()
+        if not url:
+            return None
+        img = media.pick_best_image([{"url": a.get("image"), "source": "mediastack"}]) or {}
+        return rss_ingest.FeedEntry(
+            url=url, title=a.get("title") or "", description=a.get("description") or "",
+            published_at=rss_ingest._to_iso(a.get("published_at") or ""),
+            image=img.get("url"), image_width=img.get("width"), image_height=img.get("height"),
+            image_mime=img.get("mime"), image_source=(img.get("source") if img else None),
+            source_type="mediastack", source_provider="MediaStack",
+            category=a.get("category") or combo.get("categories"),
+            language=a.get("language") or combo.get("languages"),
+            country=a.get("country") or combo.get("countries"),
+            external_id=url, publisher_hint=a.get("source") or None)
+
+
+# --------------------------------------------------------------------------- #
+# Currents — https://currentsapi.services/en/docs/
+# --------------------------------------------------------------------------- #
+class CurrentsAdapter(KeyedJSONAdapter):
+    """Currents ``latest-news``. Free tier ≈ 600 requests/day. The payload carries no outlet
+    field, so the publisher hint is the article URL's own domain (the registry resolves
+    domains); ``image`` is sometimes the literal string "None" — dropped, never stored."""
+
+    provider = "Currents"
+    source_type = "currents"
+    env_prefix = "CURRENTS"
+    endpoint_name = "latest-news"
+    page_cap = 100
+    signup_hint = "Get a free key at https://currentsapi.services and set RWE_CURRENTS_API_KEY."
+
+    def _url(self, combo: dict) -> str:
+        params = {"apiKey": self.api_key(), "page_size": str(self.page_size())}
+        q = self._env("QUERY")
+        if q:
+            params["keywords"] = q
+        params.update(combo)
+        return f"https://api.currentsapi.services/v1/latest-news?{urllib.parse.urlencode(params)}"
+
+    def _articles(self, raw: dict) -> list:
+        return raw.get("news") or []
+
+    @staticmethod
+    def _iso(pub: str) -> Optional[str]:
+        pub = (pub or "").strip()
+        if not pub:
+            return None
+        out = rss_ingest._to_iso(pub)
+        if out:
+            return out
+        try:                                                # "2026-07-26 10:00:00 +0000"
+            from datetime import datetime
+            return datetime.strptime(pub, "%Y-%m-%d %H:%M:%S %z").isoformat()
+        except ValueError:
+            return None
+
+    def _entry(self, a: dict, combo: dict):
+        url = (a.get("url") or "").strip()
+        if not url:
+            return None
+        host = urllib.parse.urlsplit(url).netloc.lower()
+        host = host[4:] if host.startswith("www.") else host
+        image = a.get("image")
+        image = None if (not image or str(image).strip().lower() == "none") else image
+        img = media.pick_best_image([{"url": image, "source": "currents"}]) or {}
+        cats = a.get("category") or []
+        return rss_ingest.FeedEntry(
+            url=url, title=a.get("title") or "", description=a.get("description") or "",
+            published_at=self._iso(a.get("published") or ""),
+            image=img.get("url"), image_width=img.get("width"), image_height=img.get("height"),
+            image_mime=img.get("mime"), image_source=(img.get("source") if img else None),
+            source_type="currents", source_provider="Currents",
+            category=(cats[0] if cats else combo.get("category")),
+            language=a.get("language") or combo.get("language"),
+            country=combo.get("country"), external_id=a.get("id") or url,
+            publisher_hint=host or None)
+
+
+# --------------------------------------------------------------------------- #
+# Google News RSS — https://news.google.com/rss (keyless; publisher comes from the <source> tag)
+# --------------------------------------------------------------------------- #
+class GoogleNewsAdapter(SourceAdapter):
+    """Google News RSS feeds (keyless). Feeds are built from TOPICS (WORLD, NATION, BUSINESS,
+    TECHNOLOGY, ENTERTAINMENT, SPORTS, SCIENCE, HEALTH) and/or free-text QUERIES — both
+    comma-separated, ROTATED one feed per cycle. Each item's ``<source url=…>`` tag names the
+    REAL outlet, which becomes the publisher hint (the registry resolves it: rated outlets
+    arrive rated, unknown ones stay honestly Unknown).
+
+    Honest limitation, by design: item links are Google redirect URLs (the encoded form is
+    undocumented — decoding it would be guesswork), so the Read flow opens via Google's
+    redirect, and canonical-URL dedup cannot merge a Google-delivered article with the SAME
+    article from the publisher's own feed — story clustering still groups them by title."""
+
+    provider = "GoogleNews"
+    source_type = "googlenews"
+
+    _TOPICS = ("WORLD", "NATION", "BUSINESS", "TECHNOLOGY", "ENTERTAINMENT",
+               "SPORTS", "SCIENCE", "HEALTH")
+
+    def __init__(self, fetch_bytes: Optional[Callable[[str], bytes]] = None):
+        self._fetch_bytes = fetch_bytes                     # injectable (offline tests)
+        self._feed_i = 0
+        self._last_feed: Optional[tuple] = None             # (kind, value, url)
+
+    def enabled(self) -> bool:
+        return _bool_env("RWE_GOOGLENEWS_ENABLED")
+
+    def interval(self) -> float:
+        return _float_env("RWE_GOOGLENEWS_POLL_INTERVAL", 900.0)
+
+    def max_articles(self) -> Optional[int]:
+        return _int_or_none("RWE_GOOGLENEWS_MAX_ARTICLES")
+
+    @property
+    def health_key(self) -> str:
+        return "googlenews://rss"
+
+    def _locale(self) -> dict:
+        hl = os.environ.get("RWE_GOOGLENEWS_LANGUAGE", "en-US").strip() or "en-US"
+        gl = os.environ.get("RWE_GOOGLENEWS_COUNTRY", "US").strip() or "US"
+        return {"hl": hl, "gl": gl, "ceid": f"{gl}:{hl.split('-')[0]}"}
+
+    def _feeds(self) -> list:
+        """(kind, value, url) per configured feed: topic sections, searches, or the front page."""
+        loc = urllib.parse.urlencode(self._locale())
+        topics = [t.strip().upper() for t in os.environ.get("RWE_GOOGLENEWS_TOPICS", "").split(",")
+                  if t.strip() and t.strip().upper() in self._TOPICS]
+        queries = [q.strip() for q in os.environ.get("RWE_GOOGLENEWS_QUERIES", "").split(",")
+                   if q.strip()]
+        feeds = [("topic", t, f"https://news.google.com/rss/headlines/section/topic/{t}?{loc}")
+                 for t in topics]
+        feeds += [("search", q,
+                   f"https://news.google.com/rss/search?{urllib.parse.urlencode({'q': q})}&{loc}")
+                  for q in queries]
+        return feeds or [("top", "", f"https://news.google.com/rss?{loc}")]
+
+    def fetch(self) -> bytes:
+        feeds = self._feeds()
+        kind, value, url = feeds[self._feed_i % len(feeds)]
+        self._feed_i += 1
+        self._last_feed = (kind, value, url)
+        if self._fetch_bytes is not None:
+            return self._fetch_bytes(url)
+        return _get_bytes(url, timeout=_float_env("RWE_GOOGLENEWS_TIMEOUT", 20.0))
+
+    def normalize(self, raw: bytes) -> SourceBatch:
+        import xml.etree.ElementTree as ET
+        kind, value, _url = self._last_feed or ("top", "", "")
+        loc = self._locale()
+        category = value.capitalize() if kind == "topic" else None
+        entries: list = []
+        raw_count = 0
+        try:
+            root = ET.fromstring(raw or b"")
+            items = root.findall(".//item")
+        except ET.ParseError:
+            items = []
+        for item in items:
+            raw_count += 1
+            link = (item.findtext("link") or "").strip()
+            title = (item.findtext("title") or "").strip()
+            if not link:
+                continue
+            src = item.find("source")
+            src_name = (src.text or "").strip() if src is not None else ""
+            src_url = (src.get("url") or "").strip() if src is not None else ""
+            # Google appends " - Publisher" to titles; strip it when it matches the source tag.
+            if src_name and title.endswith(f" - {src_name}"):
+                title = title[: -(len(src_name) + 3)].rstrip()
+            entries.append(rss_ingest.FeedEntry(
+                url=link, title=title, description=item.findtext("description") or "",
+                published_at=rss_ingest._to_iso(item.findtext("pubDate") or ""),
+                source_type="googlenews", source_provider="GoogleNews",
+                category=category, language=loc["hl"].split("-")[0], country=loc["gl"],
+                external_id=link, publisher_hint=src_url or src_name or None))
+        return SourceBatch(self.provider, self.source_type, _now_iso(), entries, raw_count=raw_count)
 
 
 # --------------------------------------------------------------------------- #
@@ -623,14 +1021,20 @@ class SourceRegistry:
 
 
 def default_registry(feeds_spec: Optional[str] = None) -> SourceRegistry:
-    """The standard registry (RSS + NewsAPI + GDELT articles, + the GKG event-geography
-    enricher). Future adapters (Guardian API, Reuters, AP, Reddit, Hacker News, …) register here
-    without touching the poller."""
+    """The standard registry (RSS + NewsAPI + Guardian + NewsData + GNews + MediaStack + Currents +
+    Google News RSS + GDELT articles, + the GKG event-geography enricher). Future adapters (Reuters,
+    AP, Reddit, Hacker News, …) register here without touching the poller."""
     reg = SourceRegistry()
     reg.register(RSSAdapter(feeds_spec=feeds_spec))
     reg.register(NewsAPIAdapter())
+    reg.register(GuardianAdapter())
+    reg.register(NewsDataAdapter())
+    reg.register(GNewsAdapter())
+    reg.register(MediaStackAdapter())
+    reg.register(CurrentsAdapter())
+    reg.register(GoogleNewsAdapter())
     reg.register(GDELTAdapter())
-    reg.register(GDELTGKGEnricher())
+    reg.register(GDELTGKGEnricher())   # enrichment last: it annotates articles the others ingested
     return reg
 
 

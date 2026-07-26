@@ -434,6 +434,54 @@ flag is on without a key: the adapter stays off until the key lands (also enforc
 `deploy/ops/validate-deployment.py`, rule `newsapi-key`). Rollback: `RWE_NEWSAPI_ENABLED=0` +
 restart — already-ingested NewsAPI articles remain (they are ordinary catalog rows).
 
+### 6c · Additional providers — Guardian, NewsData, GNews, MediaStack, Currents, Google News RSS
+
+All six ride the SAME shared pipeline and (for the keyed five) the same chassis as NewsAPI, so
+everything in §6b — rotation semantics, budget short-circuit, `rateLimited` accounting, the
+flag-without-key startup warning, the rollback story — applies verbatim; only the env prefix and
+the free-tier numbers change. Publishers resolve through `examples/data/outlet_registry.csv`:
+rated outlets arrive with their verified lean; unknown outlets ingest honestly unrated (they
+appear in `unknown_outlets` stats and the `outlet_coverage.py` worklist — curate, never guess).
+
+| Provider | Prefix (`RWE_<P>_*`) | Free tier | Interval default | Budget default | Health key |
+|---|---|---|---|---|---|
+| The Guardian | `GUARDIAN` | ~500 req/day | 900 s (96/day) | 450 | `guardian://search` |
+| NewsData.io | `NEWSDATA` | ~200 credits/day, size ≤ 10 | 900 s (96/day) | 190 | `newsdata://latest` |
+| GNews | `GNEWS` | ~100 req/day, max ≤ 10 | 900 s (96/day) | 95 | `gnews://top-headlines` |
+| MediaStack | `MEDIASTACK` | **~500 req/MONTH** | 5400 s (16/day) | 15 | `mediastack://news` |
+| Currents | `CURRENTS` | ~600 req/day | 900 s (96/day) | 550 | `currents://latest-news` |
+| Google News RSS | `GOOGLENEWS` | keyless | 900 s | — (no key, no budget) | `googlenews://rss` |
+
+Enablement is uniform — in `deploy/.env` set `RWE_<P>_ENABLED=1` (+ `RWE_<P>_API_KEY=<key>` for
+the keyed five), then `deploy/ops/restart.sh`. The §6b verification probe works for every
+provider: substitute the provider's name in the `"newsapi" in` filter (e.g. `"guardian"`).
+Validator rules `guardian-key` / `newsdata-key` / `gnews-key` / `mediastack-key` /
+`currents-key` enforce flag⇒key at deploy time.
+
+Provider-specific notes (the honest edges, documented rather than papered over):
+
+* **Guardian** is single-outlet: every article resolves to canonical publisher “The Guardian”
+  (registry-verified Lean Left). It thickens that one outlet's coverage — it widens story
+  distributions, not the outlet spectrum. Rotation axis is `RWE_GUARDIAN_SECTION`
+  (e.g. `world,politics`).
+* **NewsData + GNews** free tiers cap articles per request at 10 — the compose `PAGE_SIZE`
+  defaults match; raising them only helps on paid tiers.
+* **MediaStack's quota is MONTHLY** (~500). The defaults (90-min interval, budget 15/day ≈
+  465/month) are sized to survive the month — do not drop the interval below ~5400 s on the
+  free tier. HTTPS is paid-only there: `RWE_MEDIASTACK_HTTPS=0` downgrades the fetch to http
+  (free tier), a documented trade-off — article metadata then transits unencrypted.
+* **Currents** payloads carry no outlet field; the publisher hint is each article URL's own
+  domain (www-stripped), which the registry resolves exactly like any domain alias.
+* **Google News RSS** is keyless; feeds are built from `RWE_GOOGLENEWS_TOPICS`
+  (WORLD/NATION/BUSINESS/TECHNOLOGY/ENTERTAINMENT/SPORTS/SCIENCE/HEALTH) and/or free-text
+  `RWE_GOOGLENEWS_QUERIES`, rotated one feed per cycle. The item's `<source>` tag names the
+  real outlet — that is the publisher hint. **Known limitation:** item links are Google
+  redirect URLs (the encoding is undocumented, so we do not guess-decode), which means
+  canonical-URL dedup cannot merge a Google-delivered copy with the same article from the
+  publisher's own feed — story clustering still groups them by title. Prefer direct RSS/API
+  sources for outlets you already ingest; Google News is best used for breadth (topics and
+  queries you have no direct source for).
+
 ---
 
 ## 7 · Operational runbook

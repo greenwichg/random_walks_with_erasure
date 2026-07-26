@@ -28,6 +28,46 @@
       "fix": "On the `api` service keep `RWE_NEWSAPI_API_KEY: ${RWE_NEWSAPI_API_KEY:-}` wired and set the key in deploy/.env alongside RWE_NEWSAPI_ENABLED=1."
     },
     {
+      "id": "guardian-key",
+      "categories": ["feature-flag", "required-env"],
+      "when": { "service": "api", "env_truthy": "RWE_GUARDIAN_ENABLED" },
+      "require": { "env": ["RWE_GUARDIAN_API_KEY"] },
+      "why": "Same chassis contract as newsapi-key: the enable flag without RWE_GUARDIAN_API_KEY leaves the Guardian adapter disabled (startup config warning) and silently ingests nothing.",
+      "fix": "Keep `RWE_GUARDIAN_API_KEY: ${RWE_GUARDIAN_API_KEY:-}` wired on the `api` service and set the key in deploy/.env alongside RWE_GUARDIAN_ENABLED=1."
+    },
+    {
+      "id": "newsdata-key",
+      "categories": ["feature-flag", "required-env"],
+      "when": { "service": "api", "env_truthy": "RWE_NEWSDATA_ENABLED" },
+      "require": { "env": ["RWE_NEWSDATA_API_KEY"] },
+      "why": "Same chassis contract as newsapi-key: the enable flag without RWE_NEWSDATA_API_KEY leaves the NewsData adapter disabled (startup config warning) and silently ingests nothing.",
+      "fix": "Keep `RWE_NEWSDATA_API_KEY: ${RWE_NEWSDATA_API_KEY:-}` wired on the `api` service and set the key in deploy/.env alongside RWE_NEWSDATA_ENABLED=1."
+    },
+    {
+      "id": "gnews-key",
+      "categories": ["feature-flag", "required-env"],
+      "when": { "service": "api", "env_truthy": "RWE_GNEWS_ENABLED" },
+      "require": { "env": ["RWE_GNEWS_API_KEY"] },
+      "why": "Same chassis contract as newsapi-key: the enable flag without RWE_GNEWS_API_KEY leaves the GNews adapter disabled (startup config warning) and silently ingests nothing.",
+      "fix": "Keep `RWE_GNEWS_API_KEY: ${RWE_GNEWS_API_KEY:-}` wired on the `api` service and set the key in deploy/.env alongside RWE_GNEWS_ENABLED=1."
+    },
+    {
+      "id": "mediastack-key",
+      "categories": ["feature-flag", "required-env"],
+      "when": { "service": "api", "env_truthy": "RWE_MEDIASTACK_ENABLED" },
+      "require": { "env": ["RWE_MEDIASTACK_API_KEY"] },
+      "why": "Same chassis contract as newsapi-key: the enable flag without RWE_MEDIASTACK_API_KEY leaves the MediaStack adapter disabled (startup config warning) and silently ingests nothing. (Free tier is ~500 requests/MONTH — keep the 5400 s interval + DAILY_BUDGET 15.)",
+      "fix": "Keep `RWE_MEDIASTACK_API_KEY: ${RWE_MEDIASTACK_API_KEY:-}` wired on the `api` service and set the key in deploy/.env alongside RWE_MEDIASTACK_ENABLED=1."
+    },
+    {
+      "id": "currents-key",
+      "categories": ["feature-flag", "required-env"],
+      "when": { "service": "api", "env_truthy": "RWE_CURRENTS_ENABLED" },
+      "require": { "env": ["RWE_CURRENTS_API_KEY"] },
+      "why": "Same chassis contract as newsapi-key: the enable flag without RWE_CURRENTS_API_KEY leaves the Currents adapter disabled (startup config warning) and silently ingests nothing. (Google News RSS is keyless — RWE_GOOGLENEWS_ENABLED needs no companion rule.)",
+      "fix": "Keep `RWE_CURRENTS_API_KEY: ${RWE_CURRENTS_API_KEY:-}` wired on the `api` service and set the key in deploy/.env alongside RWE_CURRENTS_ENABLED=1."
+    },
+    {
       "id": "engine-failclosed-secret",
       "categories": ["secret", "required-env"],
       "when": { "service": "api", "env_equals": { "RWE_ENV": "production" } },

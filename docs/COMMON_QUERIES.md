@@ -134,7 +134,7 @@ python examples/corpus_health.py       # totals, diversity, freshness, age span
 python examples/corpus_validation.py   # is the candidate set recommendable?
 ```
 
-### Multi-source ingest (RSS + optional NewsAPI / GDELT)
+### Multi-source ingest (RSS + optional NewsAPI / Guardian / NewsData / GNews / MediaStack / Currents / Google News RSS / GDELT)
 
 ```bash
 python examples/sources.py check    # per-adapter enabled/config status (no ingest)

@@ -18,7 +18,7 @@ flowchart TD
     P --> SS["Story Service - examples/story_service.py + examples/clustering.py"]
     E --> CB["Corpus Builder - examples/feed_source.py + corpus_health / corpus_validation"]
     CB --> ING["Ingestion - examples/rss_ingest.py + examples/sources.py"]
-    ING --> SRC["RSS feeds / NewsAPI / GDELT"]
+    ING --> SRC["RSS feeds / keyed news APIs (NewsAPI, Guardian, NewsData, GNews, MediaStack, Currents) / Google News RSS / GDELT"]
     ING --> DB[("SQLite - examples/store.py, data/ih_beta.db")]
     CB --> DB
     SS --> DB
@@ -37,7 +37,7 @@ flowchart TD
 | **Recommendation Engine** (`examples/api_server.py` `Backend` + `rwe/`) | The actual ranking science. `rwe/` implements Random Walks with Erasure (`FeedbackGraph`, `RWEB`, `RWED`, `AdaptiveRWEB`); `Backend` wraps it with corpus loading, slice selection, and truthful card serialization. | a corpus (articles + click population), a reader row | ranked article columns per strategy; serialized cards | numpy/scipy, `rwe/`, `health_report.py` |
 | **Story Service** (`examples/story_service.py`) | Groups articles about the *same news event* across publishers — the basis of Story pages and Story Match. Token-Jaccard union-find clustering (`examples/clustering.py`), no ML model, deterministic. | catalog articles (title tokens + publishedAt) | story clusters (id, members, publishers, timeline) | Store, `clustering.py` |
 | **Corpus Builder** (`examples/feed_source.py`, `corpus_health.py`, `corpus_validation.py`, `corpus_refresh.py`) | The engine needs a *bounded, healthy, fresh* corpus, not the raw catalog. Applies freshness windows, publisher caps, floors/ceilings, then validates before anything goes live. | FeedArticle catalog + env config | a corpus CSV (`data/feed_corpus.csv`) the Backend loads; hot-swapped candidates | Store, `corpus_health` thresholds |
-| **Ingestion** (`examples/rss_ingest.py`, `examples/sources.py`, `examples/ingest.py`) | Gets real news in, normalized: parse feeds, canonicalize URLs, classify topic/lean/political, dedupe, persist. NewsAPI/GDELT adapters normalize into the *same* pipeline so downstream code never knows the source. | RSS XML / NewsAPI JSON / GDELT | `FeedArticle` rows (+ per-feed health rows) | Store, classifiers (`classify_lean/emotion/register.py`, `outlet_registry.py`) |
+| **Ingestion** (`examples/rss_ingest.py`, `examples/sources.py`, `examples/ingest.py`) | Gets real news in, normalized: parse feeds, canonicalize URLs, classify topic/lean/political, dedupe, persist. Every non-RSS adapter (NewsAPI, Guardian, NewsData, GNews, MediaStack, Currents, Google News RSS, GDELT) normalizes into the *same* pipeline so downstream code never knows the source. | RSS/Atom XML / provider JSON / Google News RSS / GDELT | `FeedArticle` rows (+ per-feed health rows) | Store, classifiers (`classify_lean/emotion/register.py`, `outlet_registry.py`) |
 | **SQLite Store** (`examples/store.py`) | Single durable source of truth. One env var (`RWE_DB_URL`) selects the database; SQLAlchemy models; everything else is stateless and rebuildable from it. | writes from ingestion + user actions | rows for every other component | SQLAlchemy |
 
 Two more first-class citizens that sit *beside* the serving path:
@@ -80,7 +80,7 @@ Classes/functions involved, in call order:
 
 ```mermaid
 flowchart TD
-    F["RSS feed XML / NewsAPI JSON / GDELT"] --> AD["sources.SourceAdapter.normalize -> rss_ingest.FeedEntry"]
+    F["RSS/Atom XML / provider JSON (NewsAPI, Guardian, NewsData, GNews, MediaStack, Currents) / Google News RSS / GDELT"] --> AD["sources.SourceAdapter.normalize -> rss_ingest.FeedEntry"]
     AD --> IE["rss_ingest.ingest_entries"]
     IE --> N["ingest.normalize_url + canonical_url - dedup key"]
     IE --> CT["ingest.classify_topic - source category > URL section > title lexicon > geographic"]
@@ -99,7 +99,7 @@ Module responsibilities:
 
 - `examples/ingest.py` — the shared vocabulary of ingestion: `RawRead`, `ScoredRead` scoring, `canonical_url`, `classify_topic` (one canonical classifier for ALL sources), `looks_political`, `score_with_cache`.
 - `examples/rss_ingest.py` — RSS/Atom parsing (`parse_feed`), the shared terminal pipeline (`ingest_entries`), the batch runner (`ingest_all`), per-feed health, and the `status` CLI.
-- `examples/sources.py` — `SourceAdapter` (RSS/NewsAPI/GDELT), `SourceRegistry`, `MultiSourcePoller`. Adapters only *normalize*; they all terminate in `ingest_entries`, so downstream never learns the provider.
+- `examples/sources.py` — `SourceAdapter` (RSS / GDELT / Google News RSS) + the `KeyedJSONAdapter` chassis (NewsAPI, Guardian, NewsData, GNews, MediaStack, Currents — env-prefix config, combo rotation, daily budgets, 429 accounting), `SourceRegistry`, `MultiSourcePoller`. Adapters only *normalize*; they all terminate in `ingest_entries`, so downstream never learns the provider.
 - `examples/feed_service.py` — the background RSS poller thread (`RWE_FEED_POLL`, default 600s), a loop *around* `rss_ingest.ingest_all` with an `on_cycle` seam.
 - `examples/corpus_refresh.py` — the hot-refresh wiring: on a poll cycle, if the candidate corpus signature changed, build → validate → sanity-check → **atomic swap** of the Backend corpus; fail-closed (a bad candidate never replaces a serving corpus).
 - `examples/corpus_health.py` — freshness (`feed_max_age_days`, `feed_require_dated`, `fresh_articles` with the read-demand exemption), retention planning (monotonic, floor-respecting), health thresholds.
@@ -235,7 +235,7 @@ Functions to know, in order: `store.add_read` → `story_service.cluster_from_st
 | serving corpus | `Backend` memory (from `data/feed_corpus.csv`) | boot or hot swap | `corpus_refresh` on poll cycles |
 | report snapshots | `report_snapshots` table | per user/report | new measured report |
 
-**Polling → rebuild → hot reload:** `feed_service`/`sources.MultiSourcePoller` (RSS 600s; NewsAPI/GDELT 900s when enabled) run `ingest_all` per cycle → `corpus_refresh` computes the candidate signature; if changed: `corpus_validation.build_candidate` → health gates → **atomic swap** of the Backend corpus (fail-closed: validation failure keeps the old corpus serving). Article ids (`Q{i}`) are **positional per corpus build** — never join feeds across builds by id; join by canonical URL.
+**Polling → rebuild → hot reload:** `feed_service`/`sources.MultiSourcePoller` (RSS 600s; most API providers 900s when enabled; MediaStack 5400s; GDELT 1800s) run `ingest_all` per cycle → `corpus_refresh` computes the candidate signature; if changed: `corpus_validation.build_candidate` → health gates → **atomic swap** of the Backend corpus (fail-closed: validation failure keeps the old corpus serving). Article ids (`Q{i}`) are **positional per corpus build** — never join feeds across builds by id; join by canonical URL.
 
 **Serving:** every `/api/recommendations` request recomputes the feed from the cached per-user model over the current corpus (deterministic given corpus+history — pinned by the RVP determinism stage).
 
