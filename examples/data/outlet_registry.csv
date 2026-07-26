@@ -82,3 +82,94 @@ The Federalist,2,thefederalist.com|Federalist,US,,,national
 Washington Times,2,washingtontimes.com,US,,,national
 Townhall,2,townhall.com,US,,,national
 The Blaze,2,theblaze.com|Blaze|TheBlaze,US,,,national
+# ---------------------------------------------------------------------------------------------
+# Locality-only rows (Signal Integrity M1): canonical identity + home locality are curated public
+# facts; the lean column is deliberately BLANK (unrated -> NaN) — a political lean is added ONLY
+# when verified against a public rating source (AllSides et al.), never guessed. Workflow:
+#   python examples/outlet_coverage.py --db <prod>   # rank unknown outlets by article volume
+#   add/extend rows here (locality first; lean only with a citable rating)
+#   python examples/outlet_coverage.py --lint        # well-formedness gate
+# ---------------------------------------------------------------------------------------------
+Deutsche Welle,,dw.com,DE,,,international
+Der Spiegel,,spiegel.de,DE,,,national
+Die Zeit,,zeit.de,DE,,,national
+Frankfurter Allgemeine Zeitung,,faz.net,DE,,,national
+Süddeutsche Zeitung,,sueddeutsche.de,DE,,,national
+France 24,,france24.com,FR,,,international
+Le Monde,,lemonde.fr,FR,,,national
+Le Figaro,,lefigaro.fr,FR,,,national
+Radio France Internationale,,rfi.fr,FR,,,international
+Euronews,,euronews.com,FR,,,international
+El País,,elpais.com,ES,,,national
+El Mundo,,elmundo.es,ES,,,national
+La Repubblica,,repubblica.it,IT,,,national
+Corriere della Sera,,corriere.it,IT,,,national
+ANSA,,ansa.it,IT,,,national
+Politico Europe,,politico.eu,BE,,,international
+The Irish Times,,irishtimes.com,IE,,,national
+RTE,,rte.ie,IE,,,national
+Swissinfo,,swissinfo.ch,CH,,,international
+NOS,,nos.nl,NL,,,national
+Kyiv Independent,,kyivindependent.com,UA,,,national
+Kyiv Post,,kyivpost.com,UA,,,national
+Sky News,,news.sky.com,GB,,,national
+The Independent,,independent.co.uk,GB,,,national
+The Telegraph,,telegraph.co.uk,GB,,,national
+Financial Times,,ft.com,GB,,,international
+The Times,,thetimes.co.uk|thetimes.com,GB,,,national
+Daily Mail,,dailymail.co.uk,GB,,,national
+The Economist,,economist.com,GB,,,international
+Mirror,,mirror.co.uk,GB,,,national
+CBC News,,cbc.ca,CA,,,national
+The Globe and Mail,,theglobeandmail.com,CA,,,national
+CTV News,,ctvnews.ca,CA,,,national
+Toronto Star,,thestar.com,CA,,,national
+ABC Australia,,abc.net.au,AU,,,national
+Sydney Morning Herald,,smh.com.au,AU,,,national
+The Age,,theage.com.au,AU,,,national
+News.com.au,,news.com.au,AU,,,national
+New Zealand Herald,,nzherald.co.nz,NZ,,,national
+Stuff,,stuff.co.nz,NZ,,,national
+The Times of India,,timesofindia.indiatimes.com,IN,,,national
+The Hindu,,thehindu.com,IN,,,national
+Hindustan Times,,hindustantimes.com,IN,,,national
+NDTV,,ndtv.com,IN,,,national
+The Indian Express,,indianexpress.com,IN,,,national
+Dawn,,dawn.com,PK,,,national
+The Japan Times,,japantimes.co.jp,JP,,,national
+NHK,,nhk.or.jp,JP,,,national
+Nikkei Asia,,asia.nikkei.com,JP,,,international
+The Korea Herald,,koreaherald.com,KR,,,national
+Yonhap News Agency,,yna.co.kr,KR,,,national
+South China Morning Post,,scmp.com,HK,,,national
+The Straits Times,,straitstimes.com,SG,,,national
+Channel NewsAsia,,channelnewsasia.com,SG,,,international
+Bangkok Post,,bangkokpost.com,TH,,,national
+The Jakarta Post,,thejakartapost.com,ID,,,national
+Philippine Daily Inquirer,,inquirer.net,PH,,,national
+Rappler,,rappler.com,PH,,,national
+The Jerusalem Post,,jpost.com,IL,,,national
+Haaretz,,haaretz.com|haaretz.co.il,IL,,,national
+The Times of Israel,,timesofisrael.com,IL,,,national
+Al Arabiya,,alarabiya.net,AE,,,international
+Middle East Eye,,middleeasteye.net,GB,,,international
+Arab News,,arabnews.com,SA,,,national
+Daily Sabah,,dailysabah.com,TR,,,national
+Hurriyet Daily News,,hurriyetdailynews.com,TR,,,national
+Daily Nation,,nation.africa|nation.co.ke,KE,,,national
+The East African,,theeastafrican.co.ke,KE,,,international
+The Punch,,punchng.com,NG,,,national
+Vanguard (Nigeria),,vanguardngr.com,NG,,,national
+Nigerian Tribune,,tribuneonlineng.com,NG,,,national
+Premium Times,,premiumtimesng.com,NG,,,national
+News24,,news24.com,ZA,,,national
+Mail & Guardian,,mg.co.za,ZA,,,national
+Daily Maverick,,dailymaverick.co.za,ZA,,,national
+Ahram Online,,english.ahram.org.eg,EG,,,national
+Morocco World News,,moroccoworldnews.com,MA,,,national
+Folha de S.Paulo,,folha.uol.com.br,BR,,,national
+O Globo,,oglobo.globo.com,BR,,,national
+Clarín,,clarin.com,AR,,,national
+La Nación,,lanacion.com.ar,AR,,,national
+El Universal,,eluniversal.com.mx,MX,,,national
+Milenio,,milenio.com,MX,,,national

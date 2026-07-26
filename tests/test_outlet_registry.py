@@ -119,10 +119,21 @@ def test_registry_integrity(reg):
     assert len(outs) == len(reg) >= 40             # the seeded AllSides table + extension outlets
     canon = [o.canonical for o in outs]
     assert len(canon) == len(set(canon))           # canonical names are unique
+    rated = [o for o in outs if math.isfinite(o.lean)]
+    assert len(rated) >= 40                        # the rated core never shrinks
     for o in outs:
-        assert o.canonical and math.isfinite(o.lean) and -2.0 <= o.lean <= 2.0
-    # ordered by (lean, name)
-    assert outs == sorted(outs, key=lambda o: (o.lean, o.canonical))
+        assert o.canonical
+        if math.isfinite(o.lean):
+            assert -2.0 <= o.lean <= 2.0
+        else:
+            # A locality-only row must EARN its place: unrated is legal only with curated
+            # locality — a row with neither lean nor locality would assert nothing.
+            assert o.country, f"{o.canonical}: unrated row without locality"
+    # rated ordered by (lean, name); locality-only rows deterministically last by name
+    assert rated == sorted(rated, key=lambda o: (o.lean, o.canonical))
+    unrated = outs[len(rated):]
+    assert all(math.isnan(o.lean) for o in unrated)
+    assert unrated == sorted(unrated, key=lambda o: o.canonical)
 
 
 def test_all_extension_outlets_are_distinct_and_present(reg):
@@ -180,3 +191,50 @@ def test_lint_never_raises_on_a_broken_file(tmp_path):
                    encoding="utf-8")
     issues = orx.lint_registry(str(csv))
     assert any(i["code"] == "invalid_lean" for i in issues)
+
+
+# --------------------------------------------------------------------------- #
+# Locality-only rows (Signal Integrity M1): identity + home are curated facts, lean stays unrated.
+# --------------------------------------------------------------------------- #
+def test_locality_only_row_loads_resolves_and_stays_unrated(tmp_path):
+    """A BLANK lean is a deliberate locality-only row: the outlet resolves (canonical name,
+    aliases, home country/scope) while its lean is NaN — the exact 'unknown' convention the
+    scorer already speaks, so downstream L2.2 nulls apply with no special-casing."""
+    csv = tmp_path / "reg.csv"
+    csv.write_text("canonical,lean,aliases,country,region,city,scope\n"
+                   "Daily Nation,,nation.africa,KE,,,national\n"
+                   "NPR,-1,npr.org,US,,,national\n",
+                   encoding="utf-8")
+    reg = orx.OutletRegistry.load(str(csv))
+    o = reg.resolve("nation.africa")
+    assert o is not None and o.canonical == "Daily Nation"
+    assert math.isnan(o.lean)                               # unrated, never a defaulted centre
+    assert o.country == "KE" and o.scope == "national"
+    assert math.isnan(reg.lean("https://nation.africa/kenya/news/x"))
+    assert reg.resolve("npr.org").lean == -1                # rated rows unchanged
+
+
+def test_outlets_ordering_is_deterministic_with_unrated_rows(tmp_path):
+    """Rated rows keep the lean-then-name order; locality-only rows sort last by name (NaN keys
+    would otherwise make the listing order-unstable)."""
+    csv = tmp_path / "reg.csv"
+    csv.write_text("canonical,lean,aliases\n"
+                   "Zeta Unrated,,z.example\n"
+                   "Alpha Unrated,,a.example\n"
+                   "Righty,1.5,r.example\n"
+                   "Lefty,-1.5,l.example\n",
+                   encoding="utf-8")
+    names = [o.canonical for o in orx.OutletRegistry.load(str(csv)).outlets()]
+    assert names == ["Lefty", "Righty", "Alpha Unrated", "Zeta Unrated"]
+
+
+def test_lint_accepts_blank_lean_but_rejects_nan_spelling(tmp_path):
+    """Blank = unrated (legal). Writing 'NaN'/garbage is a data error, not a way to say unrated."""
+    csv = tmp_path / "reg.csv"
+    csv.write_text("canonical,lean,aliases\n"
+                   "Locality Only,,lo.example\n"
+                   "Bad,NaN,bad.example\n",
+                   encoding="utf-8")
+    issues = orx.lint_registry(str(csv))
+    lines = {i["line"] for i in issues if i["code"] == "invalid_lean"}
+    assert lines == {3}                                     # only the NaN row; blank row is clean

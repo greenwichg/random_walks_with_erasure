@@ -41,11 +41,14 @@ _NONALNUM = re.compile(r"[^a-z0-9]+")
 
 @dataclass(frozen=True)
 class Outlet:
-    """A resolved outlet: the canonical display name, its AllSides lean in ``[-2, 2]``, and —
-    Location Intelligence Phase 1 — its home locality. Locality fields are curated facts
-    (publisher-level, never inferred) and default to ``None`` when unrated, so pre-existing
-    callers and rows are untouched. The dataclass grows by optional columns, never by redesign —
-    future publisher metadata (factuality, ownership, transparency) follows the same pattern."""
+    """A resolved outlet: the canonical display name, its AllSides lean in ``[-2, 2]`` —
+    ``NaN`` for a LOCALITY-ONLY row (identity + home are curated facts while the lean stays
+    honestly unrated until a defensible public rating is sourced; locality must never require
+    guessing a lean — L2.2) — and, Location Intelligence Phase 1, its home locality. Locality
+    fields are curated facts (publisher-level, never inferred) and default to ``None`` when
+    uncurated, so pre-existing callers and rows are untouched. The dataclass grows by optional
+    columns, never by redesign — future publisher metadata (factuality, ownership, transparency)
+    follows the same pattern."""
     canonical: str
     lean: float
     country: "str | None" = None    # ISO 3166-1 alpha-2 home country
@@ -130,7 +133,10 @@ class OutletRegistry:
                 if len(row) < 2 or not row[0].strip():
                     continue
                 canonical = row[0].strip()
-                lean = float(row[1])
+                # Blank lean = a deliberate locality-only row (unrated -> NaN, the same "unknown"
+                # convention the scorer already speaks). Garbage still raises — fail loudly.
+                raw_lean = row[1].strip()
+                lean = float(raw_lean) if raw_lean else float("nan")
                 outlets.append(Outlet(canonical=canonical, lean=lean,
                                       country=_opt(row, 3), region=_opt(row, 4),
                                       city=_opt(row, 5), scope=_opt(row, 6)))
@@ -164,14 +170,17 @@ class OutletRegistry:
         return o.canonical if o else None
 
     def lean(self, text: "str | None") -> float:
-        """The AllSides lean for ``text``, or ``NaN`` if unknown (matches how the engine treats
-        an unscored article — it is simply excluded from lean-based metrics)."""
+        """The AllSides lean for ``text``, or ``NaN`` if unknown OR the row is locality-only
+        (unrated) — either way the engine excludes it from lean-based metrics, never defaults."""
         o = self.resolve(text)
         return o.lean if o else float("nan")
 
     def outlets(self) -> List[Outlet]:
-        """All distinct outlets, ordered by lean then name (stable listing for onboarding later)."""
-        return sorted(self._outlets.values(), key=lambda o: (o.lean, o.canonical))
+        """All distinct outlets: rated ones ordered by lean then name, locality-only (NaN lean)
+        rows deterministically last by name (NaN sort keys would otherwise be order-unstable)."""
+        return sorted(self._outlets.values(),
+                      key=lambda o: (math.isnan(o.lean),
+                                     0.0 if math.isnan(o.lean) else o.lean, o.canonical))
 
     def __len__(self) -> int:
         return len(self._outlets)
@@ -228,14 +237,18 @@ def lint_registry(path: "str | None" = None) -> List[dict]:
                            "message": f"line {lineno}: expected 'canonical,lean,aliases', got {raw.strip()!r}"})
             continue
         canonical = cells[0].strip()
-        try:
-            lean = float(cells[1])
-            if not math.isfinite(lean) or not (-2.0 <= lean <= 2.0):
-                raise ValueError
-        except ValueError:
-            issues.append({"severity": "error", "code": "invalid_lean", "line": lineno,
-                           "message": f"line {lineno} ({canonical}): lean {cells[1].strip()!r} "
-                                      "is not a finite number in [-2, 2]"})
+        raw_lean = cells[1].strip()
+        # A BLANK lean is legal: a locality-only row (unrated). A non-blank lean must be a
+        # finite number in [-2, 2] — "NaN"/garbage is a data error, not a way to say unrated.
+        if raw_lean:
+            try:
+                lean = float(raw_lean)
+                if not math.isfinite(lean) or not (-2.0 <= lean <= 2.0):
+                    raise ValueError
+            except ValueError:
+                issues.append({"severity": "error", "code": "invalid_lean", "line": lineno,
+                               "message": f"line {lineno} ({canonical}): lean {raw_lean!r} "
+                                          "is not a finite number in [-2, 2] (blank = unrated)"})
         if canonical in seen_canonical:
             issues.append({"severity": "error", "code": "duplicate_canonical", "line": lineno,
                            "message": f"line {lineno}: canonical {canonical!r} already defined at "
