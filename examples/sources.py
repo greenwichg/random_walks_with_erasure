@@ -495,7 +495,7 @@ class GDELTGKGEnricher(SourceAdapter):
         s = stats or {}
         agg.update({"windows": s.get("windows", 0), "windowErrors": s.get("windowErrors", 0),
                     "records": s.get("records", 0), "matched": s.get("matched", 0),
-                    "located": s.get("located", 0)})
+                    "located": s.get("located", 0), "images": s.get("images", 0)})
         if s.get("backfill"):
             agg["backfill"] = True
         if on_feed is not None:
@@ -691,7 +691,7 @@ def main(argv=None) -> int:
                 # them, so report what they DID do or the run looks like a silent no-op.
                 print(f"           -> windows={agg.get('windows', 0)} "
                       f"records={agg.get('records', 0)} matched={agg.get('matched', 0)} "
-                      f"located={agg.get('located', 0)} "
+                      f"located={agg.get('located', 0)} images={agg.get('images', 0)} "
                       f"windowErrors={agg.get('windowErrors', 0)} "
                       f"errors={agg.get('errors') or '-'}")
             else:

@@ -47,6 +47,7 @@ LASTUPDATE_URL = "http://data.gdeltproject.org/gdeltv2/lastupdate.txt"
 _COL_COLLECTION = 2        # V2SOURCECOLLECTIONIDENTIFIER — 1 = WEB (URL DocumentIdentifier)
 _COL_DOCUMENT = 4          # V2DOCUMENTIDENTIFIER — the article URL for WEB records
 _COL_V1LOCATIONS = 9       # V1LOCATIONS — Type#FullName#FIPS#ADM1#Lat#Long#FeatureID; ';'-joined
+_COL_SHARING_IMAGE = 18    # V2.1SHARINGIMAGE — the article's social/OG image URL GDELT extracted
 
 
 def parse_lastupdate(manifest: str) -> Optional[str]:
@@ -97,10 +98,12 @@ def parse_gkg_csv(text: str) -> list:
 
 
 def parse_gkg_lines(lines) -> list:
-    """GKG CSV lines -> ``[(document_url, places), …]`` for WEB records with a resolvable
-    dominant country. Malformed rows and non-WEB collections (citations etc.) are skipped.
-    Takes any line iterable so the enricher can STREAM a decompressing zip member — a 15-minute
-    GKG file inflates to hundreds of MB, which must never be materialized as one string."""
+    """GKG CSV lines -> ``[(document_url, places, sharing_image), …]`` for WEB records carrying a
+    resolvable dominant country and/or a sharing image (V2.1SHARINGIMAGE — the social/OG image
+    GDELT extracted; the thumbnail supply for articles whose feed carried no media). Malformed
+    rows and non-WEB collections (citations etc.) are skipped. Takes any line iterable so the
+    enricher can STREAM a decompressing zip member — a 15-minute GKG file inflates to hundreds
+    of MB, which must never be materialized as one string."""
     out = []
     for line in lines or ():
         cols = line.rstrip("\r\n").split("\t")
@@ -112,8 +115,11 @@ def parse_gkg_lines(lines) -> list:
         if not url.lower().startswith(("http://", "https://")):
             continue
         places = _dominant_places(cols[_COL_V1LOCATIONS])
-        if places:
-            out.append((url, places))
+        image = cols[_COL_SHARING_IMAGE].strip() if len(cols) > _COL_SHARING_IMAGE else ""
+        if not image.lower().startswith(("http://", "https://")):
+            image = ""
+        if places or image:
+            out.append((url, places, image or None))
     return out
 
 
@@ -196,19 +202,26 @@ def enrich_from_latest(store_, *, fetch_bytes: Callable[[str], bytes],
             continue
         processed += 1
         records_total += len(records)
-        for url, places in records:            # newest window first → setdefault keeps it
+        for url, places, image in records:     # newest window first → setdefault keeps it
             for cand in _candidates(url):
-                by_canonical.setdefault(cand, places)
+                by_canonical.setdefault(cand, (places, image))
 
     known = store_.existing_feed_urls(list(by_canonical))
-    located = 0
+    located = images = 0
     for canonical in sorted(known):
-        events = location.resolve_event_locations(by_canonical[canonical])
-        if events:
-            store_.replace_article_event_locations(canonical, events)
-            located += 1
+        places, image = by_canonical[canonical]
+        if places:
+            events = location.resolve_event_locations(places)
+            if events:
+                store_.replace_article_event_locations(canonical, events)
+                located += 1
+        # Thumbnail supply: GDELT's extracted sharing image fills articles whose feed carried no
+        # media — backfill-when-empty only (a feed-provided image is never overwritten), so the
+        # story hero picker finally has a candidate for feeds that ship no media tags.
+        if image and store_.backfill_article_image(canonical, image, source="gdelt-gkg"):
+            images += 1
     out = {"windows": processed, "windowErrors": errors, "records": records_total,
-           "matched": len(known), "located": located}
+           "matched": len(known), "located": located, "images": images}
     if backfill:
         out["backfill"] = True          # visible in health/CLI: this was the cold-start deep cycle
     return out

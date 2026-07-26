@@ -17,12 +17,13 @@ import sources                   # noqa: E402
 import store as store_mod        # noqa: E402
 
 
-def _row(url, v1locations, collection="1"):
+def _row(url, v1locations, collection="1", image=""):
     """One GKG CSV row with the columns the parser reads populated (27-col layout)."""
     cols = [""] * 27
     cols[gdelt_gkg._COL_COLLECTION] = collection
     cols[gdelt_gkg._COL_DOCUMENT] = url
     cols[gdelt_gkg._COL_V1LOCATIONS] = v1locations
+    cols[gdelt_gkg._COL_SHARING_IMAGE] = image
     return "\t".join(cols)
 
 
@@ -122,7 +123,7 @@ def test_enrich_lookback_covers_earlier_windows_and_survives_gaps():
         # the third window is absent → KeyError → counted as a gap, cycle continues
     }
     stats = gdelt_gkg.enrich_from_latest(st, fetch_bytes=lambda u: payloads[u], windows=3)
-    assert stats == {"windows": 2, "windowErrors": 1, "records": 3, "matched": 2, "located": 2}
+    assert stats == {"windows": 2, "windowErrors": 1, "records": 3, "matched": 2, "located": 2, "images": 0}
     assert st.event_countries_for_urls(["https://old.example/story"]) == {
         "https://old.example/story": ["JP"]}                         # earlier window matched
     assert st.event_countries_for_urls(["https://dup.example/story"]) == {
@@ -145,7 +146,7 @@ def test_enrich_from_latest_matches_catalog_and_persists(monkeypatch):
     payloads = {gdelt_gkg.LASTUPDATE_URL: f"1 a {gkg_url}".encode(),
                 gkg_url: _zip_bytes(csv_text)}
     stats = gdelt_gkg.enrich_from_latest(st, fetch_bytes=lambda u: payloads[u], windows=1)
-    assert stats == {"windows": 1, "windowErrors": 0, "records": 3, "matched": 2, "located": 2}
+    assert stats == {"windows": 1, "windowErrors": 0, "records": 3, "matched": 2, "located": 2, "images": 0}
     assert st.event_countries_for_urls(["https://known.example/story"]) == {
         "https://known.example/story": ["JP"]}                       # FIPS JA → ISO JP, by name
     assert st.event_countries_for_urls(["http://schemeflip.example/a"]) == {
@@ -161,7 +162,7 @@ def test_enrich_honours_size_cap_and_empty_manifest():
     gkg_url = "http://data.gdeltproject.org/gdeltv2/x.gkg.csv.zip"
     payloads = {gdelt_gkg.LASTUPDATE_URL: f"1 a {gkg_url}".encode(), gkg_url: b"x" * 100}
     stats = gdelt_gkg.enrich_from_latest(st, fetch_bytes=lambda u: payloads[u], max_bytes=10, windows=1)
-    assert stats == {"windows": 0, "windowErrors": 1, "records": 0, "matched": 0, "located": 0}
+    assert stats == {"windows": 0, "windowErrors": 1, "records": 0, "matched": 0, "located": 0, "images": 0}
 
 
 def test_cold_start_auto_backfill(monkeypatch):
@@ -245,3 +246,38 @@ def test_enricher_adapter_contract(monkeypatch):
     bad = sources.GDELTGKGEnricher(fetch_bytes=boom).poll_once(st, scorer=None)
     assert bad["ok"] == 0 and bad["failed"] == 1 and bad["errors"][0]["feed"] == "gdelt://gkg"
     assert bad["located"] == 0                                       # an outage never fabricates
+
+
+def test_sharing_image_backfills_missing_thumbnails_only():
+    """V2.1SHARINGIMAGE (col 18) supplies thumbnails for articles whose feed shipped no media —
+    backfill-when-empty ONLY: a feed-provided image is never overwritten, records with an image
+    but no resolvable place still count, and non-URLs are dropped."""
+    st = store_mod.Store("sqlite://")
+    _upsert(st, "https://bare.example/story")                        # no image → backfill target
+    _upsert(st, "https://has.example/story", image="https://feed.example/own.jpg")
+    csv_text = "\n".join([
+        # image + location: both enrichments land
+        _row("https://bare.example/story", "1#Japan#JA##36#138#JA",
+             image="https://cdn.example/hero.jpg"),
+        # image but NO resolvable place: record must still be kept and backfill applied
+        _row("https://has.example/story", "", image="https://cdn.example/other.jpg"),
+        # junk image value: dropped at parse
+        _row("https://junk.example/story", "", image="not-a-url"),
+    ])
+    parsed = gdelt_gkg.parse_gkg_csv(csv_text)
+    assert [(u, i) for u, _p, i in parsed] == [
+        ("https://bare.example/story", "https://cdn.example/hero.jpg"),
+        ("https://has.example/story", "https://cdn.example/other.jpg"),
+    ]
+    gkg_url = "http://data.gdeltproject.org/gdeltv2/x.gkg.csv.zip"
+    payloads = {gdelt_gkg.LASTUPDATE_URL: f"1 a {gkg_url}".encode(), gkg_url: _zip_bytes(csv_text)}
+    stats = gdelt_gkg.enrich_from_latest(st, fetch_bytes=lambda u: payloads[u], windows=1)
+    assert stats["images"] == 1 and stats["located"] == 1            # only the bare row gained one
+    rows = {r["canonicalUrl"]: r for r in st.search_feed_articles()[0]}
+    assert rows["https://bare.example/story"]["image"] == "https://cdn.example/hero.jpg"
+    assert rows["https://bare.example/story"]["imageSource"] == "gdelt-gkg"   # provenance kept
+    assert rows["https://has.example/story"]["image"] == "https://feed.example/own.jpg"  # untouched
+    # Idempotence + guards: a filled row is never re-written; unknown rows are a no-op.
+    assert st.backfill_article_image("https://bare.example/story", "https://cdn.example/again.jpg") is False
+    assert st.backfill_article_image("https://has.example/story", "https://cdn.example/x.jpg") is False
+    assert st.backfill_article_image("https://missing.example/x", "https://cdn.example/x.jpg") is False

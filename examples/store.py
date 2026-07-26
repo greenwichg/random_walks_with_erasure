@@ -916,6 +916,22 @@ class Store:
                                            region=l.region, city=l.city, lat=l.lat, lon=l.lon,
                                            source=l.source))
 
+    def backfill_article_image(self, canonical_url: str, image_url: str, *,
+                              source: str = "gdelt-gkg") -> bool:
+        """Set an article's image ONLY when it has none (the backfill-when-empty discipline —
+        a feed-provided image is never overwritten). The GKG enricher's thumbnail supply for
+        articles whose feed shipped no media tags. True when a row was actually updated."""
+        url = (image_url or "").strip()
+        if not canonical_url or not url.lower().startswith(("http://", "https://")):
+            return False
+        with self.session() as s:
+            row = s.get(FeedArticle, canonical_url)
+            if row is None or (row.image or "").strip():
+                return False
+            row.image = url
+            row.image_source = source
+            return True
+
     def existing_feed_urls(self, canonical_urls) -> set:
         """Which of these canonical URLs are catalog articles — the batched membership check the
         GKG enricher uses so enrichment only ever touches articles we actually hold."""

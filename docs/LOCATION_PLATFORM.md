@@ -170,6 +170,11 @@ Enrichment only: it never creates articles. Provider-specific mapping stays in t
   consensus across members narrows further.
 - **Matching:** GKG URLs are canonicalized with the SAME `ingest.canonical_url` the catalog
   dedup uses (plus a scheme-flipped candidate), so matches align by construction.
+- **Thumbnails ride along:** the same records carry `V2.1SHARINGIMAGE` (the article's social/OG
+  image GDELT extracted). Matched articles with NO stored image get it backfilled
+  (`gdelt-gkg` provenance, backfill-when-empty — a feed-provided image is never overwritten),
+  so `pick_story_hero` finally has candidates for feeds that ship no media tags. Same files,
+  same match, zero extra fetches; the cycle's `images` counter reports it.
 - **Quality bounds:** country-level only (the coarsest, most reliable tier); provenance
   (`gdelt-gkg`) on every row; per-source replace keeps re-runs harmless; a size cap
   (`RWE_GDELT_GKG_MAX_BYTES`) guards the download.
