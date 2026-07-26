@@ -10,6 +10,12 @@
 #   wait_ready  block until the engine reports readiness (or time out)
 #   need_env    fail early with a clear message if deploy/.env is missing
 
+# Every function here uses the `function name() {` form DELIBERATELY: operators SOURCE this file
+# in interactive login shells, where bash expands aliases at parse time — and stock Ubuntu's
+# ~/.bashrc ships an `alert` alias, which turned the plain `alert() {` definition into a syntax
+# error ("unexpected token `('", 2026-07-26 prod incident). The `function` keyword suppresses
+# alias expansion of the name. Do not "simplify" these back to the POSIX form.
+
 # Resolve paths from THIS file's location, regardless of the caller's CWD or how $0 was spelled.
 OPS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # absolute deploy/ops (for sibling scripts)
 REPO_ROOT="$(cd "$OPS_DIR/../.." && pwd)"
@@ -21,7 +27,7 @@ AWS_COMPOSE="deploy/docker-compose.aws.yml"
 
 # Every production compose invocation goes through here — one source of truth for the -f/-f/--env-file
 # triple, so the base and the AWS override are always merged the same way.
-dc() {
+function dc() {
   docker compose -f "$BASE_COMPOSE" -f "$AWS_COMPOSE" --env-file "$ENV_FILE" "$@"
 }
 
@@ -29,13 +35,13 @@ dc() {
 # the store dependencies (SQLAlchemy) + the same bind-mounted /app/data — so backups, integrity checks,
 # and restores never depend on host Python (which the EC2 host does not have). `--profile backup` enables
 # the profiled service regardless of Compose version.
-backup_run() {
+function backup_run() {
   dc --profile backup run --rm -T backup python examples/db_backup.py "$@"
 }
 
 # Read a scalar KEY=value from the env-file, stripping one layer of surrounding quotes. Empty if absent.
 # (Avoids sourcing the whole file, which could choke on values with special characters.)
-env_val() {
+function env_val() {
   local key="$1" v=""
   [ -f "$ENV_FILE" ] || { printf ''; return 0; }
   v="$(grep -E "^${key}=" "$ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2-)"
@@ -43,7 +49,7 @@ env_val() {
   printf '%s' "$v"
 }
 
-need_env() {
+function need_env() {
   if [ ! -f "$ENV_FILE" ]; then
     echo "ERROR: $ENV_FILE not found." >&2
     echo "  Create it from the template:  cp deploy/.env.production.example $ENV_FILE && chmod 600 $ENV_FILE" >&2
@@ -54,7 +60,7 @@ need_env() {
 
 # Poll the engine's OBS1 readiness endpoint from INSIDE the api container (no host port needed — works
 # even though the AWS override unpublishes 8000). Idempotent; safe to call repeatedly.
-wait_ready() {
+function wait_ready() {
   local timeout="${1:-180}" waited=0
   echo "waiting for engine readiness (timeout ${timeout}s)…"
   while : ; do
@@ -77,7 +83,7 @@ wait_ready() {
 # JSON-escape a string for safe embedding in a webhook payload. Pure bash — the EC2 host has no python,
 # and an alert message can contain a container name, a quoted path, or a newline; an unescaped one would
 # produce invalid JSON and the POST would silently fail. Handles backslash, double-quote, CR, LF, tab.
-_json_escape() {
+function _json_escape() {
   local s="$1"
   s="${s//\\/\\\\}"; s="${s//\"/\\\"}"; s="${s//$'\r'/\\r}"; s="${s//$'\n'/\\n}"; s="${s//$'\t'/\\t}"
   printf '%s' "$s"
@@ -89,7 +95,7 @@ _json_escape() {
 # "content" (Discord), so one ALERT_WEBHOOK works with either service without a format flag. The message is
 # prefixed with the app domain (from deploy/.env) and JSON-escaped. Used by monitor.sh (5-min health cron)
 # and backup-offhost.sh so unattended failures reach a human. See docs/PRODUCTION_ENVIRONMENT.md → Alerting.
-alert() {
+function alert() {
   local msg="$1" hook domain esc
   echo "ALERT: $msg" >&2
   hook="$(env_val ALERT_WEBHOOK)"
@@ -106,7 +112,7 @@ alert() {
 # a mounted filesystem — otherwise the bind-mount would hit an empty directory on the root disk and the
 # app would silently create a fresh, EMPTY database. On the default (root-EBS) layout IH_DATA_MOUNT is 0
 # and this is a no-op beyond checking the directory exists.
-assert_data_mount() {
+function assert_data_mount() {
   local dir="$1" want
   [ -d "$dir" ] || { echo "ERROR: data dir '$dir' does not exist — run sudo deploy/ops/bootstrap-ec2.sh first." >&2; exit 1; }
   want="$(env_val IH_DATA_MOUNT)"
