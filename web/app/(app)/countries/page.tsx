@@ -19,13 +19,19 @@ import { activeLang } from "@/lib/i18n-core";
 import { countryName } from "@/lib/countries";
 
 /**
- * Countries — browse the located catalog by country (Location Intelligence 1.5).
+ * Countries — THE place surface: browse located coverage and registry publishers by country.
  *
  * Everything is a counted fact from the platform: the country list is the union of located
  * catalog coverage and the curated registry (registry-only countries show honest zeros), the
  * overview numbers are counts, the latest coverage is the same search surface filtered by
  * country, and the publisher panel is registry facts. No maps, no event locations — those are
  * Phase 2+ by design.
+ *
+ * This page absorbed Local News v1 (whose registry-publisher browse it had grown to subsume):
+ * the "All" chip and the always-visible publisher rail with locality lines came from it.
+ * `/local` redirects here and the name is reserved for the future PERSONALIZED local
+ * experience — followed places, opt-in nearby news, travel mode, hyperlocal feeds — which is a
+ * different product from this impersonal place browser; see docs/LOCATION_PLATFORM.md.
  */
 export default function CountriesPage() {
   const { t, formatCompact } = useTranslation();
@@ -37,10 +43,10 @@ export default function CountriesPage() {
     [facets.data, country],
   );
 
+  // No selection → the whole registry (the browse Local v1 offered); a selection filters it.
   const publishers = useQuery({
     queryKey: queryKeys.placePublishers(country ? { country } : undefined),
     queryFn: () => services.placePublishers(country ? { country } : undefined),
-    enabled: country != null,
   });
   const articles = useSearch({ country: country ?? undefined, sort: "newest", limit: 12 }, country != null);
 
@@ -53,6 +59,7 @@ export default function CountriesPage() {
         aria-label={t("countries.pick")}
         className="-mx-1 mb-6 flex gap-2 overflow-x-auto px-1 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       >
+        <FilterChip label={t("home.trending.all")} active={country === null} onClick={() => setCountry(null)} />
         {(facets.data ?? []).map((c) => (
           <FilterChip
             key={c.country}
@@ -67,17 +74,17 @@ export default function CountriesPage() {
       {facets.isLoading && <Skeleton className="h-96 w-full rounded-lg" />}
       {facets.isError && <ErrorState onRetry={() => facets.refetch()} />}
 
-      {facets.data && country == null && (
-        <EmptyState icon={Globe2} title={t("countries.empty.title")} description={t("countries.empty.body")} />
-      )}
-
-      {facets.data && country != null && (
+      {facets.data && (
         <PageGrid
           rail={
             <section aria-labelledby="country-publishers-heading" className="rounded-lg border bg-card p-4">
               <SectionHeader
                 id="country-publishers-heading"
-                title={t("story.publishersTitle")}
+                title={
+                  publishers.data
+                    ? t("local.publishers", { n: formatCompact(publishers.data.length) })
+                    : t("story.publishersTitle")
+                }
                 className="mb-3"
               />
               {publishers.isLoading && <Skeleton className="h-40 w-full rounded-lg" />}
@@ -95,6 +102,13 @@ export default function CountriesPage() {
                           {t(`local.scope.${p.scope}`)}
                         </span>
                       )}
+                      {(p.city || p.region || p.country) && (
+                        <span className="w-full text-[0.7rem] text-muted-foreground">
+                          {[p.city, p.region, p.country && countryName(p.country, activeLang())]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </span>
+                      )}
                     </li>
                   ))}
                 </ul>
@@ -103,41 +117,47 @@ export default function CountriesPage() {
             </section>
           }
         >
-          {/* Overview — counted facts for the selected country. */}
-          <section aria-labelledby="country-overview-heading" className="rounded-lg border bg-card p-4">
-            <SectionHeader
-              id="country-overview-heading"
-              title={countryName(country, activeLang())}
-              className="mb-3"
-            />
-            <div className="grid grid-cols-3 gap-3">
-              <Stat label={t("countries.stat.articles")} value={formatCompact(selected?.articles ?? 0)} />
-              <Stat label={t("countries.stat.publishers")} value={formatCompact(selected?.publishers ?? 0)} />
-              <Stat label={t("countries.stat.rated")} value={formatCompact(selected?.registryPublishers ?? 0)} />
-            </div>
-          </section>
+          {country == null ? (
+            <EmptyState icon={Globe2} title={t("countries.empty.title")} description={t("countries.empty.body")} />
+          ) : (
+            <>
+              {/* Overview — counted facts for the selected country. */}
+              <section aria-labelledby="country-overview-heading" className="rounded-lg border bg-card p-4">
+                <SectionHeader
+                  id="country-overview-heading"
+                  title={countryName(country, activeLang())}
+                  className="mb-3"
+                />
+                <div className="grid grid-cols-3 gap-3">
+                  <Stat label={t("countries.stat.articles")} value={formatCompact(selected?.articles ?? 0)} />
+                  <Stat label={t("countries.stat.publishers")} value={formatCompact(selected?.publishers ?? 0)} />
+                  <Stat label={t("countries.stat.rated")} value={formatCompact(selected?.registryPublishers ?? 0)} />
+                </div>
+              </section>
 
-          <section aria-labelledby="country-latest-heading">
-            <SectionHeader
-              id="country-latest-heading"
-              title={t("local.articles", { place: countryName(country, activeLang()) })}
-            />
-            {articles.isLoading && <Skeleton className="h-64 w-full rounded-lg" />}
-            {articles.data && articles.data.results.length === 0 && (
-              <EmptyState
-                icon={Globe2}
-                title={t("local.noArticles.title")}
-                description={t("local.noArticles.body")}
-              />
-            )}
-            {articles.data && articles.data.results.length > 0 && (
-              <div className="space-y-3">
-                {articles.data.results.map((a, i) => (
-                  <ArticleRow key={a.id} article={a} index={i} />
-                ))}
-              </div>
-            )}
-          </section>
+              <section aria-labelledby="country-latest-heading">
+                <SectionHeader
+                  id="country-latest-heading"
+                  title={t("local.articles", { place: countryName(country, activeLang()) })}
+                />
+                {articles.isLoading && <Skeleton className="h-64 w-full rounded-lg" />}
+                {articles.data && articles.data.results.length === 0 && (
+                  <EmptyState
+                    icon={Globe2}
+                    title={t("local.noArticles.title")}
+                    description={t("local.noArticles.body")}
+                  />
+                )}
+                {articles.data && articles.data.results.length > 0 && (
+                  <div className="space-y-3">
+                    {articles.data.results.map((a, i) => (
+                      <ArticleRow key={a.id} article={a} index={i} />
+                    ))}
+                  </div>
+                )}
+              </section>
+            </>
+          )}
         </PageGrid>
       )}
     </PageContainer>

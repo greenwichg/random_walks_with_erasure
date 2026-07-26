@@ -10,7 +10,6 @@ import {
   BarChart3,
   Bookmark,
   Globe2,
-  MapPin,
   ScanSearch,
   Search,
   Settings,
@@ -52,14 +51,15 @@ export const NAV: NavSection[] = [
     ],
   },
   // Explore: finding and keeping coverage. Every href is a real route — aspirational pages
-  // (Publishers, Topics, Countries, Blindspots) join here when they exist, not before.
+  // (Publishers, Topics, Blindspots) join here when they exist, not before. "Local" left this
+  // list when Local v1 folded into Countries; the name is reserved for the future personalized
+  // local experience (docs/LOCATION_PLATFORM.md) and returns only when that ships.
   {
     title: "Explore",
     titleKey: "nav.section.explore",
     items: [
       { label: "Discover", labelKey: "nav.discover", href: "/discover", icon: Compass, hint: "Trending stories & clusters", hintKey: "nav.hint.discover" },
       { label: "Stories", labelKey: "nav.stories", href: "/stories", icon: Newspaper, hint: "One event, every viewpoint", hintKey: "nav.hint.stories" },
-      { label: "Local", labelKey: "nav.local", href: "/local", icon: MapPin },
       { label: "Countries", labelKey: "nav.countries", href: "/countries", icon: Globe2 },
       { label: "Search", labelKey: "header.search", href: "/search", icon: Search },
       { label: "Analyze an article", labelKey: "home.footer.analyze", href: "/analyze", icon: ScanSearch },

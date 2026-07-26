@@ -17,9 +17,11 @@ Store                           feed_articles.country / .language (additive colu
 Story clustering                unchanged — stories derive place facets from members when needed
       ↓
 API                             Article.country/.language · search/discover ?country= ·
-                                /api/places/publishers (Local News v1) · settings.edition/.locations
+                                /api/places/publishers · /api/places/countries · /api/me/geography ·
+                                settings.edition/.locations
       ↓
-Frontend                        /local page · SearchParams.country · PlacePublisher type
+Frontend                        /countries page · SearchParams.country · PlacePublisher type ·
+                                Search country filter · Settings "Places & edition" · Home place rail
 ```
 
 ## The canonical model
@@ -65,16 +67,46 @@ That is the entire location integration. `ingest_entries` runs the resolver; the
 stories, APIs and frontend need nothing. (NewsAPI already ships `country`/`language` as ISO
 codes — its adapter needs zero resolver work.)
 
-## What each future feature reads
+## What each feature reads
 
-- **Local News v1 (shipped):** `/api/places/publishers?country|region|city|scope` (registry facts)
-  + `search?country=` (located catalog). Page: `/local`.
-- **Countries page:** `search/discover ?country=` + per-country facets — data now exists.
+- **Countries page (shipped — absorbed Local v1):** `/api/places/countries` (located-catalog ∪
+  registry facets), `/api/places/publishers?country|region|city|scope` (registry facts, whole
+  registry when unfiltered), `search?country=` (located catalog). Page: `/countries`;
+  `/local` redirects there (see the reservation below).
 - **Geographic Diversity:** `location.reader_geography(store, uid)` → counted facts
-  (`countries`, `languages`, `scope` incl. explicit `unknown`) ready for a future metric; no
-  score is computed yet, deliberately.
+  (`countries`, `languages`, `scope` incl. explicit `unknown`) — surfaced on Analytics as the
+  "Reading geography" card; no 0–100 score is computed yet, deliberately.
 - **Editions / followed places:** `settings.edition` (ISO2 or None) + `settings.locations`
-  (`{placeId, level}` ×≤10) — normalized in the engine contract, no UI yet.
+  (`{placeId, level}` ×≤10) — normalized in the engine contract; UI in Settings → Places &
+  edition, consumed by the Home "From your places" rail.
+
+## Countries vs. the future Local (the consolidation)
+
+Local News v1 (`/local`) and the Countries page shipped as siblings and converged on the same
+experience: country chips → registry publishers + latest located coverage. The pages differed
+only in ornament (chip counts, an overview card, a locality line), so Local v1 was folded into
+Countries — its "All"/whole-registry browse and publisher locality lines moved there — and the
+`/local` route now temporary-redirects to `/countries`. Nothing engine-side changed: both pages
+always read the same three endpoints, which remain the platform contract.
+
+**The name "Local" is reserved** for a genuinely different product — the reader-first,
+personalized place experience — and returns to navigation only when it ships. The
+differentiation, so the two never blur again:
+
+| | **Countries (today)** | **Future Local (reserved)** |
+|---|---|---|
+| Question | "What does coverage from place X look like?" | "What matters **near me / my places** right now?" |
+| Subject | a place, chosen per visit | the reader's standing places |
+| Inputs | located catalog + registry facts only | `settings.edition`/`.locations` (shipped), explicit **opt-in** GPS/nearby, travel context |
+| Granularity | country | region → city → neighbourhood (hyperlocal) |
+| Ranking | newest-first search, impersonal | personal relevance (must pass the W-series evaluation gate like any ranking change) |
+| Needs built | nothing — shipped | Phase 2 event geography (`article_locations` side table), regional/local registry depth, opt-in location permission UX, travel mode |
+
+Platform pieces the future Local already has waiting: followed locations + edition persisted and
+normalized in settings; `scope` as a closed registry vocabulary down to `hyperlocal`; the
+resolver's provider-extension procedure above; and the `/local` path itself. What it must never
+do is inherited from the house rules: no place is ever guessed (GPS is opt-in or absent), and no
+ranking change ships outside the evaluation framework.
 
 ## Explicitly out of scope until Phase 2/3 (per the phase plan)
 

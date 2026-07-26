@@ -16,6 +16,12 @@ const nextConfig = {
   env: {
     NEXT_PUBLIC_API_BASE_URL: process.env.NEXT_PUBLIC_API_BASE_URL ?? "",
   },
+  // Local v1 folded into Countries; `/local` is reserved for the future personalized local
+  // experience (docs/LOCATION_PLATFORM.md). Temporary redirect on purpose — the path comes back
+  // as its own page when that experience ships, so browsers must not cache a permanent answer.
+  async redirects() {
+    return [{ source: "/local", destination: "/countries", permanent: false }];
+  },
   async headers() {
     return [
       // Pages + static assets (everything except /api/*): CSP, frame/opener/resource isolation, etc.
