@@ -402,3 +402,92 @@ def test_existing_upsert_without_source_params_is_unchanged(store):
     assert created is True
     row = store.get_feed_article("https://x.example/u")
     assert row["sourceType"] is None and row["externalId"] is None   # legacy rows keep NULL provenance
+
+
+# --------------------------------------------------------------------------- #
+# NewsAPI production hardening: page size, list rotation, daily budget, 429 accounting.
+# --------------------------------------------------------------------------- #
+def test_newsapi_page_size_env_and_clamp(monkeypatch):
+    """Explicit RWE_NEWSAPI_PAGE_SIZE wins (clamped to NewsAPI's 1..100); without it the page
+    size never fetches more than the ingest quota would keep."""
+    a = sources.NewsAPIAdapter(fetch=lambda url: {"articles": []})
+    monkeypatch.setenv("RWE_NEWSAPI_PAGE_SIZE", "25")
+    assert "pageSize=25" in a._url({})
+    monkeypatch.setenv("RWE_NEWSAPI_PAGE_SIZE", "500")
+    assert "pageSize=100" in a._url({})                     # clamped to the API cap
+    monkeypatch.delenv("RWE_NEWSAPI_PAGE_SIZE")
+    monkeypatch.setenv("RWE_NEWSAPI_MAX_ARTICLES", "5")
+    assert "pageSize=5" in a._url({})                       # quota-bounded fallback
+    monkeypatch.delenv("RWE_NEWSAPI_MAX_ARTICLES")
+    assert "pageSize=100" in a._url({})
+
+
+def test_newsapi_rotation_cycles_combos_and_stamps_entries(monkeypatch):
+    """Comma-separated CATEGORY/COUNTRY lists rotate ONE combination per fetch (N combos never
+    multiply the request rate), and each batch's entries are stamped with the combo the fetch
+    actually used — not a stale env read."""
+    monkeypatch.setenv("RWE_NEWSAPI_CATEGORY", "business,technology")
+    monkeypatch.setenv("RWE_NEWSAPI_COUNTRY", "us,gb")
+    urls = []
+    art = {"source": {"name": "X"}, "title": "t", "url": "https://x.example/1",
+           "publishedAt": "2026-07-08T10:00:00Z"}
+    a = sources.NewsAPIAdapter(fetch=lambda url: (urls.append(url) or {"articles": [dict(art)]}))
+    combos_seen = []
+    for _ in range(5):                                      # 4 combos -> the 5th wraps around
+        batch = a.normalize(a.fetch())
+        e = batch.entries[0]
+        combos_seen.append((e.country, e.category))
+    assert combos_seen[:4] == [("us", "business"), ("us", "technology"),
+                               ("gb", "business"), ("gb", "technology")]
+    assert combos_seen[4] == combos_seen[0]                 # rotation wraps deterministically
+    assert len(urls) == 5 and all(u.count("country=") == 1 for u in urls)
+    assert "country=us" in urls[0] and "category=business" in urls[0]
+    assert "country=gb" in urls[2]
+
+
+def test_newsapi_daily_budget_short_circuits_before_fetch(store, monkeypatch):
+    """A spent RWE_NEWSAPI_DAILY_BUDGET SKIPS the cycle before any request: no fetch call, no
+    error, budgetExhausted on the aggregate — never a failure row for a deliberate skip."""
+    monkeypatch.setenv("RWE_NEWSAPI_DAILY_BUDGET", "2")
+    calls = []
+    a = sources.NewsAPIAdapter(fetch=lambda url: (calls.append(url) or NEWSAPI_JSON))
+    sc = ri.make_scorer()
+    first = a.poll_once(store, sc)
+    second = a.poll_once(store, sc)
+    third = a.poll_once(store, sc)
+    assert len(calls) == 2                                  # the third cycle never fetched
+    assert first["failed"] == 0 and "budgetExhausted" not in first
+    assert third.get("budgetExhausted") is True and third["failed"] == 0 and third["new"] == 0
+    assert all("rateLimited" in agg for agg in (first, second, third))
+
+
+def test_get_json_reports_transient_429s_then_succeeds(monkeypatch):
+    """_get_json retries 429 with backoff AND surfaces every transient hit through on_transient —
+    rate-limit pressure is counted, never silently absorbed by the retry loop."""
+    import io
+    import urllib.error
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return b'{"status": "ok"}'
+
+    attempts = {"n": 0}
+
+    def fake_urlopen(req, timeout=None):
+        attempts["n"] += 1
+        if attempts["n"] <= 2:
+            raise urllib.error.HTTPError(req.full_url, 429, "Too Many Requests", None, io.BytesIO(b""))
+        return _Resp()
+
+    monkeypatch.setattr(sources.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(sources.time, "sleep", lambda s: None)
+    events = []
+    out = sources._get_json("https://newsapi.org/v2/top-headlines?country=us",
+                            on_transient=events.append)
+    assert out == {"status": "ok"} and events == [429, 429] and attempts["n"] == 3

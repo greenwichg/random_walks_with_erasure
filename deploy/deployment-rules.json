@@ -20,6 +20,14 @@
       "fix": "On the `api` service add `RWE_RSS_FEEDS: /app/feeds/rss_feeds.txt` and the bind-mount `./rss_feeds.example.txt:/app/feeds/rss_feeds.txt:ro` — in the AWS override too, because its `volumes: !override` replaces the list."
     },
     {
+      "id": "newsapi-key",
+      "categories": ["feature-flag", "required-env"],
+      "when": { "service": "api", "env_truthy": "RWE_NEWSAPI_ENABLED" },
+      "require": { "env": ["RWE_NEWSAPI_API_KEY"] },
+      "why": "RWE_NEWSAPI_ENABLED=1 starts the NewsAPI adapter on the multi-source poller, which authenticates every request with RWE_NEWSAPI_API_KEY. Without the key the adapter stays disabled (a startup config warning fires) — the flag alone silently ingests nothing.",
+      "fix": "On the `api` service keep `RWE_NEWSAPI_API_KEY: ${RWE_NEWSAPI_API_KEY:-}` wired and set the key in deploy/.env alongside RWE_NEWSAPI_ENABLED=1."
+    },
+    {
       "id": "engine-failclosed-secret",
       "categories": ["secret", "required-env"],
       "when": { "service": "api", "env_equals": { "RWE_ENV": "production" } },

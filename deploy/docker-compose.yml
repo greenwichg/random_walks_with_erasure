@@ -56,6 +56,23 @@ services:
       # default 96 = 24 h; 0 disables) — no manual override/revert dance.
       RWE_GDELT_GKG_WINDOWS: ${RWE_GDELT_GKG_WINDOWS:-4}
       RWE_GDELT_GKG_BACKFILL_WINDOWS: ${RWE_GDELT_GKG_BACKFILL_WINDOWS:-96}
+      # NewsAPI adapter (same shared pipeline as RSS/GDELT: dedup, scoring, registry resolution,
+      # clustering). Default OFF — enable with RWE_NEWSAPI_ENABLED=1 + RWE_NEWSAPI_API_KEY in
+      # deploy/.env. CATEGORY/COUNTRY/LANGUAGE accept comma-separated lists, polled by ROTATION
+      # (one combination per cycle — N combos never multiply the request rate). The free tier is
+      # ~100 requests/day and the 900 s interval spends 96, so the DAILY_BUDGET default (90)
+      # leaves headroom; the budget short-circuits cycles before any request once spent.
+      RWE_NEWSAPI_ENABLED: ${RWE_NEWSAPI_ENABLED:-0}
+      RWE_NEWSAPI_API_KEY: ${RWE_NEWSAPI_API_KEY:-}
+      RWE_NEWSAPI_POLL_INTERVAL: ${RWE_NEWSAPI_POLL_INTERVAL:-900}
+      RWE_NEWSAPI_ENDPOINT: ${RWE_NEWSAPI_ENDPOINT:-top-headlines}
+      RWE_NEWSAPI_QUERY: ${RWE_NEWSAPI_QUERY:-}
+      RWE_NEWSAPI_CATEGORY: ${RWE_NEWSAPI_CATEGORY:-}
+      RWE_NEWSAPI_COUNTRY: ${RWE_NEWSAPI_COUNTRY:-}
+      RWE_NEWSAPI_LANGUAGE: ${RWE_NEWSAPI_LANGUAGE:-}
+      RWE_NEWSAPI_PAGE_SIZE: ${RWE_NEWSAPI_PAGE_SIZE:-100}
+      RWE_NEWSAPI_MAX_ARTICLES: ${RWE_NEWSAPI_MAX_ARTICLES:-}
+      RWE_NEWSAPI_DAILY_BUDGET: ${RWE_NEWSAPI_DAILY_BUDGET:-90}
       RWE_RETENTION_MAX_COUNT: ${RWE_RETENTION_MAX_COUNT:-0}
       # --- production hardening (fail-closed auth) --------------------------------
       # This compose file runs in dev mode by default (the engine trusts the local

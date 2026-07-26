@@ -391,6 +391,49 @@ doesn't overlap GDELT's monitored set — expected on a tiny/stale catalog, not 
 (overlapping lookback). Rollback: set `RWE_GDELT_GKG=0`, restart — pickers go empty (honest),
 nothing else changes, and already-persisted event rows remain valid.
 
+### 6b · NewsAPI source — enablement + first-cycle verification
+
+NewsAPI rides the SAME multi-source pipeline as RSS/GDELT (canonical-URL dedup — cross-source
+included — scoring, registry publisher/lean/country resolution, story clustering); the adapter
+is `sources.NewsAPIAdapter`, default **OFF**. Enable in `deploy/.env`, then restart the api:
+
+```bash
+RWE_NEWSAPI_ENABLED=1
+RWE_NEWSAPI_API_KEY=<your key>            # https://newsapi.org — free tier ≈ 100 requests/day
+# optional, comma-separated lists are ROTATED one combination per cycle:
+# RWE_NEWSAPI_COUNTRY=us,gb   RWE_NEWSAPI_CATEGORY=business,technology
+```
+
+**Budget math (the design constraint):** the default 900 s interval spends 96 requests/day at
+exactly one request per cycle. Rotation is why lists are safe: N combinations widen coverage
+across cycles without multiplying requests. `RWE_NEWSAPI_DAILY_BUDGET` (compose default 90)
+short-circuits cycles BEFORE any request once the per-UTC-day count is spent — those cycles log
+`newsapi_budget_exhausted` and report `budgetExhausted` instead of touching the health row.
+
+**First-cycle verification** (after one interval, ~15 min):
+
+```bash
+cd /opt/ih && source deploy/ops/_compose.sh
+dc exec -T api python - <<'PY'
+import json, os, urllib.request
+req = urllib.request.Request("http://127.0.0.1:8000/api/internal/feeds",
+                             headers={"X-IH-Auth": os.environ.get("RWE_INTERNAL_SECRET", "")})
+rows = json.loads(urllib.request.urlopen(req, timeout=15).read())
+print(json.dumps([r for r in rows if "newsapi" in json.dumps(r).lower()], indent=2))
+PY
+```
+
+Healthy = a `newsapi://top-headlines` row with a recent `lastSuccess`. Per-cycle aggregates in
+the api logs carry `new` / `duplicates` / `failed` / `rawCount` / **`rateLimited`** (HTTP 429s
+the retry loop absorbed) — a persistently non-zero `rateLimited` means the interval × combos
+outpaces your plan; raise the interval or the budget guard will start skipping. Duplicate-safety
+needs no verification step: an article seen by both RSS and NewsAPI merges into ONE row by
+canonical URL (first-seen wins; media by source priority) — the same discipline as GDELT.
+A startup log line `RWE_NEWSAPI_ENABLED is set but RWE_NEWSAPI_API_KEY is missing` means the
+flag is on without a key: the adapter stays off until the key lands (also enforced by
+`deploy/ops/validate-deployment.py`, rule `newsapi-key`). Rollback: `RWE_NEWSAPI_ENABLED=0` +
+restart — already-ingested NewsAPI articles remain (they are ordinary catalog rows).
+
 ---
 
 ## 7 · Operational runbook

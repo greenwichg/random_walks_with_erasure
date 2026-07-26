@@ -81,11 +81,14 @@ def _now_iso() -> str:
 
 
 def _get_json(url: str, *, headers=None, timeout: float = 15.0,
-              retries: Optional[int] = None, backoff: Optional[float] = None) -> dict:
+              retries: Optional[int] = None, backoff: Optional[float] = None,
+              on_transient: Optional[Callable[[int], None]] = None) -> dict:
     """HTTP GET -> parsed JSON, retrying **transient** failures (HTTP 429 + 5xx) with linear backoff.
     429 is common on shared IPs (e.g. GDELT from Colab), so a one-shot poll shouldn't fail on it; a
     non-transient error (e.g. 401 Unauthorized) raises immediately. Tunable via RWE_SOURCE_RETRIES /
-    RWE_SOURCE_BACKOFF."""
+    RWE_SOURCE_BACKOFF. ``on_transient`` (if given) is called with the HTTP code for EVERY transient
+    response — including the one that exhausts the retries — so callers can count rate-limit events
+    instead of the retry loop silently absorbing them."""
     retries = _int_env("RWE_SOURCE_RETRIES", 3) if retries is None else retries
     backoff = _float_env("RWE_SOURCE_BACKOFF", 5.0) if backoff is None else backoff
     req = urllib.request.Request(url, headers=headers or {})
@@ -97,6 +100,11 @@ def _get_json(url: str, *, headers=None, timeout: float = 15.0,
         except urllib.error.HTTPError as e:
             attempt += 1
             transient = e.code == 429 or 500 <= e.code < 600
+            if transient and on_transient is not None:
+                try:
+                    on_transient(e.code)
+                except Exception:
+                    pass                                  # metrics must never break the fetch
             if not transient or attempt > retries:
                 raise
             time.sleep(min(backoff * attempt, 60.0))     # 5s, 10s, 15s … (capped)
@@ -311,11 +319,32 @@ class RSSAdapter(SourceAdapter):
 # NewsAPI adapter — https://newsapi.org/docs
 # --------------------------------------------------------------------------- #
 class NewsAPIAdapter(SourceAdapter):
+    """NewsAPI as one more source on the SHARED pipeline: ``normalize`` emits the same
+    ``FeedEntry`` every adapter does, so canonical-URL dedup (RSS↔NewsAPI included), scoring,
+    registry publisher/lean resolution, the location resolver, and story clustering all apply
+    with zero NewsAPI-specific downstream code.
+
+    Config (env): ``RWE_NEWSAPI_ENABLED`` + ``RWE_NEWSAPI_API_KEY`` gate it; CATEGORY / COUNTRY /
+    LANGUAGE accept **comma-separated lists** — the cross-product of the lists is polled by
+    ROTATION, one combination per cycle, so N combinations cost the same one request per poll
+    (the free tier is ~100 requests/day and the default 900 s interval already spends 96 — a
+    fetch-all-combos design would blow the budget by construction). ``RWE_NEWSAPI_PAGE_SIZE``
+    is the per-request article count (1..100, NewsAPI's cap), decoupled from the
+    ``RWE_NEWSAPI_MAX_ARTICLES`` ingest quota. ``RWE_NEWSAPI_DAILY_BUDGET`` (0 = unlimited)
+    short-circuits the cycle BEFORE any request once the per-UTC-day request count is spent —
+    an in-process guard (resets on restart), advisory rather than a billing meter. Every cycle's
+    aggregate carries ``rateLimited`` (count of HTTP 429s the retry loop encountered)."""
+
     provider = "NewsAPI"
     source_type = "newsapi"
 
     def __init__(self, fetch: Optional[Callable[[str], dict]] = None):
         self._fetch_fn = fetch                              # injectable (offline tests)
+        self._combo_i = 0                                   # rotation cursor (per process)
+        self._last_combo: Optional[dict] = None             # the combo the last fetch used
+        self._rl_events = 0                                 # 429s seen in the CURRENT cycle
+        self._req_day: Optional[str] = None                 # UTC day the request counter is for
+        self._req_count = 0
 
     def api_key(self) -> str:
         return os.environ.get("RWE_NEWSAPI_API_KEY", "").strip()
@@ -335,35 +364,104 @@ class NewsAPIAdapter(SourceAdapter):
     def max_articles(self) -> Optional[int]:
         return _int_or_none("RWE_NEWSAPI_MAX_ARTICLES")
 
+    def page_size(self) -> int:
+        """Articles per request (NewsAPI caps at 100). Explicit ``RWE_NEWSAPI_PAGE_SIZE`` wins;
+        otherwise don't fetch more than the ingest quota would keep."""
+        explicit = _int_or_none("RWE_NEWSAPI_PAGE_SIZE")
+        size = explicit if explicit is not None else min(self.max_articles() or 100, 100)
+        return max(1, min(size, 100))
+
+    def daily_budget(self) -> int:
+        return _int_env("RWE_NEWSAPI_DAILY_BUDGET", 0)      # 0 = unlimited
+
     @property
     def health_key(self) -> str:
         return f"newsapi://{os.environ.get('RWE_NEWSAPI_ENDPOINT', 'top-headlines')}"
 
-    def _url(self) -> str:
+    @staticmethod
+    def _split(env: str) -> list:
+        return [v.strip() for v in os.environ.get(env, "").split(",") if v.strip()]
+
+    def _combos(self) -> list:
+        """The cross-product of the configured CATEGORY × COUNTRY × LANGUAGE lists (each list is
+        ``[None]`` when unset), as param dicts. Single values yield one combo — the pre-list
+        behaviour, unchanged."""
+        cats = self._split("RWE_NEWSAPI_CATEGORY") or [None]
+        countries = self._split("RWE_NEWSAPI_COUNTRY") or [None]
+        langs = self._split("RWE_NEWSAPI_LANGUAGE") or [None]
+        combos = []
+        for country in countries:
+            for cat in cats:
+                for lang in langs:
+                    combos.append({k: v for k, v in
+                                   (("category", cat), ("country", country), ("language", lang)) if v})
+        return combos
+
+    def _url(self, combo: dict) -> str:
         endpoint = os.environ.get("RWE_NEWSAPI_ENDPOINT", "top-headlines")
-        params = {"pageSize": str(min(self.max_articles() or 100, 100))}
-        for env, key in (("RWE_NEWSAPI_QUERY", "q"), ("RWE_NEWSAPI_CATEGORY", "category"),
-                         ("RWE_NEWSAPI_COUNTRY", "country"), ("RWE_NEWSAPI_LANGUAGE", "language")):
-            v = os.environ.get(env)
-            if v:
-                params[key] = v
+        params = {"pageSize": str(self.page_size())}
+        q = os.environ.get("RWE_NEWSAPI_QUERY")
+        if q:
+            params["q"] = q
+        params.update(combo)
         # top-headlines needs at least one of country/category/q/sources to be a valid request.
         if endpoint == "top-headlines" and not ({"q", "category", "country"} & set(params)):
             params["country"] = "us"
         return f"https://newsapi.org/v2/{endpoint}?{urllib.parse.urlencode(params)}"
 
+    def _budget_left(self) -> Optional[int]:
+        budget = self.daily_budget()
+        if budget <= 0:
+            return None
+        today = time.strftime("%Y-%m-%d", time.gmtime())
+        if self._req_day != today:                          # UTC day rolled — fresh allowance
+            self._req_day, self._req_count = today, 0
+        return budget - self._req_count
+
+    def _note_transient(self, code: int) -> None:
+        if code == 429:
+            self._rl_events += 1
+
     def fetch(self) -> dict:
-        url = self._url()
+        combos = self._combos()
+        combo = combos[self._combo_i % len(combos)]
+        self._combo_i += 1
+        self._last_combo = combo
+        url = self._url(combo)
+        self._budget_left()                                 # roll the day before counting
+        self._req_count += 1
         if self._fetch_fn is not None:
             return self._fetch_fn(url)
         return _get_json(url, headers={"X-Api-Key": self.api_key(), "User-Agent": _USER_AGENT},
-                         timeout=_float_env("RWE_NEWSAPI_TIMEOUT", 15.0))
+                         timeout=_float_env("RWE_NEWSAPI_TIMEOUT", 15.0),
+                         on_transient=self._note_transient)
+
+    def poll_once(self, store_, scorer, *, on_feed: Optional[Callable] = None) -> dict:
+        """The standard cycle plus NewsAPI's own accounting: the ``rateLimited`` counter on every
+        aggregate, and the daily-budget short-circuit — a spent budget SKIPS the cycle before any
+        request (no fetch, no health-row touch: a cycle that did nothing must not claim a
+        lastSuccess) and reports ``budgetExhausted`` instead of an error."""
+        self._rl_events = 0
+        left = self._budget_left()
+        if left is not None and left <= 0:
+            _default_log(logging.INFO, "newsapi_budget_exhausted",
+                         budget=self.daily_budget(), day=self._req_day)
+            agg = _agg(self.provider, self.source_type, None, None, 0.0, None, key=self.health_key)
+            agg["budgetExhausted"] = True
+            agg["rateLimited"] = 0
+            return agg
+        agg = super().poll_once(store_, scorer, on_feed=on_feed)
+        agg["rateLimited"] = self._rl_events
+        return agg
 
     def normalize(self, raw: dict) -> SourceBatch:
         arts = (raw or {}).get("articles") or []
-        cat = os.environ.get("RWE_NEWSAPI_CATEGORY") or None
-        lang = os.environ.get("RWE_NEWSAPI_LANGUAGE") or None
-        country = os.environ.get("RWE_NEWSAPI_COUNTRY") or None
+        # Stamp each entry with the COMBO the fetch actually used (rotation makes the env values
+        # ambiguous); a direct normalize() call without a prior fetch falls back to the first combo.
+        combo = self._last_combo if self._last_combo is not None else self._combos()[0]
+        cat = combo.get("category")
+        lang = combo.get("language")
+        country = combo.get("country")
         entries = []
         for a in arts:
             url = (a.get("url") or "").strip()
@@ -695,8 +793,13 @@ def main(argv=None) -> int:
                       f"windowErrors={agg.get('windowErrors', 0)} "
                       f"errors={agg.get('errors') or '-'}")
             else:
+                extra = ""
+                if "rateLimited" in agg:                    # NewsAPI accounting rides the aggregate
+                    extra = f"rateLimited={agg['rateLimited']} "
+                    if agg.get("budgetExhausted"):
+                        extra += "budgetExhausted=True "
                 print(f"           -> new={agg.get('new', 0)} duplicates={agg.get('duplicates', 0)} "
-                      f"failed={agg.get('failed', 0)} raw={agg.get('rawCount', 0)} "
+                      f"failed={agg.get('failed', 0)} raw={agg.get('rawCount', 0)} {extra}"
                       f"errors={agg.get('errors') or '-'}")
     rows = st.list_feed_articles(limit=1_000_000)
     print(f"catalog: {st.count_feed_articles()} articles  "
