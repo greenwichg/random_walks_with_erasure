@@ -14,6 +14,7 @@ sys.path.insert(0, str(ROOT / "examples"))
 import store as store_mod        # noqa: E402
 import story_service as ss       # noqa: E402
 import discover                  # noqa: E402
+import location                  # noqa: E402
 
 NOW = datetime(2026, 7, 6, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -158,6 +159,30 @@ def test_filter_country_over_member_locations():
     assert ss.list_stories(st, country=None)["total"] == 2            # absent filter unchanged
     wildfire = next(s for s in ss.cluster_from_store(st) if "Wildfires" in s["title"])
     assert wildfire["countries"] == []                                 # unlocated corpus stays honest
+
+
+def test_filter_country_prefers_event_location_over_publisher():
+    """Phase 2 best-known semantics: a member with provider EVENT geography contributes its event
+    countries INSTEAD of its publisher's home; members without event data keep the publisher
+    fallback. So "France" finds the Paris story a US outlet reported, and that member no longer
+    matches under its publisher's country."""
+    st = store_mod.Store("sqlite://")
+    _add(st, "https://npr.org/a1", "NPR", -1.0, "Senate passes the funding bill after debate",
+         days=2, country="US")
+    _add(st, "https://fox.com/a2", "Fox News", 1.5, "Senate passes funding bill averting shutdown",
+         days=1, country="US")
+    _add(st, "https://bbc.com/a3", "BBC News", 0.0, "US Senate passes funding bill to avert shutdown",
+         days=0, country="GB")
+    # The BBC member's EVENT is located in the US: the story stays a US story through the event
+    # dimension; BBC's GB home no longer locates it (best-known wins per member).
+    st.replace_article_event_locations(
+        "https://bbc.com/a3", location.resolve_event_locations(
+            [{"country": "United States", "source": "gdelt-gkg"}]))
+    senate = next(s for s in ss.cluster_from_store(st) if "Senate" in s["title"])
+    assert senate["eventCountries"] == ["US"]
+    assert senate["countries"] == ["US"]                              # GB gone: event beat publisher
+    assert ss.list_stories(st, country="US")["total"] == 1
+    assert ss.list_stories(st, country="GB")["total"] == 0
 
 
 def test_diagnostics():

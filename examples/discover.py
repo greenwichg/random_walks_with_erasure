@@ -90,6 +90,9 @@ def feed_article_to_article(row: dict) -> dict:
         # wire via response_model_exclude_none; never fabricated).
         "country": row.get("country"),
         "language": row.get("language"),
+        # Phase 2 — EVENT countries, present only when the caller batched them onto the row
+        # (story_service does); empty means "no provider event geography", never a guess.
+        "eventCountries": list(row.get("eventCountries") or ()),
     }
     # Additive media + publisher logo (centralised in media.py; all-null when the feed carried no image).
     art.update(media.pick_article_media(row))

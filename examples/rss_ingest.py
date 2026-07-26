@@ -74,6 +74,12 @@ class FeedEntry:
     country: Optional[str] = None
     external_id: Optional[str] = None
     publisher_hint: Optional[str] = None
+    # Where the reported EVENT happened (Location Intelligence Phase 2) — 0..n provider-supplied
+    # places, each a mapping with "country" in the provider's own form (+ optional region/city/
+    # lat/lon/source). Adapters only RELAY what their provider extracted (GDELT GKG, GeoRSS, …);
+    # location.resolve_event_locations normalizes downstream. Empty for providers without
+    # event geography — never synthesized from article text.
+    event_locations: tuple = ()
 
     def __post_init__(self) -> None:
         """FeedEntry is the canonical *normalized* contract: every adapter (RSS/Atom, NewsAPI,
@@ -346,6 +352,12 @@ def ingest_entries(entries, source_publisher, source_feed, scorer, store_, *,
             source_type=(e.source_type or source_type),
             source_provider=(e.source_provider or source_provider or source_publisher),
             external_id=e.external_id, country=loc.country, language=loc.language)
+        # Event geography (Phase 2): persist provider-extracted places, normalized through the
+        # same resolver. Written only when the entry CARRIES event locations — a provider
+        # without geography never wipes another provider's rows for the same article.
+        events = location.resolve_event_locations(e.event_locations)
+        if events:
+            store_.replace_article_event_locations(scored.article_id, events)
         stats["new" if created else "duplicates"] += 1
     return stats
 

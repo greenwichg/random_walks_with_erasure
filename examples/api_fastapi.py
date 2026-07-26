@@ -2097,7 +2097,8 @@ def discover_feed(
     topic: Optional[str] = Query(None, description="filter to a topic (facet value)"),
     publisher: Optional[str] = Query(None, description="filter to a publisher (facet value)"),
     lean: Optional[str] = Query(None, description="left | center | right"),
-    country: Optional[str] = Query(None, description="ISO 3166-1 alpha-2 publisher country"),
+    country: Optional[str] = Query(None, description="ISO 3166-1 alpha-2 country, best-known: "
+                                   "event location where a provider supplied it, publisher home otherwise"),
     limit: int = Query(60, ge=1, le=200),
 ) -> dict:
     return discover.list_discover(_require_store(), topic=topic, publisher=publisher,
@@ -2111,8 +2112,9 @@ def stories(
     topic: Optional[str] = Query(None, description="exact topic / category"),
     publisher: Optional[str] = Query(None, description="stories that include this publisher"),
     lean: Optional[str] = Query(None, description="stories with coverage on left | center | right"),
-    country: Optional[str] = Query(None, description="stories with ≥1 member located in this "
-                                                     "ISO 3166-1 alpha-2 country"),
+    country: Optional[str] = Query(None, description="stories connected to this ISO 3166-1 alpha-2 "
+                                                     "country — event location where a provider "
+                                                     "supplied it, publisher home otherwise"),
     dateFrom: Optional[str] = Query(None, description="ISO lower bound on publication time"),
     dateTo: Optional[str] = Query(None, description="ISO upper bound on publication time"),
     sort: str = Query("top", description="top | latest | oldest | publishers"),
@@ -2187,7 +2189,8 @@ def search_feed(
     dateFrom: Optional[str] = Query(None, description="ISO lower bound on publication time"),
     dateTo: Optional[str] = Query(None, description="ISO upper bound on publication time"),
     source: Optional[str] = Query(None, description="exact source feed URL"),
-    country: Optional[str] = Query(None, description="ISO 3166-1 alpha-2 publisher country"),
+    country: Optional[str] = Query(None, description="ISO 3166-1 alpha-2 country, best-known: "
+                                   "event location where a provider supplied it, publisher home otherwise"),
     sort: str = Query("newest", description="newest | oldest | publisher | relevance"),
     limit: int = Query(30, ge=1, le=200),
     offset: int = Query(0, ge=0),

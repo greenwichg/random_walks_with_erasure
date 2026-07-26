@@ -131,11 +131,28 @@ def _build_story(members: list) -> dict:
         "coverage": _coverage(members),
         "timeline": timeline,
         "blindspotSide": _blindspot(dist),
-        # Location Intelligence — the distinct located countries among members (counted fact,
-        # never guessed; unlocated members contribute nothing). Drives the ?country= filter;
-        # internal until a card consumes it (the response model omits undeclared fields).
-        "countries": sorted({(m.get("country") or "").upper() for m in members if m.get("country")}),
+        # Location Intelligence — best-known located countries (counted facts, never guessed).
+        # Per member: EVENT countries when a provider supplied them, else the publisher's home —
+        # so "France" means "about France" wherever event geography exists and degrades to
+        # publisher locality where it doesn't. ``countries`` drives the ?country= filter;
+        # ``eventCountries`` is the pure event-side fact. Both internal until a card consumes
+        # them (the response model omits undeclared fields).
+        "countries": sorted(_located_countries(members)),
+        "eventCountries": sorted({c for m in members for c in (m.get("eventCountries") or ())}),
     }
+
+
+def _located_countries(members: list) -> set:
+    """Best-known located countries across members: each article contributes its event
+    countries when present, else its publisher's home country, else nothing (fail-honest)."""
+    located: set = set()
+    for m in members:
+        events = {str(c).upper() for c in (m.get("eventCountries") or ()) if c}
+        if events:
+            located |= events
+        elif m.get("country"):
+            located.add(str(m["country"]).upper())
+    return located
 
 
 def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
@@ -164,10 +181,15 @@ def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
 # Store-backed orchestration — the surface Discover + Stories consume.
 # --------------------------------------------------------------------------- #
 def _fetch(store_, *, topic=None, date_from=None, date_to=None, max_scan=2000) -> list:
-    """A bounded, pre-filtered article set to cluster (topic/date narrow it in SQL first)."""
+    """A bounded, pre-filtered article set to cluster (topic/date narrow it in SQL first).
+    Each row is annotated with its EVENT countries (one batched side-table lookup) so story
+    construction can locate members by best-known location."""
     rows, _total = store_.search_feed_articles(
         topic=topic, date_from=date_from, date_to=date_to, sort="newest",
         pagination=OffsetPagination.from_params(max_scan, 0, max_limit=max_scan))
+    events = store_.event_countries_for_urls([r.get("canonicalUrl") for r in rows])
+    for r in rows:
+        r["eventCountries"] = events.get(r.get("canonicalUrl"), [])
     return rows
 
 
@@ -197,7 +219,9 @@ def list_stories(store_, *, topic=None, publisher=None, lean=None, country=None,
     """The paginated, filtered Story envelope Discover + Stories consume:
     ``{stories, total, page, pageSize, hasMore, remainingPages, sort}`` (+ ``clusterMs`` +
     ``diagnostics`` when ``debug``). topic/date are pre-filtered in SQL; publisher/lean/country are
-    coverage post-filters on the built stories (country: ≥1 member located in that ISO country)."""
+    coverage post-filters on the built stories. ``country`` matches best-known location: ≥1 member
+    whose EVENT happened there (provider event geography), or — for members with no event data —
+    whose publisher is from there."""
     sort = sort if sort in SORTS else "top"
     pg = OffsetPagination.from_params(limit, offset)
     t0 = _time.perf_counter()

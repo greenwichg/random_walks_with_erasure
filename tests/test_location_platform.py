@@ -184,3 +184,72 @@ def test_place_countries_unions_registry_and_catalog(st, monkeypatch):
     assert rows["FR"]["articles"] == 1 and rows["FR"]["registryPublishers"] == 0
     # Registry-only countries appear with honest zero article counts (GB has rated publishers).
     assert rows["GB"]["registryPublishers"] >= 3 and rows["GB"]["articles"] == 0
+
+
+# --------------------------------------------------------------------------- #
+# Phase 2 — event geography: resolver, side table, best-known search/facets.
+# --------------------------------------------------------------------------- #
+def test_resolve_event_locations_normalizes_and_fails_honest():
+    events = location.resolve_event_locations([
+        {"country": "France", "city": "Paris", "lat": "48.85", "lon": 2.35, "source": "gdelt-gkg"},
+        {"country": "FRA"},                       # ISO3 → dedupes against nothing (no city)
+        {"country": "France", "city": "Paris"},   # duplicate (country, region, city) → dropped
+        {"country": "Atlantis"},                  # unresolvable → dropped, never guessed
+        "not-a-mapping",                          # malformed → dropped
+    ])
+    assert [(e.country, e.city, e.source) for e in events] == [
+        ("FR", "Paris", "gdelt-gkg"), ("FR", None, "provider")]
+    assert events[0].lat == 48.85 and events[0].lon == 2.35
+    assert location.resolve_event_locations(None) == ()
+
+
+def test_event_locations_roundtrip_and_per_source_replace(st):
+    _upsert(st, "https://x.test/a", country="US")
+    st.replace_article_event_locations(
+        "https://x.test/a", location.resolve_event_locations(
+            [{"country": "France", "source": "gdelt-gkg"}, {"country": "DE", "source": "georss"}]))
+    assert st.event_countries_for_urls(["https://x.test/a"]) == {"https://x.test/a": ["DE", "FR"]}
+    # Re-ingest from ONE source replaces only that source's rows (backfill discipline).
+    st.replace_article_event_locations(
+        "https://x.test/a", location.resolve_event_locations([{"country": "IT", "source": "gdelt-gkg"}]))
+    assert st.event_countries_for_urls(["https://x.test/a"]) == {"https://x.test/a": ["DE", "IT"]}
+    # Empty input never wipes stored facts; unknown URLs are simply absent.
+    st.replace_article_event_locations("https://x.test/a", ())
+    assert st.event_countries_for_urls(["https://x.test/a", "https://x.test/none"]) == {
+        "https://x.test/a": ["DE", "IT"]}
+
+
+def test_search_uses_best_known_location(st):
+    # A: US publisher, event in FR → matches FR, no longer US. B: US publisher, no events → US.
+    _upsert(st, "https://x.test/a", country="US", publisher="CNN")
+    _upsert(st, "https://x.test/b", country="US", publisher="Fox News")
+    st.replace_article_event_locations(
+        "https://x.test/a", location.resolve_event_locations([{"country": "FR", "source": "gdelt-gkg"}]))
+    rows, total = st.search_feed_articles(country="fr")
+    assert total == 1 and rows[0]["canonicalUrl"] == "https://x.test/a"
+    rows, total = st.search_feed_articles(country="US")
+    assert total == 1 and rows[0]["canonicalUrl"] == "https://x.test/b"
+    assert st.search_feed_articles()[1] == 2                         # no filter → unchanged
+
+
+def test_country_facets_blend_best_known(st):
+    _upsert(st, "https://x.test/a", country="US", publisher="CNN")     # event FR → counts FR
+    _upsert(st, "https://x.test/b", country="US", publisher="Fox News")  # no events → counts US
+    st.replace_article_event_locations(
+        "https://x.test/a", location.resolve_event_locations([{"country": "FR", "source": "gdelt-gkg"}]))
+    facets = {f["country"]: f for f in st.feed_article_country_facets()}
+    assert facets["FR"] == {"country": "FR", "articles": 1, "publishers": 1}
+    assert facets["US"] == {"country": "US", "articles": 1, "publishers": 1}
+
+
+def test_ingest_persists_event_locations(st):
+    """FeedEntry.event_locations → resolver → side table, through the real ingest path."""
+    import rss_ingest
+    entry = rss_ingest.FeedEntry(
+        url="https://smalltown.example/quake", title="Earthquake shakes the coast",
+        description="A quake", published_at="2026-07-25T10:00:00Z",
+        country="United States",
+        event_locations=({"country": "Japan", "city": "Sendai", "source": "gdelt-gkg"},))
+    rss_ingest.ingest_entries([entry], "Smalltown", "feed://x", rss_ingest.make_scorer(), st)
+    facets = {f["country"]: f for f in st.feed_article_country_facets()}
+    assert "JP" in facets and facets["JP"]["articles"] == 1

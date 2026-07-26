@@ -637,7 +637,8 @@ export interface StoryQuery {
   topic?: string;
   publisher?: string;
   lean?: string;
-  /** ISO 3166-1 alpha-2: stories with ≥1 member article located in this country. */
+  /** ISO 3166-1 alpha-2: stories connected to this country by best-known location — a member's
+   *  EVENT location where a provider supplied one, its publisher's home otherwise. */
   country?: string;
   dateFrom?: string;
   dateTo?: string;
@@ -673,7 +674,8 @@ export interface SearchParams {
   dateFrom?: string;
   dateTo?: string;
   source?: string;
-  /** ISO 3166-1 alpha-2 publisher country (Location Intelligence Phase 0). */
+  /** ISO 3166-1 alpha-2 country, best-known: the article's EVENT location where a provider
+   *  supplied one, its publisher's home otherwise (Location Intelligence Phase 2). */
   country?: string;
   sort?: "newest" | "oldest" | "publisher" | "relevance";
   limit?: number;

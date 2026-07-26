@@ -485,6 +485,26 @@ class FeedArticle(Base):
     created_at: Mapped[datetime] = mapped_column(default=_utcnow)
 
 
+class ArticleEventLocation(Base):
+    """Where an article's EVENT happened (Location Intelligence Phase 2) — 0..n rows per catalog
+    article, provider-extracted and normalized by ``location.resolve_event_locations``. The side
+    table docs/LOCATION_PLATFORM.md reserved: ``feed_articles`` stays untouched (its ``country``
+    remains the publisher's home), and best-known location = event rows when present, publisher
+    country otherwise. ``source`` is provider provenance ("gdelt-gkg", "georss", …) — every
+    located fact stays auditable; nothing here is ever inferred from article text by us."""
+
+    __tablename__ = "article_event_locations"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    canonical_url: Mapped[str] = mapped_column(String(2048), index=True)   # FeedArticle dedup key
+    country: Mapped[str] = mapped_column(String(2), index=True)            # ISO 3166-1 alpha-2, upper
+    region: Mapped[Optional[str]] = mapped_column(String(255), default=None)
+    city: Mapped[Optional[str]] = mapped_column(String(255), default=None)
+    lat: Mapped[Optional[float]] = mapped_column(default=None)
+    lon: Mapped[Optional[float]] = mapped_column(default=None)
+    source: Mapped[str] = mapped_column(String(32), default="provider")
+
+
 class FeedHealth(Base):
     """Per-feed polling health + quality — **observational only**. Written each poll cycle by the
     poller; never removes articles, never modifies :class:`FeedArticle`, and never influences corpus
@@ -878,16 +898,61 @@ class Store:
                 "fetchedAt": r.fetched_at.isoformat() if r.fetched_at else None,
                 "createdAt": r.created_at.isoformat() if r.created_at else None}
 
+    def replace_article_event_locations(self, canonical_url: str, locations) -> None:
+        """Persist an article's EVENT locations (``location.EventLocation`` rows) — idempotent per
+        provider: incoming rows replace this article's rows FROM THE SAME SOURCES only, so a
+        provider that supplies no geography never wipes another provider's facts (the same
+        first-seen/backfill discipline the dedup merge uses)."""
+        locs = [l for l in (locations or ()) if getattr(l, "country", None)]
+        if not canonical_url or not locs:
+            return
+        sources = sorted({l.source for l in locs})
+        with self.session() as s:
+            s.execute(delete(ArticleEventLocation).where(
+                ArticleEventLocation.canonical_url == canonical_url,
+                ArticleEventLocation.source.in_(sources)))
+            for l in locs:
+                s.add(ArticleEventLocation(canonical_url=canonical_url, country=l.country,
+                                           region=l.region, city=l.city, lat=l.lat, lon=l.lon,
+                                           source=l.source))
+
+    def event_countries_for_urls(self, canonical_urls) -> dict:
+        """Distinct EVENT countries per catalog article, keyed by canonical URL — the batched
+        lookup the Story Service uses to locate members. URLs without event rows are absent."""
+        urls = [u for u in dict.fromkeys(canonical_urls) if u]
+        if not urls:
+            return {}
+        out: dict = {}
+        with self.session() as s:
+            for i in range(0, len(urls), 500):
+                rows = s.execute(select(ArticleEventLocation.canonical_url,
+                                        ArticleEventLocation.country).distinct()
+                                 .where(ArticleEventLocation.canonical_url.in_(urls[i:i + 500]))).all()
+                for u, c in rows:
+                    out.setdefault(u, []).append(c)
+        return {u: sorted(cs) for u, cs in out.items()}
+
     def feed_article_country_facets(self) -> list:
-        """Per-country catalog facts (Location Intelligence 1.5): article count + distinct
-        publishers for every located article, most-covered first. Rows with no resolved country
-        are simply absent — the caller decides how to present the unlocated remainder."""
+        """Per-country catalog facts (Location Intelligence 1.5, best-known since Phase 2):
+        article count + distinct publishers per country, most-covered first. An article counts
+        toward its EVENT countries when a provider supplied them, else toward its publisher's
+        home country — the same precedence search and stories use, so every surface agrees.
+        Rows with no location on either dimension are simply absent (fail-honest)."""
+        has_events = (select(ArticleEventLocation.id)
+                      .where(ArticleEventLocation.canonical_url == FeedArticle.canonical_url)
+                      .exists())
+        by_event = (select(ArticleEventLocation.canonical_url.label("u"),
+                           ArticleEventLocation.country.label("c")).distinct())
+        by_publisher = (select(FeedArticle.canonical_url.label("u"),
+                               func.upper(FeedArticle.country).label("c"))
+                        .where(FeedArticle.country.is_not(None), ~has_events))
+        best = by_event.union(by_publisher).subquery()
         with self.session() as s:
             rows = s.execute(
-                select(FeedArticle.country, func.count(),
+                select(best.c.c, func.count(func.distinct(best.c.u)),
                        func.count(func.distinct(FeedArticle.publisher)))
-                .where(FeedArticle.country.is_not(None))
-                .group_by(FeedArticle.country)).all()
+                .select_from(best.join(FeedArticle, FeedArticle.canonical_url == best.c.u))
+                .group_by(best.c.c)).all()
         out = [{"country": c, "articles": int(n), "publishers": int(p)} for c, n, p in rows]
         out.sort(key=lambda r: (-r["articles"], r["country"]))
         return out
@@ -1049,7 +1114,18 @@ class Store:
         if source and source.strip():
             conds.append(FeedArticle.source_feed == source.strip())
         if country and str(country).strip():
-            conds.append(func.upper(FeedArticle.country) == str(country).strip().upper())
+            # Best-known location (Phase 2): EVENT countries when a provider supplied them beat
+            # the publisher's home; publisher country answers only for articles with no event
+            # rows. Same precedence as stories + facets, so every surface agrees.
+            want = str(country).strip().upper()
+            event_match = (select(ArticleEventLocation.id)
+                           .where(ArticleEventLocation.canonical_url == FeedArticle.canonical_url,
+                                  ArticleEventLocation.country == want).exists())
+            has_events = (select(ArticleEventLocation.id)
+                          .where(ArticleEventLocation.canonical_url == FeedArticle.canonical_url)
+                          .exists())
+            conds.append(or_(event_match, and_(~has_events,
+                                               func.upper(FeedArticle.country) == want)))
         if topic and topic.strip():
             conds.append(func.lower(self._category_expr()) == topic.strip().lower())
         if lean == "left":

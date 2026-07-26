@@ -26,7 +26,14 @@ Also here (Information Health readiness, not yet surfaced): :func:`reader_geogra
 counted facts a future Geographic Diversity metric needs (countries read, local-vs-national
 exposure), derived from the reader's stored reads joined to the located catalog.
 
-Read-only over its inputs; no network, no NLP, no coordinates (explicitly out of Phase-1 scope).
+Phase 2 (event geography) extends the same layer without a parallel path: an article ALSO has
+0..n :class:`EventLocation` rows — where the reported EVENT happened, provider-extracted and
+normalized by :func:`resolve_event_locations` through the same country tables. Precedence for
+"where is this article about": event locations when a provider supplied them, else the
+publisher's home. We never extract places from article text ourselves (no NLP here, ever) and
+never guess — an article without provider event geography simply has no event rows.
+
+Read-only over its inputs; no network, no NLP.
 """
 from __future__ import annotations
 
@@ -121,6 +128,54 @@ class ResolvedLocation:
     """The canonical publisher-level location for one article."""
     country: Optional[str] = None    # ISO 3166-1 alpha-2
     language: Optional[str] = None   # ISO 639-1
+
+
+@dataclass(frozen=True)
+class EventLocation:
+    """Where an article's EVENT happened (Phase 2) — one provider-extracted place, normalized.
+
+    Distinct dimension from :class:`ResolvedLocation` (the publisher's home): an article has ONE
+    publisher location and 0..n event locations. ``source`` is provider provenance ("gdelt-gkg",
+    "georss", …) — stored so every located fact stays auditable, like the registry discipline."""
+    country: str                     # ISO 3166-1 alpha-2, upper (required — v1 is country-level)
+    region: Optional[str] = None
+    city: Optional[str] = None
+    lat: Optional[float] = None
+    lon: Optional[float] = None
+    source: str = "provider"
+
+
+def resolve_event_locations(raw_locations) -> "tuple[EventLocation, ...]":
+    """Normalize provider-supplied EVENT places into canonical :class:`EventLocation` rows.
+
+    Input: an iterable of mappings, each with ``country`` in whatever form the provider uses
+    (ISO2/ISO3/full name — the same :func:`normalize_country` forms) plus optional
+    ``region``/``city``/``lat``/``lon``/``source``. Fail-honest like everything here: an entry
+    whose country can't be normalized is DROPPED (never guessed), duplicates collapse, and this
+    function never looks at article text — extraction belongs to providers, normalization to us.
+    """
+    out: list[EventLocation] = []
+    seen: set = set()
+    for item in raw_locations or ():
+        if not isinstance(item, dict):
+            continue
+        country = normalize_country(item.get("country"))
+        if country is None:
+            continue
+        region = (str(item["region"]).strip() or None) if item.get("region") else None
+        city = (str(item["city"]).strip() or None) if item.get("city") else None
+        key = (country, region, city)
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            lat = float(item["lat"]) if item.get("lat") is not None else None
+            lon = float(item["lon"]) if item.get("lon") is not None else None
+        except (TypeError, ValueError):
+            lat = lon = None
+        out.append(EventLocation(country=country, region=region, city=city, lat=lat, lon=lon,
+                                 source=str(item.get("source") or "provider")))
+    return tuple(out)
 
 
 def resolve_article_location(entry_country: "str | None", entry_language: "str | None",
