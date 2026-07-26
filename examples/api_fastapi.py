@@ -995,6 +995,10 @@ class StoriesResponseModel(BaseModel):
     hasMore: bool
     remainingPages: int
     sort: str
+    # Story counts per event country under the active topic/publisher/lean filters (computed
+    # before the country filter + pagination) — the Stories country picker's source of truth,
+    # so an offered country always returns ≥1 story.
+    countryFacets: "dict[str, int]" = {}
 
 
 class CitationModel(BaseModel):

@@ -656,6 +656,10 @@ export interface StoriesResponse {
   hasMore: boolean;
   remainingPages: number;
   sort: string;
+  /** Story counts per EVENT country under the active topic/publisher/lean filters (computed
+   *  server-side before the country filter) — the country picker's source of truth, so an
+   *  offered country always returns ≥1 story. */
+  countryFacets?: Record<string, number>;
 }
 
 /** Discover feed: the latest catalog articles plus the facet values for the filters. */

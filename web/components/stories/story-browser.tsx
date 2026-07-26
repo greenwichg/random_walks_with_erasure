@@ -64,20 +64,13 @@ export function StoryBrowser({
   }, [topic, publisher, lean, country, sort]);
 
   const facets = useDiscover({});
-  // Located-catalog countries (Location Intelligence): the filter is only offered when located
-  // articles exist, and only offers countries with data behind them — no dead options.
+  // Article-level place facts (located articles / publishers / rated) for the facts line only —
+  // the PICKER runs on story-level facets below, because a located article can be an unclustered
+  // singleton: article facets cannot promise that a country returns any stories.
   const countries = useQuery({ queryKey: queryKeys.placeCountries, queryFn: services.placeCountries });
-  const located = React.useMemo(
-    () => (countries.data ?? []).filter((c) => c.articles > 0),
-    [countries.data],
-  );
-  const countryOptions = React.useMemo(
-    () => located.map((c) => ({ value: c.country, label: <CountryBadge code={c.country} /> })),
-    [located],
-  );
   const selectedCountry = React.useMemo(
-    () => located.find((c) => c.country === country) ?? null,
-    [located, country],
+    () => (countries.data ?? []).find((c) => c.country === country) ?? null,
+    [countries.data, country],
   );
   const { data, isLoading, isError, refetch, isFetching } = useStories({
     topic: asFilter(topic),
@@ -88,6 +81,20 @@ export function StoryBrowser({
     limit: PAGE,
     offset,
   });
+
+  // The picker's options: countries with ≥1 matching STORY (server-computed, country-filter
+  // independent). Sticky across refetches — the response is briefly absent while a new filter
+  // loads, and the control must not unmount mid-interaction.
+  const facetsRef = React.useRef<Record<string, number>>({});
+  if (data?.countryFacets) facetsRef.current = data.countryFacets;
+  const storyFacets = data?.countryFacets ?? facetsRef.current;
+  const countryOptions = React.useMemo(
+    () =>
+      Object.entries(storyFacets)
+        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+        .map(([code]) => ({ value: code, label: <CountryBadge code={code} /> })),
+    [storyFacets],
+  );
 
   const stories = data?.stories ?? [];
   const total = data?.total ?? 0;

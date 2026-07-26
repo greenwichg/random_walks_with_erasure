@@ -190,6 +190,37 @@ def test_filter_country_prefers_event_location_over_publisher():
     assert ss.list_stories(st, country="GB")["total"] == 0
 
 
+def test_country_facets_are_story_level_and_filter_independent():
+    """The picker's source of truth (the production lesson): a located article that never
+    clustered into a story must NOT put its country in ``countryFacets`` — article-level facets
+    said "US has located articles" while the story filter honestly returned zero stories, a
+    dead dropdown option. Story-level facets make that impossible: offered ⇔ ≥1 story matches.
+    Facets respect the OTHER filters but never the country filter itself."""
+    st = store_mod.Store("sqlite://")
+    _add(st, "https://npr.org/a1", "NPR", -1.0, "Senate passes the funding bill after debate",
+         days=2, country="US")
+    _add(st, "https://fox.com/a2", "Fox News", 1.5, "Senate passes funding bill averting shutdown",
+         days=1, country="US")
+    for url in ("https://npr.org/a1", "https://fox.com/a2"):
+        st.replace_article_event_locations(
+            url, location.resolve_event_locations([{"country": "US", "source": "gdelt-gkg"}]))
+    _add(st, "https://cnn.com/b1", "CNN", -1.2, "Wildfires spread across the western coast",
+         category="Climate", days=3)
+    _add(st, "https://guardian.com/b2", "The Guardian", -1.5, "Wildfires spread rapidly along western coast",
+         category="Climate", days=3)
+    # The production case: an event-located SINGLETON (one publisher → never becomes a story).
+    _add(st, "https://lemonde.fr/c1", "Le Monde", -0.5, "Paris hosts the summer athletics final",
+         category="Sports", days=1)
+    st.replace_article_event_locations(
+        "https://lemonde.fr/c1", location.resolve_event_locations([{"country": "FR", "source": "gdelt-gkg"}]))
+
+    env = ss.list_stories(st)
+    assert env["countryFacets"] == {"US": 1}                # FR absent: located but storyless
+    assert ss.list_stories(st, country="US")["countryFacets"] == {"US": 1}   # own filter excluded
+    assert ss.list_stories(st, country="FR")["total"] == 0  # and FR honestly yields no stories
+    assert ss.list_stories(st, topic="Climate")["countryFacets"] == {}       # other filters apply
+
+
 def test_diagnostics():
     st = store_mod.Store("sqlite://"); _senate_and_wildfire(st)
     d = ss.list_stories(st, debug=True)

@@ -224,11 +224,15 @@ def list_stories(store_, *, topic=None, publisher=None, lean=None, country=None,
                  sort: str = "top", limit: int = 30, offset: int = 0, min_articles: int = 2,
                  min_publishers: int = 2, max_scan: int = 2000, debug: bool = False) -> dict:
     """The paginated, filtered Story envelope Discover + Stories consume:
-    ``{stories, total, page, pageSize, hasMore, remainingPages, sort}`` (+ ``clusterMs`` +
-    ``diagnostics`` when ``debug``). topic/date are pre-filtered in SQL; publisher/lean/country are
-    coverage post-filters on the built stories. ``country`` matches EVENT location only — the
-    story's member-consensus event countries (``_event_consensus``); publisher homes never
-    substitute, so an unlocated story appears under "All" and under no country."""
+    ``{stories, total, page, pageSize, hasMore, remainingPages, sort, countryFacets}``
+    (+ ``clusterMs`` + ``diagnostics`` when ``debug``). topic/date are pre-filtered in SQL;
+    publisher/lean/country are coverage post-filters on the built stories. ``country`` matches
+    EVENT location only — the story's member-consensus event countries (``_event_consensus``);
+    publisher homes never substitute, so an unlocated story appears under "All" and under no
+    country. ``countryFacets`` = STORY counts per event country under the other active filters,
+    computed BEFORE the country filter and pagination — the picker's source of truth, so a
+    country is only ever offered when selecting it returns ≥1 story (article-level facets
+    cannot promise that: a located article may be an unclustered singleton)."""
     sort = sort if sort in SORTS else "top"
     pg = OffsetPagination.from_params(limit, offset)
     t0 = _time.perf_counter()
@@ -242,6 +246,13 @@ def list_stories(store_, *, topic=None, publisher=None, lean=None, country=None,
         stories = [s for s in stories if want in {p.lower() for p in s["publishers"]}]
     if lean in ("left", "center", "right"):
         stories = [s for s in stories if s["distribution"][lean] > 0.0]
+    # Story-level country facets: counted after topic/publisher/lean narrowed the set, before
+    # the country filter itself (standard faceting — the picker must not collapse to the current
+    # selection) and before pagination.
+    country_facets: dict = {}
+    for s in stories:
+        for c in s["countries"]:
+            country_facets[c] = country_facets.get(c, 0) + 1
     if country and country.strip():
         want = country.strip().upper()
         stories = [s for s in stories if want in s["countries"]]
@@ -249,7 +260,8 @@ def list_stories(store_, *, topic=None, publisher=None, lean=None, country=None,
     stories = _sort_stories(stories, sort)
     total = len(stories)
     page = stories[pg.offset: pg.offset + pg.limit] if pg.limit > 0 else stories
-    out = {"stories": page, "total": total, "sort": sort, **pg.meta(total)}
+    out = {"stories": page, "total": total, "sort": sort, "countryFacets": country_facets,
+           **pg.meta(total)}
     if debug:
         out["clusterMs"] = cluster_ms
         out["diagnostics"] = _diagnostics(stories, cluster_ms)
