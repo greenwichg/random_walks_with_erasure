@@ -149,7 +149,8 @@ per article, provider `source` on every row) → best-known search/stories/facet
 provider that supplies no geography never wipes another's rows (per-source replace — the same
 backfill discipline the dedup merge uses).
 
-**The supply: the GDELT GKG enricher (shipped, default OFF — `RWE_GDELT_GKG=1` to enable).**
+**The supply: the GDELT GKG enricher (shipped; ON in the production compose — kill switch
+`RWE_GDELT_GKG=0` in `deploy/.env`; the bare code default without the env var remains off).**
 The DOC artlist we ingest carries only `sourcecountry` (publisher-level); event geography lives
 in GDELT's GKG files. `examples/gdelt_gkg.py` + `sources.GDELTGKGEnricher` poll the latest
 15-minute `*.gkg.csv.zip` on the standard poller/health machinery and locate articles ALREADY
@@ -169,12 +170,12 @@ Enrichment only: it never creates articles. Provider-specific mapping stays in t
   (`gdelt-gkg`) on every row; per-source replace keeps re-runs harmless; a size cap
   (`RWE_GDELT_GKG_MAX_BYTES`) guards the download.
 
-**Coverage honesty / deploy sequence:** until `RWE_GDELT_GKG=1` runs its first cycles the side
-table is empty — country pickers offer nothing and the filter matches nothing, deliberately
-(empty beats wrong). Enable the flag and coverage fills within cycles for GDELT-monitored
-articles; older/unmonitored articles simply stay unlocated. Live validation of the first cycles
-(match rate, located counts in the `gdelt://gkg` health row) is a deploy-time step — the suite
-pins the logic offline.
+**Coverage honesty / deploy sequence:** until the enricher's first cycles run, the side table
+is empty — country pickers offer nothing and the filter matches nothing, deliberately (empty
+beats wrong). Coverage then fills within cycles for GDELT-monitored articles;
+older/unmonitored articles simply stay unlocated. First-cycle verification (match rate,
+located counts via the `gdelt://gkg` health row, side-table counts, facets filling) is the
+runbook step in docs/AWS_EC2_DEPLOYMENT_GUIDE.md §6a — the suite pins the logic offline.
 
 - **GeoRSS / Dublin Core (evaluated, deferred):** mainstream news feeds almost never carry it,
   and `georss:point` gives coordinates without a country — turning them into countries means

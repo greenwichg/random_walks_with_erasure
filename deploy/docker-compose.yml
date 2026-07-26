@@ -44,8 +44,10 @@ services:
       RWE_GDELT_POLL_INTERVAL: ${RWE_GDELT_POLL_INTERVAL:-1800}
       # GKG event-geography enricher (Location Intelligence Phase 2): locates articles ALREADY in
       # the catalog from GDELT's GKG files — the supply behind the event-location Country filter.
-      # Default 0 = OFF (an unset var never changes behavior); opt in via RWE_GDELT_GKG=1.
-      RWE_GDELT_GKG: ${RWE_GDELT_GKG:-0}
+      # Default 1 = ON (launch decision: without it the Country filter has no data and pickers
+      # stay empty). Kill switch: RWE_GDELT_GKG=0 in deploy/.env + restart. Enrichment only —
+      # it never creates articles, so RWE_RETENTION_* sizing is unaffected.
+      RWE_GDELT_GKG: ${RWE_GDELT_GKG:-1}
       RWE_GDELT_GKG_INTERVAL: ${RWE_GDELT_GKG_INTERVAL:-900}
       RWE_RETENTION_MAX_COUNT: ${RWE_RETENTION_MAX_COUNT:-0}
       # --- production hardening (fail-closed auth) --------------------------------

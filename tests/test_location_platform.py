@@ -203,6 +203,27 @@ def test_place_countries_unions_registry_and_catalog(st, monkeypatch):
 # --------------------------------------------------------------------------- #
 # Phase 2 — event geography: resolver, side table, best-known search/facets.
 # --------------------------------------------------------------------------- #
+def test_country_names_cover_the_world_with_canonical_codes():
+    """The generated full-name table (Phase 2 hardening): real GKG records carry EVERY country's
+    English name — long-tail names, legacy spellings, and ASCII-folded diacritics must resolve,
+    to CANONICAL codes only (the DD-Germany / AN-Curaçao deprecated-code trap is pinned here)."""
+    for name, want in [
+        ("Nigeria", "NG"), ("Vietnam", "VN"), ("Tanzania", "TZ"), ("Bolivia", "BO"),
+        ("Kazakhstan", "KZ"), ("Myanmar", "MM"), ("Burma", "MM"),               # legacy spelling
+        ("Ivory Coast", "CI"), ("Cote d'Ivoire", "CI"),                         # ASCII fold
+        ("Democratic Republic of the Congo", "CD"), ("Republic of the Congo", "CG"),
+        ("Kosovo", "XK"), ("Saint Kitts and Nevis", "KN"), ("Laos", "LA"),
+        ("Germany", "DE"), ("Gambia", "GM"),          # FIPS would say GM=Germany — names never do
+        ("Curacao", "CW"), ("Atlantis", None),
+    ]:
+        assert location.normalize_country(name) == want, name
+    # The generated table itself only ever emits canonical assigned codes (regression pin for
+    # the deprecated-code trap: ICU resolves DD/AN/DY etc. — the generator must exclude them).
+    assert location._COUNTRY_NAMES_FULL["germany"] == "DE"
+    assert location._COUNTRY_NAMES_FULL["curacao"] == "CW"
+    assert location._COUNTRY_NAMES_FULL["benin"] == "BJ"
+
+
 def test_resolve_event_locations_normalizes_and_fails_honest():
     events = location.resolve_event_locations([
         {"country": "France", "city": "Paris", "lat": "48.85", "lon": 2.35, "source": "gdelt-gkg"},

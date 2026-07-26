@@ -20,8 +20,10 @@ Provider-specific mapping stays HERE (the adapter layer), per the platform contr
   DOMINANT country(-ies) — the location-block-count winner, ties kept — so one stray mention
   never locates an article. Story-level member consensus narrows further.
 
-Default OFF (``RWE_GDELT_GKG``); country-level only by design (Phase-2 v1); the poller wiring
-lives in :mod:`sources` (``GDELTGKGEnricher``), the logic here so it stays offline-testable.
+Flagged by ``RWE_GDELT_GKG`` (bare code default: off; the production compose sets it ON —
+``deploy/.env`` is the kill switch). Country-level only by design (Phase-2 v1); the poller
+wiring lives in :mod:`sources` (``GDELTGKGEnricher``), the logic here so it stays
+offline-testable; first-cycle verification is docs/AWS_EC2_DEPLOYMENT_GUIDE.md §6a.
 """
 from __future__ import annotations
 
@@ -88,11 +90,18 @@ def _dominant_places(v1locations: str) -> list:
 
 
 def parse_gkg_csv(text: str) -> list:
-    """GKG CSV -> ``[(document_url, places), …]`` for WEB records with a resolvable dominant
-    country. Malformed rows and non-WEB collections (citations etc.) are skipped."""
+    """String façade over :func:`parse_gkg_lines` (fixtures/tests hand in small strings)."""
+    return parse_gkg_lines((text or "").splitlines())
+
+
+def parse_gkg_lines(lines) -> list:
+    """GKG CSV lines -> ``[(document_url, places), …]`` for WEB records with a resolvable
+    dominant country. Malformed rows and non-WEB collections (citations etc.) are skipped.
+    Takes any line iterable so the enricher can STREAM a decompressing zip member — a 15-minute
+    GKG file inflates to hundreds of MB, which must never be materialized as one string."""
     out = []
-    for line in (text or "").splitlines():
-        cols = line.split("\t")
+    for line in lines or ():
+        cols = line.rstrip("\r\n").split("\t")
         if len(cols) <= _COL_V1LOCATIONS:
             continue
         if cols[_COL_COLLECTION].strip() != "1":
@@ -136,8 +145,10 @@ def enrich_from_latest(store_, *, fetch_bytes: Callable[[str], bytes],
                 "skipped": f"gkg file {len(blob)}B exceeds cap {limit}B"}
     with zipfile.ZipFile(io.BytesIO(blob)) as z:
         name = z.namelist()[0]
-        text = z.read(name).decode("utf-8", errors="replace")
-    records = parse_gkg_csv(text)
+        # Stream-decode the member: peak memory stays at the compressed blob + one line, not the
+        # whole inflated file — this is what makes default-on safe on a small instance.
+        with z.open(name) as member:
+            records = parse_gkg_lines(io.TextIOWrapper(member, encoding="utf-8", errors="replace"))
 
     by_canonical: dict = {}
     for url, places in records:

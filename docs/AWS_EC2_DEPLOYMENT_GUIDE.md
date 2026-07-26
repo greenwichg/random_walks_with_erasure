@@ -334,6 +334,45 @@ Two go-signals: **`preflight.sh` exit 0** (config — env/secret/HTTPS/OAuth/DB)
 container). Do **not** set `IH_BASE_URL` for `preflight.sh` here — the engine port is unpublished, so a
 host-side `127.0.0.1:8000` probe would false-FAIL; `smoke-test.sh` does the live checks correctly.
 
+### 6a · GKG event-geography enricher — first-cycle verification (Location Intelligence Phase 2)
+
+`RWE_GDELT_GKG` defaults **ON** in the compose file (kill switch: `RWE_GDELT_GKG=0` in
+`deploy/.env` + restart). It downloads GDELT's latest 15-minute GKG file each cycle and locates
+articles already in the catalog — it never creates articles. After the first ~15–30 minutes:
+
+```bash
+# 1) Cycle ran and what it did (records parsed / catalog matches / articles located):
+docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.aws.yml \
+  logs api | grep -i "gdelt://gkg\|GDELT-GKG" | tail -5
+
+# 2) Health row for the enricher (server-to-server, from inside the api container):
+docker compose … exec -T api curl -fsS -H "X-IH-Auth:$RWE_INTERNAL_SECRET" \
+  http://127.0.0.1:8000/api/internal/feeds | python3 -m json.tool | grep -A6 'gdelt://gkg'
+
+# 3) Event rows actually persisted (the side table the Country filter reads):
+docker compose … --profile backup run --rm backup python - <<'EOF'
+import sqlite3
+db = sqlite3.connect("/app/data/ih_beta.db")
+n, = db.execute("SELECT COUNT(*) FROM article_event_locations").fetchone()
+top = db.execute("SELECT country, COUNT(DISTINCT canonical_url) FROM article_event_locations "
+                 "GROUP BY country ORDER BY 2 DESC LIMIT 8").fetchall()
+print("event rows:", n, "| top countries:", top)
+EOF
+
+# 4) Product surface: the countries facets fill, and the Stories Country filter appears:
+docker compose … exec -T api curl -fsS http://127.0.0.1:8000/api/places/countries | head -c 400
+# then in the browser: /stories → the Country dropdown offers only event-located countries,
+# and a selection shows stories HAPPENING there (publisher homes never match).
+```
+
+Expected shape: `matched`/`located` > 0 within a few cycles **only for articles GDELT monitors**
+(GDELT-ingested articles match near-immediately; RSS articles match when GDELT also covers that
+outlet). Empty pickers after several cycles + `records > 0, matched == 0` means the catalog and
+GKG URLs aren't overlapping yet — expected on a very small or stale catalog, not a fault. An
+`errors` entry on the health row with everything else healthy = transient GDELT outage; the next
+cycle retries. Rollback: set `RWE_GDELT_GKG=0`, restart — pickers go empty (honest), nothing else
+changes, and already-persisted event rows remain valid.
+
 ---
 
 ## 7 · Operational runbook
