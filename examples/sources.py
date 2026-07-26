@@ -678,9 +678,18 @@ def main(argv=None) -> int:
               f"source_type={a.source_type} interval={a.interval():.0f}s key={a.health_key}")
         if args.command == "poll" and a.enabled():
             agg = a.poll_once(st, scorer, on_feed=rec)
-            print(f"           -> new={agg.get('new', 0)} duplicates={agg.get('duplicates', 0)} "
-                  f"failed={agg.get('failed', 0)} raw={agg.get('rawCount', 0)} "
-                  f"errors={agg.get('errors') or '-'}")
+            if "located" in agg:
+                # Enrichment sources (GKG) create no articles — new/duplicates are always 0 for
+                # them, so report what they DID do or the run looks like a silent no-op.
+                print(f"           -> windows={agg.get('windows', 0)} "
+                      f"records={agg.get('records', 0)} matched={agg.get('matched', 0)} "
+                      f"located={agg.get('located', 0)} "
+                      f"windowErrors={agg.get('windowErrors', 0)} "
+                      f"errors={agg.get('errors') or '-'}")
+            else:
+                print(f"           -> new={agg.get('new', 0)} duplicates={agg.get('duplicates', 0)} "
+                      f"failed={agg.get('failed', 0)} raw={agg.get('rawCount', 0)} "
+                      f"errors={agg.get('errors') or '-'}")
     rows = st.list_feed_articles(limit=1_000_000)
     print(f"catalog: {st.count_feed_articles()} articles  "
           f"by source: {dict(Counter(r.get('sourceType') for r in rows))}")
