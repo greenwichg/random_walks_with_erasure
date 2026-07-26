@@ -996,21 +996,26 @@ class Store:
                     out.setdefault(u, []).append(c)
         return {u: sorted(cs) for u, cs in out.items()}
 
-    def feed_article_country_facets(self) -> list:
+    def feed_article_country_facets(self, include_provisional: bool = True) -> list:
         """Per-country catalog facts (EVENT dimension since Phase 2): article count + distinct
         publishers per country, most-covered first. An article counts toward the countries its
         EVENTS happened in (``article_event_locations``) — never toward its publisher's home,
         which is a separate provenance fact. Before event geography flows (the GKG enricher),
-        this is honestly empty, so country pickers offer nothing rather than the wrong thing."""
+        this is honestly empty, so country pickers offer nothing rather than the wrong thing.
+        ``include_provisional=False`` (the Discover surface) keeps the counts consistent with
+        what that surface actually lists — same convention as :meth:`feed_article_facets`."""
         located = (select(ArticleEventLocation.canonical_url.label("u"),
                           ArticleEventLocation.country.label("c")).distinct().subquery())
         with self.session() as s:
-            rows = s.execute(
-                select(located.c.c, func.count(func.distinct(located.c.u)),
-                       func.count(func.distinct(FeedArticle.publisher)))
-                .select_from(located.join(FeedArticle,
-                                          FeedArticle.canonical_url == located.c.u))
-                .group_by(located.c.c)).all()
+            stmt = (select(located.c.c, func.count(func.distinct(located.c.u)),
+                           func.count(func.distinct(FeedArticle.publisher)))
+                    .select_from(located.join(FeedArticle,
+                                              FeedArticle.canonical_url == located.c.u))
+                    .group_by(located.c.c))
+            if not include_provisional:
+                stmt = stmt.where(or_(FeedArticle.article_state.is_(None),
+                                      FeedArticle.article_state != "provisional"))
+            rows = s.execute(stmt).all()
         out = [{"country": c, "articles": int(n), "publishers": int(p)} for c, n, p in rows]
         out.sort(key=lambda r: (-r["articles"], r["country"]))
         return out

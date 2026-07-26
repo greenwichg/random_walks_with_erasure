@@ -912,6 +912,10 @@ class DiscoverResponseModel(BaseModel):
     articles: list[ArticleModel]
     topics: list[str]        # facet values for the topic filter
     publishers: list[str]    # facet values for the publisher filter
+    # country -> located-article count over what Discover lists (event geography, non-provisional);
+    # the picker's option list — countries with zero content are simply absent. Same semantics as
+    # the Stories countryFacets: country-filter-independent, so the dropdown stays stable.
+    countryFacets: "dict[str, int]" = {}
 
 
 class SearchResponseModel(BaseModel):

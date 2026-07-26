@@ -1,5 +1,6 @@
 import { getJson, postJson, deleteJson } from "@/services/api";
 import { requestParams } from "@/lib/request-params";
+import { discoverKey, type DiscoverFilters } from "@/lib/discover-params";
 import type {
   AnalysisResult,
   AnalyzeMetadata,
@@ -76,8 +77,9 @@ export const services = {
     postJson<RecommendationReception>("/me/recommendations/opened", { articleId, crossCutting }),
   history: () => getJson<HistoryEntry[]>("/history"),
   topics: () => getJson<TopicSlice[]>("/topics"),
-  // Discover: latest catalog articles + facets, with optional topic/publisher/lean filters + a size cap.
-  discover: (filters?: { topic?: string; publisher?: string; lean?: string; limit?: number }) =>
+  // Discover: latest catalog articles + facets, with optional topic/publisher/lean/country filters
+  // + a size cap. `country` is EVENT geography (ISO alpha-2), the same rule as Stories.
+  discover: (filters?: DiscoverFilters) =>
     getJson<DiscoverResponse>("/discover", filters && Object.keys(filters).length ? filters : undefined),
   // Stories — the paginated Story envelope from the single Story Service (Discover consumes it too).
   stories: (query?: StoryQuery) => {
@@ -141,14 +143,9 @@ export const queryKeys = {
   recommendationExplain: ["recommendations", "explain"] as const,
   history: ["history"] as const,
   topics: ["topics"] as const,
-  discover: (filters?: { topic?: string; publisher?: string; lean?: string; limit?: number }) =>
-    [
-      "discover",
-      filters?.topic ?? "all",
-      filters?.publisher ?? "all",
-      filters?.lean ?? "all",
-      filters?.limit ?? "default",
-    ] as const,
+  // Identity lives in lib/discover-params.ts (pure, node-testable) — every filter the service
+  // sends is a key segment there, ratcheted by its test against the frozen-filter bug.
+  discover: (filters?: DiscoverFilters) => discoverKey(filters),
   // Request-identity keys: the key embeds the SAME cleaned record `services` sends as the query
   // string (lib/request-params), so a param that reaches the wire is always part of the cache
   // key. The previous hand-enumerated tuples drifted from the request types (search was missing

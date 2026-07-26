@@ -26,7 +26,7 @@ export const useDashboard = () => useQuery({ queryKey: queryKeys.dashboard, quer
 export const useReport = () => useQuery({ queryKey: queryKeys.report, queryFn: services.report });
 export const useHistory = () => useQuery({ queryKey: queryKeys.history, queryFn: services.history });
 export const useTopics = () => useQuery({ queryKey: queryKeys.topics, queryFn: services.topics });
-export const useDiscover = (filters?: { topic?: string; publisher?: string; lean?: string; limit?: number }) =>
+export const useDiscover = (filters?: import("@/lib/discover-params").DiscoverFilters) =>
   useQuery({ queryKey: queryKeys.discover(filters), queryFn: () => services.discover(filters) });
 export const useStories = (query?: StoryQuery) =>
   useQuery({ queryKey: queryKeys.stories(query), queryFn: () => services.stories(query) });

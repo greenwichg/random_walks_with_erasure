@@ -133,8 +133,15 @@ def list_discover(store_, *, topic: Optional[str] = None, publisher: Optional[st
                   lean: Optional[str] = None, country: Optional[str] = None,
                   limit: int = 60, max_scan: int = 2000) -> dict:
     """Latest FeedArticles as Article dicts, newest first, with optional facet filters. Returns
-    ``{"articles": [...], "topics": [...], "publishers": [...]}`` — facets computed over the whole
-    catalog so the filter dropdowns stay stable as filters are applied.
+    ``{"articles": [...], "topics": [...], "publishers": [...], "countryFacets": {...}}`` — facets
+    computed over the whole catalog so the filter dropdowns stay stable as filters are applied.
+
+    ``country`` filters by EVENT geography (``article_event_locations``; ISO alpha-2) — the same
+    rule as Stories/Search: the publisher's home country is provenance, never a content filter. A
+    multi-country article matches ANY of its event countries and counts toward EACH country's
+    facet. ``countryFacets`` maps country -> located-article count over what Discover actually
+    lists (non-provisional), so the picker offers only countries with content — honestly empty
+    until event geography flows.
 
     Backed by the **shared** ``store.search_feed_articles`` path (one filtering implementation for
     Discover and Search — no duplicated filter/sort code). Facets come from the store's distinct
@@ -155,7 +162,10 @@ def list_discover(store_, *, topic: Optional[str] = None, publisher: Optional[st
     facets = store_.feed_article_facets(include_provisional=False)
     topics = sorted({engine._prettify(t) for t in facets["topics"] if t})
     publishers = sorted({engine._prettify(p) for p in facets["publishers"] if p})
-    return {"articles": articles, "topics": topics, "publishers": publishers}
+    countries = {r["country"]: r["articles"]
+                 for r in store_.feed_article_country_facets(include_provisional=False)}
+    return {"articles": articles, "topics": topics, "publishers": publishers,
+            "countryFacets": countries}
 
 
 # --------------------------------------------------------------------------- #

@@ -239,3 +239,84 @@ def test_discover_stories_endpoints(tmp_path, monkeypatch):
         assert detail["id"] == sid and all(cv["url"].startswith("http") for cv in detail["coverage"])
         assert c.get(f"/api/stories/{sid}").json()["id"] == sid    # backward-compatible alias
         assert c.get("/api/story/st_bogus").status_code == 404
+
+
+# --------------------------------------------------------------------------- #
+# Country filter (event geography) + countryFacets — the Discovery country picker's contract.
+# --------------------------------------------------------------------------- #
+def _locate(st, cu, *countries):
+    import location
+    st.replace_article_event_locations(
+        cu, [location.EventLocation(country=c, source="gdelt-gkg") for c in countries])
+
+
+def test_discover_country_filters_by_event_geography_never_publisher_home():
+    """?country= means "articles about events there" (ANY of a multi-country article's event
+    countries matches); the publisher's HOME country is provenance and never matches. Global
+    (country omitted or the "all" sentinel) is byte-identical to before."""
+    st = store.Store("sqlite://")
+    _event(st)
+    _locate(st, "https://npr.org/a1", "US")
+    _locate(st, "https://foxnews.com/a2", "US", "FR")       # multi-country: a summit-style article
+    # b1 gets NO event rows but a publisher HOME country — must never match a content filter.
+    st.upsert_feed_article(
+        canonical_url="https://cnn.com/b1", url="https://cnn.com/b1", publisher="CNN",
+        source_publisher="CNN", title="Wildfires spread across the western coast", description="context",
+        body=None, published_at="2026-07-05T10:00:00+00:00", source_feed="feed://x",
+        scored={"article_id": "https://cnn.com/b1", "outlet": "CNN", "category": "Climate",
+                "lean": -1.2, "title": "Wildfires spread across the western coast"},
+        country="DE")
+
+    us = discover.list_discover(st, country="US")["articles"]
+    assert {a["id"] for a in us} == {"https://npr.org/a1", "https://foxnews.com/a2"}
+    fr = discover.list_discover(st, country="FR")["articles"]
+    assert {a["id"] for a in fr} == {"https://foxnews.com/a2"}          # ANY-match, not primary-only
+    assert discover.list_discover(st, country="DE")["articles"] == []   # home country ignored
+    assert discover.list_discover(st, country="us")["articles"] == us   # case-insensitive (upper())
+
+    everything = discover.list_discover(st)["articles"]
+    assert discover.list_discover(st, country="all")["articles"] == everything   # sentinel = Global
+    assert len(everything) == 7                                          # Global behavior unchanged
+
+
+def test_discover_country_facets_count_content_only():
+    """countryFacets lists ONLY countries with located, non-provisional content — a multi-country
+    article counts toward EACH of its event countries; provisional articles and their locations
+    are invisible (Discover never lists them); no event geography -> honestly empty dict."""
+    st = store.Store("sqlite://")
+    _event(st)
+    d = discover.list_discover(st)
+    assert d["countryFacets"] == {}                                      # nothing located yet
+
+    _locate(st, "https://npr.org/a1", "US")
+    _locate(st, "https://foxnews.com/a2", "US", "FR")
+    # A provisional (extension-created, uncorroborated) article located in JP must NOT mint a facet.
+    st.upsert_feed_article(
+        canonical_url="https://ext.example/p1", url="https://ext.example/p1", publisher="Ext",
+        source_publisher="Ext", title="Provisional item", description="", body=None,
+        published_at="2026-07-05T10:00:00+00:00", source_feed="ext://reader",
+        scored={"article_id": "https://ext.example/p1", "outlet": "Ext", "lean": 0.0,
+                "title": "Provisional item"},
+        source_type="extension")
+    assert st.get_feed_article("https://ext.example/p1")["articleState"] == "provisional"
+    _locate(st, "https://ext.example/p1", "JP")
+
+    d = discover.list_discover(st)
+    assert d["countryFacets"] == {"US": 2, "FR": 1}                      # JP absent; FR from a2 only
+    # Facets are country-filter-independent (stable dropdown) — same dict under an active filter.
+    assert discover.list_discover(st, country="FR")["countryFacets"] == {"US": 2, "FR": 1}
+
+
+def test_discover_country_filter_respects_limit_and_order():
+    """Pagination contract under the filter: newest-first ordering and the size cap apply AFTER
+    the country condition (SQL WHERE), so Load More reveals a correctly filtered, correctly
+    ordered stream."""
+    st = store.Store("sqlite://")
+    _event(st)
+    for cu in ("https://npr.org/a1", "https://foxnews.com/a2", "https://bbc.com/a3"):
+        _locate(st, cu, "US")
+    page = discover.list_discover(st, country="US", limit=2)["articles"]
+    assert len(page) == 2
+    assert page[0]["id"] == "https://bbc.com/a3"                         # 12:00 beats the 10:00 pair
+    full = discover.list_discover(st, country="US", limit=50)["articles"]
+    assert [a["id"] for a in full][0] == "https://bbc.com/a3" and len(full) == 3

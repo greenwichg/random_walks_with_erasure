@@ -729,6 +729,9 @@ export interface DiscoverResponse {
   articles: Article[];
   topics: string[];
   publishers: string[];
+  /** country -> located-article count (event geography, non-provisional) — the country picker's
+   *  option list; absent country = no content. Optional for older-engine tolerance. */
+  countryFacets?: Record<string, number>;
 }
 
 /** Live catalog search request — every field optional; omitted params are unfiltered. */
