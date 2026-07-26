@@ -127,7 +127,7 @@ function SearchInner() {
         />
       )}
 
-      <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
+      <div className="grid grid-cols-1 items-start gap-5 md:grid-cols-2 xl:grid-cols-3">
         {results.map((article, i) => (
           <DiscoverCard key={article.id} article={article} index={i} openedFrom="search" />
         ))}
