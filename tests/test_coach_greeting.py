@@ -180,7 +180,7 @@ def test_stored_coach_goals_fire_even_without_recent_reads(stack):
 def test_recap_is_suppressed_without_a_recent_read(stack):
     g = _greet(stack, "stale")                           # settings row, but reads are stale
     assert g["trigger"] is None and g["turn"] is None
-    assert g["base"]["content"].startswith("Hi — I'm your Information Health coach.")
+    assert g["base"]["content"].startswith("Hi — I'm your Information Health guide.")
     assert g["followUps"]
 
 

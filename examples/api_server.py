@@ -1903,7 +1903,9 @@ class Backend:
         return [{
             "id": "msg_0",
             "role": "assistant",
-            "content": ("Hi — I'm your Information Health coach. I read your metrics straight from the "
+            # User-facing product name is "Guide" (the internal service/route/file names stay
+            # `coach` — see the greeting pins in tests/test_coach_v1_contract.py).
+            "content": ("Hi — I'm your Information Health guide. I read your metrics straight from the "
                         "engine, so I can explain any score, spot patterns in your reading, and suggest "
                         "balanced reads. What would you like to look at?"),
             "createdAt": datetime.now(timezone.utc).isoformat(),

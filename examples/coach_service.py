@@ -834,7 +834,7 @@ def _present(res: ToolResult) -> dict:
         ns["goals_minutes"] = f.get("readingGoalMinutes")
         stored = f.get("coachGoals")
         ns["goals_line"] = (_json.dumps(stored) if stored
-                            else "no stored coach goals yet — the gaps above are the candidates.")
+                            else "no stored goals yet — the gaps above are the candidates.")
     return ns
 
 
@@ -858,7 +858,7 @@ TEMPLATES = {
     "COMPARE.over_time": "{trend_lines}.",
     "COMPARE.weekly_review": ("Your weekly review — this past week: {history_week_line}. "
                               "Score trend: {trend_lines}. Your daily reading goal is "
-                              "{goals_minutes} minutes; stored coach goals: {goals_line}"),
+                              "{goals_minutes} minutes; stored goals: {goals_line}"),
     "ACT.suggest": "From your live feed: {recs_offer_line}.",
     "ACT.weekly_goals": ("Grounded in your data — gaps: {bs_spots_line} {trend_lines}. Stored "
                          "goals: {goals_line} Your reading goal is {goals_minutes} minutes/day."),

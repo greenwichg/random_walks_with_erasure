@@ -47,7 +47,8 @@ export const NAV: NavSection[] = [
     items: [
       { label: "Home", labelKey: "nav.dashboard", href: "/", icon: LayoutDashboard, hint: "Today's coverage", hintKey: "nav.hint.dashboard" },
       { label: "Recommendations", labelKey: "nav.recommendations", href: "/recommendations", icon: Sparkles, hint: "Reads picked to balance your diet", hintKey: "nav.hint.recommendations" },
-      { label: "AI Coach", labelKey: "nav.coach", href: "/coach", icon: Bot, hint: "Ask about your reading", hintKey: "nav.hint.coach" },
+      // User-facing name is "Guide"; the route/service/query-key stay `coach` by design.
+      { label: "Guide", labelKey: "nav.coach", href: "/coach", icon: Bot, hint: "Ask about your reading", hintKey: "nav.hint.coach" },
     ],
   },
   // Explore: finding and keeping coverage. Every href is a real route — aspirational pages

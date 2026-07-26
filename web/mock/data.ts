@@ -531,7 +531,7 @@ export const COACH_GREETING: CoachMessage = {
   role: "assistant",
   createdAt: new Date().toISOString(),
   content:
-    "Hi Alex — I'm your Information Health coach. I can explain any of your metrics, spot patterns in your reading, and suggest ways to balance your diet. What would you like to look at?",
+    "Hi Alex — I'm your Information Health guide. I can explain any of your metrics, spot patterns in your reading, and suggest ways to balance your diet. What would you like to look at?",
 };
 
 /** A grounded canned reply (mock). The real coach calls the Python narrate service. */

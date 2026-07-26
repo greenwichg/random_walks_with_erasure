@@ -58,7 +58,7 @@ def test_greeting_shape_demo_path(client, no_llm):
     assert isinstance(body, list) and len(body) == 1
     msg = body[0]
     assert msg["role"] == "assistant"
-    assert msg["content"].startswith("Hi — I'm your Information Health coach.")
+    assert msg["content"].startswith("Hi — I'm your Information Health guide.")
     assert isinstance(msg["citations"], list) and len(msg["citations"]) <= 2
     for c in msg["citations"]:
         assert set(c) >= {"metric", "value"}

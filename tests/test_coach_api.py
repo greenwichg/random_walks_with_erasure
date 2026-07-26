@@ -171,7 +171,7 @@ def test_flag_on_default_greeting_keeps_v1_body_and_adds_chips(client, measured,
     body = client.get("/api/coach", headers=measured).json()
     assert isinstance(body, list) and len(body) == 1
     msg = body[0]
-    assert msg["content"].startswith("Hi — I'm your Information Health coach.")
+    assert msg["content"].startswith("Hi — I'm your Information Health guide.")
     assert msg["followUps"], "the default greeting must offer weakest-metric chips"
     assert "intent" not in msg and "echo" not in msg    # no proactive turn fired
     for c in msg.get("citations") or []:

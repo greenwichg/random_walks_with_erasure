@@ -201,7 +201,7 @@ export default function PrivacyPage() {
             <p>
               We do not sell, rent, or trade personal data. We do not share it with third parties for their
               own purposes. InfoDiet shows no third-party advertising. Your reading data is used solely to
-              provide InfoDiet&rsquo;s own features to you: your report, recommendations, coaching, and
+              provide InfoDiet&rsquo;s own features to you: your report, recommendations, guidance, and
               notifications.
             </p>
           </Section>
