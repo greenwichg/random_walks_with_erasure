@@ -151,6 +151,7 @@
  "time.daysAgo": "{n} d atrás",
  "common.previous": "Anterior",
  "common.next": "Próximo",
+ "common.loadMore": "Carregar mais",
  "common.page": "Página {n}",
  "common.copy": "Copiar",
  "common.copied": "Copiado",

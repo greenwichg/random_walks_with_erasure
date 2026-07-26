@@ -151,6 +151,7 @@
  "time.daysAgo": "il y a {n} j",
  "common.previous": "Précédent",
  "common.next": "Suivant",
+ "common.loadMore": "Charger plus",
  "common.page": "Page {n}",
  "common.copy": "Copier",
  "common.copied": "Copié",

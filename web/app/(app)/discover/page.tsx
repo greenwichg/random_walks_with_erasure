@@ -32,11 +32,15 @@ export default function DiscoverPage() {
   const [topic, setTopic] = React.useState("all");
   const [publisher, setPublisher] = React.useState("all");
   const [lean, setLean] = React.useState("all");
-  const [offset, setOffset] = React.useState(0);
+  // "Load More", not pages and not infinite scroll: the browse stream reads continuously, but
+  // continuing is the READER'S deliberate act — an information-diet product doesn't autoload
+  // the bottomless feed it exists to push back against. The whole capped set is already
+  // fetched, so revealing more costs zero requests.
+  const [visible, setVisible] = React.useState(PAGE);
 
-  // Any filter change resets to the first page.
+  // Any filter change resets to the first batch.
   React.useEffect(() => {
-    setOffset(0);
+    setVisible(PAGE);
   }, [topic, publisher, lean]);
 
   const { data, isLoading, isError, refetch } = useDiscover({
@@ -48,9 +52,14 @@ export default function DiscoverPage() {
 
   const articles = data?.articles ?? [];
   const total = articles.length;
-  const paged = articles.slice(offset, offset + PAGE);
-  const page = Math.floor(offset / PAGE) + 1;
-  const hasMore = offset + PAGE < total;
+  // Each loaded batch is its OWN masonry block: CSS multicol balances globally, so appending
+  // into one container would reshuffle cards the reader already saw. Per-batch blocks append
+  // beneath the previous ones — earlier cards never move (the no-layout-shift requirement).
+  const batches: (typeof articles)[] = [];
+  for (let start = 0; start < Math.min(visible, total); start += PAGE) {
+    batches.push(articles.slice(start, Math.min(start + PAGE, visible, total)));
+  }
+  const hasMore = visible < total;
 
   return (
     <PageContainer>
@@ -93,30 +102,23 @@ export default function DiscoverPage() {
         />
       )}
 
-      <div className="columns-1 gap-5 md:columns-2 xl:columns-3">
-        {paged.map((article, i) => (
-          <div key={article.id} className="mb-5 break-inside-avoid">
-            <DiscoverCard article={article} index={i} />
-          </div>
-        ))}
-      </div>
+      {batches.map((batch, b) => (
+        <div key={b} className="columns-1 gap-5 md:columns-2 xl:columns-3">
+          {batch.map((article, i) => (
+            <div key={article.id} className="mb-5 break-inside-avoid">
+              <DiscoverCard article={article} index={i} />
+            </div>
+          ))}
+        </div>
+      ))}
 
-      {(page > 1 || hasMore) && (
-        <div className="mt-8 flex items-center justify-center gap-3">
+      {hasMore && (
+        <div className="mt-4 flex justify-center">
           <button
-            disabled={offset === 0}
-            onClick={() => setOffset(Math.max(0, offset - PAGE))}
-            className="inline-flex h-9 items-center rounded-lg border bg-card px-4 text-sm font-medium transition-colors hover:bg-accent disabled:opacity-50"
+            onClick={() => setVisible((v) => v + PAGE)}
+            className="inline-flex h-9 items-center rounded-lg border bg-card px-4 text-sm font-medium transition-colors hover:bg-accent"
           >
-            Previous
-          </button>
-          <span className="text-sm text-muted-foreground">Page {page}</span>
-          <button
-            disabled={!hasMore}
-            onClick={() => setOffset(offset + PAGE)}
-            className="inline-flex h-9 items-center rounded-lg border bg-card px-4 text-sm font-medium transition-colors hover:bg-accent disabled:opacity-50"
-          >
-            Next
+            {t("common.loadMore")}
           </button>
         </div>
       )}

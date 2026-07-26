@@ -151,6 +151,7 @@
  "time.daysAgo": "vor {n} T.",
  "common.previous": "Zurück",
  "common.next": "Weiter",
+ "common.loadMore": "Mehr laden",
  "common.page": "Seite {n}",
  "common.copy": "Kopieren",
  "common.copied": "Kopiert",
