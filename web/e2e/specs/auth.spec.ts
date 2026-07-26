@@ -24,10 +24,10 @@ test.describe("Authentication", () => {
     await page.goto("/signin");
     await page.getByRole("button", { name: "Continue as demo reader" }).click();
 
-    // On success the page navigates itself to "/" (the dashboard).
+    // On success the page navigates itself to "/" (the Today front page).
     await page.waitForURL((url) => url.pathname === "/");
     // The header also renders the page title as an h1, so scope to the main content.
-    await expect(page.getByRole("main").getByRole("heading", { name: "Dashboard", exact: true })).toBeVisible();
+    await expect(page.getByRole("main").getByRole("heading", { name: "Today", exact: true })).toBeVisible();
 
     // The session is genuinely established (an authenticated user is present).
     const session = await page.request.get("/api/auth/session").then((r) => r.json());

@@ -34,8 +34,8 @@ test.describe("Reading History", () => {
       })
       .toBeGreaterThanOrEqual(1);
 
-    // ...and the Dashboard page renders for the reader.
+    // ...and the Today front page renders for the reader.
     await page.goto("/");
-    await expect(page.getByRole("main").getByRole("heading", { name: "Dashboard", exact: true })).toBeVisible();
+    await expect(page.getByRole("main").getByRole("heading", { name: "Today", exact: true })).toBeVisible();
   });
 });

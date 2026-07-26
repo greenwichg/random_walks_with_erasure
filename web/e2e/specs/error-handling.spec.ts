@@ -16,9 +16,11 @@ test.describe("Error Handling", () => {
 
   test("an unavailable backend shows the error state, not fabricated data", async ({ authedPage }) => {
     const page = authedPage;
-    // Simulate the data source being unavailable (503) — the production posture. The app must show
-    // its error state and NOT fall back to mock numbers.
-    await page.route("**/api/dashboard", (route) =>
+    // Simulate the PRIMARY data source being unavailable (503) — the production posture. The home
+    // front page is derived from the stories catalog; dashboard/recommendations are non-blocking
+    // rail modules that simply don't render when absent. The app must show its error state and NOT
+    // fall back to mock content.
+    await page.route("**/api/stories**", (route) =>
       route.fulfill({
         status: 503,
         contentType: "application/json",
@@ -29,7 +31,7 @@ test.describe("Error Handling", () => {
     await page.goto("/");
     // Graceful error state is shown...
     await expect(page.getByText("Something went wrong")).toBeVisible();
-    // ...and no dashboard content (mock or otherwise) rendered alongside it.
-    await expect(page.getByText("Health trend")).toHaveCount(0);
+    // ...and no front-page content (mock or otherwise) rendered alongside it.
+    await expect(page.getByText("Top stories")).toHaveCount(0);
   });
 });
