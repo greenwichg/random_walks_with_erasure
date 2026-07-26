@@ -1,6 +1,5 @@
 "use client";
 
-import * as React from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { Newspaper, ArrowRight, EyeOff } from "lucide-react";
@@ -14,21 +13,14 @@ import { cn } from "@/lib/utils";
 
 /** A clustered-story preview card — one event, coverage across the spectrum.
  *
- * Imageless cards follow the newspaper rule — no photo means the TYPE gets senior: a larger,
- * deeper-clamped headline and summary, plus the coverage line (real publisher names the story
- * already carries). Grid rows stretch cards to equal height, so without this the flex spacer
- * renders the difference as dead space; with it, the space holds the product's own facts —
- * never a stock illustration or a placeholder box. */
+ * Imageless stories render the COVERAGE FIGURE in the image slot: the story's own left/center/
+ * right distribution drawn large. Same slot, same aspect, so imaged and imageless cards share
+ * one skeleton and grid rows never leave a void — and the visual is a counted fact unique to
+ * each story, never a stock illustration or category artwork. (The figure replaces the small
+ * spectrum strip; showing both would say the same thing twice.) */
 export function StoryCard({ story, index = 0 }: { story: Story; index?: number }) {
   const { t, formatCompact, timeAgo } = useTranslation();
   const hasImage = Boolean(story.image);
-  // Coverage line candidates: real outlet names only. GDELT's long-tail publishers are
-  // prettified domains ("1003Thepeak.Iheart.Com") — dots/digits give them away — and a line of
-  // those reads worse than whitespace. All sources stay counted in the header either way.
-  const cleanPublishers = React.useMemo(
-    () => (story.publishers ?? []).filter((p) => !/[.\d]/.test(p)),
-    [story.publishers],
-  );
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
@@ -39,7 +31,11 @@ export function StoryCard({ story, index = 0 }: { story: Story; index?: number }
         href={`/stories/${story.id}`}
         className="group flex h-full flex-col rounded-lg border bg-card p-5 shadow-soft transition-all hover:-translate-y-0.5 hover:shadow-card"
       >
-        <ArticleImage src={story.image} alt={story.title} className="mb-3" />
+        {hasImage ? (
+          <ArticleImage src={story.image} alt={story.title} className="mb-3" />
+        ) : (
+          <CoverageFigure story={story} />
+        )}
 
         <div className="mb-2 flex items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-1.5">
@@ -58,43 +54,18 @@ export function StoryCard({ story, index = 0 }: { story: Story; index?: number }
           </span>
         </div>
 
-        <h3
-          className={cn(
-            "font-semibold leading-snug tracking-tight group-hover:text-primary",
-            hasImage ? "line-clamp-2" : "line-clamp-3 text-lg",
-          )}
-        >
+        <h3 className="line-clamp-2 font-semibold leading-snug tracking-tight group-hover:text-primary">
           {story.title}
         </h3>
-        <p
-          className={cn(
-            "mt-1.5 text-sm text-muted-foreground",
-            hasImage ? "line-clamp-2" : "line-clamp-6 leading-relaxed",
-          )}
-        >
-          {story.summary}
-        </p>
+        <p className="mt-1.5 line-clamp-2 text-sm text-muted-foreground">{story.summary}</p>
 
-        {/* Imageless: the coverage line — who is actually reporting this. Real outlet names
-            only (a wall of prettified domains is noise, not evidence); enough of them to wrap
-            and fill, clamped so this card never out-stretches its row. */}
-        {!hasImage && cleanPublishers.length > 0 && (
-          <p className="mt-3 line-clamp-4 text-xs leading-relaxed text-muted-foreground">
-            <span className="font-medium text-foreground/70">
-              {cleanPublishers.slice(0, 10).join(" · ")}
-            </span>
-            {(story.publishers?.length ?? 0) > Math.min(cleanPublishers.length, 10) && " …"}
-          </p>
-        )}
-
-        {/* One structural slack point: grid rows stretch cards to equal height, and whatever
-            space this card can't fill with content sits HERE, above the spectrum bar — an
-            anchored footer with grouped text above it, not a hole in the middle of the copy. */}
         <div className="flex-1" />
 
-        <div className="mt-4">
-          <SpectrumBar distribution={story.distribution} height={8} showLegend={false} />
-        </div>
+        {hasImage && (
+          <div className="mt-4">
+            <SpectrumBar distribution={story.distribution} height={8} showLegend={false} />
+          </div>
+        )}
 
         <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
           {story.blindspotSide ? (
@@ -115,5 +86,45 @@ export function StoryCard({ story, index = 0 }: { story: Story; index?: number }
         </div>
       </Link>
     </motion.div>
+  );
+}
+
+/** The story's own coverage, drawn large in the hero slot: one column per side, height ∝ share,
+ *  in the diverging lean palette — a per-story figure from counted facts (the same numbers the
+ *  small spectrum strip shows on imaged cards). A 0% side keeps a stub column + label, so the
+ *  triptych always reads left-to-right and a missing side is VISIBLY missing. */
+function CoverageFigure({ story }: { story: Story }) {
+  const { t } = useTranslation();
+  const sides = ["left", "center", "right"] as const;
+  // On imageless cards this figure IS the card's distribution display, so announce it: one
+  // label carrying the three percentages (the visual columns are then decorative detail).
+  const label = sides
+    .map((s) => `${t(`filter.${s}`)} ${Math.round((story.distribution?.[s] ?? 0) * 100)}%`)
+    .join(" · ");
+  return (
+    <div
+      role="img"
+      aria-label={label}
+      className="mb-3 flex aspect-[16/9] items-end justify-center gap-8 overflow-hidden rounded-lg bg-muted/40 px-6 pb-4 pt-6"
+    >
+      {sides.map((side) => {
+        const share = Math.max(0, Math.min(1, story.distribution?.[side] ?? 0));
+        const pct = Math.round(share * 100);
+        return (
+          <div key={side} className="flex h-full w-14 min-w-0 flex-col items-center justify-end gap-1">
+            <span className="text-xs font-medium tabular-nums text-muted-foreground">{pct}%</span>
+            <div
+              className="w-full rounded-t"
+              style={{
+                height: `${Math.max(share * 72, 2.5)}%`,
+                backgroundColor: LEAN_META[side].color,
+                opacity: share > 0 ? 0.8 : 0.25,
+              }}
+            />
+            <span className="text-[0.7rem] text-muted-foreground">{t(`filter.${side}`)}</span>
+          </div>
+        );
+      })}
+    </div>
   );
 }
