@@ -476,6 +476,11 @@ class FeedArticle(Base):
     # promoted article (a feed re-discovered it, or enough distinct readers corroborated it), which
     # also records that the promotion happened. Derived from provenance at insert.
     article_state: Mapped[Optional[str]] = mapped_column(String(16), default=None)
+    # Location Intelligence Phase 0 (additive): canonical publisher-level location from the
+    # Location Resolver (location.py) — ISO 3166-1 alpha-2 / ISO 639-1, NULL when unresolvable.
+    # Provider-agnostic by construction: every adapter's metadata arrives here already normalized.
+    country: Mapped[Optional[str]] = mapped_column(String(2), default=None)
+    language: Mapped[Optional[str]] = mapped_column(String(8), default=None)
     fetched_at: Mapped[datetime] = mapped_column(default=_utcnow, index=True)
     created_at: Mapped[datetime] = mapped_column(default=_utcnow)
 
@@ -551,6 +556,7 @@ class Store:
                                      future=True)
         self._ensure_media_columns()
         self._ensure_source_columns()
+        self._ensure_location_columns()
         self._ensure_read_columns()
         self._ensure_lifecycle_columns()
         self._ensure_search_indexes()
@@ -753,7 +759,8 @@ class Store:
                             image_width: "int | None" = None, image_height: "int | None" = None,
                             image_mime: "str | None" = None, image_source: "str | None" = None,
                             image_attribution: "str | None" = None, source_type: "str | None" = None,
-                            source_provider: "str | None" = None, external_id: "str | None" = None) -> bool:
+                            source_provider: "str | None" = None, external_id: "str | None" = None,
+                            country: "str | None" = None, language: "str | None" = None) -> bool:
         """Insert a catalog article, or refresh an existing one (dedup by ``canonical_url``). Returns
         ``True`` when newly created, ``False`` on a re-poll. A re-poll refreshes ``fetched_at`` and
         backfills any field that was empty before, but never rewrites first-seen metadata — so the same
@@ -784,6 +791,7 @@ class Store:
                     image_mime=image_mime, image_source=image_source,
                     image_attribution=image_attribution, source_type=source_type,
                     source_provider=source_provider, external_id=external_id,
+                    country=country, language=language,
                     article_state=("provisional" if (source_type or "").lower() == "extension" else None)))
                 return True
             row.fetched_at = _utcnow()
@@ -797,6 +805,13 @@ class Store:
                 row.published_at = published_at
             if external_id and not row.external_id:
                 row.external_id = external_id
+            # Location backfill-when-empty: the same-canonical-URL merge fills location the first
+            # time any source supplies it, and never rewrites a stored value (first-seen wins,
+            # like every other first-seen field on this row).
+            if country and not row.country:
+                row.country = country
+            if language and not row.language:
+                row.language = language
             # Lifecycle promotion on merge: an independent feed source re-discovering a provisional
             # (extension-created) article corroborates it — promoted to an explicit "verified" state
             # (distinguishable from feed-born NULL, so the promotion itself stays auditable).
@@ -859,8 +874,26 @@ class Store:
                 "imageAttribution": r.image_attribution,
                 "sourceType": r.source_type, "sourceProvider": r.source_provider,
                 "externalId": r.external_id, "articleState": r.article_state,
+                "country": r.country, "language": r.language,
                 "fetchedAt": r.fetched_at.isoformat() if r.fetched_at else None,
                 "createdAt": r.created_at.isoformat() if r.created_at else None}
+
+    def feed_article_locations(self, canonical_urls) -> dict:
+        """Location + publisher for a set of catalog articles, keyed by canonical URL — the batched
+        join Geographic Diversity readiness uses to locate a reader's stored reads. Same batching
+        discipline as :meth:`feed_article_media`; rows the catalog doesn't know are simply absent."""
+        urls = [u for u in dict.fromkeys(canonical_urls) if u]
+        if not urls:
+            return {}
+        out: dict = {}
+        with self.session() as s:
+            for i in range(0, len(urls), 500):
+                rows = s.scalars(select(FeedArticle)
+                                 .where(FeedArticle.canonical_url.in_(urls[i:i + 500]))).all()
+                for r in rows:
+                    out[r.canonical_url] = {"country": r.country, "language": r.language,
+                                            "publisher": r.publisher}
+        return out
 
     def feed_article_media(self, canonical_urls) -> dict:
         """Media + publication metadata for a set of catalog articles, keyed by canonical URL — the
@@ -914,6 +947,22 @@ class Store:
                     s.execute(text(f"ALTER TABLE feed_articles ADD COLUMN {name} {decl}"))
             except Exception:
                 pass    # already exists (fresh DB) or a non-sqlite backend — nothing to do
+
+    def _ensure_location_columns(self) -> None:
+        """Additive, idempotent location columns on ``feed_articles`` (Location Intelligence
+        Phase 0), upgrading pre-existing DBs in place exactly like ``_ensure_source_columns``.
+        Legacy rows keep ``NULL`` until a poll refreshes them (backfill-when-empty on merge)."""
+        for name, decl in [("country", "VARCHAR(2)"), ("language", "VARCHAR(8)")]:
+            try:
+                with self.session() as s:
+                    s.execute(text(f"ALTER TABLE feed_articles ADD COLUMN {name} {decl}"))
+            except Exception:
+                pass    # already exists (fresh DB) or a non-sqlite backend — nothing to do
+        try:
+            with self.session() as s:
+                s.execute(text("CREATE INDEX IF NOT EXISTS ix_feed_country ON feed_articles(country)"))
+        except Exception:
+            pass
 
     def _ensure_read_columns(self) -> None:
         """Additive, idempotent read-source columns on ``reads`` (Commit 14), upgrading pre-existing
@@ -972,7 +1021,8 @@ class Store:
     def _category_expr():
         return func.json_extract(FeedArticle.scored, "$.category")
 
-    def _search_conditions(self, *, q, publisher, lean, topic, date_from, date_to, source) -> list:
+    def _search_conditions(self, *, q, publisher, lean, topic, date_from, date_to, source,
+                           country=None) -> list:
         """The WHERE terms for a catalog search — text (title/description/publisher/category), exact
         publisher/topic/source, lean bucket (via the JSON lean), and an ISO date range."""
         conds: list = []
@@ -984,6 +1034,8 @@ class Store:
             conds.append(func.lower(FeedArticle.publisher) == publisher.strip().lower())
         if source and source.strip():
             conds.append(FeedArticle.source_feed == source.strip())
+        if country and str(country).strip():
+            conds.append(func.upper(FeedArticle.country) == str(country).strip().upper())
         if topic and topic.strip():
             conds.append(func.lower(self._category_expr()) == topic.strip().lower())
         if lean == "left":
@@ -1008,8 +1060,8 @@ class Store:
         return (FeedArticle.published_at.desc(), FeedArticle.canonical_url.desc())
 
     def search_feed_articles(self, *, q=None, publisher=None, lean=None, topic=None,
-                             date_from=None, date_to=None, source=None, sort="newest",
-                             pagination=None, include_provisional: bool = True):
+                             date_from=None, date_to=None, source=None, country=None,
+                             sort="newest", pagination=None, include_provisional: bool = True):
         """Search the catalog directly, in SQL. Returns ``(rows, total)`` — ``rows`` are paginated
         FeedArticle-row dicts, ``total`` the match count before pagination. All filtering / sorting /
         paging happen in the database (index-backed); it never touches the recommendation engine.
@@ -1019,7 +1071,8 @@ class Store:
         from pagination import OffsetPagination
         pg = pagination or OffsetPagination()
         conds = self._search_conditions(q=q, publisher=publisher, lean=lean, topic=topic,
-                                         date_from=date_from, date_to=date_to, source=source)
+                                         date_from=date_from, date_to=date_to, source=source,
+                                         country=country)
         if not include_provisional:
             conds = list(conds) + [or_(FeedArticle.article_state.is_(None),
                                        FeedArticle.article_state != "provisional")]

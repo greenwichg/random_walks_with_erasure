@@ -37,6 +37,7 @@ const DYNAMIC_PREFIXES = [
   "storyIntel.lifecycle.", // t(`storyIntel.lifecycle.${lifecycle}`)
   "storyIntel.momentum.",  // t(`storyIntel.momentum.${state}`)
   "freshness.",            // t(`freshness.${band}`) — freshness badge
+  "local.scope.",          // t(`local.scope.${scope}`) — publisher scope pill (Local News v1)
 ];
 
 /**

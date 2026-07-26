@@ -33,7 +33,7 @@ def normalize_lean(lean: Optional[str]) -> Optional[str]:
 def search(store_, *, query: Optional[str] = None, publisher: Optional[str] = None,
            lean: Optional[str] = None, topic: Optional[str] = None,
            date_from: Optional[str] = None, date_to: Optional[str] = None,
-           source: Optional[str] = None, sort: str = "newest",
+           source: Optional[str] = None, country: Optional[str] = None, sort: str = "newest",
            limit: int = 30, offset: int = 0, debug: bool = False) -> dict:
     """Run a catalog search and return the paginated envelope:
     ``{results, total, page, pageSize, hasMore, remainingPages, sort}`` (plus ``queryMs`` +
@@ -44,7 +44,7 @@ def search(store_, *, query: Optional[str] = None, publisher: Optional[str] = No
 
     t0 = time.perf_counter()
     rows, total = store_.search_feed_articles(
-        q=query, publisher=publisher, lean=normalize_lean(lean), topic=topic,
+        q=query, publisher=publisher, lean=normalize_lean(lean), topic=topic, country=country,
         date_from=date_from, date_to=date_to, source=source, sort=sort, pagination=pagination)
     results = [discover.feed_article_to_article(r) for r in rows]
     query_ms = round((time.perf_counter() - t0) * 1000.0, 2)

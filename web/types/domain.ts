@@ -328,6 +328,10 @@ export interface Article {
   register: Register;
   publishedAt: string;
   readingMinutes: number;
+  /** Canonical publisher-level location (Location Intelligence Phase 0): ISO 3166-1 alpha-2 /
+   *  ISO 639-1. Omitted when the engine couldn't resolve one — never fabricated. */
+  country?: string;
+  language?: string;
   // Media + publisher logo (Commit 9; RSS/Atom media only). Absent → the card falls back to text-only.
   image?: string;
   imageWidth?: number;
@@ -667,6 +671,8 @@ export interface SearchParams {
   dateFrom?: string;
   dateTo?: string;
   source?: string;
+  /** ISO 3166-1 alpha-2 publisher country (Location Intelligence Phase 0). */
+  country?: string;
   sort?: "newest" | "oldest" | "publisher" | "relevance";
   limit?: number;
   offset?: number;
@@ -751,6 +757,23 @@ export interface SaveResult {
   savedCount: number;
 }
 
+/** One publisher from the locality registry (Local News v1) — curated facts, never inferred. */
+export interface PlacePublisher {
+  name: string;
+  lean: Lean;
+  leanBucket: LeanBucket;
+  country?: string;
+  region?: string;
+  city?: string;
+  scope?: "international" | "national" | "regional" | "local" | "hyperlocal";
+}
+
+/** A followed place (Location Intelligence Phase 1 — contract prepared; no UI yet). */
+export interface FollowedLocation {
+  placeId: string;
+  level: "country" | "region" | "city";
+}
+
 export interface Settings {
   theme: "light" | "dark" | "system";
   language: string;
@@ -765,6 +788,9 @@ export interface Settings {
     streakReminders: boolean;
     blindSpotAlerts: boolean;
   };
+  /** Location Intelligence Phase 1 — present in the engine contract; not yet surfaced in the UI. */
+  edition?: string | null;
+  locations?: FollowedLocation[];
   // NOTE: the engine's settings contract still carries a `privacy` group
   // (shareAnonymizedMetrics / personalizedAds); it is intentionally omitted from the frontend
   // type because nothing here reads it. A real backend response's extra `privacy` key is

@@ -36,6 +36,13 @@ DEFAULT_SETTINGS = {
     "monthlyReport": False,
     "notifications": {"recommendations": True, "weeklyDigest": True,
                       "streakReminders": False, "blindSpotAlerts": False},
+    # Location Intelligence Phase 1 — prepared, not yet surfaced in any UI. ``edition`` is the
+    # reader's default place scope (ISO 3166-1 alpha-2 country, or None = global); ``locations``
+    # is the followed-places list, each ``{"placeId": str, "level": country|region|city}``.
+    # Future capabilities (GPS, radius, travel mode) extend the entry shape additively — the list
+    # container never needs redesign.
+    "edition": None,
+    "locations": [],
     # A `privacy` group (shareAnonymizedMetrics / personalizedAds) was removed in S1.2: neither
     # field was consumed by any behavior, and one contradicted the product's privacy policy. Legacy
     # stored blobs / patches carrying those keys normalize away safely — dropped like any unknown
@@ -93,9 +100,37 @@ def normalize_settings(stored: "dict | None", patch: "dict | None" = None) -> di
         "weeklyReport": bool(_layered("weeklyReport", layers, True)),
         "monthlyReport": bool(_layered("monthlyReport", layers, False)),
         "notifications": _merge_bool_group(DEFAULT_SETTINGS["notifications"], layers, "notifications"),
+        "edition": _normalize_edition(_layered("edition", layers, None)),
+        "locations": _normalize_locations(_layered("locations", layers, [])),
         # The output is built ONLY from the keys above, so any layer key outside this set — an
         # unknown field, or the removed ``privacy`` group — is simply never read (dropped).
     }
+
+
+_LOCATION_LEVELS = ("country", "region", "city")
+_MAX_LOCATIONS = 10
+
+
+def _normalize_edition(value) -> "str | None":
+    """ISO 3166-1 alpha-2 (upper) or None — anything else falls back to None (global)."""
+    s = str(value).strip().upper() if value is not None else ""
+    return s if len(s) == 2 and s.isalpha() else None
+
+
+def _normalize_locations(value) -> list:
+    """The followed-places list, coerced to the contract: at most ``_MAX_LOCATIONS`` entries of
+    ``{"placeId": non-empty str, "level": country|region|city}``; malformed entries drop."""
+    out = []
+    for item in value if isinstance(value, list) else []:
+        if not isinstance(item, dict):
+            continue
+        place = str(item.get("placeId") or "").strip()
+        level = str(item.get("level") or "").strip().lower()
+        if place and level in _LOCATION_LEVELS:
+            out.append({"placeId": place[:128], "level": level})
+        if len(out) >= _MAX_LOCATIONS:
+            break
+    return out
 
 
 # --------------------------------------------------------------------------- #

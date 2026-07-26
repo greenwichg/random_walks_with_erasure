@@ -703,5 +703,21 @@
   "story.publishersTitle": "Publishers on this story",
   "storyIntel.joinedGroup": "{n} publishers joined the coverage",
   "storyIntel.showAllEvents": "Show all {n} events",
-  "nav.section.insights": "Insights"
+  "nav.section.insights": "Insights",
+  "nav.local": "Local",
+  "local.title": "Local news",
+  "local.subtitle": "Publishers by home place, from the curated registry — and the located coverage they carry.",
+  "local.pickCountry": "Pick a country",
+  "local.publishers": "{n} publishers",
+  "local.registryNote": "Locality is a curated registry fact per publisher — never inferred from articles.",
+  "local.articles": "Latest from {place}",
+  "local.empty.title": "Pick a place to begin",
+  "local.empty.body": "Select a country above to see its publishers and their latest located coverage.",
+  "local.noArticles.title": "No located articles yet",
+  "local.noArticles.body": "Articles gain a country as ingestion runs with the Location Resolver. Check back shortly.",
+  "local.scope.international": "International",
+  "local.scope.national": "National",
+  "local.scope.regional": "Regional",
+  "local.scope.local": "Local",
+  "local.scope.hyperlocal": "Hyperlocal"
 }

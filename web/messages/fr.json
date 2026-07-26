@@ -703,5 +703,21 @@
   "story.publishersTitle": "Médias sur ce sujet",
   "storyIntel.joinedGroup": "{n} médias ont rejoint la couverture",
   "storyIntel.showAllEvents": "Afficher les {n} événements",
-  "nav.section.insights": "Analyses"
+  "nav.section.insights": "Analyses",
+  "nav.local": "Local",
+  "local.title": "Actualités locales",
+  "local.subtitle": "Médias par lieu d’origine, issus du registre organisé, et leur couverture localisée.",
+  "local.pickCountry": "Choisissez un pays",
+  "local.publishers": "{n} médias",
+  "local.registryNote": "La localité est un fait organisé du registre par média, jamais déduite des articles.",
+  "local.articles": "Les dernières de {place}",
+  "local.empty.title": "Choisissez un lieu pour commencer",
+  "local.empty.body": "Sélectionnez un pays ci-dessus pour voir ses médias et leur dernière couverture localisée.",
+  "local.noArticles.title": "Pas encore d’articles localisés",
+  "local.noArticles.body": "Les articles obtiennent un pays au fil de l’ingestion via le Location Resolver. Revenez bientôt.",
+  "local.scope.international": "International",
+  "local.scope.national": "National",
+  "local.scope.regional": "Régional",
+  "local.scope.local": "Local",
+  "local.scope.hyperlocal": "Hyperlocal"
 }

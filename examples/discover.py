@@ -86,6 +86,10 @@ def feed_article_to_article(row: dict) -> dict:
         "description": row.get("description") or "",
         "publishedAt": row.get("publishedAt") or row.get("fetchedAt") or "",
         "readingMinutes": _reading_minutes(row),
+        # Location Intelligence Phase 0 — canonical publisher-level location (None omitted on the
+        # wire via response_model_exclude_none; never fabricated).
+        "country": row.get("country"),
+        "language": row.get("language"),
     }
     # Additive media + publisher logo (centralised in media.py; all-null when the feed carried no image).
     art.update(media.pick_article_media(row))
@@ -100,7 +104,8 @@ _LEANS = {"left", "center", "right"}
 
 
 def list_discover(store_, *, topic: Optional[str] = None, publisher: Optional[str] = None,
-                  lean: Optional[str] = None, limit: int = 60, max_scan: int = 2000) -> dict:
+                  lean: Optional[str] = None, country: Optional[str] = None,
+                  limit: int = 60, max_scan: int = 2000) -> dict:
     """Latest FeedArticles as Article dicts, newest first, with optional facet filters. Returns
     ``{"articles": [...], "topics": [...], "publishers": [...]}`` — facets computed over the whole
     catalog so the filter dropdowns stay stable as filters are applied.
@@ -117,7 +122,8 @@ def list_discover(store_, *, topic: Optional[str] = None, publisher: Optional[st
     # Discover is the one surface that hides *provisional* (extension-created, not yet corroborated)
     # articles — Stories/Search/the corpus include them (Commit 18 lifecycle). Same shared SQL path.
     rows, _total = store_.search_feed_articles(
-        publisher=_f(publisher), topic=_f(topic), lean=_f(lean), sort="newest",
+        publisher=_f(publisher), topic=_f(topic), lean=_f(lean), country=_f(country),
+        sort="newest",
         pagination=OffsetPagination.from_params(limit, 0), include_provisional=False)
     articles = [feed_article_to_article(r) for r in rows]
     facets = store_.feed_article_facets(include_provisional=False)

@@ -44,6 +44,7 @@ import enrich
 import store
 import media                     # image SELECTION (pick_best_image) — metadata only, never downloads
 import text_utils                # the ONE canonical HTML→text normalizer (used by FeedEntry below)
+import location                  # Location Resolver — canonical publisher country/language (Phase 0)
 
 _USER_AGENT = "InformationHealth-RSS/0.1 (+https://code.claude.com)"
 
@@ -330,6 +331,10 @@ def ingest_entries(entries, source_publisher, source_feed, scorer, store_, *,
             stats["unknown_outlet"] += 1
             _o = scored.outlet or "(unresolved)"
             stats["unknown_outlets"][_o] = stats["unknown_outlets"].get(_o, 0) + 1
+        # Location Resolver (location.py): provider metadata + the resolved outlet -> the ONE
+        # canonical publisher-level location. Provider-agnostic — every adapter's entry passes
+        # through this same line, so downstream never sees provider-specific location forms.
+        loc = location.resolve_article_location(e.country, e.language, outlet=scored.outlet)
         created = store_.upsert_feed_article(
             canonical_url=scored.article_id, url=url, publisher=scored.outlet,
             source_publisher=source_publisher, title=e.title or scored.title,
@@ -340,7 +345,7 @@ def ingest_entries(entries, source_publisher, source_feed, scorer, store_, *,
             image_attribution=(source_publisher or scored.outlet or None),
             source_type=(e.source_type or source_type),
             source_provider=(e.source_provider or source_provider or source_publisher),
-            external_id=e.external_id)
+            external_id=e.external_id, country=loc.country, language=loc.language)
         stats["new" if created else "duplicates"] += 1
     return stats
 

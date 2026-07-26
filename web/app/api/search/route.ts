@@ -16,6 +16,7 @@ const KEYS = [
   "dateFrom",
   "dateTo",
   "source",
+  "country",
   "sort",
   "limit",
   "offset",

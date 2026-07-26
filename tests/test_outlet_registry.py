@@ -63,7 +63,10 @@ def test_domain_and_display_name_collapse_to_one_outlet(reg):
              "https://www.nytimes.com/2026/us/politics/x", "New York Times (News)"]
     resolved = {reg.resolve(f) for f in forms}
     assert len(resolved) == 1
-    assert next(iter(resolved)) == orx.Outlet("New York Times", -1.0)
+    # Identity = canonical name + lean. The Outlet dataclass also carries locality columns now
+    # (Location Intelligence Phase 1), which this collapse test is deliberately agnostic to.
+    one = next(iter(resolved))
+    assert (one.canonical, one.lean) == ("New York Times", -1.0)
 
 
 def test_corpus_parenthetical_suffixes(reg):

@@ -41,9 +41,17 @@ _NONALNUM = re.compile(r"[^a-z0-9]+")
 
 @dataclass(frozen=True)
 class Outlet:
-    """A resolved outlet: the canonical display name and its AllSides lean in ``[-2, 2]``."""
+    """A resolved outlet: the canonical display name, its AllSides lean in ``[-2, 2]``, and —
+    Location Intelligence Phase 1 — its home locality. Locality fields are curated facts
+    (publisher-level, never inferred) and default to ``None`` when unrated, so pre-existing
+    callers and rows are untouched. The dataclass grows by optional columns, never by redesign —
+    future publisher metadata (factuality, ownership, transparency) follows the same pattern."""
     canonical: str
     lean: float
+    country: "str | None" = None    # ISO 3166-1 alpha-2 home country
+    region: "str | None" = None     # state / province / ADM1 display name
+    city: "str | None" = None
+    scope: "str | None" = None      # international | national | regional | local | hyperlocal
 
 
 def _name_key(text: str) -> str:
@@ -103,11 +111,18 @@ class OutletRegistry:
     def load(cls, path: "str | None" = None) -> "OutletRegistry":
         """Load the registry CSV (defaults to the bundled ``data/outlet_registry.csv``).
 
-        ``#`` lines and blanks are skipped. Each row is ``canonical, lean, aliases`` where
-        ``aliases`` is ``|``-separated. The canonical name is itself registered as a lookup key."""
+        ``#`` lines and blanks are skipped. Each row is ``canonical, lean, aliases`` plus the
+        optional Phase-1 locality columns ``country, region, city, scope`` (missing / blank →
+        ``None`` — a two-column legacy file still loads unchanged). ``aliases`` is
+        ``|``-separated. The canonical name is itself registered as a lookup key."""
         path = path or _DATA
         outlets: List[Outlet] = []
         aliases: Dict[str, str] = {}
+
+        def _opt(row: list, i: int) -> "str | None":
+            v = row[i].strip() if len(row) > i and row[i] and row[i].strip() else None
+            return v
+
         with open(path, encoding="utf-8") as f:
             reader = csv.reader(l for l in f if l.strip() and not l.lstrip().startswith("#"))
             header = next(reader, None)            # skip the column header
@@ -116,7 +131,9 @@ class OutletRegistry:
                     continue
                 canonical = row[0].strip()
                 lean = float(row[1])
-                outlets.append(Outlet(canonical=canonical, lean=lean))
+                outlets.append(Outlet(canonical=canonical, lean=lean,
+                                      country=_opt(row, 3), region=_opt(row, 4),
+                                      city=_opt(row, 5), scope=_opt(row, 6)))
                 aliases[canonical] = canonical      # the name itself resolves
                 if len(row) >= 3 and row[2].strip():
                     for alias in row[2].split("|"):

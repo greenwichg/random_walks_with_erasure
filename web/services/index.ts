@@ -12,6 +12,7 @@ import type {
   HealthReport,
   HistoryEntry,
   NotificationItem,
+  PlacePublisher,
   Profile,
   Recommendation,
   RecommendationExplain,
@@ -125,6 +126,15 @@ export const services = {
   // CONTRACT v1, verbatim from the engine; read-only — nothing is stored.
   analyze: (url: string, metadata?: AnalyzeMetadata) =>
     postJson<AnalysisResult>("/analyze", metadata ? { url, metadata } : { url }),
+  // Local News v1 — publishers by locality from the curated registry (facts, no catalog scan).
+  placePublishers: (filters?: { country?: string; region?: string; city?: string; scope?: string }) => {
+    const clean: Record<string, string> = {};
+    if (filters)
+      for (const [k, v] of Object.entries(filters)) {
+        if (v !== undefined && v !== null && v !== "" && v !== "all") clean[k] = String(v);
+      }
+    return getJson<PlacePublisher[]>("/places/publishers", Object.keys(clean).length ? clean : undefined);
+  },
 };
 
 /** React Query cache keys, colocated so invalidation stays consistent. */
@@ -175,4 +185,12 @@ export const queryKeys = {
   // Distinct top-level key (NOT under ["recommendations"]) so a slider-save invalidation of the feed
   // never churns the persisted-feedback cache the page reads to keep ignored cards dismissed.
   recommendationFeedback: ["recommendation-feedback"] as const,
+  placePublishers: (filters?: { country?: string; region?: string; city?: string; scope?: string }) =>
+    [
+      "place-publishers",
+      filters?.country ?? "all",
+      filters?.region ?? "all",
+      filters?.city ?? "all",
+      filters?.scope ?? "all",
+    ] as const,
 };

@@ -62,6 +62,8 @@ import story_service          # the single owner of Story construction (Discover
 import story_intelligence     # deterministic intelligence computed ON TOP of Story objects (Commit 10)
 import article_analyzer       # anonymous URL analysis (A1 service: catalog-first, fetchless, zero-write)
 import analysis_enrichment    # A3: reader-relative explanation + recommendation layered on an analysis
+import location               # Location Intelligence — canonical model + publisher scope vocabulary
+import outlet_registry        # publisher locality registry (Local News v1 backing data)
 import media                  # centralised media + publisher-logo selection (rec enrichment, Commit 9)
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -746,6 +748,12 @@ class NotificationPrefsModel(BaseModel):
 # contract in S1.2 — neither field was consumed by any behavior. Legacy stored blobs and legacy
 # PATCH payloads carrying those keys normalize away safely (dropped like any unknown key), so old
 # data and old clients keep working without a migration.
+class FollowedLocationModel(BaseModel):
+    """One followed place (Location Intelligence Phase 1). Extends additively for future levels."""
+    placeId: str
+    level: str        # country | region | city
+
+
 class SettingsModel(BaseModel):
     theme: str
     language: str
@@ -755,6 +763,9 @@ class SettingsModel(BaseModel):
     weeklyReport: bool
     monthlyReport: bool
     notifications: NotificationPrefsModel
+    # Location Intelligence Phase 1 — prepared contract, no UI yet.
+    edition: str | None = None
+    locations: list[FollowedLocationModel] = []
 
 
 # Update model — every field optional so any client can PATCH a subset; the engine merges it over
@@ -777,6 +788,8 @@ class SettingsUpdateModel(BaseModel):
     weeklyReport: bool | None = None
     monthlyReport: bool | None = None
     notifications: NotificationPrefsUpdate | None = None
+    edition: str | None = None
+    locations: list[FollowedLocationModel] | None = None
 
 
 class NotificationModel(BaseModel):
@@ -819,6 +832,9 @@ class ArticleModel(BaseModel):
     emotion: EmotionShareModel
     dominantEmotion: str
     register_: str = Field(alias="register")
+    # Location Intelligence Phase 0 — canonical publisher-level location; omitted when unknown.
+    country: Optional[str] = None
+    language: Optional[str] = None
     publishedAt: str
     readingMinutes: int
     # Media + publisher logo (Commit 9; RSS/Atom media only). Null/omitted when absent — the card falls
@@ -1101,6 +1117,18 @@ class OutletModel(BaseModel):
     lean: float
     leanBucket: str
     articles: int
+
+
+class PlacePublisherModel(BaseModel):
+    """One publisher from the locality registry (Local News v1). Locality fields are curated
+    facts; anything unknown is omitted (`response_model_exclude_none`), never guessed."""
+    name: str
+    lean: float
+    leanBucket: str
+    country: str | None = None
+    region: str | None = None
+    city: str | None = None
+    scope: str | None = None
 
 
 class EstimateRequest(BaseModel):
@@ -1968,6 +1996,45 @@ def outlets() -> list:
     return _require_backend().outlets()
 
 
+@app.get("/api/places/publishers", response_model=list[PlacePublisherModel],
+         response_model_exclude_none=True, tags=["meta"],
+         summary="Publishers by locality (Local News v1)", responses=_ERR_RESPONSES)
+def place_publishers(
+    country: Optional[str] = Query(None, description="ISO 3166-1 alpha-2 home country"),
+    region: Optional[str] = Query(None, description="state / province display name"),
+    city: Optional[str] = Query(None, description="home city display name"),
+    scope: Optional[str] = Query(None, description="international | national | regional | local | hyperlocal"),
+) -> list:
+    """Local News v1 — answers exactly one question from curated registry facts: *which publishers
+    are local to the selected place?* Publisher locality only (no event locations, no coordinates,
+    no inference); registry-backed, so it involves no recommendation engine and no catalog scan.
+    Filters are conjunctive; text filters match case-insensitively; no filters = the full rated
+    registry."""
+    def _norm(v):
+        return str(v).strip().lower() if v and str(v).strip() else None
+
+    want_country = location.normalize_country(country) if country else None
+    want_region, want_city, want_scope = _norm(region), _norm(city), _norm(scope)
+    if scope and want_scope not in location.SCOPES:
+        raise HTTPException(status_code=400,
+                            detail=f"scope must be one of {', '.join(location.SCOPES)}.")
+    out = []
+    for o in outlet_registry.default_registry().outlets():
+        if want_country and (o.country or "").upper() != want_country:
+            continue
+        if want_region and _norm(o.region) != want_region:
+            continue
+        if want_city and _norm(o.city) != want_city:
+            continue
+        if want_scope and _norm(o.scope) != want_scope:
+            continue
+        out.append({"name": o.canonical, "lean": o.lean,
+                    "leanBucket": engine._lean_bucket(o.lean),
+                    "country": o.country, "region": o.region, "city": o.city, "scope": o.scope})
+    out.sort(key=lambda r: (r.get("country") or "~", r["name"].lower()))
+    return out
+
+
 # ---- Discover & Stories: read-only exploration over the RSS FeedArticle catalog ---------------- #
 # Additive product surface: reshapes the catalog into the existing Article/Story contracts and
 # clusters it into events deterministically. No recommender, report, or protected module involved.
@@ -1978,10 +2045,11 @@ def discover_feed(
     topic: Optional[str] = Query(None, description="filter to a topic (facet value)"),
     publisher: Optional[str] = Query(None, description="filter to a publisher (facet value)"),
     lean: Optional[str] = Query(None, description="left | center | right"),
+    country: Optional[str] = Query(None, description="ISO 3166-1 alpha-2 publisher country"),
     limit: int = Query(60, ge=1, le=200),
 ) -> dict:
     return discover.list_discover(_require_store(), topic=topic, publisher=publisher,
-                                  lean=lean, limit=limit)
+                                  lean=lean, country=country, limit=limit)
 
 
 @app.get("/api/stories", response_model=StoriesResponseModel, response_model_exclude_none=True,
@@ -2065,6 +2133,7 @@ def search_feed(
     dateFrom: Optional[str] = Query(None, description="ISO lower bound on publication time"),
     dateTo: Optional[str] = Query(None, description="ISO upper bound on publication time"),
     source: Optional[str] = Query(None, description="exact source feed URL"),
+    country: Optional[str] = Query(None, description="ISO 3166-1 alpha-2 publisher country"),
     sort: str = Query("newest", description="newest | oldest | publisher | relevance"),
     limit: int = Query(30, ge=1, le=200),
     offset: int = Query(0, ge=0),
@@ -2076,8 +2145,8 @@ def search_feed(
     ``debug`` (query param) or ``RWE_SEARCH_DEBUG`` is set."""
     debug = debug or os.environ.get("RWE_SEARCH_DEBUG", "").strip().lower() in {"1", "true", "yes", "on"}
     return search.search(_require_store(), query=query, publisher=publisher, lean=lean, topic=topic,
-                         date_from=dateFrom, date_to=dateTo, source=source, sort=sort,
-                         limit=limit, offset=offset, debug=debug)
+                         date_from=dateFrom, date_to=dateTo, source=source, country=country,
+                         sort=sort, limit=limit, offset=offset, debug=debug)
 
 
 @app.post("/api/estimate", response_model=HealthReportModel, response_model_exclude_none=True,
