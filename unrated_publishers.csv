@@ -1,20 +1,75 @@
 canonical,country,domain,aliases,scope,articles
-Clarín,AR,clarin.com,,national,
-La Nación,AR,lanacion.com.ar,,national,
-Folha de S.Paulo,BR,folha.uol.com.br,,national,
-O Globo,BR,oglobo.globo.com,,national,
-Der Spiegel,DE,spiegel.de,,national,
-Die Zeit,DE,zeit.de,,national,
-Süddeutsche Zeitung,DE,sueddeutsche.de,,national,
-Ahram Online,EG,english.ahram.org.eg,,national,
-France 24,FR,france24.com,,international,
-Mirror,GB,mirror.co.uk,,national,
-NHK,JP,nhk.or.jp,,national,
-Nikkei Asia,JP,asia.nikkei.com,,international,
-The East African,KE,theeastafrican.co.ke,,international,
-Milenio,MX,milenio.com,,national,
-Nigerian Tribune,NG,tribuneonlineng.com,,national,
-The Punch,NG,punchng.com,,national,
-New Zealand Herald,NZ,nzherald.co.nz,,national,
-Philippine Daily Inquirer,PH,inquirer.net,,national,
-Mail & Guardian,ZA,mg.co.za,,national,
+pagesix.com,,pagesix.com,,,247
+decider.com,,decider.com,,,99
+Sportskeeda,,sportskeeda.com,,,50
+aktiencheck,DE,aktiencheck.de,,,45
+aol.co.uk,GB,aol.co.uk,,,41
+unitaid.eu,,unitaid.eu,,,34
+tvguide.co.uk,GB,tvguide.co.uk,,,28
+ad-hoc-news,DE,ad-hoc-news.de,,,23
+yahoo.com,,yahoo.com,,,22
+manilatimes.net,,manilatimes.net,,,21
+prnewswire.com,,prnewswire.com,,,21
+dailymail.com,,dailymail.com,,,17
+economictimes.indiatimes.com,,economictimes.indiatimes.com,,,15
+express.co.uk,GB,express.co.uk,,,15
+indiagazette.com,,indiagazette.com,,,15
+calcuttanews.net,,calcuttanews.net,,,14
+moneycontrol.com,,moneycontrol.com,,,14
+bignewsnetwork.com,,bignewsnetwork.com,,,13
+le Parisien,FR,leparisien.fr,,,13
+thestar.com.my,MY,thestar.com.my,,,13
+finance.yahoo.com,,finance.yahoo.com,,,12
+miragenews.com,,miragenews.com,,,12
+asiaone.com,,asiaone.com,,,11
+finanznachrichten.de,DE,finanznachrichten.de,,,10
+globalsecurity.org,,globalsecurity.org,,,10
+heraldscotland.com,,heraldscotland.com,,,10
+isp.netscape.com,,isp.netscape.com,,,10
+allafrica.com,,allafrica.com,,,9
+aninews.in,IN,aninews.in,,,9
+clickondetroit.com,,clickondetroit.com,,,9
+eastbaytimes.com,,eastbaytimes.com,,,9
+easternriverinachronicle.com.au,AU,easternriverinachronicle.com.au,,,9
+freemalaysiatoday.com,,freemalaysiatoday.com,,,9
+gdnonline.com,,gdnonline.com,,,9
+livemint.com,,livemint.com,,,9
+newkerala.com,,newkerala.com,,,9
+Sportschau ARD,DE,sportschau.de,,,8
+bizcommunity.com,,bizcommunity.com,,,8
+boredpanda.com,,boredpanda.com,,,8
+dailyrecord.co.uk,GB,dailyrecord.co.uk,,,8
+english.news.cn,CN,english.news.cn,,,8
+manchestereveningnews.co.uk,GB,manchestereveningnews.co.uk,,,8
+oxfordmail.co.uk,GB,oxfordmail.co.uk,,,8
+theadvocate.com.au,AU,theadvocate.com.au,,,8
+thenationonlineng.net,,thenationonlineng.net,,,8
+winnipegfreepress.com,,winnipegfreepress.com,,,8
+birminghammail.co.uk,GB,birminghammail.co.uk,,,7
+bleedingcool.com,,bleedingcool.com,,,7
+businesstimes.com.sg,SG,businesstimes.com.sg,,,7
+crookwellgazette.com.au,AU,crookwellgazette.com.au,,,7
+el-balad.com,,el-balad.com,,,7
+examiner.com.au,AU,examiner.com.au,,,7
+fortune.com,,fortune.com,,,7
+global.chinadaily.com.cn,CN,global.chinadaily.com.cn,,,7
+idahostatejournal.com,,idahostatejournal.com,,,7
+Ahram Online,EG,english.ahram.org.eg,english.ahram.org.eg,national,
+Clarín,AR,clarin.com,clarin.com,national,
+Der Spiegel,DE,spiegel.de,spiegel.de,national,
+Die Zeit,DE,zeit.de,zeit.de,national,
+Folha de S.Paulo,BR,folha.uol.com.br,folha.uol.com.br,national,
+France 24,FR,france24.com,france24.com,international,
+La Nación,AR,lanacion.com.ar,lanacion.com.ar,national,
+Mail & Guardian,ZA,mg.co.za,mg.co.za,national,
+Milenio,MX,milenio.com,milenio.com,national,
+Mirror,GB,mirror.co.uk,mirror.co.uk,national,
+New Zealand Herald,NZ,nzherald.co.nz,nzherald.co.nz,national,
+NHK,JP,nhk.or.jp,nhk.or.jp,national,
+Nigerian Tribune,NG,tribuneonlineng.com,tribuneonlineng.com,national,
+Nikkei Asia,JP,asia.nikkei.com,asia.nikkei.com,international,
+O Globo,BR,oglobo.globo.com,oglobo.globo.com,national,
+Philippine Daily Inquirer,PH,inquirer.net,inquirer.net,national,
+Süddeutsche Zeitung,DE,sueddeutsche.de,sueddeutsche.de,national,
+The East African,KE,theeastafrican.co.ke,theeastafrican.co.ke,international,
+The Punch,NG,punchng.com,punchng.com,national,
