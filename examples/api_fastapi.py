@@ -1211,6 +1211,29 @@ class PublisherEmotionModel(BaseModel):
     n: int
 
 
+class TopicGapModel(BaseModel):
+    """One under-covered topic: the catalog's counts/shares beside the publisher's — a counted
+    comparison (publisher share < half the catalog's, or zero), never a score."""
+    label: str
+    publisherCount: int
+    catalogCount: int
+    publisherShare: float
+    catalogShare: float
+
+
+class CoPublisherModel(BaseModel):
+    """One co-covering publisher and how many clustered stories they share."""
+    publisher: str
+    stories: int
+
+
+class CoCoverageModel(BaseModel):
+    """Counted story co-membership: how many clustered stories this publisher shares with at
+    least one other outlet, and the outlets it shares them with most."""
+    sharedStories: int
+    publishers: list[CoPublisherModel]
+
+
 class PublisherProfileModel(BaseModel):
     """The Publisher Intelligence profile: curated registry facts + counted catalog facts.
     ``rated=false`` means the registry doesn't rate this outlet — lean/leanBucket are null
@@ -1228,6 +1251,9 @@ class PublisherProfileModel(BaseModel):
     eventCountries: list[LabelCountModel] = []
     registers: Optional[PublisherRegistersModel] = None
     emotion: Optional[PublisherEmotionModel] = None
+    # M2 — counted relationship modules, each omitted below its floor (publisher_service).
+    topicGaps: Optional[list[TopicGapModel]] = None
+    coCoverage: Optional[CoCoverageModel] = None
     recent: list[ArticleModel] = []
     publisherLogo: Optional[str] = None
     publisherLogoDark: Optional[str] = None

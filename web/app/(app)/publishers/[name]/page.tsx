@@ -201,6 +201,46 @@ function Profile({ profile: p }: { profile: PublisherProfile }) {
             </SectionCard>
           )}
 
+          {p.topicGaps && p.topicGaps.length > 0 && (
+            <SectionCard title={t("publishers.gaps.title")} info={t("publishers.gaps.info")}>
+              {/* Bar = the topic's weight in the CATALOG; the sublabel is this publisher's own
+                  count — the gap is the distance between the two, shown as counted facts. */}
+              <BarList
+                items={p.topicGaps.map((g) => ({
+                  label: g.label,
+                  value: g.catalogShare,
+                  count: g.catalogCount,
+                  sublabel: t("publishers.gaps.them", { n: g.publisherCount }),
+                }))}
+              />
+            </SectionCard>
+          )}
+
+          {p.coCoverage && (
+            <SectionCard title={t("publishers.co.title")} info={t("publishers.co.info")}>
+              <p className="mb-3 text-xs text-muted-foreground">
+                {t("publishers.co.caption", { n: p.coCoverage.sharedStories })}
+              </p>
+              <ul className="space-y-2">
+                {p.coCoverage.publishers.map((c) => (
+                  <li key={c.publisher} className="flex items-center justify-between gap-3 text-sm">
+                    <Link
+                      href={`/publishers/${encodeURIComponent(c.publisher)}`}
+                      className="min-w-0 truncate font-medium hover:text-primary hover:underline"
+                    >
+                      {c.publisher}
+                    </Link>
+                    <span className="shrink-0 tabular-nums text-muted-foreground">
+                      {c.stories === 1
+                        ? t("publishers.co.stories.one", { n: c.stories })
+                        : t("publishers.co.stories.other", { n: c.stories })}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </SectionCard>
+          )}
+
           {(registerBars.length > 0 || emotionBars.length > 0) && (
             <SectionCard title={t("publishers.tone.title")} info={t("publishers.tone.info")}>
               <div className="space-y-5">

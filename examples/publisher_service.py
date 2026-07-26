@@ -46,6 +46,18 @@ TOP_COUNTRIES = 8
 TOP_LANGUAGES = 4
 RECENT_LIMIT = 8
 
+# Blindspot floors (M2): a "topics they rarely touch" claim needs a real sample on BOTH sides —
+# a 6-article outlet trivially "misses" everything, and a tiny catalog is no baseline.
+BLINDSPOT_MIN_ARTICLES = 20      # publisher's categorized articles
+BLINDSPOT_MIN_CATALOG = 100      # catalog's categorized articles
+TOPIC_POOL = 8                   # compare against the catalog's biggest N topics …
+TOPIC_POOL_MIN_COUNT = 10        # … that carry at least this many articles
+TOP_GAPS = 5
+
+# Co-coverage floors (M2): "appears in the same stories as" needs shared stories to count.
+CO_COVERAGE_MIN_STORIES = 3      # stories the publisher shares with at least one other outlet
+CO_COVERAGE_TOP = 6
+
 
 def _parse_iso(ts: "str | None") -> Optional[datetime]:
     try:
@@ -75,6 +87,60 @@ def _prettified_counts(items: list, cap: int) -> list:
         merged[label] = merged.get(label, 0) + it["count"]
     ranked = sorted(merged.items(), key=lambda kv: (-kv[1], kv[0]))
     return [{"label": k, "count": v} for k, v in ranked[:cap]]
+
+
+def _topic_gaps(raw_topics: list, catalog: dict) -> Optional[list]:
+    """The catalog's biggest topics this publisher rarely touches — a counted COMPARISON, not a
+    score. Deterministic rule, documented here and pinned by tests: take the catalog's TOPIC_POOL
+    largest categories (each >= TOPIC_POOL_MIN_COUNT articles); keep those where the publisher's
+    share of its own categorized articles is less than HALF the catalog's share (zero coverage
+    always qualifies); rank by catalog count desc; cap at TOP_GAPS. Floors: the publisher needs
+    BLINDSPOT_MIN_ARTICLES categorized articles and the catalog BLINDSPOT_MIN_CATALOG — below
+    either, the module is omitted (a thin sample "misses" everything, which asserts nothing).
+    Raw category labels in, prettified labels out (the facet convention)."""
+    mine = {t["label"]: t["count"] for t in raw_topics}
+    my_total = sum(mine.values())
+    catalog_total = catalog["total"]
+    if my_total < BLINDSPOT_MIN_ARTICLES or catalog_total < BLINDSPOT_MIN_CATALOG:
+        return None
+    pool = sorted(((c, n) for c, n in catalog["topics"].items() if n >= TOPIC_POOL_MIN_COUNT),
+                  key=lambda cn: (-cn[1], cn[0]))[:TOPIC_POOL]
+    gaps = []
+    for cat, cat_count in pool:
+        p_count = mine.get(cat, 0)
+        cat_share = cat_count / catalog_total
+        p_share = p_count / my_total
+        if p_count == 0 or p_share < cat_share / 2:
+            gaps.append({"label": engine._prettify(cat),
+                         "publisherCount": p_count, "catalogCount": cat_count,
+                         "publisherShare": round(p_share, 4), "catalogShare": round(cat_share, 4)})
+    return gaps[:TOP_GAPS] or None
+
+
+def _co_coverage(store_, names: "set[str]") -> Optional[dict]:
+    """Publishers that appear in the SAME clustered stories — counted co-membership over the
+    story layer (one count per shared story), never a similarity ranking. Uses the same
+    clustering the Stories surface serves. Omitted below CO_COVERAGE_MIN_STORIES shared
+    stories — one coincidental cluster is not a relationship."""
+    import story_service    # lazy: the story layer is only needed when the profile has coverage
+    lowered = {n.lower() for n in names}
+    counts: dict = {}
+    shared = 0
+    for s in story_service.cluster_from_store(store_):
+        pubs = s.get("publishers") or []
+        if not any(p.lower() in lowered for p in pubs):
+            continue
+        others = [p for p in pubs if p.lower() not in lowered]
+        if not others:
+            continue
+        shared += 1
+        for p in others:
+            counts[p] = counts.get(p, 0) + 1
+    if shared < CO_COVERAGE_MIN_STORIES:
+        return None
+    ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[:CO_COVERAGE_TOP]
+    return {"sharedStories": shared,
+            "publishers": [{"publisher": p, "stories": n} for p, n in ranked]}
 
 
 def get_publisher(store_, name: str, *, recent_limit: int = RECENT_LIMIT) -> Optional[dict]:
@@ -126,6 +192,14 @@ def get_publisher(store_, name: str, *, recent_limit: int = RECENT_LIMIT) -> Opt
             profile["registers"] = stats["registers"]
         if stats["emotion"] and stats["emotion"]["n"] >= MIN_SIGNAL:
             profile["emotion"] = stats["emotion"]
+        # M2 — the two counted relationship modules, each behind its own floor (omit, don't
+        # thin-render): what the catalog covers that they rarely do, and who shares their stories.
+        gaps = _topic_gaps(stats["topics"], store_.catalog_topic_counts())
+        if gaps:
+            profile["topicGaps"] = gaps
+        co = _co_coverage(store_, {display, stored_name, engine._prettify(stored_name)})
+        if co:
+            profile["coCoverage"] = co
     if total:
         rows, _ = store_.search_feed_articles(
             publisher=stored_name, sort="newest",

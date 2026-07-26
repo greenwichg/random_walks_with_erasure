@@ -195,3 +195,71 @@ def test_publisher_endpoint_serves_profile_and_404(tmp_path, monkeypatch):
         assert "register" not in body["recent"][0]
         assert body["recent"][1]["register"] == "mixed"
         assert c.get("/api/publishers/Completely%20Unknown%20Gazette").status_code == 404
+
+
+# --------------------------------------------------------------------------- #
+# M2 — counted relationship modules: topic gaps + co-coverage.
+# --------------------------------------------------------------------------- #
+def _bulk(st, pub, n, category, title_prefix):
+    for i in range(n):
+        _add(st, f"https://{pub.lower().replace(' ', '')}.example/{category}/{i}", pub,
+             category=category, lean=None, title=f"{title_prefix} dispatch number {i}",
+             when=f"2026-07-{(i % 20) + 1:02d}T00:00:00+00:00")
+
+
+def test_topic_gaps_list_big_catalog_topics_the_publisher_misses():
+    """The gap rule, pinned: catalog's biggest topics (pool >= TOPIC_POOL_MIN_COUNT) where the
+    publisher's share is under half the catalog's (zero always qualifies), ranked by catalog
+    count, counted on both sides — never a score."""
+    st = store_mod.Store("sqlite://")
+    _bulk(st, "World Wire", 60, "politics", "Global politics briefing")
+    _bulk(st, "Climate Desk", 40, "climate", "Climate system update")
+    _bulk(st, "Niche Daily", 25, "sports", "Local sports roundup")
+    p = ps.get_publisher(st, "Niche Daily")
+    assert [g["label"] for g in p["topicGaps"]] == ["Politics", "Climate"]
+    top = p["topicGaps"][0]
+    assert top["publisherCount"] == 0 and top["catalogCount"] == 60
+    assert top["publisherShare"] == 0.0 and top["catalogShare"] == pytest.approx(60 / 125)
+    # Sports is the publisher's own concentration — never listed as its own gap.
+    assert all(g["label"] != "Sports" for g in p["topicGaps"])
+
+
+def test_topic_gaps_omitted_below_floors():
+    """A thin publisher sample (< BLINDSPOT_MIN_ARTICLES) or a thin catalog asserts nothing —
+    the module is omitted entirely."""
+    st = store_mod.Store("sqlite://")
+    _bulk(st, "World Wire", 120, "politics", "Global politics briefing")
+    _bulk(st, "Tiny Gazette", 5, "sports", "Village sports roundup")
+    assert "topicGaps" not in ps.get_publisher(st, "Tiny Gazette")
+    thin = store_mod.Store("sqlite://")
+    _bulk(thin, "World Wire", 30, "politics", "Global politics briefing")
+    _bulk(thin, "Mid Gazette", 25, "sports", "Town sports roundup")
+    assert "topicGaps" not in ps.get_publisher(thin, "Mid Gazette")   # catalog < BLINDSPOT_MIN_CATALOG
+
+
+def _shared_story(st, event, title, pubs):
+    for pub in pubs:
+        _add(st, f"https://{pub.lower().replace(' ', '')}.example/ev{event}", pub,
+             category="politics", lean=None, title=title,
+             when="2026-07-05T10:00:00+00:00")
+
+
+def test_co_coverage_counts_shared_clustered_stories():
+    """Counted story co-membership: one count per SHARED story, ranked desc then name — and the
+    module rides the same clustering the Stories surface serves."""
+    st = store_mod.Store("sqlite://")
+    _shared_story(st, 1, "Dockworkers strike closes the main port", ["Alpha Post", "Beta Times"])
+    _shared_story(st, 2, "Wildfires spread across the western coast", ["Alpha Post", "Beta Times", "Gamma Herald"])
+    _shared_story(st, 3, "Senate passes the funding bill after debate", ["Alpha Post", "Gamma Herald"])
+    _shared_story(st, 4, "Markets rally on tech earnings today", ["Beta Times", "Gamma Herald"])
+    co = ps.get_publisher(st, "Alpha Post")["coCoverage"]
+    assert co["sharedStories"] == 3
+    assert co["publishers"] == [{"publisher": "Beta Times", "stories": 2},
+                                {"publisher": "Gamma Herald", "stories": 2}]
+
+
+def test_co_coverage_omitted_below_floor():
+    """One coincidental shared cluster is not a relationship — floor CO_COVERAGE_MIN_STORIES."""
+    st = store_mod.Store("sqlite://")
+    _shared_story(st, 1, "Dockworkers strike closes the main port", ["Alpha Post", "Beta Times"])
+    assert "coCoverage" not in ps.get_publisher(st, "Alpha Post")

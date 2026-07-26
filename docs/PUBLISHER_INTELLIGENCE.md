@@ -62,12 +62,18 @@ pre-filtered (the `?country=` pattern).
   `article_event_locations` (provider-extracted), never the publisher's home; the registry
   country renders separately as the curated home.
 
-## Fast-follows (in value order, not started)
+## Fast-follows
 
-1. Publisher blindspot: topics this publisher covers less than the catalog (counted comparison).
-2. Co-coverage: "appears in the same stories as …" — counted co-membership, not a ranking.
-3. A publishers index page, if navigation demand appears.
-4. Follow-publisher — only once a surface consumes the signal (no dead controls).
+1. **Publisher blindspot (M2 — shipped):** "What they rarely cover" — the catalog's biggest
+   topics where the publisher's share is under half the catalog's (zero always qualifies),
+   counted on both sides. Deterministic rule + floors (`BLINDSPOT_MIN_ARTICLES`,
+   `BLINDSPOT_MIN_CATALOG`) in `publisher_service._topic_gaps`; below a floor the module is
+   omitted — a thin sample "misses" everything, which asserts nothing.
+2. **Co-coverage (M2 — shipped):** "Covers the same stories as" — counted story co-membership
+   over the same clustering the Stories surface serves (one count per shared story, floor
+   `CO_COVERAGE_MIN_STORIES`), never a similarity ranking. Names link to their profiles.
+3. A publishers index page, if navigation demand appears (not started).
+4. Follow-publisher — only once a surface consumes the signal (no dead controls; not started).
 
 Data-acquisition-gated: ownership (Wikidata provider via the resolver-extension procedure in
 docs/LOCATION_PLATFORM.md), factuality (licensed/curated source), maps (Phase 3), Guide-written

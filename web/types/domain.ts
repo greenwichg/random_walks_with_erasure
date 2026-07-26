@@ -127,6 +127,16 @@ export interface LabelCount {
   count: number;
 }
 
+/** One under-covered topic: the catalog's counts/shares beside the publisher's — a counted
+ *  comparison, never a score. */
+export interface TopicGap {
+  label: string;
+  publisherCount: number;
+  catalogCount: number;
+  publisherShare: number;
+  catalogShare: number;
+}
+
 /** Publisher Intelligence profile (GET /api/publishers/{name}) — curated registry facts +
  *  counted catalog facts. `rated: false` means the registry doesn't rate the outlet: lean is
  *  null/absent ("Not rated", never a fabricated Center — L2.2). Tone modules are omitted below
@@ -148,6 +158,11 @@ export interface PublisherProfile {
   registers?: { reporting: number; opinion: number; mixed: number; n: number };
   /** Mean emotion shares over the n articles carrying a real emotion vector. */
   emotion?: EmotionShare & { n: number };
+  /** M2 — the catalog's biggest topics this publisher rarely touches: a counted comparison
+   *  (publisher share under half the catalog's, or zero), omitted below its sample floors. */
+  topicGaps?: TopicGap[];
+  /** M2 — counted story co-membership (shared clustered events), omitted below its floor. */
+  coCoverage?: { sharedStories: number; publishers: { publisher: string; stories: number }[] };
   recent: Article[];
   publisherLogo?: string;
   publisherLogoDark?: string;

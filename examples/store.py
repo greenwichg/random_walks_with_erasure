@@ -1245,6 +1245,20 @@ class Store:
             cats = [c for (c,) in s.execute(cq).all() if c]
         return {"publishers": sorted(set(pubs)), "topics": sorted(set(cats))}
 
+    def catalog_topic_counts(self, include_provisional: bool = False) -> dict:
+        """Per-category article counts across the WHOLE catalog + the categorized total — the
+        baseline the publisher blindspot comparison measures against (same provisional exclusion
+        as Discover). Uncategorized rows are absent from both counts and total, so publisher and
+        catalog shares use the same denominator convention (categorized articles)."""
+        q = select(self._category_expr(), func.count()).group_by(self._category_expr())
+        if not include_provisional:
+            q = q.where(or_(FeedArticle.article_state.is_(None),
+                            FeedArticle.article_state != "provisional"))
+        with self.session() as s:
+            rows = s.execute(q).all()
+        topics = {str(c).strip(): int(n) for c, n in rows if c and str(c).strip()}
+        return {"topics": topics, "total": sum(topics.values())}
+
     def publisher_catalog_stats(self, publisher: str) -> "dict | None":
         """Counted catalog facts for ONE publisher (Publisher Intelligence): volume + observed
         window, per-topic / per-language / per-host / per-event-country counts, and tone splits
