@@ -93,9 +93,11 @@ export default function DiscoverPage() {
         />
       )}
 
-      <div className="grid grid-cols-1 items-start gap-5 md:grid-cols-2 xl:grid-cols-3">
+      <div className="columns-1 gap-5 md:columns-2 xl:columns-3">
         {paged.map((article, i) => (
-          <DiscoverCard key={article.id} article={article} index={i} />
+          <div key={article.id} className="mb-5 break-inside-avoid">
+            <DiscoverCard article={article} index={i} />
+          </div>
         ))}
       </div>
 
