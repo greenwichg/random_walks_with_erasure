@@ -29,6 +29,7 @@ import { PageContainer } from "@/components/layout/page-container";
 import { SectionCard } from "@/components/shared/section-card";
 import { ErrorState } from "@/components/shared/states";
 import { ExtensionConnect } from "@/components/settings/extension-connect";
+import { CountryBadge } from "@/components/shared/country-badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
@@ -281,7 +282,7 @@ export default function SettingsPage() {
                           : "text-muted-foreground hover:bg-accent",
                       )}
                     >
-                      {c.country}
+                      <CountryBadge code={c.country} />
                     </button>
                   ))}
                 </div>
@@ -314,7 +315,7 @@ export default function SettingsPage() {
                             : "text-muted-foreground hover:bg-accent",
                         )}
                       >
-                        {c.country}
+                        <CountryBadge code={c.country} />
                       </button>
                     );
                   })}

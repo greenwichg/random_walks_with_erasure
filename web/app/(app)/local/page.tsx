@@ -11,9 +11,12 @@ import { SectionHeader } from "@/components/shared/section-header";
 import { ArticleRow } from "@/components/shared/article-row";
 import { LeanBadge } from "@/components/shared/article-badges";
 import { FilterChip } from "@/components/ui/filter-chip";
+import { CountryBadge } from "@/components/shared/country-badge";
 import { EmptyState, ErrorState } from "@/components/shared/states";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useTranslation } from "@/lib/i18n";
+import { activeLang } from "@/lib/i18n-core";
+import { countryName } from "@/lib/countries";
 
 /**
  * Local News v1 — publisher locality only (Location Intelligence Phase 1).
@@ -63,7 +66,7 @@ export default function LocalPage() {
         {countries.map(([code, n]) => (
           <FilterChip
             key={code}
-            label={code}
+            label={<CountryBadge code={code} />}
             count={n}
             active={country === code}
             onClick={() => setCountry(country === code ? null : code)}
@@ -117,7 +120,7 @@ export default function LocalPage() {
             <section aria-labelledby="local-articles-heading">
               <SectionHeader
                 id="local-articles-heading"
-                title={t("local.articles", { place: country })}
+                title={t("local.articles", { place: countryName(country, activeLang()) })}
               />
               {articles.isLoading && <Skeleton className="h-64 w-full rounded-lg" />}
               {articles.data && articles.data.results.length === 0 && (

@@ -14,6 +14,8 @@ import { ProfileProgress } from "@/components/shared/profile-progress";
 import { ErrorState } from "@/components/shared/states";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EMOTION_META } from "@/lib/metrics";
+import { activeLang } from "@/lib/i18n-core";
+import { countryName, languageName } from "@/lib/countries";
 
 export default function AnalyticsPage() {
   const { data, isLoading, isError, refetch } = useAnalytics();
@@ -129,7 +131,7 @@ export default function AnalyticsPage() {
                     items={Object.entries(geography.data.countries)
                       .sort((a, b) => b[1] - a[1])
                       .slice(0, 6)
-                      .map(([label, n]) => ({ label, value: n / geography.data!.located, count: n }))}
+                      .map(([code, n]) => ({ label: countryName(code, activeLang()), value: n / geography.data!.located, count: n }))}
                   />
                 </div>
                 <div>
@@ -138,7 +140,7 @@ export default function AnalyticsPage() {
                     items={Object.entries(geography.data.languages)
                       .sort((a, b) => b[1] - a[1])
                       .slice(0, 6)
-                      .map(([label, n]) => ({ label, value: n / geography.data!.located, count: n }))}
+                      .map(([code, n]) => ({ label: languageName(code, activeLang()), value: n / geography.data!.located, count: n }))}
                   />
                 </div>
                 <div>

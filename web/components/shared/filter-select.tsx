@@ -14,7 +14,8 @@ import { cn } from "@/lib/utils";
 
 export interface FilterOption {
   value: string;
-  label: string;
+  /** Text, or a node (e.g. CountryBadge); its accessible text is the option label. */
+  label: React.ReactNode;
 }
 
 /**

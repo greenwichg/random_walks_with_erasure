@@ -11,9 +11,12 @@ import { SectionHeader } from "@/components/shared/section-header";
 import { ArticleRow } from "@/components/shared/article-row";
 import { LeanBadge } from "@/components/shared/article-badges";
 import { FilterChip } from "@/components/ui/filter-chip";
+import { CountryBadge } from "@/components/shared/country-badge";
 import { EmptyState, ErrorState } from "@/components/shared/states";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useTranslation } from "@/lib/i18n";
+import { activeLang } from "@/lib/i18n-core";
+import { countryName } from "@/lib/countries";
 
 /**
  * Countries — browse the located catalog by country (Location Intelligence 1.5).
@@ -53,7 +56,7 @@ export default function CountriesPage() {
         {(facets.data ?? []).map((c) => (
           <FilterChip
             key={c.country}
-            label={c.country}
+            label={<CountryBadge code={c.country} />}
             count={c.articles}
             active={country === c.country}
             onClick={() => setCountry(country === c.country ? null : c.country)}
@@ -102,7 +105,11 @@ export default function CountriesPage() {
         >
           {/* Overview — counted facts for the selected country. */}
           <section aria-labelledby="country-overview-heading" className="rounded-lg border bg-card p-4">
-            <SectionHeader id="country-overview-heading" title={country} className="mb-3" />
+            <SectionHeader
+              id="country-overview-heading"
+              title={countryName(country, activeLang())}
+              className="mb-3"
+            />
             <div className="grid grid-cols-3 gap-3">
               <Stat label={t("countries.stat.articles")} value={formatCompact(selected?.articles ?? 0)} />
               <Stat label={t("countries.stat.publishers")} value={formatCompact(selected?.publishers ?? 0)} />
@@ -111,7 +118,10 @@ export default function CountriesPage() {
           </section>
 
           <section aria-labelledby="country-latest-heading">
-            <SectionHeader id="country-latest-heading" title={t("local.articles", { place: country })} />
+            <SectionHeader
+              id="country-latest-heading"
+              title={t("local.articles", { place: countryName(country, activeLang()) })}
+            />
             {articles.isLoading && <Skeleton className="h-64 w-full rounded-lg" />}
             {articles.data && articles.data.results.length === 0 && (
               <EmptyState

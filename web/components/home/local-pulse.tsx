@@ -6,6 +6,8 @@ import { useSearch, useSettings } from "@/hooks/use-data";
 import { SectionHeader } from "@/components/shared/section-header";
 import { ArticleRow } from "@/components/shared/article-row";
 import { useTranslation } from "@/lib/i18n";
+import { activeLang } from "@/lib/i18n-core";
+import { countryName } from "@/lib/countries";
 
 /**
  * "From your places" — the home rail's location module (Location Intelligence 1.5).
@@ -32,7 +34,7 @@ export function LocalPulse() {
     <section aria-labelledby="local-pulse-heading" className="rounded-lg border bg-card p-4">
       <SectionHeader
         id="local-pulse-heading"
-        title={place ? t("home.pulse.title", { place }) : t("home.pulse.setupTitle")}
+        title={place ? t("home.pulse.title", { place: countryName(place, activeLang()) }) : t("home.pulse.setupTitle")}
         href="/local"
         actionLabel={t("home.viewAll")}
         className="mb-3"

@@ -11,6 +11,7 @@ import type { SearchParams } from "@/types/domain";
 import { PageContainer } from "@/components/layout/page-container";
 import { DiscoverCard } from "@/components/discover/discover-card";
 import { FilterSelect, type FilterOption } from "@/components/shared/filter-select";
+import { CountryBadge } from "@/components/shared/country-badge";
 import { EmptyState, ErrorState } from "@/components/shared/states";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -52,7 +53,7 @@ function SearchInner() {
     () =>
       (countries.data ?? [])
         .filter((c) => c.articles > 0)
-        .map((c) => ({ value: c.country, label: c.country })),
+        .map((c) => ({ value: c.country, label: <CountryBadge code={c.country} /> })),
     [countries.data],
   );
   const { data, isLoading, isError, refetch, isFetching } = useSearch({

@@ -16,7 +16,8 @@ export function FilterChip({
   onClick,
   className,
 }: {
-  label: string;
+  /** Text, or a node (e.g. CountryBadge) whose accessible text is the label. */
+  label: React.ReactNode;
   count?: number;
   active: boolean;
   onClick: () => void;
