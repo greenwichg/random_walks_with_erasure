@@ -29,6 +29,12 @@ echo "checkout: $(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo
 
 # One python probe inside the api container prints every engine-side fact this script judges.
 FACTS="$(dc exec -T api python - <<'PY' 2>/dev/null
+import sys
+# The api image's WORKDIR is /app with engine modules under /app/examples — the running app adds
+# that to sys.path by being launched as a script; an exec'd `python -` must add it itself.
+for _p in ("/app/examples", "examples"):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 import inspect, json, math, os, urllib.parse, urllib.request
 
 def get(path, ok404=False):
