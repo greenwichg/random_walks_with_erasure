@@ -358,10 +358,13 @@ export interface Article {
    *  aggregations. */
   lean?: Lean | null;
   leanBucket?: LeanBucket | null;
-  confidence: number; // 0–1
-  emotion: EmotionShare;
-  dominantEmotion: keyof EmotionShare;
-  register: Register;
+  /** Null/absent when the article is unenriched (L2.2 family): no fabricated 0.7 confidence,
+   *  all-neutral emotion, or "reporting" register is ever serialised — the recommendation path
+   *  fills its own values, the feed path omits what was never measured. */
+  confidence?: number | null; // 0–1
+  emotion?: EmotionShare | null;
+  dominantEmotion?: keyof EmotionShare | null;
+  register?: Register | null;
   publishedAt: string;
   readingMinutes: number;
   /** Canonical publisher-level location (Location Intelligence Phase 0): ISO 3166-1 alpha-2 /
@@ -536,11 +539,12 @@ export interface HistoryEntry {
 export interface StoryCoverage {
   publisher: string;
   headline: string;
-  /** Null/absent for an unrated outlet (L2.2) — the row shows "Unknown", never Center. */
+  /** Null/absent for an unrated outlet (lean) or an unenriched article (register/emotion) —
+   *  L2.2: the row shows nothing rather than a default. */
   lean?: Lean | null;
   leanBucket?: LeanBucket | null;
-  register: Register;
-  emotion: EmotionShare;
+  register?: Register | null;
+  emotion?: EmotionShare | null;
   url?: string;
   publishedAt: string;
 }

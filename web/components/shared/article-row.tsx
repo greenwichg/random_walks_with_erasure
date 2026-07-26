@@ -66,8 +66,10 @@ export function ArticleRow({
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
           <LeanBadge lean={article.lean} bucket={article.leanBucket} />
           <span className="flex flex-wrap items-center gap-1.5 opacity-70">
-            <RegisterBadge register={article.register} />
-            <EmotionBadge emotion={article.emotion} dominant={article.dominantEmotion} />
+            {article.register && <RegisterBadge register={article.register} />}
+            {article.emotion && (
+              <EmotionBadge emotion={article.emotion} dominant={article.dominantEmotion ?? undefined} />
+            )}
           </span>
         </div>
       </div>

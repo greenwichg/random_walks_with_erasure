@@ -128,14 +128,17 @@ export function RegisterBadge({ register }: { register: Register }) {
   );
 }
 
-/** A compact row of an article's key attributes (used on cards). */
+/** A compact row of an article's key attributes (used on cards). Absent signals render
+ *  nothing (L2.2) — a badge never shows a defaulted value. */
 export function ArticleAttributes({ article, className }: { article: Article; className?: string }) {
   return (
     <div className={cn("flex flex-wrap items-center gap-1.5", className)}>
       <LeanBadge lean={article.lean} bucket={article.leanBucket} />
-      <RegisterBadge register={article.register} />
-      <EmotionBadge emotion={article.emotion} dominant={article.dominantEmotion} />
-      <ConfidenceBadge value={article.confidence} />
+      {article.register && <RegisterBadge register={article.register} />}
+      {article.emotion && (
+        <EmotionBadge emotion={article.emotion} dominant={article.dominantEmotion ?? undefined} />
+      )}
+      {article.confidence != null && <ConfidenceBadge value={article.confidence} />}
     </div>
   );
 }

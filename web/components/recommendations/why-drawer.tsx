@@ -82,11 +82,15 @@ function EvidenceSections({
     return d ? `${p} · ${d}` : p;
   };
   // Dominant emotion for the demoted card chip's new home (same rule the badge used).
+  // Recommendations always carry emotion; the guard keeps the type honest for the shared shape.
+  const emotionShare = rec.article.emotion;
   const dominant =
     rec.article.dominantEmotion ??
-    (Object.keys(rec.article.emotion) as (keyof EmotionShare)[]).reduce((a, b) =>
-      rec.article.emotion[a] >= rec.article.emotion[b] ? a : b,
-    );
+    (emotionShare
+      ? (Object.keys(emotionShare) as (keyof EmotionShare)[]).reduce((a, b) =>
+          emotionShare[a] >= emotionShare[b] ? a : b,
+        )
+      : null);
   return (
     <>
       {explanation && (
@@ -176,14 +180,14 @@ function EvidenceSections({
         {rec.article.leanBucket && (
           <Row label={t("why.leaning")} value={t(`filter.${rec.article.leanBucket}`)} mono={false} />
         )}
-        {DEV_DETAIL && (
+        {DEV_DETAIL && rec.article.confidence != null && (
           <Row label="Classifier confidence" value={`${Math.round(rec.article.confidence * 100)}%`} />
         )}
         <Row label={t("filter.publisher")} value={rec.article.publisher} mono={false} />
         {rec.article.topic && <Row label={t("why.category")} value={rec.article.topic} mono={false} />}
         {/* register + emotion live here now — demoted from the card face (Commit 22) */}
         <Row label={t("why.coverageType")} value={t(`register.${rec.article.register}`)} mono={false} />
-        <Row label={t("filter.emotion")} value={t(`emotion.${dominant}`)} mono={false} />
+        {dominant && <Row label={t("filter.emotion")} value={t(`emotion.${dominant}`)} mono={false} />}
       </Section>
 
       {DEV_DETAIL && (

@@ -20,10 +20,10 @@ import {
 
 type Art = { topic: string; publisher: string; lean: number | null; register: string; readingMinutes: number;
              emotion?: Record<string, number> };
-const NEUTRAL = { fear: 0, outrage: 0, analysis: 0, positive: 0, neutral: 1 };
 const entry = (a: Art, i: number) =>
   ({ id: `r${i}`, readAt: "2026-07-11T09:00:00Z", readingMinutes: a.readingMinutes, completed: true,
-     article: { ...a, emotion: a.emotion ?? NEUTRAL } }) as never;
+     // No emotion on the fixture = no emotion on the wire (null, never a neutral default — L2.2).
+     article: { ...a, emotion: a.emotion ?? null } }) as never;
 const make = (arts: Art[]) => arts.map(entry);
 
 test("empty history degrades to zeros, not NaN", () => {
@@ -46,10 +46,10 @@ test("emotion distribution buckets each read by its dominant emotion", () => {
     { topic: "T", publisher: "P", lean: 0, register: "reporting", readingMinutes: 3, emotion: { fear: 0.8, outrage: 0.1, analysis: 0.1, positive: 0, neutral: 0 } },
     { topic: "T", publisher: "P", lean: 0, register: "reporting", readingMinutes: 3, emotion: { fear: 0.1, outrage: 0.7, analysis: 0.2, positive: 0, neutral: 0 } },
     { topic: "T", publisher: "P", lean: 0, register: "reporting", readingMinutes: 3, emotion: { fear: 0, outrage: 0, analysis: 0.9, positive: 0.1, neutral: 0 } },
-    { topic: "T", publisher: "P", lean: 0, register: "reporting", readingMinutes: 3 }, // neutral default
+    { topic: "T", publisher: "P", lean: 0, register: "reporting", readingMinutes: 3 }, // no emotion signal — counted nowhere, never as neutral
   ]));
   const m = Object.fromEntries(s.emotion.map((e) => [e.key, e.n]));
-  assert.deepEqual(m, { fear: 1, outrage: 1, analysis: 1, neutral: 1 });
+  assert.deepEqual(m, { fear: 1, outrage: 1, analysis: 1 });
 });
 
 test("counts, distinct tallies, averages and concentration", () => {
@@ -141,7 +141,7 @@ test("tally is deterministic (count desc, then name asc)", () => {
 
 const at = (readAt: string) =>
   ({ id: readAt, readAt, readingMinutes: 3, completed: true,
-     article: { topic: "T", publisher: "P", lean: 0, register: "reporting", readingMinutes: 3, emotion: NEUTRAL } }) as never;
+     article: { topic: "T", publisher: "P", lean: 0, register: "reporting", readingMinutes: 3, emotion: null } }) as never;
 
 test("sessionize splits reads by gaps, newest session (and read) first", () => {
   const s = sessionize([

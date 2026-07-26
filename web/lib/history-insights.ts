@@ -137,6 +137,7 @@ export function summarizeHistory(entries: HistoryEntry[]): HistoryInsights {
 
   const emo = new Map<keyof EmotionShare, number>();
   for (const a of arts) {
+    if (!a.emotion) continue;   // no emotion signal: counted nowhere, never as neutral (L2.2)
     const k = dominantOf(a.emotion);
     emo.set(k, (emo.get(k) ?? 0) + 1);
   }

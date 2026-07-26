@@ -53,7 +53,8 @@ export default function HistoryPage() {
     if (topic !== "all" && a.topic !== topic) return false;
     if (publisher !== "all" && a.publisher !== publisher) return false;
     if (lean !== "all" && (a.lean == null || leanBucket(a.lean) !== lean)) return false;
-    if (emotion !== "all" && dominantEmotion(a.emotion) !== emotion) return false;
+    // An emotion-less read matches no emotion filter (still in "All") — mirrors the lean rule.
+    if (emotion !== "all" && (a.emotion == null || dominantEmotion(a.emotion) !== emotion)) return false;
     return true;
   });
 
