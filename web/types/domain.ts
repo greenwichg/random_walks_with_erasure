@@ -637,6 +637,8 @@ export interface StoryQuery {
   topic?: string;
   publisher?: string;
   lean?: string;
+  /** ISO 3166-1 alpha-2: stories with ≥1 member article located in this country. */
+  country?: string;
   dateFrom?: string;
   dateTo?: string;
   sort?: "top" | "latest" | "oldest" | "publishers";
@@ -755,17 +757,6 @@ export interface SaveResult {
   articleId: string;
   saved: boolean;
   savedCount: number;
-}
-
-/** One publisher from the locality registry (Local News v1) — curated facts, never inferred. */
-export interface PlacePublisher {
-  name: string;
-  lean: Lean;
-  leanBucket: LeanBucket;
-  country?: string;
-  region?: string;
-  city?: string;
-  scope?: "international" | "national" | "regional" | "local" | "hyperlocal";
 }
 
 /** One country's catalog + registry facts (`GET /api/places/countries`). */

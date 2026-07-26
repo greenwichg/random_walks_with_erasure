@@ -20,7 +20,7 @@ API                             Article.country/.language · search/discover ?co
                                 /api/places/publishers · /api/places/countries · /api/me/geography ·
                                 settings.edition/.locations
       ↓
-Frontend                        /countries page · SearchParams.country · PlacePublisher type ·
+Frontend                        Stories country filter (StoryQuery.country) · SearchParams.country ·
                                 Search country filter · Settings "Places & edition" · Home place rail
 ```
 
@@ -69,10 +69,15 @@ codes — its adapter needs zero resolver work.)
 
 ## What each feature reads
 
-- **Countries page (shipped — absorbed Local v1):** `/api/places/countries` (located-catalog ∪
-  registry facets), `/api/places/publishers?country|region|city|scope` (registry facts, whole
-  registry when unfiltered), `search?country=` (located catalog). Page: `/countries`;
-  `/local` redirects there (see the reservation below).
+- **Stories country filter (shipped — absorbed the Countries page, which absorbed Local v1):**
+  `/api/stories?country=` — a story matches when ≥1 member article is located there (each story
+  carries a derived `countries` fact: the distinct located member countries, internal until a
+  card consumes it). The picker + per-country counted-facts line read `/api/places/countries`;
+  deep link `/stories?country=XX` (the home place rail uses it). `/countries` and `/local`
+  redirect to `/stories`.
+- **Registry publisher locality (`/api/places/publishers`):** remains a platform surface with no
+  current web consumer — the dedicated browse UI retired with the Countries page; the future
+  personalized Local experience reintroduces it.
 - **Geographic Diversity:** `location.reader_geography(store, uid)` → counted facts
   (`countries`, `languages`, `scope` incl. explicit `unknown`) — surfaced on Analytics as the
   "Reading geography" card; no 0–100 score is computed yet, deliberately.
@@ -80,26 +85,28 @@ codes — its adapter needs zero resolver work.)
   (`{placeId, level}` ×≤10) — normalized in the engine contract; UI in Settings → Places &
   edition, consumed by the Home "From your places" rail.
 
-## Countries vs. the future Local (the consolidation)
+## Place browsing vs. the future Local (the consolidation)
 
-Local News v1 (`/local`) and the Countries page shipped as siblings and converged on the same
-experience: country chips → registry publishers + latest located coverage. The pages differed
-only in ornament (chip counts, an overview card, a locality line), so Local v1 was folded into
-Countries — its "All"/whole-registry browse and publisher locality lines moved there — and the
-`/local` route now temporary-redirects to `/countries`. Nothing engine-side changed: both pages
-always read the same three endpoints, which remain the platform contract.
+Place browsing consolidated twice: Local News v1 (`/local`) folded into the Countries page
+(they had converged on the same chips → publishers + located-articles experience), and the
+Countries page then folded into **Stories** as its country filter — country became a dimension
+of the primary discovery surface rather than a destination of its own. `/local` and
+`/countries` temporary-redirect to `/stories`. Engine-side the consolidation only ever ADDED
+surface: `/api/stories?country=` (member-location post-filter) joined the platform contract;
+the three places/geography endpoints are unchanged, and the registry-publishers browse UI
+retired (its endpoint remains for the future Local experience).
 
 **The name "Local" is reserved** for a genuinely different product — the reader-first,
 personalized place experience — and returns to navigation only when it ships. The
 differentiation, so the two never blur again:
 
-| | **Countries (today)** | **Future Local (reserved)** |
+| | **Stories country filter (today)** | **Future Local (reserved)** |
 |---|---|---|
 | Question | "What does coverage from place X look like?" | "What matters **near me / my places** right now?" |
 | Subject | a place, chosen per visit | the reader's standing places |
 | Inputs | located catalog + registry facts only | `settings.edition`/`.locations` (shipped), explicit **opt-in** GPS/nearby, travel context |
 | Granularity | country | region → city → neighbourhood (hyperlocal) |
-| Ranking | newest-first search, impersonal | personal relevance (must pass the W-series evaluation gate like any ranking change) |
+| Ranking | the Stories sorts (top/latest/publishers), impersonal | personal relevance (must pass the W-series evaluation gate like any ranking change) |
 | Needs built | nothing — shipped | Phase 2 event geography (`article_locations` side table), regional/local registry depth, opt-in location permission UX, travel mode |
 
 Platform pieces the future Local already has waiting: followed locations + edition persisted and

@@ -35,7 +35,7 @@ export function LocalPulse() {
       <SectionHeader
         id="local-pulse-heading"
         title={place ? t("home.pulse.title", { place: countryName(place, activeLang()) }) : t("home.pulse.setupTitle")}
-        href="/countries"
+        href={place ? `/stories?country=${encodeURIComponent(place)}` : "/stories"}
         actionLabel={t("home.viewAll")}
         className="mb-3"
       />

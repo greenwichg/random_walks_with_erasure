@@ -9,9 +9,7 @@ import {
   Newspaper,
   BarChart3,
   Bookmark,
-  Globe2,
   ScanSearch,
-  Search,
   Settings,
   User,
 } from "lucide-react";
@@ -52,17 +50,18 @@ export const NAV: NavSection[] = [
     ],
   },
   // Explore: finding and keeping coverage. Every href is a real route — aspirational pages
-  // (Publishers, Topics, Blindspots) join here when they exist, not before. "Local" left this
-  // list when Local v1 folded into Countries; the name is reserved for the future personalized
-  // local experience (docs/LOCATION_PLATFORM.md) and returns only when that ships.
+  // (Publishers, Topics, Blindspots) join here when they exist, not before. Consolidation
+  // history: "Local" folded into Countries, then Countries folded into Stories as its country
+  // filter (/local and /countries redirect there; "Local" stays reserved for the future
+  // personalized experience — docs/LOCATION_PLATFORM.md). "Search" is deliberately NOT a nav
+  // destination: search is a global action in the header (visible button + ⌘K on every page),
+  // and /search remains as that action's full-results landing page.
   {
     title: "Explore",
     titleKey: "nav.section.explore",
     items: [
       { label: "Discover", labelKey: "nav.discover", href: "/discover", icon: Compass, hint: "Trending stories & clusters", hintKey: "nav.hint.discover" },
       { label: "Stories", labelKey: "nav.stories", href: "/stories", icon: Newspaper, hint: "One event, every viewpoint", hintKey: "nav.hint.stories" },
-      { label: "Countries", labelKey: "nav.countries", href: "/countries", icon: Globe2 },
-      { label: "Search", labelKey: "header.search", href: "/search", icon: Search },
       { label: "Analyze an article", labelKey: "home.footer.analyze", href: "/analyze", icon: ScanSearch },
       { label: "Saved", labelKey: "nav.saved", href: "/saved", icon: Bookmark, hint: "Articles you saved to read later", hintKey: "nav.hint.saved" },
     ],

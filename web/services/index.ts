@@ -14,7 +14,6 @@ import type {
   HistoryEntry,
   CountryFacet,
   NotificationItem,
-  PlacePublisher,
   ReaderGeography,
   Profile,
   Recommendation,
@@ -122,16 +121,10 @@ export const services = {
   // CONTRACT v1, verbatim from the engine; read-only — nothing is stored.
   analyze: (url: string, metadata?: AnalyzeMetadata) =>
     postJson<AnalysisResult>("/analyze", metadata ? { url, metadata } : { url }),
-  // Local News v1 — publishers by locality from the curated registry (facts, no catalog scan).
-  placePublishers: (filters?: { country?: string; region?: string; city?: string; scope?: string }) => {
-    const clean: Record<string, string> = {};
-    if (filters)
-      for (const [k, v] of Object.entries(filters)) {
-        if (v !== undefined && v !== null && v !== "" && v !== "all") clean[k] = String(v);
-      }
-    return getJson<PlacePublisher[]>("/places/publishers", Object.keys(clean).length ? clean : undefined);
-  },
-  // Countries experience: located-catalog + registry facts per country.
+  // Location Intelligence: located-catalog ∪ registry facts per country (feeds the Stories
+  // country filter + Search + Settings places). The registry-publishers endpoint
+  // (/api/places/publishers) remains an engine platform surface but currently has no web
+  // consumer — the future personalized Local experience reintroduces it.
   placeCountries: () => getJson<CountryFacet[]>("/places/countries"),
   // Geographic Diversity readiness: the reader's counted geography (auth'd).
   geography: () => getJson<ReaderGeography>("/me/geography"),
@@ -176,12 +169,4 @@ export const queryKeys = {
   recommendationFeedback: ["recommendation-feedback"] as const,
   placeCountries: ["place-countries"] as const,
   geography: ["geography"] as const,
-  placePublishers: (filters?: { country?: string; region?: string; city?: string; scope?: string }) =>
-    [
-      "place-publishers",
-      filters?.country ?? "all",
-      filters?.region ?? "all",
-      filters?.city ?? "all",
-      filters?.scope ?? "all",
-    ] as const,
 };

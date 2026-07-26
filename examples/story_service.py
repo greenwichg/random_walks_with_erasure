@@ -131,6 +131,10 @@ def _build_story(members: list) -> dict:
         "coverage": _coverage(members),
         "timeline": timeline,
         "blindspotSide": _blindspot(dist),
+        # Location Intelligence — the distinct located countries among members (counted fact,
+        # never guessed; unlocated members contribute nothing). Drives the ?country= filter;
+        # internal until a card consumes it (the response model omits undeclared fields).
+        "countries": sorted({(m.get("country") or "").upper() for m in members if m.get("country")}),
     }
 
 
@@ -186,13 +190,14 @@ def cluster_from_store(store_, *, min_articles: int = 2, min_publishers: int = 2
                          min_publishers=min_publishers, sim=sim, window_days=window_days)
 
 
-def list_stories(store_, *, topic=None, publisher=None, lean=None, date_from=None, date_to=None,
+def list_stories(store_, *, topic=None, publisher=None, lean=None, country=None,
+                 date_from=None, date_to=None,
                  sort: str = "top", limit: int = 30, offset: int = 0, min_articles: int = 2,
                  min_publishers: int = 2, max_scan: int = 2000, debug: bool = False) -> dict:
     """The paginated, filtered Story envelope Discover + Stories consume:
     ``{stories, total, page, pageSize, hasMore, remainingPages, sort}`` (+ ``clusterMs`` +
-    ``diagnostics`` when ``debug``). topic/date are pre-filtered in SQL; publisher/lean are coverage
-    post-filters on the built stories."""
+    ``diagnostics`` when ``debug``). topic/date are pre-filtered in SQL; publisher/lean/country are
+    coverage post-filters on the built stories (country: ≥1 member located in that ISO country)."""
     sort = sort if sort in SORTS else "top"
     pg = OffsetPagination.from_params(limit, offset)
     t0 = _time.perf_counter()
@@ -206,6 +211,9 @@ def list_stories(store_, *, topic=None, publisher=None, lean=None, date_from=Non
         stories = [s for s in stories if want in {p.lower() for p in s["publishers"]}]
     if lean in ("left", "center", "right"):
         stories = [s for s in stories if s["distribution"][lean] > 0.0]
+    if country and country.strip():
+        want = country.strip().upper()
+        stories = [s for s in stories if want in s["countries"]]
 
     stories = _sort_stories(stories, sort)
     total = len(stories)

@@ -51,6 +51,7 @@ test("every StoryQuery field is part of the request identity", () => {
     topic: "Politics",
     publisher: "Reuters",
     lean: "left",
+    country: "US",
     dateFrom: "2026-01-01",
     dateTo: "2026-02-01",
     sort: "top",

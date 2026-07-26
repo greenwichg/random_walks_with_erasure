@@ -2111,6 +2111,8 @@ def stories(
     topic: Optional[str] = Query(None, description="exact topic / category"),
     publisher: Optional[str] = Query(None, description="stories that include this publisher"),
     lean: Optional[str] = Query(None, description="stories with coverage on left | center | right"),
+    country: Optional[str] = Query(None, description="stories with ≥1 member located in this "
+                                                     "ISO 3166-1 alpha-2 country"),
     dateFrom: Optional[str] = Query(None, description="ISO lower bound on publication time"),
     dateTo: Optional[str] = Query(None, description="ISO upper bound on publication time"),
     sort: str = Query("top", description="top | latest | oldest | publishers"),
@@ -2124,7 +2126,7 @@ def stories(
     Read flow) and the nullable `image` contract for future enrichment. Never touches the recommender."""
     debug = debug or os.environ.get("RWE_STORIES_DEBUG", "").strip().lower() in {"1", "true", "yes", "on"}
     result = story_service.list_stories(_require_store(), topic=topic, publisher=publisher, lean=lean,
-                                        date_from=dateFrom, date_to=dateTo, sort=sort,
+                                        country=country, date_from=dateFrom, date_to=dateTo, sort=sort,
                                         limit=limit, offset=offset, debug=debug)
     # Additive Story Intelligence summary (freshness + lifecycle) per story — computed HERE (the API
     # layer consumes Story Intelligence; story_service never does), so cards badge without extra calls.

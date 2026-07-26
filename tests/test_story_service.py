@@ -18,11 +18,12 @@ import discover                  # noqa: E402
 NOW = datetime(2026, 7, 6, 12, 0, 0, tzinfo=timezone.utc)
 
 
-def _add(st, cu, pub, lean, title, *, category="Politics", days=0, url=None, desc="context"):
+def _add(st, cu, pub, lean, title, *, category="Politics", days=0, url=None, desc="context",
+         country=None):
     st.upsert_feed_article(
         canonical_url=cu, url=url if url is not None else cu, publisher=pub, source_publisher=pub,
         title=title, description=desc, body=None, published_at=(NOW - timedelta(days=days)).isoformat(),
-        source_feed="feed://x",
+        source_feed="feed://x", country=country,
         scored={"article_id": cu, "outlet": pub, "category": category, "lean": lean, "title": title})
 
 
@@ -131,6 +132,32 @@ def test_filters_topic_publisher_lean():
     assert ss.list_stories(st, topic="Climate")["total"] == 1        # only the wildfire event
     assert ss.list_stories(st, publisher="NPR")["total"] == 1        # only stories including NPR
     assert ss.list_stories(st, lean="right")["total"] == 1           # only the Senate event has right coverage
+
+
+def test_filter_country_over_member_locations():
+    """?country= keeps stories with ≥1 member located there (Location Intelligence): the story's
+    ``countries`` fact is the distinct located member countries; unlocated members contribute
+    nothing and an unlocated corpus matches no country (fail-honest, never guessed)."""
+    st = store_mod.Store("sqlite://")
+    # Senate event: one member located US, one GB, one unlocated. Wildfire event: fully unlocated.
+    _add(st, "https://npr.org/a1", "NPR", -1.0, "Senate passes the funding bill after debate",
+         days=2, country="US")
+    _add(st, "https://fox.com/a2", "Fox News", 1.5, "Senate passes funding bill averting shutdown",
+         days=1, country="gb")     # normalized to upper on the story fact
+    _add(st, "https://bbc.com/a3", "BBC News", 0.0, "US Senate passes funding bill to avert shutdown", days=0)
+    _add(st, "https://cnn.com/b1", "CNN", -1.2, "Wildfires spread across the western coast",
+         category="Climate", days=3)
+    _add(st, "https://guardian.com/b2", "The Guardian", -1.5, "Wildfires spread rapidly along western coast",
+         category="Climate", days=3)
+
+    senate = next(s for s in ss.cluster_from_store(st) if "Senate" in s["title"])
+    assert senate["countries"] == ["GB", "US"]                        # counted, sorted, uppercased
+    assert ss.list_stories(st, country="US")["total"] == 1            # Senate only
+    assert ss.list_stories(st, country="gb")["total"] == 1            # case-insensitive query
+    assert ss.list_stories(st, country="FR")["total"] == 0            # no located coverage → none
+    assert ss.list_stories(st, country=None)["total"] == 2            # absent filter unchanged
+    wildfire = next(s for s in ss.cluster_from_store(st) if "Wildfires" in s["title"])
+    assert wildfire["countries"] == []                                 # unlocated corpus stays honest
 
 
 def test_diagnostics():

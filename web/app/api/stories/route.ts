@@ -8,7 +8,7 @@ import { engineAuthHeaders } from "@/lib/engine-auth";
 // filter/sort/pagination params straight through; returns the paginated Story envelope.
 export const dynamic = "force-dynamic";
 
-const KEYS = ["topic", "publisher", "lean", "dateFrom", "dateTo", "sort", "limit", "offset", "debug"] as const;
+const KEYS = ["topic", "publisher", "lean", "country", "dateFrom", "dateTo", "sort", "limit", "offset", "debug"] as const;
 
 export async function GET(request: Request) {
   const src = new URL(request.url).searchParams;
