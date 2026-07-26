@@ -39,12 +39,22 @@ function backup_run() {
   dc --profile backup run --rm -T backup python examples/db_backup.py "$@"
 }
 
-# Read a scalar KEY=value from the env-file, stripping one layer of surrounding quotes. Empty if absent.
-# (Avoids sourcing the whole file, which could choke on values with special characters.)
+# Read a scalar KEY=value from the env-file, matching docker compose's dotenv semantics: unquoted
+# values end at an inline ` #` comment (whitespace before the hash — a bare `#` inside a token, e.g.
+# a URL fragment, is kept) and are trimmed; quoted values keep everything inside the quotes and drop
+# anything after the closing quote. One layer of surrounding quotes is stripped. Empty if absent.
+# (Avoids sourcing the whole file, which could choke on values with special characters. The comment
+# handling matters: compose parsed `RWE_X_ENABLED=1  # note` as "1" while this helper returned the
+# whole tail — a false RESTART NEEDED from verify-sources.sh, 2026-07-26 prod incident.)
 function env_val() {
   local key="$1" v=""
   [ -f "$ENV_FILE" ] || { printf ''; return 0; }
   v="$(grep -E "^${key}=" "$ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2-)"
+  case "$v" in
+    \"*) v="$(printf '%s' "$v" | sed -E 's/^("[^"]*").*/\1/')" ;;   # keep through the closing quote
+    \'*) v="$(printf '%s' "$v" | sed -E "s/^('[^']*').*/\1/")" ;;
+    *)   v="$(printf '%s' "$v" | sed -E 's/[[:space:]]+#.*$//; s/[[:space:]]+$//')" ;;
+  esac
   v="${v%\"}"; v="${v#\"}"; v="${v%\'}"; v="${v#\'}"
   printf '%s' "$v"
 }
