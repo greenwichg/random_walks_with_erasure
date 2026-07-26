@@ -154,9 +154,11 @@ backfill discipline the dedup merge uses).
 The DOC artlist we ingest carries only `sourcecountry` (publisher-level); event geography lives
 in GDELT's GKG files. `examples/gdelt_gkg.py` + `sources.GDELTGKGEnricher` poll the last
 `RWE_GDELT_GKG_WINDOWS` 15-minute `*.gkg.csv.zip` files (default 4 = 1 h lookback — the latest
-file alone would almost never overlap a catalog ingested minutes-to-hours earlier; first enable
-backfills once with 96) on the standard poller/health machinery and locate articles ALREADY in
-the catalog — any provider's (an RSS-ingested outlet GDELT also monitors gets located too).
+file alone would almost never overlap a catalog ingested minutes-to-hours earlier; the
+cold-start backfill is AUTOMATIC: an unlocated catalog makes the first cycle deep,
+`RWE_GDELT_GKG_BACKFILL_WINDOWS` default 96 = 24 h, `backfill=True` in its stats) on the
+standard poller/health machinery and locate articles ALREADY in the catalog — any provider's
+(an RSS-ingested outlet GDELT also monitors gets located too).
 Enrichment only: it never creates articles. Provider-specific mapping stays in the adapter:
 
 - **The FIPS trap:** GKG `V1Locations` country codes are FIPS 10-4, not ISO (FIPS `AS` =

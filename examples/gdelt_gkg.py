@@ -160,9 +160,20 @@ def enrich_from_latest(store_, *, fetch_bytes: Callable[[str], bytes],
         return {"windows": 0, "windowErrors": 0, "records": 0, "matched": 0, "located": 0,
                 "skipped": "no gkg file in manifest"}
     limit = max_bytes if max_bytes is not None else _max_bytes()
+    # Cold-start auto-backfill: an EMPTY event table over a NON-EMPTY catalog means the existing
+    # articles were processed by GDELT hours-to-days ago — the steady-state lookback would never
+    # reach them. One deep first cycle covers them automatically; no manual env override, no
+    # restart pair, no revert to forget. An empty catalog skips it (nothing to locate — a fresh
+    # deployment shouldn't download a day of GKG for zero matches).
+    backfill = False
+    if windows is None:
+        windows = _windows()
+        if (_backfill_windows() > windows and store_.count_event_locations() == 0
+                and store_.count_feed_articles() > 0):
+            windows, backfill = _backfill_windows(), True
     by_canonical: dict = {}
     processed = errors = records_total = 0
-    for gkg_url in window_urls(latest, windows if windows is not None else _windows()):
+    for gkg_url in window_urls(latest, windows):
         try:
             blob = fetch_bytes(gkg_url)
             if len(blob) > limit:
@@ -191,18 +202,30 @@ def enrich_from_latest(store_, *, fetch_bytes: Callable[[str], bytes],
         if events:
             store_.replace_article_event_locations(canonical, events)
             located += 1
-    return {"windows": processed, "windowErrors": errors, "records": records_total,
-            "matched": len(known), "located": located}
+    out = {"windows": processed, "windowErrors": errors, "records": records_total,
+           "matched": len(known), "located": located}
+    if backfill:
+        out["backfill"] = True          # visible in health/CLI: this was the cold-start deep cycle
+    return out
 
 
 def _windows() -> int:
-    """Lookback depth per cycle (15-minute GKG windows). Default 4 = one hour: with the DOC
-    artlist polled every ≤30 minutes, every GDELT-ingested article's GKG window is covered by
-    the next enrichment cycle."""
+    """Steady-state lookback per cycle (15-minute GKG windows). Default 4 = one hour: with the
+    DOC artlist polled every ≤30 minutes, every GDELT-ingested article's GKG window is covered
+    by the next enrichment cycle."""
     try:
         return max(1, int(os.environ.get("RWE_GDELT_GKG_WINDOWS", "") or 4))
     except ValueError:
         return 4
+
+
+def _backfill_windows() -> int:
+    """Cold-start depth (default 96 = 24 h), used automatically for the FIRST cycle over an
+    unlocated catalog. 0 disables auto-backfill (manual control via RWE_GDELT_GKG_WINDOWS)."""
+    try:
+        return max(0, int(os.environ.get("RWE_GDELT_GKG_BACKFILL_WINDOWS", "") or 96))
+    except ValueError:
+        return 96
 
 
 def _max_bytes() -> int:

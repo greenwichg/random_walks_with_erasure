@@ -928,6 +928,12 @@ class Store:
                 out.update(rows)
         return out
 
+    def count_event_locations(self) -> int:
+        """Total event-location rows — the GKG enricher's cold-start probe (0 + a non-empty
+        catalog ⇒ its first cycle auto-backfills a deep window range)."""
+        with self.session() as s:
+            return int(s.execute(select(func.count()).select_from(ArticleEventLocation)).scalar_one())
+
     def event_countries_for_urls(self, canonical_urls) -> dict:
         """Distinct EVENT countries per catalog article, keyed by canonical URL — the batched
         lookup the Story Service uses to locate members. URLs without event rows are absent."""

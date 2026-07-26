@@ -89,9 +89,10 @@ LOCATED_N="$(fact locatedArticles)"
 if [ "${LOCATED_N:-0}" -gt 0 ] 2>/dev/null; then
   P "event-country data populated: $LOCATED_N located articles across [$(fact locatedCountries)]"
 else
-  W "0 located articles — run the ONE-TIME backfill (docs/AWS_EC2_DEPLOYMENT_GUIDE.md §6a):
-          echo 'RWE_GDELT_GKG_WINDOWS=96' >> deploy/.env && deploy/ops/restart.sh
-          # wait ~15 min, re-run this script, then remove the override + restart"
+  W "0 located articles — the AUTO-BACKFILL runs on the enricher's next cycle (≤15 min: a deep
+          first pass over an unlocated catalog, no manual steps). Re-run this script after; if it
+          still reads 0, see docs/AWS_EC2_DEPLOYMENT_GUIDE.md §6a for the manual override + the
+          non-overlap diagnosis."
 fi
 
 # 4 · the Stories Country selector (renders iff options exist; options = articles > 0)

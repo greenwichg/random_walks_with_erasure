@@ -164,6 +164,47 @@ def test_enrich_honours_size_cap_and_empty_manifest():
     assert stats == {"windows": 0, "windowErrors": 1, "records": 0, "matched": 0, "located": 0}
 
 
+def test_cold_start_auto_backfill(monkeypatch):
+    """No manual backfill dance: an EMPTY event table over a NON-EMPTY catalog makes the first
+    cycle deep automatically (default 96 windows, flagged `backfill` in the stats); once located
+    rows exist — or when the catalog is empty — cycles use the steady-state lookback."""
+    monkeypatch.delenv("RWE_GDELT_GKG_WINDOWS", raising=False)
+    monkeypatch.delenv("RWE_GDELT_GKG_BACKFILL_WINDOWS", raising=False)
+    base = "http://data.gdeltproject.org/gdeltv2/"
+    latest = f"{base}20260726001500.gkg.csv.zip"
+    calls = []
+
+    def fetch(url):
+        calls.append(url)
+        if url == gdelt_gkg.LASTUPDATE_URL:
+            return f"1 a {latest}".encode()
+        if url == latest:
+            return _zip_bytes(_row("https://known.example/story", "1#Japan#JA##36#138#JA"))
+        raise KeyError(url)                     # older windows absent → counted, not fatal
+
+    # Non-empty catalog + empty event table → deep first cycle (96 windows attempted).
+    st = store_mod.Store("sqlite://")
+    _upsert(st, "https://known.example/story")
+    stats = gdelt_gkg.enrich_from_latest(st, fetch_bytes=fetch)
+    assert stats["backfill"] is True and stats["located"] == 1
+    assert stats["windows"] + stats["windowErrors"] == 96
+    # Warm now → steady-state depth, no backfill flag.
+    calls.clear()
+    stats = gdelt_gkg.enrich_from_latest(st, fetch_bytes=fetch)
+    assert "backfill" not in stats and stats["windows"] + stats["windowErrors"] == 4
+    # Empty catalog → never deep (nothing to locate on a fresh deployment).
+    st2 = store_mod.Store("sqlite://")
+    stats = gdelt_gkg.enrich_from_latest(st2, fetch_bytes=fetch)
+    assert "backfill" not in stats and stats["windows"] + stats["windowErrors"] == 4
+    # Explicit windows= always wins; RWE_GDELT_GKG_BACKFILL_WINDOWS=0 disables auto-backfill.
+    st3 = store_mod.Store("sqlite://")
+    _upsert(st3, "https://known.example/story")
+    assert "backfill" not in gdelt_gkg.enrich_from_latest(st3, fetch_bytes=fetch, windows=1)
+    monkeypatch.setenv("RWE_GDELT_GKG_BACKFILL_WINDOWS", "0")
+    stats = gdelt_gkg.enrich_from_latest(st3, fetch_bytes=fetch)
+    assert "backfill" not in stats and stats["windows"] + stats["windowErrors"] == 4
+
+
 def test_enricher_adapter_contract(monkeypatch):
     monkeypatch.delenv("RWE_GDELT_GKG", raising=False)
     a = sources.GDELTGKGEnricher()

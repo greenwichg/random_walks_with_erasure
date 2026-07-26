@@ -370,19 +370,16 @@ docker compose … exec -T api curl -fsS http://127.0.0.1:8000/api/places/countr
 # and a selection shows stories HAPPENING there (publisher homes never match).
 ```
 
-**First enable — backfill once.** Each cycle looks back `RWE_GDELT_GKG_WINDOWS` 15-minute
+**Cold-start backfill — automatic.** Each cycle looks back `RWE_GDELT_GKG_WINDOWS` 15-minute
 windows (default 4 = 1 hour), which keeps steady-state cycles cheap but only covers recently
-ingested articles. The existing catalog was processed by GDELT hours-to-days ago, so on first
-enable run ONE deep cycle, then remove the override:
-
-```bash
-# temporary override for the first cycle (24 h of GKG windows), then revert:
-echo "RWE_GDELT_GKG_WINDOWS=96" >> deploy/.env
-docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.aws.yml up -d api
-# … wait one cycle (~15 min), confirm `located` > 0 via steps 1–3 above, then:
-sed -i '/RWE_GDELT_GKG_WINDOWS=96/d' deploy/.env
-docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.aws.yml up -d api
-```
+ingested articles. The existing catalog was processed by GDELT hours-to-days ago, so the
+enricher detects the cold start itself: **an empty event table over a non-empty catalog makes
+the first cycle deep automatically** (`RWE_GDELT_GKG_BACKFILL_WINDOWS`, default 96 = 24 h; the
+cycle's health/log line carries `backfill=True`). Nothing to run, nothing to revert. Manual
+control remains: set `RWE_GDELT_GKG_BACKFILL_WINDOWS=0` to disable the auto-backfill, and/or
+pin `RWE_GDELT_GKG_WINDOWS` for a one-off deep cycle the old way (override → restart → wait one
+cycle → remove → restart). To re-run a backfill later (e.g. after clearing the side table),
+the same emptiness rule triggers it again.
 
 Expected shape: after the backfill cycle, `matched`/`located` > 0 **for articles GDELT
 monitors** (GDELT-ingested articles match within the lookback; RSS articles match when GDELT
