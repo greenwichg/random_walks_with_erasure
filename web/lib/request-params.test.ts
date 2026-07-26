@@ -61,3 +61,18 @@ test("every StoryQuery field is part of the request identity", () => {
   };
   assert.deepEqual(Object.keys(requestParams(full)).sort(), Object.keys(full).sort());
 });
+
+test("every StoryQuery field is forwarded by the /api/stories proxy whitelist", async () => {
+  // The proxy is the THIRD copy of the request identity (client key, proxy whitelist, engine
+  // signature). A StoryQuery field absent from the whitelist is silently dropped on the way to
+  // the engine — the filter UI applies, the engine never hears it (the M3 blindspot bug).
+  const { STORY_WIRE_KEYS } = await import("./story-wire-keys.ts");
+  const full: Required<StoryQuery> = {
+    topic: "Politics", publisher: "Reuters", lean: "left", country: "US", blindspot: "any",
+    dateFrom: "2026-01-01", dateTo: "2026-02-01", sort: "top", limit: 24, offset: 24,
+  };
+  for (const key of Object.keys(full)) {
+    assert.ok((STORY_WIRE_KEYS as readonly string[]).includes(key),
+      `StoryQuery field ${key} is not forwarded by the stories proxy`);
+  }
+});

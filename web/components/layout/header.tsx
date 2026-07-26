@@ -74,8 +74,14 @@ export function Header() {
       </Sheet>
 
       {/* Current-page label — NOT an <h1>: each page renders its own primary heading, so this stays a
-          plain label to keep a single <h1> landmark per page (accessibility). */}
-      <span className="hidden text-lg font-semibold tracking-tight sm:block">{t(current?.labelKey ?? "nav.dashboard")}</span>
+          plain label to keep a single <h1> landmark per page (accessibility). Publisher profiles are
+          contextual destinations outside the nav, so they carry their own label instead of falling
+          back to "Home". */}
+      <span className="hidden text-lg font-semibold tracking-tight sm:block">
+        {pathname.startsWith("/publishers")
+          ? t("publishers.header")
+          : t(current?.labelKey ?? "nav.dashboard")}
+      </span>
 
       <div className="ml-auto flex items-center gap-1.5">
         <button

@@ -135,7 +135,11 @@ function Profile({ profile: p }: { profile: PublisherProfile }) {
             </div>
             {/* The counted snapshot line — volume, observed window, cadence. Facts only. */}
             <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm text-muted-foreground">
-              <span>{t("publishers.snapshot.articles", { n: formatCompact(total) })}</span>
+              <span>
+                {total === 1
+                  ? t("publishers.snapshot.articles.one", { n: formatCompact(total) })
+                  : t("publishers.snapshot.articles", { n: formatCompact(total) })}
+              </span>
               {p.articles.firstSeen && p.articles.lastSeen && (
                 <>
                   <span>·</span>
