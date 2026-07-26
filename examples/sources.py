@@ -688,15 +688,16 @@ class GNewsAdapter(KeyedJSONAdapter):
 # MediaStack — https://mediastack.com/documentation
 # --------------------------------------------------------------------------- #
 class MediaStackAdapter(KeyedJSONAdapter):
-    """MediaStack ``news``. NOTE the tight free tier: ≈ 500 requests/MONTH (~16/day — the
-    compose defaults pick a 90-minute interval + budget 15) and HTTPS is paid-only there:
-    RWE_MEDIASTACK_HTTPS=0 switches to http for the free tier (documented trade-off)."""
+    """MediaStack ``news``. NOTE the VERY tight free tier — 100 requests/MONTH (verified on the
+    operator dashboard 2026-07-26; older docs said 500): the defaults pick an 8-hour interval +
+    budget 3/day (~93/month). HTTPS is paid-only there: RWE_MEDIASTACK_HTTPS=0 switches to http
+    for the free tier (documented trade-off)."""
 
     provider = "MediaStack"
     source_type = "mediastack"
     env_prefix = "MEDIASTACK"
     endpoint_name = "news"
-    default_interval = 5400.0
+    default_interval = 28800.0
     page_cap = 100
     signup_hint = "Get a key at https://mediastack.com and set RWE_MEDIASTACK_API_KEY."
     combo_axes = (("COUNTRY", "countries"), ("CATEGORY", "categories"), ("LANGUAGE", "languages"))

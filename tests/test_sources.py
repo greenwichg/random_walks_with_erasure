@@ -646,7 +646,7 @@ def test_mediastack_url_scheme_and_plural_params(monkeypatch):
     assert url.startswith("https://") and "countries=gb" in url and "access_key=k" in url
     monkeypatch.setenv("RWE_MEDIASTACK_HTTPS", "0")
     assert a._url(a._combos()[0]).startswith("http://")
-    assert a.interval() == 5400.0                           # 90-min default fits ~500 req/MONTH
+    assert a.interval() == 28800.0                          # 8-h default fits the 100 req/MONTH free tier
 
 
 def test_currents_normalizes_into_feedentry():

@@ -448,7 +448,7 @@ appear in `unknown_outlets` stats and the `outlet_coverage.py` worklist — cura
 | The Guardian | `GUARDIAN` | ~500 req/day | 900 s (96/day) | 450 | `guardian://search` |
 | NewsData.io | `NEWSDATA` | ~200 credits/day, size ≤ 10 | 900 s (96/day) | 190 | `newsdata://latest` |
 | GNews | `GNEWS` | ~100 req/day, max ≤ 10 | 900 s (96/day) | 95 | `gnews://top-headlines` |
-| MediaStack | `MEDIASTACK` | **~500 req/MONTH** | 5400 s (16/day) | 15 | `mediastack://news` |
+| MediaStack | `MEDIASTACK` | **100 req/MONTH** (verified) | 28800 s (3/day) | 3 | `mediastack://news` |
 | Currents | `CURRENTS` | ~600 req/day, page_size ≤ 20 | 900 s (96/day) | 550 | `currents://latest-news` |
 | Google News RSS | `GOOGLENEWS` | keyless | 900 s | — (no key, no budget) | `googlenews://rss` |
 
@@ -479,10 +479,12 @@ Provider-specific notes (the honest edges, documented rather than papered over):
 * **NewsData + GNews** free tiers cap articles per request at 10, **Currents** at 20 (a hard
   400 above it, verified in prod 2026-07-26) — the compose `PAGE_SIZE` defaults match; raising
   them only helps on paid tiers.
-* **MediaStack's quota is MONTHLY** (~500). The defaults (90-min interval, budget 15/day ≈
-  465/month) are sized to survive the month — do not drop the interval below ~5400 s on the
-  free tier. HTTPS is paid-only there: `RWE_MEDIASTACK_HTTPS=0` downgrades the fetch to http
-  (free tier), a documented trade-off — article metadata then transits unencrypted.
+* **MediaStack's quota is MONTHLY — 100 requests** (verified on the operator dashboard
+  2026-07-26; older third-party docs said 500). The defaults (8-hour interval, budget 3/day ≈
+  93/month) are sized to survive the month — do not drop the interval below ~28800 s on the
+  free tier, and remember every api restart spends one request (the immediate startup cycle).
+  HTTPS is paid-only there: `RWE_MEDIASTACK_HTTPS=0` downgrades the fetch to http (free tier),
+  a documented trade-off — article metadata then transits unencrypted.
 * **Currents** payloads carry no outlet field; the publisher hint is each article URL's own
   domain (www-stripped), which the registry resolves exactly like any domain alias.
 * **Google News RSS** is keyless; feeds are built from `RWE_GOOGLENEWS_TOPICS`

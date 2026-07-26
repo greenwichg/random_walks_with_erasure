@@ -108,11 +108,12 @@ services:
       RWE_GNEWS_PAGE_SIZE: ${RWE_GNEWS_PAGE_SIZE:-10}
       RWE_GNEWS_MAX_ARTICLES: ${RWE_GNEWS_MAX_ARTICLES:-}
       RWE_GNEWS_DAILY_BUDGET: ${RWE_GNEWS_DAILY_BUDGET:-95}
-      # MediaStack (free tier: ~500 requests/MONTH → 90-min interval + budget 15/day; HTTPS is
-      # paid-only there — RWE_MEDIASTACK_HTTPS=0 downgrades to http, a documented trade-off).
+      # MediaStack (free tier VERIFIED 2026-07-26: 100 requests/MONTH → 8-hour interval + budget
+      # 3/day ≈ 93/month; HTTPS is paid-only there — RWE_MEDIASTACK_HTTPS=0 downgrades to http,
+      # a documented trade-off. Paid plans: shorten the interval + raise the budget explicitly).
       RWE_MEDIASTACK_ENABLED: ${RWE_MEDIASTACK_ENABLED:-0}
       RWE_MEDIASTACK_API_KEY: ${RWE_MEDIASTACK_API_KEY:-}
-      RWE_MEDIASTACK_POLL_INTERVAL: ${RWE_MEDIASTACK_POLL_INTERVAL:-5400}
+      RWE_MEDIASTACK_POLL_INTERVAL: ${RWE_MEDIASTACK_POLL_INTERVAL:-28800}
       RWE_MEDIASTACK_HTTPS: ${RWE_MEDIASTACK_HTTPS:-1}
       RWE_MEDIASTACK_QUERY: ${RWE_MEDIASTACK_QUERY:-}
       RWE_MEDIASTACK_CATEGORY: ${RWE_MEDIASTACK_CATEGORY:-}
@@ -120,7 +121,7 @@ services:
       RWE_MEDIASTACK_LANGUAGE: ${RWE_MEDIASTACK_LANGUAGE:-}
       RWE_MEDIASTACK_PAGE_SIZE: ${RWE_MEDIASTACK_PAGE_SIZE:-100}
       RWE_MEDIASTACK_MAX_ARTICLES: ${RWE_MEDIASTACK_MAX_ARTICLES:-}
-      RWE_MEDIASTACK_DAILY_BUDGET: ${RWE_MEDIASTACK_DAILY_BUDGET:-15}
+      RWE_MEDIASTACK_DAILY_BUDGET: ${RWE_MEDIASTACK_DAILY_BUDGET:-3}
       # Currents (free tier: ~600 requests/day and page_size ≤ 20 — the default matches; the API
       # 400s on more. The payload has no outlet field, so publishers resolve from each article
       # URL's own domain).
