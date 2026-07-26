@@ -66,6 +66,8 @@ jobs:
         run: npm ci
       - name: Typecheck
         run: npm run typecheck
+      - name: Lint
+        run: npm run lint
       - name: i18n catalog parity
         run: npm run check:i18n
       - name: Frontend unit tests (logic suite)

@@ -126,7 +126,7 @@ export function StoryBrowser({
         <FilterSelect label={t("filter.sort")} value={sort} options={SORT_OPTIONS} onChange={setSort} resettable={false} />
         {total > 0 && (
           <span className="ml-auto text-sm text-muted-foreground">
-            {total} {total === 1 ? "story" : "stories"}
+            {total === 1 ? t("stories.count.one", { n: total }) : t("stories.count.other", { n: total })}
           </span>
         )}
       </div>
@@ -167,15 +167,15 @@ export function StoryBrowser({
             onClick={() => setOffset(Math.max(0, offset - PAGE))}
             className="inline-flex h-9 items-center rounded-lg border bg-card px-4 text-sm font-medium transition-colors hover:bg-accent disabled:opacity-50"
           >
-            Previous
+            {t("common.previous")}
           </button>
-          <span className="text-sm text-muted-foreground">Page {page}</span>
+          <span className="text-sm text-muted-foreground">{t("common.page", { n: page })}</span>
           <button
             disabled={!hasMore || isFetching}
             onClick={() => setOffset(offset + PAGE)}
             className="inline-flex h-9 items-center rounded-lg border bg-card px-4 text-sm font-medium transition-colors hover:bg-accent disabled:opacity-50"
           >
-            Next
+            {t("common.next")}
           </button>
         </div>
       )}

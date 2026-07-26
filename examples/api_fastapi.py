@@ -247,6 +247,10 @@ async def lifespan(app: FastAPI):
     # middleware. Upsert is idempotent — pre-seeding, the account exists empty and everything
     # falls back to the synthetic demo reader exactly as before.
     demo_account = os.environ.get("RWE_DEMO_ACCOUNT", "").strip()
+    # Unconditional reset: a previous lifespan's exhibit uid must never leak into a process where
+    # the flag is now unset — a stale demo_uid would write-lock (and exhibit-mark) whichever
+    # ordinary user happens to hold that id in the new DB.
+    state.demo_uid = None
     if demo_account and ":" in demo_account:
         provider_name, account_id = demo_account.split(":", 1)
         state.demo_uid = st.upsert_user_by_identity(provider_name, account_id,
@@ -1978,15 +1982,19 @@ def report(request: Request,
     * **Demo** — a signed-in reader with no usable onboarding, or an anonymous / ``?user=``
       request: the reference reader (unchanged for the frontend and contract tests)."""
     with obs_metrics.timer("report_generate_ms"):     # OBS1: time generation (does not alter it)
-        rep = _report_for(_active(), request, user)
-    # RC2.3 — for a signed-in reader, reconcile the improvement-recommendation lifecycle ledger and
-    # annotate each improvement with its state. Reuses the report just built (no recompute); a no-op
-    # for anonymous/demo reports (no real uid). Never fails the request.
+        rep, is_exhibit = _report_for(_active(), request, user)
+    # RC2.3 — for a signed-in reader viewing their OWN report, reconcile the improvement lifecycle
+    # ledger and annotate each improvement with its state. The EXHIBIT report is excluded even when
+    # a real uid is present (the exhibit's own request, or a below-threshold reader served the
+    # exhibit): it is a frozen showcase — annotating would fork it per viewer AND write ledger rows
+    # from exhibit traffic, both of which the demo-account contract forbids (anon == own, and
+    # anonymous/viewer traffic never moves the exhibit). Never fails the request.
     uid = _real_uid(request)
     # Per-metric Measurement metadata (ADR-001) — coverage + provenance for Viewpoint / Emotion — is
     # now computed in the engine (measurement.py, via personalize) and attached onto each metric inside
     # `_report_for`; there is no separate report-level annotation to load reads again here.
-    if uid is not None and rep.get("mode") in ("measured", "estimate") and rep.get("improvements"):
+    if (uid is not None and not is_exhibit
+            and rep.get("mode") in ("measured", "estimate") and rep.get("improvements")):
         _annotate_improvement_lifecycle(uid, rep)       # RC2.3: attach lifecycle state
         _rank_improvement_recommendations(uid, rep)     # RC2.4: reorder + suppress (filtering only)
     return rep
@@ -2034,21 +2042,26 @@ def _annotate_improvement_lifecycle(uid: int, rep: dict) -> None:
                                          requestId=_request_id.get())
 
 
-def _report_for(active: "corpus_refresh.Active", request: Request, user: str | None) -> dict:
+def _report_for(active: "corpus_refresh.Active", request: Request, user: str | None) -> "tuple[dict, bool]":
     """The report a reader would see — **Measured** (augmented corpus), **Estimate** (stored
     onboarding), or **Demo** (anonymous / no onboarding). Shared by ``GET /api/report`` and the
     dashboard so both speak the exact same report with no duplicated routing or serialisation. Serves
-    the whole request from one captured ``active`` bundle (swap-consistent)."""
+    the whole request from one captured ``active`` bundle (swap-consistent).
+
+    Returns ``(report, is_exhibit)``: ``is_exhibit`` marks the seeded demo-exhibit account's
+    report — served to anonymous visitors, below-threshold readers, and the exhibit itself —
+    which is a frozen showcase: per-reader lifecycle/ranking annotation never applies to it."""
     be = active.backend
     uid = _real_uid(request)
     if uid is None:
         # anonymous: the seeded exhibit account's measured report when available (an explicit
         # ?user= selection always wins — the row picker is a deliberate exhibit browser)
         demo = _demo_personal(active) if user is None else None
-        return (active.personalizer.report(demo) if demo is not None
-                else be.report(_anon_row(active, request, user)))
+        if demo is not None:
+            return active.personalizer.report(demo), True
+        return be.report(_anon_row(active, request, user)), False
     if active.personalizer.has_measured(uid):
-        return active.personalizer.report(uid)
+        return active.personalizer.report(uid), uid == getattr(state, "demo_uid", None)
     outlets = _require_store().get_onboarding(uid)
     if outlets:
         try:
@@ -2062,11 +2075,13 @@ def _report_for(active: "corpus_refresh.Active", request: Request, user: str | N
                 cnt = _require_store().count_reads(uid)
                 cov["reads"] = cnt
                 cov["sufficient"] = cnt >= engine.ESTIMATE_MIN_READS
-            return rep
+            return rep, False
         except ValueError:
             pass
     demo = _demo_personal(active)
-    return active.personalizer.report(demo) if demo is not None else be.report(be.demo_user)
+    if demo is not None:
+        return active.personalizer.report(demo), True
+    return be.report(be.demo_user), False
 
 
 @app.get("/api/dashboard", response_model=DashboardModel, response_model_exclude_none=True,
@@ -2078,7 +2093,7 @@ def dashboard(request: Request,
     reading + streak (their stored reads). Same Measured/Estimate/Demo routing as ``/api/report`` —
     no new report serialisation, no algorithm."""
     active = _active()
-    rep = _report_for(active, request, user)
+    rep, _is_exhibit = _report_for(active, request, user)
     st, uid = _require_store(), _real_uid(request)
     reads = st.list_reads(uid) if uid is not None else []
     snaps = st.list_report_snapshots(uid) if uid is not None else []

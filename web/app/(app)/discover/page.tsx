@@ -73,7 +73,7 @@ export default function DiscoverPage() {
         <FilterSelect label={t("filter.lean")} value={lean} options={LEAN_OPTIONS} onChange={setLean} />
         {total > 0 && (
           <span className="ml-auto text-sm text-muted-foreground">
-            {total} article{total === 1 ? "" : "s"}
+            {total === 1 ? t("discover.count.one", { n: total }) : t("discover.count.other", { n: total })}
           </span>
         )}
       </div>

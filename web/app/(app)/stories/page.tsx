@@ -22,7 +22,7 @@ function StoriesInner() {
       initialCountry={country}
       initialPublisher={publisher}
       description={t("stories.subtitle")}
-      emptyDescription="Stories cluster the live news catalog into events. Once enough articles across publishers cover the same event, they appear here."
+      emptyDescription={t("stories.empty.body")}
     />
   );
 }
