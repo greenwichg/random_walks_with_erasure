@@ -2,6 +2,7 @@
   "analysisVersion": 1,
   "article": {
     "confidence": 0.72,
+    "country": null,
     "description": "Lawmakers reached a deal.",
     "dominantEmotion": "neutral",
     "emotion": {
@@ -11,6 +12,7 @@
       "outrage": 0.1,
       "positive": 0.1
     },
+    "eventCountries": [],
     "headline": "senate budget vote reaches bipartisan deal",
     "id": "https://theguardian.com/story/an-cluster-0",
     "image": null,
@@ -19,6 +21,7 @@
     "imageMimeType": null,
     "imageSource": null,
     "imageWidth": null,
+    "language": null,
     "lean": -1.0,
     "leanBucket": "left",
     "publishedAt": "2026-07-18T12:00:00+00:00",
@@ -98,6 +101,7 @@
     "nextArticle": {
       "article": {
         "confidence": 0.72,
+        "country": null,
         "description": "Lawmakers reached a deal.",
         "dominantEmotion": "neutral",
         "emotion": {
@@ -107,6 +111,7 @@
           "outrage": 0.1,
           "positive": 0.1
         },
+        "eventCountries": [],
         "headline": "bipartisan budget deal clears senate vote",
         "id": "https://reuters.com/story/an-cluster-2",
         "image": null,
@@ -115,6 +120,7 @@
         "imageMimeType": null,
         "imageSource": null,
         "imageWidth": null,
+        "language": null,
         "lean": 0.0,
         "leanBucket": "center",
         "publishedAt": "2026-07-18T12:00:00+00:00",

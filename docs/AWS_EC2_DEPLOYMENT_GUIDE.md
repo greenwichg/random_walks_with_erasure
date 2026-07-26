@@ -336,6 +336,11 @@ host-side `127.0.0.1:8000` probe would false-FAIL; `smoke-test.sh` does the live
 
 ### 6a · GKG event-geography enricher — first-cycle verification (Location Intelligence Phase 2)
 
+> **One-shot version of everything below:** `deploy/ops/verify-event-country.sh` runs the whole
+> Event Country checklist (flag → enricher health → side-table data → selector options →
+> event-semantics negative control → "All" intact → public probe) as PASS/WARN/FAIL lines.
+> The manual commands below remain for digging into any line that isn't green.
+
 `RWE_GDELT_GKG` defaults **ON** in the compose file (kill switch: `RWE_GDELT_GKG=0` in
 `deploy/.env` + restart). It downloads GDELT's latest 15-minute GKG file each cycle and locates
 articles already in the catalog — it never creates articles. After the first ~15–30 minutes:

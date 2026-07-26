@@ -2,6 +2,7 @@
   "analysisVersion": 1,
   "article": {
     "confidence": 0.72,
+    "country": null,
     "description": "Lawmakers reached a deal.",
     "dominantEmotion": "neutral",
     "emotion": {
@@ -11,6 +12,7 @@
       "outrage": 0.1,
       "positive": 0.1
     },
+    "eventCountries": [],
     "headline": "senate passes budget vote after bipartisan deal",
     "id": "https://apnews.com/story/an-cluster-1",
     "image": null,
@@ -19,6 +21,7 @@
     "imageMimeType": null,
     "imageSource": null,
     "imageWidth": null,
+    "language": null,
     "lean": 0.0,
     "leanBucket": "center",
     "publishedAt": "2026-07-18T12:00:00+00:00",
