@@ -145,7 +145,8 @@ def window_urls(latest_url: str, windows: int) -> list:
 
 
 def enrich_from_latest(store_, *, fetch_bytes: Callable[[str], bytes],
-                       max_bytes: Optional[int] = None, windows: Optional[int] = None) -> dict:
+                       max_bytes: Optional[int] = None, windows: Optional[int] = None,
+                       allow_backfill: bool = True) -> dict:
     """One enrichment cycle: the last N GKG windows -> parse -> match the catalog -> persist.
 
     Returns counted facts for health: ``windows`` processed (+ ``windowErrors`` skipped —
@@ -160,15 +161,19 @@ def enrich_from_latest(store_, *, fetch_bytes: Callable[[str], bytes],
         return {"windows": 0, "windowErrors": 0, "records": 0, "matched": 0, "located": 0,
                 "skipped": "no gkg file in manifest"}
     limit = max_bytes if max_bytes is not None else _max_bytes()
-    # Cold-start auto-backfill: an EMPTY event table over a NON-EMPTY catalog means the existing
-    # articles were processed by GDELT hours-to-days ago — the steady-state lookback would never
-    # reach them. One deep first cycle covers them automatically; no manual env override, no
-    # restart pair, no revert to forget. An empty catalog skips it (nothing to locate — a fresh
-    # deployment shouldn't download a day of GKG for zero matches).
+    # Cold-start auto-backfill: a BARELY-located catalog (fewer event rows than the threshold —
+    # not just zero: a few steady-state cycles may already have trickled rows in before the
+    # first deep pass, the production lesson) means the bulk of the catalog was processed by
+    # GDELT hours-to-days ago, beyond the steady-state lookback. One deep cycle covers it
+    # automatically; no manual env override, no restart pair, no revert to forget. An empty
+    # catalog skips it (nothing to locate), and the ADAPTER passes allow_backfill only on its
+    # first cycle per process — so a catalog that legitimately never crosses the threshold
+    # (low GDELT overlap) deep-scans at most once per container start, never every 15 minutes.
     backfill = False
     if windows is None:
         windows = _windows()
-        if (_backfill_windows() > windows and store_.count_event_locations() == 0
+        if (allow_backfill and _backfill_windows() > windows
+                and store_.count_event_locations() < _backfill_threshold()
                 and store_.count_feed_articles() > 0):
             windows, backfill = _backfill_windows(), True
     by_canonical: dict = {}
@@ -220,12 +225,21 @@ def _windows() -> int:
 
 
 def _backfill_windows() -> int:
-    """Cold-start depth (default 96 = 24 h), used automatically for the FIRST cycle over an
-    unlocated catalog. 0 disables auto-backfill (manual control via RWE_GDELT_GKG_WINDOWS)."""
+    """Cold-start depth (default 96 = 24 h), used automatically for the FIRST cycle over a
+    barely-located catalog. 0 disables auto-backfill (manual control via RWE_GDELT_GKG_WINDOWS)."""
     try:
         return max(0, int(os.environ.get("RWE_GDELT_GKG_BACKFILL_WINDOWS", "") or 96))
     except ValueError:
         return 96
+
+
+def _backfill_threshold() -> int:
+    """"Barely located": fewer stored event rows than this (default 25) still counts as a cold
+    start — steady-state cycles may have trickled a handful in before the first deep pass."""
+    try:
+        return max(1, int(os.environ.get("RWE_GDELT_GKG_BACKFILL_THRESHOLD", "") or 25))
+    except ValueError:
+        return 25
 
 
 def _max_bytes() -> int:

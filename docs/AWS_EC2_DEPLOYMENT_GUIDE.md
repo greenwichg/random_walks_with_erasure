@@ -373,13 +373,14 @@ docker compose … exec -T api curl -fsS http://127.0.0.1:8000/api/places/countr
 **Cold-start backfill — automatic.** Each cycle looks back `RWE_GDELT_GKG_WINDOWS` 15-minute
 windows (default 4 = 1 hour), which keeps steady-state cycles cheap but only covers recently
 ingested articles. The existing catalog was processed by GDELT hours-to-days ago, so the
-enricher detects the cold start itself: **an empty event table over a non-empty catalog makes
-the first cycle deep automatically** (`RWE_GDELT_GKG_BACKFILL_WINDOWS`, default 96 = 24 h; the
+enricher detects the cold start itself: **a barely-located catalog — fewer event rows than
+`RWE_GDELT_GKG_BACKFILL_THRESHOLD` (default 25) — makes the first cycle per process deep
+automatically** (`RWE_GDELT_GKG_BACKFILL_WINDOWS`, default 96 = 24 h; the
 cycle's health/log line carries `backfill=True`). Nothing to run, nothing to revert. Manual
 control remains: set `RWE_GDELT_GKG_BACKFILL_WINDOWS=0` to disable the auto-backfill, and/or
 pin `RWE_GDELT_GKG_WINDOWS` for a one-off deep cycle the old way (override → restart → wait one
 cycle → remove → restart). To re-run a backfill later (e.g. after clearing the side table),
-the same emptiness rule triggers it again.
+the same threshold rule triggers it again on the next container start.
 
 Expected shape: after the backfill cycle, `matched`/`located` > 0 **for articles GDELT
 monitors** (GDELT-ingested articles match within the lookback; RSS articles match when GDELT

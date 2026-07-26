@@ -188,10 +188,29 @@ def test_cold_start_auto_backfill(monkeypatch):
     stats = gdelt_gkg.enrich_from_latest(st, fetch_bytes=fetch)
     assert stats["backfill"] is True and stats["located"] == 1
     assert stats["windows"] + stats["windowErrors"] == 96
-    # Warm now → steady-state depth, no backfill flag.
-    calls.clear()
+    # LUKEWARM still backfills (the production lesson): a handful of rows trickled in by
+    # steady-state cycles before any deep pass must not read as "warm". 1 row < threshold 25.
+    assert st.count_event_locations() == 1
+    stats = gdelt_gkg.enrich_from_latest(st, fetch_bytes=fetch)
+    assert stats["backfill"] is True
+    # Genuinely warm (≥ threshold rows) → steady-state depth, no backfill flag.
+    for i in range(30):
+        _upsert(st, f"https://warm.example/{i}")
+        st.replace_article_event_locations(
+            f"https://warm.example/{i}",
+            __import__("location").resolve_event_locations([{"country": "US", "source": "gdelt-gkg"}]))
     stats = gdelt_gkg.enrich_from_latest(st, fetch_bytes=fetch)
     assert "backfill" not in stats and stats["windows"] + stats["windowErrors"] == 4
+    # The adapter allows the deep pass at most ONCE per process: a catalog that never crosses
+    # the threshold (low GDELT overlap) must not re-download 24 h of GKG every 15 minutes.
+    monkeypatch.setenv("RWE_GDELT_GKG", "1")
+    st4 = store_mod.Store("sqlite://")
+    _upsert(st4, "https://known.example/story")
+    adapter = sources.GDELTGKGEnricher(fetch_bytes=fetch)
+    first = adapter.poll_once(st4, scorer=None)
+    second = adapter.poll_once(st4, scorer=None)
+    assert first["windows"] + first["windowErrors"] == 96
+    assert second["windows"] + second["windowErrors"] == 4
     # Empty catalog → never deep (nothing to locate on a fresh deployment).
     st2 = store_mod.Store("sqlite://")
     stats = gdelt_gkg.enrich_from_latest(st2, fetch_bytes=fetch)

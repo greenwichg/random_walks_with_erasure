@@ -462,6 +462,7 @@ class GDELTGKGEnricher(SourceAdapter):
 
     def __init__(self, fetch_bytes: Optional[Callable[[str], bytes]] = None):
         self._fetch_bytes = fetch_bytes                     # injectable (offline tests)
+        self._first_cycle = True                            # auto-backfill: at most once per process
 
     def enabled(self) -> bool:
         return _bool_env("RWE_GDELT_GKG")
@@ -479,17 +480,24 @@ class GDELTGKGEnricher(SourceAdapter):
         stats: Optional[dict] = None
         try:
             stats = gdelt_gkg.enrich_from_latest(
-                store_, fetch_bytes=self._fetch_bytes or _get_bytes)
+                store_, fetch_bytes=self._fetch_bytes or _get_bytes,
+                allow_backfill=self._first_cycle)
         except Exception as e:                              # network / zip / parse error
             error = e
+        finally:
+            self._first_cycle = False
         latency_ms = (time.perf_counter() - t0) * 1000.0
         agg = _agg(self.provider, self.source_type, None, None, latency_ms, error,
                    key=self.health_key)
-        # Enrichment counters (not ingest counters): parsed records with a dominant country,
-        # catalog matches, and articles actually located this cycle.
+        # Enrichment counters (not ingest counters): windows processed/skipped, parsed records
+        # with a dominant country, catalog matches, articles located — and whether this was the
+        # automatic cold-start deep cycle.
         s = stats or {}
-        agg.update({"records": s.get("records", 0), "matched": s.get("matched", 0),
+        agg.update({"windows": s.get("windows", 0), "windowErrors": s.get("windowErrors", 0),
+                    "records": s.get("records", 0), "matched": s.get("matched", 0),
                     "located": s.get("located", 0)})
+        if s.get("backfill"):
+            agg["backfill"] = True
         if on_feed is not None:
             try:
                 on_feed(self.provider, self.health_key, stats, latency_ms, error)

@@ -155,7 +155,7 @@ The DOC artlist we ingest carries only `sourcecountry` (publisher-level); event 
 in GDELT's GKG files. `examples/gdelt_gkg.py` + `sources.GDELTGKGEnricher` poll the last
 `RWE_GDELT_GKG_WINDOWS` 15-minute `*.gkg.csv.zip` files (default 4 = 1 h lookback — the latest
 file alone would almost never overlap a catalog ingested minutes-to-hours earlier; the
-cold-start backfill is AUTOMATIC: an unlocated catalog makes the first cycle deep,
+cold-start backfill is AUTOMATIC: a barely-located catalog makes the first cycle per process deep,
 `RWE_GDELT_GKG_BACKFILL_WINDOWS` default 96 = 24 h, `backfill=True` in its stats) on the
 standard poller/health machinery and locate articles ALREADY in the catalog — any provider's
 (an RSS-ingested outlet GDELT also monitors gets located too).

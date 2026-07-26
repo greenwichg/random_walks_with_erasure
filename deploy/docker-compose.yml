@@ -51,8 +51,9 @@ services:
       RWE_GDELT_GKG_INTERVAL: ${RWE_GDELT_GKG_INTERVAL:-900}
       # Steady-state lookback per cycle (15-min GKG windows; default 4 = 1 h): catalog articles
       # were processed by GDELT in EARLIER windows, so the latest file alone would almost never
-      # match. The cold-start backfill is AUTOMATIC: an unlocated catalog makes the first cycle
-      # deep (BACKFILL_WINDOWS, default 96 = 24 h; 0 disables) — no manual override/revert dance.
+      # match. The cold-start backfill is AUTOMATIC: a barely-located catalog (< BACKFILL_THRESHOLD
+      # event rows, default 25) makes the first cycle per process deep (BACKFILL_WINDOWS,
+      # default 96 = 24 h; 0 disables) — no manual override/revert dance.
       RWE_GDELT_GKG_WINDOWS: ${RWE_GDELT_GKG_WINDOWS:-4}
       RWE_GDELT_GKG_BACKFILL_WINDOWS: ${RWE_GDELT_GKG_BACKFILL_WINDOWS:-96}
       RWE_RETENTION_MAX_COUNT: ${RWE_RETENTION_MAX_COUNT:-0}
