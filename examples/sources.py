@@ -735,9 +735,11 @@ class MediaStackAdapter(KeyedJSONAdapter):
 # Currents — https://currentsapi.services/en/docs/
 # --------------------------------------------------------------------------- #
 class CurrentsAdapter(KeyedJSONAdapter):
-    """Currents ``latest-news``. Free tier ≈ 600 requests/day. The payload carries no outlet
-    field, so the publisher hint is the article URL's own domain (the registry resolves
-    domains); ``image`` is sometimes the literal string "None" — dropped, never stored."""
+    """Currents ``latest-news``. Free tier ≈ 600 requests/day with ``page_size`` capped at 20
+    (verified in production 2026-07-26: 21+ is a hard 400 — the compose default matches). The
+    payload carries no outlet field, so the publisher hint is the article URL's own domain (the
+    registry resolves domains); ``image`` is sometimes the literal string "None" — dropped,
+    never stored."""
 
     provider = "Currents"
     source_type = "currents"

@@ -121,8 +121,9 @@ services:
       RWE_MEDIASTACK_PAGE_SIZE: ${RWE_MEDIASTACK_PAGE_SIZE:-100}
       RWE_MEDIASTACK_MAX_ARTICLES: ${RWE_MEDIASTACK_MAX_ARTICLES:-}
       RWE_MEDIASTACK_DAILY_BUDGET: ${RWE_MEDIASTACK_DAILY_BUDGET:-15}
-      # Currents (free tier: ~600 requests/day; the payload has no outlet field, so publishers
-      # resolve from each article URL's own domain).
+      # Currents (free tier: ~600 requests/day and page_size ≤ 20 — the default matches; the API
+      # 400s on more. The payload has no outlet field, so publishers resolve from each article
+      # URL's own domain).
       RWE_CURRENTS_ENABLED: ${RWE_CURRENTS_ENABLED:-0}
       RWE_CURRENTS_API_KEY: ${RWE_CURRENTS_API_KEY:-}
       RWE_CURRENTS_POLL_INTERVAL: ${RWE_CURRENTS_POLL_INTERVAL:-900}
@@ -130,7 +131,7 @@ services:
       RWE_CURRENTS_CATEGORY: ${RWE_CURRENTS_CATEGORY:-}
       RWE_CURRENTS_COUNTRY: ${RWE_CURRENTS_COUNTRY:-}
       RWE_CURRENTS_LANGUAGE: ${RWE_CURRENTS_LANGUAGE:-}
-      RWE_CURRENTS_PAGE_SIZE: ${RWE_CURRENTS_PAGE_SIZE:-100}
+      RWE_CURRENTS_PAGE_SIZE: ${RWE_CURRENTS_PAGE_SIZE:-20}
       RWE_CURRENTS_MAX_ARTICLES: ${RWE_CURRENTS_MAX_ARTICLES:-}
       RWE_CURRENTS_DAILY_BUDGET: ${RWE_CURRENTS_DAILY_BUDGET:-550}
       # Google News RSS (keyless). TOPICS ⊆ {WORLD,NATION,BUSINESS,TECHNOLOGY,ENTERTAINMENT,

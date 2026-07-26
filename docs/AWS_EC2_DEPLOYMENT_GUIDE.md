@@ -449,7 +449,7 @@ appear in `unknown_outlets` stats and the `outlet_coverage.py` worklist — cura
 | NewsData.io | `NEWSDATA` | ~200 credits/day, size ≤ 10 | 900 s (96/day) | 190 | `newsdata://latest` |
 | GNews | `GNEWS` | ~100 req/day, max ≤ 10 | 900 s (96/day) | 95 | `gnews://top-headlines` |
 | MediaStack | `MEDIASTACK` | **~500 req/MONTH** | 5400 s (16/day) | 15 | `mediastack://news` |
-| Currents | `CURRENTS` | ~600 req/day | 900 s (96/day) | 550 | `currents://latest-news` |
+| Currents | `CURRENTS` | ~600 req/day, page_size ≤ 20 | 900 s (96/day) | 550 | `currents://latest-news` |
 | Google News RSS | `GOOGLENEWS` | keyless | 900 s | — (no key, no budget) | `googlenews://rss` |
 
 Enablement is uniform — in `deploy/.env` set `RWE_<P>_ENABLED=1` (+ `RWE_<P>_API_KEY=<key>` for
@@ -476,8 +476,9 @@ Provider-specific notes (the honest edges, documented rather than papered over):
   (registry-verified Lean Left). It thickens that one outlet's coverage — it widens story
   distributions, not the outlet spectrum. Rotation axis is `RWE_GUARDIAN_SECTION`
   (e.g. `world,politics`).
-* **NewsData + GNews** free tiers cap articles per request at 10 — the compose `PAGE_SIZE`
-  defaults match; raising them only helps on paid tiers.
+* **NewsData + GNews** free tiers cap articles per request at 10, **Currents** at 20 (a hard
+  400 above it, verified in prod 2026-07-26) — the compose `PAGE_SIZE` defaults match; raising
+  them only helps on paid tiers.
 * **MediaStack's quota is MONTHLY** (~500). The defaults (90-min interval, budget 15/day ≈
   465/month) are sized to survive the month — do not drop the interval below ~5400 s on the
   free tier. HTTPS is paid-only there: `RWE_MEDIASTACK_HTTPS=0` downgrades the fetch to http
