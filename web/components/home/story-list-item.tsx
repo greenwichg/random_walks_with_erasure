@@ -45,6 +45,7 @@ export function StoryListItem({
   showImage = false,
   variant = "summary",
   showTopic = true,
+  showSplit,
   className,
 }: {
   story: Story;
@@ -55,17 +56,22 @@ export function StoryListItem({
    * Density variant (the component hierarchy's two lowest weights):
    *  - "summary" — the full editorial summary: synopsis + the labelled L/C/R split. For a
    *    section's primary list (Top Stories).
-   *  - "compact" — dateline, headline, bar and counts only. For supporting lists and the closing
-   *    run, where repeating the labelled split on every row would turn signal into noise.
+   *  - "compact" — dateline, headline, bar and counts; no synopsis, and by default no labelled
+   *    split. For supporting lists (category modules, related stories).
    */
   variant?: "summary" | "compact";
   /** Hide the topic label — set false inside a single-topic section, where the section header
    *  already names it and repeating it on every row is pure noise. */
   showTopic?: boolean;
+  /** Labelled L/C/R split + publisher count. Defaults by variant (summary yes, compact no); the
+   *  home Latest run opts IN on compact rows so it matches Top Stories' information density —
+   *  same story payload, same numbers, just rendered. */
+  showSplit?: boolean;
   className?: string;
 }) {
   const { t, formatCompact, timeAgo } = useTranslation();
   const compact = variant === "compact";
+  const split = showSplit ?? !compact;
 
   const d = story.distribution;
   const total = (d?.left ?? 0) + (d?.center ?? 0) + (d?.right ?? 0);
@@ -129,8 +135,8 @@ export function StoryListItem({
           )}
 
           {/* 4 — Coverage, then provenance. The bar renders in both variants (it is the product's
-              signature); the LABELLED split renders only in the summary variant — repeated on every
-              compact row it would turn signal into noise. */}
+              signature); the LABELLED split + publisher count render when `split` is on — always
+              in the summary variant, and on compact rows that opt in (the Latest run). */}
           {total > 0 && (
             <div className={compact ? "mt-2" : "mt-2.5"} aria-hidden>
               <SpectrumBar distribution={story.distribution} height={compact ? 4 : 5} showLegend={false} />
@@ -138,7 +144,7 @@ export function StoryListItem({
           )}
 
           <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-muted-foreground">
-            {!compact &&
+            {split &&
               total > 0 &&
               BUCKETS.map((bucket) => (
                 <span key={bucket} className="inline-flex items-center gap-1">
@@ -154,10 +160,10 @@ export function StoryListItem({
                 </span>
               ))}
 
-            {!compact && total > 0 && <span aria-hidden className="h-3 w-px bg-border" />}
+            {split && total > 0 && <span aria-hidden className="h-3 w-px bg-border" />}
 
             <span>{t("storyCard.sources", { n: formatCompact(story.totalCoverage) })}</span>
-            {!compact && publisherCount != null && (
+            {split && publisherCount != null && (
               <span>{t("stories.publishers", { n: formatCompact(publisherCount) })}</span>
             )}
 

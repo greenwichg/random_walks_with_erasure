@@ -166,11 +166,12 @@ export default function HomePage() {
                   href="/stories"
                   actionLabel={t("home.viewAll")}
                 />
-                {/* Compact on purpose: the closing run contrasts with the image-heavy sections
-                    above and lets a scanning reader cover more ground per screen. */}
+                {/* Compact type on purpose (the closing run contrasts with the image-heavy
+                    sections above), but FULL stats: the labelled L/C/R split + publisher count
+                    match Top Stories' information density — same payload, same numbers. */}
                 <ul className="divide-y">
                   {latest.map((story) => (
-                    <StoryListItem key={story.id} story={story} variant="compact" />
+                    <StoryListItem key={story.id} story={story} variant="compact" showSplit />
                   ))}
                 </ul>
               </section>
