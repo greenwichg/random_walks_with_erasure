@@ -878,6 +878,20 @@ class Store:
                 "fetchedAt": r.fetched_at.isoformat() if r.fetched_at else None,
                 "createdAt": r.created_at.isoformat() if r.created_at else None}
 
+    def feed_article_country_facets(self) -> list:
+        """Per-country catalog facts (Location Intelligence 1.5): article count + distinct
+        publishers for every located article, most-covered first. Rows with no resolved country
+        are simply absent — the caller decides how to present the unlocated remainder."""
+        with self.session() as s:
+            rows = s.execute(
+                select(FeedArticle.country, func.count(),
+                       func.count(func.distinct(FeedArticle.publisher)))
+                .where(FeedArticle.country.is_not(None))
+                .group_by(FeedArticle.country)).all()
+        out = [{"country": c, "articles": int(n), "publishers": int(p)} for c, n, p in rows]
+        out.sort(key=lambda r: (-r["articles"], r["country"]))
+        return out
+
     def feed_article_locations(self, canonical_urls) -> dict:
         """Location + publisher for a set of catalog articles, keyed by canonical URL — the batched
         join Geographic Diversity readiness uses to locate a reader's stored reads. Same batching

@@ -3,7 +3,9 @@
 import * as React from "react";
 import { useSearchParams } from "next/navigation";
 import { Search as SearchIcon } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import { useSearch, useDiscover } from "@/hooks/use-data";
+import { services, queryKeys } from "@/services";
 import { useTranslation } from "@/lib/i18n";
 import type { SearchParams } from "@/types/domain";
 import { PageContainer } from "@/components/layout/page-container";
@@ -34,20 +36,31 @@ function SearchInner() {
   const [topic, setTopic] = React.useState("all");
   const [publisher, setPublisher] = React.useState("all");
   const [lean, setLean] = React.useState("all");
+  const [country, setCountry] = React.useState("all");
   const [sort, setSort] = React.useState("newest");
   const [offset, setOffset] = React.useState(0);
 
   // Any new query or filter resets to the first page.
   React.useEffect(() => {
     setOffset(0);
-  }, [q, topic, publisher, lean, sort]);
+  }, [q, topic, publisher, lean, country, sort]);
 
   const facets = useDiscover({}); // whole-catalog facet values for the filter dropdowns
+  // Located-catalog countries — the filter only ever offers a country with data behind it.
+  const countries = useQuery({ queryKey: queryKeys.placeCountries, queryFn: services.placeCountries });
+  const countryOptions = React.useMemo(
+    () =>
+      (countries.data ?? [])
+        .filter((c) => c.articles > 0)
+        .map((c) => ({ value: c.country, label: c.country })),
+    [countries.data],
+  );
   const { data, isLoading, isError, refetch, isFetching } = useSearch({
     query: q.trim() || undefined,
     topic: asFilter(topic),
     publisher: asFilter(publisher),
     lean: asFilter(lean),
+    country: asFilter(country),
     sort: sort as SearchParams["sort"],
     limit: PAGE,
     offset,
@@ -84,6 +97,9 @@ function SearchInner() {
           onChange={setPublisher}
         />
         <FilterSelect label={t("filter.lean")} value={lean} options={LEAN_OPTIONS} onChange={setLean} />
+        {countryOptions.length > 0 && (
+          <FilterSelect label={t("filter.country")} value={country} options={countryOptions} onChange={setCountry} />
+        )}
         <FilterSelect label={t("filter.sort")} value={sort} options={SORT_OPTIONS} onChange={setSort} resettable={false} />
         {total > 0 && (
           <span className="ml-auto text-sm text-muted-foreground">

@@ -768,7 +768,24 @@ export interface PlacePublisher {
   scope?: "international" | "national" | "regional" | "local" | "hyperlocal";
 }
 
-/** A followed place (Location Intelligence Phase 1 — contract prepared; no UI yet). */
+/** One country's catalog + registry facts (`GET /api/places/countries`). */
+export interface CountryFacet {
+  country: string;
+  articles: number;
+  publishers: number;
+  registryPublishers: number;
+}
+
+/** Counted geographic facts about the reader's stored reads (`GET /api/me/geography`). */
+export interface ReaderGeography {
+  reads: number;
+  located: number;
+  countries: Record<string, number>;
+  languages: Record<string, number>;
+  scope: Record<string, number>;
+}
+
+/** A followed place (Location Intelligence Phase 1). */
 export interface FollowedLocation {
   placeId: string;
   level: "country" | "region" | "city";
@@ -788,7 +805,7 @@ export interface Settings {
     streakReminders: boolean;
     blindSpotAlerts: boolean;
   };
-  /** Location Intelligence Phase 1 — present in the engine contract; not yet surfaced in the UI. */
+  /** Location Intelligence Phase 1.5 — edition + followed places (Settings > Places). */
   edition?: string | null;
   locations?: FollowedLocation[];
   // NOTE: the engine's settings contract still carries a `privacy` group

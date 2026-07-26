@@ -1119,6 +1119,26 @@ class OutletModel(BaseModel):
     articles: int
 
 
+class CountryFacetModel(BaseModel):
+    """One country's catalog + registry facts (Countries experience). ``articles``/``publishers``
+    are counted from located catalog rows; ``registryPublishers`` from the curated registry — a
+    registry country with no located articles yet still appears (zero counts, never hidden)."""
+    country: str
+    articles: int
+    publishers: int
+    registryPublishers: int
+
+
+class ReaderGeographyModel(BaseModel):
+    """Counted geographic facts about the signed-in reader's stored reads (Geographic Diversity
+    readiness). Facts only — no 0-100 score; ``unknown`` buckets are explicit."""
+    reads: int
+    located: int
+    countries: dict[str, int]
+    languages: dict[str, int]
+    scope: dict[str, int]
+
+
 class PlacePublisherModel(BaseModel):
     """One publisher from the locality registry (Local News v1). Locality fields are curated
     facts; anything unknown is omitted (`response_model_exclude_none`), never guessed."""
@@ -1994,6 +2014,38 @@ def dashboard(request: Request,
          summary="Publishers available for onboarding selection", responses=_ERR_RESPONSES)
 def outlets() -> list:
     return _require_backend().outlets()
+
+
+@app.get("/api/places/countries", response_model=list[CountryFacetModel], tags=["meta"],
+         summary="Countries with located coverage and/or rated publishers", responses=_ERR_RESPONSES)
+def place_countries() -> list:
+    """The Countries experience's backing list: the union of countries seen in the located catalog
+    and countries in the publisher registry, with counted facts for each. Registry-only countries
+    carry zero article counts (honest zero, not omission)."""
+    facets = {r["country"]: r for r in _require_store().feed_article_country_facets()}
+    reg_counts: dict = {}
+    for o in outlet_registry.default_registry().outlets():
+        if o.country:
+            reg_counts[o.country] = reg_counts.get(o.country, 0) + 1
+    out = []
+    for c in sorted(set(facets) | set(reg_counts)):
+        f = facets.get(c, {})
+        out.append({"country": c, "articles": int(f.get("articles", 0)),
+                    "publishers": int(f.get("publishers", 0)),
+                    "registryPublishers": reg_counts.get(c, 0)})
+    out.sort(key=lambda r: (-r["articles"], -r["registryPublishers"], r["country"]))
+    return out
+
+
+@app.get("/api/me/geography", response_model=ReaderGeographyModel, tags=["report"],
+         summary="The signed-in reader's geographic reading facts (counted, not scored)",
+         responses=_ERR_RESPONSES)
+def my_geography(request: Request) -> dict:
+    """Geographic Diversity readiness surfaced: countries and languages read plus local-vs-
+    national exposure, all COUNTED from the reader's stored reads joined to the located catalog
+    (location.reader_geography). Explicit unknown buckets; no score is derived here."""
+    uid = _require_real_user(request)
+    return location.reader_geography(_require_store(), uid)
 
 
 @app.get("/api/places/publishers", response_model=list[PlacePublisherModel],

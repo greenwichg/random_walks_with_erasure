@@ -11,8 +11,10 @@ import type {
   FeedbackAction,
   HealthReport,
   HistoryEntry,
+  CountryFacet,
   NotificationItem,
   PlacePublisher,
+  ReaderGeography,
   Profile,
   Recommendation,
   RecommendationExplain,
@@ -135,6 +137,10 @@ export const services = {
       }
     return getJson<PlacePublisher[]>("/places/publishers", Object.keys(clean).length ? clean : undefined);
   },
+  // Countries experience: located-catalog + registry facts per country.
+  placeCountries: () => getJson<CountryFacet[]>("/places/countries"),
+  // Geographic Diversity readiness: the reader's counted geography (auth'd).
+  geography: () => getJson<ReaderGeography>("/me/geography"),
 };
 
 /** React Query cache keys, colocated so invalidation stays consistent. */
@@ -185,6 +191,8 @@ export const queryKeys = {
   // Distinct top-level key (NOT under ["recommendations"]) so a slider-save invalidation of the feed
   // never churns the persisted-feedback cache the page reads to keep ignored cards dismissed.
   recommendationFeedback: ["recommendation-feedback"] as const,
+  placeCountries: ["place-countries"] as const,
+  geography: ["geography"] as const,
   placePublishers: (filters?: { country?: string; region?: string; city?: string; scope?: string }) =>
     [
       "place-publishers",

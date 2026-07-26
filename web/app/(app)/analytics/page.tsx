@@ -3,6 +3,9 @@
 import { useAnalytics } from "@/hooks/use-data";
 import { useTranslation } from "@/lib/i18n";
 import { PageContainer } from "@/components/layout/page-container";
+import { useQuery } from "@tanstack/react-query";
+import { services, queryKeys } from "@/services";
+import { BarList } from "@/components/shared/bar-list";
 import { SectionCard } from "@/components/shared/section-card";
 import { TrendChart } from "@/components/shared/trend-chart";
 import { StackedBar } from "@/components/shared/stacked-bar";
@@ -14,6 +17,8 @@ import { EMOTION_META } from "@/lib/metrics";
 
 export default function AnalyticsPage() {
   const { data, isLoading, isError, refetch } = useAnalytics();
+  // Counted geographic facts (auth'd) — Geographic Diversity's inputs, not a score.
+  const geography = useQuery({ queryKey: queryKeys.geography, queryFn: services.geography });
   const { t } = useTranslation();
 
   return (
@@ -110,6 +115,48 @@ export default function AnalyticsPage() {
               showLegend
             />
           </SectionCard>
+
+          {/* Location Intelligence 1.5 — counted geographic facts about the reader's reads (no
+              0–100 score: Geographic Diversity is a future metric; these are its honest inputs).
+              Renders only once at least one read is located, so a legacy catalog shows nothing
+              rather than an empty chart. */}
+          {geography.data && geography.data.located > 0 && (
+            <SectionCard title={t("analytics.geo.title")} info={t("analytics.geo.info")} className="lg:col-span-2">
+              <div className="grid gap-6 sm:grid-cols-3">
+                <div>
+                  <p className="mb-2 text-xs font-semibold text-muted-foreground">{t("analytics.geo.countries")}</p>
+                  <BarList
+                    items={Object.entries(geography.data.countries)
+                      .sort((a, b) => b[1] - a[1])
+                      .slice(0, 6)
+                      .map(([label, n]) => ({ label, value: n / geography.data!.located, count: n }))}
+                  />
+                </div>
+                <div>
+                  <p className="mb-2 text-xs font-semibold text-muted-foreground">{t("analytics.geo.languages")}</p>
+                  <BarList
+                    items={Object.entries(geography.data.languages)
+                      .sort((a, b) => b[1] - a[1])
+                      .slice(0, 6)
+                      .map(([label, n]) => ({ label, value: n / geography.data!.located, count: n }))}
+                  />
+                </div>
+                <div>
+                  <p className="mb-2 text-xs font-semibold text-muted-foreground">{t("analytics.geo.scope")}</p>
+                  <BarList
+                    items={Object.entries(geography.data.scope)
+                      .filter(([, n]) => n > 0)
+                      .sort((a, b) => b[1] - a[1])
+                      .map(([key, n]) => ({
+                        label: key === "unknown" ? t("lean.unknown") : t(`local.scope.${key}`),
+                        value: n / geography.data!.reads,
+                        count: n,
+                      }))}
+                  />
+                </div>
+              </div>
+            </SectionCard>
+          )}
           </div>
         </div>
       )}

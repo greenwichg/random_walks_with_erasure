@@ -636,7 +636,9 @@ def test_settings_persist_and_merge(client):
                       json={"provider": "google", "providerAccountId": "route-set"}).json()["userId"]
     hdr = {"X-IH-User-Id": str(uid)}
     full_keys = {"theme", "language", "politicalOpenness", "recommendationStrength",
-                 "readingGoalMinutes", "weeklyReport", "monthlyReport", "notifications"}
+                 "readingGoalMinutes", "weeklyReport", "monthlyReport", "notifications",
+                 # Location Intelligence 1.5 — edition + followed places joined the contract.
+                 "edition", "locations"}
 
     d = client.get("/api/me/settings", headers=hdr).json()
     # S1.2: `privacy` is gone from the contract — the response carries exactly the surviving keys.

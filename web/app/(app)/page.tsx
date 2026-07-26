@@ -15,6 +15,7 @@ import { StoryFeatureCard } from "@/components/home/story-feature-card";
 import { CategorySection } from "@/components/home/category-section";
 import { RecommendationPanel } from "@/components/home/recommendation-panel";
 import { InformationHealthPanel } from "@/components/home/information-health-panel";
+import { LocalPulse } from "@/components/home/local-pulse";
 import { PublisherSpotlight } from "@/components/home/publisher-spotlight";
 import { HomeSkeleton } from "@/components/home/home-skeleton";
 import { BlindspotModule } from "@/components/home/blindspot-module";
@@ -113,6 +114,7 @@ export default function HomePage() {
                day's shape, then browsable indexes. Every module reads from data already fetched. */
             <>
               {recommendations.data && <RecommendationPanel recs={recommendations.data} />}
+              <LocalPulse />
               {dashboard.data && <InformationHealthPanel data={dashboard.data} />}
               <CoverageSnapshot mix={mix} events={visible.length} />
               <PublisherSpotlight publishers={publishers} />

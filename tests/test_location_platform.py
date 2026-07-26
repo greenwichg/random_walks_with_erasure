@@ -161,3 +161,26 @@ def test_reader_geography_counts_countries_and_scope(st):
     assert geo["countries"] == {"GB": 1, "US": 1}
     assert geo["scope"]["international"] == 1 and geo["scope"]["national"] == 1
     assert geo["scope"]["unknown"] == 1
+
+
+# --------------------------------------------------------------------------- #
+# Phase 1.5 — Countries facts + endpoint merge logic.
+# --------------------------------------------------------------------------- #
+def test_feed_article_country_facets(st):
+    _upsert(st, "https://x.test/gb1", country="GB", publisher="BBC")
+    _upsert(st, "https://x.test/gb2", country="GB", publisher="The Guardian")
+    _upsert(st, "https://x.test/us1", country="US", publisher="Fox News")
+    _upsert(st, "https://x.test/none")                                # unlocated -> absent
+    facets = st.feed_article_country_facets()
+    assert facets[0] == {"country": "GB", "articles": 2, "publishers": 2}
+    assert {f["country"] for f in facets} == {"GB", "US"}
+
+
+def test_place_countries_unions_registry_and_catalog(st, monkeypatch):
+    import api_fastapi
+    _upsert(st, "https://x.test/fr", country="FR", publisher="Le Monde")   # catalog-only country
+    monkeypatch.setattr(api_fastapi, "_require_store", lambda: st)
+    rows = {r["country"]: r for r in api_fastapi.place_countries()}
+    assert rows["FR"]["articles"] == 1 and rows["FR"]["registryPublishers"] == 0
+    # Registry-only countries appear with honest zero article counts (GB has rated publishers).
+    assert rows["GB"]["registryPublishers"] >= 3 and rows["GB"]["articles"] == 0

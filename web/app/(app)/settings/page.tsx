@@ -20,7 +20,9 @@ import {
   AlertCircle,
 } from "lucide-react";
 import type { Settings } from "@/types/domain";
+import { useQuery } from "@tanstack/react-query";
 import { useSettings, useUpdateSettings } from "@/hooks/use-data";
+import { services, queryKeys } from "@/services";
 import { diffSettings, hasChanges } from "@/lib/settings-diff";
 import { useTranslation } from "@/lib/i18n";
 import { PageContainer } from "@/components/layout/page-container";
@@ -70,6 +72,9 @@ export default function SettingsPage() {
   // counts as "dirty" (no phantom "unsaved") nor gets reverted by the minimal patch.
   const [base, setBase] = React.useState<Settings | null>(null);
   const [draft, setDraft] = React.useState<Settings | null>(null);
+  // Places the platform actually knows (located catalog ∪ registry) — the pickers below never
+  // offer a place with nothing behind it.
+  const countries = useQuery({ queryKey: queryKeys.placeCountries, queryFn: services.placeCountries });
   const [saved, setSaved] = React.useState(false);
 
   // The minimal PATCH the Save button would send: only the fields the reader changed vs their base,
@@ -239,6 +244,82 @@ export default function SettingsPage() {
                 step={5}
                 valueLabel={t("settings.perDay", { n: draft.readingGoalMinutes })}
               />
+            </div>
+          </SectionCard>
+
+          {/* Places (Location Intelligence 1.5) — edition + followed countries. GPS/travel are
+              deliberately absent (future phases). */}
+          <SectionCard title={t("settings.places")} info={t("settings.placesInfo")}>
+            <div className="space-y-6">
+              <div>
+                <p className="mb-1 text-sm font-medium">{t("settings.edition")}</p>
+                <p className="mb-2 text-xs text-muted-foreground">{t("settings.editionDesc")}</p>
+                <div className="flex flex-wrap gap-1.5">
+                  <button
+                    type="button"
+                    aria-pressed={(draft.edition ?? null) == null}
+                    onClick={() => set("edition", null)}
+                    className={cn(
+                      "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                      (draft.edition ?? null) == null
+                        ? "border-primary/40 bg-primary/10 text-primary"
+                        : "text-muted-foreground hover:bg-accent",
+                    )}
+                  >
+                    {t("settings.editionGlobal")}
+                  </button>
+                  {(countries.data ?? []).slice(0, 12).map((c) => (
+                    <button
+                      key={c.country}
+                      type="button"
+                      aria-pressed={draft.edition === c.country}
+                      onClick={() => set("edition", draft.edition === c.country ? null : c.country)}
+                      className={cn(
+                        "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                        draft.edition === c.country
+                          ? "border-primary/40 bg-primary/10 text-primary"
+                          : "text-muted-foreground hover:bg-accent",
+                      )}
+                    >
+                      {c.country}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <p className="mb-1 text-sm font-medium">{t("settings.followedPlaces")}</p>
+                <p className="mb-2 text-xs text-muted-foreground">{t("settings.followedPlacesDesc")}</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {(countries.data ?? []).slice(0, 12).map((c) => {
+                    const list = draft.locations ?? [];
+                    const on = list.some((l) => l.placeId === c.country && l.level === "country");
+                    return (
+                      <button
+                        key={c.country}
+                        type="button"
+                        aria-pressed={on}
+                        onClick={() =>
+                          set(
+                            "locations",
+                            on
+                              ? list.filter((l) => !(l.placeId === c.country && l.level === "country"))
+                              : [...list, { placeId: c.country, level: "country" as const }],
+                          )
+                        }
+                        className={cn(
+                          "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                          on
+                            ? "border-primary/40 bg-primary/10 text-primary"
+                            : "text-muted-foreground hover:bg-accent",
+                        )}
+                      >
+                        {c.country}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
           </SectionCard>
 

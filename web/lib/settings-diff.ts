@@ -37,6 +37,10 @@ export function diffSettings(base: Settings, draft: Settings): Partial<Settings>
     if (isPlainObject(b) && isPlainObject(d)) {
       const sub = diffGroup(b, d);
       if (Object.keys(sub).length > 0) out[key as string] = sub;
+    } else if (Array.isArray(b) || Array.isArray(d)) {
+      // Arrays (e.g. `locations`) diff by VALUE: a draft that rebuilds an identical array is not
+      // a change, and a changed array ships whole (the engine replaces, not merges, lists).
+      if (JSON.stringify(b ?? null) !== JSON.stringify(d ?? null)) out[key as string] = d;
     } else if (!Object.is(b, d)) {
       out[key as string] = d;
     }

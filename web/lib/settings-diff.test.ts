@@ -82,3 +82,11 @@ test("deterministic: identical inputs → deep-equal output", () => {
   const draft = { ...base(), monthlyReport: true };
   assert.deepEqual(diffSettings(base(), draft), diffSettings(base(), draft));
 });
+
+test("arrays diff by value: identical rebuilt array is no change; a changed array ships whole", () => {
+  const withUs = { ...base(), locations: [{ placeId: "US", level: "country" }] } as never;
+  const same = { ...base(), locations: [{ placeId: "US", level: "country" }] } as never;
+  const changed = { ...base(), locations: [{ placeId: "GB", level: "country" }] } as never;
+  assert.deepEqual(diffSettings(withUs, same), {});
+  assert.deepEqual(diffSettings(withUs, changed), { locations: [{ placeId: "GB", level: "country" }] });
+});
