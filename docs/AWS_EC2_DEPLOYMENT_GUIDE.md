@@ -453,10 +453,22 @@ appear in `unknown_outlets` stats and the `outlet_coverage.py` worklist — cura
 | Google News RSS | `GOOGLENEWS` | keyless | 900 s | — (no key, no budget) | `googlenews://rss` |
 
 Enablement is uniform — in `deploy/.env` set `RWE_<P>_ENABLED=1` (+ `RWE_<P>_API_KEY=<key>` for
-the keyed five), then `deploy/ops/restart.sh`. The §6b verification probe works for every
-provider: substitute the provider's name in the `"newsapi" in` filter (e.g. `"guardian"`).
-Validator rules `guardian-key` / `newsdata-key` / `gnews-key` / `mediastack-key` /
-`currents-key` enforce flag⇒key at deploy time.
+the keyed five), then `deploy/ops/restart.sh api` (it uses `up -d`, which re-reads `.env` —
+plain `docker compose restart` would NOT). Verify everything in one shot:
+
+```bash
+deploy/ops/verify-sources.sh    # per-provider checklist: .env intent, container drift,
+                                # adapter enabled/config-warning, fetch health, VERDICT
+```
+
+It prints one verdict per provider — `HEALTHY` (with lastSuccess/imported counts),
+`ENABLED — awaiting first cycle`, `FAILING` (with the error), `KEY MISSING`,
+`RESTART NEEDED` (deploy/.env edited after the container started), or `DISABLED` — plus
+ready-to-paste `.env` lines for anything missing. Exit 1 = actionable, 2 = stack down. Key
+VALUES never appear in its output (presence + length only). The §6b probe remains useful for
+raw health rows: substitute the provider's name in the `"newsapi" in` filter. Validator rules
+`guardian-key` / `newsdata-key` / `gnews-key` / `mediastack-key` / `currents-key` enforce
+flag⇒key at deploy time.
 
 Provider-specific notes (the honest edges, documented rather than papered over):
 
