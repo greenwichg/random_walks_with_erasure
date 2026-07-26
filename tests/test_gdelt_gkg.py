@@ -88,6 +88,47 @@ def test_parse_gkg_csv_skips_non_web_and_malformed_rows():
     assert parsed[0][1][0]["country"] == "FR"
 
 
+def test_window_urls_walks_back_fifteen_minute_files():
+    latest = "http://data.gdeltproject.org/gdeltv2/20260726001500.gkg.csv.zip"
+    urls = gdelt_gkg.window_urls(latest, 3)
+    assert urls == [
+        "http://data.gdeltproject.org/gdeltv2/20260726001500.gkg.csv.zip",
+        "http://data.gdeltproject.org/gdeltv2/20260726000000.gkg.csv.zip",
+        "http://data.gdeltproject.org/gdeltv2/20260725234500.gkg.csv.zip",  # crosses the day line
+    ]
+    assert gdelt_gkg.window_urls(latest, 1) == [latest]
+    assert gdelt_gkg.window_urls("http://x/odd-name.zip", 5) == ["http://x/odd-name.zip"]
+
+
+def test_enrich_lookback_covers_earlier_windows_and_survives_gaps():
+    """The reason the lookback exists: catalog articles were processed by GDELT in EARLIER
+    windows, so the latest file alone would ~never match. Older windows contribute their
+    records, the newest window wins a duplicate URL, and a missing window (GDELT gap) is
+    counted, not fatal."""
+    st = store_mod.Store("sqlite://")
+    _upsert(st, "https://old.example/story")
+    _upsert(st, "https://dup.example/story")
+    base = "http://data.gdeltproject.org/gdeltv2/"
+    latest, older = f"{base}20260726001500.gkg.csv.zip", f"{base}20260726000000.gkg.csv.zip"
+    payloads = {
+        gdelt_gkg.LASTUPDATE_URL: f"1 a {latest}".encode(),
+        # newest window: only the duplicate URL, located FR
+        latest: _zip_bytes(_row("https://dup.example/story", "1#France#FR##48#2#FR")),
+        # older window: the catalog article + the duplicate URL with a DIFFERENT country
+        older: _zip_bytes("\n".join([
+            _row("https://old.example/story", "1#Japan#JA##36#138#JA"),
+            _row("https://dup.example/story", "1#Germany#GM##51#9#GM"),
+        ])),
+        # the third window is absent → KeyError → counted as a gap, cycle continues
+    }
+    stats = gdelt_gkg.enrich_from_latest(st, fetch_bytes=lambda u: payloads[u], windows=3)
+    assert stats == {"windows": 2, "windowErrors": 1, "records": 3, "matched": 2, "located": 2}
+    assert st.event_countries_for_urls(["https://old.example/story"]) == {
+        "https://old.example/story": ["JP"]}                         # earlier window matched
+    assert st.event_countries_for_urls(["https://dup.example/story"]) == {
+        "https://dup.example/story": ["FR"]}                         # newest window won the dup
+
+
 def test_enrich_from_latest_matches_catalog_and_persists(monkeypatch):
     st = store_mod.Store("sqlite://")
     _upsert(st, "https://known.example/story")                       # in catalog (https canonical)
@@ -103,14 +144,14 @@ def test_enrich_from_latest_matches_catalog_and_persists(monkeypatch):
     gkg_url = "http://data.gdeltproject.org/gdeltv2/20260726120000.gkg.csv.zip"
     payloads = {gdelt_gkg.LASTUPDATE_URL: f"1 a {gkg_url}".encode(),
                 gkg_url: _zip_bytes(csv_text)}
-    stats = gdelt_gkg.enrich_from_latest(st, fetch_bytes=lambda u: payloads[u])
-    assert stats == {"records": 3, "matched": 2, "located": 2}
+    stats = gdelt_gkg.enrich_from_latest(st, fetch_bytes=lambda u: payloads[u], windows=1)
+    assert stats == {"windows": 1, "windowErrors": 0, "records": 3, "matched": 2, "located": 2}
     assert st.event_countries_for_urls(["https://known.example/story"]) == {
         "https://known.example/story": ["JP"]}                       # FIPS JA → ISO JP, by name
     assert st.event_countries_for_urls(["http://schemeflip.example/a"]) == {
         "http://schemeflip.example/a": ["DE"]}
     # Re-running the same cycle is harmless (per-source replace, same result).
-    assert gdelt_gkg.enrich_from_latest(st, fetch_bytes=lambda u: payloads[u])["located"] == 2
+    assert gdelt_gkg.enrich_from_latest(st, fetch_bytes=lambda u: payloads[u], windows=1)["located"] == 2
 
 
 def test_enrich_honours_size_cap_and_empty_manifest():
@@ -119,8 +160,8 @@ def test_enrich_honours_size_cap_and_empty_manifest():
     assert stats["located"] == 0 and "no gkg" in stats["skipped"]
     gkg_url = "http://data.gdeltproject.org/gdeltv2/x.gkg.csv.zip"
     payloads = {gdelt_gkg.LASTUPDATE_URL: f"1 a {gkg_url}".encode(), gkg_url: b"x" * 100}
-    stats = gdelt_gkg.enrich_from_latest(st, fetch_bytes=lambda u: payloads[u], max_bytes=10)
-    assert stats["located"] == 0 and "exceeds cap" in stats["skipped"]
+    stats = gdelt_gkg.enrich_from_latest(st, fetch_bytes=lambda u: payloads[u], max_bytes=10, windows=1)
+    assert stats == {"windows": 0, "windowErrors": 1, "records": 0, "matched": 0, "located": 0}
 
 
 def test_enricher_adapter_contract(monkeypatch):

@@ -29,9 +29,11 @@ from __future__ import annotations
 
 import io
 import os
+import re
 import sys
 import zipfile
 from collections import Counter
+from datetime import datetime, timedelta
 from typing import Callable, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -127,33 +129,61 @@ def _candidates(url: str) -> list:
     return [canon]
 
 
+def window_urls(latest_url: str, windows: int) -> list:
+    """The GKG file URLs for the latest window plus the ``windows - 1`` before it (GDELT
+    publishes one file per 15 minutes with the timestamp in the name), newest first. The
+    lookback exists because articles enter OUR catalog minutes-to-hours after GDELT processed
+    them into a (then-current) GKG file — the latest file alone would almost never overlap the
+    catalog, and ``matched`` would sit near zero forever."""
+    m = re.search(r"(\d{14})\.gkg\.csv\.zip$", latest_url)
+    if not m:
+        return [latest_url]
+    stamp = datetime.strptime(m.group(1), "%Y%m%d%H%M%S")
+    prefix = latest_url[: m.start(1)]
+    return [f"{prefix}{(stamp - timedelta(minutes=15 * k)).strftime('%Y%m%d%H%M%S')}.gkg.csv.zip"
+            for k in range(max(1, windows))]
+
+
 def enrich_from_latest(store_, *, fetch_bytes: Callable[[str], bytes],
-                       max_bytes: Optional[int] = None) -> dict:
-    """One enrichment cycle: latest GKG file -> parse -> match against the catalog -> persist.
+                       max_bytes: Optional[int] = None, windows: Optional[int] = None) -> dict:
+    """One enrichment cycle: the last N GKG windows -> parse -> match the catalog -> persist.
 
-    Returns counted facts for health: ``records`` parsed (with a dominant country), ``matched``
-    catalog articles, ``located`` articles written this cycle. Never creates articles; writes go
-    through ``replace_article_event_locations`` (per-source idempotent, so re-running a cycle is
-    harmless and other providers' rows are never touched)."""
-    gkg_url = parse_lastupdate(fetch_bytes(LASTUPDATE_URL).decode("utf-8", errors="replace"))
-    if not gkg_url:
-        return {"records": 0, "matched": 0, "located": 0, "skipped": "no gkg file in manifest"}
-    blob = fetch_bytes(gkg_url)
+    Returns counted facts for health: ``windows`` processed (+ ``windowErrors`` skipped —
+    GDELT occasionally has gaps, and one missing file must not fail the cycle), ``records``
+    parsed with a dominant country, ``matched`` catalog articles, ``located`` articles written.
+    Never creates articles; writes go through ``replace_article_event_locations`` (per-source
+    idempotent, so overlapping lookbacks between cycles are harmless). The newest window wins
+    when the same URL appears in several. First-enable backfill: run one cycle with
+    ``RWE_GDELT_GKG_WINDOWS=96`` (24 h) — see docs/AWS_EC2_DEPLOYMENT_GUIDE.md §6a."""
+    latest = parse_lastupdate(fetch_bytes(LASTUPDATE_URL).decode("utf-8", errors="replace"))
+    if not latest:
+        return {"windows": 0, "windowErrors": 0, "records": 0, "matched": 0, "located": 0,
+                "skipped": "no gkg file in manifest"}
     limit = max_bytes if max_bytes is not None else _max_bytes()
-    if len(blob) > limit:
-        return {"records": 0, "matched": 0, "located": 0,
-                "skipped": f"gkg file {len(blob)}B exceeds cap {limit}B"}
-    with zipfile.ZipFile(io.BytesIO(blob)) as z:
-        name = z.namelist()[0]
-        # Stream-decode the member: peak memory stays at the compressed blob + one line, not the
-        # whole inflated file — this is what makes default-on safe on a small instance.
-        with z.open(name) as member:
-            records = parse_gkg_lines(io.TextIOWrapper(member, encoding="utf-8", errors="replace"))
-
     by_canonical: dict = {}
-    for url, places in records:
-        for cand in _candidates(url):
-            by_canonical.setdefault(cand, places)
+    processed = errors = records_total = 0
+    for gkg_url in window_urls(latest, windows if windows is not None else _windows()):
+        try:
+            blob = fetch_bytes(gkg_url)
+            if len(blob) > limit:
+                errors += 1
+                continue
+            with zipfile.ZipFile(io.BytesIO(blob)) as z:
+                name = z.namelist()[0]
+                # Stream-decode the member: peak memory stays at the compressed blob + one line,
+                # not the whole inflated file — what makes default-on safe on a small instance.
+                with z.open(name) as member:
+                    records = parse_gkg_lines(
+                        io.TextIOWrapper(member, encoding="utf-8", errors="replace"))
+        except Exception:                       # one missing/corrupt window never fails the cycle
+            errors += 1
+            continue
+        processed += 1
+        records_total += len(records)
+        for url, places in records:            # newest window first → setdefault keeps it
+            for cand in _candidates(url):
+                by_canonical.setdefault(cand, places)
+
     known = store_.existing_feed_urls(list(by_canonical))
     located = 0
     for canonical in sorted(known):
@@ -161,7 +191,18 @@ def enrich_from_latest(store_, *, fetch_bytes: Callable[[str], bytes],
         if events:
             store_.replace_article_event_locations(canonical, events)
             located += 1
-    return {"records": len(records), "matched": len(known), "located": located}
+    return {"windows": processed, "windowErrors": errors, "records": records_total,
+            "matched": len(known), "located": located}
+
+
+def _windows() -> int:
+    """Lookback depth per cycle (15-minute GKG windows). Default 4 = one hour: with the DOC
+    artlist polled every ≤30 minutes, every GDELT-ingested article's GKG window is covered by
+    the next enrichment cycle."""
+    try:
+        return max(1, int(os.environ.get("RWE_GDELT_GKG_WINDOWS", "") or 4))
+    except ValueError:
+        return 4
 
 
 def _max_bytes() -> int:

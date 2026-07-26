@@ -49,6 +49,10 @@ services:
       # it never creates articles, so RWE_RETENTION_* sizing is unaffected.
       RWE_GDELT_GKG: ${RWE_GDELT_GKG:-1}
       RWE_GDELT_GKG_INTERVAL: ${RWE_GDELT_GKG_INTERVAL:-900}
+      # Lookback per cycle (15-min GKG windows; default 4 = 1 h): catalog articles were processed
+      # by GDELT in EARLIER windows, so the latest file alone would almost never match. For the
+      # first enable, backfill once with RWE_GDELT_GKG_WINDOWS=96 (24 h) then remove the override.
+      RWE_GDELT_GKG_WINDOWS: ${RWE_GDELT_GKG_WINDOWS:-4}
       RWE_RETENTION_MAX_COUNT: ${RWE_RETENTION_MAX_COUNT:-0}
       # --- production hardening (fail-closed auth) --------------------------------
       # This compose file runs in dev mode by default (the engine trusts the local

@@ -365,13 +365,28 @@ docker compose … exec -T api curl -fsS http://127.0.0.1:8000/api/places/countr
 # and a selection shows stories HAPPENING there (publisher homes never match).
 ```
 
-Expected shape: `matched`/`located` > 0 within a few cycles **only for articles GDELT monitors**
-(GDELT-ingested articles match near-immediately; RSS articles match when GDELT also covers that
-outlet). Empty pickers after several cycles + `records > 0, matched == 0` means the catalog and
-GKG URLs aren't overlapping yet — expected on a very small or stale catalog, not a fault. An
-`errors` entry on the health row with everything else healthy = transient GDELT outage; the next
-cycle retries. Rollback: set `RWE_GDELT_GKG=0`, restart — pickers go empty (honest), nothing else
-changes, and already-persisted event rows remain valid.
+**First enable — backfill once.** Each cycle looks back `RWE_GDELT_GKG_WINDOWS` 15-minute
+windows (default 4 = 1 hour), which keeps steady-state cycles cheap but only covers recently
+ingested articles. The existing catalog was processed by GDELT hours-to-days ago, so on first
+enable run ONE deep cycle, then remove the override:
+
+```bash
+# temporary override for the first cycle (24 h of GKG windows), then revert:
+echo "RWE_GDELT_GKG_WINDOWS=96" >> deploy/.env
+docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.aws.yml up -d api
+# … wait one cycle (~15 min), confirm `located` > 0 via steps 1–3 above, then:
+sed -i '/RWE_GDELT_GKG_WINDOWS=96/d' deploy/.env
+docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.aws.yml up -d api
+```
+
+Expected shape: after the backfill cycle, `matched`/`located` > 0 **for articles GDELT
+monitors** (GDELT-ingested articles match within the lookback; RSS articles match when GDELT
+also covers that outlet) and the Stories Country dropdown appears; steady-state cycles then
+keep pace. `records > 0, matched == 0` AFTER a 96-window backfill means the catalog genuinely
+doesn't overlap GDELT's monitored set — expected on a tiny/stale catalog, not a fault.
+`windowErrors` > 0 with the rest healthy = transient GDELT gaps; the next cycle re-covers them
+(overlapping lookback). Rollback: set `RWE_GDELT_GKG=0`, restart — pickers go empty (honest),
+nothing else changes, and already-persisted event rows remain valid.
 
 ---
 
