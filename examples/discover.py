@@ -35,6 +35,16 @@ def _num(x, default: float = 0.0) -> float:
         return default
 
 
+def _num_or_none(x) -> "float | None":
+    """The nullable twin of ``_num`` — for values where "unknown" must SURVIVE serialization
+    (L2.2: lean) instead of collapsing into a fabricated default."""
+    try:
+        v = float(x)
+        return v if math.isfinite(v) else None
+    except (TypeError, ValueError):
+        return None
+
+
 def _absolute_url(u: "str | None") -> str:
     """Only a real, absolute publisher URL is ever emitted — never a relative/hostless value that a
     browser would resolve against the app's own origin (that was the Read-opens-the-app-origin bug)."""
@@ -63,7 +73,10 @@ def feed_article_to_article(row: dict) -> dict:
     """One ``FeedArticle`` row -> the canonical Article dict, carrying the **real** publisher URL and
     publication time. ``id`` == the canonical URL so the existing Read flow opens the article."""
     scored = row.get("scored") or {}
-    lean = _num(scored.get("lean"), 0.0)
+    # L2.2 — an outlet the registry doesn't know scores lean NaN (stored as JSON null). That means
+    # UNKNOWN and stays null through serialization: the web renders "Unknown", never a fabricated
+    # Center, and the SQL lean filter already matches no bucket for NULL — display and filter agree.
+    lean = _num_or_none(scored.get("lean"))
     outlet = row.get("publisher") or scored.get("outlet") or "Unknown"
     emo = _emotion(scored)
     topic = scored.get("category") or ""
@@ -78,7 +91,7 @@ def feed_article_to_article(row: dict) -> dict:
         "topic": engine._prettify(topic) if topic else "",
         "url": url,
         "lean": lean,
-        "leanBucket": engine._lean_bucket(lean),
+        "leanBucket": engine._lean_bucket(lean) if lean is not None else None,
         "confidence": _num(scored.get("selective"), 0.7),
         "emotion": emo,
         "dominantEmotion": max(emo, key=emo.get),

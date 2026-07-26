@@ -308,7 +308,8 @@ export interface Article {
   id: string;
   headline: string;
   publisher: string;
-  publisherLean: Lean;
+  /** House lean of the outlet — null/absent when the registry doesn't rate it (L2.2). */
+  publisherLean?: Lean | null;
   topic: string;
   url?: string;
   /** Article-level political classification — the flag behind the cross-cutting gate; omitted when unknown. */
@@ -316,12 +317,14 @@ export interface Article {
   imageUrl?: string;
   /** Short summary — populated for Discover/Stories (from the feed); omitted for recommendations. */
   description?: string;
-  /** Article political lean, and its bucket. `null` when the lean is unknown (an outlet the
-   *  registry doesn't know) — only ever null for reading-history reads (L2.2); the corpus /
-   *  recommendation / story path always fills both. Rendered as "Unknown", never Center, and
-   *  excluded from lean aggregations. */
-  lean: Lean | null;
-  leanBucket: LeanBucket | null;
+  /** Article political lean, and its bucket. Null/absent when the lean is unknown — an outlet the
+   *  registry doesn't rate (L2.2): reading-history reads carry an explicit null; feed-catalog
+   *  articles (Discover/Search/Stories coverage) omit the fields on the wire (`exclude_none`) —
+   *  the GDELT long tail is mostly unrated. Only the recommendation path (corpus outlets, all
+   *  rated) always fills both. Rendered as "Unknown", never Center, and excluded from lean
+   *  aggregations. */
+  lean?: Lean | null;
+  leanBucket?: LeanBucket | null;
   confidence: number; // 0–1
   emotion: EmotionShare;
   dominantEmotion: keyof EmotionShare;
@@ -500,8 +503,9 @@ export interface HistoryEntry {
 export interface StoryCoverage {
   publisher: string;
   headline: string;
-  lean: Lean;
-  leanBucket: LeanBucket;
+  /** Null/absent for an unrated outlet (L2.2) — the row shows "Unknown", never Center. */
+  lean?: Lean | null;
+  leanBucket?: LeanBucket | null;
   register: Register;
   emotion: EmotionShare;
   url?: string;

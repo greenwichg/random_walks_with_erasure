@@ -68,8 +68,8 @@ def _json_safe(obj):
     Scored reads carry ``NaN`` sentinels by design: ``confidence`` / ``register`` default to
     ``NaN`` when a read isn't enriched, and an outlet the registry doesn't know scores ``lean``
     as ``NaN`` (see ``ingest``/``augmented_corpus``). Those mean "unknown", and every consumer
-    already treats a missing value and ``NaN`` identically (``discover._num`` falls back to its
-    default; ``feed_source._bias_label`` drops the row on either). But ``json.dumps`` at its
+    already treats a missing value and ``NaN`` identically (``discover._num_or_none`` serialises
+    both as null lean — L2.2; ``feed_source._bias_label`` drops the row on either). But ``json.dumps`` at its
     default ``allow_nan=True`` emits the bare tokens ``NaN`` / ``Infinity`` / ``-Infinity``,
     which are not valid JSON and which SQLite's ``json_extract`` / ``json_valid`` reject as
     "malformed JSON". Mapping them to ``null`` keeps the stored document valid while preserving

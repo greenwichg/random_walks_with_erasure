@@ -812,7 +812,8 @@ class ArticleModel(BaseModel):
     id: str
     headline: str
     publisher: str
-    publisherLean: float
+    # Nullable like `lean` below (L2.2): a registry-unknown outlet has no house lean either.
+    publisherLean: Optional[float] = None
     topic: str
     # the canonical publisher URL — present only when verified (live feed source / a real read),
     # omitted otherwise (response_model_exclude_none); the frontend opens it for the Read flow.
@@ -822,10 +823,11 @@ class ArticleModel(BaseModel):
     political: Optional[bool] = None
     # short summary — populated for Discover/Stories (from the feed); omitted for recommendations.
     description: Optional[str] = None
-    # Nullable (L2.2): a real reader's stored read from an outlet the registry doesn't know has an
-    # unknown political lean — serialised null rather than a fabricated centre. The corpus /
-    # recommendation / story path always fills both (0.0/"center" default), so only reading-history
-    # articles ever carry null here; `response_model_exclude_none` omits the null fields on the wire.
+    # Nullable (L2.2): an outlet the registry doesn't know has an unknown political lean —
+    # serialised null rather than a fabricated centre. That covers reading-history reads AND the
+    # feed catalog (Discover/Search/Stories coverage — the GDELT long tail is mostly unrated); only
+    # the recommendation path (corpus outlets, all rated) always fills both.
+    # `response_model_exclude_none` omits the null fields on the wire.
     lean: Optional[float] = None
     leanBucket: Optional[str] = None
     confidence: float
@@ -920,8 +922,9 @@ class StoryCoverageModel(BaseModel):
     model_config = ConfigDict(populate_by_name=True)   # `register` alias, as ArticleModel
     publisher: str
     headline: str
-    lean: float
-    leanBucket: str
+    # Nullable (L2.2) like ArticleModel: an unrated outlet's coverage row carries null, not centre.
+    lean: Optional[float] = None
+    leanBucket: Optional[str] = None
     register_: str = Field(alias="register")
     emotion: EmotionShareModel
     url: Optional[str] = None

@@ -43,13 +43,16 @@ def _story_id(members: list) -> str:
 
 
 def _distribution(members: list) -> dict:
-    """L/C/R distribution over **distinct publishers** (one vote per outlet), normalised to sum 1."""
+    """L/C/R distribution over **distinct RATED publishers** (one vote per outlet), normalised to
+    sum 1. An unrated outlet (leanBucket null — L2.2) is real coverage but casts no vote: counting
+    it as centre would fabricate a lean nobody rated. All-unrated -> all-zero (blindspot: None)."""
     by_pub = {}
     for m in members:
         by_pub.setdefault(m["publisher"], m["leanBucket"])
     counts = {"left": 0, "center": 0, "right": 0}
     for bucket in by_pub.values():
-        counts[bucket] = counts.get(bucket, 0) + 1
+        if bucket in counts:
+            counts[bucket] += 1
     total = sum(counts.values()) or 1
     return {k: counts[k] / total for k in ("left", "center", "right")}
 

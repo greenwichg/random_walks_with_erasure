@@ -173,7 +173,9 @@ function EvidenceSections({
       </Section>
 
       <Section title={t("why.articleMeta")}>
-        <Row label={t("why.leaning")} value={t(`filter.${rec.article.leanBucket}`)} mono={false} />
+        {rec.article.leanBucket && (
+          <Row label={t("why.leaning")} value={t(`filter.${rec.article.leanBucket}`)} mono={false} />
+        )}
         {DEV_DETAIL && (
           <Row label="Classifier confidence" value={`${Math.round(rec.article.confidence * 100)}%`} />
         )}

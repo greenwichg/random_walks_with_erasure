@@ -65,6 +65,33 @@ def test_story_construction_fields_and_image_contract():
     assert s["id"].startswith("st_")
 
 
+def test_distribution_excludes_unrated_publishers():
+    """L2.2: an unrated outlet is real coverage but casts no distribution vote — never counted as
+    centre. Shares are over RATED publishers; the unrated coverage row carries null lean/bucket."""
+    st = store_mod.Store("sqlite://")
+    _add(st, "https://npr.org/a1", "NPR", -1.0, "Senate passes the funding bill after debate", days=1)
+    _add(st, "https://fox.com/a2", "Fox News", 1.5, "Senate passes funding bill averting shutdown", days=1)
+    _add(st, "https://obscure.example/a3", "Obscure Tribune", None,
+         "Senate passes funding bill to avert shutdown")
+    story = next(s for s in ss.cluster_from_store(st) if "Senate" in s["title"])
+    assert story["totalCoverage"] == 3 and story["publisherCount"] == 3   # coverage counts everyone
+    assert story["distribution"] == {"left": 0.5, "center": 0.0, "right": 0.5}
+    assert story["blindspotSide"] == "center"                             # gap among RATED votes
+    unrated = next(c for c in story["coverage"] if c["publisher"] == "Obscure Tribune")
+    assert unrated["lean"] is None and unrated["leanBucket"] is None
+
+
+def test_all_unrated_story_is_zero_distribution_no_blindspot():
+    """A story covered only by unrated outlets shows an honestly empty distribution (all zero) and
+    no blindspot — empty beats wrong, and nothing crashes on null buckets."""
+    st = store_mod.Store("sqlite://")
+    _add(st, "https://a.example/1", "Tribune A", None, "Dockworkers strike closes the main port", days=1)
+    _add(st, "https://b.example/2", "Tribune B", None, "Dockworkers strike closes main port operations")
+    story = ss.cluster_from_store(st)[0]
+    assert story["distribution"] == {"left": 0.0, "center": 0.0, "right": 0.0}
+    assert story["blindspotSide"] is None
+
+
 def test_timeline_and_span_ordering():
     st = store_mod.Store("sqlite://"); _senate_and_wildfire(st)
     senate = next(s for s in ss.cluster_from_store(st) if "Senate" in s["title"])

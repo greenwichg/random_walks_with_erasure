@@ -16,7 +16,7 @@ export function LeanBadge({
   bucket,
   className,
 }: {
-  lean: Lean | null;
+  lean?: Lean | null;
   bucket?: LeanBucket | null;
   className?: string;
 }) {
@@ -37,9 +37,10 @@ export function LeanBadge({
   );
 }
 
-/** Publisher with its own house-lean dot, and an optional logo (falls back to the icon). */
-export function PublisherBadge({ name, lean, logo }: { name: string; lean?: Lean; logo?: string }) {
-  const bucket = lean === undefined ? null : leanBucket(lean);
+/** Publisher with its own house-lean dot, and an optional logo (falls back to the icon).
+ *  No dot when the house lean is unknown (unrated outlet — L2.2): absence, never a guessed hue. */
+export function PublisherBadge({ name, lean, logo }: { name: string; lean?: Lean | null; logo?: string }) {
+  const bucket = lean == null ? null : leanBucket(lean);
   const color = bucket ? `hsl(var(--${bucket}))` : "hsl(var(--muted-foreground))";
   const [logoOk, setLogoOk] = React.useState(true);
   React.useEffect(() => setLogoOk(true), [logo]);

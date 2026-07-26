@@ -53,6 +53,31 @@ def test_serializer_shape_and_real_url():
             "publishedAt", "readingMinutes"} <= set(a)
 
 
+def test_serializer_unknown_lean_is_null_never_center():
+    """L2.2: a registry-unknown outlet's lean is UNKNOWN — serialised null (lean, bucket, and
+    publisherLean alike), never a fabricated Center. Missing key, null, and NaN all mean unknown
+    (the store's _json_safe writes NaN as JSON null; the serializer must treat all three alike)."""
+    base = {"canonicalUrl": "https://obscure.example/x", "url": "https://obscure.example/x",
+            "publisher": "Obscure Tribune", "title": "t", "publishedAt": "2026-07-05T10:00:00+00:00"}
+    for scored in ({}, {"lean": None}, {"lean": float("nan")}):
+        a = discover.feed_article_to_article({**base, "scored": scored})
+        assert a["lean"] is None and a["leanBucket"] is None and a["publisherLean"] is None
+    rated = discover.feed_article_to_article({**base, "scored": {"lean": 1.6}})
+    assert rated["leanBucket"] == "right" and rated["publisherLean"] == 1.6
+
+
+def test_unrated_matches_no_lean_bucket_but_stays_in_all():
+    """Fail-honest filter: an unrated article appears in the unfiltered feed but matches NO lean
+    bucket — display (Unknown) and the SQL lean filter agree (mirrors the country-filter semantics)."""
+    st = store.Store("sqlite://")
+    _add(st, "https://npr.org/r1", "NPR", -1.0, "Rated outlet headline")
+    _add(st, "https://obscure.example/u1", "Obscure Tribune", None, "Unrated outlet headline")
+    assert len(discover.list_discover(st, limit=50)["articles"]) == 2
+    for bucket in ("left", "center", "right"):
+        pubs = {a["publisher"] for a in discover.list_discover(st, lean=bucket)["articles"]}
+        assert "Obscure Tribune" not in pubs
+
+
 def test_serializer_never_emits_a_relative_url():
     """A relative/hostless value is never emitted — it would resolve against the app's own origin
     (the Read-opens-the-app bug). Only an absolute http(s) URL survives."""
