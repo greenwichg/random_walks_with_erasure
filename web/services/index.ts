@@ -16,6 +16,7 @@ import type {
   NotificationItem,
   ReaderGeography,
   Profile,
+  PublisherProfile,
   Recommendation,
   RecommendationExplain,
   RecommendationReception,
@@ -84,6 +85,7 @@ export const services = {
     return getJson<StoriesResponse>("/stories", Object.keys(clean).length ? clean : undefined);
   },
   story: (id: string) => getJson<Story>(`/stories/${id}`),
+  publisher: (name: string) => getJson<PublisherProfile>(`/publishers/${encodeURIComponent(name)}`),
   // Deterministic Story Intelligence (freshness / lifecycle / momentum / timeline / new-since-last-visit).
   storyIntelligence: (id: string) => getJson<StoryIntelligence>(`/stories/${id}/intelligence`),
   profile: () => getJson<Profile>("/profile"),
@@ -155,6 +157,7 @@ export const queryKeys = {
   // sorted keys, so caller property order is irrelevant.
   stories: (query?: StoryQuery) => ["stories", requestParams(query ?? {})] as const,
   story: (id: string) => ["story", id] as const,
+  publisher: (name: string) => ["publisher", name] as const,
   storyIntelligence: (id: string) => ["story-intelligence", id] as const,
   profile: ["profile"] as const,
   saved: ["saved"] as const,

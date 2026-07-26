@@ -121,6 +121,39 @@ export interface Outlet {
   articles: number;
 }
 
+/** One counted publisher fact: a label (topic / ISO country / ISO language) + article count. */
+export interface LabelCount {
+  label: string;
+  count: number;
+}
+
+/** Publisher Intelligence profile (GET /api/publishers/{name}) — curated registry facts +
+ *  counted catalog facts. `rated: false` means the registry doesn't rate the outlet: lean is
+ *  null/absent ("Not rated", never a fabricated Center — L2.2). Tone modules are omitted below
+ *  their signal floor; counted lists are always present (possibly empty). */
+export interface PublisherProfile {
+  name: string;
+  rated: boolean;
+  lean?: Lean | null;
+  leanBucket?: LeanBucket | null;
+  /** Curated registry locality — absent when the outlet isn't in the registry. */
+  registry?: { country?: string; region?: string; city?: string; scope?: string };
+  /** Majority article host as a URL — the publisher's own site, counted not curated. */
+  site?: string;
+  articles: { total: number; firstSeen?: string; lastSeen?: string; perDay?: number };
+  topics: LabelCount[];
+  languages: LabelCount[];
+  eventCountries: LabelCount[];
+  /** Reporting/opinion/mixed counts over the n articles carrying a register signal. */
+  registers?: { reporting: number; opinion: number; mixed: number; n: number };
+  /** Mean emotion shares over the n articles carrying a real emotion vector. */
+  emotion?: EmotionShare & { n: number };
+  recent: Article[];
+  publisherLogo?: string;
+  publisherLogoDark?: string;
+  publisherLogoSource?: string;
+}
+
 export interface BlindSpot {
   topic: string;
   /** How under-consumed vs the catalog, 0–1 (bigger = larger gap). */

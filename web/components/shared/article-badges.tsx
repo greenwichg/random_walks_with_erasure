@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { FileText, MessageSquareQuote, Gauge, Building2 } from "lucide-react";
 import type { Article, EmotionShare, Lean, LeanBucket, Register } from "@/types/domain";
 import { Badge } from "@/components/ui/badge";
@@ -38,7 +39,9 @@ export function LeanBadge({
 }
 
 /** Publisher with its own house-lean dot, and an optional logo (falls back to the icon).
- *  No dot when the house lean is unknown (unrated outlet — L2.2): absence, never a guessed hue. */
+ *  No dot when the house lean is unknown (unrated outlet — L2.2): absence, never a guessed hue.
+ *  The name links to the Publisher Intelligence profile — every publisher mention in the app is
+ *  a doorway to its counted profile, not a dead label. */
 export function PublisherBadge({ name, lean, logo }: { name: string; lean?: Lean | null; logo?: string }) {
   const bucket = lean == null ? null : leanBucket(lean);
   const color = bucket ? `hsl(var(--${bucket}))` : "hsl(var(--muted-foreground))";
@@ -60,7 +63,13 @@ export function PublisherBadge({ name, lean, logo }: { name: string; lean?: Lean
       ) : (
         <Building2 className="h-3.5 w-3.5" />
       )}
-      {name}
+      <Link
+        href={`/publishers/${encodeURIComponent(name)}`}
+        onClick={(e) => e.stopPropagation()}
+        className="transition-colors hover:text-foreground hover:underline"
+      >
+        {name}
+      </Link>
       {bucket && <span className="h-1.5 w-1.5 rounded-full" style={{ background: color }} />}
     </span>
   );

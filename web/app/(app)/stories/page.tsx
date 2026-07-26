@@ -6,17 +6,21 @@ import { Newspaper } from "lucide-react";
 import { StoryBrowser } from "@/components/stories/story-browser";
 import { useTranslation } from "@/lib/i18n";
 
-/** Reads the optional ?country= deep link (e.g. the home "From your places" rail), so a place
- *  arrives with its filter already applied. useSearchParams needs the Suspense boundary. */
+/** Reads the optional ?country= / ?publisher= deep links (the home "From your places" rail and
+ *  the publisher profile page), so the filter arrives already applied. useSearchParams needs the
+ *  Suspense boundary. */
 function StoriesInner() {
   const { t } = useTranslation();
-  const country = useSearchParams().get("country") ?? undefined;
+  const params = useSearchParams();
+  const country = params.get("country") ?? undefined;
+  const publisher = params.get("publisher") ?? undefined;
   return (
     <StoryBrowser
       title={t("stories.title")}
       icon={Newspaper}
       defaultSort="top"
       initialCountry={country}
+      initialPublisher={publisher}
       description={t("stories.subtitle")}
       emptyDescription="Stories cluster the live news catalog into events. Once enough articles across publishers cover the same event, they appear here."
     />

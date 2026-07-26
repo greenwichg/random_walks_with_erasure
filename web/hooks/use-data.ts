@@ -32,6 +32,14 @@ export const useStories = (query?: StoryQuery) =>
   useQuery({ queryKey: queryKeys.stories(query), queryFn: () => services.stories(query) });
 export const useStory = (id: string) =>
   useQuery({ queryKey: queryKeys.story(id), queryFn: () => services.story(id), enabled: !!id });
+/** Publisher Intelligence profile; a 404 (unknown publisher) is surfaced, not retried. */
+export const usePublisher = (name: string) =>
+  useQuery({
+    queryKey: queryKeys.publisher(name),
+    queryFn: () => services.publisher(name),
+    enabled: !!name,
+    retry: (count, error) => (error as { status?: number })?.status !== 404 && count < 3,
+  });
 /** Deterministic Story Intelligence for one event (freshness / lifecycle / momentum / timeline / alerts). */
 export const useStoryIntelligence = (id: string) =>
   useQuery({

@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import type { LeanBucket, Register, StoryCoverage } from "@/types/domain";
 import { SectionHeader } from "@/components/shared/section-header";
 import { LeanBadge, RegisterBadge } from "@/components/shared/article-badges";
@@ -116,7 +117,12 @@ export function CoverageList({ coverage }: { coverage: StoryCoverage[] }) {
               <div className="-mx-2 flex flex-col gap-3 rounded-md px-2 py-3 transition-colors hover:bg-accent/40 sm:flex-row sm:items-center">
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-                    <span className="font-medium text-foreground">{row.publisher}</span>
+                    <Link
+                      href={`/publishers/${encodeURIComponent(row.publisher)}`}
+                      className="font-medium text-foreground hover:text-primary hover:underline"
+                    >
+                      {row.publisher}
+                    </Link>
                     <LeanBadge lean={row.lean} bucket={row.leanBucket} />
                     {row.register && <RegisterBadge register={row.register} />}
                     {row.publishedAt && <span>{timeAgo(row.publishedAt)}</span>}

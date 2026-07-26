@@ -102,6 +102,10 @@ codes — its adapter needs zero resolver work.)
 - **Registry publisher locality (`/api/places/publishers`):** remains a platform surface with no
   current web consumer — the dedicated browse UI retired with the Countries page; the future
   personalized Local experience reintroduces it.
+- **Publisher Intelligence (`/api/publishers/{name}` + `/publishers/[name]`):** the per-publisher
+  profile composes the registry's curated locality (home country, scope) with counted catalog
+  facts — including the EVENT dimension ("where their stories happen" counts
+  `article_event_locations`, never the publisher's home). See docs/PUBLISHER_INTELLIGENCE.md.
 - **Geographic Diversity:** `location.reader_geography(store, uid)` → counted facts
   (`countries`, `languages`, `scope` incl. explicit `unknown`) — surfaced on Analytics as the
   "Reading geography" card; no 0–100 score is computed yet, deliberately.

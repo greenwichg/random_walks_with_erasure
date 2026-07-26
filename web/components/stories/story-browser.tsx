@@ -41,6 +41,7 @@ export function StoryBrowser({
   icon,
   defaultSort = "top",
   initialCountry,
+  initialPublisher,
   emptyDescription,
 }: {
   title: string;
@@ -49,11 +50,13 @@ export function StoryBrowser({
   defaultSort?: string;
   /** Preselects the country filter (deep link: /stories?country=US — e.g. the home place rail). */
   initialCountry?: string;
+  /** Preselects the publisher filter (deep link: /stories?publisher=NPR — the publisher page). */
+  initialPublisher?: string;
   emptyDescription: string;
 }) {
   const { t, formatCompact } = useTranslation();
   const [topic, setTopic] = React.useState("all");
-  const [publisher, setPublisher] = React.useState("all");
+  const [publisher, setPublisher] = React.useState(initialPublisher ?? "all");
   const [lean, setLean] = React.useState("all");
   const [country, setCountry] = React.useState(initialCountry?.toUpperCase() ?? "all");
   const [sort, setSort] = React.useState(defaultSort);

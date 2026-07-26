@@ -32,11 +32,14 @@ const asFilter = (v: string) => (v === "all" ? undefined : v);
 const PAGE = 24;
 
 function SearchInner() {
-  const initial = useSearchParams().get("query") ?? "";
+  const params = useSearchParams();
+  const initial = params.get("query") ?? "";
+  // ?publisher= deep link (the publisher profile's "search this publisher") arrives pre-filtered.
+  const initialPublisher = params.get("publisher") ?? "all";
   const { t } = useTranslation();
   const [q, setQ] = React.useState(initial);
   const [topic, setTopic] = React.useState("all");
-  const [publisher, setPublisher] = React.useState("all");
+  const [publisher, setPublisher] = React.useState(initialPublisher);
   const [lean, setLean] = React.useState("all");
   const [country, setCountry] = React.useState("all");
   const [sort, setSort] = React.useState("newest");
