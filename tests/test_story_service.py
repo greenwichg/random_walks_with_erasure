@@ -128,6 +128,25 @@ def test_sorting():
     assert oldest[0]["earliest"] <= oldest[-1]["earliest"]
 
 
+def test_fallback_summary_handles_empty_topic():
+    """A description-less representative with an EMPTY topic (uncategorized stays "") must not
+    produce "N publishers covering ." — the orphaned-period card copy seen in production."""
+    st = store_mod.Store("sqlite://")
+    _add(st, "https://a.example/1", "TechDaily", 0.0, "Samsung introduces new foldable phones",
+         category="", desc="", days=1)
+    _add(st, "https://b.example/2", "GadgetWire", 0.2, "Samsung introduces new foldable phone line",
+         category="", desc="", days=1)
+    s = next(iter(ss.cluster_from_store(st)))
+    assert s["summary"] == "2 publishers covering this story."
+    # A real topic keeps the informative form.
+    st2 = store_mod.Store("sqlite://")
+    _add(st2, "https://a.example/1", "TechDaily", 0.0, "Samsung introduces new foldable phones",
+         category="Tech", desc="", days=1)
+    _add(st2, "https://b.example/2", "GadgetWire", 0.2, "Samsung introduces new foldable phone line",
+         category="Tech", desc="", days=1)
+    assert next(iter(ss.cluster_from_store(st2)))["summary"] == "2 publishers covering tech."
+
+
 def test_filters_topic_publisher_lean():
     st = store_mod.Store("sqlite://"); _senate_and_wildfire(st)
     assert ss.list_stories(st, topic="Climate")["total"] == 1        # only the wildfire event

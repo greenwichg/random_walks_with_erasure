@@ -107,7 +107,11 @@ def _build_story(members: list) -> dict:
     return {
         "id": _story_id(members),
         "title": rep["headline"],
-        "summary": rep["description"] or f"{len(publishers)} publishers covering {rep['topic'].lower()}.",
+        # Fallback summary handles an EMPTY topic (uncategorized stays "" by design) — the
+        # naive interpolation shipped "18 publishers covering ." with an orphaned period.
+        "summary": rep["description"] or (
+            f"{len(publishers)} publishers covering {rep['topic'].lower()}." if rep["topic"]
+            else f"{len(publishers)} publishers covering this story."),
         # Hero image contract (nullable) — selected from the cluster's articles' RSS media.
         "image": hero.get("image"),
         "imageWidth": hero.get("imageWidth"),

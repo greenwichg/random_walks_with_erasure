@@ -11,9 +11,16 @@ import { FreshnessBadge } from "@/components/stories/freshness-badge";
 import { LEAN_META } from "@/lib/metrics";
 import { cn } from "@/lib/utils";
 
-/** A clustered-story preview card — one event, coverage across the spectrum. */
+/** A clustered-story preview card — one event, coverage across the spectrum.
+ *
+ * Imageless cards follow the newspaper rule — no photo means the TYPE gets senior: a larger,
+ * deeper-clamped headline and summary, plus the coverage line (real publisher names the story
+ * already carries). Grid rows stretch cards to equal height, so without this the flex spacer
+ * renders the difference as dead space; with it, the space holds the product's own facts —
+ * never a stock illustration or a placeholder box. */
 export function StoryCard({ story, index = 0 }: { story: Story; index?: number }) {
   const { t, formatCompact, timeAgo } = useTranslation();
+  const hasImage = Boolean(story.image);
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
@@ -28,9 +35,11 @@ export function StoryCard({ story, index = 0 }: { story: Story; index?: number }
 
         <div className="mb-2 flex items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-1.5">
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-medium text-primary">
-              {story.topic}
-            </span>
+            {story.topic && (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-medium text-primary">
+                {story.topic}
+              </span>
+            )}
             {story.freshness && (
               <FreshnessBadge band={story.freshness.band} score={story.freshness.score} />
             )}
@@ -41,10 +50,33 @@ export function StoryCard({ story, index = 0 }: { story: Story; index?: number }
           </span>
         </div>
 
-        <h3 className="line-clamp-2 font-semibold leading-snug tracking-tight group-hover:text-primary">
+        <h3
+          className={cn(
+            "font-semibold leading-snug tracking-tight group-hover:text-primary",
+            hasImage ? "line-clamp-2" : "line-clamp-3 text-lg",
+          )}
+        >
           {story.title}
         </h3>
-        <p className="mt-1.5 line-clamp-2 flex-1 text-sm text-muted-foreground">{story.summary}</p>
+        <p
+          className={cn(
+            "mt-1.5 flex-1 text-sm text-muted-foreground",
+            hasImage ? "line-clamp-2" : "line-clamp-6 leading-relaxed",
+          )}
+        >
+          {story.summary}
+        </p>
+
+        {/* Imageless: the coverage line — who is actually reporting this (counted facts the card
+            already holds; the header carries the full source count, so names + an ellipsis do). */}
+        {!hasImage && (story.publishers?.length ?? 0) > 0 && (
+          <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
+            <span className="font-medium text-foreground/70">
+              {story.publishers!.slice(0, 4).join(" · ")}
+            </span>
+            {story.publishers!.length > 4 && " …"}
+          </p>
+        )}
 
         <div className="mt-4">
           <SpectrumBar distribution={story.distribution} height={8} showLegend={false} />

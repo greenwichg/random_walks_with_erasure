@@ -7,6 +7,7 @@ import { ArticleImage } from "@/components/shared/article-image";
 import { ReadArticleButton } from "@/components/shared/read-article-button";
 import { SaveButton } from "@/components/shared/save-button";
 import { useTranslation } from "@/lib/i18n";
+import { cn } from "@/lib/utils";
 
 /**
  * A Discover article card — one live FeedArticle: publisher, title, description, real publication
@@ -23,6 +24,7 @@ export function DiscoverCard({
   openedFrom?: string;
 }) {
   const { timeAgo } = useTranslation();
+  const hasImage = Boolean(article.image);
   return (
     <motion.article
       layout
@@ -49,11 +51,25 @@ export function DiscoverCard({
         )}
       </div>
 
-      <h3 className="mt-2 text-[1.05rem] font-semibold leading-snug tracking-tight">
+      {/* Imageless: the type gets senior (newspaper rule) — a larger headline and a deeper
+          description clamp fill the grid-stretched height with content, not dead space. */}
+      <h3
+        className={cn(
+          "mt-2 font-semibold leading-snug tracking-tight",
+          hasImage ? "text-[1.05rem]" : "text-lg",
+        )}
+      >
         {article.headline}
       </h3>
       {article.description && (
-        <p className="mt-1.5 line-clamp-3 flex-1 text-sm text-muted-foreground">{article.description}</p>
+        <p
+          className={cn(
+            "mt-1.5 flex-1 text-sm text-muted-foreground",
+            hasImage ? "line-clamp-3" : "line-clamp-6 leading-relaxed",
+          )}
+        >
+          {article.description}
+        </p>
       )}
 
       <div className="mt-3 flex flex-wrap items-center gap-1.5">
