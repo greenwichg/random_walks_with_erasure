@@ -1012,6 +1012,10 @@ class StoriesResponseModel(BaseModel):
     # before the country filter + pagination) — the Stories country picker's source of truth,
     # so an offered country always returns ≥1 story.
     countryFacets: "dict[str, int]" = {}
+    # Story counts per DETECTED coverage-gap side (blindspotSide), same faceting discipline —
+    # the coverage-gaps picker offers only sides that return ≥1 story. Balanced-or-unknown
+    # stories (blindspotSide null) are counted nowhere: a gap is a finding, never a default.
+    blindspotFacets: "dict[str, int]" = {}
 
 
 class CitationModel(BaseModel):
@@ -2255,6 +2259,9 @@ def stories(
     country: Optional[str] = Query(None, description="stories whose EVENT happened in this "
                                                      "ISO 3166-1 alpha-2 country (member consensus; "
                                                      "publisher home never substitutes)"),
+    blindspot: Optional[str] = Query(None, description="any | left | center | right — stories with "
+                                                       "a DETECTED coverage gap (the thin side); "
+                                                       "balanced-or-unknown stories never match"),
     dateFrom: Optional[str] = Query(None, description="ISO lower bound on publication time"),
     dateTo: Optional[str] = Query(None, description="ISO upper bound on publication time"),
     sort: str = Query("top", description="top | latest | oldest | publishers"),
@@ -2268,7 +2275,8 @@ def stories(
     Read flow) and the nullable `image` contract for future enrichment. Never touches the recommender."""
     debug = debug or os.environ.get("RWE_STORIES_DEBUG", "").strip().lower() in {"1", "true", "yes", "on"}
     result = story_service.list_stories(_require_store(), topic=topic, publisher=publisher, lean=lean,
-                                        country=country, date_from=dateFrom, date_to=dateTo, sort=sort,
+                                        country=country, blindspot=blindspot,
+                                        date_from=dateFrom, date_to=dateTo, sort=sort,
                                         limit=limit, offset=offset, debug=debug)
     # Additive Story Intelligence summary (freshness + lifecycle) per story — computed HERE (the API
     # layer consumes Story Intelligence; story_service never does), so cards badge without extra calls.

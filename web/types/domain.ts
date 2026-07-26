@@ -696,6 +696,9 @@ export interface StoryQuery {
   /** ISO 3166-1 alpha-2: stories whose EVENT happened in this country (member consensus;
    *  publisher homes never substitute). Absent = "All", the whole feed. */
   country?: string;
+  /** Coverage-gap lens: "any" = stories with a DETECTED gap (blindspotSide set); a side = that
+   *  thin side exactly. Balanced-or-unknown stories never match. Absent = "All". */
+  blindspot?: string;
   dateFrom?: string;
   dateTo?: string;
   sort?: "top" | "latest" | "oldest" | "publishers";
@@ -716,6 +719,9 @@ export interface StoriesResponse {
    *  server-side before the country filter) — the country picker's source of truth, so an
    *  offered country always returns ≥1 story. */
   countryFacets?: Record<string, number>;
+  /** Story counts per DETECTED coverage-gap side, same faceting discipline — the gaps picker
+   *  offers only sides returning ≥1 story; balanced-or-unknown stories are counted nowhere. */
+  blindspotFacets?: Record<string, number>;
 }
 
 /** Discover feed: the latest catalog articles plus the facet values for the filters. */

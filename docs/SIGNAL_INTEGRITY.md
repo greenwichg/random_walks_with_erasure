@@ -1,4 +1,4 @@
-# Signal Integrity & Registry Coverage — M1 (shipped)
+# Signal Integrity & Registry Coverage — M1 (shipped) · Coverage-gap lens — M3 (shipped)
 
 Every badge, distribution, filter, and publisher profile reads one signal layer. This milestone
 made that layer TRUE (no display defaults survive on the feed path) and widened what it covers
@@ -47,6 +47,20 @@ python examples/outlet_coverage.py --db <prod-url> --top 50   # unknown outlets 
 # add a lean ONLY with a citable public rating (AllSides et al.)
 python examples/outlet_coverage.py --lint                     # well-formedness gate
 ```
+
+## M3 — Blindspots as a discovery lens (what M1's honest distributions unlock)
+
+`/api/stories?blindspot=any|left|center|right` filters to stories with a **detected** coverage
+gap (`blindspotSide` — a side with zero rated coverage while another side is well covered).
+`blindspotSide` null means balanced-OR-unknown (an all-unrated story casts no votes) and never
+matches — a gap is a counted finding, not a default. `blindspotFacets` on the envelope follows
+the countryFacets discipline (counted under the other filters, before its own — the picker
+offers only sides returning ≥1 story, and disappears entirely when no gaps are detected).
+Surface: a "Coverage gaps" FilterSelect on the Stories browser + the `?blindspot=` deep link;
+the home Blind spots module's "view all" lands on the pre-filtered lens. Deliberately a
+DIMENSION of Stories, not a nav destination (the consolidation doctrine). Sequenced after M1
+because the lens only means something over rated-vote distributions — shipped before it, it
+would mostly have surfaced fabricated-center noise.
 
 ## Hardening rider (landed with the milestone)
 

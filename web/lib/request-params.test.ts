@@ -52,6 +52,7 @@ test("every StoryQuery field is part of the request identity", () => {
     publisher: "Reuters",
     lean: "left",
     country: "US",
+    blindspot: "any",
     dateFrom: "2026-01-01",
     dateTo: "2026-02-01",
     sort: "top",

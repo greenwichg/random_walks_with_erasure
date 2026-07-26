@@ -226,20 +226,23 @@ def cluster_from_store(store_, *, min_articles: int = 2, min_publishers: int = 2
                          min_publishers=min_publishers, sim=sim, window_days=window_days)
 
 
-def list_stories(store_, *, topic=None, publisher=None, lean=None, country=None,
+def list_stories(store_, *, topic=None, publisher=None, lean=None, country=None, blindspot=None,
                  date_from=None, date_to=None,
                  sort: str = "top", limit: int = 30, offset: int = 0, min_articles: int = 2,
                  min_publishers: int = 2, max_scan: int = 2000, debug: bool = False) -> dict:
     """The paginated, filtered Story envelope Discover + Stories consume:
-    ``{stories, total, page, pageSize, hasMore, remainingPages, sort, countryFacets}``
-    (+ ``clusterMs`` + ``diagnostics`` when ``debug``). topic/date are pre-filtered in SQL;
-    publisher/lean/country are coverage post-filters on the built stories. ``country`` matches
-    EVENT location only — the story's member-consensus event countries (``_event_consensus``);
-    publisher homes never substitute, so an unlocated story appears under "All" and under no
-    country. ``countryFacets`` = STORY counts per event country under the other active filters,
-    computed BEFORE the country filter and pagination — the picker's source of truth, so a
-    country is only ever offered when selecting it returns ≥1 story (article-level facets
-    cannot promise that: a located article may be an unclustered singleton)."""
+    ``{stories, total, page, pageSize, hasMore, remainingPages, sort, countryFacets,
+    blindspotFacets}`` (+ ``clusterMs`` + ``diagnostics`` when ``debug``). topic/date are
+    pre-filtered in SQL; publisher/lean/country/blindspot are coverage post-filters on the built
+    stories. ``country`` matches EVENT location only — the story's member-consensus event
+    countries (``_event_consensus``); publisher homes never substitute, so an unlocated story
+    appears under "All" and under no country. ``blindspot`` is the coverage-gap lens:
+    ``"any"`` matches stories with a DETECTED gap (``blindspotSide`` set), a side matches that
+    thin side exactly; ``blindspotSide`` None means balanced-OR-unknown (an all-unrated story
+    casts no votes) and never matches — a gap is a counted finding, not a default. Both facet
+    dicts are STORY counts under the other active filters, computed BEFORE their own filters and
+    pagination — each picker's source of truth, so an option is only offered when selecting it
+    returns ≥1 story."""
     sort = sort if sort in SORTS else "top"
     pg = OffsetPagination.from_params(limit, offset)
     t0 = _time.perf_counter()
@@ -253,21 +256,29 @@ def list_stories(store_, *, topic=None, publisher=None, lean=None, country=None,
         stories = [s for s in stories if want in {p.lower() for p in s["publishers"]}]
     if lean in ("left", "center", "right"):
         stories = [s for s in stories if s["distribution"][lean] > 0.0]
-    # Story-level country facets: counted after topic/publisher/lean narrowed the set, before
-    # the country filter itself (standard faceting — the picker must not collapse to the current
-    # selection) and before pagination.
+    # Story-level country + blindspot facets: counted after topic/publisher/lean narrowed the
+    # set, before their own filters (standard faceting — a picker must not collapse to the
+    # current selection) and before pagination.
     country_facets: dict = {}
+    blindspot_facets: dict = {}
     for s in stories:
         for c in s["countries"]:
             country_facets[c] = country_facets.get(c, 0) + 1
+        if s["blindspotSide"]:
+            blindspot_facets[s["blindspotSide"]] = blindspot_facets.get(s["blindspotSide"], 0) + 1
     if country and country.strip():
         want = country.strip().upper()
         stories = [s for s in stories if want in s["countries"]]
+    if blindspot == "any":
+        stories = [s for s in stories if s["blindspotSide"]]
+    elif blindspot in ("left", "center", "right"):
+        stories = [s for s in stories if s["blindspotSide"] == blindspot]
 
     stories = _sort_stories(stories, sort)
     total = len(stories)
     page = stories[pg.offset: pg.offset + pg.limit] if pg.limit > 0 else stories
     out = {"stories": page, "total": total, "sort": sort, "countryFacets": country_facets,
+           "blindspotFacets": blindspot_facets,
            **pg.meta(total)}
     if debug:
         out["clusterMs"] = cluster_ms

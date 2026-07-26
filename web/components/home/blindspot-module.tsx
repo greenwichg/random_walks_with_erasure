@@ -29,7 +29,7 @@ export function BlindspotModule({ stories }: { stories: Story[] }) {
         id="blindspots-heading"
         title={t("home.blindspots.title")}
         eyebrow={t("home.blindspots.eyebrow")}
-        href="/stories"
+        href="/stories?blindspot=any"
         actionLabel={t("home.viewAll")}
       />
       <ul className="grid gap-3 sm:grid-cols-2">

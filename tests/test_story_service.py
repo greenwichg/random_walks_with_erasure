@@ -290,3 +290,42 @@ def test_story_service_imports_no_recommendation_algorithm():
     for banned in ("health_report", "rwe", "simulate_users", "personalize", "narrate_report",
                    "corpus_refresh", "api_server"):
         assert not hasattr(ss, banned), f"story_service must not import {banned}"
+
+
+# --------------------------------------------------------------------------- #
+# M3 — the coverage-gap lens: ?blindspot= filter + counted blindspotFacets.
+# --------------------------------------------------------------------------- #
+def _gap_catalog(st):
+    """Three stories: Senate (L/C/R — balanced, no gap), Wildfire (2 left-rated -> gap on
+    centre, deterministic first-empty), Port strike (all-unrated -> UNKNOWN, no gap ever)."""
+    _senate_and_wildfire(st)
+    _add(st, "https://a.example/p1", "Tribune A", None, "Dockworkers strike closes the main port", days=1)
+    _add(st, "https://b.example/p2", "Tribune B", None, "Dockworkers strike closes main port operations")
+
+
+def test_blindspot_filter_matches_only_detected_gaps():
+    st = store_mod.Store("sqlite://"); _gap_catalog(st)
+    unfiltered = ss.list_stories(st)
+    assert unfiltered["total"] == 3                       # incl. the unknown-distribution story
+
+    any_gap = ss.list_stories(st, blindspot="any")
+    assert [s["title"] for s in any_gap["stories"]] and any_gap["total"] == 1
+    assert "Wildfires" in any_gap["stories"][0]["title"]
+    assert any_gap["stories"][0]["blindspotSide"] == "center"
+
+    assert ss.list_stories(st, blindspot="center")["total"] == 1
+    assert ss.list_stories(st, blindspot="left")["total"] == 0
+    # balanced-or-unknown never matches: the all-unrated story is not a "gap", it is unknown
+    titles_any = {s["title"] for s in any_gap["stories"]}
+    assert not any("Dockworkers" in t for t in titles_any)
+
+
+def test_blindspot_facets_counted_before_own_filter():
+    """The picker's source of truth: side counts under the OTHER filters, computed before the
+    blindspot filter itself — selecting a side must not collapse the facet dict."""
+    st = store_mod.Store("sqlite://"); _gap_catalog(st)
+    body = ss.list_stories(st, blindspot="left")          # zero results…
+    assert body["total"] == 0
+    assert body["blindspotFacets"] == {"center": 1}       # …but the facets still offer centre
+    # and an unrelated filter narrows the facet counts (standard faceting)
+    assert ss.list_stories(st, topic="Politics")["blindspotFacets"] == {}

@@ -42,6 +42,7 @@ export function StoryBrowser({
   defaultSort = "top",
   initialCountry,
   initialPublisher,
+  initialBlindspot,
   emptyDescription,
 }: {
   title: string;
@@ -52,6 +53,8 @@ export function StoryBrowser({
   initialCountry?: string;
   /** Preselects the publisher filter (deep link: /stories?publisher=NPR — the publisher page). */
   initialPublisher?: string;
+  /** Preselects the coverage-gap lens (deep link: /stories?blindspot=any — the home module). */
+  initialBlindspot?: string;
   emptyDescription: string;
 }) {
   const { t, formatCompact } = useTranslation();
@@ -59,12 +62,13 @@ export function StoryBrowser({
   const [publisher, setPublisher] = React.useState(initialPublisher ?? "all");
   const [lean, setLean] = React.useState("all");
   const [country, setCountry] = React.useState(initialCountry?.toUpperCase() ?? "all");
+  const [blindspot, setBlindspot] = React.useState(initialBlindspot ?? "all");
   const [sort, setSort] = React.useState(defaultSort);
   const [offset, setOffset] = React.useState(0);
 
   React.useEffect(() => {
     setOffset(0);
-  }, [topic, publisher, lean, country, sort]);
+  }, [topic, publisher, lean, country, blindspot, sort]);
 
   const facets = useDiscover({});
   // Article-level place facts (located articles / publishers / rated) for the facts line only —
@@ -80,6 +84,7 @@ export function StoryBrowser({
     publisher: asFilter(publisher),
     lean: asFilter(lean),
     country: asFilter(country),
+    blindspot: asFilter(blindspot),
     sort: sort as StoryQuery["sort"],
     limit: PAGE,
     offset,
@@ -98,6 +103,20 @@ export function StoryBrowser({
         .map(([code]) => ({ value: code, label: <CountryBadge code={code} /> })),
     [storyFacets],
   );
+
+  // Coverage-gap lens options: only sides with ≥1 story under the other filters (same sticky
+  // pattern as the country facets); the picker disappears entirely when no gaps are detected.
+  const gapRef = React.useRef<Record<string, number>>({});
+  if (data?.blindspotFacets) gapRef.current = data.blindspotFacets;
+  const gapFacets = data?.blindspotFacets ?? gapRef.current;
+  const blindspotOptions = React.useMemo(() => {
+    const sides = (["left", "center", "right"] as const).filter((s) => (gapFacets[s] ?? 0) > 0);
+    if (sides.length === 0) return [];
+    return [
+      { value: "any", label: t("filter.blindspot.any") },
+      ...sides.map((s) => ({ value: s, label: t(`filter.blindspot.${s}`) })),
+    ];
+  }, [gapFacets, t]);
 
   const stories = data?.stories ?? [];
   const total = data?.total ?? 0;
@@ -122,6 +141,14 @@ export function StoryBrowser({
         <FilterSelect label={t("filter.lean")} value={lean} options={LEAN_OPTIONS} onChange={setLean} />
         {countryOptions.length > 0 && (
           <FilterSelect label={t("filter.country")} value={country} options={countryOptions} onChange={setCountry} />
+        )}
+        {blindspotOptions.length > 0 && (
+          <FilterSelect
+            label={t("filter.blindspot")}
+            value={blindspot}
+            options={blindspotOptions}
+            onChange={setBlindspot}
+          />
         )}
         <FilterSelect label={t("filter.sort")} value={sort} options={SORT_OPTIONS} onChange={setSort} resettable={false} />
         {total > 0 && (

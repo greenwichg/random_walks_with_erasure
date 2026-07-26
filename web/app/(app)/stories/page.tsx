@@ -14,6 +14,7 @@ function StoriesInner() {
   const params = useSearchParams();
   const country = params.get("country") ?? undefined;
   const publisher = params.get("publisher") ?? undefined;
+  const blindspot = params.get("blindspot") ?? undefined;
   return (
     <StoryBrowser
       title={t("stories.title")}
@@ -21,6 +22,7 @@ function StoriesInner() {
       defaultSort="top"
       initialCountry={country}
       initialPublisher={publisher}
+      initialBlindspot={blindspot}
       description={t("stories.subtitle")}
       emptyDescription={t("stories.empty.body")}
     />
