@@ -6,7 +6,6 @@ import { useDiscover } from "@/hooks/use-data";
 import { useTranslation } from "@/lib/i18n";
 import { PageContainer } from "@/components/layout/page-container";
 import { DiscoverCard } from "@/components/discover/discover-card";
-import { MasonryColumns } from "@/components/shared/masonry-columns";
 import { FilterSelect, type FilterOption } from "@/components/shared/filter-select";
 import { EmptyState, ErrorState } from "@/components/shared/states";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -97,11 +96,14 @@ export default function DiscoverPage() {
         />
       )}
 
-      <MasonryColumns
-        items={shown}
-        itemKey={(a) => a.id}
-        render={(article, i) => <DiscoverCard article={article} index={i % PAGE} />}
-      />
+      {/* Uniform-height grid, deliberately not masonry: grid rows stretch every card in a row to
+          the same height and the card's internal flex slack absorbs the difference — simple,
+          consistent rows over packed columns. (Search/Saved keep MasonryColumns.) */}
+      <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
+        {shown.map((article, i) => (
+          <DiscoverCard key={article.id} article={article} index={i % PAGE} />
+        ))}
+      </div>
 
       {hasMore && (
         <div className="mt-4 flex justify-center">
