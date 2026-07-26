@@ -89,8 +89,15 @@ The Blaze,2,theblaze.com|Blaze|TheBlaze,US,,,national
 #   python examples/outlet_coverage.py --db <prod>   # rank unknown outlets by article volume
 #   add/extend rows here (locality first; lean only with a citable rating)
 #   python examples/outlet_coverage.py --lint        # well-formedness gate
+# Lean verification log — 2026-07-26, source: AllSides per-outlet pages (allsides.com/news-source/*):
+#   Left(-2): Middle East Eye · Lean Left(-1): The Economist, The Independent, Sky News, CBC News,
+#   Haaretz · Center(0): Financial Times, The Telegraph (moved from Lean Right 6/2026), The Times,
+#   Deutsche Welle, Euronews, The Globe and Mail, Toronto Star, Hindustan Times, The Jerusalem Post,
+#   The Times of Israel, South China Morning Post · Lean Right(+1): Daily Mail (moved from Right 9/2025).
+#   Confirmed NOT rated by AllSides (lean stays blank): Al Arabiya, NDTV, The Times of India,
+#   France 24, Le Monde, Der Spiegel, ABC Australia, Sydney Morning Herald.
 # ---------------------------------------------------------------------------------------------
-Deutsche Welle,,dw.com,DE,,,international
+Deutsche Welle,0,dw.com,DE,,,international
 Der Spiegel,,spiegel.de,DE,,,national
 Die Zeit,,zeit.de,DE,,,national
 Frankfurter Allgemeine Zeitung,,faz.net,DE,,,national
@@ -99,7 +106,7 @@ France 24,,france24.com,FR,,,international
 Le Monde,,lemonde.fr,FR,,,national
 Le Figaro,,lefigaro.fr,FR,,,national
 Radio France Internationale,,rfi.fr,FR,,,international
-Euronews,,euronews.com,FR,,,international
+Euronews,0,euronews.com,FR,,,international
 El País,,elpais.com,ES,,,national
 El Mundo,,elmundo.es,ES,,,national
 La Repubblica,,repubblica.it,IT,,,national
@@ -112,18 +119,18 @@ Swissinfo,,swissinfo.ch,CH,,,international
 NOS,,nos.nl,NL,,,national
 Kyiv Independent,,kyivindependent.com,UA,,,national
 Kyiv Post,,kyivpost.com,UA,,,national
-Sky News,,news.sky.com,GB,,,national
-The Independent,,independent.co.uk,GB,,,national
-The Telegraph,,telegraph.co.uk,GB,,,national
-Financial Times,,ft.com,GB,,,international
-The Times,,thetimes.co.uk|thetimes.com,GB,,,national
-Daily Mail,,dailymail.co.uk,GB,,,national
-The Economist,,economist.com,GB,,,international
+Sky News,-1,news.sky.com,GB,,,national
+The Independent,-1,independent.co.uk,GB,,,national
+The Telegraph,0,telegraph.co.uk,GB,,,national
+Financial Times,0,ft.com,GB,,,international
+The Times,0,thetimes.co.uk|thetimes.com,GB,,,national
+Daily Mail,1,dailymail.co.uk,GB,,,national
+The Economist,-1,economist.com,GB,,,international
 Mirror,,mirror.co.uk,GB,,,national
-CBC News,,cbc.ca,CA,,,national
-The Globe and Mail,,theglobeandmail.com,CA,,,national
+CBC News,-1,cbc.ca,CA,,,national
+The Globe and Mail,0,theglobeandmail.com,CA,,,national
 CTV News,,ctvnews.ca,CA,,,national
-Toronto Star,,thestar.com,CA,,,national
+Toronto Star,0,thestar.com,CA,,,national
 ABC Australia,,abc.net.au,AU,,,national
 Sydney Morning Herald,,smh.com.au,AU,,,national
 The Age,,theage.com.au,AU,,,national
@@ -132,7 +139,7 @@ New Zealand Herald,,nzherald.co.nz,NZ,,,national
 Stuff,,stuff.co.nz,NZ,,,national
 The Times of India,,timesofindia.indiatimes.com,IN,,,national
 The Hindu,,thehindu.com,IN,,,national
-Hindustan Times,,hindustantimes.com,IN,,,national
+Hindustan Times,0,hindustantimes.com,IN,,,national
 NDTV,,ndtv.com,IN,,,national
 The Indian Express,,indianexpress.com,IN,,,national
 Dawn,,dawn.com,PK,,,national
@@ -141,18 +148,18 @@ NHK,,nhk.or.jp,JP,,,national
 Nikkei Asia,,asia.nikkei.com,JP,,,international
 The Korea Herald,,koreaherald.com,KR,,,national
 Yonhap News Agency,,yna.co.kr,KR,,,national
-South China Morning Post,,scmp.com,HK,,,national
+South China Morning Post,0,scmp.com,HK,,,national
 The Straits Times,,straitstimes.com,SG,,,national
 Channel NewsAsia,,channelnewsasia.com,SG,,,international
 Bangkok Post,,bangkokpost.com,TH,,,national
 The Jakarta Post,,thejakartapost.com,ID,,,national
 Philippine Daily Inquirer,,inquirer.net,PH,,,national
 Rappler,,rappler.com,PH,,,national
-The Jerusalem Post,,jpost.com,IL,,,national
-Haaretz,,haaretz.com|haaretz.co.il,IL,,,national
-The Times of Israel,,timesofisrael.com,IL,,,national
+The Jerusalem Post,0,jpost.com,IL,,,national
+Haaretz,-1,haaretz.com|haaretz.co.il,IL,,,national
+The Times of Israel,0,timesofisrael.com,IL,,,national
 Al Arabiya,,alarabiya.net,AE,,,international
-Middle East Eye,,middleeasteye.net,GB,,,international
+Middle East Eye,-2,middleeasteye.net,GB,,,international
 Arab News,,arabnews.com,SA,,,national
 Daily Sabah,,dailysabah.com,TR,,,national
 Hurriyet Daily News,,hurriyetdailynews.com,TR,,,national

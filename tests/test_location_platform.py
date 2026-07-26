@@ -186,14 +186,20 @@ def test_feed_article_country_facets(st):
 
 
 def test_place_countries_unions_registry_and_catalog(st, monkeypatch):
+    import math
     import api_fastapi
-    # An EVENT-located article in a non-registry country (the catalog side of the union).
+    import outlet_registry
+    # An EVENT-located article (the catalog side of the union). The expected registry count is
+    # DERIVED from the registry (rated FR outlets), not hardcoded — the registry grows by
+    # curation and a count pinned as a literal rots with every curation pass.
     _upsert(st, "https://x.test/fr", country="DE", publisher="Le Monde")
     st.replace_article_event_locations(
         "https://x.test/fr", location.resolve_event_locations([{"country": "FR", "source": "gdelt-gkg"}]))
     monkeypatch.setattr(api_fastapi, "_require_store", lambda: st)
     rows = {r["country"]: r for r in api_fastapi.place_countries()}
-    assert rows["FR"]["articles"] == 1 and rows["FR"]["registryPublishers"] == 0
+    fr_rated = sum(1 for o in outlet_registry.default_registry().outlets()
+                   if o.country == "FR" and math.isfinite(o.lean))
+    assert rows["FR"]["articles"] == 1 and rows["FR"]["registryPublishers"] == fr_rated
     # Registry-only countries appear with honest zero article counts (GB has rated publishers).
     assert rows["GB"]["registryPublishers"] >= 3 and rows["GB"]["articles"] == 0
     # The publisher home (DE) is provenance, not a place facet.

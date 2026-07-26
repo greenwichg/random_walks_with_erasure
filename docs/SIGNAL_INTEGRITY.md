@@ -48,6 +48,15 @@ python examples/outlet_coverage.py --db <prod-url> --top 50   # unknown outlets 
 python examples/outlet_coverage.py --lint                     # well-formedness gate
 ```
 
+**First verified pass (2026-07-26):** 18 leans filled, each checked against the outlet's own
+AllSides page (domain-restricted search — never memory; two would have been WRONG from recall:
+AllSides moved Daily Mail Right→Lean Right in 9/2025 and The Telegraph Lean Right→Center in
+6/2026). 8 outlets confirmed **Not Rated** by AllSides stay blank (Al Arabiya, NDTV, Times of
+India, France 24, Le Monde, Der Spiegel, ABC Australia, Sydney Morning Herald). The verification
+log lives as a comment block beside the rows in `outlet_registry.csv`. Rated core: 55 → 73.
+Leans are stamped at INGEST, so newly rated outlets' articles join lean filters/distributions as
+the catalog rolls over — existing rows keep their stored (null) lean until they age out.
+
 ## M3 — Blindspots as a discovery lens (what M1's honest distributions unlock)
 
 `/api/stories?blindspot=any|left|center|right` filters to stories with a **detected** coverage
