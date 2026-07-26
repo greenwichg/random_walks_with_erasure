@@ -124,9 +124,15 @@ fact() { printf '%s' "$FACTS" | dc exec -T api python -c \
   "import json,sys,functools; d=json.load(sys.stdin); print(functools.reduce(lambda a,k: a[k] if isinstance(a,dict) else a, sys.argv[1].split('.'), d))" "$1" 2>/dev/null; }
 
 echo "== 1. deployed code =="
-[ "$(fact registryTotal)" = "138" ] && [ "$(fact registryRated)" = "73" ] \
-  && P "registry in the running container: 138 outlets / 73 rated" \
-  || F "registry counts: got $(fact registryTotal)/$(fact registryRated), want 138/73 (old image? rebuild via update.sh)"
+# Expected counts come from the CHECKOUT's CSV (awk — the host has no python), so the check is
+# "the running image matches this checkout" and curation passes can never rot a literal here.
+read -r EXP_TOTAL EXP_RATED <<EOF2
+$(awk -F, '!/^[[:space:]]*#/ && NF { n++; if (n > 1) { t++; if ($2 != "") r++ } } END { print t, r }' \
+    "$REPO_ROOT/examples/data/outlet_registry.csv")
+EOF2
+[ "$(fact registryTotal)" = "$EXP_TOTAL" ] && [ "$(fact registryRated)" = "$EXP_RATED" ] \
+  && P "registry in the running container matches the checkout: ${EXP_TOTAL} outlets / ${EXP_RATED} rated" \
+  || F "registry counts: container $(fact registryTotal)/$(fact registryRated) vs checkout ${EXP_TOTAL}/${EXP_RATED} (old image? rebuild via update.sh)"
 [ "$(fact blindspotParam)" = "True" ] && P "M3 blindspot filter present in story service" \
   || F "story_service has no blindspot param — container predates M3"
 
