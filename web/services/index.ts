@@ -1,4 +1,5 @@
 import { getJson, postJson, deleteJson } from "@/services/api";
+import { requestParams } from "@/lib/request-params";
 import type {
   AnalysisResult,
   AnalyzeMetadata,
@@ -80,11 +81,7 @@ export const services = {
     getJson<DiscoverResponse>("/discover", filters && Object.keys(filters).length ? filters : undefined),
   // Stories — the paginated Story envelope from the single Story Service (Discover consumes it too).
   stories: (query?: StoryQuery) => {
-    const clean: Record<string, string> = {};
-    if (query)
-      for (const [k, v] of Object.entries(query)) {
-        if (v !== undefined && v !== null && v !== "" && v !== "all") clean[k] = String(v);
-      }
+    const clean = requestParams(query ?? {});
     return getJson<StoriesResponse>("/stories", Object.keys(clean).length ? clean : undefined);
   },
   story: (id: string) => getJson<Story>(`/stories/${id}`),
@@ -107,10 +104,7 @@ export const services = {
     postJson<CoachMessage>("/coach", echo ? { message, echo } : { message }),
   // Live catalog search — text + facet + date filters, sorting, and offset pagination.
   search: (params: SearchParams) => {
-    const clean: Record<string, string> = {};
-    for (const [k, v] of Object.entries(params)) {
-      if (v !== undefined && v !== null && v !== "" && v !== "all") clean[k] = String(v);
-    }
+    const clean = requestParams(params);
     return getJson<SearchResponse>("/search", Object.keys(clean).length ? clean : undefined);
   },
   // Per-user API tokens for the browser extension (auth'd; proxied to the engine server-side).
@@ -160,15 +154,13 @@ export const queryKeys = {
       filters?.lean ?? "all",
       filters?.limit ?? "default",
     ] as const,
-  stories: (query?: StoryQuery) =>
-    [
-      "stories",
-      query?.topic ?? "all",
-      query?.publisher ?? "all",
-      query?.lean ?? "all",
-      query?.sort ?? "top",
-      query?.offset ?? 0,
-    ] as const,
+  // Request-identity keys: the key embeds the SAME cleaned record `services` sends as the query
+  // string (lib/request-params), so a param that reaches the wire is always part of the cache
+  // key. The previous hand-enumerated tuples drifted from the request types (search was missing
+  // country/limit/dateFrom/dateTo/source; stories was missing limit/dateFrom/dateTo), which froze
+  // filter changes on cached data until a reload. React Query hashes object key-parts with
+  // sorted keys, so caller property order is irrelevant.
+  stories: (query?: StoryQuery) => ["stories", requestParams(query ?? {})] as const,
   story: (id: string) => ["story", id] as const,
   storyIntelligence: (id: string) => ["story-intelligence", id] as const,
   profile: ["profile"] as const,
@@ -177,16 +169,7 @@ export const queryKeys = {
   notifications: ["notifications"] as const,
   analytics: ["analytics"] as const,
   coach: ["coach"] as const,
-  search: (params: SearchParams) =>
-    [
-      "search",
-      params.query ?? "",
-      params.publisher ?? "all",
-      params.lean ?? "all",
-      params.topic ?? "all",
-      params.sort ?? "newest",
-      params.offset ?? 0,
-    ] as const,
+  search: (params: SearchParams) => ["search", requestParams(params)] as const,
   apiTokens: ["apiTokens"] as const,
   // Distinct top-level key (NOT under ["recommendations"]) so a slider-save invalidation of the feed
   // never churns the persisted-feedback cache the page reads to keep ignored cards dismissed.
