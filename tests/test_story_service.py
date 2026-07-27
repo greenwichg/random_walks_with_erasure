@@ -503,3 +503,31 @@ def test_cache_invalidates_when_content_changes_at_constant_row_count():
     titles = {s["title"] for s in ss.list_stories(st)["stories"]}     # same row count as before
     assert any("Rail operators" in t for t in titles), "stale build served at constant row count"
     assert not any("Harbour" in t for t in titles)
+
+
+def test_warm_cache_populates_the_default_view():
+    """The poller warms exactly the key /api/stories reads, so the first reader after an ingest
+    does not pay the rebuild."""
+    st = store_mod.Store("sqlite://"); _senate_and_wildfire(st)
+    ss.clear_cache()
+    assert ss.warm_cache(st) == 2
+
+    calls = {"n": 0}
+    real = ss.build_stories
+    try:
+        ss.build_stories = lambda *a, **kw: (calls.__setitem__("n", calls["n"] + 1), real(*a, **kw))[1]
+        body = ss.list_stories(st)
+        assert body["total"] == 2
+        assert calls["n"] == 0, "warm build was not reused — the reader rebuilt"
+    finally:
+        ss.build_stories = real
+
+
+def test_warm_cache_is_invalidated_by_the_next_ingest():
+    """A warm build must not outlive the catalog it was built from."""
+    st = store_mod.Store("sqlite://"); _senate_and_wildfire(st)
+    ss.clear_cache()
+    assert ss.warm_cache(st) == 2
+    _add(st, "https://ap.org/new", "AP", 0.1, "Harbour pilots ratify their contract", days=1)
+    _add(st, "https://re.example/new", "Reuters", 0.0, "Harbour pilots ratify contract", days=1)
+    assert ss.list_stories(st)["total"] == 3

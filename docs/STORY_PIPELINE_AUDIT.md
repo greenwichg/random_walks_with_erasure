@@ -91,14 +91,26 @@ just rendered.
 lexicographic and chronological order coincide. `examples/backfill_published_at.py` converts existing
 rows — idempotent, `--dry-run` first, leaves unparseable and NULL values untouched.
 
+**5. The poller warms the cache after each ingest** (`feed_service._post_cycle`, after retention so
+the fingerprint is final). The ingest invalidates the cache by definition, so without this the first
+reader after every poll paid the full rebuild — 5.4 s measured, once per `RWE_POLL_INTERVAL`
+(600 s), which on low traffic is a large share of requests. The work is unavoidable; paying it on
+the thread that changed the catalog instead of on a reader's request is the point. Fail-soft: a warm
+that cannot be built is a slow next request, never a broken poll loop.
+
 ### Measured effect
 
-On a synthetic 3,556-article / 900-event / 6-day corpus:
+Production, after deploy:
 
-```
-old 2000-row cap : 511 stories
-new time window  : 898 stories      cold 0.35 s   cached 1.1 ms
-```
+| | Before | After |
+|---|---:|---:|
+| Stories | **89** | **750** |
+| Cached read | — | 1.7 ms |
+| Effective window | 12.5 h | 6.0 days |
+| Non-UTC rows | 3,349 | 0 |
+
+The clustering cost itself is unchanged (~5.4 s for the full 6-day window on this host); it now runs
+on the poller's thread rather than a reader's request.
 
 ## Deploying it
 

@@ -36,6 +36,7 @@ from typing import Callable, Optional
 import rss_ingest      # reuse: load_feeds, make_scorer, fetch_feed, ingest_all — NO duplicate ingestion
 import corpus_health
 import storage_lifecycle   # validation-aware FeedArticle retention (runs after each ingest cycle)
+import story_service       # warm the clustered-story cache after ingest (off the request path)
 
 DEFAULT_INTERVAL = 600.0    # 10 minutes
 DEFAULT_TIMEOUT = 15.0
@@ -229,6 +230,19 @@ class FeedPoller:
             agg["catalog"] = self.store.count_feed_articles()   # reflect the post-retention size
         except Exception as e:                                  # cleanup must never break polling
             self._log(logging.WARNING, "storage_cleanup_failed", error=f"{type(e).__name__}: {e}")
+
+        # Rebuild the story clusters HERE, on the poller's thread, now that the catalog has settled
+        # (after retention, so the cache fingerprint is final). The ingest just invalidated the
+        # cache; without this the next reader pays the full rebuild — 5.4 s in production, once per
+        # interval. Same total work, moved off the request path. Fail-soft: a warm that cannot be
+        # built is a slow next request, never a broken poll loop.
+        try:
+            t1 = time.perf_counter()
+            stories = story_service.warm_cache(self.store)
+            self._log(logging.INFO, "story_cache_warm", stories=stories,
+                      durationMs=round((time.perf_counter() - t1) * 1000.0, 1))
+        except Exception as e:
+            self._log(logging.WARNING, "story_cache_warm_failed", error=f"{type(e).__name__}: {e}")
 
         # Optional seam: a later commit hangs the (validated) hot corpus refresh off this — and only
         # when the catalog actually changed (agg["new"] > 0). The poller itself never refreshes it.

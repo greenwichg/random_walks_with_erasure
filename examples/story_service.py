@@ -289,6 +289,21 @@ def clear_cache() -> None:
         _CACHE.clear()
 
 
+def warm_cache(store_) -> int:
+    """Build and cache the default (unfiltered) view; returns the story count.
+
+    Called by the poller right after it ingests, on the poller's own thread. Without this the FIRST
+    reader after every poll pays the whole clustering cost — measured at 5.4 s in production, once
+    per ``RWE_POLL_INTERVAL`` (default 600 s), which on low traffic is a large share of requests.
+    The rebuild is unavoidable (the catalog genuinely changed); paying it on the thread that caused
+    the change, rather than on a reader's request, is the whole point.
+
+    Warms the exact key ``/api/stories`` uses with no filters — filters, sort and pagination are
+    applied outside the cache, so this one build serves every filter combination too."""
+    return len(_cached_build(store_, topic=None, date_from=None, date_to=None, max_scan=None,
+                             min_articles=2, min_publishers=2))
+
+
 def _cached_build(store_, *, topic, date_from, date_to, max_scan, min_articles, min_publishers) -> list:
     """``build_stories(_fetch(...))`` behind a cache with TWO independent invalidation conditions,
     because either alone is wrong:
