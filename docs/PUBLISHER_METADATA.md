@@ -40,26 +40,46 @@ GET /api/publishers/BBC%20News
 
 ## Measured outcome
 
-Against the live catalog's 20 busiest publishers, refreshed after each change:
+Refreshed against the live catalog after each change. The first four rows are the 20 busiest
+publishers; the last three widen to 60.
 
 | | matched | false positives |
 |---|---:|---:|
-| first production run | 9 | 0 |
-| brand-label domains, domain-shaped names, P31 | 12 | 0 |
-| verify every candidate, not just the first | 13 | 0 |
-| rank disambiguation candidates | **14** | 0 |
+| first production run | 9 / 20 | 0 |
+| brand-label domains, domain-shaped names, P31 | 12 / 20 | **1 (undetected)** |
+| verify every candidate, not just the first | 13 / 20 | 1 (undetected) |
+| rank disambiguation candidates | 14 / 20 | 1 (undetected) |
+| — widened to 60 — | 38 / 60 | 1 (found) |
+| aggregator hosts ignored, brand match corroborated | 46 / 60 | 1 (fix blocked by the cache) |
+| verdicts replace wrong matches | **44 / 60** | **0** |
 
-Precision never moved: the same refusals that were correct on day one (`aktiencheck` → Tom's
-Hardware, `zazoom` → Tim Minton, `sportskeeda.com` → Roger Federer) are still refused.
+**Precision did not hold throughout, and the record should say so.** Brand-label matching bound
+`ABC News` (observed `abcnews.com`, the American network) to `ABC News (Albania)`, whose site is
+`abcnews.al`. It sat wrong for three subsequent changes while the summary of each said "zero false
+positives", and it surfaced only because a triage query happened to list it. Then the fix did not
+take, because `should_replace` preserved the wrong `ok` row against the corrected refusal.
 
-**This is the busiest 20, not the catalog.** Smaller outlets are far less likely to have a Wikipedia
+Two lessons are worth more than the match rate:
+
+* **A recall change is a precision change.** Every rule that loosened matching should have been
+  measured for what it newly *accepted*, not only for what it newly resolved. The `reason` column
+  exists so that check is one query instead of luck.
+* **A cache that cannot be corrected is a liability.** Protecting good data from transient failure
+  is right; protecting bad data from a better verdict is not.
+
+The count went *down* from 46 to 44 in the last row. That is the correction landing: `ABC News`
+(wrong) and `dailymail.com` (right, but uncorroborated) both dropped out.
+
+**This is the busiest 60, not the catalog.** Smaller outlets are far less likely to have a Wikipedia
 article at all, so the catalog-wide rate will be lower — treat 70% as a ceiling, not an expectation.
 
-The six that remain unmatched are not a matching problem. `marketbeat.com`, `sportskeeda.com`,
-`zazoom` and `aktiencheck` have no Wikidata item carrying a usable website claim; `decider.com` and
-`pagesix.com`-style sub-brands resolve to their parent. More heuristics will not reach them — they
-want a curated row in `examples/data/outlet_registry.csv`, which is exactly what the `ambiguous`
-backlog and its stored `reason` exist to identify.
+The remaining refusals are mostly not a matching problem. `marketbeat.com`, `sportskeeda.com`,
+`zazoom`, `aktiencheck`, `dev.to`, `main-netz` and `eng.belta.by` have no Wikidata item carrying a
+usable website claim; `decider.com` resolves to its parent. `Associated Press` is the interesting
+one: `apnews.com` and Wikidata's `ap.org` are the same organisation under unrelated brand labels,
+which no domain rule can bridge. All of these want a curated row in
+`examples/data/outlet_registry.csv` — which is what the `ambiguous` backlog and its stored `reason`
+exist to identify.
 
 ## Verification — why most candidates are refused
 
