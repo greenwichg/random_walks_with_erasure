@@ -42,6 +42,14 @@ services:
       RWE_GDELT_QUERY: ${RWE_GDELT_QUERY:-}
       RWE_GDELT_MAX_ARTICLES: ${RWE_GDELT_MAX_ARTICLES:-25}
       RWE_GDELT_POLL_INTERVAL: ${RWE_GDELT_POLL_INTERVAL:-1800}
+      # Read timeout for the DOC endpoint. It was absent here and defaulted to 15 s in code, which
+      # is the single reason the adapter sat at a 58% success rate. Measured live 2026-07-27:
+      #   429 refusals  9.4 - 12.7 s   |   200 successes  13.5, 14.7, 15.3 s
+      # GDELT answers slowly either way and REFUSES FASTER THAN IT SUCCEEDS, so a 15 s timeout cut
+      # off successes while letting every refusal through. Query complexity is not a factor — a
+      # single-term query measured 15.3 s and 429'd at the same rate. Do not lower this below ~30 s
+      # without re-measuring the distribution; the failure it causes looks like a rate limit.
+      RWE_GDELT_TIMEOUT: ${RWE_GDELT_TIMEOUT:-45}
       # GKG event-geography enricher (Location Intelligence Phase 2): locates articles ALREADY in
       # the catalog from GDELT's GKG files — the supply behind the event-location Country filter.
       # Default 1 = ON (launch decision: without it the Country filter has no data and pickers
@@ -84,6 +92,11 @@ services:
       RWE_SOURCE_RETRIES: ${RWE_SOURCE_RETRIES:-3}
       RWE_SOURCE_BACKOFF: ${RWE_SOURCE_BACKOFF:-5}
       RWE_SOURCE_RETRY_AFTER_MAX: ${RWE_SOURCE_RETRY_AFTER_MAX:-120}
+      # Total seconds ONE request may spend sleeping across all its retries. Retry count and the
+      # per-wait ceiling do not bound wall-clock time between them: 3 retries x a 120 s Retry-After
+      # is six minutes of one poller thread held by a single polite server. This makes the worst
+      # case a number you can read instead of a product of three knobs.
+      RWE_SOURCE_MAX_WAIT: ${RWE_SOURCE_MAX_WAIT:-60}
       RWE_SOURCE_BACKOFF_STEPS: ${RWE_SOURCE_BACKOFF_STEPS:-4}
       RWE_SOURCE_MAX_INTERVAL: ${RWE_SOURCE_MAX_INTERVAL:-21600}
       # NewsAPI adapter (same shared pipeline as RSS/GDELT: dedup, scoring, registry resolution,

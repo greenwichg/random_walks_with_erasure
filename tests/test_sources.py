@@ -10,6 +10,7 @@ injectable fetch — no network is contacted.
 import pathlib
 import sys
 import threading
+import urllib.error
 
 import pytest
 
@@ -1010,3 +1011,77 @@ def test_no_warning_at_the_steady_state_lookback(monkeypatch):
     enr._log = lambda lvl, ev, **f: events.append(ev)
     enr._warn_if_window_cost_is_high()
     assert events == []
+
+
+# --------------------------------------------------------------------------- #
+# GDELT read timeout + the total sleep budget.
+# --------------------------------------------------------------------------- #
+def test_gdelt_timeout_clears_the_measured_response_distribution():
+    """The endpoint refuses FASTER than it succeeds. Measured live (2026-07-27):
+        429 refusals : 9.4 - 12.7 s
+        200 successes: 13.5, 14.7, 15.3 s
+    The shipped 15 s timeout sat between those two clusters, so it cut off successes while letting
+    every refusal through — a filter biased against the outcome we want, and the reason the success
+    rate sat at 58%. The default has to clear the SUCCESS tail with headroom."""
+    assert sources.GDELTAdapter.DEFAULT_TIMEOUT >= 20.0
+    slowest_measured_success = 15.3
+    assert sources.GDELTAdapter.DEFAULT_TIMEOUT > slowest_measured_success * 1.5
+
+
+def test_gdelt_timeout_is_overridable(monkeypatch):
+    captured = {}
+
+    def fake_get_json(url, *, headers=None, timeout=None, **kw):
+        captured["timeout"] = timeout
+        return {"articles": []}
+
+    monkeypatch.setattr(sources, "_get_json", fake_get_json)
+    monkeypatch.delenv("RWE_GDELT_TIMEOUT", raising=False)
+    sources.GDELTAdapter().fetch()
+    assert captured["timeout"] == sources.GDELTAdapter.DEFAULT_TIMEOUT
+
+    monkeypatch.setenv("RWE_GDELT_TIMEOUT", "90")
+    sources.GDELTAdapter().fetch()
+    assert captured["timeout"] == 90.0
+
+
+def test_a_single_request_cannot_block_a_thread_past_the_wait_budget(monkeypatch):
+    """Retry COUNT does not bound wall-clock time: three retries with a 120 s Retry-After ceiling
+    is six minutes of one poller thread. The budget makes the worst case a stated number."""
+    slept = []
+    monkeypatch.setattr(sources.time, "sleep", lambda s: slept.append(s))
+    monkeypatch.setenv("RWE_SOURCE_MAX_WAIT", "60")
+    monkeypatch.setenv("RWE_SOURCE_RETRIES", "5")
+    monkeypatch.setenv("RWE_SOURCE_RETRY_AFTER_MAX", "120")
+
+    class _Resp:
+        headers = {"Retry-After": "50"}
+
+    def always_429(req, timeout=None):
+        raise urllib.error.HTTPError(req.full_url, 429, "Too Many Requests",
+                                     _Resp.headers, None)
+
+    monkeypatch.setattr(sources.urllib.request, "urlopen", always_429)
+    with pytest.raises(urllib.error.HTTPError):
+        sources._get_json("https://example.test/x")
+
+    # One 50s wait fits the 60s budget; a second would exceed it, so the call gives up instead.
+    assert slept == [50]
+
+
+def test_the_wait_budget_also_bounds_connection_level_retries(monkeypatch):
+    slept = []
+    monkeypatch.setattr(sources.time, "sleep", lambda s: slept.append(s))
+    monkeypatch.setenv("RWE_SOURCE_MAX_WAIT", "8")
+    monkeypatch.setenv("RWE_SOURCE_RETRIES", "9")
+    monkeypatch.setenv("RWE_SOURCE_BACKOFF", "5")
+
+    def always_timeout(req, timeout=None):
+        raise TimeoutError("read timed out")
+
+    monkeypatch.setattr(sources.urllib.request, "urlopen", always_timeout)
+    with pytest.raises(TimeoutError):
+        sources._get_json("https://example.test/x")
+
+    assert sum(slept) <= 8.0
+    assert len(slept) < 9            # gave up on the budget, not on the retry count

@@ -126,9 +126,12 @@ def _request(url: str, *, read, headers=None, timeout: float,
 
     * **429 Too Many Requests** — retried ONLY when the server sends a ``Retry-After`` we are
       willing to wait for; otherwise it raises immediately. Retrying a rate limit on a short ladder
-      sends MORE traffic into a limit we are already over. Measured on GDELT: four requests per
-      refused cycle and ~30 s of sleeping per cycle, for nothing — a background poller's next
-      scheduled cycle is the right retry.
+      sends MORE traffic into a limit we are already over, and a background poller's next scheduled
+      cycle is the right retry. Verified on GDELT (2026-07-27): every 429 arrives with **no**
+      ``Retry-After``, so this path already makes exactly one request per refused cycle. An earlier
+      version of this note claimed four requests and ~30 s of sleeping per cycle — that was inferred
+      from a latency figure, never measured, and it was wrong: the time was going into read
+      timeouts, not retries.
     * **5xx** — a genuine transient server fault; retried with exponential backoff + jitter.
     * **Connection-level failures** (SSL handshake, DNS, connect/read timeout, reset, truncated
       body) — retried the same way. These previously escaped the loop entirely: only ``HTTPError``
@@ -136,12 +139,32 @@ def _request(url: str, *, read, headers=None, timeout: float,
       never retried however high ``RWE_SOURCE_RETRIES`` was set.
 
     ``on_transient`` is called with the HTTP code for every 429/5xx — including the one that gives
-    up — so callers count rate-limit events instead of the loop absorbing them."""
+    up — so callers count rate-limit events instead of the loop absorbing them.
+
+    **A single call has a total sleep budget** (``RWE_SOURCE_MAX_WAIT``, default 60 s). Retry counts
+    and per-wait ceilings do not bound wall-clock time on their own: with three retries and a 120 s
+    ``Retry-After`` ceiling, one polite server could hold a poller thread for six minutes. The
+    budget makes the worst case a number you can state, rather than the product of three knobs
+    nobody multiplies together."""
     retries = _int_env("RWE_SOURCE_RETRIES", 3) if retries is None else retries
     backoff = _float_env("RWE_SOURCE_BACKOFF", 5.0) if backoff is None else backoff
     retry_after_max = _float_env("RWE_SOURCE_RETRY_AFTER_MAX", 120.0)
+    max_wait = _float_env("RWE_SOURCE_MAX_WAIT", 60.0)
+    slept = 0.0
     req = urllib.request.Request(url, headers=headers or {})
     attempt = 0
+
+    def _sleep(seconds: float) -> bool:
+        """Sleep if the budget allows. False means the caller must give up instead of waiting."""
+        nonlocal slept
+        if seconds <= 0:
+            return True
+        if slept + seconds > max_wait:
+            return False
+        time.sleep(seconds)
+        slept += seconds
+        return True
+
     while True:
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -158,16 +181,19 @@ def _request(url: str, *, read, headers=None, timeout: float,
                 wait = _retry_after_seconds(e)
                 if wait is None or wait > retry_after_max or attempt > retries:
                     raise
-                time.sleep(wait)
+                if not _sleep(wait):
+                    raise
                 continue
             if not (500 <= e.code < 600) or attempt > retries:
                 raise
-            time.sleep(_backoff_delay(attempt, backoff))
+            if not _sleep(_backoff_delay(attempt, backoff)):
+                raise
         except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError):
             attempt += 1
             if attempt > retries:
                 raise
-            time.sleep(_backoff_delay(attempt, backoff))
+            if not _sleep(_backoff_delay(attempt, backoff)):
+                raise
 
 
 def _get_json(url: str, *, headers=None, timeout: float = 15.0,
@@ -980,12 +1006,30 @@ class GDELTAdapter(SourceAdapter):
                   "maxrecords": str(min(self.max_articles() or 75, 250))}
         return f"https://api.gdeltproject.org/api/v2/doc/doc?{urllib.parse.urlencode(params)}"
 
+    #: Read timeout, in seconds. NOT 15 — that was the default this adapter shipped with, and it sat
+    #: exactly inside the endpoint's response distribution.
+    #:
+    #: Measured against the live API (2026-07-27, ten samples):
+    #:     429 refusals : 9.4, 10.4, 10.8, 11.8, 11.9, 12.1, 12.7 s
+    #:     200 successes: 13.5, 14.7, 15.3 s
+    #:
+    #: GDELT's DOC endpoint answers slowly whatever the outcome, and it **refuses faster than it
+    #: succeeds**. A 15 s timeout therefore cut off successes while letting every refusal through —
+    #: a filter biased against the outcome we want, which is why the success rate sat at 58% and
+    #: every diagnosis kept landing on rate limits. Query complexity is NOT a factor: a single-term
+    #: query measured 15.3 s and 429'd at the same rate as the five-term one.
+    #:
+    #: 45 s clears the observed distribution with headroom. The cost of being generous here is one
+    #: background thread waiting longer on a poll that happens every 30 minutes; the cost of being
+    #: tight is discarding responses we already paid for.
+    DEFAULT_TIMEOUT = 45.0
+
     def fetch(self) -> dict:
         url = self._url()
         if self._fetch_fn is not None:
             return self._fetch_fn(url)
         return _get_json(url, headers={"User-Agent": _USER_AGENT},
-                         timeout=_float_env("RWE_GDELT_TIMEOUT", 15.0))
+                         timeout=_float_env("RWE_GDELT_TIMEOUT", self.DEFAULT_TIMEOUT))
 
     def normalize(self, raw: dict) -> SourceBatch:
         arts = (raw or {}).get("articles") or []
