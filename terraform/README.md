@@ -5,6 +5,11 @@ Terraform. This configuration **creates and recreates nothing**: every resource 
 brought under management via `import`, and each import is gated on a **plan-to-zero**
 result (`0 to add, 0 to change, 0 to destroy`).
 
+**One documented exception:** `github-oidc.tf` deliberately CREATES two resources
+(the GitHub OIDC provider + the `hidden-view-github-deploy` role) for the CI/CD
+pipeline — apply it once via the MFA flow below; see the file header and
+`docs/CICD_PIPELINE.md`. Everything else remains import-only.
+
 ## Prerequisites
 
 - **Terraform >= 1.10** (S3-native state locking).

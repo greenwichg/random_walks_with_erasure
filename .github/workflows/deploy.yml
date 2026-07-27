@@ -1,0 +1,137 @@
+# Continuous Deployment — ships a CI-green commit to the production EC2 host.
+#
+# Two ways in, one path through:
+#   * automatic — CI completes successfully on the default branch → deploy that exact SHA;
+#   * manual    — workflow_dispatch with a ref (rollbacks and hotfixes use the same door).
+# Both run the SAME host-side entry point, deploy/ops/cd-deploy.sh, which sequences the EXISTING
+# lifecycle scripts: pre-deploy DB snapshot → update.sh (build, converge, readiness gate, smoke
+# test) → automatic rollback to the previously-serving commit on any failure.
+#
+# Security model: no SSH keys, no long-lived AWS credentials, no secrets in this file. The job
+# assumes a least-privilege IAM role via GitHub OIDC (terraform/github-oidc.tf) that can do exactly
+# two things: send AWS-RunShellScript to instances tagged Name=ih-beta, and read the invocation
+# back. Application secrets never leave the host (deploy/.env). The `production` environment gives
+# you approval gating + deployment history — configure required reviewers in repo settings to make
+# every deploy (or only dispatched ones) wait for a human.
+#
+# Repo variables required (Settings → Actions → Variables):
+#   AWS_DEPLOY_ROLE_ARN   arn:aws:iam::652615011843:role/hidden-view-github-deploy
+#   EC2_INSTANCE_ID       i-01d221c5b7b7920ed
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main, master]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref to deploy (SHA / branch / tag; also the rollback door)"
+        required: true
+
+concurrency:
+  group: deploy-production # never two deploys converging the same host at once
+  cancel-in-progress: false # a started deploy must finish (or roll back) — never abandon mid-swap
+
+permissions:
+  contents: read
+  id-token: write # OIDC federation — the only AWS credential path
+
+jobs:
+  deploy:
+    name: Deploy to production
+    # Automatic path only on CI success; the manual door skips straight through (operator judgment).
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 30
+    steps:
+      - name: Resolve target SHA
+        id: target
+        env:
+          # Untrusted-ish operator input: never interpolate ${{ }} into shell text directly —
+          # env-var + quoting keeps it data, and the allowlist below keeps it a git ref.
+          DISPATCH_REF: ${{ inputs.ref }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            REF="$DISPATCH_REF"
+          else
+            REF="$RUN_SHA"
+          fi
+          # Git-ref characters only — this string is executed on the production host.
+          if ! printf '%s' "$REF" | grep -Eq '^[A-Za-z0-9._/-]{1,120}$'; then
+            echo "::error::refusing to deploy suspicious ref: $REF"
+            exit 1
+          fi
+          echo "sha=$REF" >> "$GITHUB_OUTPUT"
+          echo "deploying: $REF"
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Start deployment on the instance (SSM)
+        id: send
+        env:
+          TARGET_SHA: ${{ steps.target.outputs.sha }} # allowlist-validated above
+        run: |
+          CMD_ID=$(aws ssm send-command \
+            --instance-ids "${{ vars.EC2_INSTANCE_ID }}" \
+            --document-name AWS-RunShellScript \
+            --comment "cd-deploy $TARGET_SHA (run ${{ github.run_id }})" \
+            --timeout-seconds 1500 \
+            --parameters "commands=[\"cd /opt/ih && bash deploy/ops/cd-deploy.sh $TARGET_SHA 2>&1\"]" \
+            --query 'Command.CommandId' --output text)
+          echo "command-id=$CMD_ID" >> "$GITHUB_OUTPUT"
+          echo "SSM command: $CMD_ID"
+
+      - name: Wait for the host to finish (build + converge + gate + smoke ≈ 5–15 min)
+        id: wait
+        run: |
+          CMD_ID="${{ steps.send.outputs.command-id }}"
+          for i in $(seq 1 90); do
+            STATUS=$(aws ssm get-command-invocation \
+              --command-id "$CMD_ID" --instance-id "${{ vars.EC2_INSTANCE_ID }}" \
+              --query 'Status' --output text 2>/dev/null || echo Pending)
+            case "$STATUS" in
+              Success|Failed|Cancelled|TimedOut) break ;;
+              *) sleep 15 ;;
+            esac
+          done
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+
+      - name: Host output
+        if: always()
+        run: |
+          CMD_ID="${{ steps.send.outputs.command-id }}"
+          aws ssm get-command-invocation \
+            --command-id "$CMD_ID" --instance-id "${{ vars.EC2_INSTANCE_ID }}" \
+            --query 'StandardOutputContent' --output text | tail -120
+          aws ssm get-command-invocation \
+            --command-id "$CMD_ID" --instance-id "${{ vars.EC2_INSTANCE_ID }}" \
+            --query 'StandardErrorContent' --output text | tail -40
+
+      - name: Verdict (parse the cd-deploy output contract)
+        run: |
+          CMD_ID="${{ steps.send.outputs.command-id }}"
+          OUT=$(aws ssm get-command-invocation \
+            --command-id "$CMD_ID" --instance-id "${{ vars.EC2_INSTANCE_ID }}" \
+            --query 'StandardOutputContent' --output text)
+          RESULT=$(printf '%s\n' "$OUT" | grep -o 'CD_RESULT=[a-z_]*' | tail -1)
+          echo "SSM status: ${{ steps.wait.outputs.status }} — $RESULT"
+          if [ "${{ steps.wait.outputs.status }}" = "Success" ] && [ "$RESULT" = "CD_RESULT=deployed" ]; then
+            echo "✅ production is serving ${{ steps.target.outputs.sha }}"
+          elif [ "$RESULT" = "CD_RESULT=rolled_back" ]; then
+            echo "::error::deploy failed its health/smoke gate — host AUTO-ROLLED-BACK to the previous commit (healthy). See host output above."
+            exit 1
+          elif [ "$RESULT" = "CD_RESULT=rollback_failed" ]; then
+            echo "::error::deploy AND rollback failed — MANUAL INTERVENTION REQUIRED on the host now."
+            exit 2
+          else
+            echo "::error::deploy did not complete (SSM ${{ steps.wait.outputs.status }}; $RESULT) — check host output."
+            exit 1
+          fi

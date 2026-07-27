@@ -14,6 +14,7 @@ These wrap `docker compose -f deploy/docker-compose.yml -f deploy/docker-compose
 | `bootstrap-ec2.sh` | Idempotent host prep: Docker + Compose, AWS CLI, 2 GB swap, container log rotation, data dir, seeds `deploy/.env`. `sudo` required. | Once per new instance (safe to re-run). |
 | `deploy.sh` | Builds + starts ingest→api→web→caddy, gates on engine readiness, enables the backup scheduler, then runs `smoke-test.sh`. | First deploy and every redeploy. |
 | `update.sh [ref]` | Checks out a release tag (or the previous good tag for **rollback**), rebuilds, re-validates. Data untouched. | Ship a new version / roll back. |
+| `cd-deploy.sh <ref>` | **CI/CD entry point** (invoked by `.github/workflows/deploy.yml` via SSM): pre-deploy DB snapshot → `update.sh <ref>` → **automatic rollback** to the previously-serving commit on failure, with webhook alerts. Prints a machine-readable `CD_RESULT=` verdict. | GitHub Actions; also runnable by hand. See `docs/CICD_PIPELINE.md`. |
 | `restart.sh [svc]` | Restarts all services (or one) via `up -d` so a `deploy/.env` change is re-read. | After editing env (e.g. allowlist). |
 | `restore.sh [src]` | **Verify-first** restore from an `s3://…` URI or a local backup (integrity check → halt writes → safe swap → re-validate). | Recover from data loss/corruption. |
 | `backup-offhost.sh [--backup-now]` | **Container-based** backup + integrity check + `aws s3 sync` off-host (no host Python). | Hourly cron (installed by `bootstrap-ec2.sh`); go-live/manual. |
