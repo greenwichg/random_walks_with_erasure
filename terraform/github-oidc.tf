@@ -75,7 +75,27 @@ resource "aws_iam_role_policy" "github_deploy_ssm" {
       {
         Sid      = "ReadBackTheInvocation"
         Effect   = "Allow"
-        Action   = ["ssm:GetCommandInvocation", "ssm:ListCommandInvocations"]
+        Action   = ["ssm:GetCommandInvocation", "ssm:ListCommandInvocations", "ssm:DescribeInstanceInformation"]
+        Resource = "*"
+      },
+      {
+        # Suspend / Resume (.github/workflows/{suspend,resume}.yml). START and STOP only — the role
+        # deliberately has NO ec2:TerminateInstances, NO ec2:DeleteVolume, NO ec2:DetachVolume: the
+        # workflows cannot destroy the root volume that holds the database, even if a future edit
+        # asked them to. Tag-scoped to the production instance.
+        Sid      = "SuspendResumeTheProductionHost"
+        Effect   = "Allow"
+        Action   = ["ec2:StartInstances", "ec2:StopInstances"]
+        Resource = "arn:aws:ec2:us-east-1:652615011843:instance/*"
+        Condition = {
+          StringEquals = { "ec2:ResourceTag/Name" = "ih-beta" }
+        }
+      },
+      {
+        # Describe* has no resource-level permissions in EC2; read-only, so "*" is the only option.
+        Sid      = "ReadInstanceState"
+        Effect   = "Allow"
+        Action   = ["ec2:DescribeInstances", "ec2:DescribeInstanceStatus"]
         Resource = "*"
       },
     ]

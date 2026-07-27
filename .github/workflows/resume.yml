@@ -1,0 +1,114 @@
+# Resume Environment — start the instance, verify the data, bring the app back to serving.
+#
+# Manual only, approval-gated, typed confirmation. Mirrors Suspend: the control-plane start happens
+# here, everything that touches data happens on the host in resume.sh, and nothing is exposed until
+# integrity + readiness + smoke have all passed.
+#
+# Sequence: start instance → wait for it to run → wait for the SSM agent to register (a freshly
+# started instance is not immediately reachable) → resume.sh (integrity check → optional checkout →
+# compose up → readiness gate → smoke test) → report.
+name: Resume Environment
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type RESUME to confirm'
+        required: true
+      ref:
+        description: 'Optional git ref to deploy on the way back up (blank = whatever is checked out)'
+        required: false
+
+concurrency:
+  group: lifecycle-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  resume:
+    name: Resume production
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 30
+    steps:
+      - name: Check the typed confirmation and validate the ref
+        id: guard
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+          REF: ${{ inputs.ref }}
+        run: |
+          if [ "$CONFIRM" != "RESUME" ]; then
+            echo "::error::confirmation text did not match — expected RESUME. Nothing was done."
+            exit 1
+          fi
+          # Same allowlist as the deploy workflow: this string is executed on the host.
+          if [ -n "$REF" ] && ! printf '%s' "$REF" | grep -Eq '^[A-Za-z0-9._/-]{1,120}$'; then
+            echo "::error::refusing to deploy suspicious ref: $REF"
+            exit 1
+          fi
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Start the instance
+        run: |
+          aws ec2 start-instances --instance-ids "${{ vars.EC2_INSTANCE_ID }}" >/dev/null
+          echo "waiting for the instance to reach 'running'…"
+          aws ec2 wait instance-running --instance-ids "${{ vars.EC2_INSTANCE_ID }}"
+
+      - name: Wait for the SSM agent to come online
+        run: |
+          # A just-booted instance accepts commands only once its agent has registered (~30-90s).
+          for i in $(seq 1 40); do
+            PING=$(aws ssm describe-instance-information \
+              --filters "Key=InstanceIds,Values=${{ vars.EC2_INSTANCE_ID }}" \
+              --query 'InstanceInformationList[0].PingStatus' --output text 2>/dev/null || echo None)
+            echo "  attempt $i: SSM ping status = $PING"
+            [ "$PING" = "Online" ] && exit 0
+            sleep 15
+          done
+          echo "::error::the SSM agent never came online — the instance is running but unreachable. Check the EC2 console."
+          exit 1
+
+      - name: Resume the application (integrity → up → readiness → smoke)
+        run: |
+          CMD_ID=$(aws ssm send-command \
+            --instance-ids "${{ vars.EC2_INSTANCE_ID }}" \
+            --document-name AWS-RunShellScript \
+            --comment "resume (run ${{ github.run_id }})" \
+            --timeout-seconds 1500 \
+            --parameters "commands=[\"cd /opt/ih && bash deploy/ops/resume.sh ${{ steps.guard.outputs.ref }} 2>&1\"]" \
+            --query 'Command.CommandId' --output text)
+          for _ in $(seq 1 90); do
+            STATUS=$(aws ssm get-command-invocation --command-id "$CMD_ID" \
+              --instance-id "${{ vars.EC2_INSTANCE_ID }}" --query 'Status' --output text 2>/dev/null || echo Pending)
+            case "$STATUS" in Success|Failed|Cancelled|TimedOut) break ;; *) sleep 15 ;; esac
+          done
+          OUT=$(aws ssm get-command-invocation --command-id "$CMD_ID" \
+            --instance-id "${{ vars.EC2_INSTANCE_ID }}" --query 'StandardOutputContent' --output text)
+          printf '%s\n' "$OUT" | tail -80
+          aws ssm get-command-invocation --command-id "$CMD_ID" \
+            --instance-id "${{ vars.EC2_INSTANCE_ID }}" --query 'StandardErrorContent' --output text | tail -20
+          if ! printf '%s' "$OUT" | grep -q 'RESUME_RESULT=ok'; then
+            echo "::error::resume did not reach a serving state — see the host output above. The instance is RUNNING; data is intact. Fix, then re-run this workflow (it is idempotent)."
+            exit 1
+          fi
+
+      - name: Summary
+        run: |
+          {
+            echo "### Environment resumed :white_check_mark:"
+            echo ""
+            echo "* Instance started, database integrity verified **before** serving."
+            echo "* Stack up, engine readiness gate passed, smoke test green."
+            echo "* Same Elastic IP and TLS certificates as before the suspension — no DNS change."
+            echo ""
+            echo "Ingestion pollers restart automatically and will backfill on their normal intervals."
+          } >> "$GITHUB_STEP_SUMMARY"

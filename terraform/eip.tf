@@ -4,6 +4,13 @@
 # aws_eip_association.
 resource "aws_eip" "ih_eip" {
   domain = "vpc"
+
+  # PERSISTENT TIER — the address the Route 53 A record points at. It stays ASSOCIATED across a
+  # suspend (an EIP survives instance stop/start), which is why resume needs no DNS change and the
+  # TLS certificate keeps working. Releasing it would force a record update plus propagation.
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "aws_eip_association" "ih_eip_assoc" {
