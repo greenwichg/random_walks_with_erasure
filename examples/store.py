@@ -564,6 +564,58 @@ class FeedHealth(Base):
     updated_at: Mapped[datetime] = mapped_column(default=_utcnow)
 
 
+class PublisherMetadata(Base):
+    """Cached third-party facts about a publisher — the enrichment side table for the Publisher page.
+
+    **A cache of an external source, never the source of truth.** The curated
+    :mod:`outlet_registry` remains authoritative for everything it knows; this table only ever
+    fills the gaps it leaves, and every merged field carries its own provenance so the page can say
+    where a fact came from. Isolation is identical to :class:`FeedHealth`: no foreign key, no
+    influence on corpus construction, clustering, recommendation, or ranking.
+
+    Keyed by a NORMALIZED publisher key (``publisher_key``) rather than the display name, so the
+    same outlet reached as "BBC News", "bbc.co.uk" or "BBC  News" hits one row instead of three.
+
+    ``status`` is what makes refresh cheap and idempotent, and it is why a failed lookup is stored
+    rather than discarded:
+
+        ok         a page was found, verified, and parsed
+        no_match   searched, nothing plausible exists — a NEGATIVE cache entry, so the next cycle
+                   does not re-ask Wikipedia the same unanswerable question
+        ambiguous  candidates existed but none could be confirmed as this outlet (a disambiguation
+                   page, or a website that does not match the domain we actually see them publish
+                   from). Recorded as a distinct state from no_match because it is a curation
+                   signal: these are the outlets a human should resolve by hand.
+        error      the lookup itself failed (network/HTTP). Retried sooner than the others.
+    """
+
+    __tablename__ = "publisher_metadata"
+
+    publisher_key: Mapped[str] = mapped_column(String(255), primary_key=True)
+    publisher: Mapped[str] = mapped_column(String(255))          # the name the lookup ran for
+    status: Mapped[str] = mapped_column(String(16), default="ok", index=True)
+    source: Mapped[Optional[str]] = mapped_column(String(16), default=None)   # wikipedia|wikimedia
+    # Identity of the matched entity — kept so a match is auditable and re-verifiable by hand.
+    wikidata_id: Mapped[Optional[str]] = mapped_column(String(32), default=None)
+    wikipedia_title: Mapped[Optional[str]] = mapped_column(String(255), default=None)
+    wikipedia_url: Mapped[Optional[str]] = mapped_column(String(1024), default=None)
+    # The enriched facts. All optional: a partial match is a normal, useful outcome.
+    description: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    founded: Mapped[Optional[str]] = mapped_column(String(32), default=None)   # year, or ISO date
+    headquarters: Mapped[Optional[str]] = mapped_column(String(255), default=None)
+    country: Mapped[Optional[str]] = mapped_column(String(2), default=None)    # ISO 3166-1 alpha-2
+    website: Mapped[Optional[str]] = mapped_column(String(1024), default=None)
+    parent: Mapped[Optional[str]] = mapped_column(String(255), default=None)
+    logo: Mapped[Optional[str]] = mapped_column(String(1024), default=None)
+    # Every OTHER field's provenance is fixed by which extractor produces it (description comes
+    # from the article, the rest from Wikidata claims). The logo is the one fact reachable two
+    # ways — a Commons file named by claim P154, or the article's own page image — so it carries
+    # its provenance explicitly rather than having it guessed back out of the URL host.
+    logo_source: Mapped[Optional[str]] = mapped_column(String(16), default=None)
+    error: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    fetched_at: Mapped[datetime] = mapped_column(default=_utcnow, index=True)
+
+
 class AnalyticsEvent(Base):
     """A single product-analytics event (PA1) — the raw material for the activation funnel + metrics.
 
@@ -1476,6 +1528,98 @@ class Store:
                 "hosts": _counted(hosts), "eventCountries": _counted(event_countries),
                 "registers": {**registers, "n": register_n} if register_n else None,
                 "emotion": emotion}
+
+    # -- publisher metadata cache (Wikipedia/Wikimedia enrichment) --------------------
+    @staticmethod
+    def publisher_key(name: str) -> str:
+        """The cache key for a publisher name: casefolded, whitespace-collapsed.
+
+        Deliberately NOT the aggressive alphanumeric squash the registry uses for alias matching —
+        that maps distinct outlets onto one key ("The Hill" and "TheHill" is a fair merge, but the
+        squash is also how unrelated names collide). Here a wrong merge would show one publisher's
+        facts on another's page, so the key stays conservative and the registry does the aliasing
+        upstream: callers resolve to a canonical name FIRST, then key on it."""
+        return " ".join((name or "").split()).casefold()
+
+    @staticmethod
+    def _publisher_metadata_row(r: "PublisherMetadata") -> dict:
+        return {
+            "publisher": r.publisher, "status": r.status, "source": r.source,
+            "wikidataId": r.wikidata_id, "wikipediaTitle": r.wikipedia_title,
+            "wikipediaUrl": r.wikipedia_url, "description": r.description,
+            "founded": r.founded, "headquarters": r.headquarters, "country": r.country,
+            "website": r.website, "parent": r.parent, "logo": r.logo,
+            "logoSource": r.logo_source, "error": r.error,
+            "fetchedAt": r.fetched_at.isoformat() if r.fetched_at else None,
+        }
+
+    def upsert_publisher_metadata(self, publisher: str, *, status: str = "ok",
+                                  source: "str | None" = None, at: "datetime | None" = None,
+                                  **fields) -> dict:
+        """Write one lookup result. Idempotent by construction: the key is derived from the name, so
+        re-running an enrichment overwrites its own row instead of accumulating duplicates.
+
+        Every call REPLACES the fact columns, including with None. That is deliberate — if Wikidata
+        drops a claim, the cache must drop it too, or the page would keep serving a fact its source
+        no longer asserts. Curated registry values are unaffected: they live in the registry and are
+        merged on read, never written here."""
+        key = self.publisher_key(publisher)
+        cols = ("wikidata_id", "wikipedia_title", "wikipedia_url", "description", "founded",
+                "headquarters", "country", "website", "parent", "logo", "logo_source", "error")
+        unknown = set(fields) - set(cols)
+        if unknown:
+            raise ValueError(f"unknown publisher metadata fields: {sorted(unknown)}")
+        with self.session() as s:
+            row = s.get(PublisherMetadata, key)
+            if row is None:
+                row = PublisherMetadata(publisher_key=key, publisher=publisher)
+                s.add(row)
+            row.publisher = publisher
+            row.status = status
+            row.source = source
+            for c in cols:
+                setattr(row, c, fields.get(c))
+            row.fetched_at = at or _utcnow()
+            s.commit()
+            return self._publisher_metadata_row(row)
+
+    def publisher_metadata(self, publisher: str) -> "dict | None":
+        """The cached row for one publisher, or None when never looked up."""
+        with self.session() as s:
+            row = s.get(PublisherMetadata, self.publisher_key(publisher))
+            return self._publisher_metadata_row(row) if row is not None else None
+
+    def publisher_metadata_many(self, publishers) -> dict:
+        """``{publisher_key: row}`` for several names in one query — the profile page and the
+        enricher both need bulk reads, and N round-trips per cycle is the thing to avoid."""
+        keys = {self.publisher_key(p) for p in publishers if (p or "").strip()}
+        if not keys:
+            return {}
+        with self.session() as s:
+            rows = s.scalars(select(PublisherMetadata)
+                             .where(PublisherMetadata.publisher_key.in_(keys))).all()
+            return {r.publisher_key: self._publisher_metadata_row(r) for r in rows}
+
+    def publisher_metadata_stats(self) -> dict:
+        """Counts by status — the operational view: how much of the catalog is enriched, and how
+        many outlets are sitting in ``ambiguous`` waiting for a human."""
+        with self.session() as s:
+            rows = s.execute(select(PublisherMetadata.status, func.count())
+                             .group_by(PublisherMetadata.status)).all()
+        counts = {str(k): int(n) for k, n in rows}
+        return {"total": sum(counts.values()), "byStatus": counts}
+
+    def catalog_publishers(self, *, limit: "int | None" = None) -> list:
+        """Distinct publisher names in the catalog, most-published first — the enrichment worklist.
+        Busiest outlets first so a bounded per-cycle budget is spent where readers will see it."""
+        q = (select(FeedArticle.publisher, func.count().label("n"))
+             .where(FeedArticle.publisher.is_not(None))
+             .group_by(FeedArticle.publisher)
+             .order_by(func.count().desc(), FeedArticle.publisher))
+        if limit:
+            q = q.limit(limit)
+        with self.session() as s:
+            return [{"publisher": p, "articles": int(n)} for p, n in s.execute(q).all() if p]
 
     # -- content lifecycle (Commit 18: extension-created articles) --------------------
     def maybe_promote_feed_article(self, canonical_url: str, min_readers: int) -> bool:

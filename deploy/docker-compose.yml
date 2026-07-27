@@ -60,6 +60,21 @@ services:
       # automatic via BACKFILL_WINDOWS; never copy that value here.
       RWE_GDELT_GKG_WINDOWS: ${RWE_GDELT_GKG_WINDOWS:-4}
       RWE_GDELT_GKG_BACKFILL_WINDOWS: ${RWE_GDELT_GKG_BACKFILL_WINDOWS:-96}
+      # --- Publisher metadata enrichment (Wikipedia + Wikidata) ---------------------------------
+      # Fills the logo / description / founded / HQ / parent gaps the curated registry leaves, so
+      # the Publisher page renders complete profiles. Curated data is NEVER overwritten — enrichment
+      # only fills empty fields, and each one carries its source (docs/PUBLISHER_METADATA.md).
+      # REQUEST BUDGET (the number to check before raising anything): one publisher costs 2-4
+      # requests, BATCH publishers run per cycle, one cycle per INTERVAL seconds. At the defaults
+      # that is 5 x 4 = 20 requests per 15 min = ~1,920/day worst case, and far less in steady state
+      # because a publisher whose row is still fresh is skipped WITHOUT a request — once the catalog
+      # is covered a cycle costs one SQL query and zero HTTP. TTLs are 30 days for a match or a
+      # confirmed miss, 14 for ambiguous, 6 hours for an error.
+      # Wikimedia's User-Agent policy requires a contact address; RWE_WIKI_CONTACT supplies it.
+      RWE_PUBLISHER_WIKI: ${RWE_PUBLISHER_WIKI:-1}
+      RWE_PUBLISHER_WIKI_BATCH: ${RWE_PUBLISHER_WIKI_BATCH:-5}
+      RWE_PUBLISHER_WIKI_INTERVAL: ${RWE_PUBLISHER_WIKI_INTERVAL:-900}
+      RWE_WIKI_CONTACT: ${RWE_WIKI_CONTACT:-https://hidden-view.com}
       # --- shared HTTP resilience (every provider, not just GDELT) ------------------------------
       # Retries cover 5xx AND connection-level faults (SSL handshake, DNS, connect/read timeout,
       # reset) with exponential backoff + half-jitter. 429 is NOT retried on a ladder — a rate limit

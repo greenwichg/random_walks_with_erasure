@@ -124,10 +124,19 @@ def _host(url) -> str:
         return ""
 
 
-def pick_best_logo(publisher, url=None) -> dict:
-    """A publisher logo: a curated override (with an optional dark-mode variant) keyed by the canonical
-    publisher name, else the publisher's own favicon derived from the article URL's domain (privacy-
-    preserving — the publisher's own asset, no third party, no download). All-null when unknown."""
+def pick_best_logo(publisher, url=None, *, enriched=None) -> dict:
+    """A publisher logo, best source first:
+
+    1. a **curated** override (with an optional dark-mode variant), keyed by canonical name;
+    2. an **enriched** logo from Wikimedia Commons / Wikipedia, passed in as ``(url, source)`` by
+       the caller that owns the metadata cache — this module stays free of store and network;
+    3. the publisher's own **favicon**, derived from the article URL's domain (privacy-preserving:
+       the publisher's own asset, no third party, no download).
+
+    Enrichment sits ABOVE the favicon rather than below it because a favicon is a 16px browser icon
+    that frequently 404s, while a Commons logo file is the outlet's actual mark — the favicon is a
+    last resort, not a preference. It stays BELOW curation because a hand-picked logo is a decision
+    somebody made on purpose. All-null when nothing is known."""
     name = (publisher or "").strip()
     canon = None
     if outlet_registry is not None:
@@ -139,6 +148,11 @@ def pick_best_logo(publisher, url=None) -> dict:
     if curated:
         return {"publisherLogo": curated.get("logo"), "publisherLogoDark": curated.get("logoDark"),
                 "publisherLogoSource": "registry"}
+    if enriched:
+        logo, source = enriched
+        if _abs(logo):
+            return {"publisherLogo": logo, "publisherLogoDark": None,
+                    "publisherLogoSource": source}
     host = _host(url)
     if host:
         return {"publisherLogo": f"https://{host}/favicon.ico", "publisherLogoDark": None,

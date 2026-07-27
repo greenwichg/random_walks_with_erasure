@@ -51,6 +51,8 @@ import corpus_health   # reuse: validation-aware retention (post-cycle, exactly 
 import storage_lifecycle  # reuse: the ONE bounded cleanup pass (catalog + derived tables)
 import story_service      # reuse: warm the clustered-story cache after ingest (off the request path)
 import gdelt_gkg       # reuse: the Phase-2 event-geography enrichment logic (offline-testable)
+import publisher_metadata  # reuse: the bounded Wikipedia/Wikidata publisher enrichment pass
+import publisher_wiki      # reuse: the Wikimedia-compliant User-Agent (their policy requires one)
 
 _USER_AGENT = "InformationHealth-Sources/0.1 (+https://code.claude.com)"
 _TRUE = {"1", "true", "yes", "on"}
@@ -1085,6 +1087,75 @@ class GDELTGKGEnricher(SourceAdapter):
         return agg
 
 
+class PublisherMetadataEnricher(SourceAdapter):
+    """An ENRICHMENT source: fills the publisher metadata cache from Wikipedia/Wikidata, so the
+    Publisher page reads facts that are already stored instead of blocking a request on a third-party
+    API. Produces no articles, so ``fetch``/``normalize`` are never used.
+
+    It is an ADAPTER rather than a post-cycle hook for three reasons, all learned from the passes
+    that live in ``_post_cycle``: it needs its OWN cadence (a 30-day TTL does not want to be re-checked
+    every ingest cycle), it needs the poller's per-source health and failure backoff (Wikimedia
+    outages should throttle it, not the catalog), and ``fetch_json`` has to be injectable so the test
+    suite never touches the network — which a lambda built inside ``_post_cycle`` cannot be.
+
+    Idempotent by construction: :func:`publisher_metadata.pending` skips any publisher whose row is
+    still fresh, so once the catalog is covered a cycle costs one query and zero requests."""
+
+    provider = "Wikipedia"
+    source_type = "publisher-wiki"
+
+    def __init__(self, fetch_json: Optional[Callable[[str], dict]] = None):
+        self._fetch_json = fetch_json                       # injectable (offline tests)
+
+    def enabled(self) -> bool:
+        return publisher_metadata.enabled()
+
+    def interval(self) -> float:
+        # Publisher facts are close to static; this cadence exists to spread a cold start over a few
+        # hours, not to track change. Batch × cycles-per-hour is the whole request budget.
+        return _float_env("RWE_PUBLISHER_WIKI_INTERVAL", 900.0)
+
+    @property
+    def health_key(self) -> str:
+        return "wikipedia://publishers"
+
+    def _fetch(self, url: str) -> dict:
+        if self._fetch_json is not None:
+            return self._fetch_json(url)
+        # Wikimedia's User-Agent policy: requests without a descriptive agent are refused (403).
+        return _get_json(url, headers={"User-Agent": publisher_wiki.USER_AGENT}, timeout=20.0)
+
+    def poll_once(self, store_, scorer, *, on_feed: Optional[Callable] = None) -> dict:
+        t0 = time.perf_counter()
+        error = None
+        stats: Optional[dict] = None
+        try:
+            stats = publisher_metadata.run_enrichment(store_, fetch_json=self._fetch)
+        except Exception as e:                              # store / network / parse error
+            error = e
+        latency_ms = (time.perf_counter() - t0) * 1000.0
+        agg = _agg(self.provider, self.source_type, None, None, latency_ms, error,
+                   key=self.health_key)
+        s = stats or {}
+        by_status = s.get("byStatus") or {}
+        # Enrichment counters, not ingest counters: how many outlets were due, and how the lookups
+        # resolved. `ambiguous` is the one worth watching — it is the human-curation backlog.
+        # NOT named `errors`: that key already exists in _agg as the CYCLE's error list, and an
+        # int there would corrupt the aggregate every other adapter shares. A per-publisher lookup
+        # failure is a counter; a failed cycle is a different thing entirely.
+        agg.update({"considered": s.get("considered", 0),
+                    "matched": by_status.get("ok", 0),
+                    "noMatch": by_status.get("no_match", 0),
+                    "ambiguous": by_status.get("ambiguous", 0),
+                    "lookupErrors": by_status.get("error", 0)})
+        if on_feed is not None:
+            try:
+                on_feed(self.provider, self.health_key, stats, latency_ms, error)
+            except Exception:                               # health recording must never break polling
+                pass
+        return agg
+
+
 # --------------------------------------------------------------------------- #
 # SourceRegistry — the enabled adapters the poller iterates. Future providers register here only.
 # --------------------------------------------------------------------------- #
@@ -1105,7 +1176,8 @@ class SourceRegistry:
 
 def default_registry(feeds_spec: Optional[str] = None) -> SourceRegistry:
     """The standard registry (RSS + NewsAPI + Guardian + NewsData + GNews + MediaStack + Currents +
-    Google News RSS + GDELT articles, + the GKG event-geography enricher). Future adapters (Reuters,
+    Google News RSS + GDELT articles, + the GKG event-geography and publisher-metadata enrichers).
+    Future adapters (Reuters,
     AP, Reddit, Hacker News, …) register here without touching the poller."""
     reg = SourceRegistry()
     reg.register(RSSAdapter(feeds_spec=feeds_spec))
@@ -1118,6 +1190,7 @@ def default_registry(feeds_spec: Optional[str] = None) -> SourceRegistry:
     reg.register(GoogleNewsAdapter())
     reg.register(GDELTAdapter())
     reg.register(GDELTGKGEnricher())   # enrichment last: it annotates articles the others ingested
+    reg.register(PublisherMetadataEnricher())   # …and this annotates the publishers behind them
     return reg
 
 

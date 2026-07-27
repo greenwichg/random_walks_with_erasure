@@ -7,7 +7,7 @@ import { Building2, ExternalLink, Newspaper, Search } from "lucide-react";
 import { usePublisher } from "@/hooks/use-data";
 import { useTranslation } from "@/lib/i18n";
 import { countryFlag, countryName } from "@/lib/countries";
-import type { PublisherProfile } from "@/types/domain";
+import type { PublisherAbout, PublisherProfile } from "@/types/domain";
 import { PageContainer } from "@/components/layout/page-container";
 import { SectionCard } from "@/components/shared/section-card";
 import { BarList, type BarItem } from "@/components/shared/bar-list";
@@ -27,6 +27,10 @@ import { EMOTION_META } from "@/lib/metrics";
 // app — deliberately NOT a nav destination (the consolidation direction: context, not hubs).
 
 const EMOTIONS = ["fear", "outrage", "analysis", "positive", "neutral"] as const;
+
+// The About block's rows, in presentation order. `country` is rendered separately (it needs the
+// locale's region name), so it is not listed here.
+const ABOUT_ROWS = ["founded", "headquarters", "parent"] as const;
 
 export default function PublisherPage() {
   const params = useParams<{ name: string }>();
@@ -179,6 +183,8 @@ function Profile({ profile: p }: { profile: PublisherProfile }) {
         </div>
       </header>
 
+      <AboutCard about={p.about} />
+
       {total === 0 ? (
         <EmptyState
           icon={Newspaper}
@@ -299,5 +305,117 @@ function Profile({ profile: p }: { profile: PublisherProfile }) {
         </div>
       )}
     </>
+  );
+}
+
+// Enriched publisher facts. Curated registry values always win; Wikipedia/Wikidata only fills the
+// gaps, and each row names its own source — so a founding year sourced from Wikidata never borrows
+// the authority of a country somebody curated by hand. Renders nothing at all when there is nothing
+// to show, which is the normal case for an outlet nobody has matched yet.
+function AboutCard({ about }: { about?: PublisherAbout }) {
+  const { t, lang, formatDate } = useTranslation();
+  if (!about) return null;
+
+  const rows = ABOUT_ROWS.filter((k) => about[k]);
+  const hasFacts = rows.length > 0 || Boolean(about.country) || Boolean(about.website);
+  // A recorded miss is worth saying once; a miss with nothing else to show is not worth a card.
+  if (!hasFacts && !about.description) return null;
+
+  const source = (field: keyof NonNullable<PublisherAbout["sources"]>) => {
+    const s = about.sources?.[field];
+    return s ? t(`publishers.about.source.${s}`) : null;
+  };
+
+  return (
+    <SectionCard
+      title={t("publishers.about.title")}
+      info={t("publishers.about.info")}
+      className="mb-5"
+    >
+      {about.description && (
+        <p className="mb-4 max-w-3xl text-sm leading-relaxed text-muted-foreground">
+          {about.description}
+        </p>
+      )}
+
+      {hasFacts && (
+        <dl className="grid gap-x-8 gap-y-3 sm:grid-cols-2">
+          {rows.map((key) => (
+            <div key={key} className="min-w-0">
+              <dt className="text-xs uppercase tracking-wide text-muted-foreground">
+                {t(`publishers.about.${key}`)}
+              </dt>
+              <dd className="mt-0.5 flex flex-wrap items-baseline gap-x-2 text-sm">
+                <span className="font-medium">{about[key]}</span>
+                {source(key) && (
+                  <span className="text-xs text-muted-foreground">{source(key)}</span>
+                )}
+              </dd>
+            </div>
+          ))}
+
+          {about.country && (
+            <div className="min-w-0">
+              <dt className="text-xs uppercase tracking-wide text-muted-foreground">
+                {t("publishers.about.country")}
+              </dt>
+              <dd className="mt-0.5 flex flex-wrap items-baseline gap-x-2 text-sm">
+                <span className="font-medium">{countryName(about.country, lang)}</span>
+                {source("country") && (
+                  <span className="text-xs text-muted-foreground">{source("country")}</span>
+                )}
+              </dd>
+            </div>
+          )}
+
+          {about.website && (
+            <div className="min-w-0">
+              <dt className="text-xs uppercase tracking-wide text-muted-foreground">
+                {t("publishers.about.website")}
+              </dt>
+              <dd className="mt-0.5 flex flex-wrap items-baseline gap-x-2 text-sm">
+                <a
+                  href={about.website}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="truncate font-medium text-primary hover:underline"
+                >
+                  {about.website.replace(/^https?:\/\//, "")}
+                </a>
+                {source("website") && (
+                  <span className="text-xs text-muted-foreground">{source("website")}</span>
+                )}
+              </dd>
+            </div>
+          )}
+        </dl>
+      )}
+
+      <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 border-t pt-3 text-xs text-muted-foreground">
+        {about.wikipediaUrl && (
+          <a
+            href={about.wikipediaUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 text-primary hover:underline"
+          >
+            {t("publishers.about.wikipedia")}
+            <ExternalLink className="h-3 w-3" />
+          </a>
+        )}
+        {about.status === "ok" && about.refreshedAt && (
+          <span>
+            {t("publishers.about.refreshed", {
+              when: formatDate(about.refreshedAt, { dateStyle: "medium" }),
+            })}
+          </span>
+        )}
+        {/* An unconfirmed match is stated, not hidden: it explains why the block is thin and marks
+            the outlet as one a human could resolve by hand. */}
+        {(about.status === "ambiguous" || about.status === "no_match") && (
+          <span>{t("publishers.about.unmatched")}</span>
+        )}
+      </div>
+    </SectionCard>
   );
 }

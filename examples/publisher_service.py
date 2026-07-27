@@ -32,8 +32,9 @@ from typing import Optional
 
 import api_server as engine     # _prettify / _lean_bucket — the one serializer vocabulary
 import discover                 # feed_article_to_article — the canonical Article shape
-import media                    # publisher logo selection (curated override -> favicon)
+import media                    # publisher logo selection (curated -> enriched -> favicon)
 import outlet_registry
+import publisher_metadata       # curated/counted/wikipedia/wikimedia merge + per-field provenance
 from pagination import OffsetPagination
 
 # A tone split over fewer rows than this is noise presented as a fact — the module is omitted
@@ -207,5 +208,19 @@ def get_publisher(store_, name: str, *, recent_limit: int = RECENT_LIMIT) -> Opt
         profile["recent"] = [discover.feed_article_to_article(r) for r in rows]
     else:
         profile["recent"] = []
-    profile.update(media.pick_best_logo(display, site))
+
+    # Enrichment: cached Wikipedia/Wikidata facts, merged UNDER the curated registry (gap-filling
+    # only) with per-field provenance. Read-only and fail-soft — a store without the table, or an
+    # outlet nobody has looked up, leaves the profile exactly as it was. The page never blocks on a
+    # network call: the lookup happens in the poller, this reads what it left behind.
+    cached = None
+    try:
+        cached = store_.publisher_metadata(display) or store_.publisher_metadata(stored_name)
+    except Exception:
+        cached = None
+    about = publisher_metadata.merge(outlet, cached, site=site)
+    if about:
+        profile["about"] = about
+    profile.update(media.pick_best_logo(display, site,
+                                        enriched=publisher_metadata.logo_from_cache(cached)))
     return profile

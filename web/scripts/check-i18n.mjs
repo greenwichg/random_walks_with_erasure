@@ -38,7 +38,18 @@ const DYNAMIC_PREFIXES = [
   "storyIntel.momentum.",  // t(`storyIntel.momentum.${state}`)
   "freshness.",            // t(`freshness.${band}`) — freshness badge
   "local.scope.",          // t(`local.scope.${scope}`) — publisher scope pill (Local News v1)
+  "publishers.about.source.", // t(`publishers.about.source.${source}`) — per-field provenance label
 ];
+
+/**
+ * Dynamic key families whose members are enumerated by a const tuple rather than a prefix — listed
+ * individually so a typo in the tuple still trips the checker.
+ */
+DYNAMIC_PREFIXES.push(
+  "publishers.about.founded",       // ABOUT_ROWS in app/(app)/publishers/[name]/page.tsx
+  "publishers.about.headquarters",  // ditto
+  "publishers.about.parent",        // ditto
+);
 
 /**
  * Required resolver explanation templates — mirrors the switch in explanationKey() (lib/i18n-core.ts).

@@ -24,4 +24,17 @@ test.describe("Publisher Intelligence", () => {
     await page.goto("/publishers/Completely%20Unknown%20Gazette");
     await expect(page.getByText("Publisher not found")).toBeVisible();
   });
+
+  test("the page renders fully when no Wikipedia metadata has been fetched", async ({ authedPage }) => {
+    // The enrichment cache is empty on a fresh engine DB (and the enricher is off outside
+    // production), so this is the state every publisher page starts in. The About block must
+    // simply be absent — never an empty card, and never a blocked render waiting on a lookup.
+    const page = authedPage;
+    await page.goto("/publishers/NPR");
+    await expect(page.getByRole("heading", { name: "NPR", exact: true })).toBeVisible();
+    await expect(page.getByText("Founded", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("Parent organization", { exact: true })).toHaveCount(0);
+    // The curated half of the profile is unaffected by enrichment being absent.
+    await expect(page.getByText("United States").first()).toBeVisible();
+  });
 });

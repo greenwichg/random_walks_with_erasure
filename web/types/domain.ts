@@ -166,7 +166,35 @@ export interface PublisherProfile {
   recent: Article[];
   publisherLogo?: string;
   publisherLogoDark?: string;
+  /** Where the logo came from: "registry" (curated), "wikimedia"/"wikipedia" (enriched), or
+   *  "favicon" (the publisher's own domain asset). */
   publisherLogoSource?: string;
+  /** Merged publisher facts. Curated registry values always win; Wikipedia/Wikidata only fills
+   *  gaps, and `sources` records which of the two produced each field, so the page can attribute
+   *  a founding year without implying the curated country came from the same place. Absent
+   *  entirely when nothing is known — a publisher with no match still renders. */
+  about?: PublisherAbout;
+}
+
+/** Provenance of one merged field. `counted` is measured from our own catalog (the host we
+ *  actually observe them publishing from), not asserted by anyone. */
+export type MetadataSource = "curated" | "counted" | "wikipedia" | "wikimedia";
+
+/** Outcome of the last enrichment lookup. `ambiguous` means candidates existed but none could be
+ *  confirmed as this outlet — recorded rather than guessed, and never rendered as fact. */
+export type MetadataStatus = "ok" | "no_match" | "ambiguous" | "error";
+
+export interface PublisherAbout {
+  description?: string;
+  founded?: string;
+  headquarters?: string;
+  country?: string;
+  website?: string;
+  parent?: string;
+  wikipediaUrl?: string;
+  sources?: Partial<Record<keyof Omit<PublisherAbout, "sources" | "status" | "refreshedAt" | "wikipediaUrl">, MetadataSource>>;
+  status?: MetadataStatus;
+  refreshedAt?: string;
 }
 
 export interface BlindSpot {

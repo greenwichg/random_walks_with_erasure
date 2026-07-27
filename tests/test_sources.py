@@ -221,12 +221,12 @@ def test_source_registry_enabled_filtering(monkeypatch):
     monkeypatch.setenv("RWE_NEWSAPI_API_KEY", "k")
     monkeypatch.delenv("RWE_GDELT_ENABLED", raising=False)
     reg = sources.default_registry()
-    # registered order (GDELT-GKG = the Phase-2 event-geography enricher, kept LAST — it
-    # annotates articles the others ingested; the six 2026-07 providers sit between NewsAPI
-    # and GDELT and are all disabled by default)
+    # registered order (the two ENRICHERS are kept last — GDELT-GKG annotates articles the
+    # others ingested, Wikipedia annotates the publishers behind them; the six 2026-07 providers
+    # sit between NewsAPI and GDELT and are all disabled by default)
     assert [a.provider for a in reg.adapters()] == [
         "RSS", "NewsAPI", "Guardian", "NewsData", "GNews", "MediaStack", "Currents",
-        "GoogleNews", "GDELT", "GDELT-GKG"]
+        "GoogleNews", "GDELT", "GDELT-GKG", "Wikipedia"]
     assert [a.provider for a in reg.enabled()] == ["NewsAPI"]                      # only NewsAPI enabled
     monkeypatch.setenv("RWE_GDELT_ENABLED", "1")
     assert {a.provider for a in reg.enabled()} == {"NewsAPI", "GDELT"}
@@ -836,7 +836,7 @@ def test_default_registry_registers_all_providers_with_unique_health_keys():
     adapters = reg.adapters()
     providers = [a.provider for a in adapters]
     assert providers == ["RSS", "NewsAPI", "Guardian", "NewsData", "GNews", "MediaStack",
-                         "Currents", "GoogleNews", "GDELT", "GDELT-GKG"]
+                         "Currents", "GoogleNews", "GDELT", "GDELT-GKG", "Wikipedia"]
     keys = [a.health_key for a in adapters if a.health_key]
     assert len(keys) == len(set(keys))                      # health rows never collide across sources
 
