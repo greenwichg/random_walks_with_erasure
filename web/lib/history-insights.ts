@@ -219,11 +219,80 @@ export function timeBucket(hour: number): TimeBucket {
   return "night";
 }
 
+/**
+ * Hour-of-day (0–23) for an instant, in the reader's own wall clock.
+ *
+ * A read is bucketed by when it felt like morning TO THE READER, never by UTC: "07:30 in Delhi" is
+ * a morning read even though the instant is 02:00 UTC the same day. With no `timeZone` this uses
+ * the device's zone (`Date#getHours`) — the browser is the reader's clock, and this module only
+ * ever runs client-side. Tests pass an explicit IANA zone so boundaries are provable without
+ * mutating the process clock.
+ */
+export function localHour(iso: string, timeZone?: string): number {
+  const d = new Date(iso);
+  if (!timeZone) return d.getHours();
+  const hour = new Intl.DateTimeFormat("en-US", { hour: "numeric", hour12: false, timeZone }).format(d);
+  return Number(hour) % 24; // some ICU builds render midnight as "24"
+}
+
+/** Fixed precedence so an exact tie is resolved deterministically (never by input order). */
+const BUCKET_ORDER: TimeBucket[] = ["morning", "afternoon", "evening", "night"];
+
+export interface PreferredTimeOptions {
+  now?: number;
+  /** Rolling window in days (default 30). 0 / negative ⇒ no window (lifetime). */
+  windowDays?: number;
+  /** Floor below which no habit is claimed (default 5) — a handful of reads is not a pattern. */
+  minReads?: number;
+  /** IANA zone; omitted ⇒ the device's own zone. */
+  timeZone?: string;
+}
+
+/**
+ * The reader's modal time of day over a ROLLING WINDOW (default the last 30 days).
+ *
+ * Deliberately not lifetime: the card answers "when do you read?" in the present tense, and a
+ * lifetime mode is dominated by whatever the reader used to do — someone who read every morning for
+ * a year and has read only evenings for the last month would keep being told "Mornings" essentially
+ * forever, and the metric would get *more* stubborn as history grew. Returns `null` (the card shows
+ * "—") when the window holds fewer than `minReads` reads: honest silence beats a confident label
+ * derived from three data points.
+ */
+export function preferredTimeBucket(
+  entries: HistoryEntry[],
+  { now = Date.now(), windowDays = 30, minReads = 5, timeZone }: PreferredTimeOptions = {},
+): TimeBucket | null {
+  const cutoff = windowDays > 0 ? now - windowDays * 24 * 60 * 60 * 1000 : -Infinity;
+  const counts = new Map<TimeBucket, number>();
+  let inWindow = 0;
+  for (const e of entries) {
+    const at = new Date(e.readAt).getTime();
+    if (!Number.isFinite(at) || at < cutoff || at > now) continue; // future stamps are not habits
+    inWindow += 1;
+    const bkt = timeBucket(localHour(e.readAt, timeZone));
+    counts.set(bkt, (counts.get(bkt) ?? 0) + 1);
+  }
+  if (inWindow < minReads) return null;
+
+  let best: TimeBucket | null = null;
+  let max = 0;
+  for (const bkt of BUCKET_ORDER) {
+    const n = counts.get(bkt) ?? 0;
+    if (n > max) {
+      max = n;
+      best = bkt;
+    }
+  }
+  return best;
+}
+
 export interface ReadingPattern {
   total: number;
   articlesThisWeek: number;
   sessionCount: number;
   avgSessionSize: number; // total / sessionCount (0 when there are no reads)
+  /** Modal time of day over the ROLLING 30-day window in the reader's local clock; null when the
+   *  window holds too few reads to claim a habit (the card renders "—"). */
   preferredTime: TimeBucket | null;
 }
 
@@ -245,14 +314,10 @@ export function readingPattern(entries: HistoryEntry[], now: number = Date.now()
   let sessionCount = 0;
   for (const reads of byDay.values()) sessionCount += sessionize(reads).length;
 
-  const buckets = new Map<TimeBucket, number>();
-  for (const e of entries) {
-    const bkt = timeBucket(new Date(e.readAt).getHours());
-    buckets.set(bkt, (buckets.get(bkt) ?? 0) + 1);
-  }
-  let preferredTime: TimeBucket | null = null;
-  let max = 0;
-  for (const [bkt, n] of buckets) if (n > max) { max = n; preferredTime = bkt; }
+  // Preferred time is a CURRENT-habit signal: rolling 30-day window, reader-local clock, with a
+  // minimum-sample floor. (`total` / `sessionCount` deliberately stay over the whole filtered set —
+  // they are volume facts, not habit claims.)
+  const preferredTime = preferredTimeBucket(entries, { now });
 
   return {
     total: entries.length,

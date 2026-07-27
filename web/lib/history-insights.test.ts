@@ -16,6 +16,8 @@ import {
   sessionize,
   timeBucket,
   readingPattern,
+  preferredTimeBucket,
+  localHour,
 } from "./history-insights.ts";
 
 type Art = { topic: string; publisher: string; lean: number | null; register: string; readingMinutes: number;
@@ -181,5 +183,91 @@ test("readingPattern: this-week volume, session count, avg size (injectable now)
   assert.equal(p.articlesThisWeek, 3);
   assert.equal(p.sessionCount, 3); // Jul 11: 2 sessions, Jul 1: 1
   assert.ok(Math.abs(p.avgSessionSize - 4 / 3) < 1e-9);
-  assert.notEqual(p.preferredTime, null);
+  assert.equal(p.preferredTime, null);   // 4 reads is below the habit floor — "—", not a claim
+});
+
+// --------------------------------------------------------------------------- //
+// Preferred time: reader-local bucketing + rolling window (the "current habits" contract).
+// --------------------------------------------------------------------------- //
+const NOW = Date.parse("2026-07-27T12:00:00Z");
+const daysAgo = (n: number, hhmmZ: string) => {
+  const d = new Date(NOW - n * 86400000);
+  return `${d.toISOString().slice(0, 10)}T${hhmmZ}`;
+};
+const many = (n: number, iso: string) => Array.from({ length: n }, () => at(iso));
+
+test("localHour reads the reader's wall clock, not UTC", () => {
+  // One instant, three readers: 02:00Z is late evening in New York, breakfast in Delhi.
+  assert.equal(localHour("2026-07-15T02:00:00Z", "UTC"), 2);
+  assert.equal(localHour("2026-07-15T02:00:00Z", "America/New_York"), 22);
+  assert.equal(localHour("2026-07-15T02:00:00Z", "Asia/Kolkata"), 7);
+  assert.equal(localHour("2026-07-15T04:00:00Z", "America/New_York"), 0); // midnight, not "24"
+});
+
+test("the SAME instant buckets differently for readers in different zones", () => {
+  // 12:00Z: mid-afternoon in London-less UTC terms, breakfast in New York, evening in Delhi.
+  const reads = many(6, "2026-07-15T12:00:00Z");
+  assert.equal(preferredTimeBucket(reads, { now: NOW, timeZone: "America/New_York" }), "morning");
+  assert.equal(preferredTimeBucket(reads, { now: NOW, timeZone: "UTC" }), "afternoon");
+  assert.equal(preferredTimeBucket(reads, { now: NOW, timeZone: "Asia/Kolkata" }), "evening");
+  // A half-hour offset zone must not round into the wrong bucket: 11:45Z is 17:15 in Kolkata.
+  assert.equal(
+    preferredTimeBucket(many(6, "2026-07-15T11:45:00Z"), { now: NOW, timeZone: "Asia/Kolkata" }),
+    "evening",
+  );
+});
+
+test("bucket transitions land on the documented edges, in local time", () => {
+  const zone = "America/New_York"; // UTC-4 in July
+  const edge = (utcHour: string) =>
+    preferredTimeBucket(many(6, `2026-07-15T${utcHour}:00:00Z`), { now: NOW, timeZone: zone });
+  assert.equal(edge("08"), "night");      // 04:00 local → still night
+  assert.equal(edge("09"), "morning");    // 05:00 local → morning starts
+  assert.equal(edge("15"), "morning");    // 11:00 local → last morning hour
+  assert.equal(edge("16"), "afternoon");  // 12:00 local
+  assert.equal(edge("20"), "afternoon");  // 16:00 local → last afternoon hour
+  assert.equal(edge("21"), "evening");    // 17:00 local
+  assert.equal(edge("01"), "evening");    // 21:00 local (prev day) → last evening hour
+  assert.equal(edge("02"), "night");      // 22:00 local (prev day)
+});
+
+test("rolling window: an old habit stops outvoting the current one", () => {
+  // 40 morning reads from months ago, 8 evening reads in the last fortnight.
+  const stale = Array.from({ length: 40 }, (_, i) => at(daysAgo(90 + i, "13:00:00Z")));
+  const recent = Array.from({ length: 8 }, (_, i) => at(daysAgo(i + 1, "23:00:00Z")));
+  const entries = [...stale, ...recent];
+  assert.equal(preferredTimeBucket(entries, { now: NOW, timeZone: "UTC" }), "night");   // 23:00Z
+  // Lifetime (windowDays: 0) is what the card used to show — the stale majority wins.
+  assert.equal(
+    preferredTimeBucket(entries, { now: NOW, timeZone: "UTC", windowDays: 0 }),
+    "afternoon",
+  );
+});
+
+test("no habit is claimed from too few reads, or from an empty window", () => {
+  const few = Array.from({ length: 4 }, (_, i) => at(daysAgo(i + 1, "09:00:00Z")));
+  assert.equal(preferredTimeBucket(few, { now: NOW, timeZone: "UTC" }), null);       // 4 < floor
+  assert.equal(preferredTimeBucket([...few, at(daysAgo(2, "09:00:00Z"))],
+                                   { now: NOW, timeZone: "UTC" }), "morning");        // 5 → claimed
+  const ancient = Array.from({ length: 50 }, (_, i) => at(daysAgo(60 + i, "09:00:00Z")));
+  assert.equal(preferredTimeBucket(ancient, { now: NOW, timeZone: "UTC" }), null);   // window empty
+  assert.equal(preferredTimeBucket([], { now: NOW }), null);
+});
+
+test("ties resolve deterministically, never by input order", () => {
+  const morning = many(3, daysAgo(1, "09:00:00Z"));
+  const evening = many(3, daysAgo(1, "19:00:00Z"));
+  const a = preferredTimeBucket([...morning, ...evening], { now: NOW, timeZone: "UTC" });
+  const b = preferredTimeBucket([...evening, ...morning], { now: NOW, timeZone: "UTC" });
+  assert.equal(a, b);
+  assert.equal(a, "morning");   // fixed precedence: morning < afternoon < evening < night
+});
+
+test("readingPattern exposes the windowed preferred time", () => {
+  const entries = [
+    ...Array.from({ length: 30 }, (_, i) => at(daysAgo(120 + i, "09:00:00Z"))),  // old mornings
+    ...Array.from({ length: 6 }, (_, i) => at(daysAgo(i + 1, "19:00:00Z"))),     // recent evenings
+  ];
+  assert.equal(readingPattern(entries, NOW).preferredTime, "evening");
+  assert.equal(readingPattern(entries, NOW).total, 36);   // volume facts stay over the whole set
 });
