@@ -46,6 +46,7 @@ from typing import Callable, Optional
 import rss_ingest      # reuse: FeedEntry, load_feeds/fetch_feed/parse_feed, ingest_entries, ingest_all
 import media           # reuse: pick_best_image (image SELECTION only — never modified, never downloads)
 import corpus_health   # reuse: validation-aware retention (post-cycle, exactly as FeedPoller runs it)
+import storage_lifecycle  # reuse: the ONE bounded cleanup pass (catalog + derived tables)
 import gdelt_gkg       # reuse: the Phase-2 event-geography enrichment logic (offline-testable)
 
 _USER_AGENT = "InformationHealth-Sources/0.1 (+https://code.claude.com)"
@@ -1106,8 +1107,13 @@ class MultiSourcePoller:
     def _post_cycle(self, agg: dict) -> None:
         if agg.get("new", 0) <= 0 and not (self._dirty_check is not None and self._dirty_check()):
             return
-        if corpus_health.retention_enabled():
-            corpus_health.run_retention(self.store, log=self._log)
+        # Storage lifecycle: catalog retention PLUS the bounded prunes for derived/operational
+        # tables (orphaned event locations, score cache, analytics, rec-events, snapshots). One
+        # incremental pass per cycle — never user data, never a long write lock.
+        try:
+            storage_lifecycle.run_cleanup(self.store, log=self._log)
+        except Exception as e:                              # cleanup must never break polling
+            self._log(logging.WARNING, "storage_cleanup_failed", error=f"{type(e).__name__}: {e}")
         if self._on_cycle is not None:
             try:
                 self._on_cycle(agg)

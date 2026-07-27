@@ -34,7 +34,8 @@ from datetime import datetime, timezone
 from typing import Callable, Optional
 
 import rss_ingest      # reuse: load_feeds, make_scorer, fetch_feed, ingest_all — NO duplicate ingestion
-import corpus_health   # validation-aware FeedArticle retention (runs after each ingest cycle)
+import corpus_health
+import storage_lifecycle   # validation-aware FeedArticle retention (runs after each ingest cycle)
 
 DEFAULT_INTERVAL = 600.0    # 10 minutes
 DEFAULT_TIMEOUT = 15.0
@@ -222,10 +223,12 @@ class FeedPoller:
         # Validation-aware retention: prune old/excess FeedArticles, but never below the floors that a
         # healthy replacement corpus needs (corpus_health guarantees the prune set respects them).
         # FeedArticle only — reads / reports / analytics / rec-events are never touched.
-        if corpus_health.retention_enabled():
-            ret = corpus_health.run_retention(self.store, log=self._log)
+        try:
+            ret = storage_lifecycle.run_cleanup(self.store, log=self._log)
             agg["retention"] = ret
             agg["catalog"] = self.store.count_feed_articles()   # reflect the post-retention size
+        except Exception as e:                                  # cleanup must never break polling
+            self._log(logging.WARNING, "storage_cleanup_failed", error=f"{type(e).__name__}: {e}")
 
         # Optional seam: a later commit hangs the (validated) hot corpus refresh off this — and only
         # when the catalog actually changed (agg["new"] > 0). The poller itself never refreshes it.

@@ -145,7 +145,17 @@ services:
       RWE_GOOGLENEWS_LANGUAGE: ${RWE_GOOGLENEWS_LANGUAGE:-en-US}
       RWE_GOOGLENEWS_COUNTRY: ${RWE_GOOGLENEWS_COUNTRY:-US}
       RWE_GOOGLENEWS_MAX_ARTICLES: ${RWE_GOOGLENEWS_MAX_ARTICLES:-}
+      # Storage lifecycle (examples/retention_policy.py — the ONE typed policy module). 0 = keep
+      # forever, uniformly; junk/negative values fall back to the default rather than deleting more.
+      # User data (reads, saves, settings, accounts) has NO policy and is never pruned.
       RWE_RETENTION_MAX_COUNT: ${RWE_RETENTION_MAX_COUNT:-0}
+      RWE_RETENTION_MAX_AGE_DAYS: ${RWE_RETENTION_MAX_AGE_DAYS:-0}
+      RWE_RETENTION_SCORED_DAYS: ${RWE_RETENTION_SCORED_DAYS:-30}
+      RWE_RETENTION_ANALYTICS_DAYS: ${RWE_RETENTION_ANALYTICS_DAYS:-180}
+      RWE_RETENTION_REC_EVENT_DAYS: ${RWE_RETENTION_REC_EVENT_DAYS:-365}
+      RWE_RETENTION_SNAPSHOTS_PER_USER: ${RWE_RETENTION_SNAPSHOTS_PER_USER:-500}
+      RWE_RETENTION_NOTIFICATIONS_PER_USER: ${RWE_RETENTION_NOTIFICATIONS_PER_USER:-200}
+      RWE_RETENTION_BATCH_LIMIT: ${RWE_RETENTION_BATCH_LIMIT:-5000}
       # --- production hardening (fail-closed auth) --------------------------------
       # This compose file runs in dev mode by default (the engine trusts the local
       # web service) so `up` is one command. For a real, internet-facing deployment,
@@ -256,7 +266,11 @@ services:
     restart: unless-stopped
     environment:
       BACKUP_INTERVAL: "3600"          # seconds between backups (hourly)
-      BACKUP_KEEP: "48"                # retain the newest N local backups (~2 days hourly)
+      # RUNAWAY CEILING ONLY — not the retention policy. Real retention is TIERED and owned by the
+      # host cron (deploy/ops/prune-backups.sh: hourly/daily/weekly/monthly), which must be able to
+      # keep an old weekly slot that a flat "newest N" would delete. Keep this comfortably above the
+      # tiered footprint (~23 files) so it only ever fires if the host cron stops running.
+      BACKUP_KEEP: "60"
       # BACKUP_OFFHOST_CMD: 'aws s3 cp "$1" s3://acme-ih-backups/'   # optional off-host shipment ($1 = file)
     volumes:
       - ih-data:/app/data

@@ -32,7 +32,7 @@ import secrets
 import shutil
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterator, Optional
 from urllib.parse import urlsplit
@@ -882,6 +882,131 @@ class Store:
         with self.session() as s:
             r = s.get(FeedArticle, canonical_url)
             return self._feed_row(r) if r is not None else None
+
+    # ---- storage lifecycle: incremental prunes (see examples/storage_lifecycle.py) ----------
+    # Every prune here is BOUNDED by `limit` so a cleanup pass holds the single SQLite write lock
+    # only briefly and can never stall ingestion; the orchestrator re-runs until a pass is a no-op.
+    # None of these touch a table in retention_policy.PROTECTED_TABLES.
+
+    def prune_orphan_event_locations(self, limit: int = 5000) -> int:
+        """Delete ``article_event_locations`` rows whose article is gone from the catalog.
+
+        Catalog retention deletes ``feed_articles`` only (that method's contract), and event
+        locations are a side table keyed by canonical URL with no foreign key — so every pruned
+        article used to leave its geography rows behind forever. This is the reaper for them.
+        Harmless when retention is off: with no pruned articles there are no orphans."""
+        with self.session() as s:
+            ids = [i for (i,) in s.execute(
+                select(ArticleEventLocation.id)
+                .where(~select(FeedArticle.canonical_url)
+                       .where(FeedArticle.canonical_url == ArticleEventLocation.canonical_url)
+                       .exists())
+                .limit(limit)).all()]
+            if not ids:
+                return 0
+            res = s.execute(delete(ArticleEventLocation).where(ArticleEventLocation.id.in_(ids)))
+            s.commit()
+            return res.rowcount or 0
+
+    def prune_scored_cache(self, max_age_days: int, limit: int = 5000) -> int:
+        """Drop score-cache entries older than ``max_age_days``. Pure cache: ``score_with_cache``
+        re-derives an entry deterministically on the next read, so this costs a little CPU and
+        never loses information. 0 = keep forever."""
+        if max_age_days <= 0:
+            return 0
+        cutoff = _utcnow() - timedelta(days=max_age_days)
+        with self.session() as s:
+            urls = [u for (u,) in s.execute(
+                select(ScoredArticle.url).where(ScoredArticle.created_at < cutoff)
+                .limit(limit)).all()]
+            if not urls:
+                return 0
+            res = s.execute(delete(ScoredArticle).where(ScoredArticle.url.in_(urls)))
+            s.commit()
+            return res.rowcount or 0
+
+    def prune_analytics_events(self, max_age_days: int, limit: int = 5000) -> int:
+        """Drop product-analytics events older than ``max_age_days``. Observational telemetry for
+        the activation funnel — a rolling window is the honest retention for it. 0 = keep forever."""
+        if max_age_days <= 0:
+            return 0
+        cutoff = _utcnow() - timedelta(days=max_age_days)
+        with self.session() as s:
+            ids = [i for (i,) in s.execute(
+                select(AnalyticsEvent.id).where(AnalyticsEvent.created_at < cutoff)
+                .limit(limit)).all()]
+            if not ids:
+                return 0
+            res = s.execute(delete(AnalyticsEvent).where(AnalyticsEvent.id.in_(ids)))
+            s.commit()
+            return res.rowcount or 0
+
+    def prune_rec_events(self, max_age_days: int, limit: int = 5000) -> int:
+        """Drop recommendation surface/open events older than ``max_age_days``.
+
+        These are the denominator+numerator of Open-Mindedness, so the default window is a full
+        year: long enough that no live metric loses input, bounded enough that the table cannot
+        grow forever. 0 = keep forever."""
+        if max_age_days <= 0:
+            return 0
+        cutoff = (_utcnow() - timedelta(days=max_age_days)).isoformat()
+        with self.session() as s:
+            ids = [i for (i,) in s.execute(
+                select(RecEvent.id).where(RecEvent.shown_at < cutoff).limit(limit)).all()]
+            if not ids:
+                return 0
+            res = s.execute(delete(RecEvent).where(RecEvent.id.in_(ids)))
+            s.commit()
+            return res.rowcount or 0
+
+    def prune_report_snapshots(self, keep_per_user: int, limit: int = 5000) -> int:
+        """Keep only the newest ``keep_per_user`` report snapshots per user (the analytics trend
+        series). Old snapshots beyond the cap add no chart the reader can see. 0 = keep forever."""
+        if keep_per_user <= 0:
+            return 0
+        removed = 0
+        with self.session() as s:
+            uids = [u for (u,) in s.execute(select(ReportSnapshot.user_id).distinct()).all()]
+            for uid in uids:
+                keep_ids = [i for (i,) in s.execute(
+                    select(ReportSnapshot.id).where(ReportSnapshot.user_id == uid)
+                    .order_by(ReportSnapshot.id.desc()).limit(keep_per_user)).all()]
+                if len(keep_ids) < keep_per_user:
+                    continue                       # under the cap — nothing to do for this user
+                stale = [i for (i,) in s.execute(
+                    select(ReportSnapshot.id)
+                    .where(ReportSnapshot.user_id == uid, ReportSnapshot.id.notin_(keep_ids))
+                    .limit(max(1, limit - removed))).all()]
+                if not stale:
+                    continue
+                res = s.execute(delete(ReportSnapshot).where(ReportSnapshot.id.in_(stale)))
+                removed += res.rowcount or 0
+                if removed >= limit:
+                    break
+            s.commit()
+        return removed
+
+    def storage_stats(self) -> dict:
+        """Row counts per table + the database file size — the input to the size alerts and the
+        ops probe. Read-only and cheap (COUNT over indexed tables)."""
+        import pathlib
+        counts = {}
+        with self.session() as s:
+            for name, model in (("feed_articles", FeedArticle), ("article_event_locations", ArticleEventLocation),
+                                ("scored_articles", ScoredArticle), ("analytics_events", AnalyticsEvent),
+                                ("rec_events", RecEvent), ("report_snapshots", ReportSnapshot),
+                                ("notifications", Notification), ("reads", Read),
+                                ("saved_articles", SavedArticle), ("users", User)):
+                counts[name] = int(s.scalar(select(func.count()).select_from(model)) or 0)
+        size = None
+        url = str(self.engine.url)
+        if url.startswith("sqlite:///") and not url.endswith(":memory:"):
+            p = pathlib.Path(url.replace("sqlite:///", "", 1))
+            if p.exists():
+                size = p.stat().st_size + sum(
+                    q.stat().st_size for q in (p.with_suffix(p.suffix + "-wal"),
+                                               p.with_suffix(p.suffix + "-shm")) if q.exists())
+        return {"rows": counts, "dbBytes": size}
 
     def count_feed_articles(self) -> int:
         """How many distinct catalog articles have been ingested."""

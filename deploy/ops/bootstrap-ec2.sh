@@ -124,6 +124,9 @@ CRON_PATH='PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
   echo "# Wave 0 — off-host backup verify + S3 sync, hourly. Installed by bootstrap-ec2.sh."
   echo "$CRON_PATH"
   echo "23 * * * * $TARGET_USER $REPO_ROOT/deploy/ops/backup-offhost.sh >> /var/log/ih-backup.log 2>&1"
+  # Tiered LOCAL backup retention (hourly/daily/weekly), 10 minutes after the off-host sync so the
+  # copy is safely in S3 before anything is pruned from disk. See docs/STORAGE_LIFECYCLE.md.
+  echo "33 * * * * $TARGET_USER $REPO_ROOT/deploy/ops/prune-backups.sh >> /var/log/ih-backup.log 2>&1"
 } > /etc/cron.d/ih-offhost-backup
 {
   echo "# Wave 0 — deployment health monitor, every 5 minutes. Installed by bootstrap-ec2.sh."
