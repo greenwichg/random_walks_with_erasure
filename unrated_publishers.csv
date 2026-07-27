@@ -1,75 +1,128 @@
-canonical,country,domain,aliases,scope,articles
-pagesix.com,,pagesix.com,,,247
-decider.com,,decider.com,,,99
-Sportskeeda,,sportskeeda.com,,,50
-aktiencheck,DE,aktiencheck.de,,,45
-aol.co.uk,GB,aol.co.uk,,,41
-unitaid.eu,,unitaid.eu,,,34
-tvguide.co.uk,GB,tvguide.co.uk,,,28
-ad-hoc-news,DE,ad-hoc-news.de,,,23
-yahoo.com,,yahoo.com,,,22
-manilatimes.net,,manilatimes.net,,,21
-prnewswire.com,,prnewswire.com,,,21
-dailymail.com,,dailymail.com,,,17
-economictimes.indiatimes.com,,economictimes.indiatimes.com,,,15
-express.co.uk,GB,express.co.uk,,,15
-indiagazette.com,,indiagazette.com,,,15
-calcuttanews.net,,calcuttanews.net,,,14
-moneycontrol.com,,moneycontrol.com,,,14
-bignewsnetwork.com,,bignewsnetwork.com,,,13
-le Parisien,FR,leparisien.fr,,,13
-thestar.com.my,MY,thestar.com.my,,,13
-finance.yahoo.com,,finance.yahoo.com,,,12
-miragenews.com,,miragenews.com,,,12
-asiaone.com,,asiaone.com,,,11
-finanznachrichten.de,DE,finanznachrichten.de,,,10
-globalsecurity.org,,globalsecurity.org,,,10
-heraldscotland.com,,heraldscotland.com,,,10
-isp.netscape.com,,isp.netscape.com,,,10
-allafrica.com,,allafrica.com,,,9
-aninews.in,IN,aninews.in,,,9
-clickondetroit.com,,clickondetroit.com,,,9
-eastbaytimes.com,,eastbaytimes.com,,,9
-easternriverinachronicle.com.au,AU,easternriverinachronicle.com.au,,,9
-freemalaysiatoday.com,,freemalaysiatoday.com,,,9
-gdnonline.com,,gdnonline.com,,,9
-livemint.com,,livemint.com,,,9
-newkerala.com,,newkerala.com,,,9
-Sportschau ARD,DE,sportschau.de,,,8
-bizcommunity.com,,bizcommunity.com,,,8
-boredpanda.com,,boredpanda.com,,,8
-dailyrecord.co.uk,GB,dailyrecord.co.uk,,,8
-english.news.cn,CN,english.news.cn,,,8
-manchestereveningnews.co.uk,GB,manchestereveningnews.co.uk,,,8
-oxfordmail.co.uk,GB,oxfordmail.co.uk,,,8
-theadvocate.com.au,AU,theadvocate.com.au,,,8
-thenationonlineng.net,,thenationonlineng.net,,,8
-winnipegfreepress.com,,winnipegfreepress.com,,,8
-birminghammail.co.uk,GB,birminghammail.co.uk,,,7
-bleedingcool.com,,bleedingcool.com,,,7
-businesstimes.com.sg,SG,businesstimes.com.sg,,,7
-crookwellgazette.com.au,AU,crookwellgazette.com.au,,,7
-el-balad.com,,el-balad.com,,,7
-examiner.com.au,AU,examiner.com.au,,,7
-fortune.com,,fortune.com,,,7
-global.chinadaily.com.cn,CN,global.chinadaily.com.cn,,,7
-idahostatejournal.com,,idahostatejournal.com,,,7
-Ahram Online,EG,english.ahram.org.eg,english.ahram.org.eg,national,
-Clarín,AR,clarin.com,clarin.com,national,
-Der Spiegel,DE,spiegel.de,spiegel.de,national,
-Die Zeit,DE,zeit.de,zeit.de,national,
-Folha de S.Paulo,BR,folha.uol.com.br,folha.uol.com.br,national,
-France 24,FR,france24.com,france24.com,international,
-La Nación,AR,lanacion.com.ar,lanacion.com.ar,national,
-Mail & Guardian,ZA,mg.co.za,mg.co.za,national,
-Milenio,MX,milenio.com,milenio.com,national,
-Mirror,GB,mirror.co.uk,mirror.co.uk,national,
-New Zealand Herald,NZ,nzherald.co.nz,nzherald.co.nz,national,
-NHK,JP,nhk.or.jp,nhk.or.jp,national,
-Nigerian Tribune,NG,tribuneonlineng.com,tribuneonlineng.com,national,
-Nikkei Asia,JP,asia.nikkei.com,asia.nikkei.com,international,
-O Globo,BR,oglobo.globo.com,oglobo.globo.com,national,
-Philippine Daily Inquirer,PH,inquirer.net,inquirer.net,national,
-Süddeutsche Zeitung,DE,sueddeutsche.de,sueddeutsche.de,national,
-The East African,KE,theeastafrican.co.ke,theeastafrican.co.ke,international,
-The Punch,NG,punchng.com,punchng.com,national,
+canonical,country,domain,aliases,kind,scope,articles,firstSeen,lastSeen,sources
+pagesix.com,,pagesix.com,,entertainment,,252,2026-07-20,2026-07-27,"currents,rss"
+decider.com,,decider.com,,entertainment,,99,2026-07-20,2026-07-26,rss
+aktiencheck,DE,aktiencheck.de,,finance,,82,2026-07-26,2026-07-27,mediastack
+zazoom,IT,zazoom.it,,aggregator,,65,2026-07-26,2026-07-26,mediastack
+Sportskeeda,,sportskeeda.com,,sports,,50,2026-07-26,2026-07-26,mediastack
+dailymail.com,,dailymail.com,,,,46,2026-07-21,2026-07-27,"currents,gdelt"
+sportskeeda.com,,sportskeeda.com,,sports,,46,2026-07-26,2026-07-27,currents
+aol.co.uk,GB,aol.co.uk,,aggregator,,42,2026-07-21,2026-07-26,gdelt
+unitaid.eu,,unitaid.eu,,junk-suspect,,39,2026-07-22,2026-07-27,gdelt
+thestar.com.my,MY,thestar.com.my,,,,34,2026-07-21,2026-07-26,"currents,gdelt,gnews"
+tvguide.co.uk,GB,tvguide.co.uk,,entertainment,,29,2026-07-21,2026-07-26,gdelt
+koreatimes.co.kr,KR,koreatimes.co.kr,,,,27,2026-07-23,2026-07-27,"currents,gdelt"
+yahoo.com,,yahoo.com,,aggregator,,26,2026-07-23,2026-07-26,"gdelt,gnews,googlenews"
+prnewswire.com,,prnewswire.com,,press-release,,25,2026-07-21,2026-07-27,gdelt
+ad-hoc-news,DE,ad-hoc-news.de,,finance,,23,2026-07-26,2026-07-26,mediastack
+manilatimes.net,,manilatimes.net,,,,21,2026-07-21,2026-07-24,gdelt
+newsweek.com,,newsweek.com,,,,17,2026-07-21,2026-07-27,"currents,gdelt"
+Mirror,GB,mirror.co.uk,mirror.co.uk,,national,16,2026-07-21,2026-07-26,"currents,gdelt,gnews"
+bignewsnetwork.com,,bignewsnetwork.com,,syndication,,15,2026-07-21,2026-07-26,gdelt
+economictimes.indiatimes.com,,economictimes.indiatimes.com,,,,15,2026-07-22,2026-07-26,gdelt
+express.co.uk,GB,express.co.uk,,,,15,2026-07-21,2026-07-26,gdelt
+finance.yahoo.com,,finance.yahoo.com,,aggregator,,15,2026-07-21,2026-07-26,"gdelt,googlenews"
+fortune.com,,fortune.com,,,,15,2026-07-21,2026-07-26,"gdelt,googlenews"
+indiagazette.com,,indiagazette.com,,syndication,,15,2026-07-21,2026-07-26,gdelt
+calcuttanews.net,,calcuttanews.net,,syndication,,14,2026-07-21,2026-07-26,gdelt
+miragenews.com,,miragenews.com,,press-release,,14,2026-07-21,2026-07-26,gdelt
+moneycontrol.com,,moneycontrol.com,,finance,,14,2026-07-21,2026-07-26,gdelt
+le Parisien,FR,leparisien.fr,,,,13,2026-07-26,2026-07-26,mediastack
+livemint.com,,livemint.com,,,,13,2026-07-22,2026-07-27,"currents,gdelt,gnews"
+Philippine Daily Inquirer,PH,inquirer.net,inquirer.net,,national,13,2026-07-26,2026-07-27,"currents,gnews"
+winnipegfreepress.com,,winnipegfreepress.com,,,,13,2026-07-23,2026-07-26,"currents,gdelt"
+asiaone.com,,asiaone.com,,aggregator,,12,2026-07-21,2026-07-27,"currents,gdelt"
+brisbanetimes.com.au,AU,brisbanetimes.com.au,,,,11,2026-07-22,2026-07-27,"currents,gdelt"
+thestreet.com,,thestreet.com,,finance,,11,2026-07-24,2026-07-26,"currents,googlenews"
+bleedingcool.com,,bleedingcool.com,,entertainment,,10,2026-07-21,2026-07-26,gdelt
+businesstimes.com.sg,SG,businesstimes.com.sg,,,,10,2026-07-23,2026-07-26,"currents,gdelt"
+buzzfeed.com,,buzzfeed.com,,entertainment,,10,2026-07-26,2026-07-27,"currents,googlenews"
+clickondetroit.com,,clickondetroit.com,,,,10,2026-07-22,2026-07-26,gdelt
+finanznachrichten.de,DE,finanznachrichten.de,,finance,,10,2026-07-21,2026-07-24,gdelt
+gdnonline.com,,gdnonline.com,,,,10,2026-07-21,2026-07-26,gdelt
+globalsecurity.org,,globalsecurity.org,,reference,,10,2026-07-23,2026-07-24,gdelt
+heraldscotland.com,,heraldscotland.com,,,,10,2026-07-23,2026-07-26,gdelt
+isp.netscape.com,,isp.netscape.com,,aggregator,,10,2026-07-21,2026-07-25,gdelt
+oregonlive.com,,oregonlive.com,,,,10,2026-07-26,2026-07-26,"currents,googlenews"
+standard.co.uk,GB,standard.co.uk,,,,10,2026-07-22,2026-07-26,"currents,gdelt"
+thewest.com.au,AU,thewest.com.au,,,,10,2026-07-26,2026-07-27,currents
+allafrica.com,,allafrica.com,,syndication,,9,2026-07-21,2026-07-24,gdelt
+aninews.in,IN,aninews.in,,wire,,9,2026-07-22,2026-07-26,gdelt
+dailyrecord.co.uk,GB,dailyrecord.co.uk,,,,9,2026-07-21,2026-07-26,gdelt
+eastbaytimes.com,,eastbaytimes.com,,,,9,2026-07-21,2026-07-24,gdelt
+easternriverinachronicle.com.au,AU,easternriverinachronicle.com.au,,,,9,2026-07-21,2026-07-26,gdelt
+espn.com,,espn.com,,sports,,9,2026-07-26,2026-07-27,currents
+freemalaysiatoday.com,,freemalaysiatoday.com,,,,9,2026-07-21,2026-07-26,gdelt
+idahostatejournal.com,,idahostatejournal.com,,,,9,2026-07-23,2026-07-27,gdelt
+newkerala.com,,newkerala.com,,,,9,2026-07-22,2026-07-26,gdelt
+bizcommunity.com,,bizcommunity.com,,,,8,2026-07-21,2026-07-24,gdelt
+boredpanda.com,,boredpanda.com,,ugc-platform,,8,2026-07-22,2026-07-26,gdelt
+english.news.cn,CN,english.news.cn,,state-media,,8,2026-07-21,2026-07-26,gdelt
+inquirer.com,,inquirer.com,,,,8,2026-07-25,2026-07-26,"currents,gdelt"
+leadership.ng,NG,leadership.ng,,,,8,2026-07-22,2026-07-26,gdelt
+malaymail.com,,malaymail.com,,,,8,2026-07-26,2026-07-27,"currents,gnews"
+manchestereveningnews.co.uk,GB,manchestereveningnews.co.uk,,,,8,2026-07-21,2026-07-26,gdelt
+oxfordmail.co.uk,GB,oxfordmail.co.uk,,,,8,2026-07-21,2026-07-26,gdelt
+reddit.com,,reddit.com,,ugc-platform,,8,2026-07-26,2026-07-27,currents
+Sportschau ARD,DE,sportschau.de,,sports,,8,2026-07-26,2026-07-26,mediastack
+standardmedia.co.ke,KE,standardmedia.co.ke,,,,8,2026-07-21,2026-07-26,gdelt
+theadvocate.com.au,AU,theadvocate.com.au,,,,8,2026-07-21,2026-07-26,gdelt
+thenationonlineng.net,,thenationonlineng.net,,,,8,2026-07-22,2026-07-26,gdelt
+aa.com.tr,TR,aa.com.tr,,wire,,7,2026-07-22,2026-07-26,"gdelt,gnews"
+birminghammail.co.uk,GB,birminghammail.co.uk,,,,7,2026-07-23,2026-07-26,gdelt
+crookwellgazette.com.au,AU,crookwellgazette.com.au,,,,7,2026-07-21,2026-07-25,gdelt
+dev.to,,dev.to,,ugc-platform,,7,2026-07-26,2026-07-27,currents
+el-balad.com,,el-balad.com,,,,7,2026-07-21,2026-07-26,gdelt
+examiner.com.au,AU,examiner.com.au,,,,7,2026-07-22,2026-07-26,gdelt
+global.chinadaily.com.cn,CN,global.chinadaily.com.cn,,state-media,,7,2026-07-22,2026-07-24,gdelt
+lynnnews.co.uk,GB,lynnnews.co.uk,,,,7,2026-07-22,2026-07-26,gdelt
+newcastleherald.com.au,AU,newcastleherald.com.au,,,,7,2026-07-21,2026-07-26,gdelt
+news.webindia123.com,,news.webindia123.com,,aggregator,,7,2026-07-24,2026-07-26,gdelt
+perthnow.com.au,AU,perthnow.com.au,,,,7,2026-07-23,2026-07-27,"currents,gdelt"
+southeastasiapost.com,,southeastasiapost.com,,syndication,,7,2026-07-26,2026-07-26,gdelt
+stockhouse.com,,stockhouse.com,,finance,,7,2026-07-21,2026-07-24,gdelt
+The Punch,NG,punchng.com,punchng.com,,national,7,2026-07-24,2026-07-26,gdelt
+thehindubusinessline.com,,thehindubusinessline.com,,,,7,2026-07-21,2026-07-26,gdelt
+thesouthafrican.com,,thesouthafrican.com,,,,7,2026-07-21,2026-07-26,"currents,gdelt"
+yasstribune.com.au,AU,yasstribune.com.au,,,,7,2026-07-23,2026-07-26,gdelt
+7news.com.au,AU,7news.com.au,,,,6,2026-07-26,2026-07-27,currents
+africaleader.com,,africaleader.com,,syndication,,6,2026-07-21,2026-07-25,gdelt
+austinglobe.com,,austinglobe.com,,syndication,,6,2026-07-21,2026-07-26,gdelt
+australiannews.net,,australiannews.net,,syndication,,6,2026-07-21,2026-07-24,gdelt
+bgr.com,,bgr.com,,entertainment,,6,2026-07-25,2026-07-26,"gdelt,googlenews"
+businesstoday.in,IN,businesstoday.in,,finance,,6,2026-07-22,2026-07-26,gdelt
+canberratimes.com.au,AU,canberratimes.com.au,,,,6,2026-07-21,2026-07-26,gdelt
+centralwesterndaily.com.au,AU,centralwesterndaily.com.au,,,,6,2026-07-23,2026-07-26,gdelt
+china.org.cn,CN,china.org.cn,,state-media,,6,2026-07-22,2026-07-26,gdelt
+countercurrents.org,,countercurrents.org,,,,6,2026-07-23,2026-07-26,gdelt
+dailygazette.com,,dailygazette.com,,,,6,2026-07-23,2026-07-26,gdelt
+dailyliberal.com.au,AU,dailyliberal.com.au,,,,6,2026-07-22,2026-07-26,gdelt
+dailypost.ng,NG,dailypost.ng,,,,6,2026-07-21,2026-07-26,"currents,gdelt,gnews"
+edenmagnet.com.au,AU,edenmagnet.com.au,,,,6,2026-07-23,2026-07-25,gdelt
+europe.chinadaily.com.cn,CN,europe.chinadaily.com.cn,,state-media,,6,2026-07-22,2026-07-25,gdelt
+fool.com,,fool.com,,finance,,6,2026-07-21,2026-07-26,gdelt
+freebeacon.com,,freebeacon.com,,,,6,2026-07-24,2026-07-26,"currents,gdelt"
+gizmodo.com,,gizmodo.com,,entertainment,,6,2026-07-21,2026-07-25,"gdelt,googlenews"
+ign.com,,ign.com,,entertainment,,6,2026-07-21,2026-07-25,"gdelt,googlenews"
+klcc.org,,klcc.org,,,,6,2026-07-22,2026-07-26,gdelt
+mb.com.ph,PH,mb.com.ph,,,,6,2026-07-22,2026-07-26,"gdelt,gnews"
+metro.co.uk,GB,metro.co.uk,,,,6,2026-07-21,2026-07-26,gdelt
+naroomanewsonline.com.au,AU,naroomanewsonline.com.au,,,,6,2026-07-23,2026-07-26,gdelt
+newsbusters.org,,newsbusters.org,,,,6,2026-07-23,2026-07-26,gdelt
+newyorkstatesman.com,,newyorkstatesman.com,,syndication,,6,2026-07-22,2026-07-26,gdelt
+newyorktelegraph.com,,newyorktelegraph.com,,syndication,,6,2026-07-21,2026-07-26,gdelt
+Ahram Online,EG,english.ahram.org.eg,english.ahram.org.eg,,national,,,,
+Clarín,AR,clarin.com,clarin.com,,national,,,,
+Der Spiegel,DE,spiegel.de,spiegel.de,,national,,,,
+Die Zeit,DE,zeit.de,zeit.de,,national,,,,
+Folha de S.Paulo,BR,folha.uol.com.br,folha.uol.com.br,,national,,,,
+France 24,FR,france24.com,france24.com,,international,,,,
+La Nación,AR,lanacion.com.ar,lanacion.com.ar,,national,,,,
+Mail & Guardian,ZA,mg.co.za,mg.co.za,,national,,,,
+Milenio,MX,milenio.com,milenio.com,,national,,,,
+New Zealand Herald,NZ,nzherald.co.nz,nzherald.co.nz,,national,,,,
+NHK,JP,nhk.or.jp,nhk.or.jp,,national,,,,
+Nigerian Tribune,NG,tribuneonlineng.com,tribuneonlineng.com,,national,,,,
+Nikkei Asia,JP,asia.nikkei.com,asia.nikkei.com,,international,,,,
+O Globo,BR,oglobo.globo.com,oglobo.globo.com,,national,,,,
+Süddeutsche Zeitung,DE,sueddeutsche.de,sueddeutsche.de,,national,,,,
+The East African,KE,theeastafrican.co.ke,theeastafrican.co.ke,,international,,,,
