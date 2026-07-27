@@ -735,3 +735,74 @@ def test_default_registry_registers_all_providers_with_unique_health_keys():
                          "Currents", "GoogleNews", "GDELT", "GDELT-GKG"]
     keys = [a.health_key for a in adapters if a.health_key]
     assert len(keys) == len(set(keys))                      # health rows never collide across sources
+
+
+# --------------------------------------------------------------------------- #
+# Post-cycle story-cache warm.
+#
+# The API runs MultiSourcePoller (api_fastapi.py) — NOT feed_service.FeedPoller. These pin the warm
+# to the poller production actually runs, and to the single-flight guard that keeps eight adapter
+# threads from launching eight concurrent multi-second clustering runs.
+# --------------------------------------------------------------------------- #
+def test_post_cycle_warms_the_story_cache(store, monkeypatch):
+    import story_service
+    warmed = []
+    monkeypatch.setattr(story_service, "warm_cache", lambda s: warmed.append(s) or 7)
+    poller = sources.MultiSourcePoller(store, ri.make_scorer(), registry=sources.SourceRegistry(),
+                                       log=lambda *a, **k: None)
+    poller._post_cycle({"new": 3})
+    assert warmed == [store], "the warm did not run on the poller the API actually starts"
+
+
+def test_post_cycle_skips_the_warm_when_nothing_was_ingested(store, monkeypatch):
+    """No new articles means the cache fingerprint is unchanged — rebuilding would be pure waste."""
+    import story_service
+    monkeypatch.setattr(story_service, "warm_cache",
+                        lambda s: (_ for _ in ()).throw(AssertionError("warmed with no new rows")))
+    poller = sources.MultiSourcePoller(store, ri.make_scorer(), registry=sources.SourceRegistry(),
+                                       log=lambda *a, **k: None)
+    poller._post_cycle({"new": 0})
+
+
+def test_a_failing_warm_never_breaks_the_poll_cycle(store, monkeypatch):
+    import story_service
+    monkeypatch.setattr(story_service, "warm_cache",
+                        lambda s: (_ for _ in ()).throw(RuntimeError("clustering exploded")))
+    events = []
+    poller = sources.MultiSourcePoller(store, ri.make_scorer(), registry=sources.SourceRegistry(),
+                                       log=lambda lvl, ev, **f: events.append(ev))
+    poller._post_cycle({"new": 1})                       # must not raise
+    assert "story_cache_warm_failed" in events
+
+
+def test_warm_cache_is_single_flight():
+    """Eight adapter threads finishing together must not launch eight clustering runs."""
+    import threading as _t
+    import story_service
+    store_ = store_mod.Store("sqlite://")
+    started, release = _t.Event(), _t.Event()
+    concurrent, lock = [0], _t.Lock()
+
+    def slow_build(*a, **kw):
+        with lock:
+            concurrent[0] += 1
+            assert concurrent[0] == 1, "two warms clustered at once"
+        started.set()
+        release.wait(5)
+        with lock:
+            concurrent[0] -= 1
+        return []
+
+    story_service.clear_cache()
+    orig = story_service._cached_build
+    story_service._cached_build = slow_build
+    try:
+        t = _t.Thread(target=lambda: story_service.warm_cache(store_), daemon=True)
+        t.start()
+        assert started.wait(5)
+        assert story_service.warm_cache(store_) is None, "second warm should stand down, not build"
+        release.set()
+        t.join(5)
+    finally:
+        story_service._cached_build = orig
+        story_service.clear_cache()

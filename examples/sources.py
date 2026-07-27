@@ -47,6 +47,7 @@ import rss_ingest      # reuse: FeedEntry, load_feeds/fetch_feed/parse_feed, ing
 import media           # reuse: pick_best_image (image SELECTION only — never modified, never downloads)
 import corpus_health   # reuse: validation-aware retention (post-cycle, exactly as FeedPoller runs it)
 import storage_lifecycle  # reuse: the ONE bounded cleanup pass (catalog + derived tables)
+import story_service      # reuse: warm the clustered-story cache after ingest (off the request path)
 import gdelt_gkg       # reuse: the Phase-2 event-geography enrichment logic (offline-testable)
 
 _USER_AGENT = "InformationHealth-Sources/0.1 (+https://code.claude.com)"
@@ -1114,6 +1115,20 @@ class MultiSourcePoller:
             storage_lifecycle.run_cleanup(self.store, log=self._log)
         except Exception as e:                              # cleanup must never break polling
             self._log(logging.WARNING, "storage_cleanup_failed", error=f"{type(e).__name__}: {e}")
+        # Rebuild the story clusters HERE, on this adapter's thread, now the catalog has settled
+        # (after retention, so the cache fingerprint is final). This ingest just invalidated the
+        # cache; without the warm the next reader pays the full rebuild — 5.4 s measured. Same work,
+        # moved off the request path. warm_cache is single-flight: adapters run one thread each and
+        # several can land together, so only one rebuild runs at a time. Fail-soft, like the cleanup
+        # above: a warm that cannot be built is a slow next request, never a broken poll loop.
+        try:
+            t0 = time.perf_counter()
+            stories = story_service.warm_cache(self.store)
+            if stories is not None:
+                self._log(logging.INFO, "story_cache_warm", stories=stories,
+                          durationMs=round((time.perf_counter() - t0) * 1000.0, 1))
+        except Exception as e:
+            self._log(logging.WARNING, "story_cache_warm_failed", error=f"{type(e).__name__}: {e}")
         if self._on_cycle is not None:
             try:
                 self._on_cycle(agg)

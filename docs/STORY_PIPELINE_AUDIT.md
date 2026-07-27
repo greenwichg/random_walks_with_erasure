@@ -91,8 +91,16 @@ just rendered.
 lexicographic and chronological order coincide. `examples/backfill_published_at.py` converts existing
 rows — idempotent, `--dry-run` first, leaves unparseable and NULL values untouched.
 
-**5. The poller warms the cache after each ingest** (`feed_service._post_cycle`, after retention so
-the fingerprint is final). The ingest invalidates the cache by definition, so without this the first
+**5. The poller warms the cache after each ingest** (`sources.MultiSourcePoller._post_cycle`, after
+retention so the fingerprint is final).
+
+> Note for anyone touching the poll cycle: the API starts **`sources.MultiSourcePoller`**
+> (`api_fastapi.py:299`), *not* `feed_service.FeedPoller` — that one is the standalone CLI path.
+> They have separate `_post_cycle` implementations and log different events (`source_poll` vs
+> `feed_poll`). The warm was first added to the wrong one and silently never ran in production;
+> `test_post_cycle_warms_the_story_cache` now pins it to the poller the API actually starts.
+> `warm_cache` is single-flight because `MultiSourcePoller` runs one thread per adapter, and eight
+> finishing together would otherwise launch eight concurrent multi-second clustering runs. The ingest invalidates the cache by definition, so without this the first
 reader after every poll paid the full rebuild — 5.4 s measured, once per `RWE_POLL_INTERVAL`
 (600 s), which on low traffic is a large share of requests. The work is unavoidable; paying it on
 the thread that changed the catalog instead of on a reader's request is the point. Fail-soft: a warm

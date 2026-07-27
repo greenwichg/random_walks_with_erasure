@@ -289,19 +289,33 @@ def clear_cache() -> None:
         _CACHE.clear()
 
 
-def warm_cache(store_) -> int:
-    """Build and cache the default (unfiltered) view; returns the story count.
+_WARM_LOCK = threading.Lock()
+
+
+def warm_cache(store_) -> Optional[int]:
+    """Build and cache the default (unfiltered) view; returns the story count, or ``None`` if
+    another warm was already in flight and this one stood down.
 
     Called by the poller right after it ingests, on the poller's own thread. Without this the FIRST
     reader after every poll pays the whole clustering cost — measured at 5.4 s in production, once
-    per ``RWE_POLL_INTERVAL`` (default 600 s), which on low traffic is a large share of requests.
-    The rebuild is unavoidable (the catalog genuinely changed); paying it on the thread that caused
-    the change, rather than on a reader's request, is the whole point.
+    per poll cycle, which on low traffic is a large share of requests. The rebuild is unavoidable
+    (the catalog genuinely changed); paying it on the thread that caused the change, rather than on
+    a reader's request, is the whole point.
+
+    **Single-flight.** ``MultiSourcePoller`` runs one thread PER ADAPTER — eight of them can finish
+    a cycle at once, and without this guard that is eight concurrent multi-second clustering runs on
+    a small instance. A skipped warm is not a lost one: the winner's build covers the same catalog,
+    and the next adapter to finish warms again.
 
     Warms the exact key ``/api/stories`` uses with no filters — filters, sort and pagination are
     applied outside the cache, so this one build serves every filter combination too."""
-    return len(_cached_build(store_, topic=None, date_from=None, date_to=None, max_scan=None,
-                             min_articles=2, min_publishers=2))
+    if not _WARM_LOCK.acquire(blocking=False):
+        return None
+    try:
+        return len(_cached_build(store_, topic=None, date_from=None, date_to=None, max_scan=None,
+                                 min_articles=2, min_publishers=2))
+    finally:
+        _WARM_LOCK.release()
 
 
 def _cached_build(store_, *, topic, date_from, date_to, max_scan, min_articles, min_publishers) -> list:
