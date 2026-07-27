@@ -138,8 +138,10 @@ def test_a_transport_failure_is_recorded_not_raised():
     assert row["status"] == "error" and "connection reset" in row["error"]
 
 
-def test_a_later_failure_does_not_erase_an_earlier_success():
-    """The cache asymmetry, end to end: a bad minute upstream must not empty a publisher page."""
+def test_a_transport_failure_does_not_erase_an_earlier_success():
+    """A request that did not complete tells us nothing about the outlet, so it must not empty a
+    publisher page. Contrast the test below: a completed lookup that CONCLUDES "not this outlet" is
+    a verdict, and does replace."""
     st = store_mod.Store("sqlite://")
     _seed(st, "Example Post", "examplepost.com")
     pm.run_enrichment(st, fetch_json=_wiki("Example Post"), limit=5)
@@ -311,3 +313,22 @@ def test_a_wire_service_seen_only_via_an_aggregator_verifies_on_its_name():
     row = st.publisher_metadata("Associated Press")
     assert row["status"] == "ok" and row["reason"] == "title"
     assert row["website"] == "https://ap.org/"
+
+
+def test_a_corrected_verdict_overwrites_a_wrong_cached_match():
+    """End to end for the stickiest bug in this module: a row cached `ok` against the WRONG outlet
+    must be correctable. It was not — the fix landed, the refusal was computed, and the old row was
+    kept because refusal is not success. A false positive that cannot be un-set is worse than the
+    transient failure the rule was protecting against."""
+    st = store_mod.Store("sqlite://")
+    _seed(st, "Example Post", "examplepost.com")
+    pm.run_enrichment(st, fetch_json=_wiki("Example Post"), limit=5)
+    assert st.publisher_metadata("Example Post")["status"] == "ok"
+
+    # The same lookup now resolves to a DIFFERENT organisation — the verifier refuses it.
+    wrong = _wiki("Example Post", website="https://someone-else.example")
+    pm.enrich_publisher(st, "Example Post", fetch_json=wrong)
+
+    row = st.publisher_metadata("Example Post")
+    assert row["status"] == "ambiguous" and row["reason"] == "domain_conflict"
+    assert row["website"] is None          # the wrong facts are gone, not merely overridden

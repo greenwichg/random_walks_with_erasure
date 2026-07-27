@@ -106,11 +106,20 @@ def test_a_successful_lookup_replaces_the_cached_row():
     assert pm.should_replace(_cached(founded="1821"), {"status": "ok", "founded": "1822"}) is True
 
 
-def test_a_failed_lookup_never_wipes_verified_facts():
-    """Wikipedia is edited live — a momentary redirect to a disambiguation page is not a reason to
-    empty a publisher page that was correct an hour ago."""
-    assert pm.should_replace(_cached(founded="1821"), {"status": "ambiguous"}) is False
+def test_a_transport_failure_never_wipes_verified_facts():
+    """An error means the request did not complete — it says nothing about the outlet, so it must
+    not throw away facts verified an hour ago."""
     assert pm.should_replace(_cached(founded="1821"), {"status": "error"}) is False
+
+
+def test_a_corrected_refusal_does_replace_a_wrong_success():
+    """The bug this rule originally had, pinned so it cannot come back. "ABC News" was cached ok
+    against an Albanian broadcaster; when the verification bug was fixed, the corrected refusal was
+    DISCARDED and the wrong row kept, because refusal is not success. A module whose rule is "a
+    wrong match is worse than no match" cannot also refuse to un-match."""
+    wrong = _cached(founded="1998", website="http://www.abcnews.al")
+    assert pm.should_replace(wrong, {"status": "ambiguous", "reason": "domain_conflict"}) is True
+    assert pm.should_replace(wrong, {"status": "no_match", "reason": "no_page"}) is True
 
 
 def test_a_failed_lookup_does_replace_a_previous_failure():

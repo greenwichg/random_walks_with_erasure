@@ -166,10 +166,20 @@ returned, so a rerun does no work and makes no requests. That is a property of t
 — there is no "already done" state to corrupt, which is what makes the refresh safe on a cron or
 after a partial failure.
 
-**One asymmetry:** a *failed* lookup never replaces a *successful* row. Wikipedia is edited live —
-an article can be briefly redirected to a disambiguation page, moved mid-rename, or 503 for a
-minute — and none of that is a reason to discard facts verified an hour ago. Without this rule a
-single bad minute upstream silently empties publisher pages.
+**One asymmetry, and it is narrower than it first looks.** The distinction is a *verdict* versus a
+*failure*:
+
+* `ok` / `ambiguous` / `no_match` are verdicts — we reached Wikipedia, read an answer, concluded
+  something. They always replace, **including when the new verdict is worse than the old one**.
+* `error` is a failure — the request did not complete, so it tells us nothing about the outlet and
+  must not discard facts verified an hour ago.
+
+This originally preserved a successful row against *any* later non-success, reasoning that Wikipedia
+is edited live and an article can be briefly redirected to a disambiguation page. True, but rare —
+and it made a false positive **permanent**. `ABC News` was cached `ok` against the Albanian
+broadcaster; when the verification bug was fixed, the corrected refusal was discarded and the wrong
+row kept, because a refusal is not a success. A module whose rule is "a wrong match is worse than no
+match" cannot also refuse to un-match.
 
 ## Where it runs
 

@@ -136,17 +136,25 @@ def logo_from_cache(cached: "dict | None") -> "tuple[str, str] | None":
 def should_replace(cached: "dict | None", new: dict) -> bool:
     """Whether a fresh lookup result should overwrite the cached row.
 
-    A successful lookup always replaces — Wikidata is the source of truth for its own claims, and a
-    dropped claim must propagate or the page keeps asserting a fact its source no longer does.
+    The distinction is **a verdict versus a failure**, and getting it wrong once already cost us:
 
-    A FAILED lookup must not replace a successful one. Wikipedia is edited live: an article can be
-    briefly redirected to a disambiguation page, moved mid-rename, or 503 for a minute, and none of
-    those are reasons to throw away facts that were verified an hour ago. The row keeps its data
-    and gets retried on the next cycle. This is the only asymmetry in the cache, and without it a
-    single bad minute upstream silently empties publisher pages."""
-    if new.get("status") in USABLE:
-        return True
-    return not cached or cached.get("status") not in USABLE
+    * ``ok`` / ``ambiguous`` / ``no_match`` are VERDICTS. We reached Wikipedia, read an answer, and
+      concluded something. They always replace — including when the new verdict is worse than the
+      old one.
+    * ``error`` is a FAILURE. We learned nothing about the outlet, only that a request did not
+      complete, so it must never overwrite facts that were verified an hour ago.
+
+    This originally preserved a successful row against ANY later non-success, on the reasoning that
+    Wikipedia is edited live and an article can be briefly redirected to a disambiguation page. That
+    is true but rare — and it made a false positive PERMANENT. "ABC News" was cached ok against the
+    Albanian broadcaster; when the verification bug was fixed, the corrected refusal was discarded
+    and the wrong row kept, because refusal is not success. A module whose stated rule is "a wrong
+    match is worse than no match" cannot also refuse to un-match.
+
+    The transient case still costs something under this rule — a momentary upstream oddity empties
+    a block until the next refresh — but an empty block is exactly what this module prefers to a
+    wrong one."""
+    return new.get("status") != "error" or not cached or cached.get("status") not in USABLE
 
 
 # --------------------------------------------------------------------------- #
