@@ -933,6 +933,33 @@ def _template_fields(template: str) -> set:
     return {f for _, f, _, _ in _string.Formatter().parse(template or "") if f}
 
 
+def _weekly_review_payload(results) -> dict:
+    """The Weekly Review's STRUCTURED attachment (additive, like ``cards``): the same tool facts
+    the prose template cites, shaped for a dashboard rendering. Selection only — nothing is
+    computed here that the tools didn't measure, labels stay raw metric keys (the web localizes),
+    and absent facts stay ``None``/empty (honest, never fabricated)."""
+    out = {"reads": None, "outlets": None, "topPublishers": [],
+           "trends": [], "goalMinutes": None, "storedGoals": None}
+    for r in results:
+        f = r.facts
+        if r.tool == "history":
+            out["reads"] = f.get("totalReads")
+            out["outlets"] = f.get("distinctOutlets")
+            out["topPublishers"] = [{"name": o, "reads": n}
+                                    for o, n in (f.get("topOutlets") or [])[:3]]
+        elif r.tool == "trend":
+            out["trends"] = [
+                {"metric": k, "first": (v.get("first") or {}).get("overall"),
+                 "last": (v.get("last") or {}).get("overall"), "points": v.get("points")}
+                for k, v in (f.get("series") or {}).items()]
+        elif r.tool == "goals":
+            out["goalMinutes"] = f.get("readingGoalMinutes")
+            g = f.get("coachGoals")
+            out["storedGoals"] = (list(g) if isinstance(g, (list, tuple))
+                                  and all(isinstance(x, str) for x in g) else None)
+    return out
+
+
 def coach_turn(pers, store, uid: int, message: str = None, intent: Intent = None,
                echo: "dict | None" = None) -> dict:
     """ONE coach turn — the internal entry point (and the proactive seam: callers may pass a
@@ -963,6 +990,10 @@ def coach_turn(pers, store, uid: int, message: str = None, intent: Intent = None
     return {"content": content, "intent": intent.name, "resolution": intent.resolution,
             "citations": citations, "cards": cards, "followUps": follow_ups,
             "echo": out_echo, "gaps": gaps,
+            # Structured Weekly Review attachment (this intent only; None elsewhere) — the web
+            # renders it as a dashboard card, with the prose as the fallback/transcript form.
+            "weeklyReview": (_weekly_review_payload(results)
+                             if intent.name == "COMPARE.weekly_review" else None),
             # observability (M4): read-only turn telemetry, logged by the API layer
             "toolsRun": [r.tool for r in results], "fallback": fallback,
             "ms": round((_time.perf_counter() - t0) * 1000.0, 1)}

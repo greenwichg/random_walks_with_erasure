@@ -58,3 +58,64 @@ export function activeFollowUps(messages: CoachMessage[]): string[] | null {
   }
   return null;
 }
+
+// --------------------------------------------------------------------------- //
+// Weekly Review presentation (pure) — label selection + derived insights for the
+// dashboard card. Derivation is arithmetic over the server's own numbers, never
+// new claims: a delta, a share, a "held steady" — nothing the payload can't prove.
+// --------------------------------------------------------------------------- //
+
+/** The trend series the engine emits (analytics-page vocabulary — labels already exist in every
+ *  catalog). Unknown keys render raw, greppable, never a broken catalog lookup. */
+const TREND_LABEL_KEYS: Record<string, string> = {
+  healthImprovement: "analytics.healthImprovement",
+  politicalDiversity: "analytics.politicalDiversity",
+  publisherDiversity: "analytics.publisherDiversity",
+  topicDiversity: "analytics.topicDiversity",
+};
+
+export function trendLabelKey(metric: string): string | null {
+  return TREND_LABEL_KEYS[metric] ?? null;
+}
+
+/** Delta of one weekly trend, or null when either end is unmeasured (honest: no delta claim). */
+export function weeklyTrendDelta(t: { first: number | null; last: number | null }): number | null {
+  return t.first == null || t.last == null ? null : t.last - t.first;
+}
+
+export type WeeklyInsight =
+  | { kind: "slip"; metric: string; delta: number }
+  | { kind: "gain"; metric: string; delta: number }
+  | { kind: "steady" }
+  | { kind: "concentration"; publisher: string; share: number };
+
+/**
+ * Up to two derived insights, most consequential first: the biggest mover (slip preferred over
+ * gain — the product's job is surfacing gaps), "all steady" when every measured trend is flat,
+ * and a top-publisher concentration flag at ≥ 40% of the week's reads. Empty when the payload
+ * has nothing measurable — the card then simply omits its insights row.
+ */
+export function weeklyInsights(review: {
+  reads: number | null;
+  topPublishers: { name: string; reads: number }[];
+  trends: { metric: string; first: number | null; last: number | null }[];
+}): WeeklyInsight[] {
+  const out: WeeklyInsight[] = [];
+  const measured = review.trends
+    .map((t) => ({ metric: t.metric, delta: weeklyTrendDelta(t) }))
+    .filter((t): t is { metric: string; delta: number } => t.delta != null);
+  const [mover] = [...measured].sort(
+    (a, b) => Math.abs(b.delta) - Math.abs(a.delta) || (a.delta > b.delta ? 1 : -1),
+  );
+  if (mover) {
+    if (mover.delta < 0) out.push({ kind: "slip", metric: mover.metric, delta: mover.delta });
+    else if (mover.delta > 0) out.push({ kind: "gain", metric: mover.metric, delta: mover.delta });
+    else out.push({ kind: "steady" });
+  }
+  const top = review.topPublishers[0];
+  if (top && review.reads != null && review.reads > 0) {
+    const share = Math.round((top.reads / review.reads) * 100);
+    if (share >= 40) out.push({ kind: "concentration", publisher: top.name, share });
+  }
+  return out.slice(0, 2);
+}

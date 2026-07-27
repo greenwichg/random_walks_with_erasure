@@ -8,6 +8,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { LeanBadge } from "@/components/shared/article-badges";
 import { RecommendationCard } from "@/components/recommendations/recommendation-card";
+import { WeeklyReviewCard } from "@/components/coach/weekly-review-card";
 import { citationLabelKey } from "@/lib/coach-presentation";
 import { useTranslation } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
@@ -50,16 +51,23 @@ export function CoachMessageBubble({
       )}
 
       <div className={cn("flex max-w-[85%] flex-col gap-2", isUser && "items-end")}>
-        <div
-          className={cn(
-            "rounded-2xl px-4 py-2.5 text-sm leading-relaxed",
-            isUser
-              ? "rounded-tr-sm bg-primary text-primary-foreground"
-              : "rounded-tl-sm border bg-card",
-          )}
-        >
-          {message.content}
-        </div>
+        {/* A structured Weekly Review renders as a dashboard card IN PLACE of the paragraph —
+            same facts, scannable form; `content` remains the transcript/fallback rendering for
+            messages without the attachment. */}
+        {message.weeklyReview ? (
+          <WeeklyReviewCard review={message.weeklyReview} />
+        ) : (
+          <div
+            className={cn(
+              "rounded-2xl px-4 py-2.5 text-sm leading-relaxed",
+              isUser
+                ? "rounded-tr-sm bg-primary text-primary-foreground"
+                : "rounded-tl-sm border bg-card",
+            )}
+          >
+            {message.content}
+          </div>
+        )}
 
         {message.citations && message.citations.length > 0 && (
           <div className="flex flex-wrap gap-1.5">

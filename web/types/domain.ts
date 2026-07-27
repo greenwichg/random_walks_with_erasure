@@ -784,9 +784,30 @@ export interface CoachMessage {
   followUps?: string[];
   /** Full recommendation cards (same contract as /api/recommendations — reuse the card UI). */
   cards?: Recommendation[];
+  /** Structured Weekly Review (COMPARE.weekly_review replies only) — the dashboard-card form of
+   * the same facts the prose cites; `content` remains the transcript/fallback rendering. */
+  weeklyReview?: WeeklyReview;
   /** Client-carried structured conversation state (binding-only, opaque): round-trip the most
    * recent one verbatim on the next send so "it" / "the first one" resolve server-side. */
   echo?: Record<string, unknown>;
+}
+
+/** One score-trend series in the Weekly Review: raw metric key (localized client-side), the
+ *  window's first/last overall values (null when unmeasured), and the snapshot count. */
+export interface WeeklyTrend {
+  metric: string;
+  first: number | null;
+  last: number | null;
+  points: number | null;
+}
+
+export interface WeeklyReview {
+  reads: number | null;
+  outlets: number | null;
+  topPublishers: { name: string; reads: number }[];
+  trends: WeeklyTrend[];
+  goalMinutes: number | null;
+  storedGoals: string[] | null;
 }
 
 export interface Achievement {

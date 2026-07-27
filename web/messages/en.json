@@ -772,5 +772,21 @@
  "analytics.geo.scope": "Local vs national",
  "home.pulse.title": "From {place}",
  "home.pulse.setupTitle": "From your places",
- "home.pulse.setupBody": "Pick an edition or follow places to see located coverage here. Set it up in"
+ "home.pulse.setupBody": "Pick an edition or follow places to see located coverage here. Set it up in",
+ "coach.weekly.title": "Weekly review",
+ "coach.weekly.badge": "This week",
+ "coach.weekly.reads": "Reads",
+ "coach.weekly.outlets": "Outlets",
+ "coach.weekly.goal": "Daily goal",
+ "coach.weekly.goalValue": "{n} min",
+ "coach.weekly.trends": "Score trends",
+ "coach.weekly.snapshots": "{n} snapshots",
+ "coach.weekly.topPublishers": "Top publishers",
+ "coach.weekly.goals": "Stored goals",
+ "coach.weekly.goalsEmpty": "No stored goals yet — the gaps above are the candidates.",
+ "coach.weekly.insights": "Insights",
+ "coach.weekly.insight.slip": "{metric} slipped {n} pts this week.",
+ "coach.weekly.insight.gain": "{metric} rose {n} pts this week.",
+ "coach.weekly.insight.steady": "All measured scores held steady.",
+ "coach.weekly.insight.concentration": "{share}% of your reads came from {publisher}."
 }

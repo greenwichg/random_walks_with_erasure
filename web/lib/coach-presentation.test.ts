@@ -14,7 +14,14 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
-import { citationLabelKey, lastEcho, activeFollowUps } from "./coach-presentation.ts";
+import {
+  citationLabelKey,
+  lastEcho,
+  activeFollowUps,
+  trendLabelKey,
+  weeklyTrendDelta,
+  weeklyInsights,
+} from "./coach-presentation.ts";
 import type { CoachMessage } from "@/types/domain";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -77,4 +84,56 @@ test("chips come only from the LAST message, and only when it is an assistant re
   assert.deepEqual(activeFollowUps([msg({}), withChips]), ["Why is it low?", "Suggest something"]);
   // after the user sends, the offer is stale — nothing to accept mid-flight
   assert.equal(activeFollowUps([withChips, msg({ role: "user", followUps: ["x"] })]), null);
+});
+
+// --------------------------------------------------------------------------- //
+// Weekly Review presentation
+// --------------------------------------------------------------------------- //
+test("trendLabelKey: analytics catalog keys for known series, null for unknown", () => {
+  assert.equal(trendLabelKey("politicalDiversity"), "analytics.politicalDiversity");
+  assert.equal(trendLabelKey("healthImprovement"), "analytics.healthImprovement");
+  assert.equal(trendLabelKey("mystery"), null);
+});
+
+test("weeklyTrendDelta: signed delta, null when either end is unmeasured", () => {
+  assert.equal(weeklyTrendDelta({ first: 70, last: 69 }), -1);
+  assert.equal(weeklyTrendDelta({ first: 84, last: 84 }), 0);
+  assert.equal(weeklyTrendDelta({ first: null, last: 80 }), null);
+});
+
+test("weeklyInsights: biggest mover wins, slip preferred on ties, capped at two", () => {
+  const out = weeklyInsights({
+    reads: 80,
+    topPublishers: [{ name: "New York Times", reads: 15 }],
+    trends: [
+      { metric: "healthImprovement", first: 70, last: 69 },
+      { metric: "politicalDiversity", first: 84, last: 81 },
+      { metric: "publisherDiversity", first: 100, last: 100 },
+    ],
+  });
+  assert.deepEqual(out, [{ kind: "slip", metric: "politicalDiversity", delta: -3 }]);
+});
+
+test("weeklyInsights: all-flat reports steady; heavy concentration flagged at >=40%", () => {
+  const out = weeklyInsights({
+    reads: 30,
+    topPublishers: [{ name: "New York Post", reads: 14 }],
+    trends: [{ metric: "publisherDiversity", first: 100, last: 100 }],
+  });
+  assert.deepEqual(out, [
+    { kind: "steady" },
+    { kind: "concentration", publisher: "New York Post", share: 47 },
+  ]);
+});
+
+test("weeklyInsights: empty payload derives nothing (honest omission)", () => {
+  assert.deepEqual(weeklyInsights({ reads: null, topPublishers: [], trends: [] }), []);
+  assert.deepEqual(
+    weeklyInsights({
+      reads: 10,
+      topPublishers: [{ name: "NPR", reads: 2 }],   // 20% — below the concentration bar
+      trends: [{ metric: "healthImprovement", first: null, last: null }],
+    }),
+    [],
+  );
 });

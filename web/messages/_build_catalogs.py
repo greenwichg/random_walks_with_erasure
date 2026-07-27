@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 """Generate web/messages/{en,es,fr,de,pt}.json from one source so all five share identical keys.
 
+⚠️  STALE — DO NOT RUN AGAINST THE LIVE CATALOGS. The five json files are the source of truth and
+have been edited directly since this script was last reconciled; running it OVERWRITES keys it
+doesn't know (observed 2026-07-27: script carried 681 keys vs 774 live — regeneration destroyed 93
+keys and was restored from git). Add new keys to the json files (all five, identical key sets —
+`node scripts/check-i18n.mjs` enforces parity); update the table here only as documentation.
+Reconcile fully before ever running it again.
+
 Each entry maps a dot-key to its five translations (en, es, fr, de, pt). Machine-grade non-English
 strings, flagged in the implementation report for later native review. Interpolation uses {name}."""
 import json
@@ -701,6 +708,50 @@ M = {
                  "Gere minhas metas semanais"),
     # Coach v2 (M5): accessible name for the reply-specific follow-up chip row (the chip texts
     # themselves come from the engine reply verbatim, like the message content).
+    # -------- coach: Weekly Review dashboard card --------
+    "coach.weekly.title": ("Weekly review", "Resumen semanal", "Bilan hebdomadaire",
+                           "Wochenrückblick", "Resumo semanal"),
+    "coach.weekly.badge": ("This week", "Esta semana", "Cette semaine", "Diese Woche",
+                           "Esta semana"),
+    "coach.weekly.reads": ("Reads", "Lecturas", "Lectures", "Gelesen", "Leituras"),
+    "coach.weekly.outlets": ("Outlets", "Medios", "Sources", "Quellen", "Veículos"),
+    "coach.weekly.goal": ("Daily goal", "Meta diaria", "Objectif quotidien", "Tagesziel",
+                          "Meta diária"),
+    "coach.weekly.goalValue": ("{n} min", "{n} min", "{n} min", "{n} Min.", "{n} min"),
+    "coach.weekly.trends": ("Score trends", "Tendencias", "Tendances", "Trends", "Tendências"),
+    "coach.weekly.snapshots": ("{n} snapshots", "{n} instantáneas", "{n} instantanés",
+                               "{n} Momentaufnahmen", "{n} registros"),
+    "coach.weekly.topPublishers": ("Top publishers", "Principales medios", "Principales sources",
+                                   "Top-Quellen", "Principais veículos"),
+    "coach.weekly.goals": ("Stored goals", "Objetivos guardados", "Objectifs enregistrés",
+                           "Gespeicherte Ziele", "Metas salvas"),
+    "coach.weekly.goalsEmpty": ("No stored goals yet — the gaps above are the candidates.",
+                                "Aún no hay objetivos guardados; las brechas de arriba son las candidatas.",
+                                "Pas encore d'objectifs enregistrés — les lacunes ci-dessus sont les candidates.",
+                                "Noch keine gespeicherten Ziele — die Lücken oben sind die Kandidaten.",
+                                "Ainda não há metas salvas — as lacunas acima são as candidatas."),
+    "coach.weekly.insights": ("Insights", "Observaciones", "Observations", "Erkenntnisse",
+                              "Observações"),
+    "coach.weekly.insight.slip": ("{metric} slipped {n} pts this week.",
+                                  "{metric} bajó {n} pts esta semana.",
+                                  "{metric} a reculé de {n} pts cette semaine.",
+                                  "{metric} fiel diese Woche um {n} Punkte.",
+                                  "{metric} caiu {n} pts esta semana."),
+    "coach.weekly.insight.gain": ("{metric} rose {n} pts this week.",
+                                  "{metric} subió {n} pts esta semana.",
+                                  "{metric} a progressé de {n} pts cette semaine.",
+                                  "{metric} stieg diese Woche um {n} Punkte.",
+                                  "{metric} subiu {n} pts esta semana."),
+    "coach.weekly.insight.steady": ("All measured scores held steady.",
+                                    "Todas las puntuaciones medidas se mantuvieron estables.",
+                                    "Tous les scores mesurés sont restés stables.",
+                                    "Alle gemessenen Werte blieben stabil.",
+                                    "Todas as pontuações medidas se mantiveram estáveis."),
+    "coach.weekly.insight.concentration": ("{share}% of your reads came from {publisher}.",
+                                           "El {share}% de tus lecturas vino de {publisher}.",
+                                           "{share}% de vos lectures viennent de {publisher}.",
+                                           "{share}% deiner Lektüre stammte von {publisher}.",
+                                           "{share}% das suas leituras vieram de {publisher}."),
     "coach.followUps": ("Suggested follow-ups", "Preguntas sugeridas", "Questions suggérées",
                         "Vorgeschlagene Anschlussfragen", "Perguntas sugeridas"),
 

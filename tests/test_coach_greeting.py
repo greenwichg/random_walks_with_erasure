@@ -168,6 +168,15 @@ def test_weekly_recap_fires_for_settings_plus_recent_reads(stack):
     assert "25" in turn["content"]                       # the stored goal, cited and rendered
     assert turn["echo"]["turns"][-1]["intent"] == "COMPARE.weekly_review"
     assert turn["toolsRun"] == ["goals", "history", "trend"]
+    # The structured dashboard attachment mirrors the SAME tool facts the prose cites — shape
+    # pinned here so the web card and the sentence can never disagree.
+    wr = turn["weeklyReview"]
+    assert set(wr) == {"reads", "outlets", "topPublishers", "trends", "goalMinutes", "storedGoals"}
+    assert wr["reads"] is not None and wr["outlets"] is not None
+    assert all(set(p) == {"name", "reads"} for p in wr["topPublishers"]) and len(wr["topPublishers"]) <= 3
+    assert all(set(tr) == {"metric", "first", "last", "points"} for tr in wr["trends"])
+    assert wr["goalMinutes"] == 25                       # the same stored goal the prose renders
+    assert str(wr["reads"]) in turn["content"]           # card and sentence share one source
 
 
 def test_stored_coach_goals_fire_even_without_recent_reads(stack):

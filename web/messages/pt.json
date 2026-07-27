@@ -772,5 +772,21 @@
  "analytics.geo.scope": "Local vs nacional",
  "home.pulse.title": "De {place}",
  "home.pulse.setupTitle": "Dos seus lugares",
- "home.pulse.setupBody": "Escolha uma edição ou siga lugares para ver cobertura localizada aqui. Configure em"
+ "home.pulse.setupBody": "Escolha uma edição ou siga lugares para ver cobertura localizada aqui. Configure em",
+ "coach.weekly.title": "Resumo semanal",
+ "coach.weekly.badge": "Esta semana",
+ "coach.weekly.reads": "Leituras",
+ "coach.weekly.outlets": "Veículos",
+ "coach.weekly.goal": "Meta diária",
+ "coach.weekly.goalValue": "{n} min",
+ "coach.weekly.trends": "Tendências",
+ "coach.weekly.snapshots": "{n} registros",
+ "coach.weekly.topPublishers": "Principais veículos",
+ "coach.weekly.goals": "Metas salvas",
+ "coach.weekly.goalsEmpty": "Ainda não há metas salvas — as lacunas acima são as candidatas.",
+ "coach.weekly.insights": "Observações",
+ "coach.weekly.insight.slip": "{metric} caiu {n} pts esta semana.",
+ "coach.weekly.insight.gain": "{metric} subiu {n} pts esta semana.",
+ "coach.weekly.insight.steady": "Todas as pontuações medidas se mantiveram estáveis.",
+ "coach.weekly.insight.concentration": "{share}% das suas leituras vieram de {publisher}."
 }

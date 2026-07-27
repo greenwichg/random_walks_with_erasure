@@ -1043,6 +1043,10 @@ class CoachMessageModel(BaseModel):
     followUps: Optional[list[str]] = None
     cards: Optional[list[RecommendationModel]] = None
     echo: Optional[dict] = None
+    # Structured Weekly Review (COMPARE.weekly_review only): reads/outlets/topPublishers,
+    # trend first->last per metric, goal minutes, stored goals — the dashboard-card form of the
+    # same facts the prose cites. Additive + exclude_none: absent everywhere else.
+    weeklyReview: Optional[dict] = None
 
 
 class HealthStatusModel(BaseModel):
@@ -2887,6 +2891,7 @@ def _v2_message(turn: dict, mid: str) -> dict:
             "intent": turn["intent"], "resolution": turn["resolution"],
             "followUps": turn["followUps"] or None,
             "cards": turn["cards"] or None,
+            "weeklyReview": turn.get("weeklyReview"),
             "echo": turn["echo"]}
 
 
