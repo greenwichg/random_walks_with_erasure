@@ -5,8 +5,8 @@ resource "aws_s3_bucket" "ih_backups" {
   bucket = "hidden-view-ih-backups-652615011843"
 
   # PERSISTENT TIER — the off-host copy of the database, and the only thing standing between a
-  # lost instance and lost user data. Suspend/resume never touches it; this guard makes a
-  # `terraform destroy` (accidental, or a mis-targeted one) fail rather than delete it.
+  # lost instance and lost user data. This guard makes a `terraform destroy` (accidental, or a
+  # mis-targeted one) fail rather than delete it.
   lifecycle {
     prevent_destroy = true
   }

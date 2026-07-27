@@ -5,9 +5,8 @@
 resource "aws_eip" "ih_eip" {
   domain = "vpc"
 
-  # PERSISTENT TIER — the address the Route 53 A record points at. It stays ASSOCIATED across a
-  # suspend (an EIP survives instance stop/start), which is why resume needs no DNS change and the
-  # TLS certificate keeps working. Releasing it would force a record update plus propagation.
+  # PERSISTENT TIER — the address the Route 53 A record points at. Releasing it would force a
+  # record update plus DNS propagation, so it is guarded against an accidental destroy.
   lifecycle {
     prevent_destroy = true
   }
