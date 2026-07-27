@@ -147,6 +147,16 @@ often a headquarters photo rather than a logo.
 The page keeps its existing `onError` fallback to the building icon, so a dead logo URL degrades to
 the same placeholder it always did.
 
+## Adding a column later
+
+`Base.metadata.create_all` creates **new tables only**. A column added to `PublisherMetadata` after
+its first deploy will not appear on a live database, and every read then fails with
+`no such column: publisher_metadata.<name>`. That happened once already, with `reason`.
+
+Any such column must also be listed in `Store._ensure_publisher_metadata_columns`, which issues an
+idempotent `ALTER TABLE … ADD COLUMN` on every startup — the same discipline
+`_ensure_media_columns` and friends use for `feed_articles`.
+
 ## Known limits
 
 - **The public-suffix list is a hand-maintained short list**, not the real PSL (which is a

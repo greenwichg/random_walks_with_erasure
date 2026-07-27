@@ -666,6 +666,7 @@ class Store:
         self._ensure_location_columns()
         self._ensure_read_columns()
         self._ensure_lifecycle_columns()
+        self._ensure_publisher_metadata_columns()
         self._ensure_search_indexes()
 
     @contextmanager
@@ -1282,6 +1283,21 @@ class Store:
             try:
                 with self.session() as s:
                     s.execute(text(f"ALTER TABLE feed_articles ADD COLUMN {name} {decl}"))
+            except Exception:
+                pass    # already exists (fresh DB) or a non-sqlite backend — nothing to do
+
+    def _ensure_publisher_metadata_columns(self) -> None:
+        """Additive, idempotent columns on ``publisher_metadata`` — same discipline as
+        ``_ensure_media_columns``, and here for the same reason it exists there.
+
+        ``create_all`` creates NEW tables only. This table shipped one deploy, gained ``reason`` the
+        next, and the live DB kept the original schema: every read then failed with
+        ``no such column: publisher_metadata.reason``. Any column added to
+        :class:`PublisherMetadata` after its first deploy belongs in this list."""
+        for name, decl in [("reason", "VARCHAR(32)"), ("logo_source", "VARCHAR(16)")]:
+            try:
+                with self.session() as s:
+                    s.execute(text(f"ALTER TABLE publisher_metadata ADD COLUMN {name} {decl}"))
             except Exception:
                 pass    # already exists (fresh DB) or a non-sqlite backend — nothing to do
 

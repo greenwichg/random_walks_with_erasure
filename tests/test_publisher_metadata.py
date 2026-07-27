@@ -200,3 +200,45 @@ def test_a_recorded_miss_leaves_the_page_intact():
     assert profile["about"]["status"] == "no_match"
     assert profile["publisherLogoSource"] == "favicon"         # falls back, never blank
     assert profile["articles"]["total"] == 1
+
+
+# --------------------------------------------------------------------------- #
+# Schema upgrade on an existing DB.
+# --------------------------------------------------------------------------- #
+def test_a_database_predating_the_reason_column_is_upgraded_in_place(tmp_path):
+    """Regression, from production. `Base.metadata.create_all` creates NEW tables only — it never
+    adds a column to a table that already exists. publisher_metadata shipped in one deploy and
+    gained `reason` in the next, so the live DB kept the original schema and every read failed with
+    "no such column: publisher_metadata.reason". Any column added after a table's first deploy needs
+    an _ensure_* entry, and this proves that path works rather than assuming it."""
+    import sqlite3
+    db = tmp_path / "legacy.db"
+    # Build the table exactly as the FIRST deploy created it: no `reason`, no `logo_source`.
+    con = sqlite3.connect(db)
+    con.execute("""CREATE TABLE publisher_metadata (
+        publisher_key VARCHAR(255) NOT NULL PRIMARY KEY, publisher VARCHAR(255) NOT NULL,
+        status VARCHAR(16), source VARCHAR(16), wikidata_id VARCHAR(32),
+        wikipedia_title VARCHAR(255), wikipedia_url VARCHAR(1024), description TEXT,
+        founded VARCHAR(32), headquarters VARCHAR(255), country VARCHAR(2),
+        website VARCHAR(1024), parent VARCHAR(255), logo VARCHAR(1024), error TEXT,
+        fetched_at DATETIME)""")
+    con.execute("INSERT INTO publisher_metadata (publisher_key, publisher, status, founded) "
+                "VALUES ('legacy outlet', 'Legacy Outlet', 'ok', '1900')")
+    con.commit()
+    con.close()
+
+    st = store_mod.Store(f"sqlite:///{db}")
+
+    row = st.publisher_metadata("Legacy Outlet")          # would raise OperationalError before
+    assert row["status"] == "ok" and row["founded"] == "1900"
+    assert row["reason"] is None and row["logoSource"] is None    # new columns, honestly empty
+    # …and the upgraded table accepts writes to the new columns.
+    st.upsert_publisher_metadata("Legacy Outlet", status="ambiguous", reason="domain_conflict")
+    assert st.publisher_metadata("Legacy Outlet")["reason"] == "domain_conflict"
+
+
+def test_the_ensure_pass_is_idempotent(tmp_path):
+    """It runs on every Store construction, so a second open must be a no-op, not an error."""
+    db = tmp_path / "twice.db"
+    store_mod.Store(f"sqlite:///{db}").upsert_publisher_metadata("X", status="ok", reason="domain")
+    assert store_mod.Store(f"sqlite:///{db}").publisher_metadata("X")["reason"] == "domain"
