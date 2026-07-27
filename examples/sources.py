@@ -31,9 +31,11 @@ No network is contacted unless an adapter is enabled; ``fetch`` is injectable so
 
 from __future__ import annotations
 
+import http.client
 import json
 import logging
 import os
+import random
 import threading
 import time
 import urllib.error
@@ -90,55 +92,96 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _get_json(url: str, *, headers=None, timeout: float = 15.0,
-              retries: Optional[int] = None, backoff: Optional[float] = None,
-              on_transient: Optional[Callable[[int], None]] = None) -> dict:
-    """HTTP GET -> parsed JSON, retrying **transient** failures (HTTP 429 + 5xx) with linear backoff.
-    429 is common on shared IPs (e.g. GDELT from Colab), so a one-shot poll shouldn't fail on it; a
-    non-transient error (e.g. 401 Unauthorized) raises immediately. Tunable via RWE_SOURCE_RETRIES /
-    RWE_SOURCE_BACKOFF. ``on_transient`` (if given) is called with the HTTP code for EVERY transient
-    response — including the one that exhausts the retries — so callers can count rate-limit events
-    instead of the retry loop silently absorbing them."""
+def _backoff_delay(attempt: int, base: float, cap: float = 60.0) -> float:
+    """Exponential backoff with half-jitter: ``d/2 + rand(0, d/2)`` where ``d = base * 2^(n-1)``.
+
+    Half rather than full jitter because the floor matters — a retry that can fire ~immediately is
+    no retry at all against a server that just refused us."""
+    d = min(base * (2 ** max(0, attempt - 1)), cap)
+    return d / 2.0 + random.random() * (d / 2.0)
+
+
+def _retry_after_seconds(e) -> Optional[float]:
+    """``Retry-After`` in delta-seconds form, or ``None`` (absent, or the HTTP-date form we don't
+    parse). The server telling us exactly when to return is worth more than any backoff guess."""
+    try:
+        v = e.headers.get("Retry-After") if getattr(e, "headers", None) else None
+    except Exception:
+        return None
+    if not v:
+        return None
+    try:
+        return max(0.0, float(str(v).strip()))
+    except ValueError:
+        return None
+
+
+def _request(url: str, *, read, headers=None, timeout: float,
+             retries: Optional[int] = None, backoff: Optional[float] = None,
+             on_transient: Optional[Callable[[int], None]] = None):
+    """One HTTP GET with the shared retry discipline. ``read(resp)`` turns the response into the
+    caller's value (JSON, bytes, …). The retry policy differs by failure class, deliberately:
+
+    * **429 Too Many Requests** — retried ONLY when the server sends a ``Retry-After`` we are
+      willing to wait for; otherwise it raises immediately. Retrying a rate limit on a short ladder
+      sends MORE traffic into a limit we are already over. Measured on GDELT: four requests per
+      refused cycle and ~30 s of sleeping per cycle, for nothing — a background poller's next
+      scheduled cycle is the right retry.
+    * **5xx** — a genuine transient server fault; retried with exponential backoff + jitter.
+    * **Connection-level failures** (SSL handshake, DNS, connect/read timeout, reset, truncated
+      body) — retried the same way. These previously escaped the loop entirely: only ``HTTPError``
+      was caught, and ``URLError`` is its PARENT, not its child, so an SSL or timeout failure was
+      never retried however high ``RWE_SOURCE_RETRIES`` was set.
+
+    ``on_transient`` is called with the HTTP code for every 429/5xx — including the one that gives
+    up — so callers count rate-limit events instead of the loop absorbing them."""
     retries = _int_env("RWE_SOURCE_RETRIES", 3) if retries is None else retries
     backoff = _float_env("RWE_SOURCE_BACKOFF", 5.0) if backoff is None else backoff
+    retry_after_max = _float_env("RWE_SOURCE_RETRY_AFTER_MAX", 120.0)
     req = urllib.request.Request(url, headers=headers or {})
     attempt = 0
     while True:
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return json.loads(resp.read())
-        except urllib.error.HTTPError as e:
+                return read(resp)
+        except urllib.error.HTTPError as e:                 # HTTPError first: it subclasses URLError
             attempt += 1
-            transient = e.code == 429 or 500 <= e.code < 600
-            if transient and on_transient is not None:
-                try:
-                    on_transient(e.code)
-                except Exception:
-                    pass                                  # metrics must never break the fetch
-            if not transient or attempt > retries:
+            if e.code == 429 or 500 <= e.code < 600:
+                if on_transient is not None:
+                    try:
+                        on_transient(e.code)
+                    except Exception:
+                        pass                                # metrics must never break the fetch
+            if e.code == 429:
+                wait = _retry_after_seconds(e)
+                if wait is None or wait > retry_after_max or attempt > retries:
+                    raise
+                time.sleep(wait)
+                continue
+            if not (500 <= e.code < 600) or attempt > retries:
                 raise
-            time.sleep(min(backoff * attempt, 60.0))     # 5s, 10s, 15s … (capped)
+            time.sleep(_backoff_delay(attempt, backoff))
+        except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError):
+            attempt += 1
+            if attempt > retries:
+                raise
+            time.sleep(_backoff_delay(attempt, backoff))
+
+
+def _get_json(url: str, *, headers=None, timeout: float = 15.0,
+              retries: Optional[int] = None, backoff: Optional[float] = None,
+              on_transient: Optional[Callable[[int], None]] = None) -> dict:
+    """HTTP GET -> parsed JSON. See :func:`_request` for the retry policy."""
+    return _request(url, read=lambda r: json.loads(r.read()), headers=headers, timeout=timeout,
+                    retries=retries, backoff=backoff, on_transient=on_transient)
 
 
 def _get_bytes(url: str, *, headers=None, timeout: float = 30.0,
                retries: Optional[int] = None, backoff: Optional[float] = None) -> bytes:
-    """HTTP GET -> raw bytes, with the SAME transient-retry discipline as :func:`_get_json`
-    (429 + 5xx retried with linear backoff; anything else raises immediately). Used for the GKG
-    zip + manifest, which are files, not JSON."""
-    retries = _int_env("RWE_SOURCE_RETRIES", 3) if retries is None else retries
-    backoff = _float_env("RWE_SOURCE_BACKOFF", 5.0) if backoff is None else backoff
-    req = urllib.request.Request(url, headers=headers or {"User-Agent": _USER_AGENT})
-    attempt = 0
-    while True:
-        try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return resp.read()
-        except urllib.error.HTTPError as e:
-            attempt += 1
-            transient = e.code == 429 or 500 <= e.code < 600
-            if not transient or attempt > retries:
-                raise
-            time.sleep(min(backoff * attempt, 60.0))
+    """HTTP GET -> raw bytes, same retry policy as :func:`_get_json`. Used for the GKG zip +
+    manifest, which are files, not JSON."""
+    return _request(url, read=lambda r: r.read(), headers=headers or {"User-Agent": _USER_AGENT},
+                    timeout=timeout, retries=retries, backoff=backoff)
 
 
 def _default_log(level: int, event: str, **fields) -> None:
@@ -990,10 +1033,30 @@ class GDELTGKGEnricher(SourceAdapter):
     def health_key(self) -> str:
         return "gdelt://gkg"
 
+    def _warn_if_window_cost_is_high(self) -> None:
+        """One loud line at startup when the steady-state lookback has been left at a backfill-sized
+        value. Each window is a separate multi-megabyte download, so this is the single setting that
+        can silently multiply our request rate against GDELT — and it is easy to leave behind after a
+        one-off deep scan, because nothing else about the system changes when you do. It cost a 60%
+        DOC success rate before anyone connected the two."""
+        windows = gdelt_gkg.windows_per_cycle()
+        if windows <= gdelt_gkg.DEFAULT_WINDOWS * 4:
+            return
+        per_cycle = windows + 1                              # + the lastupdate.txt manifest
+        per_day = per_cycle * (86400.0 / max(1.0, self.interval()))
+        self._log(logging.WARNING, "gkg_window_cost_high", windows=windows,
+                  requestsPerCycle=per_cycle, requestsPerDay=round(per_day),
+                  steadyStateDefault=gdelt_gkg.DEFAULT_WINDOWS,
+                  hint="RWE_GDELT_GKG_WINDOWS is a ONE-TIME backfill depth; cold start is handled "
+                       "automatically by RWE_GDELT_GKG_BACKFILL_WINDOWS. Leaving it raised polls "
+                       "GDELT far harder than intended and can rate-limit the DOC adapter.")
+
     def poll_once(self, store_, scorer, *, on_feed: Optional[Callable] = None) -> dict:
         t0 = time.perf_counter()
         error = None
         stats: Optional[dict] = None
+        if self._first_cycle:
+            self._warn_if_window_cost_is_high()
         try:
             stats = gdelt_gkg.enrich_from_latest(
                 store_, fetch_bytes=self._fetch_bytes or _get_bytes,
@@ -1085,6 +1148,25 @@ class MultiSourcePoller:
         self._threads: list = []
         # Serialize DB writes + the post-cycle hook across adapters so concurrent polls stay SQLite-safe.
         self._lock = threading.Lock()
+        # health_key -> consecutive failures, for adaptive polling (see _effective_interval).
+        self._consecutive: dict = {}
+
+    # -- adaptive polling ---------------------------------------------------------------------- #
+    def _effective_interval(self, adapter: SourceAdapter) -> float:
+        """The adapter's own interval, widened while it is failing.
+
+        A provider that is refusing us is not helped by being asked again on schedule — and when the
+        refusal is a rate limit, polling on time is what sustains it. Doubling per consecutive
+        failure (capped) backs off automatically and returns to the configured cadence the moment a
+        cycle succeeds. ``consecutive_failures`` is already counted by ``record_feed_health``; this
+        is the first consumer of it."""
+        base = max(1.0, adapter.interval())
+        fails = self._consecutive.get(adapter.health_key, 0)
+        if fails <= 0:
+            return base
+        steps = _int_env("RWE_SOURCE_BACKOFF_STEPS", 4)          # 2x, 4x, 8x, 16x, then flat
+        factor = 2 ** min(fails, max(0, steps))
+        return min(base * factor, _float_env("RWE_SOURCE_MAX_INTERVAL", 6 * 3600.0))
 
     # -- per-source health (reuses store.record_feed_health; mirrors FeedPoller's glue) --
     def _record_health(self, name, url, stats, latency_ms, error) -> None:
@@ -1092,6 +1174,7 @@ class MultiSourcePoller:
             url, ok=(error is None), name=name, latency_ms=latency_ms,
             error=(f"{type(error).__name__}: {error}" if error is not None else None),
             stats=stats or {}, unhealthy_after=self.unhealthy_after)
+        self._consecutive[url] = int(rec.get("consecutiveFailures") or 0)
         if error is not None:
             self._log(logging.WARNING, "source_health", feed=url, healthy=rec["healthy"],
                       consecutiveFailures=rec["consecutiveFailures"], error=rec["lastError"])
@@ -1152,7 +1235,12 @@ class MultiSourcePoller:
                 self.poll_adapter_once(adapter)
             except Exception as e:                          # isolation: one adapter never stops another
                 self._log(logging.ERROR, "source_poll_cycle_failed", provider=adapter.provider, error=repr(e))
-            self._stop.wait(max(1.0, adapter.interval()))   # interruptible per-adapter sleep
+            wait = self._effective_interval(adapter)
+            if wait > adapter.interval():
+                self._log(logging.WARNING, "source_poll_backoff", provider=adapter.provider,
+                          consecutiveFailures=self._consecutive.get(adapter.health_key, 0),
+                          intervalSec=round(wait), baseIntervalSec=round(adapter.interval()))
+            self._stop.wait(max(1.0, wait))                 # interruptible per-adapter sleep
         self._log(logging.INFO, "source_poll_stopped", provider=adapter.provider)
 
     def start(self) -> None:

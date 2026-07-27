@@ -271,25 +271,140 @@ def test_config_warnings_collects_only_misconfigured(monkeypatch):
     assert sources.RSSAdapter().config_warning() is None
 
 
-def test_get_json_retries_transient_429(monkeypatch):
-    """A 429 (common for GDELT on shared IPs) is retried with backoff and then succeeds."""
+class _OkResp:
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
+    def read(self): return b'{"ok": true}'
+
+
+def test_429_without_retry_after_is_not_retried(monkeypatch):
+    """A bare 429 means STOP, and we stop.
+
+    The old policy retried it three times on a 5/10/15 s ladder — four requests into a limit we
+    were already over, and 30 s of sleeping per cycle. Measured on GDELT: 40% of DOC cycles failed
+    that way, with a 48.9 s average cycle against a 15 s timeout. A background poller's next
+    scheduled cycle IS the retry."""
     import urllib.error
     calls = {"n": 0}
 
-    class _Resp:
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
-        def read(self): return b'{"ok": true}'
+    def fake_urlopen(req, timeout=None):
+        calls["n"] += 1
+        raise urllib.error.HTTPError(req.full_url, 429, "Too Many Requests", {}, None)
+
+    monkeypatch.setattr(sources.urllib.request, "urlopen", fake_urlopen)
+    events = []
+    with pytest.raises(urllib.error.HTTPError):
+        sources._get_json("https://x.example/y", retries=3, backoff=0, on_transient=events.append)
+    assert calls["n"] == 1, "a bare 429 must not be retried"
+    assert events == [429], "the rate-limit hit must still be counted, not swallowed"
+
+
+def test_429_with_retry_after_waits_exactly_that_long_then_succeeds(monkeypatch):
+    """When the server says WHEN to come back, that beats any backoff guess of ours."""
+    import email.message
+    import urllib.error
+    calls, slept = {"n": 0}, []
+    hdrs = email.message.Message()
+    hdrs["Retry-After"] = "7"
+
+    def fake_urlopen(req, timeout=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise urllib.error.HTTPError(req.full_url, 429, "Too Many Requests", hdrs, None)
+        return _OkResp()
+
+    monkeypatch.setattr(sources.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(sources.time, "sleep", slept.append)
+    assert sources._get_json("https://x.example/y", retries=3) == {"ok": True}
+    assert calls["n"] == 2 and slept == [7.0]
+
+
+def test_429_with_an_unreasonably_long_retry_after_gives_up(monkeypatch):
+    """"Come back in an hour" is not something a poller should sit and wait for."""
+    import email.message
+    import urllib.error
+    calls, slept = {"n": 0}, []
+    hdrs = email.message.Message()
+    hdrs["Retry-After"] = "3600"
+
+    def fake_urlopen(req, timeout=None):
+        calls["n"] += 1
+        raise urllib.error.HTTPError(req.full_url, 429, "Too Many Requests", hdrs, None)
+
+    monkeypatch.setattr(sources.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(sources.time, "sleep", slept.append)
+    with pytest.raises(urllib.error.HTTPError):
+        sources._get_json("https://x.example/y", retries=3)
+    assert calls["n"] == 1 and slept == []
+
+
+def test_5xx_is_still_retried_with_backoff(monkeypatch):
+    """A server fault is genuinely transient — unlike a rate limit, retrying it is correct."""
+    import urllib.error
+    calls, slept = {"n": 0}, []
 
     def fake_urlopen(req, timeout=None):
         calls["n"] += 1
         if calls["n"] < 3:
-            raise urllib.error.HTTPError(req.full_url, 429, "Too Many Requests", {}, None)
-        return _Resp()
+            raise urllib.error.HTTPError(req.full_url, 503, "Service Unavailable", {}, None)
+        return _OkResp()
 
     monkeypatch.setattr(sources.urllib.request, "urlopen", fake_urlopen)
-    out = sources._get_json("https://x.example/y", retries=3, backoff=0)   # backoff=0 -> no real sleep
-    assert out == {"ok": True} and calls["n"] == 3          # retried twice, succeeded on the third
+    monkeypatch.setattr(sources.time, "sleep", slept.append)
+    events = []
+    assert sources._get_json("https://x.example/y", retries=3, on_transient=events.append) == {"ok": True}
+    assert calls["n"] == 3 and events == [503, 503] and len(slept) == 2
+
+
+def test_connection_level_failures_are_retried(monkeypatch):
+    """The gap this closes: only HTTPError used to be caught, and URLError is its PARENT — so an
+    SSL handshake failure or a read timeout was never retried however high RWE_SOURCE_RETRIES was
+    set. Every keyed provider shares this path, not just GDELT."""
+    import socket
+    import ssl
+    import urllib.error
+
+    for boom in (urllib.error.URLError(ssl.SSLError("handshake failure")),
+                 urllib.error.URLError(socket.timeout("timed out")),
+                 TimeoutError("read timed out"),
+                 ConnectionResetError("peer reset")):
+        calls, slept = {"n": 0}, []
+
+        def fake_urlopen(req, timeout=None, _boom=boom):
+            calls["n"] += 1
+            if calls["n"] < 3:
+                raise _boom
+            return _OkResp()
+
+        monkeypatch.setattr(sources.urllib.request, "urlopen", fake_urlopen)
+        monkeypatch.setattr(sources.time, "sleep", slept.append)
+        assert sources._get_json("https://x.example/y", retries=3) == {"ok": True}, \
+            f"{type(boom).__name__} was not retried"
+        assert calls["n"] == 3 and len(slept) == 2
+
+
+def test_connection_failures_give_up_after_the_retry_budget(monkeypatch):
+    import urllib.error
+    calls = {"n": 0}
+
+    def fake_urlopen(req, timeout=None):
+        calls["n"] += 1
+        raise urllib.error.URLError("permanently broken")
+
+    monkeypatch.setattr(sources.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(sources.time, "sleep", lambda s: None)
+    with pytest.raises(urllib.error.URLError):
+        sources._get_json("https://x.example/y", retries=2)
+    assert calls["n"] == 3                                   # 1 attempt + 2 retries
+
+
+def test_backoff_is_exponential_with_a_jitter_floor():
+    """Half-jitter, not full: a retry that can fire ~immediately is no retry at all against a
+    server that just refused us."""
+    for attempt, ceiling in ((1, 5.0), (2, 10.0), (3, 20.0)):
+        samples = [sources._backoff_delay(attempt, 5.0) for _ in range(200)]
+        assert all(ceiling / 2 <= s <= ceiling for s in samples), (attempt, min(samples), max(samples))
+    assert all(sources._backoff_delay(20, 5.0) <= 60.0 for _ in range(50))    # capped
 
 
 def test_get_json_does_not_retry_non_transient_401(monkeypatch):
@@ -465,36 +580,25 @@ def test_newsapi_daily_budget_short_circuits_before_fetch(store, monkeypatch):
     assert all("rateLimited" in agg for agg in (first, second, third))
 
 
-def test_get_json_reports_transient_429s_then_succeeds(monkeypatch):
-    """_get_json retries 429 with backoff AND surfaces every transient hit through on_transient —
-    rate-limit pressure is counted, never silently absorbed by the retry loop."""
+def test_every_429_is_counted_even_when_not_retried(monkeypatch):
+    """Rate-limit pressure must reach the quota accounting whether or not we retry — the budget
+    logic reads it, and a refusal we don't count is a refusal we can't react to."""
     import io
     import urllib.error
-
-    class _Resp:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *a):
-            return False
-
-        def read(self):
-            return b'{"status": "ok"}'
 
     attempts = {"n": 0}
 
     def fake_urlopen(req, timeout=None):
         attempts["n"] += 1
-        if attempts["n"] <= 2:
-            raise urllib.error.HTTPError(req.full_url, 429, "Too Many Requests", None, io.BytesIO(b""))
-        return _Resp()
+        raise urllib.error.HTTPError(req.full_url, 429, "Too Many Requests", None, io.BytesIO(b""))
 
     monkeypatch.setattr(sources.urllib.request, "urlopen", fake_urlopen)
     monkeypatch.setattr(sources.time, "sleep", lambda s: None)
     events = []
-    out = sources._get_json("https://newsapi.org/v2/top-headlines?country=us",
-                            on_transient=events.append)
-    assert out == {"status": "ok"} and events == [429, 429] and attempts["n"] == 3
+    with pytest.raises(urllib.error.HTTPError):
+        sources._get_json("https://newsapi.org/v2/top-headlines?country=us",
+                          on_transient=events.append)
+    assert events == [429] and attempts["n"] == 1
 
 
 # --------------------------------------------------------------------------- #
@@ -806,3 +910,103 @@ def test_warm_cache_is_single_flight():
     finally:
         story_service._cached_build = orig
         story_service.clear_cache()
+
+
+# --------------------------------------------------------------------------- #
+# Adaptive polling — back off a provider that is refusing us.
+#
+# When the refusal is a rate limit, polling on schedule is what SUSTAINS it. consecutive_failures
+# was already counted by record_feed_health; this is its first consumer.
+# --------------------------------------------------------------------------- #
+def _poller(store, **kw):
+    return sources.MultiSourcePoller(store, ri.make_scorer(), registry=sources.SourceRegistry(),
+                                     log=lambda *a, **k: None, **kw)
+
+
+class _PacedAdapter(sources.SourceAdapter):
+    """A minimal adapter with a realistic poll interval (the shared _FakeAdapter sleeps an hour, so
+    the max-interval ceiling would clamp before the doubling could be observed)."""
+    provider = "Paced"
+    source_type = "newsapi"
+
+    def __init__(self, seconds: float = 60.0):
+        self._seconds = seconds
+
+    def enabled(self):
+        return True
+
+    def interval(self):
+        return self._seconds
+
+    @property
+    def health_key(self):
+        return "paced://x"
+
+    def fetch(self):
+        return {}
+
+    def normalize(self, raw):
+        return sources.SourceBatch(self.provider, self.source_type, "", [])
+
+
+def test_interval_is_unchanged_while_healthy(store):
+    p, a = _poller(store), _PacedAdapter()
+    assert p._effective_interval(a) == 60.0
+
+
+def test_interval_doubles_per_consecutive_failure(store):
+    p, a = _poller(store), _PacedAdapter()
+    for fails, expected in ((1, 120.0), (2, 240.0), (3, 480.0), (4, 960.0)):
+        p._consecutive[a.health_key] = fails
+        assert p._effective_interval(a) == expected
+
+
+def test_backoff_stops_growing_and_respects_the_ceiling(store, monkeypatch):
+    p, a = _poller(store), _PacedAdapter()
+    p._consecutive[a.health_key] = 50                        # far past the step count
+    assert p._effective_interval(a) == 960.0                 # flat after RWE_SOURCE_BACKOFF_STEPS
+    monkeypatch.setenv("RWE_SOURCE_MAX_INTERVAL", "600")
+    assert p._effective_interval(a) == 600.0                 # and never past the hard ceiling
+
+
+def test_a_success_restores_the_configured_cadence(store):
+    """Recovery must be immediate — a provider that came back should not stay throttled."""
+    p, a = _poller(store), _PacedAdapter()
+    p._record_health(a.provider, a.health_key, None, 10.0, RuntimeError("429"))
+    assert p._effective_interval(a) > a.interval()
+    p._record_health(a.provider, a.health_key, {}, 10.0, None)
+    assert p._effective_interval(a) == a.interval()
+
+
+def test_record_health_tracks_consecutive_failures_from_the_store(store):
+    p, a = _poller(store), _PacedAdapter()
+    for n in (1, 2, 3):
+        p._record_health(a.provider, a.health_key, None, 5.0, RuntimeError("boom"))
+        assert p._consecutive[a.health_key] == n
+
+
+# --------------------------------------------------------------------------- #
+# GKG window-cost guard
+# --------------------------------------------------------------------------- #
+def test_warns_when_the_gkg_lookback_is_left_at_backfill_depth(monkeypatch):
+    """96 windows every 15 minutes is ~9,300 requests/day against GDELT — the setting that
+    rate-limited the DOC adapter to a 60% success rate. It must not be silent."""
+    monkeypatch.setenv("RWE_GDELT_GKG_WINDOWS", "96")
+    monkeypatch.setenv("RWE_GDELT_GKG_INTERVAL", "900")
+    events = []
+    enr = sources.GDELTGKGEnricher(fetch_bytes=lambda u: b"")
+    enr._log = lambda lvl, ev, **f: events.append((ev, f))
+    enr._warn_if_window_cost_is_high()
+    assert events and events[0][0] == "gkg_window_cost_high"
+    fields = events[0][1]
+    assert fields["windows"] == 96 and fields["requestsPerCycle"] == 97
+    assert fields["requestsPerDay"] == 9312
+
+
+def test_no_warning_at_the_steady_state_lookback(monkeypatch):
+    monkeypatch.setenv("RWE_GDELT_GKG_WINDOWS", "4")
+    events = []
+    enr = sources.GDELTGKGEnricher(fetch_bytes=lambda u: b"")
+    enr._log = lambda lvl, ev, **f: events.append(ev)
+    enr._warn_if_window_cost_is_high()
+    assert events == []

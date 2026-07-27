@@ -227,14 +227,29 @@ def enrich_from_latest(store_, *, fetch_bytes: Callable[[str], bytes],
     return out
 
 
+DEFAULT_WINDOWS = 4
+
+
 def _windows() -> int:
     """Steady-state lookback per cycle (15-minute GKG windows). Default 4 = one hour: with the
     DOC artlist polled every ≤30 minutes, every GDELT-ingested article's GKG window is covered
-    by the next enrichment cycle."""
+    by the next enrichment cycle.
+
+    **This is a per-cycle HTTP download count.** Each window is one multi-megabyte zip, so raising
+    it multiplies our request rate against GDELT — the cold-start deep scan belongs to
+    ``_backfill_windows`` (automatic, once), not here. See :func:`windows_per_cycle`."""
     try:
-        return max(1, int(os.environ.get("RWE_GDELT_GKG_WINDOWS", "") or 4))
+        return max(1, int(os.environ.get("RWE_GDELT_GKG_WINDOWS", "") or DEFAULT_WINDOWS))
     except ValueError:
-        return 4
+        return DEFAULT_WINDOWS
+
+
+def windows_per_cycle() -> int:
+    """The steady-state lookback this process will use — public so the poller can warn when it has
+    been left at a backfill-sized value. Production once ran with 96 permanently: 97 requests every
+    15 minutes, ~9,300/day, against a GDELT API that then rate-limited the DOC adapter into a 60%
+    success rate. The one-time backfill it was copied from is now automatic."""
+    return _windows()
 
 
 def _backfill_windows() -> int:

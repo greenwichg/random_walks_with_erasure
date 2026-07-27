@@ -56,8 +56,9 @@ publishers the product exists to compare**.
 
 Ruled out with live data, so they aren't re-investigated next time:
 
-- **Feed ingestion** — 8/8 providers healthy, ~3,900 articles/day. (GDELT runs ~40% SSL timeouts;
-  that costs volume, not stories.)
+- **Feed ingestion** — 8/8 providers healthy, ~3,900 articles/day. (GDELT fails ~40% of cycles —
+  later measured as HTTP 429 rate limiting, not the SSL timeouts claimed here; see
+  docs/GDELT_RATE_LIMIT_INVESTIGATION.md. Either way it costs volume, not stories.)
 - **Retention / cleanup** — `pruned: 0, kept: 12237`. Retention has never deleted an article. Stories
   are derived per request and never stored, so nothing deletes them either.
 - **Freshness filtering** — `/api/stories` applies no date bound. The `fresh: 7216` figure in the

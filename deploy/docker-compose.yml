@@ -54,8 +54,23 @@ services:
       # match. The cold-start backfill is AUTOMATIC: a barely-located catalog (< BACKFILL_THRESHOLD
       # event rows, default 25) makes the first cycle per process deep (BACKFILL_WINDOWS,
       # default 96 = 24 h; 0 disables) — no manual override/revert dance.
+      # WINDOWS is a PER-CYCLE DOWNLOAD COUNT (N windows = N+1 requests every cycle, each a multi-MB
+      # zip). Leaving it at the backfill depth 96 is ~9,300 requests/day and rate-limited the DOC
+      # adapter to a 60% success rate — see docs/GDELT_RATE_LIMIT_INVESTIGATION.md. Cold start is
+      # automatic via BACKFILL_WINDOWS; never copy that value here.
       RWE_GDELT_GKG_WINDOWS: ${RWE_GDELT_GKG_WINDOWS:-4}
       RWE_GDELT_GKG_BACKFILL_WINDOWS: ${RWE_GDELT_GKG_BACKFILL_WINDOWS:-96}
+      # --- shared HTTP resilience (every provider, not just GDELT) ------------------------------
+      # Retries cover 5xx AND connection-level faults (SSL handshake, DNS, connect/read timeout,
+      # reset) with exponential backoff + half-jitter. 429 is NOT retried on a ladder — a rate limit
+      # is retried only when the server sends a Retry-After we will wait for, else the next
+      # scheduled cycle handles it. A failing provider's interval doubles per consecutive failure
+      # (BACKOFF_STEPS caps the doubling, MAX_INTERVAL the result) and snaps back on first success.
+      RWE_SOURCE_RETRIES: ${RWE_SOURCE_RETRIES:-3}
+      RWE_SOURCE_BACKOFF: ${RWE_SOURCE_BACKOFF:-5}
+      RWE_SOURCE_RETRY_AFTER_MAX: ${RWE_SOURCE_RETRY_AFTER_MAX:-120}
+      RWE_SOURCE_BACKOFF_STEPS: ${RWE_SOURCE_BACKOFF_STEPS:-4}
+      RWE_SOURCE_MAX_INTERVAL: ${RWE_SOURCE_MAX_INTERVAL:-21600}
       # NewsAPI adapter (same shared pipeline as RSS/GDELT: dedup, scoring, registry resolution,
       # clustering). Default OFF — enable with RWE_NEWSAPI_ENABLED=1 + RWE_NEWSAPI_API_KEY in
       # deploy/.env. CATEGORY/COUNTRY/LANGUAGE accept comma-separated lists, polled by ROTATION
