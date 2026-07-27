@@ -33,8 +33,15 @@ export function NotificationsMenu() {
   const { data, isLoading } = useNotifications();
   const markSeen = useMarkNotificationSeen();
 
-  const items: NotificationItem[] = data ?? [];
-  const unread = items.reduce((n, x) => (x.seenAt ? n : n + 1), 0);
+  // ACTIVE (unseen) vs SETTLED (seen) — the panel leads with what still needs attention and keeps
+  // history behind a toggle, so a long-lived account's inbox isn't dominated by rows describing
+  // states that have already been handled or auto-resolved by the engine.
+  const all = React.useMemo<NotificationItem[]>(() => data ?? [], [data]);
+  const active = React.useMemo(() => all.filter((x) => !x.seenAt), [all]);
+  const earlier = React.useMemo(() => all.filter((x) => x.seenAt), [all]);
+  const [showEarlier, setShowEarlier] = React.useState(false);
+  const items = showEarlier ? [...active, ...earlier] : active;
+  const unread = active.length;
   const badge = badgeLabel(unread);
 
   const onSelect = React.useCallback(
@@ -130,6 +137,25 @@ export function NotificationsMenu() {
               );
             })}
           </div>
+        )}
+
+        {/* Settled history stays reachable but never crowds the actionable list. */}
+        {!isLoading && earlier.length > 0 && (
+          <>
+            <DropdownMenuSeparator className="my-0" />
+            <button
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                setShowEarlier((v) => !v);
+              }}
+              className="w-full px-3 py-2 text-left text-xs text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
+            >
+              {showEarlier
+                ? t("notifications.hideEarlier")
+                : t("notifications.showEarlier", { count: earlier.length })}
+            </button>
+          </>
         )}
       </DropdownMenuContent>
     </DropdownMenu>

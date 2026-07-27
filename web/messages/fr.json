@@ -788,5 +788,7 @@
  "coach.weekly.insight.slip": "{metric} a reculé de {n} pts cette semaine.",
  "coach.weekly.insight.gain": "{metric} a progressé de {n} pts cette semaine.",
  "coach.weekly.insight.steady": "Tous les scores mesurés sont restés stables.",
- "coach.weekly.insight.concentration": "{share}% de vos lectures viennent de {publisher}."
+ "coach.weekly.insight.concentration": "{share}% de vos lectures viennent de {publisher}.",
+ "notifications.showEarlier": "Afficher les précédentes ({count})",
+ "notifications.hideEarlier": "Masquer les précédentes"
 }
