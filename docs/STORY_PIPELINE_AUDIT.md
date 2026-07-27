@@ -102,13 +102,24 @@ new time window  : 898 stories      cold 0.35 s   cached 1.1 ms
 
 ## Deploying it
 
+Deploy first — the script is baked into the image at build time, so it does not exist in a
+container built from an earlier commit:
+
 ```bash
-docker exec -i deploy-api-1 python examples/backfill_published_at.py --dry-run   # inspect
+bash deploy/ops/cd-deploy.sh <sha>                                              # snapshots, then deploys
+docker exec -i deploy-api-1 python examples/backfill_published_at.py --dry-run  # inspect
 docker exec -i deploy-api-1 python examples/backfill_published_at.py            # apply
 ```
 
-The backfill is safe to run before or after the code deploy, and safe to re-run. No env changes are
-required — the defaults are the intended production values.
+No env changes are required — the defaults are the intended production values.
+
+**Backups are automatic at every layer here; none of it is an operator step.** `cd-deploy.sh`
+snapshots before any code moves and aborts if that fails. The migration takes its OWN
+integrity-checked snapshot through the same `store.create_backup` path before its first write, and
+refuses to start if it cannot — so the pre-migration state is always recoverable, independent of
+where the hourly cron happens to fall. The snapshot lands in the normal backups directory, so the
+usual off-host S3 sync and tiered pruning pick it up with no special handling. Re-running an
+already-migrated database takes no snapshot and writes nothing.
 
 ## Still open
 

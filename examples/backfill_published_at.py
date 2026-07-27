@@ -39,8 +39,20 @@ def normalise(value: str):
         return rss_ingest._to_iso(s)      # last resort: the RFC 822 path
 
 
-def run(store_, *, dry_run: bool = False, batch: int = 1000) -> dict:
-    """Convert every non-UTC ``published_at`` in place. Returns a counts summary."""
+def snapshot(url: str) -> str:
+    """An integrity-checked online snapshot before any write — the SAME ``store.create_backup``
+    path the hourly scheduler and ``cd-deploy.sh`` use, so the file lands in the normal backups
+    directory and is picked up by the usual off-host sync and tiered pruning. Nothing special, and
+    nothing for an operator to remember."""
+    return store_mod.create_backup(url)
+
+
+def run(store_, *, dry_run: bool = False, batch: int = 1000, backup: bool = True) -> dict:
+    """Convert every non-UTC ``published_at`` in place. Returns a counts summary.
+
+    Takes its own snapshot first when there is anything to write. This is a bulk UPDATE over
+    production rows: the hourly backup means at most an hour of exposure, but "at most an hour" is
+    not a safety property anyone should have to reason about mid-migration."""
     stats = collections.Counter()
     offsets = collections.Counter()
     pending: list = []
@@ -67,7 +79,19 @@ def run(store_, *, dry_run: bool = False, batch: int = 1000) -> dict:
     stats["to_convert"] = len(pending)
     if dry_run or not pending:
         return {"counts": dict(stats), "offsets": dict(offsets.most_common(10)),
-                "sample": pending[:5], "applied": 0}
+                "sample": pending[:5], "applied": 0, "backup": None}
+
+    # Snapshot BEFORE the first write, and abort if it fails — a migration that cannot be undone is
+    # not one to start. Skipped only when a caller explicitly opts out (tests use in-memory stores,
+    # which have no file to snapshot).
+    backup_path = None
+    if backup:
+        try:
+            backup_path = snapshot(store_.url)
+        except Exception as e:
+            raise RuntimeError(
+                f"pre-migration backup failed ({type(e).__name__}: {e}) — aborting before any write"
+            ) from e
 
     applied = 0
     for i in range(0, len(pending), batch):
@@ -79,7 +103,7 @@ def run(store_, *, dry_run: bool = False, batch: int = 1000) -> dict:
                     row.published_at = fixed
                     applied += 1
     return {"counts": dict(stats), "offsets": dict(offsets.most_common(10)),
-            "sample": pending[:5], "applied": applied}
+            "sample": pending[:5], "applied": applied, "backup": backup_path}
 
 
 def main(argv=None) -> int:
@@ -87,9 +111,12 @@ def main(argv=None) -> int:
     ap.add_argument("--db", default=None, help="RWE_DB_URL override")
     ap.add_argument("--dry-run", action="store_true", help="report what would change, write nothing")
     ap.add_argument("--batch", type=int, default=1000, help="rows per transaction")
+    ap.add_argument("--no-backup", action="store_true",
+                    help="skip the automatic pre-migration snapshot (NOT recommended)")
     args = ap.parse_args(argv)
 
-    result = run(store_mod.Store(args.db), dry_run=args.dry_run, batch=args.batch)
+    result = run(store_mod.Store(args.db), dry_run=args.dry_run, batch=args.batch,
+                 backup=not args.no_backup)
     c = result["counts"]
     print(f"rows            {c.get('total', 0)}")
     print(f"  null          {c.get('null', 0)}")
@@ -99,6 +126,8 @@ def main(argv=None) -> int:
     print(f"offsets seen    {result['offsets']}")
     for url, fixed in result["sample"]:
         print(f"  e.g. {url[:60]} -> {fixed}")
+    if result.get("backup"):
+        print(f"pre-migration backup  {result['backup']}")
     print(f"applied         {result['applied']}{' (dry run)' if args.dry_run else ''}")
     return 0
 
