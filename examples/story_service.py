@@ -237,23 +237,34 @@ def min_title_tokens() -> int:
 
 
 def use_idf() -> bool:
-    """Rarity-weighted similarity — ON, after measurement. Set ``RWE_CLUSTER_IDF=0`` to disable
-    without a deploy.
+    """Rarity-weighted similarity — OFF, after measurement said it costs more than it buys. Set
+    ``RWE_CLUSTER_IDF=1`` to enable without a deploy.
 
-    It shipped off while unproven, because weighting changes what the ``sim`` threshold MEANS.
-    Measured against 13,184 live articles with the admission gates held fixed on both sides, so
-    weighting was the only variable:
+    It was briefly enabled on the strength of the headline numbers, measured against 13,305 live
+    articles with the admission gates held fixed on both sides so weighting was the only variable:
 
-        plain jaccard : 764 stories, largest 193
-        idf-weighted  : 775 stories, largest  94
+        plain jaccard : 766 stories, largest 194
+        idf-weighted  : 777 stories, largest  93
 
-    MORE stories and half the largest cluster — the signature of separating conflated events rather
-    than destroying them. (``min_shared=4``, the other candidate, reached largest 99 only by cutting
-    the story count to 753.) Inspecting the two biggest legitimate stories showed peel-offs, not
-    bisections: "Berlin pride" kept 55 of 66 articles and 41 of 48 publishers, shedding a 5-article
-    follow-up about the attack's attribution; the French wildfires kept 62 of 75 and 50 of 56."""
+    More stories and half the largest cluster looks like separating conflated events. It is not what
+    happened. Attributing every lost article to the cluster it left (see
+    ``audit_clustering_change.py``) showed 361 of 3,431 covered articles — 10.5% — falling out of
+    stories entirely, and only 16% of that loss came from the press-release templates the weighting
+    was supposed to punish. Even crediting BOTH chained mega-clusters as correct fragmentation, 67%
+    of the loss is real stories shedding real coverage: the Nolan Wells autopsy story lost 12 of 58
+    articles, the French wildfires 9 of 75, Berlin pride 6 of 66, and a long tail of small
+    three-article stories dissolved outright.
+
+    The tell that this was the wrong instrument: the single worst template in the catalog — 101
+    articles from 4 publishers, one outlet repeating "X LLC Makes New Investment in Y Inc" — lost
+    only 9 members and survived as a story. Weighting rare words does not find one outlet repeating
+    itself; publisher concentration does (every real story in the catalog sits at 1.0–2.2 articles
+    per publisher, every template above 5).
+
+    The machinery stays because it is correct and tested, and because the real target — SINGLE-LINKAGE
+    chaining, which is what built the 194-article cluster — needs a linkage fix, not a weighting one."""
     v = os.environ.get("RWE_CLUSTER_IDF", "").strip().lower()
-    return True if not v else v in {"1", "true", "yes", "on"}
+    return v in {"1", "true", "yes", "on"}
 
 
 def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,

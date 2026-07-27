@@ -207,39 +207,57 @@ when A and C share nothing, so a chain of individually-plausible links — each 
 "trump" or "says" that are everywhere — glued ~12 unrelated stories together. No global threshold
 fixes that cleanly, which is precisely what the two runs above show.
 
-`clustering.idf_weights` / `weighted_jaccard` weight shared tokens by corpus rarity, so a common
-word is weaker evidence than a rare one. **OFF by default** (`RWE_CLUSTER_IDF`): weighting changes
-what the `sim` threshold *means*, so enabling it re-tunes the whole clustering rather than adjusting
-it. Measure first:
+### Rarity weighting: measured, enabled, then reverted on better evidence
 
-```bash
-python examples/audit_clustering_change.py --idf --show 20
-```
+`clustering.idf_weights` / `weighted_jaccard` weight shared tokens by corpus rarity, so a common word
+is weaker evidence than a rare one. It is **OFF by default** (`RWE_CLUSTER_IDF=1` enables it without
+a deploy). It was briefly on. This section records why it came back off, because the headline
+numbers argued for keeping it and they were misleading.
 
-**Measured, then enabled** (`RWE_CLUSTER_IDF`, default on; `=0` disables without a deploy). With the
-admission gates held fixed on both sides so weighting was the only variable, against 13,184 live
-articles:
+With the admission gates held fixed on both sides so weighting was the only variable, against 13,305
+live articles:
 
-| | stories | largest |
-|---|---:|---:|
-| plain jaccard | 764 | 193 |
-| **idf-weighted** | **775** | **94** |
+| | stories | largest | articles in a story |
+|---|---:|---:|---:|
+| plain jaccard | 766 | 194 | 3,431 |
+| idf-weighted | **777** | **93** | **3,147** |
 
-MORE stories and half the largest cluster — separating conflated events rather than destroying them.
-(`min_shared=4` reached largest 99 only by cutting the story count to 753.) The 206-article cluster
-fragmented into 14; "US troops killed / Iran war" into 10.
+The first two columns are what a good change looks like: more stories, half the largest cluster —
+the signature of separating conflated events. The third column is the change's real cost, and it
+only became visible once `audit_clustering_change.py` learned to report coverage retention.
 
-Inspecting the two biggest legitimate stories showed **peel-offs, not bisections**:
+**361 of 3,431 covered articles — 10.5% — fell out of stories entirely.** Attributing each loss to
+the cluster it left (the `droppedFrom` table) shows the weighting did not hit what it was aimed at:
 
-```
-Berlin pride  66 arts / 48 pubs  ->  55/41 (main)  +  5/5 "Germany says fatal Berlin Pride attack…"
-Wildfires     75 arts / 56 pubs  ->  62/50 (main)  +  4/4 "Wildfires in France drive 250,000 from homes"
-```
+| lost | arts | pubs | a/p | cluster |
+|---:|---:|---:|---:|---|
+| 43 | 45 | 5 | 9.0 | Kalshi promo code — template, correctly destroyed |
+| 31 | 194 | 100 | 1.9 | Trump tariffs — the chained mega-cluster |
+| 27 | 86 | 29 | 3.0 | US troops / Iran war — also chained |
+| 12 | 58 | 26 | 2.2 | Nolan Wells autopsy — **a real story** |
+| 9 | 75 | 56 | 1.3 | French wildfires — **a real story** |
+| 9 | 101 | 4 | 25.2 | M.D. Sass press-release template — **survived** |
+| 6 | 66 | 48 | 1.4 | Berlin pride — **a real story** |
 
-Both keep ~83% of articles and nearly all publishers, shedding a genuine follow-up development.
-`audit_clustering_change.py` now also reports **coverage retention** (articles in a story before vs
-after, and how many dropped out entirely) — a change that improves the counts by quietly losing
-articles is not an improvement, and that number was the one the decision originally lacked.
+Only **16%** of the loss came from the templates weighting was supposed to punish. Crediting *both*
+chained mega-clusters as correct fragmentation still leaves **67%** of the loss as real stories
+shedding real coverage, plus a long tail of ~91 small clusters — many of them three-article,
+three-publisher stories — dissolving outright. The verdict does not depend on where the template
+threshold is drawn.
+
+The tell that this was the wrong instrument is the sixth row. The single worst template in the
+catalog — 101 articles from 4 publishers, one outlet repeating *"X LLC Makes New Investment in Y
+Inc"* — lost **9** members and survived as a story. Rare-word weighting cannot find one outlet
+repeating itself, because the repeated words are not common corpus-wide; they are common *within
+that outlet*. **Publisher concentration** is the discriminator that separates these cleanly: every
+real story in the catalog sits at 1.0–2.2 articles per publisher, every template above 5.
+
+The machinery stays — it is correct, tested, and one env var away — because the experiment is worth
+re-running against a different catalog mix. But the real target is single-linkage **chaining**, and
+that needs a linkage fix, not a weighting one.
+
+Geography did improve under weighting (mean coherence 0.952 → 0.969, sub-0.5 clusters 3 → 1), which
+is genuine and is the reason to keep pursuing the chaining fix rather than to keep this one.
 
 ## Still open
 

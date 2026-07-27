@@ -170,12 +170,13 @@ services:
       RWE_STORIES_CACHE_TTL: ${RWE_STORIES_CACHE_TTL:-120}
       # Clustering admission gates + rarity weighting. MIN_SHARED is distinctive tokens two
       # headlines must share (the ratio alone cannot tell "Trump wins Ohio"/"…Iowa" apart from real
-      # co-coverage); IDF weights shared tokens by corpus rarity, which is what breaks single-linkage
-      # chaining. Measured on 13,184 live articles: 764 -> 775 stories, largest cluster 193 -> 94.
-      # RWE_CLUSTER_IDF=0 disables weighting without a deploy.
+      # co-coverage). IDF weights shared tokens by corpus rarity; it is OFF because measuring it on
+      # 13,305 live articles cost 361 of 3,431 covered articles, only 16% of which came from the
+      # press-release templates it was aimed at (docs/STORY_PIPELINE_AUDIT.md). =1 re-enables it
+      # without a deploy, for re-running the experiment against a different catalog mix.
       RWE_CLUSTER_MIN_SHARED: ${RWE_CLUSTER_MIN_SHARED:-3}
       RWE_CLUSTER_MIN_TOKENS: ${RWE_CLUSTER_MIN_TOKENS:-3}
-      RWE_CLUSTER_IDF: ${RWE_CLUSTER_IDF:-1}
+      RWE_CLUSTER_IDF: ${RWE_CLUSTER_IDF:-0}
       # Storage lifecycle (examples/retention_policy.py — the ONE typed policy module). 0 = keep
       # forever, uniformly; junk/negative values fall back to the default rather than deleting more.
       # User data (reads, saves, settings, accounts) has NO policy and is never pruned.
