@@ -216,8 +216,6 @@
  "coach.s6": "Gere minhas metas semanais",
  "coach.followUps": "Perguntas sugeridas",
  "discover.title": "Descobrir",
- "discover.count.one": "{n} artigo",
- "discover.count.other": "{n} artigos",
  "discover.subtitle": "Histórias novas de todo o espectro — abra o artigo real para registrar uma leitura.",
  "discover.empty.title": "Nenhum artigo ainda",
  "discover.empty.body": "O catálogo ao vivo está vazio. Ele é preenchido quando a ingestão RSS é executada.",

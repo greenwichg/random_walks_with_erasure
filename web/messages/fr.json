@@ -216,8 +216,6 @@
  "coach.s6": "Générez mes objectifs hebdomadaires",
  "coach.followUps": "Questions suggérées",
  "discover.title": "Découvrir",
- "discover.count.one": "{n} article",
- "discover.count.other": "{n} articles",
  "discover.subtitle": "Des sujets frais de tout l'échiquier — ouvrez le vrai article pour enregistrer une lecture.",
  "discover.empty.title": "Aucun article pour l'instant",
  "discover.empty.body": "Le catalogue en direct est vide. Il se remplit une fois l'ingestion RSS lancée.",

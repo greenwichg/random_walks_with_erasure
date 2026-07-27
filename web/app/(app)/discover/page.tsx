@@ -92,11 +92,6 @@ export default function DiscoverPage() {
         {countryOptions.length > 0 && (
           <FilterSelect label={t("filter.country")} value={country} options={countryOptions} onChange={setCountry} />
         )}
-        {total > 0 && (
-          <span className="ml-auto text-sm text-muted-foreground">
-            {total === 1 ? t("discover.count.one", { n: total }) : t("discover.count.other", { n: total })}
-          </span>
-        )}
       </div>
 
       {isLoading && (

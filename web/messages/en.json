@@ -216,8 +216,6 @@
  "coach.s6": "Generate my weekly goals",
  "coach.followUps": "Suggested follow-ups",
  "discover.title": "Discover",
- "discover.count.one": "{n} article",
- "discover.count.other": "{n} articles",
  "discover.subtitle": "Fresh stories across the spectrum — open the real article to record a read.",
  "discover.empty.title": "No articles yet",
  "discover.empty.body": "The live catalog is empty. It fills once RSS ingestion has run.",
