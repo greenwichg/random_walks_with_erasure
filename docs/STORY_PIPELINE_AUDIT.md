@@ -141,6 +141,17 @@ where the hourly cron happens to fall. The snapshot lands in the normal backups 
 usual off-host S3 sync and tiered pruning pick it up with no special handling. Re-running an
 already-migrated database takes no snapshot and writes nothing.
 
+## Side effect worth knowing
+
+Clustering the full window takes ~6 s and runs in the same Python process as the API, so during the
+poller's first cycle after a restart the process is briefly GIL-bound. The post-deploy smoke test's
+internal probes used a 5-second timeout and reported the resulting miss as
+`analytics not 200 with the secret (no data yet is OK pre-traffic)` — misleading twice over: an empty
+analytics table answers 200 (`product_analytics.funnel([])` is a valid result), and the endpoint
+measured 0.09 s once idle. The timeout is now 20 s (`SMOKE_TIMEOUT`), and a probe that never
+completes reports `EXC:<Type>` instead of collapsing to `000`, so a timeout and a refused connection
+are distinguishable.
+
 ## Still open
 
 - **The 94/2 cluster.** Production's largest cluster is 94 articles from **2 publishers** — a false

@@ -18,7 +18,19 @@ P() { printf '  \033[32mPASS\033[0m  %s\n' "$1"; pass=$((pass + 1)); }
 W() { printf '  \033[33mWARN\033[0m  %s\n' "$1"; warn=$((warn + 1)); }
 F() { printf '  \033[31mFAIL\033[0m  %s\n' "$1"; fail=$((fail + 1)); }
 
-# Run a python HTTP probe inside the api container; prints the numeric status code (000 on error).
+# Run a python HTTP probe inside the api container; prints the numeric status code, or EXC:<Type>
+# when the request never completed (timeout, connection refused, …).
+#
+# Timeout: this runs SECONDS after the stack restarts, while the poller's first cycle is ingesting
+# from every provider and rebuilding the story clusters (~6 s) — all in one Python process sharing
+# one GIL. At 5 s the probe timed out against an endpoint that answers in 0.09 s idle, and reported
+# it as a WARN, so a healthy deploy looked degraded. Override with SMOKE_TIMEOUT if a host is
+# slower still.
+#
+# Naming the exception rather than collapsing everything to "000" is the other half: a timeout and
+# a refused connection are different problems and the operator should not have to guess which.
+SMOKE_TIMEOUT="${SMOKE_TIMEOUT:-20}"
+
 api_code() { # $1 = path, $2 = optional "secret" to send X-IH-Auth from the container's env
   local path="$1" withsecret="${2:-}"
   dc exec -T api python -c "
@@ -26,11 +38,11 @@ import urllib.request, os, sys
 h = {'X-IH-Auth': os.environ.get('RWE_INTERNAL_SECRET','')} if '${withsecret}' else {}
 req = urllib.request.Request('http://127.0.0.1:8000${path}', headers=h)
 try:
-    print(urllib.request.urlopen(req, timeout=5).status)
+    print(urllib.request.urlopen(req, timeout=${SMOKE_TIMEOUT}).status)
 except urllib.error.HTTPError as e:
     print(e.code)
-except Exception:
-    print('000')
+except Exception as e:
+    print('EXC:' + type(e).__name__)
 " 2>/dev/null | tr -d '[:space:]'
 }
 
@@ -51,11 +63,17 @@ fi
 [ "$(api_code /api/health/ready)" = "200" ] && P "engine readiness (/api/health/ready) 200" || F "engine readiness not 200"
 
 echo "-- PA1 analytics gating (internal-only) --"
-[ "$(api_code /api/analytics/funnel secret)" = "200" ] && P "analytics reachable WITH the internal secret (200)" || W "analytics not 200 with the secret (no data yet is OK pre-traffic)"
+# An EMPTY analytics table still answers 200 (product_analytics.funnel([]) is a valid result), so a
+# non-200 here is never "no data yet" — it is a timeout, a bad secret, or a server error. The old
+# message said otherwise and sent operators looking for a data problem that cannot exist.
+a_code="$(api_code /api/analytics/funnel secret)"
+[ "$a_code" = "200" ] && P "analytics reachable WITH the internal secret (200)" \
+  || W "analytics returned '$a_code' with the secret (expected 200; EXC:* = probe never completed, 404 = secret mismatch)"
 [ "$(api_code /api/analytics/funnel)" = "404" ] && P "analytics is internal-only (404 WITHOUT the secret)" || F "analytics NOT gated (expected 404 without the secret — is it exposed?)"
 
 echo "-- OBS1 metrics --"
-[ "$(api_code /api/metrics secret)" = "200" ] && P "metrics reachable with the internal secret (200)" || W "metrics not 200 with the secret"
+m_code="$(api_code /api/metrics secret)"
+[ "$m_code" = "200" ] && P "metrics reachable with the internal secret (200)" || W "metrics returned '$m_code' with the secret (expected 200)"
 
 echo "-- Public edge (Caddy / TLS / redirect) --"
 if [ "${SMOKE_SKIP_PUBLIC:-0}" = "1" ]; then
