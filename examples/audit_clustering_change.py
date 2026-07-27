@@ -52,6 +52,18 @@ def compare(store_, *, before: tuple, after: tuple, show: int = 10,
     split = [(sid, dests) for sid, dests in fates.items() if len(dests) > 1 or dests == {None}]
     split.sort(key=lambda kv: -a_by_id[kv[0]]["totalCoverage"])
 
+    # Where the dropped articles CAME FROM. droppedOut on its own cannot tell a regression from a
+    # fix: an article leaving a 101-article/4-publisher press-release template is the change working,
+    # and an article leaving a 48-publisher wire story is the change costing real coverage. Both
+    # decrement the same counter. Attributing each loss to the cluster it left makes the mix visible,
+    # and articles-per-publisher is the tell — a template is one outlet repeating itself (25 articles
+    # per publisher), a real story is many outlets covering one event (~1.4).
+    lost: dict = {}
+    for url, old in a_member.items():
+        if url not in b_member:
+            lost[old] = lost.get(old, 0) + 1
+    dropped_from = sorted(lost.items(), key=lambda kv: -kv[1])
+
     return {
         "articles": len(rows),
         "beforeStories": len(a),
@@ -66,6 +78,13 @@ def compare(store_, *, before: tuple, after: tuple, show: int = 10,
         "afterCovered": len(b_member),
         "droppedOut": len([u for u in a_member if u not in b_member]),
         "newlyCovered": len([u for u in b_member if u not in a_member]),
+        "droppedFrom": [{
+            "lost": n,
+            "articles": a_by_id[sid]["totalCoverage"],
+            "publishers": a_by_id[sid]["publisherCount"],
+            "perPublisher": a_by_id[sid]["totalCoverage"] / max(1, a_by_id[sid]["publisherCount"]),
+            "title": a_by_id[sid]["title"],
+        } for sid, n in dropped_from[:show]],
         "split": [{
             "articles": a_by_id[sid]["totalCoverage"],
             "publishers": a_by_id[sid]["publisherCount"],
@@ -102,6 +121,12 @@ def main(argv=None) -> int:
     print(f"clusters changed   : {res['splitCount']:,}")
     print(f"articles in a story: {res['beforeCovered']:,} -> {res['afterCovered']:,} "
           f"(dropped out {res['droppedOut']:,}, newly covered {res['newlyCovered']:,})")
+    if res["droppedFrom"]:
+        print("\nwhere the dropped articles came from  (high a/p = one outlet repeating a template)")
+        print(f"{'lost':>5} {'arts':>5} {'pubs':>5} {'a/p':>6}  title")
+        for d in res["droppedFrom"]:
+            print(f"{d['lost']:>5} {d['articles']:>5} {d['publishers']:>5} "
+                  f"{d['perPublisher']:>6.1f}  {d['title'][:60]}")
     if res["split"]:
         print(f"\n{'arts':>5} {'pubs':>5} {'->':>4}  title")
         for s in res["split"]:

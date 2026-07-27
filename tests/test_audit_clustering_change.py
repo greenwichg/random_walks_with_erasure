@@ -1,0 +1,119 @@
+"""The clustering-change auditor (examples/audit_clustering_change.py).
+
+This tool exists to decide whether a threshold change is worth keeping, so its numbers have to be
+trustworthy in the one direction that matters: a change that "improves" the story count by quietly
+dropping articles out of every story is not an improvement. The counter alone cannot tell a fix from
+a regression — an article leaving a press-release template is the change working, an article leaving
+a 40-publisher wire story is the change costing coverage — so the attribution table is what the call
+actually rests on. These tests pin both.
+"""
+
+import pathlib
+import sys
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "examples"))
+
+import audit_clustering_change as acc   # noqa: E402
+import evidence_resolver as er          # noqa: E402
+import store as store_mod               # noqa: E402
+
+WHEN = "2026-07-10T09:00:00+00:00"
+
+
+def _feed(st, url, publisher, title, when=WHEN):
+    st.upsert_feed_article(
+        canonical_url=er._canon(url), url=url, publisher=publisher, source_publisher=publisher,
+        title=title, description="d", body=None, published_at=when, source_feed="f",
+        scored={"article_id": er._canon(url), "outlet": publisher, "category": "Politics",
+                "lean": 0.0, "political": True, "title": title})
+
+
+def _store(tmp_path, name="a.db"):
+    return store_mod.Store(f"sqlite:///{tmp_path / name}")
+
+
+def test_coverage_retention_is_reported(tmp_path):
+    """Story counts alone hide coverage loss. beforeCovered/afterCovered/droppedOut must be present
+    and must agree with each other arithmetically."""
+    st = _store(tmp_path)
+    for i, pub in enumerate(["Outlet A", "Outlet B", "Outlet C"]):
+        _feed(st, f"https://{i}.example.com/harbor", pub,
+              "Landmark ruling reshapes the harbor bridge project")
+
+    res = acc.compare(st, before=(1, 1), after=(1, 1), show=5)
+
+    assert res["beforeCovered"] == res["afterCovered"] == 3   # identical params → identical outcome
+    assert res["droppedOut"] == 0 and res["newlyCovered"] == 0
+    assert res["beforeStories"] == res["afterStories"] == 1
+
+
+def test_dropped_articles_are_attributed_to_the_cluster_they_left(tmp_path):
+    """The number the keep/revert decision rests on. A tightened gate that dissolves a cluster must
+    report WHERE the lost articles came from, with the articles-per-publisher tell attached — that is
+    what separates a template collapsing (good) from a real story shedding members (bad)."""
+    st = _store(tmp_path, "b.db")
+    # Two headlines sharing exactly two distinct tokens: enough to merge at shared>=2, not at >=3.
+    _feed(st, "https://a.example.com/x", "Outlet A", "Senate committee opens inquiry")
+    _feed(st, "https://b.example.com/x", "Outlet B", "Senate committee adjourns")
+
+    res = acc.compare(st, before=(2, 1), after=(3, 1), show=5)
+
+    assert res["beforeCovered"] == 2 and res["afterCovered"] == 0
+    assert res["droppedOut"] == 2
+    assert len(res["droppedFrom"]) == 1
+    lost = res["droppedFrom"][0]
+    assert lost["lost"] == 2
+    assert lost["articles"] == 2 and lost["publishers"] == 2
+    assert lost["perPublisher"] == 1.0        # a broad cluster, not a one-outlet template
+    assert "Senate committee" in lost["title"]
+
+
+def test_per_publisher_flags_a_single_outlet_template(tmp_path):
+    """The discriminator itself: one outlet publishing a template many times scores high on
+    articles-per-publisher, which is how a spam collapse is told apart from a coverage regression."""
+    st = _store(tmp_path, "c.db")
+    for i in range(6):
+        _feed(st, f"https://wire.example.com/deal/{i}", "Wire Desk",
+              f"Sass Capital LLC Makes New Investment in Holdings {i} Incorporated")
+    _feed(st, "https://other.example.com/deal", "Other Desk",
+          "Sass Capital LLC Makes New Investment in Holdings Incorporated")
+
+    res = acc.compare(st, before=(3, 1), after=(9, 1), show=5)
+
+    assert res["droppedOut"] == 7
+    lost = res["droppedFrom"][0]
+    assert lost["publishers"] == 2 and lost["articles"] == 7
+    assert lost["perPublisher"] == 3.5        # >> the ~1.4 a real multi-outlet story scores
+
+
+def test_dropped_table_is_ordered_by_loss_and_respects_show(tmp_path):
+    st = _store(tmp_path, "d.db")
+    # A big cluster (4 members) and a small one (2), both dissolved by the same tightened gate.
+    for i in range(4):
+        _feed(st, f"https://p{i}.example.com/harbor", f"Outlet {i}",
+              "Harbor bridge inquiry opens")
+    for i in range(2):                      # token-disjoint from the above, so it stays its own cluster
+        _feed(st, f"https://q{i}.example.com/ferry", f"Ferry Outlet {i}",
+              "Ferry terminal review begins")
+
+    res = acc.compare(st, before=(2, 1), after=(99, 1), show=1)
+
+    assert res["droppedOut"] == 6
+    assert len(res["droppedFrom"]) == 1                 # show= caps the table
+    assert res["droppedFrom"][0]["lost"] == 4           # biggest loss first
+
+
+def test_idf_side_is_scored_independently(tmp_path):
+    """--idf must apply to the AFTER side only, so before/after stays a real comparison."""
+    st = _store(tmp_path, "e.db")
+    for i, pub in enumerate(["Outlet A", "Outlet B"]):
+        _feed(st, f"https://{i}.example.com/harbor", pub, "Harbor bridge inquiry opens today")
+
+    plain = acc.compare(st, before=(1, 1), after=(1, 1), show=5)
+    with_idf = acc.compare(st, before=(1, 1), after=(1, 1), show=5, after_idf=True)
+
+    # Two items sharing every token degrade to ordinary Jaccard under the smoothed weights, so the
+    # cluster survives either way — the point is that requesting idf does not error or empty out.
+    assert plain["afterStories"] == with_idf["afterStories"] == 1
+    assert with_idf["afterCovered"] == 2
