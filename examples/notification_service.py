@@ -204,6 +204,25 @@ NOTIFICATION_KINDS = (
 )
 
 
+#: Kinds whose ``mode`` is ``"event"`` — STATE alerts ("you have recommendations waiting"), as
+#: opposed to ``"cadence"`` kinds, which are periodic ARTIFACTS ("your weekly report is ready").
+#: The distinction drives lifecycle: an artifact for week 30 stays true forever, so those rows
+#: accumulate legitimately; a state alert is only true while its condition holds, so at most one
+#: may be outstanding and it must auto-resolve when the condition clears (see
+#: ``notification_delivery.materialize_notifications``).
+EVENT_KINDS: tuple = tuple(k.kind for k in NOTIFICATION_KINDS if k.mode == "event")
+
+
+def inactive_event_kinds(ctx: NotificationContext) -> tuple:
+    """Event-mode kinds whose triggering condition is **not** currently true for this reader (the
+    predicate is false, or the reader disabled the setting). Pure, like :func:`evaluate` — the
+    delivery boundary uses it to resolve alerts that no longer describe reality, so the inbox and
+    its unread badge track *actionable* state instead of history."""
+    return tuple(k.kind for k in NOTIFICATION_KINDS
+                 if k.mode == "event"
+                 and (not _gated(ctx.settings, k.setting_path) or not k.predicate(ctx)))
+
+
 def evaluate(ctx: NotificationContext) -> "list[Notification]":
     """The due notifications for this context, in registry order. Pure and deterministic: for each
     kind, gate on the reader's setting, run the predicate over the context, and skip anything whose

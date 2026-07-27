@@ -22,10 +22,18 @@ recency never diverges from the dashboard's.
 from __future__ import annotations
 
 import dataclasses
+import os
 from datetime import datetime, timedelta, timezone
 
 import notification_service as ns
 import settings_service
+
+
+def _recs_window_days() -> int:
+    """How far back a still-unopened recommendation counts as *waiting* (default 7 days). Bounds the
+    alert to the live feed; 0/junk falls back to the default rather than silently going unbounded."""
+    raw = os.environ.get("RWE_NOTIFY_RECS_WINDOW_DAYS", "")
+    return int(raw) if raw.strip().lstrip("-").isdigit() and int(raw) > 0 else 7
 
 
 def _opt_int(value) -> "int | None":
@@ -96,15 +104,54 @@ def build_context(store, uid: int, now: "datetime | None" = None) -> "ns.Notific
         # Recommendations: "recommendations waiting" = recs the reader was SURFACED but hasn't opened
         # yet (``RecEvent.opened_at IS NULL``). A pure count over already-recorded reception events —
         # no recommender is invoked, nothing is ranked, and no feed is generated on this path.
+        # WINDOWED to the recent feed (RWE_NOTIFY_RECS_WINDOW_DAYS, default 7): an unopened card from
+        # months ago is not something the reader can act on today — the current feed no longer offers
+        # it — so counting it would inflate the alert with history that has no live counterpart.
         recommendations=ns.RecommendationInputs(
-            unopened_count=store.count_unopened_recommendations(uid)),
+            unopened_count=store.count_unopened_recommendations(
+                uid, since=(now - timedelta(days=_recs_window_days())).isoformat())),
         reading=reading)
 
 
 def materialize_notifications(store, uid: int, now: "datetime | None" = None) -> int:
-    """``build_context`` → ``evaluate`` → ``record_notifications``. Persists the due notifications for
-    a user and returns how many were **newly** materialised (idempotent: re-running with unchanged
-    producer state and settings records 0, because the dedupe ledger suppresses re-delivery)."""
+    """``build_context`` → ``evaluate`` → **reconcile state alerts** → ``record_notifications``.
+    Persists the due notifications for a user and returns how many were **newly** materialised
+    (idempotent: re-running with unchanged producer state and settings records 0, because the
+    dedupe ledger suppresses re-delivery).
+
+    The reconcile step is what makes the inbox — and the unread badge over it — describe what is
+    ACTIONABLE NOW rather than everything that was ever true. Two kinds of notification behave
+    differently, exactly as ``NotificationKind.mode`` already documents:
+
+    * ``cadence`` (weekly report, monthly deep dive, weekly digest) — periodic ARTIFACTS. Week 30's
+      report stays a real thing after week 31 arrives, so these accumulate, one per period.
+    * ``event`` (recommendations waiting, streak reminder, blind-spot alert) — STATE alerts, true
+      only while their condition holds. Here we (a) auto-resolve unseen alerts whose condition has
+      cleared, and (b) keep at most ONE outstanding alert per kind, refreshing its payload in place
+      instead of minting a new row on each evaluation period.
+
+    Without (a) the badge kept describing a state the reader had already resolved; without (b) an
+    inactive reader accumulated one row per day per kind forever.
+    """
     ctx = build_context(store, uid, now)
-    due = [dataclasses.asdict(n) for n in ns.evaluate(ctx)]
-    return store.record_notifications(uid, due)
+    stamp = ctx.now.isoformat()
+
+    # (a) Conditions that no longer hold: resolve their outstanding alerts.
+    for kind in ns.inactive_event_kinds(ctx):
+        store.resolve_notifications(uid, kind, at=stamp)
+
+    # (b) Still-true alerts: refresh the outstanding row instead of adding another.
+    due = []
+    for n in ns.evaluate(ctx):
+        body = dataclasses.asdict(n)
+        if n.kind in ns.EVENT_KINDS:
+            outstanding = store.unseen_notification(uid, n.kind)
+            if outstanding is not None:
+                store.refresh_notification(uid, outstanding["id"], body,
+                                           dedupe_key=n.dedupe_key)
+                continue
+        due.append(body)
+
+    created = store.record_notifications(uid, due)
+    store.prune_notifications(uid)          # bound settled history (unseen rows are never pruned)
+    return created

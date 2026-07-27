@@ -91,12 +91,21 @@ def test_blind_spot_dedupe_is_topic_stable():
     st.save_report(uid, {"mode": "measured", "overall": 50,
                          "blindSpots": [{"topic": "Economy", "gap": 0.99, "note": "totally different"}]})
     assert nd.materialize_notifications(st, uid) == 0
-    # a genuinely NEW topic set -> a fresh blind_spot_alert
+    # A genuinely NEW topic set is a new dedupe key — but blind_spot_alert is an EVENT (state)
+    # kind, so the reader's ONE outstanding alert is refreshed in place rather than a second one
+    # being stacked beside it. "You have blind spots" is one actionable thing, not two.
     st.save_report(uid, {"mode": "measured", "overall": 50,
                          "blindSpots": [{"topic": "Economy"}, {"topic": "Climate"}]})
-    assert nd.materialize_notifications(st, uid) == 1
+    assert nd.materialize_notifications(st, uid) == 0    # refreshed, not accumulated
     alerts = [x for x in st.list_notifications(uid, limit=100) if x["kind"] == "blind_spot_alert"]
-    assert len(alerts) == 2                             # {Economy} and {Economy,Climate} are distinct
+    assert len(alerts) == 1                              # exactly ONE outstanding alert
+    assert set(alerts[0]["payload"]["blindSpots"]) == {"Economy", "Climate"}   # payload is current
+    # Once dismissed, the SAME state must not immediately re-fire (the refreshed dedupe key was
+    # recorded), but a later, different gap set legitimately raises a fresh alert.
+    st.mark_notification_seen(uid, alerts[0]["id"])
+    assert nd.materialize_notifications(st, uid) == 0
+    st.save_report(uid, {"mode": "measured", "overall": 50, "blindSpots": [{"topic": "Health"}]})
+    assert nd.materialize_notifications(st, uid) == 1
 
 
 # --------------------------------------------------------------------------- #
@@ -203,3 +212,81 @@ def test_weekly_digest_streak_days_unchanged():
     digest = next(x for x in st.list_notifications(uid, limit=100) if x["kind"] == "weekly_digest")
     assert digest["payload"]["streakDays"] == 2
     assert digest["payload"]["streakDays"] == nd.build_context(st, uid).reading.streak_days
+
+
+# --------------------------------------------------------------------------- #
+# Badge semantics (N-badge): the unread count must describe what is ACTIONABLE NOW, never the
+# cumulative history of everything that was ever true, and it must not grow without bound.
+# --------------------------------------------------------------------------- #
+def _unseen(st, uid, kind=None):
+    rows = st.list_notifications(uid, unseen_only=True, limit=200)
+    return [r for r in rows if kind is None or r["kind"] == kind]
+
+
+def _surface_recs(st, uid, n, days_ago=0, tag="a"):
+    st.record_recommendations_shown(uid, [(f"https://x.example/{tag}-{days_ago}-{i}", False)
+                                          for i in range(n)], shown_at=_iso(days_ago))
+
+
+def test_recommendations_waiting_does_not_accumulate_daily():
+    """The bug this fixes: an event-mode alert minted one row PER DAY the condition held, so an
+    inactive reader's badge grew forever and permanently read '9+'. Now at most ONE is outstanding,
+    with a payload that tracks the current count."""
+    st, uid = _store_user(); _all_on(st, uid)
+    base = datetime.now(timezone.utc)
+    for day in range(10):                                  # ten days of a live feed, never opened
+        st.record_recommendations_shown(uid, [(f"https://x.example/d{day}", False)],
+                                        shown_at=(base + timedelta(days=day)).isoformat())
+        nd.materialize_notifications(st, uid, now=base + timedelta(days=day))
+    waiting = _unseen(st, uid, "recommendations_waiting")
+    assert len(waiting) == 1                               # NOT 10 — one outstanding alert
+    assert waiting[0]["payload"]["count"] == 8             # windowed to the live feed, not all 10
+
+
+def test_alert_auto_resolves_when_its_condition_clears():
+    """Opening every waiting recommendation makes the alert untrue — it must stop counting toward
+    the badge on the next evaluation, without the reader having to dismiss a stale row by hand."""
+    st, uid = _store_user(); _all_on(st, uid)
+    _surface_recs(st, uid, 2)
+    nd.materialize_notifications(st, uid)
+    assert len(_unseen(st, uid, "recommendations_waiting")) == 1
+    for i in range(2):                                     # the reader opens them
+        st.record_recommendation_open(uid, f"https://x.example/a-0-{i}", cross_cutting=False)
+    nd.materialize_notifications(st, uid)
+    assert _unseen(st, uid, "recommendations_waiting") == []   # auto-resolved
+    assert len(st.list_notifications(uid, limit=50)) >= 1       # kept as history, just not active
+    # …and it re-arms: a NEW surfaced-but-unopened recommendation raises a fresh alert.
+    _surface_recs(st, uid, 1, days_ago=0, tag="fresh")
+    nd.materialize_notifications(st, uid, now=datetime.now(timezone.utc) + timedelta(days=1))
+    assert len(_unseen(st, uid, "recommendations_waiting")) == 1
+
+
+def test_waiting_count_is_windowed_to_the_live_feed():
+    """A card surfaced months ago and never opened is not actionable today — the current feed no
+    longer offers it — so it must not inflate the alert."""
+    st, uid = _store_user(); _all_on(st, uid)
+    _surface_recs(st, uid, 5, days_ago=90)                 # ancient, unopened
+    nd.materialize_notifications(st, uid)
+    assert _unseen(st, uid, "recommendations_waiting") == []    # nothing waiting *now*
+    _surface_recs(st, uid, 2, days_ago=1)                  # fresh, unopened
+    nd.materialize_notifications(st, uid)
+    waiting = _unseen(st, uid, "recommendations_waiting")
+    assert len(waiting) == 1 and waiting[0]["payload"]["count"] == 2   # 2, not 7
+
+
+def test_notification_history_is_bounded_and_never_prunes_unseen():
+    """Cadence kinds legitimately accumulate one row per period forever; pruning bounds the table
+    while leaving every UNSEEN (still actionable) row alone."""
+    st, uid = _store_user(); _all_on(st, uid)
+    for i in range(30):
+        st.record_notifications(uid, [{"kind": "weekly_report", "dedupe_key": f"w:{i}",
+                                       "created_at": _iso(i), "title_key": "t",
+                                       "payload": {}, "gated_by": "weeklyReport"}])
+    seen_ids = [r["id"] for r in st.list_notifications(uid, limit=100)][:20]
+    for nid in seen_ids:
+        st.mark_notification_seen(uid, nid)
+    assert st.prune_notifications(uid, keep=10) > 0
+    remaining = st.list_notifications(uid, limit=100)
+    assert len(remaining) >= 10
+    assert len(_unseen(st, uid)) == 10                     # all 10 unseen rows survived pruning
+    assert st.prune_notifications(uid, keep=1000) == 0     # nothing to do -> no-op

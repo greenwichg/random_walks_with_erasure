@@ -1898,6 +1898,86 @@ class Store:
                              .where(Notification.user_id == user_id)).all()
         return set(rows)
 
+    def unseen_notification(self, user_id: int, kind: str) -> "dict | None":
+        """The user's oldest UNSEEN notification of ``kind`` (``{"id", "body"}``), or ``None``.
+        Read-only. Lets the delivery boundary keep at most ONE outstanding state alert per kind
+        instead of minting a fresh row every evaluation period."""
+        with self.session() as s:
+            row = s.scalar(select(Notification)
+                           .where(Notification.user_id == user_id, Notification.kind == kind,
+                                  Notification.seen_at.is_(None))
+                           .order_by(Notification.id.asc()).limit(1))
+            if row is None:
+                return None
+            try:
+                body = dict(json.loads(row.body))
+            except (TypeError, ValueError):
+                body = {}
+            return {"id": row.id, "body": body}
+
+    def refresh_notification(self, user_id: int, notification_id: int, body: dict,
+                             dedupe_key: "str | None" = None) -> bool:
+        """Replace an UNSEEN notification's stored body in place — the payload of a still-true state
+        alert (e.g. the current waiting-recommendation count) without creating a second row. Never
+        touches a seen row (that is history) or another user's row.
+
+        ``dedupe_key`` re-stamps the idempotency column too, so the ledger keeps describing what was
+        actually delivered: without it, the refreshed key is absent from the ledger and the alert
+        would re-fire the instant the reader dismissed it. A rare UNIQUE collision (the same key
+        already recorded on another row) leaves the key as-is and still refreshes the body — the
+        body is the part the reader sees. Returns whether it changed."""
+        with self.session() as s:
+            row = s.scalar(select(Notification).where(Notification.id == notification_id,
+                                                      Notification.user_id == user_id,
+                                                      Notification.seen_at.is_(None)))
+            if row is None:
+                return False
+            row.body = json.dumps(_json_safe(body))
+            if dedupe_key and dedupe_key != row.dedupe_key:
+                try:
+                    with s.begin_nested():
+                        row.dedupe_key = dedupe_key
+                except IntegrityError:
+                    s.refresh(row)
+                    row.body = json.dumps(_json_safe(body))
+            return True
+
+    def resolve_notifications(self, user_id: int, kind: str,
+                              at: "str | None" = None) -> int:
+        """Auto-resolve a user's UNSEEN notifications of ``kind`` by stamping ``seen_at`` — used when
+        the condition that raised a state alert no longer holds (the reader opened their waiting
+        recommendations, the blind spot closed). The row is kept as history; it simply stops being
+        actionable, so the unread badge can never describe a state that has passed. Idempotent;
+        returns how many rows were resolved."""
+        stamp = at or _utcnow().isoformat()
+        with self.session() as s:
+            rows = s.scalars(select(Notification).where(
+                Notification.user_id == user_id, Notification.kind == kind,
+                Notification.seen_at.is_(None))).all()
+            for r in rows:
+                r.seen_at = stamp
+            return len(rows)
+
+    def prune_notifications(self, user_id: int, keep: int = 200) -> int:
+        """Bound the per-user notification history: delete all but the newest ``keep`` rows. Cadence
+        kinds legitimately accumulate one row per period forever, so without this the table grows
+        without limit for a long-lived account. Unseen rows are NEVER pruned — only settled history
+        is dropped. Returns how many rows were deleted."""
+        if keep <= 0:
+            return 0
+        with self.session() as s:
+            keep_ids = [i for (i,) in s.execute(
+                select(Notification.id).where(Notification.user_id == user_id)
+                .order_by(Notification.id.desc()).limit(keep)).all()]
+            if len(keep_ids) < keep:
+                return 0
+            stale = s.scalars(select(Notification).where(
+                Notification.user_id == user_id, Notification.id.notin_(keep_ids),
+                Notification.seen_at.is_not(None))).all()
+            for r in stale:
+                s.delete(r)
+            return len(stale)
+
     def mark_notification_seen(self, user_id: int, notification_id: int,
                               seen_at: "str | None" = None) -> bool:
         """Mark one of a user's notifications as seen — **idempotent** and **user-scoped**. Stamps
