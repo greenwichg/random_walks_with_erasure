@@ -97,7 +97,15 @@ services:
       # is six minutes of one poller thread held by a single polite server. This makes the worst
       # case a number you can read instead of a product of three knobs.
       RWE_SOURCE_MAX_WAIT: ${RWE_SOURCE_MAX_WAIT:-60}
-      RWE_SOURCE_BACKOFF_STEPS: ${RWE_SOURCE_BACKOFF_STEPS:-4}
+      # Failure backoff. AFTER is how many consecutive failures before the interval widens at all;
+      # STEPS caps the doubling. Both were tightened after gdelt://doc reached 7 consecutive
+      # failures and the old 16x ladder pinned its 30-minute interval at the 6-hour ceiling —
+      # taking a source that succeeds ~58% of the time from ~28 ingests/day to ~2. Doubling on
+      # consecutive failures assumes failures are CORRELATED; GDELT's are load shedding and land
+      # independently, so runs arrive by chance. consecutive_failures is persisted, so a restart
+      # does not clear a ratchet — only a success does.
+      RWE_SOURCE_BACKOFF_AFTER: ${RWE_SOURCE_BACKOFF_AFTER:-3}
+      RWE_SOURCE_BACKOFF_STEPS: ${RWE_SOURCE_BACKOFF_STEPS:-2}
       RWE_SOURCE_MAX_INTERVAL: ${RWE_SOURCE_MAX_INTERVAL:-21600}
       # NewsAPI adapter (same shared pipeline as RSS/GDELT: dedup, scoring, registry resolution,
       # clustering). Default OFF — enable with RWE_NEWSAPI_ENABLED=1 + RWE_NEWSAPI_API_KEY in

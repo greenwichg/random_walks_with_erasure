@@ -1278,15 +1278,29 @@ class MultiSourcePoller:
 
         A provider that is refusing us is not helped by being asked again on schedule — and when the
         refusal is a rate limit, polling on time is what sustains it. Doubling per consecutive
-        failure (capped) backs off automatically and returns to the configured cadence the moment a
-        cycle succeeds. ``consecutive_failures`` is already counted by ``record_feed_health``; this
-        is the first consumer of it."""
+        failure backs off automatically and returns to the configured cadence the moment a cycle
+        succeeds.
+
+        **Backoff waits for SUSTAINED failure** (``RWE_SOURCE_BACKOFF_AFTER``, default 3), because
+        the doubling assumes consecutive failures are evidence of an outage — which holds only when
+        failures are correlated. GDELT's are not: it refuses roughly 40% of requests as load
+        shedding, independently of anything we do, so runs of four or six arrive by chance.
+        Measured in production: ``gdelt://doc`` reached 7 consecutive failures, which under the old
+        rule multiplied its 30-minute interval by 16 and pinned it at the 6-hour ceiling. That took
+        a source succeeding ~58% of the time from ~28 ingests a day to ~2 — and, because
+        ``consecutive_failures`` is persisted, a restart did not clear it.
+
+        The ceiling is a small multiple of the adapter's OWN interval rather than an absolute wall
+        clock, so a source polled every 15 minutes and one polled hourly get proportional treatment.
+        A genuinely dead source still ends up politely spaced; a flaky-but-working one keeps its
+        cadence."""
         base = max(1.0, adapter.interval())
         fails = self._consecutive.get(adapter.health_key, 0)
-        if fails <= 0:
+        after = max(1, _int_env("RWE_SOURCE_BACKOFF_AFTER", 3))
+        if fails < after:
             return base
-        steps = _int_env("RWE_SOURCE_BACKOFF_STEPS", 4)          # 2x, 4x, 8x, 16x, then flat
-        factor = 2 ** min(fails, max(0, steps))
+        steps = _int_env("RWE_SOURCE_BACKOFF_STEPS", 2)          # 2x, 4x, then flat
+        factor = 2 ** min(fails - after + 1, max(0, steps))
         return min(base * factor, _float_env("RWE_SOURCE_MAX_INTERVAL", 6 * 3600.0))
 
     # -- per-source health (reuses store.record_feed_health; mirrors FeedPoller's glue) --

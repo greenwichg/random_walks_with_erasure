@@ -189,3 +189,32 @@ is the backoff itself — it doubles on *consecutive* failures, which assumes fa
 GDELT's are closer to independent, so runs happen by chance and park a source that would have served
 us on the next attempt. Rate-based backoff would fit the source better. Deliberately not changed
 here: one variable at a time, and the timeout is the one with evidence behind it.
+
+## Follow-up: the backoff was the second half of the problem
+
+The timeout fix worked and showed up immediately: `lastLatencyMs` for `gdelt://doc` fell from a
+~47,000 average to **12,674** — one request in the observed 429 band, instead of
+*timeout → sleep → timeout → sleep → refusal*.
+
+But the success rate could not be measured, because the adapter had stopped polling. One failure
+after the deploy took `consecutive_failures` from 6 to 7, and `2^min(7, 4) = 16×` pinned the
+30-minute interval at the 6-hour `RWE_SOURCE_MAX_INTERVAL` ceiling. **`consecutive_failures` is
+persisted in `feed_health`, so restarting the container does not clear it — only a success does, and
+a 6-hour interval makes successes rare.** A source succeeding ~58% of the time was reduced from
+~28 ingests/day to ~2.
+
+Doubling per consecutive failure assumes failures are **correlated** — that a run is evidence of an
+outage. GDELT's are load shedding and land independently, so runs of four or six arrive by chance
+and carry no information. Two changes:
+
+* `RWE_SOURCE_BACKOFF_AFTER` (3) — backoff engages only on *sustained* failure. Short runs, which a
+  ~40%-refusal source produces constantly, no longer change the cadence.
+* `RWE_SOURCE_BACKOFF_STEPS` 4 → 2 — the ceiling is 4× the adapter's own interval rather than 16×,
+  so a flaky-but-working source keeps roughly its configured cadence and a genuinely dead one still
+  ends up politely spaced.
+
+Recovery is unchanged and immediate: one success returns the adapter to its configured interval.
+
+**If a source is genuinely down**, this polls it 4× less often than the configured interval rather
+than 16× — a deliberate trade. The protection that matters for keyed providers is their per-day
+budget, which short-circuits before any request and is untouched by this.

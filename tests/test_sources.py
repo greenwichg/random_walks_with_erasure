@@ -955,25 +955,44 @@ def test_interval_is_unchanged_while_healthy(store):
     assert p._effective_interval(a) == 60.0
 
 
-def test_interval_doubles_per_consecutive_failure(store):
+def test_backoff_waits_for_sustained_failure(store):
     p, a = _poller(store), _PacedAdapter()
-    for fails, expected in ((1, 120.0), (2, 240.0), (3, 480.0), (4, 960.0)):
+    for fails in (1, 2):
+        p._consecutive[a.health_key] = fails
+        assert p._effective_interval(a) == 60.0, f"backed off after only {fails} failure(s)"
+
+
+def test_backoff_engages_and_doubles_once_failure_is_sustained(store):
+    p, a = _poller(store), _PacedAdapter()
+    for fails, expected in ((3, 120.0), (4, 240.0)):
         p._consecutive[a.health_key] = fails
         assert p._effective_interval(a) == expected
 
 
-def test_backoff_stops_growing_and_respects_the_ceiling(store, monkeypatch):
+def test_the_ceiling_is_a_small_multiple_of_the_adapters_own_interval(store, monkeypatch):
+    """Measured in production: gdelt://doc reached 7 consecutive failures, which under the old
+    16x ladder pinned its 30-minute interval at the 6-hour ceiling — taking a source that succeeds
+    ~58% of the time from ~28 ingests a day to ~2. And because consecutive_failures is persisted, a
+    restart did not clear it."""
     p, a = _poller(store), _PacedAdapter()
     p._consecutive[a.health_key] = 50                        # far past the step count
-    assert p._effective_interval(a) == 960.0                 # flat after RWE_SOURCE_BACKOFF_STEPS
-    monkeypatch.setenv("RWE_SOURCE_MAX_INTERVAL", "600")
-    assert p._effective_interval(a) == 600.0                 # and never past the hard ceiling
+    assert p._effective_interval(a) == 240.0                 # 4x base, not 16x
+    monkeypatch.setenv("RWE_SOURCE_MAX_INTERVAL", "120")
+    assert p._effective_interval(a) == 120.0                 # and never past the hard ceiling
+
+
+def test_the_backoff_threshold_is_tunable(store, monkeypatch):
+    p, a = _poller(store), _PacedAdapter()
+    p._consecutive[a.health_key] = 1
+    monkeypatch.setenv("RWE_SOURCE_BACKOFF_AFTER", "1")
+    assert p._effective_interval(a) == 120.0                 # back to failing-fast behaviour
 
 
 def test_a_success_restores_the_configured_cadence(store):
     """Recovery must be immediate — a provider that came back should not stay throttled."""
     p, a = _poller(store), _PacedAdapter()
-    p._record_health(a.provider, a.health_key, None, 10.0, RuntimeError("429"))
+    for _ in range(3):                                       # enough to pass the threshold
+        p._record_health(a.provider, a.health_key, None, 10.0, RuntimeError("429"))
     assert p._effective_interval(a) > a.interval()
     p._record_health(a.provider, a.health_key, {}, 10.0, None)
     assert p._effective_interval(a) == a.interval()
