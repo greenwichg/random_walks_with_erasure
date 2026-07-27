@@ -295,11 +295,23 @@ def verify(*, publisher: str, page_title: str, facts: dict, observed_host=None,
        lets any similarly-named company bind.
 
     Anything else is ``unverified`` — recorded as ambiguous for a human, never rendered."""
-    site_label = domain_label(facts.get("website"))
-    observed = [domain_label(h) for h in _hosts(observed_host)]
-    observed = [o for o in observed if o]
-    if site_label and observed:
-        return (True, "domain") if site_label in observed else (False, "domain_conflict")
+    site_domain = registrable_domain(facts.get("website"))
+    observed = _hosts(observed_host)
+    if site_domain and observed:
+        # 1a. The same domain, or one a subdomain of the other. Decisive on its own.
+        if any(o == site_domain or o.endswith("." + site_domain) or site_domain.endswith("." + o)
+               for o in observed):
+            return True, "domain"
+        # 1b. The same BRAND on a different public suffix. NOT decisive on its own: `abcnews.com`
+        # (the American network) and `abcnews.al` (an Albanian broadcaster) share a label and are
+        # different organisations — accepting that pair was this module's first false positive.
+        # Nothing structural separates it from bbc.com/bbc.co.uk, so the name has to corroborate.
+        site_label = domain_label(facts.get("website"))
+        if site_label and site_label in [domain_label(o) for o in observed]:
+            if _name_key(page_title) == _name_key(publisher):
+                return True, "domain_label"
+            return False, "domain_conflict"
+        return False, "domain_conflict"
     if _name_key(page_title) != _name_key(publisher):
         return False, "unverified"
     if not (org_claims or any(facts.get(f) for f in _ORG_FACTS)) \
@@ -377,6 +389,9 @@ def search_titles(name: str, fetch_json: Callable[[str], dict], *, limit: int = 
 
 #: Parenthetical qualifiers that mark a disambiguation entry as a publication rather than a film,
 #: album or place — "The Hill (newspaper)" over "The Hill (1965 film)".
+#: A trailing "(…)" disambiguator on a Wikipedia title — "The Hill (newspaper)".
+_QUALIFIER = re.compile(r"\s*\([^)]*\)\s*$")
+
 _MEDIA_QUALIFIER = re.compile(
     r"\((newspaper|magazine|website|news\b|news website|periodical|publisher|publishing|"
     r"journal|media|broadcaster|TV channel|television channel|radio station|news agency)",
@@ -415,17 +430,22 @@ def rank_candidates(publisher: str, titles) -> list:
     information about relevance — without ranking, a four-candidate budget on "The Hill" is spent
     on "Allison Hill (Harrisburg)", "California State Route 17" and two Capitol Hills.
 
-    Two signals, in order: the title IS the publisher's name (possibly with a qualifier), and the
-    qualifier looks like a publication. The name test requires a WORD boundary — plain ``startswith``
-    would let "The Sun" prefer "Sunday Times"."""
+    Two signals, in order: the title IS the publisher's name — bare, or with a parenthetical
+    qualifier — and then whether that qualifier looks like a publication.
+
+    The qualifier must be stripped rather than merely tolerated as a suffix. A word-boundary
+    ``startswith`` still ranked "Mirror Mirror (film)" as a name match for "Mirror", because
+    "mirror mirror film" does begin with "mirror ". Removing the parenthetical first makes it
+    "mirror mirror", which is simply a different name."""
     key = _name_key(publisher)
 
     def score(title: str):
         tk = _name_key(title)
+        bare = _name_key(_QUALIFIER.sub("", title))
         if key and tk == key:
-            name = 2
-        elif key and tk.startswith(key + " "):
-            name = 1
+            name = 2                       # exact: "The Guardian"
+        elif key and bare == key:
+            name = 1                       # qualified: "The Hill (newspaper)"
         else:
             name = 0
         return (-name, 0 if _MEDIA_QUALIFIER.search(title) else 1, title)

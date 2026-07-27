@@ -264,3 +264,50 @@ def test_a_successful_match_records_the_evidence_that_carried_it():
     _seed(st, "Example Post", "examplepost.com")
     pm.run_enrichment(st, fetch_json=_wiki("Example Post"), limit=5)
     assert st.publisher_metadata("Example Post")["reason"] == "domain"
+
+
+# --------------------------------------------------------------------------- #
+# Aggregator hosts are not evidence about a publisher.
+# --------------------------------------------------------------------------- #
+def test_an_aggregator_host_is_not_treated_as_the_publishers_own():
+    """Measured: articles ingested through Google News carry news.google.com as their URL host, so
+    the catalog's majority host for Associated Press was news.google.com — and comparing that
+    against Wikidata's ap.org refused AP, Reuters, CBS News, Forbes, CNBC, Politico and the
+    Washington Post. An aggregator's domain says who delivered the article, not who wrote it."""
+    st = store_mod.Store("sqlite://")
+    _seed(st, "Associated Press", "news.google.com", n=3)
+    assert pm.observed_hosts(st, "Associated Press") == []
+    assert pm.observed_host(st, "Associated Press") is None
+
+
+def test_the_publishers_own_host_is_preferred_over_an_aggregator():
+    st = store_mod.Store("sqlite://")
+    _seed(st, "Example Post", "news.google.com", n=5)
+    _seed(st, "Example Post", "examplepost.com", n=2)
+    assert pm.observed_hosts(st, "Example Post") == ["examplepost.com"]
+
+
+def test_a_wire_service_seen_only_via_an_aggregator_verifies_on_its_name():
+    """With no usable host, verification falls through to the name check instead of comparing
+    against the wrong organisation — which is what makes AP resolvable at all."""
+    st = store_mod.Store("sqlite://")
+    _seed(st, "Associated Press", "news.google.com", n=3)
+
+    def fetch(url):
+        if "list=search" in url:
+            return {"query": {"search": []}}
+        if "prop=pageprops" in url:
+            return {"query": {"pages": [{"title": "Associated Press",
+                                         "pageprops": {"wikibase_item": "Q40469"},
+                                         "extract": "A news agency."}]}}
+        if "ids=Q40469" in url:
+            return {"entities": {"Q40469": {"id": "Q40469", "claims": {pw.P_WEBSITE: [
+                {"rank": "normal",
+                 "mainsnak": {"snaktype": "value",
+                              "datavalue": {"value": "https://ap.org/"}}}]}}}}
+        raise AssertionError(f"unexpected: {url}")
+
+    pm.run_enrichment(st, fetch_json=fetch, limit=5)
+    row = st.publisher_metadata("Associated Press")
+    assert row["status"] == "ok" and row["reason"] == "title"
+    assert row["website"] == "https://ap.org/"

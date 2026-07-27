@@ -228,15 +228,43 @@ def pending(store_, *, limit: int, now: "datetime | None" = None) -> list:
     return out
 
 
-def observed_host(store_, publisher: str) -> Optional[str]:
-    """The host this publisher actually publishes from, counted from the catalog — the independent
-    evidence :func:`publisher_wiki.verify` checks a candidate against."""
+#: Hosts that belong to an AGGREGATOR rather than to the publisher whose article it carries.
+#:
+#: An article ingested through Google News RSS has ``news.google.com`` as its URL host, so the
+#: catalog's majority host for Associated Press was ``news.google.com`` — and comparing THAT against
+#: Wikidata's ``ap.org`` refused the Associated Press, along with Reuters, CBS News, Forbes, CNBC,
+#: Politico and the Washington Post. The host is only evidence when it is the publisher's OWN; an
+#: aggregator's domain says who delivered the article, not who wrote it.
+AGGREGATOR_HOSTS = frozenset({
+    "news.google.com", "feedproxy.google.com", "news.url.google.com",
+    "msn.com", "www.msn.com",
+})
+
+
+def observed_hosts(store_, publisher: str) -> list:
+    """The publisher's OWN hosts, counted from the catalog, most common first.
+
+    This is the independent evidence :func:`publisher_wiki.verify` checks a candidate against, so it
+    has to be about the publisher. Aggregator domains are dropped rather than ranked down: one is
+    not weak evidence about a publisher's identity, it is evidence about somebody else's. When every
+    host is an aggregator the answer is an empty list — no domain evidence — and verification falls
+    through to the name check instead of comparing against the wrong organisation."""
     try:
         stats = store_.publisher_catalog_stats(publisher) or {}
     except Exception:
-        return None
-    hosts = stats.get("hosts") or []
-    return hosts[0]["label"] if hosts else None
+        return []
+    out = []
+    for h in stats.get("hosts") or []:
+        label = (h.get("label") or "").strip().lower()
+        if label and label not in AGGREGATOR_HOSTS:
+            out.append(label)
+    return out
+
+
+def observed_host(store_, publisher: str) -> Optional[str]:
+    """The single most common non-aggregator host, or None."""
+    hosts = observed_hosts(store_, publisher)
+    return hosts[0] if hosts else None
 
 
 def enrich_publisher(store_, publisher: str, *, fetch_json: Callable[[str], dict]) -> dict:
@@ -246,7 +274,7 @@ def enrich_publisher(store_, publisher: str, *, fetch_json: Callable[[str], dict
     abort a batch, and the status is what schedules the retry."""
     try:
         result = publisher_wiki.lookup(publisher, fetch_json,
-                                       observed_host=observed_host(store_, publisher))
+                                       observed_host=observed_hosts(store_, publisher))
     except Exception as e:
         result = {"status": "error", "error": f"{type(e).__name__}: {e}"}
 

@@ -290,17 +290,17 @@ def test_domain_label_finds_the_brand_across_suffix_forms():
     assert pw.domain_label("") is None
 
 
-def test_the_same_outlet_reached_by_two_domains_is_one_match():
-    """Every one of these was refused as a domain_conflict in production before brand-label
-    comparison — one organisation, two spellings."""
-    for observed, site in [("bbc.co.uk", "https://bbc.com"),
-                           ("dailymail.com", "http://www.dailymail.co.uk"),
-                           ("aol.co.uk", "https://aol.com/"),
-                           ("unitaid.eu", "http://www.unitaid.org/"),
-                           ("newsinfo.inquirer.net", "http://www.inquirer.com.ph/")]:
-        ok, reason = pw.verify(publisher="x", page_title="y", facts={"website": site},
-                               observed_host=observed)
-        assert ok and reason == "domain", f"{observed} vs {site}"
+def test_a_brand_match_without_name_corroboration_is_refused():
+    """The rule that closed the ABC News false positive, and its cost, stated rather than hidden.
+
+    "dailymail.com" -> "MailOnline" IS the same organisation, and it is now refused: the label
+    agrees but the name does not, and no structural signal separates that pair from
+    abcnews.com/abcnews.al. Losing one correct match to stop one wrong one is the trade this module
+    exists to make -- a wrong fact on a publisher page is worse than a missing one."""
+    ok, reason = pw.verify(publisher="dailymail.com", page_title="MailOnline",
+                           facts={"website": "http://www.dailymail.co.uk"},
+                           observed_host="dailymail.com")
+    assert not ok and reason == "domain_conflict"
 
 
 def test_different_organisations_still_conflict_at_the_label():
@@ -359,9 +359,9 @@ def test_instance_of_never_overrides_a_domain_conflict():
 
 def test_several_observed_hosts_are_all_considered():
     """A publisher often reaches us from more than one domain; matching any of them is a match."""
-    ok, _ = pw.verify(publisher="x", page_title="y", facts={"website": "https://bbc.com"},
-                      observed_host=["feeds.example.net", "bbc.co.uk"])
-    assert ok
+    ok, reason = pw.verify(publisher="x", page_title="y", facts={"website": "https://bbc.co.uk"},
+                           observed_host=["feeds.example.net", "bbc.co.uk"])
+    assert ok and reason == "domain"
 
 
 def test_instance_of_reads_the_claim():
@@ -589,3 +589,51 @@ def test_a_large_link_budget_is_requested():
 
     pw.disambiguation_links("X", fetch)
     assert "pllimit=200" in seen[0]
+
+
+# --------------------------------------------------------------------------- #
+# Brand-label matching needs corroboration — the first false positive.
+# --------------------------------------------------------------------------- #
+def test_the_same_brand_on_a_different_tld_is_not_the_same_organisation():
+    """Measured false positive: "ABC News" (observed abcnews.com, the American network) matched
+    "ABC News (Albania)" whose site is abcnews.al, because both labels are "abcnews". Nothing
+    structural separates that pair from bbc.com/bbc.co.uk, so the NAME has to corroborate."""
+    ok, reason = pw.verify(publisher="ABC News", page_title="ABC News (Albania)",
+                           facts={"website": "http://www.abcnews.al"},
+                           observed_host="abcnews.com")
+    assert not ok and reason == "domain_conflict"
+
+
+def test_a_corroborated_brand_match_is_still_accepted():
+    """The recall the label rule bought is kept where the name agrees."""
+    for name, title, observed, site in [
+            ("BBC", "BBC", "bbc.co.uk", "https://bbc.com"),
+            ("aol.co.uk", "AOL", "aol.co.uk", "https://aol.com/"),
+            ("unitaid.eu", "Unitaid", "unitaid.eu", "http://www.unitaid.org/"),
+            ("Philippine Daily Inquirer", "Philippine Daily Inquirer",
+             "newsinfo.inquirer.net", "http://www.inquirer.com.ph/")]:
+        ok, reason = pw.verify(publisher=name, page_title=title, facts={"website": site},
+                               observed_host=observed)
+        assert ok and reason == "domain_label", f"{name}: {reason}"
+
+
+def test_an_exact_domain_match_needs_no_corroboration():
+    ok, reason = pw.verify(publisher="whatever", page_title="Something Else",
+                           facts={"website": "https://www.examplepost.com/news"},
+                           observed_host="examplepost.com")
+    assert ok and reason == "domain"
+
+
+def test_a_subdomain_still_counts_as_the_same_domain():
+    ok, reason = pw.verify(publisher="x", page_title="y", facts={"website": "https://bbc.co.uk"},
+                           observed_host="news.bbc.co.uk")
+    assert ok and reason == "domain"
+
+
+def test_ranking_no_longer_reads_a_film_as_the_publisher():
+    """"Mirror Mirror (film)" begins with "mirror " and was ranked as a name match for "Mirror".
+    Stripping the qualifier first makes it "mirror mirror" — a different name."""
+    ranked = pw.rank_candidates("Mirror", ["Mirror Mirror (film)", "Daily Mirror",
+                                           "Mirror (newspaper)"])
+    assert ranked[0] == "Mirror (newspaper)"
+    assert ranked.index("Mirror Mirror (film)") > 0

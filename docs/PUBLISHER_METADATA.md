@@ -80,13 +80,31 @@ accepts only on evidence:
    everyday-object article, and the organisation check alone lets any similarly-named company
    through.
 
-Domains are compared at the **brand label** — `bbc.co.uk`, `bbc.com` and `news.bbc.co.uk` all reduce
-to `bbc`. Whole-domain comparison shipped first and cost real recall: on the live catalog's busiest
-20 publishers, 5 of 8 "conflicts" were one organisation reached by two spellings (`bbc.co.uk` vs
-`bbc.com`, `dailymail.com` vs `dailymail.co.uk`, `aol.co.uk` vs `aol.com`, `unitaid.eu` vs
-`unitaid.org`, `newsinfo.inquirer.net` vs `inquirer.com.ph`). The label still separates genuinely
-different organisations — the true refusals in the same run (`aktiencheck` vs `tomshardware`,
-`pagesix` vs `nypost`, `foxsports` vs `foxcorporation`) differ at the label too.
+Domain evidence comes in two strengths, and conflating them produced this module's only false
+positive:
+
+* **Exact domain** (or one a subdomain of the other) is decisive on its own.
+* **Same brand label, different public suffix** — `bbc.co.uk` vs `bbc.com` — is *not*. It rescued
+  real matches (`aol.co.uk`/`aol.com`, `unitaid.eu`/`unitaid.org`,
+  `newsinfo.inquirer.net`/`inquirer.com.ph`), but it also matched **`abcnews.com`, the American
+  network, to `abcnews.al`, an Albanian broadcaster**. Nothing structural separates those two pairs,
+  so a label-only match now requires the article title to corroborate it, and is recorded as
+  `domain_label` rather than `domain`.
+
+That costs one correct match: `dailymail.com` → `MailOnline` is the same organisation but the name
+does not agree, so it is now refused. Losing one right answer to stop one wrong one is the trade
+this module exists to make.
+
+### The host has to be the publisher's own
+
+`observed_hosts` drops **aggregator domains** (`publisher_metadata.AGGREGATOR_HOSTS`). An article
+ingested through Google News carries `news.google.com` as its URL host, so the catalog's majority
+host for Associated Press *was* `news.google.com` — and comparing that against Wikidata's `ap.org`
+refused AP, Reuters, CBS News, Forbes, CNBC, Politico and the Washington Post in one go. An
+aggregator's domain says who delivered the article, not who wrote it.
+
+When every host is an aggregator the answer is an empty list — no domain evidence — and
+verification falls through to the name check, which is what makes those wire services resolvable.
 
 Publisher names that ARE domains (`marketbeat.com`, `aol.co.uk`, `thestar.com.my` — a large share of
 the catalog) are reduced the same way before the title comparison, so `marketbeat.com` can match the
