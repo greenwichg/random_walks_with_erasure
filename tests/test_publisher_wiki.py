@@ -214,8 +214,9 @@ def test_lookup_returns_verified_facts():
     assert res["logo_source"] == "wikimedia" and "BBC_News.svg" in res["logo"]
 
 
-def test_lookup_records_a_disambiguation_page_as_ambiguous_not_a_match():
-    fetch = _router({"prop=pageprops": _page("Metro", disambiguation=True),
+def test_a_disambiguation_page_with_no_usable_entries_stays_ambiguous():
+    fetch = _router({"prop=links": {"query": {"pages": [{"title": "Metro", "links": []}]}},
+                     "prop=pageprops": _page("Metro", disambiguation=True),
                      "list=search": {"query": {"search": []}}})
     res = pw.lookup("Metro", fetch)
     assert res["status"] == "ambiguous" and res["reason"] == "disambiguation"
@@ -370,3 +371,153 @@ def test_instance_of_reads_the_claim():
                                                                 "id": "Q11032"}}}}]}}
     assert pw.instance_of(entity) == ["Q11032"]
     assert pw.instance_of({}) == []
+
+
+# --------------------------------------------------------------------------- #
+# Multi-candidate verification.
+# --------------------------------------------------------------------------- #
+def test_a_disambiguation_page_is_a_candidate_list_not_a_dead_end():
+    """The Hill, end to end. "The Hill" is a disambiguation page; full-text search answers it with
+    "King of the Hill". The page's own entries include "The Hill (newspaper)", which verifies on
+    domain. Checking only the first plausible page lost this outlet entirely."""
+    def fetch(url):
+        if "prop=links" in url:
+            return {"query": {"pages": [{"title": "The Hill", "links": [
+                {"title": "King of the Hill"}, {"title": "The Hill (newspaper)"}]}]}}
+        if "titles=The%20Hill&" in url or url.endswith("titles=The%20Hill"):
+            return _page("The Hill", disambiguation=True)
+        if "titles=King%20of%20the%20Hill" in url:
+            return _page("King of the Hill", qid="Q_KOTH")
+        if "titles=The%20Hill%20%28newspaper%29" in url:
+            return _page("The Hill (newspaper)", qid="Q_HILL")
+        if "list=search" in url:
+            return {"query": {"search": [{"title": "King of the Hill"}]}}
+        if "ids=Q_KOTH" in url:
+            return {"entities": {"Q_KOTH": _entity("Q_KOTH", website="https://kingofthehill.tv")}}
+        if "ids=Q_HILL" in url:
+            return {"entities": {"Q_HILL": _entity("Q_HILL", website="https://thehill.com",
+                                                   inception="+1994-01-01T00:00:00Z")}}
+        raise AssertionError(f"unexpected: {url}")
+
+    res = pw.lookup("The Hill", fetch, observed_host="thehill.com")
+    assert res["status"] == "ok" and res["reason"] == "domain"
+    assert res["wikipediaTitle"] == "The Hill (newspaper)"
+    assert res["founded"] == "1994"
+
+
+def test_search_candidates_are_all_tried_not_just_the_first():
+    """The first search result being wrong must not end the search — the second may be right."""
+    def fetch(url):
+        if "list=search" in url:
+            return {"query": {"search": [{"title": "Wrong Co"}, {"title": "The Example Post"}]}}
+        if "titles=Example%20Post" in url:
+            return _page("Example Post", missing=True)
+        if "titles=Wrong%20Co" in url:
+            return _page("Wrong Co", qid="Q_WRONG")
+        if "titles=The%20Example%20Post" in url:
+            return _page("The Example Post", qid="Q_RIGHT")
+        if "ids=Q_WRONG" in url:
+            return {"entities": {"Q_WRONG": _entity("Q_WRONG", website="https://wrongco.example")}}
+        if "ids=Q_RIGHT" in url:
+            return {"entities": {"Q_RIGHT": _entity("Q_RIGHT", website="https://examplepost.com")}}
+        raise AssertionError(f"unexpected: {url}")
+
+    res = pw.lookup("Example Post", fetch, observed_host="examplepost.com")
+    assert res["status"] == "ok" and res["wikipediaTitle"] == "The Example Post"
+
+
+def test_the_most_informative_refusal_is_the_one_reported():
+    """When nothing verifies, the recorded reason should be the one a human can act on: "Wikipedia
+    has this brand on a different domain" beats "search returned junk"."""
+    def fetch(url):
+        if "list=search" in url:
+            return {"query": {"search": [{"title": "Junk Result"}, {"title": "Near Miss"}]}}
+        if "titles=Example%20Post&" in url or url.endswith("titles=Example%20Post"):
+            return _page("Example Post", missing=True)
+        if "titles=Junk%20Result" in url:
+            return _page("Junk Result", qid="Q_JUNK")
+        if "titles=Near%20Miss" in url:
+            return _page("Near Miss", qid="Q_NEAR")
+        if "ids=Q_JUNK" in url:
+            return {"entities": {"Q_JUNK": _entity("Q_JUNK")}}          # no website -> unverified
+        if "ids=Q_NEAR" in url:
+            return {"entities": {"Q_NEAR": _entity("Q_NEAR", website="https://different.example")}}
+        raise AssertionError(f"unexpected: {url}")
+
+    res = pw.lookup("Example Post", fetch, observed_host="examplepost.com")
+    assert res["status"] == "ambiguous" and res["reason"] == "domain_conflict"
+    assert res["wikipediaTitle"] == "Near Miss"
+
+
+def test_a_direct_hit_that_verifies_costs_three_requests():
+    """The common path must not get more expensive to serve the hard one: page, item, labels."""
+    calls = []
+
+    def fetch(url):
+        calls.append(url)
+        if "prop=pageprops" in url:
+            return _page("Example Post", qid="Q7")
+        if "ids=Q7" in url:
+            return {"entities": {"Q7": _entity("Q7", website="https://examplepost.com",
+                                               hq="Q84")}}
+        if "ids=Q84" in url:
+            return {"entities": {"Q84": _entity("Q84", label="Springfield")}}
+        raise AssertionError(f"unexpected: {url}")
+
+    res = pw.lookup("Example Post", fetch, observed_host="examplepost.com")
+    assert res["status"] == "ok" and res["headquarters"] == "Springfield"
+    assert len(calls) == 3 and not any("list=search" in c for c in calls)
+
+
+def test_a_refused_candidate_does_not_pay_for_label_resolution():
+    """Identity is decided from the item's own claims; the extra request that resolves headquarters
+    and parent labels is deferred to the winner, so trying candidates stays affordable."""
+    calls = []
+
+    def fetch(url):
+        calls.append(url)
+        if "prop=pageprops" in url:
+            return _page("Example Post", qid="Q7")
+        if "ids=Q7" in url:
+            return {"entities": {"Q7": _entity("Q7", website="https://elsewhere.example",
+                                               hq="Q84", parent="Q99")}}
+        if "list=search" in url:
+            return {"query": {"search": []}}
+        raise AssertionError(f"unexpected: {url}")
+
+    res = pw.lookup("Example Post", fetch, observed_host="examplepost.com")
+    assert res["status"] == "ambiguous" and res["reason"] == "domain_conflict"
+    assert not any("ids=Q84" in c for c in calls)      # never resolved labels for a rejected item
+
+
+def test_candidate_count_is_bounded():
+    """A bounded budget is what keeps this polite; an unmatched name must not walk a search page."""
+    fetched = []
+
+    def fetch(url):
+        if "list=search" in url:
+            return {"query": {"search": [{"title": f"Candidate {i}"} for i in range(10)]}}
+        if "titles=Nobody" in url:
+            return _page("Nobody", missing=True)
+        if "prop=pageprops" in url:
+            fetched.append(url)
+            return _page("Some Page", qid=None) | {}
+        raise AssertionError(f"unexpected: {url}")
+
+    pw.lookup("Nobody", fetch, max_candidates=3)
+    assert len(fetched) <= 3
+
+
+def test_org_claim_presence_is_read_without_resolving_labels():
+    entity = _entity(hq="Q84")
+    assert pw.has_org_claim(entity) is True
+    assert pw.has_org_claim(_entity()) is False
+
+
+def test_headquarters_only_item_counts_as_an_organisation():
+    """parse_entity leaves HQ/parent as None until labels are resolved, so the org test would have
+    read a headquarters-only item as "not an organisation" without the presence check."""
+    ok, reason = pw.verify(publisher="Example Post", page_title="Example Post",
+                           facts={"website": None, "founded": None, "headquarters": None,
+                                  "parent": None}, org_claims=True)
+    assert ok and reason == "title"

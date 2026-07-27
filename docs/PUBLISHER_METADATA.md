@@ -69,8 +69,29 @@ Publisher names that ARE domains (`marketbeat.com`, `aol.co.uk`, `thestar.com.my
 the catalog) are reduced the same way before the title comparison, so `marketbeat.com` can match the
 article titled "MarketBeat" instead of failing on the `.com`.
 
+### Every candidate is verified, not just the first
+
+Candidates come from three sources, best first: the **direct title hit** (Wikipedia's own redirect
+graph says this name means this article), then a **disambiguation page's own entries**, then
+**full-text search** — the least curated of the three.
+
+Checking only the first plausible page lost "The Hill" entirely: `The Hill` is a disambiguation
+page, search answers it with `King of the Hill`, that is correctly refused, and
+`The Hill (newspaper)` — which verifies on domain — was never reached. A disambiguation page exists
+precisely to enumerate what a name can mean, so treating one as a dead end throws away the
+best-curated candidate list available.
+
+Candidates are generated **lazily**, so the common case does not subsidise the hard one: a direct
+hit that verifies costs 3 requests (page, item, labels) and never runs a search. Identity is decided
+from the Wikidata item's own claims, and the extra request that resolves headquarters/parent
+*labels* is deferred to the winner — a candidate about to be rejected costs 2 requests, not 3.
+`MAX_CANDIDATES` (4) bounds the worst case at roughly 11.
+
 Anything else is recorded as `ambiguous` — a distinct state from `no_match`, because it marks the
-outlets a human could resolve by hand. The **`reason`** column records which rule fired (`domain`,
+outlets a human could resolve by hand. When several candidates all fail, the reported reason is the
+most *informative* one (`domain_conflict` > `not_an_organisation` > `disambiguation` >
+`unverified`): "Wikipedia has this brand on a different domain" is actionable, "search returned
+something unrelated" is not. The **`reason`** column records which rule fired (`domain`,
 `title`, `domain_conflict`, `not_an_organisation`, `disambiguation`, `unverified`, `no_page`), so
 triaging the backlog is a query rather than a re-run of every lookup.
 

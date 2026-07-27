@@ -54,6 +54,17 @@ P_INSTANCE_OF = "P31"   # what KIND of thing the item is — newspaper, company,
 #: Description length. Long enough to be a real summary, short enough that the page stays a profile.
 MAX_DESCRIPTION = 400
 
+#: How many candidate articles to try before giving up. Verifying only the FIRST plausible page is
+#: what lost "The Hill": search returns "King of the Hill" first, that gets refused, and the real
+#: article — "The Hill (newspaper)", which verifies on domain — is never reached.
+MAX_CANDIDATES = 4
+
+#: When nothing verifies, which refusal to report. Ranked by how much it tells a human triaging the
+#: backlog: "Wikipedia has this brand on a different domain" is actionable, "search returned
+#: something unrelated" is not.
+_REASON_RANK = {"domain_conflict": 3, "not_an_organisation": 2, "disambiguation": 1,
+                "unverified": 0}
+
 _WS = re.compile(r"\s+")
 
 
@@ -254,8 +265,18 @@ def _hosts(observed_host) -> list:
     return [h for h in (registrable_domain(h) for h in observed_host) if h]
 
 
+def has_org_claim(entity: dict) -> bool:
+    """Whether the item asserts ANY organisational claim, read from the item itself.
+
+    Separate from the parsed ``facts`` because headquarters and parent are only *readable* after a
+    second request that resolves their labels — and identity has to be decided before paying for
+    that. Presence is all verification needs; the labels are only for display."""
+    return any(_first_claim(entity, p) is not None
+               for p in (P_WEBSITE, P_INCEPTION, P_HEADQUARTERS, P_PARENT))
+
+
 def verify(*, publisher: str, page_title: str, facts: dict, observed_host=None,
-           classes=None) -> "tuple[bool, str]":
+           classes=None, org_claims: bool = False) -> "tuple[bool, str]":
     """Is this Wikipedia page really THIS publisher? Returns ``(accepted, reason)``.
 
     The evidence, strongest first:
@@ -281,7 +302,8 @@ def verify(*, publisher: str, page_title: str, facts: dict, observed_host=None,
         return (True, "domain") if site_label in observed else (False, "domain_conflict")
     if _name_key(page_title) != _name_key(publisher):
         return False, "unverified"
-    if not any(facts.get(f) for f in _ORG_FACTS) and not (set(classes or ()) & _ORG_CLASSES):
+    if not (org_claims or any(facts.get(f) for f in _ORG_FACTS)) \
+            and not (set(classes or ()) & _ORG_CLASSES):
         return False, "not_an_organisation"
     return True, "title"
 
@@ -353,6 +375,24 @@ def search_titles(name: str, fetch_json: Callable[[str], dict], *, limit: int = 
     return [r["title"] for r in ((data.get("query") or {}).get("search") or []) if r.get("title")]
 
 
+def disambiguation_links(title: str, fetch_json: Callable[[str], dict], *, limit: int = 10) -> list:
+    """The article titles a disambiguation page lists.
+
+    Enumerating candidates is *literally what a disambiguation page is for*, so treating one as a
+    dead end throws away the best-curated candidate list Wikipedia has. "The Hill" is a
+    disambiguation page; full-text search answers it with "King of the Hill", while the page itself
+    lists "The Hill (newspaper)"."""
+    url = _api(WIKIPEDIA_API, {
+        "action": "query", "format": "json", "formatversion": "2",
+        "prop": "links", "plnamespace": "0", "pllimit": str(int(limit)), "titles": title,
+    })
+    data = fetch_json(url) or {}
+    pages = ((data.get("query") or {}).get("pages")) or []
+    if not pages:
+        return []
+    return [ln["title"] for ln in (pages[0].get("links") or []) if ln.get("title")]
+
+
 def fetch_entities(ids, fetch_json: Callable[[str], dict], *, props: str = "claims|labels") -> dict:
     """Batched Wikidata entity fetch -> ``{id: entity}``. Batching is the whole point: a publisher
     needs its own item plus up to three referenced items (HQ, country, parent), and that is two
@@ -371,69 +411,129 @@ def fetch_entities(ids, fetch_json: Callable[[str], dict], *, props: str = "clai
 # --------------------------------------------------------------------------- #
 # The lookup, end to end.
 # --------------------------------------------------------------------------- #
+def fallback_titles(publisher: str, first_page, fetch_json: Callable[[str], dict], *,
+                    search: bool = True, limit: int = MAX_CANDIDATES) -> list:
+    """Candidate titles to try when the direct hit did not verify, best first.
+
+    A disambiguation page's own entries outrank full-text search: the page exists precisely to
+    enumerate what the name can mean, and it is curated, while search is a relevance guess."""
+    titles: list = []
+    if first_page and not first_page.get("missing") and first_page.get("disambiguation"):
+        titles.extend(disambiguation_links(first_page["title"], fetch_json))
+    if search:
+        titles.extend(search_titles(publisher, fetch_json, limit=limit))
+    seen, out = set(), []
+    for t in titles:
+        if t and t not in seen:
+            seen.add(t)
+            out.append(t)
+    return out[:limit]
+
+
+def _assess(publisher: str, page: dict, fetch_json: Callable[[str], dict],
+            observed_host) -> "tuple[bool, str, dict]":
+    """Decide whether one candidate page IS this publisher.
+
+    Costs at most ONE Wikidata request: identity is decided from the item's own claims, and the
+    second request that resolves headquarters/parent LABELS is deferred to the winner. A candidate
+    we are about to reject should not cost the same as one we keep."""
+    facts = {"founded": None, "headquarters": None, "country": None, "website": None,
+             "parent": None, "logo": None}
+    classes: list = []
+    org_claims = False
+    entity: dict = {}
+    qid = page.get("wikidataId")
+    if qid:
+        entity = fetch_entities([qid], fetch_json).get(qid) or {}
+        facts = parse_entity(entity, {})          # labels unresolved — presence is what matters here
+        classes = instance_of(entity)
+        org_claims = has_org_claim(entity)
+    accepted, reason = verify(publisher=publisher, page_title=page["title"], facts=facts,
+                              observed_host=observed_host, classes=classes, org_claims=org_claims)
+    return accepted, reason, entity
+
+
+def _accepted_result(page: dict, entity: dict, reason: str,
+                     fetch_json: Callable[[str], dict]) -> dict:
+    """Build the winning row — and only now pay for the labels identity did not need."""
+    refs = entity_ids(entity, (P_HEADQUARTERS, P_COUNTRY, P_PARENT))
+    facts = parse_entity(entity, fetch_entities(refs, fetch_json) if refs else {})
+    # Logo: the Commons file a claim names is the outlet's ACTUAL logo; the article's lead image is
+    # a fallback that is often a headquarters photo, so it is used only as one.
+    logo, logo_source = facts.get("logo"), "wikimedia"
+    if not logo and page.get("pageImage"):
+        logo, logo_source = page["pageImage"], "wikipedia"
+    if not logo:
+        logo_source = None
+    return {
+        "status": "ok", "reason": reason, "source": "wikipedia",
+        "wikidataId": page.get("wikidataId"), "wikipediaTitle": page.get("title"),
+        "wikipediaUrl": page.get("url"), "description": page.get("extract"),
+        "founded": facts.get("founded"), "headquarters": facts.get("headquarters"),
+        "country": facts.get("country"), "website": facts.get("website"),
+        "parent": facts.get("parent"), "logo": logo, "logo_source": logo_source,
+    }
+
+
 def lookup(publisher: str, fetch_json: Callable[[str], dict], *, observed_host=None,
-           search: bool = True) -> dict:
+           search: bool = True, max_candidates: int = MAX_CANDIDATES) -> dict:
     """Resolve one publisher to a verified fact set.
 
     Returns ``{"status": ..., ...}`` where status is ``ok`` / ``no_match`` / ``ambiguous``. It never
     raises for a *lookup* outcome — only a genuine transport failure propagates, so the caller can
     tell "Wikipedia says no" (cache it) from "the network failed" (retry sooner).
 
-    Costs 2 requests for a direct title hit, 3 when referenced labels are needed, +1 if a search is
-    required first. Budgeted per cycle by the caller."""
+    **Every candidate is verified, not just the first.** Checking one page and stopping is what lost
+    "The Hill": search answers it with "King of the Hill", that is correctly refused, and
+    "The Hill (newspaper)" — which verifies on domain — is never reached.
+
+    Candidates are generated LAZILY, so the common case does not subsidise the hard one: a direct
+    title hit that verifies costs 3 requests (page, item, labels) and never runs a search. Only when
+    that fails do we pay for a disambiguation page's entries or a search, then 2 requests per
+    additional candidate tried — roughly 11 at the cap."""
     name = (publisher or "").strip()
     if not name:
         return {"status": "no_match", "reason": "empty_name"}
 
-    page = fetch_page(name, fetch_json)
-    tried = [name]
-    if (page is None or page.get("missing") or page.get("disambiguation")) and search:
-        for title in search_titles(name, fetch_json):
-            if title in tried:
-                continue
-            tried.append(title)
-            candidate = fetch_page(title, fetch_json)
-            if candidate and not candidate.get("missing") and not candidate.get("disambiguation"):
-                page = candidate
-                break
-    if page is None or page.get("missing"):
+    best_reason: Optional[str] = None
+    best_page: Optional[dict] = None
+    tried: set = set()
+
+    def consider(page: Optional[dict]) -> Optional[dict]:
+        """Assess one page. Returns the winning row, or None — recording the best refusal so far."""
+        nonlocal best_reason, best_page
+        if page is None or page.get("missing"):
+            return None
+        if page.get("disambiguation"):
+            # Its entries become candidates below; the page itself is not an outlet.
+            if best_reason is None:
+                best_reason, best_page = "disambiguation", page
+            return None
+        accepted, reason, entity = _assess(name, page, fetch_json, observed_host)
+        if accepted:
+            return _accepted_result(page, entity, reason, fetch_json)
+        if best_reason is None or _REASON_RANK.get(reason, -1) > _REASON_RANK.get(best_reason, -1):
+            best_reason, best_page = reason, page
+        return None
+
+    first = fetch_page(name, fetch_json)
+    if first and not first.get("missing"):
+        tried.add(first["title"])
+        won = consider(first)
+        if won is not None:
+            return won
+
+    for title in fallback_titles(name, first, fetch_json, search=search, limit=max_candidates):
+        if title in tried:
+            continue
+        tried.add(title)
+        won = consider(fetch_page(title, fetch_json))
+        if won is not None:
+            return won
+
+    if best_reason is None:
         return {"status": "no_match", "reason": "no_page"}
-    if page.get("disambiguation"):
-        return {"status": "ambiguous", "reason": "disambiguation",
-                "wikipediaTitle": page.get("title"), "wikipediaUrl": page.get("url")}
-
-    facts = {"founded": None, "headquarters": None, "country": None, "website": None,
-             "parent": None, "logo": None}
-    classes: list = []
-    qid = page.get("wikidataId")
-    if qid:
-        entities = fetch_entities([qid], fetch_json)
-        entity = entities.get(qid) or {}
-        refs = entity_ids(entity, (P_HEADQUARTERS, P_COUNTRY, P_PARENT))
-        resolved = fetch_entities(refs, fetch_json) if refs else {}
-        facts = parse_entity(entity, resolved)
-        classes = instance_of(entity)
-
-    accepted, reason = verify(publisher=name, page_title=page["title"], facts=facts,
-                              observed_host=observed_host, classes=classes)
-    if not accepted:
-        return {"status": "ambiguous", "reason": reason,
-                "wikipediaTitle": page.get("title"), "wikipediaUrl": page.get("url"),
-                "wikidataId": qid}
-
-    # Logo: the Commons file a claim names is the outlet's ACTUAL logo; the article's lead image is
-    # a fallback that is often a headquarters photo, so it is used only when no logo claim exists.
-    logo, logo_source = facts.get("logo"), "wikimedia"
-    if not logo and page.get("pageImage"):
-        logo, logo_source = page["pageImage"], "wikipedia"
-    if not logo:
-        logo_source = None
-
-    return {
-        "status": "ok", "reason": reason, "source": "wikipedia",
-        "wikidataId": qid, "wikipediaTitle": page.get("title"), "wikipediaUrl": page.get("url"),
-        "description": page.get("extract"),
-        "founded": facts.get("founded"), "headquarters": facts.get("headquarters"),
-        "country": facts.get("country"), "website": facts.get("website"),
-        "parent": facts.get("parent"), "logo": logo, "logo_source": logo_source,
-    }
+    return {"status": "ambiguous", "reason": best_reason,
+            "wikipediaTitle": (best_page or {}).get("title"),
+            "wikipediaUrl": (best_page or {}).get("url"),
+            "wikidataId": (best_page or {}).get("wikidataId")}
