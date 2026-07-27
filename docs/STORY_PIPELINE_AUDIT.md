@@ -153,6 +153,34 @@ measured 0.09 s once idle. The timeout is now 20 s (`SMOKE_TIMEOUT`), and a prob
 completes reports `EXC:<Type>` instead of collapsing to `000`, so a timeout and a refused connection
 are distinguishable.
 
+## Tokenisation gates (2026-07-27, after the geography audit)
+
+The false merges the coherence audit found were a TOKENISATION failure, not a geography one.
+Measured on the real pairs:
+
+| pair | jaccard | shared | truth |
+|---|---:|---:|---|
+| "Local news in brief, July 21" / "…July 22" | **1.00** | 4 (all filler) | different |
+| "This Day in Country History: July 22" / "…23" | **1.00** | 4 | different |
+| "Trump wins Ohio" / "Trump wins Iowa" | 0.50 | **2** | different |
+| "Berlin pride event canceled…" / "Vehicle drives into crowd at Berlin pride event" | 0.86 | **6** | same |
+
+The ratio cannot separate rows 3 and 4 — 0.50 and 0.86 both clear a 0.28 threshold. **Shared-token
+count can.** Two gates now apply before similarity is considered:
+
+* **Stop-list** extended with months, weekdays and editorial filler (`news brief roundup recap
+  today weekly best top …`), and bare numbers dropped. "Local news in brief, July 21" now reduces
+  to `{local}` and cannot cluster at all — it previously merged 65 articles from 42 publishers.
+* **`MIN_SHARED_TOKENS` (3)** — distinctive tokens two headlines must share, and
+  **`MIN_TITLE_TOKENS` (3)** — below which a headline does not cluster. Both tunable without a
+  deploy via `RWE_CLUSTER_MIN_SHARED` / `RWE_CLUSTER_MIN_TOKENS`, because the right value is an
+  empirical question about the live headline mix, not one to settle on hand-picked examples.
+
+`examples/audit_clustering_change.py` measures a candidate against the real catalog — story count,
+largest cluster, and which clusters split — so thresholds are chosen from data. Recurring columns
+with genuinely identical titles ("This Day in Country History") are NOT solved by tokenisation and
+remain open: the words really are the same every day.
+
 ## Still open
 
 - **Cluster geography coherence** (`examples/audit_story_geography.py`, added 2026-07-27) is now

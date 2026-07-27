@@ -596,9 +596,11 @@ def test_a_false_merge_scores_incoherent():
     """The production case: members located in unrelated countries, merged on shared title tokens.
     publisherDiversity rates such a cluster healthy; this must not."""
     st = store_mod.Store("sqlite://")
-    for i, (pub, ctry) in enumerate([("A", "US"), ("B", "YE"), ("C", "SG"), ("D", "DJ")]):
+    # A title distinctive enough to genuinely cluster (the tokeniser now refuses boilerplate like
+    # "Local news in brief" outright) — this test is about the METRIC, so the merge must happen.
+    for pub, ctry in [("A", "US"), ("B", "YE"), ("C", "SG"), ("D", "DJ")]:
         cu = f"https://{pub}.example/brief"
-        _add(st, cu, f"Outlet {pub}", 0.0, "Local news in brief July 21", days=1)
+        _add(st, cu, f"Outlet {pub}", 0.0, "Container terminal strike enters second week", days=1)
         _locate(st, cu, ctry)
     story = ss.cluster_from_store(st)[0]
     assert story["publisherCount"] == 4

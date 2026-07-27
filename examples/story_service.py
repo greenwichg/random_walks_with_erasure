@@ -225,16 +225,31 @@ def _geo_coherence(members: list, votes: dict) -> "tuple[Optional[float], int]":
     return round(max(votes.values()) / located, 3), located
 
 
+def min_shared_tokens() -> int:
+    """Distinctive tokens two headlines must share to be considered the same event. Tunable without
+    a deploy because the right value is an empirical question about the live headline mix — see
+    ``examples/audit_clustering_change.py``, which measures a candidate against the real catalog."""
+    return _env_int("RWE_CLUSTER_MIN_SHARED", clustering.MIN_SHARED_TOKENS)
+
+
+def min_title_tokens() -> int:
+    return _env_int("RWE_CLUSTER_MIN_TOKENS", clustering.MIN_TITLE_TOKENS)
+
+
 def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
                   sim: float = clustering.DEFAULT_SIM,
-                  window_days: float = clustering.DEFAULT_WINDOW_DAYS) -> list:
+                  window_days: float = clustering.DEFAULT_WINDOW_DAYS,
+                  min_shared: Optional[int] = None,
+                  min_tokens: Optional[int] = None) -> list:
     """Cluster FeedArticle rows into Story objects (the pure builder). Keeps clusters with
     ≥ ``min_articles`` from ≥ ``min_publishers`` distinct outlets; sorted biggest+freshest first.
     Deterministic: same rows → same stories, ids, and order."""
     arts = [discover.feed_article_to_article(r) for r in rows]
     groups = clustering.cluster(
         arts, tokens=lambda a: clustering.title_tokens(a["headline"]),
-        time=lambda a: clustering.parse_time(a["publishedAt"]), sim=sim, window_days=window_days)
+        time=lambda a: clustering.parse_time(a["publishedAt"]), sim=sim, window_days=window_days,
+        min_shared=min_shared_tokens() if min_shared is None else min_shared,
+        min_tokens=min_title_tokens() if min_tokens is None else min_tokens)
     stories = []
     for idxs in groups:
         members = [arts[i] for i in idxs]

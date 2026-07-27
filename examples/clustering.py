@@ -17,6 +17,19 @@ from typing import Callable, Optional, Sequence
 DEFAULT_SIM = 0.28
 DEFAULT_WINDOW_DAYS = 6.0
 
+#: Minimum DISTINCTIVE tokens two headlines must share before similarity is even considered.
+#: The ratio alone cannot tell evidence from coincidence — measured on real merges:
+#:   "Berlin pride event canceled…" vs "Vehicle drives into crowd at Berlin pride event"
+#:        jaccard 0.86, 6 shared tokens  -> the same event
+#:   "Trump wins Ohio" vs "Trump wins Iowa"
+#:        jaccard 0.50, 2 shared tokens  -> DIFFERENT events, and no stop-list can fix it
+#: Shared-token COUNT separates those two; the ratio does not.
+MIN_SHARED_TOKENS = 3
+
+#: A headline with fewer content tokens than this does not cluster at all. Below ~3 words the
+#: Jaccard of a tiny set is dominated by whichever few words survive, so it measures little.
+MIN_TITLE_TOKENS = 3
+
 # Small English stop-list for title-similarity — enough to keep function words from inflating overlap
 # without pulling in a stemming dependency.
 _STOPWORDS = frozenset("""
@@ -25,11 +38,30 @@ it its his her their our your my we you they he she who what when where why how 
 not no nor into over under after before amid amto about says say said new latest live update updates
 """.split())
 
+# Calendar and editorial filler. These are what made recurring columns and daily round-ups collapse
+# into single clusters: "Local news in brief, July 21" and "…July 22" reduced to the SAME four
+# tokens {brief, july, local, news} — jaccard 1.00 on nothing but boilerplate. Measured in
+# production, that merged 65 articles from 42 publishers into one "story".
+_STOPWORDS = _STOPWORDS | frozenset("""
+january february march april may june july august september october november december
+jan feb mar apr jun jul aug sep sept oct nov dec
+monday tuesday wednesday thursday friday saturday sunday
+news brief briefs briefing roundup round wrap recap digest bulletin headlines
+today yesterday tomorrow week weekly daily morning evening tonight edition
+best top since things
+""".split())
+
 
 def title_tokens(title: str) -> frozenset:
-    """Content word tokens of a headline (lowercased, length > 2, stop-words removed)."""
+    """Content word tokens of a headline (lowercased, length > 2, stop-words removed).
+
+    Pure numbers are dropped: in a headline a bare number is nearly always a count, a date or a
+    listicle rank ("6 Best… Since 2010"), not the thing the story is about. It is a real trade —
+    "737" in an aircraft story is lost — but a shared year linking two unrelated listicles is the
+    commoner case by far."""
     toks = re.findall(r"[a-z0-9]+", (title or "").lower())
-    return frozenset(t for t in toks if len(t) > 2 and t not in _STOPWORDS)
+    return frozenset(t for t in toks
+                     if len(t) > 2 and not t.isdigit() and t not in _STOPWORDS)
 
 
 def jaccard(a: frozenset, b: frozenset) -> float:
@@ -78,7 +110,9 @@ class DSU:
 
 def cluster(items: Sequence, *, tokens: Callable[[object], frozenset],
             time: Callable[[object], Optional[datetime]],
-            sim: float = DEFAULT_SIM, window_days: float = DEFAULT_WINDOW_DAYS) -> "list[list[int]]":
+            sim: float = DEFAULT_SIM, window_days: float = DEFAULT_WINDOW_DAYS,
+            min_shared: int = MIN_SHARED_TOKENS,
+            min_tokens: int = MIN_TITLE_TOKENS) -> "list[list[int]]":
     """Group item **indices** into clusters. ``tokens(item) → frozenset`` and
     ``time(item) → datetime | None`` are the accessors. Two items join the same cluster when their
     token Jaccard ≥ ``sim`` **and** their times are within ``window_days``. Returns a list of clusters,
@@ -108,15 +142,18 @@ def cluster(items: Sequence, *, tokens: Callable[[object], frozenset],
     dsu = DSU(n)
     for i in range(n):
         ti = toks[i]
-        if not ti:
-            continue
-        # Every j > i sharing ≥1 token with i — the exact superset of i's possible matches.
-        candidates = set()
+        if len(ti) < max(1, min_tokens):
+            continue                                    # too little to say anything: stays a singleton
+        # Walking the postings counts SHARED TOKENS per candidate as a by-product, so the
+        # min_shared gate costs nothing extra — and it prunes most pairs before any Jaccard.
+        shared: dict = {}
         for tok in ti:
             for j in postings[tok]:
                 if j > i:
-                    candidates.add(j)
-        for j in candidates:
+                    shared[j] = shared.get(j, 0) + 1
+        for j, overlap in shared.items():
+            if overlap < min_shared or len(toks[j]) < max(1, min_tokens):
+                continue
             if jaccard(ti, toks[j]) >= sim and within_window(times[i], times[j], window_days):
                 dsu.union(i, j)
 

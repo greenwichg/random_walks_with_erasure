@@ -72,17 +72,24 @@ def test_deterministic():
 # pair sharing no token can never match. These tests hold the guarantee to the fire by comparing
 # against a naive all-pairs reference on randomised input.
 # --------------------------------------------------------------------------- #
-def _cluster_naive(items, *, tokens, time, sim=cl.DEFAULT_SIM, window_days=cl.DEFAULT_WINDOW_DAYS):
-    """The pre-optimisation all-pairs implementation, kept HERE as the reference oracle."""
+def _cluster_naive(items, *, tokens, time, sim=cl.DEFAULT_SIM, window_days=cl.DEFAULT_WINDOW_DAYS,
+                   min_shared=cl.MIN_SHARED_TOKENS, min_tokens=cl.MIN_TITLE_TOKENS):
+    """The pre-optimisation all-pairs implementation, kept HERE as the reference oracle.
+
+    It mirrors the REAL admission rules (min_tokens, min_shared) on purpose: an oracle that only
+    checked the Jaccard would diverge the moment those gates were added and the equivalence test
+    would be asserting nothing."""
     n = len(items)
     toks = [tokens(it) for it in items]
     times = [time(it) for it in items]
     dsu = cl.DSU(n)
     for i in range(n):
-        if not toks[i]:
+        if len(toks[i]) < max(1, min_tokens):
             continue
         for j in range(i + 1, n):
-            if (toks[j] and cl.jaccard(toks[i], toks[j]) >= sim
+            if len(toks[j]) < max(1, min_tokens) or len(toks[i] & toks[j]) < min_shared:
+                continue
+            if (cl.jaccard(toks[i], toks[j]) >= sim
                     and cl.within_window(times[i], times[j], window_days)):
                 dsu.union(i, j)
     groups = {}
@@ -140,3 +147,59 @@ def test_single_item_and_empty_input():
     kw = dict(tokens=lambda x: x["t"], time=lambda x: x["d"])
     assert cl.cluster([], **kw) == []
     assert _norm(cl.cluster([{"t": frozenset({"a"}), "d": None}], **kw)) == [[0]]
+
+
+# --------------------------------------------------------------------------- #
+# Admission gates — what stops boilerplate from being read as evidence.
+#
+# The ratio alone cannot tell evidence from coincidence. Measured on real merges:
+#   "Berlin pride event canceled…" / "Vehicle drives into crowd at Berlin pride event"
+#        jaccard 0.86, 6 shared -> same event
+#   "Trump wins Ohio" / "Trump wins Iowa"
+#        jaccard 0.50, 2 shared -> different events, and no stop-list can fix it
+# --------------------------------------------------------------------------- #
+def test_calendar_and_editorial_filler_is_not_content():
+    """The production case: "Local news in brief, July 21" and "…July 22" reduced to the SAME four
+    tokens and merged 65 articles from 42 publishers into one story."""
+    a = cl.title_tokens("Local news in brief , July 21")
+    b = cl.title_tokens("Local news in brief , July 22")
+    assert a == b == frozenset({"local"}), "filler must not survive tokenisation"
+    assert len(a) < cl.MIN_TITLE_TOKENS, "and what survives is too thin to cluster on"
+
+
+def test_bare_numbers_are_dropped():
+    """A number in a headline is a count, a date or a listicle rank far more often than the subject."""
+    assert "2010" not in cl.title_tokens("6 Best Blockbuster Movies Released Since 2010")
+    assert "gujarat" in cl.title_tokens("Gujarat bridge collapse kills 30")
+
+
+def test_a_thin_headline_never_clusters():
+    items = _items(("Weekly roundup", 0), ("Weekly roundup", 0))
+    assert _groups(items) == [[0], [1]]
+
+
+def test_two_shared_words_are_not_enough_to_merge_different_events():
+    """Ohio is not Iowa. Jaccard 0.50 clears the ratio outright; only the shared-token floor
+    separates them, which is why the floor exists at all."""
+    a, b = cl.title_tokens("Trump wins Ohio"), cl.title_tokens("Trump wins Iowa")
+    assert len(a & b) == 2 and cl.jaccard(a, b) >= cl.DEFAULT_SIM   # the ratio would have merged
+    assert _groups(_items(("Trump wins Ohio", 0), ("Trump wins Iowa", 0))) == [[0], [1]]
+
+
+def test_genuinely_matching_headlines_still_merge():
+    """The guard against over-correcting: real co-coverage must survive both gates."""
+    for a, b in [("Berlin pride event canceled after vehicle drives into crowd",
+                  "Vehicle drives into crowd at Berlin pride event"),
+                 ("Senate passes the funding bill after debate",
+                  "Senate passes funding bill averting shutdown"),
+                 ("Wildfires ravage parts of southern France and Spain",
+                  "Wildfires ravage southern France, Italy and Spain")]:
+        assert _groups(_items((a, 0), (b, 0))) == [[0, 1]], f"{a!r} no longer merges with {b!r}"
+
+
+def test_gates_are_configurable_and_default_to_the_module_constants():
+    items = _items(("Harbour pilots ratify their new contract", 0),
+                   ("Harbour pilots ratify contract", 0))
+    assert _groups(items) == [[0, 1]]
+    assert _groups(items, min_shared=99) == [[0], [1]]           # nothing can clear an absurd floor
+    assert _groups(items, min_tokens=99) == [[0], [1]]           # nor an absurd token minimum
