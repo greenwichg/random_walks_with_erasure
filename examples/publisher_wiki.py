@@ -375,13 +375,28 @@ def search_titles(name: str, fetch_json: Callable[[str], dict], *, limit: int = 
     return [r["title"] for r in ((data.get("query") or {}).get("search") or []) if r.get("title")]
 
 
-def disambiguation_links(title: str, fetch_json: Callable[[str], dict], *, limit: int = 10) -> list:
-    """The article titles a disambiguation page lists.
+#: Parenthetical qualifiers that mark a disambiguation entry as a publication rather than a film,
+#: album or place — "The Hill (newspaper)" over "The Hill (1965 film)".
+_MEDIA_QUALIFIER = re.compile(
+    r"\((newspaper|magazine|website|news\b|news website|periodical|publisher|publishing|"
+    r"journal|media|broadcaster|TV channel|television channel|radio station|news agency)",
+    re.IGNORECASE)
+
+#: How many of a disambiguation page's links to pull. MediaWiki returns a page's links
+#: ALPHABETICALLY and includes EVERY wikilink on it, not just the disambiguation entries — so a
+#: small limit is not a sample of the candidates, it is the start of the alphabet. Measured: "The
+#: Hill" at limit 10 returned "Allison Hill (Harrisburg)" through "Edmonton Folk Music Festival",
+#: and never reached "The Hill (newspaper)" at all.
+DISAMBIGUATION_LINKS = 200
+
+
+def disambiguation_links(title: str, fetch_json: Callable[[str], dict], *,
+                         limit: int = DISAMBIGUATION_LINKS) -> list:
+    """The article titles a disambiguation page links to.
 
     Enumerating candidates is *literally what a disambiguation page is for*, so treating one as a
-    dead end throws away the best-curated candidate list Wikipedia has. "The Hill" is a
-    disambiguation page; full-text search answers it with "King of the Hill", while the page itself
-    lists "The Hill (newspaper)"."""
+    dead end throws away the best-curated candidate list Wikipedia has. But the raw list is
+    alphabetical and full of incidental links, so :func:`rank_candidates` is what makes it usable."""
     url = _api(WIKIPEDIA_API, {
         "action": "query", "format": "json", "formatversion": "2",
         "prop": "links", "plnamespace": "0", "pllimit": str(int(limit)), "titles": title,
@@ -391,6 +406,31 @@ def disambiguation_links(title: str, fetch_json: Callable[[str], dict], *, limit
     if not pages:
         return []
     return [ln["title"] for ln in (pages[0].get("links") or []) if ln.get("title")]
+
+
+def rank_candidates(publisher: str, titles) -> list:
+    """Order candidate titles by how likely each is to BE this publisher.
+
+    Needed because a disambiguation page's links arrive in alphabetical order, which carries no
+    information about relevance — without ranking, a four-candidate budget on "The Hill" is spent
+    on "Allison Hill (Harrisburg)", "California State Route 17" and two Capitol Hills.
+
+    Two signals, in order: the title IS the publisher's name (possibly with a qualifier), and the
+    qualifier looks like a publication. The name test requires a WORD boundary — plain ``startswith``
+    would let "The Sun" prefer "Sunday Times"."""
+    key = _name_key(publisher)
+
+    def score(title: str):
+        tk = _name_key(title)
+        if key and tk == key:
+            name = 2
+        elif key and tk.startswith(key + " "):
+            name = 1
+        else:
+            name = 0
+        return (-name, 0 if _MEDIA_QUALIFIER.search(title) else 1, title)
+
+    return sorted(titles, key=score)
 
 
 def fetch_entities(ids, fetch_json: Callable[[str], dict], *, props: str = "claims|labels") -> dict:
@@ -419,8 +459,11 @@ def fallback_titles(publisher: str, first_page, fetch_json: Callable[[str], dict
     enumerate what the name can mean, and it is curated, while search is a relevance guess."""
     titles: list = []
     if first_page and not first_page.get("missing") and first_page.get("disambiguation"):
-        titles.extend(disambiguation_links(first_page["title"], fetch_json))
+        # RANKED, not raw: the API returns these alphabetically, so their own order is noise.
+        titles.extend(rank_candidates(publisher,
+                                      disambiguation_links(first_page["title"], fetch_json)))
     if search:
+        # Search results arrive in MediaWiki's relevance order, which IS meaningful — left alone.
         titles.extend(search_titles(publisher, fetch_json, limit=limit))
     seen, out = set(), []
     for t in titles:

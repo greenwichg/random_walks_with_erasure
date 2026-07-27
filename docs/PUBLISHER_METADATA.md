@@ -81,6 +81,22 @@ page, search answers it with `King of the Hill`, that is correctly refused, and
 precisely to enumerate what a name can mean, so treating one as a dead end throws away the
 best-curated candidate list available.
 
+**A disambiguation page's links must be ranked, not taken in order.** MediaWiki's `prop=links`
+returns *every* wikilink on the page, alphabetically — not the disambiguation entries specifically.
+Measured on "The Hill" at `pllimit=10`, the candidates were:
+
+```
+Allison Hill (Harrisburg), California State Route 17, Capitol Hill, Capitol Hill (Seattle),
+Capitol Hill (disambiguation), Chapel Hill NC, Chestnut Hill MA, Chicago Heights IL,
+Cornell University, Edmonton Folk Music Festival
+```
+
+`The Hill (newspaper)` is 13th. Raising the candidate cap would only have bought more of the letter
+A, so two things changed: the link budget went to 200, and `rank_candidates` orders them by whether
+the title *is* the publisher's name (at a word boundary — plain `startswith` would make "The Sun"
+prefer "Sunday Times") and then by whether its qualifier looks like a publication. Search results
+keep MediaWiki's own relevance order, which unlike alphabetical order is meaningful.
+
 Candidates are generated **lazily**, so the common case does not subsidise the hard one: a direct
 hit that verifies costs 3 requests (page, item, labels) and never runs a search. Identity is decided
 from the Wikidata item's own claims, and the extra request that resolves headquarters/parent

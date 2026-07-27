@@ -521,3 +521,71 @@ def test_headquarters_only_item_counts_as_an_organisation():
                            facts={"website": None, "founded": None, "headquarters": None,
                                   "parent": None}, org_claims=True)
     assert ok and reason == "title"
+
+
+# --------------------------------------------------------------------------- #
+# Candidate ranking — from the real "The Hill" link list.
+# --------------------------------------------------------------------------- #
+#: Exactly what prop=links returned for "The Hill" in production, plus the entry that was never
+#: reached. Alphabetical, and full of links that are on the page for unrelated reasons.
+_THE_HILL_LINKS = [
+    "Allison Hill (Harrisburg)", "California State Route 17", "Capitol Hill",
+    "Capitol Hill (Seattle)", "Capitol Hill (disambiguation)", "Chapel Hill, North Carolina",
+    "Chestnut Hill, Massachusetts", "Chicago Heights, Illinois", "Cornell University",
+    "Edmonton Folk Music Festival", "The Hill (1965 film)", "The Hill (album)",
+    "The Hill (newspaper)",
+]
+
+
+def test_ranking_lifts_the_publication_out_of_an_alphabetical_link_dump():
+    """The measured failure: at pllimit=10 the candidate budget was spent on Allison Hill, a
+    California state route and two Capitol Hills, and "The Hill (newspaper)" was never fetched."""
+    ranked = pw.rank_candidates("The Hill", _THE_HILL_LINKS)
+    assert ranked[0] == "The Hill (newspaper)"
+    # The other "The Hill (…)" entries outrank the unrelated places, but sit below the publication.
+    assert set(ranked[1:3]) == {"The Hill (1965 film)", "The Hill (album)"}
+    assert ranked[3].startswith("Allison Hill")
+
+
+def test_ranking_requires_a_word_boundary_not_a_bare_prefix():
+    """Plain startswith would make "The Sun" prefer "Sunday Times"."""
+    ranked = pw.rank_candidates("The Sun", ["Sunday Times", "The Sun (United Kingdom)"])
+    assert ranked[0] == "The Sun (United Kingdom)"
+
+
+def test_an_exact_title_outranks_a_qualified_one():
+    ranked = pw.rank_candidates("Example Post", ["Example Post (newspaper)", "Example Post"])
+    assert ranked[0] == "Example Post"
+
+
+def test_ranking_is_stable_for_equally_scored_titles():
+    """Deterministic output for the same input — the same discipline the clustering primitive keeps."""
+    titles = ["Zeta Place", "Alpha Place", "Mu Place"]
+    assert pw.rank_candidates("Nothing Alike", titles) == sorted(titles)
+
+
+def test_disambiguation_links_are_ranked_before_the_cap_applies():
+    """End to end: the newspaper must be tried even though it is 13th alphabetically."""
+    def fetch(url):
+        if "prop=links" in url:
+            return {"query": {"pages": [{"title": "The Hill",
+                                         "links": [{"title": t} for t in _THE_HILL_LINKS]}]}}
+        if "list=search" in url:
+            return {"query": {"search": []}}
+        raise AssertionError(f"unexpected: {url}")
+
+    first = {"missing": False, "title": "The Hill", "disambiguation": True}
+    tried = pw.fallback_titles("The Hill", first, fetch, limit=4)
+    assert tried[0] == "The Hill (newspaper)"
+
+
+def test_a_large_link_budget_is_requested():
+    """A small pllimit is not a sample of the candidates — it is the start of the alphabet."""
+    seen = []
+
+    def fetch(url):
+        seen.append(url)
+        return {"query": {"pages": [{"title": "X", "links": []}]}}
+
+    pw.disambiguation_links("X", fetch)
+    assert "pllimit=200" in seen[0]
