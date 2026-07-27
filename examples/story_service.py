@@ -236,11 +236,19 @@ def min_title_tokens() -> int:
     return _env_int("RWE_CLUSTER_MIN_TOKENS", clustering.MIN_TITLE_TOKENS)
 
 
+def use_idf() -> bool:
+    """Rarity-weighted similarity. OFF by default: weighting changes what the ``sim`` threshold
+    MEANS, so flipping it is a re-tuning of the whole clustering, not a tweak. Measure a candidate
+    with ``examples/audit_clustering_change.py --idf`` against the live catalog first."""
+    return os.environ.get("RWE_CLUSTER_IDF", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
                   sim: float = clustering.DEFAULT_SIM,
                   window_days: float = clustering.DEFAULT_WINDOW_DAYS,
                   min_shared: Optional[int] = None,
-                  min_tokens: Optional[int] = None) -> list:
+                  min_tokens: Optional[int] = None,
+                  idf: Optional[bool] = None) -> list:
     """Cluster FeedArticle rows into Story objects (the pure builder). Keeps clusters with
     ≥ ``min_articles`` from ≥ ``min_publishers`` distinct outlets; sorted biggest+freshest first.
     Deterministic: same rows → same stories, ids, and order."""
@@ -249,7 +257,8 @@ def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
         arts, tokens=lambda a: clustering.title_tokens(a["headline"]),
         time=lambda a: clustering.parse_time(a["publishedAt"]), sim=sim, window_days=window_days,
         min_shared=min_shared_tokens() if min_shared is None else min_shared,
-        min_tokens=min_title_tokens() if min_tokens is None else min_tokens)
+        min_tokens=min_title_tokens() if min_tokens is None else min_tokens,
+        idf=use_idf() if idf is None else idf)
     stories = []
     for idxs in groups:
         members = [arts[i] for i in idxs]

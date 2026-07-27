@@ -181,6 +181,44 @@ largest cluster, and which clusters split — so thresholds are chosen from data
 with genuinely identical titles ("This Day in Country History") are NOT solved by tokenisation and
 remain open: the words really are the same every day.
 
+### Measured on the live catalog (13,024 articles)
+
+`audit_clustering_change.py` chose the threshold, not intuition:
+
+| | stories | largest cluster | clusters changed |
+|---|---:|---:|---:|
+| no gates (previous) | 779 | 203 | — |
+| **shared≥3 (shipped)** | **762** | **189** | 47 |
+| shared≥4 (rejected) | 753 | 99 | 129 |
+
+`shared≥3` dissolved exactly the right things — "Albany Herald Archives – Page 143 of 169",
+"Daily Horoscope - Saturday, July 25", "AP News in Brief at 6:04 p.m. EDT" — and touched **no**
+legitimate story.
+
+`shared≥4` broke the 203-article cluster into 12 pieces, but shed members from
+*"Wildfires ravage southern France, Italy and Spain"* (74 articles / 56 publishers) and
+*"Berlin pride event canceled"* (65 / 48). Losing coverage from the two best multi-outlet stories in
+the catalog to fix an unrelated cluster is a bad trade, so 4 was rejected on the evidence.
+
+### The 203-article cluster is single-linkage CHAINING, not a weak threshold
+
+That it fragments into **12** pieces at `shared≥4` is the tell: union-find merges A~B and B~C even
+when A and C share nothing, so a chain of individually-plausible links — each resting on words like
+"trump" or "says" that are everywhere — glued ~12 unrelated stories together. No global threshold
+fixes that cleanly, which is precisely what the two runs above show.
+
+`clustering.idf_weights` / `weighted_jaccard` weight shared tokens by corpus rarity, so a common
+word is weaker evidence than a rare one. **OFF by default** (`RWE_CLUSTER_IDF`): weighting changes
+what the `sim` threshold *means*, so enabling it re-tunes the whole clustering rather than adjusting
+it. Measure first:
+
+```bash
+python examples/audit_clustering_change.py --idf --show 20
+```
+
+On a small corpus the weight spread is narrow (6 items → 1.5×), so the local demonstration proves
+the mechanism, **not** that it breaks the production chain. That is what the audit is for.
+
 ## Still open
 
 - **Cluster geography coherence** (`examples/audit_story_geography.py`, added 2026-07-27) is now

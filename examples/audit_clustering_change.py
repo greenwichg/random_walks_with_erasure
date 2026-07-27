@@ -22,8 +22,8 @@ import story_service
 import store as store_mod
 
 
-def build(rows: list, *, min_shared: int, min_tokens: int) -> list:
-    return story_service.build_stories(rows, min_shared=min_shared, min_tokens=min_tokens)
+def build(rows: list, *, min_shared: int, min_tokens: int, idf: bool = False) -> list:
+    return story_service.build_stories(rows, min_shared=min_shared, min_tokens=min_tokens, idf=idf)
 
 
 def index_by_member(stories: list) -> dict:
@@ -35,10 +35,11 @@ def index_by_member(stories: list) -> dict:
     return out
 
 
-def compare(store_, *, before: tuple, after: tuple, show: int = 10) -> dict:
+def compare(store_, *, before: tuple, after: tuple, show: int = 10,
+            before_idf: bool = False, after_idf: bool = False) -> dict:
     rows = story_service._fetch(store_)
-    a = build(rows, min_shared=before[0], min_tokens=before[1])
-    b = build(rows, min_shared=after[0], min_tokens=after[1])
+    a = build(rows, min_shared=before[0], min_tokens=before[1], idf=before_idf)
+    b = build(rows, min_shared=after[0], min_tokens=after[1], idf=after_idf)
 
     a_by_id = {s["id"]: s for s in a}
     a_member = index_by_member(a)
@@ -76,18 +77,20 @@ def main(argv=None) -> int:
     ap.add_argument("--min-shared", type=int, default=None, help="candidate (default: configured)")
     ap.add_argument("--min-tokens", type=int, default=None, help="candidate (default: configured)")
     ap.add_argument("--show", type=int, default=10)
+    ap.add_argument("--idf", action="store_true",
+                    help="score the AFTER side with rarity-weighted similarity")
     args = ap.parse_args(argv)
 
     after = (args.min_shared if args.min_shared is not None else story_service.min_shared_tokens(),
              args.min_tokens if args.min_tokens is not None else story_service.min_title_tokens())
     res = compare(store_mod.Store(args.db),
                   before=(args.before_min_shared, args.before_min_tokens),
-                  after=after, show=args.show)
+                  after=after, show=args.show, after_idf=args.idf)
 
     print(f"articles in window : {res['articles']:,}")
     print(f"before  (shared>={args.before_min_shared}, tokens>={args.before_min_tokens}): "
           f"{res['beforeStories']:,} stories, largest {res['beforeLargest']}")
-    print(f"after   (shared>={after[0]}, tokens>={after[1]}): "
+    print(f"after   (shared>={after[0]}, tokens>={after[1]}{', idf' if args.idf else ''}): "
           f"{res['afterStories']:,} stories, largest {res['afterLargest']}")
     print(f"clusters changed   : {res['splitCount']:,}")
     if res["split"]:

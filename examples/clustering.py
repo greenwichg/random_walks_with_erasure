@@ -10,6 +10,7 @@ Extracted from the original Discover implementation so both Discover and Stories
 
 from __future__ import annotations
 
+import math
 import re
 from datetime import datetime, timezone
 from typing import Callable, Optional, Sequence
@@ -72,6 +73,42 @@ def jaccard(a: frozenset, b: frozenset) -> float:
     return inter / len(a | b) if inter else 0.0
 
 
+def idf_weights(token_sets: "Sequence[frozenset]") -> dict:
+    """token -> ``log(1 + N/df)`` over the input set. Rare tokens weigh more than common ones.
+
+    Why this exists: plain Jaccard treats every shared word as equal evidence, so "trump" — in
+    hundreds of headlines — counts the same as "buckenham", in two. That is what let SINGLE-LINKAGE
+    chaining build a 203-article cluster out of ~12 unrelated stories: each link was individually
+    plausible because it rested on words that are everywhere.
+
+    Smoothed so weights stay strictly positive: a token present in EVERY item still scores
+    ``log 2``, not zero, so a small corpus (a test with two items sharing every word) degrades to
+    ordinary Jaccard rather than to no similarity at all.
+
+    Deterministic: computed from the input set the caller already passed, so the same input yields
+    the same weights and the same clusters. No corpus state, no cross-run coupling."""
+    n = len(token_sets)
+    df: dict = {}
+    for toks in token_sets:
+        for t in toks:
+            df[t] = df.get(t, 0) + 1
+    return {t: math.log(1.0 + n / c) for t, c in df.items()}
+
+
+def weighted_jaccard(a: frozenset, b: frozenset, weights: Optional[dict]) -> float:
+    """Jaccard over token WEIGHTS rather than counts. ``weights=None`` falls back to plain Jaccard,
+    so one call site serves both modes."""
+    if weights is None:
+        return jaccard(a, b)
+    if not a or not b:
+        return 0.0
+    inter = a & b
+    if not inter:
+        return 0.0
+    den = sum(weights.get(t, 1.0) for t in (a | b))
+    return (sum(weights.get(t, 1.0) for t in inter) / den) if den else 0.0
+
+
 def parse_time(iso: str) -> Optional[datetime]:
     s = (iso or "").strip()
     if not s:
@@ -112,7 +149,8 @@ def cluster(items: Sequence, *, tokens: Callable[[object], frozenset],
             time: Callable[[object], Optional[datetime]],
             sim: float = DEFAULT_SIM, window_days: float = DEFAULT_WINDOW_DAYS,
             min_shared: int = MIN_SHARED_TOKENS,
-            min_tokens: int = MIN_TITLE_TOKENS) -> "list[list[int]]":
+            min_tokens: int = MIN_TITLE_TOKENS,
+            idf: bool = False) -> "list[list[int]]":
     """Group item **indices** into clusters. ``tokens(item) → frozenset`` and
     ``time(item) → datetime | None`` are the accessors. Two items join the same cluster when their
     token Jaccard ≥ ``sim`` **and** their times are within ``window_days``. Returns a list of clusters,
@@ -138,6 +176,9 @@ def cluster(items: Sequence, *, tokens: Callable[[object], frozenset],
     for i, t in enumerate(toks):
         for tok in t:
             postings.setdefault(tok, []).append(i)
+    # Rarity weighting (opt-in): shared common words stop counting as much evidence as shared rare
+    # ones. Computed from THIS input set, so determinism is unaffected.
+    weights = idf_weights(toks) if idf else None
 
     dsu = DSU(n)
     for i in range(n):
@@ -154,7 +195,8 @@ def cluster(items: Sequence, *, tokens: Callable[[object], frozenset],
         for j, overlap in shared.items():
             if overlap < min_shared or len(toks[j]) < max(1, min_tokens):
                 continue
-            if jaccard(ti, toks[j]) >= sim and within_window(times[i], times[j], window_days):
+            if (weighted_jaccard(ti, toks[j], weights) >= sim
+                    and within_window(times[i], times[j], window_days)):
                 dsu.union(i, j)
 
     groups: dict = {}

@@ -203,3 +203,100 @@ def test_gates_are_configurable_and_default_to_the_module_constants():
     assert _groups(items) == [[0, 1]]
     assert _groups(items, min_shared=99) == [[0], [1]]           # nothing can clear an absurd floor
     assert _groups(items, min_tokens=99) == [[0], [1]]           # nor an absurd token minimum
+
+
+# --------------------------------------------------------------------------- #
+# Rarity weighting (idf) — shared COMMON words are weaker evidence than shared rare ones.
+#
+# The motivating failure is single-linkage CHAINING: union-find merges A~B and B~C even when A and
+# C have nothing in common, so links resting on ubiquitous words ("trump", "says") glue unrelated
+# stories together. Downweighting those tokens weakens the chain without touching rare-token
+# matches. OFF by default — it changes what the sim threshold MEANS.
+# --------------------------------------------------------------------------- #
+def test_rare_tokens_outweigh_common_ones():
+    corpus = [cl.title_tokens(t) for t in
+              ["Trump defends tariffs on Canada", "Trump nominates FIFA boss for UN post",
+               "Trump promises help for Lebanon", "Trump defends tariffs on Mexico",
+               "Berlin pride event canceled after vehicle drives into crowd"]]
+    w = cl.idf_weights(corpus)
+    assert w["berlin"] > w["trump"], "a token in one headline must outweigh one in four"
+    assert all(v > 0 for v in w.values()), "smoothing must keep every weight positive"
+
+
+def test_weighting_degrades_to_plain_jaccard_when_every_token_is_equally_common():
+    """A two-item corpus sharing every word has no rarity signal — the weighted score must equal the
+    plain one rather than collapsing to zero, or small corpora (and tests) would stop clustering."""
+    a = cl.title_tokens("Senate passes the funding bill")
+    b = cl.title_tokens("Senate passes the funding bill")
+    w = cl.idf_weights([a, b])
+    assert abs(cl.weighted_jaccard(a, b, w) - cl.jaccard(a, b)) < 1e-9
+
+
+def test_weighted_jaccard_falls_back_when_no_weights_given():
+    a, b = cl.title_tokens("Ferry runs aground"), cl.title_tokens("Ferry runs aground near port")
+    assert cl.weighted_jaccard(a, b, None) == cl.jaccard(a, b)
+
+
+def test_weighting_lowers_a_hub_token_match_more_than_a_rare_token_match():
+    """The discrimination the feature exists for, stated as a relative claim rather than an absolute
+    threshold: weighting must cost a common-word match MORE than a rare-word match."""
+    titles = ["Trump defends tariffs on Canada saying they need us",
+              "Trump defends tariffs on Mexico saying they need trade",
+              "Berlin pride event canceled after vehicle drives into crowd",
+              "Vehicle drives into crowd at Berlin pride event",
+              "Trump nominates FIFA boss for UN post",
+              "Trump promises help for Lebanon at White House"]
+    corpus = [cl.title_tokens(t) for t in titles]
+    w = cl.idf_weights(corpus)
+    hub_drop = cl.jaccard(corpus[0], corpus[1]) - cl.weighted_jaccard(corpus[0], corpus[1], w)
+    rare_drop = cl.jaccard(corpus[2], corpus[3]) - cl.weighted_jaccard(corpus[2], corpus[3], w)
+    assert hub_drop > rare_drop, "weighting must penalise the common-word match more"
+
+
+def test_idf_clustering_is_deterministic_and_still_matches_the_oracle():
+    """Weights come from the input set, so the same input must give the same clusters — and the
+    blocked implementation must still agree with all-pairs under weighting."""
+    import random
+    from datetime import datetime, timedelta, timezone
+
+    rnd = random.Random(4242)
+    vocab = [f"tok{i}" for i in range(40)]
+    hub = "everywhere"
+    now = datetime(2026, 7, 27, tzinfo=timezone.utc)
+    items = []
+    for _ in range(40):
+        toks = frozenset(rnd.sample(vocab, rnd.randint(3, 6)) + [hub])
+        items.append({"t": toks, "d": now - timedelta(hours=rnd.random() * 100)})
+    kw = dict(tokens=lambda x: x["t"], time=lambda x: x["d"], idf=True)
+    first = _norm(cl.cluster(items, **kw))
+    assert first == _norm(cl.cluster(items, **kw))                    # deterministic
+    naive_kw = dict(tokens=lambda x: x["t"], time=lambda x: x["d"])
+    weights = cl.idf_weights([i["t"] for i in items])
+
+    def naive_idf():
+        n = len(items)
+        toks = [i["t"] for i in items]
+        times = [i["d"] for i in items]
+        dsu = cl.DSU(n)
+        for i in range(n):
+            if len(toks[i]) < cl.MIN_TITLE_TOKENS:
+                continue
+            for j in range(i + 1, n):
+                if len(toks[j]) < cl.MIN_TITLE_TOKENS or len(toks[i] & toks[j]) < cl.MIN_SHARED_TOKENS:
+                    continue
+                if (cl.weighted_jaccard(toks[i], toks[j], weights) >= cl.DEFAULT_SIM
+                        and cl.within_window(times[i], times[j], cl.DEFAULT_WINDOW_DAYS)):
+                    dsu.union(i, j)
+        groups = {}
+        for i in range(n):
+            groups.setdefault(dsu.find(i), []).append(i)
+        return _norm(list(groups.values()))
+
+    assert first == naive_idf(), "blocked and all-pairs must agree under weighting too"
+    assert naive_kw  # (kept for symmetry with the unweighted oracle above)
+
+
+def test_idf_is_off_by_default():
+    """Flipping it re-tunes the whole clustering, so it must be a deliberate act."""
+    import story_service
+    assert story_service.use_idf() is False
