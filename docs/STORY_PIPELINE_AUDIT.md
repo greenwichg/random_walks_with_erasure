@@ -216,8 +216,30 @@ it. Measure first:
 python examples/audit_clustering_change.py --idf --show 20
 ```
 
-On a small corpus the weight spread is narrow (6 items → 1.5×), so the local demonstration proves
-the mechanism, **not** that it breaks the production chain. That is what the audit is for.
+**Measured, then enabled** (`RWE_CLUSTER_IDF`, default on; `=0` disables without a deploy). With the
+admission gates held fixed on both sides so weighting was the only variable, against 13,184 live
+articles:
+
+| | stories | largest |
+|---|---:|---:|
+| plain jaccard | 764 | 193 |
+| **idf-weighted** | **775** | **94** |
+
+MORE stories and half the largest cluster — separating conflated events rather than destroying them.
+(`min_shared=4` reached largest 99 only by cutting the story count to 753.) The 206-article cluster
+fragmented into 14; "US troops killed / Iran war" into 10.
+
+Inspecting the two biggest legitimate stories showed **peel-offs, not bisections**:
+
+```
+Berlin pride  66 arts / 48 pubs  ->  55/41 (main)  +  5/5 "Germany says fatal Berlin Pride attack…"
+Wildfires     75 arts / 56 pubs  ->  62/50 (main)  +  4/4 "Wildfires in France drive 250,000 from homes"
+```
+
+Both keep ~83% of articles and nearly all publishers, shedding a genuine follow-up development.
+`audit_clustering_change.py` now also reports **coverage retention** (articles in a story before vs
+after, and how many dropped out entirely) — a change that improves the counts by quietly losing
+articles is not an improvement, and that number was the one the decision originally lacked.
 
 ## Still open
 

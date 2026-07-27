@@ -296,7 +296,13 @@ def test_idf_clustering_is_deterministic_and_still_matches_the_oracle():
     assert naive_kw  # (kept for symmetry with the unweighted oracle above)
 
 
-def test_idf_is_off_by_default():
-    """Flipping it re-tunes the whole clustering, so it must be a deliberate act."""
+def test_idf_is_on_by_default_and_can_be_switched_off(monkeypatch):
+    """Enabled after measuring it against the live catalog (764->775 stories, largest 193->94 with
+    the gates held fixed). The off switch stays reachable without a deploy."""
     import story_service
+    monkeypatch.delenv("RWE_CLUSTER_IDF", raising=False)
+    assert story_service.use_idf() is True
+    monkeypatch.setenv("RWE_CLUSTER_IDF", "0")
     assert story_service.use_idf() is False
+    monkeypatch.setenv("RWE_CLUSTER_IDF", "1")
+    assert story_service.use_idf() is True

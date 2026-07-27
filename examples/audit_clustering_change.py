@@ -59,6 +59,13 @@ def compare(store_, *, before: tuple, after: tuple, show: int = 10,
         "beforeLargest": max((s["totalCoverage"] for s in a), default=0),
         "afterLargest": max((s["totalCoverage"] for s in b), default=0),
         "splitCount": len(split),
+        # Coverage retention: a change that "improves" the numbers by quietly dropping articles out
+        # of stories is not an improvement. droppedOut counts articles that were in a story and now
+        # are in none.
+        "beforeCovered": len(a_member),
+        "afterCovered": len(b_member),
+        "droppedOut": len([u for u in a_member if u not in b_member]),
+        "newlyCovered": len([u for u in b_member if u not in a_member]),
         "split": [{
             "articles": a_by_id[sid]["totalCoverage"],
             "publishers": a_by_id[sid]["publisherCount"],
@@ -93,6 +100,8 @@ def main(argv=None) -> int:
     print(f"after   (shared>={after[0]}, tokens>={after[1]}{', idf' if args.idf else ''}): "
           f"{res['afterStories']:,} stories, largest {res['afterLargest']}")
     print(f"clusters changed   : {res['splitCount']:,}")
+    print(f"articles in a story: {res['beforeCovered']:,} -> {res['afterCovered']:,} "
+          f"(dropped out {res['droppedOut']:,}, newly covered {res['newlyCovered']:,})")
     if res["split"]:
         print(f"\n{'arts':>5} {'pubs':>5} {'->':>4}  title")
         for s in res["split"]:

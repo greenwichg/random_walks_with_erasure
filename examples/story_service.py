@@ -237,10 +237,23 @@ def min_title_tokens() -> int:
 
 
 def use_idf() -> bool:
-    """Rarity-weighted similarity. OFF by default: weighting changes what the ``sim`` threshold
-    MEANS, so flipping it is a re-tuning of the whole clustering, not a tweak. Measure a candidate
-    with ``examples/audit_clustering_change.py --idf`` against the live catalog first."""
-    return os.environ.get("RWE_CLUSTER_IDF", "").strip().lower() in {"1", "true", "yes", "on"}
+    """Rarity-weighted similarity — ON, after measurement. Set ``RWE_CLUSTER_IDF=0`` to disable
+    without a deploy.
+
+    It shipped off while unproven, because weighting changes what the ``sim`` threshold MEANS.
+    Measured against 13,184 live articles with the admission gates held fixed on both sides, so
+    weighting was the only variable:
+
+        plain jaccard : 764 stories, largest 193
+        idf-weighted  : 775 stories, largest  94
+
+    MORE stories and half the largest cluster — the signature of separating conflated events rather
+    than destroying them. (``min_shared=4``, the other candidate, reached largest 99 only by cutting
+    the story count to 753.) Inspecting the two biggest legitimate stories showed peel-offs, not
+    bisections: "Berlin pride" kept 55 of 66 articles and 41 of 48 publishers, shedding a 5-article
+    follow-up about the attack's attribution; the French wildfires kept 62 of 75 and 50 of 56."""
+    v = os.environ.get("RWE_CLUSTER_IDF", "").strip().lower()
+    return True if not v else v in {"1", "true", "yes", "on"}
 
 
 def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
