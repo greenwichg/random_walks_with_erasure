@@ -20,6 +20,9 @@ an API change.
 from __future__ import annotations
 
 import hashlib
+import os
+import threading
+import weakref
 import time as _time
 from typing import Optional
 
@@ -194,17 +197,145 @@ def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
 # --------------------------------------------------------------------------- #
 # Store-backed orchestration — the surface Discover + Stories consume.
 # --------------------------------------------------------------------------- #
-def _fetch(store_, *, topic=None, date_from=None, date_to=None, max_scan=2000) -> list:
-    """A bounded, pre-filtered article set to cluster (topic/date narrow it in SQL first).
-    Each row is annotated with its EVENT countries (one batched side-table lookup) so story
-    construction can locate members by best-known location."""
+def _env_float(name: str, default: float) -> float:
+    """A positive float from the environment, else the default. Junk never widens or narrows the
+    window silently — it falls back."""
+    try:
+        v = float(os.environ.get(name, "").strip())
+        return v if v > 0 else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        v = int(os.environ.get(name, "").strip())
+        return v if v > 0 else default
+    except (TypeError, ValueError):
+        return default
+
+
+def scan_days() -> float:
+    """How many days back the clustering candidate set reaches. Defaults to the clustering window
+    itself — a threshold that pairs articles up to ``window_days`` apart is meaningless if the
+    candidate set spans less than that."""
+    return _env_float("RWE_STORIES_SCAN_DAYS", clustering.DEFAULT_WINDOW_DAYS)
+
+
+def max_scan_default() -> int:
+    """Backstop on candidate-set SIZE. This is a memory guard, NOT the relevance rule — the window
+    above decides what is in scope. It sits far above a normal window so it only ever engages if
+    ingestion volume spikes far beyond projections."""
+    return _env_int("RWE_STORIES_MAX_SCAN", 60000)
+
+
+def _window_start(now=None) -> str:
+    from datetime import datetime, timedelta, timezone
+    now = now or datetime.now(timezone.utc)
+    return (now - timedelta(days=scan_days())).isoformat()
+
+
+def _fetch(store_, *, topic=None, date_from=None, date_to=None, max_scan=None) -> list:
+    """The clustering candidate set: a TIME-bounded, pre-filtered article slice (topic/date narrow
+    it in SQL first). Each row is annotated with its EVENT countries (one batched side-table
+    lookup) so story construction can locate members by best-known location.
+
+    The bound is a **time window**, not a row count. It used to be ``max_scan=2000`` rows ordered
+    newest-first, which made story yield a function of ingestion RATE: every provider added shrank
+    the hours those 2000 rows covered, so integrating more sources produced FEWER stories (measured:
+    a 12.5-hour effective window against a 6-day clustering threshold, 89 stories from a
+    12,790-article catalog). A caller-supplied ``date_from`` still wins — an explicit request for a
+    date range is never silently narrowed."""
+    if date_from is None:
+        date_from = _window_start()
+    cap = max_scan or max_scan_default()
     rows, _total = store_.search_feed_articles(
         topic=topic, date_from=date_from, date_to=date_to, sort="newest",
-        pagination=OffsetPagination.from_params(max_scan, 0, max_limit=max_scan))
+        pagination=OffsetPagination.from_params(cap, 0, max_limit=cap))
     events = store_.event_countries_for_urls([r.get("canonicalUrl") for r in rows])
     for r in rows:
         r["eventCountries"] = events.get(r.get("canonicalUrl"), [])
     return rows
+
+
+# --------------------------------------------------------------------------- #
+# Clustered-result cache.
+#
+# Clustering is the expensive step and its input only changes when the poller ingests (every
+# RWE_POLL_INTERVAL, default 600 s), so recomputing it per request is pure waste. Filters, sort and
+# pagination stay OUTSIDE the cache — they are cheap list operations over the cached clusters, so
+# every filter combination is served from one cached build.
+# --------------------------------------------------------------------------- #
+# Keyed by the STORE OBJECT itself, weakly. Identity cannot collide (an ``id()`` in the key would:
+# CPython reuses addresses after collection, so a dead store's clusters could be served to a new one
+# allocated at the same address), and a store's cache is collected with the store.
+_CACHE: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
+_CACHE_LOCK = threading.Lock()
+_CACHE_MAX = 16
+
+
+def cache_ttl() -> float:
+    """Seconds a clustered build stays servable. 0 disables the cache entirely."""
+    try:
+        v = float(os.environ.get("RWE_STORIES_CACHE_TTL", "").strip())
+        return v if v >= 0 else 120.0
+    except (TypeError, ValueError):
+        return 120.0
+
+
+def clear_cache() -> None:
+    """Drop every cached build (tests, and any caller that has just mutated the catalog)."""
+    with _CACHE_LOCK:
+        _CACHE.clear()
+
+
+def _cached_build(store_, *, topic, date_from, date_to, max_scan, min_articles, min_publishers) -> list:
+    """``build_stories(_fetch(...))`` behind a cache with TWO independent invalidation conditions,
+    because either alone is wrong:
+
+    * **A catalog fingerprint** ``(row count, newest fetched_at)`` is part of the KEY, so any
+      catalog write immediately invalidates. A pure TTL cache would keep serving pre-ingest
+      clusters — a reader could open a story link the list had just rendered and get a stale member
+      set. A bare row COUNT is not enough either: a retention prune plus an ingest in the same
+      interval leaves the count identical while the content differs entirely. Between polls
+      (``RWE_POLL_INTERVAL``, default 600 s) the fingerprint is stable, so this is a long-lived
+      cache in practice, not a permanently-cold one.
+    * **TTL** bounds staleness on the other axis. ``date_from`` defaults to a rolling ``now −
+      scan_days``, so a quiet catalog would otherwise pin an ever-older window.
+
+    The store's identity is in the key too: two stores must never share a build. One process serves
+    one database in production, but tests and any future multi-tenant caller would silently read
+    each other's clusters without it."""
+    def _build():
+        return build_stories(_fetch(store_, topic=topic, date_from=date_from, date_to=date_to,
+                                    max_scan=max_scan),
+                             min_articles=min_articles, min_publishers=min_publishers)
+
+    ttl = cache_ttl()
+    if ttl <= 0:
+        return _build()
+    try:
+        fingerprint = store_.catalog_fingerprint()
+    except Exception:                       # a store without the fingerprint is simply uncached
+        return _build()
+
+    key = (topic, date_from, date_to, max_scan, min_articles, min_publishers, fingerprint)
+    now = _time.time()
+    with _CACHE_LOCK:
+        entries = _CACHE.get(store_)
+        hit = entries.get(key) if entries else None
+        if hit is not None and (now - hit[0]) < ttl:
+            return hit[1]
+
+    built = _build()
+    with _CACHE_LOCK:
+        entries = _CACHE.setdefault(store_, {})
+        # Bounded per store: evict oldest first rather than grow without limit across topics/dates.
+        if len(entries) >= _CACHE_MAX:
+            for stale in sorted(entries, key=lambda k: entries[k][0])[: len(entries) - _CACHE_MAX + 1]:
+                entries.pop(stale, None)
+        entries[key] = (_time.time(), built)
+    return built
 
 
 def _sort_stories(stories: list, sort: str) -> list:
@@ -220,8 +351,9 @@ def _sort_stories(stories: list, sort: str) -> list:
 
 def cluster_from_store(store_, *, min_articles: int = 2, min_publishers: int = 2,
                        sim: float = clustering.DEFAULT_SIM,
-                       window_days: float = clustering.DEFAULT_WINDOW_DAYS, max_scan: int = 2000) -> list:
-    """The bare Story list for the whole catalog (what ``discover.cluster_stories`` delegates to)."""
+                       window_days: float = clustering.DEFAULT_WINDOW_DAYS, max_scan: int = None) -> list:
+    """The bare Story list for the current window (what ``discover.cluster_stories`` delegates to).
+    Uncached on purpose: it takes ``sim``/``window_days`` overrides the cache key does not carry."""
     return build_stories(_fetch(store_, max_scan=max_scan), min_articles=min_articles,
                          min_publishers=min_publishers, sim=sim, window_days=window_days)
 
@@ -229,7 +361,7 @@ def cluster_from_store(store_, *, min_articles: int = 2, min_publishers: int = 2
 def list_stories(store_, *, topic=None, publisher=None, lean=None, country=None, blindspot=None,
                  date_from=None, date_to=None,
                  sort: str = "top", limit: int = 30, offset: int = 0, min_articles: int = 2,
-                 min_publishers: int = 2, max_scan: int = 2000, debug: bool = False) -> dict:
+                 min_publishers: int = 2, max_scan: int = None, debug: bool = False) -> dict:
     """The paginated, filtered Story envelope Discover + Stories consume:
     ``{stories, total, page, pageSize, hasMore, remainingPages, sort, countryFacets,
     blindspotFacets}`` (+ ``clusterMs`` + ``diagnostics`` when ``debug``). topic/date are
@@ -246,8 +378,8 @@ def list_stories(store_, *, topic=None, publisher=None, lean=None, country=None,
     sort = sort if sort in SORTS else "top"
     pg = OffsetPagination.from_params(limit, offset)
     t0 = _time.perf_counter()
-    stories = build_stories(_fetch(store_, topic=topic, date_from=date_from, date_to=date_to,
-                                   max_scan=max_scan), min_articles=min_articles,
+    stories = _cached_build(store_, topic=topic, date_from=date_from, date_to=date_to,
+                            max_scan=max_scan, min_articles=min_articles,
                             min_publishers=min_publishers)
     cluster_ms = round((_time.perf_counter() - t0) * 1000.0, 2)
 
@@ -287,12 +419,16 @@ def list_stories(store_, *, topic=None, publisher=None, lean=None, country=None,
 
 
 def get_story(store_, story_id: str, *, min_articles: int = 2, min_publishers: int = 2,
-              max_scan: int = 2000, **kwargs) -> Optional[dict]:
+              max_scan: int = None, **kwargs) -> Optional[dict]:
     """One Story by id — re-derive the deterministic clusters and return the match (its stable,
     anchored id means the lookup survives new coverage of the same event). ``None`` if it no longer
-    exists (the catalog changed enough that the event dissolved)."""
-    for s in cluster_from_store(store_, min_articles=min_articles, min_publishers=min_publishers,
-                                max_scan=max_scan):
+    exists (the catalog changed enough that the event dissolved).
+
+    Shares the list's cached build, which matters twice: a detail page costs no extra clustering,
+    and the two surfaces cannot disagree about which stories exist — a narrower scan here than in
+    ``list_stories`` would 404 links the list had just rendered."""
+    for s in _cached_build(store_, topic=None, date_from=None, date_to=None, max_scan=max_scan,
+                           min_articles=min_articles, min_publishers=min_publishers):
         if s["id"] == story_id:
             return s
     return None
@@ -312,7 +448,7 @@ def _diagnostics(stories: list, cluster_ms: float) -> dict:
     }
 
 
-def diagnostics(store_, *, max_scan: int = 2000) -> dict:
+def diagnostics(store_, *, max_scan: int = None) -> dict:
     """Story-layer diagnostics for operators: counts, average + largest cluster, build time, and the
     cluster-size distribution."""
     t0 = _time.perf_counter()

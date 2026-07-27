@@ -145,6 +145,14 @@ services:
       RWE_GOOGLENEWS_LANGUAGE: ${RWE_GOOGLENEWS_LANGUAGE:-en-US}
       RWE_GOOGLENEWS_COUNTRY: ${RWE_GOOGLENEWS_COUNTRY:-US}
       RWE_GOOGLENEWS_MAX_ARTICLES: ${RWE_GOOGLENEWS_MAX_ARTICLES:-}
+      # Story clustering candidate set. The bound is a TIME WINDOW, not a row count: a row cap made
+      # story yield track ingestion RATE, so every provider added shrank the hours in scope and
+      # produced FEWER stories. Keep SCAN_DAYS >= the clustering window (clustering.py, 6 days) or
+      # the threshold is fed a window narrower than it pairs over. MAX_SCAN is a memory backstop,
+      # not the relevance rule. CACHE_TTL bounds staleness; catalog writes invalidate immediately.
+      RWE_STORIES_SCAN_DAYS: ${RWE_STORIES_SCAN_DAYS:-6}
+      RWE_STORIES_MAX_SCAN: ${RWE_STORIES_MAX_SCAN:-60000}
+      RWE_STORIES_CACHE_TTL: ${RWE_STORIES_CACHE_TTL:-120}
       # Storage lifecycle (examples/retention_policy.py — the ONE typed policy module). 0 = keep
       # forever, uniformly; junk/negative values fall back to the default rather than deleting more.
       # User data (reads, saves, settings, accounts) has NO policy and is never pruned.

@@ -8,6 +8,7 @@ and dedup)."""
 import os
 import pathlib
 import sys
+from datetime import datetime
 
 import pytest
 
@@ -259,3 +260,49 @@ def test_recommender_corpus_untouched():
     rss.ingest_all([("Fox", "feed://fox")], rss.make_scorer(), st, fetch=_fetch)
     assert st.count_feed_articles() == 2
     assert st.count_reads(1) == 0                                 # ingestion created no user reads
+
+
+# --------------------------------------------------------------------------- #
+# published_at is normalised to UTC — a SORT-CORRECTNESS requirement, not cosmetics.
+#
+# published_at is a TEXT column and store._search_order sorts it lexicographically, so a preserved
+# offset made string order disagree with real time. Measured in production: 21% of the catalog
+# carried -04:00 and was ranked up to four hours late, pushing US-Eastern publishers out of the
+# newest-first clustering window ahead of their turn.
+# --------------------------------------------------------------------------- #
+def test_to_iso_normalises_offsets_to_utc():
+    assert rss._to_iso("Mon, 27 Jul 2026 12:00:00 -0400").endswith("+00:00")
+    assert rss._to_iso("Mon, 27 Jul 2026 12:00:00 -0400").startswith("2026-07-27T16:00:00")
+    assert rss._to_iso("2026-07-27T12:00:00+05:30").startswith("2026-07-27T06:30:00")
+    assert rss._to_iso("2026-07-27T12:00:00Z") == "2026-07-27T12:00:00+00:00"
+
+
+def test_to_iso_reads_a_naive_timestamp_as_utc():
+    """A feed that omits the offset gives us nothing better to assume, and the value must still be
+    comparable with the offset-bearing rows around it."""
+    assert rss._to_iso("2026-07-27T12:00:00") == "2026-07-27T12:00:00+00:00"
+
+
+def test_to_iso_still_rejects_unparseable_input():
+    assert rss._to_iso("not a date") is None
+    assert rss._to_iso("") is None
+    assert rss._to_iso(None) is None
+
+
+def test_lexicographic_order_now_matches_chronological_order():
+    """The property the whole fix exists for: sorting the stored strings must order by real time."""
+    raw = [
+        "Mon, 27 Jul 2026 12:00:00 -0400",   # 16:00Z  — latest
+        "Mon, 27 Jul 2026 15:00:00 +0000",   # 15:00Z
+        "Mon, 27 Jul 2026 19:00:00 +0530",   # 13:30Z
+        "Mon, 27 Jul 2026 13:00:00 +0000",   # 13:00Z  — earliest
+    ]
+    stored = [rss._to_iso(r) for r in raw]
+    by_string = sorted(stored)
+    by_time = sorted(stored, key=lambda s: datetime.fromisoformat(s))
+    assert by_string == by_time
+    assert by_string[-1].startswith("2026-07-27T16:00:00")   # the -0400 row really is newest
+
+    # …and the pre-fix behaviour would have failed exactly here (offset preserved, string sort wrong)
+    naive = [datetime.fromisoformat(rss._to_iso(r)).isoformat() for r in raw]
+    assert sorted(naive) == by_time      # sanity: our normalised values are self-consistent

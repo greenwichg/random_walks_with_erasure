@@ -16,7 +16,28 @@ import story_service as ss       # noqa: E402
 import discover                  # noqa: E402
 import location                  # noqa: E402
 
-NOW = datetime(2026, 7, 6, 12, 0, 0, tzinfo=timezone.utc)
+import pytest                     # noqa: E402
+
+# Fixtures are anchored to the REAL current day, not a frozen date. Stories are built from a rolling
+# scan window (story_service.scan_days), so a corpus pinned to a calendar date silently ages out of
+# the product's window and the suite starts asserting against an empty catalog.
+NOW = datetime.now(timezone.utc).replace(hour=12, minute=0, second=0, microsecond=0)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_story_cache(monkeypatch):
+    """Two isolations this module needs:
+
+    * The clustered-build cache is module-level; without clearing it, one test's clusters leak into
+      the next (same parameters, different in-memory store).
+    * conftest opens the scan window wide so date-pinned fixtures elsewhere stay in scope. THIS
+      module owns the window's behaviour, so it drops that override and runs against the real
+      default — fixtures here are anchored to the real current day for exactly that reason.
+    """
+    monkeypatch.delenv("RWE_STORIES_SCAN_DAYS", raising=False)
+    ss.clear_cache()
+    yield
+    ss.clear_cache()
 
 
 def _add(st, cu, pub, lean, title, *, category="Politics", days=0, url=None, desc="context",
@@ -134,8 +155,9 @@ def test_stable_id_survives_new_coverage():
 def _many(st, n):
     for e in range(n):                                        # n independent 3-publisher events
         title = f"topic{e}alpha topic{e}beta topic{e}gamma"  # disjoint tokens per event -> no cross-cluster
+        # Ages stay inside the scan window — this fixture exercises paging, not retention.
         for pub, lean in (("NPR", -1.0), ("BBC News", 0.0), ("Fox News", 1.4)):
-            _add(st, f"https://{pub}-{e}.x/a", pub, lean, title, days=e % 20)
+            _add(st, f"https://{pub}-{e}.x/a", pub, lean, title, days=e % 5)
 
 
 def test_pagination_envelope():
@@ -329,3 +351,155 @@ def test_blindspot_facets_counted_before_own_filter():
     assert body["blindspotFacets"] == {"center": 1}       # …but the facets still offer centre
     # and an unrelated filter narrows the facet counts (standard faceting)
     assert ss.list_stories(st, topic="Politics")["blindspotFacets"] == {}
+
+
+# --------------------------------------------------------------------------- #
+# The clustering candidate set is a TIME window, not a row count.
+#
+# Regression guard for the story collapse: max_scan=2000 rows newest-first made story yield a
+# function of ingestion RATE, so every provider added shrank the hours those rows covered and
+# produced FEWER stories (measured in production: a 12.5-hour effective window against a 6-day
+# clustering threshold, 89 stories from a 12,790-article catalog).
+# --------------------------------------------------------------------------- #
+class _RecordingStore:
+    """A store stand-in that records how _fetch bounded the candidate set."""
+    url = "sqlite://recording"
+
+    def __init__(self):
+        self.calls = []
+
+    def search_feed_articles(self, **kw):
+        self.calls.append(kw)
+        return [], 0
+
+    def event_countries_for_urls(self, urls):
+        return {}
+
+    def count_feed_articles(self):
+        return 0
+
+
+def test_fetch_bounds_by_time_with_only_a_size_backstop():
+    """The precise regression: the bound handed to SQL must be a DATE, and the row cap must be a
+    far-off backstop rather than the 2000-row rule that made story yield track ingestion rate."""
+    import clustering
+    st = _RecordingStore()
+    ss._fetch(st)
+    kw = st.calls[0]
+    assert kw["date_from"] is not None, "no time bound -> yield depends on ingestion rate again"
+    start = datetime.fromisoformat(kw["date_from"])
+    expected = datetime.now(timezone.utc) - timedelta(days=clustering.DEFAULT_WINDOW_DAYS)
+    assert abs((start - expected).total_seconds()) < 120
+    assert kw["pagination"].limit >= 60000, "row cap must be a backstop, not the relevance rule"
+    assert kw["sort"] == "newest"
+
+
+def test_articles_outside_the_window_are_excluded():
+    """The window is a real bound, not decoration."""
+    st = store_mod.Store("sqlite://")
+    _add(st, "https://npr.org/anc", "NPR", -1.0, "Ancient event nobody recalls", days=400)
+    _add(st, "https://bbc.com/anc", "BBC News", 0.0, "Ancient event nobody recalls now", days=400)
+    assert ss.list_stories(st)["total"] == 0
+
+
+def test_explicit_date_from_overrides_the_default_window():
+    """A caller asking for a date range is never silently narrowed to the default window."""
+    st = store_mod.Store("sqlite://")
+    _add(st, "https://npr.org/anc", "NPR", -1.0, "Ancient event nobody recalls", days=400)
+    _add(st, "https://bbc.com/anc", "BBC News", 0.0, "Ancient event nobody recalls now", days=400)
+    wide = (NOW - timedelta(days=500)).isoformat()
+    assert ss.list_stories(st, date_from=wide)["total"] == 1
+
+
+def test_scan_days_is_configurable(monkeypatch):
+    st = store_mod.Store("sqlite://")
+    _add(st, "https://npr.org/x", "NPR", -1.0, "Council approves the transit levy", days=20)
+    _add(st, "https://bbc.com/x", "BBC News", 0.0, "Council approves transit levy", days=20)
+    assert ss.list_stories(st)["total"] == 0            # 20 days > the 6-day default
+    monkeypatch.setenv("RWE_STORIES_SCAN_DAYS", "45")
+    ss.clear_cache()
+    assert ss.list_stories(st)["total"] == 1
+    monkeypatch.setenv("RWE_STORIES_SCAN_DAYS", "not-a-number")
+    ss.clear_cache()
+    assert ss.list_stories(st)["total"] == 0            # junk falls back, never widens silently
+
+
+# --------------------------------------------------------------------------- #
+# Clustered-build cache
+# --------------------------------------------------------------------------- #
+def test_cache_serves_repeat_calls_without_reclustering(monkeypatch):
+    st = store_mod.Store("sqlite://"); _senate_and_wildfire(st)
+    calls = {"n": 0}
+    real = ss.build_stories
+
+    def counting(*a, **kw):
+        calls["n"] += 1
+        return real(*a, **kw)
+
+    monkeypatch.setattr(ss, "build_stories", counting)
+    ss.clear_cache()
+    first = ss.list_stories(st)["total"]
+    second = ss.list_stories(st, sort="latest")["total"]     # different sort, same build
+    third = ss.list_stories(st, lean="left")                 # different filter, same build
+    assert first == second and calls["n"] == 1, "filters/sort must not force a rebuild"
+    assert third["total"] >= 0
+
+
+def test_ingest_invalidates_the_cache_immediately():
+    """A new article must be visible at once — a pure TTL cache would hide it, and the story detail
+    page would disagree with the list that linked to it."""
+    st = store_mod.Store("sqlite://"); _senate_and_wildfire(st)
+    before = next(s for s in ss.list_stories(st)["stories"] if "Senate" in s["title"])
+    _add(st, "https://ap.org/a9", "AP", 0.1, "Senate passes funding bill in late vote", days=1)
+    after = next(s for s in ss.list_stories(st)["stories"] if "Senate" in s["title"])
+    assert after["totalCoverage"] == before["totalCoverage"] + 1
+
+
+def test_cache_disabled_by_zero_ttl(monkeypatch):
+    monkeypatch.setenv("RWE_STORIES_CACHE_TTL", "0")
+    st = store_mod.Store("sqlite://"); _senate_and_wildfire(st)
+    ss.clear_cache()
+    assert ss.list_stories(st)["total"] == ss.list_stories(st)["total"]
+
+
+def test_cache_never_leaks_between_stores():
+    """Two stores, identical parameters — each must see only its own catalog."""
+    a = store_mod.Store("sqlite://"); _senate_and_wildfire(a)
+    b = store_mod.Store("sqlite://")
+    _add(b, "https://x.example/1", "NPR", -1.0, "Harbour pilots ratify their contract", days=1)
+    _add(b, "https://y.example/1", "BBC News", 0.0, "Harbour pilots ratify contract", days=1)
+    ta = {s["title"] for s in ss.list_stories(a, limit=50)["stories"]}
+    tb = {s["title"] for s in ss.list_stories(b, limit=50)["stories"]}
+    assert ta and tb and ta.isdisjoint(tb)
+
+
+def test_get_story_sees_the_same_window_as_the_list():
+    """Every id the list hands out must resolve — a narrower scan in get_story would 404 links the
+    list had just rendered."""
+    st = store_mod.Store("sqlite://"); _many(st, 12)
+    listed = ss.list_stories(st, limit=100)["stories"]
+    assert listed
+    for s in listed:
+        assert ss.get_story(st, s["id"]) is not None, f"list rendered {s['id']} but detail 404s"
+
+
+def test_cache_invalidates_when_content_changes_at_constant_row_count():
+    """Regression: the cache key must be a content fingerprint, not a row COUNT.
+
+    Deleting N articles and inserting N others leaves the count identical while the catalog is
+    entirely different — which is exactly what a retention prune plus an ingest in the same interval
+    does. Keyed on count alone, the second read is served the first read's clusters."""
+    st = store_mod.Store("sqlite://")
+    first = ["https://one.example/a", "https://two.example/a"]
+    for cu, pub in zip(first, ("NPR", "BBC News")):
+        _add(st, cu, pub, 0.0, "Harbour pilots ratify their contract", days=1)
+    assert any("Harbour" in s["title"] for s in ss.list_stories(st)["stories"])
+
+    st.delete_feed_articles(first)
+    second = ["https://three.example/a", "https://four.example/a"]
+    for cu, pub in zip(second, ("CNN", "Fox News")):
+        _add(st, cu, pub, 0.0, "Rail operators publish the winter timetable", days=1)
+
+    titles = {s["title"] for s in ss.list_stories(st)["stories"]}     # same row count as before
+    assert any("Rail operators" in t for t in titles), "stale build served at constant row count"
+    assert not any("Harbour" in t for t in titles)

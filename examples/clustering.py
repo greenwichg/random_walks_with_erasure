@@ -82,18 +82,44 @@ def cluster(items: Sequence, *, tokens: Callable[[object], frozenset],
     """Group item **indices** into clusters. ``tokens(item) → frozenset`` and
     ``time(item) → datetime | None`` are the accessors. Two items join the same cluster when their
     token Jaccard ≥ ``sim`` **and** their times are within ``window_days``. Returns a list of clusters,
-    each a list of indices into ``items``; deterministic in membership and order. O(n²) in the number
-    of items (bounded by the caller)."""
+    each a list of indices into ``items``; deterministic in membership and order.
+
+    Candidate generation is **blocked by an inverted token index** rather than all-pairs. This is an
+    exact optimisation, not an approximation: ``jaccard(a, b) ≥ sim`` for any ``sim > 0`` requires
+    ``|a ∩ b| ≥ 1``, so a pair sharing no token can never match and is safe to skip. Only pairs that
+    share at least one token are scored, which is what makes the *whole* catalog clusterable —
+    all-pairs made the caller cap the input, and that cap (counted in items, not time) silently
+    narrowed as ingestion grew, collapsing the story count.
+
+    Cost is O(Σ_t |postings(t)|²) rather than O(n²) — near-linear for headlines, whose content tokens
+    are mostly rare. It degrades toward all-pairs only if every item shares a token with every other,
+    which cannot be worse than the previous behaviour.
+    """
     n = len(items)
     toks = [tokens(it) for it in items]
     times = [time(it) for it in items]
+
+    # token -> ascending item indices carrying it. Built once; membership tests below stay exact.
+    postings: dict = {}
+    for i, t in enumerate(toks):
+        for tok in t:
+            postings.setdefault(tok, []).append(i)
+
     dsu = DSU(n)
     for i in range(n):
-        if not toks[i]:
+        ti = toks[i]
+        if not ti:
             continue
-        for j in range(i + 1, n):
-            if toks[j] and jaccard(toks[i], toks[j]) >= sim and within_window(times[i], times[j], window_days):
+        # Every j > i sharing ≥1 token with i — the exact superset of i's possible matches.
+        candidates = set()
+        for tok in ti:
+            for j in postings[tok]:
+                if j > i:
+                    candidates.add(j)
+        for j in candidates:
+            if jaccard(ti, toks[j]) >= sim and within_window(times[i], times[j], window_days):
                 dsu.union(i, j)
+
     groups: dict = {}
     for i in range(n):
         groups.setdefault(dsu.find(i), []).append(i)

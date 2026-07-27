@@ -1013,6 +1013,19 @@ class Store:
         with self.session() as s:
             return int(s.scalar(select(func.count()).select_from(FeedArticle)) or 0)
 
+    def catalog_fingerprint(self) -> tuple:
+        """A cheap change token for the catalog: ``(row count, newest fetched_at)``.
+
+        Used to invalidate derived caches (story clustering). A bare COUNT is **not** sufficient:
+        deleting N rows and inserting N others leaves it identical while the content is entirely
+        different — which is exactly what a retention prune plus an ingest in the same interval
+        does. ``fetched_at`` is indexed and monotonic per write, so the pair moves on any insert,
+        delete or re-poll."""
+        with self.session() as s:
+            n = int(s.scalar(select(func.count()).select_from(FeedArticle)) or 0)
+            newest = s.scalar(select(func.max(FeedArticle.fetched_at)))
+        return (n, newest.isoformat() if newest is not None else None)
+
     def list_feed_articles(self, limit: int = 50) -> list:
         """Catalog articles, most-recently-fetched first (capped at ``limit``)."""
         with self.session() as s:
