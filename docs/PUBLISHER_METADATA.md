@@ -38,6 +38,29 @@ GET /api/publishers/BBC%20News
 }
 ```
 
+## Measured outcome
+
+Against the live catalog's 20 busiest publishers, refreshed after each change:
+
+| | matched | false positives |
+|---|---:|---:|
+| first production run | 9 | 0 |
+| brand-label domains, domain-shaped names, P31 | 12 | 0 |
+| verify every candidate, not just the first | 13 | 0 |
+| rank disambiguation candidates | **14** | 0 |
+
+Precision never moved: the same refusals that were correct on day one (`aktiencheck` → Tom's
+Hardware, `zazoom` → Tim Minton, `sportskeeda.com` → Roger Federer) are still refused.
+
+**This is the busiest 20, not the catalog.** Smaller outlets are far less likely to have a Wikipedia
+article at all, so the catalog-wide rate will be lower — treat 70% as a ceiling, not an expectation.
+
+The six that remain unmatched are not a matching problem. `marketbeat.com`, `sportskeeda.com`,
+`zazoom` and `aktiencheck` have no Wikidata item carrying a usable website claim; `decider.com` and
+`pagesix.com`-style sub-brands resolve to their parent. More heuristics will not reach them — they
+want a curated row in `examples/data/outlet_registry.csv`, which is exactly what the `ambiguous`
+backlog and its stored `reason` exist to identify.
+
 ## Verification — why most candidates are refused
 
 A publisher page already carries a lean rating and counted coverage claims. Attaching another
