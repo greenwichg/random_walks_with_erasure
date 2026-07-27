@@ -51,13 +51,28 @@ accepts only on evidence:
 2. **Domain conflict** — both known and different → refused. This is the case that would otherwise
    put Fox Corporation's facts on a Fox Sports page.
 3. **No domain to compare** — the article title must match the publisher's name **and** the item
-   must carry at least one organisational claim (website / inception / HQ / parent). Both halves
-   matter: the title check alone lets a common-noun masthead ("Mirror", "Metro", "The Sun") bind to
-   the everyday-object article, and the org-claim check alone lets any similarly-named organisation
+   must look like an organisation, either by carrying an organisational claim (website / inception /
+   HQ / parent) or by its `instance of` (P31) being a media/organisation class. Both halves matter:
+   the title check alone lets a common-noun masthead ("Mirror", "Metro", "The Sun") bind to the
+   everyday-object article, and the organisation check alone lets any similarly-named company
    through.
 
+Domains are compared at the **brand label** — `bbc.co.uk`, `bbc.com` and `news.bbc.co.uk` all reduce
+to `bbc`. Whole-domain comparison shipped first and cost real recall: on the live catalog's busiest
+20 publishers, 5 of 8 "conflicts" were one organisation reached by two spellings (`bbc.co.uk` vs
+`bbc.com`, `dailymail.com` vs `dailymail.co.uk`, `aol.co.uk` vs `aol.com`, `unitaid.eu` vs
+`unitaid.org`, `newsinfo.inquirer.net` vs `inquirer.com.ph`). The label still separates genuinely
+different organisations — the true refusals in the same run (`aktiencheck` vs `tomshardware`,
+`pagesix` vs `nypost`, `foxsports` vs `foxcorporation`) differ at the label too.
+
+Publisher names that ARE domains (`marketbeat.com`, `aol.co.uk`, `thestar.com.my` — a large share of
+the catalog) are reduced the same way before the title comparison, so `marketbeat.com` can match the
+article titled "MarketBeat" instead of failing on the `.com`.
+
 Anything else is recorded as `ambiguous` — a distinct state from `no_match`, because it marks the
-outlets a human could resolve by hand.
+outlets a human could resolve by hand. The **`reason`** column records which rule fired (`domain`,
+`title`, `domain_conflict`, `not_an_organisation`, `disambiguation`, `unverified`, `no_page`), so
+triaging the backlog is a query rather than a re-run of every lookup.
 
 ## Statuses and refresh cadence
 
@@ -99,9 +114,11 @@ it was imported.
 ### Request budget
 
 One publisher costs 2–4 requests; `RWE_PUBLISHER_WIKI_BATCH` (default 5) run per
-`RWE_PUBLISHER_WIKI_INTERVAL` (default 900 s). Worst case ≈ 1,920 requests/day during a cold start,
-and far less in steady state because fresh rows are skipped without a request — once the catalog is
-covered a cycle costs one SQL query and zero HTTP.
+`RWE_PUBLISHER_WIKI_INTERVAL` (default 900 s) = 480 publishers/day. The live catalog holds **~3,600
+distinct publishers**, so a cold start takes **~7 days** and ~11,000 requests in total. Steady state
+is far cheaper because fresh rows are skipped without a request — once the catalog is covered a
+cycle costs one SQL query and zero HTTP. Raise the batch for a faster fill; request rate scales
+linearly with it.
 
 Wikimedia's User-Agent policy requires a descriptive agent with a contact address; requests without
 one are refused with 403. `RWE_WIKI_CONTACT` supplies it.
@@ -132,9 +149,12 @@ the same placeholder it always did.
 
 ## Known limits
 
-- **`registrable_domain` is naive about public suffixes.** It strips a leading `www.` and nothing
-  else. Over-keeping a subdomain makes a match *fail* (recorded ambiguous), never falsely succeed,
-  so the error direction is safe; a real PSL would raise the match rate.
+- **The public-suffix list is a hand-maintained short list**, not the real PSL (which is a
+  dependency plus a data file to keep current). An unlisted two-part suffix makes `domain_label`
+  take one label too few, which makes a match *fail* rather than falsely succeed — the safe
+  direction — but it does cost recall for outlets on unusual ccTLDs.
+- **`_ORG_CLASSES` is a short allow-list of Wikidata classes**, not a subclass-tree walk. It only
+  ever adds acceptances, so an unlisted class degrades to the previous behaviour.
 - **English Wikipedia only.** Non-anglophone outlets will show a lower match rate than their
   prominence suggests.
 - **`country` requires an ISO alpha-2** (Wikidata P297). Every other country field in the product

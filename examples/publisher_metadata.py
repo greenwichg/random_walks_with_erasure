@@ -40,9 +40,13 @@ FIELDS = ("description", "founded", "headquarters", "country", "website", "paren
 TTL_DAYS = {"ok": 30.0, "no_match": 30.0, "ambiguous": 14.0, "error": 0.25}
 DEFAULT_TTL_DAYS = 30.0
 
-#: Publishers enriched per poll cycle. Each costs 2-4 requests, so 5 is ~20 requests per cycle
-#: against Wikimedia's APIs — a rounding error against their capacity, and it means a 400-publisher
-#: catalog reaches full coverage in a few hours without ever looking like a scraper.
+#: Publishers enriched per poll cycle. Each costs 2-4 requests, so 5 is ~20 requests per 15-minute
+#: cycle — a rounding error against Wikimedia's capacity, and never scraper-shaped.
+#:
+#: Coverage arithmetic, measured rather than assumed: the live catalog holds ~3,600 distinct
+#: publishers, so a cold start at this rate takes ~7 days (480/day) and ~11,000 requests in total.
+#: Steady state is far cheaper because a fresh row is skipped WITHOUT a request. Raise
+#: RWE_PUBLISHER_WIKI_BATCH for a faster fill; the request rate scales linearly with it.
 DEFAULT_BATCH = 5
 
 #: Statuses that carry usable facts. Anything else is a recorded absence.
@@ -251,6 +255,7 @@ def enrich_publisher(store_, publisher: str, *, fetch_json: Callable[[str], dict
         return cached
     # lookup() speaks the wire vocabulary for identity (camelCase); the store speaks column names.
     fields = {
+        "reason": result.get("reason"),
         "wikidata_id": result.get("wikidataId"),
         "wikipedia_title": result.get("wikipediaTitle"),
         "wikipedia_url": result.get("wikipediaUrl"),

@@ -274,3 +274,99 @@ def test_empty_name_never_makes_a_request():
     def fetch(url):
         raise AssertionError("should not fetch")
     assert pw.lookup("   ", fetch)["status"] == "no_match"
+
+
+# --------------------------------------------------------------------------- #
+# Brand-label matching — measured against the live catalog's actual refusals.
+# --------------------------------------------------------------------------- #
+def test_domain_label_finds_the_brand_across_suffix_forms():
+    assert pw.domain_label("https://www.bbc.co.uk/news") == "bbc"
+    assert pw.domain_label("bbc.com") == "bbc"
+    assert pw.domain_label("news.bbc.co.uk") == "bbc"
+    assert pw.domain_label("newsinfo.inquirer.net") == "inquirer"
+    assert pw.domain_label("http://www.inquirer.com.ph/") == "inquirer"
+    assert pw.domain_label("thestar.com.my") == "thestar"
+    assert pw.domain_label("") is None
+
+
+def test_the_same_outlet_reached_by_two_domains_is_one_match():
+    """Every one of these was refused as a domain_conflict in production before brand-label
+    comparison — one organisation, two spellings."""
+    for observed, site in [("bbc.co.uk", "https://bbc.com"),
+                           ("dailymail.com", "http://www.dailymail.co.uk"),
+                           ("aol.co.uk", "https://aol.com/"),
+                           ("unitaid.eu", "http://www.unitaid.org/"),
+                           ("newsinfo.inquirer.net", "http://www.inquirer.com.ph/")]:
+        ok, reason = pw.verify(publisher="x", page_title="y", facts={"website": site},
+                               observed_host=observed)
+        assert ok and reason == "domain", f"{observed} vs {site}"
+
+
+def test_different_organisations_still_conflict_at_the_label():
+    """The precision half. These were CORRECT refusals in the same production run and must stay so
+    — brand-label matching must not be a loophole."""
+    for observed, site in [("aktiencheck.de", "https://www.tomshardware.com"),
+                           ("pagesix.com", "https://nypost.com"),
+                           ("decider.com", "https://nypost.com"),
+                           ("foxsports.com", "https://www.foxcorporation.com")]:
+        ok, reason = pw.verify(publisher="x", page_title="y", facts={"website": site},
+                               observed_host=observed)
+        assert not ok and reason == "domain_conflict", f"{observed} vs {site}"
+
+
+def test_a_domain_shaped_publisher_name_matches_its_article_title():
+    """Much of the catalog names publishers by domain. "marketbeat.com" was refused against the
+    article titled "MarketBeat" purely on the .com."""
+    ok, reason = pw.verify(publisher="marketbeat.com", page_title="MarketBeat",
+                           facts={"founded": "2011"}, observed_host=None)
+    assert ok and reason == "title"
+
+
+def test_a_title_with_a_full_stop_is_not_treated_as_a_domain():
+    """The domain reduction applies only to single dotted tokens, so ordinary prose is untouched."""
+    assert pw._name_key("St. Louis Post-Dispatch") == "st louis post dispatch"
+
+
+def test_instance_of_accepts_a_newspaper_carrying_no_other_claims():
+    """The Hill: an exact title match on a real newspaper, refused for having no website, founding
+    year, HQ or parent. Its P31 said "newspaper" the whole time."""
+    facts = {"website": None, "founded": None, "headquarters": None, "parent": None}
+    refused, why = pw.verify(publisher="The Hill", page_title="The Hill", facts=facts)
+    assert not refused and why == "not_an_organisation"
+
+    ok, reason = pw.verify(publisher="The Hill", page_title="The Hill", facts=facts,
+                           classes=["Q11032"])       # newspaper
+    assert ok and reason == "title"
+
+
+def test_instance_of_does_not_rescue_a_non_organisation():
+    """The guard that keeps "Mirror" off the reflective-surface article: an unrelated P31 class is
+    not an organisation signal."""
+    ok, reason = pw.verify(publisher="Mirror", page_title="Mirror",
+                           facts={"website": None}, classes=["Q35197"])
+    assert not ok and reason == "not_an_organisation"
+
+
+def test_instance_of_never_overrides_a_domain_conflict():
+    """Class evidence is only consulted when there is no domain to compare — being a newspaper does
+    not make you THIS newspaper."""
+    ok, reason = pw.verify(publisher="Fox Sports", page_title="Fox Sports",
+                           facts={"website": "https://www.foxcorporation.com"},
+                           observed_host="foxsports.com", classes=["Q11032"])
+    assert not ok and reason == "domain_conflict"
+
+
+def test_several_observed_hosts_are_all_considered():
+    """A publisher often reaches us from more than one domain; matching any of them is a match."""
+    ok, _ = pw.verify(publisher="x", page_title="y", facts={"website": "https://bbc.com"},
+                      observed_host=["feeds.example.net", "bbc.co.uk"])
+    assert ok
+
+
+def test_instance_of_reads_the_claim():
+    entity = {"claims": {pw.P_INSTANCE_OF: [
+        {"rank": "normal", "mainsnak": {"snaktype": "value",
+                                        "datavalue": {"value": {"entity-type": "item",
+                                                                "id": "Q11032"}}}}]}}
+    assert pw.instance_of(entity) == ["Q11032"]
+    assert pw.instance_of({}) == []

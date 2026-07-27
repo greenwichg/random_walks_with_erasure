@@ -1130,7 +1130,11 @@ class PublisherMetadataEnricher(SourceAdapter):
         error = None
         stats: Optional[dict] = None
         try:
-            stats = publisher_metadata.run_enrichment(store_, fetch_json=self._fetch)
+            # _default_log, not the poller's: the poller's per-adapter `source_poll` line
+            # carries a fixed field set and drops the enrichment counters, so without this the
+            # pass is invisible in logs however many publishers it resolved.
+            stats = publisher_metadata.run_enrichment(store_, fetch_json=self._fetch,
+                                                      log=_default_log)
         except Exception as e:                              # store / network / parse error
             error = e
         latency_ms = (time.perf_counter() - t0) * 1000.0

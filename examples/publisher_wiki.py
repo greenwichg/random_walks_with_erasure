@@ -49,6 +49,7 @@ P_WEBSITE = "P856"
 P_PARENT = "P749"
 P_LOGO = "P154"
 P_ISO_3166 = "P297"     # on a COUNTRY item: its alpha-2 code
+P_INSTANCE_OF = "P31"   # what KIND of thing the item is — newspaper, company, …
 
 #: Description length. Long enough to be a real summary, short enough that the page stays a profile.
 MAX_DESCRIPTION = 400
@@ -65,19 +66,51 @@ def _clean(text) -> Optional[str]:
 
 
 def registrable_domain(url_or_host) -> Optional[str]:
-    """The comparable part of a host: ``www.bbc.co.uk`` and ``https://bbc.co.uk/news`` both give
-    ``bbc.co.uk``.
-
-    Deliberately naive about public suffixes — it strips a leading ``www.`` and nothing else. A real
-    PSL would be more correct, but it is a dependency, and the only job here is comparing two hosts
-    that both describe the same outlet. Over-keeping a subdomain makes a match FAIL (safe: recorded
-    ambiguous), never falsely SUCCEED."""
+    """The host part of a URL, lowercased, with a leading ``www.`` removed. ``www.bbc.co.uk`` and
+    ``https://bbc.co.uk/news`` both give ``bbc.co.uk``."""
     s = str(url_or_host or "").strip()
     if not s:
         return None
     host = urlsplit(s if "//" in s else f"//{s}").hostname or ""
     host = host.lower().strip(".")
     return host[4:] if host.startswith("www.") else host or None
+
+
+#: Two-part public suffixes, enough to cover the ccTLD pattern news domains actually use. Not a full
+#: Public Suffix List — that is a dependency plus a data file to keep current, and the only job here
+#: is finding the brand label in a host we already believe belongs to a publisher. An unlisted suffix
+#: degrades to taking one label too few, which makes a match FAIL rather than falsely succeed.
+_TWO_PART_SUFFIXES = frozenset("""
+co.uk org.uk me.uk ac.uk gov.uk net.uk
+com.au net.au org.au co.nz com.nz
+co.jp or.jp ne.jp co.kr co.in net.in org.in
+com.br net.br org.br com.mx com.ar com.co com.pe com.ve
+com.ph com.my com.sg com.hk com.tw com.cn com.vn co.id
+co.za co.ke co.il com.tr com.ua com.pk com.bd com.ng com.eg
+com.es com.pt com.pl com.gr com.cy
+""".split())
+
+
+def domain_label(url_or_host) -> Optional[str]:
+    """The BRAND label of a host: ``bbc.com``, ``bbc.co.uk`` and ``news.bbc.co.uk`` all give ``bbc``.
+
+    This exists because whole-domain comparison rejected real matches at a high rate. Measured on
+    the live catalog's busiest publishers, 5 of 8 domain conflicts were one organisation reached by
+    two spellings — ``bbc.co.uk`` vs ``bbc.com``, ``dailymail.com`` vs ``dailymail.co.uk``,
+    ``aol.co.uk`` vs ``aol.com``, ``unitaid.eu`` vs ``unitaid.org``,
+    ``newsinfo.inquirer.net`` vs ``inquirer.com.ph``.
+
+    It stays safe because the label still separates genuinely different organisations: the same
+    measurement's true refusals — ``aktiencheck`` vs ``tomshardware``, ``pagesix`` vs ``nypost``,
+    ``foxsports`` vs ``foxcorporation`` — differ at the label too."""
+    host = registrable_domain(url_or_host)
+    if not host:
+        return None
+    parts = host.split(".")
+    if len(parts) < 2:
+        return host
+    idx = -3 if ".".join(parts[-2:]) in _TWO_PART_SUFFIXES else -2
+    return parts[idx] if len(parts) >= -idx else parts[0]
 
 
 def truncate_description(text, limit: int = MAX_DESCRIPTION) -> Optional[str]:
@@ -149,6 +182,13 @@ def entity_ids(entity: dict, props) -> list:
     return ids
 
 
+def instance_of(entity: dict) -> list:
+    """The item's ``P31`` class ids. Already present in the claims we fetch, so reading it costs
+    nothing extra — it is the cheapest available signal that an item is an organisation at all."""
+    return [v["id"] for v in _claims(entity, P_INSTANCE_OF)
+            if isinstance(v, dict) and v.get("id")]
+
+
 def _label(entity: dict, lang: str = "en") -> Optional[str]:
     labels = entity.get("labels") or {}
     entry = labels.get(lang) or {}
@@ -194,41 +234,70 @@ def parse_entity(entity: dict, resolved: "dict | None" = None) -> dict:
 #: hits first.
 _ORG_FACTS = ("website", "founded", "headquarters", "parent")
 
+#: Wikidata classes (``P31`` instance-of) that make an item an organisation we could be reading.
+#: Not exhaustive and does not need to be: an unlisted class simply falls back to the fact check
+#: above, and a listed class is still refused when its domain conflicts. It exists because
+#: "The Hill" — an exact title match on a real newspaper — was refused for carrying no website,
+#: inception, HQ or parent claim, while its P31 said "newspaper" all along.
+_ORG_CLASSES = frozenset("""
+Q11032 Q1110794 Q1153191 Q192283 Q11033 Q1616075 Q14350 Q41298 Q1002697
+Q43229 Q783794 Q891723 Q4830453 Q163740 Q2085381 Q15265344
+""".split())
 
-def verify(*, publisher: str, page_title: str, facts: dict, observed_host=None) -> "tuple[bool, str]":
+
+def _hosts(observed_host) -> list:
+    """Accept one host or several — a publisher often reaches us from more than one domain."""
+    if observed_host is None:
+        return []
+    if isinstance(observed_host, str):
+        observed_host = [observed_host]
+    return [h for h in (registrable_domain(h) for h in observed_host) if h]
+
+
+def verify(*, publisher: str, page_title: str, facts: dict, observed_host=None,
+           classes=None) -> "tuple[bool, str]":
     """Is this Wikipedia page really THIS publisher? Returns ``(accepted, reason)``.
 
     The evidence, strongest first:
 
-    1. **Domain agreement** — Wikidata's official-website host matches the host we actually observe
+    1. **Domain agreement** — Wikidata's official-website host matches a host we actually observe
        this publisher publishing from. Decisive, and it is why enrichment passes the catalog's
-       counted host in: it is independent evidence, not another name string.
-    2. **Domain conflict** — both hosts known and different. Rejected outright. This is the case
-       that would otherwise put Fox Corporation's facts on a "Fox Sports" page.
-    3. **No domain to compare** — the title must match the publisher's name AND the item must carry
-       at least one organisational claim. Both halves are load-bearing: the title match alone lets
-       a common-noun masthead ("Mirror", "The Sun", "Metro") bind to the everyday-object article,
-       and the org claim alone lets any organisation with a similar name bind.
+       counted host in: it is independent evidence, not another name string. Compared at the BRAND
+       LABEL (:func:`domain_label`), so ``bbc.co.uk`` and ``bbc.com`` agree.
+    2. **Domain conflict** — both known and different at the label. Rejected outright. This is the
+       case that would otherwise put Fox Corporation's facts on a "Fox Sports" page, or Tom's
+       Hardware's on a German stock-tips site.
+    3. **No domain to compare** — the title must match the publisher's name AND the item must look
+       like an organisation, either by carrying an organisational claim or by its ``instance of``.
+       Both halves are load-bearing: the title match alone lets a common-noun masthead ("Mirror",
+       "The Sun", "Metro") bind to the everyday-object article, and the organisation check alone
+       lets any similarly-named company bind.
 
     Anything else is ``unverified`` — recorded as ambiguous for a human, never rendered."""
-    site_domain = registrable_domain(facts.get("website"))
-    observed = registrable_domain(observed_host)
-    if site_domain and observed:
-        if site_domain == observed or site_domain.endswith("." + observed) \
-                or observed.endswith("." + site_domain):
-            return True, "domain"
-        return False, "domain_conflict"
+    site_label = domain_label(facts.get("website"))
+    observed = [domain_label(h) for h in _hosts(observed_host)]
+    observed = [o for o in observed if o]
+    if site_label and observed:
+        return (True, "domain") if site_label in observed else (False, "domain_conflict")
     if _name_key(page_title) != _name_key(publisher):
         return False, "unverified"
-    if not any(facts.get(f) for f in _ORG_FACTS):
+    if not any(facts.get(f) for f in _ORG_FACTS) and not (set(classes or ()) & _ORG_CLASSES):
         return False, "not_an_organisation"
     return True, "title"
 
 
 def _name_key(text) -> str:
     """Loose name comparison for the title check: case- and punctuation-insensitive, and blind to a
-    leading "The" so "The Guardian" matches "Guardian"."""
-    s = re.sub(r"[^a-z0-9]+", " ", str(text or "").lower()).strip()
+    leading "The" so "The Guardian" matches "Guardian".
+
+    A large share of catalog publisher names ARE bare domains — ``marketbeat.com``, ``aol.co.uk``,
+    ``thestar.com.my``, ``decider.com``. Those are reduced to their brand label first, so
+    ``marketbeat.com`` can match the article titled "MarketBeat" instead of failing on the ``.com``.
+    Only applied to single tokens containing a dot, so a real title with a full stop is untouched."""
+    s = str(text or "").strip()
+    if s and " " not in s and "." in s:
+        s = domain_label(s) or s
+    s = re.sub(r"[^a-z0-9]+", " ", s.lower()).strip()
     s = re.sub(r"^the\s+", "", s)
     return _WS.sub(" ", s)
 
@@ -335,6 +404,7 @@ def lookup(publisher: str, fetch_json: Callable[[str], dict], *, observed_host=N
 
     facts = {"founded": None, "headquarters": None, "country": None, "website": None,
              "parent": None, "logo": None}
+    classes: list = []
     qid = page.get("wikidataId")
     if qid:
         entities = fetch_entities([qid], fetch_json)
@@ -342,9 +412,10 @@ def lookup(publisher: str, fetch_json: Callable[[str], dict], *, observed_host=N
         refs = entity_ids(entity, (P_HEADQUARTERS, P_COUNTRY, P_PARENT))
         resolved = fetch_entities(refs, fetch_json) if refs else {}
         facts = parse_entity(entity, resolved)
+        classes = instance_of(entity)
 
     accepted, reason = verify(publisher=name, page_title=page["title"], facts=facts,
-                              observed_host=observed_host)
+                              observed_host=observed_host, classes=classes)
     if not accepted:
         return {"status": "ambiguous", "reason": reason,
                 "wikipediaTitle": page.get("title"), "wikipediaUrl": page.get("url"),

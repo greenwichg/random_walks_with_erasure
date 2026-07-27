@@ -594,6 +594,11 @@ class PublisherMetadata(Base):
     publisher_key: Mapped[str] = mapped_column(String(255), primary_key=True)
     publisher: Mapped[str] = mapped_column(String(255))          # the name the lookup ran for
     status: Mapped[str] = mapped_column(String(16), default="ok", index=True)
+    #: WHY the status is what it is — domain / title / domain_conflict / not_an_organisation /
+    #: disambiguation / unverified / no_page. Stored because the ambiguous rows are a curation
+    #: backlog, and triaging them without this means re-running every lookup to learn what already
+    #: happened.
+    reason: Mapped[Optional[str]] = mapped_column(String(32), default=None)
     source: Mapped[Optional[str]] = mapped_column(String(16), default=None)   # wikipedia|wikimedia
     # Identity of the matched entity — kept so a match is auditable and re-verifiable by hand.
     wikidata_id: Mapped[Optional[str]] = mapped_column(String(32), default=None)
@@ -1544,7 +1549,8 @@ class Store:
     @staticmethod
     def _publisher_metadata_row(r: "PublisherMetadata") -> dict:
         return {
-            "publisher": r.publisher, "status": r.status, "source": r.source,
+            "publisher": r.publisher, "status": r.status, "reason": r.reason,
+            "source": r.source,
             "wikidataId": r.wikidata_id, "wikipediaTitle": r.wikipedia_title,
             "wikipediaUrl": r.wikipedia_url, "description": r.description,
             "founded": r.founded, "headquarters": r.headquarters, "country": r.country,
@@ -1564,8 +1570,9 @@ class Store:
         no longer asserts. Curated registry values are unaffected: they live in the registry and are
         merged on read, never written here."""
         key = self.publisher_key(publisher)
-        cols = ("wikidata_id", "wikipedia_title", "wikipedia_url", "description", "founded",
-                "headquarters", "country", "website", "parent", "logo", "logo_source", "error")
+        cols = ("reason", "wikidata_id", "wikipedia_title", "wikipedia_url", "description",
+                "founded", "headquarters", "country", "website", "parent", "logo", "logo_source",
+                "error")
         unknown = set(fields) - set(cols)
         if unknown:
             raise ValueError(f"unknown publisher metadata fields: {sorted(unknown)}")

@@ -244,3 +244,23 @@ def test_the_adapter_reports_a_failure_as_health_not_an_exception():
     # the shape every other adapter's aggregate uses.
     assert agg["lookupErrors"] == 1
     assert agg["errors"] == [] and agg["ok"] == 1
+
+
+def test_the_refusal_reason_is_persisted_for_triage():
+    """The ambiguous rows are a curation backlog. Storing WHY each was refused is what makes them
+    triageable without re-running every lookup against Wikipedia to rediscover it."""
+    st = store_mod.Store("sqlite://")
+    _seed(st, "Example Post", "examplepost.com")
+    fetch = _wiki("Example Post", website="https://a-totally-different-company.com")
+
+    pm.run_enrichment(st, fetch_json=fetch, limit=5)
+
+    row = st.publisher_metadata("Example Post")
+    assert row["status"] == "ambiguous" and row["reason"] == "domain_conflict"
+
+
+def test_a_successful_match_records_the_evidence_that_carried_it():
+    st = store_mod.Store("sqlite://")
+    _seed(st, "Example Post", "examplepost.com")
+    pm.run_enrichment(st, fetch_json=_wiki("Example Post"), limit=5)
+    assert st.publisher_metadata("Example Post")["reason"] == "domain"
