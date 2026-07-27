@@ -531,3 +531,133 @@ def test_warm_cache_is_invalidated_by_the_next_ingest():
     _add(st, "https://ap.org/new", "AP", 0.1, "Harbour pilots ratify their contract", days=1)
     _add(st, "https://re.example/new", "Reuters", 0.0, "Harbour pilots ratify contract", days=1)
     assert ss.list_stories(st)["total"] == 3
+
+
+# --------------------------------------------------------------------------- #
+# Cluster geography coherence — measured on the INCIDENT, never the publisher.
+#
+# geoCoherence is the share of LOCATED members whose incident countries include the story's
+# consensus country. It is a member-AGREEMENT measure, which is why it separates a genuine
+# multi-country story (members agree on the lead country, each adding others) from a false merge
+# (members name different places entirely).
+# --------------------------------------------------------------------------- #
+def _locate(st, cu, *countries):
+    st.replace_article_event_locations(
+        cu, [location.EventLocation(country=c, source="test") for c in countries])
+
+
+def test_a_us_publisher_reporting_from_india_belongs_to_the_indian_story():
+    """The stated requirement: the INCIDENT's location decides, not the publisher's home."""
+    st = store_mod.Store("sqlite://")
+    _add(st, "https://cnn.com/g1", "CNN", -1.0, "Bridge collapse in Gujarat kills dozens",
+         category="World", days=1, country="US")           # US publisher…
+    _add(st, "https://ndtv.com/g1", "NDTV", None, "Bridge collapse in Gujarat kills dozens today",
+         category="World", days=1, country="IN")
+    _locate(st, "https://cnn.com/g1", "IN")                # …reporting an incident in India
+    _locate(st, "https://ndtv.com/g1", "IN")
+
+    story = ss.cluster_from_store(st)[0]
+    assert story["countries"] == ["IN"], "the story must be located by the incident, not the byline"
+    assert story["geoCoherence"] == 1.0 and story["locatedMembers"] == 2
+    assert story["publisherCountries"] == ["IN", "US"]     # provenance preserved, never substituted
+
+
+def test_publisher_country_alone_never_locates_a_story():
+    """No incident locations at all -> no country and no coherence score. Absence of evidence is
+    not a location, and it is not incoherence either."""
+    st = store_mod.Store("sqlite://")
+    _add(st, "https://cnn.com/x", "CNN", -1.0, "Trade talks resume in the capital",
+         days=1, country="US")
+    _add(st, "https://fox.com/x", "Fox News", 1.5, "Trade talks resume in capital today",
+         days=1, country="US")
+    story = ss.cluster_from_store(st)[0]
+    assert story["countries"] == [] and story["publisherCountries"] == ["US"]
+    assert story["geoCoherence"] is None, "unlocated must be None, never 0.0"
+    assert story["locatedMembers"] == 0
+
+
+def test_a_genuine_multi_country_story_scores_coherent():
+    """The false-positive guard: an explainer citing fires in several countries is coherent as long
+    as its members AGREE on the lead country, however many others each one adds."""
+    st = store_mod.Store("sqlite://")
+    _add(st, "https://a.example/f", "Tribune A", 0.0, "What is a fire cloud and how do they form",
+         category="Climate", days=1)
+    _add(st, "https://b.example/f", "Tribune B", 0.0, "What is a fire cloud and how do they form now",
+         category="Climate", days=1)
+    _locate(st, "https://a.example/f", "FR", "ES", "AU")
+    _locate(st, "https://b.example/f", "FR", "GB", "US")
+    story = ss.cluster_from_store(st)[0]
+    assert story["countries"] == ["FR"]
+    assert story["geoCoherence"] == 1.0, "members agreeing on the lead country is coherent"
+    assert len(story["eventCountries"]) == 5             # breadth alone must not look like a defect
+
+
+def test_a_false_merge_scores_incoherent():
+    """The production case: members located in unrelated countries, merged on shared title tokens.
+    publisherDiversity rates such a cluster healthy; this must not."""
+    st = store_mod.Store("sqlite://")
+    for i, (pub, ctry) in enumerate([("A", "US"), ("B", "YE"), ("C", "SG"), ("D", "DJ")]):
+        cu = f"https://{pub}.example/brief"
+        _add(st, cu, f"Outlet {pub}", 0.0, "Local news in brief July 21", days=1)
+        _locate(st, cu, ctry)
+    story = ss.cluster_from_store(st)[0]
+    assert story["publisherCount"] == 4
+    assert story["publisherDiversity"] == 1.0            # the discriminator that MISSES this
+    assert story["geoCoherence"] == 0.25, "one member in four backs the consensus"
+    assert story["locatedMembers"] == 4
+
+
+def test_unlocated_members_abstain_rather_than_dilute():
+    """A member nobody located is not evidence against the ones who were — coherence is over
+    LOCATED members only, or a sparse feed would make every story look incoherent."""
+    st = store_mod.Store("sqlite://")
+    for i in range(4):
+        cu = f"https://p{i}.example/q"
+        _add(st, cu, f"Outlet {i}", 0.0, "Ferry runs aground near the northern port", days=1)
+    _locate(st, "https://p0.example/q", "GR")
+    _locate(st, "https://p1.example/q", "GR")
+    story = ss.cluster_from_store(st)[0]
+    assert story["totalCoverage"] == 4 and story["locatedMembers"] == 2
+    assert story["geoCoherence"] == 1.0
+
+
+def test_one_prolific_outlet_cannot_outvote_the_rest():
+    """Votes are per MEMBER per country, so filing more copy does not buy more say."""
+    st = store_mod.Store("sqlite://")
+    for i in range(3):
+        cu = f"https://loud.example/{i}"
+        _add(st, cu, "Loud Wire", 0.0, f"Summit talks continue in the capital {i}", days=1)
+        _locate(st, cu, "RU")
+    for i in range(2):
+        cu = f"https://calm.example/{i}"
+        _add(st, cu, f"Calm Post {i}", 0.0, f"Summit talks continue in the capital {i}", days=1)
+        _locate(st, cu, "CH")
+    votes = {}
+    for s_ in ss.cluster_from_store(st):
+        votes.update(s_["countryVotes"])
+    assert votes.get("RU", 0) == 3 and votes.get("CH", 0) == 2   # per member, not per publisher
+
+
+def test_tied_consensus_counts_members_backing_either_winner():
+    st = store_mod.Store("sqlite://")
+    _add(st, "https://a.example/t", "A", 0.0, "Border crossing reopens after long closure", days=1)
+    _add(st, "https://b.example/t", "B", 0.0, "Border crossing reopens after a long closure", days=1)
+    _locate(st, "https://a.example/t", "PL")
+    _locate(st, "https://b.example/t", "UA")
+    story = ss.cluster_from_store(st)[0]
+    assert story["countries"] == ["PL", "UA"]            # a genuine two-country event keeps both
+    # Honest, not flattering: each member named ONE country and they differ, so only half the
+    # located members back the strongest. Ambiguous geography reads as ambiguous.
+    assert story["geoCoherence"] == 0.5
+
+
+def test_members_recognising_both_places_of_a_two_country_event_stay_coherent():
+    """The case the top-vote rule protects: when members agree the event spans both places, it is
+    coherent — unlike members that each name a different single place."""
+    st = store_mod.Store("sqlite://")
+    _add(st, "https://a.example/b", "A", 0.0, "Border crossing reopens after long closure", days=1)
+    _add(st, "https://b.example/b", "B", 0.0, "Border crossing reopens after a long closure", days=1)
+    _locate(st, "https://a.example/b", "PL", "UA")
+    _locate(st, "https://b.example/b", "PL", "UA")
+    story = ss.cluster_from_store(st)[0]
+    assert story["countries"] == ["PL", "UA"] and story["geoCoherence"] == 1.0

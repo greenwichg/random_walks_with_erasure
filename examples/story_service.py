@@ -109,7 +109,9 @@ def _build_story(members: list) -> dict:
         timeline.append({"date": earliest, "label": "First report"})
     if latest and latest != earliest:
         timeline.append({"date": latest, "label": "Latest"})
-    consensus = _event_consensus(members)
+    votes = _country_votes(members)
+    consensus = _event_consensus(members, votes)
+    coherence, located_members = _geo_coherence(members, votes)
     return {
         "id": _story_id(members),
         "title": rep["headline"],
@@ -154,22 +156,73 @@ def _build_story(members: list) -> dict:
         "eventCountries": sorted({c for m in members for c in (m.get("eventCountries") or ())}),
         "publisherCountries": sorted({str(m["country"]).upper() for m in members
                                       if m.get("country")}),
+        # Cluster-geography coherence (diagnostic; internal like the fields above until a surface
+        # consumes it). Measured on the INCIDENT dimension only — see _geo_coherence.
+        "geoCoherence": coherence,              # None = nothing located, NOT zero
+        "locatedMembers": located_members,
+        "countryVotes": dict(sorted(votes.items(), key=lambda kv: (-kv[1], kv[0]))),
     }
 
 
-def _event_consensus(members: list) -> list:
+def _member_countries(m: dict) -> set:
+    """One member's EVENT countries, upper-cased. The INCIDENT's location — never the publisher's
+    home (``m["country"]``), which is provenance and lives separately as ``publisherCountries``. A
+    US outlet reporting an incident in India votes IN here, which is the whole point."""
+    return {str(c).upper() for c in (m.get("eventCountries") or ()) if c}
+
+
+def _country_votes(members: list) -> dict:
+    """country -> how many MEMBERS were located there. One vote per member per country, so a
+    prolific outlet cannot outvote the rest by filing more copy. Unlocated members abstain — they
+    are not evidence either way."""
+    votes: dict = {}
+    for m in members:
+        for c in _member_countries(m):
+            votes[c] = votes.get(c, 0) + 1
+    return votes
+
+
+def _event_consensus(members: list, votes: Optional[dict] = None) -> list:
     """The story's event countries by member consensus: each event-located member votes for its
     (already dominance-filtered) event countries; the plurality leader(s) win — ties are kept,
     because a genuinely two-country event IS in both places. No event-located members → no
     countries (fail-honest: publisher homes never substitute for where an event happened)."""
-    votes: dict = {}
-    for m in members:
-        for c in {str(c).upper() for c in (m.get("eventCountries") or ()) if c}:
-            votes[c] = votes.get(c, 0) + 1
+    votes = _country_votes(members) if votes is None else votes
     if not votes:
         return []
     top = max(votes.values())
     return sorted(c for c, n in votes.items() if n == top)
+
+
+def _geo_coherence(members: list, votes: dict) -> "tuple[Optional[float], int]":
+    """``(coherence, locatedMembers)`` — the share of LOCATED members backing the single
+    strongest incident country. ``None`` when nothing is located: absence of evidence is not
+    incoherence, and a story nobody located must not be scored as though it were.
+
+    Deliberately measured against the TOP vote, not against the consensus set. ``_event_consensus``
+    keeps ties, so a cluster whose members each name a *different* country produces an n-way tie in
+    which every member "backs a winner" — scoring maximal disagreement as perfect agreement, the
+    exact inverse of the truth. Against the top vote, four members in four countries score 0.25.
+
+    The distinction that makes this useful: a member located in BOTH places of a genuine two-country
+    event votes for both and lifts the top count, so real border/multi-site events stay coherent —
+    while members that each name a different single place do not.
+
+    This measures whether a cluster's members are *about the same place*, which turns out to be a
+    sharp detector of FALSE MERGES rather than of geography errors. Measured in production: a
+    105-publisher cluster titled "Thune on Trump's Canada tariffs" whose members were located
+    across CN, CU, DJ, GB, IL, IR, OM, PH, SA, SG, US and YE — articles with nothing to do with
+    each other, merged on shared title tokens. ``publisherDiversity`` rated that cluster healthy
+    (0.53); this does not.
+
+    Crucially it is a MEMBER-AGREEMENT measure, not a country count. A genuine multi-country story
+    scores high: an explainer citing fires in AU/ES/FR/GB/SK/US is coherent when its members all
+    mention the same lead country, however many others each adds. A false merge scores low because
+    its members name *different* places."""
+    located = sum(1 for m in members if _member_countries(m))
+    if not located or not votes:
+        return None, located
+    return round(max(votes.values()) / located, 3), located
 
 
 def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,

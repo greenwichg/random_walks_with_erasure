@@ -155,6 +155,12 @@ are distinguishable.
 
 ## Still open
 
+- **Cluster geography coherence** (`examples/audit_story_geography.py`, added 2026-07-27) is now
+  the sharpest false-merge detector we have, and it retired an earlier wrong call: the `(198, 105)`
+  cluster described below as "almost certainly real" is *"Thune on Trump's Canada tariffs"*, whose
+  members are located across CN CU DJ GB IL IR OM PH SA SG US YE. `publisherDiversity` scored it
+  0.53 and called it healthy. Coherence does not. Run the audit before trusting a size-based
+  judgement about any cluster.
 - **The 94/2 cluster.** Production's largest cluster is 94 articles from **2 publishers** — a false
   merge, almost certainly one outlet emitting near-identical headlines (live blogs, market wraps).
   The stop-list already carries `live update updates`, so this isn't fully handled. It consumes ~5%
