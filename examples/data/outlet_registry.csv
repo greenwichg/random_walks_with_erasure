@@ -1169,3 +1169,27 @@ MedPage Today,,medpagetoday.com,US,New York,New York,national
 # "Morningstar" returns THE MORNING STAR, a British communist daily MBFC rates LEFT. Importing that
 # would have put a -2 on an investment-research firm. Two-word brand names are where this file is
 # most likely to be poisoned by a plausible-looking result.
+#
+# Twenty-second pass -- LATIN AMERICA, 14 outstanding. TWO rated. This is the lowest yield of any
+# group worked in this session, lower even than the non-Western probe at 7.5%, and it is worth
+# stating as a measurement rather than passing over: MBFC's Latin American coverage is thin, and
+# where it exists it is often behind the site's paid tier (the Brazil media profile is explicitly
+# "Ad-Free members only", which is why Veja and Exame could not be read even though pages exist).
+#
+#   Buenos Aires Times +1  (MBFC RC, factual High -- Perfil Group's English-language daily)
+#   Animal Politico    -1  (MBFC LC -3.5, factual High -- IFCN-certified fact-checking, and MBFC
+#                           attributes the lean to emphasis on corruption, inequality and social
+#                           justice rather than to party alignment)
+#
+# CONFIRMED ABSENT after searching: Perfil, Ambito, La Voz, O Estado de S. Paulo, Veja, Exame,
+# Excelsior, Proceso, El Comercio (Peru), La Republica (Peru), Semana, W Radio. Ground News reports
+# El Comercio as unrateable by ALL THREE of Ad Fontes, AllSides and MBFC, which is the clearest
+# statement available that the gap is the raters' and not this file's.
+#
+# ARGENTINA GETS LESS BALANCED, the same way Turkey did. It now reads 1 left (Infobae) against 3
+# right (Clarin, La Nacion, Buenos Aires Times). Pagina/12, the obvious left counterweight, has no
+# rating at any of the three raters -- searched twice in this session. The balance guard exempts
+# Argentina at n=4 with min=1, and that exemption is honest: the missing side was looked for and
+# does not exist in any source this file accepts.
+Animal Politico,-1,animalpolitico.com,MX,,Mexico City,national
+Buenos Aires Times,1,batimes.com.ar,AR,,Buenos Aires,national

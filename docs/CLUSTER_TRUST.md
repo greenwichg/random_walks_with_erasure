@@ -2088,3 +2088,58 @@ Kiplinger, Politico Pro.
 | rows | 154 | **439** |
 | rated | 143 | **412** |
 | countries | ~30 | **53** |
+
+## Twenty-second pass: Latin America — the lowest yield measured
+
+**Fourteen probed, two rated.** Lower than the non-Western probe's 7.5%, and worth stating as a
+measurement rather than passing over.
+
+| | |
+|---|---|
+| Buenos Aires Times +1 | MBFC RC, factual High — Perfil Group's English daily |
+| Animal Político −1 | MBFC LC (−3.5), factual High, IFCN-certified fact-checking |
+
+**Confirmed absent after searching:** Perfil, Ámbito, La Voz, O Estado de S. Paulo, Veja, Exame,
+Excélsior, Proceso, El Comercio (Peru), La República (Peru), Semana, W Radio.
+
+Two reasons, and only one of them is "no rating exists":
+
+* **MBFC's Brazil profile is behind its paid tier** — explicitly "Ad-Free members only". Veja and
+  Exame have pages that could not be read. That is a **paywall**, not an absence, and it is a
+  different kind of gap: the rating exists and this file cannot see it.
+* **El Comercio is reported unrateable by all three** of Ad Fontes, AllSides and MBFC. That is the
+  clearest statement available that the gap is the raters' and not this file's.
+
+### Brazil is invisible, and there is now a test saying so
+
+Three Brazilian rows — Folha de S.Paulo, O Globo — and **not one is rated**. Folha is confirmed
+absent from all three raters; O Globo is reachable only through its *parent's* rating, which this
+file refuses. **The largest country in South America contributes nothing to a lean distribution**,
+and a Brazilian story shows no spread at all. Pinned as a fact rather than left as a silent hole.
+
+### Argentina got less balanced, and the exemption is honest
+
+Argentina now reads **1 left (Infobae) against 3 right** (Clarín, La Nación, Buenos Aires Times).
+Página/12 — the obvious counterweight — has no rating at MBFC, AllSides or Ad Fontes, searched twice
+in this session. The balance guard's exemption for Argentina now carries **that** reason instead of
+the stale "n=3" it had, which matters: an exemption is only defensible if it records *why*, and
+"the missing side was looked for and does not exist" is a different claim from "this market is small".
+
+### A second brittle test, same lesson
+
+`test_mexico_now_straddles` asserted "exactly 2 left and 2 right" and broke the moment Animal
+Político landed. That is the **second** exact-count assertion on a growing set to fail in this
+session, after the withheld-set one. Both are now properties rather than counts.
+
+**A count of a growing set is a tripwire with no hazard behind it** — it fires on correct work and
+teaches the next person to stop reading the assertion. Mexico was also removed from the guard's
+"too small to judge" exemptions: at five rated outlets that straddle, it should be checked like any
+other market.
+
+### Registry, close of twenty-two passes
+
+| | start of day | end |
+|---|---:|---:|
+| rows | 154 | **441** |
+| rated | 143 | **414** |
+| countries | ~30 | **53** |

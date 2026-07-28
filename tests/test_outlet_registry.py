@@ -1110,7 +1110,9 @@ def test_no_market_of_three_or_more_is_completely_one_sided(reg):
         "UA": "no rated outlet exists on the missing side.",
         "NZ": "no rated outlet exists on the missing side.",
         # Fewer than four rated outlets each: too small for the shape to mean anything yet.
-        "CL": "n=2", "SE": "n=3", "DK": "n=3", "MY": "n=3", "MX": "n=3", "AR": "n=3",
+        "CL": "n=2", "SE": "n=3", "DK": "n=3", "MY": "n=3", "AR": "1 left (Infobae) against 3 right. Pagina/12, the obvious counterweight, has no "
+              "rating at MBFC, AllSides or Ad Fontes — searched twice. The missing side was "
+              "looked for and does not exist in any source this file accepts.",
         "CN": "n=3", "NL": "n=5, straddles via NRC -1 and De Telegraaf +2 — see the pairs test",
     }
     for cc, v in by.items():
@@ -1177,12 +1179,17 @@ def test_the_seventeenth_pass_ratings(reg):
 
 
 def test_mexico_now_straddles(reg):
-    """It held one left outlet against two right. La Jornada at -2 makes it 2-2 — the one-sided
-    guard would not have caught this because a single left row already satisfied it, which is why
-    that test is a floor and not the whole job."""
+    """It held one left outlet against two right. La Jornada at -2 made it 2-2, and Animal Politico
+    later took it to 3-2 — the one-sided guard would not have caught the original shape because a
+    single left row already satisfied it, which is why that test is a floor and not the whole job.
+
+    Asserted as a PROPERTY, not as counts. The first version of this pinned "exactly 2 and 2" and
+    broke the moment the next rating landed — the second brittle exact-count assertion in this file
+    after the withheld-set one. A count of a growing set is a tripwire with no hazard behind it."""
     import math
     mx = [o.lean for o in reg.outlets() if o.country == "MX" and not math.isnan(o.lean)]
-    assert sum(1 for v in mx if v < 0) == 2 and sum(1 for v in mx if v > 0) == 2
+    assert len(mx) >= 4
+    assert sum(1 for v in mx if v < 0) >= 2 and sum(1 for v in mx if v > 0) >= 2
 
 
 def test_the_last_three_alias_gaps_from_the_probe(reg):
@@ -1346,3 +1353,23 @@ def test_a_newsroom_rated_off_the_axis_carries_no_kind(reg):
     o = reg.resolve("Medpagetoday.Com")
     assert math.isnan(o.lean) and o.kind is None and o.country == "US"
     assert reg.resolve("Nature.Com").kind == "research"
+
+
+def test_the_latam_pass(reg):
+    """Two ratings from fourteen probed — the lowest yield of any group in this session."""
+    assert reg.lean("Animalpolitico.Com") == -1.0
+    assert reg.lean("Batimes.Com.Ar") == 1.0
+    assert reg.resolve("Batimes.Com.Ar").country == "AR"
+
+
+def test_brazil_has_no_rated_outlet_at_all(reg):
+    """Three Brazilian rows — Folha de S.Paulo, O Globo, and neither rated. MBFC's Brazil profile is
+    behind its paid tier, so Veja and Exame could not be read even though pages exist, and O Globo
+    is only reachable through its PARENT's rating, which this file refuses.
+
+    Pinned as a fact rather than a target: the biggest country in South America is invisible to the
+    lean distribution, and a Brazilian story shows no spread at all."""
+    import math
+    br = [o for o in reg.outlets() if o.country == "BR"]
+    assert br, "the rows exist"
+    assert all(math.isnan(o.lean) for o in br), "and not one of them is rated"
