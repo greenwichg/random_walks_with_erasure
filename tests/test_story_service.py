@@ -663,3 +663,122 @@ def test_members_recognising_both_places_of_a_two_country_event_stay_coherent():
     _locate(st, "https://b.example/b", "PL", "UA")
     story = ss.cluster_from_store(st)[0]
     assert story["countries"] == ["PL", "UA"] and story["geoCoherence"] == 1.0
+
+
+# --------------------------------------------------------------------------- #
+# Cluster trust — the launch gates over geoCoherence.
+#
+# Two surfaces consume the verdict: the blindspot claim (withheld from a cluster the independent
+# signal contradicts) and the default ranking (which must not lead with one). Both exist because
+# single-linkage chaining ACCUMULATES publishers, so a false merge's wrongness and its rank have
+# the same cause.
+# --------------------------------------------------------------------------- #
+def _false_merge(st, n=4):
+    """Members located in unrelated countries, merged on shared title tokens — coherence 1/n."""
+    for pub, ctry in list(zip("ABCDEF", ["US", "YE", "SG", "DJ", "CU", "OM"]))[:n]:
+        cu = f"https://{pub}.example/strike"
+        _add(st, cu, f"Outlet {pub}", 0.0, "Container terminal strike enters second week", days=1)
+        _locate(st, cu, ctry)
+
+
+def test_trust_leaves_the_median_story_alone():
+    """A two-member cluster is ONE pairwise decision — chaining needs A~B, B~C and A≁C. The
+    catalog median is 2, so the gates skip the typical story by construction, not by tuning."""
+    assert ss._cluster_trust(2, 0.1, floor=0.7, unverified_size=50) == ss.TRUST_OK
+    assert ss._cluster_trust(1, None, floor=0.7, unverified_size=50) == ss.TRUST_OK
+
+
+def test_trust_verdicts():
+    low = ss._cluster_trust(10, 0.62, floor=0.7, unverified_size=50)
+    ok = ss._cluster_trust(10, 0.70, floor=0.7, unverified_size=50)
+    assert (low, ok) == (ss.TRUST_LOW, ss.TRUST_OK), "the floor is inclusive"
+    # No score at all: unusual only once the cluster is big enough for that to be notable.
+    assert ss._cluster_trust(10, None, floor=0.7, unverified_size=50) == ss.TRUST_OK
+    assert ss._cluster_trust(51, None, floor=0.7, unverified_size=50) == ss.TRUST_UNVERIFIED
+
+
+def test_blindspot_is_withheld_from_an_incoherent_cluster():
+    """The gate that matters most. A blindspot is a claim about PUBLISHER BEHAVIOUR; asserting one
+    from a cluster whose members are located in four different countries states something false
+    about the world, not merely something untidy about grouping."""
+    st = store_mod.Store("sqlite://")
+    _false_merge(st)
+    story = ss.cluster_from_store(st)[0]
+    assert story["clusterTrust"] == ss.TRUST_LOW
+    assert story["geoCoherence"] == 0.25
+    assert story["blindspotSide"] is None, "no claim from a cluster we cannot stand behind"
+    assert story["blindspotWithheld"] is True, "and the audit must be able to count it"
+
+
+def test_a_trusted_cluster_still_reports_its_blindspot():
+    """The gate must not simply delete the feature — a coherent cluster keeps its claim."""
+    st = store_mod.Store("sqlite://")
+    _senate_and_wildfire(st)
+    wild = next(s for s in ss.cluster_from_store(st) if "Wildfire" in s["title"])
+    assert wild["clusterTrust"] == ss.TRUST_OK
+    assert wild["blindspotSide"] in {"center", "right"} and wild["blindspotWithheld"] is False
+
+
+def test_default_ranking_demotes_an_independently_suspect_cluster():
+    """Ranking on publisherCount alone promotes exactly the defect it should bury: measured in
+    production, a 106-publisher cluster at coherence 0.62 outsorts every correct story."""
+    st = store_mod.Store("sqlite://")
+    _false_merge(st)                                        # 4 publishers, coherence 0.25
+    _senate_and_wildfire(st)                                # Senate: 3 publishers, coherent
+    stories = ss.cluster_from_store(st)
+    assert stories[0]["publisherCount"] == 3 and "Senate" in stories[0]["title"]
+    assert stories[-1]["clusterTrust"] == ss.TRUST_LOW, "the bigger, suspect cluster sorts last"
+
+
+def test_trust_ranking_can_be_switched_off(monkeypatch):
+    """The kill switch restores pure size ordering without a deploy."""
+    monkeypatch.setenv("RWE_STORY_TRUST_RANKING", "0")
+    ss.clear_cache()
+    st = store_mod.Store("sqlite://")
+    _false_merge(st)
+    _senate_and_wildfire(st)
+    stories = ss.cluster_from_store(st)
+    assert stories[0]["publisherCount"] == 4 and stories[0]["clusterTrust"] == ss.TRUST_LOW
+
+
+def test_publishers_sort_gets_the_same_demotion():
+    """Otherwise "sort by publishers" is a one-click route back to the card the default ordering
+    exists to keep off the top."""
+    st = store_mod.Store("sqlite://")
+    _false_merge(st)
+    _senate_and_wildfire(st)
+    body = ss.list_stories(st, sort="publishers")
+    assert body["stories"][0]["clusterTrust"] == ss.TRUST_OK
+    assert body["stories"][-1]["clusterTrust"] == ss.TRUST_LOW
+
+
+def test_time_sorts_are_untouched_by_trust():
+    """A reader asking for newest wants newest — the demotion belongs to the "biggest" semantic."""
+    st = store_mod.Store("sqlite://")
+    _false_merge(st)
+    _senate_and_wildfire(st)
+    latest = ss.list_stories(st, sort="latest")["stories"]
+    assert latest == sorted(latest, key=lambda s: (s["latest"] or "", s["id"]), reverse=True)
+
+
+def test_diagnostics_report_trust_and_the_launch_monitors():
+    """Both monitors are RATIOS. Raw counts stop being comparable the moment the corpus grows,
+    which is the exact regime the mega-cluster was found in."""
+    st = store_mod.Store("sqlite://")
+    _false_merge(st)
+    _senate_and_wildfire(st)
+    d = ss.diagnostics(st)
+    assert d["clusterTrust"][ss.TRUST_LOW] == 1
+    assert d["blindspotsWithheld"] == 1
+    assert d["largestOverP90"] > 0 and 0.0 < d["largestShareOfCovered"] <= 1.0
+
+
+def test_link_quorum_is_off_by_default_and_tunable(monkeypatch):
+    monkeypatch.delenv("RWE_CLUSTER_LINK_QUORUM", raising=False)
+    assert ss.link_quorum() == 0.0
+    monkeypatch.setenv("RWE_CLUSTER_LINK_QUORUM", "0.3")
+    assert ss.link_quorum() == 0.3
+    monkeypatch.setenv("RWE_CLUSTER_LINK_QUORUM", "nonsense")
+    assert ss.link_quorum() == 0.0, "junk falls back rather than silently reshaping the catalog"
+    monkeypatch.setenv("RWE_CLUSTER_LINK_QUORUM", "1.7")
+    assert ss.link_quorum() == 0.0, "out of range is junk too"

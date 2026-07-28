@@ -308,3 +308,78 @@ def test_idf_is_off_by_default_and_can_be_switched_on(monkeypatch):
     assert story_service.use_idf() is True
     monkeypatch.setenv("RWE_CLUSTER_IDF", "0")
     assert story_service.use_idf() is False
+
+
+# --------------------------------------------------------------------------- #
+# Cluster-aware linkage (link_quorum) — the fix for single-linkage chaining.
+# --------------------------------------------------------------------------- #
+# A~B and B~C both pass the pairwise gate; A~C shares nothing. Single linkage welds all three
+# together — the mechanism behind the production mega-cluster. These titles are built so the
+# chain is explicit rather than incidental.
+_CHAIN = (
+    ("alpha beta gamma delta", 0),          # A
+    ("alpha beta gamma epsilon zeta eta", 0),   # B — bridges A and C
+    ("epsilon zeta eta theta", 0),          # C
+)
+
+
+def test_single_linkage_chains_a_and_c_through_b():
+    """The baseline defect, stated as a test so the fix has something to be measured against."""
+    assert _groups(_items(*_CHAIN)) == [[0, 1, 2]]
+
+
+def test_link_quorum_breaks_the_chain_but_keeps_the_genuine_pair():
+    """B still joins A — they really do match. C does not, because it matches only half the
+    cluster: one of the two cross-pairs, below a 0.6 quorum."""
+    assert _groups(_items(*_CHAIN), link_quorum=0.6) == [[0, 1], [2]]
+
+
+def test_link_quorum_zero_is_exactly_single_linkage():
+    """The default must not drift. 0.0 takes a separate code path that never sorts or tracks
+    membership, and it has to agree with the transitive closure on every input."""
+    import random
+    rnd = random.Random(11)
+    vocab = [f"word{i}" for i in range(40)]
+    items = [{"t": " ".join(rnd.sample(vocab, 6)), "when": T0} for _ in range(120)]
+    kw = dict(tokens=lambda x: cl.title_tokens(x["t"]), time=lambda x: x["when"])
+
+    def closure():
+        toks = [cl.title_tokens(i["t"]) for i in items]
+        dsu = cl.DSU(len(items))
+        for a in range(len(items)):
+            for b in range(a + 1, len(items)):
+                if (len(toks[a]) >= cl.MIN_TITLE_TOKENS and len(toks[b]) >= cl.MIN_TITLE_TOKENS
+                        and len(toks[a] & toks[b]) >= cl.MIN_SHARED_TOKENS
+                        and cl.jaccard(toks[a], toks[b]) >= cl.DEFAULT_SIM):
+                    dsu.union(a, b)
+        groups: dict = {}
+        for i in range(len(items)):
+            groups.setdefault(dsu.find(i), []).append(i)
+        return sorted(sorted(g) for g in groups.values())
+
+    assert sorted(sorted(g) for g in cl.cluster(items, link_quorum=0.0, **kw)) == closure()
+
+
+def test_link_quorum_never_blocks_a_story_from_forming():
+    """Two singletons have exactly one cross-pair — the pair that already passed the similarity
+    gate — so even a quorum of 1.0 admits it. The rule constrains GROWTH, not formation, which is
+    what keeps it off the catalog's median two-article story."""
+    pair = _items(("harbour bridge closed after crash", 0), ("crash closes harbour bridge", 0))
+    assert _groups(pair, link_quorum=1.0) == [[0, 1]]
+
+
+def test_link_quorum_is_deterministic():
+    """Quorum linkage is order-dependent by nature, so merges are consumed best-first. The result
+    must still be identical across runs, or story IDs churn."""
+    import random
+    rnd = random.Random(3)
+    vocab = [f"tok{i}" for i in range(30)]
+    items = [{"t": " ".join(rnd.sample(vocab, 5)), "when": T0} for _ in range(80)]
+    first = _groups(items, link_quorum=0.5)
+    assert first == _groups(items, link_quorum=0.5)
+
+
+def test_link_quorum_defaults_to_off():
+    """Shipped disabled: it targets a real production failure, but the last change that tightened
+    matching on equally sound reasoning cost 10.5% of covered articles."""
+    assert cl.DEFAULT_LINK_QUORUM == 0.0

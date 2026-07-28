@@ -13,6 +13,12 @@ import { useTranslation } from "@/lib/i18n";
 
 const LEAN_FILTERS: ("all" | LeanBucket)[] = ["all", "left", "center", "right"];
 
+// Rows rendered before "Load more". Cluster size is long-tailed — the catalog median story is 2
+// articles and p90 is 7, but the largest measured cluster is 318, and every row here mounts a Read
+// button and a Save button. Batching keeps the worst case off the first paint without changing what
+// the page contains; the count line below still reports the true total.
+const PAGE = 40;
+
 /**
  * The story's article coverage as a FILTERABLE list — the "how is it covered, and by whom" section.
  *
@@ -56,6 +62,16 @@ export function CoverageList({ coverage }: { coverage: StoryCoverage[] }) {
         : (b.publishedAt ?? "").localeCompare(a.publishedAt ?? ""),
     );
   }, [coverage, lean, register, oldestFirst]);
+
+  // Any filter or order change starts the batch over — otherwise "Load more" would carry a
+  // previous filter's depth into a shorter result set.
+  const [visible, setVisible] = React.useState(PAGE);
+  React.useEffect(() => {
+    setVisible(PAGE);
+  }, [lean, register, oldestFirst]);
+
+  const shown = rows.slice(0, visible);
+  const hasMore = visible < rows.length;
 
   const reset = () => {
     setLean("all");
@@ -112,7 +128,7 @@ export function CoverageList({ coverage }: { coverage: StoryCoverage[] }) {
         </div>
       ) : (
         <ul className="divide-y">
-          {rows.map((row, i) => (
+          {shown.map((row, i) => (
             <li key={`${row.publisher}-${row.publishedAt}-${i}`} className="group">
               <div className="-mx-2 flex flex-col gap-3 rounded-md px-2 py-3 transition-colors hover:bg-accent/40 sm:flex-row sm:items-center">
                 <div className="min-w-0 flex-1">
@@ -149,6 +165,13 @@ export function CoverageList({ coverage }: { coverage: StoryCoverage[] }) {
             </li>
           ))}
         </ul>
+      )}
+      {hasMore && (
+        <div className="mt-3 flex justify-center">
+          <Button variant="outline" size="sm" onClick={() => setVisible((v) => v + PAGE)}>
+            {t("common.loadMore")}
+          </Button>
+        </div>
       )}
       <p className="mt-2 text-xs text-muted-foreground">{formatCompact(rows.length)} / {formatCompact(coverage.length)}</p>
     </section>

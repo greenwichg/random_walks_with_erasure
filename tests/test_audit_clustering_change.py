@@ -117,3 +117,42 @@ def test_idf_side_is_scored_independently(tmp_path):
     # cluster survives either way — the point is that requesting idf does not error or empty out.
     assert plain["afterStories"] == with_idf["afterStories"] == 1
     assert with_idf["afterCovered"] == 2
+
+
+# --------------------------------------------------------------------------- #
+# The verdict — bars fixed in advance, computed rather than eyeballed.
+#
+# The IDF experiment looked good on its headline numbers (more stories, half the largest cluster)
+# and cost 10.5% of covered articles. Nobody would have accepted that if asked first, so the
+# instrument now states the answer instead of leaving it to a reading of the table.
+# --------------------------------------------------------------------------- #
+def _res(**kw):
+    base = {"beforeCovered": 1000, "droppedOut": 0, "beforeStories": 100, "afterStories": 100}
+    base.update(kw)
+    return base
+
+
+def test_verdict_adopts_a_change_that_holds_coverage():
+    v = acc.verdict(_res(droppedOut=20, afterStories=110))
+    assert v["adopt"] is True and v["fails"] == []
+
+
+def test_verdict_rejects_the_idf_failure_mode():
+    """10.5% dropped — the measured cost of the last change that tightened matching."""
+    v = acc.verdict(_res(droppedOut=105))
+    assert v["adopt"] is False
+    assert "dropped 10.5%" in v["fails"][0]
+
+
+def test_verdict_rejects_a_falling_story_count():
+    """The min_publishers cliff: splitting a 4-article/2-publisher cluster into 2+2 leaves two
+    single-publisher fragments and BOTH are dropped. Oversplitting deletes stories rather than
+    shrinking them, and the article counter alone does not show it."""
+    v = acc.verdict(_res(afterStories=88))
+    assert v["adopt"] is False and "min_publishers cliff" in v["fails"][0]
+
+
+def test_verdict_bar_is_the_share_not_the_count():
+    """A fixed article count would quietly loosen as the corpus grows."""
+    assert acc.verdict(_res(beforeCovered=100, droppedOut=6))["adopt"] is False
+    assert acc.verdict(_res(beforeCovered=10000, droppedOut=6))["adopt"] is True

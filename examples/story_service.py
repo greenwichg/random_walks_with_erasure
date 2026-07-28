@@ -33,6 +33,36 @@ from pagination import OffsetPagination
 
 SORTS = ("top", "latest", "oldest", "publishers")
 
+# --------------------------------------------------------------------------- #
+# Cluster trust — how much weight a surface may put on one cluster being one event.
+#
+# ``geoCoherence`` is the only INDEPENDENT quality signal we have: it is computed from
+# provider-extracted locations and knows nothing about titles, tokens or publishers, so it can
+# contradict the clusterer. These constants turn it into a verdict two surfaces consume — the
+# blindspot claim (which must not be made from a cluster we doubt) and the default ranking (which
+# must not lead with one).
+# --------------------------------------------------------------------------- #
+
+#: A cluster below this size cannot be a chained false merge: chaining needs A~B, B~C and A≁C,
+#: which takes three members. Two-member stories are one pairwise decision — and they are the
+#: catalog MEDIAN, so these rules leave the typical story untouched by construction.
+MIN_CHAINABLE = 3
+
+#: geoCoherence at or above this counts as independently corroborated. Below it, the located
+#: members disagree about where the event happened. Measured in production: the five clusters
+#: under 0.7 include the worst known false merge (0.62, members across twelve countries).
+DEFAULT_COHERENCE_FLOOR = 0.7
+
+#: A cluster bigger than this carrying NO coherence score is treated as unverified rather than
+#: good. Location coverage is ~18% and scoring needs three located members, so a cluster this
+#: large with nothing located is itself unusual. Set well above p90 story size (7) so it catches
+#: anomalies, not ordinary well-covered news.
+DEFAULT_UNVERIFIED_SIZE = 50
+
+TRUST_OK = "ok"                     # corroborated, or too small to chain
+TRUST_LOW = "low"                   # scored, and the score says the members disagree
+TRUST_UNVERIFIED = "unverified"     # big enough to be a chain, with nothing to check it against
+
 
 # --------------------------------------------------------------------------- #
 # Story construction (the single implementation).
@@ -62,12 +92,39 @@ def _distribution(members: list) -> dict:
 
 def _blindspot(dist: dict) -> Optional[str]:
     """The under-covered side of an event — a bucket with no publishers while another side is well
-    covered. Deterministic (left < center < right). A coverage gap, not an opinion metric."""
+    covered. Deterministic (left < center < right). A coverage gap, not an opinion metric.
+
+    Computed over the cluster's members, which makes it only as true as the cluster is. Blend two
+    unrelated events and the merged lean distribution is nobody's editorial gap — so ``_build_story``
+    withholds this whenever ``_cluster_trust`` is not ``ok``. It is the product's most load-bearing
+    claim about publisher behaviour, and the only one a clustering defect can turn into a false
+    statement about the world rather than merely a poor grouping."""
     empties = [k for k in ("left", "center", "right") if dist[k] == 0.0]
     covered = [k for k in ("left", "center", "right") if dist[k] > 0.0]
     if empties and len(covered) >= 1 and max(dist.values()) >= 0.5:
         return empties[0]
     return None
+
+
+def _cluster_trust(total: int, coherence: Optional[float], *, floor: float,
+                   unverified_size: int) -> str:
+    """How much this cluster can be trusted to be ONE event — ``ok`` / ``low`` / ``unverified``.
+
+    Three rules, in order:
+
+    * under ``MIN_CHAINABLE`` members → ``ok``. Not a judgement about quality; a structural fact.
+      A two-member cluster is a single pairwise decision, so the failure this guards against
+      cannot have occurred. This is what keeps the median story out of the gate entirely.
+    * a coherence score below ``floor`` → ``low``. An independent signal actively disagrees.
+    * no score at all, above ``unverified_size`` → ``unverified``. Absence of evidence, which is
+      treated differently from evidence of absence: it withholds claims (see ``_build_story``)
+      but does not reorder the feed (see ``build_stories``).
+    """
+    if total < MIN_CHAINABLE:
+        return TRUST_OK
+    if coherence is not None:
+        return TRUST_LOW if coherence < floor else TRUST_OK
+    return TRUST_UNVERIFIED if total > unverified_size else TRUST_OK
 
 
 def _coverage(members: list) -> list:
@@ -112,6 +169,11 @@ def _build_story(members: list) -> dict:
     votes = _country_votes(members)
     consensus = _event_consensus(members, votes)
     coherence, located_members = _geo_coherence(members, votes)
+    trust = _cluster_trust(total, coherence, floor=coherence_floor(),
+                           unverified_size=unverified_size())
+    # The blindspot is asserted only from a cluster we can stand behind. Keeping the raw verdict
+    # separately means the audit can count what the gate withheld rather than guess at it.
+    raw_blindspot = _blindspot(dist)
     return {
         "id": _story_id(members),
         "title": rep["headline"],
@@ -143,7 +205,8 @@ def _build_story(members: list) -> dict:
         "distribution": dist,
         "coverage": _coverage(members),
         "timeline": timeline,
-        "blindspotSide": _blindspot(dist),
+        "blindspotSide": raw_blindspot if trust == TRUST_OK else None,
+        "blindspotWithheld": bool(raw_blindspot) and trust != TRUST_OK,
         # Location Intelligence — the story's EVENT geography (counted facts, never guessed).
         # ``countries`` is what ?country= matches: the member-consensus leaders of the EVENT
         # dimension only — a story with no event-located members matches no country (it still
@@ -160,6 +223,7 @@ def _build_story(members: list) -> dict:
         # consumes it). Measured on the INCIDENT dimension only — see _geo_coherence.
         "geoCoherence": coherence,              # None = nothing located, NOT zero
         "locatedMembers": located_members,
+        "clusterTrust": trust,                  # ok | low | unverified — see _cluster_trust
         "countryVotes": dict(sorted(votes.items(), key=lambda kv: (-kv[1], kv[0]))),
     }
 
@@ -258,13 +322,83 @@ def use_idf() -> bool:
     The tell that this was the wrong instrument: the single worst template in the catalog — 101
     articles from 4 publishers, one outlet repeating "X LLC Makes New Investment in Y Inc" — lost
     only 9 members and survived as a story. Weighting rare words does not find one outlet repeating
-    itself; publisher concentration does (every real story in the catalog sits at 1.0–2.2 articles
-    per publisher, every template above 5).
+    itself.
+
+    An earlier revision of this docstring went on to claim publisher concentration *does* find it,
+    on the strength of ten hand-read rows. That claim was **measured against the whole catalog and
+    falsified** — see ``docs/PUBLISHER_CONCENTRATION_EVALUATION.md``: 0% precision and 0% recall at
+    every threshold, because every independently-bad cluster sits at ≤ 2.0 articles per publisher
+    while the catalog's 99th percentile is 2.29. The note is kept rather than deleted so the
+    heuristic does not get re-proposed from this file.
 
     The machinery stays because it is correct and tested, and because the real target — SINGLE-LINKAGE
-    chaining, which is what built the 194-article cluster — needs a linkage fix, not a weighting one."""
+    chaining, which is what built the 194-article cluster — needs a linkage fix, not a weighting one.
+    That fix now exists as ``clustering``'s ``link_quorum``; see ``link_quorum()`` below."""
     v = os.environ.get("RWE_CLUSTER_IDF", "").strip().lower()
     return v in {"1", "true", "yes", "on"}
+
+
+def link_quorum() -> float:
+    """Cluster-aware linkage strength — OFF (0.0 = single linkage), the measured production
+    baseline. Set ``RWE_CLUSTER_LINK_QUORUM=0.3`` to require 30% of cross-pairs to agree.
+
+    Deliberately shipped disabled. It targets the one clustering failure we have direct production
+    evidence for — the mega-cluster that grew 194 → 208 → 318 while the corpus grew 23%, whose
+    geoCoherence is 0.62 with members located across twelve countries — but the last change that
+    tightened matching on equally sound reasoning (``use_idf``) cost 10.5% of covered articles and
+    was reverted. The bar was set before that measurement and it applies here unchanged:
+
+        adopt   : largest cluster well down, droppedOut ≤ 5% of covered articles, no story-count fall
+        reject  : droppedOut > 10%, or total story count falls (the min_publishers cliff — splitting
+                  a 4-article/2-publisher cluster into 2+2 can leave two single-publisher fragments,
+                  BOTH of which are then dropped, so oversplitting deletes stories rather than
+                  merely shrinking them)
+
+    Measure a candidate with ``examples/audit_clustering_change.py --link-quorum 0.3`` before
+    enabling it anywhere."""
+    v = os.environ.get("RWE_CLUSTER_LINK_QUORUM", "").strip()
+    try:
+        q = float(v)
+    except (TypeError, ValueError):
+        return clustering.DEFAULT_LINK_QUORUM
+    return q if 0.0 <= q <= 1.0 else clustering.DEFAULT_LINK_QUORUM
+
+
+def coherence_floor() -> float:
+    """geoCoherence below which a cluster is independently suspect. ``RWE_STORY_COHERENCE_FLOOR``."""
+    return _env_float("RWE_STORY_COHERENCE_FLOOR", DEFAULT_COHERENCE_FLOOR)
+
+
+def unverified_size() -> int:
+    """Cluster size above which having NO coherence score is itself notable.
+    ``RWE_STORY_UNVERIFIED_SIZE``."""
+    return _env_int("RWE_STORY_UNVERIFIED_SIZE", DEFAULT_UNVERIFIED_SIZE)
+
+
+def trust_ranking() -> bool:
+    """Whether the default ranking demotes independently-suspect clusters. ON — set
+    ``RWE_STORY_TRUST_RANKING=0`` to rank purely by size again."""
+    v = os.environ.get("RWE_STORY_TRUST_RANKING", "").strip().lower()
+    return v not in {"0", "false", "no", "off"}
+
+
+def _size_rank(s: dict, *, trust_aware: bool) -> tuple:
+    """The "biggest story" ordering key, descending.
+
+    Size alone is not a safe ranking signal here, and the reason is mechanical rather than
+    aesthetic: single-linkage chaining ACCUMULATES publishers, so a cluster's wrongness and its
+    rank have the same cause. Ranking purely on ``publisherCount`` therefore promotes the one
+    defect class we have evidence for — measured in production, a 106-publisher cluster at
+    geoCoherence 0.62 sorts ahead of every correctly-clustered story in the catalog.
+
+    So a cluster the independent signal actively contradicts sorts last. Only ``low`` is demoted,
+    never ``unverified``: we reorder on evidence, and merely having nothing to check against is
+    not evidence. The trade this accepts is real — the 208-article cluster does contain a genuine,
+    well-covered story alongside the contamination, and burying it makes that coverage harder to
+    reach from this surface (it stays on Discover, search and the publisher pages). Splitting the
+    cluster is the actual fix; see ``link_quorum()``. This is containment until that measures out."""
+    trusted = s.get("clusterTrust") != TRUST_LOW if trust_aware else True
+    return (trusted, s["publisherCount"], s["totalCoverage"], s["latest"] or "")
 
 
 def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
@@ -272,9 +406,11 @@ def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
                   window_days: float = clustering.DEFAULT_WINDOW_DAYS,
                   min_shared: Optional[int] = None,
                   min_tokens: Optional[int] = None,
-                  idf: Optional[bool] = None) -> list:
+                  idf: Optional[bool] = None,
+                  quorum: Optional[float] = None) -> list:
     """Cluster FeedArticle rows into Story objects (the pure builder). Keeps clusters with
-    ≥ ``min_articles`` from ≥ ``min_publishers`` distinct outlets; sorted biggest+freshest first.
+    ≥ ``min_articles`` from ≥ ``min_publishers`` distinct outlets; sorted biggest+freshest first,
+    with independently-suspect clusters demoted (see ``_size_rank``).
     Deterministic: same rows → same stories, ids, and order."""
     arts = [discover.feed_article_to_article(r) for r in rows]
     groups = clustering.cluster(
@@ -282,7 +418,8 @@ def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
         time=lambda a: clustering.parse_time(a["publishedAt"]), sim=sim, window_days=window_days,
         min_shared=min_shared_tokens() if min_shared is None else min_shared,
         min_tokens=min_title_tokens() if min_tokens is None else min_tokens,
-        idf=use_idf() if idf is None else idf)
+        idf=use_idf() if idf is None else idf,
+        link_quorum=link_quorum() if quorum is None else quorum)
     stories = []
     for idxs in groups:
         members = [arts[i] for i in idxs]
@@ -291,7 +428,8 @@ def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
         if len({m["publisher"] for m in members}) < min_publishers:
             continue
         stories.append(_build_story(members))
-    stories.sort(key=lambda s: (s["publisherCount"], s["totalCoverage"], s["latest"] or ""), reverse=True)
+    trust_aware = trust_ranking()
+    stories.sort(key=lambda s: _size_rank(s, trust_aware=trust_aware), reverse=True)
     return stories
 
 
@@ -474,8 +612,11 @@ def _sort_stories(stories: list, sort: str) -> list:
     if sort == "oldest":
         return sorted(stories, key=lambda s: (s["earliest"] or "~", s["id"]))
     if sort == "publishers":
-        return sorted(stories, key=lambda s: (s["publisherCount"], s["totalCoverage"], s["latest"] or ""),
-                      reverse=True)
+        # Same "biggest" semantic as "top", so it gets the same demotion — otherwise this sort is a
+        # one-click route back to the exact card the default ordering exists to keep off the top.
+        # "latest"/"oldest" are untouched: a reader asking for newest wants newest.
+        trust_aware = trust_ranking()
+        return sorted(stories, key=lambda s: _size_rank(s, trust_aware=trust_aware), reverse=True)
     return stories       # "top" — build_stories already ordered biggest+freshest first
 
 
@@ -569,12 +710,25 @@ def _diagnostics(stories: list, cluster_ms: float) -> dict:
     dist: dict = {}
     for sz in sizes:
         dist[sz] = dist.get(sz, 0) + 1
+    trust: dict = {TRUST_OK: 0, TRUST_LOW: 0, TRUST_UNVERIFIED: 0}
+    for s in stories:
+        key = s.get("clusterTrust") or TRUST_OK
+        trust[key] = trust.get(key, 0) + 1
+    covered = sum(sizes)
+    # Chaining's tell is that the biggest cluster outgrows the catalog. Both ratios are dimensionless,
+    # so they stay comparable as the corpus grows — which raw counts do not.
+    p90 = sorted(sizes)[int(0.9 * (len(sizes) - 1))] if sizes else 0
     return {
         "storyCount": len(stories),
         "avgArticlesPerStory": round(sum(sizes) / len(sizes), 2) if sizes else 0.0,
         "largestStory": sizes[0] if sizes else 0,
         "clusterBuildMs": cluster_ms,
         "sizeDistribution": {str(k): v for k, v in sorted(dist.items())},
+        "clusterTrust": trust,
+        "blindspotsWithheld": sum(1 for s in stories if s.get("blindspotWithheld")),
+        # Launch monitors — see docs/CLUSTER_TRUST.md for the agreed trigger levels.
+        "largestOverP90": round(sizes[0] / p90, 1) if p90 else 0.0,
+        "largestShareOfCovered": round(sizes[0] / covered, 4) if covered else 0.0,
     }
 
 

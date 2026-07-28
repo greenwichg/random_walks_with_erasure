@@ -18,6 +18,19 @@ from typing import Callable, Optional, Sequence
 DEFAULT_SIM = 0.28
 DEFAULT_WINDOW_DAYS = 6.0
 
+#: Fraction of a candidate merge's CROSS-PAIRS that must independently pass the similarity gate
+#: before two clusters are joined. ``0.0`` = pure single linkage: A~B and B~C merges A, B and C even
+#: when A and C share nothing. That transitive closure is what built the production mega-cluster,
+#: and it is the measured production baseline — so the default stays 0.0 until a candidate value is
+#: measured against the live catalog by ``examples/audit_clustering_change.py``.
+DEFAULT_LINK_QUORUM = 0.0
+
+#: Cross-pair scoring is O(|A|x|B|), so each side is sampled to at most this many members (lowest
+#: indices first — deterministic). A quorum measured on 32x32 is a sample, not a census; that is a
+#: deliberate cost bound, and it means the test gets *approximate* on very large clusters. Those are
+#: exactly the clusters it is meant to stop forming.
+LINK_SAMPLE = 32
+
 #: Minimum DISTINCTIVE tokens two headlines must share before similarity is even considered.
 #: The ratio alone cannot tell evidence from coincidence — measured on real merges:
 #:   "Berlin pride event canceled…" vs "Vehicle drives into crowd at Berlin pride event"
@@ -145,12 +158,43 @@ class DSU:
             self.p[max(ra, rb)] = min(ra, rb)   # attach to the lower index → deterministic roots
 
 
+def _quorum_ok(a: "list[int]", b: "list[int]", *, pair_ok: Callable[[int, int], bool],
+               quorum: float) -> bool:
+    """Whether enough CROSS-PAIRS between two clusters independently pass the pairwise gate.
+
+    This is the whole difference between single linkage and cluster-aware linkage. Single linkage
+    asks "does the joining article match *any* member?"; this asks "does it match *enough* of
+    them?". A genuine new article about the same event resembles most of the cluster. A chaining
+    bridge resembles exactly one member — the one it shares boilerplate with — and fails here.
+
+    Two singletons always pass (one cross-pair, and it is the pair that already passed the
+    similarity gate), so the quorum never blocks a story from FORMING. It only constrains growth,
+    which is where chaining lives."""
+    sa, sb = a[:LINK_SAMPLE], b[:LINK_SAMPLE]
+    total = len(sa) * len(sb)
+    if not total:
+        return False
+    need = math.ceil(quorum * total - 1e-9)
+    hits, seen = 0, 0
+    for x in sa:
+        for y in sb:
+            seen += 1
+            if pair_ok(x, y):
+                hits += 1
+                if hits >= need:
+                    return True
+            elif hits + (total - seen) < need:
+                return False                            # cannot reach the quorum any more
+    return hits >= need
+
+
 def cluster(items: Sequence, *, tokens: Callable[[object], frozenset],
             time: Callable[[object], Optional[datetime]],
             sim: float = DEFAULT_SIM, window_days: float = DEFAULT_WINDOW_DAYS,
             min_shared: int = MIN_SHARED_TOKENS,
             min_tokens: int = MIN_TITLE_TOKENS,
-            idf: bool = False) -> "list[list[int]]":
+            idf: bool = False,
+            link_quorum: float = DEFAULT_LINK_QUORUM) -> "list[list[int]]":
     """Group item **indices** into clusters. ``tokens(item) → frozenset`` and
     ``time(item) → datetime | None`` are the accessors. Two items join the same cluster when their
     token Jaccard ≥ ``sim`` **and** their times are within ``window_days``. Returns a list of clusters,
@@ -166,6 +210,19 @@ def cluster(items: Sequence, *, tokens: Callable[[object], frozenset],
     Cost is O(Σ_t |postings(t)|²) rather than O(n²) — near-linear for headlines, whose content tokens
     are mostly rare. It degrades toward all-pairs only if every item shares a token with every other,
     which cannot be worse than the previous behaviour.
+
+    ``link_quorum`` switches the LINKAGE RULE. At ``0.0`` (the default, and the measured production
+    baseline) grouping is the transitive closure of the pairwise relation — pure single linkage.
+    Above ``0.0`` a merge additionally requires that fraction of cross-pairs between the two
+    clusters to pass the same pairwise gate, which is what stops one bridging article from welding
+    two unrelated events together. See ``_quorum_ok``.
+
+    The two modes differ in a property worth stating plainly. Single linkage is **order-independent**:
+    transitive closure is unique, so the answer does not depend on which merge is attempted first.
+    A quorum rule is not — accepting one merge changes the membership a later quorum is measured
+    against. Merges are therefore consumed **best-first** (highest similarity, ties by index), so the
+    ordering is a defensible one rather than an artefact of item order, and the result stays
+    deterministic. It is still a greedy result, not a global optimum.
     """
     n = len(items)
     toks = [tokens(it) for it in items]
@@ -179,25 +236,55 @@ def cluster(items: Sequence, *, tokens: Callable[[object], frozenset],
     # Rarity weighting (opt-in): shared common words stop counting as much evidence as shared rare
     # ones. Computed from THIS input set, so determinism is unaffected.
     weights = idf_weights(toks) if idf else None
+    floor = max(1, min_tokens)
+
+    def pair_ok(x: int, y: int) -> bool:
+        """The pairwise admission gate, as one predicate. The quorum test scores cross-pairs by
+        exactly the rule that admitted the original pair — a weaker bar there would let cross-pairs
+        that could never merge on their own count as support for merging."""
+        tx, ty = toks[x], toks[y]
+        if len(tx) < floor or len(ty) < floor or len(tx & ty) < min_shared:
+            return False
+        return (weighted_jaccard(tx, ty, weights) >= sim
+                and within_window(times[x], times[y], window_days))
+
+    def candidates():
+        """Yield ``(i, j, score)`` for every pair passing the pairwise gate, ``i < j``."""
+        for i in range(n):
+            ti = toks[i]
+            if len(ti) < floor:
+                continue                                # too little to say anything: stays a singleton
+            # Walking the postings counts SHARED TOKENS per candidate as a by-product, so the
+            # min_shared gate costs nothing extra — and it prunes most pairs before any Jaccard.
+            shared: dict = {}
+            for tok in ti:
+                for j in postings[tok]:
+                    if j > i:
+                        shared[j] = shared.get(j, 0) + 1
+            for j, overlap in shared.items():
+                if overlap < min_shared or len(toks[j]) < floor:
+                    continue
+                score = weighted_jaccard(ti, toks[j], weights)
+                if score >= sim and within_window(times[i], times[j], window_days):
+                    yield i, j, score
 
     dsu = DSU(n)
-    for i in range(n):
-        ti = toks[i]
-        if len(ti) < max(1, min_tokens):
-            continue                                    # too little to say anything: stays a singleton
-        # Walking the postings counts SHARED TOKENS per candidate as a by-product, so the
-        # min_shared gate costs nothing extra — and it prunes most pairs before any Jaccard.
-        shared: dict = {}
-        for tok in ti:
-            for j in postings[tok]:
-                if j > i:
-                    shared[j] = shared.get(j, 0) + 1
-        for j, overlap in shared.items():
-            if overlap < min_shared or len(toks[j]) < max(1, min_tokens):
+    if link_quorum <= 0.0:
+        # Single linkage — union on sight. Kept as its own path so the default cannot drift: no
+        # sort, no membership bookkeeping, byte-identical grouping to the measured baseline.
+        for i, j, _ in candidates():
+            dsu.union(i, j)
+    else:
+        members = {i: [i] for i in range(n)}
+        for i, j, _ in sorted(candidates(), key=lambda p: (-p[2], p[0], p[1])):
+            ra, rb = dsu.find(i), dsu.find(j)
+            if ra == rb:
+                continue                                # already together via a stronger merge
+            if not _quorum_ok(members[ra], members[rb], pair_ok=pair_ok, quorum=link_quorum):
                 continue
-            if (weighted_jaccard(ti, toks[j], weights) >= sim
-                    and within_window(times[i], times[j], window_days)):
-                dsu.union(i, j)
+            dsu.union(i, j)
+            root, other = (ra, rb) if ra < rb else (rb, ra)   # DSU keeps the lower index as root
+            members[root] = sorted(members[root] + members.pop(other))
 
     groups: dict = {}
     for i in range(n):
