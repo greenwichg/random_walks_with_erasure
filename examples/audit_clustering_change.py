@@ -37,7 +37,14 @@ MAX_DROPPED = 0.05
 
 
 def build(rows: list, *, min_shared: int, min_tokens: int, idf: bool = False,
-          quorum: float = 0.0, repair: float = 0.0, merge: float = 0.0) -> list:
+          quorum=None, repair=None, merge=None) -> list:
+    """``None`` means "whatever production is configured with" — ``build_stories`` resolves it.
+
+    These defaulted to 0.0, which silently made the BEFORE side something production is not. It is
+    the same defect as the admission-gate baseline, and it survived that fix because only the two
+    original knobs were corrected: a ``--merge-sim`` run then compared *unrepaired* against
+    *unrepaired + merge*, where the duplicate clusters the merge exists to join are still fused
+    inside the mega-cluster and there is by construction nothing for it to do."""
     return story_service.build_stories(rows, min_shared=min_shared, min_tokens=min_tokens, idf=idf,
                                        quorum=quorum, repair=repair, merge=merge)
 
@@ -121,8 +128,8 @@ def verdict(res: dict, *, max_dropped: float = MAX_DROPPED, merging: bool = Fals
 
 def compare(store_, *, before: tuple, after: tuple, show: int = 10,
             before_idf: bool = False, after_idf: bool = False,
-            before_quorum: float = 0.0, after_quorum: float = 0.0,
-            after_repair: float = 0.0, after_merge: float = 0.0) -> dict:
+            before_quorum=None, after_quorum=None,
+            after_repair=None, after_merge=None) -> dict:
     rows = story_service._fetch(store_)
     a = build(rows, min_shared=before[0], min_tokens=before[1], idf=before_idf,
               quorum=before_quorum)
@@ -214,13 +221,13 @@ def main(argv=None) -> int:
     ap.add_argument("--show", type=int, default=10)
     ap.add_argument("--idf", action="store_true",
                     help="score the AFTER side with rarity-weighted similarity")
-    ap.add_argument("--link-quorum", type=float, default=0.0,
+    ap.add_argument("--link-quorum", type=float, default=None,
                     help="cluster-aware linkage on the AFTER side: fraction of cross-pairs that "
                          "must agree before two clusters merge (0 = single linkage)")
-    ap.add_argument("--repair-quorum", type=float, default=0.0,
+    ap.add_argument("--repair-quorum", type=float, default=None,
                     help="TARGETED linkage: re-split only the clusters the independent signal "
                          "condemns, leaving every other story untouched")
-    ap.add_argument("--merge-sim", type=float, default=0.0,
+    ap.add_argument("--merge-sim", type=float, default=None,
                     help="second-pass duplicate merge: join clusters whose description-backed "
                          "profiles reach this weighted similarity (recall, not precision)")
     ap.add_argument("--pieces", type=int, default=0,
@@ -242,13 +249,22 @@ def main(argv=None) -> int:
                   after_quorum=args.link_quorum, after_repair=args.repair_quorum,
                   after_merge=args.merge_sim)
 
+    def _tag(name, v):
+        return f", {name} {v:g}" if v else ""
+    # The before side is production, so name what production ALREADY has as well as the override —
+    # otherwise a run that changes nothing looks like a run that was never configured.
     tag = ((", idf" if args.idf else "")
-           + (f", quorum {args.link_quorum:g}" if args.link_quorum > 0 else "")
-           + (f", repair {args.repair_quorum:g}" if args.repair_quorum > 0 else "")
-           + (f", merge {args.merge_sim:g}" if args.merge_sim > 0 else ""))
+           + _tag("quorum", args.link_quorum if args.link_quorum is not None
+                  else story_service.link_quorum())
+           + _tag("repair", args.repair_quorum if args.repair_quorum is not None
+                  else story_service.repair_quorum())
+           + _tag("merge", args.merge_sim if args.merge_sim is not None
+                  else story_service.merge_similarity()))
+    base_tag = (_tag("quorum", story_service.link_quorum())
+                + _tag("repair", story_service.repair_quorum())
+                + _tag("merge", story_service.merge_similarity()))
     print(f"articles in window : {res['articles']:,}")
-    print(f"before  (shared>={before[0]}, tokens>={before[1]}"
-          f"{'' if before == configured else ''}): "
+    print(f"before  (shared>={before[0]}, tokens>={before[1]}{base_tag}): "
           f"{res['beforeStories']:,} stories, largest {res['beforeLargest']}"
           f"{'   [PRODUCTION BASELINE]' if before == configured else '   [not production]'}")
     print(f"after   (shared>={after[0]}, tokens>={after[1]}{tag}): "
@@ -273,7 +289,7 @@ def main(argv=None) -> int:
         for pc in grp["pieces"][:args.piece_limit]:
             print(f"    {pc['articles']:>5} {pc['publishers']:>5}  {pc['title'][:64]}")
 
-    v = verdict(res, max_dropped=args.max_dropped, merging=args.merge_sim > 0)
+    v = verdict(res, max_dropped=args.max_dropped, merging=bool(args.merge_sim))
     print(f"\nVERDICT: {'ADOPT' if v['adopt'] else 'REJECT'} "
           f"(dropped {v['droppedShare']:.1%} of covered articles)")
     for f in v["fails"]:

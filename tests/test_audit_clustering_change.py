@@ -215,3 +215,18 @@ def test_the_independent_signal_can_veto_a_merge():
     worse_mean = acc.verdict(_mres(afterCoherence={"scored": 60, "bad": 3, "mean": 0.94}),
                              merging=True)
     assert worse_mean["adopt"] is False and "mean coherence fell" in worse_mean["fails"][0]
+
+
+def test_the_baseline_carries_every_configured_knob_not_just_the_gates(monkeypatch):
+    """The BEFORE side must be production in full. When only the admission gates were corrected,
+    `repair` and `merge` stayed pinned at 0.0, so a --merge-sim run compared UNREPAIRED against
+    UNREPAIRED + merge — and the clusters a merge exists to join are still fused inside the
+    mega-cluster there, so it had nothing to do by construction. The verdict then failed on a
+    350-article cluster the merge had never touched."""
+    seen = {}
+    monkeypatch.setattr(acc.story_service, "repair_quorum", lambda: 0.5)
+    monkeypatch.setattr(acc.story_service, "build_stories",
+                        lambda rows, **kw: seen.setdefault(len(seen), kw) or [])
+    acc.build([], min_shared=3, min_tokens=3)
+    assert seen[0]["repair"] is None, "None means 'resolve from config', not 'disabled'"
+    assert seen[0]["merge"] is None and seen[0]["quorum"] is None
