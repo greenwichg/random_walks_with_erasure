@@ -1511,3 +1511,48 @@ articles of template copy rejoin clustering with nothing to show for it. `invali
 | rated-but-withheld | 0 | 9 |
 
 `RWE_STORY_EXCLUDE_AGGREGATOR=0` reverses the clustering change; the rows stay either way.
+
+## Eleventh pass: a second wide probe
+
+Probing 199 well-known outlets found **193 with no row** — the registry had been curated toward what
+the feed carried, not toward what a global feed *could* carry. 34 rated from that set.
+
+| region | added |
+|---|---|
+| US | Mediaite −1, Quartz −1, Fast Company −1, Investopedia 0, Military.com 0, Stars and Stripes +1 |
+| Ireland | TheJournal.ie −1, Irish Examiner −1, Irish Independent +1 |
+| UK | The Observer −1, Manchester Evening News −1, WalesOnline −1, Liverpool Echo 0 |
+| Canada | Calgary Herald +1, Ottawa Citizen +1 |
+| Japan | Asahi −1, Mainichi −1, Japan Today −1, **Yomiuri +1** |
+| Korea | Chosun Ilbo +1 |
+| Mid-East | Al-Monitor −1, Middle East Monitor −2 |
+| Africa | TimesLIVE +1, IOL 0 |
+| Europe | Der Standard −1, Politiken −1, NZZ +1, de Volkskrant +1, Aftenposten +1 |
+| LatAm | La Tercera +1, Emol +1 |
+
+**Japan is the structural win.** Asahi and Yomiuri are the country's two largest circulations and
+MBFC puts them either side of centre — so a Japanese story can now show a real spread instead of a
+row of unrated names. Chile lands the same way with La Tercera and Emol, though both right of centre.
+
+**de Volkskrant is the one to double-take on** — MBFC rates it *Right*-Center, which is not what its
+reputation abroad suggests. Recorded as published, like NHK and the Chicago Tribune before it.
+
+Three more went into the withheld set: **Gulf News (+2)**, **The National UAE (+1)** — both
+state-aligned and both MBFC-*Questionable* — and **Investor's Business Daily (+2)**, which MBFC calls
+questionable for promoting right-wing conspiracy theories. **Twelve withheld leans now.** The rule
+that looked like an edge case at eight is carrying a twelfth of the rated set.
+
+### Registry, final
+
+| | start of day | end |
+|---|---:|---:|
+| rows | 154 | **320** |
+| rated | 143 | **294** |
+| countries | ~30 | **45** |
+| spread (−2/−1/0/+1/+2) | — | **22 / 113 / 55 / 81 / 23** |
+| withheld (Questionable) | 0 | 12 |
+| classified non-newsroom | 7 | 16 |
+
+Both wings are represented and the centre carries 55. The −1 bucket dominates at 113, which is MBFC's
+shape for large English-language mastheads rather than a thumb on the scale here — and it is visible
+in the file precisely so someone can argue with it.

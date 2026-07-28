@@ -867,3 +867,48 @@ def test_pro_science_sources_are_blank_because_the_rater_said_so(reg):
     for form, canonical in [("Nature.Com", "Nature"), ("Frontiersin.Org", "Frontiers")]:
         o = reg.resolve(form)
         assert o.canonical == canonical and math.isnan(o.lean) and o.kind == "research", form
+
+
+# --------------------------------------------------------------------------- #
+# Eleventh pass — a second wide probe (199 well-known outlets, 193 missing).
+# --------------------------------------------------------------------------- #
+def test_the_second_wide_probe_ratings(reg):
+    for host, lean in [
+        ("Mediaite.Com", -1.0), ("Qz.Com", -1.0), ("Fastcompany.Com", -1.0),
+        ("Investopedia.Com", 0.0), ("Military.Com", 0.0), ("Stripes.Com", 1.0),
+        ("Thejournal.Ie", -1.0), ("Irishexaminer.Com", -1.0), ("Independent.Ie", 1.0),
+        ("Observer.Co.Uk", -1.0), ("Manchestereveningnews.Co.Uk", -1.0),
+        ("Walesonline.Co.Uk", -1.0), ("Liverpoolecho.Co.Uk", 0.0),
+        ("Calgaryherald.Com", 1.0), ("Ottawacitizen.Com", 1.0),
+        ("Asahi.Com", -1.0), ("Mainichi.Jp", -1.0), ("Japantoday.Com", -1.0),
+        ("Yomiuri.Co.Jp", 1.0), ("Chosun.Com", 1.0),
+        ("Al-Monitor.Com", -1.0), ("Middleeastmonitor.Com", -2.0),
+        ("Timeslive.Co.Za", 1.0), ("Iol.Co.Za", 0.0),
+        ("Derstandard.At", -1.0), ("Politiken.Dk", -1.0), ("Nzz.Ch", 1.0),
+        ("Volkskrant.Nl", 1.0), ("Aftenposten.No", 1.0),
+        ("Latercera.Com", 1.0), ("Emol.Com", 1.0),
+    ]:
+        assert reg.lean(host) == lean, host
+
+
+def test_japans_two_largest_dailies_land_on_opposite_sides(reg):
+    """Asahi and Yomiuri are the two biggest circulations in the country and MBFC puts them either
+    side of centre. A Japanese story can now show a spread instead of a row of unrated names."""
+    assert reg.lean("Asahi.Com") == -1.0 and reg.lean("Yomiuri.Co.Jp") == 1.0
+    assert reg.resolve("Asahi.Com").country == reg.resolve("Yomiuri.Co.Jp").country == "JP"
+
+
+def test_the_uk_observer_is_not_the_new_york_one(reg):
+    """MBFC rates The Observer (UK) and the New York Observer separately, and `Observer` alone is
+    ambiguous between them — so the parenthetical canonical declines the bare word, as designed."""
+    assert reg.resolve("Observer.Co.Uk").canonical == "The Observer (UK)"
+    assert reg.resolve("Observer") is None
+    assert reg.resolve("Observer.Com") is None
+
+
+def test_three_more_questionable_sources_are_rated_and_withheld(reg):
+    """Two Gulf state-aligned papers and a US financial title MBFC calls questionable for promoting
+    right-wing conspiracy theories. Twelve withheld leans now — the rule is not an edge case."""
+    for host, lean in [("Gulfnews.Com", 2.0), ("Thenational.Ae", 1.0), ("Investors.Com", 2.0)]:
+        assert reg.lean(host) == lean and reg.is_low_credibility(host), host
+    assert sum(1 for o in reg.outlets() if o.credibility == "low") == 12

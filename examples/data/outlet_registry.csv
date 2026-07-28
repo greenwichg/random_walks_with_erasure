@@ -740,3 +740,60 @@ arXiv,,arxiv.org,US,New York,Ithaca,international,research
 Reddit,,reddit.com,US,,,international,forum
 DEV Community,,dev.to,US,,,international,forum
 Unitaid,,unitaid.eu|unitaid.org,CH,,Geneva,international,org
+#
+# Eleventh pass -- a second wide probe (199 well-known outlets, 193 of them missing) worked down to
+# the ones a global English feed plausibly carries. 34 rated. Same MBFC mapping, same 403 caveat.
+#
+#   US        Mediaite -1, Quartz -1, Fast Company -1, Investopedia 0, Military.com 0,
+#             Stars and Stripes +1 (MBFC notes editorials favouring the Trump 47 administration)
+#   Ireland   TheJournal.ie -1, Irish Examiner -1, Irish Independent +1
+#   UK        The Observer -1, Manchester Evening News -1, WalesOnline -1, Liverpool Echo 0
+#             -- the Observer row is the UK title ONLY; MBFC rates the New York Observer separately
+#   Canada    Calgary Herald +1, Ottawa Citizen +1
+#   Japan     Asahi Shimbun -1, Mainichi -1, Japan Today -1, Yomiuri Shimbun +1
+#             -- Asahi and Yomiuri are Japan's two largest dailies and land on opposite sides
+#   Korea     Chosun Ilbo +1 (MBFC: "one-sided conservative nationalist reporting", factual MIXED)
+#   MidEast   Al-Monitor -1 (HIGH credibility), Middle East Monitor -2 (MBFC LEFT, factual MIXED)
+#   Africa    TimesLIVE +1 (HIGH cred), IOL 0 (LEAST BIASED but factual MIXED, MEDIUM cred)
+#   Europe    Der Standard -1, Politiken -1, NZZ +1, de Volkskrant +1, Aftenposten +1
+#   LatAm     La Tercera +1, Emol +1  (Chile's two majors, both Right-Center)
+#
+# de Volkskrant is the one to double-take on: MBFC rates it RIGHT-Center, which is not what its
+# reputation abroad suggests. Recorded as published, like NHK and the Chicago Tribune before it.
+Mediaite,-1,mediaite.com,US,New York,New York,national
+Quartz,-1,qz.com,US,New York,New York,national
+Fast Company,-1,fastcompany.com,US,New York,New York,national
+Investopedia,0,investopedia.com,US,New York,New York,national
+Military.com,0,military.com,US,,,national
+Stars and Stripes,1,stripes.com,US,District of Columbia,Washington,national
+TheJournal.ie,-1,thejournal.ie,IE,,Dublin,national
+Irish Examiner,-1,irishexaminer.com,IE,,Cork,national
+Irish Independent,1,independent.ie,IE,,Dublin,national
+The Observer (UK),-1,observer.co.uk,GB,,London,national
+Manchester Evening News,-1,manchestereveningnews.co.uk,GB,England,Manchester,regional
+WalesOnline,-1,walesonline.co.uk,GB,Wales,Cardiff,regional
+Liverpool Echo,0,liverpoolecho.co.uk,GB,England,Liverpool,regional
+Calgary Herald,1,calgaryherald.com,CA,Alberta,Calgary,regional
+Ottawa Citizen,1,ottawacitizen.com,CA,Ontario,Ottawa,regional
+The Asahi Shimbun,-1,asahi.com,JP,,Tokyo,national
+Mainichi Shimbun,-1,mainichi.jp,JP,,Tokyo,national
+Japan Today,-1,japantoday.com,JP,,Tokyo,national
+The Yomiuri Shimbun,1,yomiuri.co.jp,JP,,Tokyo,national
+The Chosun Ilbo,1,chosun.com|english.chosun.com,KR,,Seoul,national
+Al-Monitor,-1,al-monitor.com,US,District of Columbia,Washington,international,,high
+Middle East Monitor,-2,middleeastmonitor.com,GB,,London,international,,medium
+TimesLIVE,1,timeslive.co.za,ZA,,Johannesburg,national,,high
+IOL,0,iol.co.za,ZA,,Cape Town,national,,medium
+Der Standard,-1,derstandard.at,AT,,Vienna,national
+Politiken,-1,politiken.dk,DK,,Copenhagen,national
+NZZ,1,nzz.ch|Neue Zurcher Zeitung,CH,,Zurich,national
+de Volkskrant,1,volkskrant.nl,NL,,Amsterdam,national
+Aftenposten,1,aftenposten.no,NO,,Oslo,national
+La Tercera,1,latercera.com,CL,,Santiago,national
+Emol,1,emol.com|El Mercurio Online,CL,,Santiago,national
+# Three more under the Questionable rule -- MBFC publishes a lean for each AND classes the source
+# Questionable, so the lean is recorded and does not vote. Two Gulf state-aligned papers, and one
+# US financial title MBFC calls questionable for promoting right-wing conspiracy theories.
+Investors Business Daily,2,investors.com|IBD,US,California,Los Angeles,national,,low
+Gulf News,2,gulfnews.com,AE,,Dubai,national,,low
+The National (UAE),1,thenational.ae,AE,,Abu Dhabi,national,,low
