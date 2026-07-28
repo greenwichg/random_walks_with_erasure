@@ -1802,3 +1802,51 @@ into this document as a finding.
 | rows | 154 | **398** |
 | rated | 143 | **372** |
 | countries | ~30 | **50** |
+
+## "How many of the 199 are done?" — and what asking exposed
+
+The answer needed measuring rather than adding up, and the first measurement was **wrong in an
+interesting way**: re-running the probe list showed **57 of 199 resolving**, against 73 outlets I
+knew had been curated from it.
+
+The 16-outlet gap was not missing outlets. It was **missing aliases** — the registry knew the outlet
+and did not answer to the name the probe (or a feed) would use:
+
+| probe sent | curated as |
+|---|---|
+| Nikkei / Nikkei Asian Review | Nikkei Asia |
+| Mainichi | Mainichi Shimbun |
+| SCMP | South China Morning Post |
+| Yle · WGN · Caixin · Hurriyet | Yle News · WGN News · Caixin Global · Hurriyet Daily News |
+| The Journal.ie | TheJournal.ie |
+| El Mercurio | Emol |
+
+Ten are now aliased. **Three are not, and deliberately**: `The Week`, `The Observer` and
+`The National` each belong to more than one real outlet, so the parenthetical canonicals go on
+declining the bare word.
+
+### The bug underneath
+
+Adding `RTÉ` as an alias made `lint_registry` fail with `duplicate_alias: 'RT' maps to
+'RT (Russia Today)' but already maps to 'RTE'`.
+
+Both key functions lower-cased and then **stripped** every non-alphanumeric character — which
+*deletes* an accented letter instead of folding it. `RTÉ` lost its `É` and became `rt`, landing
+Ireland's public broadcaster on Russia Today's alias.
+
+The quieter half is worse, because nothing would ever have failed: **`Clarín` keyed as `clarn`
+while `Clarin` keyed as `clarin`.** Canonical and lookup used the same broken function, so they
+agreed with each other and resolution "worked" — while the unaccented spelling a wire service
+routinely sends missed every time. The same held for La Nación, El País, Süddeutsche Zeitung,
+Público and Excélsior.
+
+`_fold` now normalises NFKD and drops combining marks, so accented and unaccented spellings meet and
+`RTÉ` stays distinct from `RT`.
+
+**Nothing at runtime would have caught either.** The lint's `duplicate_alias` check did, at the
+moment the alias was written — which is the whole argument for that check existing.
+
+### The answer
+
+**73 of 199 curated (37%).** The other 126 split into outlets confirmed to have no public rating and
+outlets never researched; the probes' hit rate says most of the remainder is the former.

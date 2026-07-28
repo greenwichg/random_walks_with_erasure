@@ -179,7 +179,7 @@ Corriere della Sera,0,corriere.it,IT,,,national
 ANSA,0,ansa.it,IT,,,national
 Politico Europe,-1,politico.eu,BE,,,international
 The Irish Times,-1,irishtimes.com,IE,,,national
-RTE,0,rte.ie,IE,,,national
+RTE,0,rte.ie|RTE News|RTÉ,IE,,Dublin,national
 Swissinfo,-1,swissinfo.ch,CH,,,international
 NOS,1,nos.nl,NL,,,national
 Kyiv Independent,0,kyivindependent.com,UA,,,national
@@ -210,10 +210,10 @@ The Indian Express,-1,indianexpress.com,IN,,,national
 Dawn,-1,dawn.com,PK,,,national
 The Japan Times,0,japantimes.co.jp,JP,,,national
 NHK,1,nhk.or.jp,JP,,,national
-Nikkei Asia,1,asia.nikkei.com|nikkei.com,JP,,,international
+Nikkei Asia,1,asia.nikkei.com|nikkei.com|Nikkei|Nikkei Asian Review,JP,,,international
 The Korea Herald,1,koreaherald.com,KR,,,national
 Yonhap News Agency,1,yna.co.kr,KR,,,national
-South China Morning Post,0,scmp.com,HK,,,national
+South China Morning Post,0,scmp.com|SCMP,HK,,,national
 The Straits Times,1,straitstimes.com,SG,,,national
 Channel NewsAsia,0,channelnewsasia.com,SG,,,international
 Bangkok Post,1,bangkokpost.com,TH,,,national
@@ -227,7 +227,7 @@ Al Arabiya,1,alarabiya.net,AE,,,international
 Middle East Eye,-2,middleeasteye.net,GB,,,international
 Arab News,1,arabnews.com,SA,,,national
 Daily Sabah,2,dailysabah.com,TR,,,national
-Hurriyet Daily News,2,hurriyetdailynews.com,TR,,,national
+Hurriyet Daily News,2,hurriyetdailynews.com|Hurriyet,TR,,,national
 Daily Nation,-1,nation.africa|nation.co.ke,KE,,,national
 The East African,,theeastafrican.co.ke,KE,,,international
 The Punch,-1,punchng.com,NG,,,national
@@ -766,7 +766,7 @@ Fast Company,-1,fastcompany.com,US,New York,New York,national
 Investopedia,0,investopedia.com,US,New York,New York,national
 Military.com,0,military.com,US,,,national
 Stars and Stripes,1,stripes.com,US,District of Columbia,Washington,national
-TheJournal.ie,-1,thejournal.ie,IE,,Dublin,national
+TheJournal.ie,-1,thejournal.ie|The Journal.ie,IE,,Dublin,national
 Irish Examiner,-1,irishexaminer.com,IE,,Cork,national
 Irish Independent,1,independent.ie,IE,,Dublin,national
 The Observer (UK),-1,observer.co.uk,GB,,London,national
@@ -776,7 +776,7 @@ Liverpool Echo,0,liverpoolecho.co.uk,GB,England,Liverpool,regional
 Calgary Herald,1,calgaryherald.com,CA,Alberta,Calgary,regional
 Ottawa Citizen,1,ottawacitizen.com,CA,Ontario,Ottawa,regional
 The Asahi Shimbun,-1,asahi.com,JP,,Tokyo,national
-Mainichi Shimbun,-1,mainichi.jp,JP,,Tokyo,national
+Mainichi Shimbun,-1,mainichi.jp|Mainichi,JP,,Tokyo,national
 Japan Today,-1,japantoday.com,JP,,Tokyo,national
 The Yomiuri Shimbun,1,yomiuri.co.jp,JP,,Tokyo,national
 The Chosun Ilbo,1,chosun.com|english.chosun.com,KR,,Seoul,national
@@ -790,7 +790,7 @@ NZZ,1,nzz.ch|Neue Zurcher Zeitung,CH,,Zurich,national
 de Volkskrant,1,volkskrant.nl,NL,,Amsterdam,national
 Aftenposten,1,aftenposten.no,NO,,Oslo,national
 La Tercera,1,latercera.com,CL,,Santiago,national
-Emol,1,emol.com|El Mercurio Online,CL,,Santiago,national
+Emol,1,emol.com|El Mercurio Online|El Mercurio,CL,,Santiago,national
 # Three more under the Questionable rule -- MBFC publishes a lean for each AND classes the source
 # Questionable, so the lean is recorded and does not vote. Two Gulf state-aligned papers, and one
 # US financial title MBFC calls questionable for promoting right-wing conspiracy theories.
@@ -818,7 +818,7 @@ STAT News,-1,statnews.com,US,Massachusetts,Boston,national
 Roll Call,0,rollcall.com,US,District of Columbia,Washington,national
 Defense One,0,defenseone.com,US,District of Columbia,Washington,national
 KTLA,0,ktla.com,US,California,Los Angeles,local
-WGN News,0,wgntv.com,US,Illinois,Chicago,local
+WGN News,0,wgntv.com|WGN,US,Illinois,Chicago,local
 Entrepreneur,1,entrepreneur.com,US,,,national
 Birmingham Mail,-1,birminghammail.co.uk,GB,England,Birmingham,regional
 Yorkshire Post,0,yorkshirepost.co.uk,GB,England,Leeds,regional
@@ -830,14 +830,14 @@ The Diplomat,0,thediplomat.com,US,District of Columbia,Washington,international
 Khaleej Times,1,khaleejtimes.com,AE,,Dubai,national
 Israel Hayom,2,israelhayom.com|israelhayom.co.il,IL,,Tel Aviv,national
 France Info,-1,francetvinfo.fr,FR,,Paris,national
-Yle News,0,yle.fi,FI,,Helsinki,national
+Yle News,0,yle.fi|Yle,FI,,Helsinki,national
 Jyllands-Posten,1,jyllands-posten.dk,DK,,Aarhus,national
 Berlingske,1,berlingske.dk,DK,,Copenhagen,national
 Expressen,1,expressen.se,SE,,Stockholm,national
 # Thirteenth withheld lean. MBFC rates Caixin Global Right-Center and classes it QUESTIONABLE for
 # pro-government propaganda and censorship that omits criticism of the government -- the fourth
 # Chinese-state-adjacent source in this set, after Xinhua, Global Times and CGTN's absence.
-Caixin Global,1,caixinglobal.com|caixin.com,CN,,Beijing,national,,low
+Caixin Global,1,caixinglobal.com|caixin.com|Caixin,CN,,Beijing,national,,low
 #
 # Thirteenth pass -- regions the earlier probes never touched: Eastern Europe, South and Southeast
 # Asia, Africa. 134 probed, 130 missing, and the YIELD COLLAPSES here: 10 rated. That is the

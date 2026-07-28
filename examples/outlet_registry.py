@@ -30,6 +30,7 @@ import csv
 import math
 import os
 import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 from urllib.parse import urlsplit
@@ -82,10 +83,28 @@ class Outlet:
     credibility: "str | None" = None    # high | medium | low — see CREDIBILITY / :func:`is_low_credibility`
 
 
+def _fold(text: str) -> str:
+    """Lower-case and fold accents to their base letters: ``Clarín`` → ``clarin``, ``RTÉ`` → ``rte``.
+
+    Both keys used to lower-case and then strip anything non-alphanumeric, which DELETES an accented
+    letter rather than folding it. Two consequences, and the second is worse:
+
+    * a feed sending the unaccented spelling of an accented masthead missed entirely —
+      ``Clarín`` keyed as ``clarn`` while ``Clarin`` keyed as ``clarin``. Self-consistent, so
+      resolution "worked", and the form a wire service actually sends never matched;
+    * letters vanishing can make two different outlets collide. ``RTÉ`` lost its ``É`` and became
+      ``rt`` — Ireland's public broadcaster landing on Russia Today's alias. Caught by
+      ``lint_registry``'s duplicate_alias check when the alias was added, not by anything at
+      runtime, which is the argument for that check existing at all."""
+    return "".join(c for c in unicodedata.normalize("NFKD", str(text).lower())
+                   if not unicodedata.combining(c))
+
+
 def _name_key(text: str) -> str:
-    """Comparison key for a *name* form: drop parentheticals, lower-case, drop a leading ``the``,
-    strip to alphanumerics. ``"The New York Times"`` and ``"New York Times (News)"`` → ``newyorktimes``."""
-    s = _PARENS.sub(" ", str(text)).strip().lower()
+    """Comparison key for a *name* form: drop parentheticals, lower-case, fold accents, drop a
+    leading ``the``, strip to alphanumerics. ``"The New York Times"`` and
+    ``"New York Times (News)"`` → ``newyorktimes``."""
+    s = _fold(_PARENS.sub(" ", str(text))).strip()
     if s.startswith("the "):
         s = s[4:]
     return _NONALNUM.sub("", s)
@@ -102,7 +121,7 @@ def _full_key(text: str) -> str:
 
     A canonical carrying a parenthetical is registered under THIS key only, so it answers to its
     full name and to its explicit aliases, and the generic word is left unclaimed."""
-    s = str(text).strip().lower()
+    s = _fold(text).strip()
     if s.startswith("the "):
         s = s[4:]
     return _NONALNUM.sub("", s)

@@ -1113,3 +1113,51 @@ def test_no_market_of_three_or_more_is_completely_one_sided(reg):
             continue
         assert any(x < 0 for x in v), f"{cc}: {len(v)} rated outlets and none left of centre"
         assert any(x > 0 for x in v), f"{cc}: {len(v)} rated outlets and none right of centre"
+
+
+# --------------------------------------------------------------------------- #
+# Accent folding — found by re-running the probe and asking "how many completed?"
+# --------------------------------------------------------------------------- #
+def test_an_unaccented_spelling_reaches_the_accented_masthead(reg):
+    """The keys lower-cased and then STRIPPED anything non-alphanumeric, which deletes an accented
+    letter rather than folding it. `Clarín` keyed as `clarn` while `Clarin` keyed as `clarin` — so a
+    feed sending the unaccented spelling, which wire services routinely do, missed entirely. It was
+    invisible because canonical and lookup used the same broken function and agreed with each other."""
+    for plain, canonical in [("Clarin", "Clarín"), ("La Nacion", "La Nación"),
+                             ("El Pais", "El País"),
+                             ("Suddeutsche Zeitung", "Süddeutsche Zeitung")]:
+        assert reg.resolve(plain).canonical == canonical, plain
+        assert reg.resolve(canonical).canonical == canonical
+
+
+def test_rte_and_rt_are_not_the_same_broadcaster(reg):
+    """The collision the fold prevents, and the reason it was found at all: stripping the accent
+    turned `RTÉ` into `rt`, landing Ireland's public broadcaster on Russia Today's alias. Nothing at
+    runtime would have caught it — lint_registry's duplicate_alias check did, when the alias was
+    added, which is the argument for that check existing."""
+    assert reg.resolve("RTÉ").canonical == "RTE"
+    assert reg.resolve("RTE News").canonical == "RTE"
+    assert reg.resolve("RT").canonical == "RT (Russia Today)"
+    assert reg.resolve("rt.com").canonical == "RT (Russia Today)"
+
+
+def test_the_forms_a_feed_actually_sends_now_resolve(reg):
+    """Ten outlets were curated but did not answer to the name anyone would type. Found by
+    re-running the coverage probe and asking why only 57 of 199 resolved when 73 were curated — the
+    gap was never missing outlets, it was missing ALIASES."""
+    for form, canonical in [
+        ("Nikkei", "Nikkei Asia"), ("Nikkei Asian Review", "Nikkei Asia"),
+        ("Mainichi", "Mainichi Shimbun"), ("SCMP", "South China Morning Post"),
+        ("Yle", "Yle News"), ("WGN", "WGN News"), ("The Journal.ie", "TheJournal.ie"),
+        ("Hurriyet", "Hurriyet Daily News"), ("Caixin", "Caixin Global"),
+        ("El Mercurio", "Emol"),
+    ]:
+        assert reg.resolve(form).canonical == canonical, form
+
+
+def test_a_disambiguated_canonical_still_declines_the_bare_word(reg):
+    """The three that stayed unresolved in that probe, and correctly so. Aliasing these would have
+    been the wrong fix — `The Week`, `The Observer` and `The National` each belong to more than one
+    real outlet."""
+    for bare in ["The Week", "The Observer", "The National"]:
+        assert reg.resolve(bare) is None, bare
