@@ -1850,3 +1850,41 @@ moment the alias was written — which is the whole argument for that check exis
 
 **73 of 199 curated (37%).** The other 126 split into outlets confirmed to have no public rating and
 outlets never researched; the probes' hit rate says most of the remainder is the former.
+
+## Seventeenth pass: working the outstanding list
+
+The probe's outstanding column was 131 entries. **Three of those were alias gaps, not missing
+outlets** — `RFI`, `Politico EU` and `CTV` were all curated under longer canonical names
+(Radio France Internationale, Politico Europe, CTV News) and did not answer to the short form.
+Same class as Nikkei and SCMP the pass before: *the registry knowing an outlet is not the same as
+the outlet being reachable.*
+
+Six more rated:
+
+| | |
+|---|---|
+| **La Jornada −2** | MBFC LEFT (−5.9), factual High. Mexico held one left outlet against two right; it now straddles 2–2 |
+| +972 Magazine −1, The New Arab −1 | |
+| Taipei Times −1, Focus Taiwan −1 | Taiwan is new to the file |
+| Daily Monitor −1 | Uganda is new to the file |
+
+**52 countries now.**
+
+Two of these ratings carry a caveat that is not in the number:
+
+**Focus Taiwan** is Left-Center *because of who funds it* — MBFC attributes the lean to government
+funding under a DPP administration, not to content. **Daily Monitor's** factual score is explicitly
+depressed by "originating from a country with limited press freedoms" — that is partly a rating of
+*Uganda*, not of the paper. Both go in as published, and both are worth knowing when reading them.
+
+**A near-miss worth naming:** searching for *Globes* (the Israeli business daily) returns **Globe
+Magazine**, a US supermarket tabloid MBFC rates *Unrated, Very Low factual*. Importing that by
+accident would have put a tabloid's factuality on a business paper. Neither Globes nor Calcalist is
+rated; both stay out.
+
+### Where the probe stands
+
+**77 of 199 (39%).** The remaining 122 are dominated by two groups the probes keep confirming:
+US local TV call-signs (WPIX, KSAT, KOAT, WMUR, WBZ, WFXT …) and European regional dailies
+(Ouest-France, Les Echos, La Croix, Die Presse, Kurier, Tages-Anzeiger, Blick, Le Temps) — the first
+group is rated by MBFC individually and simply not yet worked; the second mostly is not rated at all.

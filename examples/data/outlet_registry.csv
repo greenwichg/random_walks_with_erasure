@@ -170,14 +170,14 @@ Süddeutsche Zeitung,-1,sueddeutsche.de,DE,,,national
 France 24,0,france24.com,FR,,,international
 Le Monde,-1,lemonde.fr,FR,,,national
 Le Figaro,1,lefigaro.fr,FR,,,national
-Radio France Internationale,0,rfi.fr,FR,,,international
+Radio France Internationale,0,rfi.fr|RFI,FR,,,international
 Euronews,0,euronews.com,FR,,,international
 El País,-1,elpais.com,ES,,,national
 El Mundo,1,elmundo.es,ES,,,national
 La Repubblica,-1,repubblica.it,IT,,,national
 Corriere della Sera,0,corriere.it,IT,,,national
 ANSA,0,ansa.it,IT,,,national
-Politico Europe,-1,politico.eu,BE,,,international
+Politico Europe,-1,politico.eu|Politico EU,BE,,,international
 The Irish Times,-1,irishtimes.com,IE,,,national
 RTE,0,rte.ie|RTE News|RTÉ,IE,,Dublin,national
 Swissinfo,-1,swissinfo.ch,CH,,,international
@@ -194,7 +194,7 @@ The Economist,-1,economist.com,GB,,,international
 Mirror,-1,mirror.co.uk,GB,,,national,,medium
 CBC News,-1,cbc.ca|CBC,CA,,,national
 The Globe and Mail,0,theglobeandmail.com,CA,,,national
-CTV News,0,ctvnews.ca,CA,,,national
+CTV News,0,ctvnews.ca|CTV,CA,,,national
 Toronto Star,0,thestar.com,CA,,,national
 ABC Australia,-1,abc.net.au,AU,,,national
 Sydney Morning Herald,-1,smh.com.au,AU,,,national
@@ -994,3 +994,32 @@ The Philippine Star,-1,philstar.com,PH,,Manila,national
 Canada's National Observer,-1,nationalobserver.com,CA,,,national
 Il Giornale,1,ilgiornale.it,IT,,Milan,national
 ThisDay,1,thisdaylive.com,NG,,Lagos,national,,high
+#
+# Seventeenth pass -- working down the 199-outlet probe's outstanding list, which was 131 entries
+# after the alias fixes above. Six more rated; the rest of the batch confirmed absent.
+#
+#   La Jornada      -2  (MBFC LEFT -5.9, factual High -- "strong opposition to US and neoliberal
+#                        policies", with a clear separation of news from opinion). Mexico had one
+#                        left outlet against two right; it now straddles properly.
+#   +972 Magazine   -1  (MBFC LC, factual High)
+#   The New Arab    -1  (MBFC LC, Mostly Factual)
+#   Taipei Times    -1  (MBFC LC, Mostly Factual -- lean attributed to a pro-independence stance)
+#   Focus Taiwan    -1  (MBFC LC, factual High, HIGH credibility -- MBFC attributes the lean to
+#                        government funding under a DPP administration, which is a lean assigned
+#                        for FUNDING rather than for content. Worth knowing when reading it.)
+#   Daily Monitor   -1  (MBFC LC, Mostly Factual -- MBFC's rationale explicitly includes
+#                        "originating from a country with limited press freedoms", so the factual
+#                        score is partly about Uganda and not only about the paper)
+#
+# Taiwan and Uganda are new countries in this file, taking it to 52.
+#
+# Confirmed absent this batch: Globes and Calcalist (the search returns Globe Magazine, a US
+# supermarket tabloid -- a near-miss worth naming so nobody imports it by accident), New Vision
+# (Uganda's state paper), Excelsior, and the French/Swiss regionals Les Echos, Ouest-France,
+# Le Temps and Blick.
+La Jornada,-2,jornada.com.mx,MX,,Mexico City,national
++972 Magazine,-1,972mag.com,IL,,Tel Aviv,international
+The New Arab,-1,newarab.com|alaraby.co.uk,GB,,London,international
+Taipei Times,-1,taipeitimes.com,TW,,Taipei,national
+Focus Taiwan,-1,focustaiwan.tw|cna.com.tw|Central News Agency,TW,,Taipei,international,,high
+Daily Monitor,-1,monitor.co.ug,UG,,Kampala,national

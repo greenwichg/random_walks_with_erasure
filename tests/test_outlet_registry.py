@@ -1161,3 +1161,29 @@ def test_a_disambiguated_canonical_still_declines_the_bare_word(reg):
     real outlet."""
     for bare in ["The Week", "The Observer", "The National"]:
         assert reg.resolve(bare) is None, bare
+
+
+def test_the_seventeenth_pass_ratings(reg):
+    for host, lean in [
+        ("Jornada.Com.Mx", -2.0), ("972Mag.Com", -1.0), ("Newarab.Com", -1.0),
+        ("Taipeitimes.Com", -1.0), ("Focustaiwan.Tw", -1.0), ("Monitor.Co.Ug", -1.0),
+    ]:
+        assert reg.lean(host) == lean, host
+
+
+def test_mexico_now_straddles(reg):
+    """It held one left outlet against two right. La Jornada at -2 makes it 2-2 — the one-sided
+    guard would not have caught this because a single left row already satisfied it, which is why
+    that test is a floor and not the whole job."""
+    import math
+    mx = [o.lean for o in reg.outlets() if o.country == "MX" and not math.isnan(o.lean)]
+    assert sum(1 for v in mx if v < 0) == 2 and sum(1 for v in mx if v > 0) == 2
+
+
+def test_the_last_three_alias_gaps_from_the_probe(reg):
+    """RFI, Politico EU and CTV were all curated under longer canonical names and did not answer to
+    the short form. Same class as Nikkei and SCMP — the registry knowing an outlet is not the same
+    as the outlet being reachable."""
+    assert reg.resolve("RFI").canonical == "Radio France Internationale"
+    assert reg.resolve("Politico EU").canonical == "Politico Europe"
+    assert reg.resolve("CTV").canonical == "CTV News"
