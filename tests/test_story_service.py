@@ -804,3 +804,53 @@ def test_link_quorum_is_off_by_default_and_tunable(monkeypatch):
     assert ss.link_quorum() == 0.0, "junk falls back rather than silently reshaping the catalog"
     monkeypatch.setenv("RWE_CLUSTER_LINK_QUORUM", "1.7")
     assert ss.link_quorum() == 0.0, "out of range is junk too"
+
+
+# --------------------------------------------------------------------------- #
+# Targeted repair — the stricter linkage rule applied ONLY where the independent signal objects.
+#
+# A GLOBAL quorum measured well on the mega-cluster (486 -> largest 45) and badly everywhere else:
+# Berlin pride, 77 articles from 54 publishers at coherence 0.94, split into six pieces. Size
+# cannot separate a good big cluster from a bad one; coherence can.
+# --------------------------------------------------------------------------- #
+def test_repair_leaves_trusted_clusters_byte_identical():
+    """The whole point of targeting. A coherent story must not notice that repair is switched on."""
+    st = store_mod.Store("sqlite://")
+    _senate_and_wildfire(st)
+    plain = ss.build_stories(ss._fetch(st))
+    mended = ss.build_stories(ss._fetch(st), repair=0.5)
+    assert plain == mended
+
+
+def test_repair_splits_a_condemned_cluster():
+    """Four members located in four different countries, merged on shared title tokens. The two
+    that also share a distinctive phrase stay together; the rest separate or fall out."""
+    st = store_mod.Store("sqlite://")
+    _false_merge(st)
+    before = ss.build_stories(ss._fetch(st))
+    assert len(before) == 1 and before[0]["clusterTrust"] == ss.TRUST_LOW
+    after = ss.build_stories(ss._fetch(st), repair=1.0)
+    assert len(after) >= 1
+    assert sum(s["totalCoverage"] for s in after) <= before[0]["totalCoverage"]
+
+
+def test_repair_keeps_the_original_when_it_cannot_improve_it():
+    """Two guards, both against silent destruction: a split into ONE piece separated nothing, and
+    a split that loses most of the articles destroyed the cluster rather than resolving it.
+    Dissolving a cluster improves every aggregate the audit prints, so this failure has to be
+    caught in the code rather than noticed in a table."""
+    members = [{"headline": f"unrelated headline number {i} alpha beta", "publishedAt": None,
+                "publisher": f"P{i}"} for i in range(6)]
+    kw = dict(sim=0.28, window_days=6.0, min_shared=3, min_tokens=3, idf=False,
+              min_articles=2, min_publishers=2)
+    # quorum 1.0 on members that share only boilerplate: everything falls below the gates.
+    assert ss._repair(members, quorum=1.0, **kw) is None
+
+
+def test_repair_quorum_is_off_by_default_and_tunable(monkeypatch):
+    monkeypatch.delenv("RWE_STORY_REPAIR_QUORUM", raising=False)
+    assert ss.repair_quorum() == 0.0
+    monkeypatch.setenv("RWE_STORY_REPAIR_QUORUM", "0.3")
+    assert ss.repair_quorum() == 0.3
+    monkeypatch.setenv("RWE_STORY_REPAIR_QUORUM", "2")
+    assert ss.repair_quorum() == 0.0, "out of range falls back rather than reshaping the catalog"

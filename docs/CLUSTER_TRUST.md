@@ -119,6 +119,43 @@ default cannot drift.
 It is off because the last change that tightened matching on equally sound reasoning
 (`use_idf`) cost **10.5% of covered articles** and was reverted.
 
+**Measured 2026-07-28 against 16,857 live articles — REJECTED as a global rule:**
+
+| quorum | stories | largest | dropped |
+|---:|---:|---:|---:|
+| 0.3 | 964 → 1,081 | 486 → **45** | 599 |
+| 0.5 | 964 → 1,122 | 486 → **45** | 677 |
+
+The mechanism works: the mega-cluster split into 61 pieces at 0.3, the largest cluster fell by an
+order of magnitude, story count *rose* (so the `min_publishers` cliff did not fire), and mean
+coherence improved 0.967 → 0.974. But it fragments stories nothing is wrong with — **Berlin pride,
+77 articles from 54 publishers at coherence 0.94, split into six pieces**, and a dozen other
+well-covered stories shed real coverage.
+
+Two caveats on those percentages. First, both runs used the tool's old default BEFORE side
+(`shared>=1, tokens>=1`), which is not production — so the headline 13.7%/15.4% includes the
+already-paid cost of the admission gates and overstates the quorum's own cost. The default is
+fixed; a re-run will be lower. Second, the rejection does not depend on that: the fragmentation of
+Berlin pride is visible in the split table regardless of what the denominator says.
+
+### 4b. Targeted repair — `story_service.repair_quorum`, **shipped disabled**
+
+The variant the measurement points to. Apply the quorum rule **only to clusters `_cluster_trust`
+has already condemned**, and leave every other cluster byte-identical.
+
+Size cannot separate a good big cluster from a bad one — Berlin pride (77) and the mega-cluster
+(327) are both large. The independent signal can: 0.94 against 0.61. So the stricter rule goes
+where that signal already objects, which on the current catalog is **3 clusters holding 380
+articles (9.1% of covered)**. That bounds the worst case: nothing outside those three can move.
+
+Two guards against silent destruction, because dissolving a cluster improves every aggregate the
+audit prints — a repair is discarded and the original kept whole if it yields only one piece
+(nothing was separated) or retains under `REPAIR_MIN_RETENTION` (50%) of the articles.
+
+```
+docker exec deploy-api-1 python /app/examples/audit_clustering_change.py --repair-quorum 0.3 --show 20
+```
+
 ### 5. Coverage-list batching
 
 `CoverageList` renders 40 rows then "Load more". The largest cluster mounted 318 rows, each with a
@@ -212,7 +249,8 @@ stale. That is a second, previously unrecorded cost of the defect.
 | `RWE_STORY_COHERENCE_FLOOR` | `0.7` | geoCoherence below which a cluster is `low` (needs 4+ located members) |
 | `RWE_STORY_UNVERIFIED_SIZE` | `50` | size above which having no score is notable |
 | `RWE_STORY_TRUST_RANKING` | on | `0` restores pure size ordering |
-| `RWE_CLUSTER_LINK_QUORUM` | `0.0` | cross-pair fraction required to merge (`0` = single linkage) |
+| `RWE_CLUSTER_LINK_QUORUM` | `0.0` | GLOBAL cross-pair fraction required to merge (`0` = single linkage) — measured and rejected |
+| `RWE_STORY_REPAIR_QUORUM` | `0.0` | TARGETED: same rule, condemned clusters only |
 
 ## Caveats, stated rather than buried
 

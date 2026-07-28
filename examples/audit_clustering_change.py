@@ -5,8 +5,13 @@ settle on hand-picked examples. This runs the current window's articles through 
 and reports what actually moves: story count, the clusters that split, and the boilerplate titles
 that stop merging.
 
-The defaults compare "no admission gates" (the pre-2026-07-27 behaviour: ratio only) against
-whatever the code is configured with now.
+The BEFORE side defaults to whatever the code is configured with — i.e. **production**. That
+matters more than it sounds. It used to default to "no admission gates" (the pre-2026-07-27
+behaviour: ratio only), which was right while the gates were the change under test and became
+wrong the moment they shipped: every later measurement then charged the already-paid cost of the
+admission gates to whatever new change was being tried. A link-quorum run scored 13.7% dropped
+coverage that way, most of it not the quorum's doing. Pass ``--before-min-shared 1
+--before-min-tokens 1`` to get the historical comparison back.
 
     python examples/audit_clustering_change.py                       # before/after summary
     python examples/audit_clustering_change.py --min-shared 4        # try a candidate value
@@ -32,9 +37,9 @@ MAX_DROPPED = 0.05
 
 
 def build(rows: list, *, min_shared: int, min_tokens: int, idf: bool = False,
-          quorum: float = 0.0) -> list:
+          quorum: float = 0.0, repair: float = 0.0) -> list:
     return story_service.build_stories(rows, min_shared=min_shared, min_tokens=min_tokens, idf=idf,
-                                       quorum=quorum)
+                                       quorum=quorum, repair=repair)
 
 
 def index_by_member(stories: list) -> dict:
@@ -50,7 +55,11 @@ def _coherence_stats(stories: list) -> dict:
     """geoCoherence over the clusters that carry one. The scored subset is a minority of the
     catalog (three located members are required), so these are reported WITH their denominator —
     a mean over 91 of 925 stories is not a statement about the catalog."""
-    scored = [s["geoCoherence"] for s in stories if s.get("geoCoherence") is not None]
+    # ACTIONABLE scores only — the same bar _cluster_trust uses. Counting a 0.50 backed by two
+    # located members would report movement in a signal the product does not act on.
+    scored = [s["geoCoherence"] for s in stories
+              if s.get("geoCoherence") is not None
+              and (s.get("locatedMembers") or 0) >= story_service.MIN_LOCATED_FOR_TRUST]
     floor = story_service.coherence_floor()
     return {
         "scored": len(scored),
@@ -82,11 +91,13 @@ def verdict(res: dict, *, max_dropped: float = MAX_DROPPED) -> dict:
 
 def compare(store_, *, before: tuple, after: tuple, show: int = 10,
             before_idf: bool = False, after_idf: bool = False,
-            before_quorum: float = 0.0, after_quorum: float = 0.0) -> dict:
+            before_quorum: float = 0.0, after_quorum: float = 0.0,
+            after_repair: float = 0.0) -> dict:
     rows = story_service._fetch(store_)
     a = build(rows, min_shared=before[0], min_tokens=before[1], idf=before_idf,
               quorum=before_quorum)
-    b = build(rows, min_shared=after[0], min_tokens=after[1], idf=after_idf, quorum=after_quorum)
+    b = build(rows, min_shared=after[0], min_tokens=after[1], idf=after_idf, quorum=after_quorum,
+              repair=after_repair)
 
     a_by_id = {s["id"]: s for s in a}
     a_member = index_by_member(a)
@@ -149,8 +160,10 @@ def compare(store_, *, before: tuple, after: tuple, show: int = 10,
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--db", default=None)
-    ap.add_argument("--before-min-shared", type=int, default=1)
-    ap.add_argument("--before-min-tokens", type=int, default=1)
+    ap.add_argument("--before-min-shared", type=int, default=None,
+                    help="baseline gate (default: configured, i.e. production)")
+    ap.add_argument("--before-min-tokens", type=int, default=None,
+                    help="baseline gate (default: configured, i.e. production)")
     ap.add_argument("--min-shared", type=int, default=None, help="candidate (default: configured)")
     ap.add_argument("--min-tokens", type=int, default=None, help="candidate (default: configured)")
     ap.add_argument("--show", type=int, default=10)
@@ -159,22 +172,30 @@ def main(argv=None) -> int:
     ap.add_argument("--link-quorum", type=float, default=0.0,
                     help="cluster-aware linkage on the AFTER side: fraction of cross-pairs that "
                          "must agree before two clusters merge (0 = single linkage)")
+    ap.add_argument("--repair-quorum", type=float, default=0.0,
+                    help="TARGETED linkage: re-split only the clusters the independent signal "
+                         "condemns, leaving every other story untouched")
     ap.add_argument("--max-dropped", type=float, default=MAX_DROPPED,
                     help="reject the change above this share of covered articles dropped")
     args = ap.parse_args(argv)
 
-    after = (args.min_shared if args.min_shared is not None else story_service.min_shared_tokens(),
-             args.min_tokens if args.min_tokens is not None else story_service.min_title_tokens())
-    res = compare(store_mod.Store(args.db),
-                  before=(args.before_min_shared, args.before_min_tokens),
+    configured = (story_service.min_shared_tokens(), story_service.min_title_tokens())
+    after = (args.min_shared if args.min_shared is not None else configured[0],
+             args.min_tokens if args.min_tokens is not None else configured[1])
+    before = (args.before_min_shared if args.before_min_shared is not None else configured[0],
+              args.before_min_tokens if args.before_min_tokens is not None else configured[1])
+    res = compare(store_mod.Store(args.db), before=before,
                   after=after, show=args.show, after_idf=args.idf,
-                  after_quorum=args.link_quorum)
+                  after_quorum=args.link_quorum, after_repair=args.repair_quorum)
 
-    tag = (", idf" if args.idf else "") + (f", quorum {args.link_quorum:g}"
-                                           if args.link_quorum > 0 else "")
+    tag = ((", idf" if args.idf else "")
+           + (f", quorum {args.link_quorum:g}" if args.link_quorum > 0 else "")
+           + (f", repair {args.repair_quorum:g}" if args.repair_quorum > 0 else ""))
     print(f"articles in window : {res['articles']:,}")
-    print(f"before  (shared>={args.before_min_shared}, tokens>={args.before_min_tokens}): "
-          f"{res['beforeStories']:,} stories, largest {res['beforeLargest']}")
+    print(f"before  (shared>={before[0]}, tokens>={before[1]}"
+          f"{'' if before == configured else ''}): "
+          f"{res['beforeStories']:,} stories, largest {res['beforeLargest']}"
+          f"{'   [PRODUCTION BASELINE]' if before == configured else '   [not production]'}")
     print(f"after   (shared>={after[0]}, tokens>={after[1]}{tag}): "
           f"{res['afterStories']:,} stories, largest {res['afterLargest']}")
     print(f"clusters changed   : {res['splitCount']:,}")

@@ -79,6 +79,12 @@ TRUST_OK = "ok"                     # corroborated, or too small to chain
 TRUST_LOW = "low"                   # scored, and the score says the members disagree
 TRUST_UNVERIFIED = "unverified"     # big enough to be a chain, with nothing to check it against
 
+#: A targeted re-split must keep at least this share of the original cluster's articles, or the
+#: original is kept whole instead. Repair is meant to separate conflated events, not to delete a
+#: cluster it cannot make sense of — and without this floor the failure mode is silent, because
+#: dissolving a cluster improves every aggregate the audit prints.
+REPAIR_MIN_RETENTION = 0.5
+
 
 # --------------------------------------------------------------------------- #
 # Story construction (the single implementation).
@@ -383,6 +389,34 @@ def link_quorum() -> float:
     return q if 0.0 <= q <= 1.0 else clustering.DEFAULT_LINK_QUORUM
 
 
+def repair_quorum() -> float:
+    """TARGETED cluster-aware linkage — OFF. Set ``RWE_STORY_REPAIR_QUORUM=0.3`` to enable.
+
+    Applies the quorum rule only to clusters ``_cluster_trust`` has already condemned, instead of
+    to the whole catalog. Measured on the live catalog (16,857 articles), a GLOBAL quorum is the
+    right idea aimed too broadly:
+
+        quorum 0.3 : largest cluster 486 -> 45, story count 964 -> 1,081, mean coherence
+                     0.967 -> 0.974 — and 599 articles dropped out of stories entirely
+        quorum 0.5 : largest 486 -> 45, stories 964 -> 1,122, 677 dropped
+
+    The mega-cluster split into 61 pieces, which is the intent. But Berlin pride — 77 articles from
+    54 publishers at coherence 0.94, nothing whatever wrong with it — split into six, and a dozen
+    other well-covered stories shed real coverage. Size cannot tell those apart; both are large.
+    The independent signal can: 0.61 against 0.94.
+
+    So this variant restricts the stricter rule to where that signal already objects. On the same
+    catalog that is 3 clusters holding 380 articles (9.1% of covered), which bounds the worst case:
+    every other story is byte-identical to production. Measure with
+    ``audit_clustering_change.py --repair-quorum 0.3`` before enabling it."""
+    v = os.environ.get("RWE_STORY_REPAIR_QUORUM", "").strip()
+    try:
+        q = float(v)
+    except (TypeError, ValueError):
+        return 0.0
+    return q if 0.0 <= q <= 1.0 else 0.0
+
+
 def coherence_floor() -> float:
     """geoCoherence below which a cluster is independently suspect. ``RWE_STORY_COHERENCE_FLOOR``."""
     return _env_float("RWE_STORY_COHERENCE_FLOOR", DEFAULT_COHERENCE_FLOOR)
@@ -420,33 +454,80 @@ def _size_rank(s: dict, *, trust_aware: bool) -> tuple:
     return (trusted, s["publisherCount"], s["totalCoverage"], s["latest"] or "")
 
 
-def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
-                  sim: float = clustering.DEFAULT_SIM,
-                  window_days: float = clustering.DEFAULT_WINDOW_DAYS,
-                  min_shared: Optional[int] = None,
-                  min_tokens: Optional[int] = None,
-                  idf: Optional[bool] = None,
-                  quorum: Optional[float] = None) -> list:
-    """Cluster FeedArticle rows into Story objects (the pure builder). Keeps clusters with
-    ≥ ``min_articles`` from ≥ ``min_publishers`` distinct outlets; sorted biggest+freshest first,
-    with independently-suspect clusters demoted (see ``_size_rank``).
-    Deterministic: same rows → same stories, ids, and order."""
-    arts = [discover.feed_article_to_article(r) for r in rows]
-    groups = clustering.cluster(
-        arts, tokens=lambda a: clustering.title_tokens(a["headline"]),
-        time=lambda a: clustering.parse_time(a["publishedAt"]), sim=sim, window_days=window_days,
-        min_shared=min_shared_tokens() if min_shared is None else min_shared,
-        min_tokens=min_title_tokens() if min_tokens is None else min_tokens,
-        idf=use_idf() if idf is None else idf,
-        link_quorum=link_quorum() if quorum is None else quorum)
-    stories = []
+def _admit(groups: list, arts: list, *, min_articles: int, min_publishers: int) -> list:
+    """Cluster index groups → member lists that clear the admission gates."""
+    out = []
     for idxs in groups:
         members = [arts[i] for i in idxs]
         if len(members) < min_articles:
             continue
         if len({m["publisher"] for m in members}) < min_publishers:
             continue
-        stories.append(_build_story(members))
+        out.append(members)
+    return out
+
+
+def _repair(members: list, *, quorum: float, sim: float, window_days: float, min_shared: int,
+            min_tokens: int, idf: bool, min_articles: int, min_publishers: int) -> Optional[list]:
+    """Re-cluster ONE condemned cluster's members under a stricter linkage rule.
+
+    Why targeted rather than global: measured on the live catalog, a global quorum splits the
+    486-article mega-cluster into 61 pieces (largest cluster 486 → 45, exactly the intent) but also
+    fragments stories nothing is wrong with — Berlin pride, 77 articles from 54 publishers at
+    coherence 0.94, went to six pieces. Size cannot separate those two; they are both large. What
+    separates them is the independent signal, 0.61 against 0.94. So the stricter rule is applied
+    only where that signal already says the cluster is wrong, and every other story in the catalog
+    is left byte-identical.
+
+    Returns the replacement stories, or ``None`` to keep the original whole — when the split
+    yields one piece (nothing was separated) or loses more than ``REPAIR_MIN_RETENTION`` of the
+    articles (it destroyed the cluster rather than resolving it)."""
+    pieces = _admit(
+        clustering.cluster(members, tokens=lambda a: clustering.title_tokens(a["headline"]),
+                           time=lambda a: clustering.parse_time(a["publishedAt"]),
+                           sim=sim, window_days=window_days, min_shared=min_shared,
+                           min_tokens=min_tokens, idf=idf, link_quorum=quorum),
+        members, min_articles=min_articles, min_publishers=min_publishers)
+    if len(pieces) < 2:
+        return None
+    if sum(len(p) for p in pieces) < REPAIR_MIN_RETENTION * len(members):
+        return None
+    return [_build_story(p) for p in pieces]
+
+
+def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
+                  sim: float = clustering.DEFAULT_SIM,
+                  window_days: float = clustering.DEFAULT_WINDOW_DAYS,
+                  min_shared: Optional[int] = None,
+                  min_tokens: Optional[int] = None,
+                  idf: Optional[bool] = None,
+                  quorum: Optional[float] = None,
+                  repair: Optional[float] = None) -> list:
+    """Cluster FeedArticle rows into Story objects (the pure builder). Keeps clusters with
+    ≥ ``min_articles`` from ≥ ``min_publishers`` distinct outlets; sorted biggest+freshest first,
+    with independently-suspect clusters demoted (see ``_size_rank``).
+    Deterministic: same rows → same stories, ids, and order."""
+    arts = [discover.feed_article_to_article(r) for r in rows]
+    shared = min_shared_tokens() if min_shared is None else min_shared
+    tokens_floor = min_title_tokens() if min_tokens is None else min_tokens
+    weighting = use_idf() if idf is None else idf
+    groups = clustering.cluster(
+        arts, tokens=lambda a: clustering.title_tokens(a["headline"]),
+        time=lambda a: clustering.parse_time(a["publishedAt"]), sim=sim, window_days=window_days,
+        min_shared=shared, min_tokens=tokens_floor, idf=weighting,
+        link_quorum=link_quorum() if quorum is None else quorum)
+    mend = repair_quorum() if repair is None else repair
+    stories = []
+    for members in _admit(groups, arts, min_articles=min_articles, min_publishers=min_publishers):
+        story = _build_story(members)
+        if mend > 0.0 and story["clusterTrust"] == TRUST_LOW:
+            pieces = _repair(members, quorum=mend, sim=sim, window_days=window_days,
+                             min_shared=shared, min_tokens=tokens_floor, idf=weighting,
+                             min_articles=min_articles, min_publishers=min_publishers)
+            if pieces is not None:
+                stories.extend(pieces)
+                continue
+        stories.append(story)
     trust_aware = trust_ranking()
     stories.sort(key=lambda s: _size_rank(s, trust_aware=trust_aware), reverse=True)
     return stories
