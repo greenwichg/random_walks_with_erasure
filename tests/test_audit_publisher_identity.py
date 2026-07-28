@@ -193,3 +193,21 @@ def test_only_a_contested_brand_word_is_reported():
     import publisher_identity
     assert publisher_identity.ambiguous_labels(["Standard.Net.Au", "Standard.Co.Uk"]) == {"standard"}
     assert publisher_identity.ambiguous_labels(["Sportskeeda.Com", "Billboard"]) == set()
+
+
+def test_a_disambiguated_canonical_does_not_swallow_the_bare_word():
+    """The identity map had the same bug one layer down. `groups` keyed a resolved name by
+    `_name_key(canonical)`, which is the bare word `star` for The Star (Malaysia) — so fixing
+    resolution alone would have left the two mastheads merged here."""
+    g = api.identity_groups(["Thestar.Com.My", "The Star (Malaysia)", "The Star", "Thestar.Com"])
+    assert g["Thestar.Com.My"] == g["The Star (Malaysia)"]
+    assert g["The Star"] != g["The Star (Malaysia)"]
+    assert g["Thestar.Com"] != g["The Star (Malaysia)"]
+
+
+def test_a_curated_outlet_still_reaches_its_uncurated_host_form():
+    """The regression the fix nearly caused, caught by the missing-alias test. Keying a resolved
+    name on its canonical alone severed the bridge from a curated row to the bare domain the feed
+    actually sends — which is how a missing alias is DETECTED at all."""
+    g = api.identity_groups(["Dailymail.Com", "Daily Mail"])
+    assert g["Dailymail.Com"] == g["Daily Mail"]

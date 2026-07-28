@@ -633,3 +633,17 @@ El Financiero,1,elfinanciero.com.mx,MX,,Mexico City,national
 # checks. Same treatment as RT: identity and country curated, lean withheld.
 Sputnik,1,sputnikglobe.com|sputniknews.com|Sputnik News,RU,,Moscow,international,,low
 TASS,1,tass.com|tass.ru|Russian News Agency TASS,RU,,Moscow,international,,low
+#
+# Eighth pass -- two outlets the PRODUCTION identity audit named, rather than a probe list. Both
+# arrived under two name forms each (Fortune.Com/Fortune, Watoday/Watoday.Com.Au), and Fortune was
+# additionally on the unlock worklist.
+#
+#   Fortune : Right-Center (MBFC RC, factual High -- "editorial positions that favor business").
+#             Ad Fontes and AllSides both say CENTRE; recorded, not averaged away.
+#   WAtoday : NO rating. MBFC has no page. Biasly has one and its own summary is self-contradictory
+#             (-14% "Somewhat Left" in one place, -6% "center" in another), which is not a source to
+#             rate an outlet from -- the same call already made for Brisbane Times. Locality earns
+#             the row: WAtoday is Nine's Perth masthead, sibling to The Age and the SMH, and
+#             inheriting THEIR ratings is the guess this file exists to refuse.
+Fortune,1,fortune.com,US,New York,New York,national
+WAtoday,,watoday.com.au,AU,Western Australia,Perth,regional

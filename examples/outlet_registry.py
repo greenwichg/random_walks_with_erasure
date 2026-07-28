@@ -73,6 +73,23 @@ def _name_key(text: str) -> str:
     return _NONALNUM.sub("", s)
 
 
+def _full_key(text: str) -> str:
+    """Comparison key that KEEPS a parenthetical. ``"The Star (Malaysia)"`` → ``starmalaysia``.
+
+    :func:`_name_key` drops parentheticals so a corpus label like ``"Fox News (Online News)"``
+    reaches Fox News. That is right for a SUFFIX and wrong for a DISAMBIGUATOR: a canonical named
+    ``The Star (Malaysia)`` normalises to the bare word ``star``, so it claimed every feed's bare
+    "The Star" — including Toronto's, mislabelling a Canadian paper as Malaysian and its lean as
+    +2 instead of 0. Measured in production: 4 articles arrived under the bare name.
+
+    A canonical carrying a parenthetical is registered under THIS key only, so it answers to its
+    full name and to its explicit aliases, and the generic word is left unclaimed."""
+    s = str(text).strip().lower()
+    if s.startswith("the "):
+        s = s[4:]
+    return _NONALNUM.sub("", s)
+
+
 def _host_of(text: str) -> str:
     """Bare host for a *domain/URL* form: handles an optional scheme, a path with no scheme, and
     strips userinfo / port / a leading ``www.``. ``"https://www.BBC.co.uk/news"`` → ``bbc.co.uk``."""
@@ -109,12 +126,20 @@ class OutletRegistry:
         # `outlets` are the distinct canonical outlets; `aliases` maps every lookup key
         # (name keys AND domain keys) to a canonical name.
         self._outlets: Dict[str, Outlet] = {o.canonical: o for o in outlets}
-        self._by_name: Dict[str, str] = {}       # name key   -> canonical
-        self._by_domain: Dict[str, str] = {}      # domain key -> canonical
+        self._by_name: Dict[str, str] = {}       # name key (parentheticals dropped) -> canonical
+        self._by_full: Dict[str, str] = {}       # full key (parentheticals KEPT)    -> canonical
+        self._by_domain: Dict[str, str] = {}     # domain key -> canonical
         for key, canonical in aliases.items():
-            (self._by_domain if _looks_like_host(key) else self._by_name)[
-                _host_of(key) if _looks_like_host(key) else _name_key(key)
-            ] = canonical
+            if _looks_like_host(key):
+                self._by_domain[_host_of(key)] = canonical
+                continue
+            # A name form carrying a parenthetical is registered ONLY under its full key. For a
+            # canonical that is the whole point — `The Star (Malaysia)` must not claim the bare word
+            # `star` and mislabel Toronto's paper. For an ALIAS it costs nothing, since an alias
+            # with a parenthetical is written to match one specific form.
+            self._by_full[_full_key(key)] = canonical
+            if "(" not in key:
+                self._by_name[_name_key(key)] = canonical
 
     # -- construction ----------------------------------------------------- #
     @classmethod
@@ -172,7 +197,11 @@ class OutletRegistry:
                 if canonical:
                     return self._outlets[canonical]
             # a bare word that looked host-ish but isn't a known domain: fall through to name
-        canonical = self._by_name.get(_name_key(text))
+        # Full key first: it is the exact form, so `The Star (Malaysia)` and a corpus variant of it
+        # both land. Then the parenthetical-stripped key, which is what makes
+        # `Fox News (Online News)` reach Fox News — but which only DISAMBIGUATED canonicals decline
+        # to register, so a bare `The Star` finds nothing rather than the wrong newspaper.
+        canonical = self._by_full.get(_full_key(text)) or self._by_name.get(_name_key(text))
         return self._outlets.get(canonical) if canonical else None
 
     def canonical(self, text: "str | None") -> Optional[str]:
@@ -345,7 +374,11 @@ def lint_registry(path: "str | None" = None) -> List[dict]:
                 issues.append({"severity": "warning", "code": "repeated_alias_in_row", "line": lineno,
                                "message": f"line {lineno} ({canonical}): alias {alias!r} repeated in the row"})
             local.add(alias)
-            key = _host_of(alias) if _looks_like_host(alias) else _name_key(alias)
+            # Mirrors the loader's registration rule exactly (see OutletRegistry.__init__): a form
+            # with a parenthetical is keyed on its FULL text, so two disambiguated names that share
+            # a bare word are not reported as colliding when resolution keeps them apart.
+            key = (_host_of(alias) if _looks_like_host(alias)
+                   else _full_key(alias) if "(" in alias else _name_key(alias))
             if key in alias_owner and alias_owner[key] != canonical:
                 issues.append({"severity": "error", "code": "duplicate_alias", "line": lineno,
                                "message": f"line {lineno}: alias {alias!r} maps to {canonical!r} but "

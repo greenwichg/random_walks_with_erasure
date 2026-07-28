@@ -1215,3 +1215,77 @@ The API now carries `lowCredibilityPublishers`; **the web surface does not rende
 does, a reader sees TASS in the publisher list with no indication that its rating was set aside —
 better than the outlet vanishing, but not the finished story. That is the next piece of work, and it
 is a design question (badge? footnote? filter?) rather than an engine one.
+
+## Found in production: a disambiguating parenthetical claimed the bare word
+
+The first post-deploy identity audit reported:
+
+```
+51  Thestar.Com.My (40) | The Star (Malaysia) (7) | The Star (4)
+```
+
+`_name_key` drops parentheticals — that is how `"Fox News (Online News)"` reaches Fox News. But it
+does the same to a canonical, so **`The Star (Malaysia)` registered under the bare word `star`** and
+answered every feed's bare "The Star". A Toronto Star article arriving under that name got
+**lean +2 instead of 0, and country MY instead of CA.** Four articles, two points and a continent.
+
+The rule is now: **a name form carrying a parenthetical is registered under its FULL key only.**
+A suffix on an undisambiguated canonical still strips (`Fox News (Online News)` → Fox News); a
+disambiguator no longer claims the generic word. Structural, not a patch for one row — `Metro`,
+`Vanguard`, `Daily Star`, `The Herald` and `The Spectator` all stopped answering to their bare forms,
+and each of those words belongs to more than one real outlet. Explicit aliases are unaffected:
+`RT` still reaches `RT (Russia Today)` because someone wrote it down.
+
+### The same bug, one layer down
+
+`publisher_identity.groups` keyed a resolved name on `_name_key(canonical)` — the bare word `star`
+again. Fixing resolution alone would have left the two mastheads merged in the identity map, which
+is what feeds `publisherCount`. Resolved names are now keyed on the **canonical string itself**.
+
+### And the regression that fix nearly caused
+
+Keying on the canonical alone severed the bridge from a curated row to the uncurated host form the
+feed actually sends — which is **how a missing alias is detected at all** (`Daily Mail` ↔
+`dailymail.com` was found exactly that way). The stubbed missing-alias test caught it immediately.
+
+A canonical without a parenthetical now also joins its own bare name key, restoring the bridge; one
+carrying a parenthetical does not, for the same reason the registry declines to register it. Both
+directions have a test, named after what they protect.
+
+**Three layers, one normalisation mistake.** The registry, the identity map, and the audit that
+reads them all had to agree — and the only reason the third didn't ship broken is that a test was
+written against the *rule* rather than against a real outlet.
+
+## Two rows the production audit named
+
+Not from a probe list — from the live collision table.
+
+* **Fortune** `+1` — MBFC Right-Center, factual High. Ad Fontes and AllSides both say *Centre*;
+  recorded, not averaged away. It was also worth 2 unlocks on the worklist.
+* **WAtoday** — **no rating.** MBFC has no page. Biasly has one and its own summary contradicts
+  itself (−14% "Somewhat Left" in one place, −6% "center" in another), which is not a source to rate
+  an outlet from — the same call already made for Brisbane Times. Locality earns the row.
+
+## The worklist was double-counting
+
+`blocked_by_ratings` computed everything in identity space and then reported in **name** space, so
+production listed `Brisbanetimes.Com.Au` at 4 unlocks and `Brisbanetimes` at 2 — one masthead worth
+4. It now aggregates on the identity key and displays the commonest form, the same rule
+`_display_publishers` uses. A worklist that double-counts is not safe to prioritise from, which is
+the only thing a worklist is for.
+
+## Post-deploy measurement
+
+| | before curation | after deploy + backfill |
+|---|---:|---:|
+| coverage-gap claims | 72 | **87** |
+| — resting on 4+ rated publishers | 23 (32%) | **35 (40%)** |
+| stories with outlets but not ratings | 271 | **245** |
+| `ok` share of articles | 98.0% | 98.0% |
+| stories that are one outlet twice | 0 | **0** |
+| missing registry aliases | 0 | **0** |
+| largest ÷ p90 · largest share | 14.9× · 2.5% | 15.3× · 2.5% |
+
+1,432 articles across 139 publisher forms were backfilled. The catalog grew during the same window
+(1,008 → 1,037 stories), so claims alone would be an unreliable read — **the 4+ bucket rising 52% is
+the cleaner signal**, because it measures how well-supported a claim is rather than how many exist.

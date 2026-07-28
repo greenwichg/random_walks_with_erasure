@@ -430,6 +430,7 @@ def test_the_unrated_set_is_exactly_the_documented_one(reg):
         "Nigerian Tribune",    # no MBFC page
         "O Globo",             # only its owner is rated
         "The East African",    # only its owner, Nation Media Group, is rated
+        "WAtoday",             # no MBFC page; Biasly's own summary contradicts itself
     }
 
 
@@ -710,3 +711,57 @@ def test_curating_one_domain_does_not_uncontest_the_word():
     assert publisher_identity.ambiguous_labels(names) == {"standard"}
     g = publisher_identity.groups(names)
     assert len({g["Standard.Co.Uk"], g["Standard.Net.Au"], g["Standard"]}) == 3
+
+
+# --------------------------------------------------------------------------- #
+# A disambiguating parenthetical must not claim the bare word.
+#
+# `_name_key` drops parentheticals so a corpus label like "Fox News (Online News)" reaches Fox News.
+# That is right for a SUFFIX and wrong for a DISAMBIGUATOR: `The Star (Malaysia)` normalised to the
+# bare word `star` and claimed every feed's bare "The Star". Found in production — 4 articles.
+# --------------------------------------------------------------------------- #
+def test_a_bare_generic_name_no_longer_reaches_a_disambiguated_masthead(reg):
+    """The live defect. A bare "The Star" resolved to the Malaysian paper: lean +2 instead of the
+    Toronto Star's 0, and country MY instead of CA. Two points and a continent."""
+    assert reg.resolve("The Star (Malaysia)").canonical == "The Star (Malaysia)"
+    assert reg.resolve("thestar.com.my").canonical == "The Star (Malaysia)"
+    assert reg.resolve("The Star") is None
+    assert reg.resolve("Star") is None
+    # The paper that WAS being mislabelled still resolves by its own name and domain.
+    assert reg.resolve("thestar.com").canonical == "Toronto Star"
+    assert reg.resolve("Toronto Star").lean == 0.0
+
+
+def test_every_disambiguated_canonical_declines_the_bare_word(reg):
+    """Not a one-off fix for one row: the rule is structural, so every parenthetical canonical in
+    the file behaves the same way. Each of these bare words belongs to more than one real outlet."""
+    for bare in ["Metro", "Vanguard", "Daily Star", "The Herald", "The Spectator"]:
+        assert reg.resolve(bare) is None, bare
+    for full, lean in [("Metro (UK)", -1.0), ("Vanguard (Nigeria)", -1.0),
+                       ("Daily Star (UK)", 1.0), ("The Herald (Scotland)", -1.0),
+                       ("The Spectator (UK)", 1.0)]:
+        assert reg.resolve(full) is not None and reg.lean(full) == lean, full
+
+
+def test_corpus_suffixes_still_resolve(reg):
+    """The behaviour the parenthetical-stripping exists for, and which the fix must not break: a
+    corpus label is a SUFFIX on a canonical that has none of its own."""
+    assert reg.resolve("Fox News (Online News)").canonical == "Fox News"
+    assert reg.resolve("Wall Street Journal (News)").canonical == "Wall Street Journal"
+    assert reg.resolve("New York Post (News)").canonical == "New York Post"
+
+
+def test_an_explicit_alias_still_wins_for_a_disambiguated_row(reg):
+    """Declining the bare word is about the CANONICAL's normalisation, not about refusing short
+    names. Where a bare form really is unambiguous it is written down and it resolves."""
+    assert reg.resolve("RT").canonical == "RT (Russia Today)"
+    assert reg.resolve("Russia Today").canonical == "RT (Russia Today)"
+    assert reg.resolve("rt.com").canonical == "RT (Russia Today)"
+
+
+def test_the_two_outlets_the_production_identity_audit_named(reg):
+    """Found by the live audit rather than a probe list — both arrived under two name forms."""
+    assert reg.lean("Fortune.Com") == 1.0 and reg.lean("Fortune") == 1.0   # MBFC RC (AllSides: C)
+    o = reg.resolve("Watoday.Com.Au")
+    assert o.canonical == "WAtoday" and math.isnan(o.lean)                 # no rating anywhere
+    assert o.city == "Perth" and o.country == "AU"                         # locality earns the row

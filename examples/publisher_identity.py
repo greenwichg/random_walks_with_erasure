@@ -101,11 +101,26 @@ def groups(names) -> dict:
     tokens: dict = {}
     for name in names:
         resolved = outlet_registry.resolve(name)
-        base = resolved.canonical if resolved else (name or "")
-        if outlet_registry._looks_like_host(base):
-            tokens[name] = "d:" + _brand_domain(base)
+        if resolved is not None:
+            # Keyed on the CANONICAL STRING, not a normalisation of it. Canonicals are unique by
+            # construction (lint enforces it), and normalising them re-created the very collision
+            # the registry had just been fixed to avoid: `_name_key("The Star (Malaysia)")` is the
+            # bare word `star`, so a resolved Malaysian masthead and an unresolved bare "The Star"
+            # met again one layer down, in the identity map.
+            tokens[name] = "c:" + resolved.canonical
+            if "(" not in resolved.canonical:
+                # ...but a curated outlet must still reach its own UNCURATED host form, which is how
+                # a missing registry alias is found at all (Daily Mail ↔ dailymail.com was found
+                # exactly this way). Joining the canonical to its bare name key restores that, via
+                # the label bridge below. Skipped for a canonical carrying a parenthetical, because
+                # that parenthetical is a disambiguator and its bare key is a generic word — the
+                # same reason the registry declines to register it.
+                union(tokens[name],
+                      "n:" + (outlet_registry._name_key(resolved.canonical) or resolved.canonical))
+        elif outlet_registry._looks_like_host(name):
+            tokens[name] = "d:" + _brand_domain(name)
         else:
-            tokens[name] = "n:" + (outlet_registry._name_key(base) or base.strip().lower())
+            tokens[name] = "n:" + (outlet_registry._name_key(name) or str(name).strip().lower())
         union(name, tokens[name])
 
     for label, domains in label_domains.items():

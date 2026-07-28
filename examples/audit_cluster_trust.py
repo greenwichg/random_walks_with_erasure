@@ -143,12 +143,22 @@ def blocked_by_ratings(stories: list, *, min_rated: int) -> dict:
             for c in story["coverage"]:
                 k = keys.get(c["publisher"], c["publisher"])
                 if k not in rated:
-                    # Keyed on the story's INDEX, not its title. Titles are not unique — two
-                    # stories can share one, and keying on it silently undercounts the outlet.
-                    unlock.setdefault(c["publisher"], set()).add(idx)
+                    # Keyed on the OUTLET IDENTITY and the story's INDEX. Both matter and both were
+                    # wrong once. Titles are not unique, so keying the story on its title silently
+                    # undercounts. And keying the outlet on its raw NAME double-counts: production
+                    # listed `Brisbanetimes.Com.Au` at 4 unlocks and `Brisbanetimes` at 2, which is
+                    # one masthead worth 4 — every line above this already works in identity space,
+                    # so this line reporting in name space made the list unsafe to prioritise from.
+                    unlock.setdefault(k, {}).setdefault("stories", set()).add(idx)
+                    forms = unlock[k].setdefault("forms", {})
+                    forms[c["publisher"]] = forms.get(c["publisher"], 0) + 1
+    # Displayed by the form that outlet used most often — the identity key is the group's
+    # lexicographic minimum, which is often a hostname nobody would recognise.
     return {"short": short,
             "blocked": sum(short.values()),
-            "unlock": sorted(((len(v), n) for n, v in unlock.items()), reverse=True)}
+            "unlock": sorted(((len(v["stories"]),
+                               max(v["forms"].items(), key=lambda kv: (kv[1], kv[0]))[0])
+                              for v in unlock.values()), reverse=True)}
 
 
 def _row(s: dict) -> str:
