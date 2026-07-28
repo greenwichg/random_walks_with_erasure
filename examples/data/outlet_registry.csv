@@ -254,3 +254,26 @@ GlobeNewswire,,globenewswire.com|Globe Newswire,,,,,wire
 # outlet is, not where it stands (L2.2). Country is a curated fact, which is what earns the row.
 ESPN,,espn.com|espn.ph|espndeportes.espn.com,US,,,international
 The Motley Fool,,fool.com|fool.co.uk|Fool,US,,,international
+# Lean curation for the outlets the publisher-identity audit surfaced as genuine registry gaps —
+# real newspapers with no row at all, not alias gaps. Every rating below is Media Bias/Fact Check's
+# published classification, mapped to this file's -2..+2 scale (Left -2, Left-Center -1, Least
+# Biased 0, Right-Center +1, Right +2). Retrieved 2026-07-28.
+#
+#   Variety              : Left-Center  (MBFC LC, factual High)
+#   Philadelphia Inquirer: Left-Center  (MBFC LC, factual High)
+#   Winnipeg Free Press  : LEAST BIASED (MBFC, factual High) -- rated 0, not left
+#   The Manila Times     : Right-Center (MBFC RC, factual MIXED)
+#   The West Australian  : Right-Center (MBFC RC, factual High)
+#   The Star (Malaysia)  : RIGHT        (MBFC, factual MIXED; MBFC cites ties to the Malaysian
+#                          Chinese Association) -- the strongest rating in this batch
+#
+# Brisbane Times is deliberately left UNRATED: MBFC has no page for it. It shares an owner with the
+# Sydney Morning Herald and The Age, both of which are rated, and inheriting from a sibling masthead
+# would be exactly the guess this file exists to refuse (L2.2). Its locality earns the row.
+Variety,-1,variety.com,US,,,national
+Philadelphia Inquirer,-1,inquirer.com|philly.com,US,Pennsylvania,Philadelphia,regional
+Winnipeg Free Press,0,winnipegfreepress.com,CA,Manitoba,Winnipeg,regional
+The Manila Times,1,manilatimes.net,PH,,,national
+The West Australian,1,thewest.com.au,AU,Western Australia,Perth,regional
+The Star (Malaysia),2,thestar.com.my,MY,,,national
+Brisbane Times,,brisbanetimes.com.au,AU,Queensland,Brisbane,regional

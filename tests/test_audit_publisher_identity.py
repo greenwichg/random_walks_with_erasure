@@ -24,13 +24,19 @@ def _story(title, pairs, *, arts=None):
 def test_domain_and_name_forms_of_an_unknown_outlet_collapse():
     """Neither form is in the registry, so the public-suffix brand label has to carry it.
 
+    Synthetic names on purpose. This test twice used real outlets as its "uncurated" example and
+    twice broke when they were curated — a curated canonical is keyed by its NAME, so the bridge
+    from an unlisted bare variant to its domain disappears. That is correct behaviour and a real
+    (small) consequence of curating: an unlisted variant of a curated outlet also stops showing up
+    in the missing-alias list, because the two are no longer in one identity group.
+
     Compared as a SET, not name by name: whether a bare name may join a domain depends on how many
     domains carry that label, which is a property of the whole catalog and invisible to a
     one-name-at-a-time call."""
-    g = api.identity_groups(["Sportskeeda.Com", "Sportskeeda"])
-    assert g["Sportskeeda.Com"] == g["Sportskeeda"]
-    w = api.identity_groups(["Thewest.Com.Au", "Thewest"])
-    assert w["Thewest.Com.Au"] == w["Thewest"]
+    g = api.identity_groups(["Widgetgazette.Com", "Widgetgazette"])
+    assert g["Widgetgazette.Com"] == g["Widgetgazette"]
+    w = api.identity_groups(["Widgettimes.Com.Au", "Widgettimes"])
+    assert w["Widgettimes.Com.Au"] == w["Widgettimes"]
 
 
 def test_the_registry_is_the_authority_when_it_knows_the_outlet():

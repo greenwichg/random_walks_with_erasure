@@ -295,3 +295,42 @@ def test_curation_removed_the_last_unplaceable_names():
     names = ["Espn.Com", "Espn.Ph", "ESPN", "Fool", "Fool.Com", "Fool.Co.Uk",
              "Pr Newswire", "Prnewswire.Com", "Prnewswire.Co.Uk"]
     assert publisher_identity.ambiguous_labels(names) == set()
+
+
+def test_curated_leans_for_the_measured_registry_gaps(reg):
+    """Outlets the publisher-identity audit surfaced as having no row at all. Every value is Media
+    Bias/Fact Check's published classification mapped to this file's -2..+2 scale, not an
+    impression: two came back differently from what a guess would have produced."""
+    assert reg.lean("Variety.Com") == -1.0                    # MBFC Left-Center
+    assert reg.lean("Inquirer.Com") == -1.0                   # MBFC Left-Center
+    assert reg.lean("Winnipegfreepress.Com") == 0.0           # MBFC LEAST BIASED, not left
+    assert reg.lean("Manilatimes.Net") == 1.0                 # MBFC Right-Center
+    assert reg.lean("Thewest.Com.Au") == 1.0                  # MBFC Right-Center
+    assert reg.lean("Thestar.Com.My") == 2.0                  # MBFC RIGHT
+
+
+def test_brisbane_times_stays_unrated(reg):
+    """MBFC has no page for it. It shares an owner with the Sydney Morning Herald and The Age, and
+    inheriting a sibling masthead's rating is exactly the guess this file refuses (L2.2). The row
+    exists for identity and locality only."""
+    import math
+    o = reg.resolve("Brisbanetimes.Com.Au")
+    assert o.canonical == "Brisbane Times" and math.isnan(o.lean)
+    assert o.country == "AU" and o.city == "Brisbane"
+
+
+def test_the_two_star_mastheads_do_not_collide(reg):
+    """Toronto Star is thestar.com; the Malaysian Star is thestar.com.my. Different registrable
+    domains, opposite ends of the scale — a collision here would mislabel one of them."""
+    assert reg.resolve("thestar.com").canonical == "Toronto Star"
+    assert reg.resolve("thestar.com.my").canonical == "The Star (Malaysia)"
+    assert reg.lean("thestar.com") == 0.0 and reg.lean("thestar.com.my") == 2.0
+
+
+def test_the_two_inquirers_do_not_collide(reg):
+    """inquirer.com is Philadelphia; inquirer.net is the Philippine Daily Inquirer, already in the
+    registry and deliberately unrated."""
+    import math
+    assert reg.resolve("inquirer.com").canonical == "Philadelphia Inquirer"
+    assert reg.resolve("inquirer.net").canonical == "Philippine Daily Inquirer"
+    assert math.isnan(reg.lean("inquirer.net"))
