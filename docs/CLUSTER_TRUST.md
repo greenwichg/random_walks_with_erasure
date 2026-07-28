@@ -2143,3 +2143,51 @@ other market.
 | rows | 154 | **441** |
 | rated | 143 | **414** |
 | countries | ~30 | **53** |
+
+## Twenty-third pass: Asia
+
+Ten outstanding. **Four rated, six confirmed absent**, and one country rescued from a one-sided
+shape the way Belgium was.
+
+| | |
+|---|---|
+| Jakarta Globe −1 | MBFC LC (−3.3), Mostly Factual — MBFC cites opaque ownership |
+| Kompas.com 0, New Straits Times 0 | both MBFC *Least Biased* |
+| **Tribunnews +1** | MBFC RC (3.6), factual Mixed, Medium credibility |
+
+### Indonesia — the Belgium case, second occurrence
+
+Jakarta Globe and Kompas would have left Indonesia at **−1, −1, 0, 0** — four rated outlets, nothing
+right of centre — which the balance guard rejects. Rather than exempt it, the missing side got
+searched for. Tribunnews closed it. Indonesia now reads **2 left, 2 centre, 1 right**.
+
+That is twice now that the guard has converted "write an exemption" into "go and look", and both
+times the missing side existed. The guard is doing the job it was written for.
+
+### Two outlets, one owner, two points apart
+
+**Tribunnews and Kompas.com are both Kompas Gramedia**, and MBFC rates them +1 and 0. A registry
+that collapsed outlets by **owner** — the shortcut already refused for Page Six and O Globo — would
+have merged a Least Biased outlet with a Right-Center one and reported the average as fact.
+
+Third independent confirmation that ownership is not a rating. Page Six sits a notch off the New
+York Post; O Globo could only be reached through its parent and was left blank; now two Indonesian
+siblings differ by two points.
+
+### Korea's exemption, re-checked
+
+Hankyoreh was searched a second time specifically because it is the outlet that would balance Korea.
+**MBFC has no page for it**, and AllSides rates it *Left* at **low confidence**. The exemption in the
+balance guard therefore stands on a re-checked basis rather than a remembered one — which is the
+standard an exemption has to meet if it is going to sit next to the UAE's.
+
+Confirmed absent: JoongAng, Hankyoreh, Dhaka Tribune, Kathmandu Post, Tuoi Tre, Vietnam News,
+Colombo Gazette.
+
+### Registry, close of twenty-three passes
+
+| | start of day | end |
+|---|---:|---:|
+| rows | 154 | **445** |
+| rated | 143 | **418** |
+| countries | ~30 | **53** |

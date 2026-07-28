@@ -1373,3 +1373,38 @@ def test_brazil_has_no_rated_outlet_at_all(reg):
     br = [o for o in reg.outlets() if o.country == "BR"]
     assert br, "the rows exist"
     assert all(math.isnan(o.lean) for o in br), "and not one of them is rated"
+
+
+def test_the_asia_pass(reg):
+    for host, lean in [
+        ("Jakartaglobe.Id", -1.0), ("Kompas.Com", 0.0),
+        ("Nst.Com.My", 0.0), ("Tribunnews.Com", 1.0),
+    ]:
+        assert reg.lean(host) == lean, host
+
+
+def test_indonesia_was_balanced_by_searching_not_by_exempting(reg):
+    """The Belgium case a second time. Jakarta Globe and Kompas would have left Indonesia at
+    -1, -1, 0, 0 — four rated outlets, nothing right of centre — and the guard rejects that.
+    Tribunnews was searched for and closed it."""
+    import math
+    idn = [o.lean for o in reg.outlets() if o.country == "ID" and not math.isnan(o.lean)]
+    assert len(idn) >= 5
+    assert any(v < 0 for v in idn) and any(v > 0 for v in idn) and any(v == 0 for v in idn)
+
+
+def test_two_outlets_of_one_owner_are_rated_two_points_apart(reg):
+    """Tribunnews and Kompas.com are both Kompas Gramedia and MBFC puts them at +1 and 0. A registry
+    that collapsed outlets by OWNER — the shortcut already refused for Page Six and O Globo — would
+    have merged a Least Biased outlet with a Right-Center one and reported the average as fact."""
+    assert reg.lean("Kompas.Com") == 0.0 and reg.lean("Tribunnews.Com") == 1.0
+    assert reg.resolve("Kompas.Com").canonical != reg.resolve("Tribunnews.Com").canonical
+
+
+def test_the_two_straits_times_are_different_papers(reg):
+    """nst.com.my is Malaysia's New Straits Times; straitstimes.com is Singapore's. One brand
+    phrase, two countries, and they are rated a point apart."""
+    assert reg.resolve("Nst.Com.My").canonical == "New Straits Times"
+    assert reg.resolve("Straitstimes.Com").canonical == "The Straits Times"
+    assert reg.resolve("Nst.Com.My").country == "MY"
+    assert reg.resolve("Straitstimes.Com").country == "SG"

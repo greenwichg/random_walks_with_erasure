@@ -1193,3 +1193,30 @@ MedPage Today,,medpagetoday.com,US,New York,New York,national
 # does not exist in any source this file accepts.
 Animal Politico,-1,animalpolitico.com,MX,,Mexico City,national
 Buenos Aires Times,1,batimes.com.ar,AR,,Buenos Aires,national
+#
+# Twenty-third pass -- ASIA, 10 outstanding. Four rated, six confirmed absent, and one country
+# rescued from a one-sided shape the way Belgium was.
+#
+#   Jakarta Globe   -1  (MBFC LC -3.3, Mostly Factual -- MBFC cites opaque ownership)
+#   Kompas.com       0  (MBFC LEAST BIASED, Mostly Factual)
+#   New Straits Times 0 (MBFC LEAST BIASED, Mostly Factual)
+#   Tribunnews      +1  (MBFC RC 3.6, factual MIXED, MEDIUM credibility)
+#
+# INDONESIA is the Belgium case again. Adding Jakarta Globe and Kompas would have taken it to
+# -1, -1, 0, 0 -- four rated outlets and nothing right of centre, which the balance guard rejects.
+# Rather than exempt it, the missing side was searched for: Tribunnews came back Right-Center and
+# closed it. Indonesia now reads 2 left, 2 centre, 1 right across four of its largest outlets.
+#
+# Note Tribunnews is owned by KOMPAS GRAMEDIA, the same group as Kompas.com, and the two are rated
+# two points apart. A registry that collapsed outlets by owner -- which is the shortcut the Page Six
+# and O Globo decisions already refused -- would have merged a Least Biased outlet with a
+# Right-Center one and reported the average as fact.
+#
+# CONFIRMED ABSENT after searching: JoongAng, Hankyoreh, Dhaka Tribune, Kathmandu Post, Tuoi Tre,
+# Vietnam News, Colombo Gazette. Hankyoreh was searched a second time specifically because it is the
+# outlet that would balance KOREA; MBFC has no page for it, and AllSides rates it Left at LOW
+# CONFIDENCE. Korea's exemption in the balance guard therefore stands on a re-checked basis.
+Jakarta Globe,-1,jakartaglobe.id,ID,,Jakarta,national
+Kompas,0,kompas.com,ID,,Jakarta,national
+New Straits Times,0,nst.com.my,MY,,Kuala Lumpur,national
+Tribunnews,1,tribunnews.com,ID,,Jakarta,national,,medium
