@@ -67,3 +67,40 @@ def test_empty_catalog_does_not_divide_by_zero():
     res = act.analyse([], top=5)
     assert res["largestOverP90"] == 0.0 and res["largestShare"] == 0.0
     assert res["topTotal"] == 0 and res["stories"] == 0
+
+
+# --------------------------------------------------------------------------- #
+# Blindspot claim support — the same missing sample-size floor the coherence gate had.
+# --------------------------------------------------------------------------- #
+def _claimer(side, *leans):
+    return {"publisherCount": len(leans), "totalCoverage": len(leans), "geoCoherence": None,
+            "clusterTrust": ss.TRUST_OK, "blindspotWithheld": False, "title": "t",
+            "locatedMembers": 0, "blindspotSide": side,
+            "coverage": [{"publisher": f"P{i}", "leanBucket": b} for i, b in enumerate(leans)]}
+
+
+def test_a_single_rated_publisher_still_produces_a_claim():
+    """The defect, stated as a measurement. One outlet covering something says nothing about who
+    else did or did not, but the distribution is 1.0 in its bucket and two buckets are empty, so
+    the claim fires anyway. This is absence of evidence reported as evidence of absence."""
+    support = act.claim_support([_claimer("center", "left")])
+    assert support == {"1": 1}
+
+
+def test_claims_are_bucketed_by_rated_publishers_not_by_articles():
+    """Unrated outlets cast no vote, so they are not the sample the claim rests on — counting
+    articles would make a thinly-rated story look well-evidenced."""
+    story = _claimer("right", "left", "center", None, None, None)
+    assert act.rated_publishers(story) == 2
+    assert act.claim_support([story]) == {"2": 1}
+
+
+def test_stories_without_a_claim_are_not_counted():
+    assert act.claim_support([_claimer(None, "left", "right", "center")]) == {}
+
+
+def test_well_supported_claims_collapse_into_one_bucket():
+    """Everything at 4+ is reported together: the question is whether a claim has enough behind it
+    to mean something, not exactly how much."""
+    big = _claimer("left", "right", "right", "right", "center", "center")
+    assert act.claim_support([big]) == {"4+": 1}

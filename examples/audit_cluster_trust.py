@@ -72,6 +72,8 @@ def analyse(stories: list, *, top: int) -> dict:
         "articles": covered,
         "buckets": buckets,
         "withheld": [s for s in stories if s.get("blindspotWithheld")],
+        "claims": len([s for s in stories if s.get("blindspotSide")]),
+        "claimSupport": claim_support(stories),
         "topScored": len(scored_head),
         "topTotal": len(head),
         "topGeoless": len(geoless_head),
@@ -85,6 +87,31 @@ def analyse(stories: list, *, top: int) -> dict:
         "largest": largest,
         "p90": p90,
     }
+
+
+def rated_publishers(story: dict) -> int:
+    """Distinct publishers in this story that carry a lean rating — the sample the blindspot claim
+    is actually computed from. Unrated outlets cast no vote, so they are not it."""
+    return len({c["publisher"] for c in story["coverage"] if c.get("leanBucket")})
+
+
+def claim_support(stories: list) -> dict:
+    """How many rated publishers stand behind each blindspot claim.
+
+    The same defect the coherence gate had before ``MIN_LOCATED_FOR_TRUST``: a ratio acted on
+    without a sample-size floor. With ONE rated publisher the distribution is 1.0 in that bucket,
+    two buckets are empty, and ``_blindspot`` fires — so the story asserts "nobody on the left
+    covered this" on the evidence of a single outlet. That is absence of evidence reported as
+    evidence of absence, and it is structural: any story with fewer than three lean-diverse rated
+    publishers has an empty bucket by arithmetic, not by editorial fact."""
+    buckets: dict = {}
+    for s in stories:
+        if not s.get("blindspotSide"):
+            continue
+        n = rated_publishers(s)
+        key = str(n) if n < 4 else "4+"
+        buckets[key] = buckets.get(key, 0) + 1
+    return buckets
 
 
 def _row(s: dict) -> str:
@@ -138,6 +165,16 @@ def main(argv=None) -> int:
     print(f"\n{HEAD}")
     for s in res["head"][:args.show]:
         print(_row(s))
+
+    print(f"\nblindspot claims: {res['claims']:,} of {res['stories']:,} stories, by how many "
+          f"RATED publishers stand behind each")
+    print(f"{'rated pubs':>11} {'claims':>8} {'% of claims':>12}")
+    for key in ("1", "2", "3", "4+"):
+        n = res["claimSupport"].get(key, 0)
+        share = f"{100.0 * n / res['claims']:.1f}%" if res["claims"] else "  n/a"
+        print(f"{key:>11} {n:>8,} {share:>12}")
+    print("  -> a claim resting on 1-2 rated publishers is arithmetic, not an editorial finding:\n"
+          "     with fewer than three lean-diverse rated outlets a bucket is empty by construction.")
 
     print(f"\nblindspot claims withheld: {len(res['withheld'])}\n{HEAD}")
     for s in res["withheld"][:args.show]:
