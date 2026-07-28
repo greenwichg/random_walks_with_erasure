@@ -75,13 +75,26 @@ def test_an_inflated_but_still_valid_story_is_counted_separately():
     assert res["shrunk"][0]["was"] == 3 and res["shrunk"][0]["now"] == 2
 
 
-def test_missing_aliases_are_named_with_the_row_that_already_exists():
+def test_missing_aliases_are_named_with_the_row_that_already_exists(monkeypatch):
     """The cheapest fix in the set — the rating exists, the row just lacks the form the feed sends,
-    so the output is directly pasteable into outlet_registry.csv."""
-    res = api.analyse([_story("Royal story", ["Daily Mail", "Dailymail.Com"])])
+    so the output is directly pasteable into outlet_registry.csv.
+
+    Resolution is stubbed rather than using a real outlet: the live example (Daily Mail missing
+    dailymail.com) was found by this audit and then CURATED, which would silently turn this into a
+    test of registry contents instead of a test of the rule."""
+    import outlet_registry
+
+    class _Row:
+        canonical = "Widget Times"
+
+    real = outlet_registry.resolve
+    monkeypatch.setattr(outlet_registry, "resolve",
+                        lambda n: _Row() if n == "Widget Times" else real(n)
+                        if n not in ("Widgettimes.Com",) else None)
+    res = api.analyse([_story("Widget story", ["Widget Times", "Widgettimes.Com"])])
     assert len(res["missingAlias"]) == 1
     m = res["missingAlias"][0]
-    assert m["canonical"] == "Daily Mail" and m["add"] == ["Dailymail.Com"]
+    assert m["canonical"] == "Widget Times" and m["add"] == ["Widgettimes.Com"]
 
 
 def test_two_unknown_forms_are_not_reported_as_a_missing_alias():
@@ -147,16 +160,18 @@ def test_the_audit_scores_over_the_pipelines_name_universe():
     ['Pr Newswire', 'Prnewswire.Com']. The audit collapsed them; the pipeline, resolving over EVERY
     article rather than only those in a story, found the brand label carried by more than one
     domain and left the bare name alone. Same rule, different sets, different answers — so the
-    audit takes the wider set."""
-    story = _story("Cogent sued", ["Pr Newswire", "Prnewswire.Com"])
+    audit takes the wider set.
+
+    Uncurated names, so the case stays testable after PR Newswire was given a registry row."""
+    story = _story("Widget merger", ["Widgetwire", "Widgetwire.Com"])
     narrow = api.analyse([story])
     assert narrow["fake"], "seen alone, the pair collapses"
 
-    # A second domain carrying the same label makes the bare name ambiguous, exactly as it is in
+    # A second domain carrying the same label makes the bare name ambiguous, exactly as it was in
     # the live build. The pipeline sees this; an audit over story publishers alone does not.
-    wide = api.analyse([story], universe={"Prnewswire.Co.Uk"})
+    wide = api.analyse([story], universe={"Widgetwire.Co.Uk"})
     assert wide["fake"] == [], "with the wider set the bare name is left alone, as production does"
-    assert "Pr Newswire" in wide["ambiguous"]
+    assert "Widgetwire" in wide["ambiguous"]
 
 
 def test_a_name_with_no_matching_domain_is_not_ambiguous():

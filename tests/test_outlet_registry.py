@@ -259,3 +259,39 @@ def test_an_unknown_outlet_is_not_wire(reg):
     """Absence of a row is unrated, never disqualified — the long tail must keep clustering."""
     assert not reg.is_wire("Some Local Gazette")
     assert not reg.is_wire(None)
+
+
+def test_the_measured_alias_gap_is_closed(reg):
+    """The one alias gap the identity audit found: Daily Mail is rated and was aliased only to its
+    UK domain, while the feed sends the US one. 21 articles of a rated outlet counted as unrated."""
+    assert reg.resolve("Dailymail.Com").canonical == "Daily Mail"
+    assert reg.resolve("dailymail.co.uk").canonical == "Daily Mail"
+
+
+def test_press_release_wires_are_marked(reg):
+    """Found the same way as the market-data feeds, and the row does two jobs: it keeps press
+    releases out of stories AND settles an identity the heuristic could not."""
+    for form in ["Pr Newswire", "Prnewswire.Com", "prnewswire.co.uk",
+                 "Globenewswire.Com", "Globe Newswire"]:
+        assert reg.is_wire(form), form
+
+
+def test_contested_brand_words_are_settled_by_curation(reg):
+    """ESPN and The Motley Fool each run more than one national domain, so a bare name could not be
+    placed without guessing which. A curated row settles WHO the outlet is; the lean stays blank
+    because identity is not a political rating (L2.2)."""
+    import math
+    for form in ["ESPN", "Espn.Com", "Espn.Ph", "espndeportes.espn.com"]:
+        assert reg.resolve(form).canonical == "ESPN", form
+    for form in ["Fool", "Fool.Com", "fool.co.uk"]:
+        assert reg.resolve(form).canonical == "The Motley Fool", form
+    assert math.isnan(reg.resolve("ESPN").lean) and reg.resolve("ESPN").country == "US"
+
+
+def test_curation_removed_the_last_unplaceable_names():
+    """The audit's worklist was exactly three names. All three now resolve, so none of them reaches
+    the brand-label heuristic at all."""
+    import publisher_identity
+    names = ["Espn.Com", "Espn.Ph", "ESPN", "Fool", "Fool.Com", "Fool.Co.Uk",
+             "Pr Newswire", "Prnewswire.Com", "Prnewswire.Co.Uk"]
+    assert publisher_identity.ambiguous_labels(names) == set()

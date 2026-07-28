@@ -173,7 +173,7 @@ The Independent,-1,independent.co.uk,GB,,,national
 The Telegraph,0,telegraph.co.uk,GB,,,national
 Financial Times,0,ft.com,GB,,,international
 The Times,0,thetimes.co.uk|thetimes.com,GB,,,national
-Daily Mail,1,dailymail.co.uk,GB,,,national
+Daily Mail,1,dailymail.co.uk|dailymail.com,GB,,,national
 The Economist,-1,economist.com,GB,,,international
 Mirror,,mirror.co.uk,GB,,,national
 CBC News,-1,cbc.ca,CA,,,national
@@ -243,3 +243,14 @@ MarketBeat,,marketbeat.com|Marketbeat.Com,,,,,wire
 American Banking News,,americanbankingnews.com|Americanbankingnews,,,,,wire
 Markets Daily,,marketsdaily.com,,,,,wire
 Ticker Report,,tickerreport.com|Tickerreport.Com,,,,,wire
+# Press-release distribution wires. Same category as the market-data feeds above and found the
+# same way: both appeared in the unrated-publisher list, and PR Newswire additionally showed up as
+# a name the identity rule could not place because prnewswire is carried by more than one domain.
+# The rows settle the identity AND keep press releases out of stories.
+PR Newswire,,prnewswire.com|prnewswire.co.uk|Pr Newswire,,,,,wire
+GlobeNewswire,,globenewswire.com|Globe Newswire,,,,,wire
+# Identity-only rows: an unrated outlet whose brand word is carried by more than one domain, so a
+# bare name could not be placed without guessing which. Lean stays blank -- these settle WHO the
+# outlet is, not where it stands (L2.2). Country is a curated fact, which is what earns the row.
+ESPN,,espn.com|espn.ph|espndeportes.espn.com,US,,,international
+The Motley Fool,,fool.com|fool.co.uk|Fool,US,,,international
