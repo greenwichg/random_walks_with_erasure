@@ -49,14 +49,30 @@ SORTS = ("top", "latest", "oldest", "publishers")
 MIN_CHAINABLE = 3
 
 #: geoCoherence at or above this counts as independently corroborated. Below it, the located
-#: members disagree about where the event happened. Measured in production: the five clusters
-#: under 0.7 include the worst known false merge (0.62, members across twelve countries).
+#: members disagree about where the event happened. Measured in production: the clusters under 0.7
+#: include the worst known false merge (0.61, 325 articles, members across a dozen countries).
 DEFAULT_COHERENCE_FLOOR = 0.7
 
-#: A cluster bigger than this carrying NO coherence score is treated as unverified rather than
-#: good. Location coverage is ~18% and scoring needs three located members, so a cluster this
-#: large with nothing located is itself unusual. Set well above p90 story size (7) so it catches
-#: anomalies, not ordinary well-covered news.
+#: Located members required before a coherence score is ACTED ON. The ratio exists at two located
+#: members, but it is not evidence there: one dissenter scores 0.50, and the commonest reason for a
+#: single dissenter in a small cluster is a genuinely two-country story, not a false merge.
+#:
+#: This is not a theoretical worry — it is what the first production run of these gates did. It
+#: withheld blindspots from "LIVE: F1 Hungarian Grand Prix … Lando Norris" (HU race, GB driver),
+#: "Zelenskyy accuses Russia of assisting Iran", and "Mamdani reiterates ICC support after urging
+#: US to…", all at 0.50 on two or three located members. Every one of them is legitimately about
+#: more than one country, which is exactly the case ``_geo_coherence`` is designed to score highly
+#: and cannot when the sample is this thin.
+#:
+#: At four, the 0.7 floor means "three of four located members agree", which is a real minority
+#: rather than a coin flip. ``audit_publisher_concentration.py`` already required three for the
+#: same reason; the precondition was in the audit and not in the gate, which is the defect this
+#: fixes. Clusters that fall short are ``unverified``, not ``low``: too little evidence to condemn.
+MIN_LOCATED_FOR_TRUST = 4
+
+#: A cluster bigger than this, with no ACTIONABLE coherence score, is treated as unverified rather
+#: than good. Set well above p90 story size (7) so it catches anomalies, not ordinary well-covered
+#: news. Measured: it catches one cluster, the 103-article press-release template.
 DEFAULT_UNVERIFIED_SIZE = 50
 
 TRUST_OK = "ok"                     # corroborated, or too small to chain
@@ -106,8 +122,8 @@ def _blindspot(dist: dict) -> Optional[str]:
     return None
 
 
-def _cluster_trust(total: int, coherence: Optional[float], *, floor: float,
-                   unverified_size: int) -> str:
+def _cluster_trust(total: int, coherence: Optional[float], located: int = 0, *, floor: float,
+                   unverified_size: int, min_located: int = MIN_LOCATED_FOR_TRUST) -> str:
     """How much this cluster can be trusted to be ONE event — ``ok`` / ``low`` / ``unverified``.
 
     Three rules, in order:
@@ -115,14 +131,17 @@ def _cluster_trust(total: int, coherence: Optional[float], *, floor: float,
     * under ``MIN_CHAINABLE`` members → ``ok``. Not a judgement about quality; a structural fact.
       A two-member cluster is a single pairwise decision, so the failure this guards against
       cannot have occurred. This is what keeps the median story out of the gate entirely.
-    * a coherence score below ``floor`` → ``low``. An independent signal actively disagrees.
-    * no score at all, above ``unverified_size`` → ``unverified``. Absence of evidence, which is
-      treated differently from evidence of absence: it withholds claims (see ``_build_story``)
-      but does not reorder the feed (see ``build_stories``).
+    * an ACTIONABLE coherence score below ``floor`` → ``low``. Actionable means backed by at least
+      ``min_located`` located members — see ``MIN_LOCATED_FOR_TRUST`` for why the ratio alone is
+      not enough.
+    * otherwise, above ``unverified_size`` → ``unverified``. Both "nothing located" and "too few
+      located to act on" land here, because they are the same thing: no independent read either
+      way. Absence of evidence withholds claims (see ``_build_story``) but does not reorder the
+      feed (see ``build_stories``) — only evidence of a problem does that.
     """
     if total < MIN_CHAINABLE:
         return TRUST_OK
-    if coherence is not None:
+    if coherence is not None and located >= min_located:
         return TRUST_LOW if coherence < floor else TRUST_OK
     return TRUST_UNVERIFIED if total > unverified_size else TRUST_OK
 
@@ -169,7 +188,7 @@ def _build_story(members: list) -> dict:
     votes = _country_votes(members)
     consensus = _event_consensus(members, votes)
     coherence, located_members = _geo_coherence(members, votes)
-    trust = _cluster_trust(total, coherence, floor=coherence_floor(),
+    trust = _cluster_trust(total, coherence, located_members, floor=coherence_floor(),
                            unverified_size=unverified_size())
     # The blindspot is asserted only from a cluster we can stand behind. Keeping the raw verdict
     # separately means the audit can count what the gate withheld rather than guess at it.

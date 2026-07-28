@@ -16,9 +16,10 @@ import audit_cluster_trust as act   # noqa: E402
 import story_service as ss          # noqa: E402
 
 
-def _story(pubs, arts, coherence, trust, *, withheld=False, title="t"):
+def _story(pubs, arts, coherence, trust, *, withheld=False, title="t", located=9):
     return {"publisherCount": pubs, "totalCoverage": arts, "geoCoherence": coherence,
-            "clusterTrust": trust, "blindspotWithheld": withheld, "title": title}
+            "clusterTrust": trust, "blindspotWithheld": withheld, "title": title,
+            "locatedMembers": located}
 
 
 def test_buckets_count_stories_and_articles():
@@ -40,6 +41,15 @@ def test_top_n_coverage_is_measured_over_the_biggest_clusters():
     res = act.analyse(stories, top=4)
     assert res["topTotal"] == 4 and res["topScored"] == 2
     assert [s["publisherCount"] for s in res["head"]] == [50, 49, 48, 47]
+
+
+def test_coverage_counts_only_ACTIONABLE_scores():
+    """A coherence value the gate would never act on is not coverage. Counting it would report the
+    gates as load-bearing while they sat over scores too thin to use."""
+    thin = [_story(50 - i, 60, 0.9, ss.TRUST_OK, located=2) for i in range(4)]
+    assert act.analyse(thin, top=4)["topScored"] == 0
+    thick = [_story(50 - i, 60, 0.9, ss.TRUST_OK, located=9) for i in range(4)]
+    assert act.analyse(thick, top=4)["topScored"] == 4
 
 
 def test_monitors_are_ratios_not_counts():

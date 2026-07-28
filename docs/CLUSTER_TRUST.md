@@ -53,12 +53,24 @@ or publishers, so it can contradict the grouping).
 
 | verdict | rule |
 |---|---|
-| `ok` | fewer than `MIN_CHAINABLE` (3) members — structurally cannot be a chain — or a score ≥ floor |
-| `low` | scored, and below `DEFAULT_COHERENCE_FLOOR` (0.7): the located members disagree |
-| `unverified` | no score at all, above `DEFAULT_UNVERIFIED_SIZE` (50) members |
+| `ok` | fewer than `MIN_CHAINABLE` (3) members — structurally cannot be a chain — or an actionable score ≥ floor |
+| `low` | actionable score below `DEFAULT_COHERENCE_FLOOR` (0.7): the located members disagree |
+| `unverified` | no actionable score, above `DEFAULT_UNVERIFIED_SIZE` (50) members |
+
+**Actionable** means backed by at least `MIN_LOCATED_FOR_TRUST` (4) located members. The first
+production run shipped without this precondition and it was the gate's one real defect: at two
+located members a single dissenter scores 0.50, and in a small cluster the commonest cause of one
+dissenter is a genuinely two-country story. It withheld blindspots from *"LIVE: F1 Hungarian Grand
+Prix — Lando Norris"* (Hungarian race, British driver), *"Zelenskyy accuses Russia of assisting
+Iran"*, and *"Mamdani reiterates ICC support after urging US to…"* — all correctly clustered, all
+legitimately about more than one country. `audit_publisher_concentration.py` already required a
+located-member minimum for exactly this reason; the precondition lived in the audit and not in the
+gate. At four members the 0.7 floor means "three of four agree", which is a real minority rather
+than a coin flip.
 
 `low` and `unverified` are treated differently on purpose: **evidence of a problem reorders the
-feed; absence of evidence only withholds claims.**
+feed; absence of evidence only withholds claims.** Too few located members to judge is absence of
+evidence, so it lands in `unverified`, never in `low`.
 
 ### 2. The blindspot gate (hard blocker — the reason for the review)
 
@@ -135,21 +147,33 @@ stories rather than merely shrinking them, and the article counter alone does no
 Both are ratios, so they stay comparable as the corpus grows, which raw counts do not. Reported by
 `audit_cluster_trust.py` and by `story_service.diagnostics`.
 
-| monitor | now | trigger |
+| monitor | measured 2026-07-28 | trigger |
 |---|---|---|
-| largest cluster ÷ p90 story size | 318 ÷ 7 = **45×** | **60×** |
-| largest cluster share of covered articles | ~2% | **8%** |
+| largest cluster ÷ p90 story size | 325 ÷ 7 = **46.4×** | **60×** |
+| largest cluster share of covered articles | **7.8%** (325 of 4,168) | **8%** |
 
 Hitting either promotes the linkage work above whatever else is queued, with no re-litigation. The
 reason this needs a pre-committed trigger rather than a judgement call later is the growth curve:
-the largest cluster went **194 → 208 → 318 (+64%)** while the corpus grew **+23%**. It is
+the largest cluster went **194 → 208 → 318 → 325** while the corpus grew far more slowly. It is
 superlinear, so it degrades without any change from us.
+
+**The share monitor is 0.2 points from its trigger.** An earlier revision of this table recorded it
+as "~2%", which was wrong: that divided the largest cluster by the whole corpus rather than by
+articles in stories, which is what the monitor measures. Corrected here — the linkage work is not a
+future iteration, it is next.
+
+The 2026-07-28 run also changed which cluster is largest. It is no longer *"Trump defends 50%
+tariffs on Canada"* but *"Trump to attend dignified transfer of fallen soldier"* — 325 articles,
+129 publishers, coherence 0.61. Same blob, different title, because the title comes from the
+earliest-published member and the chain keeps absorbing earlier bridging articles. Story IDs are
+anchored to that same member, so **the mega-cluster's id churns as it grows** and links to it go
+stale. That is a second, previously unrecorded cost of the defect.
 
 ## Configuration
 
 | variable | default | effect |
 |---|---|---|
-| `RWE_STORY_COHERENCE_FLOOR` | `0.7` | geoCoherence below which a cluster is `low` |
+| `RWE_STORY_COHERENCE_FLOOR` | `0.7` | geoCoherence below which a cluster is `low` (needs 4+ located members) |
 | `RWE_STORY_UNVERIFIED_SIZE` | `50` | size above which having no score is notable |
 | `RWE_STORY_TRUST_RANKING` | on | `0` restores pure size ordering |
 | `RWE_CLUSTER_LINK_QUORUM` | `0.0` | cross-pair fraction required to merge (`0` = single linkage) |

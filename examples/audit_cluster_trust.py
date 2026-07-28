@@ -5,10 +5,15 @@ independent signal contradicts, and the default ranking demotes them. Both key o
 which only 11% of stories carry — so the obvious objection is that they are gates over a signal that
 mostly is not there.
 
-The answer this measures is that coverage is not uniform. Scoring needs three located members, so
-it is thinnest on small clusters and densest on large ones — and the gates only ever apply to large
+The answer this measures is that coverage is not uniform. Scoring needs located members, so it is
+thinnest on small clusters and densest on large ones — and the gates only ever apply to large
 clusters. **The top-N table below is the check on that claim.** If the biggest clusters are mostly
 unscored, both gates are decorative and the thresholds need a size-based fallback instead.
+
+Read that percentage with one caveat it cannot resolve on its own: an unscored cluster may have no
+location because extraction missed it, or because the story genuinely has no geography. A phone
+launch covered by 26 outlets will never carry an event country, and that is correct behaviour, not
+a gap. Look at the titles in the table before concluding the coverage is too thin.
 
 It also prints the two launch monitors, whose trigger levels are agreed in docs/CLUSTER_TRUST.md.
 Both are ratios rather than counts, so they stay meaningful as the catalog grows.
@@ -34,11 +39,15 @@ def analyse(stories: list, *, top: int) -> dict:
         b["articles"] += s["totalCoverage"]
 
     # The claim under test: the gates apply to big clusters, and big clusters are the ones that
-    # clear the three-located-member bar. Ranked by publisherCount because that is what the default
-    # sort ranks by — this is the population the gates are supposed to police.
+    # clear the located-member bar. Ranked by publisherCount because that is what the default sort
+    # ranks by — this is the population the gates are supposed to police. "Scored" here means
+    # ACTIONABLE, the same bar _cluster_trust uses; a coherence value the gate would not act on is
+    # not coverage.
     biggest = sorted(stories, key=lambda s: (s["publisherCount"], s["totalCoverage"]), reverse=True)
     head = biggest[:top]
-    scored_head = [s for s in head if s.get("geoCoherence") is not None]
+    scored_head = [s for s in head
+                   if s.get("geoCoherence") is not None
+                   and (s.get("locatedMembers") or 0) >= story_service.MIN_LOCATED_FOR_TRUST]
 
     sizes = sorted((s["totalCoverage"] for s in stories))
     p90 = sizes[int(0.9 * (len(sizes) - 1))] if sizes else 0
@@ -63,9 +72,14 @@ def analyse(stories: list, *, top: int) -> dict:
 
 
 def _row(s: dict) -> str:
+    """``loc`` is the column that makes the coherence number readable. A 0.50 on two located
+    members is one dissenter and means almost nothing; a 0.50 on sixty is a finding."""
     coh = f"{s['geoCoherence']:.2f}" if s.get("geoCoherence") is not None else "   -"
-    return (f"{s['publisherCount']:>5} {s['totalCoverage']:>5} {coh:>6} "
-            f"{s['clusterTrust']:>10}  {s['title'][:52]}")
+    return (f"{s['publisherCount']:>5} {s['totalCoverage']:>5} {s.get('locatedMembers', 0):>4} "
+            f"{coh:>6} {s['clusterTrust']:>10}  {s['title'][:48]}")
+
+
+HEAD = f"{'pubs':>5} {'arts':>5} {'loc':>4} {'coh':>6} {'trust':>10}  title"
 
 
 def main(argv=None) -> int:
@@ -100,26 +114,31 @@ def main(argv=None) -> int:
     print("  -> gates are load-bearing" if pct >= 80.0 else
           "  -> TOO THIN: the gates need a size-based fallback, not a coherence-based one")
 
-    print(f"\n{'pubs':>5} {'arts':>5} {'coh':>6} {'trust':>10}  title")
+    print(f"\n{HEAD}")
     for s in res["head"][:args.show]:
         print(_row(s))
 
-    print(f"\nblindspot claims withheld: {len(res['withheld'])}")
+    print(f"\nblindspot claims withheld: {len(res['withheld'])}\n{HEAD}")
     for s in res["withheld"][:args.show]:
         print(_row(s))
 
-    print(f"\ndemoted from the top of the default sort: {len(res['demoted'])}")
+    print(f"\ndemoted from the top of the default sort: {len(res['demoted'])}\n{HEAD}")
     for s in res["demoted"][:args.show]:
         print(_row(s))
 
-    print(f"\nlarge but unscored (claims withheld, ranking untouched): {len(res['unverified'])}")
+    print(f"\nnot independently checkable (claims withheld, ranking untouched): "
+          f"{len(res['unverified'])}\n{HEAD}")
     for s in res["unverified"][:args.show]:
         print(_row(s))
 
     print(f"\nlaunch monitors")
+    over = res["largestShare"] >= 0.08 or res["largestOverP90"] >= 60.0
     print(f"  largest / p90 story size : {res['largestOverP90']}x  "
           f"({res['largest']} vs {res['p90']})   trigger at 60x")
-    print(f"  largest share of covered : {res['largestShare']:.1%}                trigger at 8%")
+    print(f"  largest share of covered : {res['largestShare']:.1%}"
+          f"                trigger at 8%")
+    print("  -> TRIGGERED: the linkage work is now top of the queue" if over else
+          "  -> below both triggers")
     return 0
 
 

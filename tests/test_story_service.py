@@ -673,28 +673,50 @@ def test_members_recognising_both_places_of_a_two_country_event_stay_coherent():
 # single-linkage chaining ACCUMULATES publishers, so a false merge's wrongness and its rank have
 # the same cause.
 # --------------------------------------------------------------------------- #
-def _false_merge(st, n=4):
-    """Members located in unrelated countries, merged on shared title tokens — coherence 1/n."""
+def _false_merge(st, n=5):
+    """Members located in unrelated countries, merged on shared title tokens — coherence 1/n.
+    Five members so the score clears MIN_LOCATED_FOR_TRUST and is actually actionable."""
     for pub, ctry in list(zip("ABCDEF", ["US", "YE", "SG", "DJ", "CU", "OM"]))[:n]:
         cu = f"https://{pub}.example/strike"
         _add(st, cu, f"Outlet {pub}", 0.0, "Container terminal strike enters second week", days=1)
         _locate(st, cu, ctry)
 
 
+def _trust(total, coh, located=9, **kw):
+    kw.setdefault("floor", 0.7)
+    kw.setdefault("unverified_size", 50)
+    return ss._cluster_trust(total, coh, located, **kw)
+
+
 def test_trust_leaves_the_median_story_alone():
     """A two-member cluster is ONE pairwise decision — chaining needs A~B, B~C and A≁C. The
     catalog median is 2, so the gates skip the typical story by construction, not by tuning."""
-    assert ss._cluster_trust(2, 0.1, floor=0.7, unverified_size=50) == ss.TRUST_OK
-    assert ss._cluster_trust(1, None, floor=0.7, unverified_size=50) == ss.TRUST_OK
+    assert _trust(2, 0.1) == ss.TRUST_OK
+    assert _trust(1, None) == ss.TRUST_OK
 
 
 def test_trust_verdicts():
-    low = ss._cluster_trust(10, 0.62, floor=0.7, unverified_size=50)
-    ok = ss._cluster_trust(10, 0.70, floor=0.7, unverified_size=50)
-    assert (low, ok) == (ss.TRUST_LOW, ss.TRUST_OK), "the floor is inclusive"
+    assert (_trust(10, 0.62), _trust(10, 0.70)) == (ss.TRUST_LOW, ss.TRUST_OK), "floor is inclusive"
     # No score at all: unusual only once the cluster is big enough for that to be notable.
-    assert ss._cluster_trust(10, None, floor=0.7, unverified_size=50) == ss.TRUST_OK
-    assert ss._cluster_trust(51, None, floor=0.7, unverified_size=50) == ss.TRUST_UNVERIFIED
+    assert _trust(10, None, 0) == ss.TRUST_OK
+    assert _trust(51, None, 0) == ss.TRUST_UNVERIFIED
+
+
+def test_a_thin_coherence_score_cannot_condemn_a_cluster():
+    """The defect the first production run of these gates exposed. Two located members that
+    disagree score 0.50, and in a small cluster the commonest cause is a genuinely two-country
+    story — a Hungarian Grand Prix with a British driver, Zelenskyy on Russia and Iran. The ratio
+    exists at n=2; it is not evidence there. Below MIN_LOCATED_FOR_TRUST the verdict must be
+    "cannot tell", never "bad"."""
+    assert _trust(6, 0.50, 2) != ss.TRUST_LOW
+    assert _trust(6, 0.67, 3) != ss.TRUST_LOW
+    assert _trust(6, 0.50, 4) == ss.TRUST_LOW, "four located members is actionable"
+
+
+def test_a_thin_score_on_a_big_cluster_is_unverified_not_ok():
+    """Too few located members and nothing located at all are the same state — no independent read
+    — so they get the same verdict rather than one silently passing as good."""
+    assert _trust(200, 0.50, 2) == ss.TRUST_UNVERIFIED
 
 
 def test_blindspot_is_withheld_from_an_incoherent_cluster():
@@ -705,7 +727,7 @@ def test_blindspot_is_withheld_from_an_incoherent_cluster():
     _false_merge(st)
     story = ss.cluster_from_store(st)[0]
     assert story["clusterTrust"] == ss.TRUST_LOW
-    assert story["geoCoherence"] == 0.25
+    assert story["geoCoherence"] == 0.2 and story["locatedMembers"] == 5
     assert story["blindspotSide"] is None, "no claim from a cluster we cannot stand behind"
     assert story["blindspotWithheld"] is True, "and the audit must be able to count it"
 
@@ -738,7 +760,7 @@ def test_trust_ranking_can_be_switched_off(monkeypatch):
     _false_merge(st)
     _senate_and_wildfire(st)
     stories = ss.cluster_from_store(st)
-    assert stories[0]["publisherCount"] == 4 and stories[0]["clusterTrust"] == ss.TRUST_LOW
+    assert stories[0]["publisherCount"] == 5 and stories[0]["clusterTrust"] == ss.TRUST_LOW
 
 
 def test_publishers_sort_gets_the_same_demotion():
