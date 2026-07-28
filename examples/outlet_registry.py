@@ -43,6 +43,24 @@ _NONALNUM = re.compile(r"[^a-z0-9]+")
 #: never centres one (L2.2).
 CREDIBILITY = ("high", "medium", "low")
 
+#: Legal values for the ``kind`` column. Blank = an ordinary news outlet, which is the vast
+#: majority. Everything named here is a source that is NOT a newsroom covering a story, and each
+#: name records a different reason a lean would be the wrong question:
+#:
+#: ``wire``       machine-generated market-data / press-release copy
+#: ``aggregator`` republishes other outlets' articles — its "coverage" is already in the cluster
+#: ``research``   a journal or preprint server. MBFC rates these ``Pro-Science``, a category it
+#:               states is distinct from the left-right scale, so a blank lean here is SOURCED
+#: ``forum``      user-generated posts, not reporting
+#: ``org``        an organisation publishing its own announcements
+KINDS = ("wire", "aggregator", "research", "forum", "org")
+
+#: Kinds removed from clustering entirely. Deliberately narrower than :data:`KINDS`: an aggregator's
+#: articles ARE other outlets' articles, so counting one as a publisher double-counts coverage the
+#: cluster already holds. A journal paper or an NGO release is original content — debatable, so it
+#: is classified and left in.
+EXCLUDED_KINDS = ("wire", "aggregator")
+
 
 @dataclass(frozen=True)
 class Outlet:
@@ -232,6 +250,16 @@ class OutletRegistry:
         o = self.resolve(text)
         return bool(o and o.kind == "wire")
 
+    def is_aggregator(self, text: "str | None") -> bool:
+        """Whether ``text`` republishes other outlets rather than reporting.
+
+        Worth its own predicate because an aggregator is the one non-newsroom source that can be
+        RATED: MBFC gives Google News a Left-Center lean, derived from the sources it surfaces. The
+        rating is real and voting it would still be wrong — the outlets it mirrors are already in
+        the cluster, so its vote is a second copy of theirs."""
+        o = self.resolve(text)
+        return bool(o and o.kind == "aggregator")
+
     def credibility(self, text: "str | None") -> Optional[str]:
         """The curated credibility verdict for ``text`` — ``high`` / ``medium`` / ``low``, or
         ``None`` when the outlet is unknown OR the column is uncurated."""
@@ -291,6 +319,11 @@ def is_wire(text: "str | None") -> bool:
     return default_registry().is_wire(text)
 
 
+def is_aggregator(text: "str | None") -> bool:
+    """Convenience: :meth:`OutletRegistry.is_aggregator` against the default registry."""
+    return default_registry().is_aggregator(text)
+
+
 def credibility(text: "str | None") -> Optional[str]:
     """Convenience: :meth:`OutletRegistry.credibility` against the default registry."""
     return default_registry().credibility(text)
@@ -313,6 +346,8 @@ def lint_registry(path: "str | None" = None) -> List[dict]:
       * ``duplicate_alias``    — one alias key mapped to two different canonicals (resolution would
                                  depend on row order — a real bug)
       * ``repeated_alias_in_row`` (warning) — the same alias listed twice in one row's alias list
+      * ``invalid_kind``       — column 8 is neither blank nor one of :data:`KINDS`. This column was
+        unvalidated until it grew past a single value, and a typo in it silently un-excludes a wire.
       * ``invalid_credibility``— column 9 is neither blank nor one of :data:`CREDIBILITY`
       * ``unrated_low_credibility`` (warning) — a ``low`` row with no lean. Legal, but it means the
         row is asserting a caveat about a rating that is not there, which is almost always a
@@ -349,6 +384,11 @@ def lint_registry(path: "str | None" = None) -> List[dict]:
                 issues.append({"severity": "error", "code": "invalid_lean", "line": lineno,
                                "message": f"line {lineno} ({canonical}): lean {raw_lean!r} "
                                           "is not a finite number in [-2, 2] (blank = unrated)"})
+        kind = cells[7].strip().lower() if len(cells) > 7 else ""
+        if kind and kind not in KINDS:
+            issues.append({"severity": "error", "code": "invalid_kind", "line": lineno,
+                           "message": f"line {lineno} ({canonical}): kind {kind!r} is not one of "
+                                      f"{'/'.join(KINDS)} (blank = an ordinary news outlet)"})
         cred = cells[8].strip().lower() if len(cells) > 8 else ""
         if cred and cred not in CREDIBILITY:
             issues.append({"severity": "error", "code": "invalid_credibility", "line": lineno,

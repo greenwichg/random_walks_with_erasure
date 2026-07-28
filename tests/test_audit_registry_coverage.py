@@ -49,7 +49,7 @@ def test_each_unrated_outlet_lands_in_exactly_one_bucket():
     res = _analyse(rows, [])
     buckets = [r["bucket"] for r in res["outlets"]]
     assert len(buckets) == len(set(r["identity"] for r in res["outlets"]))
-    assert set(buckets) == {arc.UNTRACKED, arc.WIRE, arc.LOCALITY_ONLY, arc.LOW_CREDIBILITY}
+    assert set(buckets) == {arc.UNTRACKED, "wire", arc.LOCALITY_ONLY, arc.LOW_CREDIBILITY}
     # Reuters is rated, so it appears in no bucket at all.
     assert "Reuters" not in [r["label"] for r in res["outlets"]]
     assert res["ratedInWindow"] == 1
@@ -59,8 +59,8 @@ def test_a_wire_row_is_not_reported_as_a_curation_gap():
     """A machine-generated market-data feed has no editorial stance to rate. Listing it as work
     remaining would put a permanently-blank row on a worklist forever."""
     res = _analyse(_row("MarketBeat", 9), [])
-    assert [r["bucket"] for r in res["outlets"]] == [arc.WIRE]
-    assert res["buckets"][arc.WIRE]["articles"] == 9
+    assert [r["bucket"] for r in res["outlets"]] == ["wire"]
+    assert res["buckets"]["wire"]["articles"] == 9
 
 
 def test_a_low_credibility_outlet_is_reported_apart_from_the_unrated(reset=None):
@@ -119,3 +119,23 @@ def test_registry_and_window_totals_are_reported_separately():
     assert res["ratedInWindow"] == 1          # only Reuters, of 240-odd rated rows
     assert res["registryRated"] > 100         # the file is far bigger than any one window
     assert "tracked_and_rated" not in res, "the ambiguous key name is gone, not aliased"
+
+
+def test_every_kind_gets_its_own_bucket():
+    """`kind` grew from one value to five, and each is a different reason a lean is the wrong
+    question. Folding them into one "not a newsroom" line would hide that an aggregator is excluded
+    from clustering while a journal is not."""
+    rows = (_row("Zazoom") + _row("Nature.Com") + _row("Reddit.Com")
+            + _row("Unitaid.Eu") + _row("MarketBeat"))
+    got = {r["label"]: r["bucket"] for r in _analyse(rows, [])["outlets"]}
+    assert got == {"Zazoom": "aggregator", "Nature.Com": "research", "Reddit.Com": "forum",
+                   "Unitaid.Eu": "org", "MarketBeat": "wire"}
+
+
+def test_a_rated_aggregator_is_still_an_aggregator():
+    """Google News carries an MBFC Left-Center rating derived from the sources it surfaces. The
+    bucket is decided by WHAT IT IS, not by whether someone rated it — the clearest case that a
+    rating and a right-to-vote are separate questions."""
+    res = _analyse(_row("News.Google.Com", 12), [])
+    row = res["outlets"][0]
+    assert row["bucket"] == "aggregator" and row["canonical"] == "Google News"

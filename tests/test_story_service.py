@@ -1286,3 +1286,31 @@ def test_an_ordinary_rated_outlet_is_untouched():
         assert story["lowCredibilityPublishers"] == []
     wildfire = next(s for s in ss.cluster_from_store(st) if "Wildfire" in s["title"])
     assert wildfire["blindspotSide"] == "center"
+
+
+def test_an_aggregator_never_enters_clustering():
+    """An aggregator republishes other outlets' articles, so counting it as a publisher is a second
+    copy of coverage the cluster already holds. Measured in production: Zazoom alone contributed 815
+    articles to a six-day window."""
+    st = store_mod.Store("sqlite://")
+    _add(st, "https://cnn.com/z1", "CNN", -1.2, "Dockworkers strike closes the main port", days=1)
+    _add(st, "https://fox.com/z2", "Fox News", 1.5, "Dockworkers strike closes main port", days=1)
+    _add(st, "https://zazoom.it/z3", "Zazoom", None, "Dockworkers strike closes the main port now",
+         days=1)
+    story = ss.cluster_from_store(st)[0]
+    assert "Zazoom" not in story["publishers"]
+    assert story["publisherCount"] == 2
+
+
+def test_the_aggregator_gate_is_its_own_switch(monkeypatch):
+    """Separate from the wire gate on purpose: they exclude for different reasons — a wire has no
+    editorial stance, an aggregator has someone else's — and an operator who wants one back should
+    not have to take the other with it."""
+    monkeypatch.setenv("RWE_STORY_EXCLUDE_AGGREGATOR", "0")
+    st = store_mod.Store("sqlite://")
+    _add(st, "https://cnn.com/z1", "CNN", -1.2, "Dockworkers strike closes the main port", days=1)
+    _add(st, "https://zazoom.it/z3", "Zazoom", None, "Dockworkers strike closes the main port now",
+         days=1)
+    story = ss.cluster_from_store(st)[0]
+    assert "Zazoom" in story["publishers"]
+    assert ss.exclude_wire() is True, "the wire gate is untouched by the aggregator switch"

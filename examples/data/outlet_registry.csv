@@ -708,6 +708,35 @@ FinanzNachrichten,,finanznachrichten.de|Finanznachrichten,DE,,,,wire
 #   iHeartRadio : ~111 station hostnames in the window, one network, no MBFC rating for it. The
 #                 brand-domain rule already collapses them; this row gives the group a name a
 #                 reader recognises instead of whichever station sorted first.
-Zazoom,,zazoom.it|zazoom,IT,,,national
+Zazoom,,zazoom.it|zazoom,IT,,,national,aggregator
 BelTA,,belta.by|eng.belta.by,BY,,Minsk,international
 iHeartRadio,,iheart.com|iHeart,US,,,national
+#
+# Tenth pass -- the `kind` column earns its vocabulary. Everything below is a source the production
+# audit found by VOLUME and that no amount of rating effort would have helped, because a political
+# lean is the wrong question to ask of it. Each kind records a different reason.
+#
+#   aggregator -- republishes other outlets' articles. Excluded from clustering
+#                 (RWE_STORY_EXCLUDE_AGGREGATOR): its "coverage" is already in the cluster, so
+#                 counting it as a publisher is a second copy of a vote that is present.
+#                 GOOGLE NEWS IS RATED: MBFC gives it Left-Center, derived from the sources it
+#                 surfaces. The rating is real and voting it would still be wrong -- which is the
+#                 clearest possible demonstration that a rating and a right-to-vote are different
+#                 questions. Recorded here and deliberately not written into the lean column.
+#   research   -- a journal or preprint server. MBFC rates these PRO-SCIENCE, a category it states
+#                 explicitly is NOT on the left-right scale. So a blank lean is SOURCED, not
+#                 missing: the rater looked and said the axis does not apply. Not excluded -- a
+#                 paper is original content, unlike a republished headline.
+#   forum      -- user-generated posts. No rater covers them and none should.
+#   org        -- an organisation publishing its own announcements.
+#
+#   Nature   : MBFC PRO-SCIENCE, factual VERY HIGH, HIGH credibility
+#   Frontiers: MBFC PRO-SCIENCE, Mostly Factual, HIGH credibility (MBFC advises caution -- open
+#              access, so not everything is peer reviewed)
+Google News,,news.google.com|Google News,US,,,international,aggregator
+Nature,,nature.com,GB,,London,international,research
+Frontiers,,frontiersin.org,CH,,Lausanne,international,research
+arXiv,,arxiv.org,US,New York,Ithaca,international,research
+Reddit,,reddit.com,US,,,international,forum
+DEV Community,,dev.to,US,,,international,forum
+Unitaid,,unitaid.eu|unitaid.org,CH,,Geneva,international,org

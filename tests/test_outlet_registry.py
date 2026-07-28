@@ -419,9 +419,12 @@ def test_the_unrated_set_is_exactly_the_documented_one(reg):
     market-data feed has no editorial stance to rate."""
     import math
     blank = {o.canonical for o in reg.outlets() if math.isnan(o.lean)}
-    wire = {o.canonical for o in reg.outlets() if o.kind == "wire"}
-    assert wire <= blank, "a wire feed must never carry a lean"
-    assert blank - wire == {
+    # Any `kind` at all excuses a blank lean, not just `wire`. A source that is not a newsroom —
+    # an aggregator, a journal, a forum, an organisation — is not a curation gap, and the kind
+    # column is where that judgement is recorded. Only rows with NO kind have to be justified here.
+    typed = {o.canonical for o in reg.outlets() if o.kind}
+    assert typed <= blank, "a non-newsroom source must never carry a lean"
+    assert blank - typed == {
         # No rating exists at any public rater. This set is now ONLY that — the eight outlets whose
         # lean was withheld for lack of a credibility column are rated, and carry the caveat in it.
         "Brisbane Times",      # no MBFC page; sibling mastheads are rated, which is not a source
@@ -432,7 +435,6 @@ def test_the_unrated_set_is_exactly_the_documented_one(reg):
         "The East African",    # only its owner, Nation Media Group, is rated
         "WAtoday",             # no MBFC page; Biasly's own summary contradicts itself
         # Not outlets to rate at all — identity is the whole reason each row exists.
-        "Zazoom",              # an aggregator; it republishes other outlets' headlines
         "BelTA",               # Belarus state agency; press-freedom scores are not an outlet lean
         "iHeartRadio",         # no rating for the network; the row names ~111 station hostnames
     }
@@ -834,3 +836,34 @@ def test_the_aggregator_and_the_network_are_identified_not_rated(reg):
         o = reg.resolve(form)
         assert o.canonical == canonical and math.isnan(o.lean), form
         assert o.kind != "wire", f"{form}: an aggregator is not machine-generated copy"
+
+
+def test_lint_rejects_a_kind_outside_the_vocabulary(tmp_path):
+    """The kind column was unvalidated until it grew past a single value. A typo in it silently
+    un-excludes a wire — the row loads, `is_wire` returns False, and 400 articles of template copy
+    rejoin clustering with nothing to show for it."""
+    p = tmp_path / "r.csv"
+    p.write_text("canonical,lean,aliases,country,region,city,scope,kind,credibility\n"
+                 "Widget Feed,,widgetfeed.com,US,,,national,wyre\n", encoding="utf-8")
+    codes = {i["code"] for i in orx.lint_registry(str(p))}
+    assert "invalid_kind" in codes
+
+
+def test_only_wire_and_aggregator_are_excluded_from_clustering(reg):
+    """A narrower set than KINDS on purpose. An aggregator's article IS another outlet's article, so
+    counting it double-counts. A journal paper or an NGO release is original content — classified,
+    and left in."""
+    assert set(orx.EXCLUDED_KINDS) == {"wire", "aggregator"}
+    assert reg.is_aggregator("Zazoom") and reg.is_aggregator("news.google.com")
+    for form in ["Nature.Com", "Reddit.Com", "Unitaid.Eu", "Arxiv.Org"]:
+        assert not reg.is_wire(form) and not reg.is_aggregator(form), form
+
+
+def test_pro_science_sources_are_blank_because_the_rater_said_so(reg):
+    """Not a curation gap. MBFC rates Nature and Frontiers PRO-SCIENCE and states that category is
+    distinct from the left-right scale — so the blank lean here is SOURCED, which is the opposite of
+    an outlet nobody has assessed."""
+    import math
+    for form, canonical in [("Nature.Com", "Nature"), ("Frontiersin.Org", "Frontiers")]:
+        o = reg.resolve(form)
+        assert o.canonical == canonical and math.isnan(o.lean) and o.kind == "research", form

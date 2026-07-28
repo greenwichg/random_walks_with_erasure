@@ -46,17 +46,25 @@ import store as store_mod
 #: Buckets, in report order. Every unresolved or unrated identity lands in exactly one.
 UNTRACKED = "untracked"
 AMBIGUOUS = "ambiguous"
-WIRE = "wire"
 LOCALITY_ONLY = "locality-only"
 LOW_CREDIBILITY = "low-credibility"
 
 _REASON = {
     UNTRACKED: "no registry row — a curator can add one",
     AMBIGUOUS: "no row, and the bare name is carried by more than one domain here",
-    WIRE: "machine-generated market-data / press-release copy — no editorial stance to rate",
     LOCALITY_ONLY: "row exists, lean deliberately blank — no public rater covers it",
     LOW_CREDIBILITY: "rated, but the rater called it Questionable — lean recorded, not voted",
+    # `kind` values are buckets in their own right: a source that is not a newsroom is not a
+    # curation gap, and listing it as one would keep a permanently-blank row on a worklist forever.
+    "wire": "machine-generated market-data / press-release copy — no editorial stance to rate",
+    "aggregator": "republishes other outlets — its coverage is already in the cluster",
+    "research": "a journal or preprint server — MBFC rates these Pro-Science, off the left/right axis",
+    "forum": "user-generated posts, not reporting",
+    "org": "an organisation publishing its own announcements",
 }
+#: Report order — real work first, then decisions already taken.
+_ORDER = (UNTRACKED, AMBIGUOUS, LOW_CREDIBILITY, LOCALITY_ONLY,
+          "aggregator", "wire", "research", "forum", "org")
 
 
 def _votes(cov: dict) -> bool:
@@ -92,8 +100,8 @@ def _classify(outlet, ambiguous_here: bool) -> "str | None":
     coverage-gap claim rests on."""
     if outlet is None:
         return AMBIGUOUS if ambiguous_here else UNTRACKED
-    if outlet.kind == "wire":
-        return WIRE
+    if outlet.kind:
+        return outlet.kind
     if outlet.credibility == "low":
         return LOW_CREDIBILITY
     if math.isnan(outlet.lean):
@@ -206,7 +214,7 @@ def main(argv=None) -> int:
     print(f"    NOT rated        : {sum(b['outlets'] for b in res['buckets'].values()):,}\n")
 
     print(f"{'outlets':>8} {'articles':>9} {'unlocks':>8}  bucket")
-    for b in (UNTRACKED, AMBIGUOUS, LOW_CREDIBILITY, LOCALITY_ONLY, WIRE):
+    for b in _ORDER:
         d = res["buckets"].get(b)
         if not d:
             continue
@@ -223,7 +231,7 @@ def main(argv=None) -> int:
     print(_table(workable, lambda r: (-r["unlocks"], -r["articles"], r["label"]), args.top)
           if workable else "    (none — no untracked outlet sits in a one-short story)")
 
-    for bucket in (AMBIGUOUS, LOW_CREDIBILITY, LOCALITY_ONLY):
+    for bucket in (b for b in _ORDER if b != UNTRACKED):
         rows_b = [r for r in res["outlets"] if r["bucket"] == bucket]
         if not rows_b:
             continue

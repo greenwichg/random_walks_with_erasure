@@ -233,6 +233,12 @@ services:
       # Machine-generated market-data feeds (outlet_registry.csv kind=wire) never enter story
       # clustering. Does nothing on its own — only outlets a human marked are affected.
       RWE_STORY_EXCLUDE_WIRE: ${RWE_STORY_EXCLUDE_WIRE:-1}
+      # Keeps registry `kind = aggregator` sources out of clustering. An aggregator republishes
+      # other outlets' articles, so counting one as a publisher double-counts coverage the cluster
+      # already holds — measured, Zazoom alone contributed 815 articles to a six-day window. A
+      # SEPARATE switch from the wire gate on purpose: a wire has no editorial stance, an aggregator
+      # has someone else's, and an operator wanting one back should not have to take the other.
+      RWE_STORY_EXCLUDE_AGGREGATOR: ${RWE_STORY_EXCLUDE_AGGREGATOR:-1}
       # Rated publishers a story needs before it may assert a coverage gap. Three, because there
       # are three lean buckets: below that an empty bucket is forced by arithmetic, not observed.
       # Measured before this existed: 516 of 1,022 stories claimed a gap and 89.1% of those rested

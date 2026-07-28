@@ -551,6 +551,16 @@ def merge_max_size() -> int:
     return _env_int("RWE_STORY_MERGE_MAX_SIZE", DEFAULT_MERGE_MAX_SIZE)
 
 
+def exclude_aggregator() -> bool:
+    """Whether a registry ``kind = aggregator`` source is kept out of clustering (default on).
+
+    Google News is the case that shows why a RATING is not enough: MBFC gives it a Left-Center lean,
+    derived from the sources it surfaces. The rating is real and voting it would still be wrong,
+    because those sources are already in the cluster. Identity, not credibility, is what settles
+    this one."""
+    return os.environ.get("RWE_STORY_EXCLUDE_AGGREGATOR", "1").strip().lower() not in ("0", "false", "no")
+
+
 def credibility_gate() -> bool:
     """Whether a registry ``credibility = low`` outlet is barred from voting its lean (default on).
 
@@ -913,6 +923,16 @@ def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
         # perfectly coherent. Filtering by curated source identity is explicit and reversible;
         # the threshold that was proposed for the same job measured 0% precision, 0% recall.
         arts = [a for a in arts if not outlet_registry.is_wire(a.get("publisher"))]
+    if exclude_aggregator():
+        # An aggregator's articles ARE other outlets' articles, republished with a reference link.
+        # Counting one as a publisher double-counts coverage the cluster already holds, inflates
+        # publisherCount, and lifts the story up a ranking that sorts on it. Measured: Zazoom alone
+        # contributed 815 articles to a six-day window.
+        #
+        # A separate switch from the wire gate on purpose. They exclude for different reasons —
+        # a wire has no editorial stance, an aggregator has someone else's — and an operator who
+        # wants one back should not have to take the other with it.
+        arts = [a for a in arts if not outlet_registry.is_aggregator(a.get("publisher"))]
     if credibility_gate():
         # Resolved HERE, from the registry, rather than read from the article's stored `scored`
         # JSON — so tightening or reversing a credibility verdict takes effect on the next build

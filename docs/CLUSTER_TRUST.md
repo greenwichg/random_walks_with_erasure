@@ -1453,3 +1453,61 @@ articles, `nature.com`, `arxiv.org`), developer blogs (`dev.to`), forums (`reddi
 
 **237 articles from a journal publisher in a news feed is a feed-configuration question, not a
 curation one** — and no amount of rating effort will turn it into one.
+
+## Tenth pass: the `kind` column earns a vocabulary
+
+The remaining tail was never unrated newspapers. It was sources a political lean is the wrong
+question for — and until now the file had exactly one word for that, `wire`. It now has five, each
+recording a different reason:
+
+| kind | reason | excluded from clustering? |
+|---|---|---|
+| `wire` | machine-generated market-data / press-release copy | **yes** |
+| `aggregator` | republishes other outlets — its coverage is already in the cluster | **yes** |
+| `research` | a journal or preprint server | no |
+| `forum` | user-generated posts, not reporting | no |
+| `org` | an organisation publishing its own announcements | no |
+
+`EXCLUDED_KINDS` is deliberately narrower than `KINDS`. An aggregator's article **is** another
+outlet's article, so counting it double-counts coverage the cluster already holds. A journal paper
+or an NGO release is original content — classified, and left in.
+
+### Google News is the case that settles it
+
+MBFC **rates Google News Left-Center**, derived from the sources it surfaces. The rating is real,
+and voting it would still be wrong: those sources are already in the cluster, so its vote is a second
+copy of theirs.
+
+That is the clearest demonstration in this whole thread that **a rating and a right-to-vote are
+different questions.** The credibility column answered it for outlets whose rater doubts them; the
+`kind` column answers it for sources that are not newsrooms at all. Neither is about the number in
+the lean field.
+
+### Pro-Science is a sourced blank, not a gap
+
+MBFC rates Nature and Frontiers **Pro-Science**, and states that category is *not* on the left-right
+scale. So the blank lean on those rows is **sourced** — the rater looked and said the axis does not
+apply. That is the opposite of an outlet nobody has assessed, and the audit now reports them apart
+so the worklist stops carrying them.
+
+### Two guards that fired doing their job
+
+`test_the_unrated_set_is_exactly_the_documented_one` caught the new rows twice, and the second time
+it needed generalising rather than extending: it subtracted `wire` from the blank set, when the real
+rule is that **any** kind excuses a blank lean. Only rows with *no* kind have to be justified by name.
+
+`lint_registry` had never validated `kind` at all — it went unnoticed while the column held one
+value. A typo there silently un-excludes a wire: the row loads, `is_wire` returns False, and 400
+articles of template copy rejoin clustering with nothing to show for it. `invalid_kind` now catches it.
+
+### Registry, end of day
+
+| | start | end |
+|---|---:|---:|
+| rows | 154 | **286** |
+| rated | 143 | **260** |
+| countries | ~30 | **41** |
+| classified non-newsroom (`kind`) | 7 | **16** |
+| rated-but-withheld | 0 | 9 |
+
+`RWE_STORY_EXCLUDE_AGGREGATOR=0` reverses the clustering change; the rows stay either way.
