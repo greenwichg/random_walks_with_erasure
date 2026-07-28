@@ -80,6 +80,35 @@ def _geo(a: dict, b: dict) -> str:
     return "same" if max(av, key=av.get) == max(bv, key=bv.get) else "diff"
 
 
+def blindspot_effect(a: dict, b: dict) -> str:
+    """Whether either half asserts a coverage gap the combined coverage contradicts — ``cured`` or
+    ``none``.
+
+    This is the reason duplication is a correctness problem and not a tidiness one. A blindspot is
+    computed over a cluster's members, so splitting one event halves the publisher set on each
+    side. An event covered left AND right becomes two stories, one of which says "nobody on the
+    right covered this" while the other IS the right coverage. The cluster-trust gate cannot see
+    it, because each half is internally coherent and scores ``ok``. It is the same false editorial
+    claim that gate was built to stop, arriving through the opposite door: chaining merges what
+    should be separate, this separates what should be merged.
+
+    The test is not "does the claim disappear" but "is the claim FALSE" — a half whose named gap
+    is covered by the other half is asserting something untrue about the world, whether or not the
+    merged story ends up with a different gap of its own.
+
+    A merge can never CREATE a claim, and that is structural rather than lucky. Merged coverage is
+    the union of the halves', so merged empty buckets are the INTERSECTION of their empty buckets —
+    a gap in the whole is a gap in both parts. (A story with an empty bucket always has one bucket
+    at ≥ 0.5, since the other two sum to 1, so the strength condition never rescues it either.)
+    There is therefore nothing to report in that direction, and no branch pretending otherwise."""
+    da = story_service._distribution(a["coverage"])
+    db = story_service._distribution(b["coverage"])
+    dm = story_service._distribution(a["coverage"] + b["coverage"])
+    ba, bb = story_service._blindspot(da), story_service._blindspot(db)
+    covered = {side for side, share in dm.items() if share > 0.0}
+    return "cured" if (ba in covered or bb in covered) else "none"
+
+
 def find_pairs(stories: list, desc: dict, *, min_sim: float, max_gap_hours: float,
                min_shared: int = MIN_SHARED) -> list:
     """Candidate same-event pairs, strongest first. Deterministic."""
@@ -131,6 +160,9 @@ def analyse(stories: list, desc: dict, *, max_gap_hours: float) -> dict:
             "groups": _groups(at),
             "geoSame": len([p for p in at if _geo(stories[p[1]], stories[p[2]]) == "same"]),
             "geoDiff": len([p for p in at if _geo(stories[p[1]], stories[p[2]]) == "diff"]),
+            # The count that decides whether this is a correctness problem or a tidiness one.
+            "bsCured": len([p for p in at
+                            if blindspot_effect(stories[p[1]], stories[p[2]]) == "cured"]),
         })
     return {"stories": len(stories),
             "articles": sum(s["totalCoverage"] for s in stories),
@@ -175,18 +207,23 @@ def main(argv=None) -> int:
     print(f"catalog: {res['stories']:,} stories, {res['articles']:,} articles in stories")
     print(f"window : same-event candidates must be within {args.max_gap_hours:g}h\n")
     print(f"{'sim':>6} {'pairs':>7} {'events':>7} {'stories':>8} {'articles':>9} {'% arts':>7} "
-          f"{'geo same':>9} {'geo diff':>9}")
+          f"{'geo same':>9} {'geo diff':>9} {'bs cured':>9}")
     for r in res["rows"]:
         share = f"{100.0 * r['articles'] / res['articles']:.1f}%" if res["articles"] else "  n/a"
         print(f"{r['threshold']:>6.2f} {r['pairs']:>7,} {r['groups']:>7,} {r['stories']:>8,} "
-              f"{r['articles']:>9,} {share:>7} {r['geoSame']:>9} {r['geoDiff']:>9}")
+              f"{r['articles']:>9,} {share:>7} {r['geoSame']:>9} {r['geoDiff']:>9} "
+              f"{r['bsCured']:>9}")
+    print("\n  bs cured = pairs where one half asserts a coverage gap that the COMBINED coverage\n"
+          "             does not support. Those are false blindspot claims the cluster-trust gate\n"
+          "             cannot see, because each half is internally coherent and scores ok.")
 
     print(f"\n--- candidate pairs at sim >= {args.min_sim:g} (READ THESE — the count is an upper "
           f"bound until they are) ---")
     shown = [p for p in res["pairs"] if p[0] >= args.min_sim][:args.show]
     for score, i, j in shown:
         a, b = stories[i], stories[j]
-        print(f"\n  sim {score:.2f}  gap {_gap_hours(a, b):.0f}h  geo {_geo(a, b)}")
+        print(f"\n  sim {score:.2f}  gap {_gap_hours(a, b):.0f}h  geo {_geo(a, b)}"
+              f"  blindspot {blindspot_effect(a, b)}")
         print(f"    {a['totalCoverage']:>4} arts  {a['title'][:66]}")
         print(f"    {b['totalCoverage']:>4} arts  {b['title'][:66]}")
     if not shown:

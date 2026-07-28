@@ -27,7 +27,8 @@ def _story(title, urls, *, arts=None, earliest=WHEN, latest=WHEN, votes=None):
         "totalCoverage": arts if arts is not None else len(urls),
         "earliest": earliest, "latest": latest,
         "countryVotes": votes or {},
-        "coverage": [{"headline": h, "url": u} for u, h in urls],
+        "coverage": [{"headline": h, "url": u, "publisher": f"P{u}", "leanBucket": None}
+                     for u, h in urls],
     }
 
 
@@ -119,3 +120,62 @@ def test_analyse_reports_article_volume_at_every_threshold():
 def test_empty_catalog_is_not_a_crash():
     res = asd.analyse([], {}, max_gap_hours=48.0)
     assert res["stories"] == 0 and all(r["pairs"] == 0 for r in res["rows"])
+
+
+# --------------------------------------------------------------------------- #
+# Blindspot impact — why duplication is a correctness problem, not a tidiness one.
+# --------------------------------------------------------------------------- #
+def _cov(*pairs):
+    return [{"headline": "h", "url": f"u{i}", "publisher": p, "leanBucket": b}
+            for i, (p, b) in enumerate(pairs)]
+
+
+def _side(cov):
+    return {"coverage": cov}
+
+
+def test_a_split_event_can_assert_a_gap_that_does_not_exist():
+    """The failure the cluster-trust gate cannot see. One event covered left AND right splits in
+    two; the right-only half asserts "nobody on the left covered this" while the OTHER half is the
+    left coverage. Both halves are internally coherent and score ok, so the gate has nothing to
+    object to. The claim is false whether or not the merged story keeps a gap of its own — here it
+    still lacks centre, and the left claim is a lie regardless."""
+    left_only = _side(_cov(("A", "left"), ("B", "left")))
+    right_only = _side(_cov(("C", "right"), ("D", "right")))
+    assert asd.blindspot_effect(left_only, right_only) == "cured"
+
+
+def test_a_genuine_gap_survives_a_merge():
+    """The gate must not be a machine for deleting blindspots. Two halves that are both right-only
+    are still right-only combined, and the claim stands."""
+    a = _side(_cov(("A", "right"), ("B", "right")))
+    b = _side(_cov(("C", "right"), ("D", "right")))
+    assert asd.blindspot_effect(a, b) == "none"
+
+
+def test_a_merge_can_never_create_a_claim():
+    """Structural, not lucky, and worth pinning because a "created" bucket would look like the
+    honest thing to report. Merged coverage is the UNION of the halves', so merged empty buckets
+    are the INTERSECTION of theirs — a gap in the whole is a gap in both parts. The half with no
+    gap of its own is exactly what falsifies the other's."""
+    balanced = _side(_cov(("A", "left"), ("B", "right"), ("C", "center")))
+    lopsided = _side(_cov(("D", "right"), ("E", "right"), ("F", "right")))
+    assert asd.blindspot_effect(balanced, lopsided) == "cured"
+    # and the reverse direction agrees — the relation is symmetric
+    assert asd.blindspot_effect(lopsided, balanced) == "cured"
+
+
+def test_a_gap_the_other_half_shares_is_not_cured():
+    """Both halves miss centre; merging them does not conjure centre coverage, so neither claim was
+    false. A rule that counted this would be a machine for deleting blindspots."""
+    a = _side(_cov(("A", "left"), ("B", "left")))
+    b = _side(_cov(("C", "left"), ("D", "left")))
+    assert asd.blindspot_effect(a, b) == "none"
+
+
+def test_unrated_publishers_never_manufacture_an_effect():
+    """An outlet with no lean rating casts no vote — 46% of stories have zero rated publishers, so
+    a rule that read unrated as centre would invent effects across half the catalog."""
+    a = _side(_cov(("A", None), ("B", None)))
+    b = _side(_cov(("C", None), ("D", None)))
+    assert asd.blindspot_effect(a, b) == "none"
