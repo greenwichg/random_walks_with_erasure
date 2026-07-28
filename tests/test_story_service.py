@@ -854,3 +854,46 @@ def test_repair_quorum_is_off_by_default_and_tunable(monkeypatch):
     assert ss.repair_quorum() == 0.3
     monkeypatch.setenv("RWE_STORY_REPAIR_QUORUM", "2")
     assert ss.repair_quorum() == 0.0, "out of range falls back rather than reshaping the catalog"
+
+
+# --------------------------------------------------------------------------- #
+# Wire sources — the one defect class no clustering signal can catch.
+#
+# A press-release template repeated 115 times clusters CORRECTLY: it really is about one template.
+# geoCoherence rates it perfectly coherent, and articles-per-publisher was measured against the
+# whole catalog and rejected at 0% precision / 0% recall. It is an identity fact about the source,
+# so it is curated in the registry rather than guessed by a threshold.
+# --------------------------------------------------------------------------- #
+def _wire_template(st, n=4):
+    for i in range(n):
+        _add(st, f"https://lulegacy.com/{i}", "Lulegacy" if i < 3 else "MarketBeat", None,
+             f"M D Sass LLC Makes New Investment in Gildan Activewear Inc holding {i}",
+             category="Business", days=1)
+
+
+def test_wire_outlets_never_form_a_story():
+    st = store_mod.Store("sqlite://")
+    _wire_template(st)
+    _senate_and_wildfire(st)
+    titles = [s["title"] for s in ss.build_stories(ss._fetch(st))]
+    assert not any("Gildan" in t for t in titles)
+    assert any("Senate" in t for t in titles), "real stories are untouched"
+
+
+def test_wire_exclusion_can_be_switched_off(monkeypatch):
+    """A kill switch, because a curation mistake should be reversible without a deploy."""
+    monkeypatch.setenv("RWE_STORY_EXCLUDE_WIRE", "0")
+    ss.clear_cache()
+    st = store_mod.Store("sqlite://")
+    _wire_template(st)
+    assert any("Gildan" in s["title"] for s in ss.build_stories(ss._fetch(st)))
+
+
+def test_an_unregistered_outlet_is_never_wire():
+    """Absence of a registry row means unrated, not disqualified — otherwise the whole long tail
+    of outlets we have not curated would silently stop producing stories."""
+    st = store_mod.Store("sqlite://")
+    for i in range(3):
+        _add(st, f"https://smalltown{i}.example/x", f"Smalltown Gazette {i}", None,
+             "council approves the new harbour development plan", days=1)
+    assert len(ss.build_stories(ss._fetch(st))) == 1

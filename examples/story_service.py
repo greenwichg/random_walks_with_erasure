@@ -29,6 +29,7 @@ from typing import Optional
 import clustering                 # the deterministic union-find Jaccard primitive (algorithm only)
 import discover                   # feed_article_to_article — the shared Article serializer (Read flow)
 import media                      # centralised hero-image selection (additive; no clustering change)
+import outlet_registry            # curated source identity — supplies the wire/news distinction
 from pagination import OffsetPagination
 
 SORTS = ("top", "latest", "oldest", "publishers")
@@ -389,6 +390,21 @@ def link_quorum() -> float:
     return q if 0.0 <= q <= 1.0 else clustering.DEFAULT_LINK_QUORUM
 
 
+def exclude_wire() -> bool:
+    """Whether ``kind=wire`` outlets are kept out of story clustering. ON — set
+    ``RWE_STORY_EXCLUDE_WIRE=0`` to disable.
+
+    On by default because the mechanism does nothing on its own: an outlet is excluded only if a
+    human wrote ``wire`` in its registry row, so the blast radius is exactly what someone curated
+    and nothing else. Unknown outlets are never wire.
+
+    Stories only. The articles stay in the catalog, on Discover, in search and on their publisher
+    pages — they are real articles, and it is their newsworthiness that is in question, not their
+    existence."""
+    v = os.environ.get("RWE_STORY_EXCLUDE_WIRE", "").strip().lower()
+    return v not in {"0", "false", "no", "off"}
+
+
 def repair_quorum() -> float:
     """TARGETED cluster-aware linkage — OFF. Set ``RWE_STORY_REPAIR_QUORUM=0.3`` to enable.
 
@@ -508,6 +524,13 @@ def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
     with independently-suspect clusters demoted (see ``_size_rank``).
     Deterministic: same rows → same stories, ids, and order."""
     arts = [discover.feed_article_to_article(r) for r in rows]
+    if exclude_wire():
+        # Machine-generated market-data copy never enters clustering, so it can neither form a
+        # story nor join one. This is the ONE defect class no clustering signal can catch: a
+        # template repeated 115 times really is about one template, so geoCoherence rates it
+        # perfectly coherent. Filtering by curated source identity is explicit and reversible;
+        # the threshold that was proposed for the same job measured 0% precision, 0% recall.
+        arts = [a for a in arts if not outlet_registry.is_wire(a.get("publisher"))]
     shared = min_shared_tokens() if min_shared is None else min_shared
     tokens_floor = min_title_tokens() if min_tokens is None else min_tokens
     weighting = use_idf() if idf is None else idf

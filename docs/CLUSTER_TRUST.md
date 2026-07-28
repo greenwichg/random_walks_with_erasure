@@ -253,10 +253,8 @@ of coverage. The share monitor went from 0.2 points under its trigger to comfort
 
 Two things this leaves, neither of them a clustering defect:
 
-* **The largest cluster in the catalog is now the M.D. Sass press-release template** — 115
-  articles from 5 publishers, no geography, `unverified`. It is correctly clustered non-news, and
-  it belongs at ingestion rather than in the clusterer. The registry has no exclusion column
-  today, so this is a new mechanism, not curation; identify the publishers before designing it.
+* **The largest cluster was the M.D. Sass press-release template** — 115 articles from 5
+  publishers, no geography. Fixed at the source; see the last section.
 * **`Expected U.S.-Saudi Nuclear Deal…`** — 60 articles, 28 publishers, coherence 0.50 on **2**
   located members. Genuinely undecidable by the signal, and unchanged by the repair since
   `unverified` clusters are not touched. Needs a human read.
@@ -371,3 +369,52 @@ stale. That is a second, previously unrecorded cost of the defect.
 * `docs/PUBLISHER_CONCENTRATION_EVALUATION.md` — the heuristic that was proposed for this problem,
   measured, and rejected at 0% precision and 0% recall.
 * `docs/STORY_PIPELINE_AUDIT.md` — the scan-window defect that collapsed the story count.
+
+## Wire sources — the defect no clustering signal can catch
+
+The largest cluster in the catalog after the repair was not a false merge. It was 115 articles of
+one press release, and it was **correctly clustered** — a template repeated 115 times really is
+about one template. `geoCoherence` rates such a cluster perfectly coherent, and
+articles-per-publisher was measured against the whole catalog and rejected at 0% precision and 0%
+recall. No clustering signal can find this, because nothing about the clustering is wrong.
+
+It is an identity fact about the source, so it is curated at the source. `outlet_registry.csv`
+gained a `kind` column (column 8); `kind=wire` marks a machine-generated market-data feed, and
+`build_stories` keeps those articles out of clustering entirely.
+
+**The evidence, gathered before writing any rows.** Five publishers produced the cluster:
+
+| publisher | in cluster | total in catalog |
+|---|---:|---:|
+| Lulegacy | 69 | 71 |
+| MarketBeat | 38 | 66 |
+| American Banking News | 4 | 8 |
+| Markets Daily | 3 | 3 |
+| Ticker Report | 1 | 1 |
+
+Three of the five do essentially nothing else. All **34** articles the five published *outside*
+the cluster were read by hand — "Baker Hughes Announces Quarterly Earnings Results", "Arrowstreet
+Capital Limited Partnership Sells 265,500 Shares of Ralliant", "Sanmina Q3 Earnings Call
+Highlights". Auto-generated earnings and 13F-filing copy without exception; no reporting. That is
+what made a source-level rule safe rather than a guess — had any of the 34 been real journalism,
+the filter would have had to be per-article and the outlets would have stayed.
+
+Scope is deliberately narrow:
+
+* **Stories only.** The articles remain in the catalog, on Discover, in search and on their
+  publisher pages. They are real articles; it is their newsworthiness in question, not their
+  existence. Nothing is deleted and no saved read breaks.
+* **The mechanism does nothing on its own.** An outlet is excluded only where a human wrote
+  `wire` in its row, so the blast radius is exactly what was curated. An unregistered outlet is
+  never wire — absence of a row means unrated, not disqualified, or the whole uncurated long tail
+  would silently stop producing stories.
+* `RWE_STORY_EXCLUDE_WIRE=0` reverses it without a deploy.
+
+This is what the publisher concentration gate was reaching for and got wrong. Same target,
+opposite location: at the source, where it is explicit, auditable, one cell to undo, and
+incapable of misfiring on a government-funding story the way a threshold in the clustering path
+could.
+
+The registry invariant moved with it. An unrated row previously had to carry a locality to earn
+its place; it may now carry a locality **or** a kind. Both are curated facts, and a row with a
+blank lean and neither still asserts nothing and is still rejected.

@@ -230,6 +230,9 @@ services:
       # tariffs and a senator's funeral had been merged into one "story".
       RWE_CLUSTER_LINK_QUORUM: ${RWE_CLUSTER_LINK_QUORUM:-0}
       RWE_STORY_REPAIR_QUORUM: ${RWE_STORY_REPAIR_QUORUM:-0.5}
+      # Machine-generated market-data feeds (outlet_registry.csv kind=wire) never enter story
+      # clustering. Does nothing on its own — only outlets a human marked are affected.
+      RWE_STORY_EXCLUDE_WIRE: ${RWE_STORY_EXCLUDE_WIRE:-1}
       # Storage lifecycle (examples/retention_policy.py — the ONE typed policy module). 0 = keep
       # forever, uniformly; junk/negative values fall back to the default rather than deleting more.
       # User data (reads, saves, settings, accounts) has NO policy and is never pruned.

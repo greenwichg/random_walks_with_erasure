@@ -126,9 +126,11 @@ def test_registry_integrity(reg):
         if math.isfinite(o.lean):
             assert -2.0 <= o.lean <= 2.0
         else:
-            # A locality-only row must EARN its place: unrated is legal only with curated
-            # locality — a row with neither lean nor locality would assert nothing.
-            assert o.country, f"{o.canonical}: unrated row without locality"
+            # An unrated row must EARN its place. Two things qualify, and both are curated FACTS
+            # rather than guesses: a home locality, or a kind (``wire`` — a machine-generated
+            # market-data feed, not a news outlet). A row with a blank lean and neither of those
+            # asserts nothing and should not exist.
+            assert o.country or o.kind, f"{o.canonical}: unrated row with no locality and no kind"
     # rated ordered by (lean, name); locality-only rows deterministically last by name
     assert rated == sorted(rated, key=lambda o: (o.lean, o.canonical))
     unrated = outs[len(rated):]
@@ -238,3 +240,22 @@ def test_lint_accepts_blank_lean_but_rejects_nan_spelling(tmp_path):
     issues = orx.lint_registry(str(csv))
     lines = {i["line"] for i in issues if i["code"] == "invalid_lean"}
     assert lines == {3}                                     # only the NaN row; blank row is clean
+
+
+def test_wire_rows_are_marked_and_resolve_from_every_form(reg):
+    """The five machine-generated market-data feeds found in production, reachable by the display
+    name the feed path actually supplies as well as by domain."""
+    for form in ["Lulegacy", "Marketbeat.Com", "marketbeat.com", "Americanbankingnews",
+                 "Markets Daily", "Tickerreport.Com", "tickerreport.com"]:
+        assert reg.is_wire(form), form
+
+
+def test_news_outlets_are_not_wire(reg):
+    for form in ["BBC News", "nytimes.com", "Fox News", "Reuters"]:
+        assert not reg.is_wire(form), form
+
+
+def test_an_unknown_outlet_is_not_wire(reg):
+    """Absence of a row is unrated, never disqualified — the long tail must keep clustering."""
+    assert not reg.is_wire("Some Local Gazette")
+    assert not reg.is_wire(None)

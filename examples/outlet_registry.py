@@ -55,6 +55,7 @@ class Outlet:
     region: "str | None" = None     # state / province / ADM1 display name
     city: "str | None" = None
     scope: "str | None" = None      # international | national | regional | local | hyperlocal
+    kind: "str | None" = None       # None = a news outlet | "wire" = machine-generated feed
 
 
 def _name_key(text: str) -> str:
@@ -115,9 +116,9 @@ class OutletRegistry:
         """Load the registry CSV (defaults to the bundled ``data/outlet_registry.csv``).
 
         ``#`` lines and blanks are skipped. Each row is ``canonical, lean, aliases`` plus the
-        optional Phase-1 locality columns ``country, region, city, scope`` (missing / blank →
-        ``None`` — a two-column legacy file still loads unchanged). ``aliases`` is
-        ``|``-separated. The canonical name is itself registered as a lookup key."""
+        optional Phase-1 locality columns ``country, region, city, scope`` and ``kind``
+        (missing / blank → ``None`` — a two-column legacy file still loads unchanged).
+        ``aliases`` is ``|``-separated. The canonical name is itself registered as a lookup key."""
         path = path or _DATA
         outlets: List[Outlet] = []
         aliases: Dict[str, str] = {}
@@ -139,7 +140,8 @@ class OutletRegistry:
                 lean = float(raw_lean) if raw_lean else float("nan")
                 outlets.append(Outlet(canonical=canonical, lean=lean,
                                       country=_opt(row, 3), region=_opt(row, 4),
-                                      city=_opt(row, 5), scope=_opt(row, 6)))
+                                      city=_opt(row, 5), scope=_opt(row, 6),
+                                      kind=_opt(row, 7)))
                 aliases[canonical] = canonical      # the name itself resolves
                 if len(row) >= 3 and row[2].strip():
                     for alias in row[2].split("|"):
@@ -175,6 +177,23 @@ class OutletRegistry:
         o = self.resolve(text)
         return o.lean if o else float("nan")
 
+    def is_wire(self, text: "str | None") -> bool:
+        """Whether ``text`` resolves to a machine-generated feed rather than a news outlet.
+
+        A ``wire`` row means the source publishes auto-generated market-data and press-release
+        copy — "X LLC Makes New Investment in Y Inc", "Z Posts Quarterly Earnings Results". Such
+        copy clusters *correctly* (a template repeated 115 times really is about one template), so
+        no clustering signal can find it: measured, ``geoCoherence`` rates it perfectly coherent
+        and articles-per-publisher was tested against the whole catalog and rejected at 0%
+        precision and 0% recall (docs/PUBLISHER_CONCENTRATION_EVALUATION.md).
+
+        It is an identity fact about the SOURCE, so it belongs here — explicit, auditable, one
+        cell to reverse, and incapable of misfiring on a government-funding story the way a
+        threshold in the clustering path would. Unknown outlets are never wire: absence of a row
+        means unrated, not disqualified."""
+        o = self.resolve(text)
+        return bool(o and o.kind == "wire")
+
     def outlets(self) -> List[Outlet]:
         """All distinct outlets: rated ones ordered by lean then name, locality-only (NaN lean)
         rows deterministically last by name (NaN sort keys would otherwise be order-unstable)."""
@@ -203,6 +222,11 @@ def default_registry() -> OutletRegistry:
 def resolve(text: "str | None") -> Optional[Outlet]:
     """Convenience: resolve against the default registry."""
     return default_registry().resolve(text)
+
+
+def is_wire(text: "str | None") -> bool:
+    """Convenience: :meth:`OutletRegistry.is_wire` against the default registry."""
+    return default_registry().is_wire(text)
 
 
 def lint_registry(path: "str | None" = None) -> List[dict]:

@@ -229,3 +229,17 @@ Clarín,,clarin.com,AR,,,national
 La Nación,,lanacion.com.ar,AR,,,national
 El Universal,-2,eluniversal.com.mx,MX,,,national
 Milenio,,milenio.com,MX,,,national
+# Machine-generated market-data feeds (kind=wire, column 8). Not news outlets: they publish
+# auto-generated 13F-filing and earnings copy — "X LLC Makes New Investment in Y Inc", "Z Posts
+# Quarterly Earnings Results". Excluded from story clustering; still present in Discover, search
+# and their publisher pages, because the articles are real and only their newsworthiness is not.
+#
+# Measured 2026-07-28 before adding these rows: one 115-article cluster, the LARGEST in the
+# catalog, was a single template repeated by these five. Their whole catalog contribution is 149
+# articles in stories (3.6%), and every one of the 34 outside that cluster was checked by hand —
+# all earnings/13F posts, no reporting. Lean stays blank: unrated, never guessed (L2.2).
+Lulegacy,,lulegacy.com,,,,,wire
+MarketBeat,,marketbeat.com|Marketbeat.Com,,,,,wire
+American Banking News,,americanbankingnews.com|Americanbankingnews,,,,,wire
+Markets Daily,,marketsdaily.com,,,,,wire
+Ticker Report,,tickerreport.com|Tickerreport.Com,,,,,wire
