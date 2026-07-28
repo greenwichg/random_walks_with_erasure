@@ -82,3 +82,51 @@ def test_each_story_is_matched_at_most_once():
     before = [_story("st_1", "Ferry aground", ["a", "b", "c", "d"])]
     after = [_story("st_2", "Ferry A", ["a", "b", "c"]), _story("st_3", "Ferry B", ["a", "b", "d"])]
     assert len(churn.match(before, after)) == 1
+
+
+# --------------------------------------------------------------------------- #
+# The stabilized replay — without it this tool measures the problem and cannot see the fix.
+# --------------------------------------------------------------------------- #
+def _row(url, pub, title, when):
+    return {"canonicalUrl": url, "url": url, "publisher": pub, "title": title,
+            "description": "context words here", "publishedAt": when, "lean": 0.0,
+            "leanBucket": "center", "category": "World", "eventCountries": []}
+
+
+def _rolling_catalog():
+    """One event whose oldest member falls out of the window as it rolls — the dominant case.
+
+    Seven articles, not three. A cluster that loses its oldest member and gains one keeps 6 of 7,
+    which is the shape production actually shows (member overlaps of 0.54-0.93). A tiny cluster
+    that doubles between steps is not "the same story" under either measure, and building the
+    fixture that way tests the thresholds rather than the carry-over."""
+    stamps = ["2026-07-19T09:00:00+00:00"] + ["2026-07-22T09:00:00+00:00"] * 3 \
+        + ["2026-07-23T09:00:00+00:00"] * 2 + ["2026-07-27T09:00:00+00:00"]
+    return [_row(f"https://p{i}.example/a", f"Outlet {i}",
+                 "Ferry runs aground near the northern port", when)
+            for i, when in enumerate(stamps)]
+
+
+def test_the_derived_replay_shows_the_churn():
+    builds = churn.replay(_rolling_catalog(), step_hours=48.0, steps=2, window_days=6.0)
+    ids = [s["id"] for _, stories in builds for s in stories]
+    assert len(set(ids)) > 1, "the derived id moves as the window rolls"
+
+
+def test_the_stabilized_replay_carries_the_id_forward():
+    """The same catalog, with the identity map threaded between builds exactly as the store does."""
+    builds = churn.replay(_rolling_catalog(), step_hours=48.0, steps=2, window_days=6.0,
+                          stabilize=True)
+    non_empty = [stories for _, stories in builds if stories]
+    ids = {s["id"] for stories in non_empty for s in stories}
+    assert len(ids) == 1, f"one story should keep one id across the replay, got {ids}"
+
+
+def test_stabilizing_never_invents_stories():
+    """Identity renames; it must not change what exists."""
+    rows = _rolling_catalog()
+    plain = churn.replay(rows, step_hours=48.0, steps=2, window_days=6.0)
+    fixed = churn.replay(rows, step_hours=48.0, steps=2, window_days=6.0, stabilize=True)
+    assert [len(s) for _, s in plain] == [len(s) for _, s in fixed]
+    for (_, a), (_, b) in zip(plain, fixed):
+        assert [x["totalCoverage"] for x in a] == [x["totalCoverage"] for x in b]

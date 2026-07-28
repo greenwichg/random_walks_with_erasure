@@ -95,20 +95,31 @@ def churn(before: list, after: list) -> dict:
             "agedOut": aged, "earlierArrived": earlier, "other": other}
 
 
-def replay(rows: list, *, step_hours: float, steps: int, window_days: float) -> list:
+def replay(rows: list, *, step_hours: float, steps: int, window_days: float,
+           stabilize: bool = False) -> list:
     """Build the catalog at successive cutoffs, oldest first. Each build sees only the articles a
-    live poller would have had at that moment, so the window rolls exactly as it does in service."""
+    live poller would have had at that moment, so the window rolls exactly as it does in service.
+
+    ``stabilize`` replays the identity carry-over too, threading each build's ``url -> id`` map into
+    the next exactly as the store does. Without it this tool measures the DERIVED id and therefore
+    the problem; ``build_stories`` is pure and knows nothing about ``stabilize_ids``, so a run
+    against a fixed production reports the same 5.1% and looks like the fix did nothing."""
     times = [clustering.parse_time(r.get("publishedAt")) for r in rows]
     stamped = [(t, r) for t, r in zip(times, rows) if t is not None]
     if not stamped:
         return []
     newest = max(t for t, _ in stamped)
-    builds = []
+    builds, prior = [], {}
     for k in range(steps, -1, -1):
         cutoff = newest - timedelta(hours=step_hours * k)
         start = cutoff - timedelta(days=window_days)
         slice_ = [r for t, r in stamped if start <= t <= cutoff]
-        builds.append((cutoff, story_service.build_stories(slice_)))
+        stories = story_service.build_stories(slice_)
+        if stabilize:
+            for i, pid in story_service.reassign_ids(prior, stories).items():
+                stories[i] = dict(stories[i], id=pid)
+            prior = {c["url"]: s["id"] for s in stories for c in s["coverage"]}
+        builds.append((cutoff, stories))
     return builds
 
 
@@ -123,35 +134,52 @@ def main(argv=None) -> int:
     store_ = store_mod.Store(args.db)
     rows = story_service._fetch(store_, date_from="1970-01-01T00:00:00+00:00")
     window = story_service.scan_days()
-    builds = replay(rows, step_hours=args.step_hours, steps=args.steps, window_days=window)
-    if len(builds) < 2:
+    def run(stabilize):
+        builds = replay(rows, step_hours=args.step_hours, steps=args.steps,
+                        window_days=window, stabilize=stabilize)
+        totals = {"matched": 0, "changed": 0, "agedOut": 0, "earlierArrived": 0, "rows": [],
+                  "worst": []}
+        for (t0, b0), (t1, b1) in zip(builds, builds[1:]):
+            c = churn(b0, b1)
+            totals["matched"] += c["matched"]
+            totals["changed"] += len(c["changed"])
+            totals["agedOut"] += c["agedOut"]
+            totals["earlierArrived"] += c["earlierArrived"]
+            totals["worst"].extend(c["changed"])
+            totals["rows"].append((t0, t1, len(b1), c))
+        return totals
+
+    derived = run(False)
+    if not derived["rows"]:
         print("not enough catalog to replay")
         return 0
+    stable = run(True)
 
     print(f"catalog: {len(rows):,} articles; replaying a {window:g}-day window in "
           f"{args.step_hours:g}h steps\n")
-    print(f"{'from':>17} {'to':>17} {'stories':>8} {'matched':>8} {'id changed':>11} "
-          f"{'aged out':>9} {'earlier':>8}")
-    totals = {"matched": 0, "changed": 0, "agedOut": 0, "earlierArrived": 0}
-    worst = []
-    for (t0, b0), (t1, b1) in zip(builds, builds[1:]):
-        c = churn(b0, b1)
-        totals["matched"] += c["matched"]
-        totals["changed"] += len(c["changed"])
-        totals["agedOut"] += c["agedOut"]
-        totals["earlierArrived"] += c["earlierArrived"]
-        worst.extend(c["changed"])
+    print(f"{'from':>17} {'to':>17} {'stories':>8} {'matched':>8} {'derived':>9} "
+          f"{'stabilized':>11} {'aged out':>9} {'earlier':>8}")
+    for (t0, t1, n, c), (_, _, _, sc) in zip(derived["rows"], stable["rows"]):
         print(f"{t0.strftime('%m-%d %H:%M'):>17} {t1.strftime('%m-%d %H:%M'):>17} "
-              f"{len(b1):>8,} {c['matched']:>8,} {len(c['changed']):>11,} "
-              f"{c['agedOut']:>9,} {c['earlierArrived']:>8,}")
+              f"{n:>8,} {c['matched']:>8,} {len(c['changed']):>9,} "
+              f"{len(sc['changed']):>11,} {c['agedOut']:>9,} {c['earlierArrived']:>8,}")
 
-    rate = (100.0 * totals["changed"] / totals["matched"]) if totals["matched"] else 0.0
-    per_day = rate * (24.0 / args.step_hours) if args.step_hours else 0.0
-    print(f"\nid churn: {totals['changed']:,} of {totals['matched']:,} surviving stories "
-          f"({rate:.1f}% per {args.step_hours:g}h step, ~{per_day:.1f}%/day)")
-    print(f"  representative aged out of the window : {totals['agedOut']:,}")
-    print(f"  an earlier article arrived            : {totals['earlierArrived']:,}")
-    print("\n  Every one of these is a saved or shared link that no longer resolves.")
+    def rate(t):
+        r = (100.0 * t["changed"] / t["matched"]) if t["matched"] else 0.0
+        return r, (r * (24.0 / args.step_hours) if args.step_hours else 0.0)
+
+    dr, dpd = rate(derived)
+    sr, spd = rate(stable)
+    print(f"\nid churn, DERIVED    : {derived['changed']:,} of {derived['matched']:,} "
+          f"({dr:.1f}% per {args.step_hours:g}h, ~{dpd:.1f}%/day)   <- the problem")
+    print(f"  representative aged out of the window : {derived['agedOut']:,}")
+    print(f"  an earlier article arrived            : {derived['earlierArrived']:,}")
+    print(f"id churn, STABILIZED : {stable['changed']:,} of {stable['matched']:,} "
+          f"({sr:.1f}% per {args.step_hours:g}h, ~{spd:.1f}%/day)   <- with RWE_STORY_STABLE_IDS on")
+    print("\n  Each remaining one is a saved or shared link that no longer resolves. The gap "
+          "between\n  the two rows is what the identity table buys; the stabilized row is the "
+          "residual.")
+    worst = derived["worst"]
 
     worst.sort(key=lambda c: -c["articles"])
     print(f"\n--- the {args.show} biggest stories whose id moved ---")
