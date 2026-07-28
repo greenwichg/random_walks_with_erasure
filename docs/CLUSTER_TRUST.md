@@ -2034,3 +2034,57 @@ balance a market the raters have not balanced**, and forcing it would mean inven
 | rows | 154 | **431** |
 | rated | 143 | **405** |
 | countries | ~30 | **53** |
+
+## Twenty-first pass: US national / trade
+
+Six rated, one withheld, one rated **off the axis**, fourteen with no rating found.
+
+| | |
+|---|---|
+| **The 19th News −2** | MBFC LEFT (7.0) with factual **HIGH (1.9)** — full transparency, clean record |
+| Inside Climate News −1, KFF Health News −1, Government Executive −1, Task & Purpose −1 | |
+| Benzinga 0 | |
+| **Courier Newsroom −1** | withheld — MBFC **Low Credibility**, Mixed factual |
+
+### Three things this pass settled
+
+**Lean and factuality are independent axes.** The 19th News is −2 *and* carries one of the highest
+factual scores MBFC gives. A reader treating a strong lean as a reliability signal has them
+confused, and this file only carries one of the two.
+
+**The withheld rule has now fired on both sides.** Courier Newsroom is the first *left*-of-centre
+outlet to be withheld. Until now all fourteen were right of centre, which left the rule looking like
+it might be tracking a direction rather than the rater's verdict. It is not, and there is a test
+asserting the withheld set spans both signs.
+
+**A third reason for a blank lean.** MBFC rates **MedPage Today** *Pro-Science* — the off-scale
+category it gives Nature and Frontiers. So the blank is **sourced**. But MedPage Today gets **no
+`kind`**, and that distinction is the row's whole point: Nature is a journal, so `kind=research`
+describes *what it is*; MedPage Today is a daily medical newsroom, and the reason its lean is blank
+is *where the rater put it*. The file now holds three distinct reasons:
+
+1. **no rating exists anywhere** — Brisbane Times, O Globo, WAtoday …
+2. **not a newsroom** — `wire`, `aggregator`, `research`, `forum`, `org`
+3. **rated, and rated off the left-right scale** — MedPage Today
+
+### A second near-miss, and a pattern
+
+Searching **Morningstar** returns **The Morning Star** — a British communist daily MBFC rates
+*Left*. Importing that would have put a −2 on an investment-research firm.
+
+That is the second such trap after *Globes* → *Globe Magazine*. **Two-word brand names are where
+this file is most likely to be poisoned by a plausible-looking result**, because the search returns
+something real, rated, and wrong. Both were caught by reading the returned outlet's description
+rather than its score.
+
+No rating found after searching: Morningstar, Zacks, American Banker, Banking Dive, Breaking
+Defense, The War Zone, Federal News Network, The Messenger, NOTUS, Capital B, Grid News, Inc.,
+Kiplinger, Politico Pro.
+
+### Registry, close of twenty-one passes
+
+| | start of day | end |
+|---|---:|---:|
+| rows | 154 | **439** |
+| rated | 143 | **412** |
+| countries | ~30 | **53** |

@@ -1126,3 +1126,46 @@ Milliyet,2,milliyet.com.tr,TR,,Istanbul,national
 Euractiv,-1,euractiv.com,BE,,Brussels,international,,high
 De Standaard,0,standaard.be,BE,,Brussels,national,,high
 Brussels Signal,1,brusselssignal.eu,BE,,Brussels,international,,medium
+#
+# Twenty-first pass -- US NATIONAL / TRADE, the probe's second-largest outstanding group at 22.
+# Six rated, one withheld, one rated OFF THE AXIS, and fourteen with no rating found.
+#
+#   The 19th News       -2  (MBFC LEFT 7.0, factual HIGH 1.9 -- full transparency, clean record.
+#                            A -2 with one of the highest factual scores in the file, which is a
+#                            useful reminder that the two axes are independent.)
+#   Inside Climate News -1  (MBFC LC, factual High)
+#   KFF Health News     -1  (MBFC LC, factual High. Formerly Kaiser Health News; both names aliased)
+#   Government Executive -1 (MBFC LC, factual High)
+#   Task & Purpose      -1  (MBFC LC, Mostly Factual -- MBFC cites opinion mislabelled as news)
+#   Benzinga             0  (MBFC LEAST BIASED, factual High)
+#
+# WITHHELD -- Courier Newsroom carries MBFC LOW CREDIBILITY with MIXED factual reporting. Fifteenth
+# withheld lean, and the first one that is LEFT-Center rather than right: the rule has now fired on
+# both sides of the scale, which is the check that it is tracking the rater's verdict and not a
+# direction.
+Courier Newsroom,-1,couriernewsroom.com,US,,,national,,low
+The 19th News,-2,19thnews.org|The 19th,US,Texas,Austin,national
+Inside Climate News,-1,insideclimatenews.org,US,New York,New York,national
+KFF Health News,-1,kffhealthnews.org|khn.org|Kaiser Health News,US,California,San Francisco,national
+Government Executive,-1,govexec.com,US,District of Columbia,Washington,national
+Task & Purpose,-1,taskandpurpose.com,US,,,national
+Benzinga,0,benzinga.com,US,Michigan,Detroit,national
+# RATED, AND OFF THE LEFT-RIGHT AXIS. MBFC rates MedPage Today PRO-SCIENCE with VERY HIGH factual
+# reporting -- the same category it gives Nature and Frontiers, and it states that category is not
+# on the left-right scale. So the blank lean here is SOURCED, exactly as theirs are.
+#
+# It gets no `kind`, though, and that is the point of the row. Nature and Frontiers are journals, so
+# `kind=research` describes what they ARE. MedPage Today is a newsroom that reports medical news
+# daily; the reason its lean is blank is not that it is a different sort of source, it is that the
+# RATER placed it off the axis. Three distinct reasons for a blank lean now live in this file:
+# no rating exists, not a newsroom, and rated off the scale.
+MedPage Today,,medpagetoday.com,US,New York,New York,national
+#
+# No rating found, having been searched: Morningstar, Zacks, American Banker, Banking Dive,
+# Breaking Defense, The War Zone, Federal News Network, The Messenger, NOTUS, Capital B, Grid News,
+# Inc., Kiplinger, Politico Pro.
+#
+# NEAR-MISS worth recording, the second of its kind after Globes/Globe Magazine: searching
+# "Morningstar" returns THE MORNING STAR, a British communist daily MBFC rates LEFT. Importing that
+# would have put a -2 on an investment-research firm. Two-word brand names are where this file is
+# most likely to be poisoned by a plausible-looking result.

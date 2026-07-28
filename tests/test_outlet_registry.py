@@ -434,6 +434,11 @@ def test_the_unrated_set_is_exactly_the_documented_one(reg):
         "O Globo",             # only its owner is rated
         "The East African",    # only its owner, Nation Media Group, is rated
         "WAtoday",             # no MBFC page; Biasly's own summary contradicts itself
+        # A THIRD reason for a blank lean: rated, and rated OFF the left-right axis. MBFC puts
+        # MedPage Today in Pro-Science, the category it gives Nature and Frontiers and states is not
+        # on the scale. Unlike them it gets no `kind` — it is a newsroom, so the reason is the
+        # RATER's placement, not what the source is.
+        "MedPage Today",
         # Not outlets to rate at all — identity is the whole reason each row exists.
         "BelTA",               # Belarus state agency; press-freedom scores are not an outlet lean
         "iHeartRadio",         # no rating for the network; the row names ~111 station hostnames
@@ -1304,3 +1309,40 @@ def test_the_belgian_standaard_is_none_of_the_standards(reg):
     assert reg.resolve("Standaard.Be").canonical == "De Standaard"
     assert reg.resolve("Standard.Co.Uk").canonical == "London Evening Standard"
     assert reg.resolve("Standard.Net.Au") is None
+
+
+def test_the_us_national_trade_pass(reg):
+    for host, lean in [
+        ("19Thnews.Org", -2.0), ("Insideclimatenews.Org", -1.0), ("Kffhealthnews.Org", -1.0),
+        ("Govexec.Com", -1.0), ("Taskandpurpose.Com", -1.0), ("Benzinga.Com", 0.0),
+    ]:
+        assert reg.lean(host) == lean, host
+    assert reg.resolve("Kaiser Health News").canonical == "KFF Health News"   # former name
+
+
+def test_lean_and_factuality_are_independent_axes(reg):
+    """The 19th News is -2 with one of the highest factual scores MBFC gives (HIGH 1.9, full
+    transparency, clean record). A reader who treats a strong lean as a reliability signal has the
+    two axes confused, and this file only carries one of them."""
+    assert reg.lean("19Thnews.Org") == -2.0
+    assert not reg.is_low_credibility("19Thnews.Org")
+
+
+def test_the_withheld_rule_has_now_fired_on_both_sides(reg):
+    """Courier Newsroom is the first LEFT-of-centre outlet to be withheld — MBFC gives it Low
+    Credibility with Mixed factual reporting. Until now every withheld lean was right of centre,
+    which left the rule looking like it might be tracking a direction rather than the rater's
+    verdict. It is not."""
+    lows = [o.lean for o in reg.outlets() if o.credibility == "low"]
+    assert any(v < 0 for v in lows) and any(v > 0 for v in lows)
+    assert reg.lean("Couriernewsroom.Com") == -1.0 and reg.is_low_credibility("Couriernewsroom.Com")
+
+
+def test_a_newsroom_rated_off_the_axis_carries_no_kind(reg):
+    """MedPage Today is Pro-Science — MBFC's off-scale category — but it is a daily medical
+    newsroom, not a journal. Nature gets `kind=research` because that describes what it IS;
+    MedPage Today gets none, because the reason its lean is blank is where the RATER put it."""
+    import math
+    o = reg.resolve("Medpagetoday.Com")
+    assert math.isnan(o.lean) and o.kind is None and o.country == "US"
+    assert reg.resolve("Nature.Com").kind == "research"
