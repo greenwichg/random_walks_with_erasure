@@ -647,3 +647,67 @@ TASS,1,tass.com|tass.ru|Russian News Agency TASS,RU,,Moscow,international,,low
 #             inheriting THEIR ratings is the guess this file exists to refuse.
 Fortune,1,fortune.com,US,New York,New York,national
 WAtoday,,watoday.com.au,AU,Western Australia,Perth,regional
+#
+# Ninth pass -- driven entirely by the LIVE production audit (audit_registry_coverage.py), not by a
+# probe list. Every outlet below was measured in the clustering window, either high-volume or
+# sitting in a story exactly one rating short. Same MBFC mapping, same 403 provenance caveat.
+#
+#   The Verge              -1  (MBFC LC, factual High)
+#   KING 5                  0  (MBFC LEAST BIASED, factual High)
+#   The Republican/MassLive 0  (MBFC LEAST BIASED, factual High)
+#   KOMO News              +1  (MBFC RC, factual High, HIGH credibility)
+#   Manila Bulletin        -1  (MBFC LC, factual MIXED; MBFC cites story selection favourable to
+#                               the sitting President)
+#   The Korea Times        -1  (MBFC LC)
+#   BuzzFeed News          -1  (MBFC LC, Mostly Factual -- retracted stories, not bias)
+#   AOL                    -1  (MBFC LC, factual High)
+#   Seeking Alpha          +1  (MBFC RC, factual High -- "libertarian market view")
+#   TheStreet              +1  (MBFC RC, factual High -- free-market economics)
+#   BreakingNews.ie        -1  (MBFC LC, factual High)
+#   Detik                   0  (MBFC LEAST BIASED, Mostly Factual)
+#   Athens Banner-Herald   -1  (MBFC LC, factual High)
+#   The Express-Times      -1  (MBFC LC, factual High)  [lehighvalleylive.com]
+#   Inland Valley Daily Bulletin 0 (MBFC LEAST BIASED, factual High)
+#   ARD                     0  (MBFC LEAST BIASED, factual High). Sportschau is ARD's sports
+#                               programme and is aliased here -- the same broadcaster under its own
+#                               programme name. Tagesschau is NOT aliased: MBFC rates it separately.
+The Verge,-1,theverge.com,US,New York,New York,national
+KING 5,0,king5.com,US,Washington,Seattle,regional
+The Republican (MassLive),0,masslive.com|MassLive,US,Massachusetts,Springfield,regional
+KOMO News,1,komonews.com,US,Washington,Seattle,regional,,high
+Manila Bulletin,-1,mb.com.ph,PH,,Manila,national,,medium
+The Korea Times,-1,koreatimes.co.kr,KR,,Seoul,national
+BuzzFeed News,-1,buzzfeed.com|buzzfeednews.com|BuzzFeed,US,New York,New York,national
+AOL,-1,aol.com|aol.co.uk,US,New York,New York,national
+Seeking Alpha,1,seekingalpha.com,US,,,national
+TheStreet,1,thestreet.com,US,New York,New York,national
+BreakingNews.ie,-1,breakingnews.ie,IE,,Cork,national
+Detik,0,detik.com,ID,,Jakarta,national
+Athens Banner-Herald,-1,onlineathens.com,US,Georgia,Athens,local
+The Express-Times,-1,lehighvalleylive.com,US,Pennsylvania,Easton,regional
+Inland Valley Daily Bulletin,0,dailybulletin.com,US,California,Ontario,regional
+ARD,0,ard.de|sportschau.de|Sportschau ARD|Sportschau,DE,,Munich,national
+# RATED, LEAN WITHHELD -- MBFC rates News18 Right-Center and classes it QUESTIONABLE with LOW
+# CREDIBILITY ("numerous false claims"). Ninth outlet under that rule. 58 articles in the window.
+News18,1,news18.com|CNN-News18,IN,,,national,,low
+# WIRE -- automated market-data and regulatory-disclosure copy, the same category as MarketBeat and
+# Ticker Report. Found by volume: 478 articles between them in a six-day window, all of it
+# clustering "correctly" around templates, which is the one defect no clustering signal can catch.
+aktiencheck,,aktiencheck.de|Aktiencheck,DE,,,,wire
+FinanzNachrichten,,finanznachrichten.de|Finanznachrichten,DE,,,,wire
+# IDENTITY ONLY -- no public rater covers any of these, and each row earns its place on a curated
+# fact rather than a rating.
+#   Zazoom      : an AGGREGATOR. It republishes third-party headlines with reference links, so its
+#                 815 articles are other outlets' stories wearing a second byline. Not a `wire`
+#                 (nothing is machine-generated) and not an outlet to rate. Excluding it from
+#                 clustering is a live decision, NOT taken here: it would remove real duplicate
+#                 coverage but it is a behaviour change, so it needs a deliberate call.
+#   BelTA       : Belarus's state telegraph agency. No MBFC page. RSF and others describe the
+#                 environment, which is not a rating -- and a country's press-freedom score is not
+#                 an outlet's lean.
+#   iHeartRadio : ~111 station hostnames in the window, one network, no MBFC rating for it. The
+#                 brand-domain rule already collapses them; this row gives the group a name a
+#                 reader recognises instead of whichever station sorted first.
+Zazoom,,zazoom.it|zazoom,IT,,,national
+BelTA,,belta.by|eng.belta.by,BY,,Minsk,international
+iHeartRadio,,iheart.com|iHeart,US,,,national

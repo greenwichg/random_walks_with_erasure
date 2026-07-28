@@ -431,6 +431,10 @@ def test_the_unrated_set_is_exactly_the_documented_one(reg):
         "O Globo",             # only its owner is rated
         "The East African",    # only its owner, Nation Media Group, is rated
         "WAtoday",             # no MBFC page; Biasly's own summary contradicts itself
+        # Not outlets to rate at all — identity is the whole reason each row exists.
+        "Zazoom",              # an aggregator; it republishes other outlets' headlines
+        "BelTA",               # Belarus state agency; press-freedom scores are not an outlet lean
+        "iHeartRadio",         # no rating for the network; the row names ~111 station hostnames
     }
 
 
@@ -765,3 +769,68 @@ def test_the_two_outlets_the_production_identity_audit_named(reg):
     o = reg.resolve("Watoday.Com.Au")
     assert o.canonical == "WAtoday" and math.isnan(o.lean)                 # no rating anywhere
     assert o.city == "Perth" and o.country == "AU"                         # locality earns the row
+
+
+# --------------------------------------------------------------------------- #
+# Ninth pass — driven by the LIVE production audit rather than a probe list.
+# --------------------------------------------------------------------------- #
+def test_the_production_measured_ratings(reg):
+    """Every outlet here was measured in the clustering window: high-volume, or sitting in a story
+    exactly one rating short. Curating from what the feed actually carries rather than from a guess
+    about what it might."""
+    for host, lean in [
+        ("Theverge.Com", -1.0), ("King5.Com", 0.0), ("Masslive.Com", 0.0),
+        ("Komonews.Com", 1.0), ("Mb.Com.Ph", -1.0), ("Koreatimes.Co.Kr", -1.0),
+        ("Buzzfeed.Com", -1.0), ("Aol.Com", -1.0), ("Seekingalpha.Com", 1.0),
+        ("Thestreet.Com", 1.0), ("Breakingnews.Ie", -1.0), ("Detik.Com", 0.0),
+        ("Onlineathens.Com", -1.0), ("Lehighvalleylive.Com", -1.0),
+        ("Dailybulletin.Com", 0.0), ("Ard.De", 0.0),
+    ]:
+        assert reg.lean(host) == lean, host
+
+
+def test_the_obituary_and_regional_subdomains_reach_their_paper(reg):
+    """The audit found these as separate high-volume names — `obits.lehighvalleylive.com` at 76
+    articles and `news.detik.com` at 28. Subdomain resolution means one row covers the masthead's
+    whole surface, which is why the volume ranking and the registry disagree on how many outlets
+    there are."""
+    assert reg.resolve("Obits.Lehighvalleylive.Com").canonical == "The Express-Times"
+    assert reg.resolve("News.Detik.Com").canonical == "Detik"
+    assert reg.resolve("Obits.Oregonlive.Com").canonical == "The Oregonian"
+
+
+def test_sportschau_reaches_ard_but_tagesschau_is_not_claimed(reg):
+    """Sportschau is ARD's sports programme — the same broadcaster under its own programme name,
+    which is the cleveland.com case, not the ownership-inference case. Tagesschau is deliberately
+    NOT aliased: MBFC rates it as a separate outlet, so folding it in would assert a rating nobody
+    published for it."""
+    assert reg.resolve("Sportschau ARD").canonical == "ARD"
+    assert reg.resolve("sportschau.de").canonical == "ARD"
+    assert reg.resolve("tagesschau.de") is None
+
+
+def test_news18_is_the_ninth_withheld_lean(reg):
+    """MBFC rates it Right-Center and classes it Questionable with Low Credibility. 58 articles in
+    the window — the largest low-credibility source in the catalog by volume."""
+    o = reg.resolve("News18.Com")
+    assert o.lean == 1.0 and o.credibility == "low"
+    assert reg.is_low_credibility("CNN-News18")
+
+
+def test_the_market_data_feeds_found_by_volume_are_wire(reg):
+    """478 articles between them in a six-day window. Template copy clusters *correctly*, so no
+    clustering signal can find it — only curated source identity can."""
+    for form in ["Aktiencheck", "aktiencheck.de", "Finanznachrichten", "finanznachrichten.de"]:
+        assert reg.is_wire(form), form
+
+
+def test_the_aggregator_and_the_network_are_identified_not_rated(reg):
+    """Three rows that exist for identity alone. Zazoom republishes other outlets' headlines, BelTA
+    is a state agency no rater covers, and iHeartRadio is ~111 station hostnames in one window —
+    the row gives that group a name a reader recognises."""
+    import math
+    for form, canonical in [("Zazoom", "Zazoom"), ("Eng.Belta.By", "BelTA"),
+                            ("Ktrh.Iheart.Com", "iHeartRadio"), ("Wjjs.Iheart.Com", "iHeartRadio")]:
+        o = reg.resolve(form)
+        assert o.canonical == canonical and math.isnan(o.lean), form
+        assert o.kind != "wire", f"{form}: an aggregator is not machine-generated copy"

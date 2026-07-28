@@ -1397,3 +1397,59 @@ sized for the outlets that can appear, not the ones that did.**
 
 Worth recording as its own class of mistake: this was not a wrong calculation. Every number was
 correct and the report still misled, because a label borrowed its meaning from the lines above it.
+
+## Ninth pass: curating from the feed instead of from a list
+
+Every previous coverage pass worked a list I assembled — plausible outlets a global feed *might*
+carry. This one worked the **live audit output**: high-volume untracked outlets, and outlets sitting
+in stories exactly one rating short. Nothing here was guessed at from a distance.
+
+**17 rated**, one more withheld, two wires, three identity-only.
+
+| | |
+|---|---|
+| −1 | The Verge, Manila Bulletin, The Korea Times, BuzzFeed News, AOL, BreakingNews.ie, Athens Banner-Herald, The Express-Times |
+| 0 | KING 5, The Republican/MassLive, Detik, Inland Valley Daily Bulletin, ARD |
+| +1 | KOMO News, Seeking Alpha, TheStreet |
+| **withheld** | **News18** — MBFC Right-Center *and* Questionable/Low Credibility. 58 articles: the largest low-credibility source in the catalog. |
+
+**`aktiencheck` and `FinanzNachrichten` are wires** — 478 articles between them in six days,
+automated market-data and regulatory-disclosure copy. Template copy clusters *correctly*, so no
+clustering signal can find it; only curated source identity can.
+
+Three rows exist for **identity alone**, and each is a different reason a rating would be wrong:
+
+* **Zazoom** (815 articles, the single biggest untracked name) is an **aggregator** — it republishes
+  third-party headlines with reference links, so its articles are other outlets' stories wearing a
+  second byline. Not a wire (nothing is machine-generated) and not an outlet to rate. **Excluding it
+  from clustering is a live decision and is deliberately NOT taken here**: it would remove real
+  duplicate coverage, but it changes behaviour, so it needs a call rather than a commit.
+* **BelTA** is Belarus's state agency with no MBFC page. RSF describes the *environment* — and a
+  country's press-freedom score is not an outlet's lean.
+* **iHeartRadio** is ~111 station hostnames in one window with no rating for the network. The
+  brand-domain rule already collapses them; the row gives the group a name a reader recognises.
+
+### Where the registry finished
+
+| | start of day | now |
+|---|---:|---:|
+| rows | 154 | **279** |
+| rated | 143 | **260** |
+| countries | ~30 | **41** |
+| wire feeds | 7 | 9 |
+| rated-but-withheld | 0 | 9 |
+| identity-only | 4 | 10 |
+
+Spread: **21 / 99 / 51 / 68 / 21** across −2 … +2 — both wings represented, and the centre now
+carries 51 rows largely because the news agencies were curated.
+
+### What "rate everything" turned out to mean
+
+The instruction was to maximise. What maximising produced was **17 more ratings and a clearer
+account of why the rest cannot be rated** — because the remaining tail is not made of unrated
+newspapers. It is aggregators (Zazoom, Google News), academic publishers (`frontiersin.org` at 237
+articles, `nature.com`, `arxiv.org`), developer blogs (`dev.to`), forums (`reddit.com`), NGOs
+(`unitaid.eu`), obituary subdomains, and thousands of small local mastheads no rater covers.
+
+**237 articles from a journal publisher in a news feed is a feed-configuration question, not a
+curation one** — and no amount of rating effort will turn it into one.
