@@ -1227,3 +1227,26 @@ def test_the_two_left_leaning_stations_are_rated_for_syndication(reg):
     # The networks they syndicate are separate outlets and keep their own ratings.
     assert reg.resolve("cnn.com").canonical == "CNN"
     assert reg.resolve("cbsnews.com").canonical == "CBS News"
+
+
+def test_the_rest_of_the_local_tv_block(reg):
+    for host, lean in [
+        ("Whdh.Com", -1.0), ("Scrippsnews.Com", -1.0), ("Cheddar.Com", -1.0),
+        ("Boston25News.Com", 0.0), ("Wmur.Com", 0.0), ("Click2Houston.Com", 0.0),
+        ("Koat.Com", 0.0),
+    ]:
+        assert reg.lean(host) == lean, host
+    assert reg.resolve("Newsy").canonical == "Scripps News"   # former name, one outlet
+
+
+def test_bostons_apparent_lean_split_is_two_syndication_contracts(reg):
+    """Boston has four rated stations and looks split — WCVB 0, WFXT 0, WBZ −1, WHDH −1. Both
+    negatives are network CARRIAGE: WBZ carries CBS, WHDH syndicates CNN. Neither is a judgement
+    about a Boston newsroom.
+
+    Pinned because the lean column cannot express it. A reader sees a spread; the spread is two
+    contracts. It is the clearest case in the file of a number being true and still not meaning
+    what it looks like."""
+    boston = {o.canonical: o.lean for o in reg.outlets()
+              if o.city == "Boston" and o.scope == "local"}
+    assert boston == {"WCVB": 0.0, "WFXT": 0.0, "WBZ-TV": -1.0, "WHDH": -1.0}

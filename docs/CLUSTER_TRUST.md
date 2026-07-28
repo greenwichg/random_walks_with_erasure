@@ -1933,3 +1933,50 @@ of US local rows on the centre, and none at either extreme.
 The centre has gone from a thin band to 79 rows, largely on wire agencies and local television —
 the two categories a left-right axis genuinely struggles to separate. That is a more honest centre
 than one assembled from national outlets someone judged to be balanced.
+
+## Nineteenth pass: finishing local TV, and a number that is true but misleading
+
+Eight more stations. The pattern from the pass before holds exactly: **every station rated
+Left-Center is rated so for SYNDICATION, never for its own newsroom.**
+
+| | |
+|---|---|
+| 0 | WFXT / Boston 25, WMUR, KPRC (AllSides *Center*), KOAT (Ground News *Center*) |
+| −1 | WHDH (*"utilizing CNN as a syndicated news source"*), Scripps News, Cheddar |
+
+**19 US local rows now, 15 of them on the centre.**
+
+### Boston is the case worth pinning
+
+Four rated stations, and it looks like a lean split:
+
+| WCVB | WFXT | WBZ-TV | WHDH |
+|---:|---:|---:|---:|
+| 0 | 0 | **−1** | **−1** |
+
+Both negatives are **network carriage** — WBZ carries CBS, WHDH syndicates CNN. Neither is a
+judgement about a Boston newsroom. A reader looking at a Boston story sees four stations and an
+apparent 2–2 split; the split is two syndication contracts.
+
+**The lean column cannot express that**, so it is written here and pinned by
+`test_bostons_apparent_lean_split_is_two_syndication_contracts`. It is the clearest case in this
+file of a number being **true and still not meaning what it looks like** — which is the same class
+of problem as MBFC rating Meduza *Left* for an anti-Kremlin stance, and Focus Taiwan *Left-Center*
+for who funds it.
+
+Three such cases now, from three different causes: **syndication, funding, and a scale built for
+one country's politics being applied to another's.** The rating is right each time. What it *means*
+needs a sentence the column has no room for.
+
+### Registry, close of nineteen passes
+
+| | start of day | end |
+|---|---:|---:|
+| rows | 154 | **421** |
+| rated | 143 | **395** |
+| countries | ~30 | **52** |
+| spread (−2/−1/0/+1/+2) | — | **27 / 159 / 83 / 99 / 27** |
+
+**The registry has grown 2.7× and the rated set 2.8× in a day.** The centre now carries 83 rows,
+built mostly from wire agencies and local television rather than from national outlets someone
+judged balanced — which is the more defensible way to have a centre.

@@ -1054,3 +1054,32 @@ WPLG,0,wplg.com|Local 10,US,Florida,Miami,local
 WSB-TV,0,wsbtv.com,US,Georgia,Atlanta,local
 KSAT,0,ksat.com,US,Texas,San Antonio,local
 WPIX,0,pix11.com,US,New York,New York,local
+#
+# Nineteenth pass -- finishing the US local-television block. Eight more, and the pattern from the
+# pass above holds exactly: every station rated LEFT-CENTER is rated so for SYNDICATION, never for
+# its own newsroom, and every station judged on its own output lands on the centre.
+#
+#    0  WFXT / Boston 25 (MBFC LEAST BIASED, factual High)
+#       WMUR9 (MBFC LEAST BIASED, factual High -- MBFC notes it runs no editorial pieces and
+#              sources national politics primarily from the AP)
+#       KPRC / Click2Houston  (AllSides CENTER -- AllSides rather than MBFC, recorded as such)
+#       KOAT Albuquerque      (Ground News CENTER, aggregating MBFC, Ad Fontes and AllSides)
+#   -1  WHDH Boston   (MBFC LC -- "utilizing CNN as a syndicated news source". Its own local
+#                      reporting is described as straightforward and factual.)
+#       Scripps News  (MBFC LC, factual High, HIGH credibility. Newsy is the former name and is
+#                      aliased; MBFC rates them as one outlet.)
+#       Cheddar       (MBFC LC, factual High)
+#
+# THREE of the four left-leaning stations across both passes -- WSVN, WBZ-TV, WHDH -- carry that
+# rating for the network they syndicate rather than for anything they produce. Boston alone now has
+# WCVB at 0, WFXT at 0, WBZ at -1 and WHDH at -1, and the two negatives are CBS and CNN carriage.
+# A reader looking at a Boston story sees four stations and what looks like a lean split; the split
+# is really two syndication contracts. The file cannot express that in the lean column, so it is
+# written here.
+WHDH,-1,whdh.com|7News Boston,US,Massachusetts,Boston,local
+Scripps News,-1,scrippsnews.com|Newsy,US,Ohio,Cincinnati,national,,high
+Cheddar,-1,cheddar.com,US,New York,New York,national
+WFXT,0,boston25news.com|Boston 25,US,Massachusetts,Boston,local
+WMUR,0,wmur.com,US,New Hampshire,Manchester,local
+KPRC,0,click2houston.com|Click2Houston,US,Texas,Houston,local
+KOAT,0,koat.com,US,New Mexico,Albuquerque,local
