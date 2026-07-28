@@ -22,27 +22,36 @@ def _story(title, pairs, *, arts=None):
 
 
 def test_domain_and_name_forms_of_an_unknown_outlet_collapse():
-    """Neither form is in the registry, so the public-suffix brand label has to carry it."""
-    assert api.identity_key("Sportskeeda.Com") == api.identity_key("Sportskeeda")
-    assert api.identity_key("Thewest.Com.Au") == api.identity_key("Thewest")
+    """Neither form is in the registry, so the public-suffix brand label has to carry it.
+
+    Compared as a SET, not name by name: whether a bare name may join a domain depends on how many
+    domains carry that label, which is a property of the whole catalog and invisible to a
+    one-name-at-a-time call."""
+    g = api.identity_groups(["Sportskeeda.Com", "Sportskeeda"])
+    assert g["Sportskeeda.Com"] == g["Sportskeeda"]
+    w = api.identity_groups(["Thewest.Com.Au", "Thewest"])
+    assert w["Thewest.Com.Au"] == w["Thewest"]
 
 
 def test_the_registry_is_the_authority_when_it_knows_the_outlet():
     """A curated alias beats the heuristic: BBC News and bbc.co.uk share no brand label, and only
     the registry knows they are one masthead."""
-    assert api.identity_key("BBC News") == api.identity_key("bbc.co.uk")
+    g = api.identity_groups(["BBC News", "bbc.co.uk"])
+    assert g["BBC News"] == g["bbc.co.uk"]
 
 
 def test_a_known_rating_reached_by_an_unknown_form_still_collapses():
     """The production case. Daily Mail is rated and aliased to dailymail.co.uk; the feed sends
     Dailymail.Com, which resolves to nothing. Keying the CANONICAL on one side and the brand label
     on the other still lands them together."""
-    assert api.identity_key("Dailymail.Com") == api.identity_key("Daily Mail")
+    g = api.identity_groups(["Dailymail.Com", "Daily Mail"])
+    assert g["Dailymail.Com"] == g["Daily Mail"]
 
 
 def test_distinct_outlets_do_not_collapse():
-    assert api.identity_key("Espn.Com") != api.identity_key("Variety.Com")
-    assert api.identity_key("BBC News") != api.identity_key("CNN")
+    g = api.identity_groups(["Espn.Com", "Variety.Com", "BBC News", "CNN"])
+    assert g["Espn.Com"] != g["Variety.Com"]
+    assert g["BBC News"] != g["CNN"]
 
 
 def test_a_story_that_is_one_outlet_twice_is_flagged():
@@ -86,3 +95,48 @@ def test_two_unknown_forms_are_not_reported_as_a_missing_alias():
 def test_empty_catalog_is_not_a_crash():
     res = api.analyse([])
     assert res["names"] == 0 and res["identities"] == 0 and res["fake"] == []
+
+
+# --------------------------------------------------------------------------- #
+# The brand-domain rule — and the false positive that forced it.
+# --------------------------------------------------------------------------- #
+def test_two_unrelated_papers_sharing_a_brand_word_stay_apart():
+    """The first version of this key collapsed standard.net.au (the Warrnambool Standard) into
+    standard.co.uk (the London Evening Standard) on the bare label 'standard'. Two unrelated
+    newspapers, and acting on that finding would have merged them."""
+    g = api.identity_groups(["Standard.Net.Au", "Standard.Co.Uk"])
+    assert g["Standard.Net.Au"] != g["Standard.Co.Uk"]
+
+
+def test_national_editions_of_one_brand_stay_apart():
+    """The Local runs separate national editions. Conservative is right for a correctness audit."""
+    g = api.identity_groups(["Thelocal.Es", "Thelocal.Fr", "Thelocal.De"])
+    assert len({g["Thelocal.Es"], g["Thelocal.Fr"], g["Thelocal.De"]}) == 3
+
+
+def test_a_syndication_network_collapses_across_its_subdomains():
+    """The production case: ~100 iHeart station hostnames syndicating identical copy, which
+    publisherCount reads as ~100 publishers."""
+    stations = ["Kfbk.Iheart.Com", "Wjjs.Iheart.Com", "1051Thewolf.Iheart.Com", "Kogo.Iheart.Com"]
+    assert len(set(api.identity_groups(stations).values())) == 1
+
+
+def test_a_section_subdomain_joins_its_parent():
+    g = api.identity_groups(["Obits.Oregonlive.Com", "Oregonlive.Com"])
+    assert g["Obits.Oregonlive.Com"] == g["Oregonlive.Com"]
+    y = api.identity_groups(["Finance.Yahoo.Com", "Yahoo.Com", "Sg.News.Yahoo.Com"])
+    assert len(set(y.values())) == 1
+
+
+def test_case_variants_of_one_host_collapse():
+    """Videocardz.Com and Videocardz.com are the same string in different case — pure normalisation."""
+    g = api.identity_groups(["Videocardz.Com", "Videocardz.com"])
+    assert g["Videocardz.Com"] == g["Videocardz.com"]
+
+
+def test_an_ambiguous_bare_name_is_left_alone():
+    """A bare 'Standard' could be either paper. Bridging a name to a domain happens only where one
+    domain carries the label — guessing here would merge the two newspapers through the name."""
+    g = api.identity_groups(["Standard.Net.Au", "Standard.Co.Uk", "Standard"])
+    assert g["Standard.Net.Au"] != g["Standard.Co.Uk"]
+    assert g["Standard"] not in (g["Standard.Net.Au"], g["Standard.Co.Uk"])
