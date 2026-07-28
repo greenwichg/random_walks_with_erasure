@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 
+import outlet_registry
 import publisher_identity
 import story_service
 import store as store_mod
@@ -90,10 +91,23 @@ def analyse(stories: list, *, top: int) -> dict:
     }
 
 
+def voting_publisher(cov: dict) -> bool:
+    """Whether this coverage row's lean counts — mirrors ``story_service._votes``.
+
+    A story's ``coverage`` rows carry ``leanBucket`` but not the low-credibility flag, so reading
+    the bucket alone counts an outlet the engine excludes. Kept as one helper because two call sites
+    below need it and they must not drift."""
+    if not cov.get("leanBucket"):
+        return False
+    if not story_service.credibility_gate():
+        return True
+    return not outlet_registry.is_low_credibility(cov["publisher"])
+
+
 def rated_publishers(story: dict) -> int:
-    """Distinct publishers in this story that carry a lean rating — the sample the blindspot claim
-    is actually computed from. Unrated outlets cast no vote, so they are not it."""
-    return len({c["publisher"] for c in story["coverage"] if c.get("leanBucket")})
+    """Distinct publishers in this story whose lean is actually counted — the sample the blindspot
+    claim rests on. Unrated outlets cast no vote, and neither do low-credibility ones."""
+    return len({c["publisher"] for c in story["coverage"] if voting_publisher(c)})
 
 
 def claim_support(stories: list) -> dict:
@@ -133,8 +147,12 @@ def blocked_by_ratings(stories: list, *, min_rated: int) -> dict:
     unlock: dict = {}
     for idx, story in enumerate(stories):
         outlets = {keys.get(c["publisher"], c["publisher"]) for c in story["coverage"]}
+        # `leanBucket` alone is NOT the rated set. A low-credibility outlet carries a lean and does
+        # not vote it (story_service._votes), so counting the bucket reports a story as
+        # fully-supported that the engine treats as one rating short — the worklist would then hide
+        # exactly the stories a curator could fix. Asked of the registry, as the engine does.
         rated = {keys.get(c["publisher"], c["publisher"])
-                 for c in story["coverage"] if c.get("leanBucket")}
+                 for c in story["coverage"] if voting_publisher(c)}
         if len(outlets) < min_rated or len(rated) >= min_rated:
             continue
         gap = min_rated - len(rated)

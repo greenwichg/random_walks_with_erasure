@@ -1327,3 +1327,44 @@ does not rate its outlet.
 **This is the third time one change had to be chased across a layer it did not obviously touch** —
 resolution → identity map → audit, and now registry → stored article. The pattern is worth naming:
 *a fact cached at write time does not follow a rule corrected at read time.*
+
+## What is left to curate — `audit_registry_coverage.py`
+
+Three audits each answered a piece of this and none answered it whole. `outlet_coverage` ranks
+unknown outlets by article volume but counts **name strings**, so one masthead arriving as
+`Yahoo.Com`, `Finance.Yahoo.Com` and `Yahoo! News` is three entries with its volume split three ways.
+`audit_publisher_identity` groups those correctly but says nothing about ratings.
+`audit_cluster_trust` reports the unlock worklist, which is the right worklist and the wrong
+denominator for "how much is left".
+
+The new audit joins them. Everything is counted **per outlet identity**, and every unresolved or
+unrated outlet lands in **exactly one** bucket — a partition, because overlapping labels would
+double-count the one number the report exists to give:
+
+| bucket | meaning | is it work? |
+|---|---|---|
+| `untracked` | no row, brand word unambiguous | **yes** — a curator can add it |
+| `ambiguous` | no row, bare name carried by several domains (`The Local`, `RTL`) | a row per edition, not a rating |
+| `low-credibility` | rated, rater called it Questionable — lean recorded, not voted | no, a decision taken |
+| `locality-only` | row exists, no public rater covers it | no, blocked on a source |
+| `wire` | machine-generated market-data copy | no, nothing to rate |
+
+Two rankings, because they answer different questions. **Article volume** says how much of the feed
+an outlet accounts for. **Unlocks** says how many coverage-gap claims one row would enable — stories
+exactly one rating short. They disagree often, which is the point.
+
+### The bug its own fixture caught
+
+The first run reported **0 unlocks** for an untracked outlet sitting in a story that was plainly one
+rating short. The audit built its rated set from `leanBucket`, and a low-credibility outlet **carries
+a lean it does not vote** — so TASS filled the third slot, the story looked fully supported, and the
+curatable row beside it vanished from the worklist.
+
+`audit_cluster_trust` had the same bug in `blocked_by_ratings` **and** in `rated_publishers`, which
+feeds the claim-support table. So the worklists read in this thread were understating the work by
+hiding stories a curator could actually fix. Both now go through one helper that asks the registry
+directly, exactly as `story_service._votes` does.
+
+**Fourth time in this thread that one rule had to be chased across a layer.** The credibility gate
+shipped correct in the engine and wrong in two audits, because a story's `coverage` rows carry
+`leanBucket` but not the flag — a derived view that lost the qualifier the original had.
