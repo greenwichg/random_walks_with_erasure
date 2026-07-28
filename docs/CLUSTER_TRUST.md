@@ -1068,3 +1068,41 @@ Still missing from the 181-outlet probe: UK nationals beyond the ones added, Can
 Australian mastheads, the Indian dailies, the state wires, and most of continental Europe and Latin
 America. Those are the next tranches, and they are findable — unlike the ~1,000-outlet long tail of
 small local mastheads, which no public rater covers and which stays blank.
+
+### Sixth pass: UK, Canada, Australia, India
+
+Twenty more rated, two more withheld.
+
+| | |
+|---|---|
+| **UK** | iNews −1, New Statesman −1, The Herald (Scotland) −1, The Scotsman 0, The Spectator (UK) +1 |
+| **Canada** | Financial Post +1, Montreal Gazette +1, Vancouver Sun +1, Toronto Sun **+2** |
+| **Australia** | Crikey −2, SBS News −1, The New Daily −1, 7NEWS +1, 9News +1, AFR +1 |
+| **India** | Scroll.in −1, Business Standard +1, Firstpost +1, ThePrint +1 |
+
+**India is the finding.** MBFC rates three of the four Right-Center for the same stated reason —
+coverage favouring the ruling party. That is a property of that market, not of this file, and a
+reader looking at an Indian story should be able to see it. It is also the strongest argument yet
+for rating outside the US/UK: a story covered by four Indian outlets looked like four neutral
+sources an hour ago.
+
+**Toronto repeats Detroit, wider.** The Toronto Star is 0 and the Toronto Sun is +2 — one city, two
+points apart. Any scheme that collapsed mastheads by locality would have merged them.
+
+Two more near-misses fixed by a domain: MBFC rates **The Spectator (UK)**, **The Spectator (USA)**
+and **Spectator World** as three separate outlets, so only `spectator.co.uk` is aliased. And a **bare
+"CBC"** now reaches the CBC News row — an alias, not a rating: the outlet was rated all along and
+the feed's commonest form simply did not resolve. That remains the cheapest class of fix in this
+file, and the publisher-identity audit is what surfaces it.
+
+**Daily Star (UK)** and **GB News** join the withheld set — MBFC publishes a lean for both and
+classes both *Questionable*. That is now six outlets rated-but-withheld, which is enough to say the
+rule is load-bearing rather than a one-off: a credibility column is the next thing this table needs.
+
+| | start of day | now |
+|---|---:|---:|
+| rows | 154 | **220** |
+| rated | 143 | **201** |
+| rated-but-withheld (Questionable) | 0 | 6 |
+| unrated anywhere | 4 | 6 |
+| wire feeds | 7 | 7 |

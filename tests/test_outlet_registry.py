@@ -434,6 +434,8 @@ def test_the_unrated_set_is_exactly_the_documented_one(reg):
         "Global Times",
         "RT (Russia Today)",
         "The Economic Times",
+        "Daily Star (UK)",
+        "GB News",
     }
 
 
@@ -499,6 +501,49 @@ def test_sfgate_is_its_own_outlet(reg):
     which is exactly why a shared row would look harmless — until one of them is re-rated."""
     assert reg.resolve("Sfgate.Com").canonical == "SFGate"
     assert reg.resolve("Sfchronicle.Com").canonical == "San Francisco Chronicle"
+
+
+def test_the_uk_canada_australia_india_tranche(reg):
+    """The next tranches of the same coverage audit. India is worth noting: MBFC rates three of the
+    four Right-Center for the same stated reason — coverage favouring the ruling party. That is a
+    property of the market, not of this file."""
+    for host, lean in [
+        ("Inews.Co.Uk", -1.0), ("Newstatesman.Com", -1.0), ("Heraldscotland.Com", -1.0),
+        ("Scotsman.Com", 0.0), ("Spectator.Co.Uk", 1.0),
+        ("Financialpost.Com", 1.0), ("Montrealgazette.Com", 1.0), ("Vancouversun.Com", 1.0),
+        ("Torontosun.Com", 2.0),
+        ("Sbs.Com.Au", -1.0), ("Thenewdaily.Com.Au", -1.0), ("Crikey.Com.Au", -2.0),
+        ("7News.Com.Au", 1.0), ("9News.Com.Au", 1.0), ("Afr.Com", 1.0),
+        ("Scroll.In", -1.0), ("Business-Standard.Com", 1.0), ("Firstpost.Com", 1.0),
+        ("Theprint.In", 1.0),
+    ]:
+        assert reg.lean(host) == lean, host
+
+
+def test_the_two_toronto_dailies_are_rated_apart(reg):
+    """Same shape as Detroit, wider gap: the Toronto Star is 0 and the Toronto Sun is +2. Both are
+    reached by a `thestar`/`torontosun` brand word that shares nothing, so only the rows keep them
+    apart — and the Star ALSO has to stay clear of the Malaysian Star, which is +2."""
+    assert reg.resolve("Thestar.Com").canonical == "Toronto Star"
+    assert reg.resolve("Torontosun.Com").canonical == "Toronto Sun"
+    assert reg.lean("Thestar.Com") == 0.0 and reg.lean("Torontosun.Com") == 2.0
+    assert reg.resolve("Thestar.Com.My").canonical == "The Star (Malaysia)"
+
+
+def test_the_uk_spectator_is_not_the_us_one(reg):
+    """MBFC rates The Spectator (UK), The Spectator (USA) and Spectator World as three outlets. Only
+    the UK domain is aliased, so spectatorworld.com resolves to nothing rather than inheriting a
+    rating written for a different magazine."""
+    assert reg.resolve("Spectator.Co.Uk").canonical == "The Spectator (UK)"
+    assert reg.resolve("Spectatorworld.Com") is None
+    assert reg.resolve("Spectator.Us") is None
+
+
+def test_a_bare_cbc_reaches_the_row_that_already_had_the_rating(reg):
+    """An alias, not a rating: CBC News was rated all along and the feed's commonest form simply did
+    not resolve. The cheapest class of fix in this file."""
+    assert reg.resolve("CBC").canonical == "CBC News"
+    assert reg.lean("CBC") == reg.lean("Cbc.Ca") == -1.0
 
 
 def test_a_questionable_source_is_identified_but_not_rated(reg):

@@ -178,7 +178,7 @@ The Times,0,thetimes.co.uk|thetimes.com,GB,,,national
 Daily Mail,1,dailymail.co.uk|dailymail.com,GB,,,national
 The Economist,-1,economist.com,GB,,,international
 Mirror,-1,mirror.co.uk,GB,,,national
-CBC News,-1,cbc.ca,CA,,,national
+CBC News,-1,cbc.ca|CBC,CA,,,national
 The Globe and Mail,0,theglobeandmail.com,CA,,,national
 CTV News,0,ctvnews.ca,CA,,,national
 Toronto Star,0,thestar.com,CA,,,national
@@ -488,3 +488,58 @@ The Plain Dealer,-1,cleveland.com,US,Ohio,Cleveland,regional
 Sacramento Bee,-1,sacbee.com,US,California,Sacramento,regional
 Charlotte Observer,-1,charlotteobserver.com,US,North Carolina,Charlotte,regional
 Kansas City Star,-1,kansascity.com,US,Missouri,Kansas City,regional
+#
+# Sixth pass -- UK / CANADA / AUSTRALIA / INDIA, the next tranches of the same coverage audit.
+# Twenty more rated, and two more withheld under the Questionable rule above.
+#
+#   UK      iNews          -1  (MBFC LC, factual High)
+#           New Statesman  -1  (MBFC LC, factual High)
+#           The Herald     -1  (MBFC LC, factual High) -- Scotland's Glasgow daily
+#           The Scotsman    0  (MBFC LEAST BIASED, factual High)
+#           The Spectator  +1  (MBFC RC, Mostly Factual) -- the UK title ONLY. MBFC rates The
+#                              Spectator (USA) / Spectator World as separate outlets.
+#   Canada  Financial Post +1  (MBFC RC, Mostly Factual)
+#           Montreal Gazette +1 (MBFC RC, factual High)
+#           Vancouver Sun  +1  (MBFC RC, factual High)
+#           Toronto Sun    +2  (MBFC RIGHT, Mostly Factual) -- note the Toronto STAR is 0; two
+#                              Toronto dailies two points apart, same as the Detroit pair
+#   Australia SBS News     -1  (MBFC LC, factual High)
+#           The New Daily  -1  (MBFC LC, Mostly Factual)
+#           Crikey         -2  (MBFC LEFT, factual High)
+#           7NEWS          +1  (MBFC RC, factual MIXED)
+#           9News          +1  (MBFC RC, factual High) -- MBFC rates 9news.com.au and nine.com.au
+#                              separately and identically; both aliases point at this row
+#           Australian Financial Review +1 (MBFC RC, factual High)
+#   India   Scroll.in      -1  (MBFC LC, Mostly Factual)
+#           Business Standard +1 (MBFC RC, Mostly Factual)
+#           Firstpost      +1  (MBFC RC, Mostly Factual)
+#           ThePrint       +1  (MBFC RC, Mostly Factual)
+#
+# India is worth a note: four outlets, and MBFC rates three of them Right-Center for the same stated
+# reason -- coverage favouring the ruling party. That is a real property of the market, not of this
+# file, and a reader looking at an Indian story should be able to see it.
+iNews,-1,inews.co.uk|The i Paper,GB,,London,national
+New Statesman,-1,newstatesman.com,GB,,London,national
+The Herald (Scotland),-1,heraldscotland.com,GB,Scotland,Glasgow,regional
+The Scotsman,0,scotsman.com,GB,Scotland,Edinburgh,regional
+The Spectator (UK),1,spectator.co.uk,GB,,London,national
+Financial Post,1,financialpost.com,CA,,,national
+Montreal Gazette,1,montrealgazette.com,CA,Quebec,Montreal,regional
+Vancouver Sun,1,vancouversun.com,CA,British Columbia,Vancouver,regional
+Toronto Sun,2,torontosun.com,CA,Ontario,Toronto,regional
+SBS News,-1,sbs.com.au|SBS,AU,,,national
+The New Daily,-1,thenewdaily.com.au,AU,,,national
+Crikey,-2,crikey.com.au,AU,,,national
+7NEWS,1,7news.com.au,AU,,,national
+9News,1,9news.com.au|nine.com.au,AU,,,national
+Australian Financial Review,1,afr.com|AFR,AU,,,national
+Scroll.in,-1,scroll.in,IN,,,national
+Business Standard,1,business-standard.com,IN,,,national
+Firstpost,1,firstpost.com,IN,,,national
+ThePrint,1,theprint.in,IN,,,national
+# Two more under the Questionable rule -- MBFC publishes a lean for each and classes both
+# QUESTIONABLE (Daily Star UK: sensational headlines, conspiracies, a long record of failed fact
+# checks; GB News: no ownership/funding transparency, failed fact checks, conspiracies). Identity
+# and country curated, lean withheld until the file can express credibility.
+Daily Star (UK),,dailystar.co.uk,GB,,London,national
+GB News,,gbnews.com,GB,,London,national
