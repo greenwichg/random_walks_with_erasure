@@ -1249,3 +1249,79 @@ The Standard (Kenya),1,standardmedia.co.ke,KE,,Nairobi,national
 The Citizen (South Africa),1,citizen.co.za,ZA,,Johannesburg,national
 GhanaWeb,0,ghanaweb.com,GH,,Accra,international,,medium
 Globes,0,globes.co.il|en.globes.co.il,IL,,Tel Aviv,national
+#
+# Twenty-fifth pass -- AUSTRALIA / NEW ZEALAND, 9 outstanding. Fifteen rated, four locality-only,
+# one withheld. The largest single-pass yield in the sweep, because both markets are small enough
+# that MBFC has covered nearly all of them and this file had only six AU rows and three NZ rows.
+#
+#   AUSTRALIA
+#   Canberra Times      -1  (MBFC LC, factual High)
+#   Newcastle Herald    -1  (MBFC LC, factual High)
+#   Illawarra Mercury   -1  (MBFC LC, factual High)
+#   Herald Sun          +1  (MBFC RC, MOSTLY FACTUAL -- MBFC cites positions against the scientific
+#                            consensus; MEDIUM credibility, the same shape as The Australian)
+#   The Courier-Mail    +1  (MBFC RC, factual High)
+#   The Daily Telegraph (Australia) +2 (MBFC RIGHT, factual MIXED, MEDIUM credibility)
+#   Sky News Australia  +2  (MBFC RIGHT, "borderline Questionable and Mixed" -- failed fact checks
+#                            and promotion of conspiracy theories; LOW credibility, so it is rated
+#                            and does not vote)
+#
+#   NEW ZEALAND
+#   1News               -1  (MBFC LC -3.3, factual High -- TVNZ's news site)
+#   The Post (New Zealand) -1 (MBFC LC -2.7, factual High -- the former Dominion Post)
+#   The Spinoff         -1  (MBFC LC, factual High)
+#   Newshub             -1  (MBFC LC -3.6, MOSTLY FACTUAL -- poor sourcing and a failed fact check;
+#                            MEDIUM credibility)
+#   Newstalk ZB         +1  (MBFC RC, factual High, HIGH credibility)
+#   Newsroom (New Zealand) +1 (MBFC RC, factual High -- see the caveat below)
+#
+# SKY NEWS AUSTRALIA IS NOT SKY NEWS. This file already carries Sky News (GB) at -1. The Australian
+# channel shares the brand word, the logo and nothing else: MBFC puts it at RIGHT with credibility
+# low, three points and a voting right away from its British namesake. Registering it as a separate
+# canonical rather than an alias is the whole reason the identity layer keys on the name SET.
+#
+# NEW ZEALAND'S EXEMPTION COMES OFF. The balance guard exempted NZ with the reason "no rated outlet
+# exists on the missing side", written when the only NZ rows were Stuff -1, NZ Herald 0 and RNZ 0.
+# That reason was a claim about the world, and it was wrong: Newstalk ZB is Right-Center with High
+# factual reporting and HIGH credibility, and was found by searching for the missing side rather
+# than for more of what was already there -- the Indonesia and Belgium move a third time. NZ now
+# reads five left, two centre, two right across nine outlets and needs no exemption.
+#
+# NEWSROOM NZ CARRIES A CAVEAT. Four differently-worded searches all return MBFC's Right-Center
+# LABEL for it, each with MBFC's own Right-Center boilerplate ("editorial positions that slightly
+# align with the right"). One of those four also carried a numeric score of -2.8, which is a
+# LEFT-Center number on MBFC's scale and cannot be true at the same time as the label. MBFC serves
+# 403 to this repo's fetcher, so the page itself could not be read to settle it. The rating is
+# recorded because the label is what this file maps from and it was corroborated four times; the
+# discrepancy is recorded because a reader who later reaches the page should know which half of the
+# evidence was never verified. Nothing structural rests on it -- Newstalk ZB alone straddles NZ.
+#
+# WITHHELD: The Saturday Paper. MBFC rates it Left-Center (-3.8), factual High (1.2), and says in
+# the review that it is a LOW-CONFIDENCE assessment because the methodology could not be fully
+# applied. This file has no confidence column, so importing the number would present a hedge as a
+# settled fact. Same rule as Billboard and Hankyoreh. The row is kept for its locality.
+#
+# LOCALITY ONLY, no accepted rating: Otago Daily Times (no MBFC page; Ground News reports Center),
+# InDaily (no MBFC page; Biasly reports Center -- Biasly is not a source this file accepts),
+# Interest.co.nz (no MBFC page).
+#
+# CALCALIST WAS RE-CHECKED, and went the other way from Globes. The Globes correction in the pass
+# above was cause to re-run every conclusion it sat beside; a targeted query for Calcalist still
+# finds no MBFC page. "Confirmed absent" survived the audit that "confirmed absent" caused.
+Canberra Times,-1,canberratimes.com.au,AU,Australian Capital Territory,Canberra,regional
+Newcastle Herald,-1,newcastleherald.com.au,AU,New South Wales,Newcastle,regional
+Illawarra Mercury,-1,illawarramercury.com.au,AU,New South Wales,Wollongong,regional
+Herald Sun,1,heraldsun.com.au,AU,Victoria,Melbourne,regional,,medium
+The Courier-Mail,1,couriermail.com.au,AU,Queensland,Brisbane,regional
+The Daily Telegraph (Australia),2,dailytelegraph.com.au,AU,New South Wales,Sydney,regional,,medium
+Sky News Australia,2,skynews.com.au,AU,,Sydney,national,,low
+The Saturday Paper,,thesaturdaypaper.com.au,AU,,Melbourne,national
+InDaily,,indaily.com.au,AU,South Australia,Adelaide,regional
+1News,-1,1news.co.nz|TVNZ,NZ,,Auckland,national
+The Post (New Zealand),-1,thepost.co.nz,NZ,Wellington,Wellington,regional
+The Spinoff,-1,thespinoff.co.nz,NZ,,Auckland,national
+Newshub,-1,newshub.co.nz,NZ,,Auckland,national,,medium
+Newstalk ZB,1,newstalkzb.co.nz,NZ,,Auckland,national
+Newsroom (New Zealand),1,newsroom.co.nz,NZ,,Auckland,national
+Otago Daily Times,,odt.co.nz,NZ,Otago,Dunedin,regional
+Interest.co.nz,,interest.co.nz,NZ,,Auckland,national

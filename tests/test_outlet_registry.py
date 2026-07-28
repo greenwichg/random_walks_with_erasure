@@ -442,6 +442,16 @@ def test_the_unrated_set_is_exactly_the_documented_one(reg):
         # Not outlets to rate at all — identity is the whole reason each row exists.
         "BelTA",               # Belarus state agency; press-freedom scores are not an outlet lean
         "iHeartRadio",         # no rating for the network; the row names ~111 station hostnames
+        # A FOURTH reason: a rating exists but not from a source this file accepts. "A number exists
+        # somewhere" has never been the bar, and writing these down as blanks is what keeps that
+        # true when the number is easy to find and would fill a hole.
+        "Otago Daily Times",   # no MBFC page; Ground News reports Center
+        "InDaily",             # no MBFC page; Biasly reports Center
+        "Interest.co.nz",      # no MBFC page
+        # A FIFTH: rated by MBFC, and MBFC says the rating is LOW CONFIDENCE because it could not
+        # fully apply its methodology. There is no confidence column here, so importing the number
+        # would present a hedge as settled. Same rule as Billboard and Hankyoreh.
+        "The Saturday Paper",
     }
 
 
@@ -1108,7 +1118,11 @@ def test_no_market_of_three_or_more_is_completely_one_sided(reg):
               "encyclopaedia description — neither is importable into a file with no confidence "
               "column.",
         "UA": "no rated outlet exists on the missing side.",
-        "NZ": "no rated outlet exists on the missing side.",
+        # NZ's exemption was REMOVED, not weakened. It read "no rated outlet exists on the missing
+        # side" when the only NZ rows were Stuff, NZ Herald and RNZ — a claim about the world that
+        # was really a claim about how far curation had got. Newstalk ZB is MBFC Right-Center with
+        # High factual reporting, and closes it. An exemption whose reason is falsifiable should be
+        # re-tested, not inherited.
         # Fewer than four rated outlets each: too small for the shape to mean anything yet.
         "CL": "n=2", "SE": "n=3", "DK": "n=3", "MY": "n=3", "AR": "1 left (Infobae) against 3 right. Pagina/12, the obvious counterweight, has no "
               "rating at MBFC, AllSides or Ad Fontes — searched twice. The missing side was "
@@ -1446,3 +1460,88 @@ def test_globes_is_rated_and_was_wrongly_recorded_as_absent(reg):
     query, not a question."""
     o = reg.resolve("Globes.Co.Il")
     assert o.canonical == "Globes" and o.lean == 0.0 and o.country == "IL"
+
+
+# --------------------------------------------------------------------------- #
+# Australia / New Zealand — the twenty-fifth pass
+# --------------------------------------------------------------------------- #
+def test_the_au_nz_pass(reg):
+    for host, lean in [
+        ("Canberratimes.Com.Au", -1.0), ("Newcastleherald.Com.Au", -1.0),
+        ("Illawarramercury.Com.Au", -1.0), ("Heraldsun.Com.Au", 1.0),
+        ("Couriermail.Com.Au", 1.0), ("Dailytelegraph.Com.Au", 2.0),
+        ("Skynews.Com.Au", 2.0),
+        ("1News.Co.Nz", -1.0), ("Thepost.Co.Nz", -1.0), ("Thespinoff.Co.Nz", -1.0),
+        ("Newshub.Co.Nz", -1.0), ("Newstalkzb.Co.Nz", 1.0), ("Newsroom.Co.Nz", 1.0),
+    ]:
+        assert reg.lean(host) == lean, host
+
+
+def test_sky_news_australia_is_not_sky_news(reg):
+    """Two channels, one brand word, and the registry must keep them three points and a voting
+    right apart: MBFC rates Sky News (UK) Left-Center, and Sky News Australia RIGHT with credibility
+    low. Aliasing the Australian channel onto the British one — the obvious shortcut, since the
+    logo is the same — would have given a non-voting Right outlet a Left-Center vote."""
+    uk, au = reg.resolve("News.Sky.Com"), reg.resolve("Skynews.Com.Au")
+    assert uk.canonical == "Sky News" and au.canonical == "Sky News Australia"
+    assert uk.lean == -1.0 and au.lean == 2.0
+    assert not reg.is_low_credibility("News.Sky.Com")
+    assert reg.is_low_credibility("Skynews.Com.Au")
+
+
+def test_new_zealand_no_longer_needs_an_exemption(reg):
+    """The balance guard exempted NZ with the reason "no rated outlet exists on the missing side".
+    That reason was falsifiable, and false — it described how far curation had got, not the market.
+    Searching for the missing side rather than for more of the same found Newstalk ZB at MBFC
+    Right-Center, High factual, HIGH credibility. Pinned here so the exemption cannot come back.
+
+    Third time this move has worked: Belgium, Indonesia, now New Zealand."""
+    import math
+    leans = [o.lean for o in reg.outlets() if o.country == "NZ" and not math.isnan(o.lean)]
+    assert len(leans) >= 9
+    assert any(x < 0 for x in leans) and any(x > 0 for x in leans)
+    assert reg.lean("Newstalkzb.Co.Nz") == 1.0
+
+
+def test_a_generic_new_zealand_masthead_does_not_claim_its_word(reg):
+    """"Newsroom" and "The Post" are both ordinary English phrases and both are registered under a
+    parenthetical, so the bare form resolves to nothing. `Courier Newsroom` — a different, American
+    outlet already in the file — must be untouched by the New Zealand row."""
+    assert reg.resolve("Newsroom.Co.Nz").canonical == "Newsroom (New Zealand)"
+    assert reg.resolve("Newsroom") is None
+    assert reg.resolve("Thepost.Co.Nz").canonical == "The Post (New Zealand)"
+    assert reg.resolve("The Post") is None
+    assert reg.resolve("Couriernewsroom.Com").canonical == "Courier Newsroom"
+
+
+def test_the_australian_daily_telegraph_does_not_answer_for_the_british_one(reg):
+    """Two unrelated papers, one on +2 with MIXED factual reporting and one — registered here as
+    "The Telegraph" — on 0. A feed sending the bare "The Daily Telegraph" is genuinely ambiguous
+    between them, so it resolves to nothing rather than to whichever was curated first."""
+    assert reg.resolve("Dailytelegraph.Com.Au").canonical == "The Daily Telegraph (Australia)"
+    assert reg.resolve("Telegraph.Co.Uk").canonical == "The Telegraph"
+    assert reg.resolve("The Daily Telegraph") is None
+
+
+def test_the_saturday_paper_is_withheld_for_low_confidence(reg):
+    """MBFC gives it Left-Center (-3.8) and factual High (1.2), and says in the review that the
+    assessment is LOW CONFIDENCE because the methodology could not be fully applied. This file has
+    no confidence column, so writing -1 would present a hedge as settled. The row survives on its
+    locality, which is the whole reason locality-without-lean rows exist.
+
+    Same rule as Billboard and Hankyoreh."""
+    import math
+    o = reg.resolve("Thesaturdaypaper.Com.Au")
+    assert math.isnan(o.lean)
+    assert o.country == "AU" and o.city == "Melbourne"
+
+
+def test_ratings_from_sources_this_file_does_not_accept_are_not_imported(reg):
+    """Otago Daily Times and InDaily both have a Center rating available — from Ground News and
+    Biasly respectively. Neither is a source this file accepts, and "a number exists somewhere" is
+    not the bar. Both keep their locality and neither gets a lean."""
+    import math
+    for host, country in [("Odt.Co.Nz", "NZ"), ("Indaily.Com.Au", "AU")]:
+        o = reg.resolve(host)
+        assert math.isnan(o.lean), host
+        assert o.country == country and o.scope == "regional"

@@ -2247,3 +2247,91 @@ Confirmed absent: The Star (Kenya), Business Day, Graphic Online, Calcalist, Ara
 | rows | 154 | **449** |
 | rated | 143 | **422** |
 | countries | ~30 | **54** |
+
+## Twenty-fifth pass — Australia / New Zealand
+
+Nine outstanding names. **Fifteen rated, four locality-only, one withheld** — the largest yield of
+the whole sweep, and not because these are big markets. It is because they are *small* ones: MBFC
+has covered almost every masthead in both countries, and this file had six Australian rows and
+three New Zealand ones. The probe list understated the gap because a probe only reports what the
+feed happened to send.
+
+| | | |
+|---|---:|---|
+| Canberra Times | −1 | MBFC Left-Center, High |
+| Newcastle Herald | −1 | MBFC Left-Center, High |
+| Illawarra Mercury | −1 | MBFC Left-Center, High |
+| Herald Sun | +1 | Right-Center, **Mostly Factual** — positions against scientific consensus; medium |
+| The Courier-Mail | +1 | Right-Center, High |
+| The Daily Telegraph (Australia) | +2 | RIGHT, **Mixed**; medium |
+| Sky News Australia | +2 | RIGHT, "borderline Questionable"; **low — rated, does not vote** |
+| 1News | −1 | Left-Center (−3.3), High |
+| The Post (New Zealand) | −1 | Left-Center (−2.7), High |
+| The Spinoff | −1 | Left-Center, High |
+| Newshub | −1 | Left-Center (−3.6), **Mostly Factual**; medium |
+| Newstalk ZB | +1 | Right-Center, High, HIGH credibility |
+| Newsroom (New Zealand) | +1 | Right-Center, High — *see caveat* |
+
+### Sky News Australia is not Sky News
+
+The file already carried **Sky News (GB) at −1**. The Australian channel shares the brand word and
+the logo and nothing else: MBFC puts it at **RIGHT with credibility low**. Aliasing it onto the
+British row — the obvious shortcut, and the one a domain-blind merge would have taken — would have
+handed a non-voting Right outlet a Left-Center *vote*. Three points and a voting right apart, on
+one word.
+
+### New Zealand's exemption came off
+
+The balance guard exempted NZ with the reason *"no rated outlet exists on the missing side"*,
+written when the only NZ rows were Stuff −1, NZ Herald 0 and RNZ 0.
+
+**That reason was falsifiable, and false.** It described how far curation had got, not the market.
+Searching for the *missing side* — rather than for more of what was already there — found Newstalk
+ZB at Right-Center, High factual, High credibility. New Zealand now reads five left, two centre,
+two right across nine outlets and needs no exemption at all.
+
+Third time this move has worked: **Belgium, Indonesia, New Zealand.** An exemption whose stated
+reason is a claim about the world should be re-tested every time the file grows, not inherited. The
+ones that survive — Russia, Korea, Argentina, the UAE — survive because their reasons were
+re-checked and held.
+
+### Newsroom NZ carries a caveat, on purpose
+
+Four differently-worded searches all return MBFC's Right-Center **label**, each with MBFC's own
+Right-Center boilerplate. One of the four also carried a numeric score of **−2.8**, which is a
+*Left*-Center number on MBFC's scale and cannot be true at the same time as the label. MBFC serves
+403 to this repo's fetcher, so the page could not be read to settle it.
+
+The rating is recorded — the label is what this file maps from, and it was corroborated four times.
+The discrepancy is recorded too, because a reader who later reaches the page should know which half
+of the evidence was never verified. **Nothing structural rests on it:** Newstalk ZB alone straddles
+New Zealand, so the exemption removal above stands whatever Newsroom turns out to be.
+
+### Two ways to not have a rating, kept separate
+
+- **The Saturday Paper** — MBFC *does* rate it, Left-Center (−3.8), High (1.2), and says in the
+  review that this is a **low-confidence** assessment because the methodology could not be fully
+  applied. There is no confidence column here, so importing the number would present a hedge as
+  settled. Withheld. Same rule as Billboard and Hankyoreh.
+- **Otago Daily Times, InDaily, Interest.co.nz** — a Center rating exists for the first two, from
+  Ground News and Biasly. Neither is a source this file accepts. *"A number exists somewhere"* has
+  never been the bar, and these three are where that costs something: three holes that were easy to
+  fill and stayed open.
+
+All four keep locality rows. That is what locality-without-lean rows are for.
+
+### Calcalist was re-checked, and went the other way from Globes
+
+The Globes correction in the previous pass was cause to re-run every conclusion sitting beside it.
+A targeted query for **Calcalist** still finds no MBFC page — "confirmed absent" survived the audit
+that "confirmed absent" caused. Re-checking is only meaningful if it can come back *unchanged*.
+
+### Registry, close of twenty-five passes
+
+| | start of day | end |
+|---|---:|---:|
+| rows | 154 | **466** |
+| rated | 143 | **435** |
+| countries | ~30 | **54** |
+| engine tests | 1,883 | **2,012** |
+| balance-guard exemptions | — | **one fewer** |
