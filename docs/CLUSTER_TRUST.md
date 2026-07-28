@@ -817,3 +817,28 @@ two.
 428 of 1,042 stories carry ≥ 3 publishers — **41%**, and that is capped by story size (p50 = 2
 articles), not by the registry. Reaching it needs broad rating coverage across the long tail, not
 a handful of rows at the head. The worklist now says which rows actually buy something.
+
+### Verified after the backfill
+
+| | before curation | after rows | after backfill |
+|---|---:|---:|---:|
+| coverage-gap claims | 61 | 62 | **72** |
+| stories 1 rating short | — | 89 | **85** |
+
+The six rated outlets dropped off the unlock worklist entirely, which is the check that the rows
+reached the catalog rather than only the file. The +10 is the curation actually landing; the +1 it
+managed beforehand was newly-ingested articles trickling in.
+
+**Three of the four biggest remaining wins are outlets deliberately left unrated**, and that is the
+honest ceiling on this approach rather than a backlog:
+
+| unlocks | outlet | why unrated |
+|---:|---|---|
+| 6 | Page Six | no row yet — a genuine gap |
+| 5 | ESPN | identity-only row: aliases and country curated, lean blank |
+| 4 | Brisbane Times | MBFC has no page; inheriting from SMH/The Age is the guess this file refuses |
+| 2 | Philippine Daily Inquirer | pre-existing locality-only row |
+
+Rating them would unlock 11 stories between them, and doing it without a defensible public source
+would put three fabricated claims into the product to gain eleven. The worklist is doing its job by
+naming them; the answer is to find sources, not to fill the blanks.
