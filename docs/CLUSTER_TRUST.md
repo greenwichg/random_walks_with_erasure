@@ -236,25 +236,31 @@ Read and a Save button.
 
 ## Thresholds
 
-### After adoption — measured 2026-07-28 with `RWE_STORY_REPAIR_QUORUM=0.5` live
+### End state — measured 2026-07-28 with all three changes live
 
-| | before gates | after repair |
-|---|---:|---:|
-| stories | 938 | **1,004** |
-| covered articles | 4,169 | 4,151 |
-| largest cluster | 327 | **115** |
-| largest ÷ p90 | 46.7× | **16.4×** |
-| largest share of covered | **7.8%** (trigger 8%) | **2.8%** |
-| `ok` share of articles | 87.0% | **95.4%** |
-| `low` | 3 clusters / 380 articles | **1 cluster / 16 articles** |
+| | start of day | gates only | + repair 0.5 | + wire curation |
+|---|---:|---:|---:|---:|
+| stories | 938 | 938 | 1,004 | **1,003** |
+| covered articles | 4,169 | 4,169 | 4,151 | 4,006 |
+| largest cluster | **327** | 327 | 115 | **100** |
+| largest ÷ p90 | 46.7× | 46.7× | 16.4× | **14.3×** |
+| largest share of covered | **7.8%** (trigger 8%) | 7.8% | 2.8% | **2.5%** |
+| `ok` share of articles | 87.0% | 87.0% | 95.4% | **98.1%** |
+| `low` | 3 / 380 articles | 3 / 380 | 1 / 16 | **1 / 16** |
+| top-20 coherence coverage | — | 60% | 80% | **81%** |
 
-Independently-condemned coverage fell **380 → 16 articles**, a 96% reduction, for 18 net articles
-of coverage. The share monitor went from 0.2 points under its trigger to comfortably below it.
+**The largest cluster in the catalog is now a real story** — *"Wildfires ravage parts of southern
+France, Italy and Spain"*, 100 articles, 61 publishers, coherence 0.76 on 50 located members —
+rather than a chained blob or a press release. Independently-condemned coverage fell 380 → 16
+articles. The share monitor went from 0.2 points under its trigger to a third of it.
+
+All four launch conditions from the review are met: top-20 coherence coverage is over the 80% bar,
+both gates are live, and both monitors sit far below their pre-committed triggers.
 
 Two things this leaves, neither of them a clustering defect:
 
-* **The largest cluster was the M.D. Sass press-release template** — 115 articles from 5
-  publishers, no geography. Fixed at the source; see the last section.
+* **The M.D. Sass press-release template** — 115 articles from 5 publishers, no geography. Fixed
+  at the source; see the last section.
 * **`Expected U.S.-Saudi Nuclear Deal…`** — 60 articles, 28 publishers, coherence 0.50 on **2**
   located members. Genuinely undecidable by the signal, and unchanged by the repair since
   `unverified` clusters are not touched. Needs a human read.
