@@ -1314,3 +1314,93 @@ def test_the_aggregator_gate_is_its_own_switch(monkeypatch):
     story = ss.cluster_from_store(st)[0]
     assert "Zazoom" in story["publishers"]
     assert ss.exclude_wire() is True, "the wire gate is untouched by the aggregator switch"
+
+
+# --------------------------------------------------------------------------- #
+# Cold-build concurrency — the performance investigation, pinned as behaviour
+# --------------------------------------------------------------------------- #
+def test_concurrent_cold_readers_build_once_not_once_each(monkeypatch):
+    """The defect the profile exposed. `warm_cache` has always been single-flight, so the POLLER's
+    eight adapter threads could not stampede each other — but the READER path had no such guard,
+    and every request arriving during a rebuild started a rebuild of its own.
+
+    Measured cost of one build at the live catalog size: ~10 s of CPU (examples/perf_profile.py,
+    20k articles). Three simultaneous readers therefore cost thirty seconds of work to produce
+    three copies of one identical answer, on a box with fewer cores than that has readers — they do
+    not merely wait for each other, they compete, and each makes the others slower.
+
+    Asserts the count, not the timing: a timing test would be flaky on a loaded machine and would
+    not say WHY it passed."""
+    import threading
+    st = store_mod.Store("sqlite://"); _senate_and_wildfire(st)
+    ss.clear_cache()
+
+    started = threading.Event()
+    calls = {"n": 0}
+    real = ss.build_stories
+
+    def slow(*a, **kw):
+        calls["n"] += 1
+        started.set()
+        # Long enough that every other thread is inside _cached_build before this one returns —
+        # which is precisely the window the old code rebuilt in.
+        threading.Event().wait(0.35)
+        return real(*a, **kw)
+
+    monkeypatch.setattr(ss, "build_stories", slow)
+    results, errors = [], []
+
+    def read():
+        try:
+            results.append(ss.list_stories(st)["total"])
+        except Exception as e:                                # pragma: no cover - surfaced below
+            errors.append(e)
+
+    threads = [threading.Thread(target=read) for _ in range(5)]
+    threads[0].start()
+    started.wait(5)                       # let the winner get inside the build
+    for t in threads[1:]:
+        t.start()
+    for t in threads:
+        t.join(30)
+
+    assert not errors, errors
+    assert len(results) == 5 and len(set(results)) == 1, "all readers must see the same answer"
+    assert calls["n"] == 1, f"one cold build for five concurrent readers, got {calls['n']}"
+
+
+def test_a_failed_build_is_not_cached_and_does_not_wedge_the_key(monkeypatch):
+    """The risk the single-flight lock introduces, closed. If a build raises while holding the
+    build lock, the lock must release and the next caller must be free to try again — a cached
+    exception or a permanently-held lock would turn one transient failure into a dead endpoint."""
+    st = store_mod.Store("sqlite://"); _senate_and_wildfire(st)
+    ss.clear_cache()
+    real = ss.build_stories
+    state = {"fail": True}
+
+    def flaky(*a, **kw):
+        if state["fail"]:
+            state["fail"] = False
+            raise RuntimeError("transient")
+        return real(*a, **kw)
+
+    monkeypatch.setattr(ss, "build_stories", flaky)
+    with pytest.raises(RuntimeError):
+        ss.list_stories(st)
+    assert ss.list_stories(st)["total"] > 0, "the next caller must get a real answer"
+
+
+def test_the_cache_ttl_default_matches_the_poll_interval(monkeypatch):
+    """Not a style assertion — a measured one. A cold build is quadratic in catalog size (0.4 s at
+    5k articles, 7.4 s at 20k, 32 s at 40k) and a warm hit is 0.65 ms, so what decides felt speed
+    is how often a READER pays the cold path.
+
+    The fingerprint already invalidates on every write and the poller already re-warms after every
+    ingest, which left the old 120 s TTL expiring still-correct builds four extra times per 600 s
+    poll cycle — four reader-visible multi-second stalls per cycle, buying nothing."""
+    monkeypatch.delenv("RWE_STORIES_CACHE_TTL", raising=False)
+    assert ss.cache_ttl() == 600.0
+    monkeypatch.setenv("RWE_STORIES_CACHE_TTL", "45")
+    assert ss.cache_ttl() == 45.0, "an explicit setting still wins"
+    monkeypatch.setenv("RWE_STORIES_CACHE_TTL", "0")
+    assert ss.cache_ttl() == 0.0, "0 must still disable the cache entirely"

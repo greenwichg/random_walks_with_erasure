@@ -1,69 +1,34 @@
 "use client";
 
-import { Cell, Pie, PieChart, Tooltip } from "recharts";
-import type { EmotionShare } from "@/types/domain";
-import { EMOTION_META } from "@/lib/metrics";
-import { useTranslation } from "@/lib/i18n";
-import { useMeasure } from "@/hooks/use-measure";
+import dynamic from "next/dynamic";
+import * as React from "react";
+import type { AttentionProfile as Impl } from "./attention-profile-impl";
 
-/** Donut of the emotional makeup of a reader's diet (fear/outrage/…/neutral). */
-export function AttentionProfile({ attention }: { attention: EmotionShare }) {
-  const { t } = useTranslation();
-  const { ref, width } = useMeasure<HTMLDivElement>(240);
-  const dim = Math.min(width, 240);
+/**
+ * Code-splitting boundary for AttentionProfile.
+ *
+ * Recharts is ~100 kB of the First Load JS and every route that statically imported one of these
+ * charts paid for the whole library — including the HOME page, whose only chart is a 104px
+ * sparkline in the rail. Measured before this split: `/` 394 kB vs `/stories` 293 kB, the two
+ * pages differing by little else.
+ *
+ * The wrapper keeps the original module path and export name, so no call site changes and the
+ * props stay exactly the impl's (`import type` is erased, so it pulls in no runtime code).
+ * `ssr: false` is safe here: every consumer is already a client component fetching its data
+ * through React Query, so these charts never rendered in server HTML anyway.
+ *
+ * The placeholder reserves the chart's own height — a lazy chart that collapses to zero and then
+ * pushes the page down on arrival trades a bundle win for a layout shift.
+ */
+const Lazy = dynamic(() => import("./attention-profile-impl").then((m) => m.AttentionProfile), {
+  ssr: false,
+  loading: () => <div aria-hidden className="w-full animate-pulse rounded-lg bg-muted/40" />,
+});
 
-  const data = (Object.keys(attention) as (keyof EmotionShare)[]).map((key) => ({
-    key,
-    name: t(`emotion.${key}`),
-    value: Math.round(attention[key] * 100),
-    color: EMOTION_META[key].color,
-  }));
-  const charged = Math.round((attention.fear + attention.outrage) * 100);
-
+export function AttentionProfile(props: React.ComponentProps<typeof Impl>) {
   return (
-    <div className="flex flex-col items-center gap-4 sm:flex-row sm:gap-6">
-      <div ref={ref} className="relative flex w-full justify-center sm:w-auto" style={{ height: dim }}>
-        <PieChart width={dim} height={dim}>
-          <Pie
-            data={data}
-            dataKey="value"
-            nameKey="name"
-            innerRadius="62%"
-            outerRadius="92%"
-            paddingAngle={2}
-            stroke="none"
-            animationDuration={800}
-          >
-            {data.map((d) => (
-              <Cell key={d.key} fill={d.color} />
-            ))}
-          </Pie>
-          <Tooltip
-            contentStyle={{
-              borderRadius: 12,
-              border: "1px solid hsl(var(--border))",
-              background: "hsl(var(--popover))",
-              color: "hsl(var(--popover-foreground))",
-              fontSize: 12,
-            }}
-            formatter={(v: number, n: string) => [`${v}%`, n]}
-          />
-        </PieChart>
-        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-          <span className="text-2xl font-semibold tabular-nums">{charged}%</span>
-          <span className="text-[0.7rem] text-muted-foreground">{t("report.charged")}</span>
-        </div>
-      </div>
-
-      <div className="grid w-full grid-cols-2 gap-x-4 gap-y-2 sm:w-auto sm:grid-cols-1">
-        {data.map((d) => (
-          <div key={d.key} className="flex items-center gap-2 text-sm">
-            <span className="h-2.5 w-2.5 rounded-full" style={{ background: d.color }} />
-            <span className="text-muted-foreground">{d.name}</span>
-            <span className="ml-auto font-medium tabular-nums">{d.value}%</span>
-          </div>
-        ))}
-      </div>
+    <div style={{ minHeight: 240 }}>
+      <Lazy {...props} />
     </div>
   );
 }

@@ -1058,20 +1058,49 @@ _CACHE: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
 _CACHE_LOCK = threading.Lock()
 _CACHE_MAX = 16
 
+#: One build lock per cache key, so concurrent readers of the SAME cold key wait for one build
+#: instead of each running their own. Keyed by the cache key (which carries the catalog
+#: fingerprint), not by the store, so a rebuild of one filtered view never blocks another.
+_BUILD_LOCKS: dict = {}
+
 
 def cache_ttl() -> float:
-    """Seconds a clustered build stays servable. 0 disables the cache entirely."""
+    """Seconds a clustered build stays servable. 0 disables the cache entirely.
+
+    600, not 120, and the reason is measured. A cold build is quadratic in catalog size — 0.4 s of
+    clustering at 5k articles, 1.6 s at 10k, 7.4 s at 20k, 32 s at 40k (``examples/perf_profile.py``)
+    — while a warm hit is 0.65 ms. At 20k that is a **15,600x** difference between the two paths,
+    so what matters for felt speed is not the build's cost but how often a READER pays it.
+
+    Two mechanisms already keep the cache honest, and neither one needs the TTL:
+
+    * the catalog **fingerprint** is part of the key, so any write invalidates immediately, and
+    * the poller calls :func:`warm_cache` right after it ingests, so the rebuild the write forces
+      is paid on the poller's thread rather than a reader's request.
+
+    That left the TTL doing one job — bounding drift of the rolling ``date_from`` window — and one
+    unintended one: expiring a still-correct build every 120 s. With ``RWE_POLL_INTERVAL`` at 600 s
+    that is FOUR extra reader-visible rebuilds per poll cycle, each of them the full cold cost, for
+    no correctness gain. Matching the poll interval removes those four and keeps the one that a
+    genuine catalog change requires.
+
+    The drift this trades away is immaterial: ``date_from`` is ``now - 6 days``, and a window start
+    up to 10 minutes stale instead of 2 changes which articles are in scope by well under a percent
+    of the window. Set ``RWE_STORIES_CACHE_TTL`` to restore any other value; 0 disables caching."""
     try:
         v = float(os.environ.get("RWE_STORIES_CACHE_TTL", "").strip())
-        return v if v >= 0 else 120.0
+        return v if v >= 0 else 600.0
     except (TypeError, ValueError):
-        return 120.0
+        return 600.0
 
 
 def clear_cache() -> None:
     """Drop every cached build (tests, and any caller that has just mutated the catalog)."""
     with _CACHE_LOCK:
         _CACHE.clear()
+        # The build locks go too. Leaving them would leak one Lock per key across a test suite that
+        # clears between cases, and a lock whose entry is gone protects nothing.
+        _BUILD_LOCKS.clear()
 
 
 _WARM_LOCK = threading.Lock()
@@ -1142,21 +1171,47 @@ def _cached_build(store_, *, topic, date_from, date_to, max_scan, min_articles, 
         return _build()
 
     key = (topic, date_from, date_to, max_scan, min_articles, min_publishers, fingerprint)
-    now = _time.time()
-    with _CACHE_LOCK:
-        entries = _CACHE.get(store_)
-        hit = entries.get(key) if entries else None
-        if hit is not None and (now - hit[0]) < ttl:
-            return hit[1]
 
-    built = _build()
+    def _lookup():
+        with _CACHE_LOCK:
+            entries = _CACHE.get(store_)
+            hit = entries.get(key) if entries else None
+            return hit[1] if (hit is not None and (_time.time() - hit[0]) < ttl) else None
+
+    hit = _lookup()
+    if hit is not None:
+        return hit
+
+    # SINGLE-FLIGHT the cold build. `warm_cache` has always guarded the POLLER's threads against
+    # each other; the reader path had no such guard, so every request that arrived during a rebuild
+    # started a rebuild of its own. At the measured 20k-article cost that is ~10 s of CPU each, on a
+    # box with far fewer cores than that has concurrent readers — the requests do not merely wait,
+    # they compete, and each one makes the others slower. Three readers cost thirty seconds of work
+    # to produce three copies of one identical answer.
+    #
+    # The waiters re-check the cache after acquiring: by then the winner has usually stored the
+    # build, so they return it instead of repeating it. A build that RAISES releases the lock via
+    # `with` and the next waiter tries — a failure is never cached and never wedges the key.
     with _CACHE_LOCK:
-        entries = _CACHE.setdefault(store_, {})
-        # Bounded per store: evict oldest first rather than grow without limit across topics/dates.
-        if len(entries) >= _CACHE_MAX:
-            for stale in sorted(entries, key=lambda k: entries[k][0])[: len(entries) - _CACHE_MAX + 1]:
-                entries.pop(stale, None)
-        entries[key] = (_time.time(), built)
+        lock = _BUILD_LOCKS.setdefault(key, threading.Lock())
+    with lock:
+        hit = _lookup()
+        if hit is not None:
+            return hit
+        built = _build()
+        with _CACHE_LOCK:
+            entries = _CACHE.setdefault(store_, {})
+            # Bounded per store: evict oldest first rather than grow without limit across topics/dates.
+            if len(entries) >= _CACHE_MAX:
+                for stale in sorted(entries, key=lambda k: entries[k][0])[: len(entries) - _CACHE_MAX + 1]:
+                    entries.pop(stale, None)
+            entries[key] = (_time.time(), built)
+            # The key contains the catalog fingerprint, so a new key is minted on every write and the
+            # old one is dead. Bound the lock map the same way the entry map is bounded, or a
+            # long-running process accumulates one dead Lock per ingest cycle forever.
+            if len(_BUILD_LOCKS) > _CACHE_MAX * 4:
+                for dead in [k for k in _BUILD_LOCKS if k != key][: len(_BUILD_LOCKS) // 2]:
+                    _BUILD_LOCKS.pop(dead, None)
     return built
 
 

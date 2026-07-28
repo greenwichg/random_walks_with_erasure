@@ -1,105 +1,38 @@
 "use client";
 
-import { Bar, BarChart, Tooltip, XAxis, YAxis } from "recharts";
-import { useMeasure } from "@/hooks/use-measure";
-import { useTranslation } from "@/lib/i18n";
+import dynamic from "next/dynamic";
+import * as React from "react";
+import type { StackedBar as Impl } from "./stacked-bar-impl";
 
-export interface BarSeries {
-  key: string;
-  label: string;
-  color: string;
-}
+// The chart module also owned this shared type. Re-exported from the same path it always lived at,
+// so the split stays invisible to importers (type-only: still no runtime cost).
+export type { BarSeries } from "./stacked-bar-impl";
 
-/** A measured stacked/grouped bar chart (reporting, acceptance…). */
-export function StackedBar({
-  data,
-  series,
-  height = 220,
-  stacked = true,
-  percent = false,
-  xKey = "date",
-  showLegend = false,
-}: {
-  data: Record<string, number | string>[];
-  series: BarSeries[];
-  height?: number;
-  stacked?: boolean;
-  percent?: boolean;
-  xKey?: string;
-  /** SpectrumBar-style chip legend (identity never color-alone); off by default so existing
-   * cards render byte-identically. */
-  showLegend?: boolean;
-}) {
-  const { formatDate } = useTranslation();
-  const { ref, width } = useMeasure<HTMLDivElement>();
+/**
+ * Code-splitting boundary for StackedBar.
+ *
+ * Recharts is ~100 kB of the First Load JS and every route that statically imported one of these
+ * charts paid for the whole library — including the HOME page, whose only chart is a 104px
+ * sparkline in the rail. Measured before this split: `/` 394 kB vs `/stories` 293 kB, the two
+ * pages differing by little else.
+ *
+ * The wrapper keeps the original module path and export name, so no call site changes and the
+ * props stay exactly the impl's (`import type` is erased, so it pulls in no runtime code).
+ * `ssr: false` is safe here: every consumer is already a client component fetching its data
+ * through React Query, so these charts never rendered in server HTML anyway.
+ *
+ * The placeholder reserves the chart's own height — a lazy chart that collapses to zero and then
+ * pushes the page down on arrival trades a bundle win for a layout shift.
+ */
+const Lazy = dynamic(() => import("./stacked-bar-impl").then((m) => m.StackedBar), {
+  ssr: false,
+  loading: () => <div aria-hidden className="w-full animate-pulse rounded-lg bg-muted/40" />,
+});
 
+export function StackedBar(props: React.ComponentProps<typeof Impl>) {
   return (
-    <div className={showLegend ? "space-y-2.5" : undefined}>
-    {/* MB1: min-w-0 + overflow-hidden — see TrendChart. */}
-    <div ref={ref} className="w-full min-w-0 overflow-hidden" style={{ height }}>
-      <BarChart width={width} height={height} data={data} margin={{ top: 8, right: 12, left: 0, bottom: 0 }} barCategoryGap={stacked ? "18%" : "26%"}>
-        <XAxis
-          dataKey={xKey}
-          tickFormatter={(d: string) =>
-            typeof d === "string" && d.includes("-")
-              ? formatDate(d, { month: "short", day: "numeric" })
-              : d
-          }
-          tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
-          tickLine={false}
-          axisLine={false}
-          minTickGap={24}
-        />
-        <YAxis
-          // A percentage chart is fixed to 0–100% (matching MultiLineChart's percent axis); a count
-          // chart keeps recharts' dynamic 0..max scaling. Never auto-scale a percentage axis.
-          domain={percent ? [0, 1] : undefined}
-          ticks={percent ? [0, 0.25, 0.5, 0.75, 1] : undefined}
-          tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
-          tickLine={false}
-          axisLine={false}
-          width={42}
-          tickFormatter={(v: number) => (percent ? `${Math.round(v * 100)}%` : `${v}`)}
-        />
-        <Tooltip
-          cursor={{ fill: "hsl(var(--muted) / 0.5)" }}
-          contentStyle={{
-            borderRadius: 12,
-            border: "1px solid hsl(var(--border))",
-            background: "hsl(var(--popover))",
-            color: "hsl(var(--popover-foreground))",
-            fontSize: 12,
-          }}
-          formatter={(v: number, name: string) => [percent ? `${Math.round(v * 100)}%` : v, name]}
-          labelFormatter={(d) =>
-            typeof d === "string" && d.includes("-")
-              ? formatDate(d, { month: "long", day: "numeric" })
-              : d
-          }
-        />
-        {series.map((s, i) => (
-          <Bar
-            key={s.key}
-            dataKey={s.key}
-            name={s.label}
-            stackId={stacked ? "a" : undefined}
-            fill={s.color}
-            radius={stacked ? (i === series.length - 1 ? [4, 4, 0, 0] : [0, 0, 0, 0]) : [4, 4, 0, 0]}
-            animationDuration={800}
-          />
-        ))}
-      </BarChart>
-    </div>
-    {showLegend && (
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
-        {series.map((s) => (
-          <div key={s.key} className="flex items-center gap-1.5">
-            <span className="h-2 w-2 rounded-full" style={{ background: s.color }} />
-            <span className="text-muted-foreground">{s.label}</span>
-          </div>
-        ))}
-      </div>
-    )}
+    <div style={{ minHeight: props.height ?? 220 }}>
+      <Lazy {...props} />
     </div>
   );
 }
