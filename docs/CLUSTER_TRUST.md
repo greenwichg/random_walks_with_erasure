@@ -894,3 +894,68 @@ other public rater covers. MBFC's ~3,900 sources are heavily US/UK weighted and 
 this tail. Filling those blanks from an owner, a sibling, or a country prior would put on the order
 of a thousand fabricated claims into the product to gain coverage, which inverts the thing the
 product is for. **An outlet with no rating anywhere stays unrated for as long as that is true.**
+
+### Sweeping the blank leans
+
+The worklist finds rows where a rating unlocks a *claim*. It says nothing about rows that were
+curated for identity and locality and then never revisited. There were twenty of those, and they
+had never been looked up as a set — each had been skipped once, in passing, for a reason nobody
+recorded.
+
+Fourteen of the twenty have a published rating.
+
+| filled | MBFC | | filled | MBFC |
+|---|---|---|---|---|
+| Der Spiegel | Left-Center | | Ahram Online | Right-Center |
+| Die Zeit | Left-Center | | Clarín | Right-Center |
+| Süddeutsche Zeitung | Left-Center | | La Nación | Right-Center |
+| The Punch | Left-Center | | NHK | Right-Center |
+| Mirror | Left-Center | | Nikkei Asia | Right-Center |
+| The Motley Fool | Left-Center | | France 24 | Least Biased |
+| Mail & Guardian | **Left** | | New Zealand Herald | Least Biased |
+
+Plus two new rows the worklist named: **Yahoo News** (Left-Center) and **WDIV ClickOnDetroit**
+(Least Biased).
+
+Two of these are worth pausing on, because they are the reason the file holds ratings rather than
+impressions. **NHK** is rated *right*-of-centre — MBFC cites story selection favouring Japanese
+nationalism — which few would predict of a public broadcaster. **Mail & Guardian** is the only
+outright Left (−2) in three curation passes, and it arrived with a *Mixed* factuality rating
+attached; lean and reliability are different axes and this file only carries one of them.
+
+The identity-only category is now empty: both of its members, ESPN and The Motley Fool, had ratings
+sourced and moved to the rated blocks. That is the intended trajectory. **An identity-only row is a
+stage, not a verdict** — nothing in this file should be read as "unratable".
+
+### The six that stayed blank, and why that list is the deliverable
+
+| outlet | why |
+|---|---|
+| O Globo | MBFC rates **Globo, the parent group**, not the newspaper |
+| Folha de S.Paulo | confirmed absent from MBFC, AllSides *and* Ad Fontes |
+| Milenio | no MBFC page |
+| Nigerian Tribune | no MBFC page |
+| The East African | only its owner, Nation Media Group, is rated |
+| Brisbane Times | no MBFC page; its sibling mastheads are rated |
+
+Off-registry, from the same worklist: **Sportskeeda** has an aggregated *factuality* score and no
+bias rating anywhere — factuality is not lean, and substituting one for the other would be a
+fabrication with a citation attached. **Sky Sports** is unrated; Sky News UK is Least Biased and is
+a different masthead. **WGAU** is unrated; MBFC rates WUGA, the NPR station in the same city.
+
+O Globo is the one that costs something. A rating for its parent was available and would have looked
+perfectly citable — and it is the same ownership inference refused for Page Six one commit earlier,
+where the masthead turned out a notch away from its owner. A refusal that only ever applies when it
+is free does not mean anything.
+
+`test_the_unrated_set_is_exactly_the_documented_one` pins this: every blank lean in the file must be
+one the comments give a reason for. Adding an unrated row stays legal — adding one *silently* does
+not.
+
+### One stale comment, corrected
+
+The pass-1 log read *"Confirmed NOT rated by AllSides (lean stays blank): … France 24, Le Monde,
+Der Spiegel, ABC Australia, Sydney Morning Herald."* All eight of those names have since been filled
+from MBFC. **One rater having no page is a fact about that rater, not about the outlet** — and it is
+not a reason to stop looking. The comment now says so, because as written it was quietly telling the
+next person those rows were closed.

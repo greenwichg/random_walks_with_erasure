@@ -277,18 +277,18 @@ def test_press_release_wires_are_marked(reg):
 
 
 def test_contested_brand_words_are_settled_by_curation(reg):
-    """The Motley Fool runs more than one national domain, so a bare name could not be placed
-    without guessing which. A curated row settles WHO the outlet is; the lean stays blank because
-    identity is not a political rating (L2.2).
+    """ESPN and The Motley Fool each run more than one national domain, so a bare name could not be
+    placed without guessing which. A curated row settles WHO the outlet is — identity first, and a
+    rating only when one is sourced.
 
-    ESPN was the other example here and is now RATED, which is the intended trajectory: an
-    identity-only row is a stage, not a verdict. Its forms still have to collapse."""
-    import math
+    Both have since been rated, which is why this now asserts only on IDENTITY. That is the point:
+    an identity-only row is a stage, not a verdict, and the collapse it buys has to keep working
+    across the transition. The unrated case is covered by the rows that are still blank, below."""
     for form in ["ESPN", "Espn.Com", "Espn.Ph", "espndeportes.espn.com"]:
         assert reg.resolve(form).canonical == "ESPN", form
     for form in ["Fool", "Fool.Com", "fool.co.uk"]:
         assert reg.resolve(form).canonical == "The Motley Fool", form
-    assert math.isnan(reg.resolve("Fool").lean) and reg.resolve("Fool").country == "US"
+    assert reg.resolve("Fool").country == "US"
 
 
 def test_curation_removed_the_last_unplaceable_names():
@@ -377,6 +377,79 @@ def test_the_two_standards_do_not_collide(reg):
     assert reg.resolve("standard.co.uk").country == "GB"
     assert reg.resolve("Standard.Net.Au") is None
     assert reg.resolve("Standard") is None
+
+
+def test_the_blank_lean_sweep(reg):
+    """Third pass: every row in the file that carried no lean was looked up rather than only the
+    ones with traffic. Fourteen of twenty had a published rating. Two came back differently from
+    what a guess would have produced — Mail & Guardian is the only LEFT in three passes, and NHK is
+    rated right-of-centre, which few would predict of a public broadcaster."""
+    assert reg.lean("Spiegel.De") == -1.0                     # MBFC Left-Center
+    assert reg.lean("Zeit.De") == -1.0                        # MBFC Left-Center
+    assert reg.lean("Sueddeutsche.De") == -1.0                # MBFC Left-Center
+    assert reg.lean("France24.Com") == 0.0                    # MBFC LEAST BIASED
+    assert reg.lean("Mirror.Co.Uk") == -1.0                   # MBFC Left-Center
+    assert reg.lean("Nzherald.Co.Nz") == 0.0                  # MBFC LEAST BIASED
+    assert reg.lean("Nhk.Or.Jp") == 1.0                       # MBFC Right-Center
+    assert reg.lean("Asia.Nikkei.Com") == 1.0                 # MBFC Right-Center
+    assert reg.lean("Punchng.Com") == -1.0                    # MBFC Left-Center
+    assert reg.lean("Mg.Co.Za") == -2.0                       # MBFC LEFT
+    assert reg.lean("English.Ahram.Org.Eg") == 1.0            # MBFC Right-Center
+    assert reg.lean("Clarin.Com") == 1.0                      # MBFC Right-Center
+    assert reg.lean("Lanacion.Com.Ar") == 1.0                 # MBFC Right-Center
+    assert reg.lean("Fool.Com") == -1.0                       # MBFC Left-Center
+    assert reg.lean("Yahoo.Com") == -1.0                      # MBFC Left-Center
+    assert reg.lean("Clickondetroit.Com") == 0.0              # MBFC LEAST BIASED
+
+
+def test_o_globo_is_not_rated_from_the_group_that_owns_it(reg):
+    """MBFC rates GLOBO, the parent, not the newspaper. Reading a masthead's lean off its owner is
+    the inference refused one commit earlier for Page Six, whose rating turned out a notch away from
+    the New York Post's. Refusing it in the direction that costs coverage is the only way the
+    refusal means anything."""
+    import math
+    o = reg.resolve("Oglobo.Globo.Com")
+    assert o.canonical == "O Globo" and math.isnan(o.lean) and o.country == "BR"
+
+
+def test_the_unrated_set_is_exactly_the_documented_one(reg):
+    """A guard, not a fact: every blank lean in the file must be one the comments give a reason for.
+    Adding a row with no rating is legal (identity and locality are curated facts) — adding one
+    silently is what this catches. Wire rows are blank by construction: a machine-generated
+    market-data feed has no editorial stance to rate."""
+    import math
+    blank = {o.canonical for o in reg.outlets() if math.isnan(o.lean)}
+    wire = {o.canonical for o in reg.outlets() if o.kind == "wire"}
+    assert wire <= blank, "a wire feed must never carry a lean"
+    assert blank - wire == {
+        "Brisbane Times",      # no MBFC page; sibling mastheads are rated, which is not a source
+        "Folha de S.Paulo",    # confirmed absent from MBFC, AllSides and Ad Fontes alike
+        "Milenio",             # no MBFC page
+        "Nigerian Tribune",    # no MBFC page
+        "O Globo",             # only its owner is rated — see the test above
+        "The East African",    # only its owner, Nation Media Group, is rated
+    }
+
+
+def test_every_yahoo_property_is_one_outlet(reg):
+    """The alias covers yahoo.com, not just news.yahoo.com, so the finance/news/regional subdomains
+    all land on one row. Deliberate: publisher_identity already collapses every yahoo.com host into
+    a single publisher, so rating only news.yahoo.com would SPLIT the identity — one form keyed by a
+    canonical, the other by its domain. The cost is that a Yahoo Finance article carries the Yahoo
+    News lean, which is stated in the file."""
+    for form in ["Yahoo.Com", "News.Yahoo.Com", "Finance.Yahoo.Com", "Sg.News.Yahoo.Com", "Yahoo"]:
+        assert reg.resolve(form).canonical == "Yahoo News", form
+    import publisher_identity
+    g = publisher_identity.groups(["Yahoo.Com", "Finance.Yahoo.Com", "Yahoo Entertainment"])
+    assert len(set(g.values())) == 1
+
+
+def test_nhk_carries_the_rating_of_the_entity_its_domain_names(reg):
+    """MBFC rates NHK (domestic) Right-Center and NHK World-Japan Left-Center — two points apart,
+    both under nhk.or.jp. Resolution is host-based, so one row has to answer for both and it answers
+    with the domestic rating. Pinned so the limitation is visible rather than discovered."""
+    assert reg.resolve("Nhk.Or.Jp").canonical == "NHK"
+    assert reg.lean("www3.nhk.or.jp/nhkworld/en/news/") == 1.0
 
 
 def test_curating_one_domain_does_not_uncontest_the_word():

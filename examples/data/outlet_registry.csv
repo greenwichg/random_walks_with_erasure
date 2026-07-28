@@ -94,8 +94,10 @@ The Blaze,2,theblaze.com|Blaze|TheBlaze,US,,,national
 #   Haaretz · Center(0): Financial Times, The Telegraph (moved from Lean Right 6/2026), The Times,
 #   Deutsche Welle, Euronews, The Globe and Mail, Toronto Star, Hindustan Times, The Jerusalem Post,
 #   The Times of Israel, South China Morning Post · Lean Right(+1): Daily Mail (moved from Right 9/2025).
-#   Confirmed NOT rated by AllSides (lean stays blank): Al Arabiya, NDTV, The Times of India,
-#   France 24, Le Monde, Der Spiegel, ABC Australia, Sydney Morning Herald.
+#   Confirmed NOT rated by AllSides: Al Arabiya, NDTV, The Times of India, France 24, Le Monde,
+#   Der Spiegel, ABC Australia, Sydney Morning Herald. (Their leans were blank on this evidence and
+#   ALL EIGHT have since been filled from MBFC in later passes -- "one rater has no page" is a fact
+#   about that rater, not about the outlet, and is not a reason to stop looking.)
 # ---------------------------------------------------------------------------------------------
 # Lean verification log — 2026-07-26 (operator pass 2, manually collected multi-source ratings;
 # lean = the operator's Average Bias Rating; per-source breakdown recorded per row below.
@@ -147,11 +149,11 @@ The Blaze,2,theblaze.com|Blaze|TheBlaze,US,,,national
 #   Vanguard (Nigeria): Lean Left (-1; MBFC LL)
 #   Yonhap News Agency: Lean Right (+1; MBFC LR)
 Deutsche Welle,0,dw.com,DE,,,international
-Der Spiegel,,spiegel.de,DE,,,national
-Die Zeit,,zeit.de,DE,,,national
+Der Spiegel,-1,spiegel.de,DE,,,national
+Die Zeit,-1,zeit.de,DE,,,national
 Frankfurter Allgemeine Zeitung,1,faz.net,DE,,,national
-Süddeutsche Zeitung,,sueddeutsche.de,DE,,,national
-France 24,,france24.com,FR,,,international
+Süddeutsche Zeitung,-1,sueddeutsche.de,DE,,,national
+France 24,0,france24.com,FR,,,international
 Le Monde,-1,lemonde.fr,FR,,,national
 Le Figaro,1,lefigaro.fr,FR,,,national
 Radio France Internationale,0,rfi.fr,FR,,,international
@@ -175,7 +177,7 @@ Financial Times,0,ft.com,GB,,,international
 The Times,0,thetimes.co.uk|thetimes.com,GB,,,national
 Daily Mail,1,dailymail.co.uk|dailymail.com,GB,,,national
 The Economist,-1,economist.com,GB,,,international
-Mirror,,mirror.co.uk,GB,,,national
+Mirror,-1,mirror.co.uk,GB,,,national
 CBC News,-1,cbc.ca,CA,,,national
 The Globe and Mail,0,theglobeandmail.com,CA,,,national
 CTV News,0,ctvnews.ca,CA,,,national
@@ -184,7 +186,7 @@ ABC Australia,-1,abc.net.au,AU,,,national
 Sydney Morning Herald,-1,smh.com.au,AU,,,national
 The Age,-1,theage.com.au,AU,,,national
 News.com.au,1,news.com.au,AU,,,national
-New Zealand Herald,,nzherald.co.nz,NZ,,,national
+New Zealand Herald,0,nzherald.co.nz,NZ,,,national
 Stuff,-1,stuff.co.nz,NZ,,,national
 The Times of India,1,timesofindia.indiatimes.com,IN,,,national
 The Hindu,-1,thehindu.com,IN,,,national
@@ -193,8 +195,8 @@ NDTV,1,ndtv.com,IN,,,national
 The Indian Express,-1,indianexpress.com,IN,,,national
 Dawn,-1,dawn.com,PK,,,national
 The Japan Times,0,japantimes.co.jp,JP,,,national
-NHK,,nhk.or.jp,JP,,,national
-Nikkei Asia,,asia.nikkei.com,JP,,,international
+NHK,1,nhk.or.jp,JP,,,national
+Nikkei Asia,1,asia.nikkei.com,JP,,,international
 The Korea Herald,1,koreaherald.com,KR,,,national
 Yonhap News Agency,1,yna.co.kr,KR,,,national
 South China Morning Post,0,scmp.com,HK,,,national
@@ -214,19 +216,19 @@ Daily Sabah,2,dailysabah.com,TR,,,national
 Hurriyet Daily News,2,hurriyetdailynews.com,TR,,,national
 Daily Nation,-1,nation.africa|nation.co.ke,KE,,,national
 The East African,,theeastafrican.co.ke,KE,,,international
-The Punch,,punchng.com,NG,,,national
+The Punch,-1,punchng.com,NG,,,national
 Vanguard (Nigeria),-1,vanguardngr.com,NG,,,national
 Nigerian Tribune,,tribuneonlineng.com,NG,,,national
 Premium Times,-1,premiumtimesng.com,NG,,,national
 News24,0,news24.com,ZA,,,national
-Mail & Guardian,,mg.co.za,ZA,,,national
+Mail & Guardian,-2,mg.co.za,ZA,,,national
 Daily Maverick,0,dailymaverick.co.za,ZA,,,national
-Ahram Online,,english.ahram.org.eg,EG,,,national
+Ahram Online,1,english.ahram.org.eg,EG,,,national
 Morocco World News,1,moroccoworldnews.com,MA,,,national
 Folha de S.Paulo,,folha.uol.com.br,BR,,,national
 O Globo,,oglobo.globo.com,BR,,,national
-Clarín,,clarin.com,AR,,,national
-La Nación,,lanacion.com.ar,AR,,,national
+Clarín,1,clarin.com,AR,,,national
+La Nación,1,lanacion.com.ar,AR,,,national
 El Universal,-2,eluniversal.com.mx,MX,,,national
 Milenio,,milenio.com,MX,,,national
 # Machine-generated market-data feeds (kind=wire, column 8). Not news outlets: they publish
@@ -249,12 +251,11 @@ Ticker Report,,tickerreport.com|Tickerreport.Com,,,,,wire
 # The rows settle the identity AND keep press releases out of stories.
 PR Newswire,,prnewswire.com|prnewswire.co.uk|Pr Newswire,,,,,wire
 GlobeNewswire,,globenewswire.com|Globe Newswire,,,,,wire
-# Identity-only row: an unrated outlet whose brand word is carried by more than one domain, so a
-# bare name could not be placed without guessing which. Lean stays blank -- it settles WHO the
-# outlet is, not where it stands (L2.2). Country is a curated fact, which is what earns the row.
-# (ESPN was here on the same terms until MBFC's rating was sourced; it now sits in the rated block
-# at the foot of this file. An identity-only row is a stage, not a verdict.)
-The Motley Fool,,fool.com|fool.co.uk|Fool,US,,,international
+# An identity-only row -- identity and country curated, lean honestly blank -- held an outlet whose
+# brand word is carried by more than one domain, so a bare name could not be placed without guessing
+# which. BOTH of its members, ESPN and The Motley Fool, have since had ratings sourced and moved to
+# the rated blocks below. The category is empty, and that is the intended trajectory: an
+# identity-only row is a stage, not a verdict. Nothing here should be read as "unratable".
 # Lean curation for the outlets the publisher-identity audit surfaced as genuine registry gaps —
 # real newspapers with no row at all, not alias gaps. Every rating below is Media Bias/Fact Check's
 # published classification, mapped to this file's -2..+2 scale (Left -2, Left-Center -1, Least
@@ -311,3 +312,57 @@ Page Six,1,pagesix.com,US,New York,New York,national
 Ynetnews,-1,ynetnews.com,IL,,,national
 The News International,1,thenews.com.pk,PK,,,national
 London Evening Standard,1,standard.co.uk|Evening Standard,GB,,London,regional
+#
+# Third curation pass -- scope: every row in this file that carried NO lean, plus the remainder of
+# the production unlock worklist. Twenty rows had identity and locality curated but the lean left
+# honestly blank; fourteen of them turned out to have a published rating, and six do not. Same
+# mapping and the same 403-driven provenance caveat as the block above (search-result summaries of
+# the MBFC pages, not the pages -- re-read by hand before treating as settled). Retrieved 2026-07-28.
+#
+#   Der Spiegel          : Left-Center  (MBFC LC, factual High)   [MBFC page: "Spiegel Online"]
+#   Die Zeit             : Left-Center  (MBFC LC, factual High)
+#   Süddeutsche Zeitung  : Left-Center  (MBFC LC, factual High)
+#   France 24            : LEAST BIASED (MBFC, factual High; no op-ed page, IFCN fact-checker)
+#   Mirror               : Left-Center  (MBFC LC, factual MIXED; AllSides says Left, AdFontes Skews
+#                          Left -- the three-source average still lands on -1)
+#   New Zealand Herald   : LEAST BIASED (MBFC, factual High) -- rated 0 although MBFC notes story
+#                          selection very slightly favours the right
+#   NHK                  : Right-Center (MBFC RC, factual High; MBFC cites story selection favouring
+#                          Japanese nationalism) -- see the NHK World caveat below
+#   Nikkei Asia          : Right-Center (MBFC RC, factual High)  [MBFC page: "Nikkei Asian Review"]
+#   The Punch            : Left-Center  (MBFC LC, factual MIXED)
+#   Mail & Guardian      : LEFT         (MBFC L, factual MIXED) -- the only -2 in three passes
+#   Ahram Online         : Right-Center (MBFC RC, factual MIXED; MBFC cites state ownership and
+#                          government censorship -- international coverage low-bias, domestic not)
+#   Clarín               : Right-Center (MBFC RC, factual High)
+#   La Nación            : Right-Center (MBFC RC, factual High)  [the ARGENTINE La Nacion; MBFC
+#                          rates a Costa Rican paper of the same name separately]
+#   The Motley Fool      : Left-Center  (MBFC LC, factual High)  -- was identity-only
+#   Yahoo News           : Left-Center  (MBFC LC, factual High)  -- new row
+#   WDIV ClickOnDetroit  : LEAST BIASED (MBFC, factual High)     -- new row
+#
+# NHK CAVEAT, recorded because a single row cannot express it: MBFC rates NHK (domestic) Right-Center
+# and NHK World-Japan Left-Center -- two points apart. Both live under nhk.or.jp, and resolution here
+# is host-based, so every NHK article gets the DOMESTIC rating. That is the rating for the entity the
+# domain names; it is wrong for NHK World copy, and no row shape available here can fix it.
+#
+# YAHOO CAVEAT: MBFC rates Yahoo News, and the alias covers yahoo.com so that finance./news./sg.news.
+# subdomains resolve to one outlet. That is deliberate -- publisher_identity ALREADY collapses every
+# yahoo.com host into one publisher, so the row rates the entity the pipeline actually counts. It
+# does mean a Yahoo Finance article carries the Yahoo News lean.
+#
+# Left blank, each for a stated reason -- these are the honest limit of the pass, not a backlog:
+#   O Globo          : MBFC rates GLOBO, the parent group, not the newspaper. Reading a masthead's
+#                      lean off its owner is the same inference refused for Page Six one commit ago.
+#   Folha de S.Paulo : no rating at MBFC, AllSides or Ad Fontes -- confirmed absent, not unsearched.
+#   Milenio          : no MBFC page.
+#   Nigerian Tribune : no MBFC page.
+#   The East African : no MBFC page of its own; only its owner, Nation Media Group, is rated.
+#   Brisbane Times   : no MBFC page (unchanged from the pass above).
+#   Sportskeeda      : an aggregated FACTUALITY score exists; no bias rating anywhere. Factuality is
+#                      not lean, and substituting one for the other would be a fabrication.
+#   Sky Sports       : no MBFC page. Sky News UK is rated Least Biased -- a different masthead.
+#   WGAU (Athens GA) : no MBFC page. MBFC rates WUGA, the NPR station in the same city -- not this one.
+The Motley Fool,-1,fool.com|fool.co.uk|Fool,US,,,international
+Yahoo News,-1,yahoo.com|news.yahoo.com|Yahoo|Yahoo Entertainment,US,,,national
+WDIV ClickOnDetroit,0,clickondetroit.com|WDIV,US,Michigan,Detroit,local
