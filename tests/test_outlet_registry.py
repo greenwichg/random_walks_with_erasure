@@ -277,24 +277,34 @@ def test_press_release_wires_are_marked(reg):
 
 
 def test_contested_brand_words_are_settled_by_curation(reg):
-    """ESPN and The Motley Fool each run more than one national domain, so a bare name could not be
-    placed without guessing which. A curated row settles WHO the outlet is; the lean stays blank
-    because identity is not a political rating (L2.2)."""
+    """The Motley Fool runs more than one national domain, so a bare name could not be placed
+    without guessing which. A curated row settles WHO the outlet is; the lean stays blank because
+    identity is not a political rating (L2.2).
+
+    ESPN was the other example here and is now RATED, which is the intended trajectory: an
+    identity-only row is a stage, not a verdict. Its forms still have to collapse."""
     import math
     for form in ["ESPN", "Espn.Com", "Espn.Ph", "espndeportes.espn.com"]:
         assert reg.resolve(form).canonical == "ESPN", form
     for form in ["Fool", "Fool.Com", "fool.co.uk"]:
         assert reg.resolve(form).canonical == "The Motley Fool", form
-    assert math.isnan(reg.resolve("ESPN").lean) and reg.resolve("ESPN").country == "US"
+    assert math.isnan(reg.resolve("Fool").lean) and reg.resolve("Fool").country == "US"
 
 
 def test_curation_removed_the_last_unplaceable_names():
-    """The audit's worklist was exactly three names. All three now resolve, so none of them reaches
-    the brand-label heuristic at all."""
-    import publisher_identity
+    """The audit's worklist was exactly three names. All three now RESOLVE, so none of them reaches
+    the brand-label heuristic at all.
+
+    Asserted against the audit's report rather than raw ``ambiguous_labels``: a label stays
+    contested whether or not its domains are curated (that is what stops curation quietly licensing
+    a guess — see test_curating_one_domain_does_not_uncontest_the_word). What curation removes is
+    the NAME from the unplaceable list, because it no longer needs placing."""
+    import audit_publisher_identity as api
     names = ["Espn.Com", "Espn.Ph", "ESPN", "Fool", "Fool.Com", "Fool.Co.Uk",
              "Pr Newswire", "Prnewswire.Com", "Prnewswire.Co.Uk"]
-    assert publisher_identity.ambiguous_labels(names) == set()
+    story = {"title": "t", "totalCoverage": len(names),
+             "coverage": [{"publisher": p, "url": f"u{i}"} for i, p in enumerate(names)]}
+    assert api.analyse([story])["ambiguous"] == []
 
 
 def test_curated_leans_for_the_measured_registry_gaps(reg):
@@ -328,9 +338,57 @@ def test_the_two_star_mastheads_do_not_collide(reg):
 
 
 def test_the_two_inquirers_do_not_collide(reg):
-    """inquirer.com is Philadelphia; inquirer.net is the Philippine Daily Inquirer, already in the
-    registry and deliberately unrated."""
-    import math
+    """inquirer.com is Philadelphia; inquirer.net is the Philippine Daily Inquirer. Both are now
+    rated Left-Center by MBFC, which makes the collision INVISIBLE in the lean and all the more
+    worth pinning: they are different newspapers on different continents."""
     assert reg.resolve("inquirer.com").canonical == "Philadelphia Inquirer"
     assert reg.resolve("inquirer.net").canonical == "Philippine Daily Inquirer"
-    assert math.isnan(reg.lean("inquirer.net"))
+    assert reg.resolve("inquirer.com").country == "US"
+    assert reg.resolve("inquirer.net").country == "PH"
+
+
+def test_the_unlock_worklist_ratings(reg):
+    """The second curation pass. These were not chosen by article volume but by the audit's UNLOCK
+    worklist — the unrated outlets that would actually complete a coverage-gap claim (a claim needs
+    >= 3 rated publishers), so a rating here changes what the product can SAY, not just what it
+    knows. Every value is MBFC's published classification on this file's -2..+2 scale."""
+    assert reg.lean("Pagesix.Com") == 1.0                     # MBFC Right-Center
+    assert reg.lean("Espn.Com") == -1.0                       # MBFC Left-Center
+    assert reg.lean("Inquirer.Net") == -1.0                   # MBFC Left-Center
+    assert reg.lean("Ynetnews.Com") == -1.0                   # MBFC Left-Center
+    assert reg.lean("Thenews.Com.Pk") == 1.0                  # MBFC Right-Center
+    assert reg.lean("Standard.Co.Uk") == 1.0                  # MBFC Right-Center
+
+
+def test_page_six_is_rated_apart_from_its_owner(reg):
+    """Page Six is the New York Post's gossip desk and shares its newsroom, but MBFC rates it
+    Right-Center where the Post is Right. Inheriting the owner's rating would have been the guess;
+    a separate row is the reason the file has rows."""
+    assert reg.resolve("Pagesix.Com").canonical == "Page Six"
+    assert reg.resolve("Nypost.Com").canonical == "New York Post"
+    assert reg.lean("Pagesix.Com") == 1.0 and reg.lean("Nypost.Com") == 2.0
+
+
+def test_the_two_standards_do_not_collide(reg):
+    """standard.co.uk is the London Evening Standard; standard.net.au is the Warrnambool Standard,
+    a Victorian local paper with no rating anywhere. Rating one must never reach the other — the
+    bare brand word 'standard' is the exact false positive that forced the brand-DOMAIN key."""
+    assert reg.resolve("Standard.Co.Uk").canonical == "London Evening Standard"
+    assert reg.resolve("standard.co.uk").country == "GB"
+    assert reg.resolve("Standard.Net.Au") is None
+    assert reg.resolve("Standard") is None
+
+
+def test_curating_one_domain_does_not_uncontest_the_word():
+    """The regression this curation could have caused, and the reason _label_domains reads the form
+    the FEED sent rather than the resolved canonical.
+
+    Curating standard.co.uk moves that name off its domain token. Counting labels after resolution
+    would then leave standard.net.au as the only 'standard' domain in the set — unambiguous — and a
+    bare 'Standard' would be placed with the Warrnambool paper. Which brand words are contested is a
+    fact about the domains, not about who has been curated."""
+    import publisher_identity
+    names = ["Standard.Co.Uk", "Standard.Net.Au", "Standard"]
+    assert publisher_identity.ambiguous_labels(names) == {"standard"}
+    g = publisher_identity.groups(names)
+    assert len({g["Standard.Co.Uk"], g["Standard.Net.Au"], g["Standard"]}) == 3

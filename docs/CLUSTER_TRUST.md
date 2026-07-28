@@ -842,3 +842,55 @@ honest ceiling on this approach rather than a backlog:
 Rating them would unlock 11 stories between them, and doing it without a defensible public source
 would put three fabricated claims into the product to gain eleven. The worklist is doing its job by
 naming them; the answer is to find sources, not to fill the blanks.
+
+### Finding the sources
+
+Four of those five were findable. MBFC and AllSides both return **403 to an automated fetch**, so
+each rating below comes from a search-result summary of the MBFC page rather than the page itself —
+a defensible public source, and second-hand. That distinction is recorded in the registry beside the
+rows, because it bears on how much they should be trusted.
+
+| outlet | MBFC | on this scale | note |
+|---|---|---:|---|
+| Page Six | Right-Center, factual Mixed | +1 | rated **apart from** the New York Post (+2), which owns it |
+| ESPN | Left-Center, factual High | −1 | was an identity-only row |
+| Philippine Daily Inquirer | Left-Center, Mostly Factual | −1 | was a locality-only row |
+| Ynetnews | Left-Center, factual High | −1 | |
+| The News International | Right-Center, factual Mixed | +1 | |
+| London Evening Standard | Right-Center, Mostly Factual | +1 | |
+
+**Brisbane Times still has no rating and still gets none.** It shares an owner with the Sydney
+Morning Herald and The Age, both rated; inheriting from a sibling masthead is precisely the guess
+this file exists to refuse. Its four unlocks stay locked.
+
+Page Six is the case worth naming. It is the New York Post's gossip desk, shares its newsroom, and
+is rated one notch *less* right than its owner. An ownership prior would have written +2 — which is
+why the file is a table of ratings and not a table of inferences.
+
+### Curating a domain must not license a guess about a name
+
+`publisher_identity` keys a name that resolves by its CANONICAL, and counted brand labels the same
+way. That is a latent bug, and rating `standard.co.uk` would have triggered it:
+
+* before: `standard.co.uk` and `standard.net.au` are two domains carrying the label `standard`, the
+  label is contested, and a bare `Standard` is left unplaced — correct, since it could be either
+  the London Evening Standard or the Warrnambool Standard;
+* after curating one of them: `standard.co.uk` resolves and moves off its domain token, leaving
+  `standard.net.au` as the *only* `standard` domain — the label reads unambiguous, and a bare
+  `Standard` is placed with the Warrnambool paper.
+
+Curation would have created a wrong identity merge in a name it never touched. Fixed by counting
+labels over **the form the feed sent**, not the resolved canonical: which brand words are contested
+is a fact about the domains in the world, not about which of them someone has got round to rating.
+
+The audit's unplaceable-names report is unaffected — it lists names that do not resolve, and a
+curated name no longer needs placing.
+
+### The tail stays blank
+
+The catalog carries ~1,188 outlet identities against ~200 rows. The remainder is small local
+mastheads — `Edenmagnet.Com.Au`, `Somdnews.Com`, `Batleynews` — that MBFC has never assessed and no
+other public rater covers. MBFC's ~3,900 sources are heavily US/UK weighted and simply do not reach
+this tail. Filling those blanks from an owner, a sibling, or a country prior would put on the order
+of a thousand fabricated claims into the product to gain coverage, which inverts the thing the
+product is for. **An outlet with no rating anywhere stays unrated for as long as that is true.**

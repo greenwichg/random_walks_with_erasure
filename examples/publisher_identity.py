@@ -41,6 +41,24 @@ def _brand_domain(host: str) -> str:
     return ".".join(parts)
 
 
+def _label_domains(names) -> dict:
+    """``brand label -> the set of domains carrying it``, over the form the FEED SENT.
+
+    Deliberately not read off the resolved canonical. Which brand words are contested is a fact
+    about the domains in the world, not about which of them someone has got round to curating —
+    and a curated row moves the name off its domain token entirely. Counting only uncurated hosts
+    would let curation silently un-contest a word: rating ``standard.co.uk`` as the London Evening
+    Standard would leave ``standard.net.au`` as the only ``standard`` domain in the set, and a bare
+    ``Standard`` would then be placed with the Warrnambool paper. The curation is right; the
+    inference it enabled would not be."""
+    out: dict = {}
+    for name in names:
+        if outlet_registry._looks_like_host(name):
+            dom = _brand_domain(name)
+            out.setdefault(publisher_wiki.domain_label(name) or dom, set()).add(dom)
+    return out
+
+
 def ambiguous_labels(names) -> set:
     """Brand labels carried by more than one domain in this name set.
 
@@ -49,14 +67,7 @@ def ambiguous_labels(names) -> set:
     report exactly this, and reconstructing it from the group map is not possible — ``groups``
     roots each set at its lexicographic minimum, which is usually the NAME rather than the token,
     so "did this name join a domain" cannot be read off the key."""
-    label_domains: dict = {}
-    for name in names:
-        resolved = outlet_registry.resolve(name)
-        base = resolved.canonical if resolved else (name or "")
-        if outlet_registry._looks_like_host(base):
-            dom = _brand_domain(base)
-            label_domains.setdefault(publisher_wiki.domain_label(base) or dom, set()).add(dom)
-    return {label for label, domains in label_domains.items() if len(domains) > 1}
+    return {label for label, domains in _label_domains(names).items() if len(domains) > 1}
 
 
 def groups(names) -> dict:
@@ -86,15 +97,13 @@ def groups(names) -> dict:
         if ra != rb:
             parent[max(ra, rb)] = min(ra, rb)
 
-    label_domains: dict = {}
+    label_domains = _label_domains(names)
     tokens: dict = {}
     for name in names:
         resolved = outlet_registry.resolve(name)
         base = resolved.canonical if resolved else (name or "")
         if outlet_registry._looks_like_host(base):
-            dom = _brand_domain(base)
-            tokens[name] = "d:" + dom
-            label_domains.setdefault(publisher_wiki.domain_label(base) or dom, set()).add(dom)
+            tokens[name] = "d:" + _brand_domain(base)
         else:
             tokens[name] = "n:" + (outlet_registry._name_key(base) or base.strip().lower())
         union(name, tokens[name])

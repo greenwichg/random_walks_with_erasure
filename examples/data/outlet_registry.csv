@@ -202,7 +202,7 @@ The Straits Times,1,straitstimes.com,SG,,,national
 Channel NewsAsia,0,channelnewsasia.com,SG,,,international
 Bangkok Post,1,bangkokpost.com,TH,,,national
 The Jakarta Post,-1,thejakartapost.com,ID,,,national
-Philippine Daily Inquirer,,inquirer.net,PH,,,national
+Philippine Daily Inquirer,-1,inquirer.net,PH,,,national
 Rappler,-1,rappler.com,PH,,,national
 The Jerusalem Post,0,jpost.com,IL,,,national
 Haaretz,-1,haaretz.com|haaretz.co.il,IL,,,national
@@ -249,10 +249,11 @@ Ticker Report,,tickerreport.com|Tickerreport.Com,,,,,wire
 # The rows settle the identity AND keep press releases out of stories.
 PR Newswire,,prnewswire.com|prnewswire.co.uk|Pr Newswire,,,,,wire
 GlobeNewswire,,globenewswire.com|Globe Newswire,,,,,wire
-# Identity-only rows: an unrated outlet whose brand word is carried by more than one domain, so a
-# bare name could not be placed without guessing which. Lean stays blank -- these settle WHO the
+# Identity-only row: an unrated outlet whose brand word is carried by more than one domain, so a
+# bare name could not be placed without guessing which. Lean stays blank -- it settles WHO the
 # outlet is, not where it stands (L2.2). Country is a curated fact, which is what earns the row.
-ESPN,,espn.com|espn.ph|espndeportes.espn.com,US,,,international
+# (ESPN was here on the same terms until MBFC's rating was sourced; it now sits in the rated block
+# at the foot of this file. An identity-only row is a stage, not a verdict.)
 The Motley Fool,,fool.com|fool.co.uk|Fool,US,,,international
 # Lean curation for the outlets the publisher-identity audit surfaced as genuine registry gaps —
 # real newspapers with no row at all, not alias gaps. Every rating below is Media Bias/Fact Check's
@@ -277,3 +278,36 @@ The Manila Times,1,manilatimes.net,PH,,,national
 The West Australian,1,thewest.com.au,AU,Western Australia,Perth,regional
 The Star (Malaysia),2,thestar.com.my,MY,,,national
 Brisbane Times,,brisbanetimes.com.au,AU,Queensland,Brisbane,regional
+#
+# Second curation pass, driven by the unlock worklist rather than by publisher volume: the audit
+# now reports which UNRATED outlets would actually complete a coverage-gap claim (a claim needs
+# >= 3 rated publishers in the story), so these are the rows where a rating changes what the
+# product can say, not merely what it knows. Same mapping as above (Left -2, Left-Center -1,
+# Least Biased 0, Right-Center +1, Right +2). Retrieved 2026-07-28.
+#
+#   Page Six                 : Right-Center (MBFC RC, factual MIXED) -- rated SEPARATELY from its
+#                              owner, the New York Post (+2), which is the whole point of a row.
+#   ESPN                     : Left-Center  (MBFC LC, factual High) -- was identity-only above.
+#   Philippine Daily Inquirer: Left-Center  (MBFC LC, Mostly Factual) -- edited IN PLACE among the
+#                              Asian outlets, where its locality row already sat.
+#   Ynetnews                 : Left-Center  (MBFC LC, factual High)
+#   The News International   : Right-Center (MBFC RC, factual MIXED)
+#   London Evening Standard  : Right-Center (MBFC RC, Mostly Factual)
+#
+# PROVENANCE CAVEAT, stated because it affects how much these should be trusted: MBFC and AllSides
+# both return 403 to an automated fetch, so each rating above comes from a SEARCH-RESULT SUMMARY of
+# the MBFC page rather than the page itself. That is a defensible public source, not a guess, so
+# the rows are legal under L2.2 -- but they are second-hand and should be re-read by hand before
+# anyone treats them as settled.
+#
+# Everything else in the worklist stays blank. The catalog carries ~1,188 outlet identities against
+# ~200 rows here, and the tail is small local mastheads -- Edenmagnet.Com.Au, Somdnews.Com,
+# Batleynews -- that MBFC has never assessed and no other public rater covers either. Filling those
+# from a sibling masthead, an owner, or a country prior would put ~1,000 fabricated claims into the
+# product, which is the single thing this file exists to prevent. An outlet with no rating anywhere
+# stays unrated for as long as that is true.
+ESPN,-1,espn.com|espn.ph|espndeportes.espn.com,US,,,international
+Page Six,1,pagesix.com,US,New York,New York,national
+Ynetnews,-1,ynetnews.com,IL,,,national
+The News International,1,thenews.com.pk,PK,,,national
+London Evening Standard,1,standard.co.uk|Evening Standard,GB,,London,regional
