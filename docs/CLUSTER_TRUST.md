@@ -583,3 +583,41 @@ Two consequences worth knowing:
 
 The eligible set for a bias summary should grow past 57: Seattle now carries 14 publishers where
 its halves carried 9 and 6.
+
+## Story-id churn — asserted, never measured
+
+`story_service`'s own docstring says ids are "stable across rebuilds as a cluster evolves". That
+holds for exactly the case it was designed against — a LATER article joining never disturbs
+`min(members, key=publishedAt)` — and not for two that happen routinely:
+
+* **The representative ages out.** The candidate set is a rolling time window, so every cluster
+  eventually loses its oldest article and the anchor moves to the next-oldest.
+* **An earlier article arrives.** Ingestion is not ordered by publication time; GDELT's GKG
+  backfill attaches articles published hours or days earlier, which moves the anchor backwards.
+
+A story id is what a saved or shared link points at, so this is data integrity rather than
+tidiness. Adopting the duplicate merge made it concrete: **14 stories were reassigned ids in one
+deploy**, because merging changes which member is earliest.
+
+`examples/audit_story_id_churn.py` measures it by replaying the window over the catalog we already
+have — build at successive cutoffs, match stories across consecutive builds **by member overlap**,
+count how many surviving stories changed id. Matching by members rather than by id is the whole
+design: matching by id could only ever report zero.
+
+```
+docker exec deploy-api-1 python /app/examples/audit_story_id_churn.py --step-hours 24 --steps 3
+```
+
+It separates the two causes, because they have different fixes. Reading it:
+
+* **Under ~1%/day** — the anchor is holding and this stays a note.
+* **Several %/day** — saved links are breaking routinely, and the fix is to stop deriving the id
+  from a member at all. Persist `story_id ↔ member urls` and, on each rebuild, match new clusters
+  to previously-seen ones and reuse the id. That makes ids stable *by construction* rather than by
+  hoping the anchor does not move. The `match()` function in this audit is the prototype for that
+  step — it is the same overlap join.
+
+Related and smaller: a merged story can be titled by its smaller half — *"Fauci diary entries"* (5
+articles) titles the merged 13-article story because it holds the earliest member. Consistent with
+the rule, but for a merged story the largest contributor is usually the better headline. Cosmetic;
+noted so it is a decision rather than an oversight.
