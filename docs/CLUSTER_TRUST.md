@@ -1289,3 +1289,41 @@ the only thing a worklist is for.
 1,432 articles across 139 publisher forms were backfilled. The catalog grew during the same window
 (1,008 → 1,037 stories), so claims alone would be an unreliable read — **the 4+ bucket rising 52% is
 the cleaner signal**, because it measures how well-supported a claim is rather than how many exist.
+
+## The backfill wrote leans but never withdrew them
+
+Measured right after the disambiguation fix shipped: **10 articles carried a lean the registry had
+stopped asserting.**
+
+| publisher | stored lean | what it was actually claiming |
+|---|---:|---|
+| The Star ×6 | +2 | the Malaysian paper — possibly Toronto's (0) or Kenya's |
+| Metro ×2 | −1 | Metro UK — possibly Metro Philadelphia |
+| The Sun ×1 | +2 | The Sun UK — MBFC rates The US Sun separately |
+| The Herald ×1 | −1 | Herald Scotland — there are many Heralds |
+
+Nothing about those articles changed. The **registry** did, and `backfill_lean.py` had no way to
+follow: it writes a lean when the registry has one, and returns `None` — no write — when it doesn't.
+So a *rating* fix reaches stored articles and a *resolution* fix does not. The ten went on voting a
+lean nobody stood behind.
+
+`--clear-orphaned` closes the direction. An outlet stops asserting a lean two ways and both count:
+it stops resolving (a disambiguation, an alias removed), or it resolves to an unrated row (a rating
+withdrawn). Either way the honest stored value is `null` — real coverage, no vote.
+
+Two deliberate asymmetries:
+
+* **Always reported, never silently acted on.** An orphaned lean is invisible from the registry side
+  — the row simply isn't there — so a count nobody prints is no better than the bug. It appears in
+  every run, including `--dry-run`.
+* **Opt-in to act,** because this *removes* data rather than correcting it. Ten articles age out of
+  the six-day window on their own; the flag exists for when they shouldn't have to.
+
+A stored lean is only ever written *from* the registry, so one the registry cannot account for is
+stale by construction — that is what makes clearing safe rather than lossy. `plan` and `plan_orphans`
+are asserted never to overlap: an article in both would mean the registry simultaneously does and
+does not rate its outlet.
+
+**This is the third time one change had to be chased across a layer it did not obviously touch** —
+resolution → identity map → audit, and now registry → stored article. The pattern is worth naming:
+*a fact cached at write time does not follow a rule corrected at read time.*

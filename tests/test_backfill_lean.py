@@ -78,3 +78,56 @@ def test_the_backfill_is_idempotent_end_to_end():
 
 def test_malformed_scored_json_is_skipped_not_crashed():
     assert bl.plan([{"canonicalUrl": "u1", "publisher": "Variety.Com", "scored": "not json"}]) == []
+
+
+# --------------------------------------------------------------------------- #
+# Orphaned leans — the direction the backfill could not previously reach.
+#
+# It writes a lean; it never withdrew one. That stayed invisible until a RESOLUTION fix shipped:
+# `The Star (Malaysia)` stopped claiming the bare name `The Star`, and six stored articles kept a
+# +2 the registry no longer stood behind — still voting, in production.
+# --------------------------------------------------------------------------- #
+def test_a_lean_whose_outlet_stopped_resolving_is_orphaned():
+    """The production case, in miniature. Nothing about the ARTICLE changed; the registry did."""
+    assert bl.is_orphaned("Some Outlet That Resolves To Nothing", 2.0) is True
+    assert bl.is_orphaned("Some Outlet That Resolves To Nothing", None) is False
+
+
+def test_a_lean_whose_outlet_became_unrated_is_orphaned(monkeypatch):
+    """The other way an outlet stops asserting a lean: the rating is withdrawn because it turned
+    out to be wrong. The row still resolves; it just no longer says anything."""
+    import outlet_registry
+
+    class _Unrated:
+        lean = float("nan")
+
+    monkeypatch.setattr(outlet_registry, "resolve", lambda n: _Unrated())
+    assert bl.is_orphaned("Widget Times", -1.0) is True
+
+
+def test_a_correctly_rated_article_is_not_orphaned():
+    """The guard that keeps this from nulling the whole catalog."""
+    assert bl.is_orphaned("reuters.com", 0.0) is False
+    assert bl.is_orphaned("foxnews.com", 2.0) is False
+
+
+def test_garbage_in_the_stored_lean_is_left_alone():
+    """Not our field to clean up, and a crash here would take the whole pass down."""
+    assert bl.is_orphaned("nothing.example", "banana") is False
+    assert bl.is_orphaned("nothing.example", {"x": 1}) is False
+
+
+def test_plan_orphans_names_the_article_and_what_it_carried():
+    rows = [{"canonicalUrl": "u1", "publisher": "Totally Unknown Masthead",
+             "scored": '{"lean": 2.0, "category": "Politics"}'},
+            {"canonicalUrl": "u2", "publisher": "reuters.com", "scored": '{"lean": 0.0}'}]
+    out = bl.plan_orphans(rows)
+    assert out == [("u1", "Totally Unknown Masthead", 2.0)]
+
+
+def test_the_two_plans_never_overlap():
+    """`plan` writes a lean, `plan_orphans` removes one — an article in both would mean the registry
+    simultaneously does and does not rate its outlet."""
+    rows = [{"canonicalUrl": "u1", "publisher": "Totally Unknown Masthead", "scored": '{"lean": 2.0}'},
+            {"canonicalUrl": "u2", "publisher": "foxnews.com", "scored": '{"lean": null}'}]
+    assert not ({r[0] for r in bl.plan(rows)} & {r[0] for r in bl.plan_orphans(rows)})
