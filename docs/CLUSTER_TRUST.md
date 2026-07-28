@@ -104,7 +104,7 @@ Read and a Save button.
 ### Before trusting the gates — run this first
 
 ```
-docker exec ih-api python /app/examples/audit_cluster_trust.py --top 20
+docker exec deploy-api-1 python /app/examples/audit_cluster_trust.py --top 20
 ```
 
 The gates key off a signal only ~11% of stories carry. The defence is that coverage is not uniform:
@@ -116,7 +116,7 @@ coherence-based one (`RWE_STORY_UNVERIFIED_SIZE` becomes the primary rule).
 ### Before enabling link_quorum
 
 ```
-docker exec ih-api python /app/examples/audit_clustering_change.py --link-quorum 0.3 --show 20
+docker exec deploy-api-1 python /app/examples/audit_clustering_change.py --link-quorum 0.3 --show 20
 ```
 
 Bars fixed in advance and computed by the tool, not eyeballed:
