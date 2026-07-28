@@ -72,11 +72,24 @@ than a coin flip.
 feed; absence of evidence only withholds claims.** Too few located members to judge is absence of
 evidence, so it lands in `unverified`, never in `low`.
 
-### 2. The blindspot gate (hard blocker — the reason for the review)
+### 2. The blindspot gate (called the hard blocker — see the measurement below)
 
 `blindspotSide` is emitted only when trust is `ok`. `blindspotWithheld` records what was suppressed
 so the audit can count it rather than guess. A blindspot is a statement about the world; we do not
 make one from a cluster our own instrument contradicts.
+
+**On the live catalog this gate currently withholds nothing, and that is a finding rather than a
+success.** The two populations barely overlap. A blindspot arises in a SMALL cluster — few
+publishers, so a side goes uncovered — while an actionable coherence score needs FOUR located
+members, which small clusters rarely have. Every cluster the signal distrusts (327, 34 and 19
+articles) is large enough to carry left, centre and right coverage, so none of them made a
+blindspot claim to withhold in the first place.
+
+So the honest position: the gate is a correctness guarantee that costs nothing and will fire the
+day a distrusted cluster does carry a blindspot, but it is **not** evidence that false blindspot
+claims have been prevented. If chained small clusters are producing false blindspots, `geoCoherence`
+structurally cannot see them, and we have no other instrument that can. That risk is open and
+unaddressed — recorded here rather than left implied by a gate that reads as covering it.
 
 ### 3. The ranking gate
 
@@ -112,6 +125,29 @@ It is off because the last change that tightened matching on equally sound reaso
 Read and a Save button.
 
 ## Thresholds
+
+### Measured, 2026-07-28 (938 stories, 4,169 covered articles)
+
+| verdict | stories | articles | share |
+|---|---:|---:|---:|
+| `ok` | 933 | 3,626 | 87.0% |
+| `low` | 3 | 380 | 9.1% |
+| `unverified` | 2 | 163 | 3.9% |
+
+The three demoted clusters, with located-member counts that make the scores readable:
+
+| pubs | arts | loc | coh | title |
+|---:|---:|---:|---:|---|
+| 129 | 327 | 72 | 0.61 | Trump to attend dignified transfer of fallen soldier |
+| 33 | 34 | 26 | 0.65 | Mount Olympus … World Heritage |
+| 18 | 19 | 5 | 0.60 | Congo Ebola outbreak kills nearly 1,000 |
+
+Position 1 of the default sort is now *"Wildfires ravage parts of southern France, Italy…"* — 61
+publishers, 49 located members, coherence 0.78. A real, coherent, well-covered story.
+
+Two clusters sit in `unverified`: the U.S.-Saudi nuclear-deal cluster (60 articles, 28 publishers,
+**only 2 located members** at 0.50 — genuinely undecidable, and worth a manual read) and the
+103-article press-release template, which has no geography at all.
 
 ### Before trusting the gates — run this first
 

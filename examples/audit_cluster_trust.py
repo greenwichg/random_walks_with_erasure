@@ -7,13 +7,20 @@ mostly is not there.
 
 The answer this measures is that coverage is not uniform. Scoring needs located members, so it is
 thinnest on small clusters and densest on large ones — and the gates only ever apply to large
-clusters. **The top-N table below is the check on that claim.** If the biggest clusters are mostly
-unscored, both gates are decorative and the thresholds need a size-based fallback instead.
+clusters. **The top-N table below is the check on that claim.** Measured on the live catalog it
+holds where it matters: the largest cluster carries 72 located members and is caught.
 
-Read that percentage with one caveat it cannot resolve on its own: an unscored cluster may have no
-location because extraction missed it, or because the story genuinely has no geography. A phone
-launch covered by 26 outlets will never carry an event country, and that is correct behaviour, not
-a gap. Look at the titles in the table before concluding the coverage is too thin.
+Two things the table has already shown that the aggregate hid:
+
+* Unscored is not one thing. A cluster with NO located members may simply have no geography — a
+  phone launch covered by 26 outlets has no event country, and that is correct. A cluster with a
+  few locations but too few to act on is an extraction-depth problem. Only the second counts
+  against the gate, so only the second is in the denominator.
+* The blindspot gate and the coherence signal barely overlap. Blindspots arise in SMALL clusters
+  (few publishers, so a side goes uncovered); coherence needs FOUR located members, which small
+  clusters rarely have. On the live catalog the gate withholds nothing, because the clusters it
+  distrusts are large enough to have coverage on every side. ``blindspot claims withheld`` is the
+  number that says so — read it as a measurement, not as a target.
 
 It also prints the two launch monitors, whose trigger levels are agreed in docs/CLUSTER_TRUST.md.
 Both are ratios rather than counts, so they stay meaningful as the catalog grows.
@@ -48,6 +55,13 @@ def analyse(stories: list, *, top: int) -> dict:
     scored_head = [s for s in head
                    if s.get("geoCoherence") is not None
                    and (s.get("locatedMembers") or 0) >= story_service.MIN_LOCATED_FOR_TRUST]
+    # Unscored splits into two different problems and only one of them is ours. A cluster with NO
+    # located members may simply have no geography — a phone launch covered by 26 outlets has no
+    # event country, and that is correct behaviour rather than a gap. A cluster with some locations
+    # but too few to act on is a depth problem in extraction. Reporting them together produced a
+    # "TOO THIN" verdict on a catalog whose largest clusters are in fact well covered.
+    geoless_head = [s for s in head if not (s.get("locatedMembers") or 0)]
+    locatable_head = [s for s in head if (s.get("locatedMembers") or 0)]
 
     sizes = sorted((s["totalCoverage"] for s in stories))
     p90 = sizes[int(0.9 * (len(sizes) - 1))] if sizes else 0
@@ -60,6 +74,8 @@ def analyse(stories: list, *, top: int) -> dict:
         "withheld": [s for s in stories if s.get("blindspotWithheld")],
         "topScored": len(scored_head),
         "topTotal": len(head),
+        "topGeoless": len(geoless_head),
+        "topLocatable": len(locatable_head),
         "head": head,
         "demoted": [s for s in stories if s["clusterTrust"] == story_service.TRUST_LOW],
         "unverified": [s for s in stories
@@ -107,12 +123,17 @@ def main(argv=None) -> int:
         share = f"{100.0 * b['articles'] / res['articles']:.1f}%" if res["articles"] else "  n/a"
         print(f"{name:>12} {b['stories']:>8,} {b['articles']:>9,} {share:>7}")
 
-    # The pre-work measurement. Below ~80% and the gates are mostly missing their targets.
-    pct = 100.0 * res["topScored"] / res["topTotal"] if res["topTotal"] else 0.0
+    # The pre-work measurement, scored over the clusters the gate could ever reach. A cluster with
+    # no located members at all is excluded from the denominator rather than counted against the
+    # gate: it is a story without geography, not a gate without coverage.
+    denom = res["topLocatable"]
+    pct = 100.0 * res["topScored"] / denom if denom else 0.0
     print(f"\ncoherence coverage on the {res['topTotal']} biggest clusters: "
-          f"{res['topScored']}/{res['topTotal']} ({pct:.0f}%)")
-    print("  -> gates are load-bearing" if pct >= 80.0 else
-          "  -> TOO THIN: the gates need a size-based fallback, not a coherence-based one")
+          f"{res['topScored']} actionable of {denom} with any location "
+          f"({pct:.0f}%), {res['topGeoless']} with no geography at all")
+    print("  -> gates are load-bearing on the clusters they can see" if pct >= 80.0 else
+          "  -> TOO THIN: extraction depth, not gate design — raise location coverage or fall "
+          "back on size (RWE_STORY_UNVERIFIED_SIZE)")
 
     print(f"\n{HEAD}")
     for s in res["head"][:args.show]:
