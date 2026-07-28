@@ -878,3 +878,48 @@ The Irrawaddy,-1,irrawaddy.com,MM,,Yangon,international
 The Express Tribune,0,tribune.com.pk,PK,,Karachi,national
 Free Malaysia Today,1,freemalaysiatoday.com,MY,,Kuala Lumpur,national
 Geo TV,1,geo.tv,PK,,Karachi,national
+#
+# Fourteenth pass -- US LOCAL, which is where MBFC's coverage is densest and where the production
+# feed demonstrably reaches (KOMO, KING 5, cleveland.com, oregonlive, lehighvalleylive, onlineathens,
+# masslive, NBC Philadelphia all appeared in the live audit). 104 probed, 104 missing, 22 rated --
+# a hit rate three times the non-Western probe and the reason to work this seam rather than another
+# international one.
+#
+#   -1  Hartford Courant, Orlando Sentinel, Columbus Dispatch, Salt Lake Tribune,
+#       Milwaukee Journal Sentinel, Austin American-Statesman, San Antonio Express-News,
+#       Louisville Courier-Journal (HIGH cred), Raleigh News & Observer, The State,
+#       Star-Ledger, Texas Tribune
+#    0  South Florida Sun-Sentinel, Indianapolis Star, San Diego Union-Tribune, The Tennessean,
+#       Buffalo News
+#   +1  Baltimore Sun (MBFC cites the post-2024 ownership shift), Pittsburgh Post-Gazette,
+#       Las Vegas Review-Journal, Orange County Register, Boston Herald
+#
+# Three same-market pairs land on opposite sides, which is the whole argument for per-masthead rows:
+#   Boston            Globe -1  vs  Herald +1
+#   Southern Calif.   LA Times -1, San Diego Union-Tribune 0, Orange County Register +1
+#   Texas             Houston Chronicle -1 / Austin -1 / San Antonio -1  vs  Dallas Morning News +1
+#
+# nj.com is the Star-Ledger's own website and thestate.com is South Carolina's, not Toronto's --
+# both the cleveland.com case, and the second is why that canonical carries a parenthetical.
+Baltimore Sun,1,baltimoresun.com,US,Maryland,Baltimore,regional
+Hartford Courant,-1,courant.com,US,Connecticut,Hartford,regional
+Orlando Sentinel,-1,orlandosentinel.com,US,Florida,Orlando,regional
+South Florida Sun-Sentinel,0,sun-sentinel.com,US,Florida,Fort Lauderdale,regional
+Pittsburgh Post-Gazette,1,post-gazette.com,US,Pennsylvania,Pittsburgh,regional
+Columbus Dispatch,-1,dispatch.com,US,Ohio,Columbus,regional
+Las Vegas Review-Journal,1,reviewjournal.com,US,Nevada,Las Vegas,regional
+Salt Lake Tribune,-1,sltrib.com,US,Utah,Salt Lake City,regional
+Milwaukee Journal Sentinel,-1,jsonline.com,US,Wisconsin,Milwaukee,regional
+Indianapolis Star,0,indystar.com,US,Indiana,Indianapolis,regional
+Austin American-Statesman,-1,statesman.com,US,Texas,Austin,regional
+San Antonio Express-News,-1,expressnews.com,US,Texas,San Antonio,regional
+San Diego Union-Tribune,0,sandiegouniontribune.com,US,California,San Diego,regional
+Orange County Register,1,ocregister.com,US,California,Santa Ana,regional
+Boston Herald,1,bostonherald.com,US,Massachusetts,Boston,regional
+The Tennessean,0,tennessean.com,US,Tennessee,Nashville,regional
+Louisville Courier-Journal,-1,courier-journal.com,US,Kentucky,Louisville,regional,,high
+Raleigh News & Observer,-1,newsobserver.com,US,North Carolina,Raleigh,regional
+The State (South Carolina),-1,thestate.com,US,South Carolina,Columbia,regional
+Star-Ledger,-1,nj.com,US,New Jersey,Newark,regional
+Buffalo News,0,buffalonews.com,US,New York,Buffalo,regional
+Texas Tribune,-1,texastribune.org,US,Texas,Austin,regional

@@ -1651,3 +1651,62 @@ carries at −2. An unattributable rating is not a rating.
 | rated | 143 | **328** |
 | countries | ~30 | **50** |
 | spread (−2/−1/0/+1/+2) | — | **25 / 125 / 64 / 90 / 24** |
+
+## Fourteenth pass: US local, where the seam actually is
+
+After the non-Western yield collapse, the question was where to dig next. The answer came from the
+production audit rather than intuition: **KOMO, KING 5, cleveland.com, oregonlive, lehighvalleylive,
+onlineathens, masslive and NBC Philadelphia all appeared in the live feed.** US local news is both
+what the feed carries and where MBFC's coverage is densest.
+
+**104 probed, 104 missing, 22 rated — a hit rate three times the non-Western probe.**
+
+| | |
+|---|---|
+| −1 | Hartford Courant, Orlando Sentinel, Columbus Dispatch, Salt Lake Tribune, Milwaukee Journal Sentinel, Austin American-Statesman, San Antonio Express-News, Louisville Courier-Journal, Raleigh News & Observer, The State, Star-Ledger, Texas Tribune |
+| 0 | Sun-Sentinel, Indianapolis Star, San Diego Union-Tribune, The Tennessean, Buffalo News |
+| +1 | Baltimore Sun, Pittsburgh Post-Gazette, Las Vegas Review-Journal, Orange County Register, Boston Herald |
+
+### Four same-market pairs on opposite sides
+
+This is the argument for per-masthead rows, made four times in one pass:
+
+| market | left | right |
+|---|---|---|
+| Boston | Globe −1 | Herald +1 |
+| Detroit | Free Press −1 | News +1 |
+| Southern California | LA Times −1 | Orange County Register +1 (San Diego U-T at 0) |
+| Texas | Houston / Austin / San Antonio −1 | Dallas Morning News +1 |
+
+**Any scheme that grouped outlets by city would have merged each of these and erased the only
+interesting thing about them.** It is also why locality lives in its own columns and never in the
+identity key.
+
+The **Baltimore Sun at +1** is the surprise — MBFC cites the post-2024 ownership change. A rating
+this file inherited from a year ago would now be wrong, which is a reminder that these are
+time-dependent and the file says so at the top.
+
+`thestate.com` and `thestar.com` are one letter and two continents apart. Both resolve correctly,
+and a bare "The State" claims neither — the parenthetical rule earning its place again.
+
+### Registry, close of fourteen passes
+
+| | start of day | end |
+|---|---:|---:|
+| rows | 154 | **376** |
+| rated | 143 | **350** |
+| countries | ~30 | **50** |
+| spread (−2/−1/0/+1/+2) | — | **25 / 137 / 69 / 95 / 24** |
+
+### The yield table, updated
+
+| probe | probed | missing | rated | hit rate |
+|---|---:|---:|---:|---:|
+| Global majors | 181 | 172 | 34 | 20% |
+| Remainder of that list | 115 | 115 | 25 | 22% |
+| Non-Western regions | 134 | 130 | 10 | 7.5% |
+| **US local** | **104** | **104** | **22** | **21%** |
+
+The lesson is not "probe more". It is that **hit rate is a function of where the rater looked**, and
+MBFC looked hardest at US and UK sources — including small ones. Curating toward that is the
+efficient move, and it happens to be where this feed's untracked volume also sits.

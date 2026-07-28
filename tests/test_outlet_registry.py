@@ -990,3 +990,35 @@ def test_exile_outlets_record_where_the_publisher_is(reg):
     published from Russia."""
     assert reg.resolve("Meduza.Io").country == "LV"
     assert reg.resolve("Themoscowtimes.Com").country == "NL"
+
+
+def test_the_us_local_pass_ratings(reg):
+    for host, lean in [
+        ("Baltimoresun.Com", 1.0), ("Courant.Com", -1.0), ("Orlandosentinel.Com", -1.0),
+        ("Sun-Sentinel.Com", 0.0), ("Post-Gazette.Com", 1.0), ("Dispatch.Com", -1.0),
+        ("Reviewjournal.Com", 1.0), ("Sltrib.Com", -1.0), ("Jsonline.Com", -1.0),
+        ("Indystar.Com", 0.0), ("Statesman.Com", -1.0), ("Expressnews.Com", -1.0),
+        ("Sandiegouniontribune.Com", 0.0), ("Ocregister.Com", 1.0), ("Bostonherald.Com", 1.0),
+        ("Tennessean.Com", 0.0), ("Courier-Journal.Com", -1.0), ("Newsobserver.Com", -1.0),
+        ("Thestate.Com", -1.0), ("Nj.Com", -1.0), ("Buffalonews.Com", 0.0),
+        ("Texastribune.Org", -1.0),
+    ]:
+        assert reg.lean(host) == lean, host
+
+
+def test_same_market_rivals_are_rated_apart(reg):
+    """The argument for per-masthead rows, three times over. Any scheme that grouped outlets by
+    city would have merged each of these pairs and erased the only interesting thing about them."""
+    assert reg.lean("Bostonglobe.Com") == -1.0 and reg.lean("Bostonherald.Com") == 1.0
+    assert reg.lean("Latimes.Com") == -1.0 and reg.lean("Ocregister.Com") == 1.0
+    assert reg.lean("Houstonchronicle.Com") == -1.0 and reg.lean("Dallasnews.Com") == 1.0
+    assert reg.lean("Freep.Com") == -1.0 and reg.lean("Detroitnews.Com") == 1.0
+
+
+def test_thestate_and_thestar_are_different_papers(reg):
+    """One letter apart, two continents. `thestate.com` is South Carolina's daily and `thestar.com`
+    is the Toronto Star — and the parenthetical canonical keeps a bare "The State" from claiming
+    either, which matters because there is also a Kenyan Standard and a Malaysian Star in here."""
+    assert reg.resolve("Thestate.Com").canonical == "The State (South Carolina)"
+    assert reg.resolve("Thestar.Com").canonical == "Toronto Star"
+    assert reg.resolve("The State") is None
