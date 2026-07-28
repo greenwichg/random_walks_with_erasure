@@ -1161,3 +1161,57 @@ column they could be rated *and* shown with the caveat attached, instead of bein
 
 After that, the measurement that matters is not registry size at all — it is whether coverage-gap
 claims went up. `backfill_lean.py` then `audit_cluster_trust.py` will say.
+
+## The credibility column
+
+Eight outlets ended the coverage audit in a bad state: a **published MBFC lean** sitting next to an
+**MBFC *Questionable* / *Low Credibility* verdict**, and a registry that could record only one of
+those. The workaround was to leave the lean blank — which threw away a true fact to avoid a
+misleading one, and made Xinhua indistinguishable from an outlet nobody has ever assessed.
+
+`credibility` is column 9: `high` / `medium` / `low`, blank = uncurated.
+
+**Blank is not `low`.** Absence of a verdict never disqualifies an outlet, exactly as absence of a
+lean never centres one. Only ~30 of 255 rows carry a verdict, because only those were seen stated —
+the column is sparse *on purpose* rather than filled in by impression.
+
+### What `low` does
+
+A low-credibility outlet is **full coverage and no vote**:
+
+| | counted? |
+|---|---|
+| `totalCoverage`, `publisherCount`, `publishers`, `coverage` | **yes** — it really did cover the story |
+| the article's own `lean` / `leanBucket` | **yes** — this is the fact the old workaround destroyed |
+| `distribution` (one vote per outlet) | no |
+| the ≥ 3 rated-publishers floor for a coverage-gap claim | no |
+| `lowCredibilityPublishers` (new, on the story and the API) | listed by name |
+
+The floor and the distribution share one helper, `_votes`, so they cannot drift into disagreeing
+about who counts — a story clearing "three rated publishers" on a sample the distribution then
+declines to use would be a subtle and permanent lie.
+
+The concrete failure this prevents, from the test: two left-leaning outlets plus TASS. Ungated, TASS
+is the third rated publisher, the story clears the floor, and the product asserts a right-side
+coverage gap **on the strength of a state wire its own rater calls Questionable**.
+
+### Two properties worth keeping
+
+**The verdict is resolved from the registry at build time, not read from stored article JSON.** The
+lean is written into `scored` at ingest and needs `backfill_lean.py` to change; the credibility gate
+deliberately does not. Correct a verdict and the next build has it.
+
+**The bar is the rater's own flag.** State-aligned outlets MBFC rates at Medium or better are rated
+and voted normally — Daily Sabah (+2), Ahram Online (+1), Anadolu Agency (+2) are all in the file
+and all vote. Without that constraint the column drifts into "outlets I distrust", which is this
+file's founding fabrication pointed the other way. There is a test named after it.
+
+`RWE_STORY_CREDIBILITY_GATE=0` restores pre-column behaviour with the leans left in place: if a
+verdict turns out to be wrong the fix is a flag, not a re-curation.
+
+### What is left
+
+The API now carries `lowCredibilityPublishers`; **the web surface does not render it yet.** Until it
+does, a reader sees TASS in the publisher list with no indication that its rating was set aside —
+better than the outlet vanishing, but not the finished story. That is the next piece of work, and it
+is a design question (badge? footnote? filter?) rather than an engine one.
