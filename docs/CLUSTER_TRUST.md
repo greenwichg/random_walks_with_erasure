@@ -2425,3 +2425,101 @@ blogTO, Radio-Canada as distinct from CBC News.
 | countries | ~30 | **54** |
 | Canadian rows | 16 | **37** |
 | engine tests | 1,883 | **2,019** |
+
+## Twenty-seventh pass — UK / Ireland
+
+The last group. Four names on the probe; **eighteen rated, two locality-only**.
+
+The Canada lesson was applied here deliberately rather than discovered: *before* working the probe
+list, ask what a probe structurally cannot see. **Northern Ireland had zero rows** — 1.9 million
+people whose newspapers divide on the single most legible axis in these islands, and the registry
+had nothing at all. A probe reports zero outstanding work for a market that sends nothing because
+nothing was ever tracked.
+
+| Northern Ireland — a market the file did not have | | |
+|---|---:|---|
+| The Irish News | −1 | Left-Center (−2.1), High — editorially Irish nationalist |
+| Belfast Live | 0 | Least Biased, High |
+
+| Scotland / Ireland | | |
+|---|---:|---|
+| Daily Record (Scotland) | −2 | LEFT, Mostly Factual; medium |
+| The National (Scotland) | −1 | Left-Center, High — openly endorses the SNP |
+| Business Post (Ireland) | 0 | Least Biased (−1.8), High |
+| Gript | +2 | RIGHT, Mixed; medium |
+
+| United Kingdom | | |
+|---|---:|---|
+| Morning Star (UK) | −2 | LEFT, Mostly Factual — *a correction* |
+| The Canary (UK) / Byline Times | −2 | LEFT (−6.5 / −6.9), Mostly Factual; medium |
+| Novara Media | −2 | **FAR LEFT**, Mixed; medium |
+| openDemocracy / The Week (UK) | −1 | Left-Center, High |
+| The Register | 0 | Least Biased, High |
+| UnHerd | +1 | Right-Center, Mostly Factual; medium |
+| The Critic / TalkTV | +2 | RIGHT; medium |
+
+### Morning Star is the second Globes
+
+An earlier pass in this file recorded the *Morningstar* / *The Morning Star* confusion as a
+near-miss **successfully avoided**, and moved on — without ever asking whether the British communist
+daily was itself rated. **It is:** MBFC LEFT, Mostly Factual.
+
+The trap was real and the question was left unanswered underneath it. That is the exact shape of the
+Globes error, and it was found by re-checking what the Globes error was standing next to. **Two
+instances now, which makes it a pattern rather than an incident:** spotting a bad search result and
+answering the question are separate acts, and the first feels like the second.
+
+It is registered under a parenthetical so the bare word stays unclaimed — `Morning Star` collides
+with Morningstar (US financial data) and the Vernon Morning Star (British Columbia). No Morningstar
+row exists today; leaving the word unclaimed keeps the trap documented rather than silently won by
+whichever was curated first.
+
+### The scale saturates, and credibility still separates
+
+Five British rows now sit on the −2 floor: three at MBFC `LEFT`, Novara Media at `FAR LEFT`. **This
+file cannot tell those apart and does not pretend to** — the floor is a genuine loss of resolution,
+recorded so nobody later reads equal numbers as a claim of equal position.
+
+What it *can* tell apart is credibility: Novara is **Mixed** where the Morning Star is **Mostly
+Factual**. The clearest demonstration so far that lean and credibility are two columns doing
+different jobs rather than one column wearing two names.
+
+### The Week is the anti-CityNews
+
+Canada's pass made CityNews **one** canonical because MBFC rated eight editions separately and all
+eight *agreed*. The Week's two editions **disagree** — MBFC has the US edition at `LEFT` and the UK
+edition at `Left-Center`.
+
+Editions are rated separately because they can come apart. **Looking is the only way to find out
+which case you are in.** A bare "The Week" resolves to neither.
+
+### A rating out of reach is not a rating that does not exist
+
+Two blank rows, two different facts:
+
+- **Belfast Telegraph** — Ad Fontes, AllSides and MBFC all have nothing. Ordinary absence.
+- **Aberdeen Press & Journal** — **the MBFC page exists and could not be read.** The fetcher gets
+  403 and search returned only prose (*"balanced perspectives that align more with the left
+  overall"*) without the categorical label this file maps from.
+
+The Brazil/paywall case again, now pinned by a test. A future curator should know which of these is
+retrievable. Six distinct reasons for a blank lean are now enumerated in that test, and each one is
+a different instruction to whoever picks the row up.
+
+Confirmed absent: News Letter (Biasly only), Nation.Cymru (Ground News reports unknown), STV News,
+City A.M. (Biasly only), Newstalk.
+
+### The sweep is complete
+
+| | start of day | end |
+|---|---:|---:|
+| rows | 154 | **505** |
+| rated | 143 | **471** |
+| countries | ~30 | **54** |
+| engine tests | 1,883 | **2,027** |
+
+Every group from the coverage analysis has been worked: Europe regional, US national/trade, LatAm,
+Asia, ME/Africa, AU/NZ, Canada, UK/IE. **The probe lists totalled far less than what the passes
+found**, and the reason is uniform across all eight: a probe reports the names a feed sent, and the
+largest gaps are the ones that send nothing — Quebec's francophone press, Northern Ireland's papers,
+half of Australasia. *A coverage audit that only reads the feed measures the feed.*

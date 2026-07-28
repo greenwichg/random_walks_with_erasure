@@ -1408,3 +1408,85 @@ rabble.ca,-2,rabble.ca,CA,Ontario,Toronto,national
 Western Standard,2,westernstandard.news,CA,Alberta,Calgary,national,,medium
 Rebel News,2,rebelnews.com|The Rebel,CA,Ontario,Toronto,national,,low
 True North Centre for Public Policy,,tnc.news|truenorthcentre.org|True North Centre,CA,Alberta,Calgary,national,org
+#
+# Twenty-seventh pass -- UK / IRELAND, 4 outstanding. Eighteen rated, two locality-only.
+# The Canada lesson applied deliberately: before working the probe list, ask what a probe CANNOT
+# see. NORTHERN IRELAND had zero rows -- a market of 1.9m whose newspapers divide on the single
+# most legible axis in these islands, and the registry had nothing at all.
+#
+#   NORTHERN IRELAND (a market this file did not have)
+#   The Irish News        -1  (MBFC LC -2.1, factual High -- editorially Irish nationalist)
+#   Belfast Live           0  (MBFC LEAST BIASED, factual High)
+#
+#   SCOTLAND
+#   Daily Record (Scotland) -2 (MBFC LEFT, MOSTLY FACTUAL -- one-sided reporting that misses
+#                               context; MEDIUM credibility)
+#   The National (Scotland) -1 (MBFC LC, factual High -- openly endorses the SNP)
+#
+#   IRELAND
+#   Business Post (Ireland) 0 (MBFC LEAST BIASED -1.8, factual High)
+#   Gript                 +2  (MBFC RIGHT, factual MIXED; MEDIUM credibility)
+#
+#   UNITED KINGDOM
+#   Morning Star (UK)     -2  (MBFC LEFT, MOSTLY FACTUAL -- see the correction below)
+#   The Canary (UK)       -2  (MBFC LEFT -6.5, MOSTLY FACTUAL 3.8; MEDIUM)
+#   Byline Times          -2  (MBFC LEFT -6.9, MOSTLY FACTUAL 3.8; MEDIUM)
+#   Novara Media          -2  (MBFC FAR LEFT, factual MIXED; MEDIUM -- see the saturation note)
+#   openDemocracy         -1  (MBFC LC, factual High)
+#   The Week (UK)         -1  (MBFC LC -3.1, factual High, HIGH credibility)
+#   The Register           0  (MBFC LEAST BIASED, factual High)
+#   UnHerd                +1  (MBFC RC, MOSTLY FACTUAL; MEDIUM)
+#   The Critic            +2  (MBFC RIGHT, MOSTLY FACTUAL; MEDIUM)
+#   TalkTV                +2  (MBFC RIGHT, factual MIXED; MEDIUM)
+#
+# MORNING STAR IS THE SECOND GLOBES. An earlier pass in this file recorded the Morningstar / The
+# Morning Star confusion as a near-miss successfully AVOIDED, and moved on without asking whether
+# the British communist daily was itself rated. It is: MBFC LEFT, Mostly Factual. The trap was real
+# and the question was left unanswered underneath it -- exactly the shape of the Globes error, found
+# by re-checking the things that error was standing next to. TWO of them, now.
+#
+# It is registered under a PARENTHETICAL so the bare word stays unclaimed. `Morning Star` collides
+# with Morningstar (US financial data) and with the Vernon Morning Star (British Columbia). No
+# Morningstar row exists today; leaving the word unclaimed keeps the trap documented rather than
+# silently won by whichever was curated first.
+#
+# THE SCALE SATURATES AT -2, and five British rows now sit on it: Morning Star and the Canary and
+# Byline Times at MBFC LEFT, Novara Media at FAR LEFT. This file cannot tell those apart and does
+# not pretend to -- the floor is a real loss of resolution, recorded here so nobody later reads
+# equal numbers as a claim of equal position. What it CAN tell apart is credibility: Novara is
+# MIXED where the Morning Star is MOSTLY FACTUAL, which is the clearest demonstration yet that lean
+# and credibility are two columns doing different jobs rather than one wearing two names.
+#
+# THE WEEK IS THE ANTI-CITYNEWS. Canada's pass rated CityNews as one canonical because MBFC rated
+# eight editions separately and all eight AGREED. The Week's two editions DISAGREE: MBFC has the US
+# edition at LEFT and the UK edition at Left-Center. Editions are rated separately because they can
+# come apart, and the only way to find out which case you are in is to look.
+#
+# LOCALITY ONLY -- and for a reason distinct from every other blank in this file. BELFAST TELEGRAPH:
+# Ground News reports that Ad Fontes, AllSides and MBFC all have no rating, so this is ordinary
+# absence. ABERDEEN PRESS & JOURNAL is different: THE MBFC PAGE EXISTS and could not be read. The
+# fetcher gets 403 and search returned only prose ("balanced perspectives that align more with the
+# left overall") without the categorical label this file maps from. That is the Brazil/paywall case
+# again -- a rating that exists and is out of reach is not the same fact as a rating that does not
+# exist, and a future curator should know this one is retrievable.
+#
+# CONFIRMED ABSENT: News Letter (Biasly only), Nation.Cymru (Ground News reports unknown), STV News,
+# City A.M. (Biasly only), Newstalk.
+The Irish News,-1,irishnews.com,GB,Northern Ireland,Belfast,regional
+Belfast Live,0,belfastlive.co.uk,GB,Northern Ireland,Belfast,regional
+Belfast Telegraph,,belfasttelegraph.co.uk,GB,Northern Ireland,Belfast,regional
+Daily Record (Scotland),-2,dailyrecord.co.uk,GB,Scotland,Glasgow,regional,,medium
+The National (Scotland),-1,thenational.scot,GB,Scotland,Glasgow,regional
+Aberdeen Press and Journal,,pressandjournal.co.uk,GB,Scotland,Aberdeen,regional
+Business Post (Ireland),0,businesspost.ie,IE,,Dublin,national
+Gript,2,gript.ie,IE,,Dublin,national,,medium
+Morning Star (UK),-2,morningstaronline.co.uk,GB,,London,national,,medium
+The Canary (UK),-2,thecanary.co,GB,,London,national,,medium
+Byline Times,-2,bylinetimes.com,GB,,London,national,,medium
+Novara Media,-2,novaramedia.com,GB,,London,national,,medium
+openDemocracy,-1,opendemocracy.net,GB,,London,international
+The Week (UK),-1,theweek.co.uk,GB,,London,national
+The Register,0,theregister.com|theregister.co.uk,GB,,London,international
+UnHerd,1,unherd.com,GB,,London,national,,medium
+The Critic,2,thecritic.co.uk,GB,,London,national,,medium
+TalkTV,2,talk.tv|talktv.co.uk|Talk TV,GB,,London,national,,medium

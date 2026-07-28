@@ -452,6 +452,13 @@ def test_the_unrated_set_is_exactly_the_documented_one(reg):
         # fully apply its methodology. There is no confidence column here, so importing the number
         # would present a hedge as settled. Same rule as Billboard and Hankyoreh.
         "The Saturday Paper",
+        # Ordinary absence — Ad Fontes, AllSides and MBFC all have nothing.
+        "Belfast Telegraph",
+        # A SIXTH reason, and the one most easily mistaken for the first: the MBFC page EXISTS and
+        # could not be read. The fetcher gets 403 and search returned only prose without the
+        # categorical label this file maps from. A rating out of reach is not a rating that does not
+        # exist, and the difference is what tells a future curator this row is retrievable.
+        "Aberdeen Press and Journal",
     }
 
 
@@ -1628,3 +1635,95 @@ def test_the_two_left_twos_canada_produced_are_both_high_factual(reg):
     for host in ("Thenarwhal.Ca", "Rabble.Ca"):
         assert reg.lean(host) == -2.0
         assert not reg.is_low_credibility(host), host
+
+
+# --------------------------------------------------------------------------- #
+# UK / Ireland — the twenty-seventh pass
+# --------------------------------------------------------------------------- #
+def test_the_uk_ireland_pass(reg):
+    for host, lean in [
+        ("Irishnews.Com", -1.0), ("Belfastlive.Co.Uk", 0.0),
+        ("Dailyrecord.Co.Uk", -2.0), ("Thenational.Scot", -1.0),
+        ("Businesspost.Ie", 0.0), ("Gript.Ie", 2.0),
+        ("Morningstaronline.Co.Uk", -2.0), ("Thecanary.Co", -2.0),
+        ("Bylinetimes.Com", -2.0), ("Novaramedia.Com", -2.0),
+        ("Opendemocracy.Net", -1.0), ("Theweek.Co.Uk", -1.0),
+        ("Theregister.Com", 0.0), ("Unherd.Com", 1.0),
+        ("Thecritic.Co.Uk", 2.0), ("Talktv.Co.Uk", 2.0),
+    ]:
+        assert reg.lean(host) == lean, host
+
+
+def test_northern_ireland_was_a_market_the_file_did_not_have(reg):
+    """The Canada lesson applied on purpose rather than discovered. Before working the probe list,
+    ask what a probe cannot see: Northern Ireland had ZERO rows — 1.9m people whose newspapers
+    divide on the most legible axis in these islands — and a probe reports zero outstanding work for
+    a market that sends nothing because nothing was ever tracked."""
+    ni = [o for o in reg.outlets() if o.region == "Northern Ireland"]
+    assert len(ni) >= 3
+    assert reg.resolve("Irishnews.Com").country == "GB"
+
+
+def test_morning_star_is_the_second_globes(reg):
+    """An earlier pass recorded the Morningstar / The Morning Star confusion as a near-miss
+    successfully AVOIDED, and moved on without asking whether the British communist daily was itself
+    rated. It is. The trap was real and the question was left unanswered underneath it — the exact
+    shape of the Globes error, found by re-checking what that error was standing next to.
+
+    Two instances now, which makes it a pattern rather than an incident: spotting a bad result and
+    answering the question are separate acts, and the first feels like the second."""
+    assert reg.lean("Morningstaronline.Co.Uk") == -2.0
+
+
+def test_the_morning_star_does_not_claim_the_word(reg):
+    """`Morning Star` collides with Morningstar (US financial data) and the Vernon Morning Star
+    (British Columbia). No Morningstar row exists today — the parenthetical keeps the word unclaimed
+    anyway, so the trap stays documented rather than silently won by whichever was curated first."""
+    assert reg.resolve("Morning Star") is None
+    assert reg.resolve("Morningstar") is None
+    assert reg.resolve("Morningstaronline.Co.Uk").canonical == "Morning Star (UK)"
+
+
+def test_the_scale_saturates_and_credibility_still_separates(reg):
+    """Five British rows sit on the -2 floor: three at MBFC LEFT and Novara Media at FAR LEFT. The
+    file cannot tell those apart and must not pretend to. What it CAN tell apart is credibility —
+    Novara is MIXED where the Morning Star is MOSTLY FACTUAL. The clearest demonstration that lean
+    and credibility are two columns doing different jobs rather than one wearing two names."""
+    floor = [o for o in reg.outlets() if o.country == "GB" and o.lean == -2.0]
+    assert len(floor) >= 4
+    assert min(o.lean for o in reg.outlets() if not __import__("math").isnan(o.lean)) == -2.0
+    assert reg.credibility("Novaramedia.Com") == "medium"
+
+
+def test_the_week_is_the_anti_citynews(reg):
+    """Canada's pass made CityNews ONE canonical because MBFC rated eight editions separately and
+    all eight agreed. The Week's two editions DISAGREE — MBFC has the US edition at LEFT and the UK
+    edition at Left-Center. Editions get rated separately because they can come apart, and looking
+    is the only way to find out which case you are in. A bare "The Week" resolves to neither."""
+    assert reg.lean("Theweek.Com") == -2.0
+    assert reg.lean("Theweek.Co.Uk") == -1.0
+    assert reg.resolve("The Week") is None
+
+
+def test_a_rating_out_of_reach_is_not_a_rating_that_does_not_exist(reg):
+    """Two blank Scottish/NI rows, two different facts. Belfast Telegraph: Ad Fontes, AllSides and
+    MBFC all have no rating — ordinary absence. Aberdeen Press & Journal: THE MBFC PAGE EXISTS and
+    could not be read; the fetcher gets 403 and search returned only prose without the categorical
+    label this file maps from.
+
+    The Brazil/paywall case again. A future curator should know which of these is retrievable."""
+    import math
+    for host in ("Belfasttelegraph.Co.Uk", "Pressandjournal.Co.Uk"):
+        o = reg.resolve(host)
+        assert math.isnan(o.lean) and o.country == "GB", host
+    assert reg.resolve("Pressandjournal.Co.Uk").region == "Scotland"
+
+
+def test_ireland_has_a_right_side_that_is_not_one_paper(reg):
+    """Ireland's rated set was six rows with exactly one outlet right of centre — the Irish
+    Independent. Gript at MBFC RIGHT means the Irish spread no longer rests on a single masthead,
+    which is the difference between a market that straddles and a market that happens to."""
+    import math
+    right = [o.canonical for o in reg.outlets()
+             if o.country == "IE" and not math.isnan(o.lean) and o.lean > 0]
+    assert len(right) >= 2, right
