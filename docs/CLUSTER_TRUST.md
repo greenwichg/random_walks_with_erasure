@@ -2191,3 +2191,59 @@ Colombo Gazette.
 | rows | 154 | **445** |
 | rated | 143 | **418** |
 | countries | ~30 | **53** |
+
+## Twenty-fourth pass: Middle East / Africa
+
+Ten outstanding, **four rated**.
+
+| | |
+|---|---|
+| The Standard (Kenya) +1 | MBFC RC, Mixed — "omits criticism of the ruling party" |
+| The Citizen (South Africa) +1 | MBFC RC, High |
+| GhanaWeb 0 | MBFC *Least Biased*, Mixed, Medium credibility |
+| **Globes 0** | MBFC *Least Biased*, High — **see the correction below** |
+
+Ghana is new; Kenya gains a spread (Daily Nation −1 against The Standard +1). **54 countries.**
+
+### GhanaWeb's zero means something different
+
+MBFC rates it Least Biased because its coverage "lacks consistent ideological framing" and is
+largely aggregated and entertainment-driven. **That is a centre meaning *absence of a stance*, not
+*balance between two*.** Both land on 0 in this file and the column cannot tell them apart — the
+same shape as Focus Taiwan's funding-derived lean and Boston's syndication split. Fourth instance.
+
+### A correction: Globes IS rated
+
+Two passes ago this document recorded *"neither Globes nor Calcalist is rated; both stay out"* — and
+presented it as a near-miss successfully avoided, because the search had returned **Globe Magazine**,
+a US supermarket tabloid.
+
+The near-miss was real. **The conclusion drawn from it was wrong.** A better-targeted query finds
+`mediabiasfactcheck.com/globes-bias-and-credibility/` immediately: Least Biased, High factual.
+
+Worth recording as its own kind of error, distinct from the near-misses themselves. The trap
+(*Globes → Globe Magazine*, *Morningstar → The Morning Star*) was correctly spotted both times. What
+went wrong here is what happened **next**: a bad result was allowed to answer the question rather
+than just to end the query. **A search that returns the wrong outlet has told you nothing about
+whether the right one is rated.**
+
+There is now a test pinning Globes' rating whose docstring says so — a regression test on the
+process rather than the data.
+
+### Four Standards, and none of them claims the word
+
+`standardmedia.co.ke` (Kenya, +1), `standard.co.uk` (London Evening Standard, +1), `standaard.be`
+(De Standaard, 0), `standard.net.au` (Warrnambool, unresolved). **A bare "The Standard" resolves to
+nothing.** That is the parenthetical rule and the brand-domain key working together, stretched
+wider than at any earlier point in this file — and it started this morning as a single false
+collapse between an Australian local and a London evening paper.
+
+Confirmed absent: The Star (Kenya), Business Day, Graphic Online, Calcalist, Arab Times, New Vision.
+
+### Registry, close of twenty-four passes
+
+| | start of day | end |
+|---|---:|---:|
+| rows | 154 | **449** |
+| rated | 143 | **422** |
+| countries | ~30 | **54** |

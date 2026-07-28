@@ -1220,3 +1220,32 @@ Jakarta Globe,-1,jakartaglobe.id,ID,,Jakarta,national
 Kompas,0,kompas.com,ID,,Jakarta,national
 New Straits Times,0,nst.com.my,MY,,Kuala Lumpur,national
 Tribunnews,1,tribunnews.com,ID,,Jakarta,national,,medium
+#
+# Twenty-fourth pass -- MIDDLE EAST / AFRICA, 10 outstanding. Four rated.
+#
+#   The Standard (Kenya)     +1  (MBFC RC, factual MIXED -- MBFC cites reporting that omits
+#                                 criticism of the ruling party)
+#   The Citizen (South Africa) +1 (MBFC RC, factual High)
+#   GhanaWeb                  0  (MBFC LEAST BIASED, factual MIXED, MEDIUM credibility -- MBFC
+#                                 attributes the neutral lean to aggregated/entertainment coverage
+#                                 lacking consistent ideological framing, which is a "centre" that
+#                                 means absence of a stance rather than balance between two)
+#   Globes                    0  (MBFC LEAST BIASED, factual High -- financial focus, clear
+#                                 separation of news from comment)
+#
+# GLOBES IS A CORRECTION. An earlier pass in this file recorded "neither Globes nor Calcalist is
+# rated; both stay out", on the strength of a search that returned GLOBE MAGAZINE, a US supermarket
+# tabloid. That was written up as a near-miss avoided. It was also a WRONG CONCLUSION: a better
+# query finds mediabiasfactcheck.com/globes-bias-and-credibility/ immediately. The near-miss was
+# real and so was the failure to look again -- a bad search result should end a query, not a
+# question.
+#
+# Ghana and Kenya's second outlet take the file to 54 countries and give KENYA a spread: Daily
+# Nation -1 against The Standard +1.
+#
+# CONFIRMED ABSENT: The Star (Kenya), Business Day, Graphic Online, Calcalist, Arab Times,
+# New Vision.
+The Standard (Kenya),1,standardmedia.co.ke,KE,,Nairobi,national
+The Citizen (South Africa),1,citizen.co.za,ZA,,Johannesburg,national
+GhanaWeb,0,ghanaweb.com,GH,,Accra,international,,medium
+Globes,0,globes.co.il|en.globes.co.il,IL,,Tel Aviv,national

@@ -1408,3 +1408,41 @@ def test_the_two_straits_times_are_different_papers(reg):
     assert reg.resolve("Straitstimes.Com").canonical == "The Straits Times"
     assert reg.resolve("Nst.Com.My").country == "MY"
     assert reg.resolve("Straitstimes.Com").country == "SG"
+
+
+def test_the_me_africa_pass(reg):
+    for host, lean in [
+        ("Standardmedia.Co.Ke", 1.0), ("Citizen.Co.Za", 1.0),
+        ("Ghanaweb.Com", 0.0), ("Globes.Co.Il", 0.0),
+    ]:
+        assert reg.lean(host) == lean, host
+
+
+def test_four_standards_and_none_of_them_claims_the_word(reg):
+    """standardmedia.co.ke, standard.co.uk, standaard.be, standard.net.au — four mastheads, one
+    brand word, four different answers. The bare "The Standard" resolves to nothing, which is the
+    parenthetical rule and the brand-domain key working together. This is the widest that
+    particular trap has been stretched in the file."""
+    assert reg.resolve("Standardmedia.Co.Ke").canonical == "The Standard (Kenya)"
+    assert reg.resolve("Standard.Co.Uk").canonical == "London Evening Standard"
+    assert reg.resolve("Standaard.Be").canonical == "De Standaard"
+    assert reg.resolve("Standard.Net.Au") is None
+    assert reg.resolve("The Standard") is None
+
+
+def test_two_citizens_stay_apart(reg):
+    """MBFC rates The Citizen (South Africa) and The Citizen (Tanzania) separately. Only the South
+    African one is curated, and a bare "The Citizen" claims neither."""
+    assert reg.resolve("Citizen.Co.Za").canonical == "The Citizen (South Africa)"
+    assert reg.resolve("The Citizen") is None
+
+
+def test_globes_is_rated_and_was_wrongly_recorded_as_absent(reg):
+    """An earlier pass concluded Globes was unrated, on a search that returned GLOBE MAGAZINE — a US
+    supermarket tabloid. The near-miss was real; the conclusion drawn from it was not. A better
+    query finds the page immediately.
+
+    Pinned as a regression test on the PROCESS, not the data: a bad search result should end a
+    query, not a question."""
+    o = reg.resolve("Globes.Co.Il")
+    assert o.canonical == "Globes" and o.lean == 0.0 and o.country == "IL"
