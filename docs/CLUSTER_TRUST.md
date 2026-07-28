@@ -236,7 +236,37 @@ Read and a Save button.
 
 ## Thresholds
 
-### Measured, 2026-07-28 (938 stories, 4,169 covered articles)
+### After adoption — measured 2026-07-28 with `RWE_STORY_REPAIR_QUORUM=0.5` live
+
+| | before gates | after repair |
+|---|---:|---:|
+| stories | 938 | **1,004** |
+| covered articles | 4,169 | 4,151 |
+| largest cluster | 327 | **115** |
+| largest ÷ p90 | 46.7× | **16.4×** |
+| largest share of covered | **7.8%** (trigger 8%) | **2.8%** |
+| `ok` share of articles | 87.0% | **95.4%** |
+| `low` | 3 clusters / 380 articles | **1 cluster / 16 articles** |
+
+Independently-condemned coverage fell **380 → 16 articles**, a 96% reduction, for 18 net articles
+of coverage. The share monitor went from 0.2 points under its trigger to comfortably below it.
+
+Two things this leaves, neither of them a clustering defect:
+
+* **The largest cluster in the catalog is now the M.D. Sass press-release template** — 115
+  articles from 5 publishers, no geography, `unverified`. It is correctly clustered non-news, and
+  it belongs at ingestion rather than in the clusterer. The registry has no exclusion column
+  today, so this is a new mechanism, not curation; identify the publishers before designing it.
+* **`Expected U.S.-Saudi Nuclear Deal…`** — 60 articles, 28 publishers, coherence 0.50 on **2**
+  located members. Genuinely undecidable by the signal, and unchanged by the repair since
+  `unverified` clusters are not touched. Needs a human read.
+
+The one remaining `low` cluster is itself a piece the repair produced: *"Oil Prices Fall After
+U.S. and Iran Pause Fighting"*, 16 articles, 7 located, 0.57. Repair does not recurse — a piece
+that comes out condemned is not re-split. At 16 articles that is not worth changing, but it is a
+known limit rather than an oversight.
+
+### Measured before adoption, 2026-07-28 (938 stories, 4,169 covered articles)
 
 | verdict | stories | articles | share |
 |---|---:|---:|---:|
