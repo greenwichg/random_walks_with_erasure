@@ -782,9 +782,26 @@ is the guess this file refuses.
 move it materially. That was wrong, and the reason is structural rather than a shortfall in the
 curation:
 
-**Adding a rating does two opposite things.** It can lift a story from two rated publishers to three
-and *enable* a claim; it can also fill an empty lean bucket in a story that already had three and
-*remove* one. On this catalog those roughly cancelled.
+**The real cause: a registry edit does not reach articles already in the catalog.** An article's
+lean is written into its `scored` JSON at INGEST time, and `feed_article_to_article` reads it from
+there — so a newly rated outlet keeps casting no vote until its next article arrives, and the
+existing ones age out of the six-day window instead of being corrected. The audit went on listing
+`Dailymail.Com`, `Winnipegfreepress.Com`, `Inquirer.Com` and `Variety.Com` as unrated, all of them
+rated an hour earlier. The registry was right and the catalog had not heard.
+
+`examples/backfill_lean.py` fixes it: rewrite the stored lean from the registry wherever the two
+disagree. Narrow on purpose — only the lean field (category, register, emotion and confidence were
+measured per article, while the lean is a property of the outlet), never invents a rating for an
+unrated or unknown row, and idempotent, so it is safe after every curation pass.
+
+```
+docker exec deploy-api-1 python /app/examples/backfill_lean.py --dry-run
+docker exec deploy-api-1 python /app/examples/backfill_lean.py
+```
+
+A second, smaller effect is real but was not the main one: **adding a rating does two opposite
+things.** It can lift a story from two rated publishers to three and *enable* a claim; it can also
+fill an empty lean bucket in a story that already had three and *remove* one.
 
 So article volume is the wrong worklist, and it was the one being used. An outlet with sixty
 articles spread across sixty stories that each already carry four rated publishers unlocks nothing.

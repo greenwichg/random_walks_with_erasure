@@ -1663,6 +1663,42 @@ class Store:
         counts = {str(k): int(n) for k, n in rows}
         return {"total": sum(counts.values()), "byStatus": counts}
 
+    def all_feed_articles_for_lean_backfill(self) -> list:
+        """``canonicalUrl``, ``publisher`` and raw ``scored`` for every catalog article.
+
+        Deliberately not filtered by the story window: a lean correction should reach the whole
+        catalog, since search, history and the publisher pages read these rows too and an article
+        outside today's clustering window is still served."""
+        with self.session() as s:
+            return [{"canonicalUrl": u, "publisher": p, "scored": sc}
+                    for u, p, sc in s.execute(select(
+                        FeedArticle.canonical_url, FeedArticle.publisher,
+                        FeedArticle.scored)).all()]
+
+    def apply_lean_backfill(self, updates: list) -> int:
+        """Rewrite ONLY the lean fields inside each article's stored ``scored`` JSON.
+
+        Read-modify-write per row rather than a JSON SQL function, so the blob is re-serialised
+        through the same sanitiser every other write uses and cannot acquire a non-finite float or
+        an invalid document. Everything except the lean is preserved byte-for-byte: category,
+        register, emotion and confidence were measured per article, while the lean is a property of
+        the outlet and is the only field the registry owns."""
+        if not updates:
+            return 0
+        wanted = dict(updates)
+        n = 0
+        with self.session() as s:
+            for row in s.execute(select(FeedArticle).where(
+                    FeedArticle.canonical_url.in_(list(wanted)))).scalars():
+                try:
+                    scored = json.loads(row.scored)
+                except (TypeError, ValueError):
+                    continue
+                scored["lean"] = wanted[row.canonical_url]
+                row.scored = _dumps_scored(scored)
+                n += 1
+        return n
+
     def story_member_ids(self) -> dict:
         """``url -> story_id`` for every article the last build served. The whole table: it is
         bounded by the clustering window, so this is thousands of rows, and loading it once beats
