@@ -181,10 +181,53 @@ docker exec deploy-api-1 python /app/examples/audit_clustering_change.py --repai
 docker exec deploy-api-1 python /app/examples/audit_clustering_change.py --repair-quorum 0.5 --pieces 1
 ```
 
-The second command is the one that decides it. 336 articles into 56 pieces is a fix if they are 56
-separate events and a regression if one story was shredded, and **both look identical in every
-counter**. `--pieces` prints the resulting titles, biggest first, with a count of how many pieces
-came out at 2 articles or fewer — that tail is the tell for over-fragmentation.
+The second command is the one that decided it.
+
+### What the 336-article cluster actually contained
+
+56 pieces holding 271 of 336 articles, only 9 of them at 2 articles or fewer. The largest:
+
+```
+   16    14  Oil Prices Fall After U.S. and Iran Pause Fighting for a Second Day
+   13     9  At Least 2 Killed in Shooting at Food Festival in Seattle
+   11    11  U.S.-Iran War Pauses for 2nd Straight Day
+    9     6  Two dead, five injured in shooting near Seattle's Space Needle
+    8     7  Trump's 50% Tariffs on Canada: What to Know, and What's Next
+    7     6  Houthis Claim Strikes on 2 Saudi Oil Tankers in Red Sea
+    7     7  US to Impose Forced Labor Tariffs on Many Trading Partners
+    6     6  House Passes Defense Bill Amid Iran War Divide
+    5     4  Netanyahu and Zelensky coming to DC for Lindsey Graham funeral
+```
+
+One cluster was holding a US-Iran war, **a mass shooting in Seattle**, Canada tariffs,
+forced-labour tariffs, Houthi attacks in the Red Sea and a senator's funeral — under a headline
+about a dignified transfer of fallen soldiers. This is the chaining defect read directly rather
+than inferred from a coherence score. Note that *"Trump's 50% Tariffs on Canada"* — the title this
+same blob carried a week earlier — comes back out as its own 8-article story.
+
+### The over-fragmentation objection, and why it does not hold
+
+The obvious complaint is that the Seattle shooting appears as four pieces (13, 9, 7, 6 articles)
+and the Iran pause as several. That reads like the quorum shredding one event.
+
+It is not. Those pieces cannot merge under **any** linkage rule, because they never clear the
+pairwise gate in the first place:
+
+| pair | shared tokens | jaccard |
+|---|---:|---:|
+| "…Shooting at Food Festival in Seattle" vs "…shooting near Seattle's Space Needle" | 2 | 0.15 |
+| "Mass shooting reported at Seattle Center" vs "…gunfire erupts near Seattle" | 1 | 0.08 |
+| "U.S.-Iran War Pauses…" vs "After Trump calls off bombing, Iran signals…" | 1 | 0.07 |
+
+Against `MIN_SHARED_TOKENS = 3` and `sim = 0.28`. They were in one cluster **only** via chaining.
+So the quorum did not fragment a coherent story — it exposed a pre-existing recall limitation of
+title-token Jaccard that the blob had been hiding. Near-duplicate stories in the feed are the new
+visible problem, and they are a *different* problem: headlines describing one event in disjoint
+vocabulary. That is the case entity or event signals would address, and it is now measurable
+instead of buried inside a 336-article cluster.
+
+**Adopted at 0.5.** Enable with `RWE_STORY_REPAIR_QUORUM=0.5` — reversible without a deploy, which
+is why it goes in the environment before it goes in the code default.
 
 ### 5. Coverage-list batching
 

@@ -213,6 +213,23 @@ services:
       RWE_CLUSTER_MIN_SHARED: ${RWE_CLUSTER_MIN_SHARED:-3}
       RWE_CLUSTER_MIN_TOKENS: ${RWE_CLUSTER_MIN_TOKENS:-3}
       RWE_CLUSTER_IDF: ${RWE_CLUSTER_IDF:-0}
+      # Cluster trust (docs/CLUSTER_TRUST.md). geoCoherence is the one signal independent of the
+      # clusterer, so it gates the blindspot claim and demotes suspect clusters out of the default
+      # ranking — single-linkage chaining accumulates publishers, which means a false merge's
+      # wrongness and its rank had the same cause. A score is only acted on with 4+ located members
+      # behind it; TRUST_RANKING=0 restores pure size ordering without a deploy.
+      RWE_STORY_COHERENCE_FLOOR: ${RWE_STORY_COHERENCE_FLOOR:-0.7}
+      RWE_STORY_UNVERIFIED_SIZE: ${RWE_STORY_UNVERIFIED_SIZE:-50}
+      RWE_STORY_TRUST_RANKING: ${RWE_STORY_TRUST_RANKING:-1}
+      # Cluster-aware linkage. GLOBAL (LINK_QUORUM) is off: measured on 16,921 live articles it
+      # cost 9.3% of covered articles, left the bad-cluster count at 3, and made mean coherence
+      # WORSE (0.966 -> 0.952) by shredding coherent stories. TARGETED (REPAIR_QUORUM) applies the
+      # same rule only to clusters the independent signal already condemns — 3 clusters, 1.6% of
+      # covered articles, bad clusters 3 -> 1, mean coherence 0.966 -> 0.968. Reading the 56 pieces
+      # the 336-article cluster produced settled it: a US-Iran war, a Seattle mass shooting, Canada
+      # tariffs and a senator's funeral had been merged into one "story".
+      RWE_CLUSTER_LINK_QUORUM: ${RWE_CLUSTER_LINK_QUORUM:-0}
+      RWE_STORY_REPAIR_QUORUM: ${RWE_STORY_REPAIR_QUORUM:-0.5}
       # Storage lifecycle (examples/retention_policy.py — the ONE typed policy module). 0 = keep
       # forever, uniformly; junk/negative values fall back to the default rather than deleting more.
       # User data (reads, saves, settings, accounts) has NO policy and is never pruned.
