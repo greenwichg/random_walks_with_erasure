@@ -962,3 +962,31 @@ def test_the_week_us_does_not_claim_the_bare_name(reg):
     as every disambiguated row does."""
     assert reg.resolve("Theweek.Com").canonical == "The Week (US)"
     assert reg.resolve("The Week") is None
+
+
+def test_the_thirteenth_pass_ratings(reg):
+    for host, lean in [
+        ("Meduza.Io", -2.0), ("Pravda.Com.Ua", -1.0), ("Themoscowtimes.Com", -1.0),
+        ("Balkaninsight.Com", -1.0), ("Thedailystar.Net", -1.0), ("Malaysiakini.Com", -1.0),
+        ("Irrawaddy.Com", -1.0), ("Tribune.Com.Pk", 0.0),
+        ("Freemalaysiatoday.Com", 1.0), ("Geo.Tv", 1.0),
+    ]:
+        assert reg.lean(host) == lean, host
+
+
+def test_three_daily_stars_stay_apart(reg):
+    """Bangladesh, the UK, and a bare name that belongs to neither. MBFC rates the Bangladeshi and
+    British papers separately and they land two points apart — the parenthetical canonicals decline
+    the bare word, which is the only thing keeping them from swapping ratings."""
+    assert reg.resolve("Thedailystar.Net").canonical == "The Daily Star (Bangladesh)"
+    assert reg.resolve("Dailystar.Co.Uk").canonical == "Daily Star (UK)"
+    assert reg.lean("Thedailystar.Net") == -1.0 and reg.lean("Dailystar.Co.Uk") == 1.0
+    assert reg.resolve("The Daily Star") is None
+
+
+def test_exile_outlets_record_where_the_publisher_is(reg):
+    """The country column means the publisher's home, not its subject. Meduza has operated from Riga
+    since 2014 and The Moscow Times from Amsterdam since 2022 — both Russian journalism, neither
+    published from Russia."""
+    assert reg.resolve("Meduza.Io").country == "LV"
+    assert reg.resolve("Themoscowtimes.Com").country == "NL"

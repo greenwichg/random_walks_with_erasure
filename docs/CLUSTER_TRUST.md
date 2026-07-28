@@ -1603,3 +1603,51 @@ voted, and that is checked per row.
 **The registry more than doubled and the rated set went up 122%.** The centre carries 63 and both
 wings are represented at 24 apiece — a shape you can argue with, which is the point of writing it
 down.
+
+## Thirteenth pass: where the yield curve breaks
+
+Regions the earlier probes never touched — Eastern Europe, South and Southeast Asia, Africa,
+Caribbean, specialist trade press. **134 probed, 130 missing, 10 rated.**
+
+That collapse is the finding, not a shortfall. The three probes now read:
+
+| probe | outlets | missing | rated | hit rate |
+|---|---:|---:|---:|---:|
+| Global majors (mostly US/UK/EU) | 181 | 172 | 34 | 20% |
+| Remainder of the same list | 115 | 115 | 25 | 22% |
+| **Non-Western regions** | **134** | **130** | **10** | **7.5%** |
+
+MBFC covers roughly 3,900 sources and is heavily US/UK weighted. Outside those markets a probe
+mostly returns outlets **no rater has ever assessed** — so the constraint on registry growth stopped
+being effort several passes ago and is now simply whether a public rating exists.
+
+Added: Meduza −2, Ukrainska Pravda −1, The Moscow Times −1, Balkan Insight −1, The Daily Star
+(Bangladesh) −1, Malaysiakini −1, The Irrawaddy −1, The Express Tribune 0, Free Malaysia Today +1,
+Geo TV +1.
+
+Three things worth recording from this set:
+
+**MBFC's scale strains outside Western politics.** It rates Meduza *Left* and attributes that to an
+anti-Kremlin stance rather than to left politics as understood in the West. The number goes in the
+file as published, but a reader treating −2 as "American left" would be reading it wrong.
+
+**Some bias the axis cannot express at all.** The Express Tribune is *Least Biased* with a note that
+Pakistani state censorship produces propaganda **by omission**. That is a real distortion and it
+scores 0, because omission has no left or right.
+
+**The country column means the publisher's home, not its subject.** Meduza has operated from Riga
+since 2014 and The Moscow Times from Amsterdam since 2022 — Russian journalism, published from
+outside Russia. Both are recorded where they actually are.
+
+**One rating was retrieved and deliberately discarded**: "The Nation (Thailand)" came back Left,
+from a result that could not be cleanly told apart from The Nation (US), which this file already
+carries at −2. An unattributable rating is not a rating.
+
+### Registry, close of thirteen passes
+
+| | start of day | end |
+|---|---:|---:|
+| rows | 154 | **354** |
+| rated | 143 | **328** |
+| countries | ~30 | **50** |
+| spread (−2/−1/0/+1/+2) | — | **25 / 125 / 64 / 90 / 24** |

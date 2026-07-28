@@ -838,3 +838,43 @@ Expressen,1,expressen.se,SE,,Stockholm,national
 # pro-government propaganda and censorship that omits criticism of the government -- the fourth
 # Chinese-state-adjacent source in this set, after Xinhua, Global Times and CGTN's absence.
 Caixin Global,1,caixinglobal.com|caixin.com,CN,,Beijing,national,,low
+#
+# Thirteenth pass -- regions the earlier probes never touched: Eastern Europe, South and Southeast
+# Asia, Africa. 134 probed, 130 missing, and the YIELD COLLAPSES here: 10 rated. That is the
+# measurement, not a shortfall -- MBFC covers ~3,900 sources and is heavily US/UK weighted, so
+# outside those markets a probe mostly returns outlets no rater has assessed. Recorded because it
+# is the honest answer to "how much more is there".
+#
+#   Ukrainska Pravda -1 (MBFC LC, Mostly Factual)
+#   The Moscow Times -1 (MBFC LC, factual High)
+#   Meduza           -2 (MBFC LEFT, factual High -- MBFC attributes the lean to an anti-Kremlin
+#                        stance rather than to left politics as understood in the West)
+#   Balkan Insight   -1 (MBFC LC, factual High)
+#   The Daily Star (Bangladesh) -1 (MBFC LC, factual High)
+#   Malaysiakini     -1 (MBFC LC, Mostly Factual, HIGH credibility)
+#   The Irrawaddy    -1 (MBFC LC, factual High)
+#   The Express Tribune 0 (MBFC LEAST BIASED, Mostly Factual -- MBFC notes Pakistani state
+#                        censorship producing propaganda by OMISSION, which is a bias the
+#                        left-right axis cannot express)
+#   Free Malaysia Today +1 (MBFC RC, factual MIXED)
+#   Geo TV           +1 (MBFC RC, factual MIXED -- state propaganda, a failed fact check)
+#
+# Two exile outlets, and the country column records where the PUBLISHER now is rather than what it
+# covers: Meduza has operated from Riga since 2014 and The Moscow Times from Amsterdam since 2022.
+# Both are Russian journalism; neither is published from Russia, and the column means home.
+#
+# NOT rated despite being probed, because no rater covers them: Prothom Alo, VnExpress, Sahara
+# Reporters, The Cable, Mada Masr, and most of the African and Southeast Asian sets.
+# "The Nation (Thailand)" was also skipped: the only rating retrieved could not be cleanly told
+# apart from The Nation (US), which this file already carries at -2. An unattributable rating is
+# not a rating.
+Meduza,-2,meduza.io,LV,,Riga,international
+Ukrainska Pravda,-1,pravda.com.ua,UA,,Kyiv,national
+The Moscow Times,-1,themoscowtimes.com,NL,,Amsterdam,international
+Balkan Insight,-1,balkaninsight.com,RS,,Belgrade,international
+The Daily Star (Bangladesh),-1,thedailystar.net,BD,,Dhaka,national
+Malaysiakini,-1,malaysiakini.com,MY,,Kuala Lumpur,national,,high
+The Irrawaddy,-1,irrawaddy.com,MM,,Yangon,international
+The Express Tribune,0,tribune.com.pk,PK,,Karachi,national
+Free Malaysia Today,1,freemalaysiatoday.com,MY,,Kuala Lumpur,national
+Geo TV,1,geo.tv,PK,,Karachi,national
