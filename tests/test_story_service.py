@@ -1146,3 +1146,75 @@ def test_stable_ids_are_on_by_default_and_reversible(monkeypatch):
     assert ss.stable_ids() is True
     monkeypatch.setenv("RWE_STORY_STABLE_IDS", "0")
     assert ss.stable_ids() is False
+
+
+# --------------------------------------------------------------------------- #
+# Publisher identity — publisherCount counts OUTLETS, not name forms.
+#
+# Measured: 181 of 1,367 names were duplicates, and 35 stories cleared min_publishers only because
+# one outlet was counted twice — the largest being 17 articles from 17 *.iheart.com hostnames.
+# --------------------------------------------------------------------------- #
+def _syndicated(st, hosts, title="Accused murderer arrested boarding a cruise ship"):
+    for i, h in enumerate(hosts):
+        _add(st, f"https://{h}/a{i}", h, 0.0, title, days=1)
+
+
+def test_a_syndication_network_is_not_a_multi_publisher_story():
+    """The production case. Seventeen station hostnames under one domain are one outlet, and this
+    cluster only ever cleared min_publishers because they were counted separately."""
+    st = store_mod.Store("sqlite://")
+    _syndicated(st, ["Kfbk.Iheart.Com", "Wjjs.Iheart.Com", "Kogo.Iheart.Com"])
+    assert ss.build_stories(ss._fetch(st)) == []
+
+
+def test_the_same_cluster_survives_with_identity_off(monkeypatch):
+    """Proof the removal is the identity rule and not something else about the fixture."""
+    monkeypatch.setenv("RWE_STORY_PUBLISHER_IDENTITY", "0")
+    ss.clear_cache()
+    st = store_mod.Store("sqlite://")
+    _syndicated(st, ["Kfbk.Iheart.Com", "Wjjs.Iheart.Com", "Kogo.Iheart.Com"])
+    stories = ss.build_stories(ss._fetch(st))
+    assert len(stories) == 1 and stories[0]["publisherCount"] == 3
+
+
+def test_a_genuine_story_keeps_every_outlet():
+    st = store_mod.Store("sqlite://")
+    _senate_and_wildfire(st)
+    senate = next(s for s in ss.build_stories(ss._fetch(st)) if "Senate" in s["title"])
+    assert senate["publisherCount"] == 3
+
+
+def test_publisher_count_collapses_but_the_story_survives():
+    """Three name forms, two outlets: the count was wrong, the story is real."""
+    st = store_mod.Store("sqlite://")
+    for i, pub in enumerate(["Sportskeeda.Com", "Sportskeeda", "BBC News"]):
+        _add(st, f"https://s{i}.example/x", pub, 0.0,
+             "Djokovic and Sinner reach the semi finals", days=1)
+    story = ss.build_stories(ss._fetch(st))[0]
+    assert story["totalCoverage"] == 3 and story["publisherCount"] == 2
+
+
+def test_the_publisher_list_names_each_outlet_once_by_its_commonest_form():
+    """Listing seventeen hostnames would overstate the coverage and read as noise."""
+    members = [{"publisher": "Sportskeeda.Com", "publisherKey": "k"},
+               {"publisher": "Sportskeeda.Com", "publisherKey": "k"},
+               {"publisher": "Sportskeeda", "publisherKey": "k"},
+               {"publisher": "BBC News", "publisherKey": "b"}]
+    assert ss._display_publishers(members) == ["BBC News", "Sportskeeda.Com"]
+
+
+def test_one_outlet_casts_one_lean_vote():
+    """_distribution votes per outlet. Without identity a fragmented outlet votes many times, which
+    skews the distribution the bias claim rests on."""
+    members = [{"publisher": "Kfbk.Iheart.Com", "publisherKey": "ih", "leanBucket": "right"},
+               {"publisher": "Wjjs.Iheart.Com", "publisherKey": "ih", "leanBucket": "right"},
+               {"publisher": "NPR", "publisherKey": "npr", "leanBucket": "left"}]
+    assert ss._distribution(members) == {"left": 0.5, "center": 0.0, "right": 0.5}
+    assert ss._rated_publishers(members) == 2
+
+
+def test_publisher_identity_is_on_by_default_and_reversible(monkeypatch):
+    monkeypatch.delenv("RWE_STORY_PUBLISHER_IDENTITY", raising=False)
+    assert ss.publisher_identity_enabled() is True
+    monkeypatch.setenv("RWE_STORY_PUBLISHER_IDENTITY", "0")
+    assert ss.publisher_identity_enabled() is False

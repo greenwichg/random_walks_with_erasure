@@ -677,3 +677,59 @@ Related and smaller: a merged story can be titled by its smaller half — *"Fauc
 articles) titles the merged 13-article story because it holds the earliest member. Consistent with
 the rule, but for a merged story the largest contributor is usually the better headline. Cosmetic;
 noted so it is a decision rather than an oversight.
+
+## One outlet counted as several
+
+`publisherCount` counted distinct publisher **strings**, and feeds do not agree on how to name an
+outlet. Measured on the live catalog: **181 of 1,367 publisher names are duplicates of another**,
+**60 stories carried an inflated count**, and — the part that is a correctness failure rather than
+a cosmetic one — **35 stories cleared `min_publishers` only because one outlet was counted twice.**
+
+The dominant case is a syndication network:
+
+```
+17 arts, 17 "publishers"  Accused Murderer Arrested While Trying To Board Cruise Ship
+                          every member a *.iheart.com station hostname
+10 arts, 10 "publishers"  Shah Projected Winner In AZ Democratic Primary
+ 9 arts,  9 "publishers"  Yellowstone Closes Three Rivers To Fishing
+```
+
+~100 iHeartRadio station hostnames syndicating identical copy. This is the M.D. Sass template in a
+new costume — one source, many hostnames — except it defeats the admission gate entirely, because
+seventeen hostnames look like seventeen publishers. `Samsung Galaxy Z Fold 8` sat near the top of
+the ranking on 26 publishers that are really 8.
+
+`publisher_identity.groups` collapses them, and the pipeline uses the result in four places that
+all read the same count: the `min_publishers` admission gate, `publisherCount`, `_distribution`
+(one lean vote per outlet, so a fragmented outlet no longer votes many times), and the rated-
+publisher floor. The story's publisher LIST names each outlet once, by the form it used most often.
+
+### The false positive that shaped the rule
+
+The first version keyed on the bare brand label and collapsed **`standard.net.au`** (the
+Warrnambool Standard) into **`standard.co.uk`** (the London Evening Standard) — two unrelated
+newspapers. Acting on that finding would have been worse than the problem it reported. So:
+
+* **two host forms** collapse only on a matching brand domain (label + public suffix) — keeps every
+  iHeart station together, keeps the two Standards and The Local's five national editions apart,
+  still joins `obits.oregonlive.com` to its parent and `Videocardz.Com` to `Videocardz.com`;
+* **a host and a bare name** collapse on the brand label, the only route from `Sportskeeda` to
+  `Sportskeeda.Com` when neither is curated — but only where exactly one domain carries that
+  label, so an ambiguous bare `Standard` is left alone rather than guessed.
+
+Correcting it removed 13 false collapses (194 → 181 duplicate names).
+
+The rule lives in `publisher_identity` and the audit imports it, because an audit measuring a
+different rule than production applies would be measuring nothing.
+
+**Expect ~35 fewer stories on the next deploy.** They were never stories.
+`RWE_STORY_PUBLISHER_IDENTITY=0` reverts without a deploy.
+
+### What this reorders
+
+Alias gaps turned out to be almost nothing — **one**, Daily Mail → `Dailymail.Com`, 21 articles.
+The registry is not missing forms, it is missing outlets. And rating outlets cannot help a story
+that should not exist, so identity comes before curation. The remaining registry work, in order:
+syndication networks and the ~30 domain/name pairs; `Globenewswire.Com` and `Prnewswire.Com` as
+`kind=wire`; then lean curation for the genuine gaps (ESPN, Variety, Philadelphia Inquirer, The
+Star Malaysia, Winnipeg Free Press).

@@ -30,6 +30,7 @@ import clustering                 # the deterministic union-find Jaccard primiti
 import discover                   # feed_article_to_article — the shared Article serializer (Read flow)
 import media                      # centralised hero-image selection (additive; no clustering change)
 import outlet_registry            # curated source identity — supplies the wire/news distinction
+import publisher_identity         # one outlet, one identity, whatever form the feed used
 from pagination import OffsetPagination
 
 SORTS = ("top", "latest", "oldest", "publishers")
@@ -142,7 +143,7 @@ def _distribution(members: list) -> dict:
     it as centre would fabricate a lean nobody rated. All-unrated -> all-zero (blindspot: None)."""
     by_pub = {}
     for m in members:
-        by_pub.setdefault(m["publisher"], m["leanBucket"])
+        by_pub.setdefault(_pub_key(m), m["leanBucket"])
     counts = {"left": 0, "center": 0, "right": 0}
     for bucket in by_pub.values():
         if bucket in counts:
@@ -191,10 +192,29 @@ def _cluster_trust(total: int, coherence: Optional[float], located: int = 0, *, 
     return TRUST_UNVERIFIED if total > unverified_size else TRUST_OK
 
 
+def _pub_key(m: dict) -> str:
+    """The member's outlet identity — its annotated key, or its raw name if identity is off."""
+    return m.get("publisherKey") or m["publisher"]
+
+
+def _display_publishers(members: list) -> list:
+    """One entry per OUTLET, named by the form that outlet used most often.
+
+    Seventeen iHeart station hostnames are one publisher, and listing all seventeen would both
+    overstate the coverage and read as noise. The commonest form wins so the label is the one a
+    reader would recognise rather than whichever sorted first."""
+    counts: dict = {}
+    for m in members:
+        counts.setdefault(_pub_key(m), {}).setdefault(m["publisher"], 0)
+        counts[_pub_key(m)][m["publisher"]] += 1
+    return sorted(max(forms.items(), key=lambda kv: (kv[1], kv[0]))[0]
+                  for forms in counts.values())
+
+
 def _rated_publishers(members: list) -> int:
     """Distinct publishers carrying a lean rating — the sample a blindspot claim rests on. An
     unrated outlet is real coverage but casts no vote (L2.2), so it is not part of that sample."""
-    return len({m["publisher"] for m in members if m.get("leanBucket")})
+    return len({_pub_key(m) for m in members if m.get("leanBucket")})
 
 
 def _coverage(members: list) -> list:
@@ -226,7 +246,7 @@ def _build_story(members: list) -> dict:
     # Representative = earliest-published article (deterministic); its headline titles the event.
     rep = min(members, key=lambda m: (m["publishedAt"] or "~", m["id"]))
     dist = _distribution(members)
-    publishers = sorted({m["publisher"] for m in members})
+    publishers = _display_publishers(members)
     total = len(members)
     # Optional hero image (additive; centralised in media.py): representative → best → most recent →
     # None. This is the only media touch here — the clustering/filter/sort/pagination logic is unchanged.
@@ -267,7 +287,7 @@ def _build_story(members: list) -> dict:
         "topic": _mode_topic(members),
         "updatedAt": latest or rep["publishedAt"],
         "totalCoverage": total,                 # article count
-        "publisherCount": len(publishers),      # distinct outlets
+        "publisherCount": len(publishers),      # distinct OUTLETS, not distinct name forms
         "publishers": publishers,               # explicit publisher list
         "publisherDiversity": round(len(publishers) / total, 3) if total else 0.0,
         "earliest": earliest,
@@ -439,6 +459,19 @@ def link_quorum() -> float:
     return q if 0.0 <= q <= 1.0 else clustering.DEFAULT_LINK_QUORUM
 
 
+def publisher_identity_enabled() -> bool:
+    """Whether publisher counts collapse the name forms of one outlet. ON —
+    ``RWE_STORY_PUBLISHER_IDENTITY=0`` counts raw strings again.
+
+    Measured before this existed: 181 of 1,367 publisher names were duplicates of another, 60
+    stories carried an inflated ``publisherCount`` (``Samsung Galaxy Z Fold 8`` showed 26
+    publishers and has 8), and **35 stories cleared ``min_publishers`` only because one outlet was
+    counted twice** — the largest being 17 articles from 17 ``*.iheart.com`` station hostnames
+    syndicating identical copy. Those 35 stop being stories, which is correct: they never were."""
+    v = os.environ.get("RWE_STORY_PUBLISHER_IDENTITY", "").strip().lower()
+    return v not in {"0", "false", "no", "off"}
+
+
 def stable_ids() -> bool:
     """Whether a story keeps the id it was last served under. ON — ``RWE_STORY_STABLE_IDS=0``
     reverts to deriving the id from the earliest member every build.
@@ -577,7 +610,7 @@ def _admit(groups: list, arts: list, *, min_articles: int, min_publishers: int) 
         members = [arts[i] for i in idxs]
         if len(members) < min_articles:
             continue
-        if len({m["publisher"] for m in members}) < min_publishers:
+        if len({_pub_key(m) for m in members}) < min_publishers:
             continue
         out.append(members)
     return out
@@ -837,6 +870,13 @@ def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
         # perfectly coherent. Filtering by curated source identity is explicit and reversible;
         # the threshold that was proposed for the same job measured 0% precision, 0% recall.
         arts = [a for a in arts if not outlet_registry.is_wire(a.get("publisher"))]
+    if publisher_identity_enabled():
+        # Resolved once over the WHOLE build: whether a bare name may join a domain depends on how
+        # many domains carry that label, which is a property of the catalog and invisible to a
+        # per-article call.
+        keys = publisher_identity.groups({a["publisher"] for a in arts})
+        for a in arts:
+            a["publisherKey"] = keys.get(a["publisher"], a["publisher"])
     shared = min_shared_tokens() if min_shared is None else min_shared
     tokens_floor = min_title_tokens() if min_tokens is None else min_tokens
     weighting = use_idf() if idf is None else idf

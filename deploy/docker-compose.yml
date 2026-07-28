@@ -252,6 +252,11 @@ services:
       # member aged out of the rolling window, 9 because a backfilled article displaced it. Each
       # one is a saved or shared link that stops resolving. 0 reverts to deriving from the anchor.
       RWE_STORY_STABLE_IDS: ${RWE_STORY_STABLE_IDS:-1}
+      # publisherCount counts OUTLETS, not name forms. Feeds send the same masthead as
+      # "Sportskeeda.Com" and "Sportskeeda", and a syndication network as ~100 *.iheart.com station
+      # hostnames. Measured: 181 of 1,367 names were duplicates, 60 stories had an inflated count,
+      # and 35 cleared min_publishers only because one outlet was counted twice. 0 counts strings.
+      RWE_STORY_PUBLISHER_IDENTITY: ${RWE_STORY_PUBLISHER_IDENTITY:-1}
       # Storage lifecycle (examples/retention_policy.py — the ONE typed policy module). 0 = keep
       # forever, uniformly; junk/negative values fall back to the default rather than deleting more.
       # User data (reads, saves, settings, accounts) has NO policy and is never pruned.
