@@ -253,3 +253,15 @@ def test_one_new_bad_cluster_rejects_regardless_of_the_mean():
     v = acc.verdict(_mres(beforeCoherence={"scored": 67, "bad": 2, "mean": 0.966},
                           afterCoherence={"scored": 68, "bad": 3, "mean": 0.99}), merging=True)
     assert v["adopt"] is False and "bad clusters rose" in v["fails"][0]
+
+
+def test_claim_counts_are_compared_on_identical_rows():
+    """The live catalog went 57 -> 62 claims across a merge deploy and gained ~100 articles in the
+    same interval, so that delta is confounded. Both sides here are built from ONE row set, which
+    is what makes a merge's contribution to bias-summary eligibility attributable at all."""
+    st = store_mod.Store("sqlite://")
+    _feed(st, "https://a.example/1", "A", "harbour bridge closed after tanker crash")
+    _feed(st, "https://b.example/1", "B", "harbour bridge closed after a crash downtown")
+    res = acc.compare(st, before=(3, 3), after=(3, 3), show=5)
+    assert "beforeClaims" in res and "afterClaims" in res
+    assert res["beforeClaims"] == res["afterClaims"], "an unchanged build cannot move claims"

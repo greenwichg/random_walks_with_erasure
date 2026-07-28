@@ -210,6 +210,11 @@ def compare(store_, *, before: tuple, after: tuple, show: int = 10,
         # this has rearranged the catalog rather than corrected it.
         "beforeCoherence": _coherence_stats(a),
         "afterCoherence": _coherence_stats(b),
+        # Blindspot claims on IDENTICAL rows. The live catalog moved 57 -> 62 claims across a merge
+        # deploy, but it also gained ~100 articles in the same interval, so that delta cannot be
+        # attributed. Both sides here are built from one row set, which makes the attribution exact.
+        "beforeClaims": len([s for s in a if s.get("blindspotSide")]),
+        "afterClaims": len([s for s in b if s.get("blindspotSide")]),
         # Coverage retention: a change that "improves" the numbers by quietly dropping articles out
         # of stories is not an improvement. droppedOut counts articles that were in a story and now
         # are in none.
@@ -312,6 +317,9 @@ def main(argv=None) -> int:
     print(f"clusters merged    : {res['mergedCount']:,}")
     print(f"articles in a story: {res['beforeCovered']:,} -> {res['afterCovered']:,} "
           f"(dropped out {res['droppedOut']:,}, newly covered {res['newlyCovered']:,})")
+
+    print(f"blindspot claims   : {res['beforeClaims']:,} -> {res['afterClaims']:,} "
+          f"(same rows, so this delta IS the change's doing)")
 
     bc, ac = res["beforeCoherence"], res["afterCoherence"]
     print(f"independent signal : {bc['bad']}/{bc['scored']} bad (mean {bc['mean']}) -> "

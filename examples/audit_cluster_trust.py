@@ -124,6 +124,10 @@ def _row(s: dict) -> str:
 
 HEAD = f"{'pubs':>5} {'arts':>5} {'loc':>4} {'coh':>6} {'trust':>10}  title"
 
+#: Locatable clusters required before the coverage percentage gets a pass/fail verdict. Below this
+#: one cluster swings it far enough to invent a regression.
+MIN_COVERAGE_DENOM = 20
+
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -158,9 +162,20 @@ def main(argv=None) -> int:
     print(f"\ncoherence coverage on the {res['topTotal']} biggest clusters: "
           f"{res['topScored']} actionable of {denom} with any location "
           f"({pct:.0f}%), {res['topGeoless']} with no geography at all")
-    print("  -> gates are load-bearing on the clusters they can see" if pct >= 80.0 else
-          "  -> TOO THIN: extraction depth, not gate design — raise location coverage or fall "
-          "back on size (RWE_STORY_UNVERIFIED_SIZE)")
+    # A verdict needs a denominator that can carry one. At n=14 a single cluster moves this by 7
+    # points, and it has already flipped 13/16 (81%) to 11/14 (79%) on catalog churn alone —
+    # reported as a regression when nothing regressed. Same defect as a coherence ratio read at two
+    # located members, in a bar of this tool's own.
+    if denom < MIN_COVERAGE_DENOM:
+        print(f"  -> not enough locatable clusters to judge (n={denom}); re-run with "
+              f"--top {max(40, args.top * 2)}")
+    elif pct >= 80.0:
+        print("  -> gates are load-bearing on the clusters they can see")
+    else:
+        print("  -> TOO THIN: extraction depth, not gate design — raise location coverage or fall "
+              "back on size (RWE_STORY_UNVERIFIED_SIZE)")
+    print("     The percentage is a proxy. The direct question is whether the BIGGEST clusters "
+          "carry a\n     score, and the table below answers it.")
 
     print(f"\n{HEAD}")
     for s in res["head"][:args.show]:

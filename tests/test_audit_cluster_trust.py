@@ -104,3 +104,14 @@ def test_well_supported_claims_collapse_into_one_bucket():
     to mean something, not exactly how much."""
     big = _claimer("left", "right", "right", "right", "center", "center")
     assert act.claim_support([big]) == {"4+": 1}
+
+
+def test_the_coverage_bar_needs_a_denominator_that_can_carry_it():
+    """13 of 16 (81%) became 11 of 14 (79%) on catalog churn and printed TOO THIN, as though
+    something had regressed. At n=14 one cluster moves the figure seven points. The constant exists
+    so the tool says "cannot judge" instead of inventing a verdict — the same lesson as reading a
+    coherence ratio off two located members."""
+    assert act.MIN_COVERAGE_DENOM >= 20
+    thin = [_story(9 - i, 9 - i, 0.9, ss.TRUST_OK, located=9) for i in range(5)]
+    res = act.analyse(thin, top=20)
+    assert res["topLocatable"] < act.MIN_COVERAGE_DENOM
