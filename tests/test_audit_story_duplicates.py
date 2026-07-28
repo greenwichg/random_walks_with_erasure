@@ -179,3 +179,40 @@ def test_unrated_publishers_never_manufacture_an_effect():
     a = _side(_cov(("A", None), ("B", None)))
     b = _side(_cov(("C", None), ("D", None)))
     assert asd.blindspot_effect(a, b) == "none"
+
+
+def test_false_claims_are_counted_per_story_not_per_pair():
+    """A pair is `cured` when EITHER side is wrong, and usually only one is. Counting pairs would
+    double the apparent damage; counting stories says how many things the product actually gets
+    wrong. Here only the right-only half lies — the left-only half's missing centre is real."""
+    left_only = _side(_cov(("A", "left"), ("B", "left")))
+    right_only = _side(_cov(("C", "right"), ("D", "right")))
+    stories = [left_only, right_only]
+    bad = asd.contradicted_claims(stories, [(0.9, 0, 1)])
+    assert bad == {1}, "the right-only half claims 'no left coverage' and the other half IS it"
+    assert asd.claim_of(left_only) == "center", "its own gap is genuine and stays"
+
+
+def test_a_story_with_no_claim_is_never_counted():
+    both = _side(_cov(("A", "left"), ("B", "right"), ("C", "center")))
+    other = _side(_cov(("D", "left"), ("E", "right"), ("F", "center")))
+    assert asd.claim_of(both) is None
+    assert asd.contradicted_claims([both, other], [(0.9, 0, 1)]) == set()
+
+
+def test_analyse_reports_the_claim_denominator():
+    """"11 contradicted claims" means nothing until you know whether the product makes 30 such
+    claims or 300."""
+    text = "Police say a gunman opened fire near the Space Needle at Seattle Center on Friday."
+    desc = {"a1": text, "b1": text}
+    a = _story(SEATTLE_A, [("a1", SEATTLE_A)])
+    b = _story(SEATTLE_B, [("b1", SEATTLE_B)])
+    a["coverage"][0].update(publisher="A", leanBucket="left")
+    b["coverage"][0].update(publisher="B", leanBucket="right")
+    res = asd.analyse([a, b], desc, max_gap_hours=48.0)
+    assert res["claims"] == 2                       # each half asserts a gap on its own
+    # Only ONE of the two is false. _blindspot names the FIRST empty bucket in left<center<right
+    # order, so the left-only half claims "center" — which the right-only half does not supply, so
+    # that claim is true. Only the right-only half's "no left coverage" is contradicted. Asserting
+    # 2 here would have been the instrument flattering itself.
+    assert res["rows"][0]["falseClaims"] == 1

@@ -109,6 +109,27 @@ def blindspot_effect(a: dict, b: dict) -> str:
     return "cured" if (ba in covered or bb in covered) else "none"
 
 
+def claim_of(story: dict) -> "str | None":
+    """The coverage gap this story asserts, recomputed from its own members."""
+    return story_service._blindspot(story_service._distribution(story["coverage"]))
+
+
+def contradicted_claims(stories: list, pairs: list) -> set:
+    """Indices of stories whose OWN blindspot is contradicted by a high-similarity sibling.
+
+    Counted per story rather than per pair, because a pair is `cured` when *either* side is wrong
+    and only one of them usually is — the Seattle 13-article half and its 9-article twin do not
+    both make a false claim. Pairs measure how much duplication there is; this measures how much
+    of it makes the product say something untrue."""
+    bad = set()
+    for _, i, j in pairs:
+        for own, other in ((i, j), (j, i)):
+            gap = claim_of(stories[own])
+            if gap and story_service._distribution(stories[other]["coverage"])[gap] > 0.0:
+                bad.add(own)
+    return bad
+
+
 def find_pairs(stories: list, desc: dict, *, min_sim: float, max_gap_hours: float,
                min_shared: int = MIN_SHARED) -> list:
     """Candidate same-event pairs, strongest first. Deterministic."""
@@ -163,9 +184,13 @@ def analyse(stories: list, desc: dict, *, max_gap_hours: float) -> dict:
             # The count that decides whether this is a correctness problem or a tidiness one.
             "bsCured": len([p for p in at
                             if blindspot_effect(stories[p[1]], stories[p[2]]) == "cured"]),
+            "falseClaims": len(contradicted_claims(stories, at)),
         })
     return {"stories": len(stories),
             "articles": sum(s["totalCoverage"] for s in stories),
+            # The denominator. "11 contradicted claims" means nothing until you know whether the
+            # product makes 30 such claims or 300.
+            "claims": len([s for s in stories if claim_of(s)]),
             "rows": rows, "pairs": pairs}
 
 
@@ -207,15 +232,20 @@ def main(argv=None) -> int:
     print(f"catalog: {res['stories']:,} stories, {res['articles']:,} articles in stories")
     print(f"window : same-event candidates must be within {args.max_gap_hours:g}h\n")
     print(f"{'sim':>6} {'pairs':>7} {'events':>7} {'stories':>8} {'articles':>9} {'% arts':>7} "
-          f"{'geo same':>9} {'geo diff':>9} {'bs cured':>9}")
+          f"{'geo same':>9} {'geo diff':>9} {'bs cured':>9} {'false claims':>14}")
     for r in res["rows"]:
         share = f"{100.0 * r['articles'] / res['articles']:.1f}%" if res["articles"] else "  n/a"
+        claims = f"{r['falseClaims']} of {res['claims']}"
         print(f"{r['threshold']:>6.2f} {r['pairs']:>7,} {r['groups']:>7,} {r['stories']:>8,} "
               f"{r['articles']:>9,} {share:>7} {r['geoSame']:>9} {r['geoDiff']:>9} "
-              f"{r['bsCured']:>9}")
-    print("\n  bs cured = pairs where one half asserts a coverage gap that the COMBINED coverage\n"
-          "             does not support. Those are false blindspot claims the cluster-trust gate\n"
-          "             cannot see, because each half is internally coherent and scores ok.")
+              f"{r['bsCured']:>9} {claims:>14}")
+    print("\n  bs cured     = PAIRS where one half asserts a coverage gap the combined coverage\n"
+          "                 does not support. The cluster-trust gate cannot see these, because\n"
+          "                 each half is internally coherent and scores ok.\n"
+          "  false claims = STORIES whose own gap a sibling contradicts, out of every story that\n"
+          "                 asserts one. This is the number that decides whether duplication is a\n"
+          "                 correctness problem or a tidiness one — a pair count cannot, since a\n"
+          "                 pair is cured when EITHER side is wrong and usually only one is.")
 
     print(f"\n--- candidate pairs at sim >= {args.min_sim:g} (READ THESE — the count is an upper "
           f"bound until they are) ---")
