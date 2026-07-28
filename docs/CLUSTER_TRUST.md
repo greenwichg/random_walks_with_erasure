@@ -769,3 +769,34 @@ Philadelphia Inquirer, The Star Malaysia, Winnipeg Free Press, Brisbane Times, M
 West Australian. That is what takes coverage-gap claims from 61 toward the measured **41% ceiling**
 (428 of 1,042 stories carry ≥ 3 publishers), and it needs defensible public ratings sourced by a
 human rather than inferred.
+
+## Curating seven outlets moved claims 61 → 62
+
+Ratings were added for the outlets the identity audit surfaced as genuine registry gaps — Variety,
+Philadelphia Inquirer, Winnipeg Free Press, The Manila Times, The West Australian, The Star
+(Malaysia), all from Media Bias/Fact Check's published classifications. Brisbane Times was left
+unrated because MBFC has no page for it, and inheriting from its sibling mastheads (SMH, The Age)
+is the guess this file refuses.
+
+**Coverage-gap claims went from 61 to 62.** The prediction was that ~150 newly-rated articles would
+move it materially. That was wrong, and the reason is structural rather than a shortfall in the
+curation:
+
+**Adding a rating does two opposite things.** It can lift a story from two rated publishers to three
+and *enable* a claim; it can also fill an empty lean bucket in a story that already had three and
+*remove* one. On this catalog those roughly cancelled.
+
+So article volume is the wrong worklist, and it was the one being used. An outlet with sixty
+articles spread across sixty stories that each already carry four rated publishers unlocks nothing.
+The right worklist is **unrated outlets appearing in stories that are exactly one rating short** —
+the only case a single registry row can convert. `audit_cluster_trust` now reports it, alongside a
+count of the stories that are two or three short and need coordinated curation.
+
+Identity applies inside that count too: one outlet under two name forms is one missing rating, not
+two.
+
+### The ceiling, restated
+
+428 of 1,042 stories carry ≥ 3 publishers — **41%**, and that is capped by story size (p50 = 2
+articles), not by the registry. Reaching it needs broad rating coverage across the long tail, not
+a handful of rows at the head. The worklist now says which rows actually buy something.

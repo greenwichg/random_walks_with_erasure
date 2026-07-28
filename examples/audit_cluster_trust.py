@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 
+import publisher_identity
 import story_service
 import store as store_mod
 
@@ -114,6 +115,42 @@ def claim_support(stories: list) -> dict:
     return buckets
 
 
+def blocked_by_ratings(stories: list, *, min_rated: int) -> dict:
+    """Stories that have the OUTLETS for a coverage-gap claim but not the RATINGS, and which
+    unrated outlets would unlock them.
+
+    Curating seven outlets moved claims 61 -> 62, and the reason is that adding a rating does two
+    opposite things: it can lift a story from two rated publishers to three (enabling a claim) and
+    it can fill an empty lean bucket in a story that already had three (removing one). Volume alone
+    cannot predict which — an outlet with 60 articles spread over 60 stories that each already have
+    four rated publishers unlocks nothing.
+
+    So the worklist is not "unrated outlets by article count". It is "unrated outlets appearing in
+    stories that are exactly ONE rating short", because those are the only ones a single row can
+    convert. Stories two or three short need coordinated curation and are counted separately."""
+    keys = publisher_identity.groups({c["publisher"] for s in stories for c in s["coverage"]})
+    short: dict = {}
+    unlock: dict = {}
+    for idx, story in enumerate(stories):
+        outlets = {keys.get(c["publisher"], c["publisher"]) for c in story["coverage"]}
+        rated = {keys.get(c["publisher"], c["publisher"])
+                 for c in story["coverage"] if c.get("leanBucket")}
+        if len(outlets) < min_rated or len(rated) >= min_rated:
+            continue
+        gap = min_rated - len(rated)
+        short[gap] = short.get(gap, 0) + 1
+        if gap == 1:
+            for c in story["coverage"]:
+                k = keys.get(c["publisher"], c["publisher"])
+                if k not in rated:
+                    # Keyed on the story's INDEX, not its title. Titles are not unique — two
+                    # stories can share one, and keying on it silently undercounts the outlet.
+                    unlock.setdefault(c["publisher"], set()).add(idx)
+    return {"short": short,
+            "blocked": sum(short.values()),
+            "unlock": sorted(((len(v), n) for n, v in unlock.items()), reverse=True)}
+
+
 def _row(s: dict) -> str:
     """``loc`` is the column that makes the coherence number readable. A 0.50 on two located
     members is one dissenter and means almost nothing; a 0.50 on sixty is a finding."""
@@ -190,6 +227,16 @@ def main(argv=None) -> int:
         print(f"{key:>11} {n:>8,} {share:>12}")
     print("  -> a claim resting on 1-2 rated publishers is arithmetic, not an editorial finding:\n"
           "     with fewer than three lean-diverse rated outlets a bucket is empty by construction.")
+
+    blocked = blocked_by_ratings(stories, min_rated=story_service.min_rated_for_blindspot())
+    print(f"\nstories with the OUTLETS but not the RATINGS: {blocked['blocked']:,}")
+    for gap in sorted(blocked["short"]):
+        print(f"  {blocked['short'][gap]:>5} are {gap} rating short")
+    print("  Only the 1-short ones can be converted by a single registry row; the rest need\n"
+          "  coordinated curation. Volume is the wrong worklist — this is the right one:")
+    print(f"  {'unlocks':>8}  unrated outlet")
+    for n, name in blocked["unlock"][:args.show]:
+        print(f"  {n:>8}  {name}")
 
     print(f"\nblindspot claims withheld: {len(res['withheld'])}\n{HEAD}")
     for s in res["withheld"][:args.show]:

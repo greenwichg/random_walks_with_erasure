@@ -115,3 +115,59 @@ def test_the_coverage_bar_needs_a_denominator_that_can_carry_it():
     thin = [_story(9 - i, 9 - i, 0.9, ss.TRUST_OK, located=9) for i in range(5)]
     res = act.analyse(thin, top=20)
     assert res["topLocatable"] < act.MIN_COVERAGE_DENOM
+
+
+# --------------------------------------------------------------------------- #
+# The rating worklist — why curating seven outlets moved claims 61 -> 62.
+# --------------------------------------------------------------------------- #
+def _rated(*pairs):
+    return {"title": "t", "totalCoverage": len(pairs), "publisherCount": len(pairs),
+            "geoCoherence": None, "clusterTrust": ss.TRUST_OK, "blindspotWithheld": False,
+            "locatedMembers": 0, "blindspotSide": None,
+            "coverage": [{"publisher": p, "leanBucket": b} for p, b in pairs]}
+
+
+def test_a_story_one_rating_short_names_the_outlet_that_would_unlock_it():
+    """The only case a single registry row can convert."""
+    st = _rated(("NPR", "left"), ("Fox News", "right"), ("Smalltown Gazette", None))
+    res = act.blocked_by_ratings([st], min_rated=3)
+    assert res["short"] == {1: 1}
+    assert res["unlock"] == [(1, "Smalltown Gazette")]
+
+
+def test_stories_further_short_are_counted_but_not_offered_as_a_worklist():
+    """Two ratings short needs coordinated curation; listing its outlets as one-row wins would
+    overstate what a single edit buys."""
+    st = _rated(("NPR", "left"), ("A", None), ("B", None))
+    res = act.blocked_by_ratings([st], min_rated=3)
+    assert res["short"] == {2: 1} and res["unlock"] == []
+
+
+def test_a_story_without_enough_outlets_is_not_blocked_by_ratings():
+    """Two publishers can never carry the claim however well rated they are — that is the
+    structural ceiling, not a curation gap, and mixing the two would inflate the worklist."""
+    assert act.blocked_by_ratings([_rated(("A", None), ("B", None))], min_rated=3)["blocked"] == 0
+
+
+def test_a_story_that_already_qualifies_is_not_in_the_worklist():
+    st = _rated(("NPR", "left"), ("Fox News", "right"), ("BBC News", "center"), ("X", None))
+    assert act.blocked_by_ratings([st], min_rated=3)["blocked"] == 0
+
+
+def test_the_worklist_ranks_by_stories_unlocked_not_by_article_volume():
+    """The correction this exists for. An outlet with many articles that all sit in stories which
+    already qualify unlocks nothing; a quieter one sitting in several one-short stories unlocks
+    several. Volume was the wrong worklist."""
+    loud = [_rated(("NPR", "left"), ("Fox News", "right"), ("BBC News", "center"), ("Loud", None))
+            for _ in range(5)]
+    quiet = [_rated(("NPR", "left"), ("Fox News", "right"), ("Quiet", None)) for _ in range(2)]
+    res = act.blocked_by_ratings(loud + quiet, min_rated=3)
+    assert res["unlock"] == [(2, "Quiet")], "Loud has more articles and unlocks nothing"
+
+
+def test_one_outlet_under_two_names_counts_once():
+    """Identity applies here too, or a fragmented outlet would look like two rating gaps."""
+    st = _rated(("NPR", "left"), ("Fox News", "right"),
+                ("Sportskeeda.Com", None), ("Sportskeeda", None))
+    res = act.blocked_by_ratings([st], min_rated=3)
+    assert res["short"] == {1: 1}, "the two forms are one missing rating, not two"
