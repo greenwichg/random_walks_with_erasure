@@ -52,7 +52,7 @@ def test_each_unrated_outlet_lands_in_exactly_one_bucket():
     assert set(buckets) == {arc.UNTRACKED, arc.WIRE, arc.LOCALITY_ONLY, arc.LOW_CREDIBILITY}
     # Reuters is rated, so it appears in no bucket at all.
     assert "Reuters" not in [r["label"] for r in res["outlets"]]
-    assert res["tracked_and_rated"] == 1
+    assert res["ratedInWindow"] == 1
 
 
 def test_a_wire_row_is_not_reported_as_a_curation_gap():
@@ -108,3 +108,14 @@ def test_a_low_credibility_outlet_does_not_fill_the_rated_slot():
 def test_an_empty_catalog_is_not_a_crash():
     res = _analyse([], [])
     assert res["names"] == 0 and res["identities"] == 0 and res["outlets"] == []
+
+
+def test_registry_and_window_totals_are_reported_separately():
+    """A reader asked whether "fully tracked and rated: 183" was the registry's 243, and the report
+    gave them no way to tell — the line sat under two registry-sounding headings and measured the
+    FEED. Both numbers now travel together and are named for what they measure."""
+    res = _analyse(_row("Reuters") + _row("Somdnews.Com"), [])
+    assert res["registryRated"] >= res["ratedInWindow"]
+    assert res["ratedInWindow"] == 1          # only Reuters, of 240-odd rated rows
+    assert res["registryRated"] > 100         # the file is far bigger than any one window
+    assert "tracked_and_rated" not in res, "the ambiguous key name is gone, not aliased"

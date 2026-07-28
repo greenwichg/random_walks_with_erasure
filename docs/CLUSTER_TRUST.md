@@ -1368,3 +1368,32 @@ directly, exactly as `story_service._votes` does.
 **Fourth time in this thread that one rule had to be chased across a layer.** The credibility gate
 shipped correct in the engine and wrong in two audits, because a story's `coverage` rows carry
 `leanBucket` but not the flag — a derived view that lost the qualifier the original had.
+
+### A number nobody could read correctly
+
+The first run of that audit printed:
+
+```
+publisher names  : 4,431
+outlet identities: 3,879
+  fully tracked and rated : 183
+```
+
+and was read, reasonably, as saying the registry holds 183 rated outlets. It holds **243**. The 183
+was a property of the **feed** — how many rated outlets published anything in the six-day window —
+sitting directly under two registry-sounding headings with nothing to distinguish it.
+
+Both numbers now travel together and are named for what they measure:
+
+```
+REGISTRY (the file)  : 257 rows, 243 rated
+WINDOW   (the feed)  : 19,328 articles, 1,045 stories
+    rated            : 183   (60 rated registry outlets published nothing in this window)
+```
+
+The 60-outlet gap is not a defect. Jacobin, Democracy Now, Middle East Eye, El Universal and most of
+the national papers added in the coverage passes simply do not appear every week. **A registry is
+sized for the outlets that can appear, not the ones that did.**
+
+Worth recording as its own class of mistake: this was not a wrong calculation. Every number was
+correct and the report still misled, because a label borrowed its meaning from the lines above it.

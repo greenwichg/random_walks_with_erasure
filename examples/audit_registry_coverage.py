@@ -155,9 +155,16 @@ def analyse(rows: list, stories: list, *, min_rated: int) -> dict:
         b["articles"] += r["articles"]
         b["unlocks"] += r["unlocks"]
 
+    # Registry-side totals travel WITH the catalog-side ones, because the two are easy to confuse
+    # and the difference is the whole point: `registryRated` is a property of the file,
+    # `ratedInWindow` is a property of the feed. A reader who sees only the second reasonably
+    # assumes it is the first — which is exactly what happened the first time this ran.
+    registry = outlet_registry.default_registry().outlets()
     return {
+        "registryRows": len(registry),
+        "registryRated": sum(1 for o in registry if not math.isnan(o.lean)),
         "names": len(names), "identities": len(groups),
-        "tracked_and_rated": len(groups) - len(out),
+        "ratedInWindow": len(groups) - len(out),
         "stories": len(stories), "articles": sum(names.values()),
         "buckets": by_bucket, "outlets": out,
     }
@@ -187,12 +194,16 @@ def main(argv=None) -> int:
         print(json.dumps(res, indent=2, sort_keys=True))
         return 0
 
-    print(f"clustering window: {res['articles']:,} articles, {res['stories']:,} stories")
-    print(f"publisher names  : {res['names']:,}")
-    print(f"outlet identities: {res['identities']:,}   "
+    unseen = res["registryRated"] - res["ratedInWindow"]
+    print(f"REGISTRY (the file)  : {res['registryRows']:,} rows, {res['registryRated']:,} rated")
+    print(f"WINDOW   (the feed)  : {res['articles']:,} articles, {res['stories']:,} stories")
+    print(f"  publisher names    : {res['names']:,}")
+    print(f"  outlet identities  : {res['identities']:,}   "
           f"({res['names'] - res['identities']:,} names are another name's alias)")
-    print(f"  fully tracked and rated : {res['tracked_and_rated']:,}")
-    print(f"  NOT rated               : {sum(b['outlets'] for b in res['buckets'].values()):,}\n")
+    print(f"    rated            : {res['ratedInWindow']:,}"
+          + (f"   ({unseen:,} rated registry outlets published nothing in this window)"
+             if unseen > 0 else ""))
+    print(f"    NOT rated        : {sum(b['outlets'] for b in res['buckets'].values()):,}\n")
 
     print(f"{'outlets':>8} {'articles':>9} {'unlocks':>8}  bucket")
     for b in (UNTRACKED, AMBIGUOUS, LOW_CREDIBILITY, LOCALITY_ONLY, WIRE):
