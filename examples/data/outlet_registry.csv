@@ -10,7 +10,9 @@
 # simulate_users, narrate_report), which keep their own DEFAULT_LEAN; where they differ, THIS
 # table is authoritative for ingestion and the production corpus.
 #
-# Columns:  canonical , lean , aliases , country , region , city , scope
+# Columns:  canonical , lean , aliases , country , region , city , scope , kind , credibility
+# Trailing columns are optional: a row may stop at any point and every earlier row still loads
+# unchanged. That is why most rows here are seven fields long.
 #   canonical : display name shown to users (and the identity reads/corpus articles collapse to)
 #   lean      : AllSides-style political lean on -2..+2 (left..right). Coarse, contested, and
 #               time-dependent — an illustrative proxy, same caveat as outlet_lean.csv.
@@ -21,7 +23,19 @@
 #   region    : state / province / ADM1 display name, where the outlet is identified with one
 #   city      : home city, where the outlet is identified with one
 #   scope     : international | national | regional | local | hyperlocal (publisher reach)
-canonical,lean,aliases,country,region,city,scope
+#   kind      : blank = a news outlet | 'wire' = machine-generated market-data / press-release feed
+#   credibility : high | medium | low — the RATER'S OWN verdict on the outlet, blank = uncurated.
+#               A lean and a credibility verdict are different facts and this file could once
+#               express only one of them. Eight outlets carry a published MBFC lean AND an MBFC
+#               'Questionable' / 'Low Credibility' verdict; with a single column the only honest
+#               option was to withhold the lean, which threw away a true fact to avoid a misleading
+#               one. With this column the lean is recorded and the caveat travels with it, and
+#               `low` stops that outlet voting in a coverage-gap claim (story_service).
+#               BLANK IS NOT 'low'. Absence of a verdict never disqualifies an outlet, exactly as
+#               absence of a lean never centres one (L2.2). Only ~30 rows have a verdict recorded
+#               because only those were seen stated; the column is sparse ON PURPOSE rather than
+#               filled in by impression.
+canonical,lean,aliases,country,region,city,scope,kind,credibility
 # --- left (-2) ---
 Mother Jones,-2,motherjones.com,US,,,national
 The Nation,-2,thenation.com,US,,,national
@@ -177,7 +191,7 @@ Financial Times,0,ft.com,GB,,,international
 The Times,0,thetimes.co.uk|thetimes.com,GB,,,national
 Daily Mail,1,dailymail.co.uk|dailymail.com,GB,,,national
 The Economist,-1,economist.com,GB,,,international
-Mirror,-1,mirror.co.uk,GB,,,national
+Mirror,-1,mirror.co.uk,GB,,,national,,medium
 CBC News,-1,cbc.ca|CBC,CA,,,national
 The Globe and Mail,0,theglobeandmail.com,CA,,,national
 CTV News,0,ctvnews.ca,CA,,,national
@@ -223,7 +237,7 @@ Premium Times,-1,premiumtimesng.com,NG,,,national
 News24,0,news24.com,ZA,,,national
 Mail & Guardian,-2,mg.co.za,ZA,,,national
 Daily Maverick,0,dailymaverick.co.za,ZA,,,national
-Ahram Online,1,english.ahram.org.eg,EG,,,national
+Ahram Online,1,english.ahram.org.eg,EG,,,national,,medium
 Morocco World News,1,moroccoworldnews.com,MA,,,national
 Folha de S.Paulo,,folha.uol.com.br,BR,,,national
 O Globo,,oglobo.globo.com,BR,,,national
@@ -390,15 +404,15 @@ WDIV ClickOnDetroit,0,clickondetroit.com|WDIV,US,Michigan,Detroit,local
 #   Anadolu Agency     : RIGHT        (MBFC R, factual MIXED -- state-subsidised, pro-government;
 #                        AllSides says Center)
 Newsweek,1,newsweek.com,US,,,national
-The Sun (UK),2,thesun.co.uk,GB,,London,national
-The Australian,1,theaustralian.com.au,AU,,,national
+The Sun (UK),2,thesun.co.uk,GB,,London,national,,medium
+The Australian,1,theaustralian.com.au,AU,,,national,,medium
 National Post,1,nationalpost.com,CA,,,national
 Global News,-1,globalnews.ca,CA,,,national
 India Today,1,indiatoday.in,IN,,,national
 AFP,-1,afp.com|Agence France-Presse,FR,,Paris,international
 Rolling Stone,-2,rollingstone.com,US,,,national
 Metro (UK),-1,metro.co.uk,GB,,London,national
-Daily Express,2,express.co.uk,GB,,London,national
+Daily Express,2,express.co.uk,GB,,London,national,,medium
 RNZ,0,rnz.co.nz|Radio New Zealand,NZ,,,national
 The Oregonian,0,oregonlive.com|OregonLive,US,Oregon,Portland,regional
 Barron's,1,barrons.com,US,,,national
@@ -427,10 +441,10 @@ Anadolu Agency,2,aa.com.tr|Anadolu,TR,,Ankara,international
 #   Global Times       : MBFC Left,         QUESTIONABLE
 #   RT                 : MBFC Right-Center, QUESTIONABLE, factual VERY LOW
 #   The Economic Times : MBFC Right-Center, QUESTIONABLE, LOW CREDIBILITY
-Xinhua,,xinhuanet.com|news.cn|Xinhua News Agency,CN,,,international
-Global Times,,globaltimes.cn,CN,,,national
-RT (Russia Today),,rt.com|RT|Russia Today,RU,,,international
-The Economic Times,,economictimes.indiatimes.com|economictimes.com,IN,,,national
+Xinhua,-2,xinhuanet.com|news.cn|Xinhua News Agency,CN,,,international,,low
+Global Times,-2,globaltimes.cn,CN,,,national,,low
+RT (Russia Today),1,rt.com|RT|Russia Today,RU,,,international,,low
+The Economic Times,1,economictimes.indiatimes.com|economictimes.com,IN,,,national,,low
 #
 # Checked this pass and left with no row at all, because nothing about them is curated yet and a
 # rating is what would have earned the row:
@@ -468,9 +482,9 @@ The Economic Times,,economictimes.indiatimes.com|economictimes.com,IN,,,national
 # SFGate gets its OWN row rather than folding into the San Francisco Chronicle: MBFC rates the two
 # separately, and they happen to agree at Left-Center.
 Chicago Tribune,1,chicagotribune.com,US,Illinois,Chicago,regional
-Dallas Morning News,1,dallasnews.com,US,Texas,Dallas,regional
+Dallas Morning News,1,dallasnews.com,US,Texas,Dallas,regional,,high
 The Detroit News,1,detroitnews.com,US,Michigan,Detroit,regional
-Boston Globe,-1,bostonglobe.com,US,Massachusetts,Boston,regional
+Boston Globe,-1,bostonglobe.com,US,Massachusetts,Boston,regional,,high
 Miami Herald,-1,miamiherald.com,US,Florida,Miami,regional
 Houston Chronicle,-1,houstonchronicle.com|chron.com,US,Texas,Houston,regional
 Seattle Times,-1,seattletimes.com,US,Washington,Seattle,regional
@@ -482,7 +496,7 @@ Atlanta Journal-Constitution,-1,ajc.com|AJC,US,Georgia,Atlanta,regional
 Detroit Free Press,-1,freep.com|Detroit Free Press,US,Michigan,Detroit,regional
 Arizona Republic,-1,azcentral.com|AZ Central,US,Arizona,Phoenix,regional
 Tampa Bay Times,-1,tampabay.com,US,Florida,Tampa,regional
-Newsday,-1,newsday.com,US,New York,Melville,regional
+Newsday,-1,newsday.com,US,New York,Melville,regional,,high
 St. Louis Post-Dispatch,-1,stltoday.com,US,Missouri,St. Louis,regional
 The Plain Dealer,-1,cleveland.com,US,Ohio,Cleveland,regional
 Sacramento Bee,-1,sacbee.com,US,California,Sacramento,regional
@@ -541,8 +555,8 @@ ThePrint,1,theprint.in,IN,,,national
 # QUESTIONABLE (Daily Star UK: sensational headlines, conspiracies, a long record of failed fact
 # checks; GB News: no ownership/funding transparency, failed fact checks, conspiracies). Identity
 # and country curated, lean withheld until the file can express credibility.
-Daily Star (UK),,dailystar.co.uk,GB,,London,national
-GB News,,gbnews.com,GB,,London,national
+Daily Star (UK),1,dailystar.co.uk,GB,,London,national,,low
+GB News,2,gbnews.com,GB,,London,national,,low
 #
 # Seventh pass -- US NATIONALS, THE NEWS AGENCIES, CONTINENTAL EUROPE, LATIN AMERICA. The last of
 # the coverage audit's findable set. Thirty-three rated, two more withheld.
@@ -595,19 +609,19 @@ The Marshall Project,0,themarshallproject.org,US,,,national
 The Conversation,0,theconversation.com,AU,,,international
 The Bulwark,1,thebulwark.com,US,,,national
 RealClearPolitics,1,realclearpolitics.com|Real Clear Politics,US,,,national
-The American Conservative,1,theamericanconservative.com,US,,,national
-Washington Free Beacon,2,freebeacon.com|Free Beacon,US,,,national
+The American Conservative,1,theamericanconservative.com,US,,,national,,high
+Washington Free Beacon,2,freebeacon.com|Free Beacon,US,,,national,,medium
 DPA,0,dpa.com|Deutsche Presse-Agentur,DE,,Hamburg,international
 Agencia EFE,0,efe.com|EFE,ES,,Madrid,international
 PA Media,0,pamediagroup.com|Press Association,GB,,London,international
 Kyodo News,0,kyodonews.net,JP,,Tokyo,international
-Aftonbladet,-2,aftonbladet.se,SE,,Stockholm,national
+Aftonbladet,-2,aftonbladet.se,SE,,Stockholm,national,,medium
 Liberation,-1,liberation.fr,FR,,Paris,national
 La Stampa,-1,lastampa.it,IT,,Turin,national
 Il Fatto Quotidiano,-1,ilfattoquotidiano.it,IT,,Rome,national
 NRC,-1,nrc.nl|NRC Handelsblad,NL,,Amsterdam,national
-Die Welt,1,welt.de|Welt,DE,,Berlin,national
-Bild,1,bild.de,DE,,Berlin,national
+Die Welt,1,welt.de|Welt,DE,,Berlin,national,,high
+Bild,1,bild.de,DE,,Berlin,national,,medium
 Le Parisien,1,leparisien.fr,FR,,Paris,national
 Dagens Nyheter,1,dn.se,SE,,Stockholm,national
 De Telegraaf,2,telegraaf.nl,NL,,Amsterdam,national
@@ -617,5 +631,5 @@ El Financiero,1,elfinanciero.com.mx,MX,,Mexico City,national
 # Two more under the Questionable rule. MBFC rates both Right-Center and classes both QUESTIONABLE
 # -- TASS "100% Russian propaganda", no sourcing; Sputnik factual VERY LOW, numerous failed fact
 # checks. Same treatment as RT: identity and country curated, lean withheld.
-Sputnik,,sputnikglobe.com|sputniknews.com|Sputnik News,RU,,Moscow,international
-TASS,,tass.com|tass.ru|Russian News Agency TASS,RU,,Moscow,international
+Sputnik,1,sputnikglobe.com|sputniknews.com|Sputnik News,RU,,Moscow,international,,low
+TASS,1,tass.com|tass.ru|Russian News Agency TASS,RU,,Moscow,international,,low

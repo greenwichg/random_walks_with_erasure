@@ -238,6 +238,12 @@ services:
       # Measured before this existed: 516 of 1,022 stories claimed a gap and 89.1% of those rested
       # on one or two rated outlets. RWE_STORY_MIN_RATED=1 restores the old behaviour.
       RWE_STORY_MIN_RATED: ${RWE_STORY_MIN_RATED:-3}
+      # Bars a registry `credibility = low` outlet from voting its lean — an outlet whose own rater
+      # published a Questionable / Low Credibility verdict beside the rating. It stays full coverage
+      # and its lean is still shown on the article; it just cannot help complete a coverage-gap
+      # claim. Resolved from the registry at build time, so a corrected verdict lands on the next
+      # build with no backfill. RWE_STORY_CREDIBILITY_GATE=0 restores pre-column behaviour.
+      RWE_STORY_CREDIBILITY_GATE: ${RWE_STORY_CREDIBILITY_GATE:-1}
       # Second-pass duplicate merge (RECALL). Measured and adopted at 0.33: 14 merges, zero
       # dropped articles, largest cluster unchanged, bad-cluster count flat. All 14 were read by
       # hand -- Seattle 13+9, Fauci 8+5, the Iran pause 6+5, J&J talc, ICC/Karim Khan, the NC

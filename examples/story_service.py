@@ -137,12 +137,29 @@ def _story_id(members: list) -> str:
     return "st_" + hashlib.sha1(anchor.encode("utf-8", "replace")).hexdigest()[:16]
 
 
+def _votes(members: list) -> list:
+    """The members whose lean may be COUNTED — rated, and not flagged low-credibility.
+
+    Two different reasons a member does not vote, and they are deliberately handled in one place so
+    they cannot drift apart:
+
+    * **unrated** (``leanBucket`` null) — nobody has rated the outlet, so there is no vote to cast.
+      Counting it as centre would fabricate a lean (L2.2).
+    * **low credibility** — the outlet IS rated, and the rater also published a Questionable /
+      Low Credibility verdict on it. The lean is real and is still shown on the article; what it
+      may not do is help manufacture a claim about who covered a story. Without this, a coverage-gap
+      claim could rest on two state broadcasters and nothing in the product would show it.
+
+    Both are still real COVERAGE — they appear in ``coverage``, in ``publishers`` and in
+    ``totalCoverage``. Only the vote is withheld."""
+    return [m for m in members if not m.get("lowCredibility")]
+
+
 def _distribution(members: list) -> dict:
-    """L/C/R distribution over **distinct RATED publishers** (one vote per outlet), normalised to
-    sum 1. An unrated outlet (leanBucket null — L2.2) is real coverage but casts no vote: counting
-    it as centre would fabricate a lean nobody rated. All-unrated -> all-zero (blindspot: None)."""
+    """L/C/R distribution over **distinct VOTING publishers** (one vote per outlet), normalised to
+    sum 1 — see :func:`_votes` for who votes and why. All-unrated -> all-zero (blindspot: None)."""
     by_pub = {}
-    for m in members:
+    for m in _votes(members):
         by_pub.setdefault(_pub_key(m), m["leanBucket"])
     counts = {"left": 0, "center": 0, "right": 0}
     for bucket in by_pub.values():
@@ -212,9 +229,21 @@ def _display_publishers(members: list) -> list:
 
 
 def _rated_publishers(members: list) -> int:
-    """Distinct publishers carrying a lean rating — the sample a blindspot claim rests on. An
-    unrated outlet is real coverage but casts no vote (L2.2), so it is not part of that sample."""
-    return len({_pub_key(m) for m in members if m.get("leanBucket")})
+    """Distinct publishers whose lean may be counted — the sample a blindspot claim rests on.
+
+    Same rule as :func:`_distribution`, and that is the point: the FLOOR and the DISTRIBUTION must
+    agree about who counts, or a story could clear "three rated publishers" on a sample the
+    distribution then declines to use."""
+    return len({_pub_key(m) for m in _votes(members) if m.get("leanBucket")})
+
+
+def _low_credibility_publishers(members: list) -> list:
+    """The outlets in this story whose lean was recorded but not counted, named for display.
+
+    Emitted rather than silently dropped: the whole reason the registry grew a credibility column is
+    that withholding these outlets entirely lost a true fact. A reader should see that TASS covered
+    the story AND that its rating is not being voted."""
+    return sorted({_pub_key(m) for m in members if m.get("lowCredibility")})
 
 
 def _coverage(members: list) -> list:
@@ -302,6 +331,11 @@ def _build_story(members: list) -> dict:
         "timeline": timeline,
         "blindspotSide": raw_blindspot if trust == TRUST_OK else None,
         "blindspotWithheld": bool(raw_blindspot) and trust != TRUST_OK,
+        # Outlets whose lean is recorded but not voted (registry credibility = low). Named, not
+        # silently dropped: the point of the credibility column is that withholding these outlets
+        # entirely lost a true fact. A reader should see that TASS covered the story AND that its
+        # rating is not counted toward the coverage-gap claim.
+        "lowCredibilityPublishers": _low_credibility_publishers(members),
         # Location Intelligence — the story's EVENT geography (counted facts, never guessed).
         # ``countries`` is what ?country= matches: the member-consensus leaders of the EVENT
         # dimension only — a story with no event-located members matches no country (it still
@@ -515,6 +549,15 @@ def merge_max_gap_hours() -> float:
 
 def merge_max_size() -> int:
     return _env_int("RWE_STORY_MERGE_MAX_SIZE", DEFAULT_MERGE_MAX_SIZE)
+
+
+def credibility_gate() -> bool:
+    """Whether a registry ``credibility = low`` outlet is barred from voting its lean (default on).
+
+    Off, every rated outlet votes — which is the behaviour from before the column existed, and is
+    what the eight affected rows would get if the verdicts turn out to be wrong. One env var to
+    reverse, and the leans stay in the file either way."""
+    return os.environ.get("RWE_STORY_CREDIBILITY_GATE", "1").strip().lower() not in ("0", "false", "no")
 
 
 def min_rated_for_blindspot() -> int:
@@ -870,6 +913,13 @@ def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
         # perfectly coherent. Filtering by curated source identity is explicit and reversible;
         # the threshold that was proposed for the same job measured 0% precision, 0% recall.
         arts = [a for a in arts if not outlet_registry.is_wire(a.get("publisher"))]
+    if credibility_gate():
+        # Resolved HERE, from the registry, rather than read from the article's stored `scored`
+        # JSON — so tightening or reversing a credibility verdict takes effect on the next build
+        # instead of waiting for a backfill. The lean itself is stored at ingest and does need one;
+        # this deliberately does not.
+        for a in arts:
+            a["lowCredibility"] = outlet_registry.is_low_credibility(a.get("publisher"))
     if publisher_identity_enabled():
         # Resolved once over the WHOLE build: whether a bare name may join a domain depends on how
         # many domains carry that label, which is a property of the catalog and invisible to a

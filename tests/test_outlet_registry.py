@@ -422,22 +422,14 @@ def test_the_unrated_set_is_exactly_the_documented_one(reg):
     wire = {o.canonical for o in reg.outlets() if o.kind == "wire"}
     assert wire <= blank, "a wire feed must never carry a lean"
     assert blank - wire == {
-        # No rating exists at any public rater.
+        # No rating exists at any public rater. This set is now ONLY that — the eight outlets whose
+        # lean was withheld for lack of a credibility column are rated, and carry the caveat in it.
         "Brisbane Times",      # no MBFC page; sibling mastheads are rated, which is not a source
         "Folha de S.Paulo",    # confirmed absent from MBFC, AllSides and Ad Fontes alike
         "Milenio",             # no MBFC page
         "Nigerian Tribune",    # no MBFC page
-        "O Globo",             # only its owner is rated — see the test above
+        "O Globo",             # only its owner is rated
         "The East African",    # only its owner, Nation Media Group, is rated
-        # A rating EXISTS and is deliberately withheld — see the test below.
-        "Xinhua",
-        "Global Times",
-        "RT (Russia Today)",
-        "The Economic Times",
-        "Daily Star (UK)",
-        "GB News",
-        "Sputnik",
-        "TASS",
     }
 
 
@@ -586,20 +578,73 @@ def test_a_bare_cbc_reaches_the_row_that_already_had_the_rating(reg):
     assert reg.lean("CBC") == reg.lean("Cbc.Ca") == -1.0
 
 
-def test_a_questionable_source_is_identified_but_not_rated(reg):
-    """The rule this pass added. MBFC publishes a lean AND a credibility verdict; for these four the
-    verdict is Questionable / Low Credibility. The lean exists and is deliberately not imported,
-    because this file has no credibility column — the vote would reach _distribution and the
-    >= 3 rated publishers floor carrying exactly Reuters' weight, and a coverage-gap claim could
-    come to rest on two state broadcasters with nothing in the product showing it.
-
-    Identity and country stay curated: those are facts, and they still settle who the outlet is."""
+def test_a_questionable_source_is_rated_and_flagged(reg):
+    """What the credibility column bought. These eight carry a published MBFC lean AND an MBFC
+    Questionable / Low Credibility verdict. With one column the only honest move was to withhold the
+    lean — which threw away a true fact to avoid a misleading one. With two, the lean is recorded
+    and the caveat travels with it."""
     import math
-    for name, country in [("Xinhuanet.Com", "CN"), ("Globaltimes.Cn", "CN"),
-                          ("Rt.Com", "RU"), ("Economictimes.Indiatimes.Com", "IN")]:
+    for name, country in [("Xinhuanet.Com", "CN"), ("Globaltimes.Cn", "CN"), ("Rt.Com", "RU"),
+                          ("Economictimes.Indiatimes.Com", "IN"), ("Dailystar.Co.Uk", "GB"),
+                          ("Gbnews.Com", "GB"), ("Sputnikglobe.Com", "RU"), ("Tass.Com", "RU")]:
         o = reg.resolve(name)
-        assert o is not None and math.isnan(o.lean), name
+        assert o is not None and not math.isnan(o.lean), name
+        assert o.credibility == "low", name
+        assert reg.is_low_credibility(name), name
         assert o.country == country, name
+
+
+def test_blank_credibility_is_not_low(reg):
+    """The asymmetry that keeps the column honest. Absence of a verdict never disqualifies an
+    outlet, exactly as absence of a lean never centres one (L2.2). Only ~30 of 255 rows carry a
+    verdict, so treating blank as suspect would silence almost the whole file."""
+    for name in ["Reuters.Com", "Apnews.Com", "Bbc.Com", "Foxnews.Com"]:
+        assert reg.credibility(name) is None, name
+        assert not reg.is_low_credibility(name), name
+    assert not reg.is_low_credibility("Somenewspapernobodyhascurated.Com")
+
+
+def test_the_credibility_bar_is_the_raters_verdict_not_an_impression(reg):
+    """State-aligned outlets MBFC rates at Medium or better vote normally. Without that constraint
+    the column drifts into "outlets I distrust", which is the fabrication this file exists to
+    prevent, pointed the other way."""
+    for name in ["Dailysabah.Com", "English.Ahram.Org.Eg", "Aa.Com.Tr"]:
+        assert not reg.is_low_credibility(name), name
+    assert reg.credibility("English.Ahram.Org.Eg") == "medium"
+    assert reg.credibility("Bostonglobe.Com") == "high"
+
+
+def test_lint_rejects_a_credibility_value_outside_the_vocabulary(tmp_path):
+    p = tmp_path / "r.csv"
+    p.write_text("canonical,lean,aliases,country,region,city,scope,kind,credibility\n"
+                 "Widget Times,1,widgettimes.com,US,,,national,,dubious\n", encoding="utf-8")
+    codes = {i["code"] for i in orx.lint_registry(str(p))}
+    assert "invalid_credibility" in codes
+
+
+def test_lint_warns_when_low_credibility_has_no_lean_to_qualify(tmp_path):
+    """A 'low' row with a blank lean asserts a caveat about a rating that is not there — almost
+    always a half-finished edit, since the whole point of 'low' is to let the lean be recorded."""
+    p = tmp_path / "r.csv"
+    p.write_text("canonical,lean,aliases,country,region,city,scope,kind,credibility\n"
+                 "Widget Times,,widgettimes.com,US,,,national,,low\n", encoding="utf-8")
+    issues = orx.lint_registry(str(p))
+    assert [i["code"] for i in issues] == ["unrated_low_credibility"]
+    assert issues[0]["severity"] == "warning"
+
+
+def test_a_row_written_before_the_column_existed_still_loads(tmp_path):
+    """Trailing columns are optional and most rows in the bundled file stop at `scope`. A schema
+    that broke them would have to rewrite 255 rows to add one field to eight."""
+    p = tmp_path / "r.csv"
+    p.write_text("canonical,lean,aliases\n"
+                 "Widget Times,1,widgettimes.com\n"
+                 "Widget Post,-1,widgetpost.com,US\n", encoding="utf-8")
+    reg2 = orx.OutletRegistry.load(str(p))
+    assert reg2.lean("widgettimes.com") == 1.0
+    assert reg2.credibility("widgettimes.com") is None
+    assert reg2.resolve("widgetpost.com").country == "US"
+    assert orx.lint_registry(str(p)) == []
 
 
 def test_the_questionable_line_is_mbfcs_own_flag_not_an_impression(reg):
@@ -623,12 +668,12 @@ def test_mastheads_that_share_a_name_across_countries_stay_apart(reg):
 
 def test_the_economic_times_does_not_capture_the_times_of_india(reg):
     """Both live under indiatimes.com. Resolution walks registrable-domain suffixes longest-first,
-    so the more specific subdomain wins — and the Times of India keeps its rating while the Economic
-    Times keeps its deliberate blank."""
-    import math
+    so the more specific subdomain wins. Both are rated +1 today, which is exactly what would make a
+    collision invisible — the credibility verdicts differ, and only the rows keep them apart."""
     assert reg.resolve("Timesofindia.Indiatimes.Com").canonical == "The Times of India"
-    assert reg.lean("Timesofindia.Indiatimes.Com") == 1.0
-    assert math.isnan(reg.lean("Economictimes.Indiatimes.Com"))
+    assert reg.resolve("Economictimes.Indiatimes.Com").canonical == "The Economic Times"
+    assert reg.credibility("Timesofindia.Indiatimes.Com") is None
+    assert reg.credibility("Economictimes.Indiatimes.Com") == "low"
 
 
 def test_every_yahoo_property_is_one_outlet(reg):

@@ -979,6 +979,12 @@ class StoryModel(BaseModel):
     coverage: list[StoryCoverageModel]
     timeline: list[TimelinePointModel]
     blindspotSide: Optional[str] = None
+    # Outlets that covered this story whose LEAN was recorded but not counted, because the registry
+    # carries a `credibility = low` verdict for them (an MBFC Questionable / Low Credibility source).
+    # Exposed rather than kept internal: the credibility column exists precisely so the caveat can
+    # be shown instead of the outlet being silently dropped, and a field the UI cannot read would
+    # rebuild the same invisibility one layer down. Empty for almost every story.
+    lowCredibilityPublishers: list[str] = []
     # Story Intelligence summary (Commit 10) — attached by the API layer so cards can badge without an
     # extra request. story_service stays untouched. Omitted (exclude_none) if not computed.
     freshness: Optional[dict[str, Any]] = None    # {band, score}

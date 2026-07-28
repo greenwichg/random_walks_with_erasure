@@ -1218,3 +1218,71 @@ def test_publisher_identity_is_on_by_default_and_reversible(monkeypatch):
     assert ss.publisher_identity_enabled() is True
     monkeypatch.setenv("RWE_STORY_PUBLISHER_IDENTITY", "0")
     assert ss.publisher_identity_enabled() is False
+
+
+# --------------------------------------------------------------------------- #
+# Registry credibility — a rated outlet whose rater also called it Questionable.
+#
+# The registry gained a `credibility` column so a lean and a credibility verdict could be recorded
+# as the separate facts they are. Before it, eight outlets with a published MBFC lean AND an MBFC
+# Questionable / Low Credibility verdict had to have the lean withheld entirely — throwing away a
+# true fact to avoid a misleading one. These tests pin what the column bought and what it must not
+# cost: the outlet is still COVERAGE, it just does not VOTE.
+# --------------------------------------------------------------------------- #
+def _gap_with_a_questionable_outlet(st):
+    """Two left outlets plus TASS, whose MBFC lean is right-of-centre and whose MBFC credibility is
+    Low. Ungated, TASS is the third rated publisher and its vote fills the right bucket."""
+    _add(st, "https://cnn.com/g1", "CNN", -1.2, "Border talks collapse after a long night", days=1)
+    _add(st, "https://guardian.com/g2", "The Guardian", -1.5, "Border talks collapse after long night",
+         days=1)
+    _add(st, "https://tass.com/g3", "TASS", 1.0, "Border talks collapse after the long night", days=1)
+
+
+def test_a_low_credibility_outlet_is_coverage_but_not_a_vote():
+    st = store_mod.Store("sqlite://"); _gap_with_a_questionable_outlet(st)
+    story = ss.cluster_from_store(st)[0]
+    # Still fully counted as coverage — the story really was covered by three outlets.
+    assert story["totalCoverage"] == 3 and story["publisherCount"] == 3
+    assert "TASS" in story["publishers"]
+    assert story["lowCredibilityPublishers"] == ["TASS"]
+    # But its lean does not vote: the distribution is the two left outlets only.
+    assert story["distribution"] == {"left": 1.0, "center": 0.0, "right": 0.0}
+
+
+def test_a_low_credibility_outlet_cannot_complete_the_claim_floor():
+    """The failure the column exists to prevent. Ungated, TASS is the third rated publisher and the
+    story clears MIN_RATED_FOR_BLINDSPOT — so a coverage-gap claim would rest on a state wire the
+    rater itself calls Questionable, with nothing in the product showing it."""
+    st = store_mod.Store("sqlite://"); _gap_with_a_questionable_outlet(st)
+    story = ss.cluster_from_store(st)[0]
+    assert story["blindspotSide"] is None            # only two voting publishers, below the floor
+    assert story["blindspotWithheld"] is False       # never valid, so nothing was withheld
+
+
+def test_the_lean_is_still_recorded_on_the_article(monkeypatch):
+    """What the column BOUGHT. The old fix was to leave the registry lean blank, which lost the
+    rating everywhere. Now the article carries it and only the vote is withheld."""
+    st = store_mod.Store("sqlite://"); _gap_with_a_questionable_outlet(st)
+    story = ss.cluster_from_store(st)[0]
+    row = next(c for c in story["coverage"] if c["publisher"] == "TASS")
+    assert row["lean"] is not None and row["leanBucket"] == "right"
+
+
+def test_the_credibility_gate_is_reversible(monkeypatch):
+    """One env var back to the pre-column behaviour, with the leans left in the file. If a verdict
+    turns out to be wrong, the fix is a flag and not a re-curation."""
+    monkeypatch.setenv("RWE_STORY_CREDIBILITY_GATE", "0")
+    st = store_mod.Store("sqlite://"); _gap_with_a_questionable_outlet(st)
+    story = ss.cluster_from_store(st)[0]
+    assert story["lowCredibilityPublishers"] == []
+    assert story["distribution"]["right"] > 0.0
+
+
+def test_an_ordinary_rated_outlet_is_untouched():
+    """The gate must fire on the registry verdict and nothing else. A story of ordinary outlets has
+    to behave exactly as it did before the column existed."""
+    st = store_mod.Store("sqlite://"); _senate_and_wildfire(st)
+    for story in ss.cluster_from_store(st):
+        assert story["lowCredibilityPublishers"] == []
+    wildfire = next(s for s in ss.cluster_from_store(st) if "Wildfire" in s["title"])
+    assert wildfire["blindspotSide"] == "center"

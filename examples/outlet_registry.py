@@ -38,6 +38,11 @@ _DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "outlet
 _PARENS = re.compile(r"\([^)]*\)")           # "(Online News)", "(Opinion)", …
 _NONALNUM = re.compile(r"[^a-z0-9]+")
 
+#: Legal values for the ``credibility`` column. Blank is legal and means UNCURATED, which is not the
+#: same as ``low`` — absence of a verdict never disqualifies an outlet, exactly as absence of a lean
+#: never centres one (L2.2).
+CREDIBILITY = ("high", "medium", "low")
+
 
 @dataclass(frozen=True)
 class Outlet:
@@ -56,6 +61,7 @@ class Outlet:
     city: "str | None" = None
     scope: "str | None" = None      # international | national | regional | local | hyperlocal
     kind: "str | None" = None       # None = a news outlet | "wire" = machine-generated feed
+    credibility: "str | None" = None    # high | medium | low — see CREDIBILITY / :func:`is_low_credibility`
 
 
 def _name_key(text: str) -> str:
@@ -116,8 +122,9 @@ class OutletRegistry:
         """Load the registry CSV (defaults to the bundled ``data/outlet_registry.csv``).
 
         ``#`` lines and blanks are skipped. Each row is ``canonical, lean, aliases`` plus the
-        optional Phase-1 locality columns ``country, region, city, scope`` and ``kind``
-        (missing / blank → ``None`` — a two-column legacy file still loads unchanged).
+        optional Phase-1 locality columns ``country, region, city, scope``, then ``kind`` and
+        ``credibility`` (missing / blank → ``None`` — a two-column legacy file still loads
+        unchanged, and so does every row written before a column existed).
         ``aliases`` is ``|``-separated. The canonical name is itself registered as a lookup key."""
         path = path or _DATA
         outlets: List[Outlet] = []
@@ -138,10 +145,12 @@ class OutletRegistry:
                 # convention the scorer already speaks). Garbage still raises — fail loudly.
                 raw_lean = row[1].strip()
                 lean = float(raw_lean) if raw_lean else float("nan")
+                cred = _opt(row, 8)
                 outlets.append(Outlet(canonical=canonical, lean=lean,
                                       country=_opt(row, 3), region=_opt(row, 4),
                                       city=_opt(row, 5), scope=_opt(row, 6),
-                                      kind=_opt(row, 7)))
+                                      kind=_opt(row, 7),
+                                      credibility=cred.lower() if cred else None))
                 aliases[canonical] = canonical      # the name itself resolves
                 if len(row) >= 3 and row[2].strip():
                     for alias in row[2].split("|"):
@@ -194,6 +203,30 @@ class OutletRegistry:
         o = self.resolve(text)
         return bool(o and o.kind == "wire")
 
+    def credibility(self, text: "str | None") -> Optional[str]:
+        """The curated credibility verdict for ``text`` — ``high`` / ``medium`` / ``low``, or
+        ``None`` when the outlet is unknown OR the column is uncurated."""
+        o = self.resolve(text)
+        return o.credibility if o else None
+
+    def is_low_credibility(self, text: "str | None") -> bool:
+        """Whether ``text`` resolves to an outlet whose LEAN should not be voted at full weight.
+
+        This column exists because a lean and a credibility verdict are different facts, and the
+        file could previously express only one of them. Eight outlets — Xinhua, Global Times, RT,
+        Sputnik, TASS, The Economic Times, Daily Star (UK), GB News — have a published MBFC lean and
+        an MBFC ``Questionable`` / ``Low Credibility`` verdict beside it. With one column the only
+        honest option was to withhold the lean entirely, which lost a true fact to avoid a
+        misleading one. With two, the lean is recorded AND the caveat travels with it.
+
+        The bar is the RATER's own verdict, never an impression of the outlet: state-aligned outlets
+        MBFC rates at Medium or better are rated and voted normally here (Daily Sabah, Ahram Online,
+        Anadolu Agency). Without that constraint the column would drift into "outlets I distrust",
+        which is the fabrication this file exists to prevent, pointed the other way.
+
+        Unknown and uncurated outlets are never low: absence of a verdict is not a verdict."""
+        return self.credibility(text) == "low"
+
     def outlets(self) -> List[Outlet]:
         """All distinct outlets: rated ones ordered by lean then name, locality-only (NaN lean)
         rows deterministically last by name (NaN sort keys would otherwise be order-unstable)."""
@@ -229,6 +262,16 @@ def is_wire(text: "str | None") -> bool:
     return default_registry().is_wire(text)
 
 
+def credibility(text: "str | None") -> Optional[str]:
+    """Convenience: :meth:`OutletRegistry.credibility` against the default registry."""
+    return default_registry().credibility(text)
+
+
+def is_low_credibility(text: "str | None") -> bool:
+    """Convenience: :meth:`OutletRegistry.is_low_credibility` against the default registry."""
+    return default_registry().is_low_credibility(text)
+
+
 def lint_registry(path: "str | None" = None) -> List[dict]:
     """Read-only well-formedness check on the registry CSV. Returns a list of issue dicts
     ``{severity, code, line, message}`` (empty ⇒ clean); NEVER raises on a malformed file (that is
@@ -241,6 +284,10 @@ def lint_registry(path: "str | None" = None) -> List[dict]:
       * ``duplicate_alias``    — one alias key mapped to two different canonicals (resolution would
                                  depend on row order — a real bug)
       * ``repeated_alias_in_row`` (warning) — the same alias listed twice in one row's alias list
+      * ``invalid_credibility``— column 9 is neither blank nor one of :data:`CREDIBILITY`
+      * ``unrated_low_credibility`` (warning) — a ``low`` row with no lean. Legal, but it means the
+        row is asserting a caveat about a rating that is not there, which is almost always a
+        half-finished edit: the point of ``low`` is to let the LEAN be recorded.
     """
     path = path or _DATA
     issues: List[dict] = []
@@ -273,6 +320,15 @@ def lint_registry(path: "str | None" = None) -> List[dict]:
                 issues.append({"severity": "error", "code": "invalid_lean", "line": lineno,
                                "message": f"line {lineno} ({canonical}): lean {raw_lean!r} "
                                           "is not a finite number in [-2, 2] (blank = unrated)"})
+        cred = cells[8].strip().lower() if len(cells) > 8 else ""
+        if cred and cred not in CREDIBILITY:
+            issues.append({"severity": "error", "code": "invalid_credibility", "line": lineno,
+                           "message": f"line {lineno} ({canonical}): credibility {cred!r} is not one "
+                                      f"of {'/'.join(CREDIBILITY)} (blank = uncurated)"})
+        elif cred == "low" and not raw_lean:
+            issues.append({"severity": "warning", "code": "unrated_low_credibility", "line": lineno,
+                           "message": f"line {lineno} ({canonical}): credibility 'low' with no lean — "
+                                      "the point of 'low' is to let the lean be recorded WITH the caveat"})
         if canonical in seen_canonical:
             issues.append({"severity": "error", "code": "duplicate_canonical", "line": lineno,
                            "message": f"line {lineno}: canonical {canonical!r} already defined at "
