@@ -1187,3 +1187,43 @@ def test_the_last_three_alias_gaps_from_the_probe(reg):
     assert reg.resolve("RFI").canonical == "Radio France Internationale"
     assert reg.resolve("Politico EU").canonical == "Politico Europe"
     assert reg.resolve("CTV").canonical == "CTV News"
+
+
+# --------------------------------------------------------------------------- #
+# US local television — the block where the RESULT SHAPE is the finding.
+# --------------------------------------------------------------------------- #
+def test_the_local_tv_block(reg):
+    for host, lean in [
+        ("Wbztv.Com", -1.0), ("Wsvn.Com", -1.0),
+        ("Wfaa.Com", 0.0), ("Khou.Com", 0.0), ("Wcvb.Com", 0.0), ("Kcra.Com", 0.0),
+        ("Wplg.Com", 0.0), ("Wsbtv.Com", 0.0), ("Ksat.Com", 0.0), ("Pix11.Com", 0.0),
+    ]:
+        assert reg.lean(host) == lean, host
+
+
+def test_local_television_clusters_on_the_centre(reg):
+    """Eight of ten are Least Biased, and MBFC's reasoning is the same each time: neutral wording,
+    minimal editorial content. A local station runs straight news and has no editorial page, so
+    there is little for a left-right scale to grip.
+
+    Asserted as a SHAPE rather than per-row because the shape is the product-relevant fact: a
+    coverage-gap claim fires on an EMPTY lean bucket, so a block of centre-rated publishers makes
+    the centre harder to leave empty and should reduce claim count while improving claim support."""
+    import math
+    tv = [o.lean for o in reg.outlets()
+          if o.scope == "local" and o.country == "US" and not math.isnan(o.lean)]
+    assert len(tv) >= 10
+    assert sum(1 for v in tv if v == 0) / len(tv) >= 0.6, "local TV should sit on the centre"
+    assert all(abs(v) <= 1 for v in tv), "no local station should be rated at either extreme"
+
+
+def test_the_two_left_leaning_stations_are_rated_for_syndication(reg):
+    """The exceptions prove the rule by their reasoning. WSVN is Left-Center only because it
+    syndicates CNN and WBZ because it carries CBS network content — neither is a judgement about
+    the newsroom in Miami or Boston. Both are still their own rows, because the rating attaches to
+    what the station BROADCASTS."""
+    assert reg.lean("Wsvn.Com") == -1.0 and reg.lean("Wbztv.Com") == -1.0
+    assert reg.resolve("CBS Boston").canonical == "WBZ-TV"
+    # The networks they syndicate are separate outlets and keep their own ratings.
+    assert reg.resolve("cnn.com").canonical == "CNN"
+    assert reg.resolve("cbsnews.com").canonical == "CBS News"

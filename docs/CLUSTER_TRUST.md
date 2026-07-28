@@ -1888,3 +1888,48 @@ rated; both stay out.
 US local TV call-signs (WPIX, KSAT, KOAT, WMUR, WBZ, WFXT …) and European regional dailies
 (Ouest-France, Les Echos, La Croix, Die Presse, Kurier, Tages-Anzeiger, Blick, Le Temps) — the first
 group is rated by MBFC individually and simply not yet worked; the second mostly is not rated at all.
+
+## Eighteenth pass: US local television, where the shape is the finding
+
+The largest workable block left on the probe. Ten rated — and **eight of ten are Least Biased**.
+
+| | |
+|---|---|
+| **0** | WFAA (Dallas), KHOU (Houston), WCVB (Boston), KCRA (Sacramento), WPLG (Miami), WSB (Atlanta), KSAT (San Antonio), WPIX (New York) |
+| **−1** | WBZ-TV / CBS Boston, WSVN (Miami) |
+
+MBFC's reasoning repeats almost verbatim across the block: *"neutral wording and minimal editorial
+content."* A local station runs straight news and carries no editorial page, so there is little for
+a left-right scale to grip.
+
+**The two exceptions prove it by their reasoning.** WSVN is Left-Center *only because it syndicates
+CNN*; WBZ because it carries CBS network content. Neither is a judgement about the newsroom in
+Miami or Boston — the rating attaches to what the station **broadcasts**.
+
+### This changes a number, and the number should not be misread
+
+A coverage-gap claim fires when a lean bucket is **empty** while another is well covered. A block of
+centre-rated publishers makes the centre bucket **harder to leave empty** — so this pass should
+*reduce* blindspot claims slightly while making the survivors better supported.
+
+That is the right direction. A story covered by four local stations and one national paper was never
+a left/right story, and claiming a gap in it was the arithmetic artefact `MIN_RATED_FOR_BLINDSPOT`
+exists to prevent. But it means **a claim count that dips after this deploy is the curation working,
+not failing** — recorded here for the same reason the credibility gate's opposite-direction effect
+was.
+
+`test_local_television_clusters_on_the_centre` asserts the shape rather than the rows: at least 60%
+of US local rows on the centre, and none at either extreme.
+
+### Registry, close of eighteen passes
+
+| | start of day | end |
+|---|---:|---:|
+| rows | 154 | **414** |
+| rated | 143 | **388** |
+| countries | ~30 | **52** |
+| spread (−2/−1/0/+1/+2) | — | **27 / 156 / 79 / 99 / 27** |
+
+The centre has gone from a thin band to 79 rows, largely on wire agencies and local television —
+the two categories a left-right axis genuinely struggles to separate. That is a more honest centre
+than one assembled from national outlets someone judged to be balanced.

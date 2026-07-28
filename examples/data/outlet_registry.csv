@@ -1023,3 +1023,34 @@ The New Arab,-1,newarab.com|alaraby.co.uk,GB,,London,international
 Taipei Times,-1,taipeitimes.com,TW,,Taipei,national
 Focus Taiwan,-1,focustaiwan.tw|cna.com.tw|Central News Agency,TW,,Taipei,international,,high
 Daily Monitor,-1,monitor.co.ug,UG,,Kampala,national
+#
+# Eighteenth pass -- US LOCAL TELEVISION, the largest workable block left on the probe. Ten rated,
+# and the shape of the result is the finding: EIGHT OF TEN ARE LEAST BIASED.
+#
+#    0  WFAA (Dallas), KHOU (Houston), WCVB (Boston, HIGH cred), KCRA (Sacramento),
+#       WPLG (Miami), WSB (Atlanta), KSAT (San Antonio), WPIX (New York)
+#   -1  WBZ-TV / CBS Boston (HIGH cred), WSVN (Miami)
+#
+# MBFC's reasoning is consistent across the block: "neutral wording and minimal editorial content".
+# A local station runs straight news and carries no editorial page, so there is little for a
+# left-right scale to grip. The two exceptions prove it by their reasoning -- WSVN is Left-Center
+# ONLY because it syndicates CNN, and WBZ because it carries CBS network content. Neither is a
+# judgement about the newsroom in Miami or Boston.
+#
+# WHY THIS MATTERS BEYOND COVERAGE. A coverage-gap claim fires when a lean bucket is EMPTY while
+# another is well covered. Adding many centre-rated publishers makes the centre bucket harder to
+# leave empty, so this pass should REDUCE the number of blindspot claims slightly while making the
+# survivors better supported. That is the right direction -- a story covered by four local stations
+# and one national paper was never a left/right story -- but it means a claim count that dips after
+# this deploy is the gate working, not curation failing. Recorded here so the number is not
+# misread, the same way the credibility gate was.
+WBZ-TV,-1,wbztv.com|CBS Boston,US,Massachusetts,Boston,local,,high
+WSVN,-1,wsvn.com,US,Florida,Miami,local
+WFAA,0,wfaa.com,US,Texas,Dallas,local
+KHOU,0,khou.com,US,Texas,Houston,local
+WCVB,0,wcvb.com,US,Massachusetts,Boston,local,,high
+KCRA,0,kcra.com,US,California,Sacramento,local
+WPLG,0,wplg.com|Local 10,US,Florida,Miami,local
+WSB-TV,0,wsbtv.com,US,Georgia,Atlanta,local
+KSAT,0,ksat.com,US,Texas,San Antonio,local
+WPIX,0,pix11.com,US,New York,New York,local
