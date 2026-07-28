@@ -649,6 +649,28 @@ It fails soft in both directions. If the table cannot be read or written, storie
 derived ids — a churned id is a broken link, a 500 is a broken page. The table is rewritten
 wholesale from the current window each build, which prunes it for free.
 
+### Verified 2026-07-28 by replaying both
+
+| step | surviving | derived | stabilized |
+|---|---:|---:|---:|
+| 07-25 → 07-26 | 398 | 6 | **0** |
+| 07-26 → 07-27 | 492 | 29 | **1** |
+| 07-27 → 07-28 | 686 | 42 | **1** |
+| **total** | **1,576** | **77 (4.9%/day)** | **2 (0.1%/day)** |
+
+A 97% reduction, measured rather than asserted — the auditor threads the identity map between
+builds exactly as the store does, so both columns come off the same replay.
+
+The two residual cases are the majority rule declining to carry an id, not a bug: those are
+clusters whose membership turned over far enough that fewer than half their articles carried the
+prior id, and whether such a thing is still "the same story" is a real question rather than an
+obvious yes.
+
+The auditor had to be taught to see this. Its first post-fix run reported the same 4.9%, correctly
+and uselessly: it calls ``build_stories``, which is pure and knows nothing about ``stabilize_ids``,
+so it was measuring the derived id — exactly the churn the fix routes around. A fix shipped
+alongside an instrument that cannot evaluate it is not a measured change.
+
 `RWE_STORY_STABLE_IDS=0` reverts without a deploy.
 
 Related and smaller: a merged story can be titled by its smaller half — *"Fauci diary entries"* (5
