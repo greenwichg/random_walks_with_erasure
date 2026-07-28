@@ -98,6 +98,26 @@ TRUST_UNVERIFIED = "unverified"     # big enough to be a chain, with nothing to 
 #: lopsided, across three it is thin.
 MIN_RATED_FOR_BLINDSPOT = 3
 
+#: Weighted profile similarity two clusters must reach before they are joined as one event.
+#:
+#: 0.33 because that is where the measured sample stops making mistakes. Reading all 23 candidate
+#: pairs at ≥ 0.25 gave 16 true duplicates, 5 same-story-different-angle and **2 false positives**
+#: (a French wildfire paired with a Californian one, two unrelated Nvidia stories) — and both false
+#: positives sat at 0.31. Every pair at 0.33 and above was a true duplicate. n = 14, so this is a
+#: floor picked from a small sample, not a tuned optimum.
+#:
+#: Not comparable to ``clustering.DEFAULT_SIM``: profiles are far larger token sets than headlines,
+#: so the same number means something much stricter here.
+DEFAULT_MERGE_SIM = 0.33
+
+#: Coverage of one event arrives in a burst. Two clusters days apart that read alike are a
+#: recurring topic — a weekly fixture, a monthly filing — not a duplicate.
+DEFAULT_MERGE_MAX_GAP_HOURS = 48.0
+
+#: No merge may produce a cluster larger than this. A backstop against a runaway, set just above
+#: the largest legitimate cluster measured (100 articles, the French/Italian wildfires).
+DEFAULT_MERGE_MAX_SIZE = 130
+
 #: A targeted re-split must keep at least this share of the original cluster's articles, or the
 #: original is kept whole instead. Repair is meant to separate conflated events, not to delete a
 #: cluster it cannot make sense of — and without this floor the failure mode is silent, because
@@ -419,6 +439,39 @@ def link_quorum() -> float:
     return q if 0.0 <= q <= 1.0 else clustering.DEFAULT_LINK_QUORUM
 
 
+def merge_similarity() -> float:
+    """Second-pass duplicate merge — OFF. Set ``RWE_STORY_MERGE_SIM=0.33`` to enable.
+
+    Targets the one defect axis nothing shipped so far touches: RECALL. Measured on the live
+    catalog, 22 duplicated events across 45 stories hold 172 articles (4.3% of covered), and the
+    mechanism is structural rather than a tuning miss — "Mass shooting reported at Seattle Center"
+    and "…gunfire erupts near Seattle" share ONE token against a floor of three. No linkage rule
+    reaches that; only richer text does.
+
+    Shipped disabled because a merge pass is precisely the operation that built the mega-cluster.
+    The guards are in ``_merge_duplicates``; the bar for turning it on is measured, not argued:
+
+        adopt   : largest cluster stays under ~120, mean actionable coherence does not fall,
+                  bad-cluster count does not rise, and the merged pairs read correctly by hand
+        reject  : any of those, or largest ÷ p90 rising above 20×
+
+    Measure with ``audit_clustering_change.py --merge-sim 0.33 --pieces 5``."""
+    v = os.environ.get("RWE_STORY_MERGE_SIM", "").strip()
+    try:
+        s = float(v)
+    except (TypeError, ValueError):
+        return 0.0
+    return s if 0.0 <= s <= 1.0 else 0.0
+
+
+def merge_max_gap_hours() -> float:
+    return _env_float("RWE_STORY_MERGE_MAX_GAP", DEFAULT_MERGE_MAX_GAP_HOURS)
+
+
+def merge_max_size() -> int:
+    return _env_int("RWE_STORY_MERGE_MAX_SIZE", DEFAULT_MERGE_MAX_SIZE)
+
+
 def min_rated_for_blindspot() -> int:
     """Rated publishers a story needs before it may assert a coverage gap.
     ``RWE_STORY_MIN_RATED`` — 1 restores the pre-2026-07-28 behaviour of claiming on any sample."""
@@ -543,7 +596,130 @@ def _repair(members: list, *, quorum: float, sim: float, window_days: float, min
         return None
     if sum(len(p) for p in pieces) < REPAIR_MIN_RETENTION * len(members):
         return None
-    return [_build_story(p) for p in pieces]
+    return pieces
+
+
+def _profile(members: list) -> frozenset:
+    """A cluster's vocabulary: every member's headline AND description as one token set.
+
+    Deliberately not the headline alone — that is the input the clusterer already failed on, so a
+    merge scored the same way could only re-derive the same answer. Measured: the four Seattle
+    clusters score 0.15 on headlines and 0.56 on profiles."""
+    toks: set = set()
+    for m in members:
+        toks |= clustering.title_tokens(m.get("headline") or "")
+        toks |= clustering.title_tokens(m.get("description") or "")
+    return frozenset(toks)
+
+
+def _span(members: list) -> tuple:
+    times = [clustering.parse_time(m.get("publishedAt")) for m in members]
+    times = [t for t in times if t is not None]
+    return (min(times), max(times)) if times else (None, None)
+
+
+def _gap_hours(a: list, b: list) -> float:
+    """Hours between two clusters' coverage windows; 0 when they overlap."""
+    (ae, al), (be, bl) = _span(a), _span(b)
+    if not (ae and al and be and bl):
+        return 0.0
+    if ae <= bl and be <= al:
+        return 0.0
+    delta = (be - al) if be > al else (ae - bl)
+    return abs(delta.total_seconds()) / 3600.0
+
+
+def _merge_duplicates(groups: list, *, min_sim: float, max_gap_hours: float, max_size: int) -> list:
+    """Join clusters that are the same event described in different words.
+
+    The recall failure the repair exposed: "Mass shooting reported at Seattle Center" and "…gunfire
+    erupts near Seattle" share ONE token against ``MIN_SHARED_TOKENS = 3`` and score 0.08 against
+    ``sim = 0.28``. They can never merge pairwise, at any threshold, so the clusterer cannot reach
+    this and a second pass over richer text is the only route.
+
+    A merge pass is exactly the operation that built the mega-cluster, so it carries three guards:
+
+    * **Complete linkage.** A group merges only when EVERY pair inside it clears ``min_sim`` — not
+      just some chain of them. This is the direct fix for a case the audit found: a "Houthi attacks
+      in the Red Sea: what to know" explainer paired with two SEPARATE Houthi events at 0.30 and
+      0.27, and single linkage would have glued those two events together through it.
+    * **Coherence must not degrade.** If the merged cluster carries an actionable geoCoherence
+      score below the floor, the merge is refused. The independent signal gets a veto over a
+      text-similarity decision.
+    * **A size cap**, so no merge can start a runaway.
+
+    Best-first and deterministic. Returns the new member lists."""
+    n = len(groups)
+    if n < 2 or min_sim <= 0.0:
+        return groups
+    profiles = [_profile(g) for g in groups]
+    weights = clustering.idf_weights(profiles)
+
+    # Candidate generation blocks on shared tokens, but skips tokens carried by more than half the
+    # clusters: they are this corpus's stop-words, they carry the minimum IDF weight, and they
+    # dominate the cost. Two clusters sharing only such tokens cannot reach min_sim anyway.
+    postings: dict = {}
+    for i, toks in enumerate(profiles):
+        for t in toks:
+            postings.setdefault(t, []).append(i)
+    common = max(2, n // 2)
+    # Each profile's total weight, precomputed. weighted_jaccard would otherwise re-sum the UNION
+    # on every pair, and the union is the expensive half; with totals in hand only the intersection
+    # needs summing, since |A ∪ B| = total[i] + total[j] - |A ∩ B|. Same arithmetic, measured 4x
+    # faster over a 1,000-cluster catalog — which is what makes this affordable in a request path
+    # rather than only in an audit.
+    total = [sum(weights.get(t, 1.0) for t in p) for p in profiles]
+
+    def score(i: int, j: int) -> float:
+        inter = profiles[i] & profiles[j]
+        if not inter:
+            return 0.0
+        w = sum(weights.get(t, 1.0) for t in inter)
+        den = total[i] + total[j] - w
+        return (w / den) if den else 0.0
+
+    pairs = []
+    for i in range(n):
+        seen: set = set()
+        for t in profiles[i]:
+            if len(postings[t]) > common:
+                continue
+            for j in postings[t]:
+                if j > i:
+                    seen.add(j)
+        for j in seen:
+            s = score(i, j)
+            if s >= min_sim and _gap_hours(groups[i], groups[j]) <= max_gap_hours:
+                pairs.append((s, i, j))
+    if not pairs:
+        return groups
+
+    member_of = {i: (i,) for i in range(n)}          # index -> the group tuple it belongs to
+    for _, i, j in sorted(pairs, key=lambda p: (-p[0], p[1], p[2])):
+        gi, gj = member_of[i], member_of[j]
+        if gi == gj:
+            continue
+        if sum(len(groups[x]) for x in gi + gj) > max_size:
+            continue
+        if not all(score(a, b) >= min_sim for a in gi for b in gj):
+            continue                                  # complete linkage, never a chain
+        merged_members = [m for x in sorted(gi + gj) for m in groups[x]]
+        coherence, located = _geo_coherence(merged_members, _country_votes(merged_members))
+        if (coherence is not None and located >= MIN_LOCATED_FOR_TRUST
+                and coherence < coherence_floor()):
+            continue                                  # the independent signal vetoes the merge
+        combined = tuple(sorted(gi + gj))
+        for x in combined:
+            member_of[x] = combined
+
+    out, done = [], set()
+    for i in range(n):
+        key = member_of[i]
+        if key in done:
+            continue
+        done.add(key)
+        out.append([m for x in key for m in groups[x]])
+    return out
 
 
 def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
@@ -553,11 +729,19 @@ def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
                   min_tokens: Optional[int] = None,
                   idf: Optional[bool] = None,
                   quorum: Optional[float] = None,
-                  repair: Optional[float] = None) -> list:
+                  repair: Optional[float] = None,
+                  merge: Optional[float] = None,
+                  merge_gap: Optional[float] = None) -> list:
     """Cluster FeedArticle rows into Story objects (the pure builder). Keeps clusters with
     ≥ ``min_articles`` from ≥ ``min_publishers`` distinct outlets; sorted biggest+freshest first,
     with independently-suspect clusters demoted (see ``_size_rank``).
-    Deterministic: same rows → same stories, ids, and order."""
+    Deterministic: same rows → same stories, ids, and order.
+
+    Three passes, and the order is deliberate. Clustering forms groups from headline tokens;
+    ``_repair`` splits the ones the independent signal condemns; ``_merge_duplicates`` joins the
+    ones that are the same event in different words. Split runs before join so the two constrain
+    each other — anything the repair over-separates that is genuinely near-identical gets rejoined,
+    and anything the merge would over-join has already been vetted by coherence."""
     arts = [discover.feed_article_to_article(r) for r in rows]
     if exclude_wire():
         # Machine-generated market-data copy never enters clustering, so it can neither form a
@@ -575,17 +759,24 @@ def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
         min_shared=shared, min_tokens=tokens_floor, idf=weighting,
         link_quorum=link_quorum() if quorum is None else quorum)
     mend = repair_quorum() if repair is None else repair
-    stories = []
+    admitted = []
     for members in _admit(groups, arts, min_articles=min_articles, min_publishers=min_publishers):
-        story = _build_story(members)
-        if mend > 0.0 and story["clusterTrust"] == TRUST_LOW:
+        if mend > 0.0 and _build_story(members)["clusterTrust"] == TRUST_LOW:
             pieces = _repair(members, quorum=mend, sim=sim, window_days=window_days,
                              min_shared=shared, min_tokens=tokens_floor, idf=weighting,
                              min_articles=min_articles, min_publishers=min_publishers)
             if pieces is not None:
-                stories.extend(pieces)
+                admitted.extend(pieces)
                 continue
-        stories.append(story)
+        admitted.append(members)
+
+    join = merge_similarity() if merge is None else merge
+    if join > 0.0:
+        admitted = _merge_duplicates(
+            admitted, min_sim=join,
+            max_gap_hours=merge_max_gap_hours() if merge_gap is None else merge_gap,
+            max_size=merge_max_size())
+    stories = [_build_story(m) for m in admitted]
     trust_aware = trust_ranking()
     stories.sort(key=lambda s: _size_rank(s, trust_aware=trust_aware), reverse=True)
     return stories

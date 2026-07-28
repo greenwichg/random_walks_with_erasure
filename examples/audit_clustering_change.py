@@ -37,9 +37,9 @@ MAX_DROPPED = 0.05
 
 
 def build(rows: list, *, min_shared: int, min_tokens: int, idf: bool = False,
-          quorum: float = 0.0, repair: float = 0.0) -> list:
+          quorum: float = 0.0, repair: float = 0.0, merge: float = 0.0) -> list:
     return story_service.build_stories(rows, min_shared=min_shared, min_tokens=min_tokens, idf=idf,
-                                       quorum=quorum, repair=repair)
+                                       quorum=quorum, repair=repair, merge=merge)
 
 
 def index_by_member(stories: list) -> dict:
@@ -68,19 +68,49 @@ def _coherence_stats(stories: list) -> dict:
     }
 
 
-def verdict(res: dict, *, max_dropped: float = MAX_DROPPED) -> dict:
+#: Largest cluster a merge may produce. Above this it is rebuilding the blob.
+MERGE_MAX_LARGEST = 120
+
+
+def verdict(res: dict, *, max_dropped: float = MAX_DROPPED, merging: bool = False) -> dict:
     """Adopt / reject against the bars, computed rather than eyeballed.
 
-    Two rejection rules, both learned from measurements already taken:
+    **The bars depend on which direction the change moves**, and applying the wrong set would
+    reject a good change on principle. A SPLIT is judged on coverage retained; a MERGE drops no
+    articles at all and is judged on whether it rebuilt something it should not have.
+
+    Splitting rules, both learned from measurements already taken:
 
     * dropped coverage over ``max_dropped`` — the IDF experiment's failure mode.
     * story count FALLING — the ``min_publishers`` cliff. Splitting a 4-article/2-publisher cluster
       into 2+2 can leave two single-publisher fragments, and both are then dropped. Oversplitting
       does not merely shrink stories, it deletes them, and a raw article count hides that.
+
+    Merging rules — the cliff rule is dropped because a falling story count is the POINT (45
+    duplicate stories becoming 22 events), and a merge cannot strand a single-publisher fragment:
+
+    * any dropped coverage at all. A merge that loses articles has a bug, not a trade-off.
+    * a largest cluster over ``MERGE_MAX_LARGEST`` — the runaway that started all of this.
+    * the independent signal getting worse: more bad clusters, or mean coherence falling. This is
+      the one that matters, because it is the only check the merge cannot mark its own homework on.
     """
     covered = res["beforeCovered"] or 1
     dropped = res["droppedOut"] / covered
     fails = []
+    if merging:
+        if res["droppedOut"]:
+            fails.append(f"a merge dropped {res['droppedOut']:,} articles — merges add coverage, "
+                         f"they never lose it, so this is a bug")
+        if res["afterLargest"] > MERGE_MAX_LARGEST:
+            fails.append(f"largest cluster {res['afterLargest']} > {MERGE_MAX_LARGEST} "
+                         f"(rebuilding the blob)")
+        before, after = res["beforeCoherence"], res["afterCoherence"]
+        if after["bad"] > before["bad"]:
+            fails.append(f"bad clusters rose {before['bad']} -> {after['bad']} "
+                         f"(the independent signal says the merge is wrong)")
+        if before["mean"] is not None and after["mean"] is not None and after["mean"] < before["mean"]:
+            fails.append(f"mean coherence fell {before['mean']} -> {after['mean']}")
+        return {"droppedShare": dropped, "fails": fails, "adopt": not fails}
     if dropped > max_dropped:
         fails.append(f"dropped {dropped:.1%} of covered articles (bar {max_dropped:.0%})")
     if res["afterStories"] < res["beforeStories"]:
@@ -92,12 +122,12 @@ def verdict(res: dict, *, max_dropped: float = MAX_DROPPED) -> dict:
 def compare(store_, *, before: tuple, after: tuple, show: int = 10,
             before_idf: bool = False, after_idf: bool = False,
             before_quorum: float = 0.0, after_quorum: float = 0.0,
-            after_repair: float = 0.0) -> dict:
+            after_repair: float = 0.0, after_merge: float = 0.0) -> dict:
     rows = story_service._fetch(store_)
     a = build(rows, min_shared=before[0], min_tokens=before[1], idf=before_idf,
               quorum=before_quorum)
     b = build(rows, min_shared=after[0], min_tokens=after[1], idf=after_idf, quorum=after_quorum,
-              repair=after_repair)
+              repair=after_repair, merge=after_merge)
 
     a_by_id = {s["id"]: s for s in a}
     b_by_id = {s["id"]: s for s in b}
@@ -190,6 +220,9 @@ def main(argv=None) -> int:
     ap.add_argument("--repair-quorum", type=float, default=0.0,
                     help="TARGETED linkage: re-split only the clusters the independent signal "
                          "condemns, leaving every other story untouched")
+    ap.add_argument("--merge-sim", type=float, default=0.0,
+                    help="second-pass duplicate merge: join clusters whose description-backed "
+                         "profiles reach this weighted similarity (recall, not precision)")
     ap.add_argument("--pieces", type=int, default=0,
                     help="print the resulting pieces for the N biggest split clusters — the read "
                          "that decides whether a split separated events or shredded a story")
@@ -206,11 +239,13 @@ def main(argv=None) -> int:
               args.before_min_tokens if args.before_min_tokens is not None else configured[1])
     res = compare(store_mod.Store(args.db), before=before,
                   after=after, show=args.show, after_idf=args.idf,
-                  after_quorum=args.link_quorum, after_repair=args.repair_quorum)
+                  after_quorum=args.link_quorum, after_repair=args.repair_quorum,
+                  after_merge=args.merge_sim)
 
     tag = ((", idf" if args.idf else "")
            + (f", quorum {args.link_quorum:g}" if args.link_quorum > 0 else "")
-           + (f", repair {args.repair_quorum:g}" if args.repair_quorum > 0 else ""))
+           + (f", repair {args.repair_quorum:g}" if args.repair_quorum > 0 else "")
+           + (f", merge {args.merge_sim:g}" if args.merge_sim > 0 else ""))
     print(f"articles in window : {res['articles']:,}")
     print(f"before  (shared>={before[0]}, tokens>={before[1]}"
           f"{'' if before == configured else ''}): "
@@ -238,7 +273,7 @@ def main(argv=None) -> int:
         for pc in grp["pieces"][:args.piece_limit]:
             print(f"    {pc['articles']:>5} {pc['publishers']:>5}  {pc['title'][:64]}")
 
-    v = verdict(res, max_dropped=args.max_dropped)
+    v = verdict(res, max_dropped=args.max_dropped, merging=args.merge_sim > 0)
     print(f"\nVERDICT: {'ADOPT' if v['adopt'] else 'REJECT'} "
           f"(dropped {v['droppedShare']:.1%} of covered articles)")
     for f in v["fails"]:

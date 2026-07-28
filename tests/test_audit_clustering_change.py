@@ -174,3 +174,44 @@ def test_split_pieces_are_reported_with_their_titles():
     grp = res["splitInto"][0]
     assert grp["pieces"] == sorted(grp["pieces"], key=lambda p: -p["articles"])
     assert all(p["title"] for p in grp["pieces"])
+
+
+# --------------------------------------------------------------------------- #
+# Merge bars — a split and a join cannot be judged by the same rules.
+# --------------------------------------------------------------------------- #
+def _mres(**kw):
+    base = {"beforeCovered": 1000, "droppedOut": 0, "beforeStories": 100, "afterStories": 78,
+            "afterLargest": 100,
+            "beforeCoherence": {"scored": 60, "bad": 3, "mean": 0.96},
+            "afterCoherence": {"scored": 60, "bad": 3, "mean": 0.97}}
+    base.update(kw)
+    return base
+
+
+def test_a_falling_story_count_is_the_point_of_a_merge():
+    """Applying the split rules to a join would reject every good merge: 45 duplicate stories
+    becoming 22 events IS the intended outcome, and a merge cannot strand a single-publisher
+    fragment the way an oversplit can."""
+    assert acc.verdict(_mres(), merging=True)["adopt"] is True
+    assert acc.verdict(_mres())["adopt"] is False, "same numbers fail the SPLIT bars"
+
+
+def test_a_merge_that_loses_articles_is_a_bug_not_a_trade_off():
+    v = acc.verdict(_mres(droppedOut=4), merging=True)
+    assert v["adopt"] is False and "never lose it" in v["fails"][0]
+
+
+def test_a_merge_may_not_rebuild_the_blob():
+    v = acc.verdict(_mres(afterLargest=140), merging=True)
+    assert v["adopt"] is False and "rebuilding the blob" in v["fails"][0]
+
+
+def test_the_independent_signal_can_veto_a_merge():
+    """The only check a text-similarity merge cannot mark its own homework on: geoCoherence knows
+    nothing about the text that produced the merge."""
+    worse_count = acc.verdict(_mres(afterCoherence={"scored": 60, "bad": 5, "mean": 0.97}),
+                              merging=True)
+    assert worse_count["adopt"] is False and "bad clusters rose" in worse_count["fails"][0]
+    worse_mean = acc.verdict(_mres(afterCoherence={"scored": 60, "bad": 3, "mean": 0.94}),
+                             merging=True)
+    assert worse_mean["adopt"] is False and "mean coherence fell" in worse_mean["fails"][0]

@@ -956,3 +956,107 @@ def test_the_support_floor_is_tunable(monkeypatch):
     _add(st, "https://small.example/w2", "Small Gazette", None,
          "Ferry runs aground close to the northern port", days=1)
     assert ss.cluster_from_store(st)[0]["blindspotSide"] == "center"
+
+
+# --------------------------------------------------------------------------- #
+# Duplicate merge — the RECALL fix, and the guards that stop it rebuilding chains.
+#
+# "Mass shooting reported at Seattle Center" and "…gunfire erupts near Seattle" share ONE token
+# against MIN_SHARED_TOKENS = 3. No linkage rule reaches that; only richer text does.
+# --------------------------------------------------------------------------- #
+SEATTLE_TEXT = ("Police say a gunman opened fire at Seattle Center near the Space Needle on"
+                " Friday, killing two people and wounding five before fleeing the plaza.")
+
+
+def _dup_catalog(st):
+    """One event, two clusters, disjoint headline vocabulary — the production shape."""
+    for i, (pub, lean, title) in enumerate([
+            ("NPR", -1.0, "At Least 2 Killed in Shooting at Food Festival in Seattle"),
+            ("BBC News", 0.0, "Two killed in a shooting at the Seattle food festival"),
+            ("Fox News", 1.5, "Two dead, five injured in gunfire near the Space Needle"),
+            ("CNN", -1.2, "Five injured and two dead in gunfire close to Space Needle")]):
+        _add(st, f"https://d{i}.example/s", pub, lean, title, desc=SEATTLE_TEXT, days=1)
+
+
+def test_the_two_clusters_cannot_merge_on_headlines():
+    """The premise. If these cleared the pairwise gate the merge pass would be unnecessary."""
+    st = store_mod.Store("sqlite://")
+    _dup_catalog(st)
+    assert len(ss.build_stories(ss._fetch(st))) == 2
+
+
+def test_descriptions_merge_what_headlines_cannot():
+    st = store_mod.Store("sqlite://")
+    _dup_catalog(st)
+    merged = ss.build_stories(ss._fetch(st), merge=0.33)
+    assert len(merged) == 1 and merged[0]["totalCoverage"] == 4
+
+
+def test_a_merge_never_loses_an_article():
+    """A merge adds coverage; losing any would be a bug, and the audit rejects on it."""
+    st = store_mod.Store("sqlite://")
+    _dup_catalog(st)
+    _senate_and_wildfire(st)
+    rows = ss._fetch(st)
+    before = {c["url"] for s in ss.build_stories(rows) for c in s["coverage"]}
+    after = {c["url"] for s in ss.build_stories(rows, merge=0.33) for c in s["coverage"]}
+    assert before == after
+
+
+def test_complete_linkage_stops_an_explainer_chaining_two_events():
+    """The guard, taken from a real audit finding: a "Houthi attacks in the Red Sea: what to know"
+    explainer paired with two SEPARATE Houthi events at 0.30 and 0.27. Single linkage would glue
+    those two events together through it. Every pair inside a group must clear the bar."""
+    # a~b = 0.44 and b~c = 0.44 both clear the bar; a~c = 0.097 does not.
+    a = [{"headline": "alphaone alphatwo", "description": "alphathree bridgeword",
+          "publishedAt": None}]
+    b = [{"headline": "bridgeword alphaone", "description": "alphatwo betaone betatwo",
+          "publishedAt": None}]
+    c = [{"headline": "betaone betatwo", "description": "betathree bridgeword",
+          "publishedAt": None}]
+    out = ss._merge_duplicates([a, b, c], min_sim=0.3, max_gap_hours=48.0, max_size=100)
+    assert len(out) == 2, "the two events must not end up in one group"
+    assert sorted(len(g) for g in out) == [1, 2], "the explainer joins ONE of them, not both"
+
+
+def test_the_size_cap_refuses_a_runaway():
+    big = [[{"headline": "same story text here", "description": "shared vocabulary everywhere",
+             "publishedAt": None}] * 60 for _ in range(2)]
+    out = ss._merge_duplicates(big, min_sim=0.1, max_gap_hours=48.0, max_size=100)
+    assert len(out) == 2, "120 articles exceeds the cap, so the merge is refused"
+
+
+def test_a_wide_time_gap_is_a_recurring_topic_not_a_duplicate():
+    """Coverage of one event arrives in a burst. Two clusters a week apart that read alike are a
+    weekly fixture or a monthly filing, and pairing them would worsen with archive size."""
+    st = store_mod.Store("sqlite://")
+    _add(st, "https://e1.example/s", "NPR", -1.0,
+         "At Least 2 Killed in Shooting at Food Festival in Seattle", desc=SEATTLE_TEXT, days=1)
+    _add(st, "https://e2.example/s", "BBC News", 0.0,
+         "Two killed in a shooting at the Seattle food festival", desc=SEATTLE_TEXT, days=1)
+    _add(st, "https://e3.example/s", "Fox News", 1.5,
+         "Two dead, five injured in gunfire near the Space Needle", desc=SEATTLE_TEXT, days=5)
+    _add(st, "https://e4.example/s", "CNN", -1.2,
+         "Five injured and two dead in gunfire close to Space Needle", desc=SEATTLE_TEXT, days=5)
+    rows = ss._fetch(st)
+    assert len(ss.build_stories(rows, merge=0.33)) == 2, "96h apart: not the same burst"
+    # …and the window is the only reason: widen it and they join.
+    assert len(ss.build_stories(rows, merge=0.33, merge_gap=200.0)) == 1
+
+
+def test_merge_is_deterministic():
+    st = store_mod.Store("sqlite://")
+    _dup_catalog(st)
+    _senate_and_wildfire(st)
+    rows = ss._fetch(st)
+    first = [(s["id"], s["totalCoverage"]) for s in ss.build_stories(rows, merge=0.33)]
+    assert first == [(s["id"], s["totalCoverage"]) for s in ss.build_stories(rows, merge=0.33)]
+
+
+def test_merge_is_off_by_default_and_tunable(monkeypatch):
+    monkeypatch.delenv("RWE_STORY_MERGE_SIM", raising=False)
+    assert ss.merge_similarity() == 0.0
+    monkeypatch.setenv("RWE_STORY_MERGE_SIM", "0.33")
+    assert ss.merge_similarity() == 0.33
+    monkeypatch.setenv("RWE_STORY_MERGE_SIM", "nope")
+    assert ss.merge_similarity() == 0.0

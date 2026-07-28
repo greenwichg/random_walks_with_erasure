@@ -482,3 +482,59 @@ finding.
 For scale, the duplication defect this search started from accounts for 15 contradicted claims
 (2.9%); this one accounted for 460 (89.1%), thirty times larger — and it was only found because
 someone asked for the near-duplicate count and the answer needed a denominator.
+
+## Recall — the duplicate merge (`RWE_STORY_MERGE_SIM`, shipped disabled)
+
+The one defect axis nothing else shipped touches. Measured: **22 duplicated events across 45
+stories, 172 articles (4.3% of covered)**, with 16 of 23 candidate pairs confirmed true duplicates
+by hand. The mechanism is structural — "Mass shooting reported at Seattle Center" and "…gunfire
+erupts near Seattle" share **one** token against `MIN_SHARED_TOKENS = 3` and score 0.08 against
+`sim = 0.28`. No linkage rule reaches that. Only richer text does: description-backed profiles score
+**0.56** on the Seattle pair.
+
+`_merge_duplicates` runs as a third pass, **after** the repair. The order is deliberate: split then
+join, so the two constrain each other. Anything the repair over-separates that is genuinely
+near-identical gets rejoined; anything the merge would over-join has already been vetted by
+coherence.
+
+### Three guards, because a merge pass is what built the mega-cluster
+
+* **Complete linkage.** A group merges only when *every* pair inside it clears the threshold, not
+  just some chain of them. This is the direct fix for a case the audit found: a *"Houthi attacks
+  create tinderbox in Red Sea: what to know"* explainer paired with **two separate** Houthi events
+  at 0.30 and 0.27. Single linkage would have glued those two events together through it.
+* **The independent signal has a veto.** If the merged cluster carries an actionable `geoCoherence`
+  below the floor, the merge is refused. This is the only check a text-similarity merge cannot mark
+  its own homework on.
+* **A size cap** (`DEFAULT_MERGE_MAX_SIZE = 130`), just above the largest legitimate cluster
+  measured, so no merge can start a runaway.
+
+### The threshold
+
+`0.33`, because that is where the measured sample stops making mistakes. Of 23 pairs at ≥ 0.25: 16
+true duplicates, 5 same-story-different-angle, **2 false positives** — and both false positives sat
+at **0.31** (a French wildfire paired with a Californian one; two unrelated Nvidia stories). Every
+pair at 0.33 and above was a true duplicate. **n = 14**, so this is a floor picked from a small
+sample, not a tuned optimum.
+
+### The bars, fixed in advance
+
+A merge and a split cannot be judged by the same rules, and applying the wrong set would reject a
+good merge on principle — a falling story count *is the point* here (45 duplicate stories becoming
+22 events), and a merge cannot strand a single-publisher fragment the way an oversplit can. So
+`verdict(..., merging=True)` swaps them:
+
+| | reject if |
+|---|---|
+| coverage | **any** article dropped — a merge adds coverage, so losing one is a bug |
+| size | largest cluster over 120 |
+| independent signal | bad-cluster count rises, **or** mean actionable coherence falls |
+
+```
+docker exec deploy-api-1 python /app/examples/audit_clustering_change.py --merge-sim 0.33 --pieces 5
+```
+
+Cost: **1.39s** over a synthetic 1,000-cluster catalog, down from 7.36s — `weighted_jaccard`
+re-summed the union on every pair, and precomputing each profile's total weight makes only the
+intersection variable (`|A ∪ B| = total_i + total_j − |A ∩ B|`). Identical arithmetic. That is what
+makes this affordable in a cached request path rather than only in an audit.
