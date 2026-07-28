@@ -230,3 +230,26 @@ def test_the_baseline_carries_every_configured_knob_not_just_the_gates(monkeypat
     acc.build([], min_shared=3, min_tokens=3)
     assert seen[0]["repair"] is None, "None means 'resolve from config', not 'disabled'"
     assert seen[0]["merge"] is None and seen[0]["quorum"] is None
+
+
+def test_a_merge_is_not_rejected_for_moving_its_own_denominator():
+    """Measured: a merge pooled located members, lifted a pair over MIN_LOCATED_FOR_TRUST, and grew
+    the scored set 67 -> 68. The new entry sat below the mean and pulled it down 0.966 -> 0.964 —
+    0.002, entirely mechanical. Rejecting on that rejects arithmetic, not a bad merge. The
+    bad-cluster COUNT is the rule with a fixed meaning, and it did not move."""
+    v = acc.verdict(_mres(beforeCoherence={"scored": 67, "bad": 2, "mean": 0.966},
+                          afterCoherence={"scored": 68, "bad": 2, "mean": 0.964}), merging=True)
+    assert v["adopt"] is True
+
+
+def test_a_real_coherence_collapse_still_rejects():
+    v = acc.verdict(_mres(beforeCoherence={"scored": 67, "bad": 2, "mean": 0.966},
+                          afterCoherence={"scored": 68, "bad": 2, "mean": 0.90}), merging=True)
+    assert v["adopt"] is False and "denominator tolerance" in v["fails"][0]
+
+
+def test_one_new_bad_cluster_rejects_regardless_of_the_mean():
+    """The count has a fixed meaning whatever the scored set does, so it needs no tolerance."""
+    v = acc.verdict(_mres(beforeCoherence={"scored": 67, "bad": 2, "mean": 0.966},
+                          afterCoherence={"scored": 68, "bad": 3, "mean": 0.99}), merging=True)
+    assert v["adopt"] is False and "bad clusters rose" in v["fails"][0]

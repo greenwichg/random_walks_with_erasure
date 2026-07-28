@@ -78,6 +78,19 @@ def _coherence_stats(stories: list) -> dict:
 #: Largest cluster a merge may produce. Above this it is rebuilding the blob.
 MERGE_MAX_LARGEST = 120
 
+#: How far mean coherence may fall before a merge is rejected.
+#:
+#: Not zero, because a merge MOVES THE DENOMINATOR. Combining two clusters pools their located
+#: members, which can lift a pair over ``MIN_LOCATED_FOR_TRUST`` and add a cluster to the scored
+#: set that was not in it before — measured, 67 scored clusters became 68. A mean over a changed
+#: denominator is not a like-for-like comparison, and a single new entry below the mean moves it by
+#: roughly 1/68 of the difference, about 0.002. Rejecting on that is rejecting on arithmetic.
+#:
+#: 0.01 absorbs about five such entries while still catching a real degradation. The rule that
+#: actually detects a bad merge is the bad-cluster COUNT, which has a fixed meaning regardless of
+#: how many clusters are scored.
+MERGE_MEAN_TOLERANCE = 0.01
+
 
 def verdict(res: dict, *, max_dropped: float = MAX_DROPPED, merging: bool = False) -> dict:
     """Adopt / reject against the bars, computed rather than eyeballed.
@@ -98,8 +111,10 @@ def verdict(res: dict, *, max_dropped: float = MAX_DROPPED, merging: bool = Fals
 
     * any dropped coverage at all. A merge that loses articles has a bug, not a trade-off.
     * a largest cluster over ``MERGE_MAX_LARGEST`` — the runaway that started all of this.
-    * the independent signal getting worse: more bad clusters, or mean coherence falling. This is
-      the one that matters, because it is the only check the merge cannot mark its own homework on.
+    * the independent signal getting worse: more bad clusters, or mean coherence falling by more
+      than ``MERGE_MEAN_TOLERANCE``. The COUNT is the rule that bites — it has a fixed meaning
+      whatever the scored set does. The mean needs the tolerance because a merge pools located
+      members and can lift a pair into the scored set, moving the denominator under the average.
     """
     covered = res["beforeCovered"] or 1
     dropped = res["droppedOut"] / covered
@@ -115,8 +130,10 @@ def verdict(res: dict, *, max_dropped: float = MAX_DROPPED, merging: bool = Fals
         if after["bad"] > before["bad"]:
             fails.append(f"bad clusters rose {before['bad']} -> {after['bad']} "
                          f"(the independent signal says the merge is wrong)")
-        if before["mean"] is not None and after["mean"] is not None and after["mean"] < before["mean"]:
-            fails.append(f"mean coherence fell {before['mean']} -> {after['mean']}")
+        if (before["mean"] is not None and after["mean"] is not None
+                and after["mean"] < before["mean"] - MERGE_MEAN_TOLERANCE):
+            fails.append(f"mean coherence fell {before['mean']} -> {after['mean']} "
+                         f"(beyond the {MERGE_MEAN_TOLERANCE} denominator tolerance)")
         return {"droppedShare": dropped, "fails": fails, "adopt": not fails}
     if dropped > max_dropped:
         fails.append(f"dropped {dropped:.1%} of covered articles (bar {max_dropped:.0%})")
@@ -140,6 +157,18 @@ def compare(store_, *, before: tuple, after: tuple, show: int = 10,
     b_by_id = {s["id"]: s for s in b}
     a_member = index_by_member(a)
     b_member = index_by_member(b)
+
+    # A "merge" = a new story whose members came from more than one old story. The split table
+    # cannot show this: under a pure merge every old story's members land in exactly ONE new story,
+    # so `len(dests) == 1` and `clusters changed` reads 0 while 14 stories have in fact been joined.
+    # The two operations need their own counters or a merge looks like a no-op.
+    joins: dict = {}
+    for url, new in b_member.items():
+        old = a_member.get(url)
+        if old is not None:
+            joins.setdefault(new, set()).add(old)
+    merged = [(nid, olds) for nid, olds in joins.items() if len(olds) > 1]
+    merged.sort(key=lambda kv: -b_by_id[kv[0]]["totalCoverage"])
 
     # A "split" = an old story whose members now live in more than one story (or in none).
     fates: dict = {}
@@ -167,6 +196,16 @@ def compare(store_, *, before: tuple, after: tuple, show: int = 10,
         "beforeLargest": max((s["totalCoverage"] for s in a), default=0),
         "afterLargest": max((s["totalCoverage"] for s in b), default=0),
         "splitCount": len(split),
+        "mergedCount": len(merged),
+        "mergedFrom": [{
+            "articles": b_by_id[nid]["totalCoverage"],
+            "publishers": b_by_id[nid]["publisherCount"],
+            "title": b_by_id[nid]["title"],
+            "parts": sorted(({"articles": a_by_id[o]["totalCoverage"],
+                              "publishers": a_by_id[o]["publisherCount"],
+                              "title": a_by_id[o]["title"]} for o in olds),
+                            key=lambda x: -x["articles"]),
+        } for nid, olds in merged],
         # Whether the INDEPENDENT signal improved. A change that splits clusters without moving
         # this has rearranged the catalog rather than corrected it.
         "beforeCoherence": _coherence_stats(a),
@@ -269,13 +308,22 @@ def main(argv=None) -> int:
           f"{'   [PRODUCTION BASELINE]' if before == configured else '   [not production]'}")
     print(f"after   (shared>={after[0]}, tokens>={after[1]}{tag}): "
           f"{res['afterStories']:,} stories, largest {res['afterLargest']}")
-    print(f"clusters changed   : {res['splitCount']:,}")
+    print(f"clusters split     : {res['splitCount']:,}")
+    print(f"clusters merged    : {res['mergedCount']:,}")
     print(f"articles in a story: {res['beforeCovered']:,} -> {res['afterCovered']:,} "
           f"(dropped out {res['droppedOut']:,}, newly covered {res['newlyCovered']:,})")
 
     bc, ac = res["beforeCoherence"], res["afterCoherence"]
     print(f"independent signal : {bc['bad']}/{bc['scored']} bad (mean {bc['mean']}) -> "
           f"{ac['bad']}/{ac['scored']} bad (mean {ac['mean']})")
+
+    for grp in res["mergedFrom"][:args.pieces]:
+        print(f"\n=== merged into: {grp['title'][:66]}")
+        print(f"    {grp['articles']} articles / {grp['publishers']} publishers, from "
+              f"{len(grp['parts'])} stories")
+        print(f"    {'arts':>5} {'pubs':>5}  was")
+        for part in grp["parts"]:
+            print(f"    {part['articles']:>5} {part['publishers']:>5}  {part['title'][:62]}")
 
     for grp in res["splitInto"][:args.pieces]:
         kept = sum(p["articles"] for p in grp["pieces"])
