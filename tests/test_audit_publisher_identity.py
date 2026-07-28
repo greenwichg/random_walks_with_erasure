@@ -140,3 +140,20 @@ def test_an_ambiguous_bare_name_is_left_alone():
     g = api.identity_groups(["Standard.Net.Au", "Standard.Co.Uk", "Standard"])
     assert g["Standard.Net.Au"] != g["Standard.Co.Uk"]
     assert g["Standard"] not in (g["Standard.Net.Au"], g["Standard.Co.Uk"])
+
+
+def test_the_audit_scores_over_the_pipelines_name_universe():
+    """The residual disagreement after the fix shipped: one story survived reading
+    ['Pr Newswire', 'Prnewswire.Com']. The audit collapsed them; the pipeline, resolving over EVERY
+    article rather than only those in a story, found the brand label carried by more than one
+    domain and left the bare name alone. Same rule, different sets, different answers — so the
+    audit takes the wider set."""
+    story = _story("Cogent sued", ["Pr Newswire", "Prnewswire.Com"])
+    narrow = api.analyse([story])
+    assert narrow["fake"], "seen alone, the pair collapses"
+
+    # A second domain carrying the same label makes the bare name ambiguous, exactly as it is in
+    # the live build. The pipeline sees this; an audit over story publishers alone does not.
+    wide = api.analyse([story], universe={"Prnewswire.Co.Uk"})
+    assert wide["fake"] == [], "with the wider set the bare name is left alone, as production does"
+    assert "Pr Newswire" in wide["ambiguous"]

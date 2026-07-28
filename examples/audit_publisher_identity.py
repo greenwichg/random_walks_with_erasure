@@ -42,15 +42,25 @@ def identity_key(name: str) -> str:
     return identity_groups([name])[name]
 
 
-def analyse(stories: list, *, min_publishers: int = 2) -> dict:
-    """Collisions, and what collapsing them would do to the stories that exist."""
+def analyse(stories: list, *, min_publishers: int = 2, universe=None) -> dict:
+    """Collisions, and what collapsing them would do to the stories that exist.
+
+    ``universe`` is every publisher name in the BUILD, not just those that reached a story, and
+    passing it is what makes this agree with the pipeline. Whether a bare name may join a domain
+    depends on how many domains carry that label — an ambiguous label is left alone — so the answer
+    is a property of the name SET. Scoring over story publishers alone uses a smaller set, sees
+    less ambiguity, and collapses pairs the pipeline does not.
+
+    That is not hypothetical: it is why one story survived here reading ``['Pr Newswire',
+    'Prnewswire.Com']`` after the pipeline shipped the same rule. The audit collapsed them; the
+    pipeline, seeing a wider set, found the label ambiguous and did not."""
     names: dict = {}
     for s in stories:
         for c in s["coverage"]:
             names.setdefault(c["publisher"], 0)
             names[c["publisher"]] += 1
 
-    keys = identity_groups(list(names))
+    keys = identity_groups(sorted(set(universe) | set(names)) if universe else list(names))
     groups: dict = {}
     for name, n in names.items():
         groups.setdefault(keys[name], []).append((name, n))
@@ -79,9 +89,23 @@ def analyse(stories: list, *, min_publishers: int = 2) -> dict:
             missing_alias.append({"canonical": canonical, "add": unresolved,
                                   "articles": sum(n for nm, n in members if nm in unresolved)})
 
+    # Names the rule declined to place because their brand label is carried by more than one
+    # domain. Reported rather than silently left alone: each is either two outlets that share a
+    # word, or a curation gap the registry should settle by hand.
+    ambiguous = []
+    for name in names:
+        if outlet_registry.resolve(name) or outlet_registry._looks_like_host(name):
+            continue
+        label = outlet_registry._name_key(name)
+        carriers = {k for k in keys.values() if k == "n:" + label}
+        if keys[name].startswith("n:") and not carriers - {keys[name]}:
+            continue
+        ambiguous.append(name)
+
     return {
         "names": len(names),
         "identities": len(groups),
+        "ambiguous": sorted(ambiguous),
         "collisions": sorted(collisions.items(), key=lambda kv: -sum(n for _, n in kv[1])),
         "shrunk": sorted(shrunk, key=lambda r: -r["articles"]),
         "fake": sorted(fake, key=lambda r: -r["articles"]),
@@ -97,8 +121,11 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
 
     store_ = store_mod.Store(args.db)
-    stories = story_service.build_stories(story_service._fetch(store_))
-    res = analyse(stories)
+    rows = story_service._fetch(store_)
+    stories = story_service.build_stories(rows)
+    # The same universe build_stories resolves over — every article, not only those in a story.
+    universe = {r.get("publisher") for r in rows if r.get("publisher")}
+    res = analyse(stories, universe=universe)
 
     print(f"catalog: {res['stories']:,} stories")
     print(f"publisher names : {res['names']:,}")
@@ -114,6 +141,13 @@ def main(argv=None) -> int:
     print("    These cleared min_publishers only because the same masthead was counted twice.")
     for r in res["fake"][:args.show]:
         print(f"{r['articles']:>5} {r['was']:>4} {r['now']:>4}  {r['title'][:44]}  {r['names']}")
+
+    if res["ambiguous"]:
+        print(f"\nbare names left unplaced (their brand word is carried by more than one domain): "
+              f"{len(res['ambiguous']):,}")
+        print("    Each is either two outlets sharing a word, or a curation gap only a human can "
+              "settle.")
+        print("    " + ", ".join(res["ambiguous"][:args.show]))
 
     print(f"\nmissing registry aliases (the rating already exists): {len(res['missingAlias']):,}")
     print(f"{'arts':>5}  canonical -> add these forms")
