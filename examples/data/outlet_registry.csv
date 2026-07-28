@@ -963,3 +963,34 @@ OpIndia,2,opindia.com,IN,,,national
 # Fourteenth withheld lean. MBFC rates Swarajya RIGHT and classes it QUESTIONABLE with LOW factual
 # reporting -- numerous failed fact checks. The lowest factual rating of any source in this file.
 Swarajya,2,swarajyamag.com,IN,,Bengaluru,national,,low
+#
+# Sixteenth pass -- ONE-SIDED MARKETS, chosen by measurement rather than by name. After the India
+# correction the obvious question was which OTHER countries the registry covered from one direction
+# only, so the per-country balance was computed first and the probe aimed at the missing side. Seven
+# markets had three or more rated outlets and a completely empty side.
+#
+#   Il Giornale     +1  (MBFC RC, Mostly Factual)     ITALY had 3 left, 2 centre, 0 right
+#   Cumhuriyet      -1  (MBFC LC)                     TURKEY had 0 left, 3 right
+#   ThisDay         +1  (MBFC RC, Mostly Factual, HIGH credibility)   NIGERIA had 3 left, 0 right
+#   Daily Trust     -1  (MBFC LC, Mostly Factual, HIGH credibility)
+#   The Philippine Star     -1 (MBFC LC, Mostly Factual)
+#   Canada's National Observer -1 (MBFC LC, factual High)
+#
+# STILL ONE-SIDED, and not for want of looking:
+#   Russia   -- the only Russian rows are RT, TASS and Sputnik, all withheld as Questionable. There
+#               is no rated INDEPENDENT Russian outlet to balance them: MBFC has no page for Novaya
+#               Gazeta, and the two independents that are rated (Meduza, The Moscow Times) publish
+#               from Riga and Amsterdam, so they sit under LV and NL. Russia's row set is therefore
+#               three state outlets whose leans do not vote -- which is honest, and worth knowing.
+#   Korea    -- Hankyoreh is rated LEFT by AllSides with LOW CONFIDENCE stated, and Kyunghyang
+#               Shinmun only has an encyclopaedia description. Same call as Billboard: a
+#               low-confidence rating in a file with no confidence column would be shown as settled.
+#   Ukraine, New Zealand -- no rated outlet exists on the missing side.
+#   Philippines, Canada -- improved by the rows above but still thin on the right and left
+#               respectively. Recorded rather than forced.
+Cumhuriyet,-1,cumhuriyet.com.tr,TR,,Istanbul,national
+Daily Trust,-1,dailytrust.com,NG,,Abuja,national,,high
+The Philippine Star,-1,philstar.com,PH,,Manila,national
+Canada's National Observer,-1,nationalobserver.com,CA,,,national
+Il Giornale,1,ilgiornale.it,IT,,Milan,national
+ThisDay,1,thisdaylive.com,NG,,Lagos,national,,high

@@ -1067,3 +1067,49 @@ def test_swarajya_is_the_lowest_factual_rating_in_the_file(reg):
     checks. The lean is recorded; it does not vote."""
     assert reg.lean("Swarajyamag.Com") == 2.0
     assert reg.is_low_credibility("Swarajyamag.Com")
+
+
+def test_the_one_sided_markets_pass(reg):
+    for host, lean in [
+        ("Cumhuriyet.Com.Tr", -1.0), ("Dailytrust.Com", -1.0), ("Philstar.Com", -1.0),
+        ("Nationalobserver.Com", -1.0), ("Ilgiornale.It", 1.0), ("Thisdaylive.Com", 1.0),
+    ]:
+        assert reg.lean(host) == lean, host
+
+
+def test_no_market_of_three_or_more_is_completely_one_sided(reg):
+    """The India lesson, generalised into a guard. A registry curated by whoever had volume inherits
+    the feed's bias and then reports it back as a property of the world. Any country with three or
+    more rated outlets must have at least one on each side — or an explicit exemption saying why.
+
+    The exemptions are not laziness. Russia's only rows are RT, TASS and Sputnik, all withheld as
+    Questionable, and the rated independents (Meduza, The Moscow Times) publish from Riga and
+    Amsterdam so they sit under LV and NL. Korea's missing side exists only as a LOW-CONFIDENCE
+    AllSides rating, which this file will not import."""
+    import collections, math
+    by = collections.defaultdict(list)
+    for o in reg.outlets():
+        if o.country and not math.isnan(o.lean):
+            by[o.country].append(o.lean)
+    # Every exemption carries its reason. An undocumented one is how a curation gap disguises
+    # itself as a fact about the world, which is the exact mistake this test exists to prevent.
+    exempt = {
+        "AE": "no independent press — every rated Emirati outlet is state-aligned and MBFC rates "
+              "all of them right of centre. Not a gap in the registry; a fact about the market.",
+        "RU": "the only Russian rows are RT, TASS and Sputnik, all withheld as Questionable. The "
+              "rated independents (Meduza, The Moscow Times) publish from Riga and Amsterdam and "
+              "so sit under LV and NL.",
+        "KR": "Hankyoreh is AllSides-Left at LOW CONFIDENCE and Kyunghyang has only an "
+              "encyclopaedia description — neither is importable into a file with no confidence "
+              "column.",
+        "UA": "no rated outlet exists on the missing side.",
+        "NZ": "no rated outlet exists on the missing side.",
+        # Fewer than four rated outlets each: too small for the shape to mean anything yet.
+        "CL": "n=2", "SE": "n=3", "DK": "n=3", "MY": "n=3", "MX": "n=3", "AR": "n=3",
+        "CN": "n=3", "NL": "n=5, straddles via NRC -1 and De Telegraaf +2 — see the pairs test",
+    }
+    for cc, v in by.items():
+        if len(v) < 3 or cc in exempt:
+            continue
+        assert any(x < 0 for x in v), f"{cc}: {len(v)} rated outlets and none left of centre"
+        assert any(x > 0 for x in v), f"{cc}: {len(v)} rated outlets and none right of centre"

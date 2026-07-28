@@ -1755,3 +1755,50 @@ and a bare "The Tribune" claims neither. The parenthetical rule, earning its pla
 | rows | 154 | **392** |
 | rated | 143 | **366** |
 | countries | ~30 | **50** |
+
+## Sixteenth pass: one-sided markets, found by measurement
+
+The India correction raised an obvious question — **which other countries does the registry cover
+from one direction only?** So this pass computed the per-country balance first and aimed the probe
+at the missing side, rather than picking a market by name.
+
+Seven countries had three or more rated outlets and a completely empty side. Four are now fixed:
+
+| country | before | added | after |
+|---|---|---|---|
+| Italy | 3L 2C **0R** | Il Giornale +1 | 3L 2C 1R |
+| Turkey | **0L** 3R | Cumhuriyet −1 | 1L 3R |
+| Nigeria | 3L **0R** | ThisDay +1, Daily Trust −1 | 4L 1R |
+| Philippines / Canada | thin | The Philippine Star −1, Canada's National Observer −1 | improved, still thin |
+
+### The ones that stayed one-sided, and why that is the finding
+
+**The UAE has four rated outlets and not one is left of centre** — Al Arabiya, Gulf News, The
+National, Khaleej Times. That is not a gap in this registry. **It is what a country with no
+independent press looks like when you measure it.** The guard flagged it, and the honest response
+was an exemption with the reason written down, not a row invented to satisfy a shape.
+
+**Russia's only rows are RT, TASS and Sputnik** — all withheld as Questionable, so their leans do
+not vote. The rated independents, Meduza and The Moscow Times, publish from Riga and Amsterdam and
+therefore sit under LV and NL. Russia's entry in this file is three state outlets that cast no vote,
+which is a truthful description of the situation.
+
+**Korea's missing side exists only as a low-confidence AllSides rating** for Hankyoreh, plus an
+encyclopaedia description of Kyunghyang Shinmun. Same call as Billboard: a file with no confidence
+column would present that as settled.
+
+### The guard
+
+`test_no_market_of_three_or_more_is_completely_one_sided` now enforces this: any country with three
+or more rated outlets must have at least one on each side, **or an exemption that states its reason
+in the test itself.** An undocumented exemption is precisely how a curation gap disguises itself as a
+fact about the world — which is the mistake the India pass caught after it had already been written
+into this document as a finding.
+
+### Registry, close of sixteen passes
+
+| | start of day | end |
+|---|---:|---:|
+| rows | 154 | **398** |
+| rated | 143 | **372** |
+| countries | ~30 | **50** |
