@@ -911,4 +911,54 @@ def test_three_more_questionable_sources_are_rated_and_withheld(reg):
     right-wing conspiracy theories. Twelve withheld leans now — the rule is not an edge case."""
     for host, lean in [("Gulfnews.Com", 2.0), ("Thenational.Ae", 1.0), ("Investors.Com", 2.0)]:
         assert reg.lean(host) == lean and reg.is_low_credibility(host), host
-    assert sum(1 for o in reg.outlets() if o.credibility == "low") == 12
+    # A floor, not an exact count: this set grows with every curation pass, and an equality here
+    # broke twice in one afternoon while asserting nothing anyone cared about. What matters is that
+    # a source the rater called Questionable is never quietly voted, and that is asserted per-row.
+    low = {o.canonical for o in reg.outlets() if o.credibility == "low"}
+    assert len(low) >= 12
+    assert {"Xinhua", "Global Times", "RT (Russia Today)", "TASS", "Sputnik",
+            "Gulf News", "The National (UAE)", "News18"} <= low
+
+
+def test_the_twelfth_pass_ratings(reg):
+    for host, lean in [
+        ("Theweek.Com", -2.0), ("Theroot.Com", -2.0), ("Grist.Org", -1.0), ("Statnews.Com", -1.0),
+        ("Rollcall.Com", 0.0), ("Defenseone.Com", 0.0), ("Ktla.Com", 0.0), ("Wgntv.Com", 0.0),
+        ("Entrepreneur.Com", 1.0), ("Birminghammail.Co.Uk", -1.0), ("Yorkshirepost.Co.Uk", 0.0),
+        ("Thetyee.Ca", -1.0), ("Edmontonjournal.Com", 1.0), ("Gmanetwork.Com", -1.0),
+        ("Abs-Cbn.Com", 0.0), ("Thediplomat.Com", 0.0), ("Khaleejtimes.Com", 1.0),
+        ("Israelhayom.Com", 2.0), ("Francetvinfo.Fr", -1.0), ("Yle.Fi", 0.0),
+        ("Jyllands-Posten.Dk", 1.0), ("Berlingske.Dk", 1.0), ("Expressen.Se", 1.0),
+    ]:
+        assert reg.lean(host) == lean, host
+
+
+def test_denmarks_three_majors_straddle_the_centre(reg):
+    """All three now rated and they do not agree: Politiken -1, Berlingske +1, Jyllands-Posten +1.
+    A Danish story can show a spread, which is the whole product applied to a country that had no
+    coverage at the start of the day."""
+    assert reg.lean("Politiken.Dk") == -1.0
+    assert reg.lean("Berlingske.Dk") == 1.0 and reg.lean("Jyllands-Posten.Dk") == 1.0
+
+
+def test_the_philippines_now_has_a_centre_point(reg):
+    """Four Philippine outlets across three positions — ABS-CBN at 0 against Manila Bulletin and the
+    Inquirer on the left and The Manila Times on the right. Before today the country had one row."""
+    assert reg.lean("Abs-Cbn.Com") == 0.0
+    assert reg.lean("Mb.Com.Ph") == -1.0 and reg.lean("Inquirer.Net") == -1.0
+    assert reg.lean("Manilatimes.Net") == 1.0
+
+
+def test_a_masthead_reached_by_a_second_corporate_domain(reg):
+    """MBFC rates Insider and Business Insider separately and lands both Left-Center; likewise
+    Nikkei Asia is Nikkei's English edition. Same masthead, own domain — the cleveland.com case,
+    not the ownership inference refused for Page Six."""
+    assert reg.resolve("Insider.Com").canonical == "Business Insider"
+    assert reg.resolve("Nikkei.Com").canonical == "Nikkei Asia"
+
+
+def test_the_week_us_does_not_claim_the_bare_name(reg):
+    """The Week India is a different magazine. The parenthetical canonical declines the bare word,
+    as every disambiguated row does."""
+    assert reg.resolve("Theweek.Com").canonical == "The Week (US)"
+    assert reg.resolve("The Week") is None

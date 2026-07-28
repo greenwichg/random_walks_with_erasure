@@ -1556,3 +1556,50 @@ that looked like an edge case at eight is carrying a twelfth of the rated set.
 Both wings are represented and the centre carries 55. The −1 bucket dominates at 113, which is MBFC's
 shape for large English-language mastheads rather than a thumb on the scale here — and it is visible
 in the file precisely so someone can argue with it.
+
+## Twelfth pass: finishing the probe
+
+The remainder of the same 199-outlet list. **25 more rated**, one more withheld.
+
+| region | added |
+|---|---|
+| US | The Week −2, The Root −2, Grist −1, STAT News −1, Roll Call 0, Defense One 0, KTLA 0, WGN News 0, Entrepreneur +1 |
+| UK | Birmingham Mail −1, Yorkshire Post 0 |
+| Canada | The Tyee −1, Edmonton Journal +1 |
+| Asia | GMA News −1, ABS-CBN 0, The Diplomat 0 |
+| Mid-East | Khaleej Times +1, Israel Hayom +2 |
+| Europe | France Info −1, Yle News 0, Jyllands-Posten +1, Berlingske +1, Expressen +1 |
+
+**Denmark now has all three majors and they straddle** — Politiken −1, Berlingske +1,
+Jyllands-Posten +1. **The Philippines gained a centre point**: ABS-CBN at 0 against Manila Bulletin
+−1, the Inquirer −1 and The Manila Times +1. Both countries had one row or none this morning.
+
+**Caixin Global** is the thirteenth withheld lean — MBFC rates it Right-Center and classes it
+Questionable for censorship that omits criticism of the government.
+
+Two alias extensions rather than new rows: `insider.com` → Business Insider and `nikkei.com` →
+Nikkei Asia. Same masthead, own domain — the cleveland.com case, not the ownership inference refused
+for Page Six.
+
+### A test that was asserting nothing
+
+`test_three_more_questionable_sources_are_rated_and_withheld` pinned the withheld count with an
+equality, and it broke twice in one afternoon — both times because the set had legitimately grown.
+An exact count of a growing set is a tripwire without a hazard behind it. It is now a floor plus a
+membership assertion: what matters is that a source the rater called Questionable is never quietly
+voted, and that is checked per row.
+
+### Registry, final
+
+| | start of day | end |
+|---|---:|---:|
+| rows | 154 | **344** |
+| rated | 143 | **318** |
+| countries | ~30 | **46** |
+| spread (−2/−1/0/+1/+2) | — | **24 / 119 / 63 / 88 / 24** |
+| withheld (Questionable) | 0 | 13 |
+| classified non-newsroom | 7 | 16 |
+
+**The registry more than doubled and the rated set went up 122%.** The centre carries 63 and both
+wings are represented at 24 apiece — a shape you can argue with, which is the point of writing it
+down.

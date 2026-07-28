@@ -62,7 +62,7 @@ The Atlantic,-1,theatlantic.com|Atlantic,US,,,national
 Time,-1,time.com,US,,,national
 Slate,-1,slate.com,US,,,national
 Bloomberg,-1,bloomberg.com,US,,,national
-Business Insider,-1,businessinsider.com,US,,,national
+Business Insider,-1,businessinsider.com|insider.com,US,,,national
 CNBC,-1,cnbc.com,US,,,national
 Al Jazeera,-1,aljazeera.com|Al Jazeera English,QA,,Doha,international
 Los Angeles Times,-1,latimes.com|LA Times,US,California,Los Angeles,regional
@@ -210,7 +210,7 @@ The Indian Express,-1,indianexpress.com,IN,,,national
 Dawn,-1,dawn.com,PK,,,national
 The Japan Times,0,japantimes.co.jp,JP,,,national
 NHK,1,nhk.or.jp,JP,,,national
-Nikkei Asia,1,asia.nikkei.com,JP,,,international
+Nikkei Asia,1,asia.nikkei.com|nikkei.com,JP,,,international
 The Korea Herald,1,koreaherald.com,KR,,,national
 Yonhap News Agency,1,yna.co.kr,KR,,,national
 South China Morning Post,0,scmp.com,HK,,,national
@@ -797,3 +797,44 @@ Emol,1,emol.com|El Mercurio Online,CL,,Santiago,national
 Investors Business Daily,2,investors.com|IBD,US,California,Los Angeles,national,,low
 Gulf News,2,gulfnews.com,AE,,Dubai,national,,low
 The National (UAE),1,thenational.ae,AE,,Abu Dhabi,national,,low
+#
+# Twelfth pass -- working the remainder of the same 199-outlet probe. 25 more rated.
+#
+#   US       The Week -2, The Root -2 (HIGH cred), Grist -1, STAT News -1, Roll Call 0
+#            (factual VERY HIGH), Defense One 0, KTLA 0, WGN News 0, Entrepreneur +1
+#   UK       Birmingham Mail -1, Yorkshire Post 0
+#   Canada   The Tyee -1, Edmonton Journal +1  -- Alberta's two majors, opposite sides
+#   Asia     GMA News -1, ABS-CBN 0, The Diplomat 0
+#   MidEast  Khaleej Times +1, Israel Hayom +2
+#   Europe   France Info -1, Yle News 0, Jyllands-Posten +1, Berlingske +1, Expressen +1
+#
+# Denmark now has all three majors and they straddle: Politiken -1, Berlingske +1,
+# Jyllands-Posten +1. The Philippines gains a centre point (ABS-CBN) to sit against Manila
+# Bulletin -1, The Manila Times +1 and the Inquirer -1.
+The Week (US),-2,theweek.com,US,New York,New York,national
+The Root,-2,theroot.com,US,,,national,,high
+Grist,-1,grist.org,US,Washington,Seattle,national
+STAT News,-1,statnews.com,US,Massachusetts,Boston,national
+Roll Call,0,rollcall.com,US,District of Columbia,Washington,national
+Defense One,0,defenseone.com,US,District of Columbia,Washington,national
+KTLA,0,ktla.com,US,California,Los Angeles,local
+WGN News,0,wgntv.com,US,Illinois,Chicago,local
+Entrepreneur,1,entrepreneur.com,US,,,national
+Birmingham Mail,-1,birminghammail.co.uk,GB,England,Birmingham,regional
+Yorkshire Post,0,yorkshirepost.co.uk,GB,England,Leeds,regional
+The Tyee,-1,thetyee.ca,CA,British Columbia,Vancouver,national
+Edmonton Journal,1,edmontonjournal.com,CA,Alberta,Edmonton,regional
+GMA News,-1,gmanetwork.com,PH,,Manila,national
+ABS-CBN,0,abs-cbn.com,PH,,Manila,national
+The Diplomat,0,thediplomat.com,US,District of Columbia,Washington,international
+Khaleej Times,1,khaleejtimes.com,AE,,Dubai,national
+Israel Hayom,2,israelhayom.com|israelhayom.co.il,IL,,Tel Aviv,national
+France Info,-1,francetvinfo.fr,FR,,Paris,national
+Yle News,0,yle.fi,FI,,Helsinki,national
+Jyllands-Posten,1,jyllands-posten.dk,DK,,Aarhus,national
+Berlingske,1,berlingske.dk,DK,,Copenhagen,national
+Expressen,1,expressen.se,SE,,Stockholm,national
+# Thirteenth withheld lean. MBFC rates Caixin Global Right-Center and classes it QUESTIONABLE for
+# pro-government propaganda and censorship that omits criticism of the government -- the fourth
+# Chinese-state-adjacent source in this set, after Xinhua, Global Times and CGTN's absence.
+Caixin Global,1,caixinglobal.com|caixin.com,CN,,Beijing,national,,low
