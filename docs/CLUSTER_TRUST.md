@@ -1017,3 +1017,54 @@ Lean Right bias for Globo — but its entry is `/interest/globo`, the parent gro
 aggregates is MBFC's Globo page. Same source, one hop further away. O Globo stays blank.
 
 A second search that returns the same evidence dressed differently is not new evidence.
+
+### Fifth pass: the US metro dailies
+
+Probing the registry against 181 outlets a global feed plausibly carries found **172 with no row at
+all**. The largest single hole was domestic: **twenty of the biggest US city papers were missing.**
+
+That is not a cosmetic gap. A US story reaching the Boston Globe, the Star Tribune, the Arizona
+Republic, the Tampa Bay Times and the Kansas City Star was reaching five *unrated* publishers, so it
+could not support a coverage-gap claim at all — the exact story shape the product exists to explain.
+All twenty are rated by MBFC.
+
+The result is lopsided, and it is worth stating rather than burying: **seventeen Left-Center, three
+Right-Center.** That is what MBFC publishes for this set.
+
+| Right-Center | why MBFC says so |
+|---|---|
+| Chicago Tribune | free-market, limited-government editorials |
+| Dallas Morning News | slightly right-leaning editorial bias |
+| The Detroit News | has never endorsed a Democrat for president; backed Gary Johnson in 2016 |
+
+The Chicago Tribune is the one to double-take on — a big-city daily rated *right*-of-centre is
+counterintuitive, and it is MBFC's rating rather than an impression, the same as NHK.
+
+Detroit is the case that justifies per-masthead rows: **the Free Press is −1 and the Detroit News is
++1, in one city.** Collapsing them on locality would erase the only interesting thing about the pair.
+
+AllSides dissents to Center on four — Houston Chronicle, Arizona Republic, St. Louis Post-Dispatch,
+Cleveland (low confidence) — and Ad Fontes puts several in "Middle". Recorded rather than averaged
+away; the mapping this file uses is MBFC's.
+
+Two rows carry a masthead's rating on that masthead's own website (`cleveland.com` for The Plain
+Dealer, `chron.com` for the Houston Chronicle). That is the same publication under its own domain,
+**not** the ownership inference refused for Page Six and O Globo — and it is pinned by a test,
+because Ad Fontes rates the website separately from the paper and the two are easy to confuse.
+SFGate gets its own row for the same reason: MBFC rates it separately from the SF Chronicle, and
+they happen to agree today, which is exactly what would make a shared row look harmless until one
+of them is re-rated.
+
+### Where the registry stands
+
+| | start of day | now |
+|---|---:|---:|
+| rows | 154 | **199** |
+| rated | 143 | **182** |
+| identity-only, reason recorded | 4 | 10 |
+| wire feeds (blank by construction) | 7 | 7 |
+
+Still missing from the 181-outlet probe: UK nationals beyond the ones added, Canadian and
+Australian mastheads, the Indian dailies, the state wires, and most of continental Europe and Latin
+America. Those are the next tranches, and they are findable — unlike the ~1,000-outlet long tail of
+small local mastheads, which no public rater covers and which stays blank.

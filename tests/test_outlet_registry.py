@@ -456,6 +456,51 @@ def test_the_coverage_pass_ratings(reg):
     assert reg.lean("Aa.Com.Tr") == 2.0                       # MBFC RIGHT
 
 
+def test_the_us_metro_dailies(reg):
+    """Twenty of the largest US city papers had no row at all — a real hole for a product whose
+    claim is showing who covered a story, because a US story reaching five metro dailies was
+    reaching five UNRATED publishers and could not support a coverage-gap claim.
+
+    The three Right-Center ones are asserted individually because they are the surprising ones. A
+    big-city daily rated RIGHT-Center is counterintuitive, and it is MBFC's rating, not an
+    impression — the same reason NHK is +1."""
+    assert reg.lean("Chicagotribune.Com") == 1.0              # MBFC Right-Center
+    assert reg.lean("Dallasnews.Com") == 1.0                  # MBFC Right-Center
+    assert reg.lean("Detroitnews.Com") == 1.0                 # MBFC Right-Center
+    for host in ["Bostonglobe.Com", "Miamiherald.Com", "Houstonchronicle.Com", "Seattletimes.Com",
+                 "Sfchronicle.Com", "Sfgate.Com", "Denverpost.Com", "Startribune.Com", "Ajc.Com",
+                 "Freep.Com", "Azcentral.Com", "Tampabay.Com", "Newsday.Com", "Stltoday.Com",
+                 "Cleveland.Com", "Sacbee.Com", "Charlotteobserver.Com", "Kansascity.Com"]:
+        assert reg.lean(host) == -1.0, host                   # MBFC Left-Center
+
+
+def test_the_two_detroit_papers_are_rated_apart(reg):
+    """One city, two dailies, opposite sides. The Free Press has endorsed Democrats since 1980; the
+    Detroit News has never endorsed one for president. Collapsing them on the city would erase the
+    only interesting thing about the pair."""
+    assert reg.resolve("Freep.Com").canonical == "Detroit Free Press"
+    assert reg.resolve("Detroitnews.Com").canonical == "The Detroit News"
+    assert reg.lean("Freep.Com") == -1.0 and reg.lean("Detroitnews.Com") == 1.0
+    assert reg.resolve("Freep.Com").city == reg.resolve("Detroitnews.Com").city == "Detroit"
+
+
+def test_a_masthead_rating_reaches_that_mastheads_own_website(reg):
+    """cleveland.com is where The Plain Dealer publishes and chron.com is where the Houston
+    Chronicle publishes — the same publication under its own domain, which is NOT the ownership
+    inference refused for Page Six and O Globo. Both are pinned because Ad Fontes rates the website
+    separately from the paper, so the two are easy to mistake for different outlets."""
+    assert reg.resolve("Cleveland.Com").canonical == "The Plain Dealer"
+    assert reg.resolve("Chron.Com").canonical == "Houston Chronicle"
+    assert reg.lean("Chron.Com") == reg.lean("Houstonchronicle.Com") == -1.0
+
+
+def test_sfgate_is_its_own_outlet(reg):
+    """MBFC rates SFGate and the San Francisco Chronicle separately. They agree at Left-Center here,
+    which is exactly why a shared row would look harmless — until one of them is re-rated."""
+    assert reg.resolve("Sfgate.Com").canonical == "SFGate"
+    assert reg.resolve("Sfchronicle.Com").canonical == "San Francisco Chronicle"
+
+
 def test_a_questionable_source_is_identified_but_not_rated(reg):
     """The rule this pass added. MBFC publishes a lean AND a credibility verdict; for these four the
     verdict is Questionable / Low Credibility. The lean exists and is deliberately not imported,

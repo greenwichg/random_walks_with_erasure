@@ -439,3 +439,52 @@ The Economic Times,,economictimes.indiatimes.com|economictimes.com,IN,,,national
 #               factuality is not lean.
 #   iHeartRadio : no MBFC rating for the network. (Its ~100 station hostnames already collapse to
 #               one identity through the brand-domain rule, so no row is needed for that.)
+#
+# Fifth pass -- US METRO DAILIES. Twenty of the largest US city papers had no row at all, which is
+# a real hole for a product whose whole claim is showing who covered a story: a US story reaching
+# five metro dailies was reaching five UNRATED publishers and could not support a coverage-gap
+# claim at all. Every one of them is rated by MBFC. Same mapping, same 403 provenance caveat.
+#
+# The result is lopsided and worth stating plainly rather than burying: SEVENTEEN of the twenty are
+# Left-Center and three are Right-Center. That is what MBFC publishes for this set; it is not a
+# thumb on the scale here, and it is exactly the kind of imbalance a reader should be able to see.
+#
+#   Right-Center : Chicago Tribune (MBFC cites free-market/limited-government editorials),
+#                  Dallas Morning News, The Detroit News (has never endorsed a Democrat for
+#                  president; endorsed Gary Johnson in 2016)
+#   Left-Center  : everything else below
+#
+# The Chicago Tribune is the one to double-take on. A big-city daily rated RIGHT-Center is
+# counterintuitive, and it is MBFC's rating, not an impression -- the same reason NHK is +1.
+#
+# AllSides dissents to CENTER on four of these -- Houston Chronicle, Arizona Republic, St. Louis
+# Post-Dispatch and Cleveland (low confidence) -- and Ad Fontes puts several in "Middle". Recorded
+# rather than averaged away: the mapping this file uses is MBFC's.
+#
+# Two rows carry a masthead's rating on the masthead's WEBSITE, which is not the ownership
+# inference refused for Page Six and O Globo -- it is the same publication under its own domain:
+#   The Plain Dealer -> cleveland.com   (Ad Fontes rates cleveland.com separately as "Middle")
+#   Houston Chronicle -> chron.com      (Ad Fontes rates chron.com separately)
+# SFGate gets its OWN row rather than folding into the San Francisco Chronicle: MBFC rates the two
+# separately, and they happen to agree at Left-Center.
+Chicago Tribune,1,chicagotribune.com,US,Illinois,Chicago,regional
+Dallas Morning News,1,dallasnews.com,US,Texas,Dallas,regional
+The Detroit News,1,detroitnews.com,US,Michigan,Detroit,regional
+Boston Globe,-1,bostonglobe.com,US,Massachusetts,Boston,regional
+Miami Herald,-1,miamiherald.com,US,Florida,Miami,regional
+Houston Chronicle,-1,houstonchronicle.com|chron.com,US,Texas,Houston,regional
+Seattle Times,-1,seattletimes.com,US,Washington,Seattle,regional
+San Francisco Chronicle,-1,sfchronicle.com,US,California,San Francisco,regional
+SFGate,-1,sfgate.com,US,California,San Francisco,regional
+Denver Post,-1,denverpost.com,US,Colorado,Denver,regional
+Star Tribune,-1,startribune.com,US,Minnesota,Minneapolis,regional
+Atlanta Journal-Constitution,-1,ajc.com|AJC,US,Georgia,Atlanta,regional
+Detroit Free Press,-1,freep.com|Detroit Free Press,US,Michigan,Detroit,regional
+Arizona Republic,-1,azcentral.com|AZ Central,US,Arizona,Phoenix,regional
+Tampa Bay Times,-1,tampabay.com,US,Florida,Tampa,regional
+Newsday,-1,newsday.com,US,New York,Melville,regional
+St. Louis Post-Dispatch,-1,stltoday.com,US,Missouri,St. Louis,regional
+The Plain Dealer,-1,cleveland.com,US,Ohio,Cleveland,regional
+Sacramento Bee,-1,sacbee.com,US,California,Sacramento,regional
+Charlotte Observer,-1,charlotteobserver.com,US,North Carolina,Charlotte,regional
+Kansas City Star,-1,kansascity.com,US,Missouri,Kansas City,regional
