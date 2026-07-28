@@ -422,13 +422,83 @@ def test_the_unrated_set_is_exactly_the_documented_one(reg):
     wire = {o.canonical for o in reg.outlets() if o.kind == "wire"}
     assert wire <= blank, "a wire feed must never carry a lean"
     assert blank - wire == {
+        # No rating exists at any public rater.
         "Brisbane Times",      # no MBFC page; sibling mastheads are rated, which is not a source
         "Folha de S.Paulo",    # confirmed absent from MBFC, AllSides and Ad Fontes alike
         "Milenio",             # no MBFC page
         "Nigerian Tribune",    # no MBFC page
         "O Globo",             # only its owner is rated — see the test above
         "The East African",    # only its owner, Nation Media Group, is rated
+        # A rating EXISTS and is deliberately withheld — see the test below.
+        "Xinhua",
+        "Global Times",
+        "RT (Russia Today)",
+        "The Economic Times",
     }
+
+
+def test_the_coverage_pass_ratings(reg):
+    """Fourth pass: outlets with no row at all, rather than blanks in rows that existed. Large
+    mastheads a global feed carries and this file had simply never listed."""
+    assert reg.lean("Newsweek.Com") == 1.0                    # MBFC Right-Center
+    assert reg.lean("Thesun.Co.Uk") == 2.0                    # MBFC RIGHT
+    assert reg.lean("Theaustralian.Com.Au") == 1.0            # MBFC Right-Center
+    assert reg.lean("Nationalpost.Com") == 1.0                # MBFC Right-Center
+    assert reg.lean("Globalnews.Ca") == -1.0                  # MBFC Left-Center
+    assert reg.lean("Indiatoday.In") == 1.0                   # MBFC Right-Center
+    assert reg.lean("Afp.Com") == -1.0                        # MBFC Left-Center
+    assert reg.lean("Rollingstone.Com") == -2.0               # MBFC LEFT
+    assert reg.lean("Metro.Co.Uk") == -1.0                    # MBFC Left-Center
+    assert reg.lean("Express.Co.Uk") == 2.0                   # MBFC RIGHT
+    assert reg.lean("Rnz.Co.Nz") == 0.0                       # MBFC LEAST BIASED
+    assert reg.lean("Oregonlive.Com") == 0.0                  # MBFC LEAST BIASED
+    assert reg.lean("Barrons.Com") == 1.0                     # MBFC Right-Center
+    assert reg.lean("Aa.Com.Tr") == 2.0                       # MBFC RIGHT
+
+
+def test_a_questionable_source_is_identified_but_not_rated(reg):
+    """The rule this pass added. MBFC publishes a lean AND a credibility verdict; for these four the
+    verdict is Questionable / Low Credibility. The lean exists and is deliberately not imported,
+    because this file has no credibility column — the vote would reach _distribution and the
+    >= 3 rated publishers floor carrying exactly Reuters' weight, and a coverage-gap claim could
+    come to rest on two state broadcasters with nothing in the product showing it.
+
+    Identity and country stay curated: those are facts, and they still settle who the outlet is."""
+    import math
+    for name, country in [("Xinhuanet.Com", "CN"), ("Globaltimes.Cn", "CN"),
+                          ("Rt.Com", "RU"), ("Economictimes.Indiatimes.Com", "IN")]:
+        o = reg.resolve(name)
+        assert o is not None and math.isnan(o.lean), name
+        assert o.country == country, name
+
+
+def test_the_questionable_line_is_mbfcs_own_flag_not_an_impression(reg):
+    """State-aligned outlets that MBFC rates at Medium credibility or better ARE rated here. Without
+    this the rule would drift into "outlets I distrust", which is the fabrication it exists to
+    prevent, pointed the other way."""
+    assert reg.lean("Dailysabah.Com") == 2.0                  # Turkish state-aligned, MBFC Right
+    assert reg.lean("English.Ahram.Org.Eg") == 1.0            # Egyptian state-owned, MBFC RC
+    assert reg.lean("Aa.Com.Tr") == 2.0                       # Turkish state agency, MBFC Right
+
+
+def test_mastheads_that_share_a_name_across_countries_stay_apart(reg):
+    """MBFC rates The Sun (UK) and The US Sun separately, and the Daily Express separately from The
+    Express US. Only the domain that was actually rated is aliased — a bare thesun.com must not
+    inherit the UK paper's RIGHT rating."""
+    assert reg.resolve("Thesun.Co.Uk").canonical == "The Sun (UK)"
+    assert reg.resolve("Thesun.Com") is None
+    assert reg.resolve("Express.Co.Uk").canonical == "Daily Express"
+    assert reg.resolve("The-Express.Com") is None
+
+
+def test_the_economic_times_does_not_capture_the_times_of_india(reg):
+    """Both live under indiatimes.com. Resolution walks registrable-domain suffixes longest-first,
+    so the more specific subdomain wins — and the Times of India keeps its rating while the Economic
+    Times keeps its deliberate blank."""
+    import math
+    assert reg.resolve("Timesofindia.Indiatimes.Com").canonical == "The Times of India"
+    assert reg.lean("Timesofindia.Indiatimes.Com") == 1.0
+    assert math.isnan(reg.lean("Economictimes.Indiatimes.Com"))
 
 
 def test_every_yahoo_property_is_one_outlet(reg):

@@ -959,3 +959,61 @@ Der Spiegel, ABC Australia, Sydney Morning Herald."* All eight of those names ha
 from MBFC. **One rater having no page is a fact about that rater, not about the outlet** — and it is
 not a reason to stop looking. The comment now says so, because as written it was quietly telling the
 next person those rows were closed.
+
+### Fourth pass: coverage, not repair
+
+The first three passes filled blanks in rows that already existed. That is bounded by whatever the
+file happened to list, and the file was never audited for what it *omitted*. Probing it against a
+list of large mastheads a global feed carries turned up 38 with no row at all.
+
+Fourteen are now rated:
+
+| | | | | |
+|---|---|---|---|---|
+| Rolling Stone −2 | Global News −1 | RNZ 0 | Newsweek +1 | The Sun (UK) +2 |
+| | AFP −1 | The Oregonian 0 | The Australian +1 | Daily Express +2 |
+| | Metro (UK) −1 | | National Post +1 | Anadolu Agency +2 |
+| | | | India Today +1, Barron's +1 | |
+
+Two raters disagree on **Newsweek** (MBFC Right-Center, AllSides Center) and on **Barron's** (MBFC
+Right-Center, AllSides Center). Both are recorded in the file rather than smoothed away — the
+mapping this file uses is MBFC's, and where AllSides dissents that is worth knowing.
+
+Two near-misses worth naming, because the fix is a domain and not a judgment: MBFC rates **The Sun
+(UK)** and **The US Sun** as separate outlets, and the **Daily Express** separately from **The
+Express US**. Only the rated domain is aliased, so `thesun.com` resolves to nothing rather than
+inheriting a RIGHT rating it was never given.
+
+### Rated, and deliberately not imported
+
+MBFC publishes a **credibility** verdict alongside the lean. For four of the outlets found this
+pass — Xinhua, Global Times, RT and The Economic Times — that verdict is *Questionable* or *Low
+Credibility*: state propaganda, failed fact checks, very low factual reporting. A lean exists for
+each and could have been pasted in.
+
+It was not, and the reason is structural rather than editorial. **This file has no credibility
+column.** A Questionable source's lean would reach `_distribution` and the ≥ 3 rated publishers
+floor carrying exactly the weight of Reuters', so a coverage-gap claim could come to rest on two
+state broadcasters with nothing in the product showing it. Identity and country are still curated —
+those are facts — and the lean waits until the file can say *rated, but not credible*.
+
+The line is **MBFC's own flag, not an impression of the outlet.** State-aligned outlets MBFC rates
+at Medium credibility or better are rated here: Daily Sabah (+2), Ahram Online (+1) and Anadolu
+Agency (+2) are all in the file. Without that constraint the rule would quietly become "outlets I
+distrust", which is the same fabrication this file exists to prevent, pointed the other way.
+`test_the_questionable_line_is_mbfcs_own_flag_not_an_impression` pins it.
+
+The same reasoning keeps **Billboard** out: AllSides rates it Left but flags *low confidence*, and a
+file with no confidence column would present that identically to a settled rating.
+
+**This is one cell each to reverse, and it is a product decision rather than a data one** — if the
+registry grows a credibility column, all four can be rated and displayed with the caveat attached.
+That is the obvious next step for this table.
+
+### O Globo, re-checked and unchanged
+
+Worth recording because the second look *appeared* to overturn the first. Ground News reports a
+Lean Right bias for Globo — but its entry is `/interest/globo`, the parent group, and the rating it
+aggregates is MBFC's Globo page. Same source, one hop further away. O Globo stays blank.
+
+A second search that returns the same evidence dressed differently is not new evidence.

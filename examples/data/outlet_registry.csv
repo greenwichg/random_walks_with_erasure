@@ -366,3 +366,76 @@ London Evening Standard,1,standard.co.uk|Evening Standard,GB,,London,regional
 The Motley Fool,-1,fool.com|fool.co.uk|Fool,US,,,international
 Yahoo News,-1,yahoo.com|news.yahoo.com|Yahoo|Yahoo Entertainment,US,,,national
 WDIV ClickOnDetroit,0,clickondetroit.com|WDIV,US,Michigan,Detroit,local
+#
+# Fourth pass -- COVERAGE, not repair. The three passes above filled blanks in rows that already
+# existed. This one adds outlets with no row at all: large mastheads that a global feed carries and
+# this file simply never listed. Same MBFC mapping, same 403 provenance caveat.
+#
+#   Newsweek           : Right-Center (MBFC RC, Mostly Factual; AllSides says CENTER -- recorded
+#                        because the raters genuinely split here)
+#   The Sun (UK)       : RIGHT        (MBFC R, factual MIXED) -- thesun.co.uk ONLY. MBFC rates
+#                        "The US Sun" as a separate outlet; conflating them would be an error.
+#   The Australian     : Right-Center (MBFC RC, factual MIXED)
+#   National Post      : Right-Center (MBFC RC, factual High)
+#   Global News        : Left-Center  (MBFC LC, factual High)
+#   India Today        : Right-Center (MBFC RC, factual MIXED)
+#   AFP                : Left-Center  (MBFC LC, factual High; MBFC notes 40% French state funding)
+#   Rolling Stone      : LEFT         (MBFC L, factual High -- news factual, opinion strongly left)
+#   Metro (UK)         : Left-Center  (MBFC LC, factual MIXED)
+#   Daily Express      : RIGHT        (MBFC R, factual MIXED) -- express.co.uk only; "The Express US"
+#                        is rated separately
+#   RNZ                : LEAST BIASED (MBFC, factual High)
+#   The Oregonian      : LEAST BIASED (MBFC, factual High; AllSides and Ground News agree)
+#   Barron's           : Right-Center (MBFC RC, factual High; AllSides says CENTER)
+#   Anadolu Agency     : RIGHT        (MBFC R, factual MIXED -- state-subsidised, pro-government;
+#                        AllSides says Center)
+Newsweek,1,newsweek.com,US,,,national
+The Sun (UK),2,thesun.co.uk,GB,,London,national
+The Australian,1,theaustralian.com.au,AU,,,national
+National Post,1,nationalpost.com,CA,,,national
+Global News,-1,globalnews.ca,CA,,,national
+India Today,1,indiatoday.in,IN,,,national
+AFP,-1,afp.com|Agence France-Presse,FR,,Paris,international
+Rolling Stone,-2,rollingstone.com,US,,,national
+Metro (UK),-1,metro.co.uk,GB,,London,national
+Daily Express,2,express.co.uk,GB,,London,national
+RNZ,0,rnz.co.nz|Radio New Zealand,NZ,,,national
+The Oregonian,0,oregonlive.com|OregonLive,US,Oregon,Portland,regional
+Barron's,1,barrons.com,US,,,national
+Anadolu Agency,2,aa.com.tr|Anadolu,TR,,Ankara,international
+#
+# RATED BY MBFC, LEAN DELIBERATELY WITHHELD -- the one new rule this pass adds.
+#
+# MBFC publishes a credibility verdict alongside the lean, and for these five it is QUESTIONABLE /
+# LOW CREDIBILITY: state propaganda, failed fact checks, very low factual reporting. A lean exists
+# for each of them and could be pasted in. The reason not to is structural: this file has no
+# credibility column, so a Questionable source's vote would reach _distribution and the >= 3 rated
+# publishers floor carrying exactly the weight of Reuters'. A coverage-gap claim could then rest on
+# two state broadcasters, and nothing in the product would show it.
+#
+# So identity and country are curated -- those are facts, and they still settle who the outlet is --
+# and the lean stays blank until the file can say "rated, but not credible". This is the same
+# reasoning that keeps Billboard blank: AllSides rates it LEFT but flags LOW CONFIDENCE, and a file
+# with no confidence column would present that identically to a settled rating.
+#
+# The line is MBFC's OWN Questionable / Low Credibility flag, not an impression of the outlet.
+# State-aligned outlets that MBFC rates at Medium credibility or better ARE rated here -- Daily
+# Sabah (+2), Ahram Online (+1) and Anadolu Agency (+2) are all in the file. This is reversible in
+# one cell each if the product later grows a credibility column, which is the obvious next step.
+#
+#   Xinhua             : MBFC Left,         QUESTIONABLE, LOW CREDIBILITY
+#   Global Times       : MBFC Left,         QUESTIONABLE
+#   RT                 : MBFC Right-Center, QUESTIONABLE, factual VERY LOW
+#   The Economic Times : MBFC Right-Center, QUESTIONABLE, LOW CREDIBILITY
+Xinhua,,xinhuanet.com|news.cn|Xinhua News Agency,CN,,,international
+Global Times,,globaltimes.cn,CN,,,national
+RT (Russia Today),,rt.com|RT|Russia Today,RU,,,international
+The Economic Times,,economictimes.indiatimes.com|economictimes.com,IN,,,national
+#
+# Checked this pass and left with no row at all, because nothing about them is curated yet and a
+# rating is what would have earned the row:
+#   Billboard : AllSides LEFT but flagged LOW CONFIDENCE (July 2026); no MBFC page. See above.
+#   9to5Mac   : a FACTUALITY score via Ground News; no bias rating anywhere. Same as Sportskeeda --
+#               factuality is not lean.
+#   iHeartRadio : no MBFC rating for the network. (Its ~100 station hostnames already collapse to
+#               one identity through the brand-domain rule, so no row is needed for that.)
