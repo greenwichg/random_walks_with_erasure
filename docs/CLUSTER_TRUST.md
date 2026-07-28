@@ -253,16 +253,17 @@ Read and a Save button.
 
 ### End state — measured 2026-07-28 with all three changes live
 
-| | start of day | gates only | + repair 0.5 | + wire curation |
-|---|---:|---:|---:|---:|
-| stories | 938 | 938 | 1,004 | **1,003** |
-| covered articles | 4,169 | 4,169 | 4,151 | 4,006 |
-| largest cluster | **327** | 327 | 115 | **100** |
-| largest ÷ p90 | 46.7× | 46.7× | 16.4× | **14.3×** |
-| largest share of covered | **7.8%** (trigger 8%) | 7.8% | 2.8% | **2.5%** |
-| `ok` share of articles | 87.0% | 87.0% | 95.4% | **98.1%** |
-| `low` | 3 / 380 articles | 3 / 380 | 1 / 16 | **1 / 16** |
-| top-20 coherence coverage | — | 60% | 80% | **81%** |
+| | start of day | gates only | + repair 0.5 | + wire curation | + claim floor |
+|---|---:|---:|---:|---:|---:|
+| stories | 938 | 938 | 1,004 | 1,003 | **1,024** |
+| covered articles | 4,169 | 4,169 | 4,151 | 4,006 | 4,091 |
+| largest cluster | **327** | 327 | 115 | 100 | **100** |
+| largest ÷ p90 | 46.7× | 46.7× | 16.4× | 14.3× | **14.3×** |
+| largest share of covered | **7.8%** (trigger 8%) | 7.8% | 2.8% | 2.5% | **2.4%** |
+| `ok` share of articles | 87.0% | 87.0% | 95.4% | 98.1% | **97.9%** |
+| `low` | 3 / 380 articles | 3 / 380 | 1 / 16 | 1 / 16 | **2 / 25** |
+| top-20 coherence coverage | — | 60% | 80% | 81% | **81%** |
+| blindspot claims | 516 (89% on 1–2 pubs) | 516 | 516 | 516 | **57 (all 3+)** |
 
 **The largest cluster in the catalog is now a real story** — *"Wildfires ravage parts of southern
 France, Italy and Spain"*, 100 articles, 61 publishers, coherence 0.76 on 50 located members —
@@ -471,8 +472,13 @@ becomes *possible*, so an empty one is finally an observation. Raise `RWE_STORY_
 a claim that carries weight rather than merely being permitted; set it to 1 to restore the old
 behaviour without a deploy.
 
-**This is a visible product change.** Claims drop from 516 to roughly 56 — the blindspot module,
-the `?blindspot=` filter and the coverage-gap facets will all get much thinner. That is the point:
-the 460 removed claims were not findings. For scale, the duplication defect this search started
-from accounts for 15 contradicted claims (2.9%); this one accounts for 460 (89.1%), thirty times
-larger.
+**This is a visible product change.** Confirmed live: claims fell **516 → 57**, and every survivor
+now carries three or more rated publishers (36 at three, 21 at four-plus, zero below). The
+blindspot module, the `?blindspot=` filter and the coverage-gap facets are all much thinner. That
+is the point: the 460 removed claims were not findings. A coverage gap went from something half the
+catalog announced to something 1 story in 18 does, which is a credible rate for an editorial
+finding.
+
+For scale, the duplication defect this search started from accounts for 15 contradicted claims
+(2.9%); this one accounted for 460 (89.1%), thirty times larger — and it was only found because
+someone asked for the near-duplicate count and the answer needed a denominator.
