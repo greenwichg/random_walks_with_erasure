@@ -226,6 +226,21 @@ visible problem, and they are a *different* problem: headlines describing one ev
 vocabulary. That is the case entity or event signals would address, and it is now measurable
 instead of buried inside a 336-article cluster.
 
+`examples/audit_story_duplicates.py` measures it. It cannot reuse headline tokens — that is the
+input the clusterer already failed on — so each story gets a profile built from every member's
+headline **and description**, with rare-word weighting doing the comparing. On the four Seattle
+clusters that profile scores 0.56 where the headlines score 0.15.
+
+Two things it counts that a naive version would get wrong: **events, not pairs** (four clusters of
+one event are six pairs but one duplicated event, so a pair count overstates the damage
+quadratically), and **article volume**, because a dozen duplicate pairs sounds negligible until
+they turn out to hold 300 articles. A time window keeps a recurring topic — a weekly fixture, a
+monthly filing — from pairing with itself across the archive.
+
+It produces **candidates, not findings**. Same-event is a judgement about the world and no signal
+here can make it, so the pairs are printed with their titles and the count at any threshold is an
+upper bound until they have been read.
+
 **Adopted at 0.5.** Enable with `RWE_STORY_REPAIR_QUORUM=0.5` — reversible without a deploy, which
 is why it goes in the environment before it goes in the code default.
 
