@@ -1545,3 +1545,86 @@ def test_ratings_from_sources_this_file_does_not_accept_are_not_imported(reg):
         o = reg.resolve(host)
         assert math.isnan(o.lean), host
         assert o.country == country and o.scope == "regional"
+
+
+# --------------------------------------------------------------------------- #
+# Canada — the twenty-sixth pass, and the francophone hole a feed probe cannot see
+# --------------------------------------------------------------------------- #
+def test_the_canada_pass(reg):
+    for host, lean in [
+        ("Lapresse.Ca", -1.0), ("Ledevoir.Com", 0.0), ("Lesoleil.Com", -1.0),
+        ("Ledroit.Com", 0.0), ("Journaldemontreal.Com", 2.0), ("Tvanouvelles.Ca", -1.0),
+        ("Thecanadianpress.Com", 0.0), ("Citynews.Ca", 0.0), ("Cp24.Com", 0.0),
+        ("Thespec.Com", -1.0), ("Timescolonist.Com", -1.0), ("Theprovince.Com", 1.0),
+        ("Bnnbloomberg.Ca", -1.0), ("Ipolitics.Ca", -1.0), ("Hilltimes.Com", -1.0),
+        ("Dailyhive.Com", -1.0), ("Thenarwhal.Ca", -2.0), ("Rabble.Ca", -2.0),
+        ("Westernstandard.News", 2.0), ("Rebelnews.Com", 2.0),
+    ]:
+        assert reg.lean(host) == lean, host
+
+
+def test_canada_had_sixteen_rows_and_no_french_press(reg):
+    """The gap a feed probe structurally cannot report. Canada looked well covered — sixteen rated
+    rows, straddling cleanly — and every one of them was anglophone. Quebec's press was represented
+    by the Montreal Gazette, an ENGLISH paper. A probe only lists names the feed already sent, so an
+    entire language's absence reads as zero outstanding work."""
+    import math
+    qc = [o for o in reg.outlets() if o.country == "CA" and o.region == "Quebec"]
+    french = {o.canonical for o in qc if o.canonical.startswith(("La ", "Le ", "TVA"))}
+    assert len(french) >= 5, french
+    leans = [o.lean for o in qc if not math.isnan(o.lean)]
+    assert any(x < 0 for x in leans) and any(x > 0 for x in leans), "Quebec must straddle too"
+
+
+def test_one_owner_two_mastheads_three_points_apart(reg):
+    """Quebecor owns Le Journal de Montréal and TVA Nouvelles. MBFC rates them +2 and -1. A registry
+    that read a masthead's lean off its proprietor — the shortcut refused for Page Six, O Globo and
+    Kompas — would have collapsed a Right tabloid and a Left-Center broadcaster into one number and
+    published the average as a fact about both. Widest owner-gap in the file."""
+    assert reg.lean("Journaldemontreal.Com") == 2.0
+    assert reg.lean("Tvanouvelles.Ca") == -1.0
+
+
+def test_citynews_is_eight_concurring_ratings_not_one_inherited_one(reg):
+    """Looks like the O Globo inference and is its opposite. MBFC rates eight CityNews editions
+    SEPARATELY and all eight come back Least Biased / High. One canonical carrying that is eight
+    measurements summarised — not one parent's rating handed to children never measured. The test
+    is whether the individual ratings exist, not whether a corporate box surrounds them.
+
+    Every city subdomain must reach it, which is the brand-domain key doing the work."""
+    for host in ("toronto.citynews.ca", "vancouver.citynews.ca", "montreal.citynews.ca",
+                 "kitchener.citynews.ca", "680news.com"):
+        assert reg.resolve(host).canonical == "CityNews", host
+
+
+def test_a_news_agency_is_not_a_press_release_feed(reg):
+    """`wire` in this file means a machine-generated press-release or market-data feed with no
+    editorial stance — PR Newswire, MarketBeat, GlobeNewswire — and rows carrying it are excluded
+    from clustering entirely. The Canadian Press is a newsroom, and is rated and votes exactly as
+    Reuters, AP and AFP do. Calling it a wire because both are called wires in ordinary speech
+    would silently drop Canada's most syndicated reporting out of every cluster."""
+    cp = reg.resolve("Thecanadianpress.Com")
+    assert cp.lean == 0.0 and not cp.kind
+    assert not reg.is_wire("Thecanadianpress.Com")
+    assert reg.is_wire("Prnewswire.Com")
+    for agency in ("Reuters.Com", "Apnews.Com", "Afp.Com"):
+        assert not reg.resolve(agency).kind, agency
+
+
+def test_a_think_tanks_rating_is_not_imported_because_it_is_available(reg):
+    """MBFC rates the True North Centre for Public Policy — a registered Calgary think tank — at
+    Right with Mixed factual reporting. This file does not give `org` rows a lean, and that rule was
+    not written to be suspended when the rating happens to be there for the taking. The row exists
+    so the identity resolves; the lean stays blank."""
+    import math
+    o = reg.resolve("Tnc.News")
+    assert o.kind == "org" and math.isnan(o.lean) and o.country == "CA"
+
+
+def test_the_two_left_twos_canada_produced_are_both_high_factual(reg):
+    """MBFC's LEFT band usually arrives with Mixed factual reporting. The Narwhal (-6.6, High 1.7)
+    and rabble.ca (-6.9, High 1.8) are both strongly left AND highly factual, which is the pairing
+    that shows lean and credibility are genuinely separate columns rather than one dressed as two."""
+    for host in ("Thenarwhal.Ca", "Rabble.Ca"):
+        assert reg.lean(host) == -2.0
+        assert not reg.is_low_credibility(host), host

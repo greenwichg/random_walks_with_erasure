@@ -1325,3 +1325,86 @@ Newstalk ZB,1,newstalkzb.co.nz,NZ,,Auckland,national
 Newsroom (New Zealand),1,newsroom.co.nz,NZ,,Auckland,national
 Otago Daily Times,,odt.co.nz,NZ,Otago,Dunedin,regional
 Interest.co.nz,,interest.co.nz,NZ,,Auckland,national
+#
+# Twenty-sixth pass -- CANADA, 6 outstanding. TWENTY rated and one classified. The probe listed six
+# names; the file had sixteen Canadian rows and every one of them was ANGLOPHONE. Quebec's press --
+# a market of eight million people with its own national broadcaster, its own tabloids and its own
+# politics -- was represented by the Montreal Gazette, an English-language paper. That is not a gap
+# a feed probe can find, because the probe only reports names the feed already sent.
+#
+#   QUEBEC / FRENCH LANGUAGE
+#   La Presse             -1  (MBFC LC, factual High)
+#   Le Devoir              0  (MBFC LEAST BIASED, factual High)
+#   Le Soleil (Quebec)    -1  (MBFC LC, factual High)
+#   Le Droit               0  (MBFC LEAST BIASED, factual High)
+#   Le Journal de Montréal +2 (MBFC RIGHT 5.7, MOSTLY FACTUAL 2.3 -- conservative nationalist
+#                              positions and sensationalism; MEDIUM credibility)
+#   TVA Nouvelles         -1  (MBFC LC -2.5, MOSTLY FACTUAL 2.5 -- MBFC cites a lack of
+#                              transparency; MEDIUM credibility)
+#
+#   ENGLISH LANGUAGE
+#   The Canadian Press     0  (MBFC LEAST BIASED -1.1, factual High, HIGH credibility)
+#   CityNews               0  (MBFC LEAST BIASED -0.7, factual High -- see the note below)
+#   CP24                   0  (MBFC LEAST BIASED, factual High)
+#   Hamilton Spectator    -1  (MBFC LC -2.7, factual High)
+#   Times Colonist        -1  (MBFC LC -2.1, factual High)
+#   The Province          +1  (MBFC RC, factual High)
+#   BNN Bloomberg         -1  (MBFC LC, factual High)
+#   iPolitics             -1  (MBFC LC -3.0, factual High 1.2)
+#   The Hill Times        -1  (MBFC LC, factual High)
+#   Daily Hive            -1  (MBFC LC, MOSTLY FACTUAL -- one failed fact check; MEDIUM)
+#   The Narwhal           -2  (MBFC LEFT -6.6, factual HIGH 1.7 -- environmental investigative)
+#   rabble.ca             -2  (MBFC LEFT -6.9, factual HIGH 1.8)
+#   Western Standard      +2  (MBFC RIGHT, factual MIXED, MEDIUM credibility -- MBFC cites Covid
+#                              and vaccine misinformation)
+#   Rebel News            +2  (MBFC RIGHT 7.3, MIXED 6.4, "Right Biased and QUESTIONABLE" for
+#                              propaganda, conspiracy theories and failed fact checks; LOW
+#                              credibility, so it is rated and does not vote)
+#
+# QUEBECOR OWNS BOTH LE JOURNAL DE MONTRÉAL AND TVA NOUVELLES, and MBFC rates them +2 and -1 --
+# THREE POINTS APART under one proprietor. This is the O Globo refusal a fourth time, and the
+# widest gap it has produced yet. A registry that inferred a masthead's lean from its owner would
+# have collapsed a Right tabloid and a Left-Center broadcaster into a single number and published
+# the average as a fact about both.
+#
+# CITYNEWS IS NOT THAT SAME INFERENCE, and the difference is worth stating because it looks
+# identical from a distance. MBFC rates EIGHT CityNews editions SEPARATELY -- Toronto, Vancouver,
+# Montreal, Calgary, Ottawa, Winnipeg, Edmonton, Kitchener -- and all eight come back Least Biased
+# with High factual reporting. One canonical carrying that rating is eight concurring measurements
+# summarised, not one parent's rating inherited by children who were never measured. The test is
+# whether the individual ratings EXIST, not whether a corporate box is drawn around them.
+#
+# THE CANADIAN PRESS IS RATED AND VOTES, like Reuters, AP and AFP. The `wire` kind in this file
+# means a machine-generated press-release or market-data feed with no editorial stance to rate --
+# PR Newswire, MarketBeat, GlobeNewswire. A national news agency with a newsroom is not that, and
+# calling it one because both are called "wires" in ordinary speech would silently drop Canada's
+# most widely syndicated reporting out of every cluster.
+#
+# TRUE NORTH IS CLASSIFIED, NOT RATED. MBFC rates the TRUE NORTH CENTRE FOR PUBLIC POLICY -- a
+# registered Calgary think tank -- at Right with Mixed factual reporting. This file does not give
+# `org` rows a lean, and that rule was not written to be suspended when the rating is convenient.
+# The row exists so the identity resolves; the lean stays blank.
+#
+# CONFIRMED ABSENT: Narcity (Ground News reports an Ad Fontes Center; not a source this file
+# accepts), blogTO, Radio-Canada as distinct from CBC News.
+La Presse,-1,lapresse.ca,CA,Quebec,Montreal,national
+Le Devoir,0,ledevoir.com,CA,Quebec,Montreal,national
+Le Soleil (Quebec),-1,lesoleil.com,CA,Quebec,Quebec City,regional
+Le Droit,0,ledroit.com,CA,Ontario,Ottawa,regional
+Le Journal de Montréal,2,journaldemontreal.com|Journal de Montreal,CA,Quebec,Montreal,national,,medium
+TVA Nouvelles,-1,tvanouvelles.ca|TVA,CA,Quebec,Montreal,national,,medium
+The Canadian Press,0,thecanadianpress.com|Canadian Press|La Presse Canadienne,CA,Ontario,Toronto,international
+CityNews,0,citynews.ca|680news.com|CityNews Toronto,CA,,,national
+CP24,0,cp24.com,CA,Ontario,Toronto,regional
+Hamilton Spectator,-1,thespec.com,CA,Ontario,Hamilton,regional
+Times Colonist,-1,timescolonist.com,CA,British Columbia,Victoria,regional
+The Province,1,theprovince.com,CA,British Columbia,Vancouver,regional
+BNN Bloomberg,-1,bnnbloomberg.ca|BNN,CA,Ontario,Toronto,national
+iPolitics,-1,ipolitics.ca,CA,Ontario,Ottawa,national
+The Hill Times,-1,hilltimes.com,CA,Ontario,Ottawa,national
+Daily Hive,-1,dailyhive.com,CA,,,national,,medium
+The Narwhal,-2,thenarwhal.ca,CA,British Columbia,Victoria,national
+rabble.ca,-2,rabble.ca,CA,Ontario,Toronto,national
+Western Standard,2,westernstandard.news,CA,Alberta,Calgary,national,,medium
+Rebel News,2,rebelnews.com|The Rebel,CA,Ontario,Toronto,national,,low
+True North Centre for Public Policy,,tnc.news|truenorthcentre.org|True North Centre,CA,Alberta,Calgary,national,org

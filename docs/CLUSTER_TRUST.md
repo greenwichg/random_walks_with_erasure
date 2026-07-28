@@ -2335,3 +2335,93 @@ that "confirmed absent" caused. Re-checking is only meaningful if it can come ba
 | countries | ~30 | **54** |
 | engine tests | 1,883 | **2,012** |
 | balance-guard exemptions | — | **one fewer** |
+
+## Twenty-sixth pass — Canada
+
+The probe listed **six** names. The pass rated **twenty** and classified one.
+
+Canada looked like the best-covered country in the file outside the US and UK: sixteen rated rows,
+straddling cleanly, every region represented. **Every one of them was anglophone.** Quebec — eight
+million people, its own broadcaster, its own tabloids, its own politics — was represented by the
+*Montreal Gazette*, an English-language paper.
+
+**A feed probe cannot report that.** It lists names the feed already sent, so an entire language's
+absence arrives as zero outstanding work. Six names looked like the end of Canada; it was the end of
+*English* Canada.
+
+| Quebec / French | | |
+|---|---:|---|
+| La Presse | −1 | Left-Center, High |
+| Le Devoir | 0 | Least Biased, High |
+| Le Soleil (Quebec) | −1 | Left-Center, High |
+| Le Droit | 0 | Least Biased, High |
+| Le Journal de Montréal | +2 | RIGHT (5.7), Mostly Factual — conservative nationalist; medium |
+| TVA Nouvelles | −1 | Left-Center (−2.5), Mostly Factual — opaque; medium |
+
+| English | | |
+|---|---:|---|
+| The Canadian Press | 0 | Least Biased (−1.1), High, HIGH credibility |
+| CityNews | 0 | Least Biased (−0.7), High |
+| CP24 | 0 | Least Biased, High |
+| Hamilton Spectator | −1 | Left-Center (−2.7), High |
+| Times Colonist | −1 | Left-Center (−2.1), High |
+| The Province | +1 | Right-Center, High |
+| BNN Bloomberg / iPolitics / The Hill Times | −1 | Left-Center, High |
+| Daily Hive | −1 | Left-Center, Mostly Factual; medium |
+| The Narwhal | −2 | **LEFT (−6.6), factual High (1.7)** |
+| rabble.ca | −2 | **LEFT (−6.9), factual High (1.8)** |
+| Western Standard | +2 | RIGHT, Mixed; medium |
+| Rebel News | +2 | RIGHT (7.3), **Questionable → low, does not vote** |
+
+### One owner, two mastheads, three points apart
+
+**Quebecor owns both Le Journal de Montréal (+2) and TVA Nouvelles (−1).** This is the O Globo
+refusal a fourth time — after Page Six, O Globo itself, and Kompas/Tribunnews — and the widest gap
+it has produced. A registry that read a masthead's lean off its proprietor would have collapsed a
+Right tabloid and a Left-Center broadcaster into one number and published the average as a fact
+about both.
+
+### CityNews looks like that inference and is its opposite
+
+MBFC rates **eight CityNews editions separately** — Toronto, Vancouver, Montreal, Calgary, Ottawa,
+Winnipeg, Edmonton, Kitchener — and all eight come back Least Biased / High. One canonical carrying
+that rating is **eight concurring measurements summarised**, not one parent's rating inherited by
+children who were never measured.
+
+The test is whether the individual ratings *exist*, not whether a corporate box can be drawn around
+them. Stated explicitly because from a distance the two cases are indistinguishable, and the rule
+that forbids one has to permit the other or it is just a rule against large owners.
+
+### A news agency is not a press-release feed
+
+`wire` in this file means a machine-generated press-release or market-data feed with no editorial
+stance — PR Newswire, MarketBeat, GlobeNewswire — and rows carrying it are excluded from clustering
+outright. **The Canadian Press is a newsroom**, and is rated and votes exactly as Reuters, AP and
+AFP do. Classifying it as a wire because both are called wires in ordinary speech would silently
+drop Canada's most widely syndicated reporting out of every cluster.
+
+### True North is classified, not rated
+
+MBFC rates the **True North Centre for Public Policy** — a registered Calgary think tank — at Right
+with Mixed factual reporting. This file does not give `org` rows a lean, and that rule was not
+written to be suspended when the rating happens to be there for the taking. The row exists so the
+identity resolves; the lean stays blank.
+
+### Two LEFTs with High factual reporting
+
+MBFC's `LEFT` band usually arrives paired with Mixed factual reporting. The Narwhal and rabble.ca
+are both strongly left *and* highly factual — the pairing that demonstrates lean and credibility are
+genuinely separate columns rather than one column wearing two names.
+
+Confirmed absent: Narcity (Ad Fontes Center via Ground News — not a source this file accepts),
+blogTO, Radio-Canada as distinct from CBC News.
+
+### Registry, close of twenty-six passes
+
+| | start of day | end |
+|---|---:|---:|
+| rows | 154 | **487** |
+| rated | 143 | **455** |
+| countries | ~30 | **54** |
+| Canadian rows | 16 | **37** |
+| engine tests | 1,883 | **2,019** |
