@@ -157,3 +157,18 @@ def test_the_audit_scores_over_the_pipelines_name_universe():
     wide = api.analyse([story], universe={"Prnewswire.Co.Uk"})
     assert wide["fake"] == [], "with the wider set the bare name is left alone, as production does"
     assert "Pr Newswire" in wide["ambiguous"]
+
+
+def test_a_name_with_no_matching_domain_is_not_ambiguous():
+    """The reporting bug this replaced: inferring "did this name join a domain" from the group key
+    counted every standalone name as unplaced, because groups() roots a set at its lexicographic
+    MINIMUM — usually the name itself, not the token. It reported 214 unplaced names where the real
+    answer is a handful. Billboard is not ambiguous; it is simply uncurated."""
+    res = api.analyse([_story("Chart news", ["Billboard", "Barron's", "9to5Mac"])])
+    assert res["ambiguous"] == []
+
+
+def test_only_a_contested_brand_word_is_reported():
+    import publisher_identity
+    assert publisher_identity.ambiguous_labels(["Standard.Net.Au", "Standard.Co.Uk"]) == {"standard"}
+    assert publisher_identity.ambiguous_labels(["Sportskeeda.Com", "Billboard"]) == set()

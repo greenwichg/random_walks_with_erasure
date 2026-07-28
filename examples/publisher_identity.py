@@ -41,6 +41,24 @@ def _brand_domain(host: str) -> str:
     return ".".join(parts)
 
 
+def ambiguous_labels(names) -> set:
+    """Brand labels carried by more than one domain in this name set.
+
+    A bare name whose label is in here cannot be placed: ``Standard`` could be standard.net.au or
+    standard.co.uk, and guessing would merge two newspapers. Exposed because the audit needs to
+    report exactly this, and reconstructing it from the group map is not possible — ``groups``
+    roots each set at its lexicographic minimum, which is usually the NAME rather than the token,
+    so "did this name join a domain" cannot be read off the key."""
+    label_domains: dict = {}
+    for name in names:
+        resolved = outlet_registry.resolve(name)
+        base = resolved.canonical if resolved else (name or "")
+        if outlet_registry._looks_like_host(base):
+            dom = _brand_domain(base)
+            label_domains.setdefault(publisher_wiki.domain_label(base) or dom, set()).add(dom)
+    return {label for label, domains in label_domains.items() if len(domains) > 1}
+
+
 def groups(names) -> dict:
     """``publisher name -> identity key``, collapsing the forms that are one outlet.
 

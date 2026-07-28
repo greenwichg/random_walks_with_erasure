@@ -90,17 +90,17 @@ def analyse(stories: list, *, min_publishers: int = 2, universe=None) -> dict:
                                   "articles": sum(n for nm, n in members if nm in unresolved)})
 
     # Names the rule declined to place because their brand label is carried by more than one
-    # domain. Reported rather than silently left alone: each is either two outlets that share a
-    # word, or a curation gap the registry should settle by hand.
-    ambiguous = []
-    for name in names:
-        if outlet_registry.resolve(name) or outlet_registry._looks_like_host(name):
-            continue
-        label = outlet_registry._name_key(name)
-        carriers = {k for k in keys.values() if k == "n:" + label}
-        if keys[name].startswith("n:") and not carriers - {keys[name]}:
-            continue
-        ambiguous.append(name)
+    # domain. Asked of publisher_identity rather than inferred from the group map: groups() roots
+    # each set at its lexicographic MINIMUM, which is usually the name itself, so "did this name
+    # join a domain" cannot be read off the key. Inferring it that way reported 214 unplaced names
+    # where the real answer is a handful — most of that list was simply names with no matching
+    # domain at all, which is not ambiguity, it is just an outlet nobody has curated.
+    unplaceable = publisher_identity.ambiguous_labels(
+        sorted(set(universe) | set(names)) if universe else list(names))
+    ambiguous = [n for n in names
+                 if not outlet_registry.resolve(n)
+                 and not outlet_registry._looks_like_host(n)
+                 and outlet_registry._name_key(n) in unplaceable]
 
     return {
         "names": len(names),
