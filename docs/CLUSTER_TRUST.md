@@ -1980,3 +1980,57 @@ needs a sentence the column has no room for.
 **The registry has grown 2.7× and the rated set 2.8× in a day.** The centre now carries 83 rows,
 built mostly from wire agencies and local television rather than from national outlets someone
 judged balanced — which is the more defensible way to have a centre.
+
+## Twentieth pass: Europe regional — the group where most of the answer is "no"
+
+The probe's largest outstanding group, 24 entries. **Ten rated, one alias, and sixteen confirmed
+unrated.** The low yield was predicted and is now measured: MBFC's European coverage runs to national
+broadcasters and the biggest dailies, and stops.
+
+| rated | |
+|---|---|
+| Die Presse +1, Kurier +1 | Austria held **one** rated outlet |
+| VRT 0, De Morgen −1, De Standaard 0, Euractiv −1, Brussels Signal +1 | Belgium held **one** |
+| Trouw −1 | |
+| Kathimerini +1 | **Greece** is new to the file |
+| Milliyet +2 | |
+
+**Confirmed unrated after searching:** Ouest-France, Les Echos, La Croix, Tages-Anzeiger, Blick,
+Le Temps, La Libre, HLN, VG, Dagbladet, Iltalehti, SvD, Público, Expresso, Diário de Notícias.
+**Portugal and Switzerland end this pass with no rated outlet at all.**
+
+### Sabah was an alias, not an outlet
+
+MBFC's *Sabah* page **is** `/daily-sabah/` — Daily Sabah is Sabah's English edition, one masthead.
+Adding a row would have double-counted a publisher and given Turkey a phantom fifth outlet, which
+would then have skewed the per-country balance this file now measures. A test pins that Turkey has
+five distinct canonicals, not six.
+
+### Belgium: the guard forced a search instead of an exemption
+
+Adding De Morgen and VRT put Belgium at −1, −1, 0 and `test_no_market_of_three_or_more_is_completely_one_sided`
+failed. The cheap fix was an exemption. Instead the missing side got searched for:
+
+* **De Standaard** — *Least Biased* ("editorial positions that slightly lean right"). Did not fix
+  the shape. Added anyway: it is a real rating.
+* **Euractiv** — *Left-Center*. Made it worse. Added anyway.
+* **Brussels Signal** — *Right-Center*. Closed it.
+
+**An exemption for Belgium would have been indistinguishable in the test file from the UAE's** — and
+the UAE's records a fact about a market with no independent press, while Belgium's would have
+recorded a fact about how hard I looked. That distinction is the whole value of the guard, and it
+only holds if exemptions stay expensive.
+
+### Turkey got less balanced, and that is the honest result
+
+Turkey now reads **1 left against 4 right**. Sabah, Milliyet, Daily Sabah and Hurriyet are what MBFC
+rates in that market; Cumhuriyet is the one left-of-centre outlet it covers. **A registry cannot
+balance a market the raters have not balanced**, and forcing it would mean inventing a row.
+
+### Registry, close of twenty passes
+
+| | start of day | end |
+|---|---:|---:|
+| rows | 154 | **431** |
+| rated | 143 | **405** |
+| countries | ~30 | **53** |

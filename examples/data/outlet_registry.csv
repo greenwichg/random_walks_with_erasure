@@ -226,7 +226,7 @@ The Times of Israel,0,timesofisrael.com,IL,,,national
 Al Arabiya,1,alarabiya.net,AE,,,international
 Middle East Eye,-2,middleeasteye.net,GB,,,international
 Arab News,1,arabnews.com,SA,,,national
-Daily Sabah,2,dailysabah.com,TR,,,national
+Daily Sabah,2,dailysabah.com|sabah.com.tr|Sabah,TR,,,national
 Hurriyet Daily News,2,hurriyetdailynews.com|Hurriyet,TR,,,national
 Daily Nation,-1,nation.africa|nation.co.ke,KE,,,national
 The East African,,theeastafrican.co.ke,KE,,,international
@@ -1083,3 +1083,46 @@ WFXT,0,boston25news.com|Boston 25,US,Massachusetts,Boston,local
 WMUR,0,wmur.com,US,New Hampshire,Manchester,local
 KPRC,0,click2houston.com|Click2Houston,US,Texas,Houston,local
 KOAT,0,koat.com,US,New Mexico,Albuquerque,local
+#
+# Twentieth pass -- EUROPE REGIONAL, the probe's largest outstanding group at 24. Seven rated, one
+# alias, and SIXTEEN CONFIRMED UNRATED. The low yield was predicted and is now measured: MBFC's
+# European coverage runs to national broadcasters and the biggest dailies and stops there.
+#
+#   Die Presse   +1  (MBFC RC, factual High)   } Austria held ONE rated outlet (Der Standard -1);
+#   Kurier       +1  (MBFC RC, factual High)   } these two give it a spread
+#   VRT           0  (MBFC LEAST BIASED, Mostly Factual, HIGH credibility)  } Belgium held only
+#   De Morgen    -1  (MBFC LC, Mostly Factual, HIGH credibility)            } Politico Europe
+#   Trouw        -1  (MBFC LC, factual High)
+#   Kathimerini  +1  (MBFC RC, Mostly Factual) -- GREECE is new to the file
+#   Milliyet     +2  (MBFC RIGHT, factual MIXED -- "pro-government propaganda")
+#
+# Turkey now reads 1 left against 4 right, which is WORSE balance than before this pass. That is
+# not a curation failure: Sabah, Milliyet, Daily Sabah and Hurriyet are what MBFC rates in that
+# market, and Cumhuriyet is the one left-of-centre outlet it covers. A registry cannot balance a
+# market the raters have not balanced, and pretending otherwise would mean inventing a row.
+#
+# CONFIRMED UNRATED, having been searched: Ouest-France, Les Echos, La Croix (France);
+# Tages-Anzeiger, Blick, Le Temps (Switzerland); La Libre, HLN (Belgium); VG, Dagbladet (Norway);
+# Iltalehti (Finland); SvD (Sweden); Publico, Expresso, Diario de Noticias (Portugal). Portugal and
+# Switzerland have no rated outlet in this file at all as a result.
+De Morgen,-1,demorgen.be,BE,,Brussels,national,,high
+Trouw,-1,trouw.nl,NL,,Amsterdam,national
+VRT,0,vrt.be,BE,,Brussels,national,,high
+Die Presse,1,diepresse.com,AT,,Vienna,national
+Kurier,1,kurier.at,AT,,Vienna,national
+Kathimerini,1,kathimerini.gr|ekathimerini.com|Ekathimerini,GR,,Athens,national
+Milliyet,2,milliyet.com.tr,TR,,Istanbul,national
+# Belgium, continued -- the balance guard failed on it the moment De Morgen and VRT went in, because
+# three rated Belgian outlets then sat at -1, -1 and 0. Rather than exempt the country, the missing
+# side was searched for and found. De Standaard was the obvious candidate and came back LEAST BIASED
+# ("balanced story selection and editorial positions that slightly lean right") -- it does not fix
+# the shape, and it goes in anyway because it is a real rating.
+#
+#   De Standaard    0  (MBFC LEAST BIASED, factual High, HIGH credibility)
+#   Euractiv       -1  (MBFC LC, factual High, HIGH credibility)
+#   Brussels Signal +1 (MBFC RC, Mostly Factual, MEDIUM credibility -- MBFC: "skeptical stance
+#                       toward EU institutions and favourable portrayal of nationalist leaders";
+#                       original commentary one-sided and lightly sourced, wire pickups reliable)
+Euractiv,-1,euractiv.com,BE,,Brussels,international,,high
+De Standaard,0,standaard.be,BE,,Brussels,national,,high
+Brussels Signal,1,brusselssignal.eu,BE,,Brussels,international,,medium

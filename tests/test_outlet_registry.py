@@ -1250,3 +1250,57 @@ def test_bostons_apparent_lean_split_is_two_syndication_contracts(reg):
     boston = {o.canonical: o.lean for o in reg.outlets()
               if o.city == "Boston" and o.scope == "local"}
     assert boston == {"WCVB": 0.0, "WFXT": 0.0, "WBZ-TV": -1.0, "WHDH": -1.0}
+
+
+def test_the_europe_regional_pass(reg):
+    for host, lean in [
+        ("Demorgen.Be", -1.0), ("Trouw.Nl", -1.0), ("Vrt.Be", 0.0),
+        ("Diepresse.Com", 1.0), ("Kurier.At", 1.0), ("Kathimerini.Gr", 1.0),
+        ("Milliyet.Com.Tr", 2.0),
+    ]:
+        assert reg.lean(host) == lean, host
+    assert reg.resolve("Ekathimerini.Com").canonical == "Kathimerini"   # English edition
+
+
+def test_sabah_is_daily_sabah_not_a_second_turkish_outlet(reg):
+    """MBFC's `Sabah` page IS `/daily-sabah/` — Daily Sabah is Sabah's English edition, one
+    masthead. Adding a row would have double-counted a publisher and handed Turkey a phantom fifth
+    outlet, which would then have skewed the per-country balance this file now measures."""
+    for form in ["Sabah", "sabah.com.tr", "dailysabah.com"]:
+        assert reg.resolve(form).canonical == "Daily Sabah", form
+    import math
+    tr = [o.canonical for o in reg.outlets() if o.country == "TR" and not math.isnan(o.lean)]
+    assert len(tr) == len(set(tr)) == 5
+
+
+def test_two_single_outlet_countries_gained_a_spread(reg):
+    """Austria held only Der Standard and Belgium only Politico Europe. A country with one rated
+    outlet can never show a spread, which makes it indistinguishable from consensus."""
+    import math
+    for cc in ("AT", "BE"):
+        v = [o.lean for o in reg.outlets() if o.country == cc and not math.isnan(o.lean)]
+        assert len(v) >= 3, cc
+        assert len(set(v)) >= 2, f"{cc}: every rated outlet on the same point"
+
+
+def test_belgium_was_balanced_by_searching_not_by_exempting(reg):
+    """The guard failed the moment De Morgen and VRT went in — three Belgian outlets at -1, -1, 0.
+    The tempting fix is an exemption; the right one was to search for the missing side. De Standaard
+    came back LEAST BIASED and did not fix the shape, Euractiv came back Left-Center and made it
+    worse, and Brussels Signal at +1 finally closed it.
+
+    Worth pinning because an exemption would have been indistinguishable in the test file from the
+    UAE's — and the UAE's is a fact about the market, while Belgium's would have been a fact about
+    how hard I looked."""
+    import math
+    be = [o.lean for o in reg.outlets() if o.country == "BE" and not math.isnan(o.lean)]
+    assert len(be) >= 6
+    assert any(v < 0 for v in be) and any(v > 0 for v in be) and any(v == 0 for v in be)
+
+
+def test_the_belgian_standaard_is_none_of_the_standards(reg):
+    """standaard.be, standard.co.uk and standard.net.au — three mastheads, one brand word, and only
+    the brand-DOMAIN key keeps them apart. The Australian one is still deliberately unresolved."""
+    assert reg.resolve("Standaard.Be").canonical == "De Standaard"
+    assert reg.resolve("Standard.Co.Uk").canonical == "London Evening Standard"
+    assert reg.resolve("Standard.Net.Au") is None
