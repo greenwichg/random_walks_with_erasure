@@ -1106,3 +1106,58 @@ rule is load-bearing rather than a one-off: a credibility column is the next thi
 | rated-but-withheld (Questionable) | 0 | 6 |
 | unrated anywhere | 4 | 6 |
 | wire feeds | 7 | 7 |
+
+### Seventh pass: US nationals, the news agencies, Europe, Latin America
+
+The last of the coverage audit's findable set — **33 rated, 2 more withheld**.
+
+**The four news agencies are the quiet win.** DPA, Agencia EFE, PA Media and Kyodo News are all
+Least Biased, joining Reuters and the AP at 0. That is completely unsurprising, which is exactly why
+it matters: **a centre with real weight is what makes a lean distribution mean anything**, and wire
+copy is where most of it comes from. Note these are news *agencies*, not the `kind=wire` rows —
+that flag means machine-generated market-data and press-release copy, which has no editorial stance
+to rate at all.
+
+**The Netherlands and Sweden each landed a pair on opposite sides:** NRC −1 against De Telegraaf +2,
+Dagens Nyheter +1 against Aftonbladet −2. A Dutch or Swedish story can now show a real spread
+instead of a row of unrated names — which is the whole product, applied to a country that had no
+coverage an hour ago.
+
+The Conversation is the only **Very High** factual rating in the file. It is recorded in a comment
+rather than a column, which is the same gap the withholding rule keeps running into.
+
+**Sputnik and TASS** join the withheld set — MBFC rates both Right-Center and classes both
+*Questionable* ("100% Russian propaganda", factual Very Low). That is **eight** rated-but-withheld
+outlets now.
+
+Checked and not rated anywhere, so no row: Página/12 (AR), El Tiempo and El Espectador (CO),
+Estadão and UOL (BR), Belfast Telegraph (GB).
+
+### Where the registry ended up
+
+| | start of day | end |
+|---|---:|---:|
+| rows | 154 | **255** |
+| rated | 143 | **234** |
+| countries with at least one outlet | ~30 | **40** |
+| rated-but-withheld (Questionable) | 0 | 8 |
+| no rating anywhere | 4 | 6 |
+| wire feeds (no editorial stance) | 7 | 7 |
+
+The rated set spans the scale rather than clustering: **19 at −2, 91 at −1, 46 at 0, 58 at +1,
+20 at +2.** The −1 bucket is the largest by a distance, and that is MBFC's shape for large
+English-language mastheads, not a thumb on the scale here — it is visible in the file precisely so
+someone can argue with it.
+
+### What is left, and why it stops here
+
+The remaining catalog tail is on the order of a thousand small local mastheads — `Edenmagnet.Com.Au`,
+`Somdnews.Com`, `Batleynews`. **No public rater covers them and none will.** They stay blank, and
+that is a finished state rather than a backlog.
+
+The next real move is not more rows. It is a **credibility column**: eight outlets now have a
+published lean this file deliberately refuses to import, and that number only grows. With one more
+column they could be rated *and* shown with the caveat attached, instead of being invisible.
+
+After that, the measurement that matters is not registry size at all — it is whether coverage-gap
+claims went up. `backfill_lean.py` then `audit_cluster_trust.py` will say.

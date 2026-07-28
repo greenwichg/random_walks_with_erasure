@@ -436,6 +436,8 @@ def test_the_unrated_set_is_exactly_the_documented_one(reg):
         "The Economic Times",
         "Daily Star (UK)",
         "GB News",
+        "Sputnik",
+        "TASS",
     }
 
 
@@ -518,6 +520,44 @@ def test_the_uk_canada_australia_india_tranche(reg):
         ("Theprint.In", 1.0),
     ]:
         assert reg.lean(host) == lean, host
+
+
+def test_the_us_nationals_agencies_europe_and_latin_america(reg):
+    """The last of the coverage audit's findable set."""
+    for host, lean in [
+        ("Newyorker.Com", -2.0), ("Thedailybeast.Com", -2.0), ("People.Com", -2.0),
+        ("Rawstory.Com", -2.0), ("Commondreams.Org", -2.0),
+        ("Propublica.Org", -1.0), ("Pbs.Org", -1.0), ("Hollywoodreporter.Com", -1.0),
+        ("Voanews.Com", 0.0), ("Semafor.Com", 0.0), ("Themarshallproject.Org", 0.0),
+        ("Theconversation.Com", 0.0),
+        ("Thebulwark.Com", 1.0), ("Realclearpolitics.Com", 1.0),
+        ("Theamericanconservative.Com", 1.0), ("Freebeacon.Com", 2.0),
+        ("Aftonbladet.Se", -2.0), ("Liberation.Fr", -1.0), ("Lastampa.It", -1.0),
+        ("Ilfattoquotidiano.It", -1.0), ("Nrc.Nl", -1.0),
+        ("Welt.De", 1.0), ("Bild.De", 1.0), ("Leparisien.Fr", 1.0), ("Dn.Se", 1.0),
+        ("Telegraaf.Nl", 2.0),
+        ("Infobae.Com", -1.0), ("Reforma.Com", 1.0), ("Elfinanciero.Com.Mx", 1.0),
+    ]:
+        assert reg.lean(host) == lean, host
+
+
+def test_the_news_agencies_are_all_least_biased(reg):
+    """Four wires, all 0. Worth pinning precisely because it is unsurprising: a centre with real
+    weight is what makes a lean distribution mean anything, and agencies are where it comes from.
+
+    Note these are news AGENCIES, not the ``kind=wire`` rows — that flag means machine-generated
+    market-data and press-release copy, which has no editorial stance to rate at all."""
+    for host in ["Dpa.Com", "Efe.Com", "Pamediagroup.Com", "Kyodonews.Net",
+                 "Apnews.Com", "Reuters.Com"]:
+        assert reg.lean(host) == 0.0, host
+        assert reg.resolve(host).kind != "wire", host
+
+
+def test_the_dutch_and_swedish_pairs_straddle_the_centre(reg):
+    """The most useful thing the European tranche buys. Each country lands a pair on opposite sides,
+    so a Dutch or Swedish story can show a real spread instead of a row of unrated names."""
+    assert reg.lean("Nrc.Nl") == -1.0 and reg.lean("Telegraaf.Nl") == 2.0
+    assert reg.lean("Aftonbladet.Se") == -2.0 and reg.lean("Dn.Se") == 1.0
 
 
 def test_the_two_toronto_dailies_are_rated_apart(reg):

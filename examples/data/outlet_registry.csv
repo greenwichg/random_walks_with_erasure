@@ -543,3 +543,79 @@ ThePrint,1,theprint.in,IN,,,national
 # and country curated, lean withheld until the file can express credibility.
 Daily Star (UK),,dailystar.co.uk,GB,,London,national
 GB News,,gbnews.com,GB,,London,national
+#
+# Seventh pass -- US NATIONALS, THE NEWS AGENCIES, CONTINENTAL EUROPE, LATIN AMERICA. The last of
+# the coverage audit's findable set. Thirty-three rated, two more withheld.
+#
+#   US nationals
+#     The New Yorker  -2 (MBFC L, High)      Raw Story       -2 (MBFC L, High)
+#     Daily Beast     -2 (MBFC L, MIXED)     Common Dreams   -2 (MBFC L, High)
+#     People          -2 (MBFC L, High)      ProPublica      -1 (MBFC LC, High)
+#     PBS NewsHour    -1 (MBFC LC, High)     Hollywood Reporter -1 (MBFC LC, High)
+#     Voice of America 0 (MBFC LEAST BIASED, High)
+#     Semafor          0 (MBFC LEAST BIASED, High; AllSides says Lean Left)
+#     The Marshall Project 0 (MBFC LEAST BIASED, High)
+#     The Conversation 0 (MBFC LEAST BIASED, factual VERY HIGH -- the only Very High in the file)
+#     The Bulwark     +1 (MBFC RC, High)     RealClearPolitics +1 (MBFC RC, Mostly Factual)
+#     The American Conservative +1 (MBFC RC, Mostly Factual, HIGH credibility)
+#     Washington Free Beacon    +2 (MBFC RIGHT, factual MIXED)
+#
+#   News agencies -- all four LEAST BIASED, which is the expected shape for a wire and is worth
+#   having in the file precisely because it is unsurprising: it gives the centre real weight.
+#     DPA 0 · Agencia EFE 0 · PA Media 0 · Kyodo News 0
+#
+#   Continental Europe
+#     Aftonbladet     -2 (MBFC L, MIXED)     Liberation      -1 (MBFC LC, High)
+#     La Stampa       -1 (MBFC LC, High)     Il Fatto Quotidiano -1 (MBFC LC, High)
+#     NRC             -1 (MBFC LC, High)     Die Welt        +1 (MBFC RC, High)
+#     Bild            +1 (MBFC RC, MIXED)    Le Parisien     +1 (MBFC RC, High)
+#     Dagens Nyheter  +1 (MBFC RC, High -- an IFCN certified fact-checker)
+#     De Telegraaf    +2 (MBFC RIGHT, Mostly Factual)
+#
+#   Latin America
+#     Infobae -1 (MBFC LC, High) · Reforma +1 (MBFC RC, High) · El Financiero +1 (MBFC RC, Mostly)
+#
+# The Netherlands and Sweden each land a pair on opposite sides -- NRC -1 against De Telegraaf +2,
+# Dagens Nyheter +1 against Aftonbladet -2. That is the single most useful thing this pass buys:
+# a Dutch or Swedish story can now show a real spread instead of a row of unrated names.
+#
+# CHECKED AND NOT RATED ANYWHERE, so no row: Pagina/12 (AR), El Tiempo and El Espectador (CO),
+# Estadao and UOL (BR), Belfast Telegraph (GB). MBFC has no page for any of them.
+The New Yorker,-2,newyorker.com,US,New York,New York,national
+Daily Beast,-2,thedailybeast.com|The Daily Beast,US,,,national
+People,-2,people.com|People Magazine,US,,,national
+Raw Story,-2,rawstory.com,US,,,national
+Common Dreams,-2,commondreams.org,US,,,national
+ProPublica,-1,propublica.org,US,,,national
+PBS NewsHour,-1,pbs.org|PBS,US,,,national
+The Hollywood Reporter,-1,hollywoodreporter.com|THR,US,California,Los Angeles,national
+Voice of America,0,voanews.com|VOA,US,,,international
+Semafor,0,semafor.com,US,,,national
+The Marshall Project,0,themarshallproject.org,US,,,national
+The Conversation,0,theconversation.com,AU,,,international
+The Bulwark,1,thebulwark.com,US,,,national
+RealClearPolitics,1,realclearpolitics.com|Real Clear Politics,US,,,national
+The American Conservative,1,theamericanconservative.com,US,,,national
+Washington Free Beacon,2,freebeacon.com|Free Beacon,US,,,national
+DPA,0,dpa.com|Deutsche Presse-Agentur,DE,,Hamburg,international
+Agencia EFE,0,efe.com|EFE,ES,,Madrid,international
+PA Media,0,pamediagroup.com|Press Association,GB,,London,international
+Kyodo News,0,kyodonews.net,JP,,Tokyo,international
+Aftonbladet,-2,aftonbladet.se,SE,,Stockholm,national
+Liberation,-1,liberation.fr,FR,,Paris,national
+La Stampa,-1,lastampa.it,IT,,Turin,national
+Il Fatto Quotidiano,-1,ilfattoquotidiano.it,IT,,Rome,national
+NRC,-1,nrc.nl|NRC Handelsblad,NL,,Amsterdam,national
+Die Welt,1,welt.de|Welt,DE,,Berlin,national
+Bild,1,bild.de,DE,,Berlin,national
+Le Parisien,1,leparisien.fr,FR,,Paris,national
+Dagens Nyheter,1,dn.se,SE,,Stockholm,national
+De Telegraaf,2,telegraaf.nl,NL,,Amsterdam,national
+Infobae,-1,infobae.com,AR,,Buenos Aires,international
+Reforma,1,reforma.com,MX,,Mexico City,national
+El Financiero,1,elfinanciero.com.mx,MX,,Mexico City,national
+# Two more under the Questionable rule. MBFC rates both Right-Center and classes both QUESTIONABLE
+# -- TASS "100% Russian propaganda", no sourcing; Sputnik factual VERY LOW, numerous failed fact
+# checks. Same treatment as RT: identity and country curated, lean withheld.
+Sputnik,,sputnikglobe.com|sputniknews.com|Sputnik News,RU,,Moscow,international
+TASS,,tass.com|tass.ru|Russian News Agency TASS,RU,,Moscow,international
