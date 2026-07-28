@@ -1060,3 +1060,89 @@ def test_merge_is_off_by_default_and_tunable(monkeypatch):
     assert ss.merge_similarity() == 0.33
     monkeypatch.setenv("RWE_STORY_MERGE_SIM", "nope")
     assert ss.merge_similarity() == 0.0
+
+
+# --------------------------------------------------------------------------- #
+# Stable story ids — the fix for a measured 5.1%/day churn.
+#
+# _story_id anchors to the earliest member, and the failure is that anchor LEAVING: the rolling
+# window drops it, or a backfilled article displaces it. No member-derived anchor survives that,
+# so ids are given BACK rather than recomputed.
+# --------------------------------------------------------------------------- #
+def _cov(*urls):
+    return {"coverage": [{"url": u} for u in urls]}
+
+
+def test_an_id_survives_its_representative_ageing_out():
+    """The dominant production case — 72 of 81 measured churn events."""
+    prior = {"a": "st_old", "b": "st_old", "c": "st_old"}
+    assert ss.reassign_ids(prior, [_cov("b", "c", "d")]) == {0: "st_old"}
+
+
+def test_an_id_survives_an_earlier_article_arriving():
+    """Ingestion is not ordered by publication time; GDELT backfill moves the anchor backwards."""
+    prior = {"b": "st_old", "c": "st_old"}
+    assert ss.reassign_ids(prior, [_cov("older", "b", "c")]) == {0: "st_old"}
+
+
+def test_a_merge_keeps_the_larger_contributors_id():
+    """One story may claim only one prior id, so the smaller half's id retires rather than both
+    surviving on one story."""
+    prior = {"a": "st_big", "b": "st_big", "c": "st_big", "x": "st_small", "y": "st_small"}
+    assert ss.reassign_ids(prior, [_cov("a", "b", "c", "x", "y")]) == {0: "st_big"}
+
+
+def test_a_split_gives_the_id_to_the_piece_holding_most_of_the_coverage():
+    """One prior id may go to only one story. The other piece is a NEW story, which is what it is."""
+    prior = {u: "st_one" for u in "abcd"}
+    out = ss.reassign_ids(prior, [_cov("a", "b", "c"), _cov("d")])
+    assert out == {0: "st_one"}, "the 3-article piece keeps it; the 1-article piece is new"
+
+
+def test_a_minority_overlap_does_not_inherit():
+    """Below a majority two clusters could each have a claim, and which won would depend on
+    ordering rather than on the data."""
+    prior = {"a": "st_old"}
+    assert ss.reassign_ids(prior, [_cov("a", "x", "y", "z")]) == {}
+
+
+def test_a_brand_new_story_keeps_its_derived_id():
+    assert ss.reassign_ids({}, [_cov("a", "b")]) == {}
+
+
+def test_reassignment_is_deterministic():
+    prior = {"a": "st_1", "b": "st_1", "c": "st_2", "d": "st_2"}
+    stories = [_cov("a", "b"), _cov("c", "d")]
+    assert ss.reassign_ids(prior, stories) == ss.reassign_ids(prior, stories)
+
+
+def test_ids_persist_across_rebuilds_when_the_oldest_article_ages_out():
+    """End to end through the store, which is where the churn actually bites."""
+    st = store_mod.Store("sqlite://")
+    for i, (pub, d) in enumerate([("NPR", 3), ("BBC News", 2), ("CNN", 1)]):
+        _add(st, f"https://age{i}.example/x", pub, 0.0,
+             "Ferry runs aground near the northern port", days=d)
+    first = ss.stabilize_ids(st, ss.build_stories(ss._fetch(st)))
+    assert len(first) == 1
+    # The window rolls: the earliest member drops out. Derived ids would change here.
+    rows = [r for r in ss._fetch(st) if "age0" not in (r.get("canonicalUrl") or "")]
+    rebuilt = ss.build_stories(rows)
+    assert rebuilt[0]["id"] != first[0]["id"], "the derived id really does move"
+    assert ss.stabilize_ids(st, rebuilt)[0]["id"] == first[0]["id"], "…and is given back"
+
+
+def test_identity_failure_never_breaks_the_page():
+    """A churned id is a broken link; a 500 is a broken page. Fail soft in both directions."""
+    class Broken:
+        def story_member_ids(self):
+            raise RuntimeError("no table")
+
+    stories = [dict(_cov("a", "b"), id="st_x")]
+    assert ss.stabilize_ids(Broken(), stories)[0]["id"] == "st_x"
+
+
+def test_stable_ids_are_on_by_default_and_reversible(monkeypatch):
+    monkeypatch.delenv("RWE_STORY_STABLE_IDS", raising=False)
+    assert ss.stable_ids() is True
+    monkeypatch.setenv("RWE_STORY_STABLE_IDS", "0")
+    assert ss.stable_ids() is False

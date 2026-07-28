@@ -439,6 +439,18 @@ def link_quorum() -> float:
     return q if 0.0 <= q <= 1.0 else clustering.DEFAULT_LINK_QUORUM
 
 
+def stable_ids() -> bool:
+    """Whether a story keeps the id it was last served under. ON — ``RWE_STORY_STABLE_IDS=0``
+    reverts to deriving the id from the earliest member every build.
+
+    Measured before this existed: **5.1% of surviving stories changed id per day**, 72 of 81 cases
+    because the representative aged out of the rolling window and 9 because a backfilled article
+    displaced it. Each one is a saved or shared link that stops resolving, and the rate is
+    structural — every long-lived story eventually loses its oldest member."""
+    v = os.environ.get("RWE_STORY_STABLE_IDS", "").strip().lower()
+    return v not in {"0", "false", "no", "off"}
+
+
 def merge_similarity() -> float:
     """Second-pass duplicate merge — OFF. Set ``RWE_STORY_MERGE_SIM=0.33`` to enable.
 
@@ -597,6 +609,81 @@ def _repair(members: list, *, quorum: float, sim: float, window_days: float, min
     if sum(len(p) for p in pieces) < REPAIR_MIN_RETENTION * len(members):
         return None
     return pieces
+
+
+#: Share of a story's articles that must already carry a prior id before that id is inherited.
+#:
+#: A majority, so an id follows the cluster that kept most of the coverage. Below a half, two
+#: clusters could each have a decent claim on the same id and which one won would depend on
+#: ordering rather than on the data.
+MIN_ID_CARRYOVER = 0.5
+
+
+def reassign_ids(prior: dict, stories: list) -> dict:
+    """``story index -> the id it should keep``, from ``url -> previously served id``.
+
+    The fix for a measured 5.1%/day id churn. ``_story_id`` anchors to the earliest member, and the
+    failure is that anchor LEAVING — the rolling window drops it, or a backfilled article displaces
+    it. No member-derived anchor survives that, so ids are given back rather than recomputed: a
+    cluster that still holds most of some previous story's articles IS that story, whatever its
+    earliest member is now.
+
+    Best-first with two exclusivity rules, which is what makes splits and merges behave:
+
+    * one story may claim only one prior id — so a MERGE keeps the id of its larger contributor
+      and the smaller contributor's id retires, rather than both surviving on one story.
+    * one prior id may go to only one story — so a SPLIT gives the id to the piece holding most of
+      the original coverage, and the other pieces are new stories, which is what they are.
+
+    Deterministic in ``(prior, stories)``: ties break on overlap, then article count, then index."""
+    claims = []
+    for i, s in enumerate(stories):
+        urls = [c["url"] for c in s["coverage"]]
+        if not urls:
+            continue
+        votes: dict = {}
+        for u in urls:
+            pid = prior.get(u)
+            if pid:
+                votes[pid] = votes.get(pid, 0) + 1
+        for pid, n in votes.items():
+            claims.append((n / len(urls), n, i, pid))
+    claims.sort(key=lambda c: (-c[0], -c[1], c[2], c[3]))
+    taken_story: set = set()
+    taken_id: set = set()
+    out: dict = {}
+    for share, _n, i, pid in claims:
+        if share < MIN_ID_CARRYOVER or i in taken_story or pid in taken_id:
+            continue
+        taken_story.add(i)
+        taken_id.add(pid)
+        out[i] = pid
+    return out
+
+
+def stabilize_ids(store_, stories: list) -> list:
+    """Give each story back the id it was last served under, then record the new mapping.
+
+    Deliberately NOT part of ``build_stories``. That function is pure — same rows in, same stories,
+    ids and order out — and the whole test suite plus every audit depends on it staying that way.
+    Identity is a property of what was PUBLISHED before, not of the input rows, so it is applied
+    where the product is served and nowhere else.
+
+    Fails soft: if the identity table cannot be read or written, stories keep their derived ids.
+    A churned id is a broken link; a 500 is a broken page."""
+    if not stories:
+        return stories
+    try:
+        prior = store_.story_member_ids()
+    except Exception:
+        return stories
+    for i, pid in reassign_ids(prior, stories).items():
+        stories[i] = dict(stories[i], id=pid)
+    try:
+        store_.replace_story_members({c["url"]: s["id"] for s in stories for c in s["coverage"]})
+    except Exception:
+        pass
+    return stories
 
 
 def _profile(members: list) -> frozenset:
@@ -924,9 +1011,17 @@ def _cached_build(store_, *, topic, date_from, date_to, max_scan, min_articles, 
     one database in production, but tests and any future multi-tenant caller would silently read
     each other's clusters without it."""
     def _build():
-        return build_stories(_fetch(store_, topic=topic, date_from=date_from, date_to=date_to,
-                                    max_scan=max_scan),
-                             min_articles=min_articles, min_publishers=min_publishers)
+        # Identity is applied HERE and not inside build_stories, which stays a pure function of its
+        # rows. Only the unfiltered build owns identity: a topic- or date-filtered view sees a
+        # subset of each cluster, so letting it write the map would hand ids to partial clusters
+        # and then hand them back to the full ones on the next unfiltered build — churn caused by
+        # the fix for churn.
+        stories = build_stories(_fetch(store_, topic=topic, date_from=date_from, date_to=date_to,
+                                       max_scan=max_scan),
+                                min_articles=min_articles, min_publishers=min_publishers)
+        if stable_ids() and topic is None and date_from is None and date_to is None:
+            stories = stabilize_ids(store_, stories)
+        return stories
 
     ttl = cache_ttl()
     if ttl <= 0:

@@ -247,6 +247,11 @@ services:
       RWE_STORY_MERGE_SIM: ${RWE_STORY_MERGE_SIM:-0.33}
       RWE_STORY_MERGE_MAX_GAP: ${RWE_STORY_MERGE_MAX_GAP:-48}
       RWE_STORY_MERGE_MAX_SIZE: ${RWE_STORY_MERGE_MAX_SIZE:-130}
+      # A story keeps the id it was last served under (story_member table). Measured before this
+      # existed: 5.1% of surviving stories changed id per DAY -- 72 of 81 because the earliest
+      # member aged out of the rolling window, 9 because a backfilled article displaced it. Each
+      # one is a saved or shared link that stops resolving. 0 reverts to deriving from the anchor.
+      RWE_STORY_STABLE_IDS: ${RWE_STORY_STABLE_IDS:-1}
       # Storage lifecycle (examples/retention_policy.py — the ONE typed policy module). 0 = keep
       # forever, uniformly; junk/negative values fall back to the default rather than deleting more.
       # User data (reads, saves, settings, accounts) has NO policy and is never pruned.

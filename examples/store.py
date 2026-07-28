@@ -621,6 +621,37 @@ class PublisherMetadata(Base):
     fetched_at: Mapped[datetime] = mapped_column(default=_utcnow, index=True)
 
 
+class StoryMember(Base):
+    """article url -> the story id it was last served under. The memory that makes a story id stable.
+
+    ``_story_id`` derives the id from the cluster's earliest-published member, which is stable for
+    the case it was designed against — a LATER article joining never disturbs it — and unstable for
+    two that happen constantly. The candidate set is a rolling time window, so every cluster
+    eventually loses its oldest article; and ingestion is not ordered by publication time, so
+    GDELT's backfill attaches articles published earlier than the current anchor. **Measured on the
+    live catalog: 5.1% of surviving stories changed id per day, 72 of 81 cases from the
+    representative ageing out.** A story id is what a saved or shared link points at.
+
+    No member-derived anchor can fix that, because the failure is the anchor LEAVING. The fix is
+    memory: remember which id a cluster's articles were last served under, and give the id back to
+    whichever cluster still holds most of them.
+
+    One row per article url rather than a list per story, because the lookup this table exists for
+    is "which story did this url belong to" — an inverted index is the natural shape, and it keeps
+    the reassignment a counting problem instead of a set-comparison problem.
+
+    Rewritten wholesale on each build from the CURRENT window, which prunes it for free: a url that
+    has aged out is not being served, so its history is not worth keeping. No foreign key and no
+    influence on clustering — this only renames the output.
+    """
+
+    __tablename__ = "story_member"
+
+    url: Mapped[str] = mapped_column(String(1024), primary_key=True)
+    story_id: Mapped[str] = mapped_column(String(32), index=True)
+    updated_at: Mapped[datetime] = mapped_column(default=_utcnow)
+
+
 class AnalyticsEvent(Base):
     """A single product-analytics event (PA1) — the raw material for the activation funnel + metrics.
 
@@ -1631,6 +1662,30 @@ class Store:
                              .group_by(PublisherMetadata.status)).all()
         counts = {str(k): int(n) for k, n in rows}
         return {"total": sum(counts.values()), "byStatus": counts}
+
+    def story_member_ids(self) -> dict:
+        """``url -> story_id`` for every article the last build served. The whole table: it is
+        bounded by the clustering window, so this is thousands of rows, and loading it once beats
+        an IN-clause over every url in the current build."""
+        with self.session() as s:
+            return {u: sid for u, sid in s.execute(
+                select(StoryMember.url, StoryMember.story_id)).all()}
+
+    def replace_story_members(self, mapping: dict) -> int:
+        """Replace the whole url -> story_id map with the current build's.
+
+        Wholesale rather than incremental, and that IS the pruning: a url outside the current
+        window is not being served, so remembering which story it used to belong to buys nothing
+        and would grow the table without bound. One transaction, so a crash mid-write leaves the
+        previous map intact rather than a half-updated one — ids would churn either way, but a
+        torn map would churn them unpredictably."""
+        with self.session() as s:
+            s.execute(delete(StoryMember))
+            if mapping:
+                now = _utcnow()
+                s.bulk_save_objects([StoryMember(url=u, story_id=sid, updated_at=now)
+                                     for u, sid in mapping.items()])
+        return len(mapping)
 
     def catalog_publishers(self, *, limit: "int | None" = None) -> list:
         """Distinct publisher names in the catalog, most-published first — the enrichment worklist.

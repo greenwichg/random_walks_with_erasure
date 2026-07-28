@@ -610,12 +610,46 @@ docker exec deploy-api-1 python /app/examples/audit_story_id_churn.py --step-hou
 
 It separates the two causes, because they have different fixes. Reading it:
 
-* **Under ~1%/day** — the anchor is holding and this stays a note.
-* **Several %/day** — saved links are breaking routinely, and the fix is to stop deriving the id
-  from a member at all. Persist `story_id ↔ member urls` and, on each rebuild, match new clusters
-  to previously-seen ones and reuse the id. That makes ids stable *by construction* rather than by
-  hoping the anchor does not move. The `match()` function in this audit is the prototype for that
-  step — it is the same overlap join.
+### Measured 2026-07-28: **5.1% per day**
+
+| step | surviving stories | id changed | aged out | earlier arrived |
+|---|---:|---:|---:|---:|
+| 07-25 → 07-26 | 396 | 6 | 6 | 0 |
+| 07-26 → 07-27 | 505 | 32 | 27 | 5 |
+| 07-27 → 07-28 | 692 | 43 | 39 | 4 |
+| **total** | **1,593** | **81 (5.1%)** | **72** | **9** |
+
+Not a tail effect: the stories losing their ids include a 61-article story, a 58, a 52, a 49 and a
+48, all at member overlaps of 0.58–0.92 — unmistakably the same story surviving under a new id.
+And 89% of it is the representative ageing out, which is **structural**: the window rolls, so every
+long-lived story eventually loses its oldest member. No member-derived anchor survives that,
+because the failure *is* the anchor leaving.
+
+### The fix — `story_member`, on by default
+
+Ids are given back rather than recomputed. A `url → story_id` table records what the last build
+served; on the next build a cluster that still holds a **majority** of some previous story's
+articles inherits that id, whatever its earliest member is now.
+
+Two exclusivity rules do the work, and they are what makes splits and merges behave:
+
+* one story may claim only one prior id — a **merge** keeps its larger contributor's id and the
+  smaller one retires, instead of both surviving on one story;
+* one prior id may go to only one story — a **split** gives the id to the piece holding most of the
+  original coverage, and the other pieces are new stories, which is what they are.
+
+`stabilize_ids` is deliberately **not** part of `build_stories`. That function is pure — same rows
+in, same stories, ids and order out — and the suite and every audit depend on it staying so.
+Identity is a property of what was published *before*, not of the input rows, so it is applied only
+where the product is served, and only on the unfiltered build: letting a topic- or date-filtered
+view write the map would hand ids to partial clusters and then hand them back on the next full
+build, which is churn caused by the fix for churn.
+
+It fails soft in both directions. If the table cannot be read or written, stories keep their
+derived ids — a churned id is a broken link, a 500 is a broken page. The table is rewritten
+wholesale from the current window each build, which prunes it for free.
+
+`RWE_STORY_STABLE_IDS=0` reverts without a deploy.
 
 Related and smaller: a merged story can be titled by its smaller half — *"Fauci diary entries"* (5
 articles) titles the merged 13-article story because it holds the earliest member. Consistent with
