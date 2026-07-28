@@ -156,3 +156,21 @@ def test_verdict_bar_is_the_share_not_the_count():
     """A fixed article count would quietly loosen as the corpus grows."""
     assert acc.verdict(_res(beforeCovered=100, droppedOut=6))["adopt"] is False
     assert acc.verdict(_res(beforeCovered=10000, droppedOut=6))["adopt"] is True
+
+
+def test_split_pieces_are_reported_with_their_titles():
+    """The aggregates cannot answer the question that decides a split. 336 articles into 56 pieces
+    is a fix if they are 56 separate events and a regression if one story was shredded, and both
+    look identical in every counter. So the titles are carried out of compare(), biggest first."""
+    st = store_mod.Store("sqlite://")
+    # Two genuine pairs joined only through one bridging article — single linkage welds all four
+    # into one cluster, a quorum separates them back into the two events.
+    _feed(st, "https://a.example/1", "A", "harbour bridge closed after tanker crash")
+    _feed(st, "https://b.example/1", "B", "harbour bridge closed tanker crash downtown fuel")
+    _feed(st, "https://c.example/1", "C", "tanker crash downtown fuel review widens")
+    _feed(st, "https://d.example/1", "D", "tanker crash downtown fuel review deepens")
+    res = acc.compare(st, before=(3, 3), after=(3, 3), after_quorum=0.9, show=10)
+    assert res["splitInto"], "a split must carry its pieces, not just a count"
+    grp = res["splitInto"][0]
+    assert grp["pieces"] == sorted(grp["pieces"], key=lambda p: -p["articles"])
+    assert all(p["title"] for p in grp["pieces"])

@@ -100,6 +100,7 @@ def compare(store_, *, before: tuple, after: tuple, show: int = 10,
               repair=after_repair)
 
     a_by_id = {s["id"]: s for s in a}
+    b_by_id = {s["id"]: s for s in b}
     a_member = index_by_member(a)
     b_member = index_by_member(b)
 
@@ -154,6 +155,20 @@ def compare(store_, *, before: tuple, after: tuple, show: int = 10,
             "dissolved": None in dests,
             "title": a_by_id[sid]["title"],
         } for sid, dests in split[:show]],
+        # The pieces themselves. No aggregate can answer the question that decides a split — are
+        # these recognisably separate events, or is one story shredded into shards? — so the titles
+        # have to be readable. Sorted biggest first; the long tail of 2-article pieces is the tell
+        # for over-fragmentation.
+        "splitInto": [{
+            "title": a_by_id[sid]["title"],
+            "articles": a_by_id[sid]["totalCoverage"],
+            "publishers": a_by_id[sid]["publisherCount"],
+            "pieces": sorted(
+                ({"articles": b_by_id[d]["totalCoverage"],
+                  "publishers": b_by_id[d]["publisherCount"],
+                  "title": b_by_id[d]["title"]} for d in dests if d),
+                key=lambda p: -p["articles"]),
+        } for sid, dests in split],
     }
 
 
@@ -175,6 +190,11 @@ def main(argv=None) -> int:
     ap.add_argument("--repair-quorum", type=float, default=0.0,
                     help="TARGETED linkage: re-split only the clusters the independent signal "
                          "condemns, leaving every other story untouched")
+    ap.add_argument("--pieces", type=int, default=0,
+                    help="print the resulting pieces for the N biggest split clusters — the read "
+                         "that decides whether a split separated events or shredded a story")
+    ap.add_argument("--piece-limit", type=int, default=25,
+                    help="how many pieces to print per cluster")
     ap.add_argument("--max-dropped", type=float, default=MAX_DROPPED,
                     help="reject the change above this share of covered articles dropped")
     args = ap.parse_args(argv)
@@ -205,6 +225,18 @@ def main(argv=None) -> int:
     bc, ac = res["beforeCoherence"], res["afterCoherence"]
     print(f"independent signal : {bc['bad']}/{bc['scored']} bad (mean {bc['mean']}) -> "
           f"{ac['bad']}/{ac['scored']} bad (mean {ac['mean']})")
+
+    for grp in res["splitInto"][:args.pieces]:
+        kept = sum(p["articles"] for p in grp["pieces"])
+        print(f"\n--- {grp['title'][:70]}")
+        print(f"    {grp['articles']} articles / {grp['publishers']} publishers -> "
+              f"{len(grp['pieces'])} pieces holding {kept} articles "
+              f"({grp['articles'] - kept} dropped)")
+        tail = len([p for p in grp["pieces"] if p["articles"] <= 2])
+        print(f"    {tail} of those pieces are 2 articles or fewer")
+        print(f"    {'arts':>5} {'pubs':>5}  title")
+        for pc in grp["pieces"][:args.piece_limit]:
+            print(f"    {pc['articles']:>5} {pc['publishers']:>5}  {pc['title'][:64]}")
 
     v = verdict(res, max_dropped=args.max_dropped)
     print(f"\nVERDICT: {'ADOPT' if v['adopt'] else 'REJECT'} "

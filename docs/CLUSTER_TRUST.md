@@ -152,9 +152,39 @@ Two guards against silent destruction, because dissolving a cluster improves eve
 audit prints — a repair is discarded and the original kept whole if it yields only one piece
 (nothing was separated) or retains under `REPAIR_MIN_RETENTION` (50%) of the articles.
 
+**Measured 2026-07-28, production baseline, 3 clusters touched in both runs:**
+
+| | stories | largest | dropped | actionable bad | mean coherence |
+|---|---:|---:|---:|---:|---:|
+| production | 940 | 336 | — | 3 of 63 | 0.966 |
+| global quorum 0.3 | 1,086 | 45 | **9.3%** | 3 of 64 | **0.952** |
+| repair 0.3 | 991 | 103 | 1.3% | 3 of 66 | 0.960 |
+| **repair 0.5** | **1,000** | **115** | **1.6%** | **1 of 66** | **0.968** |
+
+The global rule is rejected on three counts, not one: it costs 9.3% of covered articles, it does
+not reduce the bad-cluster count, and the independent signal gets **worse** (0.966 → 0.952). It
+shreds coherent stories — "Wildfires ravage parts of southern France, Italy and Spain", 100
+articles from 61 publishers, went to eleven pieces.
+
+Repair at 0.5 is the only variant where the independent signal improves. Bad clusters fall 3 → 1,
+mean coherence rises, and the cost is 1.6%. Note what the largest cluster becomes: **115 articles
+is the M.D. Sass press-release template**, not a false merge — after repair, the biggest thing in
+the catalog is a non-news problem that belongs in `outlet_registry.csv`.
+
+Caveat that no amount of arithmetic removes: **n = 3**. Three bad clusters going to one is a
+two-thirds reduction and also a sample of three. What makes it safe to adopt anyway is not the
+ratio but the blast radius — only clusters the signal already condemns are touched, so the
+downside is bounded to those three whatever the true rate is.
+
 ```
-docker exec deploy-api-1 python /app/examples/audit_clustering_change.py --repair-quorum 0.3 --show 20
+docker exec deploy-api-1 python /app/examples/audit_clustering_change.py --repair-quorum 0.5 --show 20
+docker exec deploy-api-1 python /app/examples/audit_clustering_change.py --repair-quorum 0.5 --pieces 1
 ```
+
+The second command is the one that decides it. 336 articles into 56 pieces is a fix if they are 56
+separate events and a regression if one story was shredded, and **both look identical in every
+counter**. `--pieces` prints the resulting titles, biggest first, with a count of how many pieces
+came out at 2 articles or fewer — that tail is the tell for over-fragmentation.
 
 ### 5. Coverage-list batching
 
