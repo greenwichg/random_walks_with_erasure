@@ -1710,3 +1710,48 @@ and a bare "The State" claims neither — the parenthetical rule earning its pla
 The lesson is not "probe more". It is that **hit rate is a function of where the rater looked**, and
 MBFC looked hardest at US and UK sources — including small ones. Curating toward that is the
 efficient move, and it happens to be where this feed's untracked volume also sits.
+
+## Fifteenth pass: India, and a selection bias in the registry itself
+
+The registry already held 12 Indian outlets. **Eight of them were +1 or above; three were left of
+centre.** Earlier in this document that skew was written up as a finding about *India's* media —
+"MBFC rates three of the four Right-Center for the same stated reason, coverage favouring the ruling
+party." That reading was too quick.
+
+The skew was largely **an artefact of which outlets got curated first.** The earlier passes reached
+India through business titles and English-language nationals — Business Standard, Firstpost,
+ThePrint, Economic Times, Times of India, India Today — which is the right-leaning end of that
+market. Probe the other end and it is populated:
+
+| | |
+|---|---|
+| −2 | Alt News (IFCN fact-checker; MBFC attributes the lean to which claims it selects to check) |
+| −1 | The Wire, The Quint, Telegraph India, Deccan Herald, Outlook India, The New Indian Express, Newslaundry, The News Minute |
+| 0 | Mint, WION — both *Least Biased* with *Mixed* factuality, a combination worth noticing |
+| +1 | India TV, The Tribune (India) |
+| +2 | Times Now, OpIndia, **Swarajya** (withheld — Questionable, **Low** factual, the lowest in the file) |
+
+**India now holds 28 outlets: 12 left, 3 centre, 13 right.** An Indian story can show a real spread.
+This morning it would have shown a wall of right-of-centre names and read as consensus.
+
+**The lesson generalises past India.** A registry curated by "who has volume in our feed" inherits
+whatever bias the feed has, and then *reports that bias back as a property of the world.* The earlier
+write-up did exactly that. The fix is not more curation — it is curating **both ends of a market
+deliberately**, and the test now asserts it: at least ten Indian outlets on each side.
+
+Two more things worth recording:
+
+**Zee News and Republic TV have no MBFC page** despite being two of the most-discussed outlets in
+the market. Secondary sources describe both as right-leaning. A description is not a rating — the
+same call already made for Brisbane Times and WAtoday.
+
+**`tribuneindia.com` and `tribune.com.pk`** are rated three points apart across a contested border,
+and a bare "The Tribune" claims neither. The parenthetical rule, earning its place for the fifth time.
+
+### Registry, close of fifteen passes
+
+| | start of day | end |
+|---|---:|---:|
+| rows | 154 | **392** |
+| rated | 143 | **366** |
+| countries | ~30 | **50** |

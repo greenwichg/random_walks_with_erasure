@@ -923,3 +923,43 @@ The State (South Carolina),-1,thestate.com,US,South Carolina,Columbia,regional
 Star-Ledger,-1,nj.com,US,New Jersey,Newark,regional
 Buffalo News,0,buffalonews.com,US,New York,Buffalo,regional
 Texas Tribune,-1,texastribune.org,US,Texas,Austin,regional
+#
+# Fifteenth pass -- INDIA, asked for directly. The registry already held 12 Indian outlets and they
+# leaned hard one way: 8 of 12 at +1 or above, only 3 left of centre. That was not India's media
+# landscape, it was an artefact of which outlets got curated first -- the earlier passes reached
+# India through business and English-language nationals, which is the right-leaning end of the
+# market. 48 more probed, 16 rated, and the balance changes completely.
+#
+#   -2  Alt News (MBFC LEFT, factual HIGH, HIGH credibility -- an IFCN fact-checker; MBFC
+#       attributes the lean to which claims it chooses to check)
+#   -1  The Wire, The Quint (IFCN-certified via WebQoof), Telegraph India, Deccan Herald,
+#       Outlook India, The New Indian Express, Newslaundry, The News Minute (HIGH cred)
+#    0  Mint / Livemint (MBFC LEAST BIASED but factual MIXED), WION (same shape)
+#   +1  India TV, The Tribune (India)
+#   +2  Times Now (MBFC RIGHT, MIXED -- "pro-government propaganda"), OpIndia (RIGHT, MIXED)
+#
+# India now holds 28 outlets spanning -2 to +2 with 13 left, 5 centre and 13 right of centre. An
+# Indian story can show a real spread; this morning it would have shown a wall of right-of-centre
+# names and looked like consensus.
+#
+# NOT rated: Zee News and Republic TV have no MBFC page despite being two of the most-discussed
+# outlets in the market. Widely DESCRIBED as right-leaning in secondary sources, which is not a
+# rating -- the same call made for Brisbane Times and WAtoday.
+Alt News,-2,altnews.in,IN,,,national,,high
+The Wire (India),-1,thewire.in,IN,,New Delhi,national
+The Quint,-1,thequint.com,IN,,New Delhi,national
+Telegraph India,-1,telegraphindia.com,IN,West Bengal,Kolkata,national
+Deccan Herald,-1,deccanherald.com,IN,Karnataka,Bengaluru,national
+Outlook India,-1,outlookindia.com,IN,,New Delhi,national
+The New Indian Express,-1,newindianexpress.com,IN,Tamil Nadu,Chennai,national
+Newslaundry,-1,newslaundry.com,IN,,New Delhi,national
+The News Minute,-1,thenewsminute.com,IN,Karnataka,Bengaluru,national,,high
+Mint,0,livemint.com,IN,,New Delhi,national
+WION,0,wionews.com,IN,,New Delhi,international
+India TV,1,indiatvnews.com,IN,,Noida,national
+The Tribune (India),1,tribuneindia.com,IN,Punjab,Chandigarh,national
+Times Now,2,timesnownews.com,IN,,Mumbai,national
+OpIndia,2,opindia.com,IN,,,national
+# Fourteenth withheld lean. MBFC rates Swarajya RIGHT and classes it QUESTIONABLE with LOW factual
+# reporting -- numerous failed fact checks. The lowest factual rating of any source in this file.
+Swarajya,2,swarajyamag.com,IN,,Bengaluru,national,,low

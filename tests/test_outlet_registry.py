@@ -1022,3 +1022,48 @@ def test_thestate_and_thestar_are_different_papers(reg):
     assert reg.resolve("Thestate.Com").canonical == "The State (South Carolina)"
     assert reg.resolve("Thestar.Com").canonical == "Toronto Star"
     assert reg.resolve("The State") is None
+
+
+# --------------------------------------------------------------------------- #
+# India — the registry's own selection bias, corrected.
+# --------------------------------------------------------------------------- #
+def test_the_india_pass_ratings(reg):
+    for host, lean in [
+        ("Altnews.In", -2.0), ("Thewire.In", -1.0), ("Thequint.Com", -1.0),
+        ("Telegraphindia.Com", -1.0), ("Deccanherald.Com", -1.0), ("Outlookindia.Com", -1.0),
+        ("Newindianexpress.Com", -1.0), ("Newslaundry.Com", -1.0), ("Thenewsminute.Com", -1.0),
+        ("Livemint.Com", 0.0), ("Wionews.Com", 0.0),
+        ("Indiatvnews.Com", 1.0), ("Tribuneindia.Com", 1.0),
+        ("Timesnownews.Com", 2.0), ("Opindia.Com", 2.0), ("Swarajyamag.Com", 2.0),
+    ]:
+        assert reg.lean(host) == lean, host
+
+
+def test_indias_coverage_is_no_longer_one_sided(reg):
+    """The registry held 12 Indian outlets and 8 were +1 or above — not India's media landscape but
+    an artefact of which outlets got curated first, since the earlier passes reached India through
+    business and English-language nationals. A story covered by five Indian outlets would have shown
+    a wall of right-of-centre names and read as consensus."""
+    import math
+    ind = [o.lean for o in reg.outlets() if o.country == "IN" and not math.isnan(o.lean)]
+    assert len(ind) >= 25
+    assert sum(1 for v in ind if v < 0) >= 10, "the left side must be represented"
+    assert sum(1 for v in ind if v > 0) >= 10, "and so must the right"
+    assert sum(1 for v in ind if v == 0) >= 2
+
+
+def test_the_two_tribunes_are_different_papers(reg):
+    """tribuneindia.com is Chandigarh's, tribune.com.pk is Karachi's, and they are rated three
+    points apart across a contested border. The parenthetical canonical keeps a bare "The Tribune"
+    from claiming either."""
+    assert reg.resolve("Tribuneindia.Com").canonical == "The Tribune (India)"
+    assert reg.resolve("Tribune.Com.Pk").canonical == "The Express Tribune"
+    assert reg.lean("Tribuneindia.Com") == 1.0 and reg.lean("Tribune.Com.Pk") == 0.0
+    assert reg.resolve("The Tribune") is None
+
+
+def test_swarajya_is_the_lowest_factual_rating_in_the_file(reg):
+    """MBFC rates it RIGHT and Questionable with LOW factual reporting — numerous failed fact
+    checks. The lean is recorded; it does not vote."""
+    assert reg.lean("Swarajyamag.Com") == 2.0
+    assert reg.is_low_credibility("Swarajyamag.Com")
