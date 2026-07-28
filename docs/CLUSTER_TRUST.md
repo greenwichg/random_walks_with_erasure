@@ -439,3 +439,40 @@ could.
 The registry invariant moved with it. An unrated row previously had to carry a locality to earn
 its place; it may now carry a locality **or** a kind. Both are curated facts, and a row with a
 blank lean and neither still asserts nothing and is still rejected.
+
+## Blindspot claims need a sample they could have been false in
+
+Chasing the duplication measurement turned up a bigger defect in the feature the trust gate was
+built to protect. **516 of 1,022 stories asserted a coverage gap**, and:
+
+| rated publishers behind the claim | claims | share |
+|---:|---:|---:|
+| 1 | 254 | **49.2%** |
+| 2 | 206 | **39.9%** |
+| 3 | 35 | 6.8% |
+| 4+ | 21 | 4.1% |
+
+**89.1% of the product's coverage-gap claims rested on one or two rated outlets.** With 46% of
+stories carrying no rated publisher at all (and so making no claim), that means roughly 94% of the
+stories that *could* claim a gap did.
+
+That is arithmetic, not editorial fact. There are three lean buckets, so fewer than three rated
+publishers cannot fill them: an empty bucket is guaranteed whatever the outlets actually did. A
+one-publisher story announcing "nobody on the left covered this" is reporting the size of its own
+sample. And the catalog median story is 2 articles, so the feature was firing almost everywhere it
+possibly could.
+
+This is **the same defect `MIN_LOCATED_FOR_TRUST` fixes for geoCoherence** — a ratio acted on with
+no sample-size floor — sitting inside the feature that gate exists to protect. It was fixed there
+in the morning and walked past here until the duplication denominator forced the number into view.
+
+`MIN_RATED_FOR_BLINDSPOT = 3` is the floor, chosen because three is where covering every bucket
+becomes *possible*, so an empty one is finally an observation. Raise `RWE_STORY_MIN_RATED` to 4 for
+a claim that carries weight rather than merely being permitted; set it to 1 to restore the old
+behaviour without a deploy.
+
+**This is a visible product change.** Claims drop from 516 to roughly 56 — the blindspot module,
+the `?blindspot=` filter and the coverage-gap facets will all get much thinner. That is the point:
+the 460 removed claims were not findings. For scale, the duplication defect this search started
+from accounts for 15 contradicted claims (2.9%); this one accounts for 460 (89.1%), thirty times
+larger.

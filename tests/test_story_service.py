@@ -54,9 +54,13 @@ def _senate_and_wildfire(st):
     _add(st, "https://npr.org/a1", "NPR", -1.0, "Senate passes the funding bill after debate", days=2)
     _add(st, "https://fox.com/a2", "Fox News", 1.5, "Senate passes funding bill averting shutdown", days=1)
     _add(st, "https://bbc.com/a3", "BBC News", 0.0, "US Senate passes funding bill to avert shutdown", days=0)
-    # Wildfire event — 2 publishers, both left (a real blind spot)
+    # Wildfire event — 3 LEFT-rated publishers (a real blind spot). Three is the floor: with fewer
+    # rated outlets than lean buckets an empty bucket is forced, so the claim would be arithmetic
+    # rather than a finding (MIN_RATED_FOR_BLINDSPOT).
     _add(st, "https://cnn.com/b1", "CNN", -1.2, "Wildfires spread across the western coast", category="Climate", days=3)
     _add(st, "https://guardian.com/b2", "The Guardian", -1.5, "Wildfires spread rapidly along western coast",
+         category="Climate", days=3)
+    _add(st, "https://msnbc.com/b3", "MSNBC", -1.4, "Wildfires spread fast along the western coast",
          category="Climate", days=3)
     # noise — unrelated singletons (won't form a story: < 2 publishers)
     _add(st, "https://wsj.com/c1", "WSJ", 0.8, "Markets rally on tech earnings", category="Business", days=4)
@@ -97,7 +101,10 @@ def test_distribution_excludes_unrated_publishers():
     story = next(s for s in ss.cluster_from_store(st) if "Senate" in s["title"])
     assert story["totalCoverage"] == 3 and story["publisherCount"] == 3   # coverage counts everyone
     assert story["distribution"] == {"left": 0.5, "center": 0.0, "right": 0.5}
-    assert story["blindspotSide"] == "center"                             # gap among RATED votes
+    # No claim: an unrated outlet is not part of the sample a gap rests on either, so three
+    # publishers here are only TWO rated ones — below MIN_RATED_FOR_BLINDSPOT, where an empty
+    # bucket is forced by arithmetic rather than observed.
+    assert story["blindspotSide"] is None
     unrated = next(c for c in story["coverage"] if c["publisher"] == "Obscure Tribune")
     assert unrated["lean"] is None and unrated["leanBucket"] is None
 
@@ -133,7 +140,7 @@ def test_coverage_calculation_and_blindspot():
     assert abs(sum(senate["distribution"].values()) - 1.0) < 1e-9
     assert senate["blindspotSide"] is None                   # L+C+R all covered
     assert wild["distribution"]["left"] == 1.0 and wild["blindspotSide"] in {"center", "right"}
-    assert wild["publisherDiversity"] == 1.0                 # 2 publishers / 2 articles
+    assert wild["publisherDiversity"] == 1.0                 # 3 publishers / 3 articles
 
 
 # --------------------------------------------------------------------------- #
@@ -293,8 +300,8 @@ def test_diagnostics():
     st = store_mod.Store("sqlite://"); _senate_and_wildfire(st)
     d = ss.list_stories(st, debug=True)
     assert "clusterMs" in d and d["diagnostics"]["storyCount"] == 2
-    assert d["diagnostics"]["largestStory"] == 3 and d["diagnostics"]["avgArticlesPerStory"] == 2.5
-    assert d["diagnostics"]["sizeDistribution"] == {"2": 1, "3": 1}
+    assert d["diagnostics"]["largestStory"] == 3 and d["diagnostics"]["avgArticlesPerStory"] == 3.0
+    assert d["diagnostics"]["sizeDistribution"] == {"3": 2}
 
 
 # --------------------------------------------------------------------------- #
@@ -318,7 +325,7 @@ def test_story_service_imports_no_recommendation_algorithm():
 # M3 — the coverage-gap lens: ?blindspot= filter + counted blindspotFacets.
 # --------------------------------------------------------------------------- #
 def _gap_catalog(st):
-    """Three stories: Senate (L/C/R — balanced, no gap), Wildfire (2 left-rated -> gap on
+    """Three stories: Senate (L/C/R — balanced, no gap), Wildfire (3 left-rated -> gap on
     centre, deterministic first-empty), Port strike (all-unrated -> UNKNOWN, no gap ever)."""
     _senate_and_wildfire(st)
     _add(st, "https://a.example/p1", "Tribune A", None, "Dockworkers strike closes the main port", days=1)
@@ -733,7 +740,8 @@ def test_blindspot_is_withheld_from_an_incoherent_cluster():
 
 
 def test_a_trusted_cluster_still_reports_its_blindspot():
-    """The gate must not simply delete the feature — a coherent cluster keeps its claim."""
+    """The gate must not simply delete the feature — a coherent, adequately-rated cluster keeps
+    its claim."""
     st = store_mod.Store("sqlite://")
     _senate_and_wildfire(st)
     wild = next(s for s in ss.cluster_from_store(st) if "Wildfire" in s["title"])
@@ -897,3 +905,54 @@ def test_an_unregistered_outlet_is_never_wire():
         _add(st, f"https://smalltown{i}.example/x", f"Smalltown Gazette {i}", None,
              "council approves the new harbour development plan", days=1)
     assert len(ss.build_stories(ss._fetch(st))) == 1
+
+
+# --------------------------------------------------------------------------- #
+# Blindspot support floor — a gap claim needs a sample it could have been false in.
+# --------------------------------------------------------------------------- #
+def test_one_rated_publisher_cannot_assert_a_gap():
+    """The defect this fixes, measured at 254 claims in production. One outlet covering something
+    says nothing about who else did; the distribution is 1.0 in its bucket and two buckets are
+    empty BY CONSTRUCTION, so the claim reports its own sample size."""
+    st = store_mod.Store("sqlite://")
+    _add(st, "https://npr.org/x1", "NPR", -1.0, "Ferry runs aground near the northern port", days=1)
+    _add(st, "https://small.example/x2", "Small Gazette", None,
+         "Ferry runs aground close to the northern port", days=1)
+    story = ss.cluster_from_store(st)[0]
+    assert story["distribution"] == {"left": 1.0, "center": 0.0, "right": 0.0}
+    assert story["blindspotSide"] is None, "one rated publisher is not a coverage finding"
+
+
+def test_two_rated_publishers_cannot_fill_three_buckets():
+    """Also arithmetic: two outlets cannot cover three lean buckets, so an empty one is forced
+    whatever they did. 206 production claims sat here."""
+    st = store_mod.Store("sqlite://")
+    _add(st, "https://npr.org/y1", "NPR", -1.0, "Ferry runs aground near the northern port", days=1)
+    _add(st, "https://fox.com/y2", "Fox News", 1.5, "Ferry runs aground close to northern port", days=1)
+    story = ss.cluster_from_store(st)[0]
+    assert story["distribution"] == {"left": 0.5, "center": 0.0, "right": 0.5}
+    assert story["blindspotSide"] is None
+
+
+def test_three_rated_publishers_can_assert_a_gap():
+    """Three is the floor because three is where covering every bucket becomes POSSIBLE — so an
+    empty bucket is finally an observation rather than a consequence of the sample size."""
+    st = store_mod.Store("sqlite://")
+    for i, (pub, lean) in enumerate([("NPR", -1.0), ("The Guardian", -1.5), ("MSNBC", -1.4)]):
+        _add(st, f"https://p{i}.example/z", pub, lean,
+             "Ferry runs aground near the northern port again", days=1)
+    story = ss.cluster_from_store(st)[0]
+    assert story["distribution"]["left"] == 1.0
+    assert story["blindspotSide"] in {"center", "right"}
+
+
+def test_the_support_floor_is_tunable(monkeypatch):
+    """Reversible without a deploy — 1 restores the pre-2026-07-28 behaviour of claiming on any
+    sample, which is what 89.1% of production claims rested on."""
+    monkeypatch.setenv("RWE_STORY_MIN_RATED", "1")
+    ss.clear_cache()
+    st = store_mod.Store("sqlite://")
+    _add(st, "https://npr.org/w1", "NPR", -1.0, "Ferry runs aground near the northern port", days=1)
+    _add(st, "https://small.example/w2", "Small Gazette", None,
+         "Ferry runs aground close to the northern port", days=1)
+    assert ss.cluster_from_store(st)[0]["blindspotSide"] == "center"

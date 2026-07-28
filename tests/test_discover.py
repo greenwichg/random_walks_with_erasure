@@ -29,8 +29,13 @@ def _event(st):
     _add(st, "https://foxnews.com/a2", "Fox News", 1.5, "Senate passes funding bill, averting shutdown")
     _add(st, "https://bbc.com/a3", "BBC News", 0.0, "US Senate passes funding bill to avert shutdown",
          when="2026-07-05T12:00:00+00:00")
+    # Three LEFT-rated outlets, not two. Fewer rated publishers than lean buckets forces an empty
+    # bucket, so a gap claimed below MIN_RATED_FOR_BLINDSPOT reports the sample size rather than
+    # the press. Three is the floor at which "nobody on the right covered this" is an observation.
     _add(st, "https://cnn.com/b1", "CNN", -1.2, "Wildfires spread across the western coast", category="Climate")
     _add(st, "https://guardian.com/b2", "The Guardian", -1.5, "Wildfires spread rapidly along western coast",
+         category="Climate")
+    _add(st, "https://msnbc.com/b3", "MSNBC", -1.4, "Wildfires spread fast along the western coast",
          category="Climate")
     _add(st, "https://wsj.com/c1", "Wall Street Journal", 0.8, "Markets rally on tech earnings", category="Business")
     _add(st, "https://nypost.com/c2", "New York Post", 1.3, "Local team wins the championship", category="Sports")
@@ -124,12 +129,12 @@ def test_discover_facets_and_filters():
     st = store.Store("sqlite://")
     _event(st)
     d = discover.list_discover(st, limit=50)
-    assert len(d["articles"]) == 7
+    assert len(d["articles"]) == 8
     assert d["topics"] == ["Business", "Climate", "Politics", "Sports"]   # sorted facets
     assert "Fox News" in d["publishers"] and "NPR" in d["publishers"]
 
     left = discover.list_discover(st, lean="left")["articles"]
-    assert {a["publisher"] for a in left} == {"NPR", "CNN", "The Guardian"}
+    assert {a["publisher"] for a in left} == {"NPR", "CNN", "The Guardian", "MSNBC"}
     assert discover.list_discover(st, publisher="Fox News")["articles"][0]["publisher"] == "Fox News"
     assert all(a["topic"] == "Climate" for a in discover.list_discover(st, topic="Climate")["articles"])
     # facets stay full even when a filter is applied (dropdowns don't collapse)
@@ -225,11 +230,11 @@ def test_discover_stories_endpoints(tmp_path, monkeypatch):
 
     with TestClient(mod.app) as c:
         disc = c.get("/api/discover").json()
-        assert len(disc["articles"]) == 8 and disc["articles"][0]["url"].startswith("http")
+        assert len(disc["articles"]) == 9 and disc["articles"][0]["url"].startswith("http")
         by_id = {a["id"]: a for a in disc["articles"]}
         assert by_id["https://npr.org/reg"]["register"] == "opinion"   # alias + numeric bucketing
         assert "register" not in by_id["https://bbc.com/a3"]           # absent signal stays absent
-        assert len(c.get("/api/discover", params={"lean": "left"}).json()["articles"]) == 4
+        assert len(c.get("/api/discover", params={"lean": "left"}).json()["articles"]) == 5
 
         # /api/stories is now a paginated envelope from the Story Service (Commit 7).
         body = c.get("/api/stories").json()
@@ -276,7 +281,7 @@ def test_discover_country_filters_by_event_geography_never_publisher_home():
 
     everything = discover.list_discover(st)["articles"]
     assert discover.list_discover(st, country="all")["articles"] == everything   # sentinel = Global
-    assert len(everything) == 7                                          # Global behavior unchanged
+    assert len(everything) == 8                                          # Global behavior unchanged
 
 
 def test_discover_country_facets_count_content_only():

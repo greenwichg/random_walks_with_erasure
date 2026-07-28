@@ -80,6 +80,24 @@ TRUST_OK = "ok"                     # corroborated, or too small to chain
 TRUST_LOW = "low"                   # scored, and the score says the members disagree
 TRUST_UNVERIFIED = "unverified"     # big enough to be a chain, with nothing to check it against
 
+#: Distinct RATED publishers required before a story may assert a coverage gap.
+#:
+#: Three, because that is the point below which the claim is arithmetically FORCED. There are three
+#: lean buckets, so fewer than three rated publishers cannot fill them all and an empty bucket is
+#: guaranteed whatever the outlets actually did. A one-publisher story announcing "nobody on the
+#: left covered this" is reporting the size of its own sample, not a fact about the press.
+#:
+#: Measured on the live catalog before this existed: 516 of 1,022 stories asserted a gap, and
+#: **89.1% of those rested on one or two rated publishers** (254 on one, 206 on two). Only 56
+#: claims had three or more behind them. The catalog median story is 2 articles, so the feature was
+#: firing almost everywhere it possibly could.
+#:
+#: This is the same defect ``MIN_LOCATED_FOR_TRUST`` fixes for geoCoherence — a ratio acted on with
+#: no sample-size floor — in the feature that gate was built to protect. Raise to 4 for a claim that
+#: carries weight rather than merely being possible: an empty bucket across four rated outlets is
+#: lopsided, across three it is thin.
+MIN_RATED_FOR_BLINDSPOT = 3
+
 #: A targeted re-split must keep at least this share of the original cluster's articles, or the
 #: original is kept whole instead. Repair is meant to separate conflated events, not to delete a
 #: cluster it cannot make sense of — and without this floor the failure mode is silent, because
@@ -153,6 +171,12 @@ def _cluster_trust(total: int, coherence: Optional[float], located: int = 0, *, 
     return TRUST_UNVERIFIED if total > unverified_size else TRUST_OK
 
 
+def _rated_publishers(members: list) -> int:
+    """Distinct publishers carrying a lean rating — the sample a blindspot claim rests on. An
+    unrated outlet is real coverage but casts no vote (L2.2), so it is not part of that sample."""
+    return len({m["publisher"] for m in members if m.get("leanBucket")})
+
+
 def _coverage(members: list) -> list:
     """One coverage entry per article, newest first — the canonical article list (carries the URL)."""
     out = []
@@ -199,7 +223,12 @@ def _build_story(members: list) -> dict:
                            unverified_size=unverified_size())
     # The blindspot is asserted only from a cluster we can stand behind. Keeping the raw verdict
     # separately means the audit can count what the gate withheld rather than guess at it.
-    raw_blindspot = _blindspot(dist)
+    # Two independent reasons to say nothing. Too few rated publishers means the claim was never
+    # valid — an empty bucket is forced below three, so there is nothing to withhold. A distrusted
+    # cluster means the claim may be valid but rests on a grouping we cannot stand behind, which
+    # IS a withholding and is counted as one.
+    raw_blindspot = (_blindspot(dist)
+                     if _rated_publishers(members) >= min_rated_for_blindspot() else None)
     return {
         "id": _story_id(members),
         "title": rep["headline"],
@@ -388,6 +417,12 @@ def link_quorum() -> float:
     except (TypeError, ValueError):
         return clustering.DEFAULT_LINK_QUORUM
     return q if 0.0 <= q <= 1.0 else clustering.DEFAULT_LINK_QUORUM
+
+
+def min_rated_for_blindspot() -> int:
+    """Rated publishers a story needs before it may assert a coverage gap.
+    ``RWE_STORY_MIN_RATED`` — 1 restores the pre-2026-07-28 behaviour of claiming on any sample."""
+    return _env_int("RWE_STORY_MIN_RATED", MIN_RATED_FOR_BLINDSPOT)
 
 
 def exclude_wire() -> bool:

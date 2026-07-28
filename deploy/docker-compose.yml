@@ -233,6 +233,11 @@ services:
       # Machine-generated market-data feeds (outlet_registry.csv kind=wire) never enter story
       # clustering. Does nothing on its own — only outlets a human marked are affected.
       RWE_STORY_EXCLUDE_WIRE: ${RWE_STORY_EXCLUDE_WIRE:-1}
+      # Rated publishers a story needs before it may assert a coverage gap. Three, because there
+      # are three lean buckets: below that an empty bucket is forced by arithmetic, not observed.
+      # Measured before this existed: 516 of 1,022 stories claimed a gap and 89.1% of those rested
+      # on one or two rated outlets. RWE_STORY_MIN_RATED=1 restores the old behaviour.
+      RWE_STORY_MIN_RATED: ${RWE_STORY_MIN_RATED:-3}
       # Storage lifecycle (examples/retention_policy.py — the ONE typed policy module). 0 = keep
       # forever, uniformly; junk/negative values fall back to the default rather than deleting more.
       # User data (reads, saves, settings, accounts) has NO policy and is never pruned.
