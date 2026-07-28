@@ -238,10 +238,13 @@ services:
       # Measured before this existed: 516 of 1,022 stories claimed a gap and 89.1% of those rested
       # on one or two rated outlets. RWE_STORY_MIN_RATED=1 restores the old behaviour.
       RWE_STORY_MIN_RATED: ${RWE_STORY_MIN_RATED:-3}
-      # Second-pass duplicate merge (RECALL). OFF until measured: a merge pass is the operation
-      # that built the mega-cluster. Guards are complete linkage, a geoCoherence veto and a size
-      # cap. Measured target: 22 duplicated events holding 172 articles (4.3% of covered).
-      RWE_STORY_MERGE_SIM: ${RWE_STORY_MERGE_SIM:-0}
+      # Second-pass duplicate merge (RECALL). Measured and adopted at 0.33: 14 merges, zero
+      # dropped articles, largest cluster unchanged, bad-cluster count flat. All 14 were read by
+      # hand -- Seattle 13+9, Fauci 8+5, the Iran pause 6+5, J&J talc, ICC/Karim Khan, the NC
+      # missing-person case, Mamdani groceries -- with no false merge among them. Both known false
+      # positives sat at 0.31 and the threshold excludes them. Guards: complete linkage, a
+      # geoCoherence veto, and a size cap.
+      RWE_STORY_MERGE_SIM: ${RWE_STORY_MERGE_SIM:-0.33}
       RWE_STORY_MERGE_MAX_GAP: ${RWE_STORY_MERGE_MAX_GAP:-48}
       RWE_STORY_MERGE_MAX_SIZE: ${RWE_STORY_MERGE_MAX_SIZE:-130}
       # Storage lifecycle (examples/retention_policy.py — the ONE typed policy module). 0 = keep

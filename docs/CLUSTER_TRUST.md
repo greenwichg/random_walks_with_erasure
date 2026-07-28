@@ -538,3 +538,48 @@ Cost: **1.39s** over a synthetic 1,000-cluster catalog, down from 7.36s — `wei
 re-summed the union on every pair, and precomputing each profile's total weight makes only the
 intersection variable (`|A ∪ B| = total_i + total_j − |A ∩ B|`). Identical arithmetic. That is what
 makes this affordable in a cached request path rather than only in an audit.
+
+### Measured and adopted, 2026-07-28
+
+| | before | after |
+|---|---:|---:|
+| stories | 1,042 | **1,028** |
+| clusters merged | — | **14** |
+| articles dropped | — | **0** |
+| largest cluster | 102 | **102** |
+| bad clusters | 2 of 67 | 2 of 68 |
+
+All 14 read by hand. Eight largest:
+
+| articles | publishers | joined |
+|---:|---:|---|
+| 22 | 14 | *At Least 2 Killed in Shooting at Food Festival in Seattle* + *Two dead, five injured near Seattle's Space Needle* |
+| 13 | 9 | *Fauci ruled out Wuhan market origin* + *Fauci diary entries: 'Press is going wild with me'* |
+| 11 | 7 | *After Trump calls off bombing, Iran signals it will halt strikes* + *Trump paused attacks on Iran to make space for talks* |
+| 7 | 7 | *J&J Agrees to Pay Up to $5.5 Billion to Settle Talc* + *J&J offers $5.5bn settlement* |
+| 7 | 7 | *ICC Removes Prosecutor Karim Khan* + *International Criminal Court ousts chief prosecutor Karim Khan* |
+| 7 | 6 | *NC woman missing in Grenada* + *NC physical therapist disappears in the Caribbean* |
+| 6 | 6 | *Mamdani's Grocery Stores Will Offer 30 Percent Discount* + *City-owned groceries to offer 30% discounts* |
+| 5 | 5 | *'God Of War: Laufey' and 'Fable' Play PS5-Xbox Release Date Chicken* + *The next Kratos God of War game will follow and connect to Laufey* |
+
+Seven are the same event under different words. The eighth — God of War — is the
+same-story-different-angle case: one is release-date jockeying, the other plot continuity. Arguably
+two news items about one subject rather than one event. It is the only debatable join in fourteen,
+and it is a judgement call, not a false merge.
+
+**No false merge appeared.** Both known false positives from the duplicate audit — a French
+wildfire paired with a Californian one, two unrelated Nvidia stories — sat at 0.31 and the 0.33
+threshold excluded them, which is the sample that set the threshold behaving as designed. The Red
+Sea explainer that paired with two separate Houthi events did not chain them either.
+
+Two consequences worth knowing:
+
+* **14 stories get new IDs on enable.** Story ids anchor to the earliest member, and merging
+  changes which article that is. A one-time churn on deploy; the broader id-stability question is
+  still open and unmeasured.
+* **Merged stories can be titled by the smaller half.** *"Fauci diary entries"* (5 articles) titles
+  the merged 13-article story because its earliest member is earliest overall. Consistent with the
+  existing rule, but for a merged story the largest contributor is usually the better headline.
+
+The eligible set for a bias summary should grow past 57: Seattle now carries 14 publishers where
+its halves carried 9 and 6.
