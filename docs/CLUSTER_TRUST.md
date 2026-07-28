@@ -733,3 +733,39 @@ that should not exist, so identity comes before curation. The remaining registry
 syndication networks and the ~30 domain/name pairs; `Globenewswire.Com` and `Prnewswire.Com` as
 `kind=wire`; then lean curation for the genuine gaps (ESPN, Variety, Philadelphia Inquirer, The
 Star Malaysia, Winnipeg Free Press).
+
+### Curated, and closed
+
+The rule's own worklist came back as exactly three names — `ESPN`, `Fool`, `Pr Newswire` — each a
+brand word carried by more than one domain, which is the only case it declines to guess. All three
+are one outlet running national editions, so a curated row settles them:
+
+| row | effect |
+|---|---|
+| `PR Newswire`, `GlobeNewswire` → `kind=wire` | settles the identity **and** keeps press releases out of stories |
+| `ESPN`, `The Motley Fool` → identity-only rows | aliases across national domains, country curated, **lean blank** |
+| `Daily Mail` + `dailymail.com` | the single alias gap: a rated outlet whose 21 articles counted as unrated |
+
+ESPN and The Motley Fool get lean-blank rows on purpose. They settle *who* the outlet is, not where
+it stands — guessing a lean to close an identity gap is the L2.2 violation the registry exists to
+prevent, and the curated country is what earns an unrated row its place under the integrity
+invariant.
+
+**Final state: 0 stories that are one outlet, 0 missing aliases, 0 unplaceable names.** ESPN now
+collapses all four of its forms; the catalog settled at ~1,006 stories as the press releases left.
+
+Two audit tests broke when this shipped, because they used `Dailymail.Com` and `Pr Newswire` as
+examples of *unresolved* forms. That is the tests having quietly become assertions about registry
+contents rather than about the rule, and they now use uncurated names instead.
+
+### What remains is judgment, not measurement
+
+Every surviving collision — Sportskeeda, iHeart, Yahoo, Sydney Morning Herald, The Age, Oregonlive
+— is **handled correctly at runtime** by the identity rule. Curating them makes the resolution
+permanent rather than heuristic; nothing is broken while they are not.
+
+The one item that still moves a product number is lean curation for the genuine gaps: Variety,
+Philadelphia Inquirer, The Star Malaysia, Winnipeg Free Press, Brisbane Times, Manila Times, The
+West Australian. That is what takes coverage-gap claims from 61 toward the measured **41% ceiling**
+(428 of 1,042 stories carry ≥ 3 publishers), and it needs defensible public ratings sourced by a
+human rather than inferred.
