@@ -249,8 +249,38 @@ probe_edge() {
     | grep -iE '^HTTP/|content-encoding|cache-control|content-length' | sed 's/^/    /'
 }
 
+# ── Is the box quiet enough for these numbers to mean anything? ───────────────────────────────
+# Run 3 of this probe reported every stage ~1.5x worse than run 2 and /api/discover 45x worse, and
+# NOTHING had changed — the api container happened to be at 99% of one of two cores when it ran.
+# On a 2-core host a single background thread (poller, GKG enricher, wiki enricher) is half the
+# machine, so an unchecked probe reports contention as if it were a property of the code. Measuring
+# a busy box is not a measurement; it is a mood.
+check_quiet() {
+  local cpu busy
+  cpu=$(docker stats --no-stream --format '{{.CPUPerc}}' "$API_CONTAINER" 2>/dev/null | tr -d '%')
+  [ -z "$cpu" ] && return 0
+  busy=$(awk -v c="$cpu" 'BEGIN{print (c+0 > 40) ? 1 : 0}')
+  if [ "$busy" -eq 1 ]; then
+    say ""
+    say "  ####################################################################"
+    say "  #  WARNING: ${API_CONTAINER} is at ${cpu}% CPU BEFORE this probe starts."
+    say "  #  On a $(nproc 2>/dev/null || echo '?')-core host that is a large share of the machine, and every"
+    say "  #  timing below will be inflated — uniformly, which makes it look like a"
+    say "  #  real regression. Wait for the poll cycle to finish and re-run."
+    say "  #  (compare: an idle run measured /api/discover at 361 ms median;"
+    say "  #   a run at 99% CPU measured the same endpoint at 16,363 ms.)"
+    say "  ####################################################################"
+    say ""
+    return 1
+  fi
+  say "  host quiet: ${API_CONTAINER} at ${cpu}% CPU — timings are comparable across runs"
+  return 0
+}
+
 say "== Hidden View performance probe =="
 say "   $(date -u +%FT%TZ)   api=${API_CONTAINER}"
+check_quiet
+QUIET=$?
 case "$MODE" in
   endpoints) probe_endpoints; probe_engine_internals ;;
   db)        probe_db ;;
@@ -258,4 +288,9 @@ case "$MODE" in
   *)         probe_endpoints; probe_engine_internals; probe_db; probe_resources; probe_edge ;;
 esac
 say ""
-say "done."
+if [ "${QUIET:-0}" -ne 0 ]; then
+  say "done — BUT the host was busy when this started. Treat every number above as an upper"
+  say "       bound, not a measurement, and re-run once ${API_CONTAINER} is idle."
+else
+  say "done."
+fi
