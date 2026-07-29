@@ -213,3 +213,27 @@ def test_the_api_service_resolves_the_same_allowlist_file_as_the_web_gate():
     api_block = compose.split("\n  api:", 1)[1].split("\n  web:", 1)[0]
     assert "BETA_ALLOWLIST_FILE" in api_block, \
         "the api service must receive BETA_ALLOWLIST_FILE so the CLI edits the file web reads"
+
+
+def test_the_web_service_can_actually_read_the_allowlist_file():
+    """The bug that made the first real grant fail.
+
+    `BETA_ALLOWLIST_FILE` is documented as `/app/data/allowlist.txt`, and `web` is where the gate
+    runs — but `web` had no volumes at all, so that path did not exist inside the container.
+    `loadAllowlist` catches the read error by design (a missing file must not break sign-in), so the
+    file-based allowlist silently did nothing: every grant was ignored and every tester saw
+    "invite-only".
+
+    It was invisible from both ends. The CLI runs in `api`, where /app/data IS mounted, so it
+    reported success against a real file. The gate reported `empty_allowlist` without naming the
+    file it could not read. Two containers, one path, no shared reality — the same shape as the
+    profile-gated image skew that deadlocked a deploy earlier.
+
+    Setting the env var without mounting the path is worse than leaving both unset, because it looks
+    configured."""
+    compose = (ROOT / "deploy" / "docker-compose.aws.yml").read_text()
+    web_block = compose.split("\n  web:", 1)[1].split("\n  api:", 1)[0]
+    assert "BETA_ALLOWLIST_FILE" in web_block, "the gate needs the path"
+    assert "/app/data" in web_block, (
+        "web must mount /app/data or BETA_ALLOWLIST_FILE points at a path that does not exist "
+        "inside the container, and every file-based grant is silently ignored")

@@ -72,6 +72,16 @@ services:
       BETA_ACCESS_ENABLED: ${BETA_ACCESS_ENABLED:-1}
       BETA_ALLOWLIST: ${BETA_ALLOWLIST:-}
       BETA_ALLOWLIST_FILE: ${BETA_ALLOWLIST_FILE:-}
+    volumes:
+      # READ-ONLY data mount, and the only reason it exists: BETA_ALLOWLIST_FILE is documented as
+      # /app/data/allowlist.txt, but `web` had no volumes at all — so that path did not exist inside
+      # this container, `loadAllowlist` swallowed the ENOENT, and the file-based allowlist silently
+      # did nothing. Every grant written to the file was ignored and every tester saw "invite-only".
+      #
+      # The failure was invisible from both ends: the CLI (in `api`, where /app/data IS mounted)
+      # reported success, and the gate reported `empty_allowlist` without saying which file it had
+      # failed to read. ro because `web` only ever reads this one file — the engine owns the database.
+      - ${IH_DATA_DIR:-/opt/ih/data}:/app/data:ro
 
   # ── FastAPI recommendation engine (never internet-reachable) ───────────────────────────────────────
   api:

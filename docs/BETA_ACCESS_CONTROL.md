@@ -129,3 +129,39 @@ Recommendation engine · ranking · lifecycle · evaluation · report calculatio
 (preserved for approved users) · **OBS1 observability** (preserved; denials are logged) · authentication
 providers (still Google-only in prod) · business logic. BA1 adds one allowlist check at the sign-in
 boundary and a friendly denial screen — nothing else.
+
+
+## Troubleshooting: "This beta is invite-only" after granting
+
+The gate logs its reason on every denial. Read that first — it distinguishes every cause in one line:
+
+```bash
+docker logs deploy-web-1 2>&1 | grep beta_access_denied | tail -5
+```
+
+| `reason` | what it means | fix |
+|---|---|---|
+| `empty_allowlist` | the gate is ON and it read **no entries at all** | the file is unreadable from `web`, or `BETA_ALLOWLIST_FILE` is unset — see below |
+| `not_allowlisted` | entries were read, this address is not among them | the address does not match their Google account exactly |
+| `no_email` | Google returned no email | rare; check the OAuth scopes |
+
+### `empty_allowlist` while the file clearly has entries
+
+Check what the **web** container sees, not what the host has:
+
+```bash
+docker exec deploy-web-1 sh -c 'echo "$BETA_ALLOWLIST_FILE"; cat "$BETA_ALLOWLIST_FILE"'
+```
+
+Two ways this fails, and both look identical from the host:
+
+1. **`BETA_ALLOWLIST_FILE` is unset in `deploy/.env`.** The gate never opens any file. Set it, then
+   `docker compose … up -d web` once — env changes need a restart, file edits do not.
+2. **`web` cannot see the path.** The CLI runs in `api`, where `/app/data` is mounted read-write;
+   `web` had no volumes at all until the read-only `/app/data` mount was added. `loadAllowlist`
+   catches the read error by design, so a missing mount produces silence rather than an error, and
+   every grant is ignored. Fixed in `deploy/docker-compose.aws.yml`; a test asserts it.
+
+**Setting the env var without mounting the path is worse than leaving both unset**, because it looks
+configured. `list-access` reports what the CLI can see; the log line above reports what the gate
+actually did.
