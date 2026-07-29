@@ -156,23 +156,51 @@ def bench_sqlite_writes(volume_dir: str, n: int = 400) -> dict:
         shutil.rmtree(d, ignore_errors=True)
 
 
-def cost_of(workload: dict, endpoints: dict, fallback_ms: float) -> dict:
+#: An endpoint needs at least this many samples before its cost is treated as a measurement.
+#: Learned the hard way: the first production run priced the whole model off `/api/recommendations`
+#: n=2 (mean 4,520 ms, max 7,973 ms) and `/api/search` n=1 — three samples, all of them cold-cache
+#: builds, which dragged the estimate to 910 DAU. A mean over one sample is not a measurement.
+MIN_SAMPLES = 5
+
+#: p95/p50 above this means the endpoint is BIMODAL — a cheap cached path and an expensive cold
+#: build sharing one name. Averaging across that mixture describes neither.
+BIMODAL_RATIO = 3.0
+
+
+def endpoint_cost(rec: dict, stat: str) -> float:
+    """The number used for capacity. ``p50`` by default, not the mean.
+
+    The mean is the wrong statistic here: one cold 8-second build among two samples moves it by
+    4 seconds, and capacity planning cares about what a request usually costs, not about the
+    arithmetic centre of a bimodal mixture."""
+    return float(rec["p50Ms"] if stat == "p50" else rec["meanMs"])
+
+
+def cost_of(workload: dict, endpoints: dict, fallback_ms: float, *, stat: str = "p50",
+            min_samples: int = MIN_SAMPLES) -> dict:
     """[D] Milliseconds of service time per action, from measured endpoint costs.
 
-    Reports how much of the cost came from real samples. A model built mostly on fallbacks is a
-    guess, and the output says so rather than presenting the two alike."""
+    Reports how much of the cost came from WELL-SAMPLED endpoints. A model built on fallbacks or on
+    one-sample endpoints is a guess, and the output has to say so rather than present all three
+    alike."""
     total = measured = 0.0
-    missing = []
+    missing, thin, bimodal = [], [], []
     for path, count in workload.items():
         rec = endpoints.get(path)
-        if rec:
-            total += rec["meanMs"] * count
-            measured += rec["meanMs"] * count
-        else:
+        if not rec:
             total += fallback_ms * count
             missing.append(path)
-    return {"ms": total, "measuredMs": measured, "missing": missing,
-            "measuredShare": (measured / total) if total else 0.0}
+            continue
+        c = endpoint_cost(rec, stat) * count
+        total += c
+        if rec["n"] >= min_samples:
+            measured += c
+        else:
+            thin.append(f"{path} (n={rec['n']})")
+        if rec["p50Ms"] > 0 and rec["p95Ms"] / rec["p50Ms"] > BIMODAL_RATIO:
+            bimodal.append(f"{path} (p50 {rec['p50Ms']:.0f} / p95 {rec['p95Ms']:.0f} ms)")
+    return {"ms": total, "measuredMs": measured, "missing": missing, "thin": thin,
+            "bimodal": bimodal, "measuredShare": (measured / total) if total else 0.0}
 
 
 def main() -> int:
@@ -184,6 +212,11 @@ def main() -> int:
     ap.add_argument("--actions-per-session", type=int, default=ACTIONS_PER_SESSION)
     ap.add_argument("--peak-hour-share", type=float, default=PEAK_HOUR_SHARE)
     ap.add_argument("--no-write-bench", action="store_true")
+    ap.add_argument("--stat", choices=("p50", "mean"), default="p50",
+                    help="which statistic prices an endpoint (default p50; the mean is wrecked by "
+                         "a single cold-cache sample)")
+    ap.add_argument("--min-samples", type=int, default=MIN_SAMPLES,
+                    help=f"samples before an endpoint counts as measured (default {MIN_SAMPLES})")
     args = ap.parse_args()
 
     endpoints = parse_request_log(sys.stdin) if not sys.stdin.isatty() else {}
@@ -198,7 +231,8 @@ def main() -> int:
     sustained_free = max(0.0, VCPU_SUSTAINABLE - background)
     burst_free = max(0.0, VCPU_TOTAL - background)
 
-    costs = {name: cost_of(w, endpoints, args.fallback_ms) for name, w in WORKLOADS.items()}
+    costs = {name: cost_of(w, endpoints, args.fallback_ms, stat=args.stat,
+                           min_samples=args.min_samples) for name, w in WORKLOADS.items()}
     mix_ms = statistics.fmean([c["ms"] for c in costs.values()])
     measured_share = statistics.fmean([c["measuredShare"] for c in costs.values()])
 
@@ -289,12 +323,29 @@ def main() -> int:
         print("\n  ! NO REQUEST LOG ON STDIN — every endpoint cost below is the fallback assumption.")
         print("    Pipe production logs in:  docker logs deploy-api-1 2>&1 | docker exec -i … ")
 
-    print(f"\n[D] COST PER USER ACTION   (endpoint costs measured; the endpoint MIX is modelled)")
-    print(f"      {'workload':<24}{'ms/action':>12}{'measured':>11}  missing endpoints")
+    print(f"\n[D] COST PER USER ACTION   (priced at {args.stat}; the endpoint MIX is modelled)")
+    print(f"      {'workload':<24}{'ms/action':>12}{'well-sampled':>14}  gaps")
     for name, c in costs.items():
-        miss = ", ".join(p.split()[-1] for p in c["missing"]) or "—"
-        print(f"      {name:<24}{c['ms']:>12.1f}{100 * c['measuredShare']:>10.0f}%  {miss}")
-    print(f"      {'mean of workloads':<24}{mix_ms:>12.1f}{100 * measured_share:>10.0f}%")
+        gaps = ", ".join([p.split()[-1] for p in c["missing"]] +
+                         [t.split()[-2] + " " + t.split()[-1] for t in c["thin"]]) or "—"
+        print(f"      {name:<24}{c['ms']:>12.1f}{100 * c['measuredShare']:>13.0f}%  {gaps}")
+    print(f"      {'mean of workloads':<24}{mix_ms:>12.1f}{100 * measured_share:>13.0f}%")
+    all_thin = sorted({t for c in costs.values() for t in c["thin"]})
+    all_bimodal = sorted({b for c in costs.values() for b in c["bimodal"]})
+    if all_thin:
+        print(f"\n      ! THIN SAMPLES (< {args.min_samples}) — these are not measurements yet:")
+        for t in all_thin:
+            print(f"          {t}")
+    if all_bimodal:
+        print(f"\n      ! BIMODAL (p95/p50 > {BIMODAL_RATIO:.0f}) — a cached path and a cold build "
+              f"sharing one name;")
+        print(f"        the p50 prices the cached path, which is the right choice for steady state,")
+        print(f"        but it means the cold cost is real and unmodelled:")
+        for b in all_bimodal:
+            print(f"          {b}")
+    if measured_share < 0.5:
+        print(f"\n      ! Under half this model's cost comes from well-sampled endpoints. Every")
+        print(f"        user number below is a placeholder until real traffic exists. Generate load.")
 
     print(f"\n[P] THROUGHPUT AND CONCURRENCY")
     print(f"      ASSUMES: wall time = CPU time (conservative); {think_sec:.0f}s think time between")

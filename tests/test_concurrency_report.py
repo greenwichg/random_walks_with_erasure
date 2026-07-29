@@ -78,3 +78,44 @@ def test_sqlite_write_benchmark_reports_a_rate(tmp_path):
     assert "error" not in res, res
     assert res["transactions"] == 50 and res["writesPerSec"] > 0
     assert not list(tmp_path.iterdir()), "the scratch database must be cleaned up"
+
+
+def test_thin_samples_are_not_counted_as_measurements():
+    """The failure the first production run walked straight into.
+
+    It priced the whole model off ``/api/recommendations`` with n=2 (mean 4,520 ms, max 7,973 ms)
+    and ``/api/search`` with n=1 — three samples, all cold-cache builds — and reported 910 DAU as
+    though that were a finding. A mean over one sample is not a measurement, and a model that cannot
+    tell the difference will always launder a guess into a number."""
+    ep = {
+        "GET /api/stories": {"n": 40, "meanMs": 90.0, "p50Ms": 85.0, "p95Ms": 120.0, "maxMs": 130.0},
+        "GET /api/recommendations": {"n": 2, "meanMs": 4520.0, "p50Ms": 4520.0,
+                                     "p95Ms": 7973.0, "maxMs": 7973.0},
+    }
+    good = cr.cost_of({"GET /api/stories": 1}, ep, fallback_ms=25.0)
+    assert good["measuredShare"] == 1.0 and good["thin"] == []
+
+    thin = cr.cost_of({"GET /api/recommendations": 1}, ep, fallback_ms=25.0)
+    assert thin["measuredShare"] == 0.0, "an n=2 endpoint must not count as measured"
+    assert thin["thin"] == ["GET /api/recommendations (n=2)"]
+
+
+def test_bimodal_endpoints_are_flagged_because_averaging_them_describes_neither():
+    """A cached read and a cold rebuild share one endpoint name. The p50 prices the cached path —
+    right for steady state — but the cold cost is real, and a report that silently discards it is
+    hiding the more interesting half."""
+    ep = {"GET /api/stories": {"n": 50, "meanMs": 900.0, "p50Ms": 90.0,
+                               "p95Ms": 5700.0, "maxMs": 7000.0}}
+    c = cr.cost_of({"GET /api/stories": 1}, ep, fallback_ms=25.0)
+    assert c["ms"] == 90.0, "cost must come from the p50, not the mean"
+    assert c["bimodal"] and "GET /api/stories" in c["bimodal"][0]
+
+
+def test_mean_would_have_been_the_wrong_statistic():
+    """Why p50 is the default, stated as an executable comparison rather than an opinion."""
+    ep = {"GET /api/stories": {"n": 50, "meanMs": 900.0, "p50Ms": 90.0,
+                               "p95Ms": 5700.0, "maxMs": 7000.0}}
+    by_p50 = cr.cost_of({"GET /api/stories": 1}, ep, fallback_ms=25.0, stat="p50")["ms"]
+    by_mean = cr.cost_of({"GET /api/stories": 1}, ep, fallback_ms=25.0, stat="mean")["ms"]
+    assert by_p50 == 90.0 and by_mean == 900.0
+    assert by_mean / by_p50 == 10.0, "one cold build in fifty moves the mean by 10x"
