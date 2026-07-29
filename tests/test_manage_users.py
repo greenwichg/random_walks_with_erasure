@@ -1,0 +1,215 @@
+"""scripts/manage_users.py — beta access by email.
+
+The six cases the brief asked for, plus the one that actually matters: PARITY with the TypeScript
+gate. This CLI re-implements the allowlist parser that `web/lib/beta-access.ts` uses to decide who
+may sign in. If the two drift, the tool reports access the gate does not grant — the worst failure
+available to something whose only job is to say who can get in.
+"""
+import json
+import pathlib
+import sys
+
+import pytest
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "scripts"))
+import manage_users as mu           # noqa: E402
+
+FIXTURE = json.loads((ROOT / "tests" / "fixtures" / "beta_allowlist_parity.json").read_text())
+
+
+@pytest.fixture()
+def allowlist(tmp_path, monkeypatch):
+    """An isolated allowlist file, with the gate ON and no env entries — production's shape."""
+    path = tmp_path / "allowlist.txt"
+    monkeypatch.setenv("BETA_ALLOWLIST_FILE", str(path))
+    monkeypatch.setenv("BETA_ACCESS_ENABLED", "1")
+    monkeypatch.delenv("BETA_ALLOWLIST", raising=False)
+    return path
+
+
+def run(*argv):
+    return mu.main(list(argv))
+
+
+def entries_in(path):
+    return [e.render() for e in mu.parse_allowlist(path.read_text() if path.exists() else "")]
+
+
+# --------------------------------------------------------------------------- parity
+
+
+@pytest.mark.parametrize("case", FIXTURE["parse"], ids=[c["why"][:40] for c in FIXTURE["parse"]])
+def test_parser_matches_the_typescript_gate(case):
+    """Same fixture as web/lib/beta-access.test.ts. Drift fails a build, not a tester's sign-in."""
+    got = [e.render() for e in mu.parse_allowlist(case["raw"])]
+    assert got == case["entries"], case["why"]
+
+
+@pytest.mark.parametrize("case", FIXTURE["matches"], ids=[c["why"][:40] for c in FIXTURE["matches"]])
+def test_matching_rules_match_the_typescript_gate(case):
+    entries = mu.parse_allowlist("\n".join(case["entries"]))
+    assert mu.matches(case["email"], entries) is case["allowed"], case["why"]
+
+
+# --------------------------------------------------------------------------- the six required cases
+
+
+def test_grant_a_new_user(allowlist, capsys):
+    assert run("grant-access", "alice@example.com") == mu.EXIT_OK
+    assert entries_in(allowlist) == ["alice@example.com"]
+    assert "granted" in capsys.readouterr().out
+
+
+def test_grant_an_existing_user_is_idempotent(allowlist, capsys):
+    """Running it twice must not double the entry, must not fail, and must say so plainly —
+    an operator re-running a command after a dropped SSH session is the normal case, not an error."""
+    assert run("grant-access", "alice@example.com") == mu.EXIT_OK
+    capsys.readouterr()
+    assert run("grant-access", "alice@example.com") == mu.EXIT_OK
+    out = capsys.readouterr().out
+    assert entries_in(allowlist) == ["alice@example.com"], "a repeat grant must not duplicate"
+    assert "already granted" in out
+
+
+def test_duplicate_grants_differing_only_in_case_are_the_same_grant(allowlist):
+    """The gate lowercases before comparing, so `Alice@` and `alice@` are one person. A CLI that
+    treated them as two would leave a second entry behind after a revoke."""
+    run("grant-access", "Alice@Example.com")
+    run("grant-access", "alice@example.com")
+    assert entries_in(allowlist) == ["alice@example.com"]
+
+
+def test_revoke_access(allowlist, capsys):
+    run("grant-access", "alice@example.com")
+    run("grant-access", "bob@example.com")
+    capsys.readouterr()
+    assert run("revoke-access", "alice@example.com") == mu.EXIT_OK
+    assert entries_in(allowlist) == ["bob@example.com"], "revoke must not touch the neighbour"
+    out = capsys.readouterr().out
+    assert "revoked" in out
+    assert "stateless JWT" in out, "an operator must be told the live session survives"
+
+
+def test_revoking_someone_absent_is_a_no_op_not_an_error(allowlist):
+    run("grant-access", "bob@example.com")
+    assert run("revoke-access", "alice@example.com") == mu.EXIT_OK
+    assert entries_in(allowlist) == ["bob@example.com"]
+
+
+@pytest.mark.parametrize("bad", ["", "not-an-email", "alice@", "@", "a b@example.com",
+                                 "alice@example", "two@@example.com", "@.com"])
+def test_invalid_email_is_rejected_before_anything_is_written(allowlist, bad):
+    """Validation runs first: a malformed argument must never reach the file. A junk line would be
+    parsed by the gate as an entry that matches nobody, so the damage is silent."""
+    assert run("grant-access", bad) == mu.EXIT_INVALID
+    assert not allowlist.exists(), "nothing may be written when the input is rejected"
+
+
+def test_list_access(allowlist, capsys):
+    run("grant-access", "alice@example.com")
+    run("grant-access", "@partner.dev")
+    capsys.readouterr()
+    assert run("list-access") == mu.EXIT_OK
+    out = capsys.readouterr().out
+    assert "alice@example.com" in out and "@partner.dev" in out
+    assert "ENABLED" in out
+
+
+def test_list_access_json_is_machine_readable(allowlist, capsys):
+    run("grant-access", "alice@example.com")
+    capsys.readouterr()
+    assert run("list-access", "--json") == mu.EXIT_OK
+    d = json.loads(capsys.readouterr().out)
+    assert d["gateEnabled"] is True
+    assert [e["value"] for e in d["fileEntries"]] == ["alice@example.com"]
+
+
+# --------------------------------------------------------------------------- the sharp edges
+
+
+def test_empty_allowlist_with_the_gate_on_is_reported_as_fail_closed(allowlist, capsys):
+    """The gate denies EVERYONE when it is enabled and the list is empty. That is the correct
+    behaviour and the most confusing possible state to debug, so `list-access` names it."""
+    assert run("list-access") == mu.EXIT_OK
+    assert "FAIL-CLOSED" in capsys.readouterr().out
+
+
+def test_revoke_warns_when_env_still_grants_access(allowlist, monkeypatch, capsys):
+    """BETA_ALLOWLIST lives in deploy/.env and this tool cannot edit it. Silently removing the file
+    entry while the env still admits them would report success and change nothing."""
+    monkeypatch.setenv("BETA_ALLOWLIST", "alice@example.com")
+    run("grant-access", "alice@example.com")
+    capsys.readouterr()
+    run("revoke-access", "alice@example.com")
+    assert "still allowed by BETA_ALLOWLIST" in capsys.readouterr().out
+
+
+def test_revoke_warns_when_a_domain_entry_still_grants_access(allowlist, capsys):
+    run("grant-access", "@example.com")
+    run("grant-access", "alice@example.com")
+    capsys.readouterr()
+    run("revoke-access", "alice@example.com")
+    assert "still allowed by a domain entry" in capsys.readouterr().out
+
+
+def test_comments_and_neighbours_survive_a_revoke(allowlist):
+    """Operators hand-edit this file. Rewriting it must preserve their comments and any other entry
+    sharing a line, or the tool destroys context every time it is used."""
+    allowlist.write_text("# wave 0\nalice@example.com, bob@example.com\n# wave 1\ncarol@example.com\n")
+    assert run("revoke-access", "bob@example.com") == mu.EXIT_OK
+    text = allowlist.read_text()
+    assert "# wave 0" in text and "# wave 1" in text
+    assert entries_in(allowlist) == ["alice@example.com", "carol@example.com"]
+
+
+def test_check_exits_nonzero_when_denied(allowlist):
+    """`check` is the scriptable form: exit 3 means the gate would refuse this address."""
+    run("grant-access", "alice@example.com")
+    assert run("check", "alice@example.com") == mu.EXIT_OK
+    assert run("check", "mallory@example.com") == mu.EXIT_DENIED
+
+
+def test_check_reports_allow_when_the_gate_is_disabled(allowlist, monkeypatch, capsys):
+    monkeypatch.setenv("BETA_ACCESS_ENABLED", "0")
+    assert run("check", "anyone@example.com") == mu.EXIT_OK
+    assert "gate is disabled" in capsys.readouterr().out
+
+
+def test_the_file_is_written_atomically(allowlist, monkeypatch):
+    """The gate re-reads this file on every sign-in, so a half-written file is one somebody signs in
+    against. If the write fails, the previous contents must remain intact."""
+    run("grant-access", "alice@example.com")
+    original = allowlist.read_text()
+
+    def boom(*a, **k):
+        raise OSError("disk full")
+    monkeypatch.setattr(mu.os, "replace", boom)
+    assert run("grant-access", "bob@example.com") == mu.EXIT_IO
+    assert allowlist.read_text() == original, "a failed write must not corrupt the allowlist"
+    leftovers = list(allowlist.parent.glob(".allowlist-*.tmp"))
+    assert not leftovers, f"temp files left behind: {leftovers}"
+
+
+# --------------------------------------------------------------------------- shipped where documented
+
+
+def test_the_cli_is_in_the_api_image():
+    """`docs/BETA_ACCESS_CONTROL.md` tells operators to run this with `docker exec deploy-api-1`.
+    Dockerfile.api copies only `rwe` and `examples` by default, so without an explicit COPY the
+    documented command fails with "No such file or directory" — which is exactly how
+    `capacity_report.py` failed in production earlier, and how a stale profile-gated image deadlocked
+    a deploy. A tool is not shipped because a doc says to run it."""
+    dockerfile = (ROOT / "deploy" / "Dockerfile.api").read_text()
+    assert "COPY scripts ./scripts" in dockerfile, \
+        "scripts/ must be copied into the api image or the documented docker exec cannot work"
+
+
+def test_the_api_service_resolves_the_same_allowlist_file_as_the_web_gate():
+    """The CLI runs in `api`; the gate runs in `web`. If only `web` receives BETA_ALLOWLIST_FILE the
+    CLI falls back to its default and can silently maintain a file nothing consults — granting
+    access that never takes effect."""
+    compose = (ROOT / "deploy" / "docker-compose.aws.yml").read_text()
+    api_block = compose.split("\n  api:", 1)[1].split("\n  web:", 1)[0]
+    assert "BETA_ALLOWLIST_FILE" in api_block, \
+        "the api service must receive BETA_ALLOWLIST_FILE so the CLI edits the file web reads"

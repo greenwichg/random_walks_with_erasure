@@ -1,0 +1,41 @@
+{
+  "_comment": [
+    "Shared by tests/test_manage_users.py (Python) and web/lib/beta-access.test.ts (TypeScript).",
+    "scripts/manage_users.py re-implements the allowlist parser that web/lib/beta-access.ts uses to",
+    "decide who may sign in. If the two drift, the CLI reports access the gate does not grant --",
+    "the worst failure available to a tool whose only job is to say who can get in. Both suites",
+    "read these cases, so drift fails a build instead of locking out a tester.",
+    "Add a case here FIRST when either implementation changes."
+  ],
+  "parse": [
+    { "why": "plain single email", "raw": "alice@example.com",
+      "entries": ["alice@example.com"] },
+    { "why": "comma, semicolon and newline all separate", "raw": "a@x.com, b@x.com; c@x.com\nd@x.com",
+      "entries": ["a@x.com", "b@x.com", "c@x.com", "d@x.com"] },
+    { "why": "case folded and trimmed", "raw": "  Alice@Example.COM  ",
+      "entries": ["alice@example.com"] },
+    { "why": "@domain becomes a domain entry", "raw": "@example.com",
+      "entries": ["@example.com"] },
+    { "why": "whole-line # comments are dropped", "raw": "# wave 0\nalice@example.com\n# later\nbob@example.com",
+      "entries": ["alice@example.com", "bob@example.com"] },
+    { "why": "blank lines and empty tokens vanish", "raw": "\n\na@x.com,,\n;\n",
+      "entries": ["a@x.com"] },
+    { "why": "empty input", "raw": "", "entries": [] },
+    { "why": "a bare @ has no value and is dropped", "raw": "@", "entries": [] },
+    { "why": "INLINE comments are NOT supported - the whole token survives with its spaces, which is why the CLI never writes one",
+      "raw": "alice@example.com # added today",
+      "entries": ["alice@example.com # added today"] }
+  ],
+  "matches": [
+    { "why": "exact address", "email": "alice@example.com", "entries": ["alice@example.com"], "allowed": true },
+    { "why": "case-insensitive on the query side", "email": "ALICE@Example.com", "entries": ["alice@example.com"], "allowed": true },
+    { "why": "domain entry covers any local part", "email": "zoe@example.com", "entries": ["@example.com"], "allowed": true },
+    { "why": "domain entry does not cover another domain", "email": "zoe@other.com", "entries": ["@example.com"], "allowed": false },
+    { "why": "an email entry is not a domain wildcard", "email": "bob@example.com", "entries": ["alice@example.com"], "allowed": false },
+    { "why": "no @ is not an address", "email": "not-an-email", "entries": ["@example.com"], "allowed": false },
+    { "why": "trailing @ is not an address", "email": "bob@", "entries": ["@example.com"], "allowed": false },
+    { "why": "leading @ is not an address", "email": "@example.com", "entries": ["@example.com"], "allowed": false },
+    { "why": "subdomain is a different domain", "email": "a@mail.example.com", "entries": ["@example.com"], "allowed": false },
+    { "why": "plus-addressing is matched literally, not normalised", "email": "a+beta@example.com", "entries": ["a@example.com"], "allowed": false }
+  ]
+}

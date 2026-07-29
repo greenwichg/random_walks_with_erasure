@@ -83,6 +83,14 @@ services:
       RWE_ENV: production
       RWE_INTERNAL_SECRET: ${RWE_INTERNAL_SECRET:?set RWE_INTERNAL_SECRET in deploy/.env}
       RWE_DB_URL: ${RWE_DB_URL:-sqlite:////app/data/ih_beta.db}
+      # The beta allowlist file, so `docker exec deploy-api-1 python scripts/manage_users.py` edits
+      # the SAME file the `web` gate reads. The api tier never enforces the gate — it only needs the
+      # path. Without this the CLI would fall back to its default and could silently maintain a file
+      # nothing consults, which is the failure mode of every "two deployables disagreeing" bug in
+      # this repo's history.
+      BETA_ALLOWLIST_FILE: ${BETA_ALLOWLIST_FILE:-}
+      BETA_ALLOWLIST: ${BETA_ALLOWLIST:-}
+      BETA_ACCESS_ENABLED: ${BETA_ACCESS_ENABLED:-1}
       # Coach v2 (M6): the MEASURED reader's coach routes through the intent-routed pipeline
       # (trigger ladder / weekly recap / grounded replies). Engine-side only; the demo path stays
       # v1 regardless. Default 0 = OFF (byte-identical to v1, pinned by test_coach_v1_contract.py),

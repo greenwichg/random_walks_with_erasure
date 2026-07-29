@@ -10,6 +10,11 @@ WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY rwe ./rwe
 COPY examples ./examples
+# Operator tooling that must be runnable with `docker exec` — scripts/manage_users.py grants and
+# revokes beta access by editing the allowlist file on the shared /app/data mount. Documented in
+# docs/BETA_ACCESS_CONTROL.md as a `docker exec` one-liner, so it has to actually be in the image;
+# leaving it out makes the documented command fail with "No such file or directory".
+COPY scripts ./scripts
 
 RUN pip install --no-cache-dir ".[serve]"
 

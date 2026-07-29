@@ -537,6 +537,14 @@ $COMPOSE up -d && deploy/ops/healthcheck.sh          # back to ready
 ```
 
 **Update the beta allowlist**
+- **CLI (preferred, no restart):**
+  ```bash
+  docker exec deploy-api-1 python scripts/manage_users.py grant-access  alice@example.com
+  docker exec deploy-api-1 python scripts/manage_users.py revoke-access alice@example.com
+  docker exec deploy-api-1 python scripts/manage_users.py list-access
+  ```
+  Idempotent, validates the address, and warns when a domain entry or `BETA_ALLOWLIST` still grants
+  access after a revoke. See `docs/BETA_ACCESS_CONTROL.md`.
 - **File mode (no restart):** edit `/opt/ih/data/allowlist.txt` (the `BETA_ALLOWLIST_FILE`) — re-read on
   the next sign-in.
 - **Env mode:** edit `BETA_ALLOWLIST` in `deploy/.env`, then `$COMPOSE up -d web`.

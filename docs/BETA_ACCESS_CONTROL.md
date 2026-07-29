@@ -48,7 +48,46 @@ production you **must** populate `BETA_ALLOWLIST` (or the file) or nobody can si
 
 ## Adding / removing beta testers
 
-### Add a tester
+### The one-liner (preferred)
+
+`scripts/manage_users.py` edits `BETA_ALLOWLIST_FILE` — the file this gate re-reads on **every**
+sign-in attempt — so onboarding a tester needs no restart, no redeploy, and no database edit:
+
+```bash
+python scripts/manage_users.py grant-access  alice@example.com
+python scripts/manage_users.py revoke-access alice@example.com
+python scripts/manage_users.py list-access
+python scripts/manage_users.py check         alice@example.com   # exit 3 = the gate would deny
+```
+
+On the deployed host, run it inside the api container (which has Python and the same `/app/data`
+mount the web tier reads):
+
+```bash
+cd /opt/ih
+docker exec deploy-api-1 python scripts/manage_users.py grant-access alice@example.com
+docker exec deploy-api-1 python scripts/manage_users.py list-access
+```
+
+`@example.com` grants a whole domain. Every command is idempotent — a repeat `grant-access` reports
+"already granted" and changes nothing, which matters because re-running after a dropped SSH session
+is the normal case and not an error.
+
+**It does not create user rows, deliberately.** `Store.upsert_user_by_identity` keys on
+`(provider, provider_account_id)`, not email, so a User row pre-created with only an address has no
+Identity: the first real Google sign-in would not find it and would create a *second* user, leaving
+the first as an orphan that silently splits that person's history. The account is created correctly
+by the OAuth flow on first sign-in — granting access is exactly what lets that happen.
+
+**Parity is enforced by tests.** The CLI re-implements this module's parser in Python, so
+`tests/fixtures/beta_allowlist_parity.json` is read by both `tests/test_manage_users.py` and
+`web/lib/beta-access.test.ts`. If the two implementations drift, a build fails instead of a tester
+being told they have access they do not have.
+
+`list-access` also cross-references the `users` table, so you can see who has been invited but has
+not signed in yet. It degrades gracefully when the database is not reachable.
+
+### Add a tester by hand
 1. Append their email (or a whole domain) to `BETA_ALLOWLIST` **or** the `BETA_ALLOWLIST_FILE`:
    ```
    BETA_ALLOWLIST="ada@example.com, grace@example.com, @ourteam.dev"

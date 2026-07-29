@@ -79,3 +79,32 @@ test("loadAllowlist: merges BETA_ALLOWLIST and BETA_ALLOWLIST_FILE; missing file
   const only = loadAllowlist({ BETA_ALLOWLIST: "keep@example.com", BETA_ALLOWLIST_FILE: join(dir, "nope.txt") });
   assert.deepEqual(only, [{ kind: "email", value: "keep@example.com" }]);
 });
+
+// ── Parity with the Python CLI ────────────────────────────────────────────────────────────────────
+// `scripts/manage_users.py` grants and revokes beta access by editing BETA_ALLOWLIST_FILE, and to do
+// that it re-implements this parser in Python. If the two drift, the CLI reports access that this
+// gate does not grant — the worst failure available to a tool whose only job is to say who can get
+// in. `tests/fixtures/beta_allowlist_parity.json` is read by BOTH suites, so a change to either
+// implementation has to be made in both or a build goes red.
+import { readFileSync as _readFileSync } from "node:fs";
+
+const parity = JSON.parse(
+  _readFileSync(new URL("../../tests/fixtures/beta_allowlist_parity.json", import.meta.url), "utf8"),
+) as {
+  parse: { why: string; raw: string; entries: string[] }[];
+  matches: { why: string; email: string; entries: string[]; allowed: boolean }[];
+};
+
+const render = (e: { kind: string; value: string }) => (e.kind === "domain" ? `@${e.value}` : e.value);
+
+test("parity: parseAllowlist agrees with scripts/manage_users.py on every shared case", () => {
+  for (const c of parity.parse) {
+    assert.deepEqual(parseAllowlist(c.raw).map(render), c.entries, c.why);
+  }
+});
+
+test("parity: matches() agrees with scripts/manage_users.py on every shared case", () => {
+  for (const c of parity.matches) {
+    assert.equal(matches(c.email, parseAllowlist(c.entries.join("\n"))), c.allowed, c.why);
+  }
+});
