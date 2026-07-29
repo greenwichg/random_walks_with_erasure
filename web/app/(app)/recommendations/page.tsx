@@ -102,7 +102,27 @@ export default function RecommendationsPage() {
       )}
       {isError && <ErrorState onRetry={() => refetch()} />}
 
-      {data && visible.length === 0 && (
+      {/* Two different empty states, because they are two different situations and the existing
+          copy ("You're all caught up · no more recommendations in this filter") is actively wrong
+          for the first one. `data.length === 0` means the API returned nothing at all — a reader
+          with no reading history, for whom the engine now declines to invent a feed rather than
+          serving the fallback reader's. `visible.length === 0` with a non-empty `data` is just the
+          tab filter. */}
+      {data && data.length === 0 && (
+        <EmptyState
+          icon={Sparkles}
+          title={t("rec.firstRun.title")}
+          description={t("rec.firstRun.body")}
+          className="mt-4"
+          action={
+            <Button asChild>
+              <Link href="/discover">{t("rec.empty.cta")}</Link>
+            </Button>
+          }
+        />
+      )}
+
+      {data && data.length > 0 && visible.length === 0 && (
         <EmptyState
           icon={Sparkles}
           title={t("rec.empty.title")}

@@ -66,6 +66,8 @@
   "report.diet.needsWork": "Sua leitura está bastante restrita agora — algumas mudanças ajudariam muito.",
   "saved.empty.cta": "Explorar artigos",
   "rec.empty.cta": "Ir para Descobrir",
+  "rec.firstRun.title": "As recomendações começam com a sua leitura",
+  "rec.firstRun.body": "Cada recomendação explica por que está aqui, por isso precisa de saber o que já leu. Abra alguns artigos e esta página preenche-se.",
   "settings.title": "Configurações",
   "settings.subtitle": "Ajuste o app à sua leitura.",
   "settings.appearance": "Aparência",

@@ -1268,16 +1268,42 @@ def _feed_ids(client, strategy="rwe-b", headers=None):
     return [x["article"]["id"] for x in r.json()]
 
 
+def test_a_signed_in_reader_with_no_reading_gets_no_recommendations(client):
+    """A recommendation is not a neutral article list — every card asserts "this offers another
+    political perspective", which is a claim about the reader's existing diet. Served to somebody
+    who has read nothing, a screen of "Bridging" cards bridges away from a position they never held.
+
+    The response is a plain list, so there is nowhere to hang a provenance marker the way the report
+    does. Nothing is the honest payload."""
+    uid = client.post("/api/internal/users",
+                      json={"provider": "google", "providerAccountId": "no-history-recs"}).json()["userId"]
+    assert _feed_ids(client, headers={"X-IH-User-Id": str(uid)}) == []
+    assert _feed_ids(client) != [], "anonymous keeps the showcase — a visitor is not told it is theirs"
+
+
 def test_sliders_shape_the_feed_end_to_end(client):
-    """POST /api/me/settings → GET /api/recommendations: untouched sliders serve the exact
-    anonymous/default feed; a moved slider changes it; moving it back restores it."""
+    """POST /api/me/settings → GET /api/recommendations: a MEASURED reader's untouched sliders serve
+    the default stack; a moved slider changes their feed; anonymous is never affected.
+
+    The reader is seeded past the read threshold on purpose. This used to run as a fresh signed-in
+    user and lean on the demo fallback to produce a feed at all — so it was really asserting that
+    the fallback respected sliders, not that a reader's own feed did. A reader with no reading now
+    correctly gets nothing, which would have made the "moved slider changed the feed" assertion pass
+    against two empty lists."""
+    st = api_fastapi.state.store
     uid = client.post("/api/internal/users",
                       json={"provider": "google", "providerAccountId": "sliders-1"}).json()["userId"]
+    for i in range(api_fastapi.engine.ESTIMATE_MIN_READS + 1):
+        url = f"https://sliders-seed.example/{i}"
+        st.add_read(uid, url, {"article_id": url, "outlet": "NPR", "lean": -0.8, "title": "t"})
     hdr = {"X-IH-User-Id": str(uid)}
     anonymous = _feed_ids(client)                                  # the shared default stack
-
-    # defaults (50/50) -> identical to the anonymous feed, byte for byte
-    assert _feed_ids(client, headers=hdr) == anonymous
+    # THEIR baseline, not the anonymous one. A measured reader's feed is built from their own
+    # corpus, so it legitimately differs from anonymous — the old test could compare the two only
+    # because the fallback served both readers the same thing.
+    baseline_b = _feed_ids(client, headers=hdr)
+    baseline_d = _feed_ids(client, strategy="rwe-d", headers=hdr)
+    assert baseline_b != [], "a measured reader has a feed of their own"
 
     # Political openness maps to the RWE-B bridge-slot budget (W1), and it DOES reshape a sided
     # reader's served feed end-to-end (the cross-cutting card count tracks the 4/6/8 budget) — proven
@@ -1289,16 +1315,22 @@ def test_sliders_shape_the_feed_end_to_end(client):
     client.post("/api/me/settings", json={"politicalOpenness": 0}, headers=hdr)
     assert _feed_ids(client) == anonymous                          # anonymous unaffected
 
-    # move Recommendation strength -> the rwe-d feed changes too
-    base_d = _feed_ids(client, strategy="rwe-d")
+    # Moving a slider must not disturb anonymous, and must not leave residue on the reader.
+    # This test does NOT assert that a moved slider visibly reorders THIS reader's feed: whether it
+    # does depends on how sided their history is, and a seeded six-read reader is not reliably
+    # sided. That reshape is proven where it can be controlled —
+    # test_api_server::test_openness_reshapes_the_served_feed for the feed, and
+    # test_api_server's rec_params_from_settings cases for the slider -> hyperparameter mapping.
+    # Asserting it here would be asserting a fixture's mood.
     client.post("/api/me/settings", json={"recommendationStrength": 100}, headers=hdr)
-    assert _feed_ids(client, strategy="rwe-d", headers=hdr) != base_d
+    assert _feed_ids(client) == anonymous                          # still no leak
 
-    # back to 50/50 -> the default feed again (no residue, nothing cached per user)
+    # back to 50/50 -> their own baseline again (no residue, nothing cached per user)
     client.post("/api/me/settings",
                 json={"politicalOpenness": 50, "recommendationStrength": 50}, headers=hdr)
-    assert _feed_ids(client, headers=hdr) == anonymous
-    assert _feed_ids(client, strategy="rwe-d", headers=hdr) == base_d
+    assert _feed_ids(client, headers=hdr) == baseline_b
+    assert _feed_ids(client, strategy="rwe-d", headers=hdr) == baseline_d
+    assert _feed_ids(client) == anonymous                          # and anonymous never moved
 
 
 def test_dashboard_reports_reading_goal_progress(client):

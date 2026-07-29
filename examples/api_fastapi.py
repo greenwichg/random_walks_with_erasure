@@ -1858,20 +1858,28 @@ def _serve(active: "corpus_refresh.Active", request: Request, user: str | None):
     """Routing for recommendations + coach (which have no Estimate form). Reads the single captured
     ``active`` bundle so the whole request stays on one corpus generation across a hot swap.
 
-    Returns ``("personal", uid)`` when the signed-in reader has crossed the read threshold — the
-    request is served from their augmented corpus. Otherwise the seeded exhibit account
-    (``_demo_personal``) is preferred — the same measured pipeline every real user gets — falling
-    back to ``("row", row)``: the synthetic demo reader, or the ``?user=`` selection, which always
-    wins for an anonymous request (the row picker is a deliberate exhibit browser)."""
+    Returns ``(kind, value, is_sample)``. ``("personal", uid, False)`` when the signed-in reader has
+    crossed the read threshold — the request is served from their augmented corpus. Otherwise the
+    seeded exhibit account (``_demo_personal``) is preferred — the same measured pipeline every real
+    user gets — falling back to ``("row", row, …)``: the synthetic demo reader, or the ``?user=``
+    selection, which always wins for an anonymous request (the row picker is a deliberate exhibit
+    browser).
+
+    ``is_sample`` is the same question ``_report_for`` answers: is this the requesting reader's own
+    data? A recommendation is not a neutral article list — it carries a RATIONALE ("this offers
+    another political perspective"), and that sentence is a claim about the reader's existing diet.
+    Served to someone who has read nothing it is bridging away from a position they never held."""
     uid = _real_uid(request)
     if uid is not None and active.personalizer.has_measured(uid):
-        return "personal", uid
+        return "personal", uid, False
     demo = _demo_personal(active)
     if uid is not None:
-        return ("personal", demo) if demo is not None else ("row", active.backend.demo_user)
+        # Signed in, but nothing of their own — whichever fallback is configured, it is not theirs.
+        return (("personal", demo, True) if demo is not None
+                else ("row", active.backend.demo_user, True))
     if user is None and demo is not None:
-        return "personal", demo
-    return "row", _anon_row(active, request, user)
+        return "personal", demo, True
+    return "row", _anon_row(active, request, user), True
 
 
 def _require_real_user(request: Request) -> int:
@@ -2878,7 +2886,18 @@ def recommendations(
     strategy: str | None = Query(None, description="rwe-b | rwe-d | adaptive; omit for a blended feed"),
 ) -> list:
     active = _active()
-    kind, val = _serve(active, request, user)
+    kind, val, is_sample = _serve(active, request, user)
+    # A SIGNED-IN reader with no reading of their own gets an empty feed rather than the fallback
+    # reader's. Recommendations are not a neutral article list: every card carries "this article
+    # offers another political perspective", which is a claim about the reader's existing diet.
+    # Served to somebody who has read nothing, three "Bridging" cards bridge away from a position
+    # they never held — and the response is a plain list, so unlike the report there is nowhere to
+    # hang a marker. Nothing is the honest payload; the web renders its empty state from it.
+    #
+    # Anonymous requests keep the showcase: a visitor browsing the landing experience is not being
+    # told these are theirs.
+    if is_sample and _real_uid(request) is not None:
+        return []
     # A signed-in reader's preference sliders map to per-request recommender hyperparameters
     # (Political openness → RWE-B epsilon, Recommendation strength → RWE-D beta). Untouched
     # sliders map to None — the shared default stack — so demo/anonymous requests and readers
@@ -2958,7 +2977,7 @@ def coach(request: Request, user: str | None = Query(None)) -> list:
     The metric-change and story-update triggers run in SHADOW — logged here, never rendered.
     Flag off is byte-identical to v1 (pinned by tests/test_coach_v1_contract.py)."""
     active = _active()
-    kind, val = _serve(active, request, user)
+    kind, val, _is_sample = _serve(active, request, user)
     if kind == "personal" and coach_service.coach_v2_enabled():
         pers = active.personalizer
         g = coach_service.greeting_turn(pers, pers.store, val)
@@ -2984,7 +3003,7 @@ def coach_reply(request: Request, req: CoachRequest) -> dict:
     the demo path stays v1 regardless — Coach v2 needs a real reader's Personalizer surfaces.
     Flag off is byte-identical to v1 (pinned by tests/test_coach_v1_contract.py)."""
     active = _active()
-    kind, val = _serve(active, request, req.user)
+    kind, val, _is_sample = _serve(active, request, req.user)
     if kind == "personal" and coach_service.coach_v2_enabled():
         pers = active.personalizer
         turn = coach_service.coach_turn(pers, pers.store, val,
@@ -3105,7 +3124,7 @@ def explain_recommendations_internal(
     feed than the one served. Trusted endpoint, like the other ``/api/internal/*`` routes."""
     _require_trusted(request)
     active = _active()
-    kind, val = _serve(active, request, user)
+    kind, val, _is_sample = _serve(active, request, user)
     uid = _real_uid(request)
     params = None
     if uid is not None and state.store is not None:

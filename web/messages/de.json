@@ -66,6 +66,8 @@
   "report.diet.needsWork": "Ihre Lektüre ist derzeit ziemlich einseitig – ein paar Änderungen würden viel helfen.",
   "saved.empty.cta": "Artikel durchsuchen",
   "rec.empty.cta": "Zu Entdecken",
+  "rec.firstRun.title": "Empfehlungen beginnen mit Ihrer Lektüre",
+  "rec.firstRun.body": "Jede Empfehlung erklärt, warum sie hier steht – dafür muss sie wissen, was Sie bereits gelesen haben. Öffnen Sie einige Artikel, dann füllt sich diese Seite.",
   "settings.title": "Einstellungen",
   "settings.subtitle": "Passen Sie die App an Ihre Lektüre an.",
   "settings.appearance": "Darstellung",
