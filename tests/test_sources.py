@@ -1156,3 +1156,45 @@ def test_source_poll_logs_a_duration_split():
     assert "postCycleMs" in polls[0], "the retention/warm/refresh half must be timed separately"
     assert polls[0]["pollMs"] >= 20.0, f"pollMs must measure the adapter, got {polls[0]['pollMs']}"
     assert polls[0]["postCycleMs"] >= 0.0
+
+
+def test_post_cycle_attributes_its_time_to_a_named_step():
+    """Production measured postCycleMs at 83-122 s per cycle against a 5.7 s story warm, so ~93% of
+    the most expensive loop in the process sat inside steps that had no timing at all. A single
+    aggregate duration localizes nothing — it says "the post-cycle is slow", which is where the
+    investigation already was.
+
+    Retention, warm, and the refresh hook are three different problems with three different fixes.
+    Each one reports its own duration or the aggregate cannot be acted on."""
+    events = []
+    calls = []
+
+    class _Quick:
+        provider, source_type = "Quick", "quick"
+
+        def enabled(self): return True
+        def interval(self): return 3600.0
+        @property
+        def health_key(self): return "quick://test"
+        def poll_once(self, store_, scorer, *, on_feed=None):
+            return {"new": 1, "duplicates": 0, "failed": 0}
+
+    def slow_hook(agg):
+        calls.append(agg)
+        time.sleep(0.03)
+
+    st = store_mod.Store("sqlite://")
+    reg = sources.SourceRegistry()
+    adapter = reg.register(_Quick())
+    poller = sources.MultiSourcePoller(
+        st, scorer=lambda *a, **k: 0.0, registry=reg, on_cycle=slow_hook,
+        log=lambda level, event, **f: events.append((event, f)))
+    poller.poll_adapter_once(adapter)
+
+    post = [f for event, f in events if event == "post_cycle"]
+    assert len(post) == 1, f"expected one post_cycle event, got {[e for e, _ in events]}"
+    for field in ("cleanupMs", "warmMs", "refreshMs"):
+        assert field in post[0], f"{field} missing — the step it covers would be unattributable"
+    assert calls, "the on_cycle hook must still run"
+    assert post[0]["refreshMs"] >= 30.0, \
+        f"refreshMs must measure the hook, got {post[0]['refreshMs']}"

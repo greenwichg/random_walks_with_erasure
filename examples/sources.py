@@ -1329,10 +1329,12 @@ class MultiSourcePoller:
         # Storage lifecycle: catalog retention PLUS the bounded prunes for derived/operational
         # tables (orphaned event locations, score cache, analytics, rec-events, snapshots). One
         # incremental pass per cycle — never user data, never a long write lock.
+        t0 = time.perf_counter()
         try:
             storage_lifecycle.run_cleanup(self.store, log=self._log)
         except Exception as e:                              # cleanup must never break polling
             self._log(logging.WARNING, "storage_cleanup_failed", error=f"{type(e).__name__}: {e}")
+        t_cleanup = time.perf_counter()
         # REQUEST a story rebuild rather than performing one here. The catalog has settled (this
         # runs after retention, so the fingerprint is final) and this ingest has just invalidated
         # the cache; without a warm the next reader pays the full rebuild — 5.4 s measured.
@@ -1360,11 +1362,20 @@ class MultiSourcePoller:
             story_service.request_warm(self.store, log=_warm_log)
         except Exception as e:
             self._log(logging.WARNING, "story_cache_warm_failed", error=f"{type(e).__name__}: {e}")
+        t_warm = time.perf_counter()
         if self._on_cycle is not None:
             try:
                 self._on_cycle(agg)
             except Exception as e:                          # a downstream hook must never break polling
                 self._log(logging.ERROR, "multi_source_on_cycle_error", error=repr(e))
+        t_hook = time.perf_counter()
+        # Production measured postCycleMs at 83-122 s per cycle against a 5.7 s warm, so ~93% of the
+        # most expensive loop in the process was inside a step nobody had timed. These three numbers
+        # are what turn "the post-cycle is slow" into a named owner.
+        self._log(logging.INFO, "post_cycle",
+                  cleanupMs=round((t_cleanup - t0) * 1000.0, 1),
+                  warmMs=round((t_warm - t_cleanup) * 1000.0, 1),
+                  refreshMs=round((t_hook - t_warm) * 1000.0, 1))
 
     def poll_adapter_once(self, adapter: SourceAdapter) -> dict:
         with self._lock:                                    # write-safe: one adapter ingests at a time

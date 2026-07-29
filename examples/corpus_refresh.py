@@ -159,6 +159,7 @@ class RefreshManager:
         self.last_failed_at: Optional[str] = None
         self.last_error: Optional[str] = None
         self.last_build_ms: Optional[float] = None
+        self.last_candidate_ms: Optional[float] = None
         self.last_activation_ms: Optional[float] = None
         self.last_failures: list = []
 
@@ -261,11 +262,18 @@ class RefreshManager:
             return
         self.catalog_dirty = False           # consuming the nudge: this check covers everything so far
         th = corpus_health.thresholds_from_env()
+        t0 = time.perf_counter()
         candidate = build_candidate_for(store_, th)
         sig = candidate_signature(candidate)
+        # The candidate is built on EVERY cycle — it is how the signature is computed — and it loads
+        # the entire catalog (`list_feed_articles(limit=10_000_000)`). So this cost is paid whether
+        # or not anything gets rebuilt, and until now only the rebuild had a duration in the log.
+        self.last_candidate_ms = round((time.perf_counter() - t0) * 1000.0, 1)
         self.last_candidate_sig = sig
         current = self.app.active
         if current is not None and sig == current.candidate_sig:
+            self._log(logging.INFO, "corpus_refresh_check", candidateMs=self.last_candidate_ms,
+                      items=len(candidate), rebuilt=False)
             return              # catalog composition unchanged — nothing to rebuild
 
         with self._lock:
@@ -293,7 +301,8 @@ class RefreshManager:
             self.last_error = None
             self.state = RefreshState.IDLE
         self._log(logging.INFO, "corpus_refresh_activated", generation=active.generation,
-                  items=active.item_count, buildMs=self.last_build_ms,
+                  items=active.item_count, candidateMs=self.last_candidate_ms,
+                  buildMs=self.last_build_ms,
                   activationMs=self.last_activation_ms, sig=active.candidate_sig)
 
     # -- diagnostics -------------------------------------------------------- #
