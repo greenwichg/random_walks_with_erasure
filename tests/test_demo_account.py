@@ -262,3 +262,41 @@ def test_the_synthetic_fallback_is_marked_too_not_just_the_exhibit(client):
         "the synthetic fallback is not the reader's own data either — is_exhibit=False does not "
         "mean is_mine=True")
     assert dash.get("sample") is True
+
+
+def test_the_guide_cites_nothing_for_a_reader_with_no_reading(client):
+    """The Guide's own footer promises "It won't invent statistics."
+
+    It did not invent them — it borrowed them. A signed-in reader with no reads is routed by
+    `_serve` to `kind == "row"`, so v1 narrated the FALLBACK reader's report and greeted a brand-new
+    beta tester with "Echo Chamber Score: 77 · Viewpoint Balance: 84". A reader cannot tell borrowed
+    from invented, and the page says neither happens.
+
+    Coach v2 could not help: it is gated on `kind == "personal"`, so the newest account was served
+    the oldest path."""
+    _, h = _user(client, "guide-no-history")
+    import api_fastapi
+    real = api_fastapi._demo_personal
+    api_fastapi._demo_personal = lambda active: None      # force the synthetic branch, as prod runs
+    try:
+        greeting = client.get("/api/coach", headers=h).json()
+        reply = client.post("/api/coach", json={"message": "How balanced is my reading?"},
+                            headers=h).json()
+    finally:
+        api_fastapi._demo_personal = real
+
+    assert len(greeting) == 1
+    assert not greeting[0].get("citations"), (
+        "a reader with no reading has no metrics to cite — borrowing the fallback reader's is the "
+        "exact thing the Guide's footer promises never happens")
+    assert not reply.get("citations"), "and answering a question about it must not cite them either"
+    for msg in (greeting[0], reply):
+        assert "isn't any yet" in msg["content"], "the Guide should say so plainly"
+
+
+def test_the_guide_still_answers_normally_for_the_exhibit(client, exhibit):
+    """The first-run turn is keyed on the VIEWER having nothing, not on the fallback existing. The
+    exhibit account has real reads, so it keeps the full grounded Guide."""
+    _, h = exhibit
+    greeting = client.get("/api/coach", headers=h).json()
+    assert greeting[0].get("citations"), "a reader with real reading still gets grounded citations"

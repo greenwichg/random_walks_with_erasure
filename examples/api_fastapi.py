@@ -2968,6 +2968,36 @@ def _v2_message(turn: dict, mid: str) -> dict:
             "echo": turn["echo"]}
 
 
+def _coach_first_run(uid: int, message: str = "") -> dict:
+    """The Guide's turn for a signed-in reader with no reading of their own.
+
+    v1 narrates the FALLBACK reader's report, so a brand-new beta tester was greeted with
+    "Echo Chamber Score: 77 · Viewpoint Balance: 84" — somebody else's numbers, under a page footer
+    that reads "The Guide narrates engine-computed metrics. It won't invent statistics." It did not
+    invent them; it borrowed them, which the reader cannot tell apart.
+
+    Coach v2 never even ran: it is gated on ``kind == "personal"``, and a reader with no reads is
+    routed to ``kind == "row"``. So the newest account got the OLDEST path — the one thing a first
+    impression should not be.
+
+    NO citations. There is nothing to cite yet, and an empty citation list is the honest form of
+    that. Deliberately not routed through Coach v2 either: v2's trigger ladder reads a reader's
+    surfaces, and there are none."""
+    return {
+        "id": f"msg_{engine._stable_int('first-run:' + (message or 'greeting'), uid)}",
+        "role": "assistant",
+        "content": ("Hi — I'm your Information Health guide. I work from your reading, and there "
+                    "isn't any yet, so I have nothing to explain and won't guess. Open a few "
+                    "articles from Discover and I'll be able to talk about your topics, sources, "
+                    "viewpoints and tone — and show you the numbers behind every answer."),
+        "createdAt": datetime.now(timezone.utc).isoformat(),
+        # No `followUps`. That is a Coach v2 field, and v2 deliberately did NOT run here — emitting
+        # it would make the response look v2-shaped to the client and would (rightly) trip
+        # test_coach_api::test_flag_on_below_threshold_reader_stays_v1. The content stands alone,
+        # and the web already renders its own suggestion chips.
+    }
+
+
 @app.get("/api/coach", response_model=list[CoachMessageModel], response_model_exclude_none=True,
          tags=["coach"], summary="Coach greeting for a reader", responses=_ERR_RESPONSES)
 def coach(request: Request, user: str | None = Query(None)) -> list:
@@ -2977,7 +3007,10 @@ def coach(request: Request, user: str | None = Query(None)) -> list:
     The metric-change and story-update triggers run in SHADOW — logged here, never rendered.
     Flag off is byte-identical to v1 (pinned by tests/test_coach_v1_contract.py)."""
     active = _active()
-    kind, val, _is_sample = _serve(active, request, user)
+    kind, val, is_sample = _serve(active, request, user)
+    uid = _real_uid(request)
+    if is_sample and uid is not None:
+        return [_coach_first_run(uid)]
     if kind == "personal" and coach_service.coach_v2_enabled():
         pers = active.personalizer
         g = coach_service.greeting_turn(pers, pers.store, val)
@@ -3003,7 +3036,12 @@ def coach_reply(request: Request, req: CoachRequest) -> dict:
     the demo path stays v1 regardless — Coach v2 needs a real reader's Personalizer surfaces.
     Flag off is byte-identical to v1 (pinned by tests/test_coach_v1_contract.py)."""
     active = _active()
-    kind, val, _is_sample = _serve(active, request, req.user)
+    kind, val, is_sample = _serve(active, request, req.user)
+    uid = _real_uid(request)
+    if is_sample and uid is not None:
+        # Same reasoning as the greeting, and it matters more here: the reader has just ASKED
+        # "How balanced is my reading?" and v1 would have answered from the fallback reader's facts.
+        return _coach_first_run(uid, req.message or "")
     if kind == "personal" and coach_service.coach_v2_enabled():
         pers = active.personalizer
         turn = coach_service.coach_turn(pers, pers.store, val,
