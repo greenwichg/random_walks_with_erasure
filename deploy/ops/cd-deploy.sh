@@ -24,6 +24,12 @@
 set -uo pipefail
 # shellcheck source=deploy/ops/_compose.sh
 source "$(dirname "$0")/_compose.sh"
+# shellcheck source=deploy/ops/_stages.sh
+source "$(dirname "$0")/_stages.sh"
+
+ROLLBACK_STATE="not reached"
+# cd-deploy owns the CD_RESULT contract line; update.sh must never print one (see stage_fail).
+EMIT_CD_RESULT=1
 
 REF="${1:-}"
 if [ -z "$REF" ]; then
@@ -40,70 +46,151 @@ git config --global --add safe.directory "$REPO_ROOT" 2>/dev/null || true
 LAST_GOOD="$(git rev-parse HEAD)"
 echo "== cd-deploy: currently serving ${LAST_GOOD} — requested ${REF} =="
 
-# PRE-FLIGHT: a dirty working tree, reported as itself.
-#
-# update.sh runs `git checkout "$REF"` under `set -euo pipefail`. If a tracked file has been
-# modified locally AND the target commit also changes that file, git refuses the checkout, update.sh
-# aborts, and cd-deploy rolls back — announcing that the deploy "failed its health/smoke gate" when
-# no container ever moved and nothing was ever health-checked. That message cost a full round trip
-# to diagnose: the symptom seen from outside was a missing database index, which looked like a
-# database problem and was actually a checkout that never happened.
-#
-# It is an easy state to reach by accident. Grabbing a single newer file — `git checkout <ref> --
-# deploy/ops/some-script.sh`, to run an updated ops script without a full deploy — leaves exactly
-# this, and only bites when a later deploy happens to touch the same file.
-#
-# Refuse early, name the files, and print the command that clears it. Aborting is right rather than
-# stashing on the operator's behalf: those edits might be a hotfix someone is mid-way through, and
-# a deploy tool must not silently discard work it does not understand.
+stage_enter PREFLIGHT "checks that can abort before anything moves"
+stage_clear_state
+
+# Everything in this stage is READ-ONLY. If any of it fails, no code has moved, no container has
+# been touched, and the previous deployment is still serving — which the report says explicitly, so
+# nobody pages anybody.
+
+# -- the docker daemon must be answering, or every later stage fails confusingly --
+if ! docker info >/dev/null 2>&1; then
+  evidence_from "systemctl status docker" systemctl is-active docker
+  stage_fail "the docker daemon is not responding" \
+"1. Check it:    systemctl status docker
+2. Start it:    sudo systemctl start docker
+3. Retry. Nothing has moved — but note the RUNNING SITE is also down if the daemon died under it." 3
+fi
+
+# -- a dirty working tree blocks `git checkout` and used to surface as a health failure --
 DIRTY="$(git status --porcelain --untracked-files=no 2>/dev/null || true)"
 if [ -n "$DIRTY" ]; then
-  echo "== cd-deploy: ABORTING — the working tree has local modifications ==" >&2
-  printf '%s\n' "$DIRTY" | sed 's/^/    /' >&2
-  echo "" >&2
-  echo "  update.sh would run 'git checkout ${REF}', and git refuses that when a modified file is" >&2
-  echo "  also changed by the target commit. Nothing has been deployed and nothing was rolled back." >&2
-  echo "" >&2
-  echo "  To discard these local edits and retry:" >&2
-  # `git checkout HEAD -- .`, not `git checkout -- .`. The commonest way to reach this state is
-  # `git checkout <ref> -- <path>`, which STAGES the file, and restoring the worktree from the index
-  # leaves a staged change exactly where it was. Naming HEAD as the source resets both.
-  echo "      git -C ${REPO_ROOT} checkout HEAD -- ." >&2
-  echo "      bash deploy/ops/cd-deploy.sh ${REF}" >&2
-  alert "cd-deploy: ABORTED before touching anything — ${REPO_ROOT} has local modifications that would block 'git checkout ${REF}'. Still serving ${LAST_GOOD}."
-  echo "CD_RESULT=aborted ref=${REF} reason=dirty_worktree"
-  exit 3
+  evidence "modified tracked files:"$'\n'"$(printf '%s\n' "$DIRTY" | sed 's/^/    /')"
+  stage_fail "the working tree has local modifications that can block 'git checkout ${REF}'" \
+"git refuses to check out a ref when a locally-modified file is also changed by that commit. The
+commonest way in is 'git checkout <ref> -- path/to/script', to pick up one newer ops script without
+a full deploy — it STAGES the file, and only bites when a later deploy touches the same path.
+
+Aborting rather than stashing on your behalf: these edits could be a hotfix someone is mid-way
+through, and a deploy tool must not silently discard work it does not understand.
+
+1. Inspect:  git -C ${REPO_ROOT} status --porcelain
+2. Discard:  git -C ${REPO_ROOT} checkout HEAD -- .
+     ('git checkout -- .' is NOT enough — it restores the worktree from the index and leaves a
+      staged change exactly where it was.)
+3. Retry:    bash deploy/ops/cd-deploy.sh ${REF}" 3
 fi
 
-echo "== cd-deploy: pre-deploy database snapshot =="
+# -- the data volume, if a dedicated one is configured, must actually be mounted --
+DATA_DIR="$(env_val IH_DATA_DIR)"; DATA_DIR="${DATA_DIR:-/opt/ih/data}"
+if [ "$(env_val IH_DATA_MOUNT)" = "1" ] && ! mountpoint -q "$DATA_DIR" 2>/dev/null; then
+  stage_fail "IH_DATA_MOUNT=1 but '${DATA_DIR}' is not a mounted filesystem" \
+"Refusing to deploy: the bind-mount would land on an empty directory of the root disk and the app
+would create a FRESH EMPTY DATABASE. This is the data-loss guard, working.
+
+1. Mount it:  sudo mount '${DATA_DIR}'   (check /etc/fstab)
+2. Verify:    mountpoint '${DATA_DIR}'
+3. Retry. Nothing has moved." 3
+fi
+
+# -- free disk, because a build that fills the disk fails in the least legible way available --
+AVAIL_MB="$(df -Pm "${REPO_ROOT}" 2>/dev/null | awk 'NR==2 {print $4}')"
+if [ -n "${AVAIL_MB:-}" ] && [ "$AVAIL_MB" -lt "${CD_MIN_FREE_MB:-2048}" ]; then
+  evidence_from "disk" df -h "${REPO_ROOT}"
+  evidence_from "docker disk usage" docker system df
+  stage_fail "only ${AVAIL_MB} MB free on the deploy volume (need >= ${CD_MIN_FREE_MB:-2048} MB)" \
+"An image build needs headroom; running out mid-build produces an error that names a compiler or a
+package manager rather than the disk, which is a slow thing to diagnose at speed.
+
+1. Reclaim:  docker system prune -af      (UNUSED images and build cache only — no volumes)
+2. Check:    df -h ${REPO_ROOT}
+3. Retry. Nothing has moved." 3
+fi
+
+echo "  preflight OK — worktree clean, docker up, data mount present, $((AVAIL_MB)) MB free"
+
+stage_enter BACKUP "pre-deploy database snapshot"
+BACKUP_OK=1
 if [ -n "$(env_val IH_S3_BUCKET)" ]; then
   # Consistent backup + PRAGMA integrity check + off-host S3 sync (the hourly cron's own path).
-  "$OPS_DIR/backup-offhost.sh" --backup-now || {
-    alert "cd-deploy: pre-deploy backup FAILED — aborting before any code moved (still serving ${LAST_GOOD})"
-    echo "CD_RESULT=aborted ref=${REF}"
-    exit 3
-  }
+  "$OPS_DIR/backup-offhost.sh" --backup-now || BACKUP_OK=0
 else
-  backup_run backup || {
-    alert "cd-deploy: pre-deploy backup FAILED — aborting before any code moved (still serving ${LAST_GOOD})"
-    echo "CD_RESULT=aborted ref=${REF}"
-    exit 3
-  }
+  backup_run backup || BACKUP_OK=0
+fi
+if [ "$BACKUP_OK" -ne 1 ]; then
+  evidence_from "disk" df -h "${REPO_ROOT}"
+  alert "cd-deploy [BACKUP] ABORTED before any code moved — pre-deploy snapshot failed. Site UNAFFECTED, still serving ${LAST_GOOD}."
+  stage_fail "the pre-deploy database snapshot failed" \
+"Deliberately fatal. The snapshot is what makes the deploy reversible without data risk, so a deploy
+that cannot take one does not proceed.
+
+1. Read the backup output above — a failed PRAGMA integrity check means a DATA fault, and
+   deploy/ops/restore.sh is the tool for that, not this one.
+2. Disk full is the other common cause (attached above).
+3. Retry once the snapshot succeeds. Nothing has moved — the previous deployment is still serving." 3
 fi
 
-echo "== cd-deploy: deploying ${REF} =="
-if "$OPS_DIR/update.sh" "$REF"; then
-  echo "CD_RESULT=deployed ref=$(git rev-parse HEAD)"
+echo ""
+echo "== cd-deploy: handing off to update.sh for ${REF} =="
+"$OPS_DIR/update.sh" "$REF"
+UPDATE_RC=$?
+if [ "$UPDATE_RC" -eq 0 ]; then
+  stage_clear_state
+  alert "cd-deploy [SUCCESS] deployed ${REF} — smoke green."
+  echo "CD_RESULT=deployed ref=$(git rev-parse HEAD) stage=SUCCESS service_interrupted=0 rollback=none"
   exit 0
 fi
 
-echo "== cd-deploy: deploy FAILED — rolling back to ${LAST_GOOD} ==" >&2
+# Recover the child's stage. The state file carries the detail; the exit code is the fallback for
+# the case where update.sh was killed before it could write one — which is itself worth naming
+# rather than reporting as a generic failure.
+if stage_load_state && [ -n "${CHILD_STAGE:-}" ]; then
+  FAILED_STAGE="$CHILD_STAGE"
+  FAILED_CAUSE="${CHILD_ROOT_CAUSE:-unknown}"
+  INTERRUPTED="${CHILD_INTERRUPTED:-0}"
+else
+  FAILED_STAGE="$(stage_from_exit_code "$UPDATE_RC")"
+  FAILED_CAUSE="update.sh exited ${UPDATE_RC} without leaving a stage record (killed, or crashed before reporting)"
+  if stage_is_disruptive "$FAILED_STAGE"; then INTERRUPTED=1; else INTERRUPTED=0; fi
+fi
+STAGE="$FAILED_STAGE"
+SERVICE_INTERRUPTED="$INTERRUPTED"
+
+# ROLLBACK IS ONLY RUN WHEN THE SERVICE IS ACTUALLY DOWN.
+#
+# It used to run unconditionally, which is how a refused `git checkout` produced a "rollback" that
+# re-deployed the commit already checked out and then announced a health-gate failure. Redeploying
+# a healthy stack is not free: it stops containers that were serving perfectly well, turning a
+# harmless failure into real downtime.
+if [ "$SERVICE_INTERRUPTED" -eq 0 ]; then
+  ROLLBACK_STATE="NOT NEEDED — the previous deployment never stopped"
+  alert "cd-deploy [${FAILED_STAGE}] deploy of ${REF} failed BEFORE any container moved. Site UNAFFECTED, still serving ${LAST_GOOD}. No rollback attempted. Cause: ${FAILED_CAUSE}"
+  echo ""
+  echo "  Not rolling back: the failure happened at ${FAILED_STAGE}, before the running stack was" >&2
+  echo "  touched. Redeploying a healthy stack would cause the downtime this failure avoided." >&2
+  echo "CD_RESULT=aborted ref=${REF} stage=${FAILED_STAGE} service_interrupted=0 rollback=none"
+  exit 3
+fi
+
+stage_enter ROLLBACK "restoring ${LAST_GOOD} — the site is down until this completes"
+SERVICE_INTERRUPTED=1
 if "$OPS_DIR/update.sh" "$LAST_GOOD"; then
-  alert "cd-deploy: deploy of ${REF} failed its health/smoke gate — AUTO-ROLLED-BACK to ${LAST_GOOD} (serving, healthy)"
-  echo "CD_RESULT=rolled_back from=${REF} to=${LAST_GOOD}"
+  ROLLBACK_STATE="OK — ${LAST_GOOD} restored and smoke-green"
+  alert "cd-deploy [${FAILED_STAGE}] deploy of ${REF} failed AFTER containers were replaced — AUTO-ROLLED-BACK to ${LAST_GOOD}, now serving and smoke-green. Cause: ${FAILED_CAUSE}"
+  echo "CD_RESULT=rolled_back from=${REF} to=${LAST_GOOD} stage=${FAILED_STAGE} service_interrupted=1 rollback=ok"
   exit 1
 fi
 
-alert "cd-deploy: deploy of ${REF} failed AND rollback to ${LAST_GOOD} failed — MANUAL INTERVENTION REQUIRED (check 'dc ps' + api logs; DB snapshot from before the attempt is in the backups dir)"
-echo "CD_RESULT=rollback_failed from=${REF} to=${LAST_GOOD}"
+ROLLBACK_STATE="FAILED — ${LAST_GOOD} did not come back"
+alert "cd-deploy [${FAILED_STAGE}] deploy of ${REF} failed AND rollback to ${LAST_GOOD} FAILED — THE SITE IS DOWN, MANUAL INTERVENTION REQUIRED. Cause: ${FAILED_CAUSE}"
+stage_report_failure "rollback to ${LAST_GOOD} did not restore service after a failure at ${FAILED_STAGE}" \
+"THE SITE IS DOWN AND AUTOMATION HAS RUN OUT OF MOVES.
+
+1. Container states:  cd ${REPO_ROOT} && docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.aws.yml --env-file deploy/.env ps
+2. Engine logs:       ... logs --tail 100 api
+3. The rollback ran update.sh ${LAST_GOOD} and it also failed — read ITS stage report above; the
+   stage it names is the real fault and it is not specific to ${REF}.
+4. A pre-deploy DB snapshot from before this attempt is in the backups directory. Code faults do
+   not need it; use deploy/ops/restore.sh only for a DATA fault."
+echo "CD_RESULT=rollback_failed from=${REF} to=${LAST_GOOD} stage=${FAILED_STAGE} service_interrupted=1 rollback=failed"
 exit 2

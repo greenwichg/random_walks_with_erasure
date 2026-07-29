@@ -121,15 +121,37 @@ jobs:
           OUT=$(aws ssm get-command-invocation \
             --command-id "$CMD_ID" --instance-id "${{ vars.EC2_INSTANCE_ID }}" \
             --query 'StandardOutputContent' --output text)
-          RESULT=$(printf '%s\n' "$OUT" | grep -o 'CD_RESULT=[a-z_]*' | tail -1)
-          echo "SSM status: ${{ steps.wait.outputs.status }} — $RESULT"
+          # The host emits ONE contract line. `CD_RESULT=<token>` is the verdict; the rest of the
+          # line carries the stage machine's answer to the two questions that decide what a human
+          # does next — which stage failed, and whether the site was ever actually down.
+          LINE=$(printf '%s\n' "$OUT" | grep -o 'CD_RESULT=.*' | tail -1)
+          RESULT=$(printf '%s\n' "$LINE" | grep -o 'CD_RESULT=[a-z_]*' | tail -1)
+          STAGE=$(printf '%s\n' "$LINE" | grep -o 'stage=[A-Z_]*' | cut -d= -f2)
+          INTERRUPTED=$(printf '%s\n' "$LINE" | grep -o 'service_interrupted=[01]' | cut -d= -f2)
+          ROLLBACK=$(printf '%s\n' "$LINE" | grep -o 'rollback=[a-z]*' | cut -d= -f2)
+          STAGE="${STAGE:-UNKNOWN}"; INTERRUPTED="${INTERRUPTED:-unknown}"; ROLLBACK="${ROLLBACK:-unknown}"
+          if [ "$INTERRUPTED" = "1" ]; then SITE="site WAS interrupted"; else SITE="site NEVER interrupted"; fi
+          echo "SSM status: ${{ steps.wait.outputs.status }} — $RESULT (stage=$STAGE, $SITE, rollback=$ROLLBACK)"
+          {
+            echo "### Deployment verdict"
+            echo ""
+            echo "| field | value |"
+            echo "|---|---|"
+            echo "| result | $RESULT |"
+            echo "| stage | $STAGE |"
+            echo "| service interrupted | $INTERRUPTED |"
+            echo "| rollback | $ROLLBACK |"
+          } >> "$GITHUB_STEP_SUMMARY" || true
           if [ "${{ steps.wait.outputs.status }}" = "Success" ] && [ "$RESULT" = "CD_RESULT=deployed" ]; then
             echo "✅ production is serving ${{ steps.target.outputs.sha }}"
+          elif [ "$RESULT" = "CD_RESULT=aborted" ]; then
+            echo "::error::deploy ABORTED at stage $STAGE — production was NEVER touched and is still serving. The host printed a stage report with root cause and recovery steps; nobody needs to be paged."
+            exit 1
           elif [ "$RESULT" = "CD_RESULT=rolled_back" ]; then
-            echo "::error::deploy failed its health/smoke gate — host AUTO-ROLLED-BACK to the previous commit (healthy). See host output above."
+            echo "::error::deploy failed at stage $STAGE AFTER containers were replaced — host AUTO-ROLLED-BACK and is serving the previous commit. See the host stage report above."
             exit 1
           elif [ "$RESULT" = "CD_RESULT=rollback_failed" ]; then
-            echo "::error::deploy AND rollback failed — MANUAL INTERVENTION REQUIRED on the host now."
+            echo "::error::deploy failed at stage $STAGE AND rollback failed — THE SITE IS DOWN, MANUAL INTERVENTION REQUIRED on the host now."
             exit 2
           else
             echo "::error::deploy did not complete (SSM ${{ steps.wait.outputs.status }}; $RESULT) — check host output."
