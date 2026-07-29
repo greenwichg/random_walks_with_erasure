@@ -447,3 +447,40 @@ def test_add_read_carries_source_metadata(store):
     store.add_read(u.id, "https://npr.org/b", {"article_id": "https://npr.org/b", "outlet": "NPR"}, None)
     leg = [r for r in store.list_reads(u.id) if r["canonicalUrl"] == "https://npr.org/b"][0]
     assert leg["readSource"] is None and leg["openedFrom"] is None and store.count_reads(u.id) == 2
+
+
+def test_case_insensitive_publisher_filter_uses_an_index_not_a_scan(store):
+    """Found by profiling PRODUCTION, not by reading the code — `EXPLAIN QUERY PLAN` on the live
+    database reported `SCAN feed_articles` for the publisher filter.
+
+    The filter is case-insensitive (`lower(publisher) = ?`), and a function applied to a column
+    makes the plain `ix_feed_publisher` unusable, so every publisher filter, every Publisher page
+    and every publisher-scoped search read the whole table. An expression index over the SAME
+    expression restores the lookup — measured at 25,000 rows: 28.7 ms -> 1.8 ms.
+
+    This matters more later than now. The catalog is ~25k rows and a scan of that is tens of
+    milliseconds; RWE_RETENTION_MAX_COUNT permits 150,000, and the scan grows with every one of
+    them. Asserts the PLAN rather than a duration, because a timing assertion on a small fixture
+    would pass for the wrong reason."""
+    from sqlalchemy import text
+    if store.engine.dialect.name != "sqlite":
+        pytest.skip("expression indexes are the SQLite path")
+    with store.session() as s:
+        plan = " | ".join(
+            r[-1] for r in s.execute(text(
+                "EXPLAIN QUERY PLAN SELECT * FROM feed_articles WHERE lower(publisher) = 'bbc'")).all())
+    assert "ix_feed_publisher_lower" in plan, plan
+    assert "SCAN feed_articles" not in plan, plan
+
+
+def test_search_indexes_are_idempotent_and_never_block_startup(store):
+    """The whole index block is wrapped in a bare except on purpose: a database that refuses an
+    index must still serve, just with a scan. Re-running must also be a no-op — this runs on every
+    Store construction, including against a database that already has them."""
+    store._ensure_search_indexes()
+    store._ensure_search_indexes()
+    from sqlalchemy import text
+    with store.session() as s:
+        names = {r[0] for r in s.execute(text(
+            "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='feed_articles'")).all()}
+    assert {"ix_feed_publisher", "ix_feed_publisher_lower", "ix_feed_published_at"} <= names

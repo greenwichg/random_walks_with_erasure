@@ -138,8 +138,31 @@ if not os.path.exists(path):
     print(f"  (no db at {path})"); sys.exit(0)
 c = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
 print(f"  file            {os.path.getsize(path)/1024/1024:>8.1f} MB   {path}")
-for k in ("journal_mode", "synchronous", "busy_timeout", "cache_size", "page_size", "mmap_size"):
+
+# Pragmas split by SCOPE, because the first version of this probe got it wrong and reported its own
+# throwaway connection's settings as if they were the application's. journal_mode and page_size live
+# in the FILE HEADER and are shared by every connection. synchronous, cache_size, mmap_size and
+# busy_timeout are PER-CONNECTION: reading them here says nothing about the engine's connections.
+# (That is how a stray `synchronous=2` appeared under an app that sets NORMAL, and how `cache_size
+# -2000` looked like a measurement when it was this script's default.)
+print("  -- file-level (shared by every connection) --")
+for k in ("journal_mode", "page_size"):
     print(f"  pragma {k:<14} {c.execute(f'PRAGMA {k}').fetchone()[0]}")
+print("  -- connection-level, read from the ENGINE's own connection --")
+try:
+    sys.path.insert(0, "/app/examples")
+    import store as store_mod
+    with store_mod.Store().engine.connect() as ec:
+        for k in ("synchronous", "busy_timeout", "cache_size", "mmap_size"):
+            v = ec.exec_driver_sql(f"PRAGMA {k}").scalar()
+            note = ""
+            if k == "cache_size" and isinstance(v, int) and v < 0 and abs(v) * 1024 < os.path.getsize(path) / 2:
+                note = f"  <-- {abs(v)/1024:.0f} MB of page cache for a {os.path.getsize(path)/1024/1024:.0f} MB database"
+            if k == "mmap_size" and not v:
+                note = "  <-- memory-mapped I/O disabled"
+            print(f"  pragma {k:<14} {v}{note}")
+except Exception as e:
+    print(f"  (could not read the engine's pragmas: {type(e).__name__}: {e})")
 wal = path + "-wal"
 if os.path.exists(wal):
     print(f"  WAL file        {os.path.getsize(wal)/1024/1024:>8.1f} MB   (large = checkpoints falling behind)")

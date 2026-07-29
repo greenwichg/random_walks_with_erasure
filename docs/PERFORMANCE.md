@@ -1,5 +1,10 @@
 # Performance investigation — 2026-07-28
 
+> **Production measurements arrived 2026-07-29** and are at the bottom, under
+> [Measured on the live host](#measured-on-the-live-host-2026-07-29). They **correct two claims**
+> made from synthetic data and kill one optimization outright. Read that section before acting on
+> anything above it.
+
 Hidden View "became noticeably slower". This is the measurement pass that answers *why*, before any
 optimization. Two of the findings were implemented; the rest are ranked and left alone deliberately.
 
@@ -165,3 +170,123 @@ bash deploy/ops/perf-probe.sh                               # on the production 
 `--calibrate` exists because the first two runs of this investigation were taken on a corpus that
 collapsed into one cluster. A timing on the wrong corpus is worse than no timing: it is a wrong
 number with a decimal point on it.
+
+
+---
+
+# Measured on the live host (2026-07-29)
+
+`deploy/ops/perf-probe.sh` against the running deployment at `8f023b0`, catalog 25,300 articles /
+83.2 MB. **These numbers supersede the synthetic ones above wherever they disagree.**
+
+## Two corrections to what the synthetic profile said
+
+**1. Clustering is FASTER in production than my model predicted, and `_fetch` is SLOWER.**
+
+| stage | synthetic @20k | production @21.9k |
+|---|---:|---:|
+| `_fetch` | 1,008 ms | **1,714 ms** |
+| `build_stories` | 8,317 ms | **3,681 ms** |
+| cold `list_stories` | 10,148 ms | **5,407 ms** |
+| warm | 0.65 ms | **2.0 ms** |
+| cold/warm ratio | 15,613x | **2,657x** |
+
+My generated headlines clustered harder than real ones, so I **overstated** clustering by ~2.3x.
+The quadratic *shape* stands — that was the finding — but the constant was pessimistic, and the
+honest read is that a cold build costs ~5.4 s today, not ~10 s.
+
+`_fetch` went the other way and the reason is measurable: at the same row count my synthetic
+database is **18.2 MB** and production is **83.2 MB**. Production rows are ~4.6x bigger because
+`body` — full article text — is populated. Finding #5 is therefore **bigger** than the lower bound
+I gave: `_fetch` is now **32% of the whole cold build**.
+
+**2. The API container is NOT sustainably CPU-saturated.** The first probe caught it at 100.49%
+five minutes after a deploy — that was startup work (ingest, GKG cold-start backfill). Steady state
+is **0.17%**. I reported it as a sustained finding; it was a transient. Host load 1.03 on 2 cores,
+memory 1,516 MB of 3,834 MB.
+
+## The one number that matters most
+
+```
+     min    med    max   bytes  endpoint
+      25     27  65548     514K  /api/stories?limit=20
+```
+
+Median **27 ms**. Max **65.5 seconds** — the first request after the container restarted, which is
+12x the steady cold build. That is startup contention (ingest + GKG backfill + first build racing
+on 2 cores), not the steady cold path, and neither the TTL nor the single-flight change addresses
+it: **nothing warms the cache before the first reader arrives after a restart.** Every subsequent
+request was 25–37 ms.
+
+Everything else in steady state is healthy:
+
+| endpoint | med | bytes | |
+|---|---:|---:|---|
+| `/api/stories?limit=20` | 27 ms | 514K | |
+| `/api/stories?limit=60` | 38 ms | **822K** | what the HOME page requests |
+| `/api/stories?sort=latest` | 134 ms | 371K | sorting happens outside the cache |
+| `/api/discover?limit=20` | 361 ms | 108K | **slowest steady endpoint**, max 2,560 ms |
+| `/api/search?q=trump` | 12 ms | 21K | |
+| `/api/health` | **117 ms** | 0K | unexplained — a liveness probe should be ~1 ms |
+
+## New findings only production could show
+
+* **`catalog_fingerprint` costs 18.5 ms and runs on EVERY `/api/stories` request** — 43x my
+  synthetic 0.43 ms, because it is a covering-index scan of 25,300 rows. It is 70% of a warm
+  request's total cost.
+* **`SCAN feed_articles` on the publisher filter** — confirmed by `EXPLAIN QUERY PLAN`. The filter
+  is `lower(publisher) = ?` and a function on a column cannot use `ix_feed_publisher`. **Fixed**
+  below.
+* **WAL at 5.7 MB** — checkpoints are lagging, worth watching but not yet a problem.
+* **`deploy-backup-scheduler-1` has written 5.58 GB** of block I/O, hourly, to the same disk as the
+  live database. Not on the original list; disk is at 66%.
+* **Still no CPU or memory limit** on any container — now confirmed on the host, not inferred.
+
+## An optimization killed by measurement
+
+The app leaves SQLite's `cache_size` at the 2 MB default and `mmap_size` at 0, against an 83 MB
+database. That looks like an obvious win. **It is not:**
+
+```
+  current  (cache 2MB, mmap off)     _fetch    866.7 ms   +0%
+  cache 64MB                         _fetch    915.2 ms   +6%
+  cache 64MB + mmap 256MB            _fetch    900.6 ms   +4%
+```
+
+Both variants were *slower*. `_fetch` is not disk-bound — it is Python object construction (ORM
+row materialization, `json.loads`, dict building), exactly as the earlier breakdown showed. Raising
+the page cache optimizes a resource that was never the constraint. **Not shipped.**
+
+## A cheap fix that turned out not to be cheap
+
+Deferring the `body` column from the clustering fetch is the obvious way to reclaim that 1,714 ms —
+it is the bulk of the 83 MB and clustering never looks at article text. Except `discover.
+_reading_minutes` computes `readingMinutes` from `body`, falling back to `description`. Dropping the
+column would silently shrink every article's reading time on every surface.
+
+The right fix is to **precompute `readingMinutes` at ingest** into `scored`, which makes `body`
+genuinely unused at read time — but that needs a backfill, so it is a change to plan, not to slip
+into a performance pass.
+
+## Shipped from this round
+
+**Expression index on `lower(publisher)`.** Measured at 25,000 rows: **28.7 ms → 1.8 ms (16.2x)**,
+plan flips `SCAN` → `SEARCH ... USING INDEX ix_feed_publisher_lower`. An index cannot change
+results, so the risk is confined to write cost and disk. It matters more later than now: the
+catalog is 25k and `RWE_RETENTION_MAX_COUNT` permits **150,000**.
+
+## Ranked, after production
+
+| | action | evidence | worth |
+|---|---|---|---|
+| 1 | **Warm the cache at startup**, before the readiness gate opens | the 65.5 s first request | removes the worst number in the report |
+| 2 | Cache `catalog_fingerprint` for a second, or derive it from the poller's write | 18.5 ms x every request | ~70% off a warm request |
+| 3 | Precompute `readingMinutes` at ingest, then narrow the fetch | 1,714 ms, 32% of the cold build | largest engine win available |
+| 4 | Investigate `/api/health` at 117 ms | 5 runs, tight spread | a liveness probe should be ~1 ms |
+| 5 | `/api/discover` at 361 ms median, 2,560 ms max | slowest steady endpoint | |
+| 6 | Declare container CPU/memory limits | `nanocpus: 0` | protects against the startup spike |
+| 7 | The quadratic clusterer | exponent 2.12 | still the long-term ceiling |
+
+Note how the ranking changed once real numbers arrived: **the top item did not exist in the
+synthetic list at all**, and the item I would have ranked first from the repo (the page cache) is
+now deleted as measured-harmful.
