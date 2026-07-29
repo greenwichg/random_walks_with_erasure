@@ -890,3 +890,41 @@ never the ones I found most plausible.
 
 The check that would have caught all of it costs one command: **total process CPU, then the
 candidate's share of it.** Profile the process before profiling the pipeline.
+
+## Confirmed in production
+
+Deployed `861d519`; measured after ten minutes of steady state.
+
+| | before | after | change |
+|---|---|---|---|
+| `cleanupMs` per cycle | 79,000 ms | **2,100 ms** | **−97.3%** |
+| `post_cycle` total | ~89 s | **~12 s** | −86% |
+| **process CPU** | **0.66 vCPU** | **0.19 vCPU** | **−71%** |
+| CPU steal | 1.30% | 0.62% | halved |
+| vs t3.medium baseline (0.40) | 1.65x over | **0.48x — under** | credits now accrue |
+
+One change I did not predict: the post-deploy smoke test returned **10 PASS, 0 WARN** for the first
+time this session. The PA1 analytics check had reported `EXC:TimeoutError` with the secret on every
+previous deploy, and I had been reading it as a flaky probe. It was a real endpoint failing to
+complete inside its timeout because the box was pinned. A signal I discounted was reporting the
+bottleneck all along.
+
+Also in the logs: five post-cycles 12 s apart, then quiet — eleven adapter threads that had been
+queued behind an 89-second lock, draining in seconds.
+
+### The corrected ranking
+
+Now that the process is measured rather than one pipeline inside it:
+
+| # | item | cost | share of remaining CPU |
+|---|---|---|---|
+| 1 | ~~`run_retention` quadratic set~~ | ~~79 s/cycle~~ | **fixed** |
+| 2 | story warm (`build_stories`) | 5.7 s/cycle | ~48% of post-cycle |
+| 3 | `corpus_refresh` (`build_candidate_for` + Backend) | 4.0 s/cycle | ~33% |
+| 4 | retention (post-fix) | 2.1 s/cycle | ~18% |
+| 5 | adapter polls | 0.13–4.2 s | small, bursty |
+
+The clustering work was mis-ranked, not wasted: with retention gone, the story warm is the largest
+remaining item, so the candidate-walk rewrite (−27%) and the `_merge_duplicates` size bound now sit
+on top of the biggest thing left. At 0.19 vCPU nothing here is urgent — the box has headroom for the
+first time in this investigation.
