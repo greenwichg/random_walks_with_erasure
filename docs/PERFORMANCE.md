@@ -928,3 +928,55 @@ The clustering work was mis-ranked, not wasted: with retention gone, the story w
 remaining item, so the candidate-walk rewrite (−27%) and the `_merge_duplicates` size bound now sit
 on top of the biggest thing left. At 0.19 vCPU nothing here is urgent — the box has headroom for the
 first time in this investigation.
+
+---
+
+# Capacity
+
+`examples/capacity_report.py` — a production-backed storage report, run against the live database.
+
+```
+docker exec deploy-api-1 python examples/capacity_report.py
+docker exec deploy-api-1 python examples/capacity_report.py --json
+```
+
+Every figure carries its provenance, because a capacity plan is only as good as the weakest number
+in it and the weak ones are invisible once they are all formatted the same way:
+
+* **[M] measured** — read from the live database, filesystem or kernel.
+* **[D] derived** — arithmetic over measured values only.
+* **[P] projected** — a measured rate extrapolated. The assumptions are printed beside it.
+
+## What it measures rather than assumes
+
+* **Per-table and per-index bytes from `dbstat`** — SQLite's own page accounting, so index overhead
+  is a measurement and not a rule of thumb. When the build lacks `SQLITE_ENABLE_DBSTAT_VTAB` it
+  falls back to column payload and says so in the output, because a fallback presented as the real
+  thing is worse than no fallback.
+* **WAL and `-shm` counted with the main file.** They are real allocated space on the same volume,
+  and under a write-heavy poller the WAL is not small.
+* **Ingestion rate from `feed_articles.created_at`, never `published_at`.** GDELT backfills articles
+  published days earlier, so a published-at histogram measures the news cycle instead of this
+  system's intake. Leading and trailing partial-day buckets are trimmed; with fewer than four
+  buckets the report flags the rate as unreliable rather than printing a confident date.
+* **Headroom capped at writable space.** ext4 reserves blocks for root, so writes fail before 100%
+  of `total`. A row quoting the larger number would put the exhaustion date after the outage.
+* **Bytes per article both ways** — its own table plus indexes, and its share of the whole database.
+  The all-in figure drives the headroom, because event locations, the scored cache and story
+  membership all exist because articles do.
+* **Stories are derived, not stored.** The only story bytes on disk are `story_member`; the report
+  says so instead of inventing a per-story footprint.
+
+## What it cannot see
+
+Docker images, container logs and backups live outside the container. The report prints the exact
+host commands for them rather than estimating. It also prints the `dbBytes` series already carried
+in the `storage_cleanup` log — a **measured** database growth rate, which beats any per-article
+projection.
+
+## Tests
+
+`tests/test_capacity_report.py`. The end-to-end one caught a real omission: the human-readable
+output stated its sizing method only when `dbstat` was MISSING, so a reader of a good report could
+not tell exact page allocation from an estimate. That is precisely the provenance failure the script
+exists to prevent, and it was in the script itself.
