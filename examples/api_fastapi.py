@@ -653,6 +653,18 @@ class HealthReportModel(BaseModel):
     # mode + coverage make Estimate vs Measured explicit; an estimate omits axisConfidence
     mode: Optional[str] = None
     coverage: Optional[CoverageModel] = None
+    # True when this report belongs to the EXHIBIT account and is being shown to someone else.
+    #
+    # `_report_for` falls back to the exhibit's report for a signed-in reader with no reads and no
+    # onboarding. That report is genuinely `mode="measured"` with `coverage.reads=30` — because it
+    # really is the exhibit's measurement — and nothing in the payload said whose it was. A brand new
+    # beta tester therefore opened their Health Report and saw "Measured · based on 30 reads" over a
+    # political distribution they had never produced: the product asserting a measurement about
+    # somebody who had read nothing.
+    #
+    # Additive and optional, so `response_model_exclude_none=True` omits it entirely on a real
+    # reader's report and no existing consumer or contract test sees a changed payload.
+    sample: Optional[bool] = None
     # Note (ADR-001): per-metric *dimensional* coverage now lives on each metric's `measurement`
     # (MetricModel.measurement) — Viewpoint's coverage moved there and Emotion gained one — rather
     # than a single report-level `viewpointCoverage`. The `coverage` above stays volume-only
@@ -690,6 +702,9 @@ class DashboardModel(BaseModel):
     # somehow lacks them; present for every real routing path.
     mode: Optional[str] = None
     coverage: Optional[CoverageModel] = None
+    # Same marker as HealthReportModel.sample — the dashboard shows the same Measured chip, so it
+    # would make the same false claim without it.
+    sample: Optional[bool] = None
 
 
 class EmotionPointModel(BaseModel):
@@ -2034,6 +2049,7 @@ def report(request: Request,
       request: the reference reader (unchanged for the frontend and contract tests)."""
     with obs_metrics.timer("report_generate_ms"):     # OBS1: time generation (does not alter it)
         rep, is_exhibit = _report_for(_active(), request, user)
+    rep = _mark_sample(rep, is_exhibit, request)
     # RC2.3 — for a signed-in reader viewing their OWN report, reconcile the improvement lifecycle
     # ledger and annotate each improvement with its state. The EXHIBIT report is excluded even when
     # a real uid is present (the exhibit's own request, or a below-threshold reader served the
@@ -2135,6 +2151,25 @@ def _report_for(active: "corpus_refresh.Active", request: Request, user: str | N
     return be.report(be.demo_user), False
 
 
+def _mark_sample(rep: dict, is_exhibit: bool, request: Request) -> dict:
+    """Flag a report that is the EXHIBIT's rather than the viewer's own.
+
+    The exhibit account is seeded past the read threshold, so its report is honestly
+    ``mode="measured"`` with real coverage. Served to somebody else it is still true — about the
+    wrong person. Without a marker the UI has no way to tell, and it rendered "Measured · based on
+    30 reads" to a new beta tester who had read nothing.
+
+    The exhibit viewing its OWN report is not a sample, so the flag is keyed on the viewer, not on
+    the report. Anonymous visitors are marked too: the landing showcase can still render it, but the
+    payload no longer claims it as anyone's measurement.
+
+    Mutates a copy? No — ``_report_for`` already returns a fresh dict per request, and the flag is
+    write-once. Returning it keeps the call sites honest about the transformation."""
+    if is_exhibit and _real_uid(request) != getattr(state, "demo_uid", None):
+        rep["sample"] = True
+    return rep
+
+
 @app.get("/api/dashboard", response_model=DashboardModel, response_model_exclude_none=True,
          tags=["report"], summary="Home dashboard summary for a reader", responses=_ERR_RESPONSES)
 def dashboard(request: Request,
@@ -2145,6 +2180,7 @@ def dashboard(request: Request,
     no new report serialisation, no algorithm."""
     active = _active()
     rep, _is_exhibit = _report_for(active, request, user)
+    rep = _mark_sample(rep, _is_exhibit, request)
     st, uid = _require_store(), _real_uid(request)
     reads = st.list_reads(uid) if uid is not None else []
     snaps = st.list_report_snapshots(uid) if uid is not None else []
@@ -2152,7 +2188,10 @@ def dashboard(request: Request,
     # settings always normalise to a goal, so every real user gets one); anonymous/demo has none.
     goal = (settings_service.reading_goal_minutes(st, uid)
             if uid is not None else None)
-    return active.backend.build_dashboard(rep, reads, snaps, goal_minutes=goal)
+    dash = active.backend.build_dashboard(rep, reads, snaps, goal_minutes=goal)
+    if rep.get("sample"):
+        dash["sample"] = True          # build_dashboard rebuilds the payload; carry the marker over
+    return dash
 
 
 @app.get("/api/outlets", response_model=list[OutletModel], tags=["meta"],

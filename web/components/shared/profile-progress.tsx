@@ -24,6 +24,7 @@ export function ProfileProgress({
   mode,
   coverage,
   confidence,
+  sample = false,
   cta = true,
   className,
 }: {
@@ -31,11 +32,35 @@ export function ProfileProgress({
   coverage?: Coverage | null;
   /** Axis confidence 0–1 (measured-only); shown in the Measured chip when present. */
   confidence?: number | null;
+  /** True when the report belongs to the exhibit account rather than this reader — see
+   *  `HealthReport.sample`. Checked BEFORE the measured branch, because the whole point is that
+   *  such a report is `mode: "measured"` and would otherwise render as this reader's measurement. */
+  sample?: boolean;
   cta?: boolean;
   className?: string;
 }) {
   const { t } = useTranslation();
   const s = coverageStatus(mode, coverage);
+
+  if (sample) {
+    // An example profile. It says so, and it never quotes a read count — the count belongs to
+    // somebody else, and repeating it is exactly how "Measured · based on 30 reads" reached a
+    // reader who had read nothing.
+    return (
+      <div
+        className={cn(
+          "inline-flex flex-wrap items-center gap-x-2 gap-y-1 rounded-full border border-muted-foreground/30 bg-muted/40 px-3 py-1.5 text-xs",
+          className,
+        )}
+        role="status"
+      >
+        <span className="inline-flex items-center gap-1.5 font-medium text-muted-foreground">
+          <Compass className="h-3.5 w-3.5" aria-hidden /> {t("coverage.sample.badge")}
+        </span>
+        <span className="text-muted-foreground">{t("coverage.sample.note")}</span>
+      </div>
+    );
+  }
 
   if (!s.isEstimate) {
     // Measured — keep the context visible, compactly.

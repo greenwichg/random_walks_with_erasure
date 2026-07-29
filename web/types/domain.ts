@@ -344,7 +344,16 @@ export interface EstimateHealthReport extends HealthReportBase {
 
 /** The flagship Information Health result — an estimate or a measured report, discriminated by
  *  `mode`. Narrow on `report.mode` to reach measured-only fields like `axisConfidence`. */
-export type HealthReport = MeasuredHealthReport | EstimateHealthReport;
+export type HealthReport = (MeasuredHealthReport | EstimateHealthReport) & {
+  /** True when this report belongs to the EXHIBIT account and is being shown to somebody else.
+   *
+   *  The engine falls back to the exhibit's report for a signed-in reader with no reads and no
+   *  onboarding. That report is genuinely `mode: "measured"` with `coverage.reads: 30` — it really
+   *  is a measurement, of the wrong person — so nothing in the payload distinguished it, and a new
+   *  beta tester saw "Measured · based on 30 reads" over a political distribution they had never
+   *  produced. Anything that renders a measurement claim MUST check this first. */
+  sample?: boolean;
+};
 
 /** A single trend point for the dashboard sparkline / analytics. */
 export interface TrendPoint {
@@ -361,6 +370,8 @@ export interface DashboardSummary {
   mode?: ReportMode;
   /** Reading coverage toward the measured threshold (`reads` is the honest progress in both modes). */
   coverage?: Coverage;
+  /** See `HealthReport.sample` — the dashboard shows the same chip and would make the same claim. */
+  sample?: boolean;
   trend: TrendPoint[];
   today: {
     articlesRead: number;

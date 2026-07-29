@@ -123,7 +123,7 @@ export default function ReportPage() {
           {/* Estimate vs Measured + coverage — the report header now states whether this is an
               Estimate and how many reads unlock the Measured profile, so the onboarding context
               persists here too. */}
-          <ProfileProgress mode={report.mode} coverage={report.coverage} />
+          <ProfileProgress mode={report.mode} coverage={report.coverage} sample={report.sample} />
 
           {/* Overall + radar */}
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">

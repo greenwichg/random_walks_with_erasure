@@ -59,7 +59,7 @@ export function InformationHealthPanel({ data }: { data: DashboardSummary }) {
       />
 
       {data.mode && data.coverage && (
-        <ProfileProgress mode={data.mode} coverage={data.coverage} className="mb-4" />
+        <ProfileProgress mode={data.mode} coverage={data.coverage} sample={data.sample} className="mb-4" />
       )}
 
       <div className="flex items-center gap-4">

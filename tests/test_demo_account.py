@@ -67,12 +67,22 @@ def _user(client, account):
 # --------------------------------------------------------------------------- #
 # The serving seam.
 # --------------------------------------------------------------------------- #
+def _content(report: dict) -> dict:
+    """The report minus its timestamp and its provenance marker — what the reader actually sees."""
+    return {k: v for k, v in report.items() if k not in ("updatedAt", "sample")}
+
+
 def test_anonymous_report_is_the_exhibits_measured_report(client, exhibit):
+    """Same CONTENT, different PROVENANCE. The exhibit's report is served to anonymous visitors
+    unchanged — that is the showcase — but the payload now says whose it is, so nothing downstream
+    can present it as the viewer's own measurement."""
     uid, h = exhibit
     anon = client.get("/api/report").json()
     own = client.get("/api/report", headers=h).json()
     assert anon["mode"] == "measured"
-    assert _strip(anon) == _strip(own)
+    assert _content(anon) == _content(own)
+    assert anon.get("sample") is True, "served to someone who is not the exhibit"
+    assert "sample" not in own, "the exhibit viewing its own report is not viewing a sample"
 
 
 def test_explicit_user_param_still_wins(client, exhibit):
@@ -168,3 +178,57 @@ def test_anonymous_traffic_cannot_move_the_exhibit(client, exhibit):
         client.get("/api/recommendations")
         client.post("/api/coach", json={"message": "am I balanced?"})
     assert _strip(client.get("/api/report").json()) == before
+
+
+# --------------------------------------------------------------------------- #
+# Provenance — the exhibit's numbers must never be presented as somebody else's measurement.
+# --------------------------------------------------------------------------- #
+def test_a_signed_in_reader_with_no_history_is_told_the_report_is_not_theirs(client, exhibit):
+    """The bug this marker exists for.
+
+    A brand-new beta tester signed in, opened the Health Report, and saw "Measured · based on 30
+    reads" above a political distribution they had never produced. The report was real — it was the
+    exhibit account's, which is genuinely measured over 30 reads — and nothing in the payload said
+    so, so the UI rendered it as theirs.
+
+    The fallback itself is deliberate (a cold Health Report page is worse than an example one). What
+    was not deliberate was asserting a measurement about someone who had read nothing."""
+    _, h = _user(client, "brand-new-no-history")
+    body = client.get("/api/report", headers=h).json()
+
+    exhibit_report = client.get("/api/report").json()
+    assert body["mode"] == "measured", "this is still the exhibit's genuinely measured report"
+    assert body["coverage"]["reads"] == exhibit_report["coverage"]["reads"] > 0, (
+        "and it still carries the EXHIBIT's read count, not this reader's zero — which is precisely "
+        "why the payload has to say whose it is")
+    assert body.get("sample") is True, (
+        "so the payload MUST say it is not this reader's — without this the UI claims "
+        "'Measured, based on 30 reads' for a reader with zero reads")
+
+
+def test_the_exhibit_itself_is_never_marked_a_sample(client, exhibit):
+    """The flag is keyed on the VIEWER, not on the report. The exhibit account looking at its own
+    report is looking at its own measurement."""
+    _, h = exhibit
+    assert "sample" not in client.get("/api/report", headers=h).json()
+
+
+def test_an_onboarded_reader_estimate_is_not_marked_a_sample(client, exhibit):
+    """An Estimate is the reader's own — computed from outlets THEY chose. It is not a measurement
+    and does not claim to be, but it is also not somebody else's data."""
+    _, h = _user(client, "onboarded-not-a-sample")
+    names = [o["id"] for o in client.get("/api/outlets").json()][:3]
+    client.post("/api/me/onboarding", json={"outlets": names}, headers=h)
+    body = client.get("/api/report", headers=h).json()
+    assert body["mode"] == "estimate"
+    assert "sample" not in body
+
+
+def test_the_dashboard_carries_the_same_marker(client, exhibit):
+    """The dashboard renders the same Measured chip from the same routing, so it would make the
+    same false claim. `build_dashboard` rebuilds the payload, so the marker has to be carried
+    explicitly — a test rather than a comment, because that copy is easy to lose."""
+    _, h = _user(client, "brand-new-dashboard")
+    assert client.get("/api/dashboard", headers=h).json().get("sample") is True
+    _, eh = exhibit
+    assert "sample" not in client.get("/api/dashboard", headers=eh).json()
