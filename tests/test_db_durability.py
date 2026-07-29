@@ -55,16 +55,71 @@ def test_backup_creates_valid_consistent_timestamped_copy(tmp_path):
 
     dest = store.create_backup(_url(tmp_path), out_dir=str(tmp_path / "backups"))
     assert os.path.exists(dest)
-    assert re.search(r"ih-\d{8}T\d{6}Z\.db$", dest)                              # timestamped name
-    assert store.integrity_ok(dest)                                             # valid SQLite
+    # Gzipped by default: a backup is a FULL copy of the database, and at the default 12h/7d/4w
+    # retention that is ~28 copies. Measured in production before this changed: 2.4 GB of backups
+    # against a 93 MB database, on a 29 GB volume.
+    assert re.search(r"ih-\d{8}T\d{6}Z\.db\.gz$", dest)                          # timestamped name
+    assert store.is_compressed_backup(dest)
+    assert store.integrity_ok(dest)                                             # valid SQLite inside
 
-    con = sqlite3.connect(dest)                                                 # ...and it has the data
+    restored = tmp_path / "roundtrip.db"                                        # ...and it has the data
+    store.restore_database(dest, str(restored))
+    con = sqlite3.connect(restored)
     try:
         n = con.execute("SELECT COUNT(*) FROM reads").fetchone()[0]
         emails = [r[0] for r in con.execute("SELECT email FROM users")]
     finally:
         con.close()
     assert n == 1 and "a@b.com" in emails
+
+
+def test_backup_compression_is_a_kill_switch_not_a_one_way_door(tmp_path, monkeypatch):
+    """``RWE_BACKUP_COMPRESS=0`` writes plain ``.db`` again, and BOTH formats stay readable.
+
+    This is what makes the change safe to ship: reading is format-agnostic everywhere, so flipping
+    the switch changes only what the next backup is written as. Every ``.db`` taken before
+    compression existed — and every ``.db.gz`` taken after it is turned off — remains restorable."""
+    s = _file_store(tmp_path)
+    u = s.upsert_user_by_identity("google", "sw-1", email="sw@b.com")
+    s.add_read(u.id, "https://x.com/sw", {"outlet": "x", "lean": 1.0})
+
+    gz = store.create_backup(_url(tmp_path), out_dir=str(tmp_path / "b"))
+    monkeypatch.setenv("RWE_BACKUP_COMPRESS", "0")
+    plain = store.create_backup(_url(tmp_path), out_dir=str(tmp_path / "b"))
+
+    assert gz.endswith(".db.gz") and plain.endswith(".db")
+    assert store.integrity_ok(gz) and store.integrity_ok(plain)
+    assert os.path.getsize(gz) < os.path.getsize(plain), "compression must actually shrink it"
+
+    listed = store.list_backups(str(tmp_path / "b"))
+    assert {os.path.basename(b["path"]) for b in listed} == {
+        os.path.basename(gz), os.path.basename(plain)}, "both formats must be listed"
+    assert {b["compressed"] for b in listed} == {True, False}
+
+    for src in (gz, plain):                                   # both restore identically
+        out = tmp_path / f"r-{os.path.basename(src)}.db"
+        store.restore_database(src, str(out))
+        con = sqlite3.connect(out)
+        try:
+            assert [r[0] for r in con.execute("SELECT email FROM users")] == ["sw@b.com"]
+        finally:
+            con.close()
+
+
+def test_corrupt_gzip_backup_fails_the_check_rather_than_raising(tmp_path):
+    """A file that is not valid gzip is not a valid backup, and must be reported as such.
+
+    ``integrity_ok`` is the gate every restore passes through, so it has to answer False for
+    unreadable input rather than propagate an exception — an exception escaping here would abort
+    the caller before it could refuse the restore, which is the opposite of fail-safe."""
+    bad = tmp_path / "ih-20260101T000000Z.db.gz"
+    bad.write_bytes(b"not gzip, not sqlite, not a backup")
+    assert store.integrity_ok(str(bad)) is False
+
+    live = tmp_path / "live.db"
+    store.Store(f"sqlite:///{live}")
+    with pytest.raises(ValueError):
+        store.restore_database(str(bad), str(live))
 
 
 def test_restore_validates_integrity_and_swaps(tmp_path):

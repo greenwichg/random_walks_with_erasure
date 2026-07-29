@@ -23,14 +23,15 @@ SRC="${1:-}"
 
 # 1) Resolve the source into a file that lives under $DATA_DIR (so the container sees it at /app/data/…).
 if [ -z "$SRC" ]; then
-  SRC="$(ls -1t "$DATA_DIR"/backups/*.db 2>/dev/null | head -1 || true)"
+  SRC="$(ls -1t "$DATA_DIR"/backups/*.db "$DATA_DIR"/backups/*.db.gz 2>/dev/null | head -1 || true)"
   [ -n "$SRC" ] || { echo "restore: no local backups in $DATA_DIR/backups" >&2; exit 1; }
   echo "restore: using newest local backup: $SRC"
 fi
 
 case "$SRC" in
   s3://*)
-    dest="$DATA_DIR/restore-$(date -u +%Y%m%dT%H%M%SZ).db"
+    case "$SRC" in *.db.gz) ext=".db.gz" ;; *) ext=".db" ;; esac
+    dest="$DATA_DIR/restore-$(date -u +%Y%m%dT%H%M%SZ)$ext"
     echo "restore: downloading $SRC → $dest"
     aws s3 cp "$SRC" "$dest"
     LOCAL="$dest" ;;
@@ -44,13 +45,12 @@ case "$SRC" in
 esac
 
 CONTAINER_PATH="/app/data/${LOCAL#"$DATA_DIR"/}"
-CONTAINER_DB_URL="sqlite:///$CONTAINER_PATH"          # 3 slashes + absolute path = sqlite:////app/data/…
 
 # 2) Prove the backup is intact BEFORE touching the live DB (non-destructive; reads the copy only).
 echo "== restore: integrity check on $CONTAINER_PATH =="
-status="$(backup_run --db "$CONTAINER_DB_URL" status)"
-echo "$status"
-echo "$status" | grep -i quickcheck | grep -qiw ok || {
+# `verify` handles .db and .db.gz alike and reports through its exit code. The old form opened the
+# backup as sqlite:///<path>, which a compressed backup simply is not.
+backup_run verify "$CONTAINER_PATH" || {
   echo "restore: ABORT — backup failed the integrity check; live DB untouched." >&2; exit 2; }
 
 # 3) Confirm (destructive to the live DB, though the current DB is snapshotted to *.pre-restore first).

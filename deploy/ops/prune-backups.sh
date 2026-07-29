@@ -41,7 +41,10 @@ M="$(env_val BACKUP_KEEP_MONTHLY)"; M="${M:-0}"
 
 # Newest first. Each line: <epoch> <path>, using the file's mtime (portable, and the backup's own
 # timestamp is its mtime because db_backup.py writes it once).
-mapfile -t FILES < <(find "$DIR" -maxdepth 1 -name '*.db' -printf '%T@ %p\n' 2>/dev/null | sort -rn)
+# BOTH suffixes. Backups are gzipped by default; a retention pass that globbed only '*.db' would
+# quietly match nothing and let the directory grow without bound — the exact failure this script
+# exists to prevent, and invisible until the volume fills.
+mapfile -t FILES < <(find "$DIR" -maxdepth 1 \( -name '*.db' -o -name '*.db.gz' \) -printf '%T@ %p\n' 2>/dev/null | sort -rn)
 total="${#FILES[@]}"
 [ "$total" -eq 0 ] && { echo "prune-backups: no backups yet."; exit 0; }
 

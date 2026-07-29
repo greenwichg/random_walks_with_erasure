@@ -13,7 +13,7 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."   # repo root
 
 dir="${RWE_BACKUP_DIR:-$(python -c "import sys,os;sys.path.insert(0,'examples');import store;print(store.default_backup_dir(os.environ.get('RWE_DB_URL') or store.default_db_url()))")}"
-backup="${1:-$(ls -1t "$dir"/*.db 2>/dev/null | head -1 || true)}"
+backup="${1:-$(ls -1t "$dir"/*.db "$dir"/*.db.gz 2>/dev/null | head -1 || true)}"
 if [ -z "$backup" ] || [ ! -f "$backup" ]; then
   echo "verify-restore: no backup file found (looked in: $dir)" >&2
   exit 1
@@ -22,7 +22,12 @@ fi
 scratch_dir="$(mktemp -d)"
 scratch="$scratch_dir/verify.db"
 trap 'rm -rf "$scratch_dir"' EXIT
-cp "$backup" "$scratch"
+# Decompress into the scratch copy when needed: everything below opens $scratch as a real SQLite
+# file, so this is the one place the format has to be made concrete.
+case "$backup" in
+  *.gz) gunzip -c "$backup" > "$scratch" ;;
+  *)    cp "$backup" "$scratch" ;;
+esac
 echo "verify-restore: checking $backup  (non-destructive copy → $scratch)"
 
 # 1) Integrity — db_backup.py status runs PRAGMA quick_check on the chosen DB (`--db` is a

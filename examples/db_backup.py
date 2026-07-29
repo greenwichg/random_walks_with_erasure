@@ -5,8 +5,11 @@ integrity-checked before it replaces the live database, and the current DB is sn
 No new dependency — pure stdlib sqlite3, driven by the same ``store`` helpers the engine uses.
 
     # back up the configured database (RWE_DB_URL, or the default file) to a timestamped file
-    python examples/db_backup.py backup                     # -> <db-dir>/backups/ih_beta-<ts>.db
+    python examples/db_backup.py backup                     # -> <db-dir>/backups/ih_beta-<ts>.db.gz
     python examples/db_backup.py backup --out /backups      # or a chosen directory
+
+    # verify ANY backup, compressed or not — exit 0 = intact (use this from scripts)
+    python examples/db_backup.py verify /backups/ih_beta-<ts>.db.gz
 
     # inspect storage + list backups
     python examples/db_backup.py status
@@ -16,6 +19,10 @@ No new dependency — pure stdlib sqlite3, driven by the same ``store`` helpers 
 
 The database is chosen exactly like the engine: ``--db`` > ``RWE_DB_URL`` > the default repo file.
 The backup directory is ``--out`` > ``RWE_BACKUP_DIR`` > ``backups/`` beside the database file.
+
+Backups are gzipped by default (``RWE_BACKUP_COMPRESS=0`` to disable). Reading is format-agnostic
+everywhere — ``verify`` and ``restore`` accept ``.db`` and ``.db.gz`` alike, so backups written
+before compression existed stay restorable forever.
 """
 
 from __future__ import annotations
@@ -40,7 +47,34 @@ def cmd_backup(args) -> int:
         print(f"backup failed: {e}", file=sys.stderr)
         return 1
     size = os.path.getsize(dest)
-    print(f"backup ok: {dest} ({size:,} bytes, integrity check passed)")
+    note = ""
+    if store.is_compressed_backup(dest):
+        src = store.sqlite_path(url)
+        if src and os.path.exists(src):
+            raw = os.path.getsize(src)
+            note = f", gzip {raw / size:.1f}x from {raw:,}" if size else ""
+    print(f"backup ok: {dest} ({size:,} bytes{note}, integrity check passed)")
+    return 0
+
+
+def cmd_verify(args) -> int:
+    """Integrity-check a backup FILE, compressed or not.
+
+    Exists because the scripts used to verify by opening the backup as ``sqlite:///<path>`` and
+    grepping ``status`` output for "quickCheck ok" — which cannot work on a ``.db.gz`` and, worse,
+    reported failure through a grep rather than an exit code. ``store.integrity_ok`` already handles
+    both formats; this exposes it with a contract a shell can trust."""
+    path = args.backup
+    if not os.path.exists(path):
+        print(f"verify FAILED: no such file: {path}", file=sys.stderr)
+        return 1
+    size = os.path.getsize(path)
+    if not store.integrity_ok(path):
+        print(f"verify FAILED: {path} ({size:,} bytes) did not pass PRAGMA integrity_check",
+              file=sys.stderr)
+        return 2
+    kind = "gzip" if store.is_compressed_backup(path) else "plain"
+    print(f"verify ok: {path} ({size:,} bytes, {kind}, integrity check passed)")
     return 0
 
 
@@ -92,6 +126,10 @@ def main() -> None:
     st = sub.add_parser("status", help="show storage diagnostics + list backups")
     st.add_argument("--out", default=None, help="backup directory to list")
     st.set_defaults(func=cmd_status)
+
+    v = sub.add_parser("verify", help="integrity-check a backup file (.db or .db.gz); exit 0 = intact")
+    v.add_argument("backup", help="path to a backup file")
+    v.set_defaults(func=cmd_verify)
 
     r = sub.add_parser("restore", help="restore from a backup (STOP the engine first)")
     r.add_argument("backup", help="path to a backup file produced by `backup`")

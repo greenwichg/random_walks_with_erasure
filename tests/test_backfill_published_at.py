@@ -151,7 +151,11 @@ def test_real_snapshot_writes_a_restorable_file(tmp_path):
     path = pathlib.Path(res["backup"])
     assert path.exists() and path.stat().st_size > 0
     assert store_mod.integrity_ok(str(path))
-    # the snapshot holds the PRE-migration value; the live DB holds the converted one
-    assert store_mod.Store(f"sqlite:///{path}").get_feed_article(
+    # the snapshot holds the PRE-migration value; the live DB holds the converted one. Backups are
+    # gzipped by default now, so read it back the way a real recovery would — through restore —
+    # rather than by opening the file as a database.
+    plain = tmp_path / "snapshot-readback.db"
+    store_mod.restore_database(str(path), str(plain))
+    assert store_mod.Store(f"sqlite:///{plain}").get_feed_article(
         "https://a.example/12")["publishedAt"] == "2026-07-27T12:00:00-04:00"
     assert _stored(st, "https://a.example/12") == "2026-07-27T16:00:00+00:00"

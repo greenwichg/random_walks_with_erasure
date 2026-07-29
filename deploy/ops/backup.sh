@@ -30,7 +30,7 @@ if ! python examples/db_backup.py backup ${RWE_BACKUP_DIR:+--out "$RWE_BACKUP_DI
   log '"backup":"FAILED"'
   exit 1
 fi
-dest="$(ls -1t "$dir"/*.db 2>/dev/null | head -1 || true)"
+dest="$(ls -1t "$dir"/*.db "$dir"/*.db.gz 2>/dev/null | head -1 || true)"
 if [ -z "$dest" ] || [ ! -f "$dest" ]; then
   log '"backup":"FAILED","reason":"no backup file found"'
   exit 1
@@ -50,6 +50,6 @@ deleted=0
 while IFS= read -r old; do
   [ -n "$old" ] || continue
   rm -f "$old" && deleted=$((deleted + 1))
-done < <(ls -1t "$dir"/*.db 2>/dev/null | tail -n +"$((KEEP + 1))")
+done < <(ls -1t "$dir"/*.db "$dir"/*.db.gz 2>/dev/null | tail -n +"$((KEEP + 1))")
 
 log "\"backup\":\"ok\",\"file\":\"$dest\",\"kept\":$KEEP,\"pruned\":$deleted"

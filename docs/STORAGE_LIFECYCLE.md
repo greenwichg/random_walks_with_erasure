@@ -162,7 +162,6 @@ it is deliberately *not* bundled here — it is the documented next step, not a 
 ## 7 · What this deliberately does **not** do
 
 * **No user data is ever deleted.** Account deletion remains a separate, explicit user action.
-* **No compression yet** (see above).
 * **No `VACUUM`.** SQLite does not return freed pages to the filesystem without one; after a large
   first prune the file stays its high-water size until a manual `VACUUM`. Deliberate: `VACUUM`
   rewrites the whole database and takes an exclusive lock, which is not something a background job
@@ -170,3 +169,76 @@ it is deliberately *not* bundled here — it is the documented next step, not a 
   prune.
 * **Catalog retention stays OFF by default.** Turning it on is an operator decision with a real
   product consequence (older articles leave Search and Stories), so it ships opt-in.
+
+
+---
+
+## 8 · Backup compression (measured, 2026-07-29)
+
+Backups are **gzipped by default**. `RWE_BACKUP_COMPRESS=0` turns it off.
+
+### Why
+
+A production capacity measurement, not a projection:
+
+```
+database        93 MB          28 backups     2.4 GB       volume 29 GB
+```
+
+Every backup is a FULL copy, so the retention policy multiplies the database by ~28. The catalog cap
+(`RWE_RETENTION_MAX_COUNT=150000`) bounds the database at ~450 MiB — and therefore bounds **backups
+at ~10–13 GB**, which on a 29 GB volume is the largest single growth term. The database was 0.44% of
+used space; its backups were 11%.
+
+`prune-backups.sh` already said this in its own header: *"every backup is a FULL, uncompressed copy
+of the database, so `BACKUP_KEEP=48` costs 48x the database size."* The GFS tiering was the
+mitigation; compression is the other half.
+
+### The contract: reading is format-agnostic, writing is switchable
+
+Compression is a **kill switch, not a one-way door**. Every reader detects the suffix:
+
+| | handles `.db` | handles `.db.gz` |
+|---|---|---|
+| `store.integrity_ok` | yes | yes (decompresses to a temp file) |
+| `store.restore_database` | yes | yes (decompresses inside the temp-then-rename, so it stays atomic) |
+| `store.list_backups` | yes | yes (reports `compressed`) |
+| `db_backup.py verify` | yes | yes |
+| `prune-backups.sh` / `backup.sh` / `backup-offhost.sh` / `restore.sh` / `verify-restore.sh` | yes | yes |
+
+So a `.db` written before this existed stays restorable forever, and flipping the switch off changes
+only what the *next* backup is written as.
+
+**Order matters in `create_backup`:** snapshot → integrity-check the real SQLite file → compress.
+Checking after compression would only prove gzip round-tripped whatever it was handed, and a
+faithfully compressed corrupt database is worse than no backup — it looks fine until the restore.
+If compression fails for any reason the uncompressed backup is kept: compression is an optimisation,
+never a precondition for having a backup.
+
+### `db_backup.py verify`
+
+New subcommand. The ops scripts used to verify by opening a backup as `sqlite:///<path>` and
+grepping `status` output for "quickCheck ok" — which cannot work on a `.db.gz`, and reported failure
+through a grep rather than an exit code. `verify` handles both formats and answers with its exit
+status.
+
+### What would have broken silently
+
+Six shell consumers globbed `*.db`. A retention pass that matches nothing does not error — **it
+just stops pruning**, which is precisely how a volume fills. `tests/test_backup_formats.sh` drives
+the real scripts against a real mixed directory; against the unfixed scripts it reports
+*"prune-backups deleted nothing (5 -> 5) — retention is silently inert"*, with exit code 0.
+
+## 9 · Build-cache housekeeping
+
+`cd-deploy.sh` runs `docker builder prune -f --filter until=168h` **after** a successful deploy
+(`CD_BUILD_CACHE_KEEP_HOURS` overrides the window).
+
+Measured on the production host: every `dc build` left ~495 MB of cache behind and nothing reclaimed
+it — **12.51 GB against a 29 GB volume, 57% of everything used**, while the database was 98 MiB. It
+grew at roughly 500 MB per deploy, so the failure mode was PREFLIGHT refusing to deploy about 25
+deploys out. Pruning took the volume from 78% to 39%.
+
+After success, never before: the cache is what makes the next build fast, and pruning ahead of a
+deploy would slow the thing in progress. Non-fatal by construction — a housekeeping failure must
+never turn a green deploy red.

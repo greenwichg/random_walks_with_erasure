@@ -31,15 +31,15 @@ if [ "${1:-}" = "--backup-now" ]; then
 fi
 
 # 2) Verify the NEWEST local backup non-destructively, INSIDE the container (reads the backup copy only).
-newest="$(ls -1t "$DATA_DIR"/backups/*.db 2>/dev/null | head -1 || true)"
+newest="$(ls -1t "$DATA_DIR"/backups/*.db "$DATA_DIR"/backups/*.db.gz 2>/dev/null | head -1 || true)"
 if [ -z "$newest" ]; then
   echo "backup-offhost: no local backups yet (scheduler may not have run) — nothing to verify/ship."
 else
   base="$(basename "$newest")"
   echo "== backup-offhost: verifying $base (container, non-destructive) =="
-  status="$(backup_run --db "sqlite:////app/data/backups/$base" status 2>&1)" || fail "verify command failed for $base"
-  echo "$status"
-  echo "$status" | grep -i quickcheck | grep -qiw ok || fail "integrity check FAILED for $base"
+  # `verify` rather than `status --db sqlite:///…`: a .db.gz cannot be opened as a database, and
+  # an exit code is a contract a shell can trust where a grep for "quickCheck ok" is not.
+  backup_run verify "/app/data/backups/$base" || fail "integrity check FAILED for $base"
 fi
 
 # 3) Ship all local backups off-host to S3 (instance IAM role; no --delete so S3 keeps full history until

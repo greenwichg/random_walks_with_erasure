@@ -23,6 +23,7 @@ change to that URL, not to this code.
 
 from __future__ import annotations
 
+import gzip
 import hashlib
 import json
 import math
@@ -31,6 +32,7 @@ import re
 import secrets
 import shutil
 import sqlite3
+import tempfile
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -2579,17 +2581,66 @@ def _redact_url(url: str) -> str:
     return re.sub(r"://([^:/@]+):[^@]+@", r"://\1:***@", url or "")
 
 
+#: Suffix marking a gzip-compressed backup. Backups are full copies of the database, so a catalog
+#: capped at 150,000 articles (~450 MiB) held at the default 12h/7d/4w retention costs ~10 GiB
+#: uncompressed. Measured in production: 28 copies of a 93 MB database = 2.4 GB, against a 29 GB
+#: volume. SQLite pages of news text compress hard, so this is the cheapest lever there is.
+BACKUP_GZ_SUFFIX = ".gz"
+
+
+def is_compressed_backup(path: str) -> bool:
+    return str(path).endswith(BACKUP_GZ_SUFFIX)
+
+
+def backup_compression() -> bool:
+    """Whether new backups are gzipped. ``RWE_BACKUP_COMPRESS=0`` turns it off.
+
+    A kill switch rather than an opt-in, because reading is format-agnostic: every consumer here
+    detects the suffix, so turning this off changes only what the NEXT backup is written as and
+    leaves every existing ``.db.gz`` restorable."""
+    return os.environ.get("RWE_BACKUP_COMPRESS", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+@contextmanager
+def _as_plain_sqlite(path: str) -> "Iterator[str]":
+    """Yield a path to an UNCOMPRESSED SQLite file for ``path``, decompressing to a temp file when
+    it is a ``.gz``. Yields the original path untouched otherwise.
+
+    Every reader goes through here, which is what makes compression invisible to callers: a
+    ``.db`` written last month and a ``.db.gz`` written today are the same thing to
+    ``integrity_ok`` and ``restore_database``. Old backups never stop being restorable."""
+    if not is_compressed_backup(path):
+        yield path
+        return
+    tmp_dir = tempfile.mkdtemp(prefix="ih_gunzip_")
+    plain = os.path.join(tmp_dir, Path(path).stem)          # strips only the .gz
+    try:
+        with gzip.open(path, "rb") as fsrc, open(plain, "wb") as fdst:
+            shutil.copyfileobj(fsrc, fdst, length=1024 * 1024)
+        yield plain
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
 def integrity_ok(db_path: str) -> bool:
     """True iff ``PRAGMA integrity_check`` reports a single ``ok`` for the SQLite file — the check
-    run on a backup before it is trusted, and before a restore replaces the live database."""
-    con = sqlite3.connect(db_path)
+    run on a backup before it is trusted, and before a restore replaces the live database.
+
+    Transparently handles a compressed backup by checking the decompressed bytes. A gzip file that
+    cannot be decompressed fails the check rather than raising, which is the right answer to
+    "is this backup trustworthy": no."""
     try:
-        rows = con.execute("PRAGMA integrity_check").fetchall()
-        return len(rows) == 1 and rows[0][0] == "ok"
-    except sqlite3.DatabaseError:
+        with _as_plain_sqlite(db_path) as plain:
+            con = sqlite3.connect(plain)
+            try:
+                rows = con.execute("PRAGMA integrity_check").fetchall()
+                return len(rows) == 1 and rows[0][0] == "ok"
+            except sqlite3.DatabaseError:
+                return False
+            finally:
+                con.close()
+    except (OSError, EOFError, gzip.BadGzipFile):
         return False
-    finally:
-        con.close()
 
 
 def backup_database(db_path: str, dest_path: str) -> None:
@@ -2623,7 +2674,10 @@ def restore_database(backup_path: str, db_path: str) -> str:
         saved = db_path + ".pre-restore"
         shutil.copy2(db_path, saved)
     tmp = db_path + ".restore.tmp"
-    shutil.copy2(backup_path, tmp)
+    # Decompression happens INSIDE the temp-then-rename, so a compressed restore is exactly as
+    # atomic as a plain one: the live path only ever changes by os.replace of a complete file.
+    with _as_plain_sqlite(backup_path) as plain:
+        shutil.copy2(plain, tmp)
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     os.replace(tmp, db_path)
     for side in ("-wal", "-shm"):
@@ -2647,14 +2701,19 @@ def default_backup_dir(db_url: str) -> str:
 
 
 def list_backups(out_dir: str) -> list:
-    """Backups in ``out_dir`` (``*.db``), newest first, with size + mtime."""
+    """Backups in ``out_dir`` (``*.db`` and ``*.db.gz``), newest first, with size + mtime.
+
+    Both suffixes, always. A lister that saw only one format would make the other invisible to
+    status output, retention and off-host shipping — and an invisible backup is not a backup."""
     p = Path(out_dir)
     if not p.is_dir():
         return []
     out = []
-    for f in sorted(p.glob("*.db"), key=lambda x: x.stat().st_mtime, reverse=True):
+    found = list(p.glob("*.db")) + list(p.glob("*.db" + BACKUP_GZ_SUFFIX))
+    for f in sorted(found, key=lambda x: x.stat().st_mtime, reverse=True):
         st = f.stat()
         out.append({"path": str(f), "sizeBytes": st.st_size,
+                    "compressed": is_compressed_backup(str(f)),
                     "modifiedAt": datetime.fromtimestamp(st.st_mtime, timezone.utc).isoformat()})
     return out
 
@@ -2673,7 +2732,26 @@ def create_backup(db_url: "str | None" = None, out_dir: "str | None" = None) -> 
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     dest = os.path.join(out, f"{Path(path).stem}-{ts}.db")
     backup_database(path, dest)
+    # ORDER MATTERS: verify the real SQLite file BEFORE compressing it. Checking after would only
+    # prove gzip round-tripped whatever it was given, and a faithfully compressed corrupt database
+    # is worse than no backup — it looks fine until the restore.
     if not integrity_ok(dest):
         os.remove(dest)
         raise RuntimeError("backup failed its integrity check and was discarded")
-    return dest
+    if not backup_compression():
+        return dest
+    gz = dest + BACKUP_GZ_SUFFIX
+    tmp = gz + ".tmp"
+    try:
+        with open(dest, "rb") as fsrc, gzip.open(tmp, "wb", compresslevel=6) as fdst:
+            shutil.copyfileobj(fsrc, fdst, length=1024 * 1024)
+        os.replace(tmp, gz)                 # atomic publish, same as the uncompressed path
+    except Exception:
+        for leftover in (tmp, gz):
+            try:
+                os.remove(leftover)
+            except OSError:
+                pass
+        return dest                         # compression is an optimisation; keep the good backup
+    os.remove(dest)
+    return gz

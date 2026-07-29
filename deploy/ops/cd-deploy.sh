@@ -136,6 +136,23 @@ echo "== cd-deploy: handing off to update.sh for ${REF} =="
 UPDATE_RC=$?
 if [ "$UPDATE_RC" -eq 0 ]; then
   stage_clear_state
+  # ── Build-cache housekeeping ───────────────────────────────────────────────────────────────
+  # AFTER success, never before: the cache is what makes the NEXT build fast, and pruning ahead of
+  # a deploy would slow the thing we are in the middle of. Measured on this host — every `dc build`
+  # leaves ~495 MB behind and nothing ever reclaimed it: 12.51 GB of cache against a 29 GB volume,
+  # 57% of everything used, with the database at 98 MiB. It filled the disk at roughly 500 MB per
+  # deploy, so the failure mode was "PREFLIGHT starts refusing to deploy" some 25 deploys out.
+  #
+  # `until=168h` keeps the last week, which covers the rollback window and a normal iteration
+  # cycle; only genuinely cold layers go. Non-fatal by construction — a housekeeping failure must
+  # never turn a green deploy red, so the result is reported and the exit status swallowed.
+  PRUNE_WINDOW="${CD_BUILD_CACHE_KEEP_HOURS:-168}h"
+  if reclaimed="$(docker builder prune -f --filter "until=${PRUNE_WINDOW}" 2>&1 | tail -1)"; then
+    echo "cd-deploy: build cache pruned (older than ${PRUNE_WINDOW}) — ${reclaimed}"
+  else
+    echo "cd-deploy: build-cache prune failed (harmless; deploy succeeded) — ${reclaimed}" >&2
+  fi
+  df -h / 2>/dev/null | tail -1 | sed 's/^/cd-deploy: disk /'
   alert "cd-deploy [SUCCESS] deployed ${REF} — smoke green."
   echo "CD_RESULT=deployed ref=$(git rev-parse HEAD) stage=SUCCESS service_interrupted=0 rollback=none"
   exit 0
