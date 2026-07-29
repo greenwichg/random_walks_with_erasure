@@ -980,3 +980,53 @@ projection.
 output stated its sizing method only when `dbstat` was MISSING, so a reader of a good report could
 not tell exact page allocation from an estimate. That is precisely the provenance failure the script
 exists to prevent, and it was in the script itself.
+
+---
+
+# Concurrency
+
+`examples/concurrency_report.py` — how many users this box supports, derived from measurements.
+
+```
+docker logs deploy-api-1 2>&1 | docker exec -i deploy-api-1 python examples/concurrency_report.py
+```
+
+**A concurrency limit cannot be measured without load.** This does not pretend otherwise. It derives
+the estimate from things that ARE measured — per-endpoint service time from the request log, the CPU
+budget from `/proc/stat`, SQLite write throughput benchmarked on this volume — and labels every
+modelling step so the assumptions can be argued with instead of being buried in a single number.
+
+## The measured inputs
+
+* **Per-endpoint service time** from `{"event": "request", …, "durationMs"}`. Path parameters are
+  collapsed (`/api/publishers/BBC` → `/api/publishers/{}`) so a per-entity route does not shatter
+  into hundreds of one-sample buckets, and a mean over one sample is not a measurement.
+* **CPU budget.** `t3.medium` = 2 vCPU total, **0.40 vCPU sustainable** (24 credits/hour). The
+  background draw is measured live and subtracted; what is left is the user budget.
+* **SQLite write throughput**, benchmarked against a scratch database on the same volume with the
+  same pragmas — never against the live one. SQLite permits one writer at a time, so this is a hard
+  ceiling on write-bearing requests however much CPU is spare.
+
+## The assumptions, all of them
+
+* **Wall-clock service time is treated as CPU time.** Nearly true for CPU-bound Python on an idle
+  box, and it errs toward *overstating* cost, so the user numbers come out conservative. It must not
+  be re-derived from a loaded box, where wall grows and CPU does not.
+* Endpoint→workload mapping, actions per session, sessions per DAU, DAU/MAU, think time, peak-hour
+  share. All printed beside the numbers they produce. There is not enough real traffic on this
+  deployment to measure any of them.
+* Every workload reports **what share of its cost came from real samples** versus the fallback. A
+  workload priced entirely from fallbacks must not read like one priced from production.
+
+## Burst is not free
+
+A peak hour at 2 vCPU costs 120 credit-minutes against 1,440 earned per day, so the report *checks*
+whether the day's credit budget covers the peak hour plus the other 23 hours, and falls back to the
+baseline rate when it does not. An earlier version simply assumed the burst was available, which is
+arithmetic fiction — spending credits it had not earned.
+
+## Validation
+
+None of this is a load test. The output says so in its last three lines. The way to falsify it is to
+generate load and watch where it actually breaks; until then it is a hypothesis with a stated
+derivation, not a result.
