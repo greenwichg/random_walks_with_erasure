@@ -32,6 +32,25 @@ done
 have() { command -v "$1" >/dev/null 2>&1; }
 say()  { [ "$JSON" -eq 1 ] || printf '%s\n' "$*"; }
 
+# Run a python program (fed on stdin) inside the api container and REFUSE TO BE SILENT about it.
+#
+# The first run of this script printed three empty sections and still ended with "done." — because
+# `docker exec` without -i does not attach stdin, so every here-doc program arrived empty, python
+# read nothing, printed nothing and exited 0. Empty output was indistinguishable from a healthy
+# section that happened to have nothing to say. A probe whose failure mode looks like success is
+# worse than no probe: it is a measurement you will quote later.
+api_py() {
+  local out rc
+  out=$(docker exec -i "$API_CONTAINER" python - "$@" 2>&1); rc=$?
+  if [ $rc -ne 0 ] || [ -z "$out" ]; then
+    say "  !! NO OUTPUT (exit $rc) — this section FAILED, it is not empty."
+    say "     container: $API_CONTAINER   (docker ps --filter name=$API_CONTAINER)"
+    [ -n "$out" ] && say "     said: $(printf '%s' "$out" | head -3)"
+    return 1
+  fi
+  printf '%s\n' "$out"
+}
+
 # ── Endpoint latency ──────────────────────────────────────────────────────────────────────────
 # Timed from INSIDE the api container against 127.0.0.1, so the number is the engine's own cost
 # with no proxy, TLS or network in it. A slow endpoint here is slow in the application; a fast one
@@ -55,7 +74,7 @@ probe_endpoints() {
     "/api/report"
   )
   for p in "${paths[@]}"; do
-    docker exec "$API_CONTAINER" python - "$p" "$REPEATS" <<'PY'
+    api_py "$p" "$REPEATS" <<'PY'
 import json, sys, time, urllib.request
 path, repeats = sys.argv[1], int(sys.argv[2])
 url, times, size = "http://127.0.0.1:8000" + path, [], 0
@@ -81,7 +100,7 @@ PY
 probe_engine_internals() {
   say ""
   say "== story pipeline, timed in-process against the live catalog =="
-  docker exec "$API_CONTAINER" python - <<'PY'
+  api_py <<'PY'
 import json, os, sys, time
 sys.path.insert(0, "/app/examples")
 import store as store_mod, story_service
@@ -112,7 +131,7 @@ PY
 probe_db() {
   say ""
   say "== database =="
-  docker exec "$API_CONTAINER" python - <<'PY'
+  api_py <<'PY'
 import os, sqlite3, sys
 path = os.environ.get("RWE_DB_PATH") or "/app/data/ih_beta.db"
 if not os.path.exists(path):
@@ -171,10 +190,18 @@ probe_resources() {
   done
   say ""
   say "== host =="
-  have nproc && say "  cpus     $(nproc)"
-  have free  && say "  memory   $(free -m | awk '/Mem:/ {print $3\"M used / \"$2\"M total\"}')"
-  have uptime && say "  load     $(uptime | sed 's/.*load average: //')"
-  have df && say "  disk     $(df -h / | awk 'NR==2 {print $3\" used / \"$2\" (\"$5\")\"}')"
+  local cpus mem load disk
+  cpus=$(nproc 2>/dev/null || echo '?')
+  mem=$(free -m 2>/dev/null | awk 'NR==2 {printf "%sM used / %sM total", $3, $2}')
+  load=$(uptime 2>/dev/null | sed 's/.*load average: //')
+  disk=$(df -h / 2>/dev/null | awk 'NR==2 {printf "%s used / %s (%s)", $3, $2, $5}')
+  say "  cpus     ${cpus}"
+  say "  memory   ${mem:-unavailable}"
+  say "  load     ${load:-unavailable}"
+  say "  disk     ${disk:-unavailable}"
+  # docker CPU% is relative to ONE core, so 100% on a 2-core box is one core saturated, not the
+  # machine. Spelled out because the two readings look identical and mean very different things.
+  say "  note     docker CPU% is per-core: 100% = one of ${cpus} cores busy"
 }
 
 # ── Edge: what the browser actually waits for ─────────────────────────────────────────────────
@@ -184,15 +211,19 @@ probe_edge() {
   local host="${APP_DOMAIN:-hidden-view.com}"
   for p in "/" "/stories" "/discover"; do
     have curl || { say "  (curl unavailable)"; return; }
-    out=$(curl -sS -o /dev/null -k --resolve "${host}:443:127.0.0.1" \
-      -w '%{time_connect} %{time_appconnect} %{time_starttransfer} %{time_total} %{size_download} %{content_type}' \
+    out=$(curl -sSL -o /dev/null -k --resolve "${host}:443:127.0.0.1" \
+      -H 'Accept-Encoding: gzip, zstd' \
+      -w 'code=%{http_code} hops=%{num_redirects} tls=%{time_appconnect}s ttfb=%{time_starttransfer}s total=%{time_total}s bytes=%{size_download}' \
       "https://${host}${p}" 2>/dev/null)
-    [ -n "$out" ] && say "  $(printf '%-12s' "$p") connect/tls/ttfb/total(s) + bytes: $out"
+    [ -n "$out" ] && say "  $(printf '%-12s' "$p") $out"
   done
   say ""
   say "  (compression check — Content-Encoding should be zstd or gzip)"
-  curl -sS -k -I --resolve "${host}:443:127.0.0.1" -H 'Accept-Encoding: gzip, zstd' \
-    "https://${host}/" 2>/dev/null | grep -iE 'content-encoding|cache-control|content-length' | sed 's/^/    /'
+  # -D - after following redirects, not -I: a HEAD can be answered differently from the GET a
+  # browser makes, and Caddy only compresses a real body.
+  curl -sSL -k -o /dev/null -D - --resolve "${host}:443:127.0.0.1" \
+    -H 'Accept-Encoding: gzip, zstd' "https://${host}/" 2>/dev/null \
+    | grep -iE '^HTTP/|content-encoding|cache-control|content-length' | sed 's/^/    /'
 }
 
 say "== Hidden View performance probe =="
