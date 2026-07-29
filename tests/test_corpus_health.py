@@ -7,6 +7,7 @@ every other user-keyed table survive)."""
 
 import pathlib
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -203,3 +204,57 @@ def test_retention_ignores_validation_ceilings():
     th.update({"minArticles": 0})     # isolate: only the explicit count policy should act
     plan = ch.plan_retention(arts, max_count=4, thresholds=th, now=NOW)
     assert plan["pruned"] == 6        # ceilings (maxPerPublisher, maxBucketPercent, …) are ignored
+
+
+def test_retention_builds_the_kept_set_exactly_once(monkeypatch):
+    """The regression that made the whole site slow, guarded deterministically.
+
+    ``run_retention`` selected kept articles with ``set(plan["keep"])`` written INSIDE the
+    comprehension's condition, so Python rebuilt the entire set once per article. On production's
+    catalog that was a 27,000-element set constructed 27,000 times: 37.75 s locally, 74-81 s on the
+    box, every 80 seconds, on a pass that deletes nothing in steady state.
+
+    It survived review because it is one line that reads correctly, and it survived production
+    because the log carried ``deleted`` counts and no durations — a prune that removes zero rows
+    looks idle until somebody times it.
+
+    Asserted by COUNTING, not by the clock. The first version of this test used a wall-clock bound
+    and passed against the quadratic code, because at a test-sized catalog the defect is only a few
+    seconds and any bound loose enough to be CI-safe is loose enough to miss it. Counting how many
+    times the set is built has no such gap: correct is exactly one, at every catalog size."""
+
+    class _CountingKeep(list):
+        """A keep-list that reports how many times something iterated it."""
+
+        def __init__(self, *a):
+            super().__init__(*a)
+            self.iterations = 0
+
+        def __iter__(self):
+            self.iterations += 1
+            return super().__iter__()
+
+    st = store.Store("sqlite://")
+    for i in range(40):
+        u = f"https://z{i}.example/{i}"
+        st.upsert_feed_article(canonical_url=u, url=u, publisher=f"P{i % 5}",
+                               source_publisher=f"P{i % 5}", title="t", description="", body=None,
+                               published_at=(NOW - timedelta(hours=i)).isoformat(), source_feed="f",
+                               scored={"article_id": u, "outlet": f"P{i % 5}", "lean": 0.0,
+                                       "category": "x"})
+
+    real_plan, seen = ch.plan_retention, {}
+
+    def counting_plan(*a, **kw):
+        plan = real_plan(*a, **kw)
+        plan["keep"] = seen["keep"] = _CountingKeep(plan["keep"])
+        return plan
+    monkeypatch.setattr(ch, "plan_retention", counting_plan)
+
+    res = ch.run_retention(st, max_count=1000, thresholds=TH(), now=NOW)   # cap never binds
+
+    assert res["pruned"] == 0, "the cap does not bind, so this is the steady-state no-op case"
+    assert res["metrics"]["total"] == 40, "every article must still reach the metrics pass"
+    assert seen["keep"].iterations == 1, (
+        f"the kept set was built {seen['keep'].iterations} times for 40 articles — that is the "
+        f"quadratic set-in-comprehension back; it must be hoisted out of the loop")

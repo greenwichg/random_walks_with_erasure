@@ -816,3 +816,77 @@ the process `build_stories` was**. Every subsequent investigation — cache inva
 A profile of one pipeline answers "which part of this pipeline is slowest". It cannot answer "is
 this pipeline where the time goes", and I read the first as though it were the second. The check
 that would have caught it costs one command: total process CPU, then the pipeline's share of it.
+
+## The bottleneck, found: one line, quadratic
+
+`corpus_health.run_retention`, line 500:
+
+```python
+metrics = corpus_metrics([a for a in articles if _canonical(a) in set(plan["keep"])], ...)
+```
+
+`set(plan["keep"])` sits **inside the comprehension's condition**, so Python rebuilds it for every
+article. At production's catalog size that is a 27,000-element set constructed 27,000 times — ~729
+million insertions — on a pass that in steady state deletes nothing.
+
+Measured directly:
+
+| catalog | as written | set hoisted | ratio |
+|---|---|---|---|
+| 5,000 | 1.36 s | 0.9 ms | 1,559x |
+| 10,000 | 3.93 s | 2.5 ms | 1,588x |
+| 20,000 | 24.10 s | 5.1 ms | 4,704x |
+| 27,000 | **37.75 s** | **10.0 ms** | 3,767x |
+
+Output identical at every size. Production's box is slower, which is the 74–81 s it was measuring.
+
+### The full attribution
+
+```
+storage_cleanup ms:  feed_articles 74,500-80,868   <- this line
+                     scored_articles      13-639
+                     article_event_locations 10-304
+                     storage_stats            12-24
+                     rec_events / analytics / snapshots  1-14
+post_cycle:          cleanupMs ~79.0 s (90.7%)
+                     warmMs     ~5.7 s ( 6.5%)
+                     refreshMs  ~4.0 s ( 4.6%)
+source_poll:         pollMs 127 ms - 4.2 s
+```
+
+**Retention is ~0.8 of a two-core box.** The story pipeline this investigation spent itself
+optimizing is 6.5% of the step it lives in, and the `_merge_duplicates` size bound — verified
+byte-identical across four corpora — is worth about **0.36% of the box**.
+
+### Why it hid
+
+Three properties, and it needed all three:
+
+1. **It deletes nothing.** In steady state the caps do not bind, so `deleted: 0` every cycle.
+2. **The log carried counts, not durations.** A prune that removes zero rows reads as idle.
+3. **The line is correct.** It produces exactly the right answer. Only the clock disagrees.
+
+A `deleted: 0` line and a `74,500 ms` line describe the same event. Only one of them was ever
+printed.
+
+### Guarded by counting, not by the clock
+
+The first regression test asserted a wall-clock bound and **passed against the quadratic code** — at
+a test-sized catalog the defect is only a couple of seconds, and any bound loose enough to be
+CI-safe is loose enough to miss it. Replaced with a `keep` list that counts how many times something
+iterated it: correct is exactly **one**, at every catalog size. That version fails on the unfixed
+tree with *"the kept set was built 40 times for 40 articles"*.
+
+## The method error, stated plainly
+
+I profiled `build_stories`, ranked its stages correctly, and shipped verified improvements to them.
+I never asked **what share of the process `build_stories` was**. Four follow-up investigations —
+cache invalidation, clustering, `_merge_duplicates`, and the deployment pipeline — inherited that
+unexamined frame and refined a ranking inside it.
+
+Four hypotheses died on the way to the answer: I/O, memory, `corpus_refresh`, and the orphan
+anti-join. Each was killed by a measurement I could have taken first. The ones that survived were
+never the ones I found most plausible.
+
+The check that would have caught all of it costs one command: **total process CPU, then the
+candidate's share of it.** Profile the process before profiling the pipeline.
