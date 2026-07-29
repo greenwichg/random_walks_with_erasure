@@ -1404,3 +1404,149 @@ def test_the_cache_ttl_default_matches_the_poll_interval(monkeypatch):
     assert ss.cache_ttl() == 45.0, "an explicit setting still wins"
     monkeypatch.setenv("RWE_STORIES_CACHE_TTL", "0")
     assert ss.cache_ttl() == 0.0, "0 must still disable the cache entirely"
+
+
+# --------------------------------------------------------------------------- #
+# Coalesced warming — the cache-invalidation architecture review
+# --------------------------------------------------------------------------- #
+def test_a_burst_of_provider_writes_produces_one_rebuild(monkeypatch):
+    """The finding this exists for. `MultiSourcePoller` runs a thread per adapter but holds a
+    global lock across poll+post-cycle, so adapter warms are SERIALIZED — which means warm_cache's
+    single-flight guard, written for the concurrent case, never fired for them. Every provider that
+    ingested anything ran its own full rebuild: measured live at 5.6 s each, several per polling
+    window, on a two-core box.
+
+    Six providers writing inside one quiet window must now cost ONE build, not six."""
+    monkeypatch.setenv("RWE_STORY_WARM_COALESCE", "0.4")
+    monkeypatch.setenv("RWE_STORY_WARM_MAX_DELAY", "30")
+    st = store_mod.Store("sqlite://"); _senate_and_wildfire(st)
+    ss.clear_cache(); ss.shutdown_warmer()
+    calls = {"n": 0}
+    real = ss.build_stories
+
+    def counting(*a, **kw):
+        calls["n"] += 1
+        return real(*a, **kw)
+    monkeypatch.setattr(ss, "build_stories", counting)
+    try:
+        for i in range(6):                       # six providers finishing in quick succession
+            _add(st, f"https://p{i}.example.com/a", f"P{i}", 0.0,
+                 f"Senate passes funding bill number {i}", days=1)
+            ss.request_warm(st)
+        _wait_for(lambda: calls["n"] >= 1, 10)
+        import time as _t
+        _t.sleep(1.0)                            # let any straggler warm land
+        assert calls["n"] == 1, f"one rebuild for six writes, got {calls['n']}"
+    finally:
+        ss.shutdown_warmer()
+
+
+def test_continuous_ingestion_cannot_starve_the_warm(monkeypatch):
+    """The failure mode quiescence-debouncing introduces, closed. A catalog written to more often
+    than the quiet window never goes quiet, so a pure debounce would never warm at all and EVERY
+    reader would pay a cold build — strictly worse than the behaviour being replaced. The max-delay
+    cap is therefore not a refinement; it is what makes the design admissible."""
+    monkeypatch.setenv("RWE_STORY_WARM_COALESCE", "30")     # never reached
+    monkeypatch.setenv("RWE_STORY_WARM_MAX_DELAY", "0.5")   # the cap must fire instead
+    st = store_mod.Store("sqlite://"); _senate_and_wildfire(st)
+    ss.clear_cache(); ss.shutdown_warmer()
+    calls = {"n": 0}
+    real = ss.build_stories
+
+    def counting(*a, **kw):
+        calls["n"] += 1
+        return real(*a, **kw)
+    monkeypatch.setattr(ss, "build_stories", counting)
+    stop = False
+    try:
+        import threading, time as _t
+        def hammer():
+            i = 0
+            while not stop and i < 200:
+                ss.request_warm(st)
+                _t.sleep(0.02)
+                i += 1
+        t = threading.Thread(target=hammer, daemon=True); t.start()
+        assert _wait_for(lambda: calls["n"] >= 1, 10), "the cap must force a warm under load"
+    finally:
+        stop = True
+        ss.shutdown_warmer()
+
+
+def test_coalescing_can_never_serve_stale_data(monkeypatch):
+    """The safety argument the whole design rests on, made executable.
+
+    The cache key contains the catalog fingerprint, so a reader whose fingerprint matches no cached
+    entry MISSES and builds fresh. A warm therefore only decides who PAYS for a build — it can
+    never decide what a reader SEES. That is what makes deferring, coalescing or skipping a warm a
+    pure scheduling question.
+
+    Here the warmer is suppressed entirely and a write lands: the reader must still see it."""
+    monkeypatch.setenv("RWE_STORY_WARM_COALESCE", "3600")   # a warm will not fire during this test
+    monkeypatch.setenv("RWE_STORY_WARM_MAX_DELAY", "3600")
+    st = store_mod.Store("sqlite://"); _senate_and_wildfire(st)
+    ss.clear_cache(); ss.shutdown_warmer()
+    try:
+        before = next(s for s in ss.list_stories(st)["stories"] if "Senate" in s["title"])
+        _add(st, "https://ap.org/late", "AP", 0.1, "Senate passes funding bill in late vote", days=1)
+        ss.request_warm(st)                       # queued, and deliberately never serviced
+        after = next(s for s in ss.list_stories(st)["stories"] if "Senate" in s["title"])
+        assert after["totalCoverage"] == before["totalCoverage"] + 1, \
+            "a reader must see the write whether or not a warm ever ran"
+    finally:
+        ss.shutdown_warmer()
+
+
+def test_coalescing_off_restores_the_inline_warm(monkeypatch):
+    """The kill switch has to be a true one — the same code path as before, not a quieter version
+    of the new one. At 0 the warm happens on the CALLER's thread and is finished when it returns."""
+    monkeypatch.setenv("RWE_STORY_WARM_COALESCE", "0")
+    st = store_mod.Store("sqlite://"); _senate_and_wildfire(st)
+    ss.clear_cache(); ss.shutdown_warmer()
+    calls = {"n": 0}
+    real = ss.build_stories
+
+    def counting(*a, **kw):
+        calls["n"] += 1
+        return real(*a, **kw)
+    monkeypatch.setattr(ss, "build_stories", counting)
+    assert ss.request_warm(st) is False, "0 must warm inline, not queue"
+    assert calls["n"] == 1, "the build must be done by the time request_warm returns"
+
+
+def test_the_warmer_survives_a_failing_build(monkeypatch):
+    """A warm that cannot be built is a slow next request. It must never be a dead warmer thread,
+    because a dead warmer degrades silently into "every reader pays" — the exact failure the warm
+    exists to prevent."""
+    monkeypatch.setenv("RWE_STORY_WARM_COALESCE", "0.3")
+    monkeypatch.setenv("RWE_STORY_WARM_MAX_DELAY", "5")
+    st = store_mod.Store("sqlite://"); _senate_and_wildfire(st)
+    ss.clear_cache(); ss.shutdown_warmer()
+    state = {"fail": True, "n": 0}
+    real = ss.build_stories
+
+    def flaky(*a, **kw):
+        state["n"] += 1
+        if state["fail"]:
+            state["fail"] = False
+            raise RuntimeError("transient")
+        return real(*a, **kw)
+    monkeypatch.setattr(ss, "build_stories", flaky)
+    try:
+        ss.request_warm(st)
+        assert _wait_for(lambda: state["n"] >= 1, 10)
+        ss.clear_cache()
+        ss.request_warm(st)
+        assert _wait_for(lambda: state["n"] >= 2, 10), "the warmer thread must still be alive"
+    finally:
+        ss.shutdown_warmer()
+
+
+def _wait_for(pred, timeout: float) -> bool:
+    import time as _t
+    deadline = _t.time() + timeout
+    while _t.time() < deadline:
+        if pred():
+            return True
+        _t.sleep(0.05)
+    return False

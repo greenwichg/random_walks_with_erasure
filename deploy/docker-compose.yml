@@ -213,6 +213,26 @@ services:
       # What it trades away is drift of the rolling 6-day window start: 10 minutes instead of 2,
       # well under a percent of the window.
       RWE_STORIES_CACHE_TTL: ${RWE_STORIES_CACHE_TTL:-600}
+      # Coalesced story-cache warming — SHIPPED OFF (0), which is the measured conclusion.
+      #
+      # The hypothesis: each provider invalidates the catalog fingerprint and triggers its own full
+      # 5.6 s rebuild, so eight providers do eight rebuilds where one would do. Two measurements
+      # rejected it. Production warms are ~60 s APART (four 15 s healthchecks separate them in the
+      # logs), so nothing is bunched; and benchmarked over a six-provider window, coalescing made
+      # things worse at every setting tried — quiet=5s took rebuilds 10 -> 12, build CPU
+      # 57.0 -> 67.8 s and reader misses 13.0% -> 22.2%; quiet=0.5s, 11 -> 12, 63.9 -> 71.0 s and
+      # 18.0% -> 24.5%. Deferring a warm lets a READER arrive first and build it instead.
+      #
+      # Left in place, off, because the hypothesis is still plausible for a RESTART — every adapter
+      # polls at once on start, which is a genuine burst the bench could not reach. Set COALESCE to
+      # a small number of seconds to trial it; `story_cache_warm` logs `coalesced`, so production
+      # answers the question. MAX_DELAY is the starvation cap for when it IS on.
+      #
+      # Either way this cannot affect what readers SEE: the cache key contains the catalog
+      # fingerprint, so a reader whose fingerprint matches nothing simply builds. A warm only
+      # decides who PAYS for one.
+      RWE_STORY_WARM_COALESCE: ${RWE_STORY_WARM_COALESCE:-0}
+      RWE_STORY_WARM_MAX_DELAY: ${RWE_STORY_WARM_MAX_DELAY:-60}
       # Clustering admission gates + rarity weighting. MIN_SHARED is distinctive tokens two
       # headlines must share (the ratio alone cannot tell "Trump wins Ohio"/"…Iowa" apart from real
       # co-coverage). IDF weights shared tokens by corpus rarity; it is OFF because measuring it on

@@ -1132,6 +1132,210 @@ def warm_cache(store_) -> Optional[int]:
         _WARM_LOCK.release()
 
 
+# --------------------------------------------------------------------------- #
+# Coalesced warming.
+#
+# WHY THIS IS SAFE, stated first because everything else depends on it: the cache key contains the
+# catalog fingerprint. A reader whose fingerprint matches no cached entry MISSES and builds fresh.
+# So a warm can never make a reader see stale data — it can only decide who PAYS for a build. That
+# makes deferring, coalescing or skipping a warm a pure scheduling question, with no correctness
+# dimension at all. (Delete the fingerprint from the key and every word of this stops being true.)
+#
+# WHAT IT FIXES. `MultiSourcePoller` runs one thread per adapter and holds a global lock across
+# `poll_once` + `_post_cycle`, so the adapters' warms are SERIALIZED, never concurrent — which
+# means `warm_cache`'s single-flight guard, written for the concurrent case, has never once fired
+# for them. Each provider that ingests anything triggers its own full rebuild: measured in
+# production, `story_cache_warm` at 5.6 s, several times per polling window, on a 2-core box.
+# Every one of those rebuilds but the last is superseded before a reader can use it.
+#
+# It also unblocks ingestion. The warm ran INSIDE the poller's lock, so a 5.6 s rebuild stalled
+# every other adapter's ingest behind it. Requesting instead of warming moves the build to this
+# thread and the lock is released immediately. No new concurrency class is introduced: API requests
+# already read the store while adapters write, and SQLite is in WAL mode for exactly that reason.
+# --------------------------------------------------------------------------- #
+def _env_float_allowing_zero(name: str, default: float) -> float:
+    """Like ``_env_float`` but ZERO IS A VALUE, not junk.
+
+    ``_env_float`` returns the default for anything <= 0, which is right for a window that must be
+    positive to mean anything. It is wrong for a kill switch: setting the flag to 0 to disable
+    coalescing silently gave back the default and left it enabled. Caught by the kill-switch test,
+    which is the reason to write one."""
+    try:
+        v = float(os.environ.get(name, "").strip())
+        return v if v >= 0 else default
+    except (TypeError, ValueError):
+        return default
+
+
+def warm_coalesce_window() -> float:
+    """Seconds of quiet after the last write before a coalesced warm fires.
+
+    **DEFAULT 0 — coalescing is OFF, and that is the measured conclusion, not an oversight.**
+
+    This module was built to batch "redundant" provider warms. The hypothesis was that eight
+    providers each invalidating the catalog fingerprint produce eight rebuilds where one would do.
+    Two independent measurements rejected it:
+
+    * **Production is not bunched.** The live logs put ``story_cache_warm`` events ~60 s apart —
+      four docker healthchecks at 15 s separate them. No quiet window short enough to be safe
+      merges anything, so there is no burst to coalesce in steady state.
+    * **Delaying the warm costs more than it saves.** Benchmarked over a six-provider window
+      (``examples/bench_cache_warm.py``), against warming inline:
+
+          quiet=5.0s   rebuilds 10 -> 12   build CPU 57.0 -> 67.8 s   reader miss 13.0 -> 22.2%
+          quiet=0.5s   rebuilds 11 -> 12   build CPU 63.9 -> 71.0 s   reader miss 18.0 -> 24.5%
+
+      Rebuilds went UP. Deferring the warm simply lets a READER arrive first and build it instead,
+      which costs a rebuild *and* a slow request. The one metric that improved — adapter time
+      blocked on the poller lock — moved 3.4 -> 1.5 s at 5 s and 1.8 -> 1.6 s at 0.5 s, which is
+      inside this machine's run-to-run variance.
+
+    * **There is no burst even at startup**, which was the last regime left. ``start()`` makes every
+      adapter poll immediately, so eight simultaneous writes looked like the one case coalescing
+      would win. Measured, it is a dead heat — 2 rebuilds either way, CPU and reader latency flat.
+      The reason is structural and was in front of me the whole time: ``poll_adapter_once`` holds a
+      GLOBAL lock across poll + post-cycle, so adapters can never finish simultaneously. By the time
+      the second one is inside ``_post_cycle`` the first one's warm has already returned. **The lock
+      that made single-flight useless is also what makes coalescing useless.**
+
+    So the answer is that the invalidations are not redundant. Each rebuild serves a genuinely
+    changed catalog for the ~60 s until the next write. The 5.6 s cost is the clusterer's, not the
+    scheduler's, and it belongs to the quadratic-clustering finding instead.
+
+    The machinery stays because it is correct, tested, and free when off — and because if the poller
+    lock is ever narrowed (which is its own worthwhile change), simultaneous finishes become
+    possible and this becomes relevant. ``story_cache_warm`` logs ``coalesced``, so that question
+    can be answered from production rather than from a model of it."""
+    return _env_float_allowing_zero("RWE_STORY_WARM_COALESCE", 0.0)
+
+
+def warm_max_delay() -> float:
+    """The starvation cap: however busy ingestion is, a warm fires at least this often once dirty.
+
+    Without it, quiescence-based debouncing has a real failure mode — a catalog written to more
+    often than the quiet window never goes quiet, so the warm never fires and EVERY reader pays a
+    cold build. That is strictly worse than the behaviour being replaced, so the cap is not a
+    refinement; it is what makes the design admissible."""
+    return _env_float_allowing_zero("RWE_STORY_WARM_MAX_DELAY", 60.0)
+
+
+class _Warmer:
+    """One daemon thread that collapses a burst of write notifications into a single rebuild.
+
+    Fires when EITHER the catalog has been quiet for ``warm_coalesce_window`` seconds OR
+    ``warm_max_delay`` has passed since the burst began, whichever comes first."""
+
+    def __init__(self, store_, log=None):
+        self._store = store_
+        self._log = log
+        self._cv = threading.Condition()
+        self._dirty_at: Optional[float] = None      # last request
+        self._burst_at: Optional[float] = None      # first request of the current burst
+        self._stop = False
+        self.warms = 0                              # diagnostics; nothing reads it for control
+        self.requests = 0
+        self._served = 0
+        self.requests_absorbed = 0
+        self._thread = threading.Thread(target=self._run, name="story-warmer", daemon=True)
+        self._thread.start()
+
+    def request(self) -> None:
+        with self._cv:
+            now = _time.monotonic()
+            self._dirty_at = now
+            self.requests += 1
+            if self._burst_at is None:
+                self._burst_at = now
+            self._cv.notify()
+
+    def stop(self, timeout: float = 5.0) -> None:
+        with self._cv:
+            self._stop = True
+            self._cv.notify_all()
+        self._thread.join(timeout=timeout)
+
+    def _run(self) -> None:
+        while True:
+            with self._cv:
+                while not self._stop and self._dirty_at is None:
+                    self._cv.wait()
+                if self._stop:
+                    return
+                # Wait for quiescence, but never past the starvation cap.
+                while not self._stop:
+                    now = _time.monotonic()
+                    quiet = now - (self._dirty_at or now)
+                    burst = now - (self._burst_at or now)
+                    window, cap = warm_coalesce_window(), warm_max_delay()
+                    if quiet >= window or burst >= cap:
+                        break
+                    self._cv.wait(timeout=max(0.05, min(window - quiet, cap - burst)))
+                if self._stop:
+                    return
+                self._dirty_at = None
+                self._burst_at = None
+                # How many write notifications this single rebuild is about to absorb. 1 means it
+                # coalesced nothing; >1 is the whole point, and logging it is what will tell us
+                # whether coalescing earns its keep in production rather than only on a bench.
+                coalesced = self.requests - self._served
+                self._served = self.requests
+                self.requests_absorbed = coalesced
+            try:
+                t0 = _time.perf_counter()
+                stories = warm_cache(self._store)
+                if stories is not None:
+                    self.warms += 1
+                    # Keep emitting `story_cache_warm` with a duration. That log line is how this
+                    # problem was found in the first place — a change that fixed the cost and
+                    # removed the evidence would be a bad trade. `coalesced` counts the write
+                    # notifications this single rebuild absorbed.
+                    if self._log is not None:
+                        self._log("story_cache_warm", stories=stories,
+                                  durationMs=round((_time.perf_counter() - t0) * 1000.0, 1),
+                                  coalesced=coalesced)
+            except Exception as e:
+                # A warm that cannot be built is a slow next request, never a dead warmer thread.
+                if self._log is not None:
+                    try:
+                        self._log("story_cache_warm_failed", error=f"{type(e).__name__}: {e}")
+                    except Exception:
+                        pass
+
+
+_WARMER: Optional["_Warmer"] = None
+_WARMER_LOCK = threading.Lock()
+
+
+def request_warm(store_, log=None) -> bool:
+    """Ask for the story cache to be rebuilt soon. NON-BLOCKING — returns immediately.
+
+    This is what pollers should call instead of :func:`warm_cache`. With coalescing disabled
+    (``RWE_STORY_WARM_COALESCE=0``) it warms inline on the caller's thread, which is exactly the
+    previous behaviour, so the flag is a true kill switch rather than a different code path.
+
+    Returns True if the request was queued to the background warmer, False if it warmed inline."""
+    global _WARMER
+    if warm_coalesce_window() <= 0:
+        warm_cache(store_)
+        return False
+    with _WARMER_LOCK:
+        if _WARMER is None or _WARMER._store is not store_ or not _WARMER._thread.is_alive():
+            if _WARMER is not None:
+                _WARMER.stop(timeout=0.1)
+            _WARMER = _Warmer(store_, log=log)
+        _WARMER.request()
+    return True
+
+
+def shutdown_warmer() -> None:
+    """Stop the background warmer (tests, benchmarks, and a clean process exit)."""
+    global _WARMER
+    with _WARMER_LOCK:
+        if _WARMER is not None:
+            _WARMER.stop()
+            _WARMER = None
+
+
 def _cached_build(store_, *, topic, date_from, date_to, max_scan, min_articles, min_publishers) -> list:
     """``build_stories(_fetch(...))`` behind a cache with TWO independent invalidation conditions,
     because either alone is wrong:

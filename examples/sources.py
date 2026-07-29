@@ -1333,18 +1333,31 @@ class MultiSourcePoller:
             storage_lifecycle.run_cleanup(self.store, log=self._log)
         except Exception as e:                              # cleanup must never break polling
             self._log(logging.WARNING, "storage_cleanup_failed", error=f"{type(e).__name__}: {e}")
-        # Rebuild the story clusters HERE, on this adapter's thread, now the catalog has settled
-        # (after retention, so the cache fingerprint is final). This ingest just invalidated the
-        # cache; without the warm the next reader pays the full rebuild — 5.4 s measured. Same work,
-        # moved off the request path. warm_cache is single-flight: adapters run one thread each and
-        # several can land together, so only one rebuild runs at a time. Fail-soft, like the cleanup
-        # above: a warm that cannot be built is a slow next request, never a broken poll loop.
+        # REQUEST a story rebuild rather than performing one here. The catalog has settled (this
+        # runs after retention, so the fingerprint is final) and this ingest has just invalidated
+        # the cache; without a warm the next reader pays the full rebuild — 5.4 s measured.
+        #
+        # It used to warm INLINE, and that was wrong in two ways that only production showed.
+        #
+        # The single-flight guard in warm_cache was written for concurrent adapters, but
+        # `poll_adapter_once` holds `self._lock` across poll_once AND _post_cycle, so adapter warms
+        # are SERIALIZED and the guard has never fired for them. Every provider that ingested
+        # anything therefore ran its own full rebuild — measured live: `story_cache_warm` at 5.6 s,
+        # several times per polling window, on a two-core box, with all but the last superseded
+        # before a reader could use it.
+        #
+        # And it ran while holding that lock, so a 5.6 s rebuild stalled every other adapter's
+        # ingest behind it. Requesting is non-blocking, so the lock is released immediately and the
+        # build happens on the warmer thread. That introduces no new concurrency: API requests
+        # already read this store while adapters write to it, which is what WAL is for.
+        #
+        # Fail-soft, like the cleanup above: a warm that cannot be built is a slow next request,
+        # never a broken poll loop.
         try:
-            t0 = time.perf_counter()
-            stories = story_service.warm_cache(self.store)
-            if stories is not None:
-                self._log(logging.INFO, "story_cache_warm", stories=stories,
-                          durationMs=round((time.perf_counter() - t0) * 1000.0, 1))
+            def _warm_log(event, **fields):
+                self._log(logging.WARNING if event.endswith("_failed") else logging.INFO,
+                          event, **fields)
+            story_service.request_warm(self.store, log=_warm_log)
         except Exception as e:
             self._log(logging.WARNING, "story_cache_warm_failed", error=f"{type(e).__name__}: {e}")
         if self._on_cycle is not None:

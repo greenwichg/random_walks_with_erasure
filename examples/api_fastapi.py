@@ -303,6 +303,13 @@ async def lifespan(app: FastAPI):
     yield
     if state.poller is not None:
         state.poller.stop()          # graceful: signal + join the current cycle
+    # The coalescing story warmer outlives any single poll cycle by design, so it is stopped here
+    # rather than by the poller. Ordered AFTER poller.stop() so a cycle finishing during shutdown
+    # cannot queue a warm against a warmer that has already gone.
+    try:
+        story_service.shutdown_warmer()
+    except Exception:                # shutdown must never raise out of the lifespan
+        pass
     state.poller = None
     state.active = None
     state.refresh = None

@@ -231,16 +231,17 @@ class FeedPoller:
         except Exception as e:                                  # cleanup must never break polling
             self._log(logging.WARNING, "storage_cleanup_failed", error=f"{type(e).__name__}: {e}")
 
-        # Rebuild the story clusters HERE, on the poller's thread, now that the catalog has settled
-        # (after retention, so the cache fingerprint is final). The ingest just invalidated the
-        # cache; without this the next reader pays the full rebuild — 5.4 s in production, once per
-        # interval. Same total work, moved off the request path. Fail-soft: a warm that cannot be
-        # built is a slow next request, never a broken poll loop.
+        # REQUEST a story rebuild rather than performing one here — same reasoning as the
+        # MultiSourcePoller's copy of this seam (see sources.py::_post_cycle). The rebuild the
+        # ingest forces still happens off the request path; it just happens on the warmer thread,
+        # coalesced with any other provider that wrote at about the same time, and without holding
+        # this poller's thread for the 5.6 s the build takes.
+        # Fail-soft: a warm that cannot be built is a slow next request, never a broken poll loop.
         try:
-            t1 = time.perf_counter()
-            stories = story_service.warm_cache(self.store)
-            self._log(logging.INFO, "story_cache_warm", stories=stories,
-                      durationMs=round((time.perf_counter() - t1) * 1000.0, 1))
+            def _warm_log(event, **fields):
+                self._log(logging.WARNING if event.endswith("_failed") else logging.INFO,
+                          event, **fields)
+            story_service.request_warm(self.store, log=_warm_log)
         except Exception as e:
             self._log(logging.WARNING, "story_cache_warm_failed", error=f"{type(e).__name__}: {e}")
 

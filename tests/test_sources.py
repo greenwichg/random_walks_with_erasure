@@ -849,30 +849,42 @@ def test_default_registry_registers_all_providers_with_unique_health_keys():
 # to the poller production actually runs, and to the single-flight guard that keeps eight adapter
 # threads from launching eight concurrent multi-second clustering runs.
 # --------------------------------------------------------------------------- #
-def test_post_cycle_warms_the_story_cache(store, monkeypatch):
+def test_post_cycle_requests_a_story_cache_warm(store, monkeypatch):
+    """The seam moved from `warm_cache` to `request_warm`, and the move is the point.
+
+    `poll_adapter_once` holds a global lock across poll_once AND _post_cycle, so warming inline
+    both serialized every adapter's warm (defeating warm_cache's single-flight guard, which was
+    written for the concurrent case) and held that lock for the 5.6 s a rebuild takes, stalling
+    every other adapter's ingest behind it. Requesting is non-blocking; the build happens on the
+    warmer thread."""
     import story_service
-    warmed = []
-    monkeypatch.setattr(story_service, "warm_cache", lambda s: warmed.append(s) or 7)
+    asked = []
+    monkeypatch.setattr(story_service, "request_warm",
+                        lambda s, log=None: asked.append(s) or True)
     poller = sources.MultiSourcePoller(store, ri.make_scorer(), registry=sources.SourceRegistry(),
                                        log=lambda *a, **k: None)
     poller._post_cycle({"new": 3})
-    assert warmed == [store], "the warm did not run on the poller the API actually starts"
+    assert asked == [store], "the warm was not requested on the poller the API actually starts"
 
 
 def test_post_cycle_skips_the_warm_when_nothing_was_ingested(store, monkeypatch):
     """No new articles means the cache fingerprint is unchanged — rebuilding would be pure waste."""
     import story_service
-    monkeypatch.setattr(story_service, "warm_cache",
-                        lambda s: (_ for _ in ()).throw(AssertionError("warmed with no new rows")))
+    monkeypatch.setattr(story_service, "request_warm",
+                        lambda s, log=None: (_ for _ in ()).throw(AssertionError("warmed with no new rows")))
     poller = sources.MultiSourcePoller(store, ri.make_scorer(), registry=sources.SourceRegistry(),
                                        log=lambda *a, **k: None)
     poller._post_cycle({"new": 0})
 
 
 def test_a_failing_warm_never_breaks_the_poll_cycle(store, monkeypatch):
+    """Now covers the REQUEST failing. A failing BUILD no longer reaches this thread at all — it
+    happens on the warmer, which swallows and logs it there (see
+    test_the_warmer_survives_a_failing_build). So the poll loop is strictly more isolated than
+    before, and this pins the one failure mode that can still reach it."""
     import story_service
-    monkeypatch.setattr(story_service, "warm_cache",
-                        lambda s: (_ for _ in ()).throw(RuntimeError("clustering exploded")))
+    monkeypatch.setattr(story_service, "request_warm",
+                        lambda s, log=None: (_ for _ in ()).throw(RuntimeError("clustering exploded")))
     events = []
     poller = sources.MultiSourcePoller(store, ri.make_scorer(), registry=sources.SourceRegistry(),
                                        log=lambda lvl, ev, **f: events.append(ev))

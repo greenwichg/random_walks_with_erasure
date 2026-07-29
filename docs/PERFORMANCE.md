@@ -290,3 +290,70 @@ catalog is 25k and `RWE_RETENTION_MAX_COUNT` permits **150,000**.
 Note how the ranking changed once real numbers arrived: **the top item did not exist in the
 synthetic list at all**, and the item I would have ranked first from the repo (the page cache) is
 now deleted as measured-harmful.
+
+---
+
+# Story-cache invalidation & warming — architecture review (2026-07-29)
+
+Commissioned on the hypothesis that **independent provider writes invalidate the story cache too
+often**. Traced, measured in three regimes, and **the hypothesis is rejected**. The machinery to
+coalesce is implemented, tested and shipped **OFF**, which is the finding rather than a hedge.
+
+## The lifecycle
+
+```
+adapter thread (one per provider, MultiSourcePoller.start)
+  └─ poll_adapter_once
+       └─ with self._lock:                    ← GLOBAL: serializes ALL adapters
+            ├─ adapter.poll_once()            → upsert × N ⇒ fetched_at moves ⇒ FINGERPRINT CHANGES
+            └─ _post_cycle(agg)
+                 ├─ agg["new"] == 0 → return  (no warm — already correct)
+                 ├─ storage_lifecycle.run_cleanup()   ⇒ may change the fingerprint again
+                 ├─ warm_cache(store)          ← 5.6 s, INSIDE the lock
+                 └─ _on_cycle()                ← corpus rebuild, 1–2 s, also inside
+```
+
+`_cached_build` keys on `(topic, dates, …, catalog_fingerprint)`. **Readers are protected by that
+key, not by the warm** — which is why any scheduling change here is safe by construction.
+
+## Rebuild frequency, measured
+
+| regime | rebuilds | build CPU | ingest blocked | reader miss |
+|---|---:|---:|---:|---:|
+| steady, inline (today) | 10–11 | 57–64 s | 1.8–3.4 s | 13–18% |
+| steady, coalesced 5.0 s | 12 | 67.8 s | 1.5 s | 22.2% |
+| steady, coalesced 0.5 s | 12 | 71.0 s | 1.6 s | 24.5% |
+| **startup burst, inline** | **2** | 11.2 s | 2.0 s | 3.1% |
+| **startup burst, coalesced 5 s** | **2** | 11.5 s | 2.1 s | 3.2% |
+
+**Coalescing made things worse at every setting, in every regime.** Rebuilds went *up*, because
+deferring a warm lets a reader arrive first and build it — costing a rebuild *and* a slow request.
+
+## Why there was nothing to coalesce
+
+Two independent reasons, and the second is the one that settles it.
+
+**Production writes are ~60 s apart.** The live logs put `story_cache_warm` events four docker
+healthchecks (15 s each) apart. No safe quiet window merges anything.
+
+**Adapters cannot finish simultaneously.** `poll_adapter_once` holds a global lock across poll +
+post-cycle, so by the time the second adapter reaches `_post_cycle` the first one's warm has already
+returned. **The same lock that made `warm_cache`'s single-flight guard dead code also makes
+coalescing dead code.** Startup — eight adapters polling at once, the strongest possible case — is a
+dead heat for exactly this reason.
+
+## Verdict
+
+The invalidations are **not redundant**. Each rebuild serves a genuinely changed catalog for the
+~60 s until the next write. The 5.6 s is the *clusterer's* cost, not the scheduler's, and it belongs
+to the quadratic-clustering finding — not here.
+
+Shipped: `request_warm()`, the coalescing warmer, `RWE_STORY_WARM_COALESCE` (default **0** = inline,
+byte-identical to previous behaviour) and `RWE_STORY_WARM_MAX_DELAY` as the starvation cap, plus six
+tests. `story_cache_warm` now logs `coalesced`, so if the poller lock is ever narrowed — a
+worthwhile change in its own right, and the precondition for any of this mattering — the question
+can be re-answered from production instead of from a model.
+
+The kill switch was broken on first write: `_env_float` treats 0 as junk and returned the default,
+so setting the flag to 0 left the feature on. Caught by the test written for exactly that, which is
+the argument for writing kill-switch tests at all.
