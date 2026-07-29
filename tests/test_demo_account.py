@@ -232,3 +232,33 @@ def test_the_dashboard_carries_the_same_marker(client, exhibit):
     assert client.get("/api/dashboard", headers=h).json().get("sample") is True
     _, eh = exhibit
     assert "sample" not in client.get("/api/dashboard", headers=eh).json()
+
+
+def test_the_synthetic_fallback_is_marked_too_not_just_the_exhibit(client):
+    """The branch production actually runs, and the one the first fix missed.
+
+    `_report_for` has TWO fallbacks for a signed-in reader with no reads and no onboarding: the
+    exhibit account (only when RWE_DEMO_ACCOUNT is configured and seeded) and, otherwise, the
+    synthetic demo row. Production does not set RWE_DEMO_ACCOUNT, so it runs the synthetic one —
+    which returns is_exhibit=False, so a marker keyed on is_exhibit never fired there.
+
+    The symptom was a beta reader seeing "Measured · based on 24 reads" over politics they had never
+    produced, with the numbers CHANGING between page loads because the synthetic dataset is rebuilt
+    on every corpus refresh. This test runs with no exhibit fixture, so it exercises exactly that
+    branch."""
+    _, h = _user(client, "synthetic-fallback-reader")
+    # Force the branch. The `exhibit` fixture is module-scoped and already seeded by earlier tests,
+    # so without this `_demo_personal` returns the exhibit uid and this test would quietly exercise
+    # the OTHER fallback — passing for the wrong reason, which is how the bug survived the first fix.
+    import api_fastapi
+    real = api_fastapi._demo_personal
+    api_fastapi._demo_personal = lambda active: None
+    try:
+        body = client.get("/api/report", headers=h).json()
+        dash = client.get("/api/dashboard", headers=h).json()
+    finally:
+        api_fastapi._demo_personal = real
+    assert body.get("sample") is True, (
+        "the synthetic fallback is not the reader's own data either — is_exhibit=False does not "
+        "mean is_mine=True")
+    assert dash.get("sample") is True

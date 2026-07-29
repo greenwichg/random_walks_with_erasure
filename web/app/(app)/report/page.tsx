@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { Download, Gauge, Sparkles } from "lucide-react";
+import { BookOpen, Download, Gauge, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { useReport } from "@/hooks/use-data";
 import { track } from "@/lib/analytics";
@@ -13,7 +13,7 @@ import { ProfileProgress } from "@/components/shared/profile-progress";
 import { SpectrumBar } from "@/components/shared/spectrum-bar";
 import { BarList, type BarItem } from "@/components/shared/bar-list";
 import { SectionCard } from "@/components/shared/section-card";
-import { ErrorState } from "@/components/shared/states";
+import { EmptyState, ErrorState } from "@/components/shared/states";
 import { AttentionProfile } from "@/components/report/attention-profile";
 import { MetricAccordion } from "@/components/report/metric-accordion";
 import { BlindSpots, Improvements } from "@/components/report/report-widgets";
@@ -118,7 +118,26 @@ export default function ReportPage() {
       {isLoading && <ReportSkeleton />}
       {isError && <ErrorState onRetry={() => refetch()} />}
 
-      {report && (
+      {/* A signed-in reader with no reads and no onboarding is served a FALLBACK report — the
+          synthetic demo row, or the exhibit account. It is a real report about somebody else, and
+          rendering its charts here told a new beta tester they had a 58/100 diet and a political
+          distribution they had never produced. This route is authenticated, so `sample` here can
+          only mean "none of this is yours": show the same empty state Reading History shows, and
+          send them to the thing that starts producing real data. */}
+      {report?.sample && (
+        <EmptyState
+          icon={BookOpen}
+          title={t("report.empty.title")}
+          description={t("report.empty.description")}
+          action={
+            <Button asChild>
+              <Link href="/discover">{t("report.empty.cta")}</Link>
+            </Button>
+          }
+        />
+      )}
+
+      {report && !report.sample && (
         <div className="space-y-6">
           {/* Estimate vs Measured + coverage — the report header now states whether this is an
               Estimate and how many reads unlock the Measured profile, so the onboarding context

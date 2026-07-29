@@ -2048,8 +2048,9 @@ def report(request: Request,
     * **Demo** — a signed-in reader with no usable onboarding, or an anonymous / ``?user=``
       request: the reference reader (unchanged for the frontend and contract tests)."""
     with obs_metrics.timer("report_generate_ms"):     # OBS1: time generation (does not alter it)
-        rep, is_exhibit = _report_for(_active(), request, user)
-    rep = _mark_sample(rep, is_exhibit, request)
+        rep, is_exhibit, is_sample = _report_for(_active(), request, user)
+    if is_sample:
+        rep["sample"] = True
     # RC2.3 — for a signed-in reader viewing their OWN report, reconcile the improvement lifecycle
     # ledger and annotate each improvement with its state. The EXHIBIT report is excluded even when
     # a real uid is present (the exhibit's own request, or a below-threshold reader served the
@@ -2060,7 +2061,9 @@ def report(request: Request,
     # Per-metric Measurement metadata (ADR-001) — coverage + provenance for Viewpoint / Emotion — is
     # now computed in the engine (measurement.py, via personalize) and attached onto each metric inside
     # `_report_for`; there is no separate report-level annotation to load reads again here.
-    if (uid is not None and not is_exhibit
+    # `not is_sample` as well as `not is_exhibit`: a report that is not the reader's own must never
+    # write rows into THEIR improvement ledger. The synthetic fallback used to pass this gate.
+    if (uid is not None and not is_exhibit and not is_sample
             and rep.get("mode") in ("measured", "estimate") and rep.get("improvements")):
         _annotate_improvement_lifecycle(uid, rep)       # RC2.3: attach lifecycle state
         _rank_improvement_recommendations(uid, rep)     # RC2.4: reorder + suppress (filtering only)
@@ -2109,15 +2112,29 @@ def _annotate_improvement_lifecycle(uid: int, rep: dict) -> None:
                                          requestId=_request_id.get())
 
 
-def _report_for(active: "corpus_refresh.Active", request: Request, user: str | None) -> "tuple[dict, bool]":
+def _report_for(active: "corpus_refresh.Active", request: Request,
+                user: str | None) -> "tuple[dict, bool, bool]":
     """The report a reader would see — **Measured** (augmented corpus), **Estimate** (stored
     onboarding), or **Demo** (anonymous / no onboarding). Shared by ``GET /api/report`` and the
     dashboard so both speak the exact same report with no duplicated routing or serialisation. Serves
     the whole request from one captured ``active`` bundle (swap-consistent).
 
-    Returns ``(report, is_exhibit)``: ``is_exhibit`` marks the seeded demo-exhibit account's
-    report — served to anonymous visitors, below-threshold readers, and the exhibit itself —
-    which is a frozen showcase: per-reader lifecycle/ranking annotation never applies to it."""
+    Returns ``(report, is_exhibit, is_sample)`` — two flags, because they are two questions and
+    conflating them is what let a fabricated report reach a real reader:
+
+    * ``is_exhibit`` — this report belongs to the seeded demo-exhibit account. It is a frozen
+      showcase, so per-reader lifecycle/ranking annotation never applies to it. TRUE even when the
+      exhibit is viewing its own report.
+    * ``is_sample`` — this report is NOT the requesting reader's own data. True for every fallback:
+      the exhibit served to somebody else, the synthetic demo row served to an anonymous visitor,
+      AND the synthetic demo row served to a signed-in reader with no reads and no onboarding.
+
+    That last case is the one that shipped a bug. It returned ``is_exhibit=False`` — correctly, it
+    is not the exhibit — and an earlier fix keyed the payload marker on ``is_exhibit`` alone, so the
+    branch production actually runs (``RWE_DEMO_ACCOUNT`` unset, therefore ``_demo_personal`` is
+    ``None``) stayed unmarked. A new beta reader saw "Measured · based on 24 reads" over a synthetic
+    reader's politics, and the numbers CHANGED between page loads because the synthetic dataset is
+    regenerated on every corpus rebuild."""
     be = active.backend
     uid = _real_uid(request)
     if uid is None:
@@ -2125,10 +2142,11 @@ def _report_for(active: "corpus_refresh.Active", request: Request, user: str | N
         # ?user= selection always wins — the row picker is a deliberate exhibit browser)
         demo = _demo_personal(active) if user is None else None
         if demo is not None:
-            return active.personalizer.report(demo), True
-        return be.report(_anon_row(active, request, user)), False
+            return active.personalizer.report(demo), True, True
+        return be.report(_anon_row(active, request, user)), False, True
     if active.personalizer.has_measured(uid):
-        return active.personalizer.report(uid), uid == getattr(state, "demo_uid", None)
+        # The reader's OWN measurement — the only branch that is not a sample.
+        return active.personalizer.report(uid), uid == getattr(state, "demo_uid", None), False
     outlets = _require_store().get_onboarding(uid)
     if outlets:
         try:
@@ -2142,32 +2160,15 @@ def _report_for(active: "corpus_refresh.Active", request: Request, user: str | N
                 cnt = _require_store().count_reads(uid)
                 cov["reads"] = cnt
                 cov["sufficient"] = cnt >= engine.ESTIMATE_MIN_READS
-            return rep, False
+            return rep, False, False     # an Estimate is theirs: computed from outlets THEY chose
         except ValueError:
             pass
     demo = _demo_personal(active)
     if demo is not None:
-        return active.personalizer.report(demo), True
-    return be.report(be.demo_user), False
-
-
-def _mark_sample(rep: dict, is_exhibit: bool, request: Request) -> dict:
-    """Flag a report that is the EXHIBIT's rather than the viewer's own.
-
-    The exhibit account is seeded past the read threshold, so its report is honestly
-    ``mode="measured"`` with real coverage. Served to somebody else it is still true — about the
-    wrong person. Without a marker the UI has no way to tell, and it rendered "Measured · based on
-    30 reads" to a new beta tester who had read nothing.
-
-    The exhibit viewing its OWN report is not a sample, so the flag is keyed on the viewer, not on
-    the report. Anonymous visitors are marked too: the landing showcase can still render it, but the
-    payload no longer claims it as anyone's measurement.
-
-    Mutates a copy? No — ``_report_for`` already returns a fresh dict per request, and the flag is
-    write-once. Returning it keeps the call sites honest about the transformation."""
-    if is_exhibit and _real_uid(request) != getattr(state, "demo_uid", None):
-        rep["sample"] = True
-    return rep
+        return active.personalizer.report(demo), True, True
+    # Synthetic fallback for a signed-in reader with nothing of their own. NOT the exhibit, and NOT
+    # theirs — the second flag is the whole reason this tuple grew.
+    return be.report(be.demo_user), False, True
 
 
 @app.get("/api/dashboard", response_model=DashboardModel, response_model_exclude_none=True,
@@ -2179,8 +2180,9 @@ def dashboard(request: Request,
     reading + streak (their stored reads). Same Measured/Estimate/Demo routing as ``/api/report`` —
     no new report serialisation, no algorithm."""
     active = _active()
-    rep, _is_exhibit = _report_for(active, request, user)
-    rep = _mark_sample(rep, _is_exhibit, request)
+    rep, _is_exhibit, is_sample = _report_for(active, request, user)
+    if is_sample:
+        rep["sample"] = True
     st, uid = _require_store(), _real_uid(request)
     reads = st.list_reads(uid) if uid is not None else []
     snaps = st.list_report_snapshots(uid) if uid is not None else []

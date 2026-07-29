@@ -142,12 +142,21 @@ def _strip_volatile(obj):
 
 
 def test_report_response_model_preserves_every_field(client):
-    """response_model must not drop or add any field vs the raw serialiser (else the
-    contract silently changes). Timestamps are the only expected difference."""
+    """response_model must not drop or add any field vs the raw serialiser (else the contract
+    silently changes) — modulo ONE documented handler post-pass, the same way the recommendations
+    test below documents its two.
+
+    `sample` is provenance, not content: the handler sets it when the report being served is not the
+    requesting reader's own. The serialiser cannot know that — it is handed a user id and reports on
+    it — so the flag can only be added at the routing layer, which is precisely why it was missing
+    for so long."""
     be = api_fastapi.state.backend
     http = client.get("/api/report").json()
     direct = json.loads(json.dumps(be.report(be.demo_user)))
-    assert _strip_volatile(http) == _strip_volatile(direct)
+    assert http.get("sample") is True, (
+        "an anonymous request is served a report that is nobody's own reading, and the payload has "
+        "to say so")
+    assert _strip_volatile({k: v for k, v in http.items() if k != "sample"}) == _strip_volatile(direct)
 
 
 def test_recommendations_response_model_preserves_every_field(client):
