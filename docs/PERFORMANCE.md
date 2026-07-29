@@ -690,3 +690,31 @@ tree produced the identical failure.
 Running my own failure against the pre-change worktree *before believing it* is the only reason that
 did not become an hour of debugging a correct bound. The test now sets the threshold explicitly and
 its docstring records why.
+
+### Measuring the speedup: `examples/profile_merge.py`
+
+Correctness is settled. **The speedup is not**, and this stage has misled me on a synthetic corpus
+twice — once with a 2,742-member mega-cluster against production's 482, once with zero merges where
+production has fifteen. So the measurement runs **both arms in one process against the same admitted
+clusters, seconds apart**:
+
+```
+docker exec deploy-api-1 python examples/profile_merge.py
+```
+
+It reports wall, CPU and peak allocations for *no bound* vs *bound*, best-of-N; the pair counts and
+`score()` calls behind the delta; the whole-pipeline `build_stories` time; and the loadavg at both
+ends, because on a 2-core box a concurrent warm doubles everything.
+
+Two guards make the numbers trustworthy rather than merely printed:
+
+* the harness holds its **own copy** of `_merge_duplicates` with the bound switchable — a benchmark
+  flag on the real function is a way to ship the slow arm by accident — and it also times the
+  **shipped** function, asserting `after == shipped`. If the copy ever drifts, the run says so and
+  the timings are void.
+* instrumentation counters are built only on a separate counting pass. A timed run calls the
+  unwrapped `score`, so counting cannot flatter the arm that calls it less.
+
+`--synthetic N` runs it without a store. That arm is for exercising the harness, **not** for
+quoting: on a 6,000-row synthetic catalog it reads −12%, which says nothing about production's
+distribution of profile weights, and that distribution is exactly what the bound's yield depends on.
