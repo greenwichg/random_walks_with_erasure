@@ -181,17 +181,34 @@ def signature(out: list) -> list:
     return sorted(tuple(sorted(key(m) for m in g)) for g in out)
 
 
-def timed(fn, reps: int):
-    """Best-of-N wall and CPU. Best, not mean: on a shared box the minimum is the measurement and
-    everything above it is somebody else's work."""
-    best_w = best_c = float("inf")
-    out = None
-    for _ in range(reps):
-        c0, w0 = time.process_time(), time.perf_counter()
-        out = fn()
-        best_w = min(best_w, (time.perf_counter() - w0) * 1000)
-        best_c = min(best_c, (time.process_time() - c0) * 1000)
-    return out, best_w, best_c
+def bench(arms: list, reps: int, warmup: int = 1) -> dict:
+    """Round-robin every arm, rotating the order each round.
+
+    Running arm A's reps, then B's, then C's is exactly what produced the first unusable run on the
+    production box: three blocks measured under a load that moved between them, so the blocks
+    reported the load as much as the code — the two arms running IDENTICAL algorithms came out
+    243 ms apart. Interleaving puts every arm in the same weather; rotating the order stops any arm
+    from being permanently first (cold) or last (warm).
+
+    Returns ``{name: {"samples", "best", "cpu", "median", "out"}}``, times in ms."""
+    for _, fn in arms:
+        for _ in range(warmup):
+            fn()
+    acc = {name: [] for name, _ in arms}
+    outs: dict = {}
+    k = len(arms)
+    for r in range(reps):
+        for name, fn in arms[r % k:] + arms[:r % k]:
+            c0, w0 = time.process_time(), time.perf_counter()
+            outs[name] = fn()
+            acc[name].append(((time.perf_counter() - w0) * 1000,
+                              (time.process_time() - c0) * 1000))
+    res = {}
+    for name, xs in acc.items():
+        walls = sorted(s[0] for s in xs)
+        res[name] = {"samples": walls, "best": walls[0], "median": walls[len(walls) // 2],
+                     "cpu": min(s[1] for s in xs), "out": outs[name]}
+    return res
 
 
 def peak_mib(fn) -> float:
@@ -207,7 +224,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--synthetic", type=int, metavar="N",
                     help="use a synthetic catalog of N rows instead of the live store")
-    ap.add_argument("--reps", type=int, default=3, help="timing repetitions (best-of, default 3)")
+    ap.add_argument("--reps", type=int, default=5, help="timing repetitions (default 5)")
     ap.add_argument("--no-pipeline", action="store_true",
                     help="skip the whole-pipeline build_stories timing")
     args = ap.parse_args()
@@ -231,27 +248,49 @@ def main() -> int:
         print("fewer than two admitted clusters — nothing to merge.")
         return 2
 
-    off, off_ms, off_cpu = timed(lambda: merge(adm, ms, gap, cap, False)[0], args.reps)
-    on, on_ms, on_cpu = timed(lambda: merge(adm, ms, gap, cap, True)[0], args.reps)
-    ship, ship_ms, ship_cpu = timed(
-        lambda: ss._merge_duplicates(adm, min_sim=ms, max_gap_hours=gap, max_size=cap), args.reps)
+    r = bench([
+        ("off", lambda: merge(adm, ms, gap, cap, False)[0]),
+        ("on", lambda: merge(adm, ms, gap, cap, True)[0]),
+        # The CONTROL arm. It runs the same algorithm as "on", so whatever separates them is the
+        # harness's own error bar — and no claimed delta is allowed to be smaller than it.
+        ("ship", lambda: ss._merge_duplicates(adm, min_sim=ms, max_gap_hours=gap, max_size=cap)),
+    ], args.reps)
+    off, on, ship = r["off"], r["on"], r["ship"]
 
     _, off_stats = merge(adm, ms, gap, cap, False, count=True)
     _, on_stats = merge(adm, ms, gap, cap, True, count=True)
     off_mem = peak_mib(lambda: merge(adm, ms, gap, cap, False))
     on_mem = peak_mib(lambda: merge(adm, ms, gap, cap, True))
 
-    same_ab = signature(off) == signature(on)
-    same_ship = signature(on) == signature(ship)
+    same_ab = signature(off["out"]) == signature(on["out"])
+    same_ship = signature(on["out"]) == signature(ship["out"])
 
-    print(f"  {'_merge_duplicates':<22}{'wall ms':>10}{'cpu ms':>9}{'peak MiB':>10}{'clusters':>10}")
-    print(f"  {'NO bound (before)':<22}{off_ms:>10,.0f}{off_cpu:>9,.0f}{off_mem:>10.1f}{len(off):>10,}")
-    print(f"  {'size bound (after)':<22}{on_ms:>10,.0f}{on_cpu:>9,.0f}{on_mem:>10.1f}{len(on):>10,}")
-    print(f"  {'shipped function':<22}{ship_ms:>10,.0f}{ship_cpu:>9,.0f}{'—':>10}{len(ship):>10,}")
-    print(f"\n  stage delta          {on_ms - off_ms:>+10,.0f} ms wall "
-          f"({100 * (on_ms - off_ms) / off_ms:+.1f}%), "
-          f"{on_cpu - off_cpu:+,.0f} ms cpu, {on_mem - off_mem:+.1f} MiB")
-    print(f"  output equality      before == after: {same_ab}    after == shipped: {same_ship}")
+    print(f"  {'_merge_duplicates':<22}{'best ms':>9}{'median':>9}{'cpu ms':>9}"
+          f"{'peak MiB':>10}{'clusters':>10}")
+    for label, a, mem in (("NO bound (before)", off, f"{off_mem:.1f}"),
+                          ("size bound (after)", on, f"{on_mem:.1f}"),
+                          ("shipped (control)", ship, "—")):
+        print(f"  {label:<22}{a['best']:>9,.0f}{a['median']:>9,.0f}{a['cpu']:>9,.0f}"
+              f"{mem:>10}{len(a['out']):>10,}")
+    for label, a in (("before", off), ("after", on), ("control", ship)):
+        print(f"    {label:<10} reps  " + "  ".join(f"{s:,.0f}" for s in a["samples"]))
+
+    delta = on["best"] - off["best"]
+    noise = abs(ship["best"] - on["best"])
+    print(f"\n  stage delta          {delta:>+9,.0f} ms ({100 * delta / off['best']:+.1f}%), "
+          f"cpu {on['cpu'] - off['cpu']:+,.0f} ms, mem {on_mem - off_mem:+.1f} MiB")
+    print(f"  harness error bar    {noise:>9,.0f} ms — 'after' vs 'control', two runs of the SAME "
+          f"algorithm ({100 * noise / on['best']:.1f}%)")
+    if noise > 0.05 * on["best"]:
+        print("  VERDICT              UNUSABLE. Two identical algorithms disagree by more than 5%, "
+              "so the box\n                       was contended. Re-run when idle; do not quote "
+              "the delta above.")
+    elif abs(delta) < 2 * noise:
+        print("  VERDICT              NOT SEPARABLE. The delta is within 2x the error bar.")
+    else:
+        print(f"  VERDICT              REAL. {-delta:,.0f} ms is {abs(delta) / max(noise, 1e-9):.1f}x "
+              f"the error bar.")
+    print(f"  output equality      before == after: {same_ab}    after == control: {same_ship}")
     if not (same_ab and same_ship):
         print("  ^^ OUTPUT DIFFERS — the bound is not exact on this corpus, or the copy has drifted "
               "from the shipped function. Every timing above is void until this is explained.")
@@ -261,13 +300,16 @@ def main() -> int:
                      ("score", "score() calls"), ("pairs", "pairs kept"),
                      ("merges", "merges applied")):
         print(f"  {label:<22}{off_stats.get(k, 0):>12,}{on_stats.get(k, 0):>12,}")
+    saved = off_stats.get("score", 0) - on_stats.get("score", 0)
+    if off_stats.get("score"):
+        print(f"  {'score() eliminated':<22}{'':>12}{saved:>11,} "
+              f"({100 * saved / off_stats['score']:.1f}%)")
 
     if not args.no_pipeline:
-        stories, pipe_ms, pipe_cpu = timed(lambda: ss.build_stories(rows), args.reps)
-        print(f"\n  build_stories (whole pipeline)  {pipe_ms:,.0f} ms wall / {pipe_cpu:,.0f} ms cpu"
-              f"  -> {len(stories):,} stories")
-        print(f"  merge share of pipeline         {100 * on_ms / pipe_ms:.1f}% "
-              f"(was {100 * off_ms / (pipe_ms + off_ms - on_ms):.1f}%)")
+        p = bench([("pipe", lambda: ss.build_stories(rows))], args.reps)["pipe"]
+        print(f"\n  build_stories (whole pipeline)  {p['best']:,.0f} ms best / "
+              f"{p['median']:,.0f} median / {p['cpu']:,.0f} cpu  -> {len(p['out']):,} stories")
+        print(f"  merge share of pipeline         {100 * on['best'] / p['best']:.1f}%")
     print(f"\n  loadavg {la0} -> {_loadavg()}   "
           f"(above ~1.0 on a 2-core box means contended — re-run when idle)")
     return 0

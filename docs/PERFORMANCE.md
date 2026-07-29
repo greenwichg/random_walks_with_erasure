@@ -696,25 +696,60 @@ its docstring records why.
 Correctness is settled. **The speedup is not**, and this stage has misled me on a synthetic corpus
 twice — once with a 2,742-member mega-cluster against production's 482, once with zero merges where
 production has fifteen. So the measurement runs **both arms in one process against the same admitted
-clusters, seconds apart**:
+clusters**:
 
 ```
 docker exec deploy-api-1 python examples/profile_merge.py
 ```
 
-It reports wall, CPU and peak allocations for *no bound* vs *bound*, best-of-N; the pair counts and
-`score()` calls behind the delta; the whole-pipeline `build_stories` time; and the loadavg at both
-ends, because on a 2-core box a concurrent warm doubles everything.
+Three guards make the numbers trustworthy rather than merely printed.
 
-Two guards make the numbers trustworthy rather than merely printed:
+**1. The harness holds its own copy** of `_merge_duplicates` with the bound switchable. A benchmark
+flag on the real function is a way to ship the slow arm by accident.
 
-* the harness holds its **own copy** of `_merge_duplicates` with the bound switchable — a benchmark
-  flag on the real function is a way to ship the slow arm by accident — and it also times the
-  **shipped** function, asserting `after == shipped`. If the copy ever drifts, the run says so and
-  the timings are void.
-* instrumentation counters are built only on a separate counting pass. A timed run calls the
-  unwrapped `score`, so counting cannot flatter the arm that calls it less.
+**2. The shipped function is a third, CONTROL arm.** It runs the same algorithm as the bound arm, so
+whatever separates them is the harness's own error bar — measured, not assumed. The verdict line
+refuses to call a delta real unless it is at least twice that bar.
 
-`--synthetic N` runs it without a store. That arm is for exercising the harness, **not** for
-quoting: on a 6,000-row synthetic catalog it reads −12%, which says nothing about production's
-distribution of profile weights, and that distribution is exactly what the bound's yield depends on.
+**3. Counters run on a separate pass.** A timed run calls the unwrapped `score`, so instrumentation
+cannot flatter the arm that calls it less — which would be the bound arm.
+
+#### The first production run was unusable, and the control arm is why I know
+
+```
+NO bound (before)   1,681 ms
+size bound (after)  1,395 ms
+shipped function    1,152 ms     <- same algorithm as "after", 243 ms apart
+```
+
+`loadavg 1.63 -> 1.84` on **two cores**: something else was using most of the box for the whole run.
+A textual diff of the two implementations accounts for ~10 ms of that 243 ms gap (a per-candidate
+`if use_bound` and 71,500 `skipped += 1`). The other ~233 ms was weather.
+
+The cause was structural, not just a busy box: the arms ran in **blocks** — all of A, then all of B,
+then all of C — under a load that moved between them, so each block measured the load as much as the
+code. Best-of-N does not save you when the competing process runs through every rep.
+
+`bench()` now **round-robins the arms and rotates the order each round**, so every arm sits in the
+same weather and none is permanently first (cold) or last (warm). On a synthetic corpus that pulled
+the control gap from 17% down to **1.6%**, and it prints every rep so drift is visible in the data
+instead of inferred from loadavg afterwards.
+
+#### What the bad run did establish
+
+Two things in that output are counts, not timings, and contention cannot touch them:
+
+* **output equality on production** — `before == after == shipped`, 1,146 clusters in, 1,131 out,
+  17 pairs kept, 15 merges applied, identical in all three arms. The exactness proof now has a
+  production witness.
+* **work eliminated** — the bound skipped **71,500 of 250,736 candidate pairs**, removing
+  **71,500 of 250,753 `score()` calls (28.5%)**. Each of those is a frozenset intersection plus a
+  weight sum, replaced by two multiplications.
+
+The wall-clock consequence of removing 28.5% of the dominant operation is what the re-run has to
+measure. I am not inferring it from the count — that inference is exactly the kind of assumption
+this whole investigation exists to avoid.
+
+`--synthetic N` runs without a store. That arm exercises the harness; it is not for quoting. Its
+-12% says nothing about production's distribution of profile weights, and that distribution is
+precisely what the bound's yield depends on.
