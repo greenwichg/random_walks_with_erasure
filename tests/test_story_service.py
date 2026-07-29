@@ -1550,3 +1550,73 @@ def _wait_for(pred, timeout: float) -> bool:
             return True
         _t.sleep(0.05)
     return False
+
+
+# --------------------------------------------------------------------------- #
+# _merge_duplicates size bound — 247,718 scores to keep 17 pairs
+# --------------------------------------------------------------------------- #
+def test_the_size_bound_never_rejects_a_pair_that_could_pass():
+    """The property that makes the bound admissible, checked as arithmetic rather than as a
+    clustering outcome.
+
+    ``score = w / (Ti + Tj - w)`` is increasing in ``w``, so ``score >= s`` requires
+    ``w >= s(Ti+Tj)/(1+s)``; and the intersection is a subset of both profiles, so
+    ``w <= min(Ti, Tj)``. When ``min(Ti,Tj)*(1+s) < s*(Ti+Tj)`` no intersection can lift the pair
+    over the threshold. Skipping it is therefore EXACT, not a heuristic — which is the only reason
+    it is allowed to run inside a recall-sensitive merge pass."""
+    import random
+    rng = random.Random(5)
+    false_skips = 0
+    for _ in range(4000):
+        A = frozenset(rng.sample(range(60), rng.randint(1, 40)))
+        B = frozenset(rng.sample(range(60), rng.randint(1, 40)))
+        W = {t: rng.uniform(0.05, 4.0) for t in range(60)}
+        ti, tj = sum(W[t] for t in A), sum(W[t] for t in B)
+        inter = A & B
+        w = sum(W[t] for t in inter)
+        den = ti + tj - w
+        real = (w / den) if (inter and den) else 0.0
+        for s in (0.1, 0.28, 0.33, 0.5, 0.75):
+            skipped = (ti if ti < tj else tj) * (1.0 + s) < s * (ti + tj)
+            if skipped and real >= s:
+                false_skips += 1
+    assert false_skips == 0, f"{false_skips} pairs wrongly rejected — the bound is not exact"
+
+
+def test_merging_still_joins_the_same_event_in_different_words(monkeypatch):
+    """The behaviour the merge pass exists for, pinned so the size bound cannot quietly break it.
+
+    "Mass shooting reported at Seattle Center" and "…gunfire erupts near Seattle" share ONE headline
+    token against MIN_SHARED_TOKENS=3, so the clusterer can never pair them at any threshold. The
+    second pass over headline+description is the only route. These two profiles weigh 9.25 and 8.15,
+    well inside the ~3x ratio the size bound admits, and score 0.387 against a 0.33 threshold.
+
+    The merge similarity is set EXPLICITLY here: conftest leaves it at 0, which disables the merge
+    pass outright. A first version of this test asserted a merge without setting it, got two stories
+    instead of one, and would have looked exactly like the size bound breaking recall — it was the
+    fixture running a code path that was switched off."""
+    monkeypatch.setenv("RWE_STORY_MERGE_SIM", "0.33")
+    monkeypatch.setenv("RWE_STORY_MERGE_MAX_GAP", "48")
+    monkeypatch.setenv("RWE_STORY_MERGE_MAX_SIZE", "130")
+    st = store_mod.Store("sqlite://")
+    ss.clear_cache()
+    base = NOW - timedelta(hours=6)
+    for url, pub, title, desc in [
+        ("https://a.com/1", "AP", "Mass shooting reported at Seattle Center",
+         "Police responded to gunfire at Seattle Center on Saturday evening, several wounded."),
+        ("https://b.com/1", "Reuters", "Mass shooting reported at Seattle Center",
+         "Police responded to gunfire at Seattle Center on Saturday evening, several wounded."),
+        ("https://c.com/1", "NPR", "Gunfire erupts near Seattle venue leaving several wounded",
+         "Police responded to gunfire at Seattle Center on Saturday evening, several wounded."),
+        ("https://d.com/1", "CNN", "Gunfire erupts near Seattle venue leaving several wounded",
+         "Police responded to gunfire at Seattle Center on Saturday evening, several wounded."),
+    ]:
+        st.upsert_feed_article(canonical_url=url, url=url, publisher=pub, source_publisher=None,
+                               title=title, description=desc, body=None,
+                               published_at=base.isoformat(), source_feed="t",
+                               scored={"lean": 0.0, "category": "world"})
+    stories = ss.list_stories(st)["stories"]
+    seattle = [s for s in stories if "Seattle" in s["title"] or "Gunfire" in s["title"]]
+    assert seattle, stories
+    assert max(s["totalCoverage"] for s in seattle) == 4, \
+        "the two wordings must merge into one story of four articles"

@@ -614,3 +614,79 @@ what it was measured to do; the estimate of its importance was inflated by the c
 
 Items 1 and 4 together are 46% of the pipeline and are both the same shape of problem: materialising
 per-article objects that the clustering path mostly does not read.
+
+
+---
+
+# `_merge_duplicates` in detail (2026-07-29)
+
+The stage the corrected ranking promoted to #3, at 1,451 ms (19.6% of the pipeline). Measured on the
+live corpus, because the synthetic one had already misled me twice on this pipeline's proportions —
+and did again here: it produced a 2,742-member mega-cluster and **zero merges**, so the path under
+investigation never executed.
+
+## Where the time goes (production, 1,139 clusters, 5,131 members)
+
+| phase | ms | % |
+|---|---:|---:|
+| **candidate generation** | **1,366** | **84.7%** |
+| `_profile` (tokenize) | 166 | 10.3% |
+| postings build | 32 | 2.0% |
+| `idf_weights` | 28 | 1.7% |
+| `total` precompute | 20 | 1.3% |
+
+```
+score() calls              247,718
+postings entries walked  1,289,409
+candidate pairs kept            17
+tokens skipped as common         0
+profile tokens              58,377   largest profile 2,923   distinct 16,252
+```
+
+**247,718 frozenset intersections, each followed by a weight sum, to keep seventeen pairs** — a
+0.007% yield. The stage's cost is not merging; it is deciding what *not* to merge.
+
+## Three hypotheses, all falsified by the measurement
+
+* **`_span` re-parsing.** I called this "the big one": `_gap_hours` calls `_span` on both groups per
+  candidate pair, and `_span` parses every member's timestamp. Real cost: **34 calls, 1 ms.** Only
+  17 pairs ever reach the gap check, because the score threshold rejects everything first.
+* **`_profile` redundancy.** **1.0×** — every cluster profiled exactly once.
+* **The merge loop.** 15 merges, 15 `_geo_coherence` calls, ~0 ms. Trivial.
+
+Also measured: **`tokens skipped as common: 0`.** The existing comment says that filter "dominates
+the cost"; `common = max(2, n//2) = 569`, and no token appears in more than 569 of 1,139 profiles,
+so it never fires at this scale. Inert rather than harmful — but the comment overstates it.
+
+## The optimization: an exact size bound
+
+`score = w / (Ti + Tj − w)` is monotonically increasing in `w`, so `score ≥ s` requires
+`w ≥ s(Ti+Tj)/(1+s)`. The intersection is a subset of both profiles, so `w ≤ min(Ti, Tj)`. Hence:
+
+> when `min(Ti,Tj)·(1+s) < s·(Ti+Tj)`, the pair **cannot** reach `s` for any intersection.
+
+Two multiplications replace an `O(min(|A|,|B|))` intersection plus a sum over it. At `min_sim = 0.33`
+it rules out every pair whose profile weights differ by more than ~3×.
+
+**Exact, not heuristic.** It only ever skips pairs that were going to score below the threshold — the
+surviving set is unchanged. That is the only reason it is allowed inside a recall-sensitive merge
+pass at all.
+
+### Verification
+
+* the bound itself: 150,000 randomised `(profile, threshold)` combinations, **zero false skips**;
+* merge stage in isolation: three corpora, identical member sets;
+* whole pipeline against `7593a78`: four corpora, 3,499 stories, **byte-identical** — every id,
+  title, coverage count, publisher count, blindspot side, trust verdict and ordered member URL list;
+* 2,046 engine tests.
+
+## A trap worth recording
+
+The first version of the recall test asserted a four-article merge, got two, and looked exactly like
+the bound breaking recall. It was not. **`conftest` leaves `RWE_STORY_MERGE_SIM` at 0, which disables
+the merge pass entirely** — the test exercised a switched-off code path, and the unmodified baseline
+tree produced the identical failure.
+
+Running my own failure against the pre-change worktree *before believing it* is the only reason that
+did not become an hour of debugging a correct bound. The test now sets the threshold explicitly and
+its docstring records why.
