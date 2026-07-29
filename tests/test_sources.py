@@ -10,6 +10,7 @@ injectable fetch — no network is contacted.
 import pathlib
 import sys
 import threading
+import time
 import urllib.error
 
 import pytest
@@ -1116,3 +1117,42 @@ def test_the_wait_budget_also_bounds_connection_level_retries(monkeypatch):
 
     assert sum(slept) <= 8.0
     assert len(slept) < 9            # gave up on the budget, not on the retry count
+
+
+def test_source_poll_logs_a_duration_split():
+    """Every expensive loop in this process must log how long it took.
+
+    Production spent a full pass of host-level forensics chasing ~0.66 vCPU that no log accounted
+    for, because the two loops that own the CPU — the adapter poll and the post-cycle work behind it
+    — reported counts and never durations. Counts tell you what happened; only a duration tells you
+    what it cost, and a cost you cannot read is a cost you cannot rank.
+
+    The SPLIT matters as much as the timing: fetch/parse/score is a different problem with a
+    different fix than retention/warm/refresh, and one number cannot separate them."""
+    events = []
+
+    class _Slow:
+        provider, source_type = "Slow", "slow"
+
+        def enabled(self): return True
+        def interval(self): return 3600.0
+        @property
+        def health_key(self): return "slow://test"
+        def poll_once(self, store_, scorer, *, on_feed=None):
+            time.sleep(0.02)
+            return {"new": 1, "duplicates": 0, "failed": 0}
+
+    st = store_mod.Store("sqlite://")
+    reg = sources.SourceRegistry()
+    adapter = reg.register(_Slow())
+    poller = sources.MultiSourcePoller(
+        st, scorer=lambda *a, **k: 0.0, registry=reg,
+        log=lambda level, event, **f: events.append((event, f)))
+    poller.poll_adapter_once(adapter)
+
+    polls = [f for event, f in events if event == "source_poll"]
+    assert len(polls) == 1, f"expected one source_poll event, got {events}"
+    assert "pollMs" in polls[0], "the fetch/parse/score half must be timed"
+    assert "postCycleMs" in polls[0], "the retention/warm/refresh half must be timed separately"
+    assert polls[0]["pollMs"] >= 20.0, f"pollMs must measure the adapter, got {polls[0]['pollMs']}"
+    assert polls[0]["postCycleMs"] >= 0.0

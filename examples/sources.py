@@ -1368,12 +1368,21 @@ class MultiSourcePoller:
 
     def poll_adapter_once(self, adapter: SourceAdapter) -> dict:
         with self._lock:                                    # write-safe: one adapter ingests at a time
+            t0 = time.perf_counter()
             agg = adapter.poll_once(self.store, self.scorer, on_feed=self._record_health)
+            t1 = time.perf_counter()
             self._post_cycle(agg)
+            t2 = time.perf_counter()
+        # pollMs / postCycleMs: fetch+parse+score+write against retention+warm+refresh. The split is
+        # the point — they are different problems with different fixes, and without it a slow cycle
+        # is just "slow". Measured after `story_cache_warm` turned out to be logged on a branch
+        # production does not run: an expensive path with no duration in the log is a path nobody
+        # can rank, and this loop is the one that owns the process's CPU.
         self._log(logging.WARNING if agg.get("failed") else logging.INFO, "source_poll",
                   provider=adapter.provider, sourceType=adapter.source_type, new=agg.get("new", 0),
                   duplicates=agg.get("duplicates", 0), failed=agg.get("failed", 0),
-                  catalog=self.store.count_feed_articles())
+                  catalog=self.store.count_feed_articles(),
+                  pollMs=round((t1 - t0) * 1000.0, 1), postCycleMs=round((t2 - t1) * 1000.0, 1))
         return agg
 
     def _run_adapter(self, adapter: SourceAdapter) -> None:
