@@ -56,6 +56,8 @@ SMOKE
   # A stub docker whose behaviour each test controls through DOCKER_FAIL_AT.
   cat > "$TMP/bin/docker" <<'STUB'
 #!/usr/bin/env bash
+# Record the raw argv so a test can assert HOW docker was called, not only that it was.
+[ -n "${DOCKER_CALLS:-}" ] && printf '%s\n' "$*" >> "$DOCKER_CALLS"
 sub="${1:-}"; [ "$sub" = "compose" ] && { shift; while [ $# -gt 0 ] && [ "${1:0:1}" = "-" ]; do
     case "$1" in -f|--env-file|--profile) shift 2 ;; *) shift ;; esac; done; sub="${1:-}"; }
 case "${DOCKER_FAIL_AT:-}" in
@@ -147,6 +149,20 @@ out="$(run_deploy "$TARGET")"
 check     "success -> CD_RESULT=deployed"        "$out" "CD_RESULT=deployed"
 check     "success -> stage=SUCCESS"             "$out" "stage=SUCCESS"
 check_not "success -> no failure block"          "$out" "DEPLOYMENT FAILED"
+
+# ── BUILD covers the profile-gated services ──────────────────────────────────────────────────────
+# `backup` and `backup-scheduler` sit behind compose profiles, so a bare `dc build` skips them and
+# their images go stale while the HOST scripts that drive them move with every checkout. On
+# 2026-07-29 that deadlocked a deploy: cd-deploy's BACKUP stage runs BEFORE the build, the new host
+# script called a `db_backup.py verify` subcommand the 8-day-old image lacked, and the deploy that
+# would have refreshed the image could not get past the backup that needed it.
+setup_host
+export DOCKER_CALLS="$TMP/docker-calls.txt"; : > "$DOCKER_CALLS"
+out="$(run_deploy "$TARGET")"
+builds="$(grep -- ' build' "$DOCKER_CALLS" || true)"
+check     "build includes the backup profile"    "$builds" "--profile backup"
+check     "build includes the scheduler profile" "$builds" "--profile scheduler"
+unset DOCKER_CALLS
 
 echo ""
 echo "== deploy stages: $pass PASS, $fail FAIL =="

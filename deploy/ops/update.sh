@@ -88,7 +88,14 @@ fi
 # containers serving, a startup failure does not. Reported as one step they are indistinguishable,
 # and the difference is "fix it tomorrow" versus "the site is down".
 stage_enter BUILD "building images"
-if ! dc build 2>&1 | sed 's/^/    /'; then
+# --profile backup --profile scheduler: those services are profile-gated, so a bare `dc build`
+# SKIPS them and their images go stale while the host scripts that drive them keep moving with the
+# repo. That skew is not hypothetical — it deadlocked a deploy on 2026-07-29: cd-deploy's BACKUP
+# stage runs BEFORE the build, so the new host script called a `db_backup.py verify` subcommand that
+# the 8-day-old backup image did not have, and the deploy that would have fixed the image could
+# never get past the backup that needed it. Building every service keeps host and container code on
+# the same commit, which is the only durable fix.
+if ! dc --profile backup --profile scheduler build 2>&1 | sed 's/^/    /'; then
   evidence_from "disk" df -h "${REPO_ROOT}"
   evidence_from "docker disk usage" docker system df
   stage_fail "one or more images failed to build" \

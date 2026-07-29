@@ -39,7 +39,27 @@ else
   echo "== backup-offhost: verifying $base (container, non-destructive) =="
   # `verify` rather than `status --db sqlite:///…`: a .db.gz cannot be opened as a database, and
   # an exit code is a contract a shell can trust where a grep for "quickCheck ok" is not.
-  backup_run verify "/app/data/backups/$base" || fail "integrity check FAILED for $base"
+  #
+  # But PROBE for it instead of assuming it. This script lives on the host and moves with every
+  # `git checkout`; the image it drives is profile-gated and, until update.sh began building
+  # profiles, was rebuilt by nobody. On 2026-07-29 that skew deadlocked a deploy — the new host
+  # script called `verify` against an 8-day-old image, cd-deploy's BACKUP stage aborted, and the
+  # deploy that would have refreshed the image could never run because it needed that backup.
+  #
+  # The fallback is coherent rather than a guess: an image without `verify` also predates
+  # compression, so its backups are plain `.db` and the older `status` check can read them. The two
+  # capabilities shipped together.
+  if backup_run --help 2>&1 | grep -qw verify; then
+    backup_run verify "/app/data/backups/$base" || fail "integrity check FAILED for $base"
+  else
+    echo "backup-offhost: image predates \`db_backup.py verify\` — falling back to the older check."
+    case "$base" in
+      *.gz) fail "cannot verify $base: the image predates BOTH verify and gzip, so a .gz here means an image/script mismatch. Rebuild: docker compose --profile backup build" ;;
+    esac
+    status="$(backup_run --db "sqlite:////app/data/backups/$base" status 2>&1)" || fail "verify command failed for $base"
+    echo "$status"
+    echo "$status" | grep -i quickcheck | grep -qiw ok || fail "integrity check FAILED for $base"
+  fi
 fi
 
 # 3) Ship all local backups off-host to S3 (instance IAM role; no --delete so S3 keeps full history until

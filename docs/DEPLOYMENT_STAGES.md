@@ -178,3 +178,53 @@ never disagree with a recomputed one.
 
 Recorded rather than fixed. It is a real problem worth its own pass (shared module-level state
 leaking between tests), and folding it into a deployment-pipeline change would have hidden both.
+
+
+## Version skew between host scripts and profile-gated images
+
+**2026-07-29.** A deploy aborted at BACKUP with `db_backup.py: error: argument command: invalid
+choice: 'verify'`. The state machine reported it correctly — `CD_RESULT=aborted`, service never
+stopped, nothing moved — and the root cause was a class of bug worth naming.
+
+`backup` and `backup-scheduler` sit behind compose profiles:
+
+```yaml
+backup:            { profiles: ["backup"] }
+backup-scheduler:  { profiles: ["scheduler"] }
+```
+
+A bare `docker compose build` **skips services whose profile is not active**, so those images were
+never rebuilt by any deploy — production's were **8 days old**. Meanwhile the host scripts that
+drive them (`backup-offhost.sh`, `restore.sh`, `verify-restore.sh`) move with every `git checkout`.
+Host code and container code were on different commits, and nothing said so.
+
+It deadlocked, which is the part that matters:
+
+1. cd-deploy's **BACKUP stage runs before BUILD** — deliberately, so a failed snapshot costs nothing.
+2. The new host script called `db_backup.py verify`, added in the same commit as gzip backups.
+3. The stale image had neither, so BACKUP failed and the deploy aborted.
+4. The deploy that would have rebuilt the image could not run, because it needed that backup.
+
+The same skew silently disabled the feature: the old image also predated compression, so the
+scheduled backups were still being written uncompressed — the gzip work was inert in exactly the
+containers it was for.
+
+### Two fixes, because one of them cannot break the deadlock on its own
+
+* **`update.sh` builds every profile** (`dc --profile backup --profile scheduler build`). Host and
+  container code stay on the same commit. This is the durable fix, but it cannot rescue a box that
+  is already stuck, because it only runs *after* the backup that is failing.
+* **`backup-offhost.sh` probes for the subcommand** instead of assuming it, falling back to the
+  older `status` check. The fallback is coherent rather than a guess: an image without `verify` also
+  predates compression, so its backups are plain `.db` that `status` can read — the two capabilities
+  shipped in the same commit.
+
+`tests/test_deploy_stages.sh` now records docker's argv and asserts the build carries both profiles.
+It fails on the unfixed tree.
+
+### The general rule
+
+**A host script and the image it drives are two deployables.** Any time a host-side script gains a
+dependency on new container-side code, either they are built together or the host side must degrade
+gracefully. Profiles are the trap here precisely because they make "build everything" quietly mean
+"build most things".
