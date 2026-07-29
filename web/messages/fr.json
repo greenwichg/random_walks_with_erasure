@@ -68,6 +68,7 @@
   "rec.empty.cta": "Explorer Découvrir",
   "rec.firstRun.title": "Les recommandations commencent par vos lectures",
   "rec.firstRun.body": "Chaque recommandation explique pourquoi elle est là : il lui faut donc savoir ce que vous avez déjà lu. Ouvrez quelques articles et cette page se remplira.",
+  "home.health.firstRun": "Votre score, vos métriques et votre tendance apparaîtront ici une fois que vous aurez lu quelques articles.",
   "settings.title": "Paramètres",
   "settings.subtitle": "Adaptez l'app à votre lecture.",
   "settings.appearance": "Apparence",

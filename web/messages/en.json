@@ -68,6 +68,7 @@
   "rec.empty.cta": "Browse Discover",
   "rec.firstRun.title": "Recommendations start with your reading",
   "rec.firstRun.body": "Each recommendation explains why it is here — which means it needs to know what you already read. Open a few articles and this fills in.",
+  "home.health.firstRun": "Your score, metrics and trend appear here once you have read a few articles.",
   "settings.title": "Settings",
   "settings.subtitle": "Tune the app to your reading.",
   "settings.appearance": "Appearance",

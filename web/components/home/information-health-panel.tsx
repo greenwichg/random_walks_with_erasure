@@ -31,12 +31,19 @@ import type { MetricKey } from "@/types/domain";
  *
  *  A "geographic diversity" dimension is intentionally absent — the engine models no geography,
  *  so there is no honest number to show. */
-const PANEL_METRICS: MetricKey[] = ["viewpointBalance", "topicDiversity", "sourceDiversity"];
+const PANEL_METRICS: MetricKey[] = [
+  "viewpointBalance",
+  "topicDiversity",
+  "sourceDiversity",
+];
 
 export function InformationHealthPanel({ data }: { data: DashboardSummary }) {
   const { t, formatCompact } = useTranslation();
   const band = resolveBand(data.overall);
-  const minutes = data.today.goalMinutes != null ? data.today.minutesRead ?? 0 : data.today.avgReadingMinutes;
+  const minutes =
+    data.today.goalMinutes != null
+      ? (data.today.minutesRead ?? 0)
+      : data.today.avgReadingMinutes;
 
   // The reader-facing verdict, carried over from the previous dashboard home so the headline and
   // the badge can never disagree (both derive from the same band). Measured metrics only: an
@@ -49,7 +56,10 @@ export function InformationHealthPanel({ data }: { data: DashboardSummary }) {
   const hero = heroCopyKeys(band.label);
 
   return (
-    <section aria-labelledby="health-heading" className="rounded-lg border bg-card p-4">
+    <section
+      aria-labelledby="health-heading"
+      className="rounded-lg border bg-card p-4"
+    >
       <SectionHeader
         id="health-heading"
         title={t("home.health.title")}
@@ -59,76 +69,121 @@ export function InformationHealthPanel({ data }: { data: DashboardSummary }) {
       />
 
       {data.mode && data.coverage && (
-        <ProfileProgress mode={data.mode} coverage={data.coverage} sample={data.sample} className="mb-4" />
+        <ProfileProgress
+          mode={data.mode}
+          coverage={data.coverage}
+          sample={data.sample}
+          className="mb-4"
+        />
       )}
 
-      <div className="flex items-center gap-4">
-        {/* No `band` prop: ScoreRing resolves the same band from the score itself (resolveBand),
-            and DashboardSummary carries no engine band to override it with. */}
-        <ScoreRing score={data.overall} label={t("common.of100")} size={92} />
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <Badge variant={band.hue}>{t(`band.${band.label}`)}</Badge>
-            <DeltaBadge value={data.overallDelta} suffix={t("report.thisMonth")} />
-          </div>
-          <p className="mt-2 text-sm font-medium leading-snug tracking-tight text-balance">
-            {t(hero.title)}
+      {/* A reader with no reading of their own is served a FALLBACK dashboard — the score, the
+          band, the "biggest opportunity" sentence, the three meters and the 30-day trend all
+          describe somebody else. `sample` says so, and the chip above already says so, but a
+          labelled 58/100 is still a number a new reader will take as theirs.
+
+          "Today's reading" below is NOT suppressed: those zeros are this reader's real zeros, and
+          they are the honest version of the same panel. */}
+      {data.sample ? (
+        <div className="rounded-lg border border-dashed bg-muted/30 p-4 text-center">
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            {t("home.health.firstRun")}
           </p>
+          <Link
+            href="/discover"
+            className="mt-3 inline-flex text-xs font-medium text-primary transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+          >
+            {t("rec.empty.cta")}
+          </Link>
         </div>
-      </div>
-
-      <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
-        {t(hero.body, {
-          metric: lowest ? t(`metric.${lowest.key}.label`) : "",
-          strong: strongest ? t(`metric.${strongest.key}.label`) : "",
-        })}
-      </p>
-
-      {/* The three breadth dimensions, as compact meters. */}
-      <p className="mb-2.5 mt-5 text-xs font-semibold text-muted-foreground">
-        {t("dashboard.healthMetrics")}
-      </p>
-      <ul className="space-y-3">
-        {PANEL_METRICS.map((key) => {
-          const metric = data.metrics.find((m) => m.key === key);
-          const available = metric != null && metric.available !== false;
-          return (
-            <li key={key}>
-              <div className="flex items-baseline justify-between gap-3">
-                <span className="truncate text-xs font-medium">{t(`metric.${key}.label`)}</span>
-                <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-                  {available ? metric!.score : "—"}
-                </span>
+      ) : (
+        <>
+          <div className="flex items-center gap-4">
+            {/* No `band` prop: ScoreRing resolves the same band from the score itself (resolveBand),
+              and DashboardSummary carries no engine band to override it with. */}
+            <ScoreRing
+              score={data.overall}
+              label={t("common.of100")}
+              size={92}
+            />
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant={band.hue}>{t(`band.${band.label}`)}</Badge>
+                <DeltaBadge
+                  value={data.overallDelta}
+                  suffix={t("report.thisMonth")}
+                />
               </div>
-              <div
-                aria-hidden
-                className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted"
-              >
-                {/* Neutral ink, not the brand hue: three meters in accent purple turned the panel
-                    into the loudest thing on the page. */}
-                {available && (
+              <p className="mt-2 text-sm font-medium leading-snug tracking-tight text-balance">
+                {t(hero.title)}
+              </p>
+            </div>
+          </div>
+
+          <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
+            {t(hero.body, {
+              metric: lowest ? t(`metric.${lowest.key}.label`) : "",
+              strong: strongest ? t(`metric.${strongest.key}.label`) : "",
+            })}
+          </p>
+
+          {/* The three breadth dimensions, as compact meters. */}
+          <p className="mb-2.5 mt-5 text-xs font-semibold text-muted-foreground">
+            {t("dashboard.healthMetrics")}
+          </p>
+          <ul className="space-y-3">
+            {PANEL_METRICS.map((key) => {
+              const metric = data.metrics.find((m) => m.key === key);
+              const available = metric != null && metric.available !== false;
+              return (
+                <li key={key}>
+                  <div className="flex items-baseline justify-between gap-3">
+                    <span className="truncate text-xs font-medium">
+                      {t(`metric.${key}.label`)}
+                    </span>
+                    <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                      {available ? metric!.score : "—"}
+                    </span>
+                  </div>
                   <div
-                    className="h-full rounded-full bg-foreground/55"
-                    style={{ width: `${Math.max(2, Math.min(100, metric!.score))}%` }}
-                  />
-                )}
-              </div>
-            </li>
-          );
-        })}
-      </ul>
+                    aria-hidden
+                    className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted"
+                  >
+                    {/* Neutral ink, not the brand hue: three meters in accent purple turned the panel
+                      into the loudest thing on the page. */}
+                    {available && (
+                      <div
+                        className="h-full rounded-full bg-foreground/55"
+                        style={{
+                          width: `${Math.max(2, Math.min(100, metric!.score))}%`,
+                        }}
+                      />
+                    )}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
 
-      <div className="mt-5 border-t pt-4">
-        <div className="mb-2.5 flex items-baseline justify-between">
-          <p className="text-xs font-semibold text-muted-foreground">{t("dashboard.healthTrend")}</p>
-          <p className="text-[0.68rem] text-muted-foreground">{t("dashboard.days30")}</p>
-        </div>
-        <TrendChart data={data.trend} height={104} showAxis={false} />
-      </div>
+          <div className="mt-5 border-t pt-4">
+            <div className="mb-2.5 flex items-baseline justify-between">
+              <p className="text-xs font-semibold text-muted-foreground">
+                {t("dashboard.healthTrend")}
+              </p>
+              <p className="text-[0.68rem] text-muted-foreground">
+                {t("dashboard.days30")}
+              </p>
+            </div>
+            <TrendChart data={data.trend} height={104} showAxis={false} />
+          </div>
+        </>
+      )}
 
       {/* Today's reading — preserved verbatim from the previous dashboard home. */}
       <div className="mt-4 border-t pt-4">
-        <p className="mb-2.5 text-xs font-semibold text-muted-foreground">{t("dashboard.today")}</p>
+        <p className="mb-2.5 text-xs font-semibold text-muted-foreground">
+          {t("dashboard.today")}
+        </p>
         <div className="grid grid-cols-2 gap-3">
           <TodayStat
             icon={BookOpen}
@@ -142,7 +197,11 @@ export function InformationHealthPanel({ data }: { data: DashboardSummary }) {
             sub={t("dashboard.days")}
           />
           <TodayStat
-            label={data.today.goalMinutes != null ? t("dashboard.minutesRead") : t("dashboard.avgReadingTime")}
+            label={
+              data.today.goalMinutes != null
+                ? t("dashboard.minutesRead")
+                : t("dashboard.avgReadingTime")
+            }
             value={formatCompact(minutes)}
             sub={
               data.today.goalMinutes != null
@@ -184,7 +243,9 @@ function TodayStat({
         {Icon && <Icon className="h-3 w-3" aria-hidden />}
         {label}
       </p>
-      <p className="mt-0.5 text-lg font-semibold tabular-nums tracking-tight">{value}</p>
+      <p className="mt-0.5 text-lg font-semibold tabular-nums tracking-tight">
+        {value}
+      </p>
       {sub && <p className="text-[0.65rem] text-muted-foreground">{sub}</p>}
     </div>
   );
