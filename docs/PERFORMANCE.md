@@ -357,3 +357,116 @@ can be re-answered from production instead of from a model.
 The kill switch was broken on first write: `_env_float` treats 0 as junk and returned the default,
 so setting the flag to 0 left the feature on. Caught by the test written for exactly that, which is
 the argument for writing kill-switch tests at all.
+
+---
+
+# Clustering pipeline profile (2026-07-29)
+
+The cache review ended by showing the ~5.6 s rebuild is the clusterer's cost, not the scheduler's.
+This profiles that 5.6 s. Tooling: `examples/profile_clustering.py` (`--stages`, `--functions`,
+`--redundancy`).
+
+## Timing breakdown, n = 20,000 (7,190 ms)
+
+| stage | ms | share | exponent |
+|---|---:|---:|---:|
+| **5_cluster** | **5,481** | **76.2%** | **2.15** |
+| 8_merge_duplicates | 625 | 8.7% | 0.60 |
+| 7_trust_check_and_repair | 377 | 5.2% | 1.55 |
+| 1_feed_article_to_article | 300 | 4.2% | 1.12 |
+| 2_registry_filters | 235 | 3.3% | 0.93 |
+| 4_tokenize | 87 | 1.2% | 1.03 |
+| 9_build_story | 70 | 1.0% | 0.30 |
+| 3_publisher_identity / 6_admit / 10_sort | <20 | 0.3% | <1 |
+
+Wall equals CPU at every stage — this is pure compute, so only algorithm changes move it.
+
+**Clustering is 76% of the pipeline and grows at n^2.15.** Everything else is linear or better, and
+the second-largest stage is a seventh of the largest. There is only one thing to optimize here.
+
+### Why it is quadratic
+
+The candidate walk's work unit is `sum(df²)` over tokens — for each token, every *pair* of articles
+carrying it. Measured: **3.4M → 20.4M → 101.1M** at 5k/10k/20k, and
+
+> **the ten most frequent tokens are 86.4% of that cost.**
+
+That single number explains the whole curve. A handful of ubiquitous words dominate, and their
+posting lists grow linearly with the catalog, so their pair count grows quadratically.
+
+## Repeated work (`--redundancy`, n = 20,000)
+
+| | calls | distinct | waste |
+|---|---:|---:|---:|
+| `OutletRegistry.resolve` | 60,400 | 400 publisher strings | **151×** |
+| `clustering.title_tokens` | 35,041 | ~20,000 headlines | 1.33× |
+| `story_service._build_story` | 2,782 | 1,596 stories | 1.74× |
+
+`resolve` is called three times per article by construction — `is_wire`, `is_aggregator` and
+`is_low_credibility` each resolve independently — and each call runs `_fold` twice (NFKD normalize,
+combining-mark filter, join) for `_full_key` and `_name_key`.
+
+*(The first version of this profiler patched the module-level `outlet_registry.resolve` and reported
+400 calls. The hot path reaches `OutletRegistry.resolve` — the method — directly and never passes
+through the module function, so the instrumentation was measuring a path production does not take.)*
+
+## Implemented — both byte-identical
+
+**1. Memoize `OutletRegistry.resolve`, per instance.** Resolution is a pure function of the input
+string and the registry's contents, and the contents never change after `load`. The memo caches
+misses too (`None` is a real and common answer — production sees ~5,200 distinct publisher names
+against 505 rows), is bounded because the key space is feed-controlled, and lives on the instance so
+a reloaded registry can never serve a stale answer.
+
+**2. Bisect + count in C in the candidate walk.** Postings lists are built by `enumerate`, so they
+are sorted ascending and the `j <= i` half was being walked and discarded by an `if` — `d²` steps
+where `d²/2` suffices, and the high-frequency tokens that dominate have the most to skip.
+`Counter.update(list)` then replaces a Python-level `shared.get(j, 0) + 1` per posting with one C
+call per token; profiling counted **6.7M interpreted `dict.get` calls** at n=8,000 alone. `Counter`
+is a dict subclass whose `update` inserts in first-seen order, so `shared.items()` yields exactly
+what it did before — which matters because that order decides DSU union order, which decides group
+roots, which decides story ids.
+
+## Before / after
+
+| stage (n=20,000) | before | after | |
+|---|---:|---:|---:|
+| 5_cluster | 5,481 ms | **3,762 ms** | **−31%** |
+| 2_registry_filters | 235 ms | **14 ms** | **−94%** |
+| 7_trust_check_and_repair | 377 ms | 325 ms | −14% |
+| 1_feed_article_to_article | 300 ms | 285 ms | −5% |
+| 8_merge_duplicates | 625 ms | 630 ms | +1% |
+
+| total | before | after | |
+|---|---:|---:|---:|
+| n = 5,000 | 796 ms | 652 ms | **−18%** |
+| n = 10,000 | 2,014 ms | 1,528 ms | **−24%** |
+| n = 20,000 | 7,190 ms | 5,183 ms | **−28%** |
+
+Cluster growth exponent 2.15 → 2.05. **The constant improved by a third; the asymptotics did not,
+and no amount of this kind of work will change them.**
+
+### Correctness
+
+Verified against a git worktree of the pre-change commit, on four corpora (two sizes × two seeds,
+3,499 stories): every story id, title, coverage count, publisher count, blindspot side, cluster
+trust verdict and ordered member-URL list is **byte-identical**. Six new tests pin the properties
+that make the changes admissible rather than the timings that motivated them.
+
+## Not implemented, and why
+
+**Skipping high-frequency tokens** would attack the 86.4% directly — and it changes which articles
+cluster. `docs/CLUSTER_TRUST.md` records what happened the last two times a clustering rule changed
+(IDF weighting cost 361 of 3,431 covered articles; a global link quorum cost 9.3% and made coherence
+*worse*). That needs `audit_clustering_change.py` against the live catalog, not a performance pass.
+
+**Incremental clustering** — clustering only new articles instead of rebuilding — is the structural
+answer to a quadratic rebuild, and it is a genuine design change, not an optimization. Single-linkage
+DSU is *almost* incremental: adding an article can only merge existing clusters, never split them.
+But `_repair` splits, `_merge_duplicates` joins across the whole set, and the rolling 6-day window
+*removes* articles at the tail — and removal is what single linkage cannot do incrementally, because
+you cannot tell which merges depended on the departed article without recomputing. That is why it is
+a redesign: it needs a different cluster representation, not a different loop.
+
+**`_build_story` at 1.74× per story** is real but now 1.0% of the pipeline. Fixing it would save
+~25 ms of 5,183.

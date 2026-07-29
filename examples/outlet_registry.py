@@ -56,6 +56,14 @@ CREDIBILITY = ("high", "medium", "low")
 #: ``org``        an organisation publishing its own announcements
 KINDS = ("wire", "aggregator", "research", "forum", "org")
 
+#: Sentinel for "not in the resolve cache" — distinct from a cached ``None``, which is a real and
+#: very common answer (most feed publishers are unknown to the registry). A plain ``.get(text)``
+#: would re-resolve every unknown name on every call, which is the majority of them.
+_MISS = object()
+
+#: Upper bound on the per-registry resolve memo. See ``OutletRegistry.resolve``.
+_RESOLVE_CACHE_MAX = 100_000
+
 #: Kinds removed from clustering entirely. Deliberately narrower than :data:`KINDS`: an aggregator's
 #: articles ARE other outlets' articles, so counting one as a publisher double-counts coverage the
 #: cluster already holds. A journal paper or an NGO release is original content — debatable, so it
@@ -166,6 +174,9 @@ class OutletRegistry:
         self._by_name: Dict[str, str] = {}       # name key (parentheticals dropped) -> canonical
         self._by_full: Dict[str, str] = {}       # full key (parentheticals KEPT)    -> canonical
         self._by_domain: Dict[str, str] = {}     # domain key -> canonical
+        # Per-instance memo for `resolve`. On the instance rather than a module global so that a
+        # reloaded registry starts empty — a curation change can never be served from a stale memo.
+        self._resolve_cache: Dict[str, Optional[Outlet]] = {}
         for key, canonical in aliases.items():
             if _looks_like_host(key):
                 self._by_domain[_host_of(key)] = canonical
@@ -224,9 +235,35 @@ class OutletRegistry:
     # -- resolution ------------------------------------------------------- #
     def resolve(self, text: "str | None") -> Optional[Outlet]:
         """Resolve any form (name / domain / URL / corpus variant) to an :class:`Outlet`, or
-        ``None`` if unknown. Domain forms match by registrable-domain suffix (subdomain-tolerant)."""
+        ``None`` if unknown. Domain forms match by registrable-domain suffix (subdomain-tolerant).
+
+        **Memoized per registry instance.** Resolution is a pure function of the input string and
+        the registry's contents, and the contents never change after ``load`` — so the same name
+        can only ever produce the same answer, and remembering it changes nothing but the cost.
+
+        Measured, story clustering at 20,000 articles: **60,400 calls over 400 distinct publisher
+        strings**, a 151x waste factor. Three of those calls are per article by construction —
+        ``is_wire``, ``is_aggregator`` and ``is_low_credibility`` each resolve independently — and
+        each one pays ``_fold`` (NFKD normalize + a combining-mark filter + a join) twice, once for
+        ``_full_key`` and once for ``_name_key``. cProfile put resolve at 10% of a whole build.
+
+        The cache lives on the INSTANCE, not in a module global: a reloaded registry is a new
+        object and starts empty, so a curation change can never be served from a stale memo."""
         if not text:
             return None
+        hit = self._resolve_cache.get(text, _MISS)
+        if hit is not _MISS:
+            return hit
+        out = self._resolve_uncached(text)
+        # Bounded, because the key space is FEED-CONTROLLED: publisher strings arrive from remote
+        # sources and a hostile or merely broken one could otherwise grow this without limit. The
+        # cap is far above any real catalog's distinct-publisher count (production: ~5,200), so in
+        # practice it never evicts; it exists so that "never" is a property rather than a hope.
+        if len(self._resolve_cache) < _RESOLVE_CACHE_MAX:
+            self._resolve_cache[text] = out
+        return out
+
+    def _resolve_uncached(self, text: str) -> Optional[Outlet]:
         if _looks_like_host(text):
             host = _host_of(text)
             for cand in _domain_suffixes(host):

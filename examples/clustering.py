@@ -13,6 +13,8 @@ from __future__ import annotations
 import math
 import re
 from datetime import datetime, timezone
+from bisect import bisect_right
+from collections import Counter
 from typing import Callable, Optional, Sequence
 
 DEFAULT_SIM = 0.28
@@ -256,11 +258,24 @@ def cluster(items: Sequence, *, tokens: Callable[[object], frozenset],
                 continue                                # too little to say anything: stays a singleton
             # Walking the postings counts SHARED TOKENS per candidate as a by-product, so the
             # min_shared gate costs nothing extra — and it prunes most pairs before any Jaccard.
-            shared: dict = {}
+            # Two mechanical changes, both output-preserving, from profiling this loop at 49% of a
+            # whole build with 6.7M interpreted `dict.get` calls behind it:
+            #
+            # 1. BISECT past `j <= i`. Postings lists are built by `enumerate`, so they are sorted
+            #    ascending; the old code walked every entry and discarded the first half with an
+            #    `if`. For a token carried by `d` articles that is `d` steps per occurrence and
+            #    `d**2` overall, when `d**2 / 2` will do. The high-frequency tokens that dominate
+            #    the cost are exactly the ones with the most to skip.
+            # 2. COUNT IN C. `Counter.update(list)` dispatches to `_count_elements`, so the tally
+            #    that was a Python-level `shared.get(j, 0) + 1` per posting becomes one C call per
+            #    token. Counter is a dict subclass and `update` inserts in first-seen order, so
+            #    `shared.items()` below yields exactly what it did before.
+            shared: Counter = Counter()
             for tok in ti:
-                for j in postings[tok]:
-                    if j > i:
-                        shared[j] = shared.get(j, 0) + 1
+                plist = postings[tok]
+                tail = plist[bisect_right(plist, i):]
+                if tail:
+                    shared.update(tail)
             for j, overlap in shared.items():
                 if overlap < min_shared or len(toks[j]) < floor:
                     continue

@@ -383,3 +383,54 @@ def test_link_quorum_defaults_to_off():
     """Shipped disabled: it targets a real production failure, but the last change that tightened
     matching on equally sound reasoning cost 10.5% of covered articles."""
     assert cl.DEFAULT_LINK_QUORUM == 0.0
+
+
+# --------------------------------------------------------------------------- #
+# Candidate-walk optimizations — profiled at 76% of a whole build, exponent 2.15
+# --------------------------------------------------------------------------- #
+def test_postings_walk_skips_lower_indices_without_changing_groups():
+    """The candidate walk yields pairs `i < j` only. Postings lists are built by `enumerate`, so
+    they are sorted ascending and the `j <= i` half can be skipped by bisection instead of tested
+    and discarded — for a token carried by `d` articles that is `d**2` steps where `d**2 / 2` will
+    do, and the highest-frequency tokens (measured: the top TEN account for 86.4% of the walk's
+    cost at 20,000 articles) have the most to skip.
+
+    Pinned as a property rather than a timing: the grouping must be unchanged, which is the only
+    thing that makes the optimization admissible."""
+    items = [{"t": "senate passes funding bill late vote", "d": "2026-07-20T10:00:00Z"},
+             {"t": "senate approves funding bill after vote", "d": "2026-07-20T11:00:00Z"},
+             {"t": "wildfire spreads across southern france", "d": "2026-07-20T12:00:00Z"},
+             {"t": "wildfire crews battle southern france blaze", "d": "2026-07-20T13:00:00Z"},
+             {"t": "unrelated headline about knitting patterns", "d": "2026-07-20T14:00:00Z"}]
+    groups = cl.cluster(items, tokens=lambda a: cl.title_tokens(a["t"]),
+                                time=lambda a: cl.parse_time(a["d"]))
+    sizes = sorted(len(g) for g in groups)
+    assert sizes == [1, 2, 2], sizes
+    # Roots stay the LOWER index, which is what makes output order stable across runs.
+    assert all(g == sorted(g) for g in groups)
+
+
+def test_counting_shared_tokens_is_order_preserving():
+    """`Counter.update(list)` replaced a Python-level `shared.get(j, 0) + 1` per posting — 6.7M
+    interpreted calls at 8,000 articles. Counter is a dict subclass and `update` inserts in
+    first-seen order, so `shared.items()` yields exactly what the manual loop did.
+
+    That ordering is not cosmetic: it decides the order pairs are yielded, which decides DSU union
+    order, which decides group roots. If it changed, clusters would still be 'correct' and story
+    ids would silently churn."""
+    from collections import Counter
+    from bisect import bisect_right
+    postings = {"a": [0, 3, 7, 9], "b": [1, 3, 5, 9], "c": [2, 3]}
+    i = 0
+    manual: dict = {}
+    for tok in ("a", "b", "c"):
+        for j in postings[tok]:
+            if j > i:
+                manual[j] = manual.get(j, 0) + 1
+    fast: Counter = Counter()
+    for tok in ("a", "b", "c"):
+        pl = postings[tok]
+        tail = pl[bisect_right(pl, i):]
+        if tail:
+            fast.update(tail)
+    assert list(manual.items()) == list(fast.items())
