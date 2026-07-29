@@ -470,3 +470,69 @@ a redesign: it needs a different cluster representation, not a different loop.
 
 **`_build_story` at 1.74× per story** is real but now 1.0% of the pipeline. Fixing it would save
 ~25 ms of 5,183.
+
+
+---
+
+# The failed deploy of 4fbc855 — root cause (2026-07-29)
+
+Not a health failure, not the index, and not the box. **`git checkout` refused, and the failure was
+reported as something else entirely.**
+
+## What happened
+
+To run an updated ops script without a full deploy, the operator was told (by me) to run:
+
+```bash
+git checkout 256d929 -- deploy/ops/perf-probe.sh
+```
+
+That leaves `deploy/ops/perf-probe.sh` **staged** as a local modification. `update.sh` then runs
+`git checkout "$REF"` under `set -euo pipefail`, and `4fbc855` also changes that file:
+
+```
+error: Your local changes to the following files would be overwritten by checkout:
+	deploy/ops/perf-probe.sh
+Please commit your changes or stash them before you switch branches.
+Aborting
+exit=1
+```
+
+`set -e` aborts update.sh **before `dc up -d --build` ever runs**. cd-deploy sees a non-zero exit,
+rolls back — trivially, since the old commit was still checked out — and alerts that the deploy
+"failed its health/smoke gate". No container moved. Nothing was health-checked.
+
+Reproduced end to end in a scratch repo with the same three-commit shape.
+
+## Why it took a round trip to find
+
+Every downstream symptom pointed somewhere else:
+
+* the index was missing → looked like a database or SQLite-version problem;
+* the probe printed the old pragma block → looked like a second, separate bug;
+* the alert said "health/smoke gate" → pointed at readiness and the busy box.
+
+All three had one cause: **the checkout never happened**. Two hypotheses were tested and killed
+before the real one was found — creating all eight indexes on a 25,470-row catalog takes **153 ms**,
+and the engine reaches `/api/health/ready` in **5.1 s** against a 240 s gate.
+
+## Fixed
+
+`cd-deploy.sh` now pre-flights the working tree and refuses with the actual reason, the file list,
+and the command that clears it — before the backup, before update.sh, before anything moves:
+
+```
+CD_RESULT=aborted ref=<sha> reason=dirty_worktree
+```
+
+It aborts rather than stashing on the operator's behalf: those edits could be a hotfix someone is
+mid-way through, and a deploy tool must not silently discard work it does not understand.
+
+The suggested remedy is `git checkout HEAD -- .`, not `git checkout -- .` — the first version of
+this fix printed the latter, and a test of the fix showed it leaves the staged change exactly where
+it was. `git checkout <ref> -- <path>` stages; restoring the worktree from the index changes
+nothing.
+
+**The lesson is about the message, not the mechanism.** A deploy tool that reports every failure as
+a health failure will send you to the wrong place at the worst time. The categories it can
+distinguish are the categories you can debug.
