@@ -484,3 +484,33 @@ def test_search_indexes_are_idempotent_and_never_block_startup(store):
         names = {r[0] for r in s.execute(text(
             "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='feed_articles'")).all()}
     assert {"ix_feed_publisher", "ix_feed_publisher_lower", "ix_feed_published_at"} <= names
+
+
+def test_one_bad_index_statement_does_not_take_the_others_with_it(store):
+    """The fault that hid behind "never blocks startup". The whole index batch used to run in ONE
+    session under ONE bare `except: pass`, so a failure on any statement aborted every statement
+    after it and rolled back the ones before it in the same transaction — adding a new index at the
+    END of the list could leave a fresh database with NO indexes at all.
+
+    And it was invisible: production reported `SCAN feed_articles` for an index that was supposed to
+    exist, with nothing anywhere saying why. Startup must still survive a database that refuses an
+    index; it must not survive it SILENTLY.
+
+    The failure is made real rather than mocked: a TABLE occupying the index's name makes SQLite
+    reject that one CREATE (``IF NOT EXISTS`` does not cover a name held by a different object
+    kind), which is exactly the shape of an environment-specific refusal."""
+    from sqlalchemy import text
+    with store.session() as s:
+        s.execute(text("DROP INDEX IF EXISTS ix_feed_publisher_lower"))
+        s.execute(text("DROP INDEX IF EXISTS ix_feed_publisher"))
+        s.execute(text("DROP INDEX IF EXISTS ix_feed_published_at"))
+        s.execute(text("CREATE TABLE ix_feed_publisher_lower (x INTEGER)"))
+
+    store._ensure_search_indexes()          # must not raise
+
+    with store.session() as s:
+        names = {r[0] for r in s.execute(text(
+            "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='feed_articles'")).all()}
+    assert "ix_feed_publisher" in names, "a later failure must not prevent an earlier index"
+    assert "ix_feed_published_at" in names
+    assert any("publisher_lower" in n for n, _ in store.index_errors), store.index_errors

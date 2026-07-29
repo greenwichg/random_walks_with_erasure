@@ -1399,12 +1399,26 @@ class Store:
                       # SEARCH. It matters more later than now: RWE_RETENTION_MAX_COUNT allows
                       # 150,000 rows, six times the current catalog, and a scan grows with all of it.
                       "CREATE INDEX IF NOT EXISTS ix_feed_publisher_lower ON feed_articles(lower(publisher))"]
-        try:
-            with self.session() as s:
-                for stmt in stmts:
+        # ONE TRANSACTION PER STATEMENT, and a failure is RECORDED rather than swallowed.
+        #
+        # The old shape wrapped the whole loop in a single session and a single bare `except: pass`,
+        # which has two faults that only showed up when an index was added. A failure on any one
+        # statement aborted every statement after it AND rolled back the ones before it in the same
+        # transaction — so adding a new index at the end of the list could leave a fresh database
+        # with NO indexes at all. And the failure was invisible: production reported
+        # `SCAN feed_articles` with an index that was supposed to exist, and nothing anywhere said
+        # why. "Never blocks startup" was the right intent; "never tells anyone" was not part of it.
+        #
+        # `index_errors` is diagnostic state, not control flow — nothing reads it to decide
+        # anything, so a database that refuses every index still serves, exactly as before.
+        self.index_errors: "list[tuple[str, str]]" = []
+        for stmt in stmts:
+            try:
+                with self.session() as s:
                     s.execute(text(stmt))
-        except Exception:
-            pass
+            except Exception as exc:                       # pragma: no cover - environment-specific
+                name = stmt.split()[5] if len(stmt.split()) > 5 else stmt[:40]
+                self.index_errors.append((name, f"{type(exc).__name__}: {exc}"))
 
     @staticmethod
     def _lean_expr():
