@@ -362,6 +362,12 @@ the argument for writing kill-switch tests at all.
 
 # Clustering pipeline profile (2026-07-29)
 
+> **⚠ SUPERSEDED IN PART.** The stage PROPORTIONS below were measured on a synthetic corpus and are
+> substantially wrong for production — clustering is 38% of `build_stories`, not 76%. The real
+> breakdown, and why the synthetic one misled, is at
+> [Measured on the live corpus](#the-real-breakdown-live-corpus-2026-07-29). The optimizations and
+> their byte-identical verification stand; only the ranking was wrong.
+
 The cache review ended by showing the ~5.6 s rebuild is the clusterer's cost, not the scheduler's.
 This profiles that 5.6 s. Tooling: `examples/profile_clustering.py` (`--stages`, `--functions`,
 `--redundancy`).
@@ -536,3 +542,75 @@ nothing.
 **The lesson is about the message, not the mechanism.** A deploy tool that reports every failure as
 a health failure will send you to the wrong place at the worst time. The categories it can
 distinguish are the categories you can debug.
+
+
+---
+
+# The real breakdown, live corpus (2026-07-29)
+
+Measured in-process against the production catalog, 22,493 rows → 1,074 stories.
+
+| stage | prod ms | % pipeline | % build_stories | **synthetic said** |
+|---|---:|---:|---:|---:|
+| `_fetch` | 2,319 | **31.4%** | — | — |
+| `cluster` | 1,942 | 26.3% | **38.3%** | **76.2%** |
+| `_merge_duplicates` | 1,451 | 19.6% | **28.6%** | **8.7%** |
+| `feed_article_to_article` | 1,118 | 15.1% | **22.1%** | **4.2%** |
+| registry filters | 150 | 2.0% | 3.0% | 3.3% |
+| publisher identity | 149 | 2.0% | 2.9% | 0.1% |
+| `_build_story` | 123 | 1.7% | 2.4% | 1.0% |
+| trust + repair | 120 | 1.6% | 2.4% | 5.2% |
+| `_admit` | 16 | 0.2% | 0.3% | 0.1% |
+
+`build_stories` = 5,069 ms, which matches an independent best-of-5 measurement of 5,011 ms.
+
+## Why the synthetic profile misranked it
+
+The A/B on the live corpus printed the token distribution, and it is nothing like the generated one:
+
+| | synthetic | **production** |
+|---|---:|---:|
+| postings work `sum(df²)` | 101,058,872 | **8,399,037** (12× less) |
+| top-10 token share of that | 86.4% | **25.8%** |
+| max token document frequency | — | 995 |
+| distinct tokens | — | 38,215 |
+
+Real headlines spread across 38,215 tokens with a maximum document frequency under a thousand.
+The generator concentrated its mass in a short head, which inflated the quadratic term by an order
+of magnitude and made clustering look like the whole problem.
+
+**The calibration mistake, precisely.** `--calibrate` checked story count, covered-article share and
+largest-cluster size, and all three landed within 1.4× of live. Those are OUTPUTS. The cost of the
+candidate walk is governed by an INPUT property — the token frequency distribution — which was never
+checked. **Passing an output check says nothing about an input the cost depends on.**
+
+`perf_profile.calibrate()` should assert on `postingsWork` and the top-10 concentration, not only on
+the story-shape metrics. Until it does, treat any stage RANKING from that harness as a hypothesis.
+
+## What the shipped optimizations are actually worth
+
+The candidate-walk change was A/B'd in one process on the live corpus, alternating rounds:
+
+```
+articles 20,156  distinct tokens 38,215  maxDF 995
+candidate walk  OLD 1,379 ms   NEW 1,008 ms   -27%      SAME RESULT: True (50,898 pairs)
+```
+
+**−27% on the walk, verified identical.** But the walk is ~28% of `build_stories`, so the
+end-to-end effect is **~7%**, not the 28% the synthetic run predicted. The optimization does exactly
+what it was measured to do; the estimate of its importance was inflated by the corpus.
+
+## The real ranking, for whatever comes next
+
+1. **`_fetch` 2,319 ms (31%)** — the largest single cost in the whole cold path, and already
+   diagnosed: production rows are ~4.6× larger than synthetic ones because `body` is populated, and
+   `body` is loaded and discarded. Blocked on precomputing `readingMinutes` at ingest.
+2. **`cluster` 1,942 ms (26%)** — just improved 27% on its hot loop. The remainder is the
+   quadratic term, and reducing it further changes clustering results.
+3. **`_merge_duplicates` 1,451 ms (20%)** — **the surprise.** The synthetic profile put it at 8.7%
+   with a SUBLINEAR exponent (0.60) and it is the third-largest real cost. Never examined.
+4. **`feed_article_to_article` 1,118 ms (15%)** — 22,493 dicts at ~50 µs each, including a
+   `media.pick_best_logo` call per article that could be memoised by publisher.
+
+Items 1 and 4 together are 46% of the pipeline and are both the same shape of problem: materialising
+per-article objects that the clustering path mostly does not read.
