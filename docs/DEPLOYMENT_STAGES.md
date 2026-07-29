@@ -222,6 +222,31 @@ containers it was for.
 `tests/test_deploy_stages.sh` now records docker's argv and asserts the build carries both profiles.
 It fails on the unfixed tree.
 
+### Breaking the deadlock needs a manual step
+
+Neither fix can rescue an already-stuck box, and it is worth being explicit about why: `cd-deploy`
+runs the host scripts **from the current checkout**, and the checkout only advances *after* BACKUP
+passes. The repaired script sits in the repo and cannot reach the box by the one route that would
+put it there.
+
+The one-time unblock is to build the profile images from the checkout that is already on disk:
+
+```bash
+cd /opt/ih
+docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.aws.yml \
+  --env-file deploy/.env --profile backup --profile scheduler build backup backup-scheduler
+```
+
+Images only — nothing running is touched. Afterwards the normal deploy proceeds.
+
+### A rebuilt image does not reach a running container
+
+`up -d` recreates the services it manages, and a profile-gated service is not managed by a bare
+`up -d`. So `backup-scheduler` kept running 8-day-old code even once the image was current — the
+same skew, one layer down. `update.sh` now refreshes it **only when it is already running**, so an
+opt-in service an operator deliberately left off is never started, and the one-shot `backup` service
+is never brought up as a long-running container.
+
 ### The general rule
 
 **A host script and the image it drives are two deployables.** Any time a host-side script gains a

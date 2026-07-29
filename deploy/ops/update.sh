@@ -130,6 +130,18 @@ if ! dc up -d 2>&1 | sed 's/^/    /'; then
   "$EXIT_CONTAINER_STARTUP"
 fi
 
+# A RUNNING container keeps its old image after a rebuild — `up -d` only recreates services it
+# manages, and `backup-scheduler` is profile-gated so a bare `up -d` does not manage it. Left alone
+# it runs 8-day-old code indefinitely: the same skew that deadlocked the 2026-07-29 deploy, one
+# layer down. Recreated ONLY when it is already running, so this never STARTS an opt-in service that
+# an operator deliberately left off — and never touches the one-shot `backup` service, which is a
+# `run --rm` job and would become a crash-looping container if `up -d` ever managed it.
+if docker ps --format '{{.Names}}' 2>/dev/null | grep -q 'backup-scheduler'; then
+  echo "    refreshing backup-scheduler onto the newly built image"
+  dc --profile scheduler up -d backup-scheduler 2>&1 | sed 's/^/    /' || \
+    echo "    (backup-scheduler refresh failed — recurring backups may still run older code)" >&2
+fi
+
 # ── READINESS ────────────────────────────────────────────────────────────────────────────────────
 # The timeout is configurable so the stage tests can exercise a readiness FAILURE without waiting
 # four minutes for it, and so an operator on a slow box can widen it without editing the script.
