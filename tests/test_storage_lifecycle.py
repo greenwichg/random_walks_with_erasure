@@ -174,3 +174,28 @@ def test_storage_stats_reports_rows_and_size(st):
     stats = st.storage_stats()
     assert stats["rows"]["feed_articles"] == 1
     assert "dbBytes" in stats                                # None for in-memory, int for a file DB
+
+
+def test_cleanup_reports_a_duration_for_every_step():
+    """The pass that turned out to own the box, made attributable.
+
+    This module's docstring claimed a no-op pass "costs a few indexed COUNTs". Production measured
+    it at 75-84 s per poll cycle — roughly 0.8 of a two-core box, and about 91% of the post-cycle,
+    against a 5.7 s story clustering rebuild that an entire performance investigation had been spent
+    optimizing instead.
+
+    The reason it hid for so long is that ``deleted`` counts were logged and durations were not: a
+    pass that deletes nothing looks idle in the log while it scans a growing catalog to prove there
+    is nothing to delete. Per-step timings are what separate "this prune is expensive" from "this
+    prune found nothing, expensively" — and those have opposite fixes.
+
+    Every step reports, including ``storage_stats``, which is a per-table scan rather than free."""
+    st = store_mod.Store("sqlite://")
+    res = storage_lifecycle.run_cleanup(st, policy=retention_policy.RetentionPolicy())
+
+    assert "ms" in res, "run_cleanup must report per-step durations"
+    for name in res["deleted"]:
+        assert name in res["ms"], f"step {name!r} deleted rows but reported no duration"
+        assert res["ms"][name] >= 0.0
+    assert "storage_stats" in res["ms"], \
+        "storage_stats is a per-table scan and must be timed like any other step"

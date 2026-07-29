@@ -20,13 +20,20 @@ Safety properties, which are the whole point:
   leave a cycle's worth of orphans behind every time.
 * **Fail-soft.** A failure in one table's prune is logged and the pass continues: a cleanup job must
   never take down ingestion, and a partially-completed pass is always safe to repeat.
-* **Idempotent.** Re-running when there is nothing to prune is a no-op that costs a few indexed
-  COUNTs.
+* **Idempotent.** Re-running when there is nothing to prune deletes nothing.
+
+  It is NOT, however, free — this docstring used to claim it "costs a few indexed COUNTs", and
+  production measured the pass at 75-84 s per poll cycle, ~0.8 of a core on a two-core box, dwarfing
+  every other thing the process does. A pass that deletes nothing still has to PROVE there is
+  nothing to delete, and proving a negative over a growing catalog is not a COUNT. Every step is
+  therefore timed and reported in ``storage_cleanup.ms``: an unbounded scan hiding behind a bounded
+  DELETE is exactly the shape that claim concealed.
 """
 from __future__ import annotations
 
 import json
 import logging
+import time
 
 import corpus_health
 import retention_policy
@@ -46,13 +53,17 @@ def run_cleanup(store_, *, policy: "retention_policy.RetentionPolicy | None" = N
     limit = policy.batch_limit
     deleted: dict = {}
     errors: dict = {}
+    ms: dict = {}
 
     def step(name, fn):
+        t0 = time.perf_counter()
         try:
             deleted[name] = fn()
         except Exception as e:                       # a cleanup pass must never break the poller
             deleted[name] = 0
             errors[name] = f"{type(e).__name__}: {e}"
+        finally:
+            ms[name] = round((time.perf_counter() - t0) * 1000.0, 1)
 
     # 1. Catalog FIRST — it is what produces orphaned side rows. Validation-aware (floors protect
     #    the serving corpus), and delegated to the module that already owns that logic.
@@ -62,6 +73,7 @@ def run_cleanup(store_, *, policy: "retention_policy.RetentionPolicy | None" = N
             max_count=policy.article_max_count or None, log=log).get("pruned", 0))
     else:
         deleted["feed_articles"] = 0
+        ms["feed_articles"] = 0.0                    # disabled, but the contract is every step reports
 
     # 2. Then the reaper for anything the catalog prune (now or in the past) left behind.
     step("article_event_locations", lambda: store_.prune_orphan_event_locations(limit))
@@ -72,10 +84,13 @@ def run_cleanup(store_, *, policy: "retention_policy.RetentionPolicy | None" = N
     step("report_snapshots", lambda: store_.prune_report_snapshots(policy.snapshots_per_user, limit))
 
     total = sum(deleted.values())
-    stats = store_.storage_stats()
-    result = {"deleted": deleted, "total": total, "errors": errors,
+    t0 = time.perf_counter()
+    stats = store_.storage_stats()                   # timed too: it is a per-table scan, not free
+    ms["storage_stats"] = round((time.perf_counter() - t0) * 1000.0, 1)
+    result = {"deleted": deleted, "total": total, "errors": errors, "ms": ms,
               "policy": policy.describe(), "stats": stats}
-    log(logging.INFO, "storage_cleanup", total=total, deleted=deleted,
+    log(logging.INFO, "storage_cleanup", total=total, deleted=deleted, ms=ms,
+        totalMs=round(sum(ms.values()), 1),
         dbBytes=stats.get("dbBytes"), errors=errors or None)
     return result
 
