@@ -1330,10 +1330,23 @@ def request_warm(store_, log=None) -> bool:
     (``RWE_STORY_WARM_COALESCE=0``) it warms inline on the caller's thread, which is exactly the
     previous behaviour, so the flag is a true kill switch rather than a different code path.
 
-    Returns True if the request was queued to the background warmer, False if it warmed inline."""
+    Returns True if the request was queued to the background warmer, False if it warmed inline.
+
+    The inline branch logs ``story_cache_warm`` too. It did not, and that was a real regression:
+    ``_Warmer._run`` emits the event, coalescing is OFF in production, so the ONE log line that
+    makes the dominant rebuild cost visible was only ever emitted on the path nobody runs. Nine
+    hours of production forensics — I/O, CPU credits, corpus refresh — were spent re-deriving a
+    number this line would have printed. The comment above the other call site says a change that
+    fixed the cost and removed the evidence would be a bad trade; the kill switch made exactly
+    that trade, silently, because the switch and the instrumentation lived on opposite branches."""
     global _WARMER
     if warm_coalesce_window() <= 0:
-        warm_cache(store_)
+        t0 = _time.perf_counter()
+        stories = warm_cache(store_)
+        if stories is not None and log is not None:
+            # coalesced=1 matches _Warmer's meaning: this rebuild absorbed one write notification.
+            log("story_cache_warm", stories=stories,
+                durationMs=round((_time.perf_counter() - t0) * 1000.0, 1), coalesced=1)
         return False
     with _WARMER_LOCK:
         if _WARMER is None or _WARMER._store is not store_ or not _WARMER._thread.is_alive():

@@ -1620,3 +1620,31 @@ def test_merging_still_joins_the_same_event_in_different_words(monkeypatch):
     assert seattle, stories
     assert max(s["totalCoverage"] for s in seattle) == 4, \
         "the two wordings must merge into one story of four articles"
+
+
+def test_inline_warm_logs_story_cache_warm(monkeypatch):
+    """The kill switch must not also kill the instrumentation.
+
+    ``story_cache_warm`` is emitted by ``_Warmer._run``. Production runs with
+    ``RWE_STORY_WARM_COALESCE=0``, which takes the inline branch of ``request_warm`` — and that
+    branch used to log nothing at all. The single most expensive recurring operation in the process
+    was therefore invisible in production for as long as the switch was off, and finding its cost
+    again took a full pass of host-level forensics (iostat, PSI, /proc thread sampling, CPU credits)
+    to re-derive a number this one line prints.
+
+    The event is the contract. Both branches emit it or neither is trustworthy."""
+    monkeypatch.setenv("RWE_STORY_WARM_COALESCE", "0")       # the production setting
+    st = store_mod.Store("sqlite://"); _senate_and_wildfire(st)
+    ss.clear_cache(); ss.shutdown_warmer()
+    events = []
+    try:
+        queued = ss.request_warm(st, log=lambda event, **f: events.append((event, f)))
+    finally:
+        ss.shutdown_warmer()
+
+    assert queued is False, "coalescing off must warm inline, not queue"
+    warms = [f for event, f in events if event == "story_cache_warm"]
+    assert len(warms) == 1, f"the inline warm must log exactly one story_cache_warm, got {events}"
+    assert warms[0]["stories"] >= 1
+    assert warms[0]["durationMs"] >= 0.0, "duration is the field the cost was measured with"
+    assert warms[0]["coalesced"] == 1, "inline absorbs exactly one write notification"

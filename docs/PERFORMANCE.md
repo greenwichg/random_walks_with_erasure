@@ -753,3 +753,66 @@ this whole investigation exists to avoid.
 `--synthetic N` runs without a store. That arm exercises the harness; it is not for quoting. Its
 -12% says nothing about production's distribution of profile weights, and that distribution is
 precisely what the bound's yield depends on.
+
+---
+
+# The production investigation, and what it found instead
+
+The optimizations above are real, verified, and aimed at the wrong thing. This section records how
+that came out, because the process failure is more valuable than the result.
+
+## The measurements, in the order they killed hypotheses
+
+**The box is over budget.** `t3.medium`, 2 vCPU. Sustainable baseline is 24 CPU credits/hour =
+**0.40 vCPU**. Measured over five minutes from `/proc/stat` (which reports the HOST inside a
+container):
+
+```
+user 37.48%  system 0.99%  idle 60.37%  iowait 0.02%  steal 1.12%
+busy 0.79 vCPU   against a sustainable 0.40 vCPU
+```
+
+Roughly **2x the instance's sustainable rate**, with steal already non-zero — credits are draining
+and the hypervisor has begun taking time back. No algorithmic change fixes a 2x budget overrun.
+
+**It is not I/O.** `%iowait 0.00`, `nvme0n1 %util 0.02%`, `b` column zero across 24 vmstat samples,
+PSI `io full avg60=0.00`. Killed on sight.
+
+**It is not memory.** PSI `memory avg60=0.09`, 1.4 GiB cache, 89 MB of 2 GB swap used.
+
+**It is not `corpus_refresh`.** This one looked certain: `corpus_refresh.on_poll_cycle` runs inside
+the poller thread and builds a whole `engine.Backend`, and the log census showed 16 activations.
+But the log already carries `buildMs`, and summing it gives **44.2 s across 43 minutes — 1.7% of
+one core.** One outlier (24.8 s, generation 18) against a ~1.1 s norm. Dead.
+
+**It is not the story clustering I spent the investigation on** either — at least not by the route I
+assumed. `_merge_duplicates` is 1.4 s inside a `build_stories` that costs ~5 s, and `build_stories`
+runs once per warm.
+
+## The actual finding: the hot path had no log line
+
+`story_cache_warm` is emitted in exactly one place — `_Warmer._run`, the coalescing path.
+Production runs `RWE_STORY_WARM_COALESCE=0`, so `request_warm` takes the inline branch, calls
+`warm_cache`, and **logs nothing**. The warmer was working the whole time. The evidence was gone.
+
+The comment directly above the surviving call site reads: *"Keep emitting `story_cache_warm` with a
+duration. That log line is how this problem was found in the first place — a change that fixed the
+cost and removed the evidence would be a bad trade."* The kill switch made exactly that trade,
+silently, because the switch and the instrumentation ended up on opposite branches of the same
+function.
+
+The cost: an entire pass of host-level forensics — vmstat, iostat, PSI, `/proc` thread sampling,
+CPU-credit arithmetic, an attempt to attach py-spy — to re-derive a number one log line prints.
+
+`tests/test_story_service.py::test_inline_warm_logs_story_cache_warm` now asserts both branches
+emit it. It fails on the pre-fix tree, which is the only reason it is worth having.
+
+## What I got wrong about method
+
+I profiled `build_stories` thoroughly and ranked its stages correctly. I never asked **what share of
+the process `build_stories` was**. Every subsequent investigation — cache invalidation, clustering,
+`_merge_duplicates` — inherited that unexamined frame and refined a ranking inside it.
+
+A profile of one pipeline answers "which part of this pipeline is slowest". It cannot answer "is
+this pipeline where the time goes", and I read the first as though it were the second. The check
+that would have caught it costs one command: total process CPU, then the pipeline's share of it.
