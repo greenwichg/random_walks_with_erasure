@@ -319,6 +319,23 @@ services:
       RWE_BREAKING_NOTIFICATIONS: ${RWE_BREAKING_NOTIFICATIONS:-0}
       RWE_BREAKING_MIN_PUBLISHERS: ${RWE_BREAKING_MIN_PUBLISHERS:-}
       RWE_BREAKING_TTL_HOURS: ${RWE_BREAKING_TTL_HOURS:-}
+      # Browser push (Phase B1 — registration only; nothing sends yet). Default OFF, and off is what
+      # the reader sees: with no key the config endpoint reports the feature unavailable and the web
+      # tier renders no control, so no permission prompt can appear. Generating the key pair and
+      # turning it on: docs/BROWSER_PUSH_OPERATIONS.md.
+      #
+      #   RWE_PUSH_ENABLED      the switch. Off ⇒ every push route 503s and the UI hides the control.
+      #   RWE_VAPID_PUBLIC_KEY  served to browsers; they subscribe against it. Public by construction.
+      #   RWE_VAPID_PRIVATE_KEY signs the sends. READ BY NOTHING until B2 — wired now so the operator
+      #                         generates and stores the PAIR once, and B2 needs no compose change.
+      #   RWE_VAPID_SUBJECT     the mailto:/https: contact the push service is given. Also B2.
+      #
+      # Rotating the pair invalidates every existing subscription; the web tier detects the mismatch
+      # and re-subscribes each device on its next visit (web/lib/push.ts::subscriptionMatchesKey).
+      RWE_PUSH_ENABLED: ${RWE_PUSH_ENABLED:-0}
+      RWE_VAPID_PUBLIC_KEY: ${RWE_VAPID_PUBLIC_KEY:-}
+      RWE_VAPID_PRIVATE_KEY: ${RWE_VAPID_PRIVATE_KEY:-}
+      RWE_VAPID_SUBJECT: ${RWE_VAPID_SUBJECT:-}
       # Storage lifecycle (examples/retention_policy.py — the ONE typed policy module). 0 = keep
       # forever, uniformly; junk/negative values fall back to the default rather than deleting more.
       # User data (reads, saves, settings, accounts) has NO policy and is never pruned.

@@ -136,6 +136,25 @@
       "require": { "env": ["RWE_BREAKING_NOTIFICATIONS", "RWE_BREAKING_MIN_PUBLISHERS", "RWE_BREAKING_TTL_HOURS"] },
       "why": "Breaking-story detection runs on the engine's poller thread (story_events.detect_breaking_stories, hung off the same post-cycle seam as the story-cache warm) and is OFF unless RWE_BREAKING_NOTIFICATIONS is truthy. `environment:` is an explicit allowlist and this stack has no `env_file:`, so an unlisted flag can be neither turned on nor rolled back — setting it in deploy/.env would appear to do nothing, exactly the failure the web tier's identity-recovery lever hit. Unlike the API-key rules this one applies whether or not the flag is set: an OFF switch that cannot be reached is the problem it guards against. The two tuning knobs travel with it because they are what an operator reaches for when detection is too noisy or too quiet, at the moment they least want a redeploy.",
       "fix": "On the `api` service (base compose, and restated in the AWS override) add `RWE_BREAKING_NOTIFICATIONS: ${RWE_BREAKING_NOTIFICATIONS:-0}`, `RWE_BREAKING_MIN_PUBLISHERS: ${RWE_BREAKING_MIN_PUBLISHERS:-}` and `RWE_BREAKING_TTL_HOURS: ${RWE_BREAKING_TTL_HOURS:-}`. Not on `ingest` — that service runs the one-shot rss_ingest.py, which never reaches the detection seam. See docs/NOTIFICATION_PLATFORM.md."
+    },
+    {
+      "id": "api-push-switch",
+      "categories": ["feature-flag", "required-env"],
+      "when": { "service": "api" },
+      "require": { "env": ["RWE_PUSH_ENABLED"] },
+      "why": "Browser push is OFF unless RWE_PUSH_ENABLED is truthy, and `environment:` is an explicit allowlist with no `env_file:` behind it — so an unlisted switch can be neither turned on nor rolled back. Applies whether or not the flag is set, for the same reason as the breaking-notifications rule: an OFF switch an operator cannot reach is the failure being guarded against. Push is the first feature that can put a browser permission prompt in front of every reader, which makes reaching the switch during an incident more urgent than usual, not less.",
+      "fix": "On the `api` service (base compose, and restated in the AWS override) add `RWE_PUSH_ENABLED: ${RWE_PUSH_ENABLED:-0}`. See docs/BROWSER_PUSH_OPERATIONS.md."
+    },
+    {
+      "id": "api-push-vapid-keys",
+      "categories": ["feature-flag", "required-env", "secret"],
+      "when": { "service": "api", "env_truthy": "RWE_PUSH_ENABLED" },
+      "require": {
+        "env": ["RWE_VAPID_PUBLIC_KEY", "RWE_VAPID_SUBJECT"],
+        "secrets": ["RWE_VAPID_PRIVATE_KEY"]
+      },
+      "why": "Web Push authenticates every send with a VAPID key PAIR, and a browser subscribes against the public half. Enabling push without the keys leaves the config endpoint reporting the feature unavailable — deliberately fail-closed, so nothing breaks — but it means the switch appears to do nothing, which is the failure mode this repo has hit before. The private key is a real secret: it signs sends on the deployment's behalf, so it must be interpolated from deploy/.env and never written into a compose file. The pair must be generated together; a public key from one pair and a private key from another produces sends every push service rejects.",
+      "fix": "Generate the pair (docs/BROWSER_PUSH_OPERATIONS.md gives an openssl recipe needing no new dependency), set RWE_VAPID_PUBLIC_KEY / RWE_VAPID_PRIVATE_KEY / RWE_VAPID_SUBJECT in deploy/.env, and keep all three wired on the `api` service as `${VAR:-}` interpolations."
     }
   ],
 

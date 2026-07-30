@@ -507,6 +507,67 @@ class NotificationEvent(Base):
     recorded_at: Mapped[datetime] = mapped_column(default=_utcnow)     # DB write time
 
 
+class PushSubscription(Base):
+    """One browser's Web Push subscription — a **device**, not a reader.
+
+    A reader may hold several (laptop, phone, a second browser) and each carries its own endpoint and
+    its own encryption keys, so this is the first per-user table whose grain is finer than the user.
+    ``docs/BROWSER_PUSH_ARCHITECTURE.md`` §7 is the contract; this row is its storage.
+
+    **``endpoint`` is the identity, and it is globally unique** — the push service mints it, and it
+    already names exactly one browser instance. Keying on ``(user_id, endpoint)`` instead would let
+    the same browser appear under two accounts, which is not a hypothetical: signing out and signing
+    in as someone else on a shared machine re-subscribes the *same* endpoint. The push service would
+    then deliver one message that two accounts believe is theirs. UNIQUE on ``endpoint`` alone makes
+    the second subscription a REASSIGNMENT, which is what actually happened.
+
+    **The four ``push_*`` columns are a denormalised copy of the reader's per-category push
+    preferences**, and they exist for one reason: fan-out-on-write has to ask "which subscriptions
+    want this category", and preferences live in an opaque JSON blob (``user_settings.value``) that
+    cannot be indexed. They are a QUERY ACCELERATOR and never the authority — ``settings_service`` +
+    ``notification_service.gate_path`` decide, and a stale copy here is corrected by that decision,
+    never allowed to override it. Nothing reads them yet (delivery is Phase B2); they ship now for the
+    same reason ``settings.notifications.categories.*.push`` shipped in Phase A — so the shape exists
+    before the rows do, and adding the column later does not mean rewriting every reader's row.
+
+    Product state only. Pruned by exactly one thing, and not by retention: a ``410 Gone`` from the
+    push service, which means the browser revoked it (see ``retention_policy.PROTECTED_TABLES``)."""
+
+    __tablename__ = "push_subscriptions"
+    __table_args__ = (UniqueConstraint("endpoint", name="uq_push_subscription_endpoint"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    # The push service's delivery URL. Long by nature (FCM endpoints run ~200 chars, and the spec sets
+    # no limit), so the column is generous and the API bounds what it will accept.
+    endpoint: Mapped[str] = mapped_column(String(1024))
+    # The subscription's public key and auth secret (base64url, from `PushSubscription.getKey`). The
+    # payload is encrypted TO these, so they are not credentials of ours — they are the device's
+    # address. Stored verbatim; never logged.
+    p256dh: Mapped[str] = mapped_column(String(255))
+    auth: Mapped[str] = mapped_column(String(255))
+    # Content encoding the browser negotiated (`aes128gcm` universally today). Recorded rather than
+    # assumed so a future browser that offers something else is visible in the data, not a surprise
+    # at send time.
+    content_encoding: Mapped[str] = mapped_column(String(32), default="aes128gcm")
+    # The browser's own expiry hint (`PushSubscription.expirationTime`), almost always null. Advisory:
+    # a 410 is the authoritative signal, this is only an early warning.
+    expires_at: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+    # Which device this is, for the operator and for the reader's own "your devices" list. Truncated
+    # by the API; carries no identifier we do not already have.
+    user_agent: Mapped[str] = mapped_column(String(255), default="")
+    # Denormalised preference mirror — see the class docstring. Indexed because the fan-out query
+    # filters on exactly one of them.
+    push_breaking: Mapped[bool] = mapped_column(default=False, index=True)
+    push_digests: Mapped[bool] = mapped_column(default=False, index=True)
+    push_recommendations: Mapped[bool] = mapped_column(default=False, index=True)
+    push_product: Mapped[bool] = mapped_column(default=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(default=_utcnow)
+    # Refreshed on every re-registration. A browser re-subscribes on its own schedule, so this is how
+    # an operator tells a live device from one that has not checked in since it was set up.
+    updated_at: Mapped[datetime] = mapped_column(default=_utcnow)
+
+
 class FeedArticle(Base):
     """An article discovered via RSS ingestion — the news **catalog** (distinct from per-user
     ``reads``). Deduplicated by ``canonical_url`` (the same key ``reads`` and the scoring cache use),
@@ -1183,6 +1244,7 @@ class Store:
                                 ("scored_articles", ScoredArticle), ("analytics_events", AnalyticsEvent),
                                 ("rec_events", RecEvent), ("report_snapshots", ReportSnapshot),
                                 ("notifications", Notification), ("reads", Read),
+                                ("push_subscriptions", PushSubscription),
                                 ("saved_articles", SavedArticle), ("users", User)):
                 counts[name] = int(s.scalar(select(func.count()).select_from(model)) or 0)
         size = None
@@ -2575,6 +2637,106 @@ class Store:
                             "category": r.category, "payload": payload,
                             "occurredAt": r.occurred_at, "expiresAt": r.expires_at})
             return out
+
+    # -- push subscriptions (one row per DEVICE; see :class:`PushSubscription`) ------------------
+    #: The category → column map for the denormalised preference mirror. One place, so a new category
+    #: is a row here rather than four call sites that can disagree.
+    _PUSH_FLAG_COLUMNS = {"breaking": "push_breaking", "digests": "push_digests",
+                          "recommendations": "push_recommendations", "product": "push_product"}
+
+    def upsert_push_subscription(self, user_id: int, endpoint: str, *, p256dh: str, auth: str,
+                                 content_encoding: str = "aes128gcm",
+                                 expires_at: "str | None" = None, user_agent: str = "",
+                                 categories: "dict | None" = None) -> dict:
+        """Register or refresh one device's push subscription. Idempotent on ``endpoint``.
+
+        Three real situations arrive at this one method, and collapsing them is the point:
+
+        * **New device** — insert.
+        * **Refresh** — the same browser re-subscribes (its keys rotated, or ``pushsubscriptionchange``
+          fired). Same endpoint, possibly new keys: update in place, so the reader does not accumulate
+          a row per rotation.
+        * **Account switch** — the same browser, now signed in as somebody else. The endpoint moves to
+          the new ``user_id``. This is a REASSIGNMENT rather than a second row, because the push
+          service will deliver one message to that endpoint and exactly one account may own it.
+          Getting this wrong means the previous reader keeps receiving notifications on a device that
+          is no longer theirs, which is a privacy failure, not a duplicate-row problem.
+
+        ``categories`` is the reader's per-category push preferences (``{"breaking": {"push": True},
+        …}``, the ``settings.notifications.categories`` shape). Mirrored into the indexed columns as a
+        query accelerator; unknown categories are ignored, and an absent one means ``False``.
+        Returns the stored row."""
+        flags = self._push_flags(categories)
+        with self.session() as s:
+            row = s.scalar(select(PushSubscription).where(PushSubscription.endpoint == endpoint))
+            if row is None:
+                row = PushSubscription(endpoint=endpoint, user_id=user_id)
+                s.add(row)
+            row.user_id = user_id                    # reassignment: the signed-in reader owns it now
+            row.p256dh, row.auth = p256dh, auth
+            row.content_encoding = content_encoding or "aes128gcm"
+            row.expires_at = expires_at
+            row.user_agent = (user_agent or "")[:255]
+            for column, value in flags.items():
+                setattr(row, column, value)
+            row.updated_at = _utcnow()
+            s.flush()
+            return self._push_view(row)
+
+    @classmethod
+    def _push_flags(cls, categories: "dict | None") -> dict:
+        """``{"breaking": {"push": True}}`` → ``{"push_breaking": True, …}``, defaulting to False.
+        Fail-closed like every other read of a preference: a shape we do not recognise is not consent."""
+        cats = categories if isinstance(categories, dict) else {}
+        out = {}
+        for category, column in cls._PUSH_FLAG_COLUMNS.items():
+            entry = cats.get(category)
+            out[column] = bool(entry.get("push")) if isinstance(entry, dict) else False
+        return out
+
+    @staticmethod
+    def _push_view(row: "PushSubscription") -> dict:
+        """The wire shape. ``p256dh``/``auth`` are deliberately absent: they are the device's address,
+        the sender reads them from the row directly, and nothing outside this module needs them —
+        least of all a response that could end up in a log."""
+        return {"id": row.id, "endpoint": row.endpoint, "userAgent": row.user_agent,
+                "contentEncoding": row.content_encoding, "expiresAt": row.expires_at,
+                "categories": {c: getattr(row, col)
+                               for c, col in Store._PUSH_FLAG_COLUMNS.items()},
+                "createdAt": row.created_at.isoformat() if row.created_at else None,
+                "updatedAt": row.updated_at.isoformat() if row.updated_at else None}
+
+    def list_push_subscriptions(self, user_id: int) -> "list[dict]":
+        """A reader's registered devices, newest first. Read-only."""
+        with self.session() as s:
+            rows = s.scalars(select(PushSubscription)
+                             .where(PushSubscription.user_id == user_id)
+                             .order_by(PushSubscription.id.desc())).all()
+            return [self._push_view(r) for r in rows]
+
+    def delete_push_subscription(self, user_id: int, endpoint: str) -> bool:
+        """Unregister one device, **user-scoped**: another reader's endpoint is never deleted, even
+        when the caller names it exactly. Idempotent — returns whether a row went away."""
+        with self.session() as s:
+            row = s.scalar(select(PushSubscription).where(
+                PushSubscription.endpoint == endpoint, PushSubscription.user_id == user_id))
+            if row is None:
+                return False
+            s.delete(row)
+            return True
+
+    def sync_push_subscription_flags(self, user_id: int, categories: "dict | None") -> int:
+        """Re-mirror a reader's per-category push preferences onto all of their devices. Called when
+        settings change, so the accelerator does not drift from the authority it accelerates. Returns
+        how many rows were updated."""
+        flags = self._push_flags(categories)
+        with self.session() as s:
+            rows = s.scalars(select(PushSubscription)
+                             .where(PushSubscription.user_id == user_id)).all()
+            for row in rows:
+                for column, value in flags.items():
+                    setattr(row, column, value)
+            return len(rows)
 
     def prune_notifications(self, user_id: int, keep: int = 200) -> int:
         """Bound the per-user notification history: delete all but the newest ``keep`` rows. Cadence

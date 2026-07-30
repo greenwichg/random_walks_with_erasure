@@ -30,6 +30,7 @@ import { PageContainer } from "@/components/layout/page-container";
 import { SectionCard } from "@/components/shared/section-card";
 import { ErrorState } from "@/components/shared/states";
 import { ExtensionConnect } from "@/components/settings/extension-connect";
+import { PushToggle } from "@/components/settings/push-toggle";
 import { CountryBadge } from "@/components/shared/country-badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
@@ -410,6 +411,10 @@ export default function SettingsPage() {
                 checked={draft.notifications.categories.breaking.inApp}
                 onChange={(v) => setCategory("breaking", "inApp", v)}
               />
+              {/* Per-DEVICE, not per-account: it takes effect immediately and is deliberately outside
+                  the draft / Save flow, because a browser permission prompt cannot be staged. Renders
+                  nothing when the browser or the deployment cannot support push. */}
+              <PushToggle />
             </div>
           </SectionCard>
 

@@ -102,6 +102,18 @@ events are recorded, undelivered ones lapse at their TTL, and rows already in a 
 (they describe something that really happened). Design, lifecycle rules and the reasoning behind the
 caps: **`docs/NOTIFICATION_PLATFORM.md`**.
 
+## Browser push (off by default, registration only)
+
+Wired but **disabled** (`RWE_PUSH_ENABLED=0`). Phase B1 lets a browser register a push subscription
+and stores it; **nothing sends a push yet**. Enabling it changes one visible thing: a per-device
+control appears in Settings and can produce a browser permission prompt.
+
+It needs a VAPID key pair, which must be generated before the switch means anything — the engine
+reports the feature unavailable when the switch is on and the key is missing, deliberately. Key
+generation (an `openssl` recipe needing no new dependency), enabling, verification, rotation and
+rollback all live in **`docs/BROWSER_PUSH_OPERATIONS.md`**. The frozen design is
+`docs/BROWSER_PUSH_ARCHITECTURE.md`.
+
 ---
 
 ## A · First deploy (existing, bootstrapped instance)

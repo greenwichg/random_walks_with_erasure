@@ -25,6 +25,7 @@ import json
 import math
 import logging
 import os
+import re
 import sys
 import time
 import uuid
@@ -32,6 +33,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any, Literal, Optional
+from urllib.parse import urlsplit
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # import sibling api_server
 import api_server as engine   # Backend, DatasetProfile, resolve_profile, BUILTIN_PROFILES
@@ -72,7 +74,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 
@@ -871,6 +873,70 @@ class NotificationModel(BaseModel):
     createdAt: str
     seenAt: str | None = None
     gatedBy: str
+
+
+# --------------------------------------------------------------------------------------------- #
+# Browser push (Phase B1) — subscription registration only. Nothing here sends anything; see
+# docs/BROWSER_PUSH_ARCHITECTURE.md.
+# --------------------------------------------------------------------------------------------- #
+class PushConfigModel(BaseModel):
+    """What a browser needs before it may subscribe. Served rather than baked into the web bundle so
+    the key and the switch are read at call time — turning push off, or rotating the key pair, is a
+    restart and not a rebuild."""
+    enabled: bool
+    #: The VAPID **public** key (base64url, uncompressed P-256 point). Public by construction: it is
+    #: handed to `pushManager.subscribe` in the browser. The private half never leaves the engine.
+    publicKey: str
+
+
+class PushSubscriptionModel(BaseModel):
+    """One registered device. Deliberately WITHOUT `p256dh`/`auth` — those are the device's address,
+    the sender reads them from the row, and a response that carries them is one that can be logged."""
+    id: int
+    endpoint: str
+    userAgent: str
+    contentEncoding: str
+    expiresAt: str | None = None
+    categories: dict
+    createdAt: str | None = None
+    updatedAt: str | None = None
+
+
+class PushSubscriptionCreate(BaseModel):
+    """A browser's `PushSubscription`, flattened. Validated rather than trusted: this arrives from a
+    client, the endpoint becomes a URL the engine will later POST to, and the keys become the
+    encryption target — so a malformed one must be rejected here rather than discovered at send time,
+    when the failure is asynchronous and looks like a delivery bug."""
+    endpoint: str = Field(min_length=8, max_length=1024)
+    p256dh: str = Field(min_length=8, max_length=255)
+    auth: str = Field(min_length=4, max_length=255)
+    contentEncoding: str = Field(default="aes128gcm", max_length=32)
+    #: `PushSubscription.expirationTime` — epoch **milliseconds** per the DOM spec, or null (the usual
+    #: case). Advisory only; a 410 from the push service is the authoritative end of a subscription.
+    expirationTime: int | None = None
+    userAgent: str = Field(default="", max_length=255)
+
+    @field_validator("endpoint")
+    @classmethod
+    def _https_endpoint(cls, v: str) -> str:
+        """HTTPS with a host, and nothing else. The engine will POST to whatever is stored here, so an
+        unvalidated endpoint is a stored request-forgery target: `http://` would carry the encrypted
+        payload in clear transport, and a hostless or non-URL value is a send that can only ever fail."""
+        parts = urlsplit(v.strip())
+        if parts.scheme != "https" or not parts.netloc:
+            raise ValueError("endpoint must be an https:// URL")
+        return v.strip()
+
+    @field_validator("p256dh", "auth")
+    @classmethod
+    def _base64url(cls, v: str) -> str:
+        """base64url, as `PushSubscription.getKey` produces. Charset-checked rather than decoded: the
+        engine does not interpret these — it hands them to the encryption layer — so the useful test
+        is that nothing arrived which could not have come from that API."""
+        v = v.strip()
+        if not re.fullmatch(r"[A-Za-z0-9_-]+=*", v):
+            raise ValueError("must be base64url")
+        return v
 
 
 class ArticleModel(BaseModel):
@@ -2714,7 +2780,16 @@ def update_my_settings(request: Request, req: SettingsUpdateModel) -> dict:
     report."""
     uid = _require_real_user(request)
     st = _require_store()
-    return settings_service.update(st, uid, req.model_dump(exclude_none=True))
+    updated = settings_service.update(st, uid, req.model_dump(exclude_none=True))
+    # Re-mirror the per-category push flags onto the reader's registered devices. The mirror is a
+    # query accelerator for fan-out (store.PushSubscription), and this is the one place preferences
+    # change — so syncing here is what keeps it from drifting from the authority it accelerates.
+    # Fail-soft: a preference save must never fail because a device row could not be touched.
+    try:
+        st.sync_push_subscription_flags(uid, (updated.get("notifications") or {}).get("categories"))
+    except Exception as e:                          # noqa: BLE001 — see above
+        _log(logging.WARNING, "push_flag_sync_failed", error=f"{type(e).__name__}: {e}")
+    return updated
 
 
 def _notification_view(n: dict) -> dict:
@@ -2751,6 +2826,92 @@ def mark_my_notification_seen(request: Request, notification_id: int) -> dict:
     uid = _require_real_user(request)
     st = _require_store()
     return {"ok": True, "changed": bool(st.mark_notification_seen(uid, notification_id))}
+
+
+# ---- browser push: subscription registration (Phase B1 — nothing here sends) --------------------
+def _push_enabled() -> bool:
+    """Whether browsers may subscribe at all. Default OFF: subscribing prompts the reader for a
+    permission this product has never asked for, so switching it on is an operational act. Read at
+    call time, so it is a restart rather than a rebuild — in both directions."""
+    return os.environ.get("RWE_PUSH_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _vapid_public_key() -> str:
+    """The VAPID public key browsers subscribe against, or ``""`` when unconfigured."""
+    return (os.environ.get("RWE_VAPID_PUBLIC_KEY") or "").strip()
+
+
+def _require_push() -> None:
+    """Fail-closed gate for every push route. 503 rather than 404: the endpoint exists and the reason
+    it will not serve is configuration, which is what an operator needs to be told."""
+    if not _push_enabled():
+        raise HTTPException(status_code=503, detail="Push notifications are not enabled.")
+    if not _vapid_public_key():
+        raise HTTPException(status_code=503, detail="Push notifications are not configured.")
+
+
+@app.get("/api/push/config", response_model=PushConfigModel, tags=["meta"],
+         summary="Whether browser push is available, and the VAPID public key to subscribe with")
+def push_config() -> dict:
+    """Unauthenticated on purpose: a browser must know whether to offer push *before* it asks the
+    reader for anything, and the only value returned is a public key. Reports ``enabled=False`` when
+    the switch is off **or** the key is missing — an operator who set one without the other should see
+    the feature reported unavailable rather than half-live."""
+    key = _vapid_public_key()
+    return {"enabled": bool(_push_enabled() and key), "publicKey": key}
+
+
+@app.get("/api/me/push/subscriptions", response_model=list[PushSubscriptionModel], tags=["meta"],
+         summary="The signed-in reader's registered push devices", responses=_ERR_RESPONSES)
+def my_push_subscriptions(request: Request) -> list:
+    """One entry per device. Never includes the devices' encryption keys."""
+    _require_push()
+    uid = _require_real_user(request)
+    return _require_store().list_push_subscriptions(uid)
+
+
+@app.post("/api/me/push/subscriptions", response_model=PushSubscriptionModel, tags=["meta"],
+          summary="Register or refresh a push subscription for the signed-in reader",
+          responses=_ERR_RESPONSES)
+def create_my_push_subscription(request: Request, req: PushSubscriptionCreate) -> dict:
+    """Idempotent on the endpoint, which is what makes this one route serve all three real cases: a
+    new device, the same browser re-subscribing after a key rotation or ``pushsubscriptionchange``,
+    and the same browser now signed in as a different reader (the endpoint is reassigned — see
+    ``store.PushSubscription``).
+
+    The reader's current per-category push preferences are mirrored onto the row as an indexed query
+    accelerator for a later fan-out. Settings remain the authority; this copy is never consulted for
+    consent on its own."""
+    _require_push()
+    uid = _require_real_user(request)
+    st = _require_store()
+    categories = (settings_service.get(st, uid).get("notifications") or {}).get("categories")
+    expires_at = None
+    if req.expirationTime is not None:
+        # The DOM spec gives epoch milliseconds; the store keeps ISO-8601 like every other timestamp
+        # here. Out-of-range values are dropped rather than rejected — the field is advisory, and a
+        # browser sending nonsense in it should not cost the reader their subscription.
+        try:
+            expires_at = datetime.fromtimestamp(req.expirationTime / 1000, timezone.utc).isoformat()
+        except (OverflowError, OSError, ValueError):
+            expires_at = None
+    return st.upsert_push_subscription(
+        uid, req.endpoint, p256dh=req.p256dh, auth=req.auth,
+        content_encoding=req.contentEncoding, expires_at=expires_at,
+        user_agent=req.userAgent or (request.headers.get("user-agent") or ""),
+        categories=categories)
+
+
+@app.delete("/api/me/push/subscriptions", tags=["meta"],
+            summary="Unregister a push subscription for the signed-in reader",
+            responses=_ERR_RESPONSES)
+def delete_my_push_subscription(request: Request, endpoint: str) -> dict:
+    """Unregister one device. ``endpoint`` is a query parameter because it is a URL and must not sit
+    in a path segment (same reason as ``DELETE /api/me/saved``). User-scoped and idempotent:
+    ``removed`` is ``False`` for an endpoint that was already gone or was never this reader's."""
+    _require_push()
+    uid = _require_real_user(request)
+    return {"ok": True, "removed": bool(_require_store().delete_push_subscription(uid, endpoint))}
 
 
 @app.post("/api/me/recommendations/opened", response_model=RecReceptionModel,

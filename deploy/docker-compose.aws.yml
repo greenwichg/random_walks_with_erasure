@@ -122,6 +122,14 @@ services:
       RWE_BREAKING_NOTIFICATIONS: ${RWE_BREAKING_NOTIFICATIONS:-0}
       RWE_BREAKING_MIN_PUBLISHERS: ${RWE_BREAKING_MIN_PUBLISHERS:-}
       RWE_BREAKING_TTL_HOURS: ${RWE_BREAKING_TTL_HOURS:-}
+      # Browser push (Phase B1 — registration only). Restated for the same reason as the two switches
+      # above: this manifest is what an operator reads to see what is live, and a feature that can put
+      # a permission prompt in front of every reader belongs in it. Default 0 = OFF. The private key
+      # is interpolated, never literal — deploy/deployment-rules.json fails the build otherwise.
+      RWE_PUSH_ENABLED: ${RWE_PUSH_ENABLED:-0}
+      RWE_VAPID_PUBLIC_KEY: ${RWE_VAPID_PUBLIC_KEY:-}
+      RWE_VAPID_PRIVATE_KEY: ${RWE_VAPID_PRIVATE_KEY:-}
+      RWE_VAPID_SUBJECT: ${RWE_VAPID_SUBJECT:-}
     volumes: !override
       - ${IH_DATA_DIR:-/opt/ih/data}:/app/data   # host-visible DB + backups (for off-host S3 sync)
       # The background poller's feed list (RWE_RSS_FEEDS, from the base compose) — the SAME file the

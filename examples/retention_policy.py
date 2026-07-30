@@ -102,4 +102,5 @@ PROTECTED_TABLES = {
     "rec_feedback": "explicit user feedback (like/dislike/ignore)",
     "improvement_lifecycle": "audit trail of suggested improvements",
     "feed_health": "one row per feed — naturally bounded, and the ops diagnostic",
+    "push_subscriptions": "devices the reader explicitly connected; removed only on a push-service 410",
 }
