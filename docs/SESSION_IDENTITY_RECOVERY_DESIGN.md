@@ -78,11 +78,10 @@ work in the meantime; the memo (§4) is what stops the second one from calling t
 
 ### The identity key
 
-Recovery must resolve the **same** engine user, never mint a second one. The engine's upsert is keyed
-on `(provider, provider_account_id)` with a `UNIQUE` constraint (`uq_identity_provider_account`), and
-email is stored as profile context only — explicitly *not* a join key
-(`examples/store.py::upsert_user_by_identity`). So the recovery key must be the provider account id,
-and nothing else.
+Recovery must resolve the **same** engine user, never mint a second one. That is the store's guarantee,
+specified in [`IDENTITY_UPSERT_CONCURRENCY.md`](IDENTITY_UPSERT_CONCURRENCY.md) — invariants **I1** (one user per `(provider, provider_account_id)`), **I2**
+(idempotency) and **I5** (email is never an identity key). What this design owes that contract is the
+**correct key**: the provider account id, and nothing else.
 
 For Google, `token.sub` **is** that value: the provider's `profile()` maps `id: profile.sub`
 (`next-auth/providers/google.js`), and NextAuth sets `sub: user.id.toString()`
@@ -146,8 +145,8 @@ the reads that need it (server-side, §2), so it would look like it worked while
 | Concern | Answer |
 |---|---|
 | **Can a client forge an identity?** | No. Every input (`sub`, `provider`, `providerAccountId`, `email`) comes from the JWT, signed with `NEXTAUTH_SECRET`. Anyone able to alter those already owns the session outright. Recovery reads no request body, query param, or header. |
-| **Can recovery attach a session to the wrong account?** | No, provided the key is the provider account id. The engine joins on `(provider, provider_account_id)`; email is refreshed but never matched. This is the single most important invariant in the design and gets its own test (§8). |
-| **Can it be used to hijack by email?** | No — see above. If a future change ever made the engine resolve identities by email, a Google session could claim a `dev` account with the same address. The test in §8 exists to make that change fail loudly. |
+| **Can recovery attach a session to the wrong account?** | No, provided the key is the provider account id — guaranteed by **I1**/**I5** of the [`IDENTITY_UPSERT_CONCURRENCY.md`](IDENTITY_UPSERT_CONCURRENCY.md), which owns the constraint and its tests. |
+| **Can it be used to hijack by email?** | No — **I5**. If a future change ever made the engine resolve identities by email, a Google session could claim a `dev` account with the same address; that contract's test 4 exists to make such a change fail loudly. |
 | **Does it bypass the beta allowlist?** | It must not. `callbacks.signIn` enforces the allowlist at sign-in only, so recovery is effectively the deferred second half of a sign-in that already passed. The proposal nonetheless **re-checks `isEmailAllowed(token.email)`** before attempting, so a reader removed from the allowlist cannot have an engine account created for them by a stale session. `loadAllowlist` is a small `readFileSync` on a path already read per sign-in; on the recovery path it runs at most once per backoff window. |
 | **Trust boundary to the engine** | Unchanged. Recovery calls the existing `POST /api/internal/users` with `X-IH-Auth` when `RWE_INTERNAL_SECRET` is set, exactly as sign-in does. No new endpoint, no new surface, no widening of `/api/internal/*`. |
 | **Does it leak anything into logs?** | One OBS1-style structured line per recovery — `{"event":"engine_identity_recovered","provider":"google","userId":N}`. Email is omitted; the existing `beta_access_denied` line logs an email because an operator must know who to approve, and no such need exists here. |
@@ -171,19 +170,16 @@ already runs on every session read; this adds a branch to it.
 
 ## 7. Idempotency
 
-- **The engine upsert is idempotent by construction** — `upsert_user_by_identity` selects the
-  identity and returns its user; only a first sighting inserts. Repeated recovery yields the same id
-  and creates nothing.
+- **The engine upsert is idempotent, and that is a contract rather than an assumption** — **I2** of the
+  [`IDENTITY_UPSERT_CONCURRENCY.md`](IDENTITY_UPSERT_CONCURRENCY.md). Repeated recovery yields the same id and creates nothing.
 - **Recovery is therefore safe to attempt any number of times**, from any number of processes, tabs,
   or concurrent requests. The memo and coalescing are performance measures, not correctness measures —
   which is the property to preserve: correctness must not depend on the cache being hit.
-- **One race is worth checking during implementation.** `upsert_user_by_identity` does
-  `SELECT` → `INSERT` inside one session; two simultaneous first-sightings of the same identity could
-  collide on `uq_identity_provider_account` and raise `IntegrityError`. Under SQLite's single writer
-  this is a narrow window, and it exists today on the sign-in path, but recovery makes concurrent
-  first-sightings more likely (a fan-out page render on a session that never got an id). The follow-up
-  should either catch the unique violation and re-select, or confirm the window is unreachable. This
-  is the one place the proposal touches engine code.
+- **This design depends on §3 and §4 of that contract** — concurrent first-sighting resolving to one
+  user, and the loser re-reading rather than erroring. The change specified there is a **prerequisite**
+  for recovery, because recovery makes concurrent first-sightings of a single identity materially more
+  likely (§9c). It is the one place this work touches engine code, and it is specified, diagrammed and
+  tested there rather than here.
 - **Healing the token is idempotent**: writing the same `engineUserId` again is a no-op, and a token
   that already has one never enters the path.
 
@@ -212,14 +208,11 @@ already runs on every session read; this adds a branch to it.
     writes the result to the token.
 12. `callbacks.jwt` with an id present does not call the resolver.
 
-**Engine (`tests/test_api_fastapi.py` / `tests/test_store.py`)**:
-
-13. `upsert_user_by_identity` called twice with the same `(provider, account id)` returns one user and
-    creates one identity row — extend the existing coverage to assert the row count.
-14. The same email under two different providers yields **two** users. This is the anti-hijack test;
-    it must fail if anyone ever makes the join key an email.
-15. Concurrent first-sighting of one identity resolves to a single user (or the window is documented
-    as unreachable, with the reasoning).
+**Engine** — owned by [`IDENTITY_UPSERT_CONCURRENCY.md`](IDENTITY_UPSERT_CONCURRENCY.md) §7, not duplicated here. Recovery depends on its tests 1 (concurrent
+first-sighting resolves to one user), 2 (no orphan `users` row on a lost race), 3 (sequential
+idempotency) and 4 (same email under two providers → two users). Heed that contract's warning: the race
+tests must run against a **file-backed** SQLite database, because the in-memory fixture shares a single
+connection and cannot produce a conflict at all.
 
 **e2e (`web/e2e/specs/auth.spec.ts`)**:
 
@@ -310,19 +303,18 @@ Safe already:
   no second write to order.
 - Losing a race costs nothing: both callers get the same id.
 
-The exception: `upsert_user_by_identity` does `SELECT` then `INSERT` inside one session (§7). On one
-instance, per-process coalescing collapses concurrent first-sightings to a single call, so the window
-is narrow. **Across instances there is no coalescing**, so N instances recovering the same identity at
-once means up to N simultaneous first-sightings, and the loser of the race hits
-`uq_identity_provider_account` and raises `IntegrityError`. The engine's catch-all handler turns that
-into a typed `500 internal_error`, which recovery reads as a failure and backs off from — so the loser
-is not corrupted, just unhelpfully delayed by a backoff window it did not need.
+The exception is the store's un-fixed first-sighting window, specified in [`IDENTITY_UPSERT_CONCURRENCY.md`](IDENTITY_UPSERT_CONCURRENCY.md) §3–§4. On one
+instance, per-process coalescing collapses concurrent first-sightings to a single call, so the window is
+narrow. **Across instances there is no coalescing**, so N instances recovering the same identity at once
+means up to N simultaneous first-sightings — and until that contract's §4 lands, the loser's
+`IntegrityError` reaches the engine's catch-all handler as a typed `500 internal_error`, which recovery
+reads as a failure and backs off from. The loser is not corrupted, just delayed by a backoff window it
+did not need — and it additionally leaves an orphan `users` row behind, which is that contract's **I4**
+and happens at one instance too.
 
-That upgrades the §7 note from a nicety to a **prerequisite**: catching the unique violation and
-re-selecting is required before the web tier is ever run with more than one instance. It is a handful
-of lines, it follows a pattern already used four times in `examples/store.py` (`except IntegrityError:`
-then re-select, as in `ImprovementLifecycle`), and it is cheap insurance even on one instance — so it
-should land with the initial implementation rather than being deferred to a scaling project.
+So the fix is a **prerequisite**, and the topological reason is that it is what makes recovery safe on
+more than one web instance. It should land with the initial implementation regardless, because the
+orphan-user consequence does not wait for a second instance.
 
 ### Assumptions about deployment topology, stated
 
@@ -331,13 +323,13 @@ should land with the initial implementation rather than being deferred to a scal
 | `NEXTAUTH_SECRET` identical across instances | reading each other's tokens at all | Already required today; a mismatch invalidates every session, recovery or not. Not a new constraint. |
 | No session affinity required | nothing | Correct as designed: all durable state is the signed cookie plus the engine. Recovery adds no server-side session state, so a load balancer may route freely. |
 | One instance | **cost only** — the memo's hit rate | N instances multiply worst-case recovery calls by N. Bounded, idempotent, convergent. |
-| Concurrent first-sighting is rare | the un-fixed `SELECT`-then-`INSERT` window | Becomes likely with N instances. Fix required first — see above. |
+| Concurrent first-sighting is rare | the store's un-fixed first-sighting window ([`IDENTITY_UPSERT_CONCURRENCY.md`](IDENTITY_UPSERT_CONCURRENCY.md) §3) | Becomes likely with N instances. Fix required first — see above. |
 | SQLite, single writer, one host | the engine, not this design | Horizontal scaling of the web tier is bounded by the engine's store long before it is bounded by anything here. Worth remembering when reading the N-instance column: it is contingency, not a roadmap. |
 
 The honest summary: the design is correct on the current topology and stays correct on a rolling or
 multi-instance one, because its durable state is a signed cookie and its engine write is an idempotent
-keyed upsert. The only thing that must change before the topology does is the unique-constraint race,
-which the required tests already cover (§8, engine test 15).
+keyed upsert. The only thing that must change before the topology does is the store's first-sighting
+race, and that now has its own specification, diagrams and tests in [`IDENTITY_UPSERT_CONCURRENCY.md`](IDENTITY_UPSERT_CONCURRENCY.md).
 
 ## 10. Out of scope
 
