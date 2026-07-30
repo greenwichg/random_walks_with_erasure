@@ -553,6 +553,8 @@
   "notifications.streak_reminder.body": "Ihre {streakDays}-Tage-Serie ist in Gefahr — lesen Sie heute etwas.",
   "notifications.blind_spot_alert.title": "Neuer blinder Fleck",
   "notifications.blind_spot_alert.body": "{count} blinder Fleck in Ihrer Lese-Diät.",
+  "notifications.breaking_story.title": "Eilmeldung",
+  "notifications.breaking_story.body": "{title}",
   "analyze.backHome": "Zurück zur Startseite",
   "analyze.title": "Artikel analysieren",
   "analyze.subtitle": "Fügen Sie einen Nachrichtenlink ein, um die Informations-Gesundheitsanalyse zu sehen — Ausrichtung, Thema, Ton, Kontext.",

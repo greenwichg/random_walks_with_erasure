@@ -553,6 +553,8 @@
   "notifications.streak_reminder.body": "Your {streakDays}-day streak is at risk — read something today.",
   "notifications.blind_spot_alert.title": "New blind spot",
   "notifications.blind_spot_alert.body": "{count} blind spot in your reading diet.",
+  "notifications.breaking_story.title": "Breaking news",
+  "notifications.breaking_story.body": "{title}",
   "analyze.backHome": "Back to home",
   "analyze.title": "Analyze an article",
   "analyze.subtitle": "Paste a news link to see its Information Health analysis — political lean, topic, tone, and story context.",

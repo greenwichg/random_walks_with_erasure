@@ -43,6 +43,10 @@ access-controlled box.
 |---|---|---|
 | `RWE_COACH_V2` | `0` (off) | `1` routes a **measured** reader's AI Coach through the v2 intent pipeline (trigger-ladder greeting, weekly recap, intent-routed replies). Off is byte-identical to v1 (pinned by `test_coach_v1_contract.py`). Engine-side only — wired onto the `api` service in `docker-compose.aws.yml`. Only engages once an account has **≥ 5 reads** (`ESTIMATE_MIN_READS`); below that, and with no seeded demo account, the coach serves v1. **Production runs with `RWE_COACH_V2=1`.** |
 
+| `RWE_BREAKING_NOTIFICATIONS` | `0` (off) | `1` lets the engine's poller record a notification event the first time a story becomes *Breaking* (`examples/story_events.py`), which the in-app inbox then delivers to readers who kept `notifications.categories.breaking.inApp` on — capped at 5/day each. Engine-side only; wired onto the `api` service in **both** compose files (the `ingest` service never reaches the detection seam). Read at call time: `deploy/ops/restart.sh api` applies a change with no rebuild, in either direction. **Production runs with `RWE_BREAKING_NOTIFICATIONS=0`.** See `docs/NOTIFICATION_PLATFORM.md`. |
+| `RWE_BREAKING_MIN_PUBLISHERS` | `3` | Distinct outlets a story needs before it may interrupt a reader. A quality bar, not a performance one — a single-source "breaking story" is a rumour. |
+| `RWE_BREAKING_TTL_HOURS` | `6` | How long a breaking event stays deliverable. Also what makes the daily cap a *cap* rather than a *queue*: a story held back by the cap expires instead of arriving tomorrow as news. |
+
 ### Web (Next.js `web`) — validated at startup (`web/instrumentation.ts`)
 | Variable | Value | Notes |
 |---|---|---|

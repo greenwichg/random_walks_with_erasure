@@ -43,6 +43,12 @@ for any of these, so adding one fails the build rather than shipping quietly.
 | `report_snapshots` | 500/user | the analytics trend series; beyond the cap draws no visible chart |
 | `notifications` | 200/user | settled history only — **unseen rows are never pruned** |
 
+### Not pruned, but not protected either
+
+| Table | Growth | Why there is no policy yet |
+|---|---|---|
+| `notification_events` | one row per global occurrence (currently: per story that becomes *Breaking*) | It is the **idempotency ledger** that turns a freshness *band* into a one-time *edge*: deleting a row is what would let a story be announced twice. Growth is bounded by real-world news volume rather than by traffic — with `RWE_BREAKING_NOTIFICATIONS=1` and a 3-outlet floor, order 10–50 rows/day, so ~4–18k rows/year against a payload of a few hundred bytes. Delivery already ignores anything past its `expires_at` (6 h), so old rows cost storage only. A policy would have to keep rows far longer than they are deliverable, which is the argument for deciding it deliberately rather than defaulting one in. Accepted, and revisited when a second producer (product announcements, digests) writes to the same table. See `docs/NOTIFICATION_PLATFORM.md` §9. |
+
 Everything is `0 = keep forever`, uniformly. A junk or negative value **falls back to the default**
 rather than deleting more: the failure mode of a bad config must be keeping too much.
 

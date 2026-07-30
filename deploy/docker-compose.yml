@@ -298,6 +298,27 @@ services:
       # hostnames. Measured: 181 of 1,367 names were duplicates, 60 stories had an inflated count,
       # and 35 cleared min_publishers only because one outlet was counted twice. 0 counts strings.
       RWE_STORY_PUBLISHER_IDENTITY: ${RWE_STORY_PUBLISHER_IDENTITY:-1}
+      # Breaking-story notifications (Phase A). Detection runs on the POLLER's thread, inside THIS
+      # service — `story_events.detect_breaking_stories` hangs off the same post-cycle seam as the
+      # story-cache warm (feed_service.poll_once / sources.MultiSourcePoller._post_cycle), never off a
+      # request. The one-shot `ingest` service does not run it: `rss_ingest.py run` writes articles and
+      # exits without touching story_service, so wiring these there would turn nothing on.
+      # Listed even though the default is OFF, and that is the point: `environment:` is an explicit
+      # allowlist and this stack has no `env_file:`, so a variable absent here never reaches the
+      # container whatever deploy/.env says — an unlisted flag can be neither enabled nor rolled back.
+      #
+      #   RWE_BREAKING_NOTIFICATIONS   1/true/yes/on turns detection on; anything else (incl. unset)
+      #                                leaves it off. The whole feature's on/off switch.
+      #   RWE_BREAKING_MIN_PUBLISHERS  distinct outlets a story needs before it may interrupt a
+      #                                reader (default 3). A quality bar: a single-source "breaking
+      #                                story" is a rumour.
+      #   RWE_BREAKING_TTL_HOURS       how long an event stays deliverable (default 6). Also what
+      #                                makes the per-day cap a cap: a held-back story expires rather
+      #                                than arriving tomorrow as news.
+      # Read at call time, so `bash deploy/ops/restart.sh api` applies a change with no rebuild.
+      RWE_BREAKING_NOTIFICATIONS: ${RWE_BREAKING_NOTIFICATIONS:-0}
+      RWE_BREAKING_MIN_PUBLISHERS: ${RWE_BREAKING_MIN_PUBLISHERS:-}
+      RWE_BREAKING_TTL_HOURS: ${RWE_BREAKING_TTL_HOURS:-}
       # Storage lifecycle (examples/retention_policy.py — the ONE typed policy module). 0 = keep
       # forever, uniformly; junk/negative values fall back to the default rather than deleting more.
       # User data (reads, saves, settings, accounts) has NO policy and is never pruned.

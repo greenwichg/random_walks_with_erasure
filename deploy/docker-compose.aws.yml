@@ -113,6 +113,15 @@ services:
       # v1 regardless. Default 0 = OFF (byte-identical to v1, pinned by test_coach_v1_contract.py),
       # so an unset var never changes behavior — opt in by setting RWE_COACH_V2=1 in deploy/.env.
       RWE_COACH_V2: ${RWE_COACH_V2:-0}
+      # Breaking-story notifications (Phase A). Restated from the base file — which this merges over —
+      # for the same reason as the web tier's RWE_IDENTITY_RECOVERY: this is the manifest an operator
+      # reads when deciding what is live, and a feature that can push a notification to every reader
+      # should be visible in it. Default 0 = OFF; `RWE_BREAKING_NOTIFICATIONS=1` in deploy/.env plus
+      # `bash deploy/ops/restart.sh api` turns it on with no rebuild, and 0 + restart turns it back off.
+      # The two tuning knobs are wired-but-empty so their defaults keep ONE home, in story_events.py.
+      RWE_BREAKING_NOTIFICATIONS: ${RWE_BREAKING_NOTIFICATIONS:-0}
+      RWE_BREAKING_MIN_PUBLISHERS: ${RWE_BREAKING_MIN_PUBLISHERS:-}
+      RWE_BREAKING_TTL_HOURS: ${RWE_BREAKING_TTL_HOURS:-}
     volumes: !override
       - ${IH_DATA_DIR:-/opt/ih/data}:/app/data   # host-visible DB + backups (for off-host S3 sync)
       # The background poller's feed list (RWE_RSS_FEEDS, from the base compose) — the SAME file the

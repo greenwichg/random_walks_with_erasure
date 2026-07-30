@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useNotifications, useMarkNotificationSeen } from "@/hooks/use-data";
-import { notificationPresentation, badgeLabel } from "@/lib/notifications";
+import { notificationPresentation, notificationHref, badgeLabel } from "@/lib/notifications";
 import { useTranslation } from "@/lib/i18n";
 import { timeAgo } from "@/lib/i18n-core";
 import { cn } from "@/lib/utils";
@@ -47,7 +47,9 @@ export function NotificationsMenu() {
   const onSelect = React.useCallback(
     (item: NotificationItem) => {
       if (!item.seenAt) markSeen.mutate(item.id);
-      const { href } = notificationPresentation(item.kind);
+      // Payload-aware, because one kind's destination is per-notification: a breaking story opens
+      // THAT story, not the stories index. Every other kind resolves to its static href.
+      const href = notificationHref(item.kind, item.payload);
       if (href) router.push(href);
     },
     [markSeen, router],

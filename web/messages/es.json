@@ -553,6 +553,8 @@
   "notifications.streak_reminder.body": "Tu racha de {streakDays} días está en riesgo: lee algo hoy.",
   "notifications.blind_spot_alert.title": "Nuevo punto ciego",
   "notifications.blind_spot_alert.body": "{count} punto ciego en tu dieta de lectura.",
+  "notifications.breaking_story.title": "Última hora",
+  "notifications.breaking_story.body": "{title}",
   "analyze.backHome": "Volver al inicio",
   "analyze.title": "Analiza un artículo",
   "analyze.subtitle": "Pega un enlace de noticias para ver su análisis de Salud Informativa: sesgo político, tema, tono y contexto.",

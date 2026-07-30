@@ -76,6 +76,32 @@ is a deliberate operational decision with its own step-by-step runbook (baseline
 monitor → rollback): **`docs/GDELT_TRIAL_RUNBOOK.md`**. Provider articles that aren't recommendable stay
 searchable by design — see `docs/CORPUS_ARCHITECTURE.md`.
 
+## Breaking-story notifications (off by default)
+
+Wired but **disabled** (`RWE_BREAKING_NOTIFICATIONS=0`). It is the one part of the notification
+platform that changes what a reader sees unprompted, so turning it on is a deliberate act. Detection
+runs on the engine's poller thread, so all three variables live on the **`api`** service (not
+`ingest`, which runs the one-shot seed and never reaches the seam) and are read at call time.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `RWE_BREAKING_NOTIFICATIONS` | `0` | The on/off switch. |
+| `RWE_BREAKING_MIN_PUBLISHERS` | `3` | Outlets a story needs before it may interrupt a reader. |
+| `RWE_BREAKING_TTL_HOURS` | `6` | How long an event stays deliverable (also what makes the 5/day cap a cap rather than a queue). |
+
+```bash
+$EDITOR deploy/.env                                       # RWE_BREAKING_NOTIFICATIONS=1
+deploy/ops/restart.sh api                                 # no rebuild — read at call time
+docker exec deploy-api-1 printenv | grep RWE_BREAKING     # prove it reached the container
+docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.aws.yml --env-file deploy/.env \
+  logs api | grep breaking_story_detected                 # one line per story, once
+```
+
+**Rollback:** set it back to `0` and `deploy/ops/restart.sh api`. Detection stops at once; no new
+events are recorded, undelivered ones lapse at their TTL, and rows already in a reader's inbox stay
+(they describe something that really happened). Design, lifecycle rules and the reasoning behind the
+caps: **`docs/NOTIFICATION_PLATFORM.md`**.
+
 ---
 
 ## A · First deploy (existing, bootstrapped instance)

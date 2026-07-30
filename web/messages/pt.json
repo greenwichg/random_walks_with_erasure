@@ -553,6 +553,8 @@
   "notifications.streak_reminder.body": "Sua sequência de {streakDays} dias está em risco — leia algo hoje.",
   "notifications.blind_spot_alert.title": "Novo ponto cego",
   "notifications.blind_spot_alert.body": "{count} ponto cego na sua dieta de leitura.",
+  "notifications.breaking_story.title": "Última hora",
+  "notifications.breaking_story.body": "{title}",
   "analyze.backHome": "Voltar ao início",
   "analyze.title": "Analisar um artigo",
   "analyze.subtitle": "Cole um link de notícia para ver a análise de Saúde da Informação — viés, tema, tom e contexto.",

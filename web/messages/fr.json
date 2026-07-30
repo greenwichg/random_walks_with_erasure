@@ -553,6 +553,8 @@
   "notifications.streak_reminder.body": "Votre série de {streakDays} jours est en danger — lisez quelque chose aujourd'hui.",
   "notifications.blind_spot_alert.title": "Nouvel angle mort",
   "notifications.blind_spot_alert.body": "{count} angle mort dans votre régime de lecture.",
+  "notifications.breaking_story.title": "Alerte info",
+  "notifications.breaking_story.body": "{title}",
   "analyze.backHome": "Retour à l'accueil",
   "analyze.title": "Analyser un article",
   "analyze.subtitle": "Collez un lien d'actualité pour voir son analyse de Santé de l'information — orientation, sujet, ton et contexte.",

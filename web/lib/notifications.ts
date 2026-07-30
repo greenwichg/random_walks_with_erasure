@@ -7,10 +7,11 @@
  *
  * An **unknown kind** never crashes and never renders a raw key: it degrades to a safe generic row
  * (bell icon, a generic localized title, no body, no navigation). This is the single place that
- * knows kind-specific UI — components go through `notificationPresentation(kind)` only.
+ * knows kind-specific UI — components go through `notificationPresentation(kind)` for how a row
+ * looks and `notificationHref(kind, payload)` for where it goes, and nowhere else.
  */
 import type { LucideIcon } from "lucide-react";
-import { Activity, CalendarDays, Sparkles, BarChart3, Flame, Eye, Bell } from "lucide-react";
+import { Activity, CalendarDays, Sparkles, BarChart3, Flame, Eye, Zap, Bell } from "lucide-react";
 
 export interface NotificationPresentation {
   icon: LucideIcon;
@@ -56,7 +57,36 @@ const MAP: Record<string, NotificationPresentation> = {
     icon: Eye, href: "/report",
     titleKey: "notifications.blind_spot_alert.title", bodyKey: "notifications.blind_spot_alert.body",
   },
+  // The first kind whose destination is per-notification rather than per-kind: every other row
+  // opens a fixed page, this one opens the story that broke. `href` stays the static fallback
+  // (`/stories`) so an old row with no `storyId` still navigates somewhere sensible;
+  // `notificationHref` below resolves the specific one.
+  breaking_story: {
+    icon: Zap, href: "/stories",
+    titleKey: "notifications.breaking_story.title", bodyKey: "notifications.breaking_story.body",
+  },
 };
+
+/**
+ * Where a notification should navigate, given its payload.
+ *
+ * Kept separate from {@link NotificationPresentation.href} rather than turning that field into a
+ * function: every other kind has a genuinely static destination, and making all six carry a resolver
+ * to serve one exception would be the wrong trade. Components call this; the static `href` remains
+ * the answer when the payload has nothing better.
+ *
+ * Defensive because the payload is stored JSON that may predate any given shape: a `storyId` that is
+ * missing, empty, or not a string falls back to the kind's static destination rather than building
+ * `/stories/undefined`.
+ */
+export function notificationHref(kind: string, payload?: unknown): string | null {
+  const { href } = notificationPresentation(kind);
+  if (kind !== "breaking_story") return href;
+  const storyId = (payload as { storyId?: unknown } | undefined)?.storyId;
+  return typeof storyId === "string" && storyId.trim()
+    ? `/stories/${encodeURIComponent(storyId.trim())}`
+    : href;
+}
 
 /** Resolve a notification kind to its presentation; an unknown kind gets the safe generic row. */
 export function notificationPresentation(kind: string): NotificationPresentation {

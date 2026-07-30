@@ -48,6 +48,7 @@ Engine + web (in `deploy/.env`, prod-hardening lines uncommented in the override
 - [ ] **BA1:** `BETA_ACCESS_ENABLED=1` **and** `BETA_ALLOWLIST` = the **5 Wave-0 emails** (fail-closed — an empty list denies everyone).
 - [ ] No `RWE_DEV_LOGIN` / `NEXT_PUBLIC_DEV_LOGIN` in production.
 - [ ] **Identity recovery:** leave `RWE_IDENTITY_RECOVERY` and `RWE_BACKEND_TIMEOUT_MS` **unset** — the defaults (on, 6000 ms) are what you want. Both are declared on the `web` service in both compose files; `deploy/ops/validate-deployment.py` fails if either is missing. Ref: `docs/SESSION_IDENTITY_RECOVERY_DESIGN.md` §5a.
+- [ ] **Breaking-story notifications:** leave `RWE_BREAKING_NOTIFICATIONS` **unset or `0`** for go-live — it is the one feature that reaches a reader unprompted, and it should be turned on after the first users are settled, not during a launch. All three `RWE_BREAKING_*` variables are declared on the **`api`** service in both compose files (`deploy/ops/validate-deployment.py` fails if any is missing), so the switch is reachable when you do want it: `RWE_BREAKING_NOTIFICATIONS=1` + `deploy/ops/restart.sh api`, no rebuild. Ref: `docs/NOTIFICATION_PLATFORM.md` §7.
 - [ ] Backup env: `BACKUP_OFFHOST_CMD='aws s3 cp "$1" s3://<bucket>/backups/'`, `BACKUP_KEEP=48`.
 - [ ] Monitoring env: `IH_BASE_URL=http://127.0.0.1:8000`, `ALERT_WEBHOOK=<slack/SNS>`.
 

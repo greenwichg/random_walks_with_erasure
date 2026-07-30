@@ -128,6 +128,14 @@
       "require": { "env": ["RWE_IDENTITY_RECOVERY", "RWE_BACKEND_TIMEOUT_MS"] },
       "why": "Identity recovery calls the engine from the auth path, and RWE_IDENTITY_RECOVERY is its documented rollback (set 0, restart web, no rebuild); RWE_BACKEND_TIMEOUT_MS bounds that call. Both are read at call time, but `environment:` is an explicit allowlist and this stack has no `env_file:` — a variable absent from the service never reaches the container, whatever deploy/.env says. Both were absent when recovery shipped, so the rollback lever silently did nothing: an operator would set it, restart, see no change, and conclude the app was ignoring the flag.",
       "fix": "On the `web` service add `RWE_IDENTITY_RECOVERY: ${RWE_IDENTITY_RECOVERY:-1}` and `RWE_BACKEND_TIMEOUT_MS: ${RWE_BACKEND_TIMEOUT_MS:-}` — in the AWS override too, since that is the manifest an operator reads during an incident. See docs/SESSION_IDENTITY_RECOVERY_DESIGN.md."
+    },
+    {
+      "id": "api-breaking-notifications-switch",
+      "categories": ["feature-flag", "required-env"],
+      "when": { "service": "api" },
+      "require": { "env": ["RWE_BREAKING_NOTIFICATIONS", "RWE_BREAKING_MIN_PUBLISHERS", "RWE_BREAKING_TTL_HOURS"] },
+      "why": "Breaking-story detection runs on the engine's poller thread (story_events.detect_breaking_stories, hung off the same post-cycle seam as the story-cache warm) and is OFF unless RWE_BREAKING_NOTIFICATIONS is truthy. `environment:` is an explicit allowlist and this stack has no `env_file:`, so an unlisted flag can be neither turned on nor rolled back — setting it in deploy/.env would appear to do nothing, exactly the failure the web tier's identity-recovery lever hit. Unlike the API-key rules this one applies whether or not the flag is set: an OFF switch that cannot be reached is the problem it guards against. The two tuning knobs travel with it because they are what an operator reaches for when detection is too noisy or too quiet, at the moment they least want a redeploy.",
+      "fix": "On the `api` service (base compose, and restated in the AWS override) add `RWE_BREAKING_NOTIFICATIONS: ${RWE_BREAKING_NOTIFICATIONS:-0}`, `RWE_BREAKING_MIN_PUBLISHERS: ${RWE_BREAKING_MIN_PUBLISHERS:-}` and `RWE_BREAKING_TTL_HOURS: ${RWE_BREAKING_TTL_HOURS:-}`. Not on `ingest` — that service runs the one-shot rss_ingest.py, which never reaches the detection seam. See docs/NOTIFICATION_PLATFORM.md."
     }
   ],
 
