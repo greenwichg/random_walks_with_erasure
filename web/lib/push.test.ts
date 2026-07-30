@@ -6,6 +6,7 @@ import {
   serializeSubscription,
   normalizePermission,
   pushUiState,
+  shouldRepairSubscription,
   subscriptionMatchesKey,
   type PushCapabilities,
 } from "./push.ts";
@@ -172,6 +173,48 @@ test("on requires BOTH a granted permission and a live subscription", () => {
   assert.equal(pushUiState({ ...CAPS, permission: "granted", subscribed: false }), "off");
   // Permission granted on another device, or granted then unsubscribed here: not on.
   assert.equal(pushUiState({ ...CAPS, permission: "default", subscribed: true }), "off");
+});
+
+// --------------------------------------------------------------------------------------------- //
+// Silent repair after a VAPID rotation (P2). The decision is a pure predicate precisely because it
+// runs with no reader present — it must never be able to subscribe someone who did not ask.
+// --------------------------------------------------------------------------------------------- //
+const REPAIR = {
+  supported: true,
+  configured: true,
+  permission: "granted" as const,
+  hasSubscription: true,
+  keyMatches: false,
+};
+
+test("a subscription bound to a retired key IS repaired", () => {
+  // The regression this exists for: before it, a rotation left the device dark. Nothing sent, nothing
+  // logged, and a toggle that silently switched itself off was the only symptom.
+  assert.equal(shouldRepairSubscription(REPAIR), true);
+});
+
+test("a device that never subscribed is never subscribed FOR the reader", () => {
+  // Repair restores what a reader chose; it must not choose for them. This is the guard that keeps a
+  // silent, promptless operation honest.
+  assert.equal(shouldRepairSubscription({ ...REPAIR, hasSubscription: false }), false);
+});
+
+test("repair never runs without granted permission", () => {
+  // Re-subscribing needs no prompt only because consent already exists. Without it this would be an
+  // attempt to subscribe someone who has not agreed — and on "denied" it cannot succeed anyway.
+  for (const permission of ["default", "denied", "unsupported"] as const) {
+    assert.equal(shouldRepairSubscription({ ...REPAIR, permission }), false, permission);
+  }
+});
+
+test("a matching key is left alone", () => {
+  // Churning the endpoint for no reason costs the engine a row to reconcile on every page load.
+  assert.equal(shouldRepairSubscription({ ...REPAIR, keyMatches: true }), false);
+});
+
+test("repair does not run when the browser or the deployment cannot support push", () => {
+  assert.equal(shouldRepairSubscription({ ...REPAIR, supported: false }), false);
+  assert.equal(shouldRepairSubscription({ ...REPAIR, configured: false }), false);
 });
 
 // --------------------------------------------------------------------------------------------- //

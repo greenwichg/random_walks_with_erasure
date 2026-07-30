@@ -17,14 +17,13 @@ import * as React from "react";
 import {
   currentPermission,
   pushSupported,
-  publishLanguage,
   registerServiceWorker,
+  repairSubscription,
   subscribe as subscribeDevice,
   subscriptionIsCurrent,
   unsubscribe as unsubscribeDevice,
 } from "@/lib/push-client";
 import { pushUiState, type PushPermission, type PushUiState } from "@/lib/push";
-import { useTranslation } from "@/lib/i18n";
 
 interface PushConfig {
   enabled: boolean;
@@ -43,19 +42,11 @@ export interface UsePush {
 }
 
 export function usePush(): UsePush {
-  const { lang } = useTranslation();
   const [config, setConfig] = React.useState<PushConfig>({ enabled: false, publicKey: "" });
   const [permission, setPermission] = React.useState<PushPermission>("unsupported");
   const [subscribed, setSubscribed] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   const [failed, setFailed] = React.useState(false);
-
-  // The reader's language, published where the service worker can read it (§4). Runs on every change
-  // — including the first render — so a device that subscribes today has a language on file before
-  // any push can arrive.
-  React.useEffect(() => {
-    void publishLanguage(lang);
-  }, [lang]);
 
   // Ask the server whether push is available at all before touching any browser API. A reader on a
   // deployment with no VAPID key must never see the control, let alone a permission prompt.
@@ -85,11 +76,17 @@ export function usePush(): UsePush {
   // anything. Registration prompts for nothing; it only means the worker is ready to be subscribed
   // against, and it is also what makes `pushsubscriptionchange` reach us on a device that already
   // granted permission on a previous visit.
+  //
+  // Then repair a subscription the server's current VAPID key can no longer be used with. This is the
+  // automatic half of a key rotation: it prompts for nothing, does nothing unless this device holds a
+  // subscription bound to a retired key, and without it a rotated deployment leaves every device dark
+  // until each reader notices a toggle that switched itself off.
   React.useEffect(() => {
     if (!config.enabled || !pushSupported()) return;
     let alive = true;
     (async () => {
       await registerServiceWorker();
+      await repairSubscription(config.publicKey, config.enabled);
       if (alive) await refresh(config.publicKey);
     })();
     return () => {

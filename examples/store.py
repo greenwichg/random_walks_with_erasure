@@ -2665,23 +2665,44 @@ class Store:
         ``categories`` is the reader's per-category push preferences (``{"breaking": {"push": True},
         …}``, the ``settings.notifications.categories`` shape). Mirrored into the indexed columns as a
         query accelerator; unknown categories are ignored, and an absent one means ``False``.
-        Returns the stored row."""
+        Returns the stored row.
+
+        **Concurrency.** The lookup is an optimisation and ``UNIQUE(endpoint)`` is the arbiter, so two
+        callers registering the same *new* endpoint at once both see no row and both insert; the loser
+        gets an ``IntegrityError``. That is not rare here — the page's ``subscribe()`` and the service
+        worker's ``pushsubscriptionchange`` are exactly the pair that can fire together — and unlike
+        :meth:`record_notification_event`, which only reports whether it won, this method must return
+        the row either way. So the loser simply retries: the winner's row now exists, the second pass
+        takes the update branch, and the caller sees a normal upsert.
+
+        A second transaction rather than a SAVEPOINT, for the reason
+        ``docs/IDENTITY_UPSERT_CONCURRENCY.md`` §4 records: under the sqlite3 driver's legacy
+        transaction mode a released savepoint does not participate in the enclosing transaction. One
+        retry is enough by construction — after an ``IntegrityError`` the row is committed, so the
+        second pass cannot take the insert branch. A further failure is a real fault and propagates."""
         flags = self._push_flags(categories)
-        with self.session() as s:
-            row = s.scalar(select(PushSubscription).where(PushSubscription.endpoint == endpoint))
-            if row is None:
-                row = PushSubscription(endpoint=endpoint, user_id=user_id)
-                s.add(row)
-            row.user_id = user_id                    # reassignment: the signed-in reader owns it now
-            row.p256dh, row.auth = p256dh, auth
-            row.content_encoding = content_encoding or "aes128gcm"
-            row.expires_at = expires_at
-            row.user_agent = (user_agent or "")[:255]
-            for column, value in flags.items():
-                setattr(row, column, value)
-            row.updated_at = _utcnow()
-            s.flush()
-            return self._push_view(row)
+        for attempt in (0, 1):
+            try:
+                with self.session() as s:
+                    row = s.scalar(select(PushSubscription)
+                                   .where(PushSubscription.endpoint == endpoint))
+                    if row is None:
+                        row = PushSubscription(endpoint=endpoint, user_id=user_id)
+                        s.add(row)
+                    row.user_id = user_id            # reassignment: the signed-in reader owns it now
+                    row.p256dh, row.auth = p256dh, auth
+                    row.content_encoding = content_encoding or "aes128gcm"
+                    row.expires_at = expires_at
+                    row.user_agent = (user_agent or "")[:255]
+                    for column, value in flags.items():
+                        setattr(row, column, value)
+                    row.updated_at = _utcnow()
+                    s.flush()                        # surface the conflict here, not at commit
+                    return self._push_view(row)
+            except IntegrityError:
+                if attempt:                          # not the race: a genuine constraint failure
+                    raise
+        raise AssertionError("unreachable")          # the loop returns or raises on both passes
 
     @classmethod
     def _push_flags(cls, categories: "dict | None") -> dict:

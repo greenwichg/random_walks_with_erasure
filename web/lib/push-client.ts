@@ -10,6 +10,7 @@ import {
   LANG_URL,
   normalizePermission,
   serializeSubscription,
+  shouldRepairSubscription,
   subscriptionMatchesKey,
   urlBase64ToUint8Array,
   type PushPermission,
@@ -89,25 +90,39 @@ export async function subscriptionIsCurrent(serverKey: string): Promise<boolean>
   return subscriptionMatchesKey(options?.applicationServerKey, serverKey);
 }
 
+/** Tell the engine to forget an endpoint. Best-effort: used to retire a rotated-away subscription,
+ *  where failing to clean up leaves a stale row rather than breaking the live one. */
+async function deregisterEndpoint(endpoint: string): Promise<void> {
+  try {
+    await fetch(`/api/push/subscriptions?endpoint=${encodeURIComponent(endpoint)}`, {
+      method: "DELETE",
+    });
+  } catch {
+    /* the new subscription is already registered; a stale row is the lesser failure */
+  }
+}
+
 /**
- * Ask for permission and subscribe, then register the subscription with the engine.
+ * Ensure this device holds a subscription against `serverKey` and that the engine knows about it.
  *
- * Order matters and is not interchangeable: `requestPermission` must be called from a user gesture,
- * and a subscription created before the engine knows about it is a device the sender cannot reach.
- * If registration fails the local subscription is rolled back, so the browser and the engine never
- * disagree about whether this device is subscribed.
+ * The single path both `subscribe` (reader-initiated, may prompt) and `repairSubscription` (silent,
+ * never prompts) go through, so the two cannot drift — a rotation must produce exactly the same
+ * end state as a fresh opt-in.
+ *
+ * Ordering is deliberate throughout: the new subscription is registered with the engine **before**
+ * the old endpoint is retired, so an interruption leaves a device reachable rather than unreachable;
+ * and a failed registration rolls the local subscription back, so the two sides never disagree about
+ * whether this device is subscribed.
  */
-export async function subscribe(serverKey: string): Promise<"on" | "blocked" | "failed"> {
-  if (!pushSupported()) return "failed";
-  const permission = normalizePermission(await Notification.requestPermission());
-  if (permission !== "granted") return permission === "denied" ? "blocked" : "failed";
-
-  const reg = await registerServiceWorker();
-  if (!reg) return "failed";
-
+async function ensureSubscribed(
+  reg: ServiceWorkerRegistration,
+  serverKey: string,
+): Promise<boolean> {
   let sub = await reg.pushManager.getSubscription();
+  let retired: string | null = null;
   if (sub && !subscriptionMatchesKey((sub.options as PushSubscriptionOptions)?.applicationServerKey, serverKey)) {
-    await sub.unsubscribe();            // created against a rotated-away key: unusable
+    retired = sub.endpoint;             // created against a rotated-away key: unusable
+    await sub.unsubscribe();
     sub = null;
   }
   if (!sub) {
@@ -118,7 +133,7 @@ export async function subscribe(serverKey: string): Promise<"on" | "blocked" | "
   }
 
   const body = serializeSubscription(sub.toJSON() as never, navigator.userAgent);
-  if (!body) return "failed";
+  if (!body) return false;
   const res = await fetch("/api/push/subscriptions", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -126,9 +141,65 @@ export async function subscribe(serverKey: string): Promise<"on" | "blocked" | "
   });
   if (!res.ok) {
     await sub.unsubscribe();            // roll back, so the two sides cannot disagree
-    return "failed";
+    return false;
   }
-  return "on";
+  // Only now that the replacement is live: the endpoint we rotated away from can never be delivered
+  // to again, and leaving it behind means the engine pays to attempt a dead device on every fan-out.
+  if (retired && retired !== body.endpoint) await deregisterEndpoint(retired);
+  return true;
+}
+
+/**
+ * Ask for permission and subscribe, then register the subscription with the engine.
+ *
+ * `requestPermission` must be called from a user gesture, which is why this is the reader-initiated
+ * path and `repairSubscription` is a separate, silent one.
+ */
+export async function subscribe(serverKey: string): Promise<"on" | "blocked" | "failed"> {
+  if (!pushSupported()) return "failed";
+  const permission = normalizePermission(await Notification.requestPermission());
+  if (permission !== "granted") return permission === "denied" ? "blocked" : "failed";
+
+  const reg = await registerServiceWorker();
+  if (!reg) return "failed";
+  return (await ensureSubscribed(reg, serverKey)) ? "on" : "failed";
+}
+
+/**
+ * Silently re-create a subscription the server's current VAPID key can actually be used with —
+ * the automatic half of a key rotation.
+ *
+ * Runs on load, prompts for nothing, and does nothing at all unless
+ * {@link shouldRepairSubscription} says this device holds a subscription bound to a key the server no
+ * longer serves. Without it a rotation leaves the device dark until the reader happens to notice a
+ * toggle that switched itself off.
+ *
+ * Returns whether it repaired anything. Never throws: a failed repair leaves the reader exactly where
+ * a rotation had already left them, and the next visit tries again.
+ */
+export async function repairSubscription(serverKey: string, configured: boolean): Promise<boolean> {
+  try {
+    const sub = await currentSubscription();
+    const keyMatches = subscriptionMatchesKey(
+      (sub?.options as PushSubscriptionOptions | undefined)?.applicationServerKey,
+      serverKey,
+    );
+    if (
+      !shouldRepairSubscription({
+        supported: pushSupported(),
+        configured: configured && !!serverKey,
+        permission: currentPermission(),
+        hasSubscription: !!sub,
+        keyMatches,
+      })
+    ) {
+      return false;
+    }
+    const reg = await registerServiceWorker();
+    return reg ? await ensureSubscribed(reg, serverKey) : false;
+  } catch {
+    return false;
+  }
 }
 
 /**

@@ -56,12 +56,9 @@ test.describe("Browser push foundation", () => {
     expect(new URL(scope).pathname).toBe("/");
   });
 
-  test("the reader's language is published where the worker can read it", async ({ authedPage }) => {
-    // §4: the worker resolves the language from browser storage FIRST, because the payload's copy was
-    // captured at send time and can be stale by the time a push renders. This is the write half of
-    // that contract — without it the worker only ever sees the fallback.
-    await authedPage.goto("/settings");
-    const stored = await authedPage.evaluate(async () => {
+  /** Poll the language store the service worker reads (§4). */
+  async function storedLanguage(page: import("@playwright/test").Page) {
+    return page.evaluate(async () => {
       for (let i = 0; i < 40; i += 1) {
         const cache = await caches.open("ih-prefs-v1");
         const hit = await cache.match("/__ih/lang");
@@ -70,7 +67,32 @@ test.describe("Browser push foundation", () => {
       }
       return null;
     });
-    expect(stored).toBe("en");
+  }
+
+  test("the reader's language is published from ANY page, not just Settings", async ({
+    authedPage,
+  }) => {
+    // §4: the worker resolves the language from browser storage FIRST, because the payload's copy was
+    // captured at send time and can be stale by the time a push renders. This is the write half of
+    // that contract.
+    //
+    // REGRESSION (P1): this used to live in the push hook, which is mounted only by the Settings
+    // control — so a reader who never opened Settings had nothing on file and every push would have
+    // rendered in the fallback language. The assertion is deliberately made from the dashboard, which
+    // has no push UI at all: publication belongs to the language lifecycle, not to a page.
+    await authedPage.goto("/");
+    expect(await storedLanguage(authedPage)).toBe("en");
+  });
+
+  test("the published language follows the reader's setting", async ({ authedPage }) => {
+    // The provider publishes on every change, so a switch reaches the worker's store without the
+    // reader visiting anything push-related afterwards.
+    await authedPage.goto("/settings");
+    expect(await storedLanguage(authedPage)).toBe("en");
+
+    await authedPage.request.post("/api/settings", { data: { language: "es" } });
+    await authedPage.goto("/");
+    await expect.poll(() => storedLanguage(authedPage)).toBe("es");
   });
 
   test("a push handler exists, so a delivered push can never become the browser's generic message", async ({

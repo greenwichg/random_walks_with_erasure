@@ -11,6 +11,7 @@ The contract this file pins is `docs/BROWSER_PUSH_ARCHITECTURE.md` §7.
 
 import pathlib
 import sys
+import threading
 
 import pytest
 
@@ -177,6 +178,72 @@ def test_the_returned_view_never_carries_the_devices_encryption_keys(st):
     row = _sub(st, uid, p256dh="BSecretPublicKey", auth="SecretAuth")
     assert "p256dh" not in row and "auth" not in row
     assert "BSecretPublicKey" not in str(row) and "SecretAuth" not in str(row)
+
+
+# --------------------------------------------------------------------------------------------- #
+# Concurrency (P3). The lookup is an optimisation; UNIQUE(endpoint) is the arbiter. Two callers
+# registering the same NEW endpoint at once is not exotic here — the page's `subscribe()` and the
+# service worker's `pushsubscriptionchange` are exactly the pair that can fire together.
+# --------------------------------------------------------------------------------------------- #
+def test_a_racing_duplicate_registration_does_not_raise(tmp_path, monkeypatch):
+    """Deterministic simulation of the race window: a concurrent writer commits this endpoint between
+    our pre-check SELECT and our flush. Before P3 the losing insert propagated an IntegrityError and
+    the request 500ed; now it retries, takes the update branch, and returns the row."""
+    url = f"sqlite:///{tmp_path / 'race.db'}"
+    st = store_mod.Store(url)
+    uid = _user(st, "racer")
+    rival = store_mod.Store(url)             # its own pool -> a genuine second connection
+    real_utcnow = store_mod._utcnow
+    fired = {"done": False}
+
+    def inject():
+        # `_utcnow()` is called once inside the upsert, immediately before the flush — i.e. after the
+        # pre-check has already concluded "no such row". Fire the rival exactly there.
+        if not fired["done"]:
+            fired["done"] = True
+            rival.upsert_push_subscription(uid, ENDPOINT, p256dh="BRival", auth="RivalAuth",
+                                           user_agent="rival")
+        return real_utcnow()
+
+    monkeypatch.setattr(store_mod, "_utcnow", inject)
+    row = st.upsert_push_subscription(uid, ENDPOINT, p256dh="BOurs", auth="OursAuth",
+                                      user_agent="ours")
+    monkeypatch.undo()
+
+    assert fired["done"], "the simulation must actually have injected a racing writer"
+    assert row["endpoint"] == ENDPOINT
+    assert row["userAgent"] == "ours", "the retry re-applies our update over the winner's row"
+    assert len(st.list_push_subscriptions(uid)) == 1, "one endpoint, one row"
+
+
+def test_concurrent_registrations_of_one_endpoint_yield_one_row(tmp_path):
+    """The same thing under real threads: whichever order they interleave in, neither call raises and
+    exactly one row exists afterwards."""
+    url = f"sqlite:///{tmp_path / 'threads.db'}"
+    st = store_mod.Store(url)
+    uid = _user(st, "threaded")
+
+    barrier = threading.Barrier(2)
+    errors: dict = {}
+
+    def worker(name):
+        s = store_mod.Store(url)
+        barrier.wait()                       # both threads register together
+        try:
+            s.upsert_push_subscription(uid, ENDPOINT, p256dh=f"BKey{name}", auth=f"Auth{name}",
+                                       user_agent=name)
+        except Exception as exc:             # a race loser must retry, never raise
+            errors[name] = exc
+
+    threads = [threading.Thread(target=worker, args=(n,)) for n in ("a", "b")]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert errors == {}
+    rows = st.list_push_subscriptions(uid)
+    assert len(rows) == 1 and rows[0]["endpoint"] == ENDPOINT
 
 
 def test_a_long_user_agent_is_truncated_to_the_column(st):

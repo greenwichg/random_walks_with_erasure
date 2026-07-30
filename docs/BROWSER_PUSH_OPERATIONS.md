@@ -149,13 +149,29 @@ PY
 Generate a new pair (§2), replace all three values, restart `api`.
 
 **Every existing subscription becomes undeliverable.** A subscription is bound to the key it was
-created against, and a push service rejects sends signed by a different one. The web tier detects
-this without being told: it compares the key its subscription declares against the key the server now
-serves (`web/lib/push.ts::subscriptionMatchesKey`) and re-subscribes the device on the reader's next
-visit, silently and without a new permission prompt — permission has already been granted.
+created against, and a push service rejects sends signed by a different one.
 
-The consequence is a window: between the rotation and a reader's next visit, that device is
-unreachable. Rotate when there is a reason to, not on a schedule.
+The repair is automatic, and this is exactly what it does. On the reader's **next page load** (any
+page — the repair runs from the app shell, not from Settings) the web tier compares the key its
+subscription declares against the key the server now serves
+(`web/lib/push.ts::subscriptionMatchesKey`). On a mismatch, and **only** when that device already held
+a subscription and notification permission is still granted, it:
+
+1. unsubscribes the stale subscription in the browser,
+2. subscribes again against the new key — with no permission prompt, because consent already exists,
+3. registers the new endpoint with the engine, and
+4. only then deletes the retired endpoint's row, so an interruption leaves the device reachable
+   rather than unreachable.
+
+A reader who never enabled push is not subscribed by a rotation, and a reader who revoked permission
+is not re-subscribed behind the revocation — both are guarded explicitly
+(`push.ts::shouldRepairSubscription`).
+
+**The window that remains** is between the rotation and each reader's next page load. Devices are
+unreachable for that period and there is no server-side signal for it, because a rotation produces no
+failed send until something is sent. A reader who does not return for a week has a device that stays
+dark for a week. Rotate when there is a reason to, not on a schedule, and expect the subscription
+table to churn afterwards — one row replaced per returning device.
 
 ---
 
@@ -167,7 +183,7 @@ unreachable. Rotate when there is a reason to, not on a schedule.
 | Control appears, toggle does nothing | browser console | The permission prompt was dismissed. Dismissal is neither granted nor denied; the toggle stays off and can be tried again. |
 | Toggle shows "blocked" copy | browser site settings | The reader denied notifications. `requestPermission()` is a permanent no-op after that — only the reader can undo it, in browser settings. This is why the control is disabled rather than retried. |
 | Toggle fails with "Could not enable" | `docker logs deploy-api-1` | A `422` means the browser produced a subscription the engine rejected (endpoint not https, keys not base64url). A `503` means push was switched off between the page load and the click. |
-| Subscription rows accumulate for one reader | the query in §3 | Expected up to one per device/browser. Many rows for one device means the endpoint is changing every visit, which is a browser-side anomaly worth reporting. |
+| Subscription rows accumulate for one reader | the query in §3 | Expected up to one per device/browser. A recent key rotation legitimately replaces one row per returning device (§5). Many rows for one device *without* a rotation means the endpoint is changing every visit, which is a browser-side anomaly worth reporting. |
 | Rows exist but nothing arrives | — | Correct in B1. Nothing sends yet. |
 
 **What is NOT a symptom yet:** delivery failures, `410 Gone`, retry storms, fan-out latency. None of

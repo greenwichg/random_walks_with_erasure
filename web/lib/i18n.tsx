@@ -13,6 +13,7 @@
  */
 import * as React from "react";
 import { useSettings } from "@/hooks/use-data";
+import { publishLanguage } from "@/lib/push-client";
 import {
   makeT,
   normalizeLang,
@@ -72,8 +73,16 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
 
   // Keep <html lang> in sync with the active language (a11y + correct hyphenation), replacing the
   // authority of the hardcoded attribute in the root layout. Live, on every switch.
+  //
+  // The same effect publishes the language to the store a service worker can read, because this is
+  // the moment the language SETTLES and this provider wraps the whole app — the two consumers differ
+  // only in that one can read the DOM and one cannot. Doing it anywhere narrower was a real bug: when
+  // it lived in the push hook it ran only on the Settings page, so a reader who never opened Settings
+  // had no language on file and every push would have rendered in the fallback.
+  // See docs/BROWSER_PUSH_ARCHITECTURE.md §4.
   React.useEffect(() => {
     if (typeof document !== "undefined") document.documentElement.lang = lang;
+    void publishLanguage(lang);
   }, [lang]);
 
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;

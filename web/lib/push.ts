@@ -133,6 +133,36 @@ export function pushUiState(caps: PushCapabilities): PushUiState {
 }
 
 /**
+ * Whether this device's subscription should be silently re-created against the server's current key.
+ *
+ * A VAPID rotation invalidates every existing subscription — the push service rejects sends signed by
+ * a key the endpoint was not created against — and the device cannot detect that from a failed send,
+ * because it never sees one. Left alone it simply goes dark: the engine keeps a row, the sender keeps
+ * getting rejections, and the reader believes they are subscribed.
+ *
+ * Repair is silent and prompts for nothing, so the guards are what keep it honest:
+ *
+ * * **`permission !== "granted"`** — never. Re-subscribing needs no prompt only because consent is
+ *   already given; without it this would be an attempt to subscribe someone who has not agreed.
+ * * **no existing subscription** — never. A reader who never enabled push must not have it enabled
+ *   for them by a key rotation; "repair" means restoring what they chose, not choosing for them.
+ * * **the key already matches** — nothing to do, and re-subscribing would churn the endpoint for no
+ *   reason (every rotation of an endpoint is a row the engine must reconcile).
+ */
+export function shouldRepairSubscription(caps: {
+  supported: boolean;
+  configured: boolean;
+  permission: PushPermission;
+  hasSubscription: boolean;
+  keyMatches: boolean;
+}): boolean {
+  if (!caps.supported || !caps.configured) return false;
+  if (caps.permission !== "granted") return false;
+  if (!caps.hasSubscription) return false;
+  return !caps.keyMatches;
+}
+
+/**
  * Whether a subscription belongs to the key the server is currently serving.
  *
  * Rotating the VAPID pair invalidates every existing subscription — the push service will reject
