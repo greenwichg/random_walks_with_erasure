@@ -27,6 +27,7 @@ of changes that makes the existing platform able to express that.
 | A4 | The delivery boundary reads events + today's counts into the context |
 | A5 | `examples/story_events.py` — the producer, on the poller's post-cycle seam |
 | A6 | Web presentation + deep link, i18n across 5 catalogs, compose wiring, this document |
+| — | *Retrospective follow-ups (see `docs/NOTIFICATION_PHASE_A_RETROSPECTIVE.md`):* channel-aware gating (`gate_path`), and the reader-facing switch in Settings |
 
 ---
 
@@ -68,6 +69,22 @@ Phase A implements the first two. The dedupe key for a breaking notification is 
 keyed on the **event row**, not the story id, because a story id is derived from its earliest
 published member and can move when a backfill discovers an earlier article. An event row is immutable
 once written.
+
+Two properties of the notification level are worth stating exactly, because both look like bugs and
+neither is:
+
+* **The dedupe ledger and the display history are the same table.**
+  `delivered_notification_keys` reads dedupe keys out of `notifications`, and `prune_notifications`
+  deletes settled rows past 200 per user — so pruning history also erases idempotency. It is not
+  reachable today: a breaking event is deliverable for 6 h, and reaching 200 notifications inside 6 h
+  is impossible under a 5/day cap. A future higher-volume kind could walk into it, and the fix then is
+  a ledger that outlives the row, not a bigger `keep`.
+* **The daily cap is very nearly, but not exactly, a hard bound.** Two concurrent fetches can each
+  compute a budget of 5 before either commits. They almost always cancel out, because dedupe keys are
+  derived from event ids: both requests see the same events, compute the same keys, and the loser's
+  inserts collide on `UNIQUE(user_id, kind, dedupe_key)`. The cap can only be exceeded when a *new*
+  event lands between the two context builds, and then by one or two rows. Locking the read would cost
+  more than the overrun it prevents.
 
 ---
 
@@ -115,8 +132,8 @@ GET /api/me/notifications  (the reader's next request — evaluate-on-fetch)
   └─ notification_delivery.build_context(...)
         _recent_events(...)   → EventInputs      (fail-SOFT: unreadable ⇒ ())
         _counts_today(...)    → DeliveryState    (fail-CLOSED: unreadable ⇒ the ceiling)
-  └─ notification_service.evaluate(ctx)
-        gate:   notifications.categories.breaking.inApp
+  └─ notification_service.evaluate(ctx, channel="in_app")
+        gate:   gate_path(kind, channel) -> notifications.categories.breaking.inApp
         fanout: one (dedupe_key, payload) per unexpired event
         budget: BREAKING_MAX_PER_DAY (5) minus what today already delivered
   └─ store.record_notifications(...)           one row per story, deduped
@@ -152,11 +169,24 @@ Preferences live under `notifications.categories` in normalised settings (`setti
 }
 ```
 
-The kind gates on `notifications.categories.breaking.inApp` and reads unset paths **fail-closed**.
-Note that these are exposed on the API explicitly: FastAPI's `response_model` filters output to
-declared fields, so an undeclared preference group is silently stripped from every response — a
-preference that is neither readable nor settable. `NotificationPrefsModel` and
-`NotificationPrefsUpdate` both carry `categories`.
+A kind names its **category**, not a path: `gate_path(kind, channel)` derives
+`notifications.categories.breaking.<inApp|push>`, so the same kind can be on for one channel and off
+for another — which is what a reader means by "notify me, but not on my phone". The six kinds that
+predate channels keep a single `setting_path` and answer the same on every channel, because there is
+no separate per-channel toggle to consult for them. Unset paths and unknown channels both **fail
+closed**: consent is per channel, and a transport nobody has written a preference for must not
+inherit consent given for a different one.
+
+Exposing this took explicit work at two boundaries, both of which fail silently when missed:
+
+* **The API.** FastAPI's `response_model` filters output to declared fields, so an undeclared
+  preference group is stripped from every response — a preference that is neither readable nor
+  settable. `NotificationPrefsModel` and `NotificationPrefsUpdate` both carry `categories`.
+* **The web.** `Settings.notifications.categories` is declared in `types/domain.ts` and the
+  Notifications card renders the in-app switch for `breaking`. Only in-app: a control for a channel
+  that cannot deliver would be a promise the product doesn't keep. `diffSettings` recurses two levels
+  so flipping one channel ships one leaf — the engine deep-merges, so a patch restating unchanged
+  siblings would overwrite a change made on another device.
 
 Two limits bound the interruption, and they do different jobs:
 
@@ -225,11 +255,16 @@ No rebuild, no revert, no data migration.
 | Producer (A5) | `tests/test_story_events.py` — flag off, threshold, band, idempotence across cycles, both poller seams |
 | Web (A6) | `web/lib/notifications.test.ts` — deep link, fallback for a payload with no usable `storyId`, escaping, other kinds unaffected |
 | Deploy (A6) | `deploy/ops/validate-deployment.py` — the switch must stay wired on `api` in both stacks |
+| Gating | `tests/test_notification_service.py` — per-channel paths, legacy kinds unchanged on every channel, unknown channel denied, the two channels gating independently, `evaluate(ctx)` byte-identical to `evaluate(ctx, "in_app")` |
+| Preference | `web/lib/settings-diff.test.ts` — a two-level change ships one leaf, an identical rebuild is not a change |
 
 Every commit was accepted against **mutation testing**, not just a green suite: the A6 resolver kills
 all six mutants (drop `trim`, drop `encodeURIComponent`, resolve for every kind, never resolve, drop
-the `typeof` guard, trim only in the guard), and the validator rule was verified by deleting the flag
-from the compose file and watching the rule fail.
+the `typeof` guard, trim only in the guard); the gating refactor kills all seven (invert the category
+check, path for an unknown channel, ignore the channel in `evaluate`, revert `gated_by`, ignore the
+channel in resolution, collapse the push leaf onto `inApp`, disable the fan-out's category filter);
+and the validator rule was verified by deleting the flag from the compose file and watching the rule
+fail.
 
 ---
 
