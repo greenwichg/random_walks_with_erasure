@@ -245,6 +245,18 @@ class FeedPoller:
         except Exception as e:
             self._log(logging.WARNING, "story_cache_warm_failed", error=f"{type(e).__name__}: {e}")
 
+        # Breaking-story detection (OFF unless RWE_BREAKING_NOTIFICATIONS is set). Here rather than in
+        # a request handler because this is the only place a story's freshness band is recomputed off
+        # the request path — and a notification producer must never be a side effect of a GET.
+        # `detect_breaking_stories` is idempotent and stateless: the UNIQUE constraint on the event
+        # row is what turns the recomputed BAND into a one-time EDGE, so running it every cycle is
+        # correct rather than merely tolerable. It never raises; this guard is belt and braces.
+        try:
+            import story_events                  # lazy: keeps story_intelligence out of this import graph
+            story_events.detect_breaking_stories(self.store, log=_warm_log)
+        except Exception as e:
+            self._log(logging.WARNING, "breaking_detect_failed", error=f"{type(e).__name__}: {e}")
+
         # Optional seam: a later commit hangs the (validated) hot corpus refresh off this — and only
         # when the catalog actually changed (agg["new"] > 0). The poller itself never refreshes it.
         if self._on_cycle is not None:

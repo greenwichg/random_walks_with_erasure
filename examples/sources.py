@@ -1362,6 +1362,17 @@ class MultiSourcePoller:
             story_service.request_warm(self.store, log=_warm_log)
         except Exception as e:
             self._log(logging.WARNING, "story_cache_warm_failed", error=f"{type(e).__name__}: {e}")
+
+        # Breaking-story detection (OFF unless RWE_BREAKING_NOTIFICATIONS is set) — the same seam as
+        # FeedPoller's copy in feed_service.py, and it must exist in BOTH: either chassis may be the
+        # one polling, and a producer wired to only one of them would simply never fire in whichever
+        # deployment ran the other. Idempotent and stateless; the event row's UNIQUE constraint is
+        # what makes running it every cycle correct rather than merely harmless.
+        try:
+            import story_events                  # lazy: keeps story_intelligence out of this import graph
+            story_events.detect_breaking_stories(self.store, log=_warm_log)
+        except Exception as e:
+            self._log(logging.WARNING, "breaking_detect_failed", error=f"{type(e).__name__}: {e}")
         t_warm = time.perf_counter()
         if self._on_cycle is not None:
             try:
