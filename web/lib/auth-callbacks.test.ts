@@ -169,15 +169,16 @@ test("the claims stay on the JWT and never reach the browser session", async () 
 // is either a per-request engine call or a second upsert into an engine that is already failing.
 // --------------------------------------------------------------------------------------------------
 
-/** Count engine calls across a `jwt` invocation, with the memo cleared either side. */
+/** Count engine calls and capture recovery log lines across a `jwt` invocation, memo cleared either
+ *  side. Capturing rather than silencing, so the log can be asserted from the real call site. */
 async function countingEngine(
   reply: () => unknown,
-  fn: (state: { fetches: number }) => Promise<void>,
+  fn: (state: { fetches: number; logs: Record<string, unknown>[] }) => Promise<void>,
 ): Promise<void> {
   const g = globalThis as unknown as { fetch: unknown };
   const realFetch = g.fetch;
   const realWarn = console.warn;
-  const state = { fetches: 0 };
+  const state: { fetches: number; logs: Record<string, unknown>[] } = { fetches: 0, logs: [] };
 
   __resetIdentityCache();
   g.fetch = async () => {
@@ -186,7 +187,7 @@ async function countingEngine(
     if (value instanceof Error) throw value;
     return value;
   };
-  console.warn = () => {};                         // the recovery log line
+  console.warn = (line: string) => { state.logs.push(JSON.parse(line) as Record<string, unknown>); };
   try {
     await fn(state);
   } finally {
@@ -306,4 +307,36 @@ test("RWE_IDENTITY_RECOVERY=0 turns the call site back into a no-op", async () =
     if (real === undefined) delete process.env.RWE_IDENTITY_RECOVERY;
     else process.env.RWE_IDENTITY_RECOVERY = real;
   }
+});
+
+test("the recovery log reaches the real call site, one line per repair", async () => {
+  // The resolver's own tests prove the three lines; this proves they actually escape `callbacks.jwt`,
+  // which is where production emits them, and that repeated session reads do not multiply them.
+  await countingEngine(() => ({ ok: true, json: async () => ({ userId: 42 }) }), async (state) => {
+    const before = brokenSession().token;
+    for (let i = 0; i < 15; i++) await jwt({ token: { ...before } } as never);
+    assert.equal(state.fetches, 1);
+    assert.deepEqual(state.logs, [{
+      event: "engine_identity_recovered", provider: "google", userId: 42,
+    }], `15 session reads produced ${state.logs.length} log lines`);
+  });
+});
+
+test("a failing engine is diagnosable from the callback's log alone", async () => {
+  await countingEngine(() => ({ ok: false, status: 401, json: async () => ({}) }), async (state) => {
+    await jwt({ token: { ...brokenSession().token } } as never);
+    assert.deepEqual(state.logs, [{
+      event: "engine_identity_recovery_failed", provider: "google", reason: "http_401",
+    }], "http_401 is how a wrong RWE_INTERNAL_SECRET presents, and must say so");
+  });
+});
+
+test("the sign-in invocation logs nothing — it is not a recovery", async () => {
+  // The `!account` guard again, from the log's side: a failed sign-in must not look like a failed
+  // recovery, or the two rates become impossible to tell apart.
+  await countingEngine(() => ({ ok: false, status: 503, json: async () => ({}) }), async (state) => {
+    await jwt({ ...googleSignIn(), trigger: "signIn" } as never);
+    assert.equal(state.fetches, 1);
+    assert.deepEqual(state.logs, []);
+  });
 });

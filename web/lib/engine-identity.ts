@@ -21,16 +21,29 @@ import { fetchWithTimeout } from "./engine-timeout.ts";
 
 const ENGINE_BASE = process.env.RWE_BACKEND_URL ?? "http://127.0.0.1:8000";
 
-/**
- * Map a third-party identity to the stable engine user id, or `null` if the engine
- * is unreachable — in which case the app simply falls back to the demo reader.
- */
-export async function upsertEngineUser(input: {
+interface EngineIdentityInput {
   provider: string;
   providerAccountId: string;
   email?: string | null;
   displayName?: string | null;
-}): Promise<number | null> {
+}
+
+/**
+ * Why an upsert did not yield an id. Every failure resolves to `null` for the caller, but the *reason*
+ * is what an operator needs: `http_401` means the shared secret is wrong, `timeout` means the engine is
+ * wedged, `unreachable` means it is down, `malformed_response` means the contract broke. Collapsing
+ * them all to `null` before anything can log them is what made a broken recovery indistinguishable from
+ * no broken sessions at all.
+ */
+type UpsertOutcome =
+  | { ok: true; userId: number }
+  | { ok: false; reason: string; detail?: string };
+
+/**
+ * The upsert, with its failure reason intact. `upsertEngineUser` is the thin `number | null` wrapper
+ * over this and is what the sign-in paths use; recovery uses this one so it can say what went wrong.
+ */
+async function attemptEngineUpsert(input: EngineIdentityInput): Promise<UpsertOutcome> {
   try {
     // fetchWithTimeout, not bare fetch: a wedged engine must fail rather than hang. The recovery path
     // coalesces concurrent callers onto one in-flight promise, so a promise that never settles would
@@ -56,12 +69,30 @@ export async function upsertEngineUser(input: {
         displayName: input.displayName ?? undefined,
       }),
     });
-    if (!res.ok) return null;
+    if (!res.ok) return { ok: false, reason: `http_${res.status}` };
     const data = (await res.json()) as { userId?: number };
-    return typeof data.userId === "number" ? data.userId : null;
-  } catch {
-    return null; // engine down, unreachable, or past the deadline — resolve to demo until it recovers
+    return typeof data.userId === "number"
+      ? { ok: true, userId: data.userId }
+      : { ok: false, reason: "malformed_response" };
+  } catch (err) {
+    // engine down, unreachable, or past the deadline — resolve to demo until it recovers
+    const name = err instanceof Error ? err.name : "Error";
+    if (name === "TimeoutError" || name === "AbortError") return { ok: false, reason: "timeout" };
+    // undici reports a dead socket as `TypeError: fetch failed` and puts the useful part on `cause`,
+    // so the bare name would say nothing. ECONNREFUSED vs ENOTFOUND is the difference between "the
+    // engine is restarting" and "RWE_BACKEND_URL is wrong", which is worth one field.
+    const code = (err as { cause?: { code?: unknown } })?.cause?.code;
+    return { ok: false, reason: "unreachable", detail: typeof code === "string" ? code : name };
   }
+}
+
+/**
+ * Map a third-party identity to the stable engine user id, or `null` if the engine
+ * is unreachable — in which case the app simply falls back to the demo reader.
+ */
+export async function upsertEngineUser(input: EngineIdentityInput): Promise<number | null> {
+  const outcome = await attemptEngineUpsert(input);
+  return outcome.ok ? outcome.userId : null;
 }
 
 /* ------------------------------------------------------------------------------------------------
@@ -133,8 +164,48 @@ export interface RecoverableToken {
   name?: unknown;
 }
 
+/**
+ * Whether a token already carries a usable engine user id.
+ *
+ * One predicate, because there were two and they disagreed. The resolver asked
+ * `typeof token.engineUserId === "number"` while `callbacks.jwt` asked `token.engineUserId == null`,
+ * which part ways on any non-numeric value: the caller would decline to recover a token the resolver
+ * would refuse to use, leaving a session permanently un-attributed. Unreachable today — nothing writes
+ * a non-number and JSON round-trips preserve the type — but two definitions of "has an id" is one more
+ * than the code can keep true.
+ *
+ * This adopts the resolver's definition, so the loose check is the only thing that changes: a token
+ * carrying garbage is now treated as having no id, which is what `sessionCallback` already believes.
+ */
+export function hasEngineUserId(token: Pick<RecoverableToken, "engineUserId">): boolean {
+  return typeof token.engineUserId === "number";
+}
+
 function cacheKey(provider: string, providerAccountId: string): string {
   return `${provider}:${providerAccountId}`;
+}
+
+/**
+ * The recovery log, in one place so the three outcomes cannot drift apart in shape.
+ *
+ * OBS1-style structured lines, one per *attempt* — never per request. Everything that answers from the
+ * memo, the backoff or the in-flight map returns before reaching here, which is what keeps a broken
+ * engine from also becoming a log flood.
+ *
+ *   engine_identity_recovered         a session was repaired. A rising rate means sign-in-time engine
+ *                                     unavailability — look at deploys, not at recovery.
+ *   engine_identity_recovery_failed   recovery itself is not working. `reason` says which: http_401 is
+ *                                     a wrong/missing RWE_INTERNAL_SECRET, timeout is a wedged engine,
+ *                                     unreachable is a dead one. Without this line a totally broken
+ *                                     recovery looks exactly like having nothing to recover.
+ *   engine_identity_recovery_denied   a signed-in reader is no longer on the allowlist, so their
+ *                                     session stays un-attributed until someone acts. Carries the
+ *                                     email for the same reason `beta_access_denied` does — the
+ *                                     operator has to know who to approve.
+ */
+function logRecovery(line: Record<string, unknown>): void {
+  // eslint-disable-next-line no-console
+  console.warn(JSON.stringify(line));
 }
 
 /** Drop expired entries, then the oldest ones if still over the ceiling. */
@@ -165,7 +236,7 @@ function remember(key: string, userId: number | null): void {
  * Never throws: every failure resolves to `null`, which leaves the caller exactly where it is today.
  */
 export async function resolveEngineUserId(token: RecoverableToken): Promise<number | null> {
-  if (typeof token.engineUserId === "number") return token.engineUserId;
+  if (hasEngineUserId(token)) return token.engineUserId as number;
 
   // Below this line is recovery proper, and it is all the kill switch has to disable: returning `null`
   // here is precisely what the code did before recovery existed.
@@ -205,30 +276,38 @@ export async function resolveEngineUserId(token: RecoverableToken): Promise<numb
   // an engine account created for a removed reader — a cached denial prevents just as well.
   // docs/SESSION_IDENTITY_RECOVERY_DESIGN.md §4.
   const email = typeof token.email === "string" ? token.email : null;
-  if (!isEmailAllowed(email).allowed) {
+  const access = isEmailAllowed(email);
+  if (!access.allowed) {
     remember(key, null);
+    logRecovery({ event: "engine_identity_recovery_denied", provider, email, reason: access.reason });
     return null;
   }
 
-  const attempt = upsertEngineUser({
+  const attempt = attemptEngineUpsert({
     provider,
     providerAccountId,
     email,
     displayName: typeof token.name === "string" ? token.name : null,
   })
-    .then((userId) => {
+    // `attemptEngineUpsert` swallows its own errors, so this is belt and braces — but it is placed
+    // BEFORE the handler below rather than after it on purpose. Normalising a throw into an outcome
+    // here means there is exactly one place that remembers and logs, so no interleaving can record the
+    // result twice or emit two lines for one attempt.
+    .catch((): UpsertOutcome => ({ ok: false, reason: "unexpected" }))
+    .then((outcome) => {
+      const userId = outcome.ok ? outcome.userId : null;
       remember(key, userId);
-      if (userId !== null) {
-        // OBS1-style line. No email: unlike a beta denial, nobody needs to act on who this was — a
-        // rising rate means sign-in-time engine unavailability, which is the thing to look at.
-        // eslint-disable-next-line no-console
-        console.warn(JSON.stringify({ event: "engine_identity_recovered", provider, userId }));
-      }
+      logRecovery(
+        outcome.ok
+          ? { event: "engine_identity_recovered", provider, userId: outcome.userId }
+          : {
+              event: "engine_identity_recovery_failed",
+              provider,
+              reason: outcome.reason,
+              ...(outcome.detail ? { detail: outcome.detail } : {}),
+            },
+      );
       return userId;
-    })
-    .catch(() => {
-      remember(key, null);              // upsertEngineUser already swallows; belt and braces
-      return null;
     })
     .finally(() => {
       inflight.delete(key);

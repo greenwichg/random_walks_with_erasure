@@ -13,7 +13,7 @@
 import type { NextAuthOptions } from "next-auth";
 
 import { isEmailAllowed } from "./beta-access.ts";
-import { resolveEngineUserId, upsertEngineUser } from "./engine-identity.ts";
+import { hasEngineUserId, resolveEngineUserId, upsertEngineUser } from "./engine-identity.ts";
 
 type Callbacks = NonNullable<NextAuthOptions["callbacks"]>;
 
@@ -79,7 +79,7 @@ export const jwtCallback: Callbacks["jwt"] = async function jwt({ token, account
   // that is the invocation that has JUST run `upsertEngineUser` above. Without this guard, a sign-in
   // that failed to reach the engine would fire a second upsert milliseconds after the first one
   // failed, into an engine that is already failing, with no memo entry yet to suppress it. §3.
-  if (!account && token.engineUserId == null) {
+  if (!account && !hasEngineUserId(token)) {
     const recovered = await resolveEngineUserId(token);
     if (recovered != null) token.engineUserId = recovered;
   }

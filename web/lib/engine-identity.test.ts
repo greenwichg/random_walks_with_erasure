@@ -10,6 +10,7 @@ import assert from "node:assert/strict";
 import {
   __identityCacheStats,
   __resetIdentityCache,
+  hasEngineUserId,
   resolveEngineUserId,
   upsertEngineUser,
 } from "./engine-identity.ts";
@@ -140,16 +141,26 @@ test("a 2xx without a numeric userId resolves to null", async () => {
 const SUB = "108461123456789012345";
 const GOOGLE_TOKEN = { provider: "google", providerAccountId: SUB, email: "reader@example.com" };
 
-/** Replace fetch + silence the recovery log; returns the call count so tests can assert on it. */
+interface LogLine {
+  event?: string;
+  provider?: string;
+  userId?: number;
+  reason?: string;
+  detail?: string;
+  email?: string | null;
+}
+
+/** Replace fetch and CAPTURE the recovery log (rather than discarding it), so every test can assert on
+ *  the engine call count and on what was written about it. */
 async function withResolver(
   reply: () => unknown,
-  fn: (state: { fetches: number }) => Promise<void>,
+  fn: (state: { fetches: number; logs: LogLine[] }) => Promise<void>,
 ): Promise<void> {
   const g = globalThis as unknown as { fetch: unknown };
   const realFetch = g.fetch;
   const realWarn = console.warn;
   const realNow = Date.now;
-  const state = { fetches: 0 };
+  const state: { fetches: number; logs: LogLine[] } = { fetches: 0, logs: [] };
 
   __resetIdentityCache();
   g.fetch = async () => {
@@ -158,7 +169,9 @@ async function withResolver(
     if (value instanceof Error) throw value;
     return value;
   };
-  console.warn = () => {};
+  // Parsed, not stored raw: every recovery line must be machine-readable JSON, so a line that stopped
+  // being parseable fails here rather than quietly degrading the operator's `docker logs | grep`.
+  console.warn = (line: string) => { state.logs.push(JSON.parse(line) as LogLine); };
 
   try {
     await fn(state);
@@ -169,6 +182,9 @@ async function withResolver(
     __resetIdentityCache();
   }
 }
+
+/** The log lines for one event name. */
+const only = (logs: LogLine[], event: string) => logs.filter((l) => l.event === event);
 
 const REAL_NOW = Date.now;
 
@@ -604,4 +620,244 @@ test("recovery succeeds on a later attempt once the engine answers again", async
     Date.now = REAL_NOW;
     __resetIdentityCache();
   }
+});
+
+// --------------------------------------------------------------------------------------------------
+// Recovery logging (commit 5b).
+//
+// Before these lines existed only success was logged, which inverted the useful signal: a recovery
+// that failed for every reader — a wrong RWE_INTERNAL_SECRET is the realistic cause — produced logs
+// byte-identical to having no broken sessions at all. You could ship the fix and never learn it had
+// never worked. Three events, and the count matters as much as the content: one line per ATTEMPT,
+// never per request, or a sick engine becomes a log flood on top of everything else.
+// --------------------------------------------------------------------------------------------------
+
+test("a successful recovery logs exactly one line, with the id and no email", async () => {
+  await withResolver(() => ok({ userId: 42 }), async (state) => {
+    await resolveEngineUserId(GOOGLE_TOKEN);
+    assert.equal(state.logs.length, 1);
+    assert.deepEqual(state.logs[0], {
+      event: "engine_identity_recovered", provider: "google", userId: 42,
+    });
+    // Unlike a denial, nobody has to act on who this was; a rising rate is the signal, not the person.
+    assert.equal("email" in state.logs[0]!, false, "the success line must not carry an email");
+  });
+});
+
+test("the healthy path logs nothing at all", async () => {
+  await withResolver(() => ok({ userId: 999 }), async (state) => {
+    for (let i = 0; i < 20; i++) await resolveEngineUserId({ ...GOOGLE_TOKEN, engineUserId: 42 });
+    assert.deepEqual(state.logs, [], "a token that already has an id is not a recovery");
+  });
+});
+
+test("a failed recovery names the reason, and the reason distinguishes the causes", async () => {
+  // The whole point of the line. http_401 means the shared secret is wrong; timeout means the engine
+  // is wedged; unreachable means it is down. "Recovery failed" alone would not tell them apart.
+  const cases: [() => unknown, string, string | undefined][] = [
+    [() => notOk(401), "http_401", undefined],
+    [() => notOk(403), "http_403", undefined],
+    [() => notOk(500), "http_500", undefined],
+    [() => notOk(503), "http_503", undefined],
+    [() => ok({}), "malformed_response", undefined],
+    [() => ok({ userId: "42" }), "malformed_response", undefined],
+    [() => new Error("boom"), "unreachable", "Error"],
+  ];
+  for (const [reply, reason, detail] of cases) {
+    await withResolver(reply, async (state) => {
+      assert.equal(await resolveEngineUserId(GOOGLE_TOKEN), null);
+      assert.equal(state.logs.length, 1, `${reason}: expected one line`);
+      assert.equal(state.logs[0]!.event, "engine_identity_recovery_failed");
+      assert.equal(state.logs[0]!.reason, reason);
+      assert.equal(state.logs[0]!.provider, "google");
+      if (detail !== undefined) assert.equal(state.logs[0]!.detail, detail);
+      // A failure says nothing about who: the operator's action is on the engine, not the reader.
+      assert.equal("email" in state.logs[0]!, false, `${reason}: must not carry an email`);
+    });
+  }
+});
+
+test("a transport failure carries the OS error code, not just `TypeError`", async () => {
+  // undici reports a dead socket as `TypeError: fetch failed` and hides the useful part on `cause`.
+  // ECONNREFUSED (engine restarting) vs ENOTFOUND (RWE_BACKEND_URL is wrong) is the whole diagnosis.
+  const wrapped = Object.assign(new TypeError("fetch failed"), {
+    cause: Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:8000"), { code: "ECONNREFUSED" }),
+  });
+  await withResolver(() => wrapped, async (state) => {
+    assert.equal(await resolveEngineUserId(GOOGLE_TOKEN), null);
+    assert.equal(state.logs[0]!.reason, "unreachable");
+    assert.equal(state.logs[0]!.detail, "ECONNREFUSED");
+  });
+});
+
+test("a wedged engine logs `timeout`, distinct from a dead one", async () => {
+  const g = globalThis as unknown as { fetch: unknown };
+  const realFetch = g.fetch;
+  const realWarn = console.warn;
+  const logs: LogLine[] = [];
+  __resetIdentityCache();
+  console.warn = (line: string) => { logs.push(JSON.parse(line) as LogLine); };
+  g.fetch = (_url: string, init: RequestInit) =>
+    new Promise<Response>((_res, rej) => {
+      init.signal?.addEventListener("abort", () => rej(new DOMException("aborted", "AbortError")));
+    });
+  try {
+    await withShortDeadline(60, async () => {
+      assert.equal(await resolveEngineUserId(GOOGLE_TOKEN), null);
+      assert.equal(logs.length, 1);
+      assert.equal(logs[0]!.event, "engine_identity_recovery_failed");
+      assert.equal(logs[0]!.reason, "timeout");
+    });
+  } finally {
+    g.fetch = realFetch;
+    console.warn = realWarn;
+    __resetIdentityCache();
+  }
+});
+
+test("an allowlist denial logs the email, because someone has to act on it", async () => {
+  // Same rationale as `beta_access_denied`: this reader is signed in and permanently un-attributed
+  // until an operator adds them back or accepts that they are out. The engine is fine — no
+  // `..._failed` line may be emitted, or the two situations become indistinguishable.
+  await withAllowlist("someone-else@example.com", async () => {
+    await withResolver(() => ok({ userId: 1 }), async (state) => {
+      assert.equal(await resolveEngineUserId(GOOGLE_TOKEN), null);
+      assert.equal(state.fetches, 0, "a denial must not reach the engine");
+      assert.deepEqual(state.logs, [{
+        event: "engine_identity_recovery_denied",
+        provider: "google",
+        email: "reader@example.com",
+        reason: "not_allowlisted",
+      }]);
+    });
+  });
+});
+
+test("the denial reason distinguishes a removed reader from a misconfigured gate", async () => {
+  // `empty_allowlist` is fail-closed and denies EVERYONE — an operational emergency that looks
+  // identical to `not_allowlisted` without this field.
+  await withAllowlist("", async () => {
+    await withResolver(() => ok({ userId: 1 }), async (state) => {
+      await resolveEngineUserId(GOOGLE_TOKEN);
+      assert.equal(state.logs[0]!.reason, "empty_allowlist");
+    });
+  });
+  await withAllowlist("someone-else@example.com", async () => {
+    await withResolver(() => ok({ userId: 1 }), async (state) => {
+      await resolveEngineUserId({ ...GOOGLE_TOKEN, email: undefined });
+      assert.equal(state.logs[0]!.reason, "no_email");
+      assert.equal(state.logs[0]!.email, null);
+    });
+  });
+});
+
+// -- no duplicates -----------------------------------------------------------------------------
+// One line per attempt. Every cache layer that suppresses an attempt must suppress its line too,
+// otherwise the log volume tracks REQUESTS — and `callbacks.jwt` runs on every server render.
+
+test("concurrent callers sharing one attempt produce ONE line, not one each", async () => {
+  let release: (v: unknown) => void = () => {};
+  const gate = new Promise((r) => { release = r; });
+  await withResolver(() => ok({ userId: 42 }), async (state) => {
+    const g = globalThis as unknown as { fetch: unknown };
+    const counting = g.fetch as () => Promise<unknown>;
+    g.fetch = async () => { await gate; return counting(); };
+
+    const callers = Array.from({ length: 25 }, () => resolveEngineUserId(GOOGLE_TOKEN));
+    release(null);
+    await Promise.all(callers);
+
+    assert.equal(state.fetches, 1);
+    assert.equal(only(state.logs, "engine_identity_recovered").length, 1,
+      `25 coalesced callers wrote ${state.logs.length} lines`);
+  });
+});
+
+test("memo hits after a success log nothing further", async () => {
+  await withResolver(() => ok({ userId: 42 }), async (state) => {
+    for (let i = 0; i < 50; i++) await resolveEngineUserId(GOOGLE_TOKEN);
+    assert.equal(state.fetches, 1);
+    assert.equal(state.logs.length, 1, "50 server renders must not be 50 log lines");
+  });
+});
+
+test("the backoff suppresses the failure line as well as the engine call", async () => {
+  await withResolver(() => notOk(503), async (state) => {
+    for (let i = 0; i < 30; i++) await resolveEngineUserId(GOOGLE_TOKEN);
+    assert.equal(state.fetches, 1);
+    assert.equal(state.logs.length, 1, "a sick engine must not also produce a log flood");
+
+    advance(30 * 1000 + 1);                                   // BACKOFF_MS + 1ms
+    await resolveEngineUserId(GOOGLE_TOKEN);
+    assert.equal(state.logs.length, 2, "a genuinely new attempt does get its own line");
+  });
+});
+
+test("a cached denial is not re-logged on every session read", async () => {
+  await withAllowlist("someone-else@example.com", async () => {
+    await withResolver(() => ok({ userId: 1 }), async (state) => {
+      for (let i = 0; i < 30; i++) await resolveEngineUserId(GOOGLE_TOKEN);
+      assert.equal(state.logs.length, 1, "the denial memo must suppress the line too");
+    });
+  });
+});
+
+test("recovery disabled by the kill switch logs nothing", async () => {
+  const real = process.env.RWE_IDENTITY_RECOVERY;
+  process.env.RWE_IDENTITY_RECOVERY = "0";
+  try {
+    await withResolver(() => ok({ userId: 42 }), async (state) => {
+      await resolveEngineUserId(GOOGLE_TOKEN);
+      assert.deepEqual(state.logs, [], "a disabled resolver is silent, not noisy about being off");
+    });
+  } finally {
+    if (real === undefined) delete process.env.RWE_IDENTITY_RECOVERY;
+    else process.env.RWE_IDENTITY_RECOVERY = real;
+  }
+});
+
+test("every recovery line is parseable JSON carrying a distinct `event`", async () => {
+  // The shape contract the operator's `docker logs deploy-web-1 | grep engine_identity` depends on.
+  // `withResolver` already JSON.parses each line, so reaching here at all proves parseability.
+  const seen = new Set<string>();
+  await withResolver(() => ok({ userId: 42 }), async (state) => {
+    await resolveEngineUserId(GOOGLE_TOKEN);
+    state.logs.forEach((l) => seen.add(l.event!));
+  });
+  await withResolver(() => notOk(500), async (state) => {
+    await resolveEngineUserId(GOOGLE_TOKEN);
+    state.logs.forEach((l) => seen.add(l.event!));
+  });
+  await withAllowlist("nobody@example.com", async () => {
+    await withResolver(() => ok({ userId: 1 }), async (state) => {
+      await resolveEngineUserId(GOOGLE_TOKEN);
+      state.logs.forEach((l) => seen.add(l.event!));
+    });
+  });
+  assert.deepEqual([...seen].sort(), [
+    "engine_identity_recovered",
+    "engine_identity_recovery_denied",
+    "engine_identity_recovery_failed",
+  ], "the three outcomes must be distinguishable by event name alone");
+});
+
+// -- hasEngineUserId ---------------------------------------------------------------------------
+
+test("hasEngineUserId is the single definition of 'this token already has an id'", async () => {
+  // There were two, and they disagreed on any non-numeric value: the resolver refused to USE it while
+  // the callback refused to RECOVER it, which is a session nothing can repair. Both now ask this.
+  assert.equal(hasEngineUserId({ engineUserId: 42 }), true);
+  assert.equal(hasEngineUserId({ engineUserId: 0 }), true, "0 is a number, however unlikely an id");
+  for (const bad of [undefined, null, "42", "", true, {}, []]) {
+    assert.equal(hasEngineUserId({ engineUserId: bad }), false, JSON.stringify(bad) ?? "undefined");
+  }
+});
+
+test("the resolver and the predicate agree, so no token is both un-usable and un-recoverable", async () => {
+  await withResolver(() => ok({ userId: 42 }), async (state) => {
+    // A garbage id: the predicate says "no id", so recovery runs and returns a real one.
+    assert.equal(hasEngineUserId({ engineUserId: "42" }), false);
+    assert.equal(await resolveEngineUserId({ ...GOOGLE_TOKEN, engineUserId: "42" }), 42);
+    assert.equal(state.fetches, 1);
+  });
 });
