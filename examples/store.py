@@ -41,7 +41,7 @@ from urllib.parse import urlsplit
 
 from sqlalchemy import (ForeignKey, String, Text, UniqueConstraint, and_, create_engine,
                         delete, event, func, or_, select, text)
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import (DeclarativeBase, Mapped, Session, mapped_column,
                             relationship, sessionmaker)
 from sqlalchemy.pool import StaticPool
@@ -721,25 +721,63 @@ class Store:
         """Return the user for ``(provider, provider_account_id)``, creating the user +
         identity on first sign-in.
 
-        Idempotent: the same identity always resolves to the same user. A returning user's
-        email / display name are refreshed when a value is supplied (Google can change them),
-        and left as-is when ``None``."""
+        Idempotent: the same identity always resolves to the same user, whether calls are
+        sequential or concurrent. A returning user's email / display name are refreshed when a
+        value is supplied (Google can change them), and left as-is when ``None``.
+
+        Two concurrent first sign-ins for the same identity both miss the initial read; the
+        UNIQUE constraint on ``(provider, provider_account_id)`` decides which one creates the
+        rows, and the loser resolves the winner's user in a **second transaction** rather than
+        failing. Its first transaction rolled back whole, so nothing of it was committed and the
+        retry is safe — that is the property the whole design rests on, and it is why there is
+        no SAVEPOINT here (under the sqlite3 driver's legacy transaction mode a released
+        savepoint escapes the enclosing rollback, which would commit a user for a call that
+        raised).
+
+        Full contract, proof and the assumptions it depends on:
+        ``docs/IDENTITY_UPSERT_CONCURRENCY.md``; the harness that checks them is
+        ``tests/concurrency/``.
+        """
+        try:
+            return self._resolve_identity(provider, provider_account_id, email, display_name,
+                                          create=True)
+        except (IntegrityError, OperationalError) as first:
+            # Either we lost a first-sighting race (the UNIQUE constraint rejected our identity
+            # insert) or we could not get the write transaction against a concurrent writer.
+            # OperationalError is caught deliberately: if the driver ever stops running in legacy
+            # transaction mode, a lost race can surface as a snapshot conflict instead.
+            user = self._resolve_identity(provider, provider_account_id, email, display_name,
+                                          create=False)
+            if user is None:
+                raise first     # nobody won, so this was never a race — never swallow it
+            return user
+
+    def _resolve_identity(self, provider: str, provider_account_id: str,
+                          email: str | None, display_name: str | None,
+                          *, create: bool) -> "User | None":
+        """One attempt at :meth:`upsert_user_by_identity`, in one transaction.
+
+        With ``create=False`` it resolves an existing identity or returns ``None`` — which the
+        caller reads as "there was no winner, so the failure was not a race"."""
         with self.session() as s:
             identity = s.scalar(
                 select(Identity).where(Identity.provider == provider,
                                        Identity.provider_account_id == provider_account_id))
             if identity is None:
+                if not create:
+                    return None
                 user = User(email=email, display_name=display_name)
                 s.add(user)
                 s.flush()                       # assign user.id
                 s.add(Identity(provider=provider,
                                provider_account_id=provider_account_id, user_id=user.id))
+                s.flush()                       # surface the conflict here, not at commit
             else:
                 user = identity.user
-                if email is not None:
-                    user.email = email
-                if display_name is not None:
-                    user.display_name = display_name
+            if email is not None:
+                user.email = email
+            if display_name is not None:
+                user.display_name = display_name
             s.flush()
             s.refresh(user)
             return user

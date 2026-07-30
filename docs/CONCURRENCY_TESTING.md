@@ -121,8 +121,13 @@ what happened last time, and it is a normal outcome, not a crisis.
 
 ## 5. The executable reference implementation
 
-`test_identity_upsert.py` contains `upsert_reference` — the algorithm specified in §4 — alongside the
-shipped method, and asserts every property against both.
+> **This has now happened.** Commit 1 adopted §4, the strict xfail fired, and the same commit deleted
+> the reference implementation and collapsed the parametrisation onto the real method. The section is
+> kept because the pattern is worth reusing, and because the reasoning explains a shape the git history
+> would otherwise make look arbitrary.
+
+`test_identity_upsert.py` contained `upsert_reference` — the algorithm specified in §4 — alongside the
+shipped method, and asserted every property against both.
 
 **Why it exists.** The design was reviewed before it was implemented, and a design that cannot be run
 is a claim rather than a specification. Making §4 executable meant the invariant suite could be written
@@ -131,10 +136,10 @@ control: with both subjects in the same table, the *difference between the colum
 being proposed*. Today that difference is two cells — I2 under concurrency, and I8 — which is a far more
 honest description of the work than a paragraph claiming the same thing.
 
-**When to remove it.** The moment `Store.upsert_user_by_identity` adopts §4. You will not have to
-remember: `test_I8_every_concurrent_caller_resolves[shipped-*]` is an `xfail(strict=True)`, so when the
-shipped method starts passing it, the XPASS **fails the suite on purpose**. That red is the removal
-notice. Three steps:
+**When to remove it.** The moment `Store.upsert_user_by_identity` adopts §4 — you do not have to
+remember, because `test_I8_every_concurrent_caller_resolves[shipped-*]` was an `xfail(strict=True)`, so
+the XPASS **failed the suite on purpose**. That red was the removal notice. Three steps, all done in
+commit 1:
 
 1. delete `upsert_reference` and `_attempt` from the test module,
 2. collapse `SUBJECTS` to the real method (the parametrisation disappears with it),

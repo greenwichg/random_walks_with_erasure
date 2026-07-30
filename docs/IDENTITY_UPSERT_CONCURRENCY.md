@@ -4,9 +4,10 @@
 `POST /api/internal/users`. It is the only way a third-party login becomes an engine user, so its
 concurrency behaviour is the foundation every authenticated surface stands on.
 
-**Status:** specification. §4 specifies a change that does **not** exist yet and is a prerequisite for
-[`SESSION_IDENTITY_RECOVERY_DESIGN.md`](SESSION_IDENTITY_RECOVERY_DESIGN.md), which multiplies
-concurrent first-sightings of the same identity.
+**Status:** **implemented.** §4 is what `Store.upsert_user_by_identity` does as of commit 1 of
+[`IDENTITY_RECOVERY_IMPLEMENTATION_PLAN.md`](IDENTITY_RECOVERY_IMPLEMENTATION_PLAN.md). It was a
+prerequisite for [`SESSION_IDENTITY_RECOVERY_DESIGN.md`](SESSION_IDENTITY_RECOVERY_DESIGN.md), which
+multiplies concurrent first-sightings of the same identity and is still to come.
 
 > **Revision note.** An earlier revision of §4 specified a `SAVEPOINT`-based algorithm. It is
 > withdrawn. SQLAlchemy's own documentation for the installed version states that SAVEPOINT
@@ -36,17 +37,19 @@ These hold for every caller, at every concurrency level, on every supported back
 | **I7** | **The user id, once returned, never changes for that identity.** Nothing updates `identities.user_id` or deletes rows; the mapping is append-only. |
 | **I8** | **No caller observes an error caused solely by losing the race.** Losing produces a resolved user, not a failure. |
 
-**What today's code does, measured.** Fifteen concurrent first-sightings of one identity against the
-shipped method: ten resolved, five raised `IntegrityError`, and the database ended at exactly one user
-and one identity with **no orphan** `[M: J1]`. So the shipped defect is narrow and specific:
+**Before and after, measured.** Fifteen concurrent first-sightings of one identity:
 
-- **I8 fails** — a caller that loses the race gets a `500` instead of a user, and
-- **I2 fails under concurrency** — the call is idempotent when serialised, but not when raced.
-- **I4, I6 and everything else hold today.** I4 holds because the whole transaction rolls back, and I6
-  holds trivially because there is no conflict handling to swallow anything.
+| | before | after |
+|---|---|---|
+| callers that resolved | 10 | **15** |
+| callers that raised `IntegrityError` | 5 | **0** |
+| `users`, `identities` rows | 1, 1 | 1, 1 |
 
-That framing matters for §4: the change must convert a loser's failure into a resolution **without
-giving up I4** — which is exactly the trap the withdrawn savepoint version fell into.
+So the defect this closed was narrow and specific — **I8** (a loser got a `500` instead of a user) and
+**I2 under concurrency** (idempotent when serialised, not when raced). **I4 and I6 held before and
+still hold**: I4 because the whole transaction rolls back, I6 because a failure no winner explains is
+re-raised rather than swallowed. Keeping I4 while fixing I8 was the constraint, and it is exactly the
+trap the withdrawn savepoint version fell into.
 
 ## 2. Concurrency guarantees offered to callers
 
@@ -287,7 +290,7 @@ pytest tests/concurrency -q -m "slow or not slow"   # + the two wall-clock probe
 | `harness.py` | the file-backed store loader, `counts()`, and `read_barrier()` — the engine-level hook that makes a first-sighting race **deterministic** |
 | `conftest.py` | `file_store` (file-backed, always) and `second_store` (a second engine + pool over the same file) |
 | `test_storage_premises.py` | one test per premise, named for its §10 id — the version-drift detectors |
-| `test_identity_upsert.py` | the invariant suite, run against **two subjects**: the shipped method and an executable reference implementation of §4 |
+| `test_identity_upsert.py` | the invariant suite for the shipped method — I1–I8, Q2, Q5, and the second-attempt count that proves the race is real |
 
 ### Premise tests, by §10 id
 
@@ -309,23 +312,23 @@ pytest tests/concurrency -q -m "slow or not slow"   # + the two wall-clock probe
 Each of these asserts today's behaviour and names the section to re-read in its own failure message.
 **A failure here is a prompt to re-validate, not necessarily a defect.**
 
-### Invariant tests, over two subjects
+### Invariant tests
 
-`test_identity_upsert.py` parametrises every property over `shipped` (the current method) and
-`reference` (§4's algorithm, implemented in the test file so the design is executable before it is
-adopted). The diff between the two columns *is* the change being proposed:
+`test_identity_upsert.py` asserts I1–I8 and Q2/Q5 against the shipped method: sequential idempotency,
+the anti-hijack rule, the profile-column rules, a detached-instance read, a race at N = 2, 8 and 15 that
+must produce no duplicates **and no errors**, both halves of I6, and that a lost race still applies the
+loser's own profile columns.
 
-| Property | `shipped` | `reference` |
-|---|---|---|
-| I1/I3/I4 — a race never duplicates or orphans (N = 2, 8, 15) | ✔ | ✔ |
-| I2 sequential idempotency, I5 anti-hijack, profile-column rules, Q2 detached reads | ✔ | ✔ |
-| Q5 — a failure after the inserts commits nothing | ✔ | ✔ |
-| **I8 — every concurrent caller resolves** | **✘ `xfail(strict=True)`** | ✔ |
-| I6 — a failure no winner explains re-raises the original | n/a (no handler) | ✔ |
+Until commit 1 this file also carried an executable reference implementation of §4, with every property
+parametrised over both subjects and `test_I8_...` marked `xfail(strict=True)` on the shipped one. That
+marker was the implementation signal: adopting §4 turned it into an XPASS, failed the suite on purpose,
+and the same commit deleted the reference and the marker. It worked exactly as intended, which is worth
+recording for the next time a design lands ahead of its implementation.
 
-**The strict xfail is the implementation signal.** When §4 lands, `shipped` starts passing I8, the
-strict marker turns that XPASS into a suite failure, and whoever implemented it deletes the reference
-implementation and the marker. The suite tells you it is time.
+**One test earns its keep more than the rest.** `test_OB4_...` counts second attempts and requires
+exactly N−1 of them. Agreeing user ids would look identical if the callers had serialised and every one
+had hit the read — so without that count, a barrier that stopped producing conflicts would leave the
+whole file green and meaningless.
 
 ### Two things the harness had to learn the hard way
 

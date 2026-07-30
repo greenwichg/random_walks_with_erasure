@@ -1,12 +1,14 @@
 # Implementation Plan — Identity Recovery + Transaction-Retry Upsert
 
-Nothing here is implemented. This is the roadmap for two designs that are already reviewed:
+**Commit 1 is implemented; commits 2–7 are not.** This is the roadmap for two designs that are already
+reviewed:
 
 - [`IDENTITY_UPSERT_CONCURRENCY.md`](IDENTITY_UPSERT_CONCURRENCY.md) §4 — the engine-side upsert.
 - [`SESSION_IDENTITY_RECOVERY_DESIGN.md`](SESSION_IDENTITY_RECOVERY_DESIGN.md) — the web-side recovery.
 
-Acceptance is not a matter of judgement: `tests/concurrency/` already encodes it, and the reference
-implementation in `test_identity_upsert.py` is the oracle the shipped method must match.
+Acceptance is not a matter of judgement: `tests/concurrency/` encodes it. For commit 1 the oracle was an
+executable reference implementation living in `test_identity_upsert.py`; it was deleted by the commit it
+certified, exactly as planned.
 
 ---
 
@@ -14,7 +16,7 @@ implementation in `test_identity_upsert.py` is the oracle the shipped method mus
 
 | # | Tier | Commit | Observable in production? | Revert |
 |---|---|---|---|---|
-| **1** | engine | Transaction-retry upsert (§4) + collapse the harness onto the real method | yes — losers resolve instead of erroring | `git revert`, behaviour-only |
+| **1** | engine | Transaction-retry upsert (§4) + collapse the harness onto the real method — **done** | yes — losers resolve instead of erroring | `git revert`, behaviour-only |
 | **2** | web | Extract `upsertEngineUser` into `lib/engine-identity.ts` | **no** — pure move | `git revert` |
 | **3** | web | Add the memoized resolver + its unit tests, wired to nothing | **no** — dead code | `git revert` |
 | **4** | web | Persist `provider` + `providerAccountId` claims at sign-in | **no** — nothing reads them yet | `git revert` |
@@ -28,7 +30,7 @@ losing one harmless.
 
 ---
 
-## Commit 1 — engine: transaction-retry upsert
+## Commit 1 — engine: transaction-retry upsert ✅ implemented
 
 **Files**
 - `examples/store.py` — add `OperationalError` to the `sqlalchemy.exc` import; add a private
@@ -50,15 +52,15 @@ of raising. Measured today: 15 concurrent first-sightings → 10 resolve, 5 rais
 semantics are identical, which matters because there are ~100 call sites (4 in production code, the rest
 in tests) and none of them should need touching.
 
-**Tests that must pass**
+**Tests that must pass** — and did:
 ```
-pytest tests/concurrency -q -m "slow or not slow"     # 35 tests, no xfail left
-pytest tests -q                                        # full engine suite, 2148+
+pytest tests/concurrency -q -m "slow or not slow"     # 27 passed, 0 xfailed
+pytest tests -q --ignore=tests/test_plot_axis.py       # 2142 passed, 2 deselected
 ```
 Acceptance, precisely: `test_I8_every_concurrent_caller_resolves` passes for the real method at N = 2
 and 15, and `test_I1_I3_I4_concurrent_first_sighting_never_duplicates` reports **`errors == []`** rather
-than the `{"IntegrityError"}` it tolerates today. Tighten that assertion in the same commit — a suite
-that still *permits* the old failure is not holding the new contract.
+than the `{"IntegrityError"}` it used to tolerate. That assertion was tightened in the same commit — a
+suite that still *permits* the old failure is not holding the new contract.
 
 **Rollback.** `git revert`. No schema change, no API change, no data migration. The revert also restores
 the xfail, so the suite stays coherent in both directions.
