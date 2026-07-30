@@ -6,7 +6,13 @@
 #
 #   deploy/ops/update.sh v1.2.0        # deploy a new release tag
 #   deploy/ops/update.sh <prev-tag>    # ROLLBACK: redeploy the previous good tag
+#   deploy/ops/update.sh <sha>         # deploy an exact commit
+#   deploy/ops/update.sh <branch>      # deploy ORIGIN's tip of that branch (never the local branch)
 #   deploy/ops/update.sh               # rebuild the current checkout (no ref change)
+#
+# A branch name means origin's tip, and the checkout is always DETACHED at a commit. See the comment
+# at the ref-resolution step: taking a branch name literally once rolled production back 272 commits
+# without a single failing check.
 #
 # For a DATA fault (corruption), use deploy/ops/restore.sh instead — this script only moves code.
 #
@@ -46,7 +52,25 @@ if [ -n "$REF" ]; then
 
   # Resolve the ref BEFORE checking out, so an unknown ref is named as such rather than arriving as
   # a confusing checkout error two steps later.
-  if ! git rev-parse --verify --quiet "${REF}^{commit}" >/dev/null; then
+  #
+  # A BRANCH NAME RESOLVES TO THE REMOTE'S TIP, not to the local branch of the same name. `git fetch`
+  # updates `origin/<branch>` and deliberately leaves the local branch alone, so a bare `git checkout
+  # <branch>` here deployed whatever that local branch happened to point at — which, on a box that
+  # normally deploys detached at a tag or sha, is wherever it was left months ago. That is not a
+  # stale-code bug that announces itself: the checkout succeeds, the build is a cache hit because the
+  # context matches an image already built, the smoke test passes because the old code is healthy,
+  # and the script truthfully reports "now serving <old sha>". It rolled production BACKWARDS 272
+  # commits once, and the only symptom was a feature being absent from a container that had just
+  # been "deployed".
+  TARGET="$REF"
+  if git rev-parse --verify --quiet "refs/remotes/origin/${REF}^{commit}" >/dev/null; then
+    TARGET="origin/${REF}"
+    [ "$(git rev-parse --quiet --verify "refs/heads/${REF}" 2>/dev/null)" = \
+      "$(git rev-parse "refs/remotes/origin/${REF}")" ] || \
+      evidence "'${REF}' is a branch — deploying origin's tip" \
+               "$(git log --oneline -1 "refs/remotes/origin/${REF}")"
+  fi
+  if ! git rev-parse --verify --quiet "${TARGET}^{commit}" >/dev/null; then
     evidence "requested ref: ${REF}"
     evidence_from "recent commits on origin" git log --oneline -5 FETCH_HEAD
     stage_fail "ref '${REF}' does not exist in this repository after fetching" \
@@ -54,13 +78,17 @@ if [ -n "$REF" ]; then
 2. Re-run with a ref that exists. NOTHING has changed — the previous deployment is still serving." \
       "$EXIT_GIT_FETCH"
   fi
+  # Always land on a COMMIT, never on a branch. A deployment is a specific build of specific code;
+  # leaving the box on a branch invites the next `git checkout <same branch>` to mean something
+  # different from what it meant today.
+  TARGET="$(git rev-parse "${TARGET}^{commit}")"
 
   # ── GIT_CHECKOUT ───────────────────────────────────────────────────────────────────────────────
   # Moves code ON DISK. The running containers still serve the OLD image until `dc up -d`, so a
   # failure here leaves a MIXED state — checkout possibly new, service definitely old — and the
   # recovery text has to say that out loud rather than leave it to be inferred.
-  stage_enter GIT_CHECKOUT "checking out ${REF}"
-  if ! co_out="$(git checkout "$REF" 2>&1)"; then
+  stage_enter GIT_CHECKOUT "checking out ${REF} ($(git rev-parse --short "$TARGET"))"
+  if ! co_out="$(git checkout --detach "$TARGET" 2>&1)"; then
     evidence "git checkout said:"$'\n'"$(printf '%s\n' "$co_out" | sed 's/^/    /')"
     evidence_from "working tree" git status --porcelain --untracked-files=no
     stage_fail "git refused to check out '${REF}'" \
