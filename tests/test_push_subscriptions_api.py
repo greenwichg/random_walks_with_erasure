@@ -393,3 +393,60 @@ def test_reads_and_deletes_during_a_rollback_are_not_logged_as_gate_rejections(c
     client.get("/api/me/push/subscriptions", headers=h)
     client.delete("/api/me/push/subscriptions", params={"endpoint": _endpoint("x")}, headers=h)
     assert logged("push_registration_rejected") == []
+
+
+# --------------------------------------------------------------------------------------------- #
+# Claiming another reader's endpoint (P5) and the per-reader device cap (P7).
+# --------------------------------------------------------------------------------------------- #
+def test_claiming_another_readers_endpoint_without_its_secret_is_409(client, push_on, logged):
+    """Knowing an endpoint is not evidence of holding the subscription, and an endpoint leaks far
+    more easily than the secret: a log, a HAR file, a screenshot."""
+    _, alice = _user(client, "claim-alice")
+    _, bob = _user(client, "claim-bob")
+    client.post("/api/me/push/subscriptions",
+                json=_body("claimed", auth="TheRealSecret"), headers=alice)
+
+    stolen = client.post("/api/me/push/subscriptions",
+                         json=_body("claimed", auth="GuessedSecret"), headers=bob)
+    assert stolen.status_code == 409
+    assert [s["endpoint"] for s in client.get("/api/me/push/subscriptions", headers=alice).json()] \
+        == [_endpoint("claimed")], "the victim keeps their device"
+    assert client.get("/api/me/push/subscriptions", headers=bob).json() == []
+
+    line = logged("push_subscription_claim_refused")[-1]
+    assert line["_level"] == "WARNING"
+    assert _endpoint("claimed") not in json.dumps(line) and "GuessedSecret" not in json.dumps(line)
+
+
+def test_a_genuine_shared_browser_handover_still_works(client, push_on):
+    """The same browser signing in as someone else carries the same subscription, so the same secret.
+    The check must cost that nothing — it is a real and supported flow."""
+    _, alice = _user(client, "hand-alice")
+    _, bob = _user(client, "hand-bob")
+    body = _body("handover", auth="SameBrowserSecret")
+    assert client.post("/api/me/push/subscriptions", json=body, headers=alice).status_code == 200
+    assert client.post("/api/me/push/subscriptions", json=body, headers=bob).status_code == 200
+    assert client.get("/api/me/push/subscriptions", headers=alice).json() == []
+    assert len(client.get("/api/me/push/subscriptions", headers=bob).json()) == 1
+
+
+def test_devices_are_capped_per_reader_and_the_eviction_is_logged(client, push_on, monkeypatch,
+                                                                  logged):
+    monkeypatch.setenv("RWE_PUSH_MAX_DEVICES", "2")
+    _, h = _user(client, "cap")
+    for i in range(3):
+        client.post("/api/me/push/subscriptions", json=_body(f"cap-{i}"), headers=h)
+
+    kept = [s["endpoint"] for s in client.get("/api/me/push/subscriptions", headers=h).json()]
+    assert kept == [_endpoint("cap-2"), _endpoint("cap-1")], "the quietest device goes"
+
+    line = logged("push_subscription_evicted")[-1]
+    assert line["cap"] == 2 and line["userId"]
+    assert _endpoint("cap-0") not in json.dumps(line), "a digest, not the endpoint"
+
+
+def test_the_cap_falls_back_to_its_default_on_junk(client, push_on, monkeypatch):
+    monkeypatch.setenv("RWE_PUSH_MAX_DEVICES", "not-a-number")
+    assert api_fastapi._push_max_devices() == 10
+    monkeypatch.setenv("RWE_PUSH_MAX_DEVICES", "0")
+    assert api_fastapi._push_max_devices() == 0, "0 is a deliberate 'unbounded', not junk"

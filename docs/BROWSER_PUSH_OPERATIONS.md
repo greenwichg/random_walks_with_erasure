@@ -17,7 +17,7 @@ readers who already registered (§4).
 
 ## 1. Configuration
 
-All four variables live on the **`api`** service, in both compose files, and are read at call time —
+All five variables live on the **`api`** service, in both compose files, and are read at call time —
 so every change below is a `deploy/ops/restart.sh api`, never a rebuild.
 
 | Variable | Default | Used in B1 | Meaning |
@@ -26,6 +26,7 @@ so every change below is a `deploy/ops/restart.sh api`, never a rebuild.
 | `RWE_VAPID_PUBLIC_KEY` | *(empty)* | yes | Served to browsers, which subscribe against it. Public by construction. |
 | `RWE_VAPID_PRIVATE_KEY` | *(empty)* | **no** | Signs sends. Read by nothing until B2 — wired now so the pair is generated and stored once. |
 | `RWE_VAPID_SUBJECT` | *(empty)* | **no** | The `mailto:` or `https:` contact given to push services. Also B2. |
+| `RWE_PUSH_MAX_DEVICES` | `10` | yes | How many devices one reader may hold. Past the cap the least-recently-registered is dropped. `0` = unbounded. |
 
 `deploy/deployment-rules.json` enforces two things: the switch must stay wired on `api` whether or not
 it is set (an OFF switch an operator cannot reach is the failure being guarded against), and turning it
@@ -206,6 +207,8 @@ correlate a registration with the deletion of the same device and nothing else.
 | `push_subscription_updated` | INFO | same | The same browser re-registered — a key rotation repair, or the browser rotating its own subscription. Read `reason`. |
 | `push_subscription_reassigned` | **WARNING** | same + `previousUserId` | One browser's endpoint moved between accounts. Normal on a shared machine; a rising rate is worth understanding. |
 | `push_subscription_deleted` | INFO | `userId`, `endpointDigest`, `reason`, `removed` | A device was unregistered. `removed:false` means it was already gone or was never that reader's. |
+| `push_subscription_evicted` | INFO | `userId`, `endpointDigest`, `cap` | The device cap dropped a reader's quietest device. Seeing these regularly means `RWE_PUSH_MAX_DEVICES` is too low for how people actually use the product — raise it rather than wonder why push is flaky. |
+| `push_subscription_claim_refused` | **WARNING** | `userId`, `endpointDigest`, `reason` | Someone submitted an endpoint belonging to another reader **without the subscription's own secret**. No real browser can produce this, so it is a replayed endpoint or a client bug. |
 | `push_subscription_rejected` | WARNING | `path`, `fields`, `errors` | A browser produced a subscription the engine refused. **Field names only** — the submitted value is an endpoint or a key. |
 | `push_registration_rejected` | INFO | `userId`, `reason`, `enabled`, `configured` | A browser tried to register while push was off or unconfigured. |
 
@@ -233,6 +236,8 @@ $COMPOSE logs api | grep -o '"event":"push_[a-z_]*"' | sort | uniq -c    # the s
 $COMPOSE logs api | grep push_subscription_reassigned                    # shared devices changing hands
 $COMPOSE logs api | grep push_subscription_rejected                      # browsers we are refusing
 $COMPOSE logs api | grep 'push_subscription_updated.*"reason":"repair"'  # rotation repairs landing
+$COMPOSE logs api | grep push_subscription_claim_refused                 # endpoints being replayed
+$COMPOSE logs api | grep push_subscription_evicted                       # is the device cap biting?
 ```
 
 A steady trickle of `created` with occasional `deleted` is ordinary. A burst of
@@ -241,7 +246,28 @@ rollback readers have not seen yet, or a half-configured deploy. A burst of
 `push_subscription_rejected` means something about the client changed, and it will be visible to
 readers as "Could not enable".
 
+**`push_subscription_claim_refused` deserves a look every time.** An endpoint and its keys are minted
+together by the browser and rotate together, so a request naming an existing endpoint *without* its
+secret is not something a real browser produces. One or two are most likely a client bug; a pattern
+means endpoints are leaking somewhere they can be replayed from — check what is being logged, shared
+in support tickets, or captured in HAR files.
+
 There are no metrics yet — counting log lines is the whole facility in B1.
+
+### What the ownership check does and does not do
+
+Reassigning an endpoint between accounts is legitimate and supported: one browser, a reader signs
+out, another signs in. Since it is the same browser it holds the same subscription, so the request
+carries the same `auth` secret and the handover succeeds.
+
+What the check refuses is a request that names an endpoint it does not hold the secret for. That
+raises the bar from **"knows a URL"** — which leaks through logs, screenshots and HAR files — to
+**"holds the subscription material"**, which requires the browser itself.
+
+It is **not** proof of possession. Web Push offers none without sending a challenge to the device and
+having it answer, and nothing sends anything in B1. An attacker who has both an endpoint and its
+`auth` secret has, by definition, the browser's subscription — and the check cannot tell them from
+the reader.
 
 ---
 
@@ -253,11 +279,14 @@ There are no metrics yet — counting log lines is the whole facility in B1.
 | Control appears, toggle does nothing | browser console | The permission prompt was dismissed. Dismissal is neither granted nor denied; the toggle stays off and can be tried again. |
 | Toggle shows "blocked" copy | browser site settings | The reader denied notifications. `requestPermission()` is a permanent no-op after that — only the reader can undo it, in browser settings. This is why the control is disabled rather than retried. |
 | Toggle fails with "Could not enable" | `push_subscription_rejected` in the log (§6) | A `422` means the browser produced a subscription the engine rejected (endpoint not https, keys not base64url). A `503` means push was switched off between the page load and the click. |
-| Subscription rows accumulate for one reader | the query in §3 | Expected up to one per device/browser. A recent key rotation legitimately replaces one row per returning device (§5). Many rows for one device *without* a rotation means the endpoint is changing every visit, which is a browser-side anomaly worth reporting. |
+| Subscription rows accumulate for one reader | the query in §3 | Bounded by `RWE_PUSH_MAX_DEVICES` (10). A recent key rotation legitimately replaces one row per returning device (§5). Many rows for one device *without* a rotation means the endpoint is changing every visit, which is a browser-side anomaly worth reporting. |
+| A reader says push stopped working on an old device | `push_subscription_evicted` (§6) | The device cap dropped it. Expected if they use more than `RWE_PUSH_MAX_DEVICES` browsers; re-enabling on that device restores it, and raising the cap prevents a recurrence. |
+| A registration returns `409` | `push_subscription_claim_refused` (§6) | The endpoint is already registered to a different account and the request did not carry its secret. Legitimate on no real browser — see §6. |
 | Rows exist but nothing arrives | — | Correct in B1. Nothing sends yet. |
 
 **What is NOT a symptom yet:** delivery failures, `410 Gone`, retry storms, fan-out latency. None of
-that code exists. If something in this area misbehaves in B1, it is registration, not delivery.
+that code exists. Note that the device cap's eviction is *not* `410` pruning — it bounds how many
+devices one reader holds; removing endpoints a push service has declared gone is Phase B2. If something in this area misbehaves in B1, it is registration, not delivery.
 
 ---
 

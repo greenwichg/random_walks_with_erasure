@@ -87,6 +87,115 @@ def test_a_shared_browser_reassigns_the_endpoint_to_the_signed_in_reader(st):
     assert [s["endpoint"] for s in st.list_push_subscriptions(bob)] == [ENDPOINT]
 
 
+# --------------------------------------------------------------------------------------------- #
+# Claiming an endpoint (P5). Reassignment is legitimate, but knowing an endpoint STRING is not
+# evidence of holding the subscription — and an endpoint leaks far more easily than the secret does.
+# --------------------------------------------------------------------------------------------- #
+def test_a_handover_carrying_the_subscriptions_secret_succeeds(st):
+    """The real shared-browser case: the same browser, so `getSubscription()` returns the same object
+    — same endpoint, same keys. The check costs a legitimate handover nothing."""
+    alice, bob = _user(st, "alice"), _user(st, "bob")
+    _sub(st, alice, auth="SharedBrowserAuth")
+    assert _sub(st, bob, auth="SharedBrowserAuth")["outcome"] == "reassigned"
+    assert [s["endpoint"] for s in st.list_push_subscriptions(bob)] == [ENDPOINT]
+
+
+def test_claiming_another_readers_endpoint_without_its_secret_is_refused(st):
+    """The attack the check exists for: an endpoint recovered from a log, a HAR file or a screenshot,
+    replayed under another account. It would silently deregister the device that owns it and point
+    future sends at keys the real device cannot decrypt."""
+    alice, bob = _user(st, "alice"), _user(st, "bob")
+    _sub(st, alice, auth="TheRealSecret")
+
+    with pytest.raises(store_mod.PushOwnershipError):
+        _sub(st, bob, auth="GuessedSecret")
+
+    assert [s["endpoint"] for s in st.list_push_subscriptions(alice)] == [ENDPOINT], \
+        "the victim keeps their device"
+    assert st.list_push_subscriptions(bob) == []
+
+
+def test_a_refused_claim_changes_nothing_at_all(st):
+    """Not merely the ownership: a refused claim must not have rewritten the keys, the user agent or
+    the preference mirror on its way to failing."""
+    alice, bob = _user(st, "alice"), _user(st, "bob")
+    _sub(st, alice, auth="TheRealSecret", user_agent="Alice/1", categories=_cats(breaking=True))
+    # Read back through the same path as the assertion below: the write returns a tz-aware
+    # `updatedAt` and a re-read returns a naive one (the column is not declared `timezone=True`), so
+    # comparing the two forms would test the serialization, not whether anything changed.
+    before = st.list_push_subscriptions(alice)[0]
+
+    with pytest.raises(store_mod.PushOwnershipError):
+        _sub(st, bob, auth="Wrong", user_agent="Attacker/9", categories=_cats(product=True))
+
+    after = st.list_push_subscriptions(alice)[0]
+    assert after["userAgent"] == "Alice/1" and after["categories"]["breaking"] is True
+    assert after["updatedAt"] == before["updatedAt"], "not even a touched timestamp"
+
+
+def test_a_reader_refreshing_their_own_device_is_never_ownership_checked(st):
+    """No privacy boundary is crossed, so the strictness would only add a way for a legitimate
+    refresh to fail."""
+    uid = _user(st)
+    _sub(st, uid, auth="First")
+    assert _sub(st, uid, auth="Second")["outcome"] == "updated"
+
+
+# --------------------------------------------------------------------------------------------- #
+# The device cap (P7). Every registered device is a send attempt per notification once B2 exists,
+# and nothing else bounds how many an authenticated reader can accumulate.
+# --------------------------------------------------------------------------------------------- #
+def _endpoints(st, uid):
+    return [s["endpoint"] for s in st.list_push_subscriptions(uid)]
+
+
+def test_devices_past_the_cap_evict_the_least_recently_registered(st):
+    uid = _user(st)
+    for i in range(3):
+        _sub(st, uid, f"https://fcm.example/dev-{i}")
+
+    newest = _sub(st, uid, "https://fcm.example/dev-3", max_devices=3)
+    assert newest["evicted"] == ["https://fcm.example/dev-0"], "the quietest device goes"
+    assert _endpoints(st, uid) == [f"https://fcm.example/dev-{i}" for i in (3, 2, 1)]
+
+
+def test_the_device_just_registered_is_never_the_one_evicted(st):
+    """It is the newest by construction — the cap runs after the write, so the reader's current
+    browser cannot be dropped by the act of registering it."""
+    uid = _user(st)
+    _sub(st, uid, "https://fcm.example/old")
+    fresh = _sub(st, uid, "https://fcm.example/new", max_devices=1)
+    assert fresh["evicted"] == ["https://fcm.example/old"]
+    assert _endpoints(st, uid) == ["https://fcm.example/new"]
+
+
+def test_re_registering_an_existing_device_at_the_cap_evicts_nothing(st):
+    """A refresh does not add a row, so it must not cost the reader another device."""
+    uid = _user(st)
+    for i in range(2):
+        _sub(st, uid, f"https://fcm.example/keep-{i}")
+    assert _sub(st, uid, "https://fcm.example/keep-0", max_devices=2)["evicted"] == []
+    assert len(st.list_push_subscriptions(uid)) == 2
+
+
+def test_the_cap_never_reaches_another_reader(st):
+    alice, bob = _user(st, "alice"), _user(st, "bob")
+    for i in range(3):
+        _sub(st, bob, f"https://fcm.example/bob-{i}")
+    _sub(st, alice, "https://fcm.example/alice-0", max_devices=1)
+    assert len(st.list_push_subscriptions(bob)) == 3
+
+
+def test_an_absent_or_zero_cap_is_unbounded(st):
+    """The store's default, and what an operator gets by setting the knob to 0."""
+    uid = _user(st)
+    for i in range(5):
+        _sub(st, uid, f"https://fcm.example/many-{i}", max_devices=0)
+    assert len(st.list_push_subscriptions(uid)) == 5
+    _sub(st, uid, "https://fcm.example/many-5")          # no cap passed at all
+    assert len(st.list_push_subscriptions(uid)) == 6
+
+
 def test_one_reader_may_hold_several_devices(st):
     uid = _user(st)
     _sub(st, uid, ENDPOINT)

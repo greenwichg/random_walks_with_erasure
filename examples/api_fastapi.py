@@ -2869,6 +2869,17 @@ def _vapid_public_key() -> str:
     return (os.environ.get("RWE_VAPID_PUBLIC_KEY") or "").strip()
 
 
+def _push_max_devices() -> int:
+    """How many devices one reader may hold (default 10). 0 or junk means unbounded.
+
+    A bound rather than a preference: every registered device is a send attempt for every notification
+    once Phase B2 exists, so an unbounded table is unbounded fan-out cost — and nothing stops an
+    authenticated reader accumulating rows, since every fresh browser profile mints a new endpoint.
+    Ten is generous for a person and small enough that the ceiling is never the thing that breaks."""
+    raw = os.environ.get("RWE_PUSH_MAX_DEVICES", "")
+    return int(raw) if raw.strip().isdigit() else 10
+
+
 def _endpoint_digest(endpoint: str) -> str:
     """A short, stable, non-reversible handle for a push endpoint — what the logs carry instead of the
     URL.
@@ -2953,11 +2964,20 @@ def create_my_push_subscription(request: Request, req: PushSubscriptionCreate) -
             expires_at = datetime.fromtimestamp(req.expirationTime / 1000, timezone.utc).isoformat()
         except (OverflowError, OSError, ValueError):
             expires_at = None
-    saved = st.upsert_push_subscription(
-        uid, req.endpoint, p256dh=req.p256dh, auth=req.auth,
-        content_encoding=req.contentEncoding, expires_at=expires_at,
-        user_agent=req.userAgent or (request.headers.get("user-agent") or ""),
-        categories=categories)
+    try:
+        saved = st.upsert_push_subscription(
+            uid, req.endpoint, p256dh=req.p256dh, auth=req.auth,
+            content_encoding=req.contentEncoding, expires_at=expires_at,
+            user_agent=req.userAgent or (request.headers.get("user-agent") or ""),
+            categories=categories, max_devices=_push_max_devices())
+    except store.PushOwnershipError:
+        # Someone submitted an endpoint that belongs to another reader without the subscription's own
+        # secret. A real browser cannot produce this — an endpoint and its keys are minted together —
+        # so it is either a leaked endpoint being replayed or a client bug, and both are worth seeing.
+        _log(logging.WARNING, "push_subscription_claim_refused", userId=uid,
+             endpointDigest=_endpoint_digest(req.endpoint), reason=req.reason)
+        raise HTTPException(status_code=409,
+                            detail="This subscription belongs to another account.")
 
     # One line per registration, carrying the digest rather than the endpoint. `outcome` is what makes
     # these worth reading: `created` is a new device, `updated` is the same browser re-registering (a
@@ -2968,6 +2988,12 @@ def create_my_push_subscription(request: Request, req: PushSubscriptionCreate) -
          f"push_subscription_{outcome}", userId=uid, subscriptionId=saved.get("id"),
          endpointDigest=_endpoint_digest(req.endpoint), reason=req.reason,
          **({"previousUserId": saved["previousUserId"]} if outcome == "reassigned" else {}))
+    # One line per device the cap dropped. Worth its own event rather than a count on the line above:
+    # a reader losing a device they did not ask to lose is the cost of the bound, and an operator
+    # seeing these regularly should raise RWE_PUSH_MAX_DEVICES rather than wonder why push is flaky.
+    for endpoint in saved.get("evicted") or []:
+        _log(logging.INFO, "push_subscription_evicted", userId=uid,
+             endpointDigest=_endpoint_digest(endpoint), cap=_push_max_devices())
     return saved
 
 

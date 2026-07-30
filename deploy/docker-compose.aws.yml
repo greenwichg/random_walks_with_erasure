@@ -130,6 +130,10 @@ services:
       RWE_VAPID_PUBLIC_KEY: ${RWE_VAPID_PUBLIC_KEY:-}
       RWE_VAPID_PRIVATE_KEY: ${RWE_VAPID_PRIVATE_KEY:-}
       RWE_VAPID_SUBJECT: ${RWE_VAPID_SUBJECT:-}
+      # How many devices one reader may hold (default 10; 0 = unbounded). Every device is a
+      # send attempt per notification once B2 exists, and nothing else bounds how many an
+      # authenticated reader accumulates — a fresh browser profile mints a new endpoint.
+      RWE_PUSH_MAX_DEVICES: ${RWE_PUSH_MAX_DEVICES:-}
     volumes: !override
       - ${IH_DATA_DIR:-/opt/ih/data}:/app/data   # host-visible DB + backups (for off-host S3 sync)
       # The background poller's feed list (RWE_RSS_FEEDS, from the base compose) — the SAME file the

@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import gzip
 import hashlib
+import hmac
 import json
 import math
 import os
@@ -505,6 +506,15 @@ class NotificationEvent(Base):
     occurred_at: Mapped[str] = mapped_column(String(64), index=True)   # injected; the ordering key
     expires_at: Mapped[Optional[str]] = mapped_column(String(64), default=None)   # None = never
     recorded_at: Mapped[datetime] = mapped_column(default=_utcnow)     # DB write time
+
+
+class PushOwnershipError(Exception):
+    """A push subscription was claimed for an account that cannot prove it holds the subscription.
+
+    Raised only when an endpoint already registered to one reader is submitted by another WITHOUT the
+    subscription's ``auth`` secret. The API turns it into a 409; nothing else in the store raises it,
+    and no legitimate browser can provoke it (a subscription's endpoint and keys are minted together
+    and rotate together, so the pair is either both current or both replaced)."""
 
 
 class PushSubscription(Base):
@@ -2647,7 +2657,8 @@ class Store:
     def upsert_push_subscription(self, user_id: int, endpoint: str, *, p256dh: str, auth: str,
                                  content_encoding: str = "aes128gcm",
                                  expires_at: "str | None" = None, user_agent: str = "",
-                                 categories: "dict | None" = None) -> dict:
+                                 categories: "dict | None" = None,
+                                 max_devices: "int | None" = None) -> dict:
         """Register or refresh one device's push subscription. Idempotent on ``endpoint``.
 
         Three real situations arrive at this one method, and collapsing them is the point:
@@ -2666,11 +2677,36 @@ class Store:
         …}``, the ``settings.notifications.categories`` shape). Mirrored into the indexed columns as a
         query accelerator; unknown categories are ignored, and an absent one means ``False``.
 
-        Returns the stored row plus two keys the caller uses for its log line and nothing else:
-        ``outcome`` (``created`` / ``updated`` / ``reassigned``) and, for a reassignment,
-        ``previousUserId``. They are reported from here because this is the only place that can see
-        which of the three happened — the caller would need a second query to tell them apart. The
-        API's ``response_model`` declares neither, so both are stripped from the HTTP response.
+        Returns the stored row plus keys the caller uses for its log line and nothing else:
+        ``outcome`` (``created`` / ``updated`` / ``reassigned``), ``previousUserId`` for a
+        reassignment, and ``evicted`` — the endpoints dropped by the device cap. They are reported
+        from here because this is the only place that can see them without a second query. The API's
+        ``response_model`` declares none of them, so all are stripped from the HTTP response.
+
+        **Reassignment requires the subscription's own ``auth`` secret** (P5). Moving an endpoint
+        between accounts is legitimate — a shared browser signing in as someone else — but the only
+        thing the request proves is that the caller knows the endpoint string, and an endpoint leaks
+        far more easily than the secret does: a log, a HAR file, a screenshot. Left unchecked, anyone
+        holding one could silently deregister the device that owns it and point future sends at keys
+        the real device cannot decrypt.
+
+        ``auth`` is the browser's 16-byte shared secret, minted with the subscription and never
+        separable from it — a subscription's endpoint and keys are one unit, and a browser that
+        rotates gets a whole new endpoint too. So *same endpoint, different secret* is not a state a
+        real browser can be in, and a mismatch is refused (:class:`PushOwnershipError`) rather than
+        resolved. Same-user refreshes are not checked: there is no privacy boundary to cross, and the
+        strictness would only add a way for a legitimate refresh to fail.
+
+        This is not proof of possession — Web Push offers none without sending a challenge to the
+        device, which does not exist yet. It raises the bar from "knows a URL" to "holds the
+        subscription material", which is the difference between a leaked log and a compromised
+        browser.
+
+        ``max_devices`` bounds how many devices one reader may hold (P7). Over the cap, the
+        least-recently-registered are dropped: unbounded rows mean unbounded fan-out cost per
+        notification, and the device that has not checked in longest is the one most likely already
+        dead. Distinct from the ``410`` pruning Phase B2 will add, which removes endpoints the push
+        service has declared gone.
 
         **Concurrency.** The lookup is an optimisation and ``UNIQUE(endpoint)`` is the arbiter, so two
         callers registering the same *new* endpoint at once both see no row and both insert; the loser
@@ -2696,6 +2732,11 @@ class Store:
                         row = PushSubscription(endpoint=endpoint, user_id=user_id)
                         s.add(row)
                     elif row.user_id != user_id:
+                        # The privacy boundary. Constant-time because the comparison is against a
+                        # secret and the answer is returned to the caller.
+                        if not hmac.compare_digest(row.auth or "", auth or ""):
+                            raise PushOwnershipError(
+                                "This subscription belongs to another account.")
                         outcome, previous = "reassigned", row.user_id
                     else:
                         outcome, previous = "updated", None
@@ -2708,12 +2749,36 @@ class Store:
                         setattr(row, column, value)
                     row.updated_at = _utcnow()
                     s.flush()                        # surface the conflict here, not at commit
+                    # After the flush, so the row just written is the newest and can never be the one
+                    # the cap drops.
+                    evicted = self._evict_excess_push_subscriptions(s, user_id, max_devices)
                     return {**self._push_view(row), "outcome": outcome,
-                            "previousUserId": previous}
+                            "previousUserId": previous, "evicted": evicted}
             except IntegrityError:
                 if attempt:                          # not the race: a genuine constraint failure
                     raise
         raise AssertionError("unreachable")          # the loop returns or raises on both passes
+
+    @staticmethod
+    def _evict_excess_push_subscriptions(s, user_id: int, max_devices: "int | None") -> list:
+        """Drop a reader's least-recently-registered devices past ``max_devices``; returns their
+        endpoints. ``None`` or a non-positive cap means unbounded.
+
+        Ordered by ``updated_at`` rather than ``created_at``: a device that re-registers is alive, and
+        the one worth losing is the one that has not been heard from, not the one that was set up
+        first. Runs inside the caller's transaction, so a cap that cannot be applied cannot leave a
+        half-registered device behind."""
+        if not max_devices or max_devices <= 0:
+            return []
+        rows = s.scalars(select(PushSubscription)
+                         .where(PushSubscription.user_id == user_id)
+                         .order_by(PushSubscription.updated_at.desc(),
+                                   PushSubscription.id.desc())).all()
+        evicted = []
+        for row in rows[max_devices:]:
+            evicted.append(row.endpoint)
+            s.delete(row)
+        return evicted
 
     @classmethod
     def _push_flags(cls, categories: "dict | None") -> dict:
