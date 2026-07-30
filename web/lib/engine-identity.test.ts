@@ -218,27 +218,120 @@ test("no usable account id means no attempt", async () => {
   });
 });
 
-test("an email the allowlist no longer accepts never reaches the engine", async () => {
-  // Recovery is the deferred second half of a sign-in, so it re-runs sign-in's gate. Without this, a
-  // revoked reader's stale session could mint an engine account.
+/** Run `fn` with the beta gate on and `allowed` as the entire allowlist. */
+async function withAllowlist(allowed: string, fn: () => Promise<void>): Promise<void> {
   const realEnabled = process.env.BETA_ACCESS_ENABLED;
   const realList = process.env.BETA_ALLOWLIST;
   process.env.BETA_ACCESS_ENABLED = "1";
-  process.env.BETA_ALLOWLIST = "someone-else@example.com";
+  process.env.BETA_ALLOWLIST = allowed;
   try {
-    await withResolver(() => ok({ userId: 1 }), async (state) => {
-      assert.equal(await resolveEngineUserId(GOOGLE_TOKEN), null);
-      assert.equal(state.fetches, 0);
-
-      process.env.BETA_ALLOWLIST = "reader@example.com";        // now allowed
-      assert.equal(await resolveEngineUserId(GOOGLE_TOKEN), 1);
-      assert.equal(state.fetches, 1);
-    });
+    await fn();
   } finally {
     if (realEnabled === undefined) delete process.env.BETA_ACCESS_ENABLED;
     else process.env.BETA_ACCESS_ENABLED = realEnabled;
     if (realList === undefined) delete process.env.BETA_ALLOWLIST;
     else process.env.BETA_ALLOWLIST = realList;
+  }
+}
+
+test("an email the allowlist no longer accepts never reaches the engine", async () => {
+  // Recovery is the deferred second half of a sign-in, so it re-runs sign-in's gate. Without this, a
+  // revoked reader's stale session could mint an engine account.
+  await withAllowlist("someone-else@example.com", async () => {
+    await withResolver(() => ok({ userId: 1 }), async (state) => {
+      assert.equal(await resolveEngineUserId(GOOGLE_TOKEN), null);
+      assert.equal(state.fetches, 0);
+    });
+  });
+});
+
+test("a denial is REMEMBERED, so the allowlist is not re-read on every session read", async () => {
+  // The property, and the one trade it makes. `isEmailAllowed` does an uncached `readFileSync`, and the
+  // caller — `callbacks.jwt` — runs on every `getServerSession`. A denial checked per call and left
+  // unrecorded means synchronous file I/O on every server render, always returning null, for the 30-day
+  // life of the token. So the denial is a negative cache entry like any other failure (§4).
+  //
+  // Asserted by observable consequence rather than by counting syscalls: re-allowing the address has no
+  // effect until the backoff window expires, which can only be true if the memo answered without
+  // re-running the check.
+  await withAllowlist("someone-else@example.com", async () => {
+    await withResolver(() => ok({ userId: 1 }), async (state) => {
+      assert.equal(await resolveEngineUserId(GOOGLE_TOKEN), null);
+      assert.equal(__identityCacheStats().entries, 1, "the denial must be recorded, not merely returned");
+
+      process.env.BETA_ALLOWLIST = "reader@example.com";        // the operator approves them
+      for (let i = 0; i < 10; i++) assert.equal(await resolveEngineUserId(GOOGLE_TOKEN), null);
+      assert.equal(state.fetches, 0, "the cached denial must answer without re-reading the allowlist");
+
+      // And the trade: approval takes effect within one backoff window, not instantly. That is the
+      // whole cost, and it is well inside what BETA_ACCESS_ENABLED already implies.
+      advance(30 * 1000 + 1);
+      assert.equal(await resolveEngineUserId(GOOGLE_TOKEN), 1);
+      assert.equal(state.fetches, 1);
+    });
+  });
+});
+
+test("a denial is cached under its own identity and cannot deny anyone else", async () => {
+  await withAllowlist("b@example.com", async () => {
+    await withResolver(() => ok({ userId: 22 }), async (state) => {
+      const denied = { provider: "google", providerAccountId: "acct-a", email: "a@example.com" };
+      const allowed = { provider: "google", providerAccountId: "acct-b", email: "b@example.com" };
+
+      assert.equal(await resolveEngineUserId(denied), null);
+      assert.equal(await resolveEngineUserId(allowed), 22, "one reader's denial must not block another");
+      assert.equal(state.fetches, 1);
+    });
+  });
+});
+
+// --------------------------------------------------------------------------------------------------
+// The kill switch. `RWE_IDENTITY_RECOVERY=0` must reproduce pre-recovery behaviour exactly, without a
+// rebuild — the rollback path in IDENTITY_RECOVERY_IMPLEMENTATION_PLAN.md's commit 5.
+// --------------------------------------------------------------------------------------------------
+
+async function withRecoveryFlag(value: string | undefined, fn: () => Promise<void>): Promise<void> {
+  const real = process.env.RWE_IDENTITY_RECOVERY;
+  if (value === undefined) delete process.env.RWE_IDENTITY_RECOVERY;
+  else process.env.RWE_IDENTITY_RECOVERY = value;
+  try {
+    await fn();
+  } finally {
+    if (real === undefined) delete process.env.RWE_IDENTITY_RECOVERY;
+    else process.env.RWE_IDENTITY_RECOVERY = real;
+  }
+}
+
+test("RWE_IDENTITY_RECOVERY=0 disables recovery and restores pre-recovery behaviour", async () => {
+  for (const off of ["0", "false", "no", "off", "OFF", " 0 "]) {
+    await withRecoveryFlag(off, async () => {
+      await withResolver(() => ok({ userId: 42 }), async (state) => {
+        assert.equal(await resolveEngineUserId(GOOGLE_TOKEN), null, `flag=${JSON.stringify(off)}`);
+        assert.equal(state.fetches, 0);
+        assert.equal(__identityCacheStats().entries, 0, "a disabled resolver must not cache anything");
+      });
+    });
+  }
+});
+
+test("the switch never disables the token's own id — that is not recovery", async () => {
+  // Disabling recovery must not sign anyone out or de-attribute a working session.
+  await withRecoveryFlag("0", async () => {
+    await withResolver(() => ok({ userId: 999 }), async (state) => {
+      assert.equal(await resolveEngineUserId({ ...GOOGLE_TOKEN, engineUserId: 42 }), 42);
+      assert.equal(state.fetches, 0);
+    });
+  });
+});
+
+test("recovery is on by default and stays on for any value that is not a documented off", async () => {
+  for (const on of [undefined, "1", "true", "yes", "on", ""]) {
+    await withRecoveryFlag(on, async () => {
+      await withResolver(() => ok({ userId: 42 }), async (state) => {
+        assert.equal(await resolveEngineUserId(GOOGLE_TOKEN), 42, `flag=${JSON.stringify(on)}`);
+        assert.equal(state.fetches, 1);
+      });
+    });
   }
 });
 

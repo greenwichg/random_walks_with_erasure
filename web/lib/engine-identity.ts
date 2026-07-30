@@ -76,12 +76,26 @@ export async function upsertEngineUser(input: {
  * Design, including why each cache layer exists and what it may not be relied upon for:
  * docs/SESSION_IDENTITY_RECOVERY_DESIGN.md §3–§5.
  *
- * NOTHING CALLS THIS YET. It is wired to `callbacks.jwt` — the single call site — in commit 5 of
- * docs/IDENTITY_RECOVERY_IMPLEMENTATION_PLAN.md, so that the logic arrives complete and tested before
- * anything depends on it. An earlier revision of that plan added a second call site in
- * `engineAuthHeaders`; it was deleted once tracing showed a heal here is already visible to that
- * function in the same request (SESSION_IDENTITY_RECOVERY_DESIGN.md §2a).
+ * ONE CALLER, and it must stay that way: `callbacks.jwt` in `lib/auth-callbacks.ts`. An earlier
+ * revision of the plan added a second call site in `engineAuthHeaders`; it was deleted once tracing
+ * showed that `routes/session.js` builds the session object from `callbacks.jwt`'s RETURN VALUE, so a
+ * heal here is already visible to `engineAuthHeaders` in the same request — no cookie involved
+ * (SESSION_IDENTITY_RECOVERY_DESIGN.md §2a). A second entry point would resolve an id the first one
+ * had, moments earlier, already put on the token it was about to read.
  * ---------------------------------------------------------------------------------------------- */
+
+/**
+ * The kill switch. Default on; `RWE_IDENTITY_RECOVERY=0` (or `false`/`no`/`off`) turns recovery off
+ * without a rebuild — edit `deploy/.env`, `docker compose up -d web`, done.
+ *
+ * Read per call rather than at module load, so the restart is what applies it rather than a rebuild,
+ * and so a test can flip it. Disabling reproduces today's behaviour exactly: a token that has an id
+ * still uses it (that is not recovery), and a token that has none resolves to `null` as it does now.
+ */
+function recoveryEnabled(): boolean {
+  const raw = (process.env.RWE_IDENTITY_RECOVERY ?? "1").trim().toLowerCase();
+  return !["0", "false", "no", "off"].includes(raw);
+}
 
 /** How long a resolved id is reused without asking the engine again. */
 const MEMO_TTL_MS = 10 * 60 * 1000;
@@ -153,6 +167,10 @@ function remember(key: string, userId: number | null): void {
 export async function resolveEngineUserId(token: RecoverableToken): Promise<number | null> {
   if (typeof token.engineUserId === "number") return token.engineUserId;
 
+  // Below this line is recovery proper, and it is all the kill switch has to disable: returning `null`
+  // here is precisely what the code did before recovery existed.
+  if (!recoveryEnabled()) return null;
+
   // A token minted before the provider claims existed carries the Google `sub` in `token.sub`, which
   // IS the provider account id. That fallback is only safe because a `dev` token can never reach this
   // point: the credentials provider fails sign-in outright when its upsert fails, so a dev session
@@ -168,11 +186,6 @@ export async function resolveEngineUserId(token: RecoverableToken): Promise<numb
         : null;
   if (!providerAccountId) return null;
 
-  // Recovery is the deferred second half of a sign-in, so it re-runs the gate that sign-in ran. A
-  // reader removed from the allowlist since must not get an engine account created by a stale session.
-  const email = typeof token.email === "string" ? token.email : null;
-  if (!isEmailAllowed(email).allowed) return null;
-
   const key = cacheKey(provider, providerAccountId);
 
   const cached = memo.get(key);
@@ -180,6 +193,22 @@ export async function resolveEngineUserId(token: RecoverableToken): Promise<numb
 
   const pending = inflight.get(key);
   if (pending) return pending;          // another caller is already asking for this exact identity
+
+  // Recovery is the deferred second half of a sign-in, so it re-runs the gate that sign-in ran. A
+  // reader removed from the allowlist since must not get an engine account created by a stale session.
+  //
+  // AFTER the cache lookups, not before, and the denial is REMEMBERED. `isEmailAllowed` does an
+  // uncached `readFileSync` of BETA_ALLOWLIST_FILE, and the caller is `callbacks.jwt`, which runs on
+  // every session read — so a denial checked first and left unrecorded would mean synchronous file I/O
+  // on every server render, always returning null, for the 30-day life of the token. Recorded as a
+  // negative entry it costs one read per backoff window instead. What the check exists to prevent —
+  // an engine account created for a removed reader — a cached denial prevents just as well.
+  // docs/SESSION_IDENTITY_RECOVERY_DESIGN.md §4.
+  const email = typeof token.email === "string" ? token.email : null;
+  if (!isEmailAllowed(email).allowed) {
+    remember(key, null);
+    return null;
+  }
 
   const attempt = upsertEngineUser({
     provider,

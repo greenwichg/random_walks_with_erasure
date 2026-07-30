@@ -13,7 +13,7 @@
 import type { NextAuthOptions } from "next-auth";
 
 import { isEmailAllowed } from "./beta-access.ts";
-import { upsertEngineUser } from "./engine-identity.ts";
+import { resolveEngineUserId, upsertEngineUser } from "./engine-identity.ts";
 
 type Callbacks = NonNullable<NextAuthOptions["callbacks"]>;
 
@@ -61,6 +61,27 @@ export const jwtCallback: Callbacks["jwt"] = async function jwt({ token, account
   if (account) {
     token.provider = account.provider;
     if (account.provider === "google") token.providerAccountId = account.providerAccountId;
+  }
+
+  // Recovery. A session whose token carries no engine id cannot be attributed to anyone — every
+  // /api/me/* call goes out anonymous and the engine answers 401, for the life of that session. It
+  // happens when the engine is unreachable during the few hundred milliseconds of sign-in above, which
+  // swallows the failure by design. Resolve it from the claims the signed token already carries.
+  //
+  // This is the ONLY recovery call site, and one is enough for both halves of the repair:
+  //   - the CURRENT request is already correct, because next-auth's session route builds the session
+  //     object from this callback's return value, in-process, before anything is serialised;
+  //   - the repair becomes DURABLE on the next response that can actually set cookies — the
+  //     /api/auth/session fetch SessionProvider issues on mount and on window focus.
+  // Traced rather than reasoned: docs/SESSION_IDENTITY_RECOVERY_DESIGN.md §2a.
+  //
+  // `!account` is load-bearing. `account` is present on exactly one invocation — the sign-in — and
+  // that is the invocation that has JUST run `upsertEngineUser` above. Without this guard, a sign-in
+  // that failed to reach the engine would fire a second upsert milliseconds after the first one
+  // failed, into an engine that is already failing, with no memo entry yet to suppress it. §3.
+  if (!account && token.engineUserId == null) {
+    const recovered = await resolveEngineUserId(token);
+    if (recovered != null) token.engineUserId = recovered;
   }
   return token;
 };

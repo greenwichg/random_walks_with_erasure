@@ -295,8 +295,10 @@ upsert is half-migrated. The two tiers are independent: web commits work against
 
 Commit 1 is done when, with `upsert_reference` deleted:
 
-- `pytest tests/concurrency -q -m "slow or not slow"` → **35 passed, 0 xfailed** (the xfail is gone
-  because the behaviour it described is gone).
+- `pytest tests/concurrency -q -m "slow or not slow"` → **27 passed, 0 xfailed** (the xfail is gone
+  because the behaviour it described is gone). *This line said 35 until commit 5 measured it: 35 was a
+  forecast written before commit 1, and deleting `upsert_reference` took its parameterised cases with
+  it. The substantive criteria below are what the number was standing in for.*
 - `test_I1_I3_I4_concurrent_first_sighting_never_duplicates` asserts `errors == []` at N = 2, 8, 15.
 - Every premise test in `test_storage_premises.py` is **untouched**. If commit 1 needs one of them
   changed, the design changed too and this plan is stale — stop and re-read

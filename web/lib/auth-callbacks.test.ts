@@ -10,6 +10,7 @@ import assert from "node:assert/strict";
 import { decode, encode } from "next-auth/jwt";
 
 import { jwtCallback, sessionCallback } from "./auth-callbacks.ts";
+import { __identityCacheStats, __resetIdentityCache } from "./engine-identity.ts";
 
 const SUB = "108461123456789012345";
 const SECRET = "test-secret-at-least-32-characters-long!";
@@ -158,4 +159,151 @@ test("the claims stay on the JWT and never reach the browser session", async () 
   assert.equal((result as { engineUserId?: number }).engineUserId, 42);
   assert.equal("provider" in result, false);
   assert.equal("providerAccountId" in result, false);
+});
+
+// --------------------------------------------------------------------------------------------------
+// Recovery, from the caller's side (SESSION_IDENTITY_RECOVERY_DESIGN.md §3).
+//
+// `callbacks.jwt` is the ONLY recovery call site. These assert by engine-call count rather than by
+// spying on the resolver, because the count is the thing that matters in production: a regression here
+// is either a per-request engine call or a second upsert into an engine that is already failing.
+// --------------------------------------------------------------------------------------------------
+
+/** Count engine calls across a `jwt` invocation, with the memo cleared either side. */
+async function countingEngine(
+  reply: () => unknown,
+  fn: (state: { fetches: number }) => Promise<void>,
+): Promise<void> {
+  const g = globalThis as unknown as { fetch: unknown };
+  const realFetch = g.fetch;
+  const realWarn = console.warn;
+  const state = { fetches: 0 };
+
+  __resetIdentityCache();
+  g.fetch = async () => {
+    state.fetches += 1;
+    const value = reply();
+    if (value instanceof Error) throw value;
+    return value;
+  };
+  console.warn = () => {};                         // the recovery log line
+  try {
+    await fn(state);
+  } finally {
+    g.fetch = realFetch;
+    console.warn = realWarn;
+    __resetIdentityCache();
+  }
+}
+
+/** A session that signed in while the engine was down: claims present, no engine id. */
+const brokenSession = () => ({
+  token: { name: "A Reader", email: "reader@example.com", sub: SUB,
+           provider: "google", providerAccountId: SUB },
+});
+
+test("a session with no engine id is healed on a later invocation", async () => {
+  // §8 test 11. The whole point: a session created during an engine outage repairs itself, with no
+  // sign-out, from the claims the signed token already carries.
+  await countingEngine(() => ({ ok: true, json: async () => ({ userId: 42 }) }), async (state) => {
+    const token = await jwt(brokenSession() as never);
+    assert.equal(token.engineUserId, 42, "the healed id must be written onto the token");
+    assert.equal(state.fetches, 1);
+  });
+});
+
+test("a session that already has an engine id triggers no engine call at all", async () => {
+  // §8 test 12. `callbacks.jwt` runs on EVERY getServerSession, so a regression here is one engine
+  // call per server render. Only a call count catches it.
+  await countingEngine(() => ({ ok: true, json: async () => ({ userId: 999 }) }), async (state) => {
+    const token = await jwt({ token: { ...brokenSession().token, engineUserId: 42 } } as never);
+    assert.equal(token.engineUserId, 42, "the token's own id must be left alone");
+    assert.equal(state.fetches, 0);
+  });
+});
+
+test("INVARIANT: the sign-in invocation never recovers, even when its own upsert failed", async () => {
+  // §8 test 13, and the reason the `!account` guard exists. Sign-in has just called upsertEngineUser
+  // itself; without the guard a failing engine would be called a SECOND time milliseconds later, with
+  // no memo entry yet to suppress it. Exactly one call, or the guard is gone.
+  await countingEngine(() => ({ ok: false, status: 503, json: async () => ({}) }), async (state) => {
+    const token = await jwt({ ...googleSignIn(), trigger: "signIn" } as never);
+    assert.equal(state.fetches, 1, `sign-in against a failing engine made ${state.fetches} calls`);
+    assert.equal(token.engineUserId, undefined, "and it stays unresolved until the next request");
+    assert.equal(__identityCacheStats().entries, 0, "recovery never ran, so it cached nothing");
+  });
+});
+
+test("a successful sign-in also performs exactly one upsert", async () => {
+  await countingEngine(() => ({ ok: true, json: async () => ({ userId: 42 }) }), async (state) => {
+    const token = await jwt({ ...googleSignIn(), trigger: "signIn" } as never);
+    assert.equal(token.engineUserId, 42);
+    assert.equal(state.fetches, 1);
+  });
+});
+
+test("a failed recovery leaves the token exactly as it was, and is not retried per request", async () => {
+  // Fail-soft: the reader stays signed in and un-attributed, which is today's behaviour, rather than
+  // being signed out or having `engineUserId: null` written onto the token.
+  await countingEngine(() => ({ ok: false, status: 503, json: async () => ({}) }), async (state) => {
+    const before = brokenSession().token;
+    const token = await jwt({ token: { ...before } } as never);
+    assert.deepEqual(token, before, "nothing may be written when recovery fails");
+
+    for (let i = 0; i < 10; i++) await jwt({ token: { ...before } } as never);
+    assert.equal(state.fetches, 1, "the backoff must suppress a retry on every session read");
+  });
+});
+
+test("a dev session is never recovered, whatever its `sub` holds", async () => {
+  // A dev token's `sub` is an ENGINE USER ID, not a provider account id. The credentials provider fails
+  // sign-in outright when its upsert fails, so a dev session always has an id — but if one ever lacked
+  // it, resolving on `sub` would key the upsert on an integer that means something else entirely.
+  await countingEngine(() => ({ ok: true, json: async () => ({ userId: 1 }) }), async (state) => {
+    const token = await jwt({
+      token: { name: "Demo Reader", email: "demo@infodiet.local", sub: "31", provider: "dev" },
+    } as never);
+    assert.equal(token.engineUserId, undefined);
+    assert.equal(state.fetches, 0);
+  });
+});
+
+test("a legacy token with no claims is healed through its `sub`", async () => {
+  // Sessions minted before commit 4 carry neither `provider` nor `providerAccountId`. For Google, `sub`
+  // IS the provider account id, so they recover too — no forced sign-out on deploy (§9a).
+  await countingEngine(() => ({ ok: true, json: async () => ({ userId: 42 }) }), async (state) => {
+    const token = await jwt({
+      token: { name: "A Reader", email: "reader@example.com", sub: SUB },
+    } as never);
+    assert.equal(token.engineUserId, 42);
+    assert.equal(state.fetches, 1);
+  });
+});
+
+test("concurrent session reads for one identity make a single engine call", async () => {
+  // Several route handlers rendering one page each call getServerSession, so each runs this callback.
+  // They must share one upsert, not race to create the same identity N times.
+  await countingEngine(() => ({ ok: true, json: async () => ({ userId: 42 }) }), async (state) => {
+    const tokens = await Promise.all(
+      Array.from({ length: 12 }, () => jwt({ token: { ...brokenSession().token } } as never)),
+    );
+    assert.deepEqual([...new Set(tokens.map((t) => t.engineUserId))], [42]);
+    assert.equal(state.fetches, 1, `12 concurrent session reads made ${state.fetches} engine calls`);
+  });
+});
+
+test("RWE_IDENTITY_RECOVERY=0 turns the call site back into a no-op", async () => {
+  const real = process.env.RWE_IDENTITY_RECOVERY;
+  process.env.RWE_IDENTITY_RECOVERY = "0";
+  try {
+    await countingEngine(() => ({ ok: true, json: async () => ({ userId: 42 }) }), async (state) => {
+      const before = brokenSession().token;
+      const token = await jwt({ token: { ...before } } as never);
+      assert.deepEqual(token, before, "with recovery off the callback must not touch the token");
+      assert.equal(state.fetches, 0);
+    });
+  } finally {
+    if (real === undefined) delete process.env.RWE_IDENTITY_RECOVERY;
+    else process.env.RWE_IDENTITY_RECOVERY = real;
+  }
 });
