@@ -14,6 +14,7 @@ import {
   subscriptionMatchesKey,
   urlBase64ToUint8Array,
   type PushPermission,
+  type PushReason,
 } from "./push";
 
 export const SW_URL = "/sw.js";
@@ -65,12 +66,19 @@ export async function registerServiceWorker(): Promise<ServiceWorkerRegistration
   }
 }
 
-/** The subscription this browser currently holds, if any. */
+/**
+ * The subscription this browser currently holds, if any.
+ *
+ * `getRegistration()`, deliberately, and not `ready`: `navigator.serviceWorker.ready` never settles
+ * when nothing is registered. That was survivable while this was only called after registering, but
+ * it is called now on a deployment with push switched off — where the worker is not registered and
+ * `ready` would hang the caller forever rather than answering "no subscription".
+ */
 export async function currentSubscription(): Promise<PushSubscription | null> {
   if (!pushSupported()) return null;
   try {
-    const reg = await navigator.serviceWorker.ready;
-    return await reg.pushManager.getSubscription();
+    const reg = await navigator.serviceWorker.getRegistration();
+    return reg ? await reg.pushManager.getSubscription() : null;
   } catch {
     return null;
   }
@@ -92,11 +100,12 @@ export async function subscriptionIsCurrent(serverKey: string): Promise<boolean>
 
 /** Tell the engine to forget an endpoint. Best-effort: used to retire a rotated-away subscription,
  *  where failing to clean up leaves a stale row rather than breaking the live one. */
-async function deregisterEndpoint(endpoint: string): Promise<void> {
+async function deregisterEndpoint(endpoint: string, reason: PushReason): Promise<void> {
   try {
-    await fetch(`/api/push/subscriptions?endpoint=${encodeURIComponent(endpoint)}`, {
-      method: "DELETE",
-    });
+    await fetch(
+      `/api/push/subscriptions?endpoint=${encodeURIComponent(endpoint)}&reason=${reason}`,
+      { method: "DELETE" },
+    );
   } catch {
     /* the new subscription is already registered; a stale row is the lesser failure */
   }
@@ -117,6 +126,7 @@ async function deregisterEndpoint(endpoint: string): Promise<void> {
 async function ensureSubscribed(
   reg: ServiceWorkerRegistration,
   serverKey: string,
+  reason: PushReason,
 ): Promise<boolean> {
   let sub = await reg.pushManager.getSubscription();
   let retired: string | null = null;
@@ -137,7 +147,7 @@ async function ensureSubscribed(
   const res = await fetch("/api/push/subscriptions", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ ...body, reason }),
   });
   if (!res.ok) {
     await sub.unsubscribe();            // roll back, so the two sides cannot disagree
@@ -145,7 +155,7 @@ async function ensureSubscribed(
   }
   // Only now that the replacement is live: the endpoint we rotated away from can never be delivered
   // to again, and leaving it behind means the engine pays to attempt a dead device on every fan-out.
-  if (retired && retired !== body.endpoint) await deregisterEndpoint(retired);
+  if (retired && retired !== body.endpoint) await deregisterEndpoint(retired, "repair_retire");
   return true;
 }
 
@@ -162,7 +172,7 @@ export async function subscribe(serverKey: string): Promise<"on" | "blocked" | "
 
   const reg = await registerServiceWorker();
   if (!reg) return "failed";
-  return (await ensureSubscribed(reg, serverKey)) ? "on" : "failed";
+  return (await ensureSubscribed(reg, serverKey, "user")) ? "on" : "failed";
 }
 
 /**
@@ -196,7 +206,7 @@ export async function repairSubscription(serverKey: string, configured: boolean)
       return false;
     }
     const reg = await registerServiceWorker();
-    return reg ? await ensureSubscribed(reg, serverKey) : false;
+    return reg ? await ensureSubscribed(reg, serverKey, "repair") : false;
   } catch {
     return false;
   }
@@ -211,9 +221,10 @@ export async function unsubscribe(): Promise<boolean> {
   const sub = await currentSubscription();
   if (!sub) return true;
   try {
-    await fetch(`/api/push/subscriptions?endpoint=${encodeURIComponent(sub.endpoint)}`, {
-      method: "DELETE",
-    });
+    await fetch(
+      `/api/push/subscriptions?endpoint=${encodeURIComponent(sub.endpoint)}&reason=user`,
+      { method: "DELETE" },
+    );
   } catch {
     /* fall through — the local unsubscribe below still matters */
   }

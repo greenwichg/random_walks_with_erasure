@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import contextvars
 import dataclasses
+import hashlib
 import json
 import math
 import logging
@@ -430,6 +431,14 @@ _HTTP_CODES = {400: "bad_request", 401: "unauthorized", 404: "not_found",
 
 @app.exception_handler(RequestValidationError)
 async def _on_validation_error(request: Request, exc: RequestValidationError):
+    # Push registrations are logged on rejection, and only push: a browser producing subscriptions the
+    # engine will not accept is invisible from both ends otherwise — the reader sees "could not
+    # enable" and the operator sees a bare 422 count. Field NAMES only; a validation error's context
+    # echoes the submitted value, which for this route is an endpoint or a device key.
+    if request.url.path.startswith("/api/me/push/"):
+        fields = sorted({str(e.get("loc", ["?"])[-1]) for e in exc.errors()})
+        _log(logging.WARNING, "push_subscription_rejected",
+             path=request.url.path, fields=fields, errors=len(exc.errors()))
     return _error(422, "invalid_request", "One or more request parameters are invalid.")
 
 
@@ -902,6 +911,19 @@ class PushSubscriptionModel(BaseModel):
     updatedAt: str | None = None
 
 
+#: Why a subscription changed — a closed set, so a client cannot write arbitrary strings into the
+#: operational log. ``repair_retire`` applies only to deletions (the endpoint a VAPID rotation
+#: replaced), the rest only to registrations.
+PushReason = Literal["user", "repair", "worker", "repair_retire"]
+
+
+def _push_reason(value: str) -> str:
+    """Clamp a deletion's ``reason`` query parameter to the closed set. A query parameter cannot be
+    validated by the request model, and an unrecognised value is a log-injection vector rather than
+    something worth rejecting a deletion over — so it degrades to ``user``."""
+    return value if value in ("user", "repair", "worker", "repair_retire") else "user"
+
+
 class PushSubscriptionCreate(BaseModel):
     """A browser's `PushSubscription`, flattened. Validated rather than trusted: this arrives from a
     client, the endpoint becomes a URL the engine will later POST to, and the keys become the
@@ -915,6 +937,12 @@ class PushSubscriptionCreate(BaseModel):
     #: case). Advisory only; a 410 from the push service is the authoritative end of a subscription.
     expirationTime: int | None = None
     userAgent: str = Field(default="", max_length=255)
+    #: What caused this registration, for the operational log only — it changes no behaviour and is
+    #: never stored. Without it every registration looks alike, and the question a key rotation makes
+    #: urgent ("are devices actually repairing themselves?") has no answer in the logs.
+    #: ``user`` a reader enabled it · ``repair`` the client found a retired VAPID key and re-subscribed
+    #: · ``worker`` the browser rotated the subscription and the service worker re-registered it.
+    reason: PushReason = "user"
 
     @field_validator("endpoint")
     @classmethod
@@ -2841,9 +2869,25 @@ def _vapid_public_key() -> str:
     return (os.environ.get("RWE_VAPID_PUBLIC_KEY") or "").strip()
 
 
-def _require_push() -> None:
-    """Fail-closed gate for every push route. 503 rather than 404: the endpoint exists and the reason
-    it will not serve is configuration, which is what an operator needs to be told."""
+def _endpoint_digest(endpoint: str) -> str:
+    """A short, stable, non-reversible handle for a push endpoint — what the logs carry instead of the
+    URL.
+
+    An endpoint is a capability: anything that can reach it can, with the right key, address that
+    device. It also identifies a specific browser install. Neither belongs in a log that is shipped,
+    rotated and read by people, so operational lines carry this digest, which is enough to correlate a
+    registration with the deletion of the same device and nothing else."""
+    return hashlib.sha256((endpoint or "").encode("utf-8")).hexdigest()[:12]
+
+
+def _require_push_registration() -> None:
+    """Fail-closed gate for **registration only**. 503 rather than 404: the route exists and the
+    reason it will not serve is configuration, which is what an operator needs to be told.
+
+    Reads and deletions are deliberately NOT gated. Rolling push back must not strand a reader with a
+    registered device they cannot inspect or remove: the rows survive a rollback by design (so
+    re-enabling does not ask everyone to opt in again), which is exactly why the way out has to keep
+    working while the way in is closed."""
     if not _push_enabled():
         raise HTTPException(status_code=503, detail="Push notifications are not enabled.")
     if not _vapid_public_key():
@@ -2864,8 +2908,11 @@ def push_config() -> dict:
 @app.get("/api/me/push/subscriptions", response_model=list[PushSubscriptionModel], tags=["meta"],
          summary="The signed-in reader's registered push devices", responses=_ERR_RESPONSES)
 def my_push_subscriptions(request: Request) -> list:
-    """One entry per device. Never includes the devices' encryption keys."""
-    _require_push()
+    """One entry per device. Never includes the devices' encryption keys.
+
+    **Not gated by the feature switch** — see :func:`_require_push_registration`. A reader must be able
+    to see what is registered in their name even while push is switched off, because the rows outlive
+    the rollback."""
     uid = _require_real_user(request)
     return _require_store().list_push_subscriptions(uid)
 
@@ -2881,9 +2928,20 @@ def create_my_push_subscription(request: Request, req: PushSubscriptionCreate) -
 
     The reader's current per-category push preferences are mirrored onto the row as an indexed query
     accelerator for a later fan-out. Settings remain the authority; this copy is never consulted for
-    consent on its own."""
-    _require_push()
+    consent on its own.
+
+    The **only** push route the feature switch gates: while push is off no new device may register,
+    but the ones already registered stay readable and removable."""
     uid = _require_real_user(request)
+    try:
+        _require_push_registration()
+    except HTTPException:
+        # Logged rather than silently 503'd: a burst of these is how an operator learns that browsers
+        # are still trying to register against a deployment where push was switched off — either a
+        # rollback that readers have not seen yet, or a half-configured deploy.
+        _log(logging.INFO, "push_registration_rejected", userId=uid, reason=req.reason,
+             enabled=_push_enabled(), configured=bool(_vapid_public_key()))
+        raise
     st = _require_store()
     categories = (settings_service.get(st, uid).get("notifications") or {}).get("categories")
     expires_at = None
@@ -2895,23 +2953,40 @@ def create_my_push_subscription(request: Request, req: PushSubscriptionCreate) -
             expires_at = datetime.fromtimestamp(req.expirationTime / 1000, timezone.utc).isoformat()
         except (OverflowError, OSError, ValueError):
             expires_at = None
-    return st.upsert_push_subscription(
+    saved = st.upsert_push_subscription(
         uid, req.endpoint, p256dh=req.p256dh, auth=req.auth,
         content_encoding=req.contentEncoding, expires_at=expires_at,
         user_agent=req.userAgent or (request.headers.get("user-agent") or ""),
         categories=categories)
 
+    # One line per registration, carrying the digest rather than the endpoint. `outcome` is what makes
+    # these worth reading: `created` is a new device, `updated` is the same browser re-registering (a
+    # key rotation or `pushsubscriptionchange`), and `reassigned` is a shared browser changing hands —
+    # the last is the one nobody should see often, and until now it happened silently.
+    outcome = saved.get("outcome")
+    _log(logging.WARNING if outcome == "reassigned" else logging.INFO,
+         f"push_subscription_{outcome}", userId=uid, subscriptionId=saved.get("id"),
+         endpointDigest=_endpoint_digest(req.endpoint), reason=req.reason,
+         **({"previousUserId": saved["previousUserId"]} if outcome == "reassigned" else {}))
+    return saved
+
 
 @app.delete("/api/me/push/subscriptions", tags=["meta"],
             summary="Unregister a push subscription for the signed-in reader",
             responses=_ERR_RESPONSES)
-def delete_my_push_subscription(request: Request, endpoint: str) -> dict:
+def delete_my_push_subscription(request: Request, endpoint: str,
+                                reason: str = "user") -> dict:
     """Unregister one device. ``endpoint`` is a query parameter because it is a URL and must not sit
     in a path segment (same reason as ``DELETE /api/me/saved``). User-scoped and idempotent:
-    ``removed`` is ``False`` for an endpoint that was already gone or was never this reader's."""
-    _require_push()
+    ``removed`` is ``False`` for an endpoint that was already gone or was never this reader's.
+
+    **Not gated by the feature switch.** Turning push off must never trap a reader with a device they
+    cannot remove — see :func:`_require_push_registration`."""
     uid = _require_real_user(request)
-    return {"ok": True, "removed": bool(_require_store().delete_push_subscription(uid, endpoint))}
+    removed = bool(_require_store().delete_push_subscription(uid, endpoint))
+    _log(logging.INFO, "push_subscription_deleted", userId=uid,
+         endpointDigest=_endpoint_digest(endpoint), reason=_push_reason(reason), removed=removed)
+    return {"ok": True, "removed": removed}
 
 
 @app.post("/api/me/recommendations/opened", response_model=RecReceptionModel,

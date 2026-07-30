@@ -2665,7 +2665,12 @@ class Store:
         ``categories`` is the reader's per-category push preferences (``{"breaking": {"push": True},
         …}``, the ``settings.notifications.categories`` shape). Mirrored into the indexed columns as a
         query accelerator; unknown categories are ignored, and an absent one means ``False``.
-        Returns the stored row.
+
+        Returns the stored row plus two keys the caller uses for its log line and nothing else:
+        ``outcome`` (``created`` / ``updated`` / ``reassigned``) and, for a reassignment,
+        ``previousUserId``. They are reported from here because this is the only place that can see
+        which of the three happened — the caller would need a second query to tell them apart. The
+        API's ``response_model`` declares neither, so both are stripped from the HTTP response.
 
         **Concurrency.** The lookup is an optimisation and ``UNIQUE(endpoint)`` is the arbiter, so two
         callers registering the same *new* endpoint at once both see no row and both insert; the loser
@@ -2687,8 +2692,13 @@ class Store:
                     row = s.scalar(select(PushSubscription)
                                    .where(PushSubscription.endpoint == endpoint))
                     if row is None:
+                        outcome, previous = "created", None
                         row = PushSubscription(endpoint=endpoint, user_id=user_id)
                         s.add(row)
+                    elif row.user_id != user_id:
+                        outcome, previous = "reassigned", row.user_id
+                    else:
+                        outcome, previous = "updated", None
                     row.user_id = user_id            # reassignment: the signed-in reader owns it now
                     row.p256dh, row.auth = p256dh, auth
                     row.content_encoding = content_encoding or "aes128gcm"
@@ -2698,7 +2708,8 @@ class Store:
                         setattr(row, column, value)
                     row.updated_at = _utcnow()
                     s.flush()                        # surface the conflict here, not at commit
-                    return self._push_view(row)
+                    return {**self._push_view(row), "outcome": outcome,
+                            "previousUserId": previous}
             except IntegrityError:
                 if attempt:                          # not the race: a genuine constraint failure
                     raise

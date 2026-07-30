@@ -8,6 +8,8 @@ staying in step with the settings that own it.
 The contract is `docs/BROWSER_PUSH_ARCHITECTURE.md` §7.
 """
 
+import json
+import logging
 import pathlib
 import sys
 import uuid
@@ -78,14 +80,50 @@ def test_config_needs_no_authentication(client, push_on):
     assert client.get("/api/push/config").status_code == 200
 
 
-def test_every_subscription_route_is_503_when_push_is_off(client, monkeypatch):
+def test_registration_is_503_when_push_is_off(client, monkeypatch):
     """503 rather than 404: the route exists and the reason it will not serve is configuration."""
     monkeypatch.setenv("RWE_PUSH_ENABLED", "0")
     _, h = _user(client, "push-off")
-    assert client.get("/api/me/push/subscriptions", headers=h).status_code == 503
     assert client.post("/api/me/push/subscriptions", json=_body("off"), headers=h).status_code == 503
+
+
+# --------------------------------------------------------------------------------------------- #
+# Rollback safety (P4). Rows survive a rollback by design — so re-enabling does not ask everyone to
+# opt in again — which is precisely why the way OUT must keep working while the way IN is closed.
+# --------------------------------------------------------------------------------------------- #
+def test_a_reader_can_still_see_and_remove_devices_after_a_rollback(client, push_on, monkeypatch):
+    """The whole point of P4. Register while push is on, switch it off, and the reader must still be
+    able to inspect and delete what is registered in their name."""
+    _, h = _user(client, "push-rollback")
+    client.post("/api/me/push/subscriptions", json=_body("rollback"), headers=h)
+
+    monkeypatch.setenv("RWE_PUSH_ENABLED", "0")            # the rollback
+
+    listed = client.get("/api/me/push/subscriptions", headers=h)
+    assert listed.status_code == 200, "a reader must be able to see what is registered for them"
+    assert [s["endpoint"] for s in listed.json()] == [_endpoint("rollback")]
+
+    removed = client.delete("/api/me/push/subscriptions",
+                            params={"endpoint": _endpoint("rollback")}, headers=h)
+    assert removed.status_code == 200 and removed.json()["removed"] is True
+    assert client.get("/api/me/push/subscriptions", headers=h).json() == []
+
+
+def test_a_rollback_does_not_delete_anything_by_itself(client, push_on, monkeypatch):
+    """Rows outlive the switch: turning push off must not silently unregister devices, or turning it
+    back on would ask every reader to opt in again."""
+    _, h = _user(client, "push-survive")
+    client.post("/api/me/push/subscriptions", json=_body("survive"), headers=h)
+    monkeypatch.setenv("RWE_PUSH_ENABLED", "0")
+    assert len(client.get("/api/me/push/subscriptions", headers=h).json()) == 1
+
+
+def test_reads_and_deletes_still_require_authentication_when_push_is_off(client, monkeypatch):
+    """Ungating the feature switch must not ungate anything else."""
+    monkeypatch.setenv("RWE_PUSH_ENABLED", "0")
+    assert client.get("/api/me/push/subscriptions").status_code in (401, 403)
     assert client.delete("/api/me/push/subscriptions",
-                         params={"endpoint": _endpoint("off")}, headers=h).status_code == 503
+                         params={"endpoint": _endpoint("anon")}).status_code in (401, 403)
 
 
 # --------------------------------------------------------------------------------------------- #
@@ -236,3 +274,122 @@ def test_a_settings_save_still_succeeds_when_the_mirror_cannot_be_written(client
     monkeypatch.setattr(api_fastapi.state.store.__class__, "sync_push_subscription_flags", boom)
     r = client.post("/api/me/settings", json={"readingGoalMinutes": 42}, headers=h)
     assert r.status_code == 200 and r.json()["readingGoalMinutes"] == 42
+
+
+# --------------------------------------------------------------------------------------------- #
+# Operational logging (P6). The events an operator reads to answer "is registration working, did a
+# rotation repair devices, and did a browser change hands" — carrying a digest, never the endpoint.
+# --------------------------------------------------------------------------------------------- #
+@pytest.fixture()
+def logged(caplog):
+    """Structured log lines emitted during the test, decoded back into dicts."""
+    caplog.set_level(logging.INFO, logger=api_fastapi.logger.name)
+
+    def events(name=None):
+        out = []
+        for rec in caplog.records:
+            try:
+                payload = json.loads(rec.getMessage())
+            except (TypeError, ValueError):
+                continue
+            if name is None or payload.get("event") == name:
+                # The severity lives on the record, not in the JSON body, so carry it alongside —
+                # a reassignment being a WARNING rather than an INFO is part of the contract.
+                out.append({**payload, "_level": rec.levelname})
+        return out
+    return events
+
+
+def test_a_new_device_logs_created_with_a_digest_not_the_endpoint(client, push_on, logged):
+    _, h = _user(client, "log-created")
+    client.post("/api/me/push/subscriptions", json=_body("log-created"), headers=h)
+
+    line = logged("push_subscription_created")[-1]
+    assert line["subscriptionId"] and line["userId"]
+    assert line["reason"] == "user"
+    assert len(line["endpointDigest"]) == 12
+    # The two things that must never appear in a shipped, rotated, human-read log.
+    blob = json.dumps(logged())
+    assert _endpoint("log-created") not in blob, "the endpoint URL is a capability, not a log field"
+    assert "BPubKey_abcdef" not in blob and "AuthSecret1" not in blob
+
+
+def test_re_registration_logs_updated_and_carries_the_same_digest(client, push_on, logged):
+    _, h = _user(client, "log-updated")
+    client.post("/api/me/push/subscriptions", json=_body("log-updated"), headers=h)
+    created = logged("push_subscription_created")[-1]
+    client.post("/api/me/push/subscriptions",
+                json=_body("log-updated", reason="worker"), headers=h)
+
+    line = logged("push_subscription_updated")[-1]
+    assert line["reason"] == "worker", "a browser-initiated refresh is distinguishable from a reader's"
+    assert line["endpointDigest"] == created["endpointDigest"], "the same device correlates"
+
+
+def test_a_shared_browser_changing_hands_is_logged_as_a_warning(client, push_on, logged):
+    """The event nobody should see often, and which happened silently until now: one browser's
+    endpoint moving between accounts. WARNING, and it names the account that lost it."""
+    alice_uid, alice = _user(client, "log-alice")
+    bob_uid, bob = _user(client, "log-bob")
+    client.post("/api/me/push/subscriptions", json=_body("log-shared"), headers=alice)
+    client.post("/api/me/push/subscriptions", json=_body("log-shared"), headers=bob)
+
+    line = logged("push_subscription_reassigned")[-1]
+    assert line["userId"] == bob_uid and line["previousUserId"] == alice_uid
+    assert line["_level"] == "WARNING", "a browser changing hands is not routine INFO traffic"
+    assert logged("push_subscription_created")[-1]["_level"] == "INFO", "a new device is routine"
+
+
+def test_deletion_is_logged_with_its_reason(client, push_on, logged):
+    _, h = _user(client, "log-deleted")
+    client.post("/api/me/push/subscriptions", json=_body("log-deleted"), headers=h)
+    client.delete("/api/me/push/subscriptions",
+                  params={"endpoint": _endpoint("log-deleted"), "reason": "repair_retire"}, headers=h)
+
+    line = logged("push_subscription_deleted")[-1]
+    assert line["removed"] is True and line["reason"] == "repair_retire"
+    assert _endpoint("log-deleted") not in json.dumps(line)
+
+
+def test_an_unknown_deletion_reason_is_clamped_rather_than_trusted(client, push_on, logged):
+    """A query parameter cannot be validated by the request model, and an arbitrary string in a log
+    field is a log-injection vector — so it degrades to `user` rather than being echoed."""
+    _, h = _user(client, "log-reason")
+    client.delete("/api/me/push/subscriptions",
+                  params={"endpoint": _endpoint("nope"), "reason": "../../evil"}, headers=h)
+    assert logged("push_subscription_deleted")[-1]["reason"] == "user"
+
+
+def test_a_rejected_registration_logs_the_failing_fields_and_no_values(client, push_on, logged):
+    """A browser producing subscriptions the engine will not accept is invisible from both ends
+    otherwise: the reader sees "could not enable" and the operator sees a bare 422 count."""
+    _, h = _user(client, "log-invalid")
+    body = _body("log-invalid")
+    body["endpoint"] = "http://insecure.example/x"
+    assert client.post("/api/me/push/subscriptions", json=body, headers=h).status_code == 422
+
+    line = logged("push_subscription_rejected")[-1]
+    assert line["fields"] == ["endpoint"] and line["errors"] == 1
+    assert "insecure.example" not in json.dumps(line), "field NAMES only — never the submitted value"
+
+
+def test_a_registration_refused_by_the_feature_gate_is_logged(client, monkeypatch, logged):
+    """A burst of these is how an operator learns browsers are still trying to register against a
+    deployment where push was switched off."""
+    monkeypatch.setenv("RWE_PUSH_ENABLED", "0")
+    _, h = _user(client, "log-gated")
+    assert client.post("/api/me/push/subscriptions", json=_body("gated"), headers=h).status_code == 503
+
+    line = logged("push_registration_rejected")[-1]
+    assert line["enabled"] is False and line["userId"]
+
+
+def test_reads_and_deletes_during_a_rollback_are_not_logged_as_gate_rejections(client, monkeypatch,
+                                                                              logged):
+    """They are not rejected, so they must not appear as rejections — otherwise the signal that means
+    'browsers are failing to register' is diluted by ordinary rollback traffic."""
+    monkeypatch.setenv("RWE_PUSH_ENABLED", "0")
+    _, h = _user(client, "log-rollback")
+    client.get("/api/me/push/subscriptions", headers=h)
+    client.delete("/api/me/push/subscriptions", params={"endpoint": _endpoint("x")}, headers=h)
+    assert logged("push_registration_rejected") == []

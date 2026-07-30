@@ -100,6 +100,11 @@ export function serializeSubscription(
   };
 }
 
+/** Why a subscription changed, mirroring the engine's closed set. Operational logging only — it
+ *  changes no behaviour, and it is what lets an operator answer "did the rotation actually repair
+ *  devices?" from the log rather than by guessing. */
+export type PushReason = "user" | "repair" | "worker" | "repair_retire";
+
 /** The browser's permission for notifications, plus the case where the API does not exist at all. */
 export type PushPermission = "default" | "granted" | "denied" | "unsupported";
 
@@ -114,20 +119,31 @@ export interface PushCapabilities {
   /** The server says push is configured and switched on. */
   configured: boolean;
   permission: PushPermission;
+  /** This browser holds a subscription **against the key the server serves now**. */
   subscribed: boolean;
+  /** This browser holds *any* subscription, including one bound to a key the server has retired —
+   *  and, crucially, including when the server no longer offers push at all. */
+  hasSubscription: boolean;
 }
 
 /**
- * What the UI may offer, derived from four independent signals rather than guessed from one.
+ * What the UI may offer, derived from independent signals rather than guessed from one.
  *
- * `blocked` is the state that most needs naming: once a reader denies notifications, the browser
- * makes `requestPermission()` a no-op forever, so a control that keeps offering to enable them is a
- * button that cannot work. The reader has to change it in browser settings, and the UI has to say so.
+ * `blocked` — once a reader denies notifications the browser makes `requestPermission()` a no-op
+ * forever, so a control that keeps offering to enable them is a button that cannot work. The reader
+ * has to change it in browser settings, and the UI has to say so.
+ *
+ * `paused` — the server has push switched off (rolled back, or the key was removed) while this device
+ * is still registered. Without this state the control disappeared and the reader was stranded: the row
+ * survives a rollback by design, the API keeps deletion open for exactly that reason, and hiding the
+ * control was what made the open route unreachable. The only action offered is turning it off.
  */
-export type PushUiState = "unavailable" | "blocked" | "off" | "on";
+export type PushUiState = "unavailable" | "blocked" | "paused" | "off" | "on";
 
 export function pushUiState(caps: PushCapabilities): PushUiState {
-  if (!caps.supported || !caps.configured || caps.permission === "unsupported") return "unavailable";
+  if (!caps.supported || caps.permission === "unsupported") return "unavailable";
+  // Server-side unavailability is not the same as browser-side: a device may still be registered.
+  if (!caps.configured) return caps.hasSubscription ? "paused" : "unavailable";
   if (caps.permission === "denied") return "blocked";
   return caps.subscribed && caps.permission === "granted" ? "on" : "off";
 }

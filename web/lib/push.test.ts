@@ -140,6 +140,7 @@ const CAPS: PushCapabilities = {
   configured: true,
   permission: "default",
   subscribed: false,
+  hasSubscription: false,
 };
 
 test("permission values outside the platform's three are treated as unsupported", () => {
@@ -162,9 +163,39 @@ test("push is unavailable when the browser lacks it or the server has not config
   assert.equal(pushUiState({ ...CAPS, configured: false }), "unavailable");
   assert.equal(pushUiState({ ...CAPS, permission: "unsupported" }), "unavailable");
   assert.equal(
-    pushUiState({ supported: false, configured: false, permission: "granted", subscribed: true }),
+    pushUiState({
+      supported: false,
+      configured: false,
+      permission: "granted",
+      subscribed: true,
+      hasSubscription: true,
+    }),
     "unavailable",
-    "an unsupported browser is unavailable even holding a subscription",
+    "an unsupported BROWSER is unavailable even holding a subscription — nothing can be done there",
+  );
+});
+
+test("a still-registered device on a rolled-back deployment is PAUSED, not hidden", () => {
+  // P4. The row survives the rollback by design and the API keeps deletion open for exactly that
+  // reason — so reporting "unavailable" here (which hides the control) is what stranded the reader
+  // with a registration they could not remove.
+  assert.equal(
+    pushUiState({ ...CAPS, configured: false, permission: "granted", hasSubscription: true }),
+    "paused",
+  );
+});
+
+test("a device that is NOT registered on a rolled-back deployment stays hidden", () => {
+  // Nothing to remove, so nothing to show: the control would be a switch with no destination.
+  assert.equal(pushUiState({ ...CAPS, configured: false, hasSubscription: false }), "unavailable");
+});
+
+test("paused outranks blocked, because removal must stay reachable either way", () => {
+  // A reader who revoked permission AND is on a rolled-back deployment still has a row in the engine.
+  // "blocked" disables the control; "paused" is the state that can still delete.
+  assert.equal(
+    pushUiState({ ...CAPS, configured: false, permission: "denied", hasSubscription: true }),
+    "paused",
   );
 });
 

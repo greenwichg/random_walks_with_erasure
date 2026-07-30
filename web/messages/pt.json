@@ -479,6 +479,7 @@
   "settings.notif.pushDesc": "Receba avisos mesmo com o Hidden View fechado. Vale só para este navegador.",
   "settings.notif.pushBlockedDesc": "As notificações estão bloqueadas para este site. Permita-as nas configurações do navegador para ativar.",
   "settings.notif.pushFailedDesc": "Não foi possível ativar as notificações neste dispositivo. Tente novamente.",
+  "settings.notif.pushPausedDesc": "As notificações push estão indisponíveis no momento. Este dispositivo continua registrado — desative para removê-lo.",
   "settings.privacy": "Privacidade",
   "settings.privacyInfo": "Você controla seus dados.",
   "settings.privacy.policy": "Política de privacidade",

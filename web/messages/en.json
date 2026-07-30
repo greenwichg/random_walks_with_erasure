@@ -479,6 +479,7 @@
   "settings.notif.pushDesc": "Get notified even when Hidden View is closed. Applies to this browser only.",
   "settings.notif.pushBlockedDesc": "Notifications are blocked for this site. Allow them in your browser settings to turn this on.",
   "settings.notif.pushFailedDesc": "Could not enable notifications on this device. Try again.",
+  "settings.notif.pushPausedDesc": "Push notifications are currently unavailable. This device is still registered — turn this off to remove it.",
   "settings.privacy": "Privacy",
   "settings.privacyInfo": "You're in control of your data.",
   "settings.privacy.policy": "Privacy policy",

@@ -26,10 +26,34 @@ test.describe("Browser push foundation", () => {
     authedPage,
   }) => {
     // A permanently greyed switch reads as a fault in the product rather than a fact about the
-    // platform, so `PushToggle` renders nothing in the `unavailable` state.
+    // platform, so `PushToggle` renders nothing in the `unavailable` state. This browser holds no
+    // subscription, which is what distinguishes it from `paused` below.
     await authedPage.goto("/settings");
     await expect(authedPage.getByText("Breaking news").first()).toBeVisible();
     await expect(authedPage.getByText("Push notifications on this device")).toHaveCount(0);
+  });
+
+  test("reads and deletes stay open while registration is closed (P4)", async ({ authedPage }) => {
+    // The suite runs with push UNCONFIGURED, which is the rolled-back state. Registration must be
+    // refused and the other two must not be: a row survives a rollback by design, so the way out has
+    // to keep working while the way in is shut. Asserted at the API, because the UI half depends on
+    // this browser holding a subscription — which needs a live push service.
+    await authedPage.goto("/settings");
+
+    const listed = await authedPage.request.get("/api/push/subscriptions");
+    expect(listed.status(), "a reader can always see what is registered for them").toBe(200);
+    expect(await listed.json()).toEqual([]);
+
+    const removed = await authedPage.request.delete(
+      "/api/push/subscriptions?endpoint=" + encodeURIComponent("https://fcm.example/none"),
+    );
+    expect(removed.status(), "and can always remove one").toBe(200);
+    expect((await removed.json()).removed).toBe(false);
+
+    const registered = await authedPage.request.post("/api/push/subscriptions", {
+      data: { endpoint: "https://fcm.example/x", p256dh: "BKeyAAAA", auth: "AuthAAAA" },
+    });
+    expect(registered.status(), "but no NEW device may register").toBe(503);
   });
 
   test("the service worker registers and activates", async ({ authedPage }) => {

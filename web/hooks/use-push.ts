@@ -16,6 +16,7 @@
 import * as React from "react";
 import {
   currentPermission,
+  currentSubscription,
   pushSupported,
   registerServiceWorker,
   repairSubscription,
@@ -45,6 +46,11 @@ export function usePush(): UsePush {
   const [config, setConfig] = React.useState<PushConfig>({ enabled: false, publicKey: "" });
   const [permission, setPermission] = React.useState<PushPermission>("unsupported");
   const [subscribed, setSubscribed] = React.useState(false);
+  // Tracked separately from `subscribed` because the two answer different questions, and during a
+  // rollback only this one can be answered: `subscribed` needs a server key to compare against, and a
+  // switched-off deployment serves none — so without this a still-registered device would look like a
+  // device that was never registered, and the reader would lose the only control that removes it.
+  const [hasSubscription, setHasSubscription] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   const [failed, setFailed] = React.useState(false);
 
@@ -69,6 +75,7 @@ export function usePush(): UsePush {
 
   const refresh = React.useCallback(async (key: string) => {
     setPermission(currentPermission());
+    setHasSubscription((await currentSubscription()) !== null);
     setSubscribed(key ? await subscriptionIsCurrent(key) : false);
   }, []);
 
@@ -82,11 +89,15 @@ export function usePush(): UsePush {
   // subscription bound to a retired key, and without it a rotated deployment leaves every device dark
   // until each reader notices a toggle that switched itself off.
   React.useEffect(() => {
-    if (!config.enabled || !pushSupported()) return;
+    if (!pushSupported()) return;
     let alive = true;
     (async () => {
-      await registerServiceWorker();
-      await repairSubscription(config.publicKey, config.enabled);
+      // Only register and repair when the server offers push. When it does not, still refresh: a
+      // device registered before a rollback must be discoverable, or the reader cannot remove it.
+      if (config.enabled) {
+        await registerServiceWorker();
+        await repairSubscription(config.publicKey, config.enabled);
+      }
       if (alive) await refresh(config.publicKey);
     })();
     return () => {
@@ -141,6 +152,7 @@ export function usePush(): UsePush {
       configured: config.enabled && !!config.publicKey,
       permission,
       subscribed,
+      hasSubscription,
     }),
     permission,
     busy,

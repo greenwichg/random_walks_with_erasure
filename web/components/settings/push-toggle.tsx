@@ -27,14 +27,23 @@ export function PushToggle() {
   // Unavailable is rendered as ABSENT, not as a disabled row: a browser without the APIs, or a
   // deployment with no VAPID key, has nothing the reader can act on, and a permanently greyed switch
   // reads as a fault in the product rather than a fact about the platform.
+  //
+  // `paused` is the exception, and the reason it exists: push is switched off server-side while THIS
+  // device is still registered. Hiding the row there would strand the reader — the row survives a
+  // rollback by design and the API deliberately keeps deletion open, so the control has to stay
+  // reachable. It shows as on, because the device really is registered, and the only action it offers
+  // is turning that off.
   if (state === "unavailable") return null;
 
   const blocked = state === "blocked";
+  const paused = state === "paused";
   const description = blocked
     ? t("settings.notif.pushBlockedDesc")
-    : failed
-      ? t("settings.notif.pushFailedDesc")
-      : t("settings.notif.pushDesc");
+    : paused
+      ? t("settings.notif.pushPausedDesc")
+      : failed
+        ? t("settings.notif.pushFailedDesc")
+        : t("settings.notif.pushDesc");
 
   return (
     <div className="flex items-center justify-between gap-4 py-4 first:pt-0 last:pb-0">
@@ -56,9 +65,11 @@ export function PushToggle() {
         </div>
       </div>
       <Switch
-        checked={state === "on"}
+        checked={state === "on" || paused}
         disabled={busy || blocked}
-        onCheckedChange={(v) => void (v ? enable() : disable())}
+        // While paused the switch may only travel one way: there is nothing to enable against, so a
+        // flick towards "on" is ignored rather than failing.
+        onCheckedChange={(v) => void (paused ? (v ? undefined : disable()) : v ? enable() : disable())}
         aria-label={t("settings.notif.push")}
       />
     </div>

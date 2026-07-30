@@ -246,6 +246,19 @@ def test_concurrent_registrations_of_one_endpoint_yield_one_row(tmp_path):
     assert len(rows) == 1 and rows[0]["endpoint"] == ENDPOINT
 
 
+def test_the_upsert_reports_which_of_the_three_cases_happened(st):
+    """The caller cannot tell created from updated from reassigned without a second query, and the
+    difference is exactly what makes the operational log worth reading — a reassignment means a shared
+    browser changed hands."""
+    alice, bob = _user(st, "alice"), _user(st, "bob")
+    assert _sub(st, alice)["outcome"] == "created"
+    assert _sub(st, alice)["outcome"] == "updated"
+
+    handed_over = _sub(st, bob)
+    assert handed_over["outcome"] == "reassigned"
+    assert handed_over["previousUserId"] == alice
+
+
 def test_a_long_user_agent_is_truncated_to_the_column(st):
     """The API bounds the `userAgent` FIELD, but its fallback is the raw `User-Agent` header, which
     nothing bounds — so this truncation is the only guard on that path. SQLite ignores VARCHAR limits,

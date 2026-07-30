@@ -10,6 +10,9 @@ fan-out, no retry ladder. Enabling B1 in production changes exactly one thing a 
 "Push notifications on this device" control appears in Settings, and using it produces a browser
 permission prompt. Readers who enable it will receive nothing until Phase B2 ships.
 
+Every action on that surface is logged (§6), and a rollback closes registration without stranding the
+readers who already registered (§4).
+
 ---
 
 ## 1. Configuration
@@ -19,7 +22,7 @@ so every change below is a `deploy/ops/restart.sh api`, never a rebuild.
 
 | Variable | Default | Used in B1 | Meaning |
 |---|---|---|---|
-| `RWE_PUSH_ENABLED` | `0` (off) | yes | The switch. Off ⇒ every push route answers `503` and the web tier renders no control. |
+| `RWE_PUSH_ENABLED` | `0` (off) | yes | The switch. Off ⇒ **registration** answers `503`; reading and deleting a subscription stay open (§4). |
 | `RWE_VAPID_PUBLIC_KEY` | *(empty)* | yes | Served to browsers, which subscribe against it. Public by construction. |
 | `RWE_VAPID_PRIVATE_KEY` | *(empty)* | **no** | Signs sends. Read by nothing until B2 — wired now so the pair is generated and stored once. |
 | `RWE_VAPID_SUBJECT` | *(empty)* | **no** | The `mailto:` or `https:` contact given to push services. Also B2. |
@@ -124,9 +127,23 @@ $EDITOR deploy/.env                       # RWE_PUSH_ENABLED=0
 deploy/ops/restart.sh api
 ```
 
-Every push route immediately answers `503`, and the web tier stops rendering the control (its config
-fetch reports the feature unavailable). Stored subscriptions are **kept**: they are devices readers
-explicitly connected, and turning the feature back on should not ask everyone to opt in again.
+**Registration closes; reading and deletion stay open.** That asymmetry is deliberate:
+
+| Route | While `RWE_PUSH_ENABLED=0` |
+|---|---|
+| `POST /api/me/push/subscriptions` | `503` — no new device may register |
+| `GET /api/me/push/subscriptions` | **works** — a reader can see what is registered in their name |
+| `DELETE /api/me/push/subscriptions` | **works** — a reader can remove a device |
+
+Stored subscriptions are **kept**: they are devices readers explicitly connected, and turning the
+feature back on should not ask everyone to opt in again. That is exactly why the way out has to keep
+working while the way in is shut — gating all three would leave a reader with a registration they
+could neither see nor remove, and no operator path short of a SQL statement.
+
+The Settings control follows the same rule. A device that is still registered shows a **paused** row —
+switch on, one direction of travel, copy explaining push is currently unavailable — so the open
+`DELETE` is actually reachable. A device that is *not* registered sees no control at all, because
+there would be nothing for it to do.
 
 Browsers keep their own subscription objects, which is harmless — nothing sends, so nothing arrives.
 
@@ -175,14 +192,67 @@ table to churn afterwards — one row replaced per returning device.
 
 ---
 
-## 6. Troubleshooting
+## 6. Logging
+
+One structured JSON line per event on the engine's logger, correlatable by `requestId` like every
+other line. **Endpoints and device keys never appear.** An endpoint is a capability and identifies a
+specific browser install; logs are shipped, rotated and read by people, so a line carries
+`endpointDigest` — the first 12 hex characters of the endpoint's SHA-256 — which is enough to
+correlate a registration with the deletion of the same device and nothing else.
+
+| Event | Level | Fields | What it tells you |
+|---|---|---|---|
+| `push_subscription_created` | INFO | `userId`, `subscriptionId`, `endpointDigest`, `reason` | A new device registered. |
+| `push_subscription_updated` | INFO | same | The same browser re-registered — a key rotation repair, or the browser rotating its own subscription. Read `reason`. |
+| `push_subscription_reassigned` | **WARNING** | same + `previousUserId` | One browser's endpoint moved between accounts. Normal on a shared machine; a rising rate is worth understanding. |
+| `push_subscription_deleted` | INFO | `userId`, `endpointDigest`, `reason`, `removed` | A device was unregistered. `removed:false` means it was already gone or was never that reader's. |
+| `push_subscription_rejected` | WARNING | `path`, `fields`, `errors` | A browser produced a subscription the engine refused. **Field names only** — the submitted value is an endpoint or a key. |
+| `push_registration_rejected` | INFO | `userId`, `reason`, `enabled`, `configured` | A browser tried to register while push was off or unconfigured. |
+
+### `reason`, and the question it answers
+
+Every registration and deletion carries why it happened, from a closed set — a client cannot write
+arbitrary strings into the log:
+
+- **`user`** — a reader used the Settings control.
+- **`repair`** — the client found its subscription bound to a retired VAPID key and re-subscribed (§5).
+- **`worker`** — the browser rotated the subscription and the service worker re-registered it.
+- **`repair_retire`** — the deletion of the endpoint a repair replaced.
+
+This is what makes a rotation auditable. After changing the key pair, `push_subscription_updated`
+with `reason=repair` and `push_subscription_deleted` with `reason=repair_retire` should appear in
+pairs as readers return; the count of distinct `userId`s in those lines is how many devices have
+actually healed. Without it every registration looks alike and "did the rotation work?" has no answer
+short of querying the table.
+
+### Reading the volumes
+
+```bash
+COMPOSE="docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.aws.yml --env-file deploy/.env"
+$COMPOSE logs api | grep -o '"event":"push_[a-z_]*"' | sort | uniq -c    # the shape of the traffic
+$COMPOSE logs api | grep push_subscription_reassigned                    # shared devices changing hands
+$COMPOSE logs api | grep push_subscription_rejected                      # browsers we are refusing
+$COMPOSE logs api | grep 'push_subscription_updated.*"reason":"repair"'  # rotation repairs landing
+```
+
+A steady trickle of `created` with occasional `deleted` is ordinary. A burst of
+`push_registration_rejected` means browsers are still trying against a switched-off deployment — a
+rollback readers have not seen yet, or a half-configured deploy. A burst of
+`push_subscription_rejected` means something about the client changed, and it will be visible to
+readers as "Could not enable".
+
+There are no metrics yet — counting log lines is the whole facility in B1.
+
+---
+
+## 7. Troubleshooting
 
 | Symptom | Check | Cause / fix |
 |---|---|---|
-| No control in Settings | `curl http://127.0.0.1:8000/api/push/config` | `enabled:false` ⇒ switch off or key missing (§1). `enabled:true` but still no control ⇒ the browser lacks the APIs (Safari before 16.4, or a non-HTTPS origin). |
+| No control in Settings | `curl http://127.0.0.1:8000/api/push/config` | `enabled:false` **and this device is not registered** ⇒ correct (§1); a still-registered device shows the paused row instead. `enabled:true` but no control ⇒ the browser lacks the APIs (Safari before 16.4, or a non-HTTPS origin). |
 | Control appears, toggle does nothing | browser console | The permission prompt was dismissed. Dismissal is neither granted nor denied; the toggle stays off and can be tried again. |
 | Toggle shows "blocked" copy | browser site settings | The reader denied notifications. `requestPermission()` is a permanent no-op after that — only the reader can undo it, in browser settings. This is why the control is disabled rather than retried. |
-| Toggle fails with "Could not enable" | `docker logs deploy-api-1` | A `422` means the browser produced a subscription the engine rejected (endpoint not https, keys not base64url). A `503` means push was switched off between the page load and the click. |
+| Toggle fails with "Could not enable" | `push_subscription_rejected` in the log (§6) | A `422` means the browser produced a subscription the engine rejected (endpoint not https, keys not base64url). A `503` means push was switched off between the page load and the click. |
 | Subscription rows accumulate for one reader | the query in §3 | Expected up to one per device/browser. A recent key rotation legitimately replaces one row per returning device (§5). Many rows for one device *without* a rotation means the endpoint is changing every visit, which is a browser-side anomaly worth reporting. |
 | Rows exist but nothing arrives | — | Correct in B1. Nothing sends yet. |
 
@@ -191,7 +261,7 @@ that code exists. If something in this area misbehaves in B1, it is registration
 
 ---
 
-## 7. What B1 does not include
+## 8. What B1 does not include
 
 Stated explicitly so the absence is not read as a defect: no push is sent from anywhere; there is no
 notification worker, no fan-out query, no retry or backoff, no `410` pruning, and no delivery metrics.
