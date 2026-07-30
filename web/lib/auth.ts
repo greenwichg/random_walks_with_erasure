@@ -14,8 +14,10 @@
 import type { NextAuthOptions } from "next-auth";
 import GoogleProvider from "next-auth/providers/google";
 import CredentialsProvider from "next-auth/providers/credentials";
-import { isEmailAllowed } from "@/lib/beta-access";
-import { upsertEngineUser } from "@/lib/engine-identity";
+import { jwtCallback, sessionCallback, signInCallback } from "./auth-callbacks.ts";
+// Still used directly by the dev provider's authorize(), which keys the upsert on the EMAIL —
+// not on what NextAuth later reports as account.providerAccountId (that is the engine user id).
+import { upsertEngineUser } from "./engine-identity.ts";
 
 // Dev-only demo sign-in. OFF unless RWE_DEV_LOGIN is explicitly set (e.g. the Colab demo), and
 // force-OFF whenever production mode is on — so it can NEVER be available in a real deployment,
@@ -66,42 +68,5 @@ export const authOptions: NextAuthOptions = {
   // `error` routes NextAuth's AccessDenied (a beta-allowlist rejection) back to the sign-in page,
   // which shows a friendly invite-only message (?error=AccessDenied).
   pages: { signIn: "/signin", error: "/signin" },
-  callbacks: {
-    // BA1 — beta access control. Gate Google sign-in behind the approved-email allowlist so a
-    // non-approved user never gets a session (and therefore never an engine account). The dev demo
-    // login (non-production only) is not gated. Returning `false` triggers the AccessDenied redirect.
-    // Access control only — no recommendation-engine, analytics, observability, or business-logic change.
-    async signIn({ user, account, profile }) {
-      if (account?.provider !== "google") return true; // dev credentials provider (dev-only) is exempt
-      const email = user?.email ?? (profile as { email?: string } | undefined)?.email ?? null;
-      const { allowed, reason } = isEmailAllowed(email);
-      if (!allowed) {
-        // OBS1-style structured line so the operator sees denied attempts (and who to approve). No
-        // analytics/PA1 event is added; a denied user never reaches the authenticated tracking path.
-        // eslint-disable-next-line no-console
-        console.warn(JSON.stringify({ event: "beta_access_denied", email: email ?? null, reason }));
-        return false;
-      }
-      return true;
-    },
-    async jwt({ token, account, profile, user }) {
-      // Google: upsert the identity into the engine on the initial sign-in (the one engine call).
-      if (account?.provider === "google") {
-        const engineUserId = await upsertEngineUser({
-          provider: account.provider,
-          providerAccountId: account.providerAccountId,
-          email: (profile as { email?: string } | undefined)?.email ?? token.email,
-          displayName: (profile as { name?: string } | undefined)?.name ?? token.name,
-        });
-        if (engineUserId != null) token.engineUserId = engineUserId;
-      }
-      // Dev credentials sign-in: the engine id was resolved in authorize() and rides on `user`.
-      if (typeof user?.engineUserId === "number") token.engineUserId = user.engineUserId;
-      return token;
-    },
-    async session({ session, token }) {
-      if (typeof token.engineUserId === "number") session.engineUserId = token.engineUserId;
-      return session;
-    },
-  },
+  callbacks: { signIn: signInCallback, jwt: jwtCallback, session: sessionCallback },
 };

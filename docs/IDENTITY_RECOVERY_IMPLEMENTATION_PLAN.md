@@ -1,6 +1,6 @@
 # Implementation Plan — Identity Recovery + Transaction-Retry Upsert
 
-**Commits 1–3 and 3.5 are implemented; commits 4–7 are not.** This is the roadmap for two designs that are already
+**Commits 1–4 are implemented; commits 5–7 are not.** This is the roadmap for two designs that are already
 reviewed:
 
 - [`IDENTITY_UPSERT_CONCURRENCY.md`](IDENTITY_UPSERT_CONCURRENCY.md) §4 — the engine-side upsert.
@@ -20,7 +20,7 @@ certified, exactly as planned.
 | **2** | web | Extract `upsertEngineUser` into `lib/engine-identity.ts` — **done** | **no** — pure move | `git revert` |
 | **3** | web | Add the memoized resolver + its unit tests, wired to nothing — **done** | **no** — dead code | `git revert` |
 | **3.5** | web | Give `upsertEngineUser` a deadline — `lib/engine-timeout.ts`, shared with `backend.ts` — **done** | yes — a wedged engine now fails instead of hanging | `git revert` |
-| **4** | web | Persist `provider` + `providerAccountId` claims at sign-in | **no** — nothing reads them yet | `git revert` |
+| **4** | web | Persist `provider` + `providerAccountId` claims at sign-in — **done** | **no** — nothing reads them yet | `git revert` |
 | **5** | web | Call the resolver from `callbacks.jwt` (durable heal), behind a kill switch | yes — broken sessions start healing | env flag, then revert |
 | **6** | web | Call the resolver from `engineAuthHeaders` (immediate heal) | yes — hot path gains a guarded call | env flag, then revert |
 | **7** | docs | Flip both designs from proposal to implemented; ops note | no | trivial |
@@ -144,7 +144,7 @@ not delegate that guarantee to the thing that is misbehaving.
 
 **Rollback.** `git revert`. Reverting restores bare `fetch` in both call sites.
 
-## Commit 4 — web: persist the identity claims at sign-in
+## Commit 4 — web: persist the identity claims at sign-in ✅ implemented
 
 **Files** — `web/lib/auth.ts` (`callbacks.jwt` writes `token.provider` and `token.providerAccountId` when
 `account` is present); `web/types/next-auth.d.ts` (augment the `JWT` interface alongside the existing
@@ -158,8 +158,19 @@ valid — the resolver's `sub` fallback covers them.
 already carries the exact key, and only pre-existing sessions rely on the fallback. Reversing the order
 would work but would widen the window in which the fallback is the only path.
 
-**Tests** — new `web/lib/auth.test.ts`: the `jwt` callback writes both claims on the sign-in invocation
-and preserves them on later invocations. Typecheck covers the augmentation.
+**Tests** — new `web/lib/auth-callbacks.test.ts`, nine of them. Getting there needed a **pure move**
+that was not in this plan: `lib/auth.ts` builds the providers at module load, and
+`next-auth/providers/*` are CommonJS, so importing that module from bare `node --test` fails on the
+CJS/ESM default interop that webpack and tsc paper over — the callbacks were untestable where they sat.
+They now live in `lib/auth-callbacks.ts`, unchanged, and `lib/auth.ts` references them. Commit 5's
+required callback tests would have hit the same wall.
+
+**Two implementation details worth the reviewer's eye.** `providerAccountId` is recorded for Google
+only: NextAuth sets `account.providerAccountId` to `user.id` for the credentials provider, which
+`authorize()` sets to the *engine user id*, while the dev upsert keys on the email — so recording it
+under that name would promise something it is not. `provider` is recorded for both, which is what lets
+a reader of a dev token know not to treat it as Google. And the claims are written even when the engine
+call failed, since that is precisely the session recovery will later need to repair.
 
 **Rollback.** `git revert`. Tokens minted meanwhile keep two claims nothing reads — harmless.
 
