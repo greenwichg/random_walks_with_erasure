@@ -1026,3 +1026,87 @@ test("upsertEngineUser accepts a per-call deadline, and omitting it changes noth
     g.fetch = realFetch;
   }
 });
+
+// --------------------------------------------------------------------------------------------------
+// refreshProfile (S2b).
+//
+// The engine refreshes a user's email and display name on every upsert that supplies them. Right for
+// sign-in, whose profile is a freshly minted OAuth response; wrong for recovery, whose profile comes
+// from a session token up to 30 days old and would otherwise write itself over whatever a newer
+// sign-in already stored.
+//
+// The wire is the contract here, so these assert on the serialized body rather than on arguments.
+// --------------------------------------------------------------------------------------------------
+
+/** The parsed request body of the Nth engine call. */
+function bodyOf(calls: Call[], n = 0): Record<string, unknown> {
+  return JSON.parse(calls[n]!.init.body as string) as Record<string, unknown>;
+}
+
+test("a sign-in body does not carry refreshProfile at all", async () => {
+  // Not "carries true" — ABSENT. `undefined` is dropped by JSON.stringify, so a sign-in request is
+  // byte-identical to the one sent before this field existed. That is what keeps an engine which
+  // predates it behaving identically, and what makes reverting either tier alone safe.
+  await withFetch(() => ok({ userId: 42 }), async (calls) => {
+    await upsertEngineUser(IDENTITY);
+    const body = bodyOf(calls);
+    assert.equal("refreshProfile" in body, false, `sign-in body was ${JSON.stringify(body)}`);
+    assert.deepEqual(body, {
+      provider: "google",
+      providerAccountId: "108461123456789012345",
+      email: "reader@example.com",
+      displayName: "A Reader",
+    }, "the sign-in request must be exactly what it was before S2b");
+  });
+});
+
+test("the recovery body carries refreshProfile: false", async () => {
+  await withResolver(() => ok({ userId: 42 }), async () => {
+    const g = globalThis as unknown as { fetch: unknown };
+    const seen: Record<string, unknown>[] = [];
+    const counting = g.fetch as (u: string, i: RequestInit) => Promise<unknown>;
+    g.fetch = async (u: string, i: RequestInit) => {
+      seen.push(JSON.parse(i.body as string) as Record<string, unknown>);
+      return counting(u, i);
+    };
+
+    assert.equal(await resolveEngineUserId(GOOGLE_TOKEN), 42);
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0]!.refreshProfile, false, `recovery body was ${JSON.stringify(seen[0])}`);
+    // The identity key is unchanged — recovery must still resolve the SAME user, only without
+    // writing the profile.
+    assert.equal(seen[0]!.providerAccountId, SUB);
+  });
+});
+
+test("an explicit refreshProfile: true serializes as true, not as absent", async () => {
+  // The pass-through has to work in both directions, or `false` arriving would be luck rather than
+  // wiring.
+  await withFetch(() => ok({ userId: 42 }), async (calls) => {
+    await upsertEngineUser({ ...IDENTITY, refreshProfile: true });
+    assert.equal(bodyOf(calls).refreshProfile, true);
+  });
+  await withFetch(() => ok({ userId: 42 }), async (calls) => {
+    await upsertEngineUser({ ...IDENTITY, refreshProfile: false });
+    assert.equal(bodyOf(calls).refreshProfile, false);
+  });
+});
+
+test("the flag changes nothing else about the request", async () => {
+  // Same URL, method, headers and cache policy; the body differs by one key. A regression that also
+  // moved the identity key or dropped the secret would otherwise hide behind a passing flag test.
+  const bodies: Record<string, unknown>[] = [];
+  const metas: string[] = [];
+  await withFetch(() => ok({ userId: 42 }), async (calls) => {
+    await upsertEngineUser(IDENTITY);
+    await upsertEngineUser({ ...IDENTITY, refreshProfile: false });
+    for (const c of calls) {
+      bodies.push(JSON.parse(c.init.body as string) as Record<string, unknown>);
+      metas.push(`${c.url}|${c.init.method}|${c.init.cache}|${JSON.stringify(c.init.headers)}`);
+    }
+  }, "s3cret");
+  assert.equal(metas[0], metas[1], "url, method, cache and headers must be identical");
+  const { refreshProfile, ...withoutFlag } = bodies[1]!;
+  assert.equal(refreshProfile, false);
+  assert.deepEqual(withoutFlag, bodies[0], "the bodies differ by the flag and nothing else");
+});

@@ -112,16 +112,17 @@ const brokenToken = () => ({
 /** Run with the engine stubbed and the identity cache clear either side. */
 async function withEngine(
   reply: () => unknown,
-  fn: (state: { fetches: number }) => Promise<void>,
+  fn: (state: { fetches: number; bodies: Record<string, unknown>[] }) => Promise<void>,
 ): Promise<void> {
   const g = globalThis as unknown as { fetch: unknown };
   const realFetch = g.fetch;
   const realWarn = console.warn;
-  const state = { fetches: 0 };
+  const state: { fetches: number; bodies: Record<string, unknown>[] } = { fetches: 0, bodies: [] };
 
   __resetIdentityCache();
-  g.fetch = async () => {
+  g.fetch = async (_url: string, init?: RequestInit) => {
     state.fetches += 1;
+    if (init?.body) state.bodies.push(JSON.parse(init.body as string) as Record<string, unknown>);
     const value = reply();
     if (value instanceof Error) throw value;
     return value;
@@ -282,4 +283,37 @@ test("RWE_IDENTITY_RECOVERY=0 turns the whole route back into pre-recovery behav
     if (real === undefined) delete process.env.RWE_IDENTITY_RECOVERY;
     else process.env.RWE_IDENTITY_RECOVERY = real;
   }
+});
+
+test("the recovery upsert carries refreshProfile: false through the whole path", async () => {
+  // S2b end to end. The unit test asserts the body the resolver builds; this asserts what actually
+  // leaves the process when a real getServerSession drives a real callbacks.jwt — the only place a
+  // wrapper, a re-serialisation or a stray spread could drop the flag between the two.
+  await withEngine(() => ok(42), async (state) => {
+    const { session } = await getServerSession(brokenToken());
+    assert.equal(session?.engineUserId, 42, "precondition: recovery ran");
+    assert.equal(state.bodies.length, 1);
+    assert.equal(state.bodies[0]!.refreshProfile, false,
+      `recovery sent ${JSON.stringify(state.bodies[0])}`);
+    // Still the same identity key: this suppresses a profile write, never a different lookup.
+    assert.equal(state.bodies[0]!.providerAccountId, SUB);
+  });
+});
+
+test("a sign-in through the callback sends no refreshProfile, even alongside recovery", async () => {
+  // Both callers in one process, so a module-level default leaking from one to the other would show.
+  await withEngine(() => ok(42), async (state) => {
+    await jwtCallback!({
+      token: { name: "A Reader", email: "reader@example.com", sub: SUB },
+      account: { provider: "google", providerAccountId: SUB, type: "oauth" },
+      profile: { email: "reader@example.com", name: "A Reader" },
+      trigger: "signIn",
+    } as never);
+    assert.equal("refreshProfile" in state.bodies[0]!, false,
+      `sign-in sent ${JSON.stringify(state.bodies[0])}`);
+
+    __resetIdentityCache();
+    await getServerSession(brokenToken());
+    assert.equal(state.bodies[1]!.refreshProfile, false, "and recovery still sends it");
+  });
 });

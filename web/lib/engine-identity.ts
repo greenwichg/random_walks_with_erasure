@@ -26,6 +26,16 @@ interface EngineIdentityInput {
   providerAccountId: string;
   email?: string | null;
   displayName?: string | null;
+  /**
+   * `false` asks the engine to resolve the id **without** writing `email`/`displayName` over an
+   * existing user's stored profile. Creation is unaffected — a first sighting is still created with
+   * them, because creation is not a refresh.
+   *
+   * Omitted by both sign-in paths, which want today's refresh: their profile comes from a fresh OAuth
+   * response. Sent as `false` by recovery, whose profile comes from a session token that may be weeks
+   * old and must not overwrite what a newer sign-in already stored.
+   */
+  refreshProfile?: boolean;
 }
 
 /**
@@ -70,6 +80,11 @@ async function attemptEngineUpsert(
         providerAccountId: input.providerAccountId,
         email: input.email ?? undefined,
         displayName: input.displayName ?? undefined,
+        // `undefined` is DROPPED by JSON.stringify, so a caller that does not set this sends a body
+        // byte-identical to the one it sent before this field existed. That is what keeps both sign-in
+        // paths untouched on the wire, and what makes an old engine (which ignores unknown fields)
+        // and a new one behave the same for them.
+        refreshProfile: input.refreshProfile,
       }),
     }, timeoutMs);   // undefined ⇒ fetchWithTimeout's own default, i.e. engineTimeoutMs()
     if (!res.ok) return { ok: false, reason: `http_${res.status}` };
@@ -299,6 +314,10 @@ export async function resolveEngineUserId(token: RecoverableToken): Promise<numb
       providerAccountId,
       email,
       displayName: typeof token.name === "string" ? token.name : null,
+      // The token's profile is as old as the session — up to 30 days. Sign-in's is freshly minted, so
+      // it refreshes; this one must not. Without this, a reader broken on one device and returning
+      // after a newer sign-in elsewhere updated their name would have the old one written back.
+      refreshProfile: false,
     },
     // The repair's own deadline, shorter than sign-in's. This call is awaited inside
     // `getServerSession`, so every millisecond is a reader waiting on a render for work they did not

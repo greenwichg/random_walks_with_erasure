@@ -345,6 +345,35 @@ The practical effect: a wedged engine costs an affected reader ~2 s on one rende
 ~6 s. A *dead* engine — the common case during a deploy — still fails in microseconds via
 `ECONNREFUSED` and is unaffected by either number.
 
+### 5c. Recovery resolves the id without refreshing the profile
+
+Recovery's `email` and `displayName` come from the session token, so they are as old as the session —
+up to 30 days. Sign-in's come from a freshly minted OAuth response. The engine cannot tell the two
+apart, so the caller says which it is:
+
+| Caller | `refreshProfile` | Effect |
+|---|---|---|
+| Sign-in (`callbacks.jwt` with `account`; the dev provider's `authorize()`) | **omitted** | The engine refreshes email and display name, exactly as before. The request is byte-identical to the pre-S2 one — `undefined` is dropped by `JSON.stringify`. |
+| Recovery (`resolveEngineUserId`) | `false` | The id resolves; an **existing** user's stored profile is left alone. |
+
+**Creation is not a refresh.** A first sighting can arrive through recovery — the reader signed in
+during an outage, so no engine row was ever made — and it is still created with the profile it was
+given. Suppressing that write would mint accounts with a null email that nothing would ever fill.
+
+The failure this prevents: a reader broken on device A, who signs in on device B, changes their Google
+display name, and returns to A weeks later. Recovery on A would have written the old name back over
+the new one, silently, with nothing in the logs and no way to attribute it.
+
+**Rolling-deployment safety, in both directions.** The engine defaults `refreshProfile` to `true`, so an
+old web tier that never sends it behaves as before; and `UpsertUserRequest` keeps Pydantic's default
+`extra="ignore"`, so a *new* web sending it to an engine that predates it is silently ignored rather
+than 422'd. Reverting either tier alone therefore returns to current behaviour rather than breaking —
+`test_internal_user_upsert_ignores_unknown_fields` pins the harder half of that.
+
+Storage-level detail, including what this does to the concurrent-first-sighting retry (it becomes a
+pure `SELECT` on this path, and stays write-capable on the default one):
+[`IDENTITY_UPSERT_CONCURRENCY.md`](IDENTITY_UPSERT_CONCURRENCY.md).
+
 ### Turning it off
 
 ```bash
@@ -604,12 +633,12 @@ looked.
 | # | Gap | How it was closed |
 |---|---|---|
 | **S1** | Recovery inherited the general 6 s engine deadline, so a **wedged** engine could hold a server render for that long. | `recoveryTimeoutMs()` in `lib/engine-timeout.ts` — `min(engineTimeoutMs(), 2000)`, passed per call. Sign-in keeps the 6 s default; the repair gives up at 2 s and retries after the 30 s backoff. See §5b. |
+| **S2** | Recovery sent `email`/`displayName` from a token up to 30 days old, and the engine refreshed both — so a long-idle broken session could write a **stale profile over a newer one**. | `refreshProfile` on `POST /api/internal/users`, defaulting to `true`. Recovery sends `false`; both sign-in paths omit it and their request is byte-identical to before. Creation still writes the profile — creation is not a refresh. See §5c. |
 
 ### Deferred to a follow-up PR
 
 | # | Gap | Why it was not a release blocker | What the fix looks like |
 |---|---|---|---|
-| **S2** | Recovery sends `email` and `displayName` from the token, and the engine refreshes both. A long-idle broken session can therefore write a **stale profile over a newer one**. | Recovery normally runs on the request right after the failed sign-in, when the token's profile is seconds old. The bad case needs a session broken for weeks, a profile change, *and* another device having updated the engine meanwhile. | `refreshProfile` on `POST /api/internal/users`, defaulting to `true` so an old web tier is unaffected; recovery sends `false`. Engine change first, web change second. Also makes the concurrent-first-sighting retry cleanly read-only ([`IDENTITY_UPSERT_CONCURRENCY.md`](IDENTITY_UPSERT_CONCURRENCY.md) §4). |
 | **S4b** | No Playwright test drives a **real** engine refusing `/api/internal/users` and then recovering. | `lib/session-recovery.test.ts` covers the mechanism against the real NextAuth route (§8). What e2e would add is the durable-heal step via `SessionProvider`, which no unit test can show. | A fixture that mints a broken session — `e2e/helpers.ts` currently mints tokens with `engineUserId` already set — plus a way to fail the endpoint for a window. |
 
 ### Accepted, with the reasoning
