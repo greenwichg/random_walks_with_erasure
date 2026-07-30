@@ -9,6 +9,10 @@
     "esModuleInterop": true,
     "module": "esnext",
     "moduleResolution": "bundler",
+    // Lets a VALUE import between lib modules carry its `.ts` extension, which is the only specifier
+    // form bare `node --test` resolves (it honours neither the `@/` alias nor extensionless paths).
+    // Safe here because tsc is type-check-only (`noEmit`), and webpack/SWC resolve explicit extensions.
+    "allowImportingTsExtensions": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
     "jsx": "preserve",

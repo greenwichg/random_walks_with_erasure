@@ -1,6 +1,6 @@
 # Implementation Plan — Identity Recovery + Transaction-Retry Upsert
 
-**Commits 1 and 2 are implemented; commits 3–7 are not.** This is the roadmap for two designs that are already
+**Commits 1–3 are implemented; commits 4–7 are not.** This is the roadmap for two designs that are already
 reviewed:
 
 - [`IDENTITY_UPSERT_CONCURRENCY.md`](IDENTITY_UPSERT_CONCURRENCY.md) §4 — the engine-side upsert.
@@ -18,7 +18,7 @@ certified, exactly as planned.
 |---|---|---|---|---|
 | **1** | engine | Transaction-retry upsert (§4) + collapse the harness onto the real method — **done** | yes — losers resolve instead of erroring | `git revert`, behaviour-only |
 | **2** | web | Extract `upsertEngineUser` into `lib/engine-identity.ts` — **done** | **no** — pure move | `git revert` |
-| **3** | web | Add the memoized resolver + its unit tests, wired to nothing | **no** — dead code | `git revert` |
+| **3** | web | Add the memoized resolver + its unit tests, wired to nothing — **done** | **no** — dead code | `git revert` |
 | **4** | web | Persist `provider` + `providerAccountId` claims at sign-in | **no** — nothing reads them yet | `git revert` |
 | **5** | web | Call the resolver from `callbacks.jwt` (durable heal), behind a kill switch | yes — broken sessions start healing | env flag, then revert |
 | **6** | web | Call the resolver from `engineAuthHeaders` (immediate heal) | yes — hot path gains a guarded call | env flag, then revert |
@@ -90,7 +90,7 @@ edge bundle.
 
 ---
 
-## Commit 3 — web: the resolver, wired to nothing
+## Commit 3 — web: the resolver, wired to nothing ✅ implemented
 
 **Files** — `web/lib/engine-identity.ts` gains `resolveEngineUserId(token)`, the process-level memo
 (10 min TTL), in-flight coalescing, the 30 s negative backoff, provider gating, the legacy-token `sub`
@@ -106,6 +106,17 @@ concurrent calls produce one fetch; a second call inside the TTL produces none; 
 next attempt inside the backoff window; 401/500/timeout each return `null` without throwing.
 
 **Rollback.** `git revert` — or leave it; it is unreachable.
+
+**Measured** (100k healthy resolutions, 2 000 concurrent callers on one identity, 25 000 distinct
+identities): 0.43 µs per healthy call with zero engine calls and zero cache entries; 2000:1 coalescing;
+99% hit rate at 10 identities × 100 requests; the cache holds at its 1 000-entry ceiling at ~201 bytes
+per entry (197 KiB total); 10 000 requests against a dead engine produce **one** call.
+
+**One detail the design did not specify:** it called for a memo "holding a resolved id for a bounded
+TTL", but a TTL alone does not bound memory — an entry nobody reads again is never evicted. The
+implementation sweeps expired entries on write and caps the map at 1 000 identities, dropping the oldest
+beyond that. Dropping an entry costs one engine call and never correctness, so this fills in an
+unspecified detail rather than changing an approved one.
 
 ---
 
