@@ -4,10 +4,16 @@
 `POST /api/internal/users`. It is the only way a third-party login becomes an engine user, so its
 concurrency behaviour is the foundation every authenticated surface stands on.
 
-**Status:** specification. The invariants and the normal path describe code that exists today; §4
-specifies a change (savepoint + conflict handling) that does **not** exist yet and is a prerequisite
-for [`SESSION_IDENTITY_RECOVERY_DESIGN.md`](SESSION_IDENTITY_RECOVERY_DESIGN.md), which multiplies
+**Status:** specification. §4 specifies a change that does **not** exist yet and is a prerequisite for
+[`SESSION_IDENTITY_RECOVERY_DESIGN.md`](SESSION_IDENTITY_RECOVERY_DESIGN.md), which multiplies
 concurrent first-sightings of the same identity.
+
+> **Revision note.** An earlier revision of §4 specified a `SAVEPOINT`-based algorithm. It is
+> withdrawn. SQLAlchemy's own documentation for the installed version states that SAVEPOINT
+> "fails to participate in the enclosing transaction" under the sqlite3 driver's default mode, and
+> measurement confirmed the consequence: a released savepoint's rows are **already committed** before
+> `COMMIT` is reached, so a later failure cannot roll them back. §4 is now savepoint-free, and §10
+> classifies every assumption so this class of mistake is visible next time.
 
 This document owns the storage-level reasoning. Callers should reference it rather than restate it.
 
@@ -15,19 +21,30 @@ This document owns the storage-level reasoning. Callers should reference it rath
 
 ## 1. Invariants
 
-These hold for every caller, at every concurrency level, on every supported backend. They are the
-contract; everything after this section is how it is kept.
+These hold for every caller, at every concurrency level, on every supported backend.
 
 | # | Invariant |
 |---|---|
 | **I1** | **One engine user per `(provider, provider_account_id)`.** The pair resolves to the same `users.id` forever. Enforced by `UniqueConstraint("provider", "provider_account_id", name="uq_identity_provider_account")` — the database, not application logic, is the arbiter. |
 | **I2** | **Idempotent.** Any number of calls with the same pair — sequential, concurrent, from any number of processes — create at most one `users` row and exactly one `identities` row, and all return the same user. |
-| **I3** | **No duplicate identities.** Two rows with the same pair are unrepresentable. There is no code path, including every failure path, that can produce one. |
-| **I4** | **No orphan users.** A `users` row is never committed without its `identities` row. A lost race must leave the store exactly as a successful re-resolve would. |
-| **I5** | **Email is never an identity key.** It is refreshed as profile context when supplied and matched never, so two providers carrying the same address resolve to two distinct users. |
+| **I3** | **No duplicate identities.** Two rows with the same pair are unrepresentable. |
+| **I4** | **No orphan users.** A `users` row is never committed without its `identities` row. |
+| **I5** | **Email is never an identity key.** Refreshed as profile context when supplied, matched never, so two providers carrying the same address resolve to two distinct users. |
 | **I6** | **Unrelated integrity failures are never swallowed.** Conflict handling recognises *this* conflict; anything else propagates. |
+| **I7** | **The user id, once returned, never changes for that identity.** Nothing updates `identities.user_id` or deletes rows; the mapping is append-only. |
+| **I8** | **No caller observes an error caused solely by losing the race.** Losing produces a resolved user, not a failure. |
 
-I4 and I6 are the two the current code does not yet guarantee. See §4.
+**What today's code does, measured.** Fifteen concurrent first-sightings of one identity against the
+shipped method: ten resolved, five raised `IntegrityError`, and the database ended at exactly one user
+and one identity with **no orphan** `[M: J1]`. So the shipped defect is narrow and specific:
+
+- **I8 fails** — a caller that loses the race gets a `500` instead of a user, and
+- **I2 fails under concurrency** — the call is idempotent when serialised, but not when raced.
+- **I4, I6 and everything else hold today.** I4 holds because the whole transaction rolls back, and I6
+  holds trivially because there is no conflict handling to swallow anything.
+
+That framing matters for §4: the change must convert a loser's failure into a resolution **without
+giving up I4** — which is exactly the trap the withdrawn savepoint version fell into.
 
 ## 2. Concurrency guarantees offered to callers
 
@@ -36,20 +53,21 @@ What a caller may rely on:
 - **Safe to call concurrently** with itself for the same identity or any other, from any thread or
   process. No caller-side locking, ordering, or deduplication is required.
 - **Safe to retry** — I2. A caller that times out and retries cannot create a second account.
-- **Returns a fully resolved user or raises.** There is no partial success and no sentinel.
+- **Returns a fully resolved user or raises.** No partial success, no sentinel. The returned instance
+  is detached but fully loaded (`expire_on_commit=False`), so attribute access after return is safe.
 - **Contention manifests as latency, not error**, up to `busy_timeout` (5 s, §5). Beyond it, and for
   any other failure, the caller sees an exception — surfaced by the API as a typed
-  `500 internal_error` — and is expected to treat it as transient.
+  `500 internal_error` — and should treat it as transient.
+- **At most two transactions per call.** No unbounded retry, no backoff loop.
 
 What a caller may **not** rely on:
 
-- **Which** concurrent call performs the insert. First-sighting is a race with no defined winner; both
-  callers receive the same user, and neither can tell which one created it.
+- **Which** concurrent call performs the insert. First-sighting is a race with no defined winner.
 - **`users.email` / `display_name` reflecting its own arguments** after a concurrent call. Both are
   last-write-wins profile context, refreshed only when a non-`None` value is supplied. Nothing in the
   product keys on them (I5).
-- **Row ids being contiguous or gap-free.** SQLite reuses the id after a rolled-back savepoint
-  (measured); PostgreSQL sequences consume it. Nothing may infer ordering or population size from an id.
+- **Row ids being contiguous or gap-free.** SQLite reuses the id after a rolled-back transaction
+  (measured); PostgreSQL sequences consume it. Nothing may infer ordering or population from an id.
 
 ## 3. How concurrent first-sighting must behave
 
@@ -59,77 +77,88 @@ Two or more callers see no identity and both attempt to create one.
 user. No caller observes an error caused solely by having lost the race.
 
 **Required mechanism:** the unique constraint decides, and the loser recovers by reading the winner's
-row. Specifically:
+row in a **fresh transaction**. Specifically:
 
 1. The loser must not create a second identity — guaranteed by the constraint (I3).
-2. The loser must not leave a `users` row behind — this is what the savepoint is for (I4).
-3. The loser must find the winner's row on re-read. This is not a hope: the constraint violation is
-   *evidence* that the winner's row is visible to the loser's transaction, since a violation can only
-   be raised against data the statement can see. If the re-read comes back empty, the failure was not
-   this race, and I6 requires re-raising.
-4. Neither caller may spin. One conflict, one re-read, done — no retry loop, no backoff, no jitter.
+2. The loser must not leave a `users` row behind. Its whole transaction rolls back, so neither insert
+   survives (I4).
+3. The loser must find the winner's row on its second attempt. The winner has committed, and a new
+   transaction reads committed data — ordinary visibility, not a subtlety.
+4. Neither caller may spin. One conflict, one fresh read, done.
 
-**Explicitly not required:** a lock, an advisory lock, table-level serialisation, or a "get-or-create"
-mutex in the web tier. The constraint already provides mutual exclusion at exactly the granularity
-needed, and paying for a lock on every sign-in to make a rare race tidier is the wrong trade.
+**Explicitly not required:** a lock, an advisory lock, table-level serialisation, or a get-or-create
+mutex in the web tier. The constraint provides mutual exclusion at exactly the granularity needed.
 
 ## 4. The specified algorithm
 
-The pattern is not novel here: `record_improvement_lifecycle` in the same file already does
-savepoint → `IntegrityError` → re-select for `(user_id, rec_key)`, with a comment naming the unique
-constraint as the arbiter. This is that pattern, with one difference that matters.
+Two attempts, each its own transaction. No savepoint (see the revision note, and §10 ID2).
 
 ```python
-with self.session() as s:
-    identity = s.scalar(select(Identity).where(
-        Identity.provider == provider,
-        Identity.provider_account_id == provider_account_id))
+def upsert_user_by_identity(self, provider: str, provider_account_id: str,
+                            email: str | None = None,
+                            display_name: str | None = None) -> User:
+    """Return the user for (provider, provider_account_id), creating user + identity on first sight.
 
-    if identity is None:
-        try:
-            # THE SAVEPOINT SPANS BOTH INSERTS. `users` is written first (to assign the id the
-            # identity references), so a savepoint around only the identity insert would leave the
-            # user row behind in the enclosing transaction when the identity conflicts — an orphan
-            # user per lost race (I4). This is the one way this differs from the lifecycle pattern,
-            # which inserts a single row.
-            with s.begin_nested():
-                user = User(email=email, display_name=display_name)
-                s.add(user)
-                s.flush()                        # assigns user.id
-                s.add(Identity(provider=provider,
-                               provider_account_id=provider_account_id, user_id=user.id))
-                s.flush()                        # surfaces the conflict here rather than at RELEASE
-        except IntegrityError:
-            # Lost the race. The savepoint rollback discards both inserts and expunges the `User`
-            # instance created inside it, so `user` must be rebound from the winner's row — which the
-            # violation proves is visible to this transaction.
-            identity = s.scalar(select(Identity).where(
-                Identity.provider == provider,
-                Identity.provider_account_id == provider_account_id))
-            if identity is None:
-                raise                            # not this race — I6, never swallow it
+    Idempotent and concurrency-safe: see docs/IDENTITY_UPSERT_CONCURRENCY.md.
+    """
+    try:
+        return self._resolve_identity(provider, provider_account_id, email, display_name,
+                                      create=True)
+    except (IntegrityError, OperationalError) as first:
+        # Either we lost a first-sighting race (the UNIQUE constraint rejected our identity insert) or
+        # we could not get the write transaction against a concurrent writer. In both cases our
+        # transaction rolled back whole, so nothing of ours is committed and a second attempt is safe.
+        # OperationalError is included deliberately: if the driver ever stops running in legacy
+        # transaction mode, a lost race can surface as a snapshot conflict rather than a constraint
+        # violation (§10 ID1).
+        user = self._resolve_identity(provider, provider_account_id, email, display_name,
+                                      create=False)
+        if user is None:
+            raise first          # nobody won, so this was never a race — I6, never swallow it
+        return user
+
+
+def _resolve_identity(self, provider: str, account_id: str, email: str | None,
+                      display_name: str | None, *, create: bool) -> "User | None":
+    """One attempt, one transaction. With `create=False`, resolves an existing identity or returns
+    None — which the caller reads as "there was no winner, so the failure was not a race"."""
+    with self.session() as s:
+        identity = s.scalar(select(Identity).where(
+            Identity.provider == provider,
+            Identity.provider_account_id == account_id))
+
+        if identity is None:
+            if not create:
+                return None
+            user = User(email=email, display_name=display_name)
+            s.add(user)
+            s.flush()                                   # assigns user.id
+            s.add(Identity(provider=provider, provider_account_id=account_id, user_id=user.id))
+            s.flush()                                   # the conflict surfaces here
+        else:
             user = identity.user
-    else:
-        user = identity.user
 
-    if email is not None:
-        user.email = email                       # profile context, last-write-wins (I5)
-    if display_name is not None:
-        user.display_name = display_name
-    s.flush()
-    s.refresh(user)
-    return user
+        if email is not None:
+            user.email = email                          # profile context, last-write-wins (I5)
+        if display_name is not None:
+            user.display_name = display_name
+        s.flush()
+        s.refresh(user)
+        return user
 ```
 
-Four details are load-bearing, and each is a way a plausible-looking variant would be wrong:
+Why this shape:
 
 | Detail | Why |
 |---|---|
-| `begin_nested()`, not bare `try` | Mandatory, and on SQLite too: without it the handler's re-read raises `PendingRollbackError`, as does the commit, so the call returns no user at all (measured, §9.7). On PostgreSQL a failed statement additionally aborts the whole transaction. |
-| The savepoint spans **both** inserts | Otherwise every lost race commits an orphan `users` row (I4). |
-| The explicit second `s.flush()` | **Not** required for correctness — exiting `begin_nested()` flushes, so the conflict still lands inside the `with` and reaches the handler (measured, §9.7). Kept because it puts the failure at the statement rather than at a block boundary. |
-| `raise` when the re-read is empty | An `IntegrityError` from something else (a foreign-key failure, a future constraint) must not be reported as success (I6). |
-| Rebinding `user` in the handler | The savepoint rollback expunges the instance added inside it. Reusing that stale object instead of the winner's would return a user that is not in the database. |
+| **Transaction-scoped retry, not savepoint-scoped** | A rolled-back transaction is documented to discard all of its work, and was measured to. A released savepoint under this driver is not (§9.7, §10 ID2). |
+| **A second `session()`, not a continuation of the first** | After a flush error the first session is unusable (`PendingRollbackError`, measured). A fresh transaction is also what makes the winner's row plainly visible. |
+| `except (IntegrityError, OperationalError)` | Covers both shapes a lost race can take: a constraint violation today, or a snapshot/lock conflict if the driver's transaction mode ever changes (§10 ID1, OB1). |
+| **`raise first` when the second attempt finds nothing** | An `IntegrityError` from a foreign key, or a genuine lock timeout, must not be reported as success (I6). |
+| **Exactly two attempts** | Bounded (Q6). A loop here would mask a different bug. |
+
+The loser's path costs one extra short transaction, on a path that runs at most once per identity per
+sign-in.
 
 ## 5. Why this is safe on SQLite today
 
@@ -138,39 +167,30 @@ Verified against the running configuration rather than assumed:
 | Fact | Value | Where |
 |---|---|---|
 | SQLAlchemy | 2.0.51 | installed |
-| SQLite | 3.45.1 | installed |
+| SQLite / Python | 3.45.1 / 3.11.15 | installed |
 | Journal mode | `wal` | `SQLITE_PRAGMAS`, confirmed via `PRAGMA journal_mode` |
 | Busy timeout | 5000 ms | idem |
-| Pool (file DB) | `QueuePool` — several connections, one per active thread | `_make_engine` |
+| Pool (file DB) | `QueuePool`, `pool_size=5`, `max_overflow=10` → 15 connections | `_make_engine` |
 | Pool (in-memory) | `StaticPool` — a single shared connection | idem (matters for testing, §7) |
-| Driver transaction control | pysqlite legacy (`isolation_level == ''`) | confirmed at runtime |
-| API process model | one uvicorn process, no `--workers`; sync `def` endpoints run in the anyio threadpool | `api_fastapi.py`, `Dockerfile.api` |
+| Session | `expire_on_commit=False` | `Store.__init__` |
+| Driver transaction control | sqlite3 **legacy transaction control** (`isolation_level == ''`) | confirmed at runtime |
+| API process model | one uvicorn process, no `--workers`; sync `def` endpoints on the anyio threadpool | `api_fastapi.py`, `Dockerfile.api` |
 | Other writer processes | `ingest` and the backup scheduler share the same file | `docker-compose.yml` |
 
-So concurrency is real today — multiple threads in the API process, plus other containers on the same
-database file. Three properties combine to make the algorithm correct:
+Concurrency is real today — multiple threads in the API process plus other containers on the same
+file. Three properties make the algorithm correct:
 
 1. **WAL gives one writer at a time, and readers never block.** Two threads can both run the initial
-   `SELECT` concurrently and both miss.
-2. **The driver's legacy transaction control means the `SELECT` runs outside any transaction.** pysqlite
-   issues no `BEGIN` for a read; it begins a deferred transaction on the first DML statement. So the
-   loser's write transaction starts *after* its own read and after the winner's commit, and therefore
-   sees the winner's row. This is why the loser gets a clean `IntegrityError` rather than
-   `SQLITE_BUSY_SNAPSHOT` from trying to upgrade a stale read snapshot — a distinction that decides
-   which exception the handler must catch.
-3. **`busy_timeout=5000` absorbs write-lock contention.** The loser waits for the writer's lock rather
-   than failing immediately; only a >5 s stall surfaces as `OperationalError: database is locked`,
-   which is contention, not conflict, and is correctly treated as transient by the caller.
+   `SELECT` and both miss.
+2. **The loser's whole transaction rolls back.** Nothing it inserted survives, so I4 holds regardless
+   of where in the attempt the failure happened.
+3. **`busy_timeout=5000` absorbs write-lock contention.** A blocked writer waits rather than failing;
+   only a >5 s stall raises `OperationalError: database is locked`, which §4 treats as a possible lost
+   race and re-raises if the second attempt finds no winner.
 
-Point 2 is now measured, not inferred: a session's DBAPI connection reports `in_transaction == False`
-after the initial `SELECT` and `True` after the first `INSERT` (§9.5 A3).
-
-**Assumption to state, because a future change could silently invalidate point 2:** the algorithm's
-exception type depends on the driver's legacy transaction control. Switching to explicit
-`BEGIN IMMEDIATE`, setting `isolation_level=None` with manual transaction management, or adopting
-SQLAlchemy 2.1's SQLite transaction-control options could move the loser's failure from
-`IntegrityError` to an `OperationalError` snapshot conflict. If any of those lands, the handler must
-also treat that as "lost the race, re-read" — and §7's race test is what would catch it.
+Note what is *not* in that list: the driver's legacy transaction mode. The previous revision depended
+on it twice — for savepoint semantics, and for which exception the loser sees. The redesign removes the
+first dependency entirely and tolerates either outcome of the second.
 
 ## 6. Sequence diagrams
 
@@ -186,20 +206,16 @@ sequenceDiagram
 
     W->>A: POST /api/internal/users {provider, providerAccountId, email}
     A->>S: upsert_user_by_identity(...)
-    S->>DB: SELECT identity WHERE (provider, account_id)
+    S->>DB: SELECT identity WHERE provider, account_id
     DB-->>S: none
-    S->>DB: SAVEPOINT
-    S->>DB: INSERT users → id=42
-    S->>DB: INSERT identities (provider, account_id, 42)
-    DB-->>S: ok
-    S->>DB: RELEASE SAVEPOINT
+    S->>DB: INSERT users → id 42
+    S->>DB: INSERT identities → provider, account_id, 42
     S->>DB: COMMIT
     S-->>A: user 42
     A-->>W: 200 {userId: 42}
 ```
 
-A returning identity is shorter still: the `SELECT` hits, the savepoint block is skipped, and only the
-profile refresh is written.
+A returning identity is shorter: the `SELECT` hits and only the profile refresh is written.
 
 ### Concurrent first sighting — the race
 
@@ -216,23 +232,20 @@ sequenceDiagram
         T2->>DB: SELECT identity → none
     end
 
-    Note over T1,T2: neither read opened a transaction (pysqlite legacy control)
-
-    T1->>DB: SAVEPOINT · INSERT users 43 · INSERT identities
-    Note right of T1: acquires the single write lock
-    T1->>DB: RELEASE · COMMIT
+    T1->>DB: INSERT users 43 · INSERT identities · COMMIT
+    Note right of T1: holds the single write lock
     DB-->>T1: ok → user 43
 
-    T2->>DB: SAVEPOINT · INSERT users 44 · INSERT identities
-    Note right of T2: waits for the write lock up to busy_timeout,<br/>then reads a snapshot that already<br/>contains A's commit
+    T2->>DB: INSERT users 44 · INSERT identities
+    Note right of T2: waits for the lock up to busy_timeout,<br/>then the INSERT hits the unique index
     DB-->>T2: IntegrityError on uq_identity_provider_account
-    T2->>DB: ROLLBACK TO SAVEPOINT
-    Note right of T2: user 44 never existed outside the savepoint (I4)
-    T2->>DB: SELECT identity → found, user_id=43
+    T2->>DB: ROLLBACK
+    Note right of T2: user 44 never committed — I4 holds by<br/>transaction rollback, not by savepoint scope
+    T2->>DB: second attempt · SELECT identity → user_id 43
     T2->>DB: COMMIT
     DB-->>T2: user 43
 
-    Note over T1,T2: one users row, one identities row,<br/>both callers hold the same id (I1, I2, I3)
+    Note over T1,T2: one users row, one identities row,<br/>both callers hold the same id
 ```
 
 ### The failure that must not be swallowed
@@ -243,250 +256,265 @@ sequenceDiagram
     participant T as caller
     participant DB as database
 
-    T->>DB: SAVEPOINT · INSERT users · INSERT identities
+    T->>DB: INSERT users · INSERT identities
     DB-->>T: IntegrityError from some OTHER constraint
-    T->>DB: ROLLBACK TO SAVEPOINT
-    T->>DB: SELECT identity → none
+    T->>DB: ROLLBACK
+    T->>DB: second attempt · SELECT identity → none
     Note right of T: no winner exists, so this was never a race
-    T-->>T: re-raise per I6 → 500 internal_error
+    T-->>T: raise the original error per I6 → 500 internal_error
 ```
 
 ## 7. Testing requirements
 
 | # | Test | Asserts |
 |---|---|---|
-| 1 | Two threads, file-backed DB, barrier-synchronised on the same new identity | `users` count == 1, `identities` count == 1, both threads return the same id (I1, I2, I3) |
-| 2 | Same, then count `users` | == 1 — the orphan-user regression (I4). Fails against a savepoint that wraps only the identity insert. |
+| 1 | Two threads, file-backed DB, barrier-synchronised on the same new identity | `users` == 1, `identities` == 1, both threads return the same id (I1, I2, I3) |
+| 2 | Same, then count `users` | == 1 — the orphan-user regression (I4) |
 | 3 | Sequential repeat: same pair called five times | one user, one identity, same id each time (I2) |
 | 4 | Same email under `google` and `dev` | two distinct users (I5) — the anti-hijack test; must fail if the join key ever becomes email |
 | 5 | `email=None` / `display_name=None` on a returning identity | existing values preserved, not nulled |
-| 6 | An `IntegrityError` whose re-read finds nothing | propagates (I6). Inject via a monkeypatched `Identity` insert or a deliberately violated foreign key. |
-| 7 | Race under contention: N threads, one identity | no `OperationalError` escapes; `busy_timeout` absorbs the waiting (§5.3). Measured clean at N = 2, 8, 15. |
-| 8 | The **class** of exception the handler catches, in the race | it is `IntegrityError`. Counts alone would stay green if the mechanism silently changed to something accidentally equivalent — this is what pins premise A3 (§9.9 R1, R2). |
-| 9 | A session's DBAPI connection after a bare `SELECT` | `in_transaction is False`; `True` after the first `INSERT`. Promotes the F5 probe to a guard, so a future `isolation_level` or `BEGIN IMMEDIATE` change fails here rather than in production (§9.9 R2). |
+| 6 | An `IntegrityError` whose second attempt finds nothing | the **original** exception propagates (I6). Inject via a deliberately violated foreign key. |
+| 7 | Race under contention: N threads, one identity | no exception escapes; `busy_timeout` absorbs the waiting. Measured clean at N = 2, 8, 15. |
+| 8 | The **class** of exception the first attempt fails with, in the race | `IntegrityError` today. Pins OB1 (§10) — row counts alone stay green if the mechanism changes underneath. |
+| 9 | A session's DBAPI connection after a bare `SELECT` | `in_transaction is False`; `True` after the first `INSERT`. Pins ID1 (§10), so a driver-mode change fails here rather than in production. |
+| 10 | **A failure after the inserts but before commit** | commits nothing (Q5). This is the test the withdrawn savepoint design would have failed, and the reason it was withdrawn. |
+| 11 | The returned `User` is usable after return | attribute access on the detached instance works (`expire_on_commit=False`, SC6) |
 
-Tests 1, 2, 6, 8 and 9 are new; 3–5 extend existing coverage.
+Tests 1, 2, 6, 8, 9, 10 are new; 3–5, 7, 11 extend existing coverage.
 
 **Two constraints on how the concurrent tests are written**, both measured:
 
-- **Use a file-backed temporary database.** `tests/test_store.py` builds
-  `Store("sqlite:///:memory:")`, which uses `StaticPool` — a *single* shared connection, so concurrent
-  sessions serialise and no conflict can occur at all. A race test on that fixture passes for the wrong
-  reason, which is worse than no test.
-- **Keep N ≤ 15.** The engine's pool ceiling is `pool_size 5 + max_overflow 10`. A barrier-style test
-  where each of N threads holds a connection while waiting **deadlocks** at N = 16 — every thread fails
-  on checkout (`TimeoutError`) and the barrier breaks. This is a property of the harness, not of the
-  algorithm, and it costs an afternoon to rediscover.
+- **Use a file-backed temporary database.** `tests/test_store.py` builds `Store("sqlite:///:memory:")`,
+  which uses `StaticPool` — a *single* shared connection, so concurrent sessions serialise and no
+  conflict can occur at all. A race test on that fixture passes for the wrong reason.
+- **Keep N ≤ 15.** The pool ceiling is `pool_size 5 + max_overflow 10`. A barrier-style test where each
+  of N threads holds a connection while waiting **deadlocks** at N = 16 — every thread fails on
+  checkout (`TimeoutError`) and the barrier breaks. A property of the harness, not the algorithm.
 
-**One ops confirmation.** `Base.metadata.create_all` does not add a constraint to a table that already
-exists, so in principle a production `identities` table older than `uq_identity_provider_account` would
-lack it — and then nothing in this document is enforced. Checked: the constraint and the table entered
-history in the **same commit** (`3aa0ca7`), so the table has never shipped without it and any
-`create_all`-built database has the index. Confirm once anyway, because it is one line and it underwrites
-every invariant here: `PRAGMA index_list('identities')` on the live file (§9.9 R3).
+**One ops confirmation.** `create_all` does not add a constraint to a table that already exists, so in
+principle a production `identities` table older than `uq_identity_provider_account` would lack it — and
+then nothing here is enforced. Checked: constraint and table entered history in the **same commit**
+(`3aa0ca7`), so no released schema ever lacked it. Confirm once anyway, because it underwrites
+everything: `PRAGMA index_list('identities')` on the live file.
 
 ## 8. If the engine migrates to PostgreSQL
 
-The algorithm is chosen to be portable, so the answer is short: **the code does not change.** What
-changes is the reasoning behind why it works, and one configuration detail that must be checked.
-
 | Aspect | SQLite today | PostgreSQL |
 |---|---|---|
-| Arbiter of I1/I3 | `UNIQUE` constraint | the same constraint, unchanged by the migration |
-| Concurrency of first-sighting | rare — one writer at a time | **common** — true concurrent writers, so the handler moves from a corner case to a routine one. This is why it must be correct rather than merely present. |
-| Loser's failure | `IntegrityError` (unique violation), thanks to the driver's read-outside-transaction behaviour | `IntegrityError` wrapping SQLSTATE `23505`. Same exception class from SQLAlchemy; the handler is unchanged. |
-| Is the savepoint still needed? | yes, to keep the enclosing transaction usable and to prevent orphan users | **more** than needed — mandatory. A failed statement aborts the whole PostgreSQL transaction; without a savepoint, every subsequent statement raises until rollback. |
-| Does the re-read see the winner? | yes — proven by the violation being raised against visible data | yes **under READ COMMITTED** (the default), which takes a fresh snapshot per statement. **Under REPEATABLE READ or SERIALIZABLE it does not** — the snapshot is fixed at transaction start, so the re-read returns nothing and the algorithm must instead roll the whole transaction back and retry it. **Check the isolation level before migrating**; if anything sets it above READ COMMITTED, §4 needs a transaction-level retry wrapper. |
-| Lock-wait behaviour | `busy_timeout=5000` | `lock_timeout` / `statement_timeout`; contention appears as waiting on the conflicting row, resolved when the winner commits |
-| Cheaper alternative | — | `INSERT … ON CONFLICT (provider, provider_account_id) DO NOTHING RETURNING id`, one round trip, no savepoint. Available in SQLite 3.24+ too, but only through dialect-specific constructs (`sqlalchemy.dialects.{sqlite,postgresql}.insert`), so it trades one portable implementation for two. Not worth it unless profiling says so — this path runs at most once per sign-in. |
+| Arbiter of I1/I3 | `UNIQUE` constraint | the same constraint, unchanged |
+| Concurrency of first-sighting | rare — one writer at a time | **common** — true concurrent writers, so the loser path becomes routine rather than a corner case |
+| Loser's failure | `IntegrityError` (unique violation) | `IntegrityError` wrapping SQLSTATE `23505`. Same class from SQLAlchemy; §4 unchanged. |
+| Does the second attempt see the winner? | yes — a new transaction reads committed data | yes, **at any isolation level**, because it is a *new* transaction rather than a re-read inside the failed one. The savepoint design needed READ COMMITTED specifically; this one does not. |
+| Recovering from a failed statement | new transaction | new transaction. On PostgreSQL a failed statement aborts the whole transaction — which is exactly what §4 already does. |
+| Lock-wait behaviour | `busy_timeout=5000` | `lock_timeout` / `statement_timeout`; contention appears as waiting on the conflicting row |
+| Cheaper alternative | — | `INSERT … ON CONFLICT DO NOTHING RETURNING id`. Available in SQLite 3.24+ too but only via dialect-specific constructs, so it trades one portable implementation for two. Not worth it unless profiling says so. |
 
-Migration checklist for this table specifically: (a) confirm the transaction isolation level is READ
-COMMITTED; (b) confirm `uq_identity_provider_account` came across as a real unique index, not an
-advisory or partial one; (c) re-run the §7 tests against PostgreSQL — tests 1 and 2 are the ones that
-would catch a regression, and they will now exercise genuine concurrency rather than a narrow window.
+Migration checklist for this table: (a) confirm `uq_identity_provider_account` came across as a real
+unique index; (b) re-run §7 — tests 1, 2 and 10 would catch a regression, and they will now exercise
+genuine concurrency. The isolation level is no longer a prerequisite to check, which is a direct
+benefit of dropping the savepoint.
 
 ## 9. Correctness argument
 
-A semi-formal proof: every storage-level premise is either cited to documented behaviour or
-**measured** on this exact stack (SQLAlchemy 2.0.51, SQLite 3.45.1, the real `_make_engine`).
-Measurements are labelled `[M]` with the probe id. The probes were ad-hoc scripts against throwaway
-file-backed databases; §7 is where the ones worth keeping become tests, and §9.9 says which those are
-and why. Two claims made earlier in this document did not survive measurement — see §9.7.
+Every storage-level premise is either cited to documented behaviour or **measured** on this exact
+stack. Measurements are labelled `[M]`. §9.7 records what measurement disproved.
 
 ### 9.1 Preconditions
 
 | # | Precondition | Enforced by |
 |---|---|---|
 | **P1** | `provider` and `provider_account_id` are non-empty strings, ≤ 40 and ≤ 255 chars | caller; column widths truncate silently otherwise |
-| **P2** | The caller holds no open transaction on this store and passes no session in | the method opens and owns its own `session()` |
-| **P3** | The schema is present and `uq_identity_provider_account` exists **in the live database** | `create_all`; the constraint has shipped with the table since `3aa0ca7`, so no released schema lacks it (**R3** keeps the one-line confirmation) |
+| **P2** | The caller holds no open transaction on this store and passes no session in | the method opens and owns its own sessions |
+| **P3** | `uq_identity_provider_account` exists in the live database | `create_all`; shipped with the table since `3aa0ca7` (§7) |
 | **P4** | The engine is built by `_make_engine` (WAL, `busy_timeout=5000`, `foreign_keys=ON`) | `Store.__init__` |
 | **P5** | `email` / `display_name` are `None` or strings; `None` means "do not touch" | signature |
 
 ### 9.2 Postconditions
 
-On return, in the committed state of the database:
-
 | # | Postcondition |
 |---|---|
 | **Q1** | Exactly one `identities` row exists with `(provider, provider_account_id)`. |
-| **Q2** | The returned `User` is the one that row references, and is persistent (loaded, id assigned). |
-| **Q3** | `users.email` / `display_name` equal the supplied arguments where those were not `None`, and are otherwise unchanged. |
-| **Q4** | Exactly one `users` row was created across all calls for this identity — never zero, never two. |
-| **Q5** | On raise, nothing this call attempted is committed: no `users` row, no `identities` row. The store is exactly as it was. |
-| **Q6** | The call terminates. There is no retry loop, no wait that is not bounded by `busy_timeout`. |
+| **Q2** | The returned `User` is the one that row references, fully loaded and safe to read after return. |
+| **Q3** | `users.email` / `display_name` equal the supplied arguments where those were not `None`. |
+| **Q4** | Exactly one `users` row was created across all calls for this identity. |
+| **Q5** | On raise, nothing this call attempted is committed. |
+| **Q6** | The call terminates: at most two transactions, no wait unbounded by `busy_timeout`. |
 
-Q5 is what makes the caller's retry safe, and it is the postcondition the savepoint exists to
-provide.
+Q5 is what makes the caller's retry safe. It is also the postcondition the withdrawn design violated.
 
-### 9.3 Invariants guaranteed
-
-I1–I6 from §1 restated as what the proof must show, plus two that only appear once you reason about
-sequences of calls:
-
-| # | Invariant | Scope |
-|---|---|---|
-| I1 | One engine user per `(provider, provider_account_id)`, forever | global, all time |
-| I2 | Idempotent under any number of calls, sequential or concurrent | global |
-| I3 | No two `identities` rows share the pair | global, enforced by the constraint |
-| I4 | No `users` row is committed without its `identities` row | per call |
-| I5 | Email is never an identity key | per call |
-| I6 | An `IntegrityError` that is not this conflict propagates | per call |
-| **I7** | **The user id, once returned, never changes for that identity.** Nothing in the algorithm updates `identities.user_id` or deletes rows, so the mapping is append-only. | global |
-| **I8** | **No caller observes an error caused solely by losing the race.** Losing produces a resolved user, not a failure. | per call |
-
-### 9.4 The algorithm as atomic steps
-
-For a caller X:
+### 9.3 The algorithm as atomic steps
 
 ```
-S_X    SELECT identity WHERE (provider, account_id)          -- no transaction open  [M: F5]
-        found?  -->  U_X, C_X                                 -- the "exists" branch
-        miss?   -->  N_X
-N_X    SAVEPOINT
-I1_X     INSERT INTO users ...                                -- opens the write transaction here
-I2_X     INSERT INTO identities ...                           -- succeeds, or raises V_X
-        success -->  R_X (RELEASE), U_X, C_X
-        V_X     -->  K_X (ROLLBACK TO SAVEPOINT), S'_X, U_X, C_X
-U_X    UPDATE users SET email/display_name                    -- only for non-None arguments
-C_X    COMMIT
+attempt 1:  S_X   SELECT identity                       -- no transaction open  [M: F5]
+                  found? --> U_X, C_X                   -- the "exists" branch
+                  miss?  --> I1_X INSERT users          -- opens the write transaction here
+                             I2_X INSERT identities     -- succeeds, or raises V_X
+                             U_X, C_X
+            V_X --> ROLLBACK (whole transaction)
+attempt 2:  S'_X  SELECT identity in a NEW transaction
+                  found? --> U_X, C_X
+                  miss?  --> re-raise V_X               -- I6
 ```
 
-The write phase of X is the interval `[I1_X, C_X]`. This is the unit that matters, because of A1
-below: **write phases of distinct callers cannot interleave.** That single fact reduces the space of
-interleavings from unbounded to the handful enumerated in §9.5.
+The write phase of X is `[I1_X, C_X]`. By A1 below, write phases of distinct callers cannot
+interleave — the fact that makes the enumeration in §9.5 finite and short.
 
-### 9.5 Storage-level premises
+### 9.4 Storage-level premises
 
 | # | Premise | Status |
 |---|---|---|
-| **A1** | SQLite in WAL mode permits **one write transaction at a time**; a second writer blocks. | documented SQLite semantics; corroborated `[M: F3, F4]` |
-| **A2** | WAL readers observe the last committed snapshot and never another transaction's uncommitted writes. | documented SQLite semantics |
-| **A3** | pysqlite legacy transaction control: no `BEGIN` before a read; `BEGIN` deferred until the first DML. | `[M: F5]` — DBAPI `in_transaction` is `False` after `S_X`, `True` after `I1_X` |
-| **A4** | A `UNIQUE` violation is raised only against data visible to the statement. Therefore after `V_X`, `S'_X` finds the winner. | `[M: E6, F1, F2]` — every loser resolved, 14/14 at N=15 |
-| **A5** | `Session.begin_nested()` emits a real `SAVEPOINT` that behaves correctly under A3, and rolling it back discards **all** work inside it. | `[M: E2, E3]` — with the savepoint spanning both inserts, final counts `(1,1)`; spanning only the identity insert, `(2,1)` |
-| **A6** | Exiting the `begin_nested()` block flushes pending work, so a deferred `I2_X` still raises **inside** the `with`. | `[M: F1]` — handler fired with and without an explicit `flush()` |
-| **A7** | Savepoint rollback expunges instances added inside it; they revert to transient. | `[M: E6]` — `transient=True`, `in_session=False` |
-| **A8** | A blocked writer waits up to `busy_timeout` (5 s), then raises `OperationalError: database is locked`. | `[M: F3]` 5.02 s to failure; `[M: F4]` acquires at 1.03 s when the holder commits |
-| **A9** | The connection pool ceiling is `pool_size 5 + max_overflow 10 = 15`. | `[M: E11]` — the 16th concurrent holder fails on checkout |
-| **A10** | `foreign_keys=ON`, so an FK violation also surfaces as `IntegrityError`. | `[M: E10]` |
+| **A1** | WAL permits one write transaction at a time; a second writer blocks. | documented SQLite semantics; corroborated `[M: F3, F4]` |
+| **A2** | WAL readers see the last committed snapshot, never uncommitted writes. | documented SQLite semantics; corroborated `[M: G3]` |
+| **A3** | `ROLLBACK` of a plain DML transaction discards every statement in it. | documented; `[M: G3, H3]` — counts `(0,0)` from another connection before and after |
+| **A4** | A committed row is visible to any transaction started afterwards. | documented committed-read visibility; `[M: H1, H2]` |
+| **A5** | A `UNIQUE` violation raises `IntegrityError` through SQLAlchemy. | documented DBAPI-error wrapping; `[M: F1, F2]` |
+| **A6** | `foreign_keys=ON`, so an FK violation *also* raises `IntegrityError`. | `[M: E10]` — hence I6 must discriminate |
+| **A7** | A blocked writer waits up to `busy_timeout` then raises `OperationalError: database is locked`. | `[M: F3]` 5.02 s to failure; `[M: F4]` acquires at 1.03 s when the holder commits |
+| **A8** | `expire_on_commit=False`, so the returned detached instance keeps loaded attributes. | documented SQLAlchemy option; `[M]` verified against the live `Store` |
+| **A9** | Pool ceiling is `5 + 10 = 15` connections; the 16th concurrent holder fails on checkout. | `[M: E11]` |
+| **A10** | The shipped (pre-change) method already satisfies I4 by transaction rollback: 15 concurrent first-sightings leave one user and one identity, with five callers raising. | `[M: J1]` |
 
-### 9.6 All interleavings of two concurrent first-time sign-ins
+Premises the previous revision needed and this one does not: savepoint participation in the enclosing
+transaction, flush-on-savepoint-release, and expunge-on-savepoint-rollback. All three are now moot.
 
-Let A and B be two callers for the same identity, both starting with no row present. By **A1**, their
-write phases are totally ordered; without loss of generality let **A** be the caller whose write phase
-commits first. Then B's `S_B` falls in exactly one of three places, and B's write phase in one of two.
-That is the complete space — six leaves, of which two are the same case reached differently.
+### 9.5 All interleavings of two concurrent first-time sign-ins
 
-```mermaid
-sequenceDiagram
-    autonumber
-    participant B as caller B
-    participant DB as SQLite WAL
-    participant A as caller A
-
-    Note over B,A: A is defined as the first committer. S_B falls before, during, or after A's write phase.
-    B->>DB: case 1 · S_B before I1_A → miss
-    A->>DB: I1_A · I2_A · C_A
-    B->>DB: case 2 · S_B during A's phase → miss by A2
-    Note over B: case 3 · S_B after C_A → hit, no conflict
-    B->>DB: write phase (serialized after A by A1) → V_B → K_B → S'_B
-    DB-->>B: winner's row, user id = A's
-```
+By A1 the write phases are totally ordered; let **A** be the caller whose write phase commits first.
+`S_B` then falls in exactly one of three places, and B's write phase in one of two.
 
 | # | Interleaving | What B does | Outcome | Invariants |
 |---|---|---|---|---|
-| **1** | `S_B` … `I1_A I2_A C_A` … `I1_B` | misses, then attempts its inserts entirely after `C_A` (A1) | `V_B` → `K_B` → `S'_B` finds A's row (A4) → returns A's user | I1 ✔ (one identity) I3 ✔ (constraint) I4 ✔ (A5 discards B's user) I8 ✔ (no error) |
-| **2** | `I1_A` … `S_B` … `C_A` … `I1_B` | `S_B` reads the committed snapshot, so it misses (A2); its write phase is blocked until `C_A` (A1) | identical to case 1 | as case 1 |
-| **3** | `I1_A I2_A C_A` … `S_B` | `S_B` **hits** | takes the exists branch; only `U_B` runs; no insert, no conflict | I1 ✔ I4 ✔ trivially, I5 ✔ (only profile columns written) |
-| **4** | `S_A S_B` then B's write phase first | relabel: B is the first committer, A is the loser | symmetric to case 1 | as case 1 |
-| **5** | `I1_A` open, `I1_B` attempts, A does **not** commit within 5 s | B blocks on the write lock and then raises (A8) | B's call fails having written nothing (Q5); the caller's retry re-enters at `S_B` and lands in case 1 or 3 | I2 ✔ (retry safe) Q5 ✔ I8 — *see the note below* |
-| **6** | A's write phase aborts (unrelated error, crash, rollback) | nothing of A's is committed | B's phase succeeds and B becomes the first committer | I1 ✔ I4 ✔; A's caller sees the raise (I6) |
+| **1** | `S_B` … `I1_A I2_A C_A` … `I1_B` | misses, then attempts its inserts entirely after `C_A` (A1) | `V_B` → whole-transaction rollback (A3) → second attempt finds A's row (A4) → returns A's user | I1 ✔ I3 ✔ (constraint) I4 ✔ (A3) I8 ✔ |
+| **2** | `I1_A` … `S_B` … `C_A` … `I1_B` | `S_B` reads the committed snapshot, so it misses (A2); its write phase blocks until `C_A` (A1) | identical to case 1 | as case 1 |
+| **3** | `I1_A I2_A C_A` … `S_B` | `S_B` **hits** | exists branch; only the profile update runs | I1 ✔ I4 ✔ trivially I5 ✔ |
+| **4** | `S_A S_B` then B's write phase first | relabel: B is the first committer | symmetric to case 1 | as case 1 |
+| **5** | `I1_A` open, `I1_B` attempts, A does not commit within 5 s | B blocks then raises (A7); §4 treats it as a possible lost race, finds no winner, re-raises | B's call fails having written nothing (Q5); the caller's retry re-enters at case 1 or 3 | I2 ✔ Q5 ✔ I8 — see the note |
+| **6** | A's write phase aborts | nothing of A's is committed (A3) | B's phase succeeds and B becomes the first committer | I1 ✔ I4 ✔; A's caller sees the raise (I6) |
 
-**The one honest wrinkle, case 5.** I8 says no caller fails *solely* for losing a race. In case 5 B
-does fail — but not because of the conflict: it fails because A held the write lock for more than five
-seconds, which is a caller-discipline failure (a slow operation inside an open transaction), not a
-property of this algorithm. `upsert_user_by_identity` itself holds the write lock for two inserts and
-an update, microseconds of work. The invariant survives with that reading, and R6 records the
-obligation it puts on callers.
+**The honest wrinkle, case 5.** I8 says no caller fails *solely* for losing a race. In case 5 B does
+fail — not from the conflict but because A held the write lock for over five seconds, which is a
+caller-discipline failure (slow work inside a transaction), not a property of this algorithm.
+`upsert_user_by_identity` holds the lock for two inserts and an update. R6 records the obligation.
 
-**Generalisation to N callers.** By induction on the write-phase order: the first committer creates the
-row; every later caller either misses and conflicts (case 1/2 → resolves to the first committer's user)
-or hits (case 3). Measured at N = 2, 8 and 15 real threads: `handler_fired == N − 1` exactly, all N
-resolved to the same id, final counts `(1, 1)`, no exception escaped `[M: F2]`.
+**Generalisation to N callers.** By induction on write-phase order: the first committer creates the
+row; every later caller either misses and conflicts (→ case 1/2) or hits (→ case 3). Measured at
+N = 2, 8, 15 real threads against the savepoint-free algorithm: all N resolved to the same id, final
+counts `(1, 1)`, no exception escaped `[M: H2]`.
 
-### 9.7 Two corrections from measurement
+### 9.6 Why each execution preserves the invariants
 
-**The explicit second `flush()` is not load-bearing.** §4 claimed the conflict would escape the handler
-without it. It does not: exiting `begin_nested()` flushes, and the resulting `IntegrityError`
-propagates out of the `with` block into the handler (A6, `[M: F1]` — the handler fired in both
-variants). The explicit flush is retained because it puts the failure at the statement rather than at a
-block boundary, which is easier to read and to debug — but it is style, not correctness.
+- **I1, I3** rest on the unique index alone. No execution can insert a second identity row, so no
+  interleaving needs to be trusted for these.
+- **I4** rests on A3. In every failing execution the whole transaction rolls back, so the `users`
+  insert cannot outlive the `identities` insert. The withdrawn design made I4 depend on savepoint
+  scope, which is where it broke.
+- **I2, I7** follow from I1 plus the absence of any `UPDATE` to `identities.user_id` and any `DELETE`.
+- **I5** holds because email appears only in `UPDATE users SET email`, never in a `WHERE` that selects
+  an identity.
+- **I6** holds because the second attempt distinguishes "a winner exists" (a race) from "no winner"
+  (something else), and re-raises the original exception in the second case.
+- **I8** holds in cases 1–4 and 6; case 5 is the documented exception above.
+- **Q5** holds because a failed attempt's transaction is rolled back whole, verified `[M: H3]`.
 
-**Omitting the savepoint fails harder than described.** §4 said a bare `try` "leaves the failed inserts
-pending on SQLite". Measured, it is worse: the re-read inside the handler raises
-`PendingRollbackError`, and so does the subsequent `commit()`, so the whole call fails and returns no
-user at all `[M: E4]`. The savepoint is mandatory on SQLite, for its own reason, and not merely
-tidiness before a PostgreSQL migration.
+### 9.7 What measurement disproved
 
-**One caveat narrowed.** §2 warns that a rolled-back savepoint "may consume a rowid on some backends".
-On SQLite it does not — the next insert reuses the id `[M: E7]`. On PostgreSQL, sequence values *are*
-consumed. The caveat stands as written for portability; the SQLite behaviour is now known.
+**The savepoint design violated Q5 — the finding that forced the rewrite.** SQLAlchemy 2.0.51's own
+SQLite dialect documentation states, of the sqlite3 driver's default legacy transaction mode:
 
-### 9.8 Assumptions the proof depends on — and where each is checked
+> **Incorrect behavior for SAVEPOINT** — as the SAVEPOINT statement does not imply a BEGIN, a new
+> SAVEPOINT emitted before a BEGIN will function on its own but fails to participate in the enclosing
+> transaction, meaning a ROLLBACK of the transaction will not rollback elements that were part of a
+> released savepoint.
 
-| Layer | Assumption | If it changed |
-|---|---|---|
-| SQLite | A1 single writer, A2 snapshot reads | The enumeration in §9.6 assumes write phases cannot interleave. Without A1 the case analysis is invalid and the constraint alone would carry correctness (still I1/I3, but I4's argument would need re-deriving). |
-| Driver | A3 legacy transaction control | The loser's exception class could become `OperationalError` (`SQLITE_BUSY_SNAPSHOT`) from upgrading a stale read snapshot. The handler catches only `IntegrityError`, so I8 would break — losers would fail instead of resolving. **This is the single most fragile premise.** |
-| SQLAlchemy | A5 savepoint semantics, A6 flush-on-release, A7 expunge-on-rollback | I4 depends on A5; the handler firing at all depends on A6; rebinding `user` depends on A7. All three are version-pinned behaviours, verified on 2.0.51. |
-| Transaction boundary | The write phase is `[I1_X, C_X]`, opened by the first DML and closed by exactly one commit | A caller that wraps this method in an outer transaction (violating P2) changes the boundary and invalidates Q5. |
-| Flush semantics | `s.flush()` emits SQL immediately; the session's autoflush does not emit the identity insert earlier than intended | An autoflush triggered by `S'_X` inside the handler is harmless here (the pending inserts were expunged by A5/A7), but it is why the re-read must come *after* the savepoint rollback, never before. |
-| Pooling | A9 ceiling of 15 connections | Concurrency above 15 does not corrupt anything, but callers queue and then fail on checkout (`TimeoutError`, default 30 s). FastAPI's threadpool is 40 wide, so the pool — not this algorithm — is the first limit on concurrent sign-ins. |
+Measured `[M: G1, G2]`: after the savepoint was released, another connection could already see
+`(users, identities) = (1, 1)` — **before `COMMIT` was ever called** — and `s.rollback()` (exactly what
+`Store.session()` does on any exception) left both rows in place. A failure anywhere after the release
+would have committed a user and identity for a call that raised. The earlier proof measured only
+`ROLLBACK TO SAVEPOINT` — the half the documentation says "will function on its own" — and mistook it
+for the whole.
 
-### 9.9 The residue: what tests must establish, because the code cannot
+**The explicit second `flush()` was not load-bearing** in the savepoint design either: exiting
+`begin_nested()` flushes, so the conflict reached the handler with or without it `[M: F1]`. Moot now,
+but it is the second claim measurement contradicted.
 
-These are the assumptions no amount of reading the implementation can settle. Each needs a test whose
-failure is the alarm.
+**Retained, and now measured directly:** a plain transaction rollback *does* discard everything
+`[M: G3, H3]`, which is what the redesign rests on.
+
+### 9.8 The residue: what tests must establish, because the code cannot
 
 | # | Residual assumption | Required test |
 |---|---|---|
-| **R1** | A5/A6/A7 hold in whatever SQLAlchemy version is installed *next*. | §7 tests 1–2, plus an assertion that the **caught exception class is `IntegrityError`** — not merely that the final counts are right. Counts alone stay green if the mechanism changes to something accidentally equivalent. |
-| **R2** | A3 (no `BEGIN` before a read) still holds. Nothing in the algorithm expresses this dependency, and a future `isolation_level` change is a one-line diff elsewhere. | A test asserting the loser's caught exception is `IntegrityError`, and a direct assertion that a session's DBAPI connection is **not** `in_transaction` after a SELECT — the F5 probe, promoted to a test. |
-| **R3** | `uq_identity_provider_account` exists in the **production** database. `create_all` never adds a constraint retroactively, so a table older than the constraint would leave every invariant here unenforced. Git says this cannot have happened — the constraint and the table arrived in the same commit (`3aa0ca7`), so no released schema ever lacked it. What remains is confirmation rather than suspicion. | One ops line: `PRAGMA index_list('identities')` on the live database. Worth doing because it underwrites everything else, not because it is likely to fail. |
-| **R4** | Multi-process safety. E9 modelled a second process with a second engine in one process; SQLite's file locking is what would actually carry it. | A subprocess-based test, or an explicit decision that E9's model plus SQLite's documented file locking is sufficient evidence. |
-| **R5** | These two inserts are the only writes in the transaction. | A test that fails if the method grows another write inside the same session — or simply the review discipline of re-reading §9.2 when it does. |
-| **R6** | Callers never hold the write transaction across a slow operation (case 5). | Not unit-testable. It is a code-review rule: no network call, no sleep, no user-facing wait inside a `session()` block. |
+| **R1** | The loser's failure is an exception class §4 catches. | §7 test 8 — assert the class, not just the row counts. |
+| **R2** | The driver's transaction mode is what §5 says. | §7 test 9 — assert `in_transaction is False` after a SELECT. Fails loudly if `autocommit`/`isolation_level` is ever set, or on Python ≥ 3.16 where legacy mode stops being the default. |
+| **R3** | The unique index exists in the live database. | One ops line (§7). Confirmation, not suspicion. |
+| **R4** | Multi-process safety. `[M: E9]` modelled a second process with a second engine in one process; SQLite's file locking is what would actually carry it. | A subprocess test, or an explicit decision that E9 plus SQLite's documented file locking suffices. |
+| **R5** | These are the only writes in the transaction. | Review discipline: re-read §9.2 when the method grows a third write. |
+| **R6** | Callers never hold a write transaction across slow work (case 5). | Not unit-testable. Code-review rule: no network call, no sleep inside a `session()` block. |
 
-A test suite that satisfies R1–R4 turns this section from an argument into a checked property. Until
-then it is exactly what it says it is: a proof against premises, six of which were measured on this
-stack today and one of which (R3) has not yet been checked at all.
+## 10. Assumption classification
 
-## 10. Non-goals
+Operational purpose: **on any upgrade to SQLAlchemy, Python, SQLite or the driver, re-validate the
+Observed Behavior rows and re-read the Implementation Detail rows. The Stable Contract rows need no
+attention.**
+
+### Stable Contract — documented, safe across upgrades
+
+Correctness rests here. If all of these hold, I1–I7 and Q1–Q6 hold.
+
+| # | Assumption | Source | Invariants depending on it |
+|---|---|---|---|
+| **SC1** | A `UNIQUE` constraint rejects a second row with the same key. | SQL standard; SQLite constraint documentation | I1, I3 — and through them I2, I7 |
+| **SC2** | A constraint violation surfaces as `sqlalchemy.exc.IntegrityError`. | SQLAlchemy's documented DBAPI exception wrapping | §4's `except`, I6 |
+| **SC3** | WAL allows one writer at a time; readers do not block writers. | SQLite WAL documentation *(not re-fetched here — sqlite.org is blocked from this environment; corroborated by `[M: F3, F4]`)* | the §9.5 enumeration |
+| **SC4** | `ROLLBACK` discards every statement of the transaction. | SQLite + SQLAlchemy transaction documentation; `[M: G3, H3]` | **I4, Q5** — the load-bearing one for the redesign |
+| **SC5** | A transaction cannot read another's uncommitted writes; a committed row is visible to transactions starting later. | SQLite isolation documentation | case 2's miss, and the second attempt's hit |
+| **SC6** | `expire_on_commit=False` leaves a detached instance's loaded attributes readable. | SQLAlchemy `sessionmaker` documentation | Q2 |
+| **SC7** | `Session.flush()` emits pending DML inside the current transaction. | SQLAlchemy session documentation | the conflict arriving at a known point |
+| **SC8** | With `foreign_keys=ON`, an FK violation is also an `IntegrityError`. | SQLite pragma documentation | I6's discrimination requirement |
+
+### Observed Behavior — verified here, not guaranteed; protect with tests
+
+Measured on SQLAlchemy 2.0.51 / SQLite 3.45.1 / Python 3.11.15. An upgrade may change any of these
+without it being a bug in anyone's product.
+
+| # | Observation | Measured | Risk if it changes | Guard |
+|---|---|---|---|---|
+| **OB1** | The loser's first attempt fails with `IntegrityError` specifically, not a lock or snapshot error. | `[M: F1, F2]` — 14/14 losers at N = 15 | §4 would not catch it and I8 would break: losers would fail instead of resolving | §7 test 8. **§4 already catches `OperationalError` too, which downgrades this from a correctness risk to a latency one.** |
+| **OB2** | `busy_timeout` produces a ~5 s wait, then `OperationalError: database is locked`. | `[M: F3]` 5.02 s; `[M: F4]` 1.03 s | Case 5's boundary moves; no invariant breaks | §7 test 7 |
+| **OB3** | Pool ceiling 15 (`5 + 10`), 30 s checkout timeout. | `[M: E11]` | Concurrency beyond 15 queues then fails; and **barrier-style tests deadlock** | §7's "keep N ≤ 15" note |
+| **OB4** | For N concurrent callers, exactly one wins and N−1 take the loser path. | `[M: F2, H2]` | Nothing — but it is the signal that a race test is exercising the race at all | §7 tests 1, 7 |
+| **OB5** | SQLite reuses a rowid after a rolled-back transaction (no gap). | `[M: E7]` | Nothing — §2 forbids inferring anything from ids | none needed; do not start depending on it |
+
+### Implementation Detail — do not rely on; isolated or removed
+
+| # | Detail | Status in the design |
+|---|---|---|
+| **ID1** | **sqlite3 legacy transaction control** — no `BEGIN` before `SELECT`, `SAVEPOINT` or DDL. SQLAlchemy documents this as a divergence from PEP 249 that "will no longer be the default" (Python 3.16), and Python 3.12+ already offers `autocommit=False` to opt out. | **Tolerated, not depended on.** It decides *which* exception the loser sees (OB1); §4 catches both shapes, so the algorithm survives the mode change. §7 test 9 makes the change visible rather than silent. |
+| **ID2** | **`SAVEPOINT` participating in the enclosing transaction.** Documented as *incorrect* under ID1, and measured to leave released-savepoint rows committed `[M: G1, G2]`. | **REMOVED.** This was the previous §4's foundation. Nothing in the current algorithm emits a savepoint. |
+| **ID3** | Flush-on-savepoint-release timing. | Moot — no savepoints. |
+| **ID4** | Savepoint rollback expunging instances added inside it. | Moot — no savepoints. |
+| **ID5** | The exact wording of SQLite's "database is locked" message. | Never parsed; only the exception class is used. |
+| **ID6** | `QueuePool` being the default pool class for file-backed SQLite in SQLAlchemy 2.x. | Not depended on for correctness; it sets OB3's numbers, which only the test harness cares about. |
+
+### Upgrade checklist
+
+| Trigger | Re-validate |
+|---|---|
+| SQLAlchemy minor/major upgrade | OB1 (test 8), OB3 (harness N), and that SC2/SC6 are still documented |
+| Python upgrade to 3.12–3.15 | ID1 unchanged by default, but `autocommit` becomes available — do not set it without re-running tests 8, 9, 10 |
+| **Python 3.16** | ID1's default flips. Run tests 8, 9, 10 and expect OB1 to become `OperationalError`; §4 should already handle it |
+| Anyone sets `isolation_level` or `connect_args={"autocommit": …}` | tests 8, 9, 10 — this is the change ID1 exists to make loud |
+| SQLite version upgrade | nothing; SC1/SC3/SC5 are long-stable guarantees |
+| Migration to PostgreSQL | §8's two-item checklist; the isolation-level question no longer applies |
+
+## 11. Non-goals
 
 - **Merging identities.** Two providers for one person are two users today (I5). Account linking is a
   product feature with its own design, not a storage concern.
 - **Deleting or reassigning identities.** Out of scope; nothing does it.
 - **Serialising sign-ins.** A lock would make the race disappear and make every sign-in pay for it.
-  The constraint is cheaper and stronger.
-- **Retry loops.** One conflict, one re-read. A loop here would be masking a different bug.
+- **Retry loops.** Two attempts, bounded. A loop here would be masking a different bug.
+- **Adopting non-legacy transaction mode to make savepoints work.** It is the documented fix for ID2,
+  but it changes transaction behaviour for *every* query in the engine, and the SQLAlchemy docs warn it
+  is "more susceptible to locked database errors" — with three writer processes on one file, that is a
+  production risk taken on to enable a mechanism this algorithm no longer needs.

@@ -308,13 +308,14 @@ instance, per-process coalescing collapses concurrent first-sightings to a singl
 narrow. **Across instances there is no coalescing**, so N instances recovering the same identity at once
 means up to N simultaneous first-sightings — and until that contract's §4 lands, the loser's
 `IntegrityError` reaches the engine's catch-all handler as a typed `500 internal_error`, which recovery
-reads as a failure and backs off from. The loser is not corrupted, just delayed by a backoff window it
-did not need — and it additionally leaves an orphan `users` row behind, which is that contract's **I4**
-and happens at one instance too.
+reads as a failure and backs off from. Nothing is corrupted — measured against the shipped method, 15
+concurrent first-sightings leave exactly one user and one identity, because the loser's whole
+transaction rolls back. The cost is that the loser is *delayed* by a backoff window it did not need,
+and on a single instance today the same thing happens to two concurrent sign-ins.
 
-So the fix is a **prerequisite**, and the topological reason is that it is what makes recovery safe on
-more than one web instance. It should land with the initial implementation regardless, because the
-orphan-user consequence does not wait for a second instance.
+So the fix is a **prerequisite**, and the topological reason is that it is what makes recovery
+*effective* on more than one web instance: without it, N instances recovering one identity means N−1 of
+them take an unnecessary failure path.
 
 ### Assumptions about deployment topology, stated
 
