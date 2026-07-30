@@ -240,8 +240,9 @@ never resolves `engineUserId`, so the session exists but cannot be attributed. E
 401s — the landing step's write included — and no retry can fix it, because `engineUserId` is only
 resolved on the initial sign-in. Signing out and back in is the only recovery. This predates the
 onboarding work and affects every authenticated surface, not just this step; the fix belongs in
-`lib/auth.ts` (re-resolve the engine id in the `jwt` callback whenever the token lacks one, keyed off
-the stored provider + `token.sub`), and should be its own change with its own tests.
+`lib/auth.ts`, and is designed in
+[`SESSION_IDENTITY_RECOVERY_DESIGN.md`](SESSION_IDENTITY_RECOVERY_DESIGN.md) — proposal only, so it can
+be reviewed and implemented independently of the onboarding change.
 
 ## 9. Tests that hold it in place
 
