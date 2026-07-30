@@ -639,12 +639,32 @@ looked.
 |---|---|---|
 | **S1** | Recovery inherited the general 6 s engine deadline, so a **wedged** engine could hold a server render for that long. | `recoveryTimeoutMs()` in `lib/engine-timeout.ts` — `min(engineTimeoutMs(), 2000)`, passed per call. Sign-in keeps the 6 s default; the repair gives up at 2 s and retries after the 30 s backoff. See §5b. |
 | **S2** | Recovery sent `email`/`displayName` from a token up to 30 days old, and the engine refreshed both — so a long-idle broken session could write a **stale profile over a newer one**. | `refreshProfile` on `POST /api/internal/users`, defaulting to `true`. Recovery sends `false`; both sign-in paths omit it and their request is byte-identical to before. Creation still writes the profile — creation is not a refresh. See §5c. |
+| **S4b** | No end-to-end test drove a broken session through a **real** browser, so the repair's *durable* half — the re-issued cookie — was reasoned about, never observed. | `web/e2e/specs/identity-recovery.spec.ts`, three tests against the real stack: a broken session heals to the **same** engine account and the re-issued cookie carries the id; a legacy token with only `sub` heals through the fallback; a non-Google broken token is refused. Fixtures `mintBrokenSessionCookie` / `decodeSessionToken` in `e2e/helpers.ts`. Verified by mutation, not just by passing — see the residual below. |
 
 ### Deferred to a follow-up PR
 
-| # | Gap | Why it was not a release blocker | What the fix looks like |
-|---|---|---|---|
-| **S4b** | No Playwright test drives a **real** engine refusing `/api/internal/users` and then recovering. | `lib/session-recovery.test.ts` covers the mechanism against the real NextAuth route (§8). What e2e would add is the durable-heal step via `SessionProvider`, which no unit test can show. | A fixture that mints a broken session — `e2e/helpers.ts` currently mints tokens with `engineUserId` already set — plus a way to fail the endpoint for a window. |
+*(Empty. S4b was the last entry and is now closed — see above, and the residual below.)*
+
+#### The residual S4b did not close
+
+The original entry asked for a test driving **a real engine refusing `/api/internal/users`**. What
+shipped covers everything *around* that refusal — the durable heal, the legacy-token fallback, and the
+non-Google refusal — but not a genuine engine-side failure, and the reason is structural rather than
+an omission: the suite shares one web server and one engine across all specs, `ENGINE_BASE` and the
+kill switch are both read from that process's environment, and the recovery call is server-to-server,
+so `page.route` cannot intercept it. Failing the endpoint for one test would mean failing it for all
+of them.
+
+That branch is covered where it can be: `lib/session-recovery.test.ts` and `lib/engine-identity.test.ts`
+drive `attemptEngineUpsert` against a stubbed fetch for each outcome (`http_401`, `timeout`,
+`unreachable`, `malformed_response`), which is where the reason-classification logic actually lives.
+What e2e adds and units cannot — the re-issued cookie — is now observed.
+
+**The tests were verified by mutation, not by passing.** Running the suite with
+`RWE_IDENTITY_RECOVERY=0` fails exactly the two heal tests and leaves the refusal test green; deleting
+the `provider !== "google"` guard fails exactly the refusal test and leaves the two heal tests green.
+A test that asserts an absence is the easiest kind to write vacuously, which is why that second
+mutation matters more than the first.
 
 ### Accepted, with the reasoning
 

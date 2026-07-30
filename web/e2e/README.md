@@ -15,6 +15,7 @@ read-recording are genuinely exercised (not stubbed).
 | `specs/settings.spec.ts` | Theme persists across reload; a preference saves and is retained |
 | `specs/saved.spec.ts` | Save → persist across reload → unsave → empty state |
 | `specs/error-handling.spec.ts` | Anonymous protected endpoint → 401; unavailable backend → error state, no fabricated data |
+| `specs/identity-recovery.spec.ts` | A session with no engine id heals to the **same** account and the re-issued cookie carries it; a legacy token heals from `sub`; a non-Google token is refused |
 
 ## How to run
 

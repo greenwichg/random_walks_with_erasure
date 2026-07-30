@@ -342,9 +342,11 @@ each `reason` means and what to do about it, how to disable recovery) added as d
 allowlist-shortcut invariant written down in §4; and the production-readiness review's deferred findings
 and accepted debt recorded in §10 so they are decisions with reasons rather than omissions.
 
-**Follow-ups still open:** S4b (Playwright test 14), specified in
-[`SESSION_IDENTITY_RECOVERY_DESIGN.md`](SESSION_IDENTITY_RECOVERY_DESIGN.md) §10. S1 and S2 are
-closed — see the commit table.
+**Follow-ups still open:** none. S1, S2 and S4b are all closed — see the commit table and
+[`SESSION_IDENTITY_RECOVERY_DESIGN.md`](SESSION_IDENTITY_RECOVERY_DESIGN.md) §10. S4b shipped as
+`web/e2e/specs/identity-recovery.spec.ts`, which observes the durable re-issued cookie that no unit
+test can reach; §10 records the one branch it could not cover (a real engine-side refusal, which the
+shared-server topology makes un-isolatable) and where that is covered instead.
 
 **Not done here:** recording the observed recovery-log volume after a day in production. That needs
 production, and deploys are manual. It is the first thing to add once the stack has run with commit 5

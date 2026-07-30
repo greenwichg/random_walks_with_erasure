@@ -11,7 +11,7 @@
  * Direct engine calls carry `X-IH-User-Id`; on localhost with no internal secret the engine trusts
  * it (the same dev posture the app uses), so no secret is needed.
  */
-import { encode } from "next-auth/jwt";
+import { encode, decode } from "next-auth/jwt";
 import { ENGINE_URL, NEXTAUTH_SECRET } from "./constants";
 
 export interface SessionCookie {
@@ -25,8 +25,17 @@ export interface SessionCookie {
 
 let counter = 0;
 
-/** Create a fresh, isolated engine user and return its stable engine id. */
-export async function createEngineUser(tag = "e2e"): Promise<number> {
+/**
+ * Create a fresh, isolated engine user and return BOTH halves of its identity.
+ *
+ * Most specs only need the engine id, and use {@link createEngineUser}. The identity-recovery spec
+ * needs the `providerAccountId` too, because that is the claim recovery resolves *from* — a broken
+ * session carries no engine id, so the only way to prove recovery healed the RIGHT account is to
+ * know which provider account it should land on.
+ */
+export async function createEngineIdentity(
+  tag = "e2e",
+): Promise<{ uid: number; providerAccountId: string }> {
   const providerAccountId = `${tag}-${Date.now()}-${counter++}`;
   const res = await fetch(`${ENGINE_URL}/api/internal/users`, {
     method: "POST",
@@ -35,7 +44,12 @@ export async function createEngineUser(tag = "e2e"): Promise<number> {
   });
   if (!res.ok) throw new Error(`createEngineUser failed: ${res.status} ${await res.text()}`);
   const { userId } = (await res.json()) as { userId: number };
-  return userId;
+  return { uid: userId, providerAccountId };
+}
+
+/** Create a fresh, isolated engine user and return its stable engine id. */
+export async function createEngineUser(tag = "e2e"): Promise<number> {
+  return (await createEngineIdentity(tag)).uid;
 }
 
 /** Encode the NextAuth session cookie for `uid` (the identity a real sign-in would establish). */
@@ -52,6 +66,56 @@ export async function mintSessionCookie(uid: number): Promise<SessionCookie> {
     httpOnly: true,
     sameSite: "Lax",
   };
+}
+
+/**
+ * Encode a session cookie for a **broken** session: a validly signed token that carries no
+ * `engineUserId`. This is the state identity recovery exists to repair, and it is not reachable
+ * through any UI — it happens when the engine is unreachable during the few hundred milliseconds of
+ * sign-in, which swallows the failure by design. Minting it directly is the only way to drive the
+ * repair end to end.
+ *
+ * The claims are deliberately caller-controlled, because *which* claims a token carries is what
+ * decides whether recovery may proceed at all:
+ *   - `providerAccountId` — what a token minted after the provider claims existed carries;
+ *   - `sub` alone — what an OLDER token carries, where the Google `sub` IS the provider account id;
+ *   - `provider` other than `google` — a token recovery must refuse to guess from.
+ */
+export async function mintBrokenSessionCookie(claims: {
+  provider?: string;
+  providerAccountId?: string;
+  sub?: string;
+  email?: string;
+  name?: string;
+}): Promise<SessionCookie> {
+  const token = await encode({
+    token: {
+      name: claims.name ?? "E2E Broken Reader",
+      email: claims.email ?? "e2e-broken@infodiet.local",
+      ...(claims.sub ? { sub: claims.sub } : {}),
+      ...(claims.provider ? { provider: claims.provider } : {}),
+      ...(claims.providerAccountId ? { providerAccountId: claims.providerAccountId } : {}),
+      // engineUserId is POINTEDLY absent — that absence is the whole fixture.
+    },
+    secret: NEXTAUTH_SECRET,
+  });
+  return {
+    name: "next-auth.session-token",
+    value: token,
+    domain: "localhost",
+    path: "/",
+    httpOnly: true,
+    sameSite: "Lax",
+  };
+}
+
+/**
+ * Decode a session cookie back into its claims — how a test sees whether a repair became DURABLE.
+ * The in-memory session object being correct only proves the current request was served correctly;
+ * the re-issued cookie is what proves the next one will be too.
+ */
+export async function decodeSessionToken(value: string): Promise<Record<string, unknown> | null> {
+  return (await decode({ token: value, secret: NEXTAUTH_SECRET })) as Record<string, unknown> | null;
 }
 
 function engineHeaders(uid: number): Record<string, string> {
