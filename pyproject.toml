@@ -31,3 +31,12 @@ include = ["rwe*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# `slow` covers the wall-clock probes in tests/concurrency (busy_timeout expiry, pool exhaustion).
+# They are excluded by default and run with `pytest -m slow tests/concurrency`; everything else in
+# that directory runs with the normal suite, so CI's 3.11 + 3.12 matrix exercises the version-drift
+# detectors documented in docs/IDENTITY_UPSERT_CONCURRENCY.md §10.
+addopts = "-m 'not slow'"
+markers = [
+  "concurrency: storage-level concurrency + version-drift harness (tests/concurrency)",
+  "slow: needs seconds of wall clock; excluded by default",
+]

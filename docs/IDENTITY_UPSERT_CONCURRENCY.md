@@ -264,32 +264,74 @@ sequenceDiagram
     T-->>T: raise the original error per I6 → 500 internal_error
 ```
 
-## 7. Testing requirements
+## 7. The harness
 
-| # | Test | Asserts |
+**It exists: `tests/concurrency/`.** The experiments that produced every `[M]` measurement in this
+document are kept as runnable tests, not as prose about experiments that were once run.
+
+```
+pytest tests/concurrency -q                      # fast probes (runs with the normal suite, and in CI
+                                                 # on both 3.11 and 3.12)
+pytest tests/concurrency -q -m "slow or not slow"   # + the two wall-clock probes (~14 s total)
+```
+
+| File | What it holds |
+|---|---|
+| `harness.py` | the file-backed store loader, `counts()`, and `read_barrier()` — the engine-level hook that makes a first-sighting race **deterministic** |
+| `conftest.py` | `file_store` (file-backed, always) and `second_store` (a second engine + pool over the same file) |
+| `test_storage_premises.py` | one test per premise, named for its §10 id — the version-drift detectors |
+| `test_identity_upsert.py` | the invariant suite, run against **two subjects**: the shipped method and an executable reference implementation of §4 |
+
+### Premise tests, by §10 id
+
+| Test | Pins | If it fails |
 |---|---|---|
-| 1 | Two threads, file-backed DB, barrier-synchronised on the same new identity | `users` == 1, `identities` == 1, both threads return the same id (I1, I2, I3) |
-| 2 | Same, then count `users` | == 1 — the orphan-user regression (I4) |
-| 3 | Sequential repeat: same pair called five times | one user, one identity, same id each time (I2) |
-| 4 | Same email under `google` and `dev` | two distinct users (I5) — the anti-hijack test; must fail if the join key ever becomes email |
-| 5 | `email=None` / `display_name=None` on a returning identity | existing values preserved, not nulled |
-| 6 | An `IntegrityError` whose second attempt finds nothing | the **original** exception propagates (I6). Inject via a deliberately violated foreign key. |
-| 7 | Race under contention: N threads, one identity | no exception escapes; `busy_timeout` absorbs the waiting. Measured clean at N = 2, 8, 15. |
-| 8 | The **class** of exception the first attempt fails with, in the race | `IntegrityError` today. Pins OB1 (§10) — row counts alone stay green if the mechanism changes underneath. |
-| 9 | A session's DBAPI connection after a bare `SELECT` | `in_transaction is False`; `True` after the first `INSERT`. Pins ID1 (§10), so a driver-mode change fails here rather than in production. |
-| 10 | **A failure after the inserts but before commit** | commits nothing (Q5). This is the test the withdrawn savepoint design would have failed, and the reason it was withdrawn. |
-| 11 | The returned `User` is usable after return | attribute access on the detached instance works (`expire_on_commit=False`, SC6) |
+| `test_engine_configuration_matches_the_contract` | §5's table: WAL, `busy_timeout`, `foreign_keys`, `QueuePool` / `StaticPool`, `expire_on_commit` | every number in this document describes a machine that no longer exists |
+| `test_unique_constraint_exists_on_the_identity_pair` | SC1 — and shows what the live-database ops check looks for | I1/I3 are unenforced |
+| `test_SC4_transaction_rollback_discards_every_statement` | SC4 | **I4 and Q5 are lost** — this is the premise the redesign rests on |
+| `test_SC5_committed_rows_are_visible_to_later_transactions` | SC5 | the loser's second attempt is no longer guaranteed to find the winner |
+| `test_SC8_foreign_key_violation_also_raises_integrity_error` | SC8 | I6's discrimination requirement changes shape |
+| `test_ID1_sqlite3_is_still_in_legacy_transaction_control` | ID1 | the driver mode changed (Python ≥ 3.16, or someone set `isolation_level`/`autocommit`) — re-validate OB1 |
+| `test_ID2_a_released_savepoint_escapes_the_enclosing_rollback` | ID2 | savepoints now participate properly; §10 ID2 can be reclassified |
+| `test_OB2_busy_timeout_bounds_a_blocked_writer` *(slow)* | OB2 | case 5's boundary moved |
+| `test_OB2b_a_blocked_writer_proceeds_once_the_holder_commits` | OB2 | contention stopped being latency-shaped |
+| `test_OB3_pool_ceiling_is_pool_size_plus_max_overflow` *(slow)* | OB3 | update the `n <= 15` guard in `run_concurrently` |
+| `test_OB5_sqlite_reuses_a_rowid_after_a_rolled_back_insert` | OB5 | nothing — recorded so §2's "infer nothing from an id" stays honest |
+| `test_two_stores_on_one_file_share_the_constraint` | R4's model | cross-pool enforcement changed |
 
-Tests 1, 2, 6, 8, 9, 10 are new; 3–5, 7, 11 extend existing coverage.
+Each of these asserts today's behaviour and names the section to re-read in its own failure message.
+**A failure here is a prompt to re-validate, not necessarily a defect.**
 
-**Two constraints on how the concurrent tests are written**, both measured:
+### Invariant tests, over two subjects
 
-- **Use a file-backed temporary database.** `tests/test_store.py` builds `Store("sqlite:///:memory:")`,
-  which uses `StaticPool` — a *single* shared connection, so concurrent sessions serialise and no
-  conflict can occur at all. A race test on that fixture passes for the wrong reason.
-- **Keep N ≤ 15.** The pool ceiling is `pool_size 5 + max_overflow 10`. A barrier-style test where each
-  of N threads holds a connection while waiting **deadlocks** at N = 16 — every thread fails on
-  checkout (`TimeoutError`) and the barrier breaks. A property of the harness, not the algorithm.
+`test_identity_upsert.py` parametrises every property over `shipped` (the current method) and
+`reference` (§4's algorithm, implemented in the test file so the design is executable before it is
+adopted). The diff between the two columns *is* the change being proposed:
+
+| Property | `shipped` | `reference` |
+|---|---|---|
+| I1/I3/I4 — a race never duplicates or orphans (N = 2, 8, 15) | ✔ | ✔ |
+| I2 sequential idempotency, I5 anti-hijack, profile-column rules, Q2 detached reads | ✔ | ✔ |
+| Q5 — a failure after the inserts commits nothing | ✔ | ✔ |
+| **I8 — every concurrent caller resolves** | **✘ `xfail(strict=True)`** | ✔ |
+| I6 — a failure no winner explains re-raises the original | n/a (no handler) | ✔ |
+
+**The strict xfail is the implementation signal.** When §4 lands, `shipped` starts passing I8, the
+strict marker turns that XPASS into a suite failure, and whoever implemented it deletes the reference
+implementation and the marker. The suite tells you it is time.
+
+### Two things the harness had to learn the hard way
+
+- **Races must be forced at the engine, not in the test body.** Synchronising the threads *before*
+  calling the method is not enough: the method issues its own `SELECT` afterwards, so at N = 2 one
+  caller routinely finishes before another reads, the read hits, and the "race" test tests nothing. It
+  showed up as a flaky XPASS on the tripwire. `read_barrier()` installs an `after_cursor_execute`
+  listener and holds every caller immediately after its identities `SELECT` until all N have read.
+- **Disarm the barrier after N.** `threading.Barrier` resets once its parties pass, so a still-armed
+  listener traps the next caller of that `SELECT` — including the test's own `counts()` helper. That
+  one presented as `BrokenBarrierError` in eight unrelated tests.
+
+Both are recorded in the code, because each cost an hour and neither is obvious from the outcome.
 
 **One ops confirmation.** `create_all` does not add a constraint to a table that already exists, so in
 principle a production `identities` table older than `uq_identity_provider_account` would lack it — and
@@ -444,10 +486,10 @@ but it is the second claim measurement contradicted.
 
 | # | Residual assumption | Required test |
 |---|---|---|
-| **R1** | The loser's failure is an exception class §4 catches. | §7 test 8 — assert the class, not just the row counts. |
-| **R2** | The driver's transaction mode is what §5 says. | §7 test 9 — assert `in_transaction is False` after a SELECT. Fails loudly if `autocommit`/`isolation_level` is ever set, or on Python ≥ 3.16 where legacy mode stops being the default. |
-| **R3** | The unique index exists in the live database. | One ops line (§7). Confirmation, not suspicion. |
-| **R4** | Multi-process safety. `[M: E9]` modelled a second process with a second engine in one process; SQLite's file locking is what would actually carry it. | A subprocess test, or an explicit decision that E9 plus SQLite's documented file locking suffices. |
+| **R1** | The loser's failure is an exception class §4 catches. | `test_I1_I3_I4_concurrent_first_sighting_never_duplicates` asserts the failure *class*, not just the row counts. |
+| **R2** | The driver's transaction mode is what §5 says. | `test_ID1_sqlite3_is_still_in_legacy_transaction_control`. Fails loudly if `autocommit`/`isolation_level` is ever set, or on Python ≥ 3.16 where legacy mode stops being the default. |
+| **R3** | The unique index exists in the live database. | `test_unique_constraint_exists_on_the_identity_pair` covers the schema; the live file still needs the one ops line in §7. |
+| **R4** | Multi-process safety. `test_R4_two_engines_on_one_file_race_safely` models a second process with a second engine and pool; real OS-level file locking is only *modelled*. | Still open: a subprocess test, or an explicit decision that the two-engine model plus SQLite's documented file locking suffices. |
 | **R5** | These are the only writes in the transaction. | Review discipline: re-read §9.2 when the method grows a third write. |
 | **R6** | Callers never hold a write transaction across slow work (case 5). | Not unit-testable. Code-review rule: no network call, no sleep inside a `session()` block. |
 

@@ -208,11 +208,11 @@ already runs on every session read; this adds a branch to it.
     writes the result to the token.
 12. `callbacks.jwt` with an id present does not call the resolver.
 
-**Engine** — owned by [`IDENTITY_UPSERT_CONCURRENCY.md`](IDENTITY_UPSERT_CONCURRENCY.md) §7, not duplicated here. Recovery depends on its tests 1 (concurrent
-first-sighting resolves to one user), 2 (no orphan `users` row on a lost race), 3 (sequential
-idempotency) and 4 (same email under two providers → two users). Heed that contract's warning: the race
-tests must run against a **file-backed** SQLite database, because the in-memory fixture shares a single
-connection and cannot produce a conflict at all.
+**Engine** — already written, in `tests/concurrency/`, and owned by
+[`IDENTITY_UPSERT_CONCURRENCY.md`](IDENTITY_UPSERT_CONCURRENCY.md) §7 rather than duplicated here.
+Recovery depends on the concurrent first-sighting properties (one user, no orphan, sequential
+idempotency, same email under two providers → two users) and on the strict-xfail tripwire that will
+announce when the upsert change lands. Run them with `pytest tests/concurrency -q`.
 
 **e2e (`web/e2e/specs/auth.spec.ts`)**:
 
