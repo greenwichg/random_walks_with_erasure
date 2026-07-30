@@ -29,3 +29,24 @@ def _wide_story_scan_window():
         os.environ.pop("RWE_STORIES_SCAN_DAYS", None)
     else:
         os.environ["RWE_STORIES_SCAN_DAYS"] = prior
+
+
+@pytest.fixture(autouse=True)
+def _push_worker_is_running():
+    """Start every test with a push worker that is not shutting down.
+
+    ``push_delivery._stop`` is module state that outlives an application lifespan: ``shutdown()``
+    sets it and ``startup()`` clears it, which is exactly right for a process that boots once. This
+    suite is not that process — it runs many simulated lifespans in one interpreter, so a test client
+    whose teardown calls ``shutdown()`` leaves every later test talking to a worker that has been
+    told to stop, and a delivery test then fails with an empty run and no explanation.
+
+    Cleared before AND after: before, so a test is unaffected by whatever ran previously; after, so a
+    test that deliberately stops the worker cannot leak that decision into its neighbours.
+    """
+    import sys
+    sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent.parent / "examples"))
+    import push_delivery
+    push_delivery._stop.clear()
+    yield
+    push_delivery._stop.clear()

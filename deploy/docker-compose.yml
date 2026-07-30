@@ -351,6 +351,11 @@ services:
       #                             fail rather than hold a worker thread.
       RWE_PUSH_DELIVERY: ${RWE_PUSH_DELIVERY:-0}
       RWE_PUSH_SEND_TIMEOUT_MS: ${RWE_PUSH_SEND_TIMEOUT_MS:-}
+      # Rate limiting (Phase B4). A TOKEN BUCKET PER PUSH SERVICE, not a global one: endpoints belong
+      # to a handful of independent operators, and throttling Firefox because Chrome is slow punishes
+      # the wrong readers. On by default — the failure it prevents (tripping a push service's own
+      # limit, turning every send into a retry) is silent and gradual. `0` switches it off.
+      RWE_PUSH_MAX_SENDS_PER_SECOND: ${RWE_PUSH_MAX_SENDS_PER_SECOND:-}
       # Storage lifecycle (examples/retention_policy.py — the ONE typed policy module). 0 = keep
       # forever, uniformly; junk/negative values fall back to the default rather than deleting more.
       # User data (reads, saves, settings, accounts) has NO policy and is never pruned.

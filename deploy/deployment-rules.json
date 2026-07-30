@@ -1,170 +1,394 @@
 {
-  "_comment": "Declarative deployment-dependency rules for deploy/ops/validate-deployment.py. Each rule says: WHEN a service declares a capability (a truthy flag / an env value / merely existing), it must REQUIRE the config that capability depends on — env vars, bind mounts, secrets, and config files. Adding a future check = adding a rule here (no code change). Categories covered: required-env, required-mount, feature-flag, secret, config-file. See docs/DEPLOYMENT_RUNBOOK.md -> Deployment-dependency validation.",
-
+  "_comment": "Declarative deployment-dependency rules for deploy/ops/validate-deployment.py. Each rule says: WHEN a service declares a capability (a truthy flag / an env value / merely existing), it must REQUIRE the config that capability depends on \u2014 env vars, bind mounts, secrets, and config files. Adding a future check = adding a rule here (no code change). Categories covered: required-env, required-mount, feature-flag, secret, config-file. See docs/DEPLOYMENT_RUNBOOK.md -> Deployment-dependency validation.",
   "stacks": [
-    { "name": "production (base + AWS override)", "files": ["deploy/docker-compose.yml", "deploy/docker-compose.aws.yml"] },
-    { "name": "dev (base only)", "files": ["deploy/docker-compose.yml"] }
+    {
+      "name": "production (base + AWS override)",
+      "files": [
+        "deploy/docker-compose.yml",
+        "deploy/docker-compose.aws.yml"
+      ]
+    },
+    {
+      "name": "dev (base only)",
+      "files": [
+        "deploy/docker-compose.yml"
+      ]
+    }
   ],
-
   "rules": [
     {
       "id": "rss-poller-feeds",
-      "categories": ["feature-flag", "required-env", "required-mount", "config-file"],
-      "when": { "service": "api", "env_truthy": "RWE_FEED_POLL" },
+      "categories": [
+        "feature-flag",
+        "required-env",
+        "required-mount",
+        "config-file"
+      ],
+      "when": {
+        "service": "api",
+        "env_truthy": "RWE_FEED_POLL"
+      },
       "require": {
-        "env": ["RWE_RSS_FEEDS"],
-        "mounts": ["/app/feeds/rss_feeds.txt"],
-        "files": ["deploy/rss_feeds.example.txt"]
+        "env": [
+          "RWE_RSS_FEEDS"
+        ],
+        "mounts": [
+          "/app/feeds/rss_feeds.txt"
+        ],
+        "files": [
+          "deploy/rss_feeds.example.txt"
+        ]
       },
       "why": "RWE_FEED_POLL=1 starts the engine's in-process RSS poller, which resolves its feed list from RWE_RSS_FEEDS and reads the mounted feed file. Without both, rss_ingest.load_feeds() returns 0 feeds and the poller silently ingests nothing while appearing healthy (prod incident 2026-07-21).",
-      "fix": "On the `api` service add `RWE_RSS_FEEDS: /app/feeds/rss_feeds.txt` and the bind-mount `./rss_feeds.example.txt:/app/feeds/rss_feeds.txt:ro` — in the AWS override too, because its `volumes: !override` replaces the list."
+      "fix": "On the `api` service add `RWE_RSS_FEEDS: /app/feeds/rss_feeds.txt` and the bind-mount `./rss_feeds.example.txt:/app/feeds/rss_feeds.txt:ro` \u2014 in the AWS override too, because its `volumes: !override` replaces the list."
     },
     {
       "id": "newsapi-key",
-      "categories": ["feature-flag", "required-env"],
-      "when": { "service": "api", "env_truthy": "RWE_NEWSAPI_ENABLED" },
-      "require": { "env": ["RWE_NEWSAPI_API_KEY"] },
-      "why": "RWE_NEWSAPI_ENABLED=1 starts the NewsAPI adapter on the multi-source poller, which authenticates every request with RWE_NEWSAPI_API_KEY. Without the key the adapter stays disabled (a startup config warning fires) — the flag alone silently ingests nothing.",
+      "categories": [
+        "feature-flag",
+        "required-env"
+      ],
+      "when": {
+        "service": "api",
+        "env_truthy": "RWE_NEWSAPI_ENABLED"
+      },
+      "require": {
+        "env": [
+          "RWE_NEWSAPI_API_KEY"
+        ]
+      },
+      "why": "RWE_NEWSAPI_ENABLED=1 starts the NewsAPI adapter on the multi-source poller, which authenticates every request with RWE_NEWSAPI_API_KEY. Without the key the adapter stays disabled (a startup config warning fires) \u2014 the flag alone silently ingests nothing.",
       "fix": "On the `api` service keep `RWE_NEWSAPI_API_KEY: ${RWE_NEWSAPI_API_KEY:-}` wired and set the key in deploy/.env alongside RWE_NEWSAPI_ENABLED=1."
     },
     {
       "id": "guardian-key",
-      "categories": ["feature-flag", "required-env"],
-      "when": { "service": "api", "env_truthy": "RWE_GUARDIAN_ENABLED" },
-      "require": { "env": ["RWE_GUARDIAN_API_KEY"] },
+      "categories": [
+        "feature-flag",
+        "required-env"
+      ],
+      "when": {
+        "service": "api",
+        "env_truthy": "RWE_GUARDIAN_ENABLED"
+      },
+      "require": {
+        "env": [
+          "RWE_GUARDIAN_API_KEY"
+        ]
+      },
       "why": "Same chassis contract as newsapi-key: the enable flag without RWE_GUARDIAN_API_KEY leaves the Guardian adapter disabled (startup config warning) and silently ingests nothing.",
       "fix": "Keep `RWE_GUARDIAN_API_KEY: ${RWE_GUARDIAN_API_KEY:-}` wired on the `api` service and set the key in deploy/.env alongside RWE_GUARDIAN_ENABLED=1."
     },
     {
       "id": "newsdata-key",
-      "categories": ["feature-flag", "required-env"],
-      "when": { "service": "api", "env_truthy": "RWE_NEWSDATA_ENABLED" },
-      "require": { "env": ["RWE_NEWSDATA_API_KEY"] },
+      "categories": [
+        "feature-flag",
+        "required-env"
+      ],
+      "when": {
+        "service": "api",
+        "env_truthy": "RWE_NEWSDATA_ENABLED"
+      },
+      "require": {
+        "env": [
+          "RWE_NEWSDATA_API_KEY"
+        ]
+      },
       "why": "Same chassis contract as newsapi-key: the enable flag without RWE_NEWSDATA_API_KEY leaves the NewsData adapter disabled (startup config warning) and silently ingests nothing.",
       "fix": "Keep `RWE_NEWSDATA_API_KEY: ${RWE_NEWSDATA_API_KEY:-}` wired on the `api` service and set the key in deploy/.env alongside RWE_NEWSDATA_ENABLED=1."
     },
     {
       "id": "gnews-key",
-      "categories": ["feature-flag", "required-env"],
-      "when": { "service": "api", "env_truthy": "RWE_GNEWS_ENABLED" },
-      "require": { "env": ["RWE_GNEWS_API_KEY"] },
+      "categories": [
+        "feature-flag",
+        "required-env"
+      ],
+      "when": {
+        "service": "api",
+        "env_truthy": "RWE_GNEWS_ENABLED"
+      },
+      "require": {
+        "env": [
+          "RWE_GNEWS_API_KEY"
+        ]
+      },
       "why": "Same chassis contract as newsapi-key: the enable flag without RWE_GNEWS_API_KEY leaves the GNews adapter disabled (startup config warning) and silently ingests nothing.",
       "fix": "Keep `RWE_GNEWS_API_KEY: ${RWE_GNEWS_API_KEY:-}` wired on the `api` service and set the key in deploy/.env alongside RWE_GNEWS_ENABLED=1."
     },
     {
       "id": "mediastack-key",
-      "categories": ["feature-flag", "required-env"],
-      "when": { "service": "api", "env_truthy": "RWE_MEDIASTACK_ENABLED" },
-      "require": { "env": ["RWE_MEDIASTACK_API_KEY"] },
-      "why": "Same chassis contract as newsapi-key: the enable flag without RWE_MEDIASTACK_API_KEY leaves the MediaStack adapter disabled (startup config warning) and silently ingests nothing. (Free tier is ~500 requests/MONTH — keep the 5400 s interval + DAILY_BUDGET 15.)",
+      "categories": [
+        "feature-flag",
+        "required-env"
+      ],
+      "when": {
+        "service": "api",
+        "env_truthy": "RWE_MEDIASTACK_ENABLED"
+      },
+      "require": {
+        "env": [
+          "RWE_MEDIASTACK_API_KEY"
+        ]
+      },
+      "why": "Same chassis contract as newsapi-key: the enable flag without RWE_MEDIASTACK_API_KEY leaves the MediaStack adapter disabled (startup config warning) and silently ingests nothing. (Free tier is ~500 requests/MONTH \u2014 keep the 5400 s interval + DAILY_BUDGET 15.)",
       "fix": "Keep `RWE_MEDIASTACK_API_KEY: ${RWE_MEDIASTACK_API_KEY:-}` wired on the `api` service and set the key in deploy/.env alongside RWE_MEDIASTACK_ENABLED=1."
     },
     {
       "id": "currents-key",
-      "categories": ["feature-flag", "required-env"],
-      "when": { "service": "api", "env_truthy": "RWE_CURRENTS_ENABLED" },
-      "require": { "env": ["RWE_CURRENTS_API_KEY"] },
-      "why": "Same chassis contract as newsapi-key: the enable flag without RWE_CURRENTS_API_KEY leaves the Currents adapter disabled (startup config warning) and silently ingests nothing. (Google News RSS is keyless — RWE_GOOGLENEWS_ENABLED needs no companion rule.)",
+      "categories": [
+        "feature-flag",
+        "required-env"
+      ],
+      "when": {
+        "service": "api",
+        "env_truthy": "RWE_CURRENTS_ENABLED"
+      },
+      "require": {
+        "env": [
+          "RWE_CURRENTS_API_KEY"
+        ]
+      },
+      "why": "Same chassis contract as newsapi-key: the enable flag without RWE_CURRENTS_API_KEY leaves the Currents adapter disabled (startup config warning) and silently ingests nothing. (Google News RSS is keyless \u2014 RWE_GOOGLENEWS_ENABLED needs no companion rule.)",
       "fix": "Keep `RWE_CURRENTS_API_KEY: ${RWE_CURRENTS_API_KEY:-}` wired on the `api` service and set the key in deploy/.env alongside RWE_CURRENTS_ENABLED=1."
     },
     {
       "id": "engine-failclosed-secret",
-      "categories": ["secret", "required-env"],
-      "when": { "service": "api", "env_equals": { "RWE_ENV": "production" } },
-      "require": { "secrets": ["RWE_INTERNAL_SECRET"] },
+      "categories": [
+        "secret",
+        "required-env"
+      ],
+      "when": {
+        "service": "api",
+        "env_equals": {
+          "RWE_ENV": "production"
+        }
+      },
+      "require": {
+        "secrets": [
+          "RWE_INTERNAL_SECRET"
+        ]
+      },
       "why": "In production the engine fail-closes: it refuses per-user calls without RWE_INTERNAL_SECRET and refuses to boot if it is unset. It must be wired from deploy/.env (interpolated), never hardcoded into the compose file.",
       "fix": "On the `api` service set `RWE_INTERNAL_SECRET: ${RWE_INTERNAL_SECRET:?set RWE_INTERNAL_SECRET in deploy/.env}`."
     },
     {
       "id": "web-shared-secret",
-      "categories": ["secret", "required-env"],
-      "when": { "service": "web", "env_equals": { "RWE_ENV": "production" } },
-      "require": { "secrets": ["RWE_INTERNAL_SECRET"] },
+      "categories": [
+        "secret",
+        "required-env"
+      ],
+      "when": {
+        "service": "web",
+        "env_equals": {
+          "RWE_ENV": "production"
+        }
+      },
+      "require": {
+        "secrets": [
+          "RWE_INTERNAL_SECRET"
+        ]
+      },
       "why": "The web tier signs engine calls with the same shared secret; it must be present, match the engine's, and be supplied from deploy/.env.",
       "fix": "On the `web` service set `RWE_INTERNAL_SECRET: ${RWE_INTERNAL_SECRET:?...}` (identical to the engine)."
     },
     {
       "id": "web-oauth-secrets",
-      "categories": ["secret", "required-env"],
-      "when": { "service": "web", "env_equals": { "RWE_ENV": "production" } },
+      "categories": [
+        "secret",
+        "required-env"
+      ],
+      "when": {
+        "service": "web",
+        "env_equals": {
+          "RWE_ENV": "production"
+        }
+      },
       "require": {
-        "secrets": ["NEXTAUTH_SECRET", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"],
-        "env": ["NEXTAUTH_URL"]
+        "secrets": [
+          "NEXTAUTH_SECRET",
+          "GOOGLE_CLIENT_ID",
+          "GOOGLE_CLIENT_SECRET"
+        ],
+        "env": [
+          "NEXTAUTH_URL"
+        ]
       },
       "why": "Google OAuth is the only production sign-in method; web/instrumentation.ts validates these at startup and process.exit(1)s if any is missing, so the web tier would crash-loop.",
       "fix": "On the `web` service wire NEXTAUTH_URL + the three OAuth secrets from deploy/.env (`${NEXTAUTH_SECRET:?...}` etc.)."
     },
     {
       "id": "caddy-tls-config",
-      "categories": ["config-file", "required-mount"],
-      "when": { "service": "caddy" },
+      "categories": [
+        "config-file",
+        "required-mount"
+      ],
+      "when": {
+        "service": "caddy"
+      },
       "require": {
-        "mounts": ["/etc/caddy/Caddyfile"],
-        "files": ["deploy/Caddyfile"]
+        "mounts": [
+          "/etc/caddy/Caddyfile"
+        ],
+        "files": [
+          "deploy/Caddyfile"
+        ]
       },
       "why": "Caddy is the only internet-facing process; it terminates TLS and reverse-proxies using the mounted Caddyfile. Without that config file mounted, the edge serves nothing.",
       "fix": "On the `caddy` service keep the mount `./Caddyfile:/etc/caddy/Caddyfile:ro`."
     },
     {
       "id": "engine-db-persistence",
-      "categories": ["required-mount"],
-      "when": { "service": "api" },
-      "require": { "mounts": ["/app/data"] },
+      "categories": [
+        "required-mount"
+      ],
+      "when": {
+        "service": "api"
+      },
+      "require": {
+        "mounts": [
+          "/app/data"
+        ]
+      },
       "why": "The engine's SQLite database and local backups live under /app/data; without the mount the DB would be created on the ephemeral container layer and lost on every recreation.",
       "fix": "On the `api` service keep a volume mounted at /app/data (named volume in dev, host bind-mount in prod)."
     },
     {
       "id": "gdelt-bounded-catalog",
-      "categories": ["feature-flag", "required-env"],
-      "when": { "service": "api", "env_truthy": "RWE_GDELT_ENABLED" },
-      "require": { "env": ["RWE_RETENTION_MAX_COUNT"] },
+      "categories": [
+        "feature-flag",
+        "required-env"
+      ],
+      "when": {
+        "service": "api",
+        "env_truthy": "RWE_GDELT_ENABLED"
+      },
+      "require": {
+        "env": [
+          "RWE_RETENTION_MAX_COUNT"
+        ]
+      },
       "why": "GDELT is high-volume ingestion; catalog retention is OFF unless RWE_RETENTION_MAX_COUNT (or _MAX_AGE_DAYS) is set, so enabling GDELT without a bound lets feed_articles / the SQLite DB / every backup grow unbounded. (Guard checks the knob is WIRED; set a non-zero value in deploy/.env per the runbook.)",
       "fix": "Wire RWE_RETENTION_MAX_COUNT into the api service and set a non-zero value in deploy/.env (e.g. 20000) whenever RWE_GDELT_ENABLED=1. See docs/GDELT_TRIAL_RUNBOOK.md."
     },
     {
       "id": "web-identity-recovery-switch",
-      "categories": ["feature-flag", "required-env"],
-      "when": { "service": "web", "env_equals": { "RWE_ENV": "production" } },
-      "require": { "env": ["RWE_IDENTITY_RECOVERY", "RWE_BACKEND_TIMEOUT_MS"] },
-      "why": "Identity recovery calls the engine from the auth path, and RWE_IDENTITY_RECOVERY is its documented rollback (set 0, restart web, no rebuild); RWE_BACKEND_TIMEOUT_MS bounds that call. Both are read at call time, but `environment:` is an explicit allowlist and this stack has no `env_file:` — a variable absent from the service never reaches the container, whatever deploy/.env says. Both were absent when recovery shipped, so the rollback lever silently did nothing: an operator would set it, restart, see no change, and conclude the app was ignoring the flag.",
-      "fix": "On the `web` service add `RWE_IDENTITY_RECOVERY: ${RWE_IDENTITY_RECOVERY:-1}` and `RWE_BACKEND_TIMEOUT_MS: ${RWE_BACKEND_TIMEOUT_MS:-}` — in the AWS override too, since that is the manifest an operator reads during an incident. See docs/SESSION_IDENTITY_RECOVERY_DESIGN.md."
+      "categories": [
+        "feature-flag",
+        "required-env"
+      ],
+      "when": {
+        "service": "web",
+        "env_equals": {
+          "RWE_ENV": "production"
+        }
+      },
+      "require": {
+        "env": [
+          "RWE_IDENTITY_RECOVERY",
+          "RWE_BACKEND_TIMEOUT_MS"
+        ]
+      },
+      "why": "Identity recovery calls the engine from the auth path, and RWE_IDENTITY_RECOVERY is its documented rollback (set 0, restart web, no rebuild); RWE_BACKEND_TIMEOUT_MS bounds that call. Both are read at call time, but `environment:` is an explicit allowlist and this stack has no `env_file:` \u2014 a variable absent from the service never reaches the container, whatever deploy/.env says. Both were absent when recovery shipped, so the rollback lever silently did nothing: an operator would set it, restart, see no change, and conclude the app was ignoring the flag.",
+      "fix": "On the `web` service add `RWE_IDENTITY_RECOVERY: ${RWE_IDENTITY_RECOVERY:-1}` and `RWE_BACKEND_TIMEOUT_MS: ${RWE_BACKEND_TIMEOUT_MS:-}` \u2014 in the AWS override too, since that is the manifest an operator reads during an incident. See docs/SESSION_IDENTITY_RECOVERY_DESIGN.md."
     },
     {
       "id": "api-breaking-notifications-switch",
-      "categories": ["feature-flag", "required-env"],
-      "when": { "service": "api" },
-      "require": { "env": ["RWE_BREAKING_NOTIFICATIONS", "RWE_BREAKING_MIN_PUBLISHERS", "RWE_BREAKING_TTL_HOURS"] },
-      "why": "Breaking-story detection runs on the engine's poller thread (story_events.detect_breaking_stories, hung off the same post-cycle seam as the story-cache warm) and is OFF unless RWE_BREAKING_NOTIFICATIONS is truthy. `environment:` is an explicit allowlist and this stack has no `env_file:`, so an unlisted flag can be neither turned on nor rolled back — setting it in deploy/.env would appear to do nothing, exactly the failure the web tier's identity-recovery lever hit. Unlike the API-key rules this one applies whether or not the flag is set: an OFF switch that cannot be reached is the problem it guards against. The two tuning knobs travel with it because they are what an operator reaches for when detection is too noisy or too quiet, at the moment they least want a redeploy.",
-      "fix": "On the `api` service (base compose, and restated in the AWS override) add `RWE_BREAKING_NOTIFICATIONS: ${RWE_BREAKING_NOTIFICATIONS:-0}`, `RWE_BREAKING_MIN_PUBLISHERS: ${RWE_BREAKING_MIN_PUBLISHERS:-}` and `RWE_BREAKING_TTL_HOURS: ${RWE_BREAKING_TTL_HOURS:-}`. Not on `ingest` — that service runs the one-shot rss_ingest.py, which never reaches the detection seam. See docs/NOTIFICATION_PLATFORM.md."
+      "categories": [
+        "feature-flag",
+        "required-env"
+      ],
+      "when": {
+        "service": "api"
+      },
+      "require": {
+        "env": [
+          "RWE_BREAKING_NOTIFICATIONS",
+          "RWE_BREAKING_MIN_PUBLISHERS",
+          "RWE_BREAKING_TTL_HOURS"
+        ]
+      },
+      "why": "Breaking-story detection runs on the engine's poller thread (story_events.detect_breaking_stories, hung off the same post-cycle seam as the story-cache warm) and is OFF unless RWE_BREAKING_NOTIFICATIONS is truthy. `environment:` is an explicit allowlist and this stack has no `env_file:`, so an unlisted flag can be neither turned on nor rolled back \u2014 setting it in deploy/.env would appear to do nothing, exactly the failure the web tier's identity-recovery lever hit. Unlike the API-key rules this one applies whether or not the flag is set: an OFF switch that cannot be reached is the problem it guards against. The two tuning knobs travel with it because they are what an operator reaches for when detection is too noisy or too quiet, at the moment they least want a redeploy.",
+      "fix": "On the `api` service (base compose, and restated in the AWS override) add `RWE_BREAKING_NOTIFICATIONS: ${RWE_BREAKING_NOTIFICATIONS:-0}`, `RWE_BREAKING_MIN_PUBLISHERS: ${RWE_BREAKING_MIN_PUBLISHERS:-}` and `RWE_BREAKING_TTL_HOURS: ${RWE_BREAKING_TTL_HOURS:-}`. Not on `ingest` \u2014 that service runs the one-shot rss_ingest.py, which never reaches the detection seam. See docs/NOTIFICATION_PLATFORM.md."
     },
     {
       "id": "api-push-switch",
-      "categories": ["feature-flag", "required-env"],
-      "when": { "service": "api" },
-      "require": { "env": ["RWE_PUSH_ENABLED"] },
-      "why": "Browser push is OFF unless RWE_PUSH_ENABLED is truthy, and `environment:` is an explicit allowlist with no `env_file:` behind it — so an unlisted switch can be neither turned on nor rolled back. Applies whether or not the flag is set, for the same reason as the breaking-notifications rule: an OFF switch an operator cannot reach is the failure being guarded against. Push is the first feature that can put a browser permission prompt in front of every reader, which makes reaching the switch during an incident more urgent than usual, not less.",
+      "categories": [
+        "feature-flag",
+        "required-env"
+      ],
+      "when": {
+        "service": "api"
+      },
+      "require": {
+        "env": [
+          "RWE_PUSH_ENABLED"
+        ]
+      },
+      "why": "Browser push is OFF unless RWE_PUSH_ENABLED is truthy, and `environment:` is an explicit allowlist with no `env_file:` behind it \u2014 so an unlisted switch can be neither turned on nor rolled back. Applies whether or not the flag is set, for the same reason as the breaking-notifications rule: an OFF switch an operator cannot reach is the failure being guarded against. Push is the first feature that can put a browser permission prompt in front of every reader, which makes reaching the switch during an incident more urgent than usual, not less.",
       "fix": "On the `api` service (base compose, and restated in the AWS override) add `RWE_PUSH_ENABLED: ${RWE_PUSH_ENABLED:-0}`. See docs/BROWSER_PUSH_OPERATIONS.md."
     },
     {
       "id": "api-push-vapid-keys",
-      "categories": ["feature-flag", "required-env", "secret"],
-      "when": { "service": "api", "env_truthy": "RWE_PUSH_ENABLED" },
-      "require": {
-        "env": ["RWE_VAPID_PUBLIC_KEY", "RWE_VAPID_SUBJECT"],
-        "secrets": ["RWE_VAPID_PRIVATE_KEY"]
+      "categories": [
+        "feature-flag",
+        "required-env",
+        "secret"
+      ],
+      "when": {
+        "service": "api",
+        "env_truthy": "RWE_PUSH_ENABLED"
       },
-      "why": "Web Push authenticates every send with a VAPID key PAIR, and a browser subscribes against the public half. Enabling push without the keys leaves the config endpoint reporting the feature unavailable — deliberately fail-closed, so nothing breaks — but it means the switch appears to do nothing, which is the failure mode this repo has hit before. The private key is a real secret: it signs sends on the deployment's behalf, so it must be interpolated from deploy/.env and never written into a compose file. The pair must be generated together; a public key from one pair and a private key from another produces sends every push service rejects.",
+      "require": {
+        "env": [
+          "RWE_VAPID_PUBLIC_KEY",
+          "RWE_VAPID_SUBJECT"
+        ],
+        "secrets": [
+          "RWE_VAPID_PRIVATE_KEY"
+        ]
+      },
+      "why": "Web Push authenticates every send with a VAPID key PAIR, and a browser subscribes against the public half. Enabling push without the keys leaves the config endpoint reporting the feature unavailable \u2014 deliberately fail-closed, so nothing breaks \u2014 but it means the switch appears to do nothing, which is the failure mode this repo has hit before. The private key is a real secret: it signs sends on the deployment's behalf, so it must be interpolated from deploy/.env and never written into a compose file. The pair must be generated together; a public key from one pair and a private key from another produces sends every push service rejects.",
       "fix": "Generate the pair (docs/BROWSER_PUSH_OPERATIONS.md gives an openssl recipe needing no new dependency), set RWE_VAPID_PUBLIC_KEY / RWE_VAPID_PRIVATE_KEY / RWE_VAPID_SUBJECT in deploy/.env, and keep all three wired on the `api` service as `${VAR:-}` interpolations."
     },
     {
       "id": "api-push-delivery-switch",
-      "categories": ["feature-flag", "required-env"],
-      "when": { "service": "api" },
-      "require": { "env": ["RWE_PUSH_DELIVERY"] },
-      "why": "Delivery is the act that first puts a notification on a reader's lock screen, and it is gated separately from registration so an operator can let people subscribe before anything is sent to them. Like every other switch in this stack it must stay listed on the service whether or not it is set: `environment:` is an explicit allowlist with no `env_file:` behind it, so an unlisted flag can be neither turned on nor — the part that matters here — turned back off during an incident.",
+      "categories": [
+        "feature-flag",
+        "required-env"
+      ],
+      "when": {
+        "service": "api"
+      },
+      "require": {
+        "env": [
+          "RWE_PUSH_DELIVERY"
+        ]
+      },
+      "why": "Delivery is the act that first puts a notification on a reader's lock screen, and it is gated separately from registration so an operator can let people subscribe before anything is sent to them. Like every other switch in this stack it must stay listed on the service whether or not it is set: `environment:` is an explicit allowlist with no `env_file:` behind it, so an unlisted flag can be neither turned on nor \u2014 the part that matters here \u2014 turned back off during an incident.",
       "fix": "On the `api` service (base compose, and restated in the AWS override) add `RWE_PUSH_DELIVERY: ${RWE_PUSH_DELIVERY:-0}`. Delivery additionally requires RWE_VAPID_PRIVATE_KEY and RWE_VAPID_SUBJECT, which the api-push-vapid-keys rule already covers. See docs/BROWSER_PUSH_OPERATIONS.md."
+    },
+    {
+      "id": "api-push-ratelimit",
+      "categories": [
+        "required-env"
+      ],
+      "when": {
+        "service": "api"
+      },
+      "require": {
+        "env": [
+          "RWE_PUSH_MAX_SENDS_PER_SECOND"
+        ]
+      },
+      "why": "The fan-out is rate-limited per push service, and the limit is ON by default because the failure it prevents is silent: trip a push service's own limit and every send comes back 429, which the retry ladder then dutifully repeats. The variable that matters here is the one an operator reaches for during an incident \u2014 either to lower the rate because we are being throttled, or to set it to 0 because the limit has become the problem. An unlisted variable can be neither, since `environment:` is an explicit allowlist with no `env_file:` behind it. Left unset it takes the built-in default, so wiring it costs nothing and its absence costs an incident.",
+      "fix": "On the `api` service (base compose, and restated in the AWS override) add `RWE_PUSH_MAX_SENDS_PER_SECOND: ${RWE_PUSH_MAX_SENDS_PER_SECOND:-}`. Leave it empty for the default (10/s per service); set a number to change it; set 0 to disable. See docs/BROWSER_PUSH_OPERATIONS.md \u00a77.2."
     }
   ],
-
-  "secret_name_patterns": ["SECRET", "PASSWORD", "TOKEN", "API_KEY", "CLIENT_SECRET", "PRIVATE_KEY"]
+  "secret_name_patterns": [
+    "SECRET",
+    "PASSWORD",
+    "TOKEN",
+    "API_KEY",
+    "CLIENT_SECRET",
+    "PRIVATE_KEY"
+  ]
 }

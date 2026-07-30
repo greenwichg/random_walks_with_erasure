@@ -3103,6 +3103,36 @@ class Store:
                 "firstAttemptedAt": r.first_attempted_at,
                 "nextAttemptAt": r.next_attempt_at}
 
+    def delivery_backlog(self, *, channel: str = "web_push",
+                         now: "datetime | None" = None) -> dict:
+        """What is outstanding on the delivery ledger right now — two counts, and they mean different
+        things.
+
+        ``pending`` is claimed-but-unresolved: a process died between the send and the record. A
+        handful immediately after a deploy is expected and self-healing (the lease recovers them); a
+        number that keeps growing means runs are dying rather than one having died.
+
+        ``scheduled`` is the retry ladder's depth — deliveries waiting for their backoff. It rises
+        during a push-service outage and falls afterwards, which is the shape to expect; one that
+        rises and stays up means the ladder is exhausting rather than succeeding.
+
+        Read at startup and by the runbook, so it is a query rather than something the worker has to
+        remember across a restart."""
+        moment = now or _utcnow()
+        with self.session() as s:
+            base = select(func.count()).select_from(NotificationDelivery).where(
+                NotificationDelivery.channel == channel)
+            return {
+                "pending": int(s.scalar(base.where(
+                    NotificationDelivery.status == "pending",
+                    NotificationDelivery.next_attempt_at.is_(None))) or 0),
+                "scheduled": int(s.scalar(base.where(
+                    NotificationDelivery.next_attempt_at.is_not(None))) or 0),
+                "due": int(s.scalar(base.where(
+                    NotificationDelivery.next_attempt_at.is_not(None),
+                    NotificationDelivery.next_attempt_at <= moment)) or 0),
+            }
+
     def notification_by_id(self, notification_id: int) -> "dict | None":
         """One notification as the delivery worker needs it — the body a payload is built from.
 

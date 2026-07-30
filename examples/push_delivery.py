@@ -42,11 +42,14 @@ import dataclasses
 import logging
 import os
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
 import notification_service as ns
+import push_metrics
 import push_payload
+import push_ratelimit
 import push_retry
 import push_sender
 import settings_service
@@ -83,8 +86,20 @@ MAX_RETRIES_PER_RUN = 200
 #: shorten the ladder for work the run itself chose not to do.
 MAX_JOBS_PER_RUN = 1000
 
+#: How long :func:`shutdown` waits for a run in flight before giving up on it. Short, because a
+#: container being stopped is on a clock of its own (Docker's default SIGKILL is ten seconds after
+#: SIGTERM) and a shutdown that outlives it is not graceful, it is just late. Anything unfinished is
+#: an unresolved claim, which the lease already knows how to recover.
+SHUTDOWN_GRACE_SECONDS = 5.0
+
 _lock = threading.Lock()
 _running = False
+_thread: "threading.Thread | None" = None
+
+#: Set on shutdown. The run checks it between waves — the same grain as the deadline, and for the
+#: same reason: it is the finest point at which stopping does not mean abandoning a request already
+#: in flight, whose outcome we would then never record.
+_stop = threading.Event()
 
 
 def enabled() -> bool:
@@ -372,12 +387,24 @@ def _retry_job(store_, row: dict, *, now, log, stats) -> "_Job | None":
 # --------------------------------------------------------------------------------------------- #
 # Sending — network only, on the pool. No store access anywhere below this line.
 # --------------------------------------------------------------------------------------------- #
-def _send(sender, job: _Job, log) -> "push_sender.SendResult":
+def _send(sender, job: _Job, log, *, limiter=None) -> "push_sender.SendResult":
     """One send. Never raises: it runs on a pool thread, where an exception would be swallowed by the
     executor and the ledger row would stay ``pending`` until the lease recovered it — a delay for
-    something that should have been recorded immediately."""
+    something that should have been recorded immediately.
+
+    The rate-limit wait happens **here**, on the pool thread, rather than in the caller: the buckets
+    are per push service, so a worker waiting on a throttled host must not hold up a worker sending to
+    a different one. Waiting on the calling thread would serialise exactly what the pool exists to
+    parallelise."""
     nid, sid = job.notification["id"], job.subscription["id"]
     try:
+        if limiter is not None and limiter.enabled:
+            waited = limiter.wait(job.subscription.get("endpoint") or "")
+            if waited > 0:
+                push_metrics.record_rate_limited(waited)
+                log(logging.INFO, "push_rate_limited", subscriptionId=sid,
+                    host=push_ratelimit.host_of(job.subscription.get("endpoint") or ""),
+                    waitedMs=round(waited * 1000.0))
         payload = push_payload.build(job.notification, lang=job.lang,
                                      sent_at=datetime.now(timezone.utc).isoformat())
         body = push_payload.encode(payload)
@@ -412,6 +439,7 @@ def _record(store_, job: _Job, result, *, now, log, stats) -> None:
 
     store_.record_delivery_result(job.delivery_id, result.status, status_code=result.status_code,
                                   detail=result.detail, next_attempt_at=schedule)
+    push_metrics.record_attempt(result.status)
 
     if result.ok:
         stats.sent += 1
@@ -451,13 +479,14 @@ def _record(store_, job: _Job, result, *, now, log, stats) -> None:
                 userId=job.subscription.get("userId"), statusCode=result.status_code)
 
 
-def _send_all(sender, jobs: "list[_Job]", *, deadline, log, stats) -> "list[tuple]":
-    """Every planned send, in waves of :data:`MAX_WORKERS`, stopping at the deadline.
+def _send_all(sender, jobs: "list[_Job]", *, deadline, limiter, log, stats) -> "list[tuple]":
+    """Every planned send, in waves of :data:`MAX_WORKERS`, stopping at the deadline or on shutdown.
 
     Waves rather than one continuous pool, because a continuously-fed pool has no point at which the
     deadline can be consulted: submitting is instant, so every job is queued before the first second
     has passed and the "bound" bounds nothing. A wave costs at most one send timeout, which is the
-    finest grain available without abandoning a request already in flight.
+    finest grain available without abandoning a request already in flight — and abandoning one is
+    strictly worse than finishing it, because its outcome would then never reach the ledger.
 
     A job left unsent keeps its claim and is recovered by the lease — the same machinery that recovers
     a run killed mid-send, and for the same reason: from the ledger's point of view an attempt that
@@ -465,13 +494,18 @@ def _send_all(sender, jobs: "list[_Job]", *, deadline, log, stats) -> "list[tupl
     the emergency path; :data:`MAX_JOBS_PER_RUN` is what normally keeps a run inside its deadline."""
     results: "list[tuple]" = []
     for start in range(0, len(jobs), MAX_WORKERS):
+        if _stop.is_set():
+            log(logging.INFO, "push_run_stopped", sent=len(results),
+                unsent=len(jobs) - len(results))
+            break
         if datetime.now(timezone.utc) >= deadline:
             log(logging.WARNING, "push_run_deadline", phase="send", sent=len(results),
                 unsent=len(jobs) - len(results))
             break
         wave = jobs[start:start + MAX_WORKERS]
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-            results += list(zip(wave, pool.map(lambda job: _send(sender, job, log), wave)))
+            results += list(zip(wave, pool.map(
+                lambda job: _send(sender, job, log, limiter=limiter), wave)))
     return results
 
 
@@ -489,25 +523,35 @@ def run_once(store_, *, now=None, sender=None, log=None) -> RunStats:
     sender = sender or _sender()
     if sender is None:
         return stats
+    if _stop.is_set():
+        return stats                         # shutting down: do not start work we cannot finish
 
+    started = time.perf_counter()
+    # One limiter per run. The buckets could be module-level and persist, but runs are minutes apart
+    # and a bucket idle that long has refilled to its burst anyway — so a fresh one is the same
+    # answer without the global mutable state, and it picks up a configuration change immediately.
+    limiter = push_ratelimit.from_env(os.environ)
     deadline = datetime.now(timezone.utc) + timedelta(seconds=MAX_RUN_SECONDS)
     jobs = _plan_retries(store_, now=now, log=log, stats=stats)
     jobs += _plan_fresh(store_, now=now, deadline=deadline,
                         budget=MAX_JOBS_PER_RUN - len(jobs), log=log, stats=stats)
     stats.considered = len(jobs)
 
-    for job, result in _send_all(sender, jobs, deadline=deadline, log=log, stats=stats):
+    for job, result in _send_all(sender, jobs, deadline=deadline, limiter=limiter,
+                                 log=log, stats=stats):
         try:
             _record(store_, job, result, now=now, log=log, stats=stats)
         except Exception as exc:             # noqa: BLE001 — one unrecorded row must not lose the rest
             log(logging.WARNING, "push_record_failed", deliveryId=job.delivery_id,
                 error=f"{type(exc).__name__}: {exc}")
 
+    push_metrics.record_run(stats, (time.perf_counter() - started) * 1000.0)
     if stats.considered or stats.abandoned:
         log(logging.INFO, "push_run_complete", considered=stats.considered, sent=stats.sent,
             failed=stats.failed, pruned=stats.pruned, skipped=stats.skipped,
             retried=stats.retried, scheduled=stats.scheduled, exhausted=stats.exhausted,
-            recovered=stats.recovered, abandoned=stats.abandoned)
+            recovered=stats.recovered, abandoned=stats.abandoned,
+            durationMs=round((time.perf_counter() - started) * 1000.0))
     return stats
 
 
@@ -527,8 +571,8 @@ def request_delivery(store_, *, log=None) -> bool:
     **One run at a time, and a request during a run is dropped rather than queued.** A slow push
     service would otherwise turn every poll cycle into another overlapping fan-out, and the work is
     idempotent anyway: whatever this run does not reach, the next cycle will."""
-    global _running
-    if _sender() is None:
+    global _running, _thread
+    if _stop.is_set() or _sender() is None:
         return False
     with _lock:
         if _running:
@@ -546,5 +590,55 @@ def request_delivery(store_, *, log=None) -> bool:
             with _lock:
                 _running = False
 
-    threading.Thread(target=_run, name="push-delivery", daemon=True).start()
+    thread = threading.Thread(target=_run, name="push-delivery", daemon=True)
+    _thread = thread                         # kept so shutdown has something to wait on
+    thread.start()
     return True
+
+
+def startup(store_, *, log=None) -> dict:
+    """Called once when the process comes up. Registers the metric series and reports what the last
+    process left behind. Returns the summary, so a caller can log or assert on it.
+
+    The report is the point. A container restart mid-fan-out leaves claimed-but-unresolved rows, and
+    B3's lease recovers them fifteen minutes later — silently, which is the problem. Counting them at
+    startup turns "notifications were late after that deploy" from a mystery into a number an
+    operator can see at the moment it is caused."""
+    log = log or _default_log
+    _stop.clear()                            # a new process is not a stopping one
+    push_metrics.initialize()
+    summary = {"pending": 0, "scheduled": 0}
+    try:
+        summary = store_.delivery_backlog(channel=CHANNEL)
+    except Exception as exc:                 # noqa: BLE001 — a report is never worth failing startup
+        log(logging.WARNING, "push_startup_scan_failed", error=f"{type(exc).__name__}: {exc}")
+        return summary
+    if summary.get("pending") or summary.get("scheduled"):
+        log(logging.WARNING, "push_startup_backlog", **summary)
+    return summary
+
+
+def shutdown(*, log=None, timeout: float = SHUTDOWN_GRACE_SECONDS) -> bool:
+    """Stop accepting work and wait briefly for a run in flight. Returns whether it finished.
+
+    Graceful, not guaranteed — and the difference is worth being precise about. The run stops between
+    waves, so a request already handed to a push service is allowed to finish and be recorded;
+    anything not yet started is simply not started. What is *not* waited for is a run longer than
+    ``timeout``: a container being stopped has its own clock (SIGKILL follows SIGTERM by ten seconds
+    under Docker's defaults), and a shutdown that outruns it is not graceful, only late.
+
+    Whatever is left unresolved is an unresolved claim, which is precisely what B3's lease exists to
+    recover — so the worst case of an ungraceful stop is a delivery that is late, not one that is
+    lost."""
+    log = log or _default_log
+    _stop.set()
+    thread = _thread
+    if thread is None or not thread.is_alive():
+        return True
+    thread.join(timeout)
+    finished = not thread.is_alive()
+    if not finished:
+        # Not an error. The claims it holds are recovered by the lease; this line exists so an
+        # operator reading the shutdown sequence knows why the next run has recoveries in it.
+        log(logging.WARNING, "push_shutdown_incomplete", timeoutSeconds=timeout)
+    return finished

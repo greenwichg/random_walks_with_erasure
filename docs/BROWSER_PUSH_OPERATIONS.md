@@ -4,12 +4,14 @@ Operational companion to [`BROWSER_PUSH_ARCHITECTURE.md`](BROWSER_PUSH_ARCHITECT
 frozen design. This document covers what an operator does: generating keys, turning the feature on,
 verifying it, rolling it back, and reading its failures.
 
-**Current state: Phase B3 — registration, delivery, and retries.** A browser can be asked for
+**Current state: Phase B4 — registration, delivery, retries, and the operational surface.** A browser can be asked for
 permission and register a subscription (B1); the engine **sends** (B2) — a worker hangs off the
 ingestion poller, fans an event out to every consenting device, records every attempt in a delivery
 ledger, and prunes endpoints a push service declares gone; and a failure that could succeed later is
 now **tried again** (B3) on an exponential backoff that survives a restart, because the schedule is a
-column rather than a timer.
+column rather than a timer. B4 adds what an operator needs when it goes wrong: a per-push-service rate
+limit (§7.2), counters split by failure classification (§7.3), a graceful stop, and a startup report
+of what the previous process left behind (§7.4).
 
 **Two switches, not one.** `RWE_PUSH_ENABLED` governs *registration*; `RWE_PUSH_DELIVERY` governs
 *sending*. They are separate on purpose: an operator can let readers subscribe, watch the subscription
@@ -22,7 +24,7 @@ independently without stranding the readers who already registered (§4).
 
 ## 1. Configuration
 
-All seven variables live on the **`api`** service, in both compose files, and are read at call time —
+All eight variables live on the **`api`** service, in both compose files, and are read at call time —
 so every change below is a `deploy/ops/restart.sh api`, never a rebuild.
 
 | Variable | Default | Governs | Meaning |
@@ -34,15 +36,17 @@ so every change below is a `deploy/ops/restart.sh api`, never a rebuild.
 | `RWE_VAPID_PRIVATE_KEY` | *(empty)* | **delivery** | Signs sends. Without it delivery stays off however `RWE_PUSH_DELIVERY` is set. |
 | `RWE_VAPID_SUBJECT` | *(empty)* | **delivery** | The `mailto:` or `https:` contact given to push services. Also required to send. |
 | `RWE_PUSH_SEND_TIMEOUT_MS` | `10000` | delivery | Per-send deadline in **milliseconds**. A zero or unparseable value falls back to the default rather than disabling the deadline. |
+| `RWE_PUSH_MAX_SENDS_PER_SECOND` | `10` | delivery | Sends per second **per push service** (§7.2). `0` disables the limit. Unparseable falls back to the default — a typo must not read as "no limit". |
 
 **Delivery needs all three of its variables.** The switch alone, or the switch with only one key, sends
 nothing — and does so silently, because a missing key on a background thread is a reason not to run
 rather than an error to raise. §3 has the command that proves which state you are in.
 
-`deploy/deployment-rules.json` enforces three things: both switches must stay wired on `api` whether or
-not they are set (an OFF switch an operator cannot reach is the failure being guarded against), and
-turning registration on requires all three key variables — with the private key **interpolated from
-`deploy/.env`**, never written into a compose file.
+`deploy/deployment-rules.json` enforces four things: both switches and the rate limit must stay wired
+on `api` whether or not they are set (a control an operator cannot reach during an incident is the
+failure being guarded against — `environment:` is an explicit allowlist with no `env_file:` behind
+it), and turning registration on requires all three key variables — with the private key
+**interpolated from `deploy/.env`**, never written into a compose file.
 
 **Both halves matter.** The engine reports push as available only when the switch is on *and* a public
 key is present. A deployment with one but not the other reports the feature off, which is deliberate:
@@ -98,7 +102,7 @@ after the misconfiguration.
 
 ```bash
 cd /opt/ih
-$EDITOR deploy/.env                       # the four variables above
+$EDITOR deploy/.env                       # the registration variables above
 deploy/ops/restart.sh api                 # read at call time — no rebuild
 docker exec deploy-api-1 printenv | grep -E 'RWE_PUSH_ENABLED|RWE_VAPID'   # prove it landed
 curl -s http://127.0.0.1:8000/api/push/config     # from the host; expect enabled:true
@@ -454,6 +458,75 @@ SELECT status, attempts, count(*) FROM notification_deliveries
 SELECT count(*) FROM notification_deliveries WHERE status = 'pending';
 ```
 
+### 7.2 Rate limiting
+
+A **token bucket per push service**, not a global one. Endpoints belong to a handful of independent
+operators — `fcm.googleapis.com`, `updates.push.services.mozilla.com`, `*.notify.windows.com` — and a
+global limit throttles Firefox because Chrome is slow, which punishes the wrong readers for someone
+else's bad day.
+
+A bucket rather than a fixed minimum gap, because fan-outs are bursty by nature: an event produces
+every send it will ever produce inside one cycle, then nothing for an hour. Idle time pays for the
+burst, which is both faster and closer to what a published rate limit actually means.
+
+**On by default at 10/s per service.** The failure it prevents is silent and gradual: trip a push
+service's own limit and every send comes back `429`, which the retry ladder then dutifully repeats —
+so the symptom is a slow, failing pipeline with no single thing to point at. Throttling delays sends;
+it never drops them.
+
+```bash
+$EDITOR deploy/.env         # RWE_PUSH_MAX_SENDS_PER_SECOND=25   (or 0 to switch it off)
+deploy/ops/restart.sh api
+$COMPOSE logs api | grep push_rate_limited     # are we throttling ourselves, and for which host?
+```
+
+This is the **proactive** half. `Retry-After` (§7.1) is the reactive half — the service telling us it
+has had enough. They are complementary: one is about not arriving at that point, the other about
+behaving once you have.
+
+### 7.3 Metrics
+
+Served by the existing internal-only `/api/metrics` — the same snapshot as everything else, because an
+incident should have one place to look, not two. Every push series is prefixed `push_`.
+
+```bash
+curl -s -H "$INTERNAL_SECRET_HEADER" http://127.0.0.1:8000/api/metrics \
+  | python3 -c 'import json,sys; d=json.load(sys.stdin)["counters"]; \
+                print(json.dumps({k:v for k,v in d.items() if k.startswith("push_")}, indent=2))'
+```
+
+| Series | What it is |
+|---|---|
+| `push_runs_total`, `push_run_ms` | Fan-outs, and how long each took. The duration is the number that says whether the pipeline is keeping up: a run longer than the poll interval means every cycle starts behind, and the dropped-not-queued rule turns that into *fewer* fan-outs, not more. |
+| `push_considered_total`, `push_attempted_total` | Planned, and actually sent. A gap means the deadline or the job budget cut a run short. |
+| `push_succeeded_total`, `push_failed_total` | The headline split. |
+| `push_failed_expired_total` / `_timeout_total` / `_transient_total` / `_permanent_total` | **The reason this section exists.** A rising `expired` rate is ordinary attrition; a rising `permanent` rate is a credential defect we shipped. One "failures" number cannot tell them apart, and they need opposite responses. |
+| `push_pruned_total` | Devices removed on 404/410. |
+| `push_retries_scheduled_total` / `_exhausted_total` / `_abandoned_total` | The ladder's shape. `scheduled` rising with `exhausted` flat is a service having a bad minute; `exhausted` rising is one that never came back. |
+| `push_deliveries_recovered_total` | Rows taken over after a process died mid-send. Non-zero after a deploy is expected. |
+| `push_rate_limited_total`, `push_rate_limit_wait_ms` | How often *we* are the reason a send waited. A fan-out slow because we are throttling ourselves looks exactly like one slow because the push service is — and the fixes are opposite. |
+
+Every counter is registered at zero on startup. A missing series and a zero series look identical at
+3am and mean opposite things, and nobody can alert on a metric that does not exist until it fires.
+
+### 7.4 Startup and shutdown
+
+**On startup** the engine registers the metric series and logs `push_startup_backlog` if the previous
+process left anything behind — `pending` (claimed, never resolved: a process died mid-send) and
+`scheduled` (the retry ladder's depth). The lease recovers `pending` rows fifteen minutes later
+anyway; the report exists so "notifications were late after that deploy" is a number visible at the
+moment it is caused rather than a mystery afterwards.
+
+**On shutdown** the worker stops between waves of four sends. A request already handed to a push
+service is allowed to finish and be recorded — abandoning it would mean an outcome the ledger never
+learns, which is worse than one more send. Anything not yet started is simply not started.
+
+Graceful, not guaranteed: the wait is capped at five seconds, because a container being stopped has
+its own clock (Docker sends SIGKILL ten seconds after SIGTERM by default) and a shutdown that outruns
+it is not graceful, only late. `push_shutdown_incomplete` says it happened. **Nothing is lost either
+way** — what is left behind is an unresolved claim, which is exactly what the lease recovers, so the
+worst case of an ungraceful stop is a delivery that is late.
+
 ### Delivery log events
 
 | Event | Level | Fields | What it tells you |
@@ -478,6 +551,11 @@ SELECT count(*) FROM notification_deliveries WHERE status = 'pending';
 | `push_reader_failed` | **WARNING** | `userId`, `error` | One reader's evaluation raised. The fan-out continued without them. |
 | `push_run_failed` | **WARNING** | `error` | The background run itself died. Should never appear. |
 | `push_delivery_request_failed` | **WARNING** | `error` | The poller could not even start a run. Should never appear. |
+| `push_rate_limited` | INFO | `subscriptionId`, `host`, `waitedMs` | A send waited on **our** limit, not the service's (§7.2). |
+| `push_run_stopped` | INFO | `sent`, `unsent` | A run stopped between waves because the process is shutting down. The unsent jobs keep their claims and the lease recovers them. |
+| `push_startup_backlog` | **WARNING** | `pending`, `scheduled`, `due` | What the previous process left behind (§7.4). |
+| `push_startup_scan_failed` | **WARNING** | `error` | The backlog could not be counted. The engine still came up — a report is never worth failing startup. |
+| `push_shutdown_incomplete` | **WARNING** | `timeoutSeconds` | A run outlived the shutdown grace period. Not an error; the lease recovers its claims. |
 
 As with registration: **no endpoints and no keys.** A delivery line carries ids, a status and a code.
 
@@ -530,7 +608,7 @@ pruning removes endpoints a push service has declared gone. Both delete rows, fo
 
 ---
 
-## 9. What B3 does not include
+## 9. What B4 does not include
 
 Stated explicitly so the absence is not read as a defect.
 
@@ -541,12 +619,22 @@ the lease, and the Notification `tag`. The residual risk is narrow and named: a 
 whose result could not be written (`push_record_failed`) is re-attempted after the lease, and the
 device shows one notification because the `tag` collapses it.
 
-**No batching and no rate limiting.** The pool is four concurrent sends with a per-send deadline, and
-the backoff spreads a failed fan-out out over time — but sustained `429` has no automatic response
-beyond honouring `Retry-After` per delivery.
+**No batching.** Each send is its own request. Web Push has no batch endpoint that all services
+implement, so this is the protocol's shape rather than a shortcut.
 
-**No delivery metrics.** Counting log lines and querying `notification_deliveries` is the whole
-facility.
+**No metrics export.** The counters live in process and are read via `/api/metrics` (§7.3). A restart
+resets them, and two replicas would each hold their own — neither matters for a single-container
+deployment, and both are why §7.3's numbers are for reading during an incident rather than for
+alerting on trends. Draining the snapshot into Prometheus is a later phase and touches no call site.
+
+**No adaptive rate limiting.** The per-service limit is a fixed configured rate. It does not learn
+from `429`s: sustained throttling is visible (§7.3) and the response is an operator lowering the
+number, not the pipeline lowering it itself.
+
+**No cross-process coordination.** The one-run-at-a-time rule, the rate limiter's buckets, and the
+shutdown flag are all in-process. A second replica would fan out concurrently with the first — safe,
+because the delivery ledger's UNIQUE constraint and the lease are in the database where both can see
+them, but the rate limit would effectively double.
 
 **No retry tuning by configuration.** The three bounds are constants in `examples/push_retry.py`. They
 interact — the ladder has to fit inside the age bound — so exposing them individually as environment

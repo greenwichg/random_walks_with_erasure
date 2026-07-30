@@ -303,7 +303,27 @@ async def lifespan(app: FastAPI):
                                                  log=_log, on_cycle=state.refresh.on_poll_cycle,
                                                  dirty_check=state.refresh.is_catalog_dirty)
         state.poller.start()
+
+    # Push delivery (Phase B4). Registers the metric series so a counter that has never fired is a
+    # visible zero rather than an absent one, and reports what the PREVIOUS process left behind — a
+    # restart mid-fan-out leaves claimed-but-unresolved rows that the lease recovers silently fifteen
+    # minutes later, which is exactly the kind of self-healing nobody notices until they need to
+    # explain why notifications were late.
+    try:
+        import push_delivery
+        push_delivery.startup(state.store, log=_log)
+    except Exception as e:           # startup reporting must never keep the app from coming up
+        _log(logging.WARNING, "push_startup_failed", error=f"{type(e).__name__}: {e}")
+
     yield
+
+    # Push first: a fan-out in flight holds delivery claims, and stopping it before the poller means
+    # the poller cannot start another one behind our back while we are waiting.
+    try:
+        import push_delivery
+        push_delivery.shutdown(log=_log)
+    except Exception:                # shutdown must never raise out of the lifespan
+        pass
     if state.poller is not None:
         state.poller.stop()          # graceful: signal + join the current cycle
     # The coalescing story warmer outlives any single poll cycle by design, so it is stopped here
