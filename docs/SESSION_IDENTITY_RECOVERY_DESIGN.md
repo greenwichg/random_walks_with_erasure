@@ -1,8 +1,10 @@
-# Design Proposal — Recovering a Session With No Engine Identity
+# Design — Recovering a Session With No Engine Identity
 
-**Status:** partly implemented. The resolver, its deadline, the identity claims and the engine-side
-retry all exist and are tested; **nothing calls the resolver yet** — that is the last behavioural commit
-(commit 5 of the plan). Written as a follow-up to the onboarding-gate work
+**Status:** **implemented.** `callbacks.jwt` in `lib/auth-callbacks.ts` calls `resolveEngineUserId`, and
+has done since commit 5 of [`IDENTITY_RECOVERY_IMPLEMENTATION_PLAN.md`](IDENTITY_RECOVERY_IMPLEMENTATION_PLAN.md);
+the kill switch reaches the container (5a), the three log events exist (5b), and the same-request
+visibility claim in §2a is asserted by a committed test rather than argued (5c). Known gaps and
+deliberate omissions are listed in §10. Written as a follow-up to the onboarding-gate work
 ([`ONBOARDING.md`](ONBOARDING.md) §8), which surfaced the failure but deliberately left it alone:
 it predates that work and affects every authenticated surface, not just onboarding.
 
@@ -57,7 +59,7 @@ dev sign-in **fails closed** — the session is never created. Only the Google p
 session without an identity. Recovery therefore only ever needs to handle `google` — which is what
 makes the legacy-token fallback in §2 and the deploy-skew case in §9a safe.
 
-## 2. Proposed design
+## 2. The design
 
 One module, `web/lib/engine-identity.ts` — which now exists and already owns `upsertEngineUser`
 (commit 2 of the plan moved it out of `lib/auth.ts`). It gains a single memoized resolver:
@@ -149,7 +151,7 @@ For Google, `token.sub` **is** that value: the provider's `profile()` maps `id: 
 (`next-auth/providers/google.js`), and NextAuth sets `sub: user.id.toString()`
 (`core/routes/callback.js`). Verified, not assumed — the whole design rests on it.
 
-Even so, the proposal adds two claims to the token at sign-in rather than relying on that coincidence:
+Even so, two claims are written onto the token at sign-in rather than relying on that coincidence:
 
 ```ts
 token.provider = account.provider;              // "google" | "dev"
@@ -242,6 +244,25 @@ This was found by walking the state machine rather than by writing the resolver,
 recorded here as design rather than as a code comment. `[R]` — the repeated `readFileSync` follows from
 reading `loadAllowlist`; it has not been profiled.
 
+### The allowlist check is skipped on the cached and coalesced paths — deliberately
+
+Worth stating outright, because it is security-relevant and a reader who derives it independently may
+"fix" it. Two paths return **before** `isEmailAllowed` runs:
+
+- **a live positive memo entry** — the id was resolved for this identity inside the TTL;
+- **a joined in-flight promise** — another caller is already resolving this exact identity.
+
+Both are safe for the same reason, and it is the reason the cache is keyed the way it is: the key is
+`(provider, providerAccountId)`, and a Google account id is **stable across email changes**. So a caller
+that hits either path is the same *person* whose email was checked when the entry was created — not a
+different reader inheriting someone else's decision. The one observable consequence is the trade §4
+already names: a revocation takes effect at the next cache expiry rather than instantly.
+
+What this must never become is a cache keyed on anything weaker. If a future change ever keys the memo
+on email, on `sub` without the provider, or on a value a caller supplies, these two early returns stop
+being safe and the check must move above them. That is the invariant to hold, not the position of the
+check.
+
 State is per-process and lost on restart. That is correct: this is a cache, never a source of truth,
 and the deployment runs one web container. Nothing needs to be shared or persisted — §9 works through
 what changes, and what does not, if that stops being true.
@@ -257,10 +278,68 @@ look like it worked while doing nothing.
 | **Can a client forge an identity?** | No. Every input (`sub`, `provider`, `providerAccountId`, `email`) comes from the JWT, signed with `NEXTAUTH_SECRET`. Anyone able to alter those already owns the session outright. Recovery reads no request body, query param, or header. |
 | **Can recovery attach a session to the wrong account?** | No, provided the key is the provider account id — guaranteed by **I1**/**I5** of the [`IDENTITY_UPSERT_CONCURRENCY.md`](IDENTITY_UPSERT_CONCURRENCY.md), which owns the constraint and its tests. |
 | **Can it be used to hijack by email?** | No — **I5**. If a future change ever made the engine resolve identities by email, a Google session could claim a `dev` account with the same address; that contract's test 4 exists to make such a change fail loudly. |
-| **Does it bypass the beta allowlist?** | It must not. `callbacks.signIn` enforces the allowlist at sign-in only, so recovery is effectively the deferred second half of a sign-in that already passed. The proposal nonetheless **re-checks `isEmailAllowed(token.email)`** before attempting, so a reader removed from the allowlist cannot have an engine account created for them by a stale session. `loadAllowlist` is a small `readFileSync` on a path already read per sign-in; the denial is memoized so it runs at most once per backoff window rather than once per server render (§4). |
+| **Does it bypass the beta allowlist?** | It must not. `callbacks.signIn` enforces the allowlist at sign-in only, so recovery is effectively the deferred second half of a sign-in that already passed. Recovery nonetheless **re-checks `isEmailAllowed(token.email)`** before attempting, so a reader removed from the allowlist cannot have an engine account created for them by a stale session. `loadAllowlist` is a small `readFileSync` on a path already read per sign-in; the denial is memoized so it runs at most once per backoff window rather than once per server render (§4). |
 | **Trust boundary to the engine** | Unchanged. Recovery calls the existing `POST /api/internal/users` with `X-IH-Auth` when `RWE_INTERNAL_SECRET` is set, exactly as sign-in does. No new endpoint, no new surface, no widening of `/api/internal/*`. |
-| **Does it leak anything into logs?** | One OBS1-style structured line per recovery — `{"event":"engine_identity_recovered","provider":"google","userId":N}`. Email is omitted; the existing `beta_access_denied` line logs an email because an operator must know who to approve, and no such need exists here. |
+| **Does it leak anything into logs?** | Three OBS1-style structured lines, one per *attempt* — never per request (§5a). The success and failure lines omit the email; the **denial** line carries it, for the same reason `beta_access_denied` does: that reader is signed in and permanently un-attributed until an operator acts, so "who" is the actionable part. No token, secret, or account id is ever logged. |
+| **Can the memo serve one reader another reader's decision?** | No. The two paths that skip the allowlist re-check are keyed on `(provider, providerAccountId)`, which is stable across email changes, so a caller reaching them is the same person whose email was checked. Stated as an invariant in §4 because it constrains what the cache key may become. |
 | **Can it create accounts in a loop?** | No. The upsert creates at most one identity row per `(provider, account id)`; repeated calls resolve. See §7. |
+
+## 5a. Operating it — logs, and the switch
+
+### The three events
+
+All on stderr from the `web` container, one JSON object per line, one line per **attempt**.
+
+```json
+{"event":"engine_identity_recovered","provider":"google","userId":4211}
+{"event":"engine_identity_recovery_failed","provider":"google","reason":"http_401"}
+{"event":"engine_identity_recovery_failed","provider":"google","reason":"unreachable","detail":"ECONNREFUSED"}
+{"event":"engine_identity_recovery_denied","provider":"google","email":"reader@example.com","reason":"not_allowlisted"}
+```
+
+```bash
+docker logs deploy-web-1 2>&1 | grep engine_identity | tail -20
+```
+
+| Event | Means | Do what |
+|---|---|---|
+| `engine_identity_recovered` | A broken session was repaired. **This is the feature working.** | Nothing. A *rising* rate means sign-in-time engine unavailability — look at deploy timing and engine restarts, not at recovery. |
+| `engine_identity_recovery_failed`, `reason: http_401` | The engine rejected the call. In production this is `RWE_INTERNAL_SECRET` mismatched between the `web` and `api` services. | Compare the two; they must be byte-identical. Until fixed, **no** session can be repaired. |
+| `…_failed`, `reason: timeout` | The engine accepted the connection and did not answer within `RWE_BACKEND_TIMEOUT_MS`. Wedged, not down. | Check engine health and load. Recovery retries after 30 s per identity. |
+| `…_failed`, `reason: unreachable`, `detail: ECONNREFUSED` | The engine is down or restarting. | Expected briefly during a deploy; self-corrects. Sustained means the `api` service is not up. |
+| `…_failed`, `detail: ENOTFOUND` | `RWE_BACKEND_URL` is wrong. | Configuration, not an outage. |
+| `…_failed`, `reason: malformed_response` | A 2xx without a numeric `userId` — the internal contract broke. | Engine bug or a proxy rewriting the body. Escalate; this should be impossible. |
+| `…_failed`, `reason: unexpected` | Something threw where nothing can throw — `attemptEngineUpsert` catches its own errors, so this is the belt-and-braces branch (§10, N5). | Should never appear. If it does, it is a bug in the web tier, not an engine problem. Escalate with the surrounding log lines. |
+| `engine_identity_recovery_denied`, `reason: not_allowlisted` | A signed-in reader is no longer on the beta allowlist. Their session stays un-attributed. | Decide: add them back (`BETA_ALLOWLIST`, takes effect within one 30 s window) or leave them out. |
+| `…_denied`, `reason: empty_allowlist` | The gate is on with nothing configured, so **everyone** is denied (fail-closed). | Operational emergency. Fix `BETA_ALLOWLIST` / `BETA_ALLOWLIST_FILE`. |
+| `…_denied`, `reason: no_email` | The token carries no email to check. | Rare; a Google account without an email scope. |
+
+**Silence is meaningful too.** No `engine_identity_*` lines at all means no session needed repairing —
+the healthy steady state. It does *not* mean recovery is broken; a broken recovery is loud, which is the
+whole reason the failure line exists.
+
+**What is not instrumented.** There is no counter, gauge, or `/api/metrics` series for recovery — the
+log line is the only signal, and answering "how many sessions are currently broken?" requires counting
+lines. Accepted for now (§10); revisit if the recovered rate stops being near-zero.
+
+### Turning it off
+
+```bash
+# in deploy/.env
+RWE_IDENTITY_RECOVERY=0
+bash deploy/ops/restart.sh web        # `dc up -d web` — re-reads the environment, no rebuild
+```
+
+Read at call time, so the restart is what applies it. `0`, `false`, `no`, `off` disable; anything else,
+including empty, leaves it on.
+
+Disabling restores pre-recovery behaviour **exactly**: a session that already carries an engine id keeps
+using it, so nobody is signed out and no working session is de-attributed. Only the repair stops. Both
+this variable and `RWE_BACKEND_TIMEOUT_MS` are wired onto the `web` service in *both* compose files —
+`deploy/ops/validate-deployment.py` fails if either goes missing, because for the first release they
+were absent and the documented rollback silently did nothing.
+
+Reverting commit 5 is the fallback if the flag is somehow not enough; it needs a rebuild and redeploy.
 
 ## 6. Performance impact
 
@@ -313,7 +392,7 @@ traffic, and a dead engine cannot be turned into a retry storm by page views.
 
 ## 8. Required tests
 
-**`web/lib/engine-identity.test.ts`** — written, 25 tests, `node --test` with `fetch` stubbed:
+**`web/lib/engine-identity.test.ts`** — written, 45 tests, `node --test` with `fetch` stubbed:
 
 1. A token with a numeric `engineUserId` triggers **zero** engine calls — the guard, asserted by call
    count, because a regression here is a per-request engine call in production.
@@ -330,7 +409,7 @@ traffic, and a dead engine cannot be turned into a retry storm by page views.
 9. An email that fails `isEmailAllowed` produces no attempt, **and the denial is memoized** — a second
    denied call inside the window does no further `isEmailAllowed` work (§4).
 
-**`web/lib/auth-callbacks.test.ts`** — written, 9 tests. Named for the module the callbacks were moved
+**`web/lib/auth-callbacks.test.ts`** — written, 21 tests. Named for the module the callbacks were moved
 into by commit 4 of the plan, not `auth.test.ts`: `lib/auth.ts` constructs providers at module load and
 `next-auth/providers/*` is CommonJS, which bare `node --test` cannot import. The callbacks are the unit
 under test, so they live where they can be tested.
@@ -490,13 +569,38 @@ multi-instance one, because its durable state is a signed cookie and its engine 
 keyed upsert. The only thing that must change before the topology does is the store's first-sighting
 race, and that now has its own specification, diagrams and tests in [`IDENTITY_UPSERT_CONCURRENCY.md`](IDENTITY_UPSERT_CONCURRENCY.md).
 
-## 10. Out of scope
 
-- Re-checking the beta allowlist on *every* request (JWT sessions don't do this today; changing it is
-  a separate policy decision).
+## 10. Known gaps and accepted debt
+
+Everything below was found by a production-readiness review *after* the implementation landed, and each
+was classified deliberately rather than left implicit. "Accepted" means someone decided, not that nobody
+looked.
+
+### Deferred to a follow-up PR
+
+| # | Gap | Why it was not a release blocker | What the fix looks like |
+|---|---|---|---|
+| **S1** | Recovery inherits the general 6 s engine deadline, so a **wedged** engine can hold a server render for that long. | Reaching it needs the engine *listening but not answering*; the common outage — a restarting container — gives `ECONNREFUSED` in microseconds. Bounded to once per identity per 30 s by the backoff. | An optional `timeoutMs` on `upsertEngineUser`: sign-in keeps 6 s (the reader is waiting and a failed sign-in is worse than a slow one), recovery gets ~2 s (it can wait 30 s for the next attempt). |
+| **S2** | Recovery sends `email` and `displayName` from the token, and the engine refreshes both. A long-idle broken session can therefore write a **stale profile over a newer one**. | Recovery normally runs on the request right after the failed sign-in, when the token's profile is seconds old. The bad case needs a session broken for weeks, a profile change, *and* another device having updated the engine meanwhile. | `refreshProfile` on `POST /api/internal/users`, defaulting to `true` so an old web tier is unaffected; recovery sends `false`. Engine change first, web change second. Also makes the concurrent-first-sighting retry cleanly read-only ([`IDENTITY_UPSERT_CONCURRENCY.md`](IDENTITY_UPSERT_CONCURRENCY.md) §4). |
+| **S4b** | No Playwright test drives a **real** engine refusing `/api/internal/users` and then recovering. | `lib/session-recovery.test.ts` covers the mechanism against the real NextAuth route (§8). What e2e would add is the durable-heal step via `SessionProvider`, which no unit test can show. | A fixture that mints a broken session — `e2e/helpers.ts` currently mints tokens with `engineUserId` already set — plus a way to fail the endpoint for a window. |
+
+### Accepted, with the reasoning
+
+| # | Debt | Why it stays |
+|---|---|---|
+| **N2** | The memo key is a string join, `` `${provider}:${providerAccountId}` ``. | Unreachable collision: `provider` is a fixed set and a Google `sub` is numeric. `JSON.stringify([provider, id])` is better and costs nothing — **but it becomes required the moment a provider is added**, and it should land in that change rather than as churn now. |
+| **N4** | Eviction is FIFO, and `Map.set` on an existing key keeps its original position — so a frequently refreshed identity can be evicted before colder, newer ones. | Costs one engine call when it happens, never correctness. True LRU means touching the map on every read: more work in the common case to optimise the rare one. |
+| **N5** | The resolver's `.catch` is unreachable — `attemptEngineUpsert` swallows its own errors. | Removing it would make this module correct *by assumption about another module*. It is placed before the result handler precisely so it cannot produce a duplicate log line or a second memo write. Untestable by construction, and that is fine. |
+| **R4** | Multi-process safety is modelled, not proven. | The deployment runs one web container (§9). §9b states exactly what N instances would cost: redundant engine calls, bounded and convergent — never disagreement about who a reader is. |
+| — | No metrics series for recovery; the log line is the only signal. | Counting log lines answers "is it working". A gauge for "how many sessions are currently broken" would need state this design deliberately does not keep. Revisit if the recovered rate stops being near-zero. |
+
+### Still out of scope, by decision
+
+- Re-checking the beta allowlist on *every* request. JWT sessions don't, and §4's cached-path invariant
+  is what makes the current behaviour defensible; changing it is a policy decision, not a bug fix.
 - Any change to session lifetime, strategy, or cookie shape.
-- Making `upsertEngineUser` fail sign-in when the engine is down. It is tempting — the dev provider
-  already does exactly that — but it converts a recoverable degradation into an outage-shaped one
-  ("you cannot sign in"), and it should be argued separately from recovery.
+- Making `upsertEngineUser` fail sign-in when the engine is down. Tempting — the dev provider does
+  exactly that — but it converts a recoverable degradation into an outage-shaped one ("you cannot sign
+  in"), and deserves its own argument.
 - Surfacing "your account is still connecting" in the UI. Recovery is meant to be invisible; if it
   isn't, that is the argument for the previous bullet, not for a banner.

@@ -151,6 +151,33 @@ the real method has quietly diverged is worse than no suite, because it reports 
 earned. The reference is scaffolding with an expiry condition, and the expiry is enforced by the tests
 rather than by anyone's memory.
 
+## 6. The same idea, on the web side
+
+`web/lib/session-recovery.test.ts` is an assumption detector too, and everything in §1–§4 applies to it
+even though it is a `node --test` file rather than a pytest one.
+
+It exists for the same reason `test_storage_premises.py` does: a design rests on the documented
+behaviour of a dependency, and the reasoning is only as good as the premise. Here the dependency is
+NextAuth, and the premise is that `core/routes/session.js` builds the session object from
+`callbacks.jwt`'s **return value** — which is why identity recovery needs one call site instead of two.
+The test loads `next-auth/core`, a module deliberately *outside* the package's `exports` map, and drives
+the real `AuthHandler`.
+
+Reaching into a dependency's internals is normally a smell. It is the point here: a test that only used
+the public surface could not detect the change that would break the design. The trade is that a NextAuth
+upgrade can fail this file, and §4's rule is what to do about it —
+
+> **Failing premise ⇒ revalidate the design. Failing invariant ⇒ fix the code.**
+
+A failure to *load* the module, or a change in the response shape, is a **premise** failure: re-read
+`core/routes/session.js`, confirm the session is still built from the callback's return value, update
+[`SESSION_IDENTITY_RECOVERY_DESIGN.md`](SESSION_IDENTITY_RECOVERY_DESIGN.md) §2a, and only then adjust
+the test. A failure of the healed id to appear in the session body while the mechanism is unchanged is
+an **invariant** failure: our code broke. Loosening an assertion to get green re-opens the question the
+design closed, silently.
+
+The file's own header says this, so that whoever hits the failure reads it before deciding.
+
 ## What this suite is not
 
 - **Not a benchmark.** The wall-clock numbers (`busy_timeout`, pool exhaustion) are there to pin
@@ -162,3 +189,5 @@ rather than by anyone's memory.
   still open.
 - **Not a substitute for §9.** The tests check the premises; the argument that the premises imply the
   invariants is prose, and prose is where the next mistake will be.
+- **Not the only detectors in the repo.** `web/lib/session-recovery.test.ts` follows the same rules
+  against NextAuth's internals — see §6.

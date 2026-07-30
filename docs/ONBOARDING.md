@@ -235,16 +235,22 @@ a comprehension bug. Adding guidance on top of it would have decorated the failu
 | **Hung server (no response at all)** | The 12 s abort turns it into the same retry card. |
 | **A stash the registry no longer accepts** (renamed outlet) | The engine 400s, which the web route flattens to 503, so it presents as retryable. Two attempts later the funnel is the primary action, and completing it clears the poisoned stash via the authenticated save path. |
 
-**One known gap, out of scope here.** If the engine is unreachable *during sign-in*, the `jwt` callback
-never resolves `engineUserId`, so the session exists but cannot be attributed. Every per-user call
-401s — the landing step's write included — and no retry can fix it, because `engineUserId` is only
-resolved on the initial sign-in. Signing out and back in is the only recovery. This predates the
-onboarding work and affects every authenticated surface, not just this step; the fix belongs in the
-`jwt` callback, and is designed in
-[`SESSION_IDENTITY_RECOVERY_DESIGN.md`](SESSION_IDENTITY_RECOVERY_DESIGN.md) — partly built and
-sequenced in [`IDENTITY_RECOVERY_IMPLEMENTATION_PLAN.md`](IDENTITY_RECOVERY_IMPLEMENTATION_PLAN.md), so
-it can be reviewed and shipped independently of the onboarding change. Until its last commit lands, the
-paragraph above still describes production.
+**A gap that used to live here, now closed.** If the engine was unreachable *during sign-in*, the `jwt`
+callback never resolved `engineUserId`, so the session existed but could not be attributed. Every
+per-user call 401'd — the landing step's write included — and no retry fixed it, because the id was
+resolved only on the initial sign-in. Signing out and back in was the only recovery.
+
+That is fixed. `callbacks.jwt` now re-resolves the id from the claims the signed token already carries,
+on the next request, repairing that render and persisting on the client's next `/api/auth/session`
+fetch. It predated the onboarding work and affected every authenticated surface, so it was designed,
+sequenced and shipped separately: [`SESSION_IDENTITY_RECOVERY_DESIGN.md`](SESSION_IDENTITY_RECOVERY_DESIGN.md)
+(§5a is the operational side — the log events and the kill switch) and
+[`IDENTITY_RECOVERY_IMPLEMENTATION_PLAN.md`](IDENTITY_RECOVERY_IMPLEMENTATION_PLAN.md).
+
+What this means for the funnel specifically: a reader who signs in during an engine restart now lands on
+`/signin/complete`, whose `/api/me` read may still 401 on that first attempt — the landing step is
+already built to treat that as retryable — and by the following request the session carries its engine
+id and the stash persists normally.
 
 ## 9. Tests that hold it in place
 

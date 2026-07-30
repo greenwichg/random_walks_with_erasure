@@ -1,7 +1,8 @@
 # Implementation Plan — Identity Recovery + Transaction-Retry Upsert
 
-**Commits 1–5a are implemented; commit 7 is not. Commit 6 was deleted** — proved redundant by execution
-trace before it was written (see below). This is the roadmap for two designs that are already reviewed:
+**All commits are implemented. Commit 6 was deleted** — proved redundant by execution trace before it
+was written (see below); commits 5a–5c were added by a production-readiness review after commit 5
+landed. This is the roadmap for two designs that are now shipped:
 
 - [`IDENTITY_UPSERT_CONCURRENCY.md`](IDENTITY_UPSERT_CONCURRENCY.md) §4 — the engine-side upsert.
 - [`SESSION_IDENTITY_RECOVERY_DESIGN.md`](SESSION_IDENTITY_RECOVERY_DESIGN.md) — the web-side recovery.
@@ -21,14 +22,24 @@ certified, exactly as planned.
 | **3** | web | Add the memoized resolver + its unit tests, wired to nothing — **done** | **no** — dead code | `git revert` |
 | **3.5** | web | Give `upsertEngineUser` a deadline — `lib/engine-timeout.ts`, shared with `backend.ts` — **done** | yes — a wedged engine now fails instead of hanging | `git revert` |
 | **4** | web | Persist `provider` + `providerAccountId` claims at sign-in — **done** | **no** — nothing reads them yet | `git revert` |
-| **5** | web | Call the resolver from `callbacks.jwt` — the **only** call site — behind a kill switch | yes — broken sessions start healing, current render included | env flag, then revert |
+| **5** | web | Call the resolver from `callbacks.jwt` — the **only** call site — behind a kill switch — **done** | yes — broken sessions start healing, current render included | env flag, then revert |
 | **5a** | deploy | Plumb `RWE_IDENTITY_RECOVERY` + `RWE_BACKEND_TIMEOUT_MS` onto the `web` service — **done** | **no** — both render to today's behaviour | `git revert` |
+| **5b** | web | Log recovery failures and denials; extract `hasEngineUserId()` — **done** | yes — two new log events | `git revert` |
+| **5c** | test | Commit the session-recovery acceptance test — **done** | **no** — test-only | `git revert` |
 | ~~**6**~~ | ~~web~~ | ~~Call the resolver from `engineAuthHeaders` (immediate heal)~~ — **deleted, redundant** | — | — |
-| **7** | docs | Flip both designs from proposal to implemented; ops note | no | trivial |
+| **7** | docs | Designs flipped to implemented; ops note; accepted-debt register — **done** | no | trivial |
 
-All six remaining are independently deployable. The ordering constraint is only that **1 should reach
-production no later than 5**, because recovery multiplies concurrent first-sightings and 1 is what makes
-losing one harmless.
+Each is independently deployable. The ordering constraint is only that **1 should reach production no
+later than 5**, because recovery multiplies concurrent first-sightings and 1 is what makes losing one
+harmless.
+
+**Commits 5a–5c were not in the original plan.** They came out of a production-readiness review run
+against the shipped code, which found that the kill switch never reached the container (so the
+documented rollback did nothing), that only recovery *successes* were logged (so a totally broken
+recovery was indistinguishable from having nothing to recover), and that the end-to-end proof lived in
+a scratchpad file that would not survive the session. The review's remaining findings are deferred, and
+tracked as [`SESSION_IDENTITY_RECOVERY_DESIGN.md`](SESSION_IDENTITY_RECOVERY_DESIGN.md) §10 rather than
+here — a plan that is finished should not also be a backlog.
 
 ### Why commit 6 was deleted
 
@@ -209,7 +220,7 @@ call failed, since that is precisely the session recovery will later need to rep
 
 ---
 
-## Commit 5 — web: heal in `callbacks.jwt` (the only call site)
+## Commit 5 — web: heal in `callbacks.jwt` (the only call site) ✅ implemented
 
 **Files** — `web/lib/auth-callbacks.ts` (call the resolver when `token.engineUserId` is missing **and
 `account` is absent**); `web/lib/engine-identity.ts` (read the `RWE_IDENTITY_RECOVERY` kill switch);
@@ -276,11 +287,62 @@ its pre-5a state — recovery still on, still 6000 ms, still unswitchable.
 
 ---
 
-## Commit 7 — docs
+## Commit 5b — web: make a failing recovery visible ✅ implemented
 
-Flip both design documents from proposal to implemented, record the observed recovery-log volume after a
-day in production, and add the ops note: what `engine_identity_recovered` means, how to disable recovery,
-and what a *rising* rate indicates (sign-in-time engine unavailability, not a recovery problem).
+**Files** — `web/lib/engine-identity.ts` (`attemptEngineUpsert` + `logRecovery` + `hasEngineUserId`),
+`web/lib/auth-callbacks.ts` (uses the predicate), both test files.
+
+**Behavioural change.** Two new log events; no change to what recovery attempts or returns.
+`upsertEngineUser` is now a wrapper over `attemptEngineUpsert`, which keeps the failure reason instead of
+collapsing everything to `null` — same signature, same return type, both sign-in call sites untouched.
+
+**Why it was needed.** Only successes were logged, which inverted the signal: a recovery failing for
+every reader (a mismatched `RWE_INTERNAL_SECRET` being the realistic cause) produced logs identical to
+having no broken sessions. You could ship the repair and never learn it had never worked.
+
+**Tests** — 18 new. Each reason code; the denial's email and reason; and the property that makes the log
+usable under load: **one line per attempt, never per request** — 15 session reads, 30 renders during an
+outage, 25 coalesced callers and 30 cached denials each produce exactly one line.
+
+**Rollback.** `git revert`. The events are additive; nothing parses them yet.
+
+---
+
+## Commit 5c — test: commit the acceptance harness ✅ implemented
+
+**Files** — `web/lib/session-recovery.test.ts` (new), `web/package.json`.
+
+**Behavioural change.** None — test-only.
+
+**Why it was needed.** The end-to-end proof of design §2a lived in a scratchpad file outside the repo.
+Everything committed stubbed `fetch` and tested the resolver and the callback separately, so nothing
+exercised the hop between them — which is the claim the whole design rests on.
+
+**Tests** — the harness's 32 checks reduced to 9, dropping what the unit suites already own. Verified by
+**mutation**, not by passing: removing the recovery call fails 5 of 9; not writing the resolved id back
+to the token fails 3; dropping the `!account` guard, breaking in-flight coalescing, and ignoring the kill
+switch each fail exactly the test written for them.
+
+**Note for future maintainers.** It reaches into `next-auth/core`, outside the package's `exports` map.
+That is deliberate and documented in the file header: it is an assumption detector, so a failure after a
+NextAuth upgrade means re-read `core/routes/session.js` and revalidate design §2a — not loosen the
+assertion.
+
+**Rollback.** `git revert`.
+
+---
+
+## Commit 7 — docs ✅ implemented
+
+Both design documents flipped from proposal to implemented; the operational section (log events, what
+each `reason` means and what to do about it, how to disable recovery) added as design §5a; the
+allowlist-shortcut invariant written down in §4; and the production-readiness review's deferred findings
+and accepted debt recorded in §10 so they are decisions with reasons rather than omissions.
+
+**Not done here:** recording the observed recovery-log volume after a day in production. That needs
+production, and deploys are manual. It is the first thing to add once the stack has run with commit 5
+for a day — the expected steady state is *zero* `engine_identity_*` lines, with a burst after each
+deploy that restarts the engine.
 
 ---
 

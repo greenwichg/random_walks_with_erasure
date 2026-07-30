@@ -7,7 +7,16 @@ concurrency behaviour is the foundation every authenticated surface stands on.
 **Status:** **implemented.** §4 is what `Store.upsert_user_by_identity` does as of commit 1 of
 [`IDENTITY_RECOVERY_IMPLEMENTATION_PLAN.md`](IDENTITY_RECOVERY_IMPLEMENTATION_PLAN.md). It was a
 prerequisite for [`SESSION_IDENTITY_RECOVERY_DESIGN.md`](SESSION_IDENTITY_RECOVERY_DESIGN.md), which
-multiplies concurrent first-sightings of the same identity and is still to come.
+multiplies concurrent first-sightings of the same identity and **has since shipped** — so the race this
+document specifies is now reached in production by recovery as well as by sign-in.
+
+> **One open item, tracked as debt.** The `create=False` attempt still applies the profile refresh, so
+> it emits an `UPDATE` when the supplied email or display name differs from what is stored — meaning the
+> retry is *not* guaranteed read-only. Under WAL with `busy_timeout=5000` a reader never blocks, and
+> concurrent callers for one identity normally carry identical profiles, so no write is emitted at all.
+> The fix is `refreshProfile` on the request, specified as **S2** in
+> [`SESSION_IDENTITY_RECOVERY_DESIGN.md`](SESSION_IDENTITY_RECOVERY_DESIGN.md) §10; it would make this
+> path cleanly read-only as a side effect.
 
 > **Revision note.** An earlier revision of §4 specified a `SAVEPOINT`-based algorithm. It is
 > withdrawn. SQLAlchemy's own documentation for the installed version states that SAVEPOINT

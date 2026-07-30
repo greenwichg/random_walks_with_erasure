@@ -97,6 +97,28 @@ Every hop is best-effort: reporting **never** raises into the code it instrument
 {"event":"client_error","requestId":"-","name":"TypeError","message":"undefined is not a function","url":"/report"}
 ```
 
+### Web-tier events
+
+Emitted by the Next.js container on stderr, in the same one-object-per-line shape. They carry no
+`requestId` — the web tier has no request-id middleware — so correlate by timestamp.
+
+```json
+{"event":"beta_access_denied","email":"someone@example.com","reason":"not_allowlisted"}
+{"event":"engine_identity_recovered","provider":"google","userId":4211}
+{"event":"engine_identity_recovery_failed","provider":"google","reason":"http_401"}
+{"event":"engine_identity_recovery_denied","provider":"google","email":"reader@example.com","reason":"not_allowlisted"}
+```
+
+| Event | Owner | Read it as |
+|---|---|---|
+| `beta_access_denied` | [`BETA_ACCESS_CONTROL.md`](BETA_ACCESS_CONTROL.md) | Someone tried to sign in who is not on the allowlist. |
+| `engine_identity_recovered` | [`SESSION_IDENTITY_RECOVERY_DESIGN.md`](SESSION_IDENTITY_RECOVERY_DESIGN.md) §5a | A session that lost its engine id was repaired. Healthy steady state is **none**; a burst after a deploy is expected. |
+| `engine_identity_recovery_failed` | same | Recovery itself is broken. `reason` distinguishes a wrong shared secret (`http_401`) from a wedged engine (`timeout`) from a dead one (`unreachable`). |
+| `engine_identity_recovery_denied` | same | A signed-in reader is off the allowlist and will stay un-attributed until someone acts. Carries the email for that reason. |
+
+One line per *attempt*, not per request — the caches and backoff that bound the engine calls bound the
+log volume identically.
+
 Metrics snapshot (`GET /api/metrics`, internal):
 ```json
 {"uptimeSeconds":42.1,"series":{"counters":6,"timers":4},
