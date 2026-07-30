@@ -1,8 +1,7 @@
 # Implementation Plan — Identity Recovery + Transaction-Retry Upsert
 
-**Commits 1–4 are implemented; commits 5 and 7 are not. Commit 6 was deleted** — proved redundant by
-execution trace before it was written (see below). This is the roadmap for two designs that are already
-reviewed:
+**Commits 1–5a are implemented; commit 7 is not. Commit 6 was deleted** — proved redundant by execution
+trace before it was written (see below). This is the roadmap for two designs that are already reviewed:
 
 - [`IDENTITY_UPSERT_CONCURRENCY.md`](IDENTITY_UPSERT_CONCURRENCY.md) §4 — the engine-side upsert.
 - [`SESSION_IDENTITY_RECOVERY_DESIGN.md`](SESSION_IDENTITY_RECOVERY_DESIGN.md) — the web-side recovery.
@@ -23,6 +22,7 @@ certified, exactly as planned.
 | **3.5** | web | Give `upsertEngineUser` a deadline — `lib/engine-timeout.ts`, shared with `backend.ts` — **done** | yes — a wedged engine now fails instead of hanging | `git revert` |
 | **4** | web | Persist `provider` + `providerAccountId` claims at sign-in — **done** | **no** — nothing reads them yet | `git revert` |
 | **5** | web | Call the resolver from `callbacks.jwt` — the **only** call site — behind a kill switch | yes — broken sessions start healing, current render included | env flag, then revert |
+| **5a** | deploy | Plumb `RWE_IDENTITY_RECOVERY` + `RWE_BACKEND_TIMEOUT_MS` onto the `web` service — **done** | **no** — both render to today's behaviour | `git revert` |
 | ~~**6**~~ | ~~web~~ | ~~Call the resolver from `engineAuthHeaders` (immediate heal)~~ — **deleted, redundant** | — | — |
 | **7** | docs | Flip both designs from proposal to implemented; ops note | no | trivial |
 
@@ -245,8 +245,34 @@ it is present, writes the result to the token, and — test 13 — **does not ca
 sign-in invocation even when the id is missing**, asserted by resolver call count so that removing the
 guard fails the suite.
 
-**Rollback.** `RWE_IDENTITY_RECOVERY=0` in `deploy/.env` + `docker compose up -d web` restores today's
-behaviour without a rebuild. `git revert` if the flag is not enough.
+**Rollback.** `RWE_IDENTITY_RECOVERY=0` in `deploy/.env` + `bash deploy/ops/restart.sh web` restores
+today's behaviour without a rebuild. `git revert` if the flag is not enough.
+
+> This was **not true when commit 5 shipped** — the variable was not on the `web` service in either
+> compose file, and neither has an `env_file:`, so setting it in `deploy/.env` did nothing at all.
+> Commit 5a wired it (and `RWE_BACKEND_TIMEOUT_MS`) onto the service and added the
+> `web-identity-recovery-switch` rule to `deploy/deployment-rules.json` so the omission cannot recur.
+> Nothing about the flag's *semantics* changed; it simply could not reach the container.
+
+---
+
+## Commit 5a — deploy: plumb the kill switch and the engine deadline ✅ implemented
+
+**Files** — `deploy/docker-compose.yml`, `deploy/docker-compose.aws.yml` (two variables on the `web`
+service), `deploy/deployment-rules.json` (a rule that fails the validator if they go missing),
+`docs/PRODUCTION_ENVIRONMENT.md`.
+
+**Behavioural change.** None. Both variables render to values that reproduce current behaviour when
+unset: `RWE_IDENTITY_RECOVERY=1` (on, the code default) and `RWE_BACKEND_TIMEOUT_MS=""` (empty, which
+`engineTimeoutMs()` already maps to 6000). No application file was touched.
+
+**Why it is its own commit.** It is the rollback lever for commit 5, and a lever has to be in place
+before the thing it disarms. It is also the only commit in this plan that changes nothing an automated
+test could observe from inside the app, which is precisely why it needs a deployment-manifest rule
+rather than a unit test.
+
+**Rollback.** `git revert`. Reverting removes the variables from the service, which returns the stack to
+its pre-5a state — recovery still on, still 6000 ms, still unswitchable.
 
 ---
 

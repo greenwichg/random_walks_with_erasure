@@ -72,6 +72,13 @@ services:
       BETA_ACCESS_ENABLED: ${BETA_ACCESS_ENABLED:-1}
       BETA_ALLOWLIST: ${BETA_ALLOWLIST:-}
       BETA_ALLOWLIST_FILE: ${BETA_ALLOWLIST_FILE:-}
+      # Restated from the base file (which this merges over) because this is the manifest an operator
+      # reads during an incident, and RWE_IDENTITY_RECOVERY is the rollback lever for identity
+      # recovery: `RWE_IDENTITY_RECOVERY=0` in deploy/.env + `bash deploy/ops/restart.sh web` returns
+      # the web tier to pre-recovery behaviour with no rebuild and no revert. Read at call time, so
+      # the restart is what applies it. Both default to today's behaviour when unset.
+      RWE_IDENTITY_RECOVERY: ${RWE_IDENTITY_RECOVERY:-1}
+      RWE_BACKEND_TIMEOUT_MS: ${RWE_BACKEND_TIMEOUT_MS:-}
     volumes:
       # READ-ONLY data mount, and the only reason it exists: BETA_ALLOWLIST_FILE is documented as
       # /app/data/allowlist.txt, but `web` had no volumes at all — so that path did not exist inside

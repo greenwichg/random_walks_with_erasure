@@ -55,6 +55,19 @@ access-controlled box.
 | `BETA_ACCESS_ENABLED` | `1` | BA1 invite-only gate (defaults on in prod; set explicitly). |
 | `BETA_ALLOWLIST` | `a@x.com, b@y.com` or `@team.com` | The Wave-0 emails. **Fail-closed: enabled + empty = everyone denied.** See `docs/BETA_ACCESS_CONTROL.md`. |
 
+### Web feature flags (optional — safe to leave unset)
+
+Both are read **at call time**, so a change takes effect on `deploy/ops/restart.sh web` with no rebuild.
+Both are wired onto the `web` service in `docker-compose.yml` *and* `docker-compose.aws.yml`; a variable
+that is not on the service never reaches the container, whatever `deploy/.env` says — compose reads that
+file to substitute `${VAR}`, not to inject it. `deploy/ops/validate-deployment.py` enforces their
+presence (`web-identity-recovery-switch`).
+
+| Variable | Default | Notes |
+|---|---|---|
+| `RWE_IDENTITY_RECOVERY` | `1` (on) | The kill switch for identity recovery — a session that signed in while the engine was unreachable carries no engine user id, and the `jwt` callback repairs it from the token's own claims (`docs/SESSION_IDENTITY_RECOVERY_DESIGN.md`). `0` / `false` / `no` / `off` disables it; **any other value, including empty, leaves it on**. Disabling restores pre-recovery behaviour exactly: a session that already has an id keeps using it, so nobody is signed out or de-attributed. This is the rollback lever — prefer it to a revert. |
+| `RWE_BACKEND_TIMEOUT_MS` | `6000` | Deadline for every engine call from the web tier (`lib/engine-timeout.ts`), including the recovery upsert. Left **empty** in both compose files on purpose, so the default has one home, in code. A non-positive or unparseable value falls back to `6000` rather than becoming a zero-millisecond deadline — which would abort every engine call instantly and present exactly like a total outage. |
+
 ### Off-host backups & host data
 | Variable | Value | Used by |
 |---|---|---|

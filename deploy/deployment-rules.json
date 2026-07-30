@@ -120,6 +120,14 @@
       "require": { "env": ["RWE_RETENTION_MAX_COUNT"] },
       "why": "GDELT is high-volume ingestion; catalog retention is OFF unless RWE_RETENTION_MAX_COUNT (or _MAX_AGE_DAYS) is set, so enabling GDELT without a bound lets feed_articles / the SQLite DB / every backup grow unbounded. (Guard checks the knob is WIRED; set a non-zero value in deploy/.env per the runbook.)",
       "fix": "Wire RWE_RETENTION_MAX_COUNT into the api service and set a non-zero value in deploy/.env (e.g. 20000) whenever RWE_GDELT_ENABLED=1. See docs/GDELT_TRIAL_RUNBOOK.md."
+    },
+    {
+      "id": "web-identity-recovery-switch",
+      "categories": ["feature-flag", "required-env"],
+      "when": { "service": "web", "env_equals": { "RWE_ENV": "production" } },
+      "require": { "env": ["RWE_IDENTITY_RECOVERY", "RWE_BACKEND_TIMEOUT_MS"] },
+      "why": "Identity recovery calls the engine from the auth path, and RWE_IDENTITY_RECOVERY is its documented rollback (set 0, restart web, no rebuild); RWE_BACKEND_TIMEOUT_MS bounds that call. Both are read at call time, but `environment:` is an explicit allowlist and this stack has no `env_file:` — a variable absent from the service never reaches the container, whatever deploy/.env says. Both were absent when recovery shipped, so the rollback lever silently did nothing: an operator would set it, restart, see no change, and conclude the app was ignoring the flag.",
+      "fix": "On the `web` service add `RWE_IDENTITY_RECOVERY: ${RWE_IDENTITY_RECOVERY:-1}` and `RWE_BACKEND_TIMEOUT_MS: ${RWE_BACKEND_TIMEOUT_MS:-}` — in the AWS override too, since that is the manifest an operator reads during an incident. See docs/SESSION_IDENTITY_RECOVERY_DESIGN.md."
     }
   ],
 

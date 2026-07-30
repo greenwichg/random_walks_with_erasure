@@ -379,6 +379,19 @@ services:
     environment:
       RWE_BACKEND_URL: http://api:8000
       NODE_ENV: production
+      # Both are read at CALL time by the web tier, so changing either takes effect on
+      # `docker compose up -d web` with no rebuild. That is the whole point of listing them:
+      # `environment:` is an explicit allowlist and this stack has no `env_file:`, so a variable
+      # absent from here never reaches the container no matter what deploy/.env says — compose
+      # reads that file to substitute ${VAR}, not to inject it. Identity recovery's documented
+      # rollback depended on this line existing.
+      #
+      #   RWE_IDENTITY_RECOVERY   0/false/no/off disables identity recovery (docs/SESSION_IDENTITY_
+      #                           RECOVERY_DESIGN.md); anything else, including empty, leaves it on.
+      #   RWE_BACKEND_TIMEOUT_MS  deadline for every engine call. Empty ⇒ the code default (6000).
+      #                           Left empty here so the default has ONE home, in lib/engine-timeout.ts.
+      RWE_IDENTITY_RECOVERY: ${RWE_IDENTITY_RECOVERY:-1}
+      RWE_BACKEND_TIMEOUT_MS: ${RWE_BACKEND_TIMEOUT_MS:-}
       # --- production hardening (must match the engine's pair above) --------------
       # With RWE_ENV=production the web app validates these AT STARTUP and refuses to
       # boot if any are missing (see DEPLOYMENT.md → "Startup validation").
