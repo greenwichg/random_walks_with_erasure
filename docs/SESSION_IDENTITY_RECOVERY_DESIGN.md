@@ -348,6 +348,15 @@ under test, so they live where they can be tested.
 promise, so a promise that never settles is a shared stall; the deadline both aborts *and* races, and a
 test drives a transport that ignores the abort signal to prove the race is what makes it unconditional.
 
+**`web/lib/session-recovery.test.ts`** — written, 9 tests, and the only committed test that exercises
+the hop *between* the resolver and the callback. It drives the real `AuthHandler` from
+`next-auth/core` — a module outside the package's `exports` map, loaded on purpose — so §2a's claim
+is asserted rather than argued: a heal made in `callbacks.jwt` is in the session body of the same
+request, with the queued cookies discarded. It also covers §2b's two reachable exits, route-level
+coalescing across identities, fail-soft on a dead engine, the `!account` guard end to end, and the kill
+switch. Treat a failure after a NextAuth upgrade as **revalidate §2a**, not as a test to loosen —
+it is an assumption detector in the sense of [`CONCURRENCY_TESTING.md`](CONCURRENCY_TESTING.md).
+
 **Engine** — already written, in `tests/concurrency/`, and owned by
 [`IDENTITY_UPSERT_CONCURRENCY.md`](IDENTITY_UPSERT_CONCURRENCY.md) §7 rather than duplicated here.
 Recovery depends on the concurrent first-sighting properties (one user, no orphan, sequential
