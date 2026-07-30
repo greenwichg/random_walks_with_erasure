@@ -287,7 +287,9 @@ fail.
 
 ---
 
-*Related: `docs/STORAGE_LIFECYCLE.md` (notification retention), `docs/DEPLOYMENT_RUNBOOK.md` §
+*Related: `docs/BROWSER_PUSH_ARCHITECTURE.md` (Phase B — the frozen architecture for the push
+channel, which adds no kind and changes nothing in this document),
+`docs/STORAGE_LIFECYCLE.md` (notification retention), `docs/DEPLOYMENT_RUNBOOK.md` §
 Breaking-story notifications, `docs/PRODUCTION_ENVIRONMENT.md` (engine feature flags),
 `docs/IDENTITY_UPSERT_CONCURRENCY.md` §4 (why new code uses a second transaction rather than a
 SAVEPOINT).*

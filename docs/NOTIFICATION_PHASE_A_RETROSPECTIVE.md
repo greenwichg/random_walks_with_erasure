@@ -46,6 +46,12 @@ category kinds exist — which is the whole argument for doing it before Phase B
 
 ## 2. Carried forward — decisions for Phase B
 
+> **All four were settled by design review and are now frozen in
+> [`BROWSER_PUSH_ARCHITECTURE.md`](BROWSER_PUSH_ARCHITECTURE.md).** The entries below are kept as
+> written — they record what was open and what was recommended at the time, which is the part a
+> retrospective is for. Where the eventual decision differs from the recommendation here, the
+> specification is authoritative and the difference is noted.
+
 ### R3 — the `Channel` protocol is unexercised
 
 `InAppChannel` is referenced only by tests. `materialize_notifications` writes
@@ -56,6 +62,11 @@ which needs a subscription, a TTL, an urgency and a topic.
 **Recommendation: do not extend it speculatively.** Design the real abstraction against two real
 channels in Phase B's first commit, or delete it. An unexercised seam is a guess, and the guess is
 already visible in the signature.
+
+**Settled** ([spec §3](BROWSER_PUSH_ARCHITECTURE.md)): the guess was wrong in a way this entry did not
+anticipate. What channels share is a **metadata table**, not a render function at all — the two
+consumers need different types under the same field names, disjoint extra fields, and different
+correct behaviour for an unknown kind. `Channel`/`InAppChannel` are superseded rather than extended.
 
 ### R4 — rendering is deferred to the client, and the catalogs live only in the web tier
 
@@ -73,6 +84,13 @@ structural decision in Phase B:
 3. the engine gains a copy of the catalogs — worst: two sources of truth, and `check:i18n` guards only
    the web copy.
 
+**Settled** ([spec §4, §5](BROWSER_PUSH_ARCHITECTURE.md)): (1), with the sender in the **engine** —
+the tier that owns the trigger, the data and the gate, and the only one with a place to run background
+work. Two amendments to the recommendation as written here: the payload carries `{kind, payload}`
+rather than `{titleKey, bodyKey}`, since the keys are metadata the worker already holds; and the
+reader's language is read from browser storage at render time, with the payload's `lang` demoted to a
+fallback — a language captured at send time can be stale by the time a push is delivered.
+
 ### R5 — Phase A never had to think about time of day; push does
 
 Evaluate-on-fetch means an in-app notification waits for the reader. A push arrives at 3am. There is
@@ -87,6 +105,10 @@ push enabled for a category, and settings are stored as an opaque JSON blob — 
 plus a JSON parse per event. Fine at Wave 0; the first thing that needs an index later. Since
 `push_subscriptions` has to exist anyway, carrying a denormalised per-category flag on it solves this
 for free, and is worth doing in the same commit that creates the table.
+
+**Settled** ([spec §7](BROWSER_PUSH_ARCHITECTURE.md)): adopted, with the constraint made explicit —
+settings remain authoritative and the subscription's copy is a query accelerator, so a stale copy is
+corrected by `gate_path`, never permitted to contradict it.
 
 ---
 
