@@ -7,6 +7,10 @@ it predates that work and affects every authenticated surface, not just onboardi
 **Goal:** whenever a valid authenticated session exists but its token carries no engine user id,
 resolve one automatically, without the reader having to sign out and back in.
 
+**Sequencing:** [`IDENTITY_RECOVERY_IMPLEMENTATION_PLAN.md`](IDENTITY_RECOVERY_IMPLEMENTATION_PLAN.md)
+breaks this and the engine-side upsert into seven reviewable commits, with the rollback strategy and
+deployment risks for each.
+
 ---
 
 ## 1. The failure

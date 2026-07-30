@@ -16,6 +16,8 @@ concurrent first-sightings of the same identity.
 > classifies every assumption so this class of mistake is visible next time.
 
 This document owns the storage-level reasoning. Callers should reference it rather than restate it.
+The commit-by-commit route from here to production is
+[`IDENTITY_RECOVERY_IMPLEMENTATION_PLAN.md`](IDENTITY_RECOVERY_IMPLEMENTATION_PLAN.md).
 
 ---
 
