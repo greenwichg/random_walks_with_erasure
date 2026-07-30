@@ -439,6 +439,7 @@
   "onboarding.what2": "It gets more accurate as you connect real reading.",
   "onboarding.what3": "It becomes a measured report once you have enough reads.",
   "onboarding.saveTrack": "Save my estimate & track it",
+  "onboarding.saveFailed": "Couldn't save — check your connection.",
   "onboarding.adjustOutlets": "Adjust my outlets",
   "onboarding.privacyNote": "We score the news you read — never your identity, and never sold.",
   "settings.appearanceInfo": "How the app looks. Theme changes apply instantly.",

@@ -439,6 +439,7 @@
   "onboarding.what2": "Elle devient plus précise à mesure que vous connectez vos lectures réelles.",
   "onboarding.what3": "Elle devient un rapport mesuré une fois que vous avez assez de lectures.",
   "onboarding.saveTrack": "Enregistrer mon estimation et la suivre",
+  "onboarding.saveFailed": "Échec de l'enregistrement — vérifiez votre connexion.",
   "onboarding.adjustOutlets": "Ajuster mes médias",
   "onboarding.privacyNote": "Nous notons les actualités que vous lisez — jamais votre identité, et jamais vendues.",
   "settings.appearanceInfo": "L'apparence de l'app. Les changements de thème s'appliquent instantanément.",

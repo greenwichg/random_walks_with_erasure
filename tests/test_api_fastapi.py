@@ -304,6 +304,28 @@ def test_save_onboarding_persists_and_me_returns_it(client):
     assert me["report"]["mode"] == "estimate" and 0 <= me["report"]["overall"] <= 100
 
 
+def test_me_carries_the_two_facts_the_onboarding_gate_reads(client):
+    """The web app shell redirects to /onboarding on `onboarding is None and reads == 0` — see
+    docs/ONBOARDING.md. Both halves are asserted here because the gate is only as correct as this
+    payload: without `reads` it would bounce established readers who predate the onboarding row."""
+    uid = client.post("/api/internal/users",
+                      json={"provider": "google", "providerAccountId": "gate-1"}).json()["userId"]
+    hdr = {"X-IH-User-Id": str(uid)}
+
+    # A brand-new account: nothing chosen, nothing read -> the state the gate acts on. `onboarding`
+    # is ABSENT rather than null (response_model_exclude_none), which is why the web check is
+    # falsy-based; `reads` is 0, not absent, because 0 is not None.
+    fresh = client.get("/api/me", headers=hdr).json()
+    assert fresh.get("onboarding") is None and fresh["reads"] == 0
+
+    # Reading alone clears the gate. No onboarding row is written by /api/me/reads, so this is the
+    # regression guard for a gate that looked only at `onboarding`.
+    client.post("/api/me/reads", json={"reads": [{"url": "https://www.nytimes.com/2024/us/a"}]},
+                headers=hdr)
+    established = client.get("/api/me", headers=hdr).json()
+    assert established.get("onboarding") is None and established["reads"] == 1
+
+
 def test_internal_secret_gates_the_trust_boundary(client, monkeypatch):
     """With RWE_INTERNAL_SECRET set, internal calls need the X-IH-Auth header and the
     user-id header is honoured only when signed. Unset (the default) leaves dev untouched."""

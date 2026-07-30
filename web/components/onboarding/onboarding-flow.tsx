@@ -7,7 +7,12 @@ import type { EstimateHealthReport, LeanBucket, Outlet } from "@/types/domain";
 import { Button } from "@/components/ui/button";
 import { ScoreRing } from "@/components/shared/score-ring";
 import { SpectrumBar } from "@/components/shared/spectrum-bar";
-import { PENDING_ONBOARDING_KEY } from "@/components/onboarding/onboarding-sync";
+import { useSession } from "next-auth/react";
+import {
+  PENDING_ONBOARDING_KEY,
+  clearOnboardingPending,
+  markOnboardingPending,
+} from "@/lib/onboarding";
 import { useTranslation } from "@/lib/i18n";
 import { track } from "@/lib/analytics";
 import { cn } from "@/lib/utils";
@@ -346,17 +351,75 @@ function Estimate({
   onAdjust: () => void;
 }) {
   const { t } = useTranslation();
+  const { status } = useSession();
+  const [saving, setSaving] = React.useState(false);
+  const [saveFailed, setSaveFailed] = React.useState(false);
   const takeaway = report.improvements[0];
-  // Stash the selection so it survives the sign-in redirect; OnboardingSync persists it post-auth.
-  const save = () => {
-    track("source_connected", { outletCount: outletIds.length }); // PA1 funnel event (best-effort)
+
+  /**
+   * Stash the selection where OnboardingSync can find it after a session appears, and mark it
+   * pending so the app-shell gate lets the reader through the moment they sign in rather than
+   * bouncing them back into the funnel they just finished. Cookie last: it is a claim about the
+   * payload, so it must not outrun it.
+   */
+  const stash = () => {
     try {
       window.localStorage.setItem(PENDING_ONBOARDING_KEY, JSON.stringify({ outlets: outletIds }));
+      markOnboardingPending();
     } catch {
       /* ignore storage failures — sign-in still proceeds */
     }
-    // Go to the sign-in page (Google, or the demo login when enabled) rather than forcing one
-    // provider — so a reader without Google configured can still sign in.
+  };
+
+  /**
+   * Two paths, because there are genuinely two situations.
+   *
+   * ANONYMOUS (unchanged): there is nowhere server-side to put a selection made before the account
+   * exists, so it goes to localStorage and `OnboardingSync` flushes it once a session appears.
+   * localStorage is the right tool for exactly this one job.
+   *
+   * AUTHENTICATED (new): a reader sent here by the app-shell gate already HAS an account, so the
+   * round-trip through localStorage is pure risk — a stale pending item from an earlier anonymous
+   * session could clobber the choice just made, and the sync only runs on the
+   * unauthenticated -> authenticated transition, which for this reader never happens again. Write
+   * straight to the server, clear any stale pending item, and go to the app.
+   *
+   * If that write fails we stay on this screen and say so, rather than navigating to `/`: the gate
+   * would only bounce them straight back here, so a redirect would look like a loop. The selection
+   * is still stashed in localStorage first, which covers the one case where `/` WOULD work — an
+   * unreachable engine, where the gate fails open and OnboardingSync flushes the stash.
+   */
+  const save = async () => {
+    track("source_connected", { outletCount: outletIds.length }); // PA1 funnel event (best-effort)
+
+    if (status === "authenticated") {
+      setSaving(true);
+      setSaveFailed(false);
+      try {
+        const res = await fetch("/api/me/onboarding", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ outlets: outletIds }),
+        });
+        if (!res.ok) throw new Error("save failed");
+        try {
+          window.localStorage.removeItem(PENDING_ONBOARDING_KEY);   // never let a stale item win
+          clearOnboardingPending();
+        } catch {
+          /* ignore */
+        }
+        window.location.assign("/");
+      } catch {
+        stash();                 // so a retry, or a fail-open app load, still has the selection
+        setSaveFailed(true);
+        setSaving(false);        // the button re-enables: pressing it again retries the POST
+      }
+      return;
+    }
+
+    stash();
+    // Signed out: go to the sign-in page (Google, or the demo login when enabled) rather than
+    // forcing one provider — so a reader without Google configured can still sign in.
     window.location.assign("/signin");
   };
   return (
@@ -388,9 +451,14 @@ function Estimate({
           <li>• {t("onboarding.what3")}</li>
         </ul>
       </div>
-      <Button className="mt-5 w-full" size="lg" onClick={save}>
+      <Button className="mt-5 w-full" size="lg" onClick={save} disabled={saving}>
         {t("onboarding.saveTrack")}
       </Button>
+      {saveFailed && (
+        <p role="alert" className="mt-2 text-center text-xs text-destructive">
+          {t("onboarding.saveFailed")}
+        </p>
+      )}
       <button
         onClick={onAdjust}
         className="mt-3 flex w-full items-center justify-center gap-1 text-xs text-muted-foreground hover:text-foreground"

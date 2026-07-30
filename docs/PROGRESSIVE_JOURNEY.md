@@ -8,6 +8,10 @@ unavailable insight.
 **No scoring algorithm or analytics calculation was changed.** Everything here is metadata plumbing
 (surfacing `mode`/`coverage` the engine already computes) plus presentation.
 
+> This document starts once a reader is **onboarded**. How they get there — the single onboarding
+> gate, the two persistence paths, and the states before Estimate — is
+> [`ONBOARDING.md`](ONBOARDING.md).
+
 ---
 
 ## The lifecycle

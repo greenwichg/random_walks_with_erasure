@@ -1311,6 +1311,11 @@ class OnboardingSaveRequest(BaseModel):
 class MeModel(BaseModel):
     onboarding: Optional[dict] = None
     report: Optional[HealthReportModel] = None
+    # Stored read count. The authenticated app shell gates on onboarding, and it must not bounce a
+    # reader who already HAS reading — anyone past the threshold has onboarded in substance, whether
+    # or not an `onboarding` row exists. Without this the gate would send established users back to
+    # a funnel they no longer need. Kept on /api/me so the gate is ONE call.
+    reads: Optional[int] = None
 
 
 class AnalyzeMetadata(BaseModel):
@@ -2487,7 +2492,8 @@ def me(request: Request) -> dict:
     st = _require_store()
     outlets = st.get_onboarding(uid)
     return {"onboarding": {"outlets": outlets} if outlets is not None else None,
-            "report": st.latest_report(uid)}
+            "report": st.latest_report(uid),
+            "reads": st.count_reads(uid)}
 
 
 # Distinct readers needed to promote a provisional (extension-created) article into Discover —
