@@ -36,8 +36,15 @@ from datetime import datetime
 @dataclasses.dataclass(frozen=True)
 class DeliveryState:
     """What has already been delivered — the idempotency ledger. A kind whose dedupe key is in
-    ``delivered_keys`` is suppressed, so re-evaluating on every fetch never re-emits the same item."""
+    ``delivered_keys`` is suppressed, so re-evaluating on every fetch never re-emits the same item.
+
+    ``counts_today`` is how many notifications of each kind this reader has already received today,
+    and it exists for a different reason than ``delivered_keys``: dedupe stops the SAME item arriving
+    twice, a daily cap stops a HUNDRED DIFFERENT items arriving at once. Only kinds that fan out (see
+    :attr:`NotificationKind.max_per_day`) need it — one event upstream can mean many notifications,
+    and nothing else in the ledger bounds that."""
     delivered_keys: frozenset = frozenset()
+    counts_today: dict = dataclasses.field(default_factory=dict)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -72,6 +79,24 @@ class ReadingInputs:
 
 
 @dataclasses.dataclass(frozen=True)
+class EventInputs:
+    """**Global** occurrences — the first facts in this context that are not about the reader.
+
+    Every other substructure here answers "what is true of *this* reader": their report, their
+    recommendations, their reading. Those are what let the delivery boundary evaluate on the reader's
+    own fetch. An event is different in kind: it happened once, to nobody in particular, and many
+    readers may be told about it (a breaking story is the first). The boundary reads them from
+    ``store.recent_notification_events`` and packs them here; this module still decides nothing but
+    what the context contains.
+
+    Each entry is a plain dict as that accessor returns it — ``id``, ``sourceType``, ``sourceId``,
+    ``category``, ``payload``, ``occurredAt`` — newest first. Kept as dicts, not a dataclass, for the
+    same reason the store persists dicts: this leaf must not grow a schema that a producer has to
+    import."""
+    events: tuple = ()
+
+
+@dataclasses.dataclass(frozen=True)
 class NotificationContext:
     """The complete, immutable input to :func:`evaluate`. ``settings`` is the reader's *normalised*
     preferences (produced upstream by ``settings_service``); everything else is grouped producer facts."""
@@ -81,6 +106,7 @@ class NotificationContext:
     report: ReportInputs = ReportInputs()
     recommendations: RecommendationInputs = RecommendationInputs()
     reading: ReadingInputs = ReadingInputs()
+    events: EventInputs = EventInputs()
 
 
 # --------------------------------------------------------------------------- #
@@ -153,13 +179,43 @@ def _gated(settings: dict, path: str) -> bool:
 # --------------------------------------------------------------------------- #
 @dataclasses.dataclass(frozen=True)
 class NotificationKind:
+    """One declarative kind.
+
+    Two shapes, and a kind is exactly one of them:
+
+    * **single** — ``predicate`` / ``dedupe_key`` / ``payload``. Answers "is this true of the reader
+      right now?" and yields at most ONE notification. Every kind shipped before this field existed.
+    * **fan-out** — ``fanout`` alone. Yields 0..N notifications from one evaluation, because the
+      trigger is a *collection* (several breaking stories) rather than a state. It returns
+      ``[(dedupe_key, payload), ...]`` in the order they should be delivered; the three callables
+      above are unused and must be left at their defaults.
+
+    ``mode`` documents the LIFECYCLE, which is a different axis from the shape and is consumed by
+    ``notification_delivery.materialize_notifications``:
+
+    * ``"cadence"`` — a periodic ARTIFACT ("your weekly report"). Week 30's report stays real after
+      week 31, so these accumulate, one per period.
+    * ``"event"`` — a STATE alert ("you have recommendations waiting"), true only while its condition
+      holds. At most one may be outstanding, and it auto-resolves when the condition clears.
+    * ``"discrete"`` — a one-time OCCURRENCE ("this story broke"). It accumulates like a cadence kind
+      and is triggered like an event, and it is neither collapsed to one-per-kind nor auto-resolved:
+      a story that has stopped breaking still broke, and the reader should still see that it did.
+      Getting this wrong is silent — ``"event"`` would erase the alert the moment the condition
+      passed, and keep only one row for every story ever.
+
+    ``max_per_day`` bounds how many of this kind one reader may receive in a day. ``None`` means
+    unbounded, which is right for anything that can only fire once per period; a fan-out kind should
+    always set it, because the number of notifications is decided by the world rather than by us."""
+
     kind: str
     setting_path: str
-    mode: str                                    # "cadence" | "event" (documentation of the trigger)
+    mode: str                                    # "cadence" | "event" | "discrete" (lifecycle)
     title_key: str
-    predicate: "typing.Callable[[NotificationContext], bool]"
-    dedupe_key: "typing.Callable[[NotificationContext], str]"
-    payload: "typing.Callable[[NotificationContext], dict]"
+    predicate: "typing.Callable[[NotificationContext], bool]" = lambda c: False
+    dedupe_key: "typing.Callable[[NotificationContext], str]" = lambda c: ""
+    payload: "typing.Callable[[NotificationContext], dict]" = lambda c: {}
+    fanout: "typing.Optional[typing.Callable[[NotificationContext], list]]" = None
+    max_per_day: "int | None" = None
 
 
 NOTIFICATION_KINDS = (
@@ -212,6 +268,13 @@ NOTIFICATION_KINDS = (
 #: ``notification_delivery.materialize_notifications``).
 EVENT_KINDS: tuple = tuple(k.kind for k in NOTIFICATION_KINDS if k.mode == "event")
 
+#: Kinds whose ``mode`` is ``"discrete"`` — one-time OCCURRENCES. They accumulate like ``cadence``
+#: kinds and are triggered like ``event`` kinds, and the delivery boundary must apply NEITHER of the
+#: two treatments it gives state alerts: no auto-resolve (a story that stopped breaking still broke)
+#: and no one-outstanding-per-kind collapse (one row per story is the entire point). Exported so
+#: ``notification_delivery`` can exclude them explicitly rather than by asking "is it an event?".
+DISCRETE_KINDS: tuple = tuple(k.kind for k in NOTIFICATION_KINDS if k.mode == "discrete")
+
 
 def inactive_event_kinds(ctx: NotificationContext) -> tuple:
     """Event-mode kinds whose triggering condition is **not** currently true for this reader (the
@@ -219,23 +282,51 @@ def inactive_event_kinds(ctx: NotificationContext) -> tuple:
     delivery boundary uses it to resolve alerts that no longer describe reality, so the inbox and
     its unread badge track *actionable* state instead of history."""
     return tuple(k.kind for k in NOTIFICATION_KINDS
-                 if k.mode == "event"
+                 if k.mode == "event"                 # NOT "discrete": an occurrence never resolves
                  and (not _gated(ctx.settings, k.setting_path) or not k.predicate(ctx)))
+
+
+def _due_pairs(k: NotificationKind, ctx: NotificationContext) -> "list[tuple]":
+    """The ``(dedupe_key, payload)`` pairs a kind wants to deliver, before dedupe and the cap.
+
+    The single/fan-out split lives here and nowhere else, so :func:`evaluate` reads the same for both
+    shapes and the six kinds that predate fan-out take a byte-identical path."""
+    if k.fanout is not None:
+        return [(str(key), dict(payload)) for key, payload in k.fanout(ctx)]
+    if not k.predicate(ctx):
+        return []
+    return [(k.dedupe_key(ctx), k.payload(ctx))]
 
 
 def evaluate(ctx: NotificationContext) -> "list[Notification]":
     """The due notifications for this context, in registry order. Pure and deterministic: for each
-    kind, gate on the reader's setting, run the predicate over the context, and skip anything whose
-    dedupe key was already delivered. Reads no producer and no clock — everything comes from ``ctx``."""
+    kind, gate on the reader's setting, ask the kind what it wants to deliver, and skip anything whose
+    dedupe key was already delivered. Reads no producer and no clock — everything comes from ``ctx``.
+
+    A kind may yield more than one notification (see :attr:`NotificationKind.fanout`), so two further
+    rules apply, both of which exist because a fan-out kind's volume is decided by the world:
+
+    * ``max_per_day`` bounds the total this reader receives of that kind today, counting what the
+      ledger says they already got. Truncation keeps the FRONT of the list — a fan-out returns its
+      items in delivery order, so the reader keeps the first ones rather than an arbitrary slice.
+    * dedupe is applied per item, and duplicates *within one fan-out* are collapsed too, so a producer
+      that emits the same key twice cannot spend the cap on one notification."""
     out: "list[Notification]" = []
     for k in NOTIFICATION_KINDS:
         if not _gated(ctx.settings, k.setting_path):
             continue
-        if not k.predicate(ctx):
-            continue
-        key = k.dedupe_key(ctx)
-        if key in ctx.delivery.delivered_keys:
-            continue
-        out.append(Notification(kind=k.kind, dedupe_key=key, created_at=ctx.now.isoformat(),
-                                title_key=k.title_key, payload=k.payload(ctx), gated_by=k.setting_path))
+        budget = None
+        if k.max_per_day is not None:
+            budget = max(0, k.max_per_day - int(ctx.delivery.counts_today.get(k.kind, 0)))
+            if budget == 0:
+                continue
+        emitted: set = set()
+        for key, payload in _due_pairs(k, ctx):
+            if key in ctx.delivery.delivered_keys or key in emitted:
+                continue
+            emitted.add(key)
+            out.append(Notification(kind=k.kind, dedupe_key=key, created_at=ctx.now.isoformat(),
+                                    title_key=k.title_key, payload=payload, gated_by=k.setting_path))
+            if budget is not None and len(emitted) >= budget:
+                break
     return out
