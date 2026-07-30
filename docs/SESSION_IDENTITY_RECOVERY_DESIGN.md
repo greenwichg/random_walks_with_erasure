@@ -43,7 +43,8 @@ gate and `/signin/complete`.
 
 `CredentialsProvider.authorize()` calls `upsertEngineUser` and returns `null` when it fails, so a
 dev sign-in **fails closed** — the session is never created. Only the Google path can produce a
-session without an identity. This matters for §5: recovery only ever needs to handle `google`.
+session without an identity. Recovery therefore only ever needs to handle `google` — which is what
+makes the legacy-token fallback in §2 and the deploy-skew case in §9a safe.
 
 ## 2. Proposed design
 
@@ -96,9 +97,9 @@ token.providerAccountId = account.providerAccountId;
 
 Additive and free (they ride in the existing cookie). Recovery then uses them when present, and falls
 back to `token.sub` **only when `token.provider` is absent and the token predates this change**. That
-fallback is safe for exactly the reason in §1.1: a `dev` token whose `sub` is an engine user id can
-never lack `engineUserId`, so it can never enter the recovery path. Recovery bails on any token whose
-provider is not `google`.
+fallback is safe for exactly the reason in §1, *Why the dev provider is not affected*: a `dev` token
+whose `sub` is an engine user id can never lack `engineUserId`, so it can never enter the recovery
+path. Recovery bails on any token whose provider is not `google`.
 
 ## 3. When recovery is attempted
 
@@ -134,7 +135,8 @@ growth — the failure this recovers from is an outage measured in seconds). Wit
 that is down turns every page view into a retry storm against a service that is already unwell.
 
 State is per-process and lost on restart. That is correct: this is a cache, never a source of truth,
-and the deployment runs one web container. Nothing needs to be shared or persisted.
+and the deployment runs one web container. Nothing needs to be shared or persisted — §9 works through
+what changes, and what does not, if that stops being true.
 
 **Explicitly rejected:** carrying the backoff stamp in the token. It would be discarded on exactly
 the reads that need it (server-side, §2), so it would look like it worked while doing nothing.
@@ -225,7 +227,119 @@ already runs on every session read; this adds a branch to it.
     page load is personalised, with no sign-out. This is the scenario in prose form and the only test
     that proves the whole path.
 
-## 9. Out of scope
+## 9. Mixed-version deployments and rolling releases
+
+### The topology this ships onto today
+
+Verified, not assumed: `deploy/docker-compose.aws.yml` defines **one** `web` service with no
+`replicas` and no `deploy:` block, Caddy reverse-proxies to the single service name `web:3000`, and
+`deploy/ops/update.sh` replaces it with `dc up -d` — Compose stops the old container and starts the
+new one ("THE POINT OF NO RETURN", in the script's own words). There is a brief window with **no** web
+instance, and never a window with two versions serving at once.
+
+So on the current topology, mixed-version skew is **temporal, not spatial**: a token minted by the old
+image is read by the new image after the restart. Everything below also covers the spatial case,
+because the design should not have to be revisited if that changes.
+
+### a. Signed in on an old instance, later served by a new one
+
+This is the common case on every deploy, and it is the case the token-claim design has to survive.
+
+| Direction | Token shape | New/old code's behaviour |
+|---|---|---|
+| **Old → new** (deploy) | minted without `provider` / `providerAccountId`; `engineUserId` present or not | Recovery falls back to `token.sub`, which for Google **is** the provider account id (§2). A `dev` token cannot reach the path (§1). Correct with no migration. |
+| **New → old** (rollback) | carries the two extra claims | The old `jwt` callback returns the token it was handed, so unknown claims are preserved rather than stripped. An already-healed session keeps working; an unhealed one simply isn't repaired until the new image is back. |
+
+Two properties make this work, and both are worth naming because a future change could remove them
+without obviously breaking anything:
+
+- **The claims are additive.** Nothing reads them as required; absence has a defined fallback. A token
+  is never invalidated by a version change, so no session is ever forced to sign in again by a deploy.
+- **Sign-in rebuilds the token; a session read preserves it.** NextAuth constructs
+  `defaultToken = { name, email, picture, sub }` on the sign-in invocation only
+  (`core/routes/callback.js`); later invocations pass the decoded token through. So a sign-in on an old
+  instance produces an old-shaped token — the row above — and a session read on an old instance does
+  not discard what a new instance added.
+
+Cookie size is not a factor: the two claims add on the order of 50 bytes against NextAuth's 4096-byte
+chunking threshold, and both versions' `sessionStore` read chunked cookies transparently, so even a
+re-chunk would be invisible.
+
+### b. Divergent in-memory caches
+
+The memo and the coalescing map are per-process, so on N instances there are N of them, and a deploy
+throws away the one it had. Neither affects correctness, for one reason stated as a rule in §7:
+
+> The memo and coalescing are performance measures, not correctness measures. Correctness must not
+> depend on the cache being hit.
+
+What actually diverges is **cost**, bounded and stated exactly:
+
+| Topology | Worst-case engine calls for one broken identity |
+|---|---|
+| 1 instance (today) | 1 per 10-minute TTL, or 1 per 30-second backoff window while the engine is down |
+| N instances | N per TTL / N per backoff window — a cold cache per instance, not a cache that can be wrong |
+| Immediately after a deploy | 1 per instance, because the memo starts empty |
+
+Every instance resolves through the same keyed upsert, so they all converge on the same engine user id
+(§7). A divergent cache can make the system do redundant work; it cannot make two instances disagree
+about who the reader is.
+
+The post-deploy empty cache is in fact the behaviour you want. A deploy restarts the API, which is
+precisely when identity-less sessions get created — and it also clears any backoff stamp, so the first
+request after the restart attempts recovery immediately instead of being suppressed by a stamp set
+during the outage.
+
+**The durable cache is not in any instance.** It is the signed session cookie. That is what makes this
+topology-independent: the heal is written by whichever instance handled the client's
+`/api/auth/session` fetch, and from then on *every* instance and *every* version reads the id straight
+off the token and never calls the resolver again. No server-side coordination, no shared cache, no
+sticky sessions.
+
+### c. Concurrent recovery across instances
+
+Concurrency is safe by construction *provided* one engine-side fix lands — and this is the section's
+one real finding, not a reassurance.
+
+Safe already:
+
+- The upsert is idempotent and keyed on `(provider, provider_account_id)`, so simultaneous recoveries
+  of the same identity from different instances resolve to the same user and create at most one
+  identity row.
+- Recovery writes nothing else. It does not touch onboarding, reads, reports, or settings, so there is
+  no second write to order.
+- Losing a race costs nothing: both callers get the same id.
+
+The exception: `upsert_user_by_identity` does `SELECT` then `INSERT` inside one session (§7). On one
+instance, per-process coalescing collapses concurrent first-sightings to a single call, so the window
+is narrow. **Across instances there is no coalescing**, so N instances recovering the same identity at
+once means up to N simultaneous first-sightings, and the loser of the race hits
+`uq_identity_provider_account` and raises `IntegrityError`. The engine's catch-all handler turns that
+into a typed `500 internal_error`, which recovery reads as a failure and backs off from — so the loser
+is not corrupted, just unhelpfully delayed by a backoff window it did not need.
+
+That upgrades the §7 note from a nicety to a **prerequisite**: catching the unique violation and
+re-selecting is required before the web tier is ever run with more than one instance. It is a handful
+of lines, it follows a pattern already used four times in `examples/store.py` (`except IntegrityError:`
+then re-select, as in `ImprovementLifecycle`), and it is cheap insurance even on one instance — so it
+should land with the initial implementation rather than being deferred to a scaling project.
+
+### Assumptions about deployment topology, stated
+
+| Assumption | Depended on for | If it changes |
+|---|---|---|
+| `NEXTAUTH_SECRET` identical across instances | reading each other's tokens at all | Already required today; a mismatch invalidates every session, recovery or not. Not a new constraint. |
+| No session affinity required | nothing | Correct as designed: all durable state is the signed cookie plus the engine. Recovery adds no server-side session state, so a load balancer may route freely. |
+| One instance | **cost only** — the memo's hit rate | N instances multiply worst-case recovery calls by N. Bounded, idempotent, convergent. |
+| Concurrent first-sighting is rare | the un-fixed `SELECT`-then-`INSERT` window | Becomes likely with N instances. Fix required first — see above. |
+| SQLite, single writer, one host | the engine, not this design | Horizontal scaling of the web tier is bounded by the engine's store long before it is bounded by anything here. Worth remembering when reading the N-instance column: it is contingency, not a roadmap. |
+
+The honest summary: the design is correct on the current topology and stays correct on a rolling or
+multi-instance one, because its durable state is a signed cookie and its engine write is an idempotent
+keyed upsert. The only thing that must change before the topology does is the unique-constraint race,
+which the required tests already cover (§8, engine test 15).
+
+## 10. Out of scope
 
 - Re-checking the beta allowlist on *every* request (JWT sessions don't do this today; changing it is
   a separate policy decision).
