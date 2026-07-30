@@ -746,6 +746,46 @@ def test_dev_diagnostics_absent_in_production(client, monkeypatch):
     assert A._dev_token() is None                               # no fixed dev token in production
 
 
+def test_settings_expose_notification_categories_both_ways(client):
+    """The category x channel matrix must survive BOTH response and request models.
+
+    FastAPI's `response_model` filters output to declared fields, so an undeclared group is silently
+    dropped — a preference the reader can neither see nor set. This asserts the whole round trip:
+    defaults are visible, one channel can be patched alone, its sibling and the other categories are
+    untouched, and it persists."""
+    uid = client.post("/api/internal/users",
+                      json={"provider": "google", "providerAccountId": "route-cats"}).json()["userId"]
+    hdr = {"X-IH-User-Id": str(uid)}
+
+    cats = client.get("/api/me/settings", headers=hdr).json()["notifications"]["categories"]
+    assert sorted(cats) == ["breaking", "digests", "product", "recommendations"]
+    assert cats["breaking"] == {"inApp": True, "push": False}, "in-app on, push off by default"
+
+    saved = client.post("/api/me/settings", headers=hdr, json={
+        "notifications": {"categories": {"breaking": {"push": True}}}}).json()
+    saved_cats = saved["notifications"]["categories"]
+    assert saved_cats["breaking"] == {"inApp": True, "push": True}, "sibling channel untouched"
+    assert saved_cats["digests"] == {"inApp": True, "push": False}, "other categories untouched"
+    assert saved["notifications"]["weeklyDigest"] is True, "flat toggles untouched"
+
+    again = client.get("/api/me/settings", headers=hdr).json()
+    assert again["notifications"]["categories"]["breaking"]["push"] is True, "persisted"
+
+
+def test_settings_reject_an_unknown_category_without_failing_the_patch(client):
+    """An unknown category is an undeclared field: ignored by Pydantic's default extra="ignore",
+    exactly like the legacy `privacy` group. The rest of the same patch must still apply."""
+    uid = client.post("/api/internal/users",
+                      json={"provider": "google", "providerAccountId": "route-cat-unknown"}).json()["userId"]
+    hdr = {"X-IH-User-Id": str(uid)}
+    r = client.post("/api/me/settings", headers=hdr, json={
+        "notifications": {"categories": {"sports": {"inApp": True}, "breaking": {"inApp": False}}}})
+    assert r.status_code == 200
+    cats = r.json()["notifications"]["categories"]
+    assert "sports" not in cats
+    assert cats["breaking"]["inApp"] is False, "the known category in the same patch still applied"
+
+
 def test_settings_persist_and_merge(client):
     """Settings load with honest defaults, and partial updates merge over stored preferences and
     survive a reload — the persistence the mock page lacked. Auth required; preferences only."""

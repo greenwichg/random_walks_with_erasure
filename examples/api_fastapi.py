@@ -765,11 +765,36 @@ class ProfileModel(BaseModel):
     savedCount: int                          # the single "Saved" counter (no separate bookmark)
 
 
+class NotificationCategoryModel(BaseModel):
+    """One category's per-channel switches. ``push`` is part of the contract from the start and is
+    read by nothing yet — declaring it now is what lets a client store the shape before there is a
+    push channel to honour it, so adding one later needs no settings migration."""
+    inApp: bool
+    push: bool
+
+
+class NotificationCategoriesModel(BaseModel):
+    """Notification preferences by CATEGORY (what it is about) x CHANNEL (how it arrives).
+
+    Declared explicitly rather than as a free ``dict`` so the contract is visible in the OpenAPI
+    schema and an unknown category cannot enter through the API — the same reason every other group
+    here is a model. ``settings_service`` drops unknown keys independently; this is the outer gate."""
+    breaking: NotificationCategoryModel
+    digests: NotificationCategoryModel
+    recommendations: NotificationCategoryModel
+    product: NotificationCategoryModel
+
+
 class NotificationPrefsModel(BaseModel):
     recommendations: bool
     weeklyDigest: bool
     streakReminders: bool
     blindSpotAlerts: bool
+    # The four booleans above are per-KIND toggles and stay authoritative for the kinds that already
+    # ship; `categories` is the composable shape new kinds gate on. Both are live — see
+    # `settings_service.DEFAULT_SETTINGS`. Without this field FastAPI's response_model would strip
+    # the group from every response, leaving a preference the reader could never see or change.
+    categories: NotificationCategoriesModel
 
 
 # NOTE: a `privacy` group (shareAnonymizedMetrics / personalizedAds) was removed from the settings
@@ -798,11 +823,27 @@ class SettingsModel(BaseModel):
 
 # Update model — every field optional so any client can PATCH a subset; the engine merges it over
 # the stored preferences and returns the full, normalised SettingsModel.
+class NotificationCategoryUpdate(BaseModel):
+    """A partial patch of one category — either channel alone, both, or neither."""
+    inApp: bool | None = None
+    push: bool | None = None
+
+
+class NotificationCategoriesUpdate(BaseModel):
+    breaking: NotificationCategoryUpdate | None = None
+    digests: NotificationCategoryUpdate | None = None
+    recommendations: NotificationCategoryUpdate | None = None
+    product: NotificationCategoryUpdate | None = None
+
+
 class NotificationPrefsUpdate(BaseModel):
     recommendations: bool | None = None
     weeklyDigest: bool | None = None
     streakReminders: bool | None = None
     blindSpotAlerts: bool | None = None
+    # `exclude_none=True` on the dump is recursive, so a patch of a single channel arrives at
+    # `normalize_settings` as exactly that one leaf and merges without disturbing its siblings.
+    categories: NotificationCategoriesUpdate | None = None
 
 
 # A legacy client that still sends a `privacy` object is not an error: it's an undeclared field,

@@ -20,6 +20,7 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "examples"))
+import notification_service as ns   # noqa: E402
 import settings_service as ss   # noqa: E402
 import store                    # noqa: E402
 
@@ -173,3 +174,116 @@ def test_scalar_accessors():
     assert ss.reading_goal_minutes(st, uid) == 30
     assert ss.theme(st, uid) == "light"
     assert ss.language(st, uid) == "de"
+
+
+# --------------------------------------------------------------------------- #
+# notifications.categories — the category x channel matrix (A2).
+#
+# The four flat toggles above are per-KIND booleans: they do not compose, and they cannot express
+# "in the app but not on my lock screen". These pin the nested shape that can, including the reason
+# the unread `push` key ships now — so stored blobs already carry the channel dimension and adding
+# it later needs no migration.
+# --------------------------------------------------------------------------- #
+CATEGORIES = ("breaking", "digests", "recommendations", "product")
+
+
+def test_category_defaults_are_in_app_on_and_push_off():
+    cats = ss.normalize_settings(None)["notifications"]["categories"]
+    assert sorted(cats) == sorted(CATEGORIES)
+    for name in CATEGORIES:
+        assert cats[name] == {"inApp": True, "push": False}, name
+
+
+def test_a_patch_merges_per_leaf_not_per_category():
+    """The property `_merge_bool_group` could not provide. Setting one channel of one category must
+    leave the other channel, the other categories, and the flat toggles untouched."""
+    out = ss.normalize_settings(
+        {"notifications": {"categories": {"breaking": {"inApp": False, "push": True}}}},
+        {"notifications": {"categories": {"breaking": {"push": False}}}})
+    cats = out["notifications"]["categories"]
+    assert cats["breaking"] == {"inApp": False, "push": False}, "patched leaf changed, sibling kept"
+    assert cats["digests"] == {"inApp": True, "push": False}, "other categories untouched"
+    assert out["notifications"]["weeklyDigest"] is True, "flat toggles untouched"
+
+
+def test_layering_order_is_defaults_then_stored_then_patch():
+    stored = {"notifications": {"categories": {"breaking": {"push": True}}}}
+    assert ss.normalize_settings(stored)["notifications"]["categories"]["breaking"]["push"] is True
+    both = ss.normalize_settings(stored, {"notifications": {"categories": {"breaking": {"push": False}}}})
+    assert both["notifications"]["categories"]["breaking"]["push"] is False, "patch wins over stored"
+
+
+def test_unknown_categories_and_channels_are_dropped():
+    """Built only from the defaults, like every other key in this module — so a client inventing a
+    category or a channel cannot widen the contract or smuggle a value past the gate."""
+    out = ss.normalize_settings(None, {"notifications": {"categories": {
+        "breaking": {"inApp": False, "telepathy": True},
+        "sports": {"inApp": True},
+    }}})
+    cats = out["notifications"]["categories"]
+    assert sorted(cats) == sorted(CATEGORIES), "no new category appeared"
+    assert set(cats["breaking"]) == {"inApp", "push"}, "no new channel appeared"
+    assert cats["breaking"]["inApp"] is False, "the known leaf in the same patch still applied"
+
+
+def test_non_boolean_channel_values_are_coerced_not_passed_through():
+    out = ss.normalize_settings(None, {"notifications": {"categories": {
+        "breaking": {"inApp": "yes", "push": 0}}}})
+    assert out["notifications"]["categories"]["breaking"] == {"inApp": True, "push": False}
+
+
+def test_a_malformed_categories_group_falls_back_to_defaults():
+    """A stored blob whose `categories` is not a dict (or whose category is not a dict) must
+    normalise away rather than raise — the same fail-safe as any other malformed layer."""
+    for bad in [{"notifications": {"categories": "nope"}},
+                {"notifications": {"categories": ["breaking"]}},
+                {"notifications": {"categories": {"breaking": "on"}}},
+                {"notifications": "nope"}]:
+        cats = ss.normalize_settings(bad)["notifications"]["categories"]
+        assert cats["breaking"] == {"inApp": True, "push": False}, bad
+
+
+def test_a_legacy_blob_without_categories_gains_them_with_no_loss():
+    """Every stored blob in production predates this commit. It must keep its flat toggles exactly
+    and acquire the category defaults — no migration, no reset."""
+    legacy = {"theme": "dark", "readingGoalMinutes": 45,
+              "notifications": {"recommendations": False, "weeklyDigest": False,
+                                "streakReminders": True, "blindSpotAlerts": True}}
+    out = ss.normalize_settings(legacy)
+    assert out["notifications"]["recommendations"] is False
+    assert out["notifications"]["streakReminders"] is True
+    assert out["theme"] == "dark" and out["readingGoalMinutes"] == 45
+    assert out["notifications"]["categories"]["breaking"] == {"inApp": True, "push": False}
+
+
+def test_the_removed_group_still_normalises_away_alongside_the_new_one():
+    """Regression guard for the reverse direction: reverting this commit must leave stored blobs
+    containing `categories` harmless, exactly as the removed `privacy` group already is."""
+    out = ss.normalize_settings({"privacy": {"personalizedAds": True},
+                                 "notifications": {"categories": {"breaking": {"push": True}}}})
+    assert "privacy" not in out
+    assert out["notifications"]["categories"]["breaking"]["push"] is True
+
+
+def test_gating_a_category_path_is_fail_closed_before_the_group_exists():
+    """`notification_service._gated` walks a dotted path and returns False on any missing segment.
+    That is the second safety layer under a category-gated kind: until this commit is deployed the
+    path does not exist, so the kind cannot fire even if its events do."""
+    normalised = ss.normalize_settings(None)
+    assert ns._gated(normalised, "notifications.categories.breaking.inApp") is True
+    assert ns._gated(normalised, "notifications.categories.breaking.push") is False
+    assert ns._gated(normalised, "notifications.categories.sports.inApp") is False
+    assert ns._gated({"notifications": {}}, "notifications.categories.breaking.inApp") is False
+    assert ns._gated({}, "notifications.categories.breaking.inApp") is False
+
+
+def test_merge_bool_group_skips_nested_subgroups():
+    """`_merge_bool_group` is re-exported (api_server imports it), so its contract matters beyond
+    this module's own call path: it merges a group of BOOLEANS, and `bool({...})` is `True` — a
+    nested sub-group handed to it would silently become a truthy scalar and destroy the structure.
+
+    Tested directly because `_merge_notifications` overwrites `categories` immediately afterwards,
+    so through the public function the guard is invisible. A second consumer would not be so lucky."""
+    defaults = {"flat": True, "nested": {"inApp": True}}
+    out = ss._merge_bool_group(defaults, [{"g": {"flat": False}}], "g")
+    assert out == {"flat": False}, "the nested sub-group must be skipped, not coerced to True"

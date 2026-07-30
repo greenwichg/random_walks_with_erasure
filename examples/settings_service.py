@@ -35,7 +35,28 @@ DEFAULT_SETTINGS = {
     "weeklyReport": True,
     "monthlyReport": False,
     "notifications": {"recommendations": True, "weeklyDigest": True,
-                      "streakReminders": False, "blindSpotAlerts": False},
+                      "streakReminders": False, "blindSpotAlerts": False,
+                      # The forward-looking shape: a CATEGORY (what the notification is about) crossed
+                      # with a CHANNEL (how it reaches the reader). The four flat booleans above are
+                      # per-KIND toggles and do not compose — a fifth kind means a fifth checkbox, and
+                      # they have no way to say "in the app but not on my lock screen", which is the
+                      # normal preference once push exists.
+                      #
+                      # BOTH shapes are live and they govern different kinds. The flat toggles remain
+                      # authoritative for the six kinds that already ship; ``categories`` gates new
+                      # ones, starting with breaking stories. Pointing the existing kinds at a category
+                      # is a behaviour change for every current reader and needs its own migration
+                      # decision — deliberately not made here.
+                      #
+                      # ``push`` ships now and is READ BY NOTHING. That is the point: the nesting has to
+                      # exist before stored blobs contain it, or adding the channel dimension later
+                      # means migrating everyone's settings. Costing nothing now buys that.
+                      "categories": {
+                          "breaking":        {"inApp": True, "push": False},
+                          "digests":         {"inApp": True, "push": False},
+                          "recommendations": {"inApp": True, "push": False},
+                          "product":         {"inApp": True, "push": False},
+                      }},
     # Location Intelligence Phase 1 — prepared, not yet surfaced in any UI. ``edition`` is the
     # reader's default place scope (ISO 3166-1 alpha-2 country, or None = global); ``locations``
     # is the followed-places list, each ``{"placeId": str, "level": country|region|city}``.
@@ -77,7 +98,34 @@ def _layered(key, layers, default):
 def _merge_bool_group(defaults: dict, layers, group: str) -> dict:
     subs = [layer[group] for layer in layers
             if isinstance(layer, dict) and isinstance(layer.get(group), dict)]
-    return {k: bool(_layered(k, subs, dv)) for k, dv in defaults.items()}
+    return {k: bool(_layered(k, subs, dv)) for k, dv in defaults.items()
+            if not isinstance(dv, dict)}    # nested sub-groups are merged by their own helper
+
+
+def _merge_notification_categories(layers) -> dict:
+    """The ``notifications.categories`` matrix — one nested level deeper than
+    :func:`_merge_bool_group`, which coerces with ``bool()`` and would flatten a dict to ``True``.
+
+    Layering is per LEAF, not per category: a patch of ``{"breaking": {"push": True}}`` must leave
+    ``breaking.inApp`` alone, so each channel resolves through its own ``_layered`` call. Built only
+    from the defaults, so an unknown category or an unknown channel is dropped exactly like any other
+    unknown key — the same fail-safe the rest of this module relies on."""
+    defaults = DEFAULT_SETTINGS["notifications"]["categories"]
+    groups = [layer["notifications"]["categories"] for layer in layers
+              if isinstance(layer, dict) and isinstance(layer.get("notifications"), dict)
+              and isinstance(layer["notifications"].get("categories"), dict)]
+    out = {}
+    for category, channels in defaults.items():
+        subs = [g[category] for g in groups if isinstance(g.get(category), dict)]
+        out[category] = {ch: bool(_layered(ch, subs, dv)) for ch, dv in channels.items()}
+    return out
+
+
+def _merge_notifications(layers) -> dict:
+    """The whole ``notifications`` group: the flat per-kind toggles plus the nested category matrix."""
+    merged = _merge_bool_group(DEFAULT_SETTINGS["notifications"], layers, "notifications")
+    merged["categories"] = _merge_notification_categories(layers)
+    return merged
 
 
 def normalize_settings(stored: "dict | None", patch: "dict | None" = None) -> dict:
@@ -99,7 +147,7 @@ def normalize_settings(stored: "dict | None", patch: "dict | None" = None) -> di
         "readingGoalMinutes": _clamp_int(_layered("readingGoalMinutes", layers, 20), 0, 600, 20),
         "weeklyReport": bool(_layered("weeklyReport", layers, True)),
         "monthlyReport": bool(_layered("monthlyReport", layers, False)),
-        "notifications": _merge_bool_group(DEFAULT_SETTINGS["notifications"], layers, "notifications"),
+        "notifications": _merge_notifications(layers),
         "edition": _normalize_edition(_layered("edition", layers, None)),
         "locations": _normalize_locations(_layered("locations", layers, [])),
         # The output is built ONLY from the keys above, so any layer key outside this set — an
