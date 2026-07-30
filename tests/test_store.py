@@ -44,6 +44,67 @@ def test_upsert_creates_user_and_identity(store):
     assert again is not None and again.id == user.id
 
 
+def _count_statements(store, verb):
+    """Count SQL statements starting with `verb` while the returned callable is in scope.
+
+    Statement-level rather than value-level because "the values did not change" and "no UPDATE was
+    issued" are different claims, and only the second one makes the concurrency retry read-only."""
+    from sqlalchemy import event
+    seen = []
+    event.listen(store.engine, "after_cursor_execute",
+                 lambda conn, cur, stmt, params, ctx, many: seen.append(stmt.split()[0].upper()))
+    return lambda: seen.count(verb.upper()), seen
+
+
+def test_upsert_refresh_profile_false_leaves_an_existing_profile_alone(store):
+    """S2. Identity recovery resolves an id from a session token that may be weeks old; it must not
+    write that token's profile over one a newer sign-in already stored."""
+    first = store.upsert_user_by_identity("google", "keep-1", email="current@x.io",
+                                          display_name="Current")
+    same = store.upsert_user_by_identity("google", "keep-1", email="stale@x.io",
+                                         display_name="Stale", refresh_profile=False)
+    assert same.id == first.id                      # the id still resolves — the point of the call
+    assert same.email == "current@x.io"
+    assert same.display_name == "Current"
+    assert store.get_user(first.id).display_name == "Current"
+
+
+def test_upsert_refresh_profile_false_still_writes_the_profile_on_creation(store):
+    """Creation is not a refresh. A first sighting can arrive through recovery, and suppressing the
+    create-path write would mint accounts with a null email nothing would ever fill."""
+    user = store.upsert_user_by_identity("google", "fresh-1", email="new@x.io",
+                                         display_name="New", refresh_profile=False)
+    assert user.email == "new@x.io" and user.display_name == "New"
+
+
+def test_upsert_refresh_profile_false_issues_no_update_for_an_existing_identity(store):
+    """The read-only claim, asserted at statement level.
+
+    With the refresh suppressed nothing is dirty, so `flush` emits no UPDATE at all — which is what
+    makes the concurrency retry a pure read on this path (docs/IDENTITY_UPSERT_CONCURRENCY.md §4)."""
+    store.upsert_user_by_identity("google", "ro-1", email="a@x.io", display_name="A")
+    updates, _ = _count_statements(store, "UPDATE")
+
+    store.upsert_user_by_identity("google", "ro-1", email="b@x.io", display_name="B",
+                                  refresh_profile=False)
+    assert updates() == 0, "refresh_profile=False must not write"
+
+    # And the default still does, or the flag would be doing nothing at all.
+    store.upsert_user_by_identity("google", "ro-1", email="b@x.io", display_name="B")
+    assert updates() == 1, "the default must still refresh a changed profile"
+
+
+def test_upsert_default_refresh_is_unchanged_for_every_existing_caller(store):
+    """~100 call sites pass no flag. This pins that they all keep today's behaviour."""
+    first = store.upsert_user_by_identity("google", "def-1", email="a@x.io", display_name="A")
+    again = store.upsert_user_by_identity("google", "def-1", email="b@x.io", display_name="B")
+    assert again.id == first.id
+    assert again.email == "b@x.io" and again.display_name == "B"
+    # A None value still means "leave it alone", flag or no flag.
+    third = store.upsert_user_by_identity("google", "def-1")
+    assert third.email == "b@x.io" and third.display_name == "B"
+
+
 def test_upsert_is_idempotent(store):
     a = store.upsert_user_by_identity("google", "acct-1", display_name="Ada")
     b = store.upsert_user_by_identity("google", "acct-1", display_name="Ada L.")

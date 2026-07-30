@@ -217,6 +217,92 @@ def test_internal_user_upsert_is_idempotent(client):
     assert got.status_code == 200 and got.json()["displayName"] == "Ada"
 
 
+def test_internal_user_upsert_refreshes_the_profile_by_default(client):
+    """The behaviour every existing caller depends on, asserted on the UPDATE path.
+
+    `test_internal_user_upsert_is_idempotent` only ever sets the name on the FIRST call, so it would
+    still pass if the default flipped to False. This is the test that would not."""
+    body = {"provider": "google", "providerAccountId": "refresh-1", "displayName": "Ada",
+            "email": "ada@example.com"}
+    uid = client.post("/api/internal/users", json=body).json()["userId"]
+
+    # A later sign-in with a changed Google profile, and no flag at all.
+    again = client.post("/api/internal/users",
+                        json={"provider": "google", "providerAccountId": "refresh-1",
+                              "displayName": "Ada Lovelace", "email": "ada.l@example.com"})
+    assert again.json()["userId"] == uid
+    got = client.get(f"/api/internal/users/{uid}").json()
+    assert got["displayName"] == "Ada Lovelace" and got["email"] == "ada.l@example.com"
+
+
+def test_internal_user_upsert_refresh_profile_true_is_explicit_default(client):
+    """Sending the flag as True must mean exactly what omitting it means."""
+    body = {"provider": "google", "providerAccountId": "refresh-2", "displayName": "First"}
+    uid = client.post("/api/internal/users", json=body).json()["userId"]
+    client.post("/api/internal/users",
+                json={"provider": "google", "providerAccountId": "refresh-2",
+                      "displayName": "Second", "refreshProfile": True})
+    assert client.get(f"/api/internal/users/{uid}").json()["displayName"] == "Second"
+
+
+def test_internal_user_upsert_refresh_profile_false_leaves_the_stored_profile(client):
+    """S2: a stale session must not overwrite a newer profile.
+
+    Identity recovery resolves an id from a token that can be weeks old. Without this the reader's
+    display name would silently revert to whatever that token was minted with."""
+    uid = client.post("/api/internal/users",
+                      json={"provider": "google", "providerAccountId": "keep-1",
+                            "displayName": "Current Name",
+                            "email": "current@example.com"}).json()["userId"]
+
+    stale = client.post("/api/internal/users",
+                        json={"provider": "google", "providerAccountId": "keep-1",
+                              "displayName": "Old Name", "email": "old@example.com",
+                              "refreshProfile": False})
+    # The id still resolves — that is the whole point of the call.
+    assert stale.status_code == 200 and stale.json()["userId"] == uid
+    # ...and the response reports what is STORED, not what was submitted.
+    assert stale.json()["displayName"] == "Current Name"
+    assert stale.json()["email"] == "current@example.com"
+
+    got = client.get(f"/api/internal/users/{uid}").json()
+    assert got["displayName"] == "Current Name" and got["email"] == "current@example.com"
+
+
+def test_internal_user_upsert_refresh_profile_false_still_creates_with_the_profile(client):
+    """Creation is not a refresh.
+
+    A first sighting can arrive via recovery — the reader signed in during an engine outage, so no
+    engine row was ever made. If `False` also suppressed the create-path write, recovery would mint
+    accounts with a null email and display name that nothing would ever fill in."""
+    created = client.post("/api/internal/users",
+                          json={"provider": "google", "providerAccountId": "fresh-1",
+                                "displayName": "Brand New", "email": "new@example.com",
+                                "refreshProfile": False})
+    assert created.status_code == 200
+    uid = created.json()["userId"]
+    got = client.get(f"/api/internal/users/{uid}").json()
+    assert got["displayName"] == "Brand New" and got["email"] == "new@example.com"
+
+
+def test_internal_user_upsert_ignores_unknown_fields(client):
+    """Rolling-deployment safety, as a test rather than a comment.
+
+    The whole new-web-against-an-old-engine argument rests on Pydantic's default extra="ignore":
+    a web tier that sends `refreshProfile` to an engine that predates it must be silently ignored,
+    not 422'd. Adding extra="forbid" to UpsertUserRequest would break reverting the engine alone,
+    and this is what would catch it."""
+    r = client.post("/api/internal/users",
+                    json={"provider": "google", "providerAccountId": "unknown-1",
+                          "displayName": "Ada", "someFutureField": True, "refreshProfileTypo": False})
+    assert r.status_code == 200
+    uid = r.json()["userId"]
+    # And the unknown fields changed nothing: the profile was still refreshed, i.e. the default held.
+    client.post("/api/internal/users",
+                json={"provider": "google", "providerAccountId": "unknown-1", "displayName": "Ada L"})
+    assert client.get(f"/api/internal/users/{uid}").json()["displayName"] == "Ada L"
+
+
 def test_internal_user_missing_is_typed_404(client):
     r = client.get("/api/internal/users/999999")
     assert r.status_code == 404 and r.json()["error"]["code"] == "not_found"

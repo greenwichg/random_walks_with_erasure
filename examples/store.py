@@ -717,13 +717,22 @@ class Store:
     # -- repository operations ------------------------------------------
     def upsert_user_by_identity(self, provider: str, provider_account_id: str,
                                 email: str | None = None,
-                                display_name: str | None = None) -> User:
+                                display_name: str | None = None,
+                                *, refresh_profile: bool = True) -> User:
         """Return the user for ``(provider, provider_account_id)``, creating the user +
         identity on first sign-in.
 
         Idempotent: the same identity always resolves to the same user, whether calls are
         sequential or concurrent. A returning user's email / display name are refreshed when a
         value is supplied (Google can change them), and left as-is when ``None``.
+
+        ``refresh_profile=False`` suppresses that refresh for an EXISTING user, so the supplied
+        profile can never overwrite what is stored. Creation is unaffected — a first sighting is
+        still created with the email and display name it was given, because creation is not a
+        refresh. The caller that needs this is web-tier identity recovery, which resolves an id
+        from a session token that may be weeks old: without it, a long-idle broken session could
+        write a stale profile over one a newer sign-in had already updated
+        (``docs/SESSION_IDENTITY_RECOVERY_DESIGN.md`` §10, S2).
 
         Two concurrent first sign-ins for the same identity both miss the initial read; the
         UNIQUE constraint on ``(provider, provider_account_id)`` decides which one creates the
@@ -740,25 +749,29 @@ class Store:
         """
         try:
             return self._resolve_identity(provider, provider_account_id, email, display_name,
-                                          create=True)
+                                          create=True, refresh_profile=refresh_profile)
         except (IntegrityError, OperationalError) as first:
             # Either we lost a first-sighting race (the UNIQUE constraint rejected our identity
             # insert) or we could not get the write transaction against a concurrent writer.
             # OperationalError is caught deliberately: if the driver ever stops running in legacy
             # transaction mode, a lost race can surface as a snapshot conflict instead.
             user = self._resolve_identity(provider, provider_account_id, email, display_name,
-                                          create=False)
+                                          create=False, refresh_profile=refresh_profile)
             if user is None:
                 raise first     # nobody won, so this was never a race — never swallow it
             return user
 
     def _resolve_identity(self, provider: str, provider_account_id: str,
                           email: str | None, display_name: str | None,
-                          *, create: bool) -> "User | None":
+                          *, create: bool, refresh_profile: bool = True) -> "User | None":
         """One attempt at :meth:`upsert_user_by_identity`, in one transaction.
 
         With ``create=False`` it resolves an existing identity or returns ``None`` — which the
-        caller reads as "there was no winner, so the failure was not a race"."""
+        caller reads as "there was no winner, so the failure was not a race".
+
+        ``refresh_profile=False`` skips the refresh of an EXISTING user's profile. Creation is
+        unaffected: the profile is written by the ``User(...)`` constructor below, not by the
+        refresh block, so a first sighting still gets its email and display name either way."""
         with self.session() as s:
             identity = s.scalar(
                 select(Identity).where(Identity.provider == provider,
@@ -774,10 +787,15 @@ class Store:
                 s.flush()                       # surface the conflict here, not at commit
             else:
                 user = identity.user
-            if email is not None:
-                user.email = email
-            if display_name is not None:
-                user.display_name = display_name
+            # The refresh, and the only thing refresh_profile turns off. On the create path above the
+            # profile is already on the new row, so this block is a no-op there; here it is what lets a
+            # returning reader's changed Google profile land. Skipping it makes the whole transaction
+            # read-only for an existing identity — nothing is dirty, so `flush` emits no UPDATE.
+            if refresh_profile:
+                if email is not None:
+                    user.email = email
+                if display_name is not None:
+                    user.display_name = display_name
             s.flush()
             s.refresh(user)
             return user

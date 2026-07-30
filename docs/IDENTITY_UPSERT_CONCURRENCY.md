@@ -10,13 +10,23 @@ prerequisite for [`SESSION_IDENTITY_RECOVERY_DESIGN.md`](SESSION_IDENTITY_RECOVE
 multiplies concurrent first-sightings of the same identity and **has since shipped** — so the race this
 document specifies is now reached in production by recovery as well as by sign-in.
 
-> **One open item, tracked as debt.** The `create=False` attempt still applies the profile refresh, so
-> it emits an `UPDATE` when the supplied email or display name differs from what is stored — meaning the
-> retry is *not* guaranteed read-only. Under WAL with `busy_timeout=5000` a reader never blocks, and
-> concurrent callers for one identity normally carry identical profiles, so no write is emitted at all.
-> The fix is `refreshProfile` on the request, specified as **S2** in
-> [`SESSION_IDENTITY_RECOVERY_DESIGN.md`](SESSION_IDENTITY_RECOVERY_DESIGN.md) §10; it would make this
-> path cleanly read-only as a side effect.
+> **`refresh_profile`, and what it does to the retry.** `upsert_user_by_identity` takes a keyword-only
+> `refresh_profile: bool = True`, threaded to both attempts. The default is the behaviour described
+> throughout this document and is what every existing caller gets. With `refresh_profile=False` the
+> profile refresh is skipped **for an existing user** — creation still writes email and display name,
+> because creation is not a refresh — which makes `_resolve_identity(create=False)` a pure `SELECT`:
+> nothing is dirty, so the flush emits no `UPDATE`. Asserted at statement level by
+> `test_refresh_profile_false_leaves_the_losers_retry_read_only`.
+>
+> This **narrows** the open item rather than closing it. On the default path the retry still applies the
+> refresh and can emit an `UPDATE` when the supplied profile differs from what is stored, so the loser's
+> second transaction is not guaranteed read-only for sign-in. Under WAL with `busy_timeout=5000` a
+> reader never blocks, and concurrent callers for one identity normally carry identical profiles — which
+> SQLAlchemy's dirty-check turns into no statement at all (measured: identical profile → 0 `UPDATE`s,
+> changed profile → 1). The caller that passes `False` is web-tier identity recovery
+> ([`SESSION_IDENTITY_RECOVERY_DESIGN.md`](SESSION_IDENTITY_RECOVERY_DESIGN.md) §10, **S2**), which
+> resolves an id from a session token that may be weeks old and must not write a stale profile over a
+> newer one.
 
 > **Revision note.** An earlier revision of §4 specified a `SAVEPOINT`-based algorithm. It is
 > withdrawn. SQLAlchemy's own documentation for the installed version states that SAVEPOINT

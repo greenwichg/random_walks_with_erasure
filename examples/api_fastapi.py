@@ -1160,6 +1160,15 @@ class UpsertUserRequest(BaseModel):
     providerAccountId: str
     email: str | None = None
     displayName: str | None = None
+    # False = do not overwrite an EXISTING user's profile with the values above; a first sighting is
+    # still created with them. Sent by web-tier identity recovery, which resolves an id from a session
+    # token that may be weeks old and must not write a stale profile over a newer one.
+    #
+    # Defaults True — today's behaviour — so a client that has never heard of this field is unchanged.
+    # The model must also keep Pydantic's default extra="ignore": a NEWER web sending refreshProfile
+    # to an OLDER engine has to be silently ignored, not rejected, or a rollback of this tier alone
+    # would 422 every sign-in. test_internal_user_upsert_ignores_unknown_fields pins that.
+    refreshProfile: bool = True
 
 
 class UserModel(BaseModel):
@@ -3067,10 +3076,14 @@ def coach_reply(request: Request, req: CoachRequest) -> dict:
           responses=_ERR_RESPONSES)
 def upsert_user(request: Request, req: UpsertUserRequest) -> dict:
     """Called by the web tier on sign-in: map a provider account to a stable engine user id,
-    creating the user on first sight. Idempotent. Requires the internal secret when set."""
+    creating the user on first sight. Idempotent. Requires the internal secret when set.
+
+    ``refreshProfile=False`` resolves the id without touching an existing user's stored profile;
+    the response still reports what is STORED, not what was submitted."""
     _require_trusted(request)
     u = _require_store().upsert_user_by_identity(
-        req.provider, req.providerAccountId, email=req.email, display_name=req.displayName)
+        req.provider, req.providerAccountId, email=req.email, display_name=req.displayName,
+        refresh_profile=req.refreshProfile)
     return {"userId": u.id, "email": u.email, "displayName": u.display_name}
 
 

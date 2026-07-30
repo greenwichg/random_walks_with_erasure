@@ -19,10 +19,12 @@ from harness import (ACCOUNT, PROVIDER, counts, find_identity, read_barrier, run
 pytestmark = pytest.mark.concurrency
 
 
-def upsert(store, provider=PROVIDER, account_id=ACCOUNT, email=None, display_name=None):
+def upsert(store, provider=PROVIDER, account_id=ACCOUNT, email=None, display_name=None,
+           refresh_profile=True):
     """The subject, with this suite's default identity pre-filled."""
     return store.upsert_user_by_identity(provider, account_id, email=email,
-                                         display_name=display_name)
+                                         display_name=display_name,
+                                         refresh_profile=refresh_profile)
 
 
 # --------------------------------------------------------------------------------------------------
@@ -106,11 +108,12 @@ def test_I6_a_failure_no_winner_explains_is_re_raised(file_store, monkeypatch):
     attempts = []
     real = store_mod.Store._resolve_identity
 
-    def fake(self, provider, account_id, email, display_name, *, create):
+    def fake(self, provider, account_id, email, display_name, *, create, refresh_profile=True):
         attempts.append(create)
         if create:
             raise injected
-        return real(self, provider, account_id, email, display_name, create=False)
+        return real(self, provider, account_id, email, display_name, create=False,
+                    refresh_profile=refresh_profile)
 
     monkeypatch.setattr(store_mod.Store, "_resolve_identity", fake)
 
@@ -129,10 +132,11 @@ def test_I6_a_failure_with_a_winner_resolves_instead_of_raising(file_store, monk
     injected = IntegrityError("INSERT ...", {}, Exception("looks like a race"))
     real = store_mod.Store._resolve_identity
 
-    def fake(self, provider, account_id, email, display_name, *, create):
+    def fake(self, provider, account_id, email, display_name, *, create, refresh_profile=True):
         if create:
             raise injected
-        return real(self, provider, account_id, email, display_name, create=False)
+        return real(self, provider, account_id, email, display_name, create=False,
+                    refresh_profile=refresh_profile)
 
     monkeypatch.setattr(store_mod.Store, "_resolve_identity", fake)
 
@@ -165,10 +169,12 @@ def test_OB4_exactly_one_caller_wins_and_the_rest_take_the_loser_path(file_store
     real = store_mod.Store._resolve_identity
     second_attempts = []
 
-    def counting(self, provider, account_id, email, display_name, *, create):
+    def counting(self, provider, account_id, email, display_name, *, create,
+                 refresh_profile=True):
         if not create:
             second_attempts.append(provider)
-        return real(self, provider, account_id, email, display_name, create=create)
+        return real(self, provider, account_id, email, display_name, create=create,
+                    refresh_profile=refresh_profile)
 
     monkeypatch.setattr(store_mod.Store, "_resolve_identity", counting)
 
@@ -210,3 +216,48 @@ def test_R4_two_engines_on_one_file_race_safely(file_store, second_store):
     assert not errors, errors
     assert len(set(resolved)) == 1, f"the two engines disagreed: {resolved}"
     assert counts(file_store) == (1, 1)
+
+
+# --------------------------------------------------------------------------------------------------
+# refresh_profile (S2) — the flag must not weaken any invariant above.
+# --------------------------------------------------------------------------------------------------
+def test_I1_I2_concurrent_first_sighting_with_refresh_profile_false(file_store):
+    """The identity invariants hold identically with the refresh suppressed.
+
+    Recovery is the caller that passes `refresh_profile=False`, and recovery is also what makes
+    concurrent first-sightings of one identity likely (§9c of the recovery design). So the two have
+    to be exercised together: N callers, no profile writes on the losers' retry, still one user."""
+    n = 8
+    read_barrier([file_store.engine], n)
+    ids, errors = run_concurrently(
+        n, lambda: upsert(file_store, email="r@x.io", display_name="R",
+                          refresh_profile=False).id)
+    assert errors == [], f"a caller failed rather than resolving: {sorted(set(errors))}"
+    assert len(set(ids)) == 1, f"{n} concurrent first-sightings produced {len(set(ids))} users"
+    assert counts(file_store) == (1, 1), f"duplicates or an orphan: {counts(file_store)}"
+
+
+def test_refresh_profile_false_leaves_the_losers_retry_read_only(file_store):
+    """The retry stops writing on this path.
+
+    `_resolve_identity(create=False)` applies the profile refresh too, so with the sign-in default a
+    loser can emit an UPDATE. With the flag off it cannot — the whole second transaction is a SELECT.
+    That narrows the open item in docs/IDENTITY_UPSERT_CONCURRENCY.md rather than closing it: the
+    default path is unchanged and can still write."""
+    from sqlalchemy import event
+
+    upsert(file_store, email="first@x.io", display_name="First")
+
+    seen = []
+    event.listen(file_store.engine, "after_cursor_execute",
+                 lambda conn, cur, stmt, params, ctx, many: seen.append(stmt.split()[0].upper()))
+
+    ids, errors = run_concurrently(
+        8, lambda: upsert(file_store, email="late@x.io", display_name="Late",
+                          refresh_profile=False).id)
+    assert errors == []
+    assert len(set(ids)) == 1
+    assert seen.count("UPDATE") == 0, f"expected no writes, saw {seen.count('UPDATE')}"
+    with file_store.session() as s:
+        assert find_identity(s) is not None
+    assert file_store.get_user(ids[0]).display_name == "First", "the stored profile survived"
