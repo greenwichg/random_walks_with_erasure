@@ -14,6 +14,12 @@ Two orthogonal axes keep the design small:
   add a Channel each, never a new kind. Telemetry is a *different* bounded context (system-facing egress,
   privacy-consent-gated) and deliberately lives nowhere near here — it shares only ``settings_service``.
 
+The two axes meet at exactly one point: **the gate**. :func:`evaluate` takes the channel it is
+deciding for, because a reader may want breaking news in the app but not on their phone, and
+:func:`gate_path` is the only place that knows a channel has a preference at all. Everything after the
+gate — the trigger, the payload, the dedupe key, the cap — is channel-independent, which is what keeps
+adding a transport from touching any kind.
+
 Determinism (D0 contract): :func:`evaluate` is a pure function of the context. Same context in → same
 notifications out, in registry order. ``now`` is injected, gating is read from the (already-normalised)
 settings carried in the context, and idempotency is enforced against the delivered-key ledger — so no
@@ -117,7 +123,9 @@ class Notification:
     """One due notification. JSON-safe and self-describing: ``kind`` names it, ``dedupe_key`` makes
     delivery idempotent, ``title_key`` is an i18n key (rendering is a channel's job), ``payload`` is
     structured content sourced only from context facts, and ``gated_by`` records the setting that
-    enabled it (transparency for a later telemetry/consent view)."""
+    enabled it — **the resolved path for the channel it was evaluated on**, so a row says which
+    consent it rests on rather than which kind produced it (transparency for a later
+    telemetry/consent view)."""
     kind: str
     dedupe_key: str
     created_at: str
@@ -146,6 +154,19 @@ class InAppChannel:
                 "payload": dict(notification.payload), "createdAt": notification.created_at}
 
 
+#: The in-app channel's identifier — the default everything here evaluates for, and the only channel
+#: that currently delivers anything.
+IN_APP = "in_app"
+
+#: Channel identifier → the per-channel leaf under ``notifications.categories.<category>``.
+#:
+#: Two vocabularies meet here on purpose, and one dict is cheaper than renaming either: the settings
+#: contract is camelCase JSON that clients already store (``inApp`` / ``push``), while a channel
+#: identifier is snake_case like :attr:`InAppChannel.name`. A channel absent from this map has no
+#: gate, and :func:`gate_path` fails CLOSED for it rather than inventing one.
+CHANNEL_SETTING_KEYS = {IN_APP: "inApp", "push": "push"}
+
+
 # --------------------------------------------------------------------------- #
 # Deterministic helpers (pure).
 # --------------------------------------------------------------------------- #
@@ -167,6 +188,13 @@ def _blind_spot_sig(blind_spots) -> str:
 #: is a platform guarantee, not a tuning knob. A quiet day never reaches it; a chaotic one is capped
 #: rather than allowed to fill the inbox.
 BREAKING_MAX_PER_DAY = 5
+
+#: The event category breaking stories travel under — the reader-facing axis their preference gates
+#: on. Named once here and used twice (the registry row and the fan-out's filter) so the kind and its
+#: trigger cannot drift apart. ``story_events.CATEGORY`` is the producer's matching constant: this
+#: leaf must import nothing, so the two sides of the boundary each name the string rather than share
+#: a module.
+BREAKING_CATEGORY = "breaking"
 
 
 def _breaking_fanout(ctx: "NotificationContext") -> list:
@@ -190,7 +218,7 @@ def _breaking_fanout(ctx: "NotificationContext") -> list:
     out = []
     now = ctx.now.isoformat()
     for ev in ctx.events.events:
-        if not isinstance(ev, dict) or ev.get("category") != "breaking":
+        if not isinstance(ev, dict) or ev.get("category") != BREAKING_CATEGORY:
             continue
         expires = ev.get("expiresAt")
         if expires and str(expires) <= now:
@@ -250,17 +278,51 @@ class NotificationKind:
 
     ``max_per_day`` bounds how many of this kind one reader may receive in a day. ``None`` means
     unbounded, which is right for anything that can only fire once per period; a fan-out kind should
-    always set it, because the number of notifications is decided by the world rather than by us."""
+    always set it, because the number of notifications is decided by the world rather than by us.
+
+    **Gating: exactly one of ``setting_path`` or ``category``.** These are two eras of the same idea:
+
+    * ``setting_path`` — a single dotted preference (``notifications.weeklyDigest``). The kind is
+      on or off, the same answer for every channel, which is right for the kinds that predate
+      per-channel preferences: there is no separate "email me my weekly digest" toggle to consult.
+    * ``category`` — the reader-facing axis (``breaking``), from which :func:`gate_path` derives a
+      **per-channel** preference: ``notifications.categories.breaking.inApp`` for in-app,
+      ``…​.push`` for push. A kind that names a category can be on for one channel and off for
+      another, which is what a reader means by "notify me, but not on my phone".
+
+    A category kind must NOT hard-code a channel into ``setting_path``: that reads as a preference
+    but behaves as a decision, and it makes the kind undeliverable on any other channel — there
+    would be no notification for a second channel to send."""
 
     kind: str
-    setting_path: str
     mode: str                                    # "cadence" | "event" | "discrete" (lifecycle)
     title_key: str
+    setting_path: str = ""                       # legacy shape: one gate for every channel
+    category: "str | None" = None                # per-channel shape: notifications.categories.<c>.<ch>
     predicate: "typing.Callable[[NotificationContext], bool]" = lambda c: False
     dedupe_key: "typing.Callable[[NotificationContext], str]" = lambda c: ""
     payload: "typing.Callable[[NotificationContext], dict]" = lambda c: {}
     fanout: "typing.Optional[typing.Callable[[NotificationContext], list]]" = None
     max_per_day: "int | None" = None
+
+
+def gate_path(k: NotificationKind, channel: str = IN_APP) -> str:
+    """The preference that decides whether ``k`` may be delivered on ``channel``.
+
+    The single place that knows a channel has a preference at all, so adding one is a row in
+    :data:`CHANNEL_SETTING_KEYS` rather than an edit to every kind. Three cases:
+
+    * a kind with a ``category`` resolves to ``notifications.categories.<category>.<channel leaf>``;
+    * a kind without one returns its ``setting_path`` unchanged — the same gate on every channel,
+      which is what a preference that predates channels means;
+    * an **unknown channel** returns ``""``, which :func:`_gated` reads as absent and therefore
+      denies. Fail-closed: a channel nobody has written a preference for must not inherit consent
+      from one the reader gave for something else.
+    """
+    if not k.category:
+        return k.setting_path
+    leaf = CHANNEL_SETTING_KEYS.get(channel)
+    return f"notifications.categories.{k.category}.{leaf}" if leaf else ""
 
 
 NOTIFICATION_KINDS = (
@@ -307,7 +369,7 @@ NOTIFICATION_KINDS = (
     # a breaking story belongs. Appending also leaves the six kinds above in their existing relative
     # order, so nothing about them changes.
     NotificationKind(
-        kind="breaking_story", setting_path="notifications.categories.breaking.inApp",
+        kind="breaking_story", category=BREAKING_CATEGORY,
         mode="discrete",                         # an occurrence: never collapsed, never auto-resolved
         title_key="notifications.breaking_story.title",
         fanout=_breaking_fanout, max_per_day=BREAKING_MAX_PER_DAY),
@@ -325,19 +387,23 @@ EVENT_KINDS: tuple = tuple(k.kind for k in NOTIFICATION_KINDS if k.mode == "even
 #: Kinds whose ``mode`` is ``"discrete"`` — one-time OCCURRENCES. They accumulate like ``cadence``
 #: kinds and are triggered like ``event`` kinds, and the delivery boundary must apply NEITHER of the
 #: two treatments it gives state alerts: no auto-resolve (a story that stopped breaking still broke)
-#: and no one-outstanding-per-kind collapse (one row per story is the entire point). Exported so
-#: ``notification_delivery`` can exclude them explicitly rather than by asking "is it an event?".
+#: and no one-outstanding-per-kind collapse (one row per story is the entire point).
+#:
+#: Both exclusions hold because the boundary asks ``EVENT_KINDS``, which is an ALLOWLIST — a discrete
+#: kind is simply not in it, and so is a kind in whatever mode is invented next. This tuple is
+#: therefore an assertion surface rather than a control: the tests use it to pin that the two sets stay
+#: disjoint and that no shipped kind quietly changed lifecycle. Production code reads ``EVENT_KINDS``.
 DISCRETE_KINDS: tuple = tuple(k.kind for k in NOTIFICATION_KINDS if k.mode == "discrete")
 
 
-def inactive_event_kinds(ctx: NotificationContext) -> tuple:
+def inactive_event_kinds(ctx: NotificationContext, channel: str = IN_APP) -> tuple:
     """Event-mode kinds whose triggering condition is **not** currently true for this reader (the
-    predicate is false, or the reader disabled the setting). Pure, like :func:`evaluate` — the
-    delivery boundary uses it to resolve alerts that no longer describe reality, so the inbox and
-    its unread badge track *actionable* state instead of history."""
+    predicate is false, or the reader disabled the setting **for this channel**). Pure, like
+    :func:`evaluate` — the delivery boundary uses it to resolve alerts that no longer describe
+    reality, so the inbox and its unread badge track *actionable* state instead of history."""
     return tuple(k.kind for k in NOTIFICATION_KINDS
                  if k.mode == "event"                 # NOT "discrete": an occurrence never resolves
-                 and (not _gated(ctx.settings, k.setting_path) or not k.predicate(ctx)))
+                 and (not _gated(ctx.settings, gate_path(k, channel)) or not k.predicate(ctx)))
 
 
 def _due_pairs(k: NotificationKind, ctx: NotificationContext) -> "list[tuple]":
@@ -352,10 +418,17 @@ def _due_pairs(k: NotificationKind, ctx: NotificationContext) -> "list[tuple]":
     return [(k.dedupe_key(ctx), k.payload(ctx))]
 
 
-def evaluate(ctx: NotificationContext) -> "list[Notification]":
-    """The due notifications for this context, in registry order. Pure and deterministic: for each
-    kind, gate on the reader's setting, ask the kind what it wants to deliver, and skip anything whose
-    dedupe key was already delivered. Reads no producer and no clock — everything comes from ``ctx``.
+def evaluate(ctx: NotificationContext, channel: str = IN_APP) -> "list[Notification]":
+    """The due notifications for this context **on one channel**, in registry order. Pure and
+    deterministic: for each kind, gate on the reader's setting for that channel, ask the kind what it
+    wants to deliver, and skip anything whose dedupe key was already delivered. Reads no producer and
+    no clock — everything comes from ``ctx``.
+
+    ``channel`` defaults to in-app, which is what every current caller wants and makes this call
+    identical to the one that predates channels. It is a parameter rather than a constant because a
+    reader's answer to "tell me about breaking news" can legitimately differ from their answer to
+    "interrupt my phone about it" — see :func:`gate_path`. Everything downstream of the gate is
+    channel-independent: the same :class:`Notification` is what any transport renders.
 
     A kind may yield more than one notification (see :attr:`NotificationKind.fanout`), so two further
     rules apply, both of which exist because a fan-out kind's volume is decided by the world:
@@ -367,7 +440,8 @@ def evaluate(ctx: NotificationContext) -> "list[Notification]":
       that emits the same key twice cannot spend the cap on one notification."""
     out: "list[Notification]" = []
     for k in NOTIFICATION_KINDS:
-        if not _gated(ctx.settings, k.setting_path):
+        gate = gate_path(k, channel)
+        if not _gated(ctx.settings, gate):
             continue
         budget = None
         if k.max_per_day is not None:
@@ -380,7 +454,7 @@ def evaluate(ctx: NotificationContext) -> "list[Notification]":
                 continue
             emitted.add(key)
             out.append(Notification(kind=k.kind, dedupe_key=key, created_at=ctx.now.isoformat(),
-                                    title_key=k.title_key, payload=payload, gated_by=k.setting_path))
+                                    title_key=k.title_key, payload=payload, gated_by=gate))
             if budget is not None and len(emitted) >= budget:
                 break
     return out

@@ -333,7 +333,8 @@ def test_discrete_kinds_are_never_returned_as_inactive(monkeypatch):
 
 
 def test_discrete_kinds_are_exported_separately_from_event_kinds():
-    """The boundary must be able to exclude them explicitly rather than by asking "is it an event?"."""
+    """`EVENT_KINDS` is an ALLOWLIST, so a discrete kind is excluded by not being in it — and so is
+    whatever mode is invented next. This tuple is the assertion surface that pins the two apart."""
     assert hasattr(ns, "DISCRETE_KINDS")
     assert set(ns.DISCRETE_KINDS) & set(ns.EVENT_KINDS) == set(), "a kind is one lifecycle, not two"
 
@@ -487,3 +488,124 @@ def test_breaking_is_registered_last_so_it_leads_the_inbox():
 
 def test_no_events_means_no_breaking_notifications():
     assert _breaking(ns.evaluate(_breaking_ctx([]))) == []
+
+
+# --------------------------------------------------------------------------- #
+# Channel-aware gating (pre-Phase-B). A reader's answer to "tell me about breaking news" and their
+# answer to "interrupt my phone about it" are different answers, so the gate — and only the gate —
+# depends on the channel being evaluated for.
+# --------------------------------------------------------------------------- #
+def _channel_ctx(events=(), *, in_app=True, push=False):
+    return ns.NotificationContext(
+        now=NOW,
+        settings=ss.normalize_settings(
+            {"notifications": {"categories": {"breaking": {"inApp": in_app, "push": push}}}}),
+        events=ns.EventInputs(events=tuple(events)))
+
+
+def test_a_category_kind_resolves_a_different_gate_per_channel():
+    k = next(k for k in ns.NOTIFICATION_KINDS if k.kind == "breaking_story")
+    assert ns.gate_path(k) == "notifications.categories.breaking.inApp", "in-app is the default"
+    assert ns.gate_path(k, "in_app") == "notifications.categories.breaking.inApp"
+    assert ns.gate_path(k, "push") == "notifications.categories.breaking.push"
+
+
+def test_a_legacy_kind_keeps_one_gate_on_every_channel():
+    """A preference that predates channels means the same thing on all of them: there is no separate
+    "email me my weekly digest" toggle to consult, so inventing a path per channel would gate on a
+    preference the reader was never offered."""
+    for kind in ("weekly_report", "weekly_digest", "streak_reminder"):
+        k = next(k for k in ns.NOTIFICATION_KINDS if k.kind == kind)
+        assert ns.gate_path(k) == k.setting_path
+        assert ns.gate_path(k, "push") == k.setting_path
+        assert ns.gate_path(k, "carrier_pigeon") == k.setting_path
+
+
+def test_an_unknown_channel_is_fail_closed_for_a_category_kind():
+    """Consent is per channel, so a channel nobody has written a preference for must not inherit the
+    consent a reader gave for a different one."""
+    k = next(k for k in ns.NOTIFICATION_KINDS if k.kind == "breaking_story")
+    assert ns.gate_path(k, "sms") == ""
+    ctx = _channel_ctx([_breaking_event(1)], in_app=True, push=True)
+    assert _breaking(ns.evaluate(ctx, "sms")) == [], "everything on, but not on a channel we know"
+
+
+def test_the_two_channels_gate_independently():
+    """The point of the whole refactor: with the channel baked into `setting_path`, a reader who
+    wanted push but not in-app produced NO notification at all, so there was nothing for a push
+    channel to send."""
+    events = [_breaking_event(1)]
+
+    both_off = _channel_ctx(events, in_app=False, push=False)
+    assert _breaking(ns.evaluate(both_off, "in_app")) == []
+    assert _breaking(ns.evaluate(both_off, "push")) == []
+
+    in_app_only = _channel_ctx(events, in_app=True, push=False)
+    assert len(_breaking(ns.evaluate(in_app_only, "in_app"))) == 1
+    assert _breaking(ns.evaluate(in_app_only, "push")) == [], "in-app consent is not push consent"
+
+    push_only = _channel_ctx(events, in_app=False, push=True)
+    assert _breaking(ns.evaluate(push_only, "in_app")) == []
+    assert len(_breaking(ns.evaluate(push_only, "push"))) == 1, "the case that used to be impossible"
+
+
+def test_gated_by_records_the_channel_it_was_evaluated_for():
+    """`gated_by` is the consent a row rests on, so it must name the channel's own preference — a
+    later consent view that showed `.inApp` for something delivered by push would be lying."""
+    ctx = _channel_ctx([_breaking_event(1)], in_app=True, push=True)
+    assert _breaking(ns.evaluate(ctx, "in_app"))[0].gated_by == "notifications.categories.breaking.inApp"
+    assert _breaking(ns.evaluate(ctx, "push"))[0].gated_by == "notifications.categories.breaking.push"
+
+
+def test_the_default_channel_leaves_every_shipped_kind_byte_identical():
+    """The refactor's acceptance condition: no caller passes a channel yet, so `evaluate(ctx)` must
+    produce exactly what it did before channels existed — same kinds, same keys, same gates."""
+    ctx = dataclasses.replace(_ctx(), events=ns.EventInputs(events=(_breaking_event(1),)))
+    assert ns.evaluate(ctx) == ns.evaluate(ctx, "in_app")
+    assert [n.gated_by for n in ns.evaluate(ctx)] == [
+        "weeklyReport", "monthlyReport", "notifications.recommendations",
+        "notifications.weeklyDigest", "notifications.streakReminders",
+        "notifications.blindSpotAlerts", "notifications.categories.breaking.inApp"]
+
+
+def test_inactive_event_kinds_is_channel_aware_too():
+    """Resolution follows the same gate as delivery: an alert the reader turned off for a channel is
+    not actionable on that channel. No shipped event kind has a category yet, so today every channel
+    gives the same answer — the parameter exists so that stays true when one does."""
+    ctx = _ctx()
+    assert ns.inactive_event_kinds(ctx) == ns.inactive_event_kinds(ctx, "in_app")
+    assert ns.inactive_event_kinds(ctx) == ns.inactive_event_kinds(ctx, "push")
+
+
+def test_every_kind_declares_exactly_one_gating_shape():
+    """A registry invariant, not a style rule: a kind with both would have two answers to "may I
+    deliver this", and a kind with neither resolves to "" and can never deliver at all."""
+    for k in ns.NOTIFICATION_KINDS:
+        assert bool(k.setting_path) != bool(k.category), f"{k.kind} must have exactly one"
+
+
+def test_a_category_kind_never_hard_codes_a_channel_in_its_setting_path():
+    """The specific mistake this refactor removes: a `setting_path` ending in a channel leaf reads as
+    a preference but behaves as a decision, and makes the kind undeliverable anywhere else."""
+    leaves = set(ns.CHANNEL_SETTING_KEYS.values())
+    for k in ns.NOTIFICATION_KINDS:
+        assert k.setting_path.split(".")[-1] not in leaves, f"{k.kind} should declare a category"
+
+
+def test_inactive_event_kinds_follows_the_channel_gate(monkeypatch):
+    """The channel-aware half of resolution, provable only with a synthetic kind: no shipped event
+    kind has a category yet, so the real registry cannot distinguish `gate_path(k, channel)` from
+    `k.setting_path` here. A state alert the reader turned off for a channel is not actionable on
+    that channel, and must be resolved there — while staying live on a channel they left on."""
+    state = ns.NotificationKind(
+        kind="synthetic_category_state", category="breaking", mode="event",
+        title_key="notifications.synthetic.title", predicate=lambda c: True,
+        dedupe_key=lambda c: "s:1", payload=lambda c: {})
+    _only(monkeypatch, state)
+    ctx = ns.NotificationContext(
+        now=FW_NOW,
+        settings=ss.normalize_settings(
+            {"notifications": {"categories": {"breaking": {"inApp": True, "push": False}}}}))
+
+    assert "synthetic_category_state" not in ns.inactive_event_kinds(ctx, "in_app"), "on, so live"
+    assert "synthetic_category_state" in ns.inactive_event_kinds(ctx, "push"), "off, so resolved"
