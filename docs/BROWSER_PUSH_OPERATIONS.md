@@ -105,7 +105,15 @@ cd /opt/ih
 $EDITOR deploy/.env                       # the registration variables above
 deploy/ops/restart.sh api                 # read at call time — no rebuild
 docker exec deploy-api-1 printenv | grep -E 'RWE_PUSH_ENABLED|RWE_VAPID'   # prove it landed
-curl -s http://127.0.0.1:8000/api/push/config     # from the host; expect enabled:true
+
+# From INSIDE the container. The AWS override unpublishes port 8000 — the engine is only on the
+# private Docker network — so `curl http://127.0.0.1:8000/...` on the host connects to nothing and
+# `curl -s` prints nothing at all, which reads as "the endpoint returned empty" rather than "there
+# was nobody to ask". This is the same shape `deploy/ops/smoke-test.sh` uses, and urllib is stdlib
+# so it needs nothing installed in the image.
+docker exec deploy-api-1 python -c \
+  "import urllib.request;print(urllib.request.urlopen('http://127.0.0.1:8000/api/push/config').read().decode())"
+# expect {"enabled":true,"publicKey":"B..."}
 ```
 
 `printenv` showing nothing means the variable never reached the container — `environment:` is an
@@ -490,9 +498,14 @@ Served by the existing internal-only `/api/metrics` — the same snapshot as eve
 incident should have one place to look, not two. Every push series is prefixed `push_`.
 
 ```bash
-curl -s -H "$INTERNAL_SECRET_HEADER" http://127.0.0.1:8000/api/metrics \
-  | python3 -c 'import json,sys; d=json.load(sys.stdin)["counters"]; \
-                print(json.dumps({k:v for k,v in d.items() if k.startswith("push_")}, indent=2))'
+# Inside the container, and with the internal secret from the container's own env — /api/metrics is
+# internal-only and answers 404 without it. Port 8000 is not published on the AWS stack (see §3).
+docker exec deploy-api-1 python -c "
+import urllib.request, os, json
+req = urllib.request.Request('http://127.0.0.1:8000/api/metrics',
+                             headers={'X-IH-Auth': os.environ.get('RWE_INTERNAL_SECRET','')})
+counters = json.load(urllib.request.urlopen(req))['counters']
+print(json.dumps({k: v for k, v in counters.items() if k.startswith('push_')}, indent=2))"
 ```
 
 | Series | What it is |
