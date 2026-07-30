@@ -17,6 +17,27 @@
 /** localStorage key holding an onboarding selection made before the sign-in redirect. */
 export const PENDING_ONBOARDING_KEY = "ih:pendingOnboarding";
 
+/** The two facts `GET /api/me` carries about initialization. */
+export interface OnboardingState {
+  onboarding?: { outlets: string[] } | null;
+  reads?: number | null;
+}
+
+/**
+ * "This account has never been initialized" — the ONE definition of it.
+ *
+ * Read by the app-shell gate (to decide whether to redirect) and by the sign-in landing step (to
+ * decide whether a stashed selection is still wanted). Sharing the predicate is what makes the two
+ * unable to disagree: a landing step that thought an account was fresh while the gate thought
+ * otherwise is exactly the shape a redirect loop would take.
+ *
+ * `reads` matters because reading is onboarding in substance — an extension-first reader, or an
+ * account created before the gate existed, has no row but is plainly established.
+ */
+export function needsOnboarding(me: OnboardingState): boolean {
+  return !me.onboarding && (me.reads ?? 0) === 0;
+}
+
 /** Stash a selection for the landing page to persist after sign-in. Never throws. */
 export function stashPendingOnboarding(outlets: string[]): void {
   try {

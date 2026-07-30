@@ -67,7 +67,27 @@ test.describe("Authentication", () => {
     await expect(
       page.getByRole("main").getByRole("heading", { name: "Today", exact: true }),
     ).toBeVisible();
+
+    // The landing step replaced its own history entry rather than pushing one, so Back cannot return
+    // to it. An interstitial reachable by Back is the one way this step could look like a loop.
+    await page.goBack();
+    await expect(page).not.toHaveURL(/\/signin\/complete/);
+
     await context.close();
+  });
+
+  test("re-entering the sign-in landing step is a no-op for an onboarded reader", async ({
+    authedPage,
+  }) => {
+    // Idempotency, from the direction that actually happens in the wild: a refresh, a duplicated tab,
+    // or a bookmarked URL. The step checks `/api/me` before writing, so an established account is
+    // passed through untouched — it must not re-post a stale selection over real outlets, and it must
+    // not bounce to the funnel.
+    await authedPage.goto("/signin/complete");
+    await authedPage.waitForURL((url) => url.pathname === "/");
+    await expect(
+      authedPage.getByRole("main").getByRole("heading", { name: "Today", exact: true }),
+    ).toBeVisible();
   });
 
   test("an onboarded reader goes straight to the dashboard", async ({ authedPage }) => {

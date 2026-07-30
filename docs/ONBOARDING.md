@@ -102,6 +102,12 @@ The fix is a step, not a mechanism. Both providers use `callbackUrl: "/signin/co
 public page outside `(app)` that persists the stash and only then moves on. By the time any gated
 page renders, the store is authoritative again.
 
+The step is **check-then-write**: `GET /api/me` first, and the stash is landed only when
+`needsOnboarding()` says the account has never been initialized. That predicate lives in
+`lib/onboarding.ts` and is the *same function the gate calls*, so the two cannot form a differing
+opinion about who is new — a landing step that thought an account was established while the gate
+thought otherwise is exactly the shape a redirect loop takes.
+
 What that buys, beyond working:
 
 - **The gate has no exception.** It reads the store, full stop — no grace window, no client-set flag
@@ -109,6 +115,20 @@ What that buys, beyond working:
 - **It cannot loop.** The stash is *consumed* on success (`clearPendingOnboarding`). Even in the
   pathological case where the gate disagreed after a successful write, the second pass finds nothing
   to re-post and terminates on the funnel.
+- **It is idempotent by check, not by luck.** A refresh mid-write, a duplicated tab, React's
+  double-invoked effect in development, or a bookmarked URL all find the row already present and pass
+  through. The write being an upsert is the second line of defence, not the first.
+- **An established account is never overwritten.** A stash abandoned in this browser months ago would
+  otherwise replace a real reader's outlets — and because the write also stores a fresh estimate
+  snapshot, and `latest_report` returns the newest, it would demote a Measured report to an Estimate.
+- **Nothing is unbounded.** The round trip is capped (12 s, above the engine's own 6 s timeout), so a
+  hung server produces the retry card rather than a spinner that never resolves. Retries are capped
+  too: after two, the funnel becomes the primary action, because a failure that survives two attempts
+  is one the reader fixes by re-picking rather than by waiting.
+- **Back cannot return to it.** The step `replace`s its own history entry, so the dashboard's Back
+  goes where it went before this change existed. It is a full document load rather than
+  `router.replace` on purpose: a client navigation may be served from the Router Cache, and a payload
+  rendered before the row existed would redirect a reader who is now perfectly onboarded.
 - **The first dashboard paint is already personalised.** The row exists before `/` renders. A
   background flush racing the first render would have shown an un-onboarded dashboard to the reader
   whose selection had just been accepted.
@@ -198,15 +218,42 @@ a comprehension bug. Adding guidance on top of it would have decorated the failu
 | Engine down | Fails open; the app renders with honest empty states. |
 | Signed in, visits `/onboarding` directly | Sees the funnel and saves through the authenticated path. Nothing forces them out — `/onboarding` is public by design. |
 
+### Reviewed: refresh, duplicate submit, Back, tabs, interrupted OAuth, retries
+
+| Scenario | Behaviour |
+|---|---|
+| **Refresh while the spinner is up** | The write may already have landed; the reload's `/api/me` check sees the row, discards the stash, and passes through. No duplicate write. |
+| **Refresh after success** | Stash is gone, so it is the returning-reader pass-through. |
+| **React double-invoked effect** (`reactStrictMode: true`) | The first pass is aborted by cleanup; the second decides. Both would have been safe — the write is an upsert — but the check makes the second a no-op. |
+| **Back from the dashboard** | Cannot reach the step: it `replace`d its entry. Back lands where it did before this change (`/signin` on the demo path, the provider on OAuth). |
+| **Back to the *failure* card** (it does keep its entry) | Restored from bfcache with the card showing; "Try again" still works, and the stash is intact. |
+| **Two tabs completing the funnel** | Both read the same stash; the first writes, the second's check finds the row and passes through. Last explicit save wins if the reader actually re-picks in the second tab, which is their own action. |
+| **OAuth abandoned at the provider** | No session, so the step is never reached. The stash survives; the middleware sends them to the funnel. |
+| **`?error=AccessDenied`** | NextAuth routes to `/signin`, not here. The stash survives for an eventual approved sign-in. |
+| **Landing step opened while signed out** | No session to attribute, so it forwards to `/` and the middleware takes over. |
+| **Network failure / 5xx on the write** | Retry card, stash intact, capped at two attempts before the funnel becomes the primary action. |
+| **Hung server (no response at all)** | The 12 s abort turns it into the same retry card. |
+| **A stash the registry no longer accepts** (renamed outlet) | The engine 400s, which the web route flattens to 503, so it presents as retryable. Two attempts later the funnel is the primary action, and completing it clears the poisoned stash via the authenticated save path. |
+
+**One known gap, out of scope here.** If the engine is unreachable *during sign-in*, the `jwt` callback
+never resolves `engineUserId`, so the session exists but cannot be attributed. Every per-user call
+401s — the landing step's write included — and no retry can fix it, because `engineUserId` is only
+resolved on the initial sign-in. Signing out and back in is the only recovery. This predates the
+onboarding work and affects every authenticated surface, not just this step; the fix belongs in
+`lib/auth.ts` (re-resolve the engine id in the `jwt` callback whenever the token lacks one, keyed off
+the stored provider + `token.sub`), and should be its own change with its own tests.
+
 ## 9. Tests that hold it in place
 
 | Test | Locks in |
 |---|---|
 | `tests/test_api_fastapi.py::test_me_carries_the_two_facts_the_onboarding_gate_reads` | `/api/me` carries `onboarding` **and** `reads`; a fresh account reports `reads: 0`, and reading alone clears the gate without an onboarding row. Fails on the pre-fix engine. |
-| `web/lib/onboarding.test.ts` | The stash contract `/signin/complete` branches on: a round trip, that clearing is consuming (which is what makes the landing loop-proof), and that every malformed shape reads as "nothing to do" instead of throwing or returning junk. |
+| `web/lib/onboarding.test.ts` | The stash contract `/signin/complete` branches on: a round trip, that clearing is consuming (which is what makes the landing loop-proof), and that every malformed shape reads as "nothing to do" instead of throwing or returning junk. Plus `needsOnboarding()` — the predicate the gate and the landing step share, including that an absent key and an explicit `null` read alike, and that `reads` alone settles it. |
 | `web/e2e/specs/auth.spec.ts` — *"signing in without onboarding lands on the funnel, not the app"* | The bypass itself: sign in at `/signin` with no prior funnel → `/onboarding`. |
 | … *"completing the funnel then signing in lands in the app, not back at the funnel"* | The regression the landing step exists to prevent — it walks the funnel, signs in, and asserts the dashboard. |
 | … *"an onboarded reader goes straight to the dashboard"* | The gate not over-firing — the failure mode worse than the bug. |
+| … *"re-entering the sign-in landing step is a no-op for an onboarded reader"* | Idempotency from the direction that happens in the wild (refresh, duplicated tab, bookmark): check-then-write passes an established account through without re-posting or bouncing. |
+| … Back assertion in the funnel spec | The landing step replaced its history entry, so Back cannot return to the interstitial. |
 | `web/e2e/fixtures.ts` | `authedPage` is an **onboarded** reader, which is what all nine feature specs were always testing. |
 
 The e2e suite needs a built web app and a live engine: `cd web && npm run e2e`.

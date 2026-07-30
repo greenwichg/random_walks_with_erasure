@@ -8,6 +8,9 @@ export const dynamic = "force-dynamic";
 type Me = {
   onboarding: { outlets: string[] } | null;
   report: EstimateHealthReport | MeasuredHealthReport | null;
+  // Stored read count. Read by `/signin/complete` (with `onboarding`, via `needsOnboarding`) to tell a
+  // never-initialized account from an established one before landing a pre-sign-in selection.
+  reads?: number;
 };
 
 /** The signed-in user's saved onboarding + latest result (or nulls). Auth required. */

@@ -4,6 +4,7 @@ import { Header } from "@/components/layout/header";
 import { FooterSlot, UtilityBarSlot } from "@/components/layout/chrome-slots";
 import { backendGet } from "@/lib/backend";
 import { engineAuthHeaders } from "@/lib/engine-auth";
+import { needsOnboarding, type OnboardingState } from "@/lib/onboarding";
 
 /**
  * The authenticated app shell (Template-4): fixed sidebar (lg+) + sticky header + the global
@@ -35,18 +36,11 @@ import { engineAuthHeaders } from "@/lib/engine-auth";
  * engine blip must never bounce every signed-in reader into a funnel they have already completed.
  */
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
-  // `onboarding` is absent, not null, when unset (the engine serialises /api/me with
-  // response_model_exclude_none), hence the falsy check rather than `=== null`.
-  const me = await backendGet<{ onboarding?: { outlets: string[] } | null; reads?: number }>(
-    "/api/me",
-    await engineAuthHeaders(),
-  );
-  // `reads` is what keeps established readers out of the funnel: anyone with reading has onboarded
-  // in substance whether or not a row exists (the e2e suite has been seeding one for exactly this
-  // reason). Only a reader with NEITHER is genuinely un-onboarded — and `me === null` means we never
-  // got an answer (unreachable engine), which is not a "no".
-  const unonboarded = me !== null && !me.onboarding && (me.reads ?? 0) === 0;
-  if (unonboarded) redirect("/onboarding");
+  const me = await backendGet<OnboardingState>("/api/me", await engineAuthHeaders());
+  // `needsOnboarding` is shared with `/signin/complete`, which decides from the same two facts whether
+  // a pre-sign-in selection still wants landing — one predicate, so the two cannot disagree about who
+  // is new. `me === null` means we never got an answer (unreachable engine), which is not a "no".
+  if (me !== null && needsOnboarding(me)) redirect("/onboarding");
 
   return (
     <div className="min-h-screen">

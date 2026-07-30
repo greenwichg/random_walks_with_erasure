@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 import {
   PENDING_ONBOARDING_KEY,
   clearPendingOnboarding,
+  needsOnboarding,
   readPendingOnboarding,
   stashPendingOnboarding,
 } from "./onboarding.ts";
@@ -93,5 +94,34 @@ test("storage failures are swallowed — a private-mode reader still gets throug
     assert.doesNotThrow(() => clearPendingOnboarding());
   } finally {
     if (prev === undefined) delete g.window; else g.window = prev;
+  }
+});
+
+// needsOnboarding — read by the app-shell gate (redirect?) and by `/signin/complete` (land the
+// stash?). Both call sites branch on the same answer on purpose: if they could disagree, the gate
+// would send a reader to the funnel that the landing step had just decided was already onboarded,
+// which is precisely the shape of a redirect loop.
+
+test("needsOnboarding: only an account with no outlets AND no reads is uninitialized", () => {
+  assert.equal(needsOnboarding({}), true);                                    // fresh account
+  assert.equal(needsOnboarding({ reads: 0 }), true);
+  assert.equal(needsOnboarding({ onboarding: null, reads: 0 }), true);
+  assert.equal(needsOnboarding({ onboarding: { outlets: ["a"] } }), false);    // picked outlets
+  assert.equal(needsOnboarding({ reads: 1 }), false);                          // extension-first
+  assert.equal(needsOnboarding({ onboarding: { outlets: [] }, reads: 3 }), false);
+});
+
+test("needsOnboarding: an absent key and an explicit null read the same", () => {
+  // The engine serialises /api/me with response_model_exclude_none, so `onboarding` arrives ABSENT
+  // rather than null, while the mock/typed paths may send null. Both mean "no row".
+  assert.equal(needsOnboarding({ onboarding: undefined, reads: undefined }), true);
+  assert.equal(needsOnboarding({ onboarding: null, reads: null }), true);
+});
+
+test("needsOnboarding: reads alone decides it, whatever the row says", () => {
+  // The clause that keeps established readers out of the funnel. A reader whose reading arrived via
+  // the browser extension has onboarded in substance and must never be bounced.
+  for (const reads of [1, 5, 4200]) {
+    assert.equal(needsOnboarding({ reads }), false, String(reads));
   }
 });
