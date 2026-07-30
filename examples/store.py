@@ -41,7 +41,7 @@ from typing import Iterator, Optional
 from urllib.parse import urlsplit
 
 from sqlalchemy import (ForeignKey, String, Text, UniqueConstraint, and_, create_engine,
-                        delete, event, func, or_, select, text)
+                        delete, event, func, or_, select, text, update)
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import (DeclarativeBase, Mapped, Session, mapped_column,
                             relationship, sessionmaker)
@@ -588,10 +588,14 @@ class NotificationDelivery(Base):
     delivery worker runs on every poll cycle, so without it every cycle would re-send every
     still-unexpired notification to every device, forever.
 
-    The row is **claimed before the send and resolved after it**. A crash between the two leaves a
-    ``pending`` row, which is deliberately *not* retried — an unresolved claim means "we do not know
-    whether the reader saw this", and re-sending on that basis is how a notification platform starts
-    duplicating itself. It is visible in the ledger for an operator to judge.
+    The row is **claimed before the send and resolved after it**, and since B3 the claim is a *lease*
+    rather than a one-shot: a retryable outcome schedules another attempt (``next_attempt_at``), and a
+    row left ``pending`` past :data:`push_retry.LEASE_SECONDS` is recoverable, because the only thing
+    that leaves one is the process dying mid-send. B2 deliberately abandoned such rows — the reasoning
+    was that "we do not know whether the reader saw this" and re-sending risks duplication. The lease
+    is what makes recovery safe instead: it is long enough that a row this old cannot be an in-flight
+    send, and the ``tag`` derived from ``dedupeKey`` collapses a duplicate at the OS level if the first
+    attempt did in fact land.
 
     ``subscription_id`` is stored as a plain integer rather than a foreign key on purpose: a
     subscription is pruned the moment the push service reports it gone (404/410), and the record that
@@ -608,8 +612,8 @@ class NotificationDelivery(Base):
     #: The `push_subscriptions.id` at claim time. NOT a foreign key — see the class docstring.
     subscription_id: Mapped[int] = mapped_column(index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
-    #: pending → success | expired | timeout | transient | permanent. `pending` outliving a run means
-    #: the process died mid-send; nothing retries it.
+    #: pending → success | expired | timeout | transient | permanent. The classification of the LAST
+    #: attempt; whether another is coming is `next_attempt_at`, not this.
     status: Mapped[str] = mapped_column(String(16), index=True, default="pending")
     #: The push service's status code where there was one, for correlation with its documentation.
     status_code: Mapped[Optional[int]] = mapped_column(default=None)
@@ -617,6 +621,18 @@ class NotificationDelivery(Base):
     detail: Mapped[str] = mapped_column(String(255), default="")
     attempted_at: Mapped[datetime] = mapped_column(default=_utcnow)
     completed_at: Mapped[Optional[datetime]] = mapped_column(default=None)
+
+    # -- retry scheduling (B3). Persisted rather than held in memory, so the ladder survives a deploy;
+    #    a restart in the middle of a fan-out is the ordinary case, not the exotic one.
+    #: How many sends have been made. 1 after the first claim — not 0, because the claim IS the attempt.
+    attempts: Mapped[int] = mapped_column(default=1)
+    #: When the first attempt happened. Never updated, because the age bound that decides whether a
+    #: delivery is still worth making must be measured from the beginning, not from the last try.
+    first_attempted_at: Mapped[Optional[datetime]] = mapped_column(default=None)
+    #: When this row becomes due again. **NULL means nothing is scheduled** — either the delivery is
+    #: settled, or it is in flight. This single nullable column is the whole scheduler state; there is
+    #: no queue, no timer and nothing in memory to lose.
+    next_attempt_at: Mapped[Optional[datetime]] = mapped_column(default=None, index=True)
 
 
 class FeedArticle(Base):
@@ -852,6 +868,7 @@ class Store:
         self._ensure_read_columns()
         self._ensure_lifecycle_columns()
         self._ensure_publisher_metadata_columns()
+        self._ensure_delivery_retry_columns()
         self._ensure_search_indexes()
 
     @contextmanager
@@ -1556,6 +1573,35 @@ class Store:
         try:
             with self.session() as s:
                 s.execute(text("CREATE INDEX IF NOT EXISTS ix_feed_country ON feed_articles(country)"))
+        except Exception:
+            pass
+
+    def _ensure_delivery_retry_columns(self) -> None:
+        """Additive, idempotent retry-scheduler columns on ``notification_deliveries`` (Phase B3).
+
+        Same discipline and the same reason as ``_ensure_publisher_metadata_columns``: ``create_all``
+        creates NEW tables only, and this one shipped in B2. Without this, the first B3 deploy would
+        fail every ledger read with ``no such column: notification_deliveries.attempts`` — and since
+        the ledger is read on the delivery path, push would stop working entirely on a database that
+        already had rows in it.
+
+        ``attempts`` defaults to 1 for legacy rows, which is true of every one of them: a B2 row was
+        claimed exactly once. ``next_attempt_at`` stays NULL, so nothing that predates B3 is suddenly
+        scheduled — those deliveries were settled under the old rules and stay settled."""
+        for name, decl in [("attempts", "INTEGER DEFAULT 1"),
+                           ("first_attempted_at", "DATETIME"),
+                           ("next_attempt_at", "DATETIME")]:
+            try:
+                with self.session() as s:
+                    s.execute(text(f"ALTER TABLE notification_deliveries ADD COLUMN {name} {decl}"))
+            except Exception:
+                pass    # already exists (fresh DB) or a non-sqlite backend — nothing to do
+        try:
+            with self.session() as s:
+                # The scheduler's only hot query filters on this. Small table today; the index is
+                # cheap now and impossible to add unnoticed once it is not.
+                s.execute(text("CREATE INDEX IF NOT EXISTS ix_delivery_next_attempt "
+                               "ON notification_deliveries(next_attempt_at)"))
         except Exception:
             pass
 
@@ -2911,7 +2957,8 @@ class Store:
         return {key: int(nid) for key, nid in rows}
 
     def claim_delivery(self, notification_id: int, subscription_id: int, *, user_id: int,
-                       channel: str = "web_push") -> "int | None":
+                       channel: str = "web_push",
+                       now: "datetime | None" = None) -> "int | None":
         """Claim the right to deliver one notification to one destination. Returns the ledger row id,
         or ``None`` if it was already claimed.
 
@@ -2920,14 +2967,22 @@ class Store:
         every cycle would re-send every one of them to every device. ``UNIQUE(notification_id,
         channel, subscription_id)`` is the arbiter, so two workers racing produce one send.
 
-        A claim is never released. A row left ``pending`` means the process died mid-send, and
-        re-sending on "we do not know whether they saw it" is how a notification platform starts
-        duplicating itself — it stays visible in the ledger for a human to judge instead."""
+        The claim is a LEASE, not a permanent grant (B3): a retryable failure schedules another
+        attempt, and a row abandoned ``pending`` by a process that died mid-send is recoverable via
+        :meth:`due_deliveries`. What the UNIQUE constraint still guarantees is that only one such lease
+        exists per destination, which is what makes "have we already tried this?" answerable at all.
+
+        ``now`` is the CALLER's clock, not this module's. The worker already has one — every deadline
+        in a run is measured against it — and a claim stamped from a second, independent clock is a
+        claim the scheduler's own arithmetic disagrees with. They are the same instant in production;
+        making the dependency explicit is what lets the ladder be tested in simulated time at all."""
+        now = now or _utcnow()
         try:
             with self.session() as s:
                 row = NotificationDelivery(notification_id=notification_id, channel=channel,
                                            subscription_id=subscription_id, user_id=user_id,
-                                           status="pending")
+                                           status="pending", attempts=1,
+                                           attempted_at=now, first_attempted_at=now)
                 s.add(row)
                 s.flush()                    # surface the conflict here, not at commit
                 return int(row.id)
@@ -2935,8 +2990,15 @@ class Store:
             return None                      # already claimed — by an earlier cycle or a racing worker
 
     def record_delivery_result(self, delivery_id: int, status: str, *,
-                               status_code: "int | None" = None, detail: str = "") -> bool:
-        """Resolve a claimed delivery. Returns whether the row was found and updated."""
+                               status_code: "int | None" = None, detail: str = "",
+                               next_attempt_at: "datetime | None" = None) -> bool:
+        """Resolve a claimed delivery. Returns whether the row was found and updated.
+
+        ``next_attempt_at`` is the entire scheduler. Passing a time leaves the delivery **open** — it
+        will be picked up again when that moment arrives; passing ``None`` (the default, and every
+        terminal outcome) closes it and stamps ``completed_at``. Nothing else distinguishes "we are
+        still trying" from "this is over", which is deliberate: a scheduler whose state can disagree
+        with itself is a scheduler that eventually does."""
         with self.session() as s:
             row = s.get(NotificationDelivery, delivery_id)
             if row is None:
@@ -2944,8 +3006,62 @@ class Store:
             row.status = status
             row.status_code = status_code
             row.detail = (detail or "")[:255]
-            row.completed_at = _utcnow()
+            row.next_attempt_at = next_attempt_at
+            # An open delivery has no completion time. Stamping one and then reopening the row would
+            # make `completed_at` mean "the last time we gave up", which no reader of it expects.
+            row.completed_at = None if next_attempt_at is not None else _utcnow()
             return True
+
+    def due_deliveries(self, *, now: "datetime | None" = None, limit: int = 500,
+                       lease_seconds: float = 900.0,
+                       channel: str = "web_push") -> "list[dict]":
+        """Deliveries owed another attempt right now — the retry queue, which is a query and not a queue.
+
+        Two populations, and the second is the one that makes this restart-safe:
+
+        * **scheduled** — ``next_attempt_at`` has arrived. An ordinary backoff coming due.
+        * **abandoned** — still ``pending`` and last touched longer than ``lease_seconds`` ago. Nothing
+          takes that long: the per-send deadline is measured in seconds. A row in this state means the
+          process died between claiming and recording, and without this clause every delivery in flight
+          at deploy time would be lost silently — which, on a system that redeploys often, is not an
+          edge case but the normal way notifications would go missing.
+
+        Ordered oldest-first so a backlog drains in the order it accumulated rather than starving its
+        own head."""
+        moment = now or _utcnow()
+        stale_before = moment - timedelta(seconds=max(0.0, lease_seconds))
+        with self.session() as s:
+            q = (select(NotificationDelivery)
+                 .where(NotificationDelivery.channel == channel)
+                 .where(or_(
+                     and_(NotificationDelivery.next_attempt_at.is_not(None),
+                          NotificationDelivery.next_attempt_at <= moment),
+                     and_(NotificationDelivery.status == "pending",
+                          NotificationDelivery.next_attempt_at.is_(None),
+                          NotificationDelivery.attempted_at <= stale_before)))
+                 .order_by(NotificationDelivery.id.asc()).limit(max(0, limit)))
+            return [self._delivery_view(r) for r in s.scalars(q).all()]
+
+    def lease_delivery(self, delivery_id: int, *, attempts: int,
+                       now: "datetime | None" = None) -> bool:
+        """Take over a due delivery for one more attempt. Returns whether this caller got it.
+
+        ``attempts`` is what :meth:`due_deliveries` reported, and it is checked in the ``WHERE``
+        clause — a compare-and-set. Two workers reading the same due row therefore produce one send:
+        the first increments the counter, the second's update matches nothing and it backs off. This is
+        the same shape as the UNIQUE claim one level up, applied to a row that already exists.
+
+        A single ``UPDATE`` rather than read-modify-write, because the check and the write have to be
+        one statement for the compare to mean anything."""
+        moment = now or _utcnow()
+        with self.session() as s:
+            result = s.execute(
+                update(NotificationDelivery)
+                .where(NotificationDelivery.id == delivery_id,
+                       NotificationDelivery.attempts == int(attempts))
+                .values(status="pending", attempts=int(attempts) + 1, attempted_at=moment,
+                        next_attempt_at=None, completed_at=None))
+            return bool(result.rowcount == 1)
 
     def delivery_attempts(self, notification_id: "int | None" = None, *,
                           user_id: "int | None" = None, limit: int = 200) -> "list[dict]":
@@ -2957,12 +3073,49 @@ class Store:
             if user_id is not None:
                 q = q.where(NotificationDelivery.user_id == user_id)
             rows = s.scalars(q.order_by(NotificationDelivery.id.desc()).limit(max(0, limit))).all()
-            return [{"id": r.id, "notificationId": r.notification_id, "channel": r.channel,
-                     "subscriptionId": r.subscription_id, "userId": r.user_id,
-                     "status": r.status, "statusCode": r.status_code, "detail": r.detail,
-                     "attemptedAt": r.attempted_at.isoformat() if r.attempted_at else None,
-                     "completedAt": r.completed_at.isoformat() if r.completed_at else None}
-                    for r in rows]
+            return [self._delivery_view(r) for r in rows]
+
+    @staticmethod
+    def _delivery_view(r: "NotificationDelivery") -> dict:
+        """One ledger row as plain data. Timestamps as ISO strings, except the two the SCHEDULER reads
+        back — those stay ``datetime`` because the caller does arithmetic on them, and round-tripping
+        through a string to parse it again is where timezone bugs are born."""
+        return {"id": r.id, "notificationId": r.notification_id, "channel": r.channel,
+                "subscriptionId": r.subscription_id, "userId": r.user_id,
+                "status": r.status, "statusCode": r.status_code, "detail": r.detail,
+                "attempts": r.attempts,
+                "attemptedAt": r.attempted_at.isoformat() if r.attempted_at else None,
+                "completedAt": r.completed_at.isoformat() if r.completed_at else None,
+                "firstAttemptedAt": r.first_attempted_at,
+                "nextAttemptAt": r.next_attempt_at}
+
+    def notification_by_id(self, notification_id: int) -> "dict | None":
+        """One notification as the delivery worker needs it — the body a payload is built from.
+
+        The retry path has only ids: the notification it planned from belongs to a run that has since
+        ended, possibly in another process. Re-reading rather than caching is what makes a retry
+        independent of the run that scheduled it."""
+        with self.session() as s:
+            row = s.get(Notification, notification_id)
+            if row is None:
+                return None
+            try:
+                body = dict(json.loads(row.body))
+            except (TypeError, ValueError):
+                body = {}                    # a body we cannot read is not a reason to lose the row
+        return {**body, "id": row.id}        # id last, so a payload key cannot shadow row identity
+
+    def push_subscription_by_id(self, subscription_id: int) -> "dict | None":
+        """One device by id, or ``None`` if it is gone. The retry path must tolerate ``None``: between
+        two attempts a reader may have unregistered, or a 410 on another notification may have pruned
+        it out from under this one."""
+        with self.session() as s:
+            row = s.get(PushSubscription, subscription_id)
+            if row is None:
+                return None
+            return {"id": row.id, "userId": row.user_id, "endpoint": row.endpoint,
+                    "p256dh": row.p256dh, "auth": row.auth,
+                    "contentEncoding": row.content_encoding}
 
     def delete_push_subscription_by_id(self, subscription_id: int) -> "str | None":
         """Remove a device the push service has declared gone (404/410). Returns its endpoint, so the
@@ -2980,7 +3133,19 @@ class Store:
         """Bound the per-user notification history: delete all but the newest ``keep`` rows. Cadence
         kinds legitimately accumulate one row per period forever, so without this the table grows
         without limit for a long-lived account. Unseen rows are NEVER pruned — only settled history
-        is dropped. Returns how many rows were deleted."""
+        is dropped. Returns how many rows were deleted.
+
+        **The delivery ledger goes with them**, and it has to: ``notification_deliveries`` carries a
+        real foreign key to ``notifications``, and ``PRAGMA foreign_keys=ON``, so deleting a
+        notification that a delivery names raises — on this call, which runs on the delivery boundary
+        for every reader on every fetch. B2 introduced that edge without noticing; it only fires once
+        a reader passes ``keep`` notifications *and* one of the prunable ones was pushed, which is why
+        it was invisible until the retry ladder needed to delete a notification on purpose.
+
+        Dropping the ledger rows is the right resolution rather than the expedient one. The ledger's
+        ``subscription_id`` is deliberately not a foreign key, because a record of a send must outlive
+        the *address* it was sent to — but the notification is the send's *subject*, and a record that
+        we delivered something no longer in existence describes nothing an operator can act on."""
         if keep <= 0:
             return 0
         with self.session() as s:
@@ -2992,6 +3157,10 @@ class Store:
             stale = s.scalars(select(Notification).where(
                 Notification.user_id == user_id, Notification.id.notin_(keep_ids),
                 Notification.seen_at.is_not(None))).all()
+            if not stale:
+                return 0
+            s.execute(delete(NotificationDelivery).where(
+                NotificationDelivery.notification_id.in_([r.id for r in stale])))
             for r in stale:
                 s.delete(r)
             return len(stale)

@@ -4,11 +4,12 @@ Operational companion to [`BROWSER_PUSH_ARCHITECTURE.md`](BROWSER_PUSH_ARCHITECT
 frozen design. This document covers what an operator does: generating keys, turning the feature on,
 verifying it, rolling it back, and reading its failures.
 
-**Current state: Phase B2 — registration and delivery.** A browser can be asked for permission and
-register a subscription (B1), and the engine now **sends**: a worker hangs off the ingestion poller,
-fans an event out to every consenting device, records every attempt in a delivery ledger, and prunes
-endpoints a push service declares gone. There is still **no retry ladder** — a transient failure is a
-recorded, un-repeated loss (§9).
+**Current state: Phase B3 — registration, delivery, and retries.** A browser can be asked for
+permission and register a subscription (B1); the engine **sends** (B2) — a worker hangs off the
+ingestion poller, fans an event out to every consenting device, records every attempt in a delivery
+ledger, and prunes endpoints a push service declares gone; and a failure that could succeed later is
+now **tried again** (B3) on an exponential backoff that survives a restart, because the schedule is a
+column rather than a timer.
 
 **Two switches, not one.** `RWE_PUSH_ENABLED` governs *registration*; `RWE_PUSH_DELIVERY` governs
 *sending*. They are separate on purpose: an operator can let readers subscribe, watch the subscription
@@ -391,25 +392,84 @@ just "failed" — a rising `expired` rate and a rising `permanent` rate need opp
 |---|---|---|---|
 | `success` | 2xx | The push service accepted it. Not proof a human saw it — no such signal exists. | Nothing. |
 | `expired` | 404, 410 | The subscription is gone forever. The row is deleted immediately. | Nothing. Ordinary attrition: reinstalls, cleared site data, browsers pruning idle subscriptions. A *spike* usually follows a key rotation (§5). |
-| `transient` | 429, 5xx | The service is unwell; the subscription is fine. | Nothing to fix on our side. Without retries this is a lost delivery — see §9. Sustained 429 means we are being rate-limited and B3 needs to exist. |
-| `timeout` | — | No answer inside `RWE_PUSH_SEND_TIMEOUT_MS`. Delivered or not — unknowable. | Check the deadline is not too tight before assuming the service is slow. |
+| `transient` | 429, 5xx | The service is unwell; the subscription is fine. | Nothing to fix on our side — it is **retried** (§7.1). A `429` carrying `Retry-After` is honoured. Sustained 429 means we are being rate-limited faster than the backoff spreads us out. |
+| `timeout` | — | No answer inside `RWE_PUSH_SEND_TIMEOUT_MS`. Delivered or not — unknowable. | **Retried.** Check the deadline is not too tight before assuming the service is slow. |
 | `permanent` | 400, 401, 403, 413, anything unrecognised | **Our request is wrong** — malformed payload, VAPID mismatch, payload over the size limit. | Investigate every time. This is a bug we shipped, not weather. A 401/403 across all devices is a mismatched key pair (§2). |
 
 An unrecognised status is classified `permanent`, not `transient`, on purpose: once retries exist,
 treating an unknown answer as retryable is how a sender starts hammering a service that is saying no.
 
+### 7.1 The retry ladder
+
+A `transient` or `timeout` outcome schedules another attempt. `expired`, `permanent` and `success` do
+not: the first two cannot succeed on a repeat, and repeating them just spends requests.
+
+**The schedule is a column, not a timer.** `notification_deliveries.next_attempt_at` is the entire
+scheduler — there is no queue, nothing in memory, and nothing to lose when the container restarts
+mid-fan-out. A run finds due work by querying for it. This is also why a deploy during a backlog costs
+nothing: the next run picks up exactly where the last one stopped.
+
+**Three independent bounds**, each answering a different question. All three live in
+`examples/push_retry.py` and are constants rather than environment variables — they are contract, not
+tuning, and changing one without checking the other two breaks the ladder silently:
+
+| Bound | Value | The question it answers |
+|---|---|---|
+| `MAX_ATTEMPTS` | 5 | *How many times.* Without it, a permanently-unreachable service turns one notification into an unbounded stream of requests. |
+| `BASE_SECONDS` / `MAX_BACKOFF_SECONDS` | 30 s → 15 min | *How far apart.* Doubling per attempt, with **equal jitter** (half fixed, half random) so a fan-out that failed together does not retry together. The cap stops the exponent scheduling an attempt days out. |
+| `MAX_DELIVERY_AGE_SECONDS` | 4 h | *For how long overall* — and this is the one that matters. A notification that arrives late enough is not a late notification, it is a **wrong** one: "breaking news" four hours after the fact describes something that has stopped being true, and the reader cannot tell from a lock screen. Deliberately equal to the transport's `ttl`, because the push service drops the message at the same moment anyway. |
+
+With the defaults the whole ladder spans roughly half an hour, well inside the age bound. A test
+asserts that relationship holds, so retuning one bound cannot quietly invalidate another.
+
+**`Retry-After` is a floor, never a ceiling.** A push service asking for *more* time gets it — asking
+again sooner is the definition of hammering. One asking for less does not get to shorten our backoff.
+A value long enough to push the attempt past the age bound ends the ladder rather than parking it.
+
+**A delivery is abandoned without sending** when, at the moment it comes due, the device has been
+unregistered or pruned, the reader has withdrawn consent for that kind on the push channel, the
+notification no longer exists, or the age bound has passed. All four are ordinary. Consent is
+re-checked on **every** attempt, not only the first: it is the reader's decision and they may have
+changed it since.
+
+**Restart recovery.** A row left `pending` — claimed, never resolved — is what a container restart
+mid-send leaves behind. After `LEASE_SECONDS` (15 minutes, far longer than any send can take) another
+run takes it over and logs `push_delivery_recovered`. B2 abandoned these silently; the lease is what
+makes recovering them safe, and the Notification `tag` collapses a duplicate at the OS level if the
+first attempt did in fact land.
+
+```sql
+-- Deliveries currently on the ladder, and when each comes due
+SELECT id, notification_id, subscription_id, status, attempts, next_attempt_at
+  FROM notification_deliveries WHERE next_attempt_at IS NOT NULL ORDER BY next_attempt_at;
+
+-- Gave up: retryable, out of budget. `attempts` at the cap means the service never came back.
+SELECT status, attempts, count(*) FROM notification_deliveries
+ WHERE next_attempt_at IS NULL AND status IN ('transient','timeout') GROUP BY 1, 2;
+
+-- Claimed and never resolved. A handful after a deploy is expected; a growing number is not.
+SELECT count(*) FROM notification_deliveries WHERE status = 'pending';
+```
+
 ### Delivery log events
 
 | Event | Level | Fields | What it tells you |
 |---|---|---|---|
-| `push_send_started` | INFO | `notificationId`, `subscriptionId`, `kind`, `bytes` | A claim was taken and a payload built. Every one of these should be followed by exactly one outcome line. |
-| `push_send_succeeded` | INFO | `notificationId`, `subscriptionId` | The push service accepted it. |
-| `push_send_failed` | **WARNING** | + `status`, `statusCode`, `detail` | Anything that is not success or timeout. `status` is the classification above — read it, not just the code. |
-| `push_send_timeout` | **WARNING** | `notificationId`, `subscriptionId` | No answer inside the deadline. |
+| `push_send_started` | INFO | `notificationId`, `subscriptionId`, `kind`, `attempt`, `bytes` | A claim was taken and a payload built. Every one of these should be followed by exactly one outcome line. `attempt` is 1 on a first try. |
+| `push_send_succeeded` | INFO | + `attempt` | The push service accepted it. |
+| `push_send_failed` | **WARNING** | + `attempt`, `status`, `statusCode`, `detail` | Anything that is not success or timeout. `status` is the classification above — read it, not just the code. |
+| `push_send_timeout` | **WARNING** | `notificationId`, `subscriptionId`, `attempt` | No answer inside the deadline. |
 | `push_send_error` | **WARNING** | + `error` (exception **type**, never a body) | The send path itself raised. A bug, not a push-service answer. |
 | `push_subscription_pruned` | INFO | `subscriptionId`, `userId`, `statusCode` | A 404/410 device was deleted immediately. |
 | `push_payload_oversize` | **WARNING** | `notificationId`, `bytes` | A payload over the 1 KB budget. Logged and still attempted — a payload this big is a defect upstream, and silently mangling it would hide the defect. |
-| `push_run_complete` | INFO | `considered`, `sent`, `failed`, `pruned`, `skipped` | One fan-out finished. `skipped` counts claims an earlier cycle already took, and a steady non-zero value there is normal. |
+| `push_retry_scheduled` | INFO | `notificationId`, `subscriptionId`, `attempt`, `nextAttemptAt`, `retryAfter` | A retryable failure earned another attempt. `retryAfter` is the raw header when the service sent one. |
+| `push_retry_exhausted` | **WARNING** | + `attempts`, `status`, `reason` | The ladder gave up. `reason` is `attempts` (the service never came back) or `age` (the delivery outlived its usefulness) — different problems with different fixes. |
+| `push_retry_abandoned` | INFO | `deliveryId`, `subscriptionId`, `attempts`, `reason` | A due delivery was closed without sending. `reason` ∈ `age`, `subscription_gone`, `consent_withdrawn`, `notification_gone`. All ordinary. |
+| `push_delivery_recovered` | **WARNING** | `deliveryId`, `subscriptionId`, `attempts` | A row left claimed by a process that died was taken over after the lease. A few after a deploy is expected. |
+| `push_retry_scan_failed` | **WARNING** | `error` | The ledger could not be read. The fresh fan-out still ran. |
+| `push_retry_plan_failed` | **WARNING** | `deliveryId`, `error` | One due row could not be planned. The rest of the scan continued. |
+| `push_record_failed` | **WARNING** | `deliveryId`, `error` | A send happened but its result could not be written. The lease will re-attempt it — an over-delivery risk that the notification `tag` collapses. |
+| `push_run_complete` | INFO | `considered`, `sent`, `failed`, `pruned`, `skipped`, `retried`, `scheduled`, `exhausted`, `recovered`, `abandoned` | One fan-out finished. `skipped` counts claims an earlier cycle already took (or that the ladder still owns), and a steady non-zero value there is normal. |
 | `push_run_deadline` | **WARNING** | `plannedReaders` | A run hit the 120-second bound while still planning. The remainder goes on the next cycle. Repeated appearances mean the fan-out has outgrown one cycle. |
 | `push_reader_failed` | **WARNING** | `userId`, `error` | One reader's evaluation raised. The fan-out continued without them. |
 | `push_run_failed` | **WARNING** | `error` | The background run itself died. Should never appear. |
@@ -457,28 +517,36 @@ success — a quiet log is equally consistent with the worker never having run.
 | Tapping a notification opens the wrong page | — | For a *known* kind the worker derives the destination itself and ignores the payload's `href`. A wrong page means the metadata table and the engine disagree — `tests/test_push_delivery.py` cross-checks them, so this should fail CI before it reaches a reader. |
 | Every send is `permanent` with 401/403 | §2 | A mismatched VAPID pair — a public key from one generation with a private key from another. Regenerate both together. |
 | A burst of `expired` right after a rotation | §5 | Expected. Every subscription is bound to the key it was created against; devices heal on their readers' next visit. |
+| The same notification arrives twice on one device | `push_record_failed`, `push_delivery_recovered` (§7) | Delivery is at-least-once; the Notification `tag` normally collapses a repeat at the OS level. Two visible copies means the two payloads carried different `dedupeKey`s, which is a bug worth reporting. |
+| A delivery sits `pending` for a long time | the `pending` query in §7.1 | A process died mid-send. It is recovered after the 15-minute lease. A *growing* count means runs are dying, not just one. |
+| `push_retry_exhausted` with `reason: age` | §7.1 | The delivery outlived its usefulness rather than running out of attempts. Expected after a long push-service outage; the notification was correctly not sent. |
 
 **The device cap's eviction is not `410` pruning.** The cap bounds how many devices one reader holds;
 pruning removes endpoints a push service has declared gone. Both delete rows, for unrelated reasons.
 
 ---
 
-## 9. What B2 does not include
+## 9. What B3 does not include
 
 Stated explicitly so the absence is not read as a defect.
 
-**No retries, no backoff, no queue.** A `transient` or `timeout` failure means that notification is not
-delivered to that device **at all**. The claim row records the attempt and its outcome, and nothing
-picks it up again. This is a real consequence and it was chosen over a half-built retry ladder: the
-ledger is exactly what a later phase selects on to add one, and a claim is deliberately never released
-by a failure, because re-sending on "we do not know whether the reader saw this" is how a platform
-starts duplicating itself.
+**No exactly-once delivery, and there cannot be.** Web Push offers no acknowledgement that a human
+saw anything; a `success` means the push *service* accepted the message. The ladder is therefore
+at-least-once with three collapsing mechanisms behind it — the delivery ledger's UNIQUE constraint,
+the lease, and the Notification `tag`. The residual risk is narrow and named: a send that succeeded but
+whose result could not be written (`push_record_failed`) is re-attempted after the lease, and the
+device shows one notification because the `tag` collapses it.
 
-**No batching and no rate limiting.** The pool is four concurrent sends with a per-send deadline;
-sustained `429` from a push service has no automatic response yet.
+**No batching and no rate limiting.** The pool is four concurrent sends with a per-send deadline, and
+the backoff spreads a failed fan-out out over time — but sustained `429` has no automatic response
+beyond honouring `Retry-After` per delivery.
 
 **No delivery metrics.** Counting log lines and querying `notification_deliveries` is the whole
 facility.
+
+**No retry tuning by configuration.** The three bounds are constants in `examples/push_retry.py`. They
+interact — the ladder has to fit inside the age bound — so exposing them individually as environment
+variables would let an operator produce a ladder whose later attempts can never happen.
 
 **No new notification kinds.** Only the event-driven ones fan out to push; the six cadence and
 state-alert kinds that predate channels remain in-app.

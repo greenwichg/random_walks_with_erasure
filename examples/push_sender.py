@@ -51,10 +51,15 @@ _TRANSIENT_CODES = frozenset({429, 500, 502, 503, 504})
 @dataclasses.dataclass(frozen=True)
 class SendResult:
     """What one attempt resolved to. ``detail`` is short and non-sensitive — a code or an exception
-    type, never a response body, because it lands in a log."""
+    type, never a response body, because it lands in a log.
+
+    ``retry_after`` is the raw ``Retry-After`` header when the push service sent one, left as the
+    string it arrived as. Interpreting it is ``push_retry``'s job, not this module's: both legal forms
+    (a delta and an HTTP-date) need a clock, and a transport has no business owning one."""
     status: str
     status_code: "int | None" = None
     detail: str = ""
+    retry_after: "str | None" = None
 
     @property
     def ok(self) -> bool:
@@ -89,7 +94,8 @@ def classify_exception(exc: BaseException) -> SendResult:
     """
     code = _status_from_exception(exc)
     if code is not None:
-        return SendResult(classify_status(code), code, f"http_{code}")
+        return SendResult(classify_status(code), code, f"http_{code}",
+                          retry_after=_retry_after_from_exception(exc))
 
     name = type(exc).__name__
     if "Timeout" in name:
@@ -106,6 +112,32 @@ def _status_from_exception(exc: BaseException) -> "int | None":
     response = getattr(exc, "response", None)
     code = getattr(response, "status_code", None)
     return int(code) if isinstance(code, int) else None
+
+
+def _retry_after_from_exception(exc: BaseException) -> "str | None":
+    """The ``Retry-After`` a rejection is carrying, if any. This is the header that matters most on a
+    ``429``, and it arrives on the exception rather than on a return value because that is how
+    pywebpush reports a non-2xx."""
+    return _header(getattr(exc, "response", None), "Retry-After")
+
+
+def _header(response, name: str) -> "str | None":
+    """One header off a response object, case-insensitively, tolerating anything that is not one.
+
+    ``requests`` gives a case-insensitive mapping; a hand-rolled stub or an older release may give a
+    plain dict or nothing at all. A header is a nice-to-have on the retry path — failing to read one
+    must never cost the classification that surrounds it."""
+    headers = getattr(response, "headers", None)
+    if not headers:
+        return None
+    try:
+        value = headers.get(name)
+        if value is None:
+            lowered = name.lower()
+            value = next((v for k, v in headers.items() if str(k).lower() == lowered), None)
+        return None if value is None else str(value)
+    except Exception:                             # noqa: BLE001 — not worth a failed classification
+        return None
 
 
 class WebPushSender:
@@ -132,25 +164,49 @@ class WebPushSender:
             "keys": {"p256dh": subscription.get("p256dh"), "auth": subscription.get("auth")},
         }
         try:
-            code = transport(info, data, self.private_key, self.subject, self.timeout)
+            returned = transport(info, data, self.private_key, self.subject, self.timeout)
         except BaseException as exc:              # noqa: BLE001 — classification IS the handling
             return classify_exception(exc)
-        status = classify_status(int(code))
-        return SendResult(status, int(code), "" if status == SUCCESS else f"http_{code}")
+        code, retry_after = _code_and_retry_after(returned)
+        status = classify_status(code)
+        return SendResult(status, code, "" if status == SUCCESS else f"http_{code}",
+                          retry_after=retry_after)
+
+
+def _code_and_retry_after(returned) -> "tuple[int, str | None]":
+    """Normalise what a transport returned into ``(status code, Retry-After)``.
+
+    Two shapes are accepted, deliberately. The real transport returns the push service's **response**,
+    which is where a ``Retry-After`` on a throttled-but-accepted send would live. A test transport
+    returns a bare **int**, because the overwhelming majority of what needs driving here is "answer
+    with this status" and making every one of those construct a response object would be noise around
+    the thing actually under test.
+
+    Anything else is a bug in the transport rather than an answer from a push service, and
+    ``int(...)`` raising is the right outcome — :meth:`WebPushSender.send` catches it and classifies it
+    ``permanent``, which is exactly what a broken transport is."""
+    if isinstance(returned, int):
+        return returned, None
+    code = getattr(returned, "status_code", None)
+    return int(code if code is not None else returned), _header(returned, "Retry-After")
 
 
 def _pywebpush_transport(subscription_info: dict, data: str, private_key: str, subject: str,
-                         timeout: float) -> int:
+                         timeout: float):
     """The real call. Imported here so the module — and the test suite — load without the library.
+
+    Returns the **response**, not just its code: a push service may accept a send and still ask for a
+    slower rate, and that header is only readable here.
 
     ``ttl`` bounds how long the push service may hold an undelivered message for an offline device.
     Four hours: long enough to survive a commute or a night's sleep, short enough that a notification
     does not arrive describing something that has stopped being true. It is the transport's echo of the
-    per-event ``expires_at`` the platform already applies.
+    per-event ``expires_at`` the platform already applies — and, since B3, of ``push_retry``'s own age
+    bound, which is set to the same number so the ladder never outlives the message it is delivering.
     """
     from pywebpush import webpush            # noqa: PLC0415 — deliberate, see the docstring
 
-    response = webpush(
+    return webpush(
         subscription_info=subscription_info,
         data=data,
         vapid_private_key=private_key,
@@ -158,4 +214,3 @@ def _pywebpush_transport(subscription_info: dict, data: str, private_key: str, s
         ttl=14400,
         timeout=timeout,
     )
-    return int(getattr(response, "status_code", 201))
