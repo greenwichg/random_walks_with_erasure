@@ -162,6 +162,51 @@ def _blind_spot_sig(blind_spots) -> str:
     return hashlib.sha1(canon.encode("utf-8")).hexdigest()[:12]
 
 
+#: How many breaking-story notifications one reader may receive in a day. A fan-out's volume is
+#: decided by the news rather than by us, and this product exists to make reading calmer — so the cap
+#: is a platform guarantee, not a tuning knob. A quiet day never reaches it; a chaotic one is capped
+#: rather than allowed to fill the inbox.
+BREAKING_MAX_PER_DAY = 5
+
+
+def _breaking_fanout(ctx: "NotificationContext") -> list:
+    """One ``(dedupe_key, payload)`` per breaking-story event the reader has not already been told
+    about — the first fan-out kind.
+
+    Three filters, each here rather than at the caller, so this kind's decision is complete for any
+    context anyone hands it:
+
+    * **category** — the context may carry events of several categories once product updates exist,
+      and a kind selects its own. Matching the *category* rather than the source type is what keeps
+      the preference (``notifications.categories.breaking``) and the trigger describing one thing.
+    * **expiry** — a three-day-old "breaking" is not breaking. The store filters this too, but
+      ``ctx.now`` is the authoritative evaluation time and this leaf must be right on its own.
+    * **a usable title** — an event whose payload never got one would render as an empty row, which
+      is worse for the reader than nothing at all.
+
+    Keyed on the event id, not the story id: a story id is derived from its earliest-published member
+    and can move if a backfill discovers an earlier article, which would re-announce the same story
+    under a new key. The event row is immutable once written."""
+    out = []
+    now = ctx.now.isoformat()
+    for ev in ctx.events.events:
+        if not isinstance(ev, dict) or ev.get("category") != "breaking":
+            continue
+        expires = ev.get("expiresAt")
+        if expires and str(expires) <= now:
+            continue
+        payload = ev.get("payload") if isinstance(ev.get("payload"), dict) else {}
+        title = str(payload.get("title") or "").strip()
+        if not title:
+            continue
+        out.append((f"ev:{ev.get('id')}",
+                    {"storyId": payload.get("storyId") or ev.get("sourceId"),
+                     "title": title,
+                     "publisherCount": payload.get("publisherCount"),
+                     "occurredAt": ev.get("occurredAt")}))
+    return out
+
+
 def _gated(settings: dict, path: str) -> bool:
     """Read a boolean preference at a dotted ``path`` (e.g. ``notifications.streakReminders``) from the
     normalised settings. Fail-closed: a missing path never delivers."""
@@ -257,6 +302,15 @@ NOTIFICATION_KINDS = (
         dedupe_key=lambda c: f"blind_spot_alert:{_blind_spot_sig(c.report.blind_spots)}",
         payload=lambda c: {"blindSpots": list(c.report.blind_spots),
                            "count": len(c.report.blind_spots)}),
+    # LAST on purpose. `list_notifications` orders by `id DESC`, so within one materialisation the
+    # kind registered last is inserted last and therefore appears FIRST in the inbox — which is where
+    # a breaking story belongs. Appending also leaves the six kinds above in their existing relative
+    # order, so nothing about them changes.
+    NotificationKind(
+        kind="breaking_story", setting_path="notifications.categories.breaking.inApp",
+        mode="discrete",                         # an occurrence: never collapsed, never auto-resolved
+        title_key="notifications.breaking_story.title",
+        fanout=_breaking_fanout, max_per_day=BREAKING_MAX_PER_DAY),
 )
 
 

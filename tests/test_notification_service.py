@@ -82,9 +82,15 @@ def test_all_kinds_fire_when_due_and_enabled():
 
 
 def test_output_is_in_registry_order():
+    """Registry order is the output order. `_ctx()` fires every kind whose trigger is the reader's
+    own state; `breaking_story` needs a global event, so it is added here to exercise the full
+    registry rather than being excused from the property."""
     registry_order = [k.kind for k in ns.NOTIFICATION_KINDS]
     fired = _kinds(ns.evaluate(_ctx()))
-    assert fired == registry_order            # all fire here -> full registry order, deterministic
+    assert fired == [k for k in registry_order if k != "breaking_story"]
+
+    with_event = dataclasses.replace(_ctx(), events=ns.EventInputs(events=(_breaking_event(1),)))
+    assert _kinds(ns.evaluate(with_event)) == registry_order, "the new kind slots into its own place"
 
 
 @pytest.mark.parametrize("kind,setting_path", [
@@ -340,10 +346,144 @@ def test_event_inputs_default_empty_and_carry_events():
 
 
 def test_the_six_shipped_kinds_are_untouched_by_fan_out():
-    """The regression that matters most: every existing kind takes the single-notification path, and
-    none of them acquired a fanout, a cap, or a new mode."""
+    """The regression that matters most: the kinds that predate fan-out still take the
+    single-notification path, and none of them acquired a fanout, a cap, or a new mode. Adding a
+    fan-out kind must change nothing about them."""
     for k in ns.NOTIFICATION_KINDS:
-        assert k.fanout is None, f"{k.kind} must stay a single kind"
-        assert k.max_per_day is None, f"{k.kind} must stay uncapped"
-        assert k.mode in ("cadence", "event"), f"{k.kind} has an unexpected mode {k.mode!r}"
-    assert ns.DISCRETE_KINDS == (), "A3a adds the capability, A3b adds the first user"
+        if k.kind in ALL_KINDS:
+            assert k.fanout is None, f"{k.kind} must stay a single kind"
+            assert k.max_per_day is None, f"{k.kind} must stay uncapped"
+            assert k.mode in ("cadence", "event"), f"{k.kind} has an unexpected mode {k.mode!r}"
+    assert set(ns.DISCRETE_KINDS).isdisjoint(ALL_KINDS), "no shipped kind became discrete"
+
+
+# --------------------------------------------------------------------------- #
+# breaking_story — the first fan-out kind (A3b).
+#
+# A3a's tests pin the FRAMEWORK against a synthetic kind. These pin this kind's own policy: what it
+# selects out of the context, what it puts in the payload, and the cap that keeps a chaotic news day
+# from filling the inbox.
+# --------------------------------------------------------------------------- #
+def _breaking_event(i, *, title="Court issues major ruling", category="breaking",
+                    expires_at=None, story_id=None, publishers=4):
+    """An event shaped exactly as `store.recent_notification_events` returns one."""
+    return {"id": i, "sourceType": "story_breaking", "sourceId": story_id or f"st_{i}",
+            "category": category,
+            "payload": {"storyId": story_id or f"st_{i}", "title": title,
+                        "publisherCount": publishers, "band": "Breaking"},
+            "occurredAt": "2026-07-15T11:00:00+00:00", "expiresAt": expires_at}
+
+
+def _breaking_ctx(events=(), *, on=True, delivered=(), counts=None, now=NOW):
+    return ns.NotificationContext(
+        now=now,
+        settings=ss.normalize_settings({"notifications": {"categories": {"breaking": {"inApp": on}}}}),
+        delivery=ns.DeliveryState(delivered_keys=frozenset(delivered), counts_today=dict(counts or {})),
+        events=ns.EventInputs(events=tuple(events)))
+
+
+def _breaking(out):
+    return [n for n in out if n.kind == "breaking_story"]
+
+
+def test_each_breaking_event_becomes_one_notification():
+    """The requirement in one line: one notification per STORY, not per article and not per update.
+    The event table already guarantees one event per story; this guarantees one notification per
+    event."""
+    out = _breaking(ns.evaluate(_breaking_ctx([_breaking_event(1), _breaking_event(2)])))
+    assert [n.dedupe_key for n in out] == ["ev:1", "ev:2"]
+    assert [n.payload["storyId"] for n in out] == ["st_1", "st_2"]
+    assert {n.title_key for n in out} == {"notifications.breaking_story.title"}
+
+
+def test_the_payload_carries_what_the_inbox_needs_to_deep_link():
+    out = _breaking(ns.evaluate(_breaking_ctx([_breaking_event(7, story_id="st_xyz")])))
+    assert out[0].payload == {"storyId": "st_xyz", "title": "Court issues major ruling",
+                              "publisherCount": 4, "occurredAt": "2026-07-15T11:00:00+00:00"}
+
+
+def test_the_dedupe_key_is_the_event_not_the_story():
+    """A story id is derived from its earliest-published member, so a backfill that discovers an
+    earlier article can move it. Keying on the immutable event row is what stops that re-announcing
+    a story the reader already saw."""
+    ev = _breaking_event(3, story_id="st_original")
+    assert _breaking(ns.evaluate(_breaking_ctx([ev])))[0].dedupe_key == "ev:3"
+    moved = {**ev, "sourceId": "st_moved", "payload": {**ev["payload"], "storyId": "st_moved"}}
+    assert _breaking(ns.evaluate(_breaking_ctx([moved])))[0].dedupe_key == "ev:3", "same event, same key"
+
+
+def test_only_breaking_category_events_are_selected():
+    """The context will carry other categories once product updates exist; a kind selects its own.
+    Matched on CATEGORY, which is what the reader's preference is expressed in."""
+    events = [_breaking_event(1), _breaking_event(2, category="product"),
+              _breaking_event(3, category="digests")]
+    assert [n.dedupe_key for n in _breaking(ns.evaluate(_breaking_ctx(events)))] == ["ev:1"]
+
+
+def test_expired_events_do_not_fire():
+    """A three-day-old "breaking" is not breaking. `ctx.now` is the authority, so this holds even if
+    the caller handed us a stale list."""
+    events = [_breaking_event(1, expires_at="2026-07-15T09:00:00+00:00"),   # before NOW
+              _breaking_event(2, expires_at="2026-07-15T17:00:00+00:00"),   # after NOW
+              _breaking_event(3, expires_at=None)]                          # never expires
+    assert [n.dedupe_key for n in _breaking(ns.evaluate(_breaking_ctx(events)))] == ["ev:2", "ev:3"]
+
+
+def test_an_event_without_a_usable_title_is_skipped():
+    """An empty row is worse for the reader than no row."""
+    events = [_breaking_event(1, title=""), _breaking_event(2, title="   "), _breaking_event(3)]
+    assert [n.dedupe_key for n in _breaking(ns.evaluate(_breaking_ctx(events)))] == ["ev:3"]
+
+
+def test_a_malformed_event_cannot_break_evaluation():
+    """Events are JSON from the database. A row that lost its shape must be skipped, never raise —
+    one bad event may not cost the reader their whole inbox."""
+    events = ["not-a-dict", None, {"id": 9}, {"id": 10, "category": "breaking", "payload": None},
+              _breaking_event(11)]
+    out = _breaking(ns.evaluate(_breaking_ctx(events)))
+    assert [n.dedupe_key for n in out] == ["ev:11"]
+
+
+def test_breaking_is_capped_per_day_at_five():
+    """A fan-out's volume is set by the news. The cap is a platform guarantee in a product about
+    reading more calmly — a quiet day never reaches it, a chaotic one is bounded."""
+    assert ns.BREAKING_MAX_PER_DAY == 5
+    events = [_breaking_event(i) for i in range(1, 11)]
+    out = _breaking(ns.evaluate(_breaking_ctx(events)))
+    assert len(out) == 5
+    assert [n.dedupe_key for n in out] == ["ev:1", "ev:2", "ev:3", "ev:4", "ev:5"]
+
+    partial = _breaking(ns.evaluate(_breaking_ctx(events, counts={"breaking_story": 3})))
+    assert len(partial) == 2, "the cap counts what the reader already received today"
+
+
+def test_breaking_is_gated_by_its_category_and_is_fail_closed():
+    events = [_breaking_event(1)]
+    assert _breaking(ns.evaluate(_breaking_ctx(events, on=False))) == []
+    bare = ns.NotificationContext(now=NOW, settings={}, events=ns.EventInputs(events=tuple(events)))
+    assert _breaking(ns.evaluate(bare)) == [], "a missing preference path never delivers"
+
+
+def test_a_delivered_breaking_notification_is_not_repeated():
+    events = [_breaking_event(1), _breaking_event(2)]
+    out = _breaking(ns.evaluate(_breaking_ctx(events, delivered=("ev:1",))))
+    assert [n.dedupe_key for n in out] == ["ev:2"]
+
+
+def test_breaking_is_discrete_and_therefore_never_auto_resolves():
+    """F2, at the kind level. `notification_delivery` resolves every kind `inactive_event_kinds`
+    names; a story that has stopped breaking still broke, and the reader should still see that."""
+    assert "breaking_story" in ns.DISCRETE_KINDS
+    assert "breaking_story" not in ns.EVENT_KINDS
+    assert "breaking_story" not in ns.inactive_event_kinds(_breaking_ctx([]))
+    assert "breaking_story" not in ns.inactive_event_kinds(_breaking_ctx([], on=False))
+
+
+def test_breaking_is_registered_last_so_it_leads_the_inbox():
+    """`store.list_notifications` orders by `id DESC`, so within one materialisation the kind
+    registered LAST is inserted last and shows first. That is where a breaking story belongs."""
+    assert ns.NOTIFICATION_KINDS[-1].kind == "breaking_story"
+
+
+def test_no_events_means_no_breaking_notifications():
+    assert _breaking(ns.evaluate(_breaking_ctx([]))) == []
