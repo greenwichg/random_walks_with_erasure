@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
+import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 /**
@@ -105,6 +106,28 @@ before(() => {
   assert.ok(
     fs.existsSync(path.join(WEB, "public", "sw-data.js")),
     "run `node scripts/build-sw-data.mjs` first — the worker's data is a build artifact",
+  );
+});
+
+test("the worker's data builds on a Node without TypeScript type stripping", () => {
+  /**
+   * The production web image is `node:20-slim`. Type stripping arrived in Node 22.18, so a build
+   * script that imports a `.ts` file directly works here and fails there with
+   * `ERR_UNKNOWN_FILE_EXTENSION` — taking `npm run build`, and therefore the whole image, with it.
+   *
+   * That shipped once: development runs Node 22 and so does CI, so nothing between the editor and
+   * the registry ever ran the Node the container actually uses. `--no-experimental-strip-types` is
+   * the closest available simulation, and it is exact for this failure mode.
+   */
+  const result = spawnSync(
+    process.execPath,
+    ["--no-experimental-strip-types", "scripts/build-sw-data.mjs"],
+    { cwd: WEB, encoding: "utf8" },
+  );
+  assert.equal(
+    result.status,
+    0,
+    `build-sw-data must not depend on type stripping:\n${result.stderr}`,
   );
 });
 

@@ -18,12 +18,45 @@
  * Run: `node scripts/build-sw-data.mjs` (wired into `npm run build` and `npm run build:e2e`).
  */
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { NOTIFICATION_KINDS, GENERIC_KIND } from "../lib/notification-kinds.ts";
+import { pathToFileURL, fileURLToPath } from "node:url";
+import ts from "typescript";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WEB = path.resolve(__dirname, "..");
+
+/**
+ * Load the metadata table from its TypeScript source.
+ *
+ * **Not `import ... from "../lib/notification-kinds.ts"`**, which is what this did first and which
+ * works only on Node ≥22.18, where type stripping is on by default. The production web image is
+ * `node:20-slim`, where the same line fails the whole build with `ERR_UNKNOWN_FILE_EXTENSION` — a
+ * blocker that never appeared in development because this machine runs Node 22, and never appeared
+ * in CI because CI runs the same Node this machine does.
+ *
+ * Transpiling with the `typescript` already in devDependencies is version-proof: it works on every
+ * Node the app could plausibly run on, and it keeps the table in the typed file the app itself
+ * imports rather than splitting it into a second source of truth to satisfy a build script.
+ */
+async function loadKinds() {
+  const source = path.join(WEB, "lib", "notification-kinds.ts");
+  const js = ts.transpileModule(fs.readFileSync(source, "utf8"), {
+    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+    fileName: source,
+  }).outputText;
+  // Via a real file rather than a `data:` URL: a data URL cannot resolve relative imports, and a
+  // future edit adding one to this module would fail in a way that points nowhere near the cause.
+  const tmp = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "ih-swdata-")), "kinds.mjs");
+  try {
+    fs.writeFileSync(tmp, js, "utf8");
+    return await import(pathToFileURL(tmp).href);
+  } finally {
+    fs.rmSync(path.dirname(tmp), { recursive: true, force: true });
+  }
+}
+
+const { NOTIFICATION_KINDS, GENERIC_KIND } = await loadKinds();
 const LANGS = ["en", "es", "fr", "de", "pt"];
 const PREFIX = "notifications.";
 const OUT = path.join(WEB, "public", "sw-data.js");
