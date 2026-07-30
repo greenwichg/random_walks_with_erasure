@@ -4,7 +4,7 @@
 // and it is called on the sign-in path where a wrong request means a session that can never be
 // attributed. These pin the request it sends and the four ways it can decline to return an id. The
 // helper moved out of lib/auth.ts unchanged; this is the first test coverage it has had.
-import { test } from "node:test";
+import { mock, test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -860,4 +860,169 @@ test("the resolver and the predicate agree, so no token is both un-usable and un
     assert.equal(await resolveEngineUserId({ ...GOOGLE_TOKEN, engineUserId: "42" }), 42);
     assert.equal(state.fetches, 1);
   });
+});
+
+// --------------------------------------------------------------------------------------------------
+// Caller-specific deadlines (S1).
+//
+// Recovery is awaited inside `getServerSession`, so its deadline is a reader waiting on a render for
+// work they did not ask for; sign-in's deadline is the reader waiting for the thing they DID ask for.
+// Same helper, two deadlines, chosen by caller.
+//
+// Driven with node:test mock timers rather than real ones: the difference under test is 2000ms vs
+// 6000ms, and a suite that waited those out would be slower than everything else here combined. Ticking
+// is also exact — "still pending at 2001ms" is an assertion, not a race against a machine's load.
+// --------------------------------------------------------------------------------------------------
+
+/** A fetch that never answers but honours abort — a wedged engine mid-request. */
+function wedged(observed: { aborts: number }) {
+  return (_url: string, init: RequestInit) =>
+    new Promise<Response>((_res, rej) => {
+      init.signal?.addEventListener("abort", () => {
+        observed.aborts += 1;
+        rej(new DOMException("aborted", "AbortError"));
+      });
+    });
+}
+
+/** Let queued microtasks run without advancing mocked time. */
+const flush = () => new Promise((r) => setImmediate(r));
+
+async function withMockTimers(fn: () => Promise<void>): Promise<void> {
+  const realWarn = console.warn;
+  console.warn = () => {};
+  __resetIdentityCache();
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    await fn();
+  } finally {
+    mock.timers.reset();
+    console.warn = realWarn;
+    __resetIdentityCache();
+  }
+}
+
+test("sign-in keeps the full default deadline — it is not shortened by recovery's", async () => {
+  const g = globalThis as unknown as { fetch: unknown };
+  const realFetch = g.fetch;
+  const observed = { aborts: 0 };
+  g.fetch = wedged(observed);
+  try {
+    await withMockTimers(async () => {
+      let settled = false;
+      // `upsertEngineUser` with no options is exactly what `callbacks.jwt` calls on sign-in.
+      const p = upsertEngineUser(IDENTITY).then(() => { settled = true; });
+
+      mock.timers.tick(2001);                       // past the RECOVERY deadline
+      await flush();
+      assert.equal(settled, false, "sign-in must NOT give up at recovery's 2s");
+      assert.equal(observed.aborts, 0);
+
+      mock.timers.tick(6000 - 2001 + 1);            // past the DEFAULT deadline
+      await p;
+      assert.equal(settled, true, "sign-in gives up at the 6s default");
+      assert.equal(observed.aborts, 1);
+    });
+  } finally {
+    g.fetch = realFetch;
+  }
+});
+
+test("recovery gives up at the shorter deadline instead of holding the render", async () => {
+  const g = globalThis as unknown as { fetch: unknown };
+  const realFetch = g.fetch;
+  const observed = { aborts: 0 };
+  g.fetch = wedged(observed);
+  try {
+    await withMockTimers(async () => {
+      let result: number | null | "pending" = "pending";
+      const p = resolveEngineUserId(GOOGLE_TOKEN).then((v) => { result = v; });
+
+      mock.timers.tick(1999);
+      await flush();
+      assert.equal(result, "pending", "not before its deadline");
+
+      mock.timers.tick(2);
+      await p;
+      assert.equal(result, null, "recovery gives up at ~2s, four seconds before sign-in would");
+      assert.equal(observed.aborts, 1, "and the request is actually aborted, not merely abandoned");
+
+      // Unchanged by the shorter deadline: it is still a remembered failure, not a special case.
+      const stats = __identityCacheStats();
+      assert.equal(stats.entries, 1, "the backoff is recorded exactly as any other failure");
+      assert.equal(stats.inflight, 0, "and the in-flight entry is released");
+    });
+  } finally {
+    g.fetch = realFetch;
+  }
+});
+
+test("a recovery that times out leaves sign-in behaviour untouched", async () => {
+  // The deadlines must not be coupled through any shared state — no module-level "current timeout",
+  // no leaked AbortController. A repair giving up early must be invisible to the next sign-in.
+  const g = globalThis as unknown as { fetch: unknown };
+  const realFetch = g.fetch;
+  const observed = { aborts: 0 };
+  try {
+    await withMockTimers(async () => {
+      g.fetch = wedged(observed);
+      let recovered: number | null | "pending" = "pending";
+      const recovery = resolveEngineUserId(GOOGLE_TOKEN).then((v) => { recovered = v; });
+      mock.timers.tick(2001);
+      await recovery;
+      assert.equal(recovered, null, "recovery timed out");
+
+      // Now a sign-in, against an engine that answers. It must succeed normally.
+      g.fetch = async () => ok({ userId: 42 });
+      assert.equal(await upsertEngineUser(IDENTITY), 42, "sign-in still resolves an id");
+
+      // And a sign-in against a still-wedged engine must still get the FULL default deadline —
+      // the earlier timeout must not have shortened anything.
+      g.fetch = wedged(observed);
+      let signInSettled = false;
+      const signIn = upsertEngineUser(IDENTITY).then(() => { signInSettled = true; });
+      mock.timers.tick(2001);
+      await flush();
+      assert.equal(signInSettled, false, "sign-in's deadline is still 6s, not recovery's 2s");
+      mock.timers.tick(4000);
+      await signIn;
+      assert.equal(signInSettled, true);
+    });
+  } finally {
+    g.fetch = realFetch;
+  }
+});
+
+test("upsertEngineUser accepts a per-call deadline, and omitting it changes nothing", async () => {
+  // The override is what makes the deadline caller-specific rather than global. Omitting it must be
+  // byte-identical to before this existed, which is what keeps both sign-in paths untouched.
+  const g = globalThis as unknown as { fetch: unknown };
+  const realFetch = g.fetch;
+  const observed = { aborts: 0 };
+  g.fetch = wedged(observed);
+  try {
+    await withMockTimers(async () => {
+      let result: number | null | "pending" = "pending";
+      const p = upsertEngineUser(IDENTITY, { timeoutMs: 500 }).then((v) => { result = v; });
+      mock.timers.tick(499);
+      await flush();
+      assert.equal(result, "pending");
+      mock.timers.tick(2);
+      await p;
+      assert.equal(result, null, "the per-call deadline is honoured, and a timeout is still `null`");
+    });
+
+    await withMockTimers(async () => {
+      let settled = false;
+      const p = upsertEngineUser(IDENTITY, {}).then(() => { settled = true; });
+      mock.timers.tick(2001);
+      await flush();
+      assert.equal(settled, false, "an empty options object must not become a zero deadline");
+      mock.timers.tick(4000);
+      await p;
+      assert.equal(settled, true);
+    });
+  } finally {
+    g.fetch = realFetch;
+  }
 });

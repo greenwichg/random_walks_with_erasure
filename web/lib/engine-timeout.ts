@@ -28,6 +28,31 @@ export function engineTimeoutMs(): number {
 }
 
 /**
+ * The ceiling for an *opportunistic repair* — currently only identity recovery.
+ *
+ * Recovery runs inside `callbacks.jwt`, which runs inside `getServerSession`, which a server component
+ * awaits. So its deadline is time a reader spends looking at nothing. The general deadline is the right
+ * length for work the reader actually asked for: a sign-in that takes six seconds is bad, a sign-in
+ * that fails because the engine needed five is worse. A repair has no such claim on the request — it
+ * can decline and try again in 30 seconds (`BACKOFF_MS`), and the reader loses nothing but the repair
+ * they did not know was happening.
+ *
+ * Clamped, never flat. Lowering `RWE_BACKEND_TIMEOUT_MS` below this ceiling must lower recovery too,
+ * or an operator tightening the engine deadline would leave the *repair* path as the slowest thing in
+ * the request — the opposite of what they asked for.
+ *
+ * No environment variable of its own, deliberately. It is a ratio to a knob that already exists rather
+ * than an independent policy, and every new variable has to be threaded onto the `web` service in both
+ * compose files (and guarded in `deployment-rules.json`) or it silently does nothing — which is exactly
+ * how the identity-recovery kill switch shipped inert the first time.
+ */
+const RECOVERY_TIMEOUT_MS = 2000;
+
+export function recoveryTimeoutMs(): number {
+  return Math.min(engineTimeoutMs(), RECOVERY_TIMEOUT_MS);
+}
+
+/**
  * `fetch` with a deadline. Rejects at the deadline — or earlier, with the transport's own error — so
  * the caller decides what a failure means. Always clears its timer, so a resolved call leaves no
  * pending handle behind.

@@ -17,7 +17,7 @@
 // resolves — but a VALUE import between lib modules has to look like this. `moduleResolution: bundler`
 // accepts it, and so do webpack and SWC.
 import { isEmailAllowed } from "./beta-access.ts";
-import { fetchWithTimeout } from "./engine-timeout.ts";
+import { fetchWithTimeout, recoveryTimeoutMs } from "./engine-timeout.ts";
 
 const ENGINE_BASE = process.env.RWE_BACKEND_URL ?? "http://127.0.0.1:8000";
 
@@ -43,7 +43,10 @@ type UpsertOutcome =
  * The upsert, with its failure reason intact. `upsertEngineUser` is the thin `number | null` wrapper
  * over this and is what the sign-in paths use; recovery uses this one so it can say what went wrong.
  */
-async function attemptEngineUpsert(input: EngineIdentityInput): Promise<UpsertOutcome> {
+async function attemptEngineUpsert(
+  input: EngineIdentityInput,
+  timeoutMs?: number,
+): Promise<UpsertOutcome> {
   try {
     // fetchWithTimeout, not bare fetch: a wedged engine must fail rather than hang. The recovery path
     // coalesces concurrent callers onto one in-flight promise, so a promise that never settles would
@@ -68,7 +71,7 @@ async function attemptEngineUpsert(input: EngineIdentityInput): Promise<UpsertOu
         email: input.email ?? undefined,
         displayName: input.displayName ?? undefined,
       }),
-    });
+    }, timeoutMs);   // undefined ⇒ fetchWithTimeout's own default, i.e. engineTimeoutMs()
     if (!res.ok) return { ok: false, reason: `http_${res.status}` };
     const data = (await res.json()) as { userId?: number };
     return typeof data.userId === "number"
@@ -89,9 +92,16 @@ async function attemptEngineUpsert(input: EngineIdentityInput): Promise<UpsertOu
 /**
  * Map a third-party identity to the stable engine user id, or `null` if the engine
  * is unreachable — in which case the app simply falls back to the demo reader.
+ *
+ * `opts.timeoutMs` overrides the deadline for this call only; omitting it keeps the shared
+ * `RWE_BACKEND_TIMEOUT_MS` default, which is what both sign-in paths want. The override exists because
+ * the right deadline depends on who is waiting: see `recoveryTimeoutMs` in lib/engine-timeout.ts.
  */
-export async function upsertEngineUser(input: EngineIdentityInput): Promise<number | null> {
-  const outcome = await attemptEngineUpsert(input);
+export async function upsertEngineUser(
+  input: EngineIdentityInput,
+  opts?: { timeoutMs?: number },
+): Promise<number | null> {
+  const outcome = await attemptEngineUpsert(input, opts?.timeoutMs);
   return outcome.ok ? outcome.userId : null;
 }
 
@@ -283,12 +293,18 @@ export async function resolveEngineUserId(token: RecoverableToken): Promise<numb
     return null;
   }
 
-  const attempt = attemptEngineUpsert({
-    provider,
-    providerAccountId,
-    email,
-    displayName: typeof token.name === "string" ? token.name : null,
-  })
+  const attempt = attemptEngineUpsert(
+    {
+      provider,
+      providerAccountId,
+      email,
+      displayName: typeof token.name === "string" ? token.name : null,
+    },
+    // The repair's own deadline, shorter than sign-in's. This call is awaited inside
+    // `getServerSession`, so every millisecond is a reader waiting on a render for work they did not
+    // ask for. Giving up early costs nothing: the failure is remembered and retried after BACKOFF_MS.
+    recoveryTimeoutMs(),
+  )
     // `attemptEngineUpsert` swallows its own errors, so this is belt and braces — but it is placed
     // BEFORE the handler below rather than after it on purpose. Normalising a throw into an outcome
     // here means there is exactly one place that remembers and logs, so no interleaving can record the

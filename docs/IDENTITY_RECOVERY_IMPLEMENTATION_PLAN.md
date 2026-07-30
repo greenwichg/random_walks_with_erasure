@@ -28,6 +28,7 @@ certified, exactly as planned.
 | **5c** | test | Commit the session-recovery acceptance test — **done** | **no** — test-only | `git revert` |
 | ~~**6**~~ | ~~web~~ | ~~Call the resolver from `engineAuthHeaders` (immediate heal)~~ — **deleted, redundant** | — | — |
 | **7** | docs | Designs flipped to implemented; ops note; accepted-debt register — **done** | no | trivial |
+| **S1** | web | Recovery-specific deadline (`recoveryTimeoutMs`) — **done**, from the readiness review | yes — a wedged engine costs a repair 2 s, not 6 | `git revert` |
 
 Each is independently deployable. The ordering constraint is only that **1 should reach production no
 later than 5**, because recovery multiplies concurrent first-sightings and 1 is what makes losing one
@@ -338,6 +339,10 @@ Both design documents flipped from proposal to implemented; the operational sect
 each `reason` means and what to do about it, how to disable recovery) added as design §5a; the
 allowlist-shortcut invariant written down in §4; and the production-readiness review's deferred findings
 and accepted debt recorded in §10 so they are decisions with reasons rather than omissions.
+
+**Follow-ups still open:** S2 (`refreshProfile`, engine then web) and S4b (Playwright test 14),
+both specified in [`SESSION_IDENTITY_RECOVERY_DESIGN.md`](SESSION_IDENTITY_RECOVERY_DESIGN.md) §10.
+S1 is closed — see the commit table.
 
 **Not done here:** recording the observed recovery-log volume after a day in production. That needs
 production, and deploys are manual. It is the first thing to add once the stack has run with commit 5

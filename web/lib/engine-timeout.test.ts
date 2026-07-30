@@ -6,7 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { engineTimeoutMs, fetchWithTimeout } from "./engine-timeout.ts";
+import { engineTimeoutMs, fetchWithTimeout, recoveryTimeoutMs } from "./engine-timeout.ts";
 
 /** A fetch that never answers but honours the abort signal — how undici behaves against a wedged
  *  server that has accepted the connection. */
@@ -118,4 +118,47 @@ test("a late rejection after the deadline does not surface as an unhandled rejec
     rejectLate(new Error("socket closed, long after we gave up"));
     await new Promise((r) => setTimeout(r, 50));            // let any unhandled rejection surface
   });
+});
+
+// --------------------------------------------------------------------------------------------------
+// The recovery deadline (S1). Identity recovery is an opportunistic repair awaited inside
+// getServerSession, so its deadline is a reader waiting on a render for work they did not ask for.
+// Sign-in is not: there the reader IS waiting for that call, and failing early is worse than being
+// slow. Hence two deadlines, chosen by caller.
+// --------------------------------------------------------------------------------------------------
+
+async function withGlobalTimeout(value: string | undefined, fn: () => void): Promise<void> {
+  const real = process.env.RWE_BACKEND_TIMEOUT_MS;
+  if (value === undefined) delete process.env.RWE_BACKEND_TIMEOUT_MS;
+  else process.env.RWE_BACKEND_TIMEOUT_MS = value;
+  try {
+    fn();
+  } finally {
+    if (real === undefined) delete process.env.RWE_BACKEND_TIMEOUT_MS;
+    else process.env.RWE_BACKEND_TIMEOUT_MS = real;
+  }
+}
+
+test("recoveryTimeoutMs is shorter than the general deadline, and never longer", async () => {
+  await withGlobalTimeout(undefined, () => {
+    assert.equal(engineTimeoutMs(), 6000, "sign-in keeps the existing default");
+    assert.equal(recoveryTimeoutMs(), 2000, "a repair gets ~2s of a reader's render, not six");
+  });
+
+  // Clamped, not flat: an operator who tightens the engine deadline must tighten the repair too, or
+  // the repair path becomes the slowest thing in the request — the opposite of what they asked for.
+  await withGlobalTimeout("800", () => {
+    assert.equal(engineTimeoutMs(), 800);
+    assert.equal(recoveryTimeoutMs(), 800, "recovery must never outlast the general deadline");
+  });
+  await withGlobalTimeout("30000", () => {
+    assert.equal(recoveryTimeoutMs(), 2000, "a generous global does not license a slow repair");
+  });
+
+  // And it inherits the same rejection of nonsense, because it is derived rather than parsed twice.
+  for (const bad of ["", "  ", "abc", "0", "-5"]) {
+    await withGlobalTimeout(bad, () => {
+      assert.equal(recoveryTimeoutMs(), 2000, `RWE_BACKEND_TIMEOUT_MS=${JSON.stringify(bad)}`);
+    });
+  }
 });

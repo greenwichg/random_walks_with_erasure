@@ -305,7 +305,7 @@ docker logs deploy-web-1 2>&1 | grep engine_identity | tail -20
 |---|---|---|
 | `engine_identity_recovered` | A broken session was repaired. **This is the feature working.** | Nothing. A *rising* rate means sign-in-time engine unavailability — look at deploy timing and engine restarts, not at recovery. |
 | `engine_identity_recovery_failed`, `reason: http_401` | The engine rejected the call. In production this is `RWE_INTERNAL_SECRET` mismatched between the `web` and `api` services. | Compare the two; they must be byte-identical. Until fixed, **no** session can be repaired. |
-| `…_failed`, `reason: timeout` | The engine accepted the connection and did not answer within `RWE_BACKEND_TIMEOUT_MS`. Wedged, not down. | Check engine health and load. Recovery retries after 30 s per identity. |
+| `…_failed`, `reason: timeout` | The engine accepted the connection and did not answer within recovery's deadline — **2 s**, not the 6 s a sign-in gets (§5b). Wedged, not down. | Check engine health and load. Recovery retries after 30 s per identity. |
 | `…_failed`, `reason: unreachable`, `detail: ECONNREFUSED` | The engine is down or restarting. | Expected briefly during a deploy; self-corrects. Sustained means the `api` service is not up. |
 | `…_failed`, `detail: ENOTFOUND` | `RWE_BACKEND_URL` is wrong. | Configuration, not an outage. |
 | `…_failed`, `reason: malformed_response` | A 2xx without a numeric `userId` — the internal contract broke. | Engine bug or a proxy rewriting the body. Escalate; this should be impossible. |
@@ -321,6 +321,29 @@ whole reason the failure line exists.
 **What is not instrumented.** There is no counter, gauge, or `/api/metrics` series for recovery — the
 log line is the only signal, and answering "how many sessions are currently broken?" requires counting
 lines. Accepted for now (§10); revisit if the recovered rate stops being near-zero.
+
+### 5b. Two deadlines, chosen by caller
+
+`RWE_BACKEND_TIMEOUT_MS` (default 6000) bounds every engine call. Recovery does **not** use it directly:
+
+| Caller | Deadline | Why |
+|---|---|---|
+| Sign-in — `callbacks.jwt` with `account`, and the dev provider's `authorize()` | `engineTimeoutMs()`, 6 s | The reader is waiting for *this* call. A sign-in that takes six seconds is bad; a sign-in that fails because the engine needed five is worse. |
+| Recovery — `resolveEngineUserId` | `recoveryTimeoutMs()` = `min(engineTimeoutMs(), 2000)` | Awaited inside `getServerSession`, so the deadline is a reader waiting on a render for work they never asked for. Giving up early costs only the repair, and the next request retries after the 30 s backoff. |
+
+**Clamped, never flat.** Lowering `RWE_BACKEND_TIMEOUT_MS` below 2 s lowers recovery with it — otherwise
+an operator tightening the engine deadline would leave the *repair* as the slowest thing in the request,
+the opposite of what they asked for. Raising it above 2 s does not lengthen recovery.
+
+**No environment variable of its own**, deliberately. It is a ratio to a knob that already exists rather
+than an independent policy, and every new variable must be threaded onto the `web` service in both
+compose files and guarded in `deployment-rules.json` or it silently does nothing — which is how the kill
+switch shipped inert the first time (§5a). If tuning it ever becomes necessary, that plumbing is the
+cost, and it should be paid deliberately.
+
+The practical effect: a wedged engine costs an affected reader ~2 s on one render per 30 s, instead of
+~6 s. A *dead* engine — the common case during a deploy — still fails in microseconds via
+`ECONNREFUSED` and is unaffected by either number.
 
 ### Turning it off
 
@@ -576,11 +599,16 @@ Everything below was found by a production-readiness review *after* the implemen
 was classified deliberately rather than left implicit. "Accepted" means someone decided, not that nobody
 looked.
 
+### Closed since the review
+
+| # | Gap | How it was closed |
+|---|---|---|
+| **S1** | Recovery inherited the general 6 s engine deadline, so a **wedged** engine could hold a server render for that long. | `recoveryTimeoutMs()` in `lib/engine-timeout.ts` — `min(engineTimeoutMs(), 2000)`, passed per call. Sign-in keeps the 6 s default; the repair gives up at 2 s and retries after the 30 s backoff. See §5b. |
+
 ### Deferred to a follow-up PR
 
 | # | Gap | Why it was not a release blocker | What the fix looks like |
 |---|---|---|---|
-| **S1** | Recovery inherits the general 6 s engine deadline, so a **wedged** engine can hold a server render for that long. | Reaching it needs the engine *listening but not answering*; the common outage — a restarting container — gives `ECONNREFUSED` in microseconds. Bounded to once per identity per 30 s by the backoff. | An optional `timeoutMs` on `upsertEngineUser`: sign-in keeps 6 s (the reader is waiting and a failed sign-in is worse than a slow one), recovery gets ~2 s (it can wait 30 s for the next attempt). |
 | **S2** | Recovery sends `email` and `displayName` from the token, and the engine refreshes both. A long-idle broken session can therefore write a **stale profile over a newer one**. | Recovery normally runs on the request right after the failed sign-in, when the token's profile is seconds old. The bad case needs a session broken for weeks, a profile change, *and* another device having updated the engine meanwhile. | `refreshProfile` on `POST /api/internal/users`, defaulting to `true` so an old web tier is unaffected; recovery sends `false`. Engine change first, web change second. Also makes the concurrent-first-sighting retry cleanly read-only ([`IDENTITY_UPSERT_CONCURRENCY.md`](IDENTITY_UPSERT_CONCURRENCY.md) §4). |
 | **S4b** | No Playwright test drives a **real** engine refusing `/api/internal/users` and then recovering. | `lib/session-recovery.test.ts` covers the mechanism against the real NextAuth route (§8). What e2e would add is the durable-heal step via `SessionProvider`, which no unit test can show. | A fixture that mints a broken session — `e2e/helpers.ts` currently mints tokens with `engineUserId` already set — plus a way to fail the endpoint for a window. |
 
