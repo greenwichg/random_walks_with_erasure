@@ -52,7 +52,8 @@ makes the legacy-token fallback in §2 and the deploy-skew case in §9a safe.
 
 ## 2. Proposed design
 
-One new module, `web/lib/engine-identity.ts`, exporting a single memoized resolver:
+One module, `web/lib/engine-identity.ts` — which now exists and already owns `upsertEngineUser`
+(commit 2 of the plan moved it out of `lib/auth.ts`). It gains a single memoized resolver:
 
 ```ts
 export async function resolveEngineUserId(token: {

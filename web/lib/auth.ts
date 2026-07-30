@@ -15,8 +15,7 @@ import type { NextAuthOptions } from "next-auth";
 import GoogleProvider from "next-auth/providers/google";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { isEmailAllowed } from "@/lib/beta-access";
-
-const ENGINE_BASE = process.env.RWE_BACKEND_URL ?? "http://127.0.0.1:8000";
+import { upsertEngineUser } from "@/lib/engine-identity";
 
 // Dev-only demo sign-in. OFF unless RWE_DEV_LOGIN is explicitly set (e.g. the Colab demo), and
 // force-OFF whenever production mode is on — so it can NEVER be available in a real deployment,
@@ -28,46 +27,6 @@ const ENGINE_BASE = process.env.RWE_BACKEND_URL ?? "http://127.0.0.1:8000";
 const PRODUCTION = process.env.RWE_ENV === "production" || process.env.RWE_ENV === "prod";
 const DEV_LOGIN =
   !PRODUCTION && (process.env.RWE_DEV_LOGIN === "1" || process.env.RWE_DEV_LOGIN === "true");
-
-/**
- * Map a third-party identity to the stable engine user id, or `null` if the engine
- * is unreachable — in which case the app simply falls back to the demo reader.
- */
-async function upsertEngineUser(input: {
-  provider: string;
-  providerAccountId: string;
-  email?: string | null;
-  displayName?: string | null;
-}): Promise<number | null> {
-  try {
-    const res = await fetch(`${ENGINE_BASE}/api/internal/users`, {
-      method: "POST",
-      // The engine's /api/internal/* surface is fail-closed in production: it trusts a call only when
-      // it carries the shared secret as X-IH-Auth (same header engineAuthHeaders sends for /api/me/*).
-      // Without it this sign-in upsert 401s in prod, engineUserId never resolves, and every per-user
-      // page falls through to a 401. Mirror lib/engine-auth.ts's internalSecretHeaders(): send the
-      // secret when configured, omit it in dev (RWE_INTERNAL_SECRET unset) where the engine is open.
-      headers: {
-        "Content-Type": "application/json",
-        ...(process.env.RWE_INTERNAL_SECRET
-          ? { "X-IH-Auth": process.env.RWE_INTERNAL_SECRET }
-          : {}),
-      },
-      cache: "no-store",
-      body: JSON.stringify({
-        provider: input.provider,
-        providerAccountId: input.providerAccountId,
-        email: input.email ?? undefined,
-        displayName: input.displayName ?? undefined,
-      }),
-    });
-    if (!res.ok) return null;
-    const data = (await res.json()) as { userId?: number };
-    return typeof data.userId === "number" ? data.userId : null;
-  } catch {
-    return null; // engine down at sign-in time — resolve to demo until it recovers
-  }
-}
 
 export const authOptions: NextAuthOptions = {
   providers: [

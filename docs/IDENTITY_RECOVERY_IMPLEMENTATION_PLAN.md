@@ -1,6 +1,6 @@
 # Implementation Plan — Identity Recovery + Transaction-Retry Upsert
 
-**Commit 1 is implemented; commits 2–7 are not.** This is the roadmap for two designs that are already
+**Commits 1 and 2 are implemented; commits 3–7 are not.** This is the roadmap for two designs that are already
 reviewed:
 
 - [`IDENTITY_UPSERT_CONCURRENCY.md`](IDENTITY_UPSERT_CONCURRENCY.md) §4 — the engine-side upsert.
@@ -17,7 +17,7 @@ certified, exactly as planned.
 | # | Tier | Commit | Observable in production? | Revert |
 |---|---|---|---|---|
 | **1** | engine | Transaction-retry upsert (§4) + collapse the harness onto the real method — **done** | yes — losers resolve instead of erroring | `git revert`, behaviour-only |
-| **2** | web | Extract `upsertEngineUser` into `lib/engine-identity.ts` | **no** — pure move | `git revert` |
+| **2** | web | Extract `upsertEngineUser` into `lib/engine-identity.ts` — **done** | **no** — pure move | `git revert` |
 | **3** | web | Add the memoized resolver + its unit tests, wired to nothing | **no** — dead code | `git revert` |
 | **4** | web | Persist `provider` + `providerAccountId` claims at sign-in | **no** — nothing reads them yet | `git revert` |
 | **5** | web | Call the resolver from `callbacks.jwt` (durable heal), behind a kill switch | yes — broken sessions start healing | env flag, then revert |
@@ -67,7 +67,7 @@ the xfail, so the suite stays coherent in both directions.
 
 ---
 
-## Commit 2 — web: extract the engine upsert (pure move)
+## Commit 2 — web: extract the engine upsert (pure move) ✅ implemented
 
 **Files** — new `web/lib/engine-identity.ts` exporting `upsertEngineUser` (moved verbatim from
 `lib/auth.ts`); `web/lib/auth.ts` imports it; `web/lib/engine-identity.test.ts` (new) + its entry in
@@ -80,8 +80,11 @@ recovery logic instead of about moving code around.
 `providerAccountId` (never email), `X-IH-Auth` is sent when `RWE_INTERNAL_SECRET` is set and omitted
 otherwise, and a non-2xx or thrown fetch resolves to `null`. Plus `npm run typecheck`, `lint`, `build`.
 
-**Reviewer's question for this commit**: *did the extraction change anything?* The answer must be
-provably no — same function body, same call site, one import.
+**Reviewer's question for this commit**: *did the extraction change anything?* Provably no: the moved
+function body is byte-identical to what was removed (checked by diffing the slice against `HEAD`, with
+`export` as the only permitted difference), both call sites are untouched, and the production build's
+bundle sizes are unchanged — including `Middleware` at 50.4 kB, which confirms nothing leaked into the
+edge bundle.
 
 **Rollback.** `git revert`.
 
