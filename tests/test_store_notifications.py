@@ -291,3 +291,164 @@ def test_list_notifications_row_metadata_not_shadowed_by_payload():
     assert row["seenAt"] is None                                 # the real read-state, not the body's
     assert row["kind"] == "weekly_report"                        # harmless body fields still survive
     assert row["payload"] == {"overall": 72}
+
+
+# --------------------------------------------------------------------------- #
+# notification_events — the GLOBAL trigger table (A1).
+#
+# Every kind that exists today is derived from one reader's own state, so the delivery boundary can
+# evaluate it on that reader's fetch. A breaking story is the first fact that is global: it happens
+# once, to nobody in particular. These pin the one property that makes such a fact usable — the
+# level-to-edge conversion — plus the read filters the boundary will lean on.
+# --------------------------------------------------------------------------- #
+EV_NOW = "2026-07-15T12:00:00+00:00"
+
+
+def _event_store(tmp_path=None):
+    return store_mod.Store("sqlite://" if tmp_path is None else f"sqlite:///{tmp_path / 'ev.db'}")
+
+
+def test_event_records_once_and_returns_the_edge():
+    """THE property. `compute_freshness` returns a *level* that oscillates — a story crosses into
+    "Breaking", drops out as the rolling window slides, and crosses back in on the next wave. The
+    return value is what turns that into a one-time edge: True on the first sighting, False forever
+    after, with no state kept by the caller."""
+    st = _event_store()
+    assert st.record_notification_event("story_breaking", "st_a", category="breaking",
+                                        payload={"title": "First"}, occurred_at=EV_NOW) is True
+    for _ in range(5):                              # every later ingest cycle re-sees the same story
+        assert st.record_notification_event("story_breaking", "st_a", category="breaking",
+                                            payload={"title": "Again"}) is False
+    events = st.recent_notification_events(now=EV_NOW)
+    assert len(events) == 1
+    assert events[0]["payload"] == {"title": "First"}, "the first sighting's payload is authoritative"
+
+
+def test_events_are_scoped_by_source_type_not_just_id():
+    """The same id under a different source type is a different event — that is what keeps the table
+    reusable for product updates and digest cycles without a namespace collision."""
+    st = _event_store()
+    assert st.record_notification_event("story_breaking", "x1", category="breaking") is True
+    assert st.record_notification_event("product_update", "x1", category="product") is True
+    assert len(st.recent_notification_events(now=EV_NOW)) == 2
+
+
+def test_events_read_newest_first_and_filter_by_since():
+    """`since` is the reader's horizon: the boundary asks for what happened after it last looked."""
+    st = _event_store()
+    for n, ts in [("a", "2026-07-15T09:00:00+00:00"), ("b", "2026-07-15T10:00:00+00:00"),
+                  ("c", "2026-07-15T11:00:00+00:00")]:
+        st.record_notification_event("story_breaking", n, category="breaking", occurred_at=ts)
+
+    assert [e["sourceId"] for e in st.recent_notification_events(now=EV_NOW)] == ["c", "b", "a"]
+    after = st.recent_notification_events(since="2026-07-15T09:30:00+00:00", now=EV_NOW)
+    assert [e["sourceId"] for e in after] == ["c", "b"]
+    assert st.recent_notification_events(since=EV_NOW, now=EV_NOW) == []
+
+
+def test_expired_events_are_not_returned():
+    """A three-day-old "breaking" is not breaking. Expiry is per-event, so a category with a
+    different lifetime (a product announcement) simply passes `expires_at=None`."""
+    st = _event_store()
+    st.record_notification_event("story_breaking", "stale", category="breaking",
+                                 occurred_at="2026-07-15T06:00:00+00:00",
+                                 expires_at="2026-07-15T09:00:00+00:00")
+    st.record_notification_event("story_breaking", "fresh", category="breaking",
+                                 occurred_at="2026-07-15T11:00:00+00:00",
+                                 expires_at="2026-07-15T17:00:00+00:00")
+    st.record_notification_event("product_update", "forever", category="product",
+                                 occurred_at="2026-07-15T01:00:00+00:00", expires_at=None)
+
+    live = [e["sourceId"] for e in st.recent_notification_events(now=EV_NOW)]
+    assert live == ["fresh", "forever"], "expired excluded; a null expiry never expires"
+
+
+def test_events_filter_by_category():
+    st = _event_store()
+    st.record_notification_event("story_breaking", "s1", category="breaking", occurred_at=EV_NOW)
+    st.record_notification_event("product_update", "p1", category="product", occurred_at=EV_NOW)
+    only = st.recent_notification_events(now=EV_NOW, categories=["breaking"])
+    assert [e["sourceId"] for e in only] == ["s1"]
+
+
+def test_event_payload_round_trips_and_a_corrupt_row_cannot_break_the_read():
+    """Payload is stored verbatim JSON like `notifications.body`. A row that somehow stopped being
+    JSON must degrade to an empty payload, never take down the whole inbox read."""
+    st = _event_store()
+    payload = {"storyId": "st_a", "title": "Ruling issued", "publisherCount": 4, "band": "Breaking"}
+    st.record_notification_event("story_breaking", "st_a", category="breaking",
+                                 payload=payload, occurred_at=EV_NOW)
+    assert st.recent_notification_events(now=EV_NOW)[0]["payload"] == payload
+
+    with st.session() as s:                          # corrupt it behind the accessor's back
+        row = s.scalars(store_mod.select(store_mod.NotificationEvent)).first()
+        row.payload = "{not json"
+    assert st.recent_notification_events(now=EV_NOW)[0]["payload"] == {}
+
+
+def test_event_limit_is_honoured():
+    st = _event_store()
+    for i in range(10):
+        st.record_notification_event("story_breaking", f"s{i}", category="breaking",
+                                     occurred_at=f"2026-07-15T{i:02d}:00:00+00:00")
+    assert len(st.recent_notification_events(now=EV_NOW, limit=3)) == 3
+    assert st.recent_notification_events(now=EV_NOW, limit=0) == []
+
+
+def test_concurrent_first_sighting_yields_exactly_one_edge(tmp_path):
+    """The race the ingest cycle can actually produce. Two processes rebuild stories at once and both
+    see the same story cross into "Breaking". Exactly ONE must get the edge, neither may raise, and
+    there must be one row — the UNIQUE constraint is the arbiter, as in `upsert_user_by_identity`."""
+    url = f"sqlite:///{tmp_path / 'race.db'}"
+    st = store_mod.Store(url)
+    n = 8
+    barrier = threading.Barrier(n)
+    results: dict = {}
+    errors: dict = {}
+
+    def worker(name):
+        s = store_mod.Store(url)                     # its own pool -> a genuine second connection
+        barrier.wait()                               # all threads attempt the edge together
+        try:
+            results[name] = s.record_notification_event("story_breaking", "st_race",
+                                                        category="breaking",
+                                                        payload={"by": name}, occurred_at=EV_NOW)
+        except Exception as exc:                     # a loser must report False, never raise
+            errors[name] = exc
+
+    threads = [threading.Thread(target=worker, args=(str(i),)) for i in range(n)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert errors == {}, f"a caller raised instead of losing cleanly: {errors!r}"
+    assert sum(results.values()) == 1, f"exactly one edge, saw {sum(results.values())}"
+    assert len(st.recent_notification_events(now=EV_NOW)) == 1
+
+
+def test_a_known_event_costs_no_insert_attempt():
+    """The pre-check is an OPTIMISATION, not a correctness device — without it the UNIQUE constraint
+    still returns the right answer via `IntegrityError`. It earns its place on the hot path instead:
+    every ingest cycle re-sees every currently-breaking story, so the "already recorded" case is the
+    overwhelming majority and must not raise-and-catch each time.
+
+    Asserted at statement level, because that is the only observable difference."""
+    from sqlalchemy import event as sa_event
+
+    st = _event_store()
+    st.record_notification_event("story_breaking", "st_a", category="breaking", occurred_at=EV_NOW)
+
+    # BEFORE, not after: `after_cursor_execute` fires only on SUCCESSFUL execution, so an INSERT that
+    # loses to the UNIQUE constraint would be invisible to it — and the attempt is exactly what this
+    # test is about. (Found by mutation: removing the pre-check left an `after_` version passing.)
+    seen: list = []
+    sa_event.listen(st.engine, "before_cursor_execute",
+                    lambda conn, cur, stmt, params, ctx, many: seen.append(stmt.split()[0].upper()))
+
+    assert st.record_notification_event("story_breaking", "st_a", category="breaking") is False
+    assert seen.count("INSERT") == 0, f"a known event must not attempt an insert, saw {seen}"
+
+    seen.clear()
+    assert st.record_notification_event("story_breaking", "st_new", category="breaking") is True
+    assert seen.count("INSERT") == 1, "a genuinely new event does exactly one insert"

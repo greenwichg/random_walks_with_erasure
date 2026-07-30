@@ -467,6 +467,46 @@ class Notification(Base):
     recorded_at: Mapped[datetime] = mapped_column(default=_utcnow)             # DB write time
 
 
+class NotificationEvent(Base):
+    """A **global**, user-agnostic occurrence worth telling readers about — the trigger side of the
+    notification platform, and the counterpart to :class:`Notification` (which is per-reader).
+
+    Every notification kind that exists today is derived from *one reader's own* persisted state:
+    their report, their reads, their streak. The delivery boundary can therefore evaluate them on
+    that reader's fetch and needs no global input. A breaking story is the first thing that is **not**
+    like that — it happens once, to nobody in particular, and many readers should hear about it. This
+    table is where that kind of fact lives.
+
+    **Why a table and not a check at read time.** The signal it records is derived and *oscillates*:
+    ``story_intelligence.compute_freshness`` returns the band ``"Breaking"`` from a rolling window, so
+    a story crosses in, drops out as the window slides, and crosses in again on the next wave of
+    coverage. A notification must fire on the **edge**, not the level. ``UNIQUE(source_type,
+    source_id)`` is that edge: the first sighting creates the row, every later one is rejected, and
+    the row outlives the condition. Nothing else in the system remembers "we already said this".
+
+    ``payload`` is stored verbatim JSON, like ``notifications.body`` / ``report_snapshots`` — this
+    table persists dicts and imports nothing from the notification modules. ``occurred_at`` is the
+    event's own (injected) timestamp; ``expires_at`` is the staleness cutoff past which the event is
+    no longer worth materialising for a reader who has not looked in a while (a three-day-old
+    "breaking" is not breaking). ``category`` is the axis reader preferences gate on, and the reason
+    this table is reusable: a product announcement or a digest cycle is the same shape of row.
+
+    Product state only — no recommender, report, or corpus path reads it."""
+
+    __tablename__ = "notification_events"
+    __table_args__ = (UniqueConstraint("source_type", "source_id",
+                                       name="uq_notification_event_source"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    source_type: Mapped[str] = mapped_column(String(48), index=True)   # "story_breaking"
+    source_id: Mapped[str] = mapped_column(String(255))                # the story id
+    category: Mapped[str] = mapped_column(String(32), index=True)      # "breaking" — what prefs gate
+    payload: Mapped[str] = mapped_column(Text)                         # JSON, verbatim
+    occurred_at: Mapped[str] = mapped_column(String(64), index=True)   # injected; the ordering key
+    expires_at: Mapped[Optional[str]] = mapped_column(String(64), default=None)   # None = never
+    recorded_at: Mapped[datetime] = mapped_column(default=_utcnow)     # DB write time
+
+
 class FeedArticle(Base):
     """An article discovered via RSS ingestion — the news **catalog** (distinct from per-user
     ``reads``). Deduplicated by ``canonical_url`` (the same key ``reads`` and the scoring cache use),
@@ -2434,6 +2474,83 @@ class Store:
             for r in rows:
                 r.seen_at = stamp
             return len(rows)
+
+    # -- notification events (global triggers; see :class:`NotificationEvent`) -------------------
+    def record_notification_event(self, source_type: str, source_id: str, *, category: str,
+                                  payload: "dict | None" = None, occurred_at: "str | None" = None,
+                                  expires_at: "str | None" = None) -> bool:
+        """Record a global occurrence, **once**. Returns ``True`` iff this call created it.
+
+        That return value is the whole point: it converts a *level* into an *edge*. The caller asks
+        "is this story breaking?" on every ingest cycle and gets ``True`` exactly once, on the first
+        cycle that saw it — no separate existence check, no read-then-write race, no state of its own
+        to keep. Every later cycle, and every concurrent one, gets ``False``.
+
+        Concurrency-safe by the same argument as :meth:`upsert_user_by_identity`, and deliberately by
+        the *same mechanism*: the pre-check is an optimisation for the overwhelmingly common
+        "already recorded" case, and ``UNIQUE(source_type, source_id)`` is the arbiter. A caller that
+        loses the race sees its ``IntegrityError``, whole transaction rolled back, and reports
+        ``False`` — which is exactly right, because the event does now exist and it was not us who
+        made it.
+
+        **No SAVEPOINT here, unlike** :meth:`record_notifications` **just above.** That method
+        isolates each row of a batch with ``begin_nested()``; this one is a single row and uses a
+        second transaction instead. Under the sqlite3 driver's legacy transaction mode a *released*
+        savepoint does not participate in the enclosing transaction (measured — see
+        ``docs/IDENTITY_UPSERT_CONCURRENCY.md`` §4 and §5), so new code should not lean on it where a
+        plain transaction will do."""
+        payload = payload if isinstance(payload, dict) else {}
+        stamp = occurred_at or _utcnow().isoformat()
+        with self.session() as s:
+            exists = s.scalar(select(NotificationEvent.id).where(
+                NotificationEvent.source_type == source_type,
+                NotificationEvent.source_id == source_id))
+            if exists is not None:
+                return False                    # already recorded -> not an edge
+        try:
+            with self.session() as s:
+                s.add(NotificationEvent(source_type=source_type, source_id=source_id,
+                                        category=category, payload=json.dumps(_json_safe(payload)),
+                                        occurred_at=stamp, expires_at=expires_at))
+                s.flush()                       # surface the conflict here, not at commit
+            return True
+        except IntegrityError:
+            return False                        # a concurrent caller won the edge; it still fired once
+
+    def recent_notification_events(self, *, since: "str | None" = None, now: "str | None" = None,
+                                   categories: "list[str] | None" = None,
+                                   limit: int = 50) -> "list[dict]":
+        """Global events worth showing right now, **newest first**.
+
+        Filters on three things, all of which the caller would otherwise have to re-implement:
+        ``since`` (a lower bound on ``occurred_at`` — the reader's horizon), expiry (a row whose
+        ``expires_at`` has passed is skipped; ``None`` never expires), and ``categories``. Timestamps
+        are ISO-8601 strings compared lexicographically, which is ordering-correct for the UTC
+        ``isoformat()`` values this system writes everywhere.
+
+        Returns plain dicts with ``payload`` already decoded, so the delivery boundary can pack them
+        straight into a notification context without importing this module's models."""
+        moment = now or _utcnow().isoformat()
+        with self.session() as s:
+            q = select(NotificationEvent)
+            if since:
+                q = q.where(NotificationEvent.occurred_at > since)
+            if categories:
+                q = q.where(NotificationEvent.category.in_(list(categories)))
+            q = q.where(or_(NotificationEvent.expires_at.is_(None),
+                            NotificationEvent.expires_at > moment))
+            rows = s.scalars(q.order_by(NotificationEvent.occurred_at.desc(),
+                                        NotificationEvent.id.desc()).limit(max(0, limit))).all()
+            out = []
+            for r in rows:
+                try:
+                    payload = json.loads(r.payload) if r.payload else {}
+                except (ValueError, TypeError):
+                    payload = {}                # a corrupt row must not break the whole inbox
+                out.append({"id": r.id, "sourceType": r.source_type, "sourceId": r.source_id,
+                            "category": r.category, "payload": payload,
+                            "occurredAt": r.occurred_at, "expiresAt": r.expires_at})
+            return out
 
     def prune_notifications(self, user_id: int, keep: int = 200) -> int:
         """Bound the per-user notification history: delete all but the newest ``keep`` rows. Cadence
