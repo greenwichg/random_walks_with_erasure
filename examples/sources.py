@@ -1373,6 +1373,20 @@ class MultiSourcePoller:
             story_events.detect_breaking_stories(self.store, log=_warm_log)
         except Exception as e:
             self._log(logging.WARNING, "breaking_detect_failed", error=f"{type(e).__name__}: {e}")
+
+        # Push delivery (OFF unless RWE_PUSH_DELIVERY is set). Hangs off the same post-cycle seam as
+        # breaking-story detection, immediately after it, so an event recorded above can be delivered
+        # on this cycle rather than the next.
+        #
+        # `request_delivery` STARTS A THREAD and returns: the fan-out is network I/O against a third
+        # party, and blocking ingestion on it would trade a delayed notification for a stale corpus.
+        # One run at a time — a request during a run is dropped, not queued, so a slow push service
+        # cannot turn every cycle into another overlapping fan-out.
+        try:
+            import push_delivery                 # lazy: keeps the push stack out of this import graph
+            push_delivery.request_delivery(self.store, log=lambda lvl, ev, **f: self._log(lvl, ev, **f))
+        except Exception as e:
+            self._log(logging.WARNING, "push_delivery_request_failed", error=f"{type(e).__name__}: {e}")
         t_warm = time.perf_counter()
         if self._on_cycle is not None:
             try:

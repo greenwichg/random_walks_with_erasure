@@ -340,6 +340,17 @@ services:
       # send attempt per notification once B2 exists, and nothing else bounds how many an
       # authenticated reader accumulates — a fresh browser profile mints a new endpoint.
       RWE_PUSH_MAX_DEVICES: ${RWE_PUSH_MAX_DEVICES:-}
+      # Delivery (Phase B2). SEPARATE from RWE_PUSH_ENABLED, which governs registration: an operator
+      # can let readers subscribe and watch the subscription table before anything is ever sent to
+      # them. Turning this on is the act that first puts a notification on a lock screen.
+      #
+      #   RWE_PUSH_DELIVERY         1/true/yes/on runs the fan-out on the poller's post-cycle seam.
+      #                             Needs RWE_VAPID_PRIVATE_KEY and RWE_VAPID_SUBJECT — without
+      #                             either, delivery stays off however this is set.
+      #   RWE_PUSH_SEND_TIMEOUT_MS  per-send deadline (default 10000). A wedged push service must
+      #                             fail rather than hold a worker thread.
+      RWE_PUSH_DELIVERY: ${RWE_PUSH_DELIVERY:-0}
+      RWE_PUSH_SEND_TIMEOUT_MS: ${RWE_PUSH_SEND_TIMEOUT_MS:-}
       # Storage lifecycle (examples/retention_policy.py — the ONE typed policy module). 0 = keep
       # forever, uniformly; junk/negative values fall back to the default rather than deleting more.
       # User data (reads, saves, settings, accounts) has NO policy and is never pruned.

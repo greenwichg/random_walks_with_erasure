@@ -155,6 +155,14 @@
       },
       "why": "Web Push authenticates every send with a VAPID key PAIR, and a browser subscribes against the public half. Enabling push without the keys leaves the config endpoint reporting the feature unavailable — deliberately fail-closed, so nothing breaks — but it means the switch appears to do nothing, which is the failure mode this repo has hit before. The private key is a real secret: it signs sends on the deployment's behalf, so it must be interpolated from deploy/.env and never written into a compose file. The pair must be generated together; a public key from one pair and a private key from another produces sends every push service rejects.",
       "fix": "Generate the pair (docs/BROWSER_PUSH_OPERATIONS.md gives an openssl recipe needing no new dependency), set RWE_VAPID_PUBLIC_KEY / RWE_VAPID_PRIVATE_KEY / RWE_VAPID_SUBJECT in deploy/.env, and keep all three wired on the `api` service as `${VAR:-}` interpolations."
+    },
+    {
+      "id": "api-push-delivery-switch",
+      "categories": ["feature-flag", "required-env"],
+      "when": { "service": "api" },
+      "require": { "env": ["RWE_PUSH_DELIVERY"] },
+      "why": "Delivery is the act that first puts a notification on a reader's lock screen, and it is gated separately from registration so an operator can let people subscribe before anything is sent to them. Like every other switch in this stack it must stay listed on the service whether or not it is set: `environment:` is an explicit allowlist with no `env_file:` behind it, so an unlisted flag can be neither turned on nor — the part that matters here — turned back off during an incident.",
+      "fix": "On the `api` service (base compose, and restated in the AWS override) add `RWE_PUSH_DELIVERY: ${RWE_PUSH_DELIVERY:-0}`. Delivery additionally requires RWE_VAPID_PRIVATE_KEY and RWE_VAPID_SUBJECT, which the api-push-vapid-keys rule already covers. See docs/BROWSER_PUSH_OPERATIONS.md."
     }
   ],
 

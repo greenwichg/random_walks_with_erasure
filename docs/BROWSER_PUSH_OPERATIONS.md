@@ -4,34 +4,44 @@ Operational companion to [`BROWSER_PUSH_ARCHITECTURE.md`](BROWSER_PUSH_ARCHITECT
 frozen design. This document covers what an operator does: generating keys, turning the feature on,
 verifying it, rolling it back, and reading its failures.
 
-**Current state: Phase B1 — registration only.** A browser can be asked for permission and can
-register a push subscription; the engine stores it. **Nothing sends a push.** There is no worker, no
-fan-out, no retry ladder. Enabling B1 in production changes exactly one thing a reader can see: a
-"Push notifications on this device" control appears in Settings, and using it produces a browser
-permission prompt. Readers who enable it will receive nothing until Phase B2 ships.
+**Current state: Phase B2 — registration and delivery.** A browser can be asked for permission and
+register a subscription (B1), and the engine now **sends**: a worker hangs off the ingestion poller,
+fans an event out to every consenting device, records every attempt in a delivery ledger, and prunes
+endpoints a push service declares gone. There is still **no retry ladder** — a transient failure is a
+recorded, un-repeated loss (§9).
 
-Every action on that surface is logged (§6), and a rollback closes registration without stranding the
-readers who already registered (§4).
+**Two switches, not one.** `RWE_PUSH_ENABLED` governs *registration*; `RWE_PUSH_DELIVERY` governs
+*sending*. They are separate on purpose: an operator can let readers subscribe, watch the subscription
+table fill, and only then turn on the switch that first puts a notification on somebody's lock screen.
+
+Every action is logged (§6 for registration, §7 for delivery), and a rollback closes each half
+independently without stranding the readers who already registered (§4).
 
 ---
 
 ## 1. Configuration
 
-All five variables live on the **`api`** service, in both compose files, and are read at call time —
+All seven variables live on the **`api`** service, in both compose files, and are read at call time —
 so every change below is a `deploy/ops/restart.sh api`, never a rebuild.
 
-| Variable | Default | Used in B1 | Meaning |
+| Variable | Default | Governs | Meaning |
 |---|---|---|---|
-| `RWE_PUSH_ENABLED` | `0` (off) | yes | The switch. Off ⇒ **registration** answers `503`; reading and deleting a subscription stay open (§4). |
-| `RWE_VAPID_PUBLIC_KEY` | *(empty)* | yes | Served to browsers, which subscribe against it. Public by construction. |
-| `RWE_VAPID_PRIVATE_KEY` | *(empty)* | **no** | Signs sends. Read by nothing until B2 — wired now so the pair is generated and stored once. |
-| `RWE_VAPID_SUBJECT` | *(empty)* | **no** | The `mailto:` or `https:` contact given to push services. Also B2. |
-| `RWE_PUSH_MAX_DEVICES` | `10` | yes | How many devices one reader may hold. Past the cap the least-recently-registered is dropped. `0` = unbounded. |
+| `RWE_PUSH_ENABLED` | `0` (off) | registration | Off ⇒ **registration** answers `503`; reading and deleting a subscription stay open (§4). |
+| `RWE_VAPID_PUBLIC_KEY` | *(empty)* | registration | Served to browsers, which subscribe against it. Public by construction. |
+| `RWE_PUSH_MAX_DEVICES` | `10` | registration | How many devices one reader may hold. Past the cap the least-recently-registered is dropped. `0` = unbounded. |
+| `RWE_PUSH_DELIVERY` | `0` (off) | **delivery** | The send switch. Off ⇒ the worker returns immediately and nothing is ever handed to a push service. Accepts `1`/`true`/`yes`/`on`. |
+| `RWE_VAPID_PRIVATE_KEY` | *(empty)* | **delivery** | Signs sends. Without it delivery stays off however `RWE_PUSH_DELIVERY` is set. |
+| `RWE_VAPID_SUBJECT` | *(empty)* | **delivery** | The `mailto:` or `https:` contact given to push services. Also required to send. |
+| `RWE_PUSH_SEND_TIMEOUT_MS` | `10000` | delivery | Per-send deadline in **milliseconds**. A zero or unparseable value falls back to the default rather than disabling the deadline. |
 
-`deploy/deployment-rules.json` enforces two things: the switch must stay wired on `api` whether or not
-it is set (an OFF switch an operator cannot reach is the failure being guarded against), and turning it
-on requires all three key variables — with the private key **interpolated from `deploy/.env`**, never
-written into a compose file.
+**Delivery needs all three of its variables.** The switch alone, or the switch with only one key, sends
+nothing — and does so silently, because a missing key on a background thread is a reason not to run
+rather than an error to raise. §3 has the command that proves which state you are in.
+
+`deploy/deployment-rules.json` enforces three things: both switches must stay wired on `api` whether or
+not they are set (an OFF switch an operator cannot reach is the failure being guarded against), and
+turning registration on requires all three key variables — with the private key **interpolated from
+`deploy/.env`**, never written into a compose file.
 
 **Both halves matter.** The engine reports push as available only when the switch is on *and* a public
 key is present. A deployment with one but not the other reports the feature off, which is deliberate:
@@ -119,9 +129,51 @@ Then from a browser, signed in:
 Expect one row per device. A reader with a laptop and a phone has two, and that is correct — a
 subscription is a device, not an account.
 
+### Then turning delivery on
+
+Registration and delivery are switched separately, and the order matters: register at least one device
+of your own first, so the first thing the pipeline ever sends goes to a device you are holding.
+
+```bash
+$EDITOR deploy/.env                       # RWE_PUSH_DELIVERY=1
+deploy/ops/restart.sh api
+docker exec deploy-api-1 printenv | grep -E 'RWE_PUSH_DELIVERY|RWE_VAPID_(PRIVATE|SUBJECT)'
+```
+
+Prove the engine agrees it can send — this is the one check that distinguishes "off" from
+"misconfigured", which the logs cannot, because a deployment that cannot send says nothing at all:
+
+```bash
+docker exec -i deploy-api-1 python - <<'PY'
+import sys; sys.path.insert(0, '/app/examples')
+import push_delivery
+print("enabled:", push_delivery.enabled())
+print("can send:", push_delivery._sender() is not None)
+print("timeout (s):", push_delivery._timeout_seconds())
+PY
+```
+
+`enabled: True` with `can send: False` means a VAPID variable is missing — go back to §1. Delivery then
+runs on the ingestion poller's cycle: the next breaking-story event fans out within one cycle, and
+`push_run_complete` (§7) is the line that says it happened.
+
 ---
 
 ## 4. Rolling it back
+
+Two independent rollbacks. **Prefer the delivery switch** — it is the one that stops notifications
+arriving, and it leaves every registered device in place to resume without a reader touching anything:
+
+```bash
+$EDITOR deploy/.env                       # RWE_PUSH_DELIVERY=0
+deploy/ops/restart.sh api
+```
+
+The worker then returns immediately on every cycle. Nothing is queued while it is off, so turning it
+back on does not produce a flood — events that expired meanwhile are simply not sent, which is correct:
+a three-day-old "breaking" is not breaking.
+
+Turning off **registration** as well is the wider rollback:
 
 ```bash
 $EDITOR deploy/.env                       # RWE_PUSH_ENABLED=0
@@ -146,7 +198,14 @@ switch on, one direction of travel, copy explaining push is currently unavailabl
 `DELETE` is actually reachable. A device that is *not* registered sees no control at all, because
 there would be nothing for it to do.
 
-Browsers keep their own subscription objects, which is harmless — nothing sends, so nothing arrives.
+**`RWE_PUSH_ENABLED=0` does not stop sending.** The two switches are independent, and this is the one
+place that independence can surprise you: with registration off and delivery still on, no *new* device
+can register but every device already registered keeps receiving. If the reason you are rolling back is
+that readers are getting notifications they should not, **`RWE_PUSH_DELIVERY=0` is the switch you
+want** — on its own, or before this one.
+
+With delivery off, browsers keep their own subscription objects, which is harmless: nothing sends, so
+nothing arrives.
 
 **To also drop the stored subscriptions** (a decision, not a rollback step — readers must re-enable
 afterwards):
@@ -193,7 +252,7 @@ table to churn afterwards — one row replaced per returning device.
 
 ---
 
-## 6. Logging
+## 6. Logging — registration
 
 One structured JSON line per event on the engine's logger, correlatable by `requestId` like every
 other line. **Endpoints and device keys never appear.** An endpoint is a capability and identifies a
@@ -252,7 +311,7 @@ secret is not something a real browser produces. One or two are most likely a cl
 means endpoints are leaking somewhere they can be replayed from — check what is being logged, shared
 in support tickets, or captured in HAR files.
 
-There are no metrics yet — counting log lines is the whole facility in B1.
+There are no metrics yet — counting log lines is the whole facility.
 
 ### What the ownership check does and does not do
 
@@ -271,7 +330,116 @@ the reader.
 
 ---
 
-## 7. Troubleshooting
+## 7. Delivery
+
+### What one cycle does
+
+The worker hangs off the ingestion poller's post-cycle seam, immediately after breaking-story
+detection, so an event recorded on a cycle is delivered on that same cycle. It **starts a thread and
+returns** — the poller's job is keeping the corpus fresh, and blocking it on a third party's network
+would trade a delayed notification for a stale corpus, the worse of the two.
+
+One run at a time. A request arriving while a run is in flight is **dropped, not queued**: a slow push
+service would otherwise turn every poll cycle into another overlapping fan-out. Nothing is lost, since
+the next cycle re-derives the same work.
+
+Then, per cycle:
+
+1. **Categories with live events** in the last 24 hours. B2 delivers what `notification_events`
+   produced — the event-driven kinds. A reader's weekly report is *not* pushed, which is why enabling
+   delivery does not immediately fire every cadence notification the registry would evaluate.
+2. **Candidate devices**, from the denormalised per-category flags on `push_subscriptions`. That index
+   is an accelerator, never the authority: consent is decided per reader against real settings, so a
+   stale flag can cost a candidate but can never produce an unconsented send.
+3. **Per reader**, the Phase A decision path with `channel="push"` — the same evaluation the inbox
+   uses, reading `notifications.categories.<c>.push` instead of `.inApp`. The daily cap applies.
+4. **Plan, then send.** Planning reads the database on the worker's own thread; sending happens on a
+   pool of four. A whole run is bounded by 120 seconds; what it does not reach, the next cycle does.
+5. **Claim, send, record.** Every attempt takes a row in `notification_deliveries` first
+   (`UNIQUE(notification_id, channel, subscription_id)`), which is what stops each cycle re-sending
+   every unexpired notification to every device.
+
+### The delivery ledger
+
+```bash
+docker exec -i deploy-api-1 python - <<'PY'
+import sys; sys.path.insert(0, '/app/examples')
+import store, sqlalchemy as sa
+with store.Store().session() as s:
+    print("--- last 20 attempts")
+    for row in s.execute(sa.text(
+        "select id, notification_id, subscription_id, status, status_code, detail, attempted_at "
+        "from notification_deliveries order by id desc limit 20")).all():
+        print(row)
+    print("--- outcome mix, last 24h")
+    for row in s.execute(sa.text(
+        "select status, count(*) from notification_deliveries "
+        "where attempted_at > datetime('now','-1 day') group by status order by 2 desc")).all():
+        print(row)
+PY
+```
+
+`subscription_id` is deliberately **not** a foreign key: pruning a dead device must not erase the
+record that we tried to reach it.
+
+### Reading the outcome mix
+
+This is the table that makes the platform operable, and the reason a failed send is never recorded as
+just "failed" — a rising `expired` rate and a rising `permanent` rate need opposite responses.
+
+| Status | Codes | What it means | What to do |
+|---|---|---|---|
+| `success` | 2xx | The push service accepted it. Not proof a human saw it — no such signal exists. | Nothing. |
+| `expired` | 404, 410 | The subscription is gone forever. The row is deleted immediately. | Nothing. Ordinary attrition: reinstalls, cleared site data, browsers pruning idle subscriptions. A *spike* usually follows a key rotation (§5). |
+| `transient` | 429, 5xx | The service is unwell; the subscription is fine. | Nothing to fix on our side. Without retries this is a lost delivery — see §9. Sustained 429 means we are being rate-limited and B3 needs to exist. |
+| `timeout` | — | No answer inside `RWE_PUSH_SEND_TIMEOUT_MS`. Delivered or not — unknowable. | Check the deadline is not too tight before assuming the service is slow. |
+| `permanent` | 400, 401, 403, 413, anything unrecognised | **Our request is wrong** — malformed payload, VAPID mismatch, payload over the size limit. | Investigate every time. This is a bug we shipped, not weather. A 401/403 across all devices is a mismatched key pair (§2). |
+
+An unrecognised status is classified `permanent`, not `transient`, on purpose: once retries exist,
+treating an unknown answer as retryable is how a sender starts hammering a service that is saying no.
+
+### Delivery log events
+
+| Event | Level | Fields | What it tells you |
+|---|---|---|---|
+| `push_send_started` | INFO | `notificationId`, `subscriptionId`, `kind`, `bytes` | A claim was taken and a payload built. Every one of these should be followed by exactly one outcome line. |
+| `push_send_succeeded` | INFO | `notificationId`, `subscriptionId` | The push service accepted it. |
+| `push_send_failed` | **WARNING** | + `status`, `statusCode`, `detail` | Anything that is not success or timeout. `status` is the classification above — read it, not just the code. |
+| `push_send_timeout` | **WARNING** | `notificationId`, `subscriptionId` | No answer inside the deadline. |
+| `push_send_error` | **WARNING** | + `error` (exception **type**, never a body) | The send path itself raised. A bug, not a push-service answer. |
+| `push_subscription_pruned` | INFO | `subscriptionId`, `userId`, `statusCode` | A 404/410 device was deleted immediately. |
+| `push_payload_oversize` | **WARNING** | `notificationId`, `bytes` | A payload over the 1 KB budget. Logged and still attempted — a payload this big is a defect upstream, and silently mangling it would hide the defect. |
+| `push_run_complete` | INFO | `considered`, `sent`, `failed`, `pruned`, `skipped` | One fan-out finished. `skipped` counts claims an earlier cycle already took, and a steady non-zero value there is normal. |
+| `push_run_deadline` | **WARNING** | `plannedReaders` | A run hit the 120-second bound while still planning. The remainder goes on the next cycle. Repeated appearances mean the fan-out has outgrown one cycle. |
+| `push_reader_failed` | **WARNING** | `userId`, `error` | One reader's evaluation raised. The fan-out continued without them. |
+| `push_run_failed` | **WARNING** | `error` | The background run itself died. Should never appear. |
+| `push_delivery_request_failed` | **WARNING** | `error` | The poller could not even start a run. Should never appear. |
+
+As with registration: **no endpoints and no keys.** A delivery line carries ids, a status and a code.
+
+```bash
+$COMPOSE logs api | grep -o '"event":"push_run_complete".*' | tail -20   # did it run, and do what?
+$COMPOSE logs api | grep -o '"status":"[a-z]*"' | sort | uniq -c        # the outcome mix
+$COMPOSE logs api | grep push_send_failed | grep -v '"status":"transient"'   # the ones that are ours
+$COMPOSE logs api | grep push_payload_oversize                          # upstream defects
+```
+
+### What is not verified
+
+`pywebpush` — the library that encrypts the payload and signs the VAPID header — could not be
+installed in the development container (`http-ece` needs a compiler toolchain that is not there), so
+**the call into `pywebpush` itself is exercised by no test.** Everything around it is: the transport is
+injected, so classification, the ledger, pruning, the pool and the payload are all covered
+deterministically. What has never run outside production is the one line that hands the payload to the
+library.
+
+The practical consequence: the first real send is the first test of that line. Turn delivery on with a
+device of your own registered (§3), and check `push_send_succeeded` before assuming a quiet log means
+success — a quiet log is equally consistent with the worker never having run.
+
+---
+
+## 8. Troubleshooting
 
 | Symptom | Check | Cause / fix |
 |---|---|---|
@@ -282,22 +450,38 @@ the reader.
 | Subscription rows accumulate for one reader | the query in §3 | Bounded by `RWE_PUSH_MAX_DEVICES` (10). A recent key rotation legitimately replaces one row per returning device (§5). Many rows for one device *without* a rotation means the endpoint is changing every visit, which is a browser-side anomaly worth reporting. |
 | A reader says push stopped working on an old device | `push_subscription_evicted` (§6) | The device cap dropped it. Expected if they use more than `RWE_PUSH_MAX_DEVICES` browsers; re-enabling on that device restores it, and raising the cap prevents a recurrence. |
 | A registration returns `409` | `push_subscription_claim_refused` (§6) | The endpoint is already registered to a different account and the request did not carry its secret. Legitimate on no real browser — see §6. |
-| Rows exist but nothing arrives | — | Correct in B1. Nothing sends yet. |
+| Rows exist but nothing arrives | the `can send` check in §3 | Almost always delivery not switched on, or on with a VAPID variable missing — which is silent by design. If it reports `can send: True`, look for `push_run_complete` before looking anywhere else. |
+| `push_run_complete` shows `considered: 0` | events, then consent | No live event in the last 24h (nothing to send — the common case), or no reader has `notifications.categories.breaking.push` set. The `sent` count only ever counts consenting devices. |
+| Notification arrives saying "This site has been updated in the background" | `/sw-data.js` in the browser's Network tab | The service worker received a push and could not render it. That message is the browser's, not ours, and it means the render path threw — most likely a missing or stale `sw-data.js` (a build artifact, generated by `npm run build`). |
+| Notification arrives in the wrong language | — | The device's stored language wins over the payload's, deliberately (§4 of the architecture): a push can sit under its TTL for hours, so the language captured at send time can be stale. The reader changing language in the app fixes it on the next render. |
+| Tapping a notification opens the wrong page | — | For a *known* kind the worker derives the destination itself and ignores the payload's `href`. A wrong page means the metadata table and the engine disagree — `tests/test_push_delivery.py` cross-checks them, so this should fail CI before it reaches a reader. |
+| Every send is `permanent` with 401/403 | §2 | A mismatched VAPID pair — a public key from one generation with a private key from another. Regenerate both together. |
+| A burst of `expired` right after a rotation | §5 | Expected. Every subscription is bound to the key it was created against; devices heal on their readers' next visit. |
 
-**What is NOT a symptom yet:** delivery failures, `410 Gone`, retry storms, fan-out latency. None of
-that code exists. Note that the device cap's eviction is *not* `410` pruning — it bounds how many
-devices one reader holds; removing endpoints a push service has declared gone is Phase B2. If something in this area misbehaves in B1, it is registration, not delivery.
+**The device cap's eviction is not `410` pruning.** The cap bounds how many devices one reader holds;
+pruning removes endpoints a push service has declared gone. Both delete rows, for unrelated reasons.
 
 ---
 
-## 8. What B1 does not include
+## 9. What B2 does not include
 
-Stated explicitly so the absence is not read as a defect: no push is sent from anywhere; there is no
-notification worker, no fan-out query, no retry or backoff, no `410` pruning, and no delivery metrics.
-The service worker ships a **generic** render path only — architecture §6's floor, so that a device
-holding a B1 subscription renders correctly rather than producing the browser's own "site has been
-updated in the background" message when a later deploy first sends something. Metadata-driven
-rendering is Phase B2.
+Stated explicitly so the absence is not read as a defect.
+
+**No retries, no backoff, no queue.** A `transient` or `timeout` failure means that notification is not
+delivered to that device **at all**. The claim row records the attempt and its outcome, and nothing
+picks it up again. This is a real consequence and it was chosen over a half-built retry ladder: the
+ledger is exactly what a later phase selects on to add one, and a claim is deliberately never released
+by a failure, because re-sending on "we do not know whether the reader saw this" is how a platform
+starts duplicating itself.
+
+**No batching and no rate limiting.** The pool is four concurrent sends with a per-send deadline;
+sustained `429` from a push service has no automatic response yet.
+
+**No delivery metrics.** Counting log lines and querying `notification_deliveries` is the whole
+facility.
+
+**No new notification kinds.** Only the event-driven ones fan out to push; the six cadence and
+state-alert kinds that predate channels remain in-app.
 
 ---
 

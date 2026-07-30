@@ -12,6 +12,7 @@
  */
 import type { LucideIcon } from "lucide-react";
 import { Activity, CalendarDays, Sparkles, BarChart3, Flame, Eye, Zap, Bell } from "lucide-react";
+import { kindMeta, hrefFor } from "./notification-kinds.ts";
 
 export interface NotificationPresentation {
   icon: LucideIcon;
@@ -23,48 +24,19 @@ export interface NotificationPresentation {
   href: string | null;
 }
 
-const GENERIC: NotificationPresentation = {
-  icon: Bell,
-  titleKey: "notifications.generic.title",
-  bodyKey: null,
-  href: null,
-};
-
-/** kind → presentation. Literal template keys on purpose (check:i18n scans them). */
-const MAP: Record<string, NotificationPresentation> = {
-  weekly_report: {
-    icon: Activity, href: "/report",
-    titleKey: "notifications.weekly_report.title", bodyKey: "notifications.weekly_report.body",
-  },
-  monthly_deep_dive: {
-    icon: CalendarDays, href: "/report",
-    titleKey: "notifications.monthly_deep_dive.title", bodyKey: "notifications.monthly_deep_dive.body",
-  },
-  recommendations_waiting: {
-    icon: Sparkles, href: "/recommendations",
-    titleKey: "notifications.recommendations_waiting.title",
-    bodyKey: "notifications.recommendations_waiting.body",
-  },
-  weekly_digest: {
-    icon: BarChart3, href: "/",
-    titleKey: "notifications.weekly_digest.title", bodyKey: "notifications.weekly_digest.body",
-  },
-  streak_reminder: {
-    icon: Flame, href: "/",
-    titleKey: "notifications.streak_reminder.title", bodyKey: "notifications.streak_reminder.body",
-  },
-  blind_spot_alert: {
-    icon: Eye, href: "/report",
-    titleKey: "notifications.blind_spot_alert.title", bodyKey: "notifications.blind_spot_alert.body",
-  },
-  // The first kind whose destination is per-notification rather than per-kind: every other row
-  // opens a fixed page, this one opens the story that broke. `href` stays the static fallback
-  // (`/stories`) so an old row with no `storyId` still navigates somewhere sensible;
-  // `notificationHref` below resolves the specific one.
-  breaking_story: {
-    icon: Zap, href: "/stories",
-    titleKey: "notifications.breaking_story.title", bodyKey: "notifications.breaking_story.body",
-  },
+/**
+ * kind → ICON. The only per-kind fact that is React's alone: the shared metadata table holds the
+ * template keys and destinations (`lib/notification-kinds.ts`), and the Notification API wants a URL
+ * here rather than a component, which is precisely why the table does not carry it.
+ */
+const ICONS: Record<string, LucideIcon> = {
+  weekly_report: Activity,
+  monthly_deep_dive: CalendarDays,
+  recommendations_waiting: Sparkles,
+  weekly_digest: BarChart3,
+  streak_reminder: Flame,
+  blind_spot_alert: Eye,
+  breaking_story: Zap,
 };
 
 /**
@@ -80,17 +52,18 @@ const MAP: Record<string, NotificationPresentation> = {
  * `/stories/undefined`.
  */
 export function notificationHref(kind: string, payload?: unknown): string | null {
-  const { href } = notificationPresentation(kind);
-  if (kind !== "breaking_story") return href;
-  const storyId = (payload as { storyId?: unknown } | undefined)?.storyId;
-  return typeof storyId === "string" && storyId.trim()
-    ? `/stories/${encodeURIComponent(storyId.trim())}`
-    : href;
+  return hrefFor(kind, payload);
 }
 
 /** Resolve a notification kind to its presentation; an unknown kind gets the safe generic row. */
 export function notificationPresentation(kind: string): NotificationPresentation {
-  return MAP[kind] ?? GENERIC;
+  const meta = kindMeta(kind);
+  return {
+    icon: ICONS[kind] ?? Bell,
+    titleKey: meta.titleKey,
+    bodyKey: meta.bodyKey,
+    href: meta.href,
+  };
 }
 
 /** Display label for the unread badge: 0 ⇒ "" (hidden), 1–9 ⇒ the number, >9 ⇒ "9+". */

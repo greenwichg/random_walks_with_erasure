@@ -24,7 +24,10 @@ docs = ["matplotlib>=3.5", "python-pptx>=0.6", "pillow>=9.0"]
 # Production serving layer (examples/api_fastapi.py) + the beta product store
 # (examples/store.py). The research pipeline and the stdlib demo server
 # (examples/api_server.py) need none of this.
-serve = ["fastapi>=0.110", "uvicorn>=0.30", "sqlalchemy>=2.0"]
+serve = ["fastapi>=0.110", "uvicorn>=0.30", "sqlalchemy>=2.0",
+         # Web Push (Phase B2). Imported lazily by examples/push_sender.py so the engine — and the
+         # whole test suite — still load where its native dependency (http-ece) cannot be built.
+         "pywebpush>=1.14"]
 
 [tool.setuptools.packages.find]
 include = ["rwe*"]

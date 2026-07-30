@@ -1,27 +1,30 @@
 /* eslint-disable no-undef */
 /**
- * Hidden View service worker — Phase B1 (Browser Push Foundation).
+ * Hidden View service worker — Phase B2 (Push Delivery).
  *
- * This worker exists so a browser can hold a push subscription; it does NOT yet render notifications
- * from the notification metadata table. That is Phase B2, and it will replace `renderGeneric` below
- * with a metadata-driven renderer. See docs/BROWSER_PUSH_ARCHITECTURE.md.
+ * Renders a delivered notification from the payload it was handed, with **no network call before
+ * `showNotification()`**. That is architecture §2 P4 and it is the constraint the whole file is shaped
+ * by: a worker that receives a push and does not show something makes the browser display its own
+ * message ("This site has been updated in the background"), so every failure here is user-visible and
+ * worse than silence. Nothing in the render path may depend on the network, on authentication, or on
+ * storage that might be absent.
  *
- * WHY THERE IS A `push` HANDLER AT ALL IN A COMMIT THAT SENDS NOTHING. Architecture §2 P4: a worker
- * that receives a push and does not call `showNotification()` makes the browser display its own
- * message ("This site has been updated in the background"). §6 then requires that a worker meeting a
- * kind it does not understand still renders — generically, tappably, never a raw i18n key. A B1
- * worker is exactly "a worker that understands no kinds", so the generic path IS §6's floor rather
- * than an early piece of B2's ceiling. A device that installs this worker today and receives a push
- * from a later deploy is precisely the forward-compatibility case the specification describes, and it
- * behaves correctly.
+ * Everything it needs is either in the message or in `sw-data.js`, generated at build time from
+ * `lib/notification-kinds.ts` and `messages/*.json` — a derived copy, which §8 distinguishes from a
+ * duplicated one. `importScripts` because this file is served verbatim and no bundler touches it.
  *
- * No imports, no bundler: this file is served verbatim from /sw.js so its scope is the whole origin.
+ * Rendering policy is deliberately NOT the inbox's (§3): an unknown kind degrades to app-level copy
+ * that still navigates, where the inbox degrades to an inert row. A push has already interrupted the
+ * reader; a dead tap would be the second insult.
  */
+
+importScripts("/sw-data.js");
 
 const LANG_CACHE = "ih-prefs-v1";
 const LANG_URL = "/__ih/lang"; // synthetic key; never fetched from the network
-const SUPPORTED = ["en", "es", "fr", "de", "pt"];
-const DEFAULT_LANG = "en";
+// From sw-data.js, so the supported set cannot drift from the app's.
+const SUPPORTED = self.IH_LANGS;
+const DEFAULT_LANG = self.IH_DEFAULT_LANG;
 
 // --------------------------------------------------------------------------------------------- //
 // Lifecycle. Take over promptly so a reader who grants permission is not talking to a worker from a
@@ -60,14 +63,14 @@ async function readStoredLang() {
   }
 }
 
-/** §4's resolution order: stored → payload → default. Exported shape mirrors `lib/push-lang.ts`. */
+/** §4's resolution order: stored → payload → default. Mirrors `lib/push.ts::resolveLang`. */
 async function resolveLang(payloadLang) {
   return (await readStoredLang()) || normalizeLang(payloadLang) || DEFAULT_LANG;
 }
 
 // --------------------------------------------------------------------------------------------- //
-// Push. B1's obligation is the §6 floor and nothing more: always render, never a raw key, always
-// tappable.
+// Push. Three obligations, in order: ALWAYS render (§2 P4), never a raw i18n key, always tappable
+// (§6). Every branch below ends in a notification — there is no input that produces silence.
 // --------------------------------------------------------------------------------------------- //
 function safeParse(event) {
   try {
@@ -77,40 +80,79 @@ function safeParse(event) {
   }
 }
 
+/** Interpolate `{name}` placeholders, mirroring `lib/i18n-core.ts`. Missing params are left as-is. */
+function interpolate(template, params) {
+  if (!params) return template;
+  return String(template).replace(/\{(\w+)\}/g, (m, k) =>
+    params[k] === undefined || params[k] === null ? m : String(params[k]),
+  );
+}
+
+/** A catalog lookup with the app's own fallback chain: active language → English → nothing. */
+function translate(lang, key, params) {
+  if (!key) return null;
+  const catalogs = self.IH_MESSAGES || {};
+  const hit = (catalogs[lang] || {})[key] ?? (catalogs.en || {})[key];
+  // Never a raw key on a lock screen: absent means "render without it", not "render the key".
+  return hit === undefined ? null : interpolate(hit, params);
+}
+
 /**
- * The generic render. Deliberately carries no per-kind knowledge: B1 has no metadata table, and §6
- * requires this exact behaviour from any worker meeting a kind it does not know.
+ * The payload → what `showNotification` is called with.
  *
- * `tag` is the notification's dedupe key when present — the fourth of the platform's four idempotency
- * levels — so a repeat collapses at the OS level instead of stacking.
+ * `href` precedence is §2's rule applied: a worker that KNOWS the kind derives the destination from
+ * its own metadata (fresher, and the same answer the inbox gives), and falls back to the server's
+ * `href` only for a kind it has never heard of. The payload is a fallback for what the device cannot
+ * derive, never an override of what it can.
  */
-async function renderGeneric(data) {
+function renderOptions(data, lang) {
+  const kinds = self.IH_KINDS || {};
+  const meta = kinds[(data && data.kind) || ""] || self.IH_GENERIC_KIND;
+  const known = Object.prototype.hasOwnProperty.call(kinds, (data && data.kind) || "");
+  const payload = (data && data.payload) || {};
+
+  const title = translate(lang, meta.titleKey, payload) || "Hidden View";
+  const body = translate(lang, meta.bodyKey, payload);
+
+  let href = (data && data.href) || "/";
+  if (known) {
+    if (meta.deepLinkField && meta.deepLinkPath) {
+      const value = payload[meta.deepLinkField];
+      href =
+        typeof value === "string" && value.trim()
+          ? meta.deepLinkPath + encodeURIComponent(value.trim())
+          : meta.href || href;
+    } else if (meta.href) {
+      href = meta.href;
+    }
+  }
+
+  return [
+    title,
+    {
+      body: body || undefined,
+      icon: "/android-chrome-192x192.png",
+      badge: "/favicon-32x32.png",
+      // The fourth idempotency level: one tag per notification, so a repeat collapses at the OS
+      // level instead of stacking a second banner for the same event.
+      tag: (data && data.dedupeKey) || undefined,
+      timestamp: data && data.createdAt ? Date.parse(data.createdAt) || undefined : undefined,
+      data: { href: href, notificationId: data && data.notificationId },
+    },
+  ];
+}
+
+async function render(data) {
   const lang = await resolveLang(data && data.lang);
-  const titles = {
-    en: "Hidden View", es: "Hidden View", fr: "Hidden View",
-    de: "Hidden View", pt: "Hidden View",
-  };
-  const bodies = {
-    en: "You have a new notification.",
-    es: "Tienes una nueva notificación.",
-    fr: "Vous avez une nouvelle notification.",
-    de: "Sie haben eine neue Benachrichtigung.",
-    pt: "Você tem uma nova notificação.",
-  };
-  return self.registration.showNotification(titles[lang] || titles.en, {
-    body: bodies[lang] || bodies.en,
-    icon: "/android-chrome-192x192.png",
-    badge: "/favicon-32x32.png",
-    tag: (data && data.dedupeKey) || undefined,
-    timestamp: data && data.createdAt ? Date.parse(data.createdAt) || undefined : undefined,
-    data: { href: (data && data.href) || "/", notificationId: data && data.notificationId },
-  });
+  const [title, options] = renderOptions(data, lang);
+  return self.registration.showNotification(title, options);
 }
 
 self.addEventListener("push", (event) => {
   // Unconditionally inside waitUntil: there is no branch of this handler that may end without a
-  // notification having been shown.
-  event.waitUntil(renderGeneric(safeParse(event)));
+  // notification having been shown — including a payload that will not parse, a kind this build has
+  // never heard of, and a schema version from the future (§6). All three land on the generic row.
+  event.waitUntil(render(safeParse(event)));
 });
 
 self.addEventListener("notificationclick", (event) => {

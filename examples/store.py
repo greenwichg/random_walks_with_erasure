@@ -578,6 +578,47 @@ class PushSubscription(Base):
     updated_at: Mapped[datetime] = mapped_column(default=_utcnow)
 
 
+class NotificationDelivery(Base):
+    """One attempt to deliver one notification to one destination — the platform's **third** level of
+    idempotency (``docs/NOTIFICATION_PLATFORM.md`` §3), and the only durable record that a send ever
+    happened.
+
+    ``UNIQUE(notification_id, channel, subscription_id)`` is what stops the same notification being
+    pushed to the same device twice. It matters more here than anywhere else in the platform: the
+    delivery worker runs on every poll cycle, so without it every cycle would re-send every
+    still-unexpired notification to every device, forever.
+
+    The row is **claimed before the send and resolved after it**. A crash between the two leaves a
+    ``pending`` row, which is deliberately *not* retried — an unresolved claim means "we do not know
+    whether the reader saw this", and re-sending on that basis is how a notification platform starts
+    duplicating itself. It is visible in the ledger for an operator to judge.
+
+    ``subscription_id`` is stored as a plain integer rather than a foreign key on purpose: a
+    subscription is pruned the moment the push service reports it gone (404/410), and the record that
+    we tried to reach it must outlive the address we tried to reach. ``channel`` is the axis a future
+    transport (email, mobile push) extends along without a schema change."""
+
+    __tablename__ = "notification_deliveries"
+    __table_args__ = (UniqueConstraint("notification_id", "channel", "subscription_id",
+                                       name="uq_notification_delivery_target"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    notification_id: Mapped[int] = mapped_column(ForeignKey("notifications.id"), index=True)
+    channel: Mapped[str] = mapped_column(String(32), index=True, default="web_push")
+    #: The `push_subscriptions.id` at claim time. NOT a foreign key — see the class docstring.
+    subscription_id: Mapped[int] = mapped_column(index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    #: pending → success | expired | timeout | transient | permanent. `pending` outliving a run means
+    #: the process died mid-send; nothing retries it.
+    status: Mapped[str] = mapped_column(String(16), index=True, default="pending")
+    #: The push service's status code where there was one, for correlation with its documentation.
+    status_code: Mapped[Optional[int]] = mapped_column(default=None)
+    #: A short, non-sensitive reason ("timeout", "http_413"). Never a response body.
+    detail: Mapped[str] = mapped_column(String(255), default="")
+    attempted_at: Mapped[datetime] = mapped_column(default=_utcnow)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(default=None)
+
+
 class FeedArticle(Base):
     """An article discovered via RSS ingestion — the news **catalog** (distinct from per-user
     ``reads``). Deduplicated by ``canonical_url`` (the same key ``reads`` and the scoring cache use),
@@ -2834,6 +2875,106 @@ class Store:
                 for column, value in flags.items():
                     setattr(row, column, value)
             return len(rows)
+
+    def push_subscriptions_for_category(self, category: str, limit: int = 5000) -> "list[dict]":
+        """Every device whose reader has push enabled for ``category`` — the fan-out candidate set.
+
+        This is the query the denormalised ``push_*`` columns exist for: preferences live in an opaque
+        JSON blob that cannot be indexed, so without the mirror this would be a full scan plus a JSON
+        parse per row. The mirror is an ACCELERATOR and never the authority
+        (``docs/BROWSER_PUSH_ARCHITECTURE.md`` §7) — the caller still evaluates
+        ``notification_service.gate_path`` against real settings before sending, so a stale flag here
+        can only cost a wasted candidate, never an unconsented send.
+
+        Includes the device's keys, because the caller is the sender and they are its address."""
+        column = self._PUSH_FLAG_COLUMNS.get(category)
+        if column is None:
+            return []
+        with self.session() as s:
+            rows = s.scalars(select(PushSubscription)
+                             .where(getattr(PushSubscription, column).is_(True))
+                             .order_by(PushSubscription.id.asc()).limit(max(0, limit))).all()
+            return [{"id": r.id, "userId": r.user_id, "endpoint": r.endpoint,
+                     "p256dh": r.p256dh, "auth": r.auth,
+                     "contentEncoding": r.content_encoding} for r in rows]
+
+    def notification_ids_by_dedupe_key(self, user_id: int, keys: "list[str]") -> "dict[str, int]":
+        """``dedupe_key -> notification id`` for one reader. The delivery worker records notifications
+        idempotently (``record_notifications`` skips ones that already exist, so it cannot report their
+        ids) and then needs those ids for the ledger and the payload."""
+        if not keys:
+            return {}
+        with self.session() as s:
+            rows = s.execute(select(Notification.dedupe_key, Notification.id)
+                             .where(Notification.user_id == user_id,
+                                    Notification.dedupe_key.in_(list(keys)))).all()
+        return {key: int(nid) for key, nid in rows}
+
+    def claim_delivery(self, notification_id: int, subscription_id: int, *, user_id: int,
+                       channel: str = "web_push") -> "int | None":
+        """Claim the right to deliver one notification to one destination. Returns the ledger row id,
+        or ``None`` if it was already claimed.
+
+        The claim happens BEFORE the send, and that ordering is the whole design. The worker runs on
+        every poll cycle over the same still-unexpired notifications; without a claim taken first,
+        every cycle would re-send every one of them to every device. ``UNIQUE(notification_id,
+        channel, subscription_id)`` is the arbiter, so two workers racing produce one send.
+
+        A claim is never released. A row left ``pending`` means the process died mid-send, and
+        re-sending on "we do not know whether they saw it" is how a notification platform starts
+        duplicating itself — it stays visible in the ledger for a human to judge instead."""
+        try:
+            with self.session() as s:
+                row = NotificationDelivery(notification_id=notification_id, channel=channel,
+                                           subscription_id=subscription_id, user_id=user_id,
+                                           status="pending")
+                s.add(row)
+                s.flush()                    # surface the conflict here, not at commit
+                return int(row.id)
+        except IntegrityError:
+            return None                      # already claimed — by an earlier cycle or a racing worker
+
+    def record_delivery_result(self, delivery_id: int, status: str, *,
+                               status_code: "int | None" = None, detail: str = "") -> bool:
+        """Resolve a claimed delivery. Returns whether the row was found and updated."""
+        with self.session() as s:
+            row = s.get(NotificationDelivery, delivery_id)
+            if row is None:
+                return False
+            row.status = status
+            row.status_code = status_code
+            row.detail = (detail or "")[:255]
+            row.completed_at = _utcnow()
+            return True
+
+    def delivery_attempts(self, notification_id: "int | None" = None, *,
+                          user_id: "int | None" = None, limit: int = 200) -> "list[dict]":
+        """The ledger, newest first — the operator's answer to "did this reach that device?"."""
+        with self.session() as s:
+            q = select(NotificationDelivery)
+            if notification_id is not None:
+                q = q.where(NotificationDelivery.notification_id == notification_id)
+            if user_id is not None:
+                q = q.where(NotificationDelivery.user_id == user_id)
+            rows = s.scalars(q.order_by(NotificationDelivery.id.desc()).limit(max(0, limit))).all()
+            return [{"id": r.id, "notificationId": r.notification_id, "channel": r.channel,
+                     "subscriptionId": r.subscription_id, "userId": r.user_id,
+                     "status": r.status, "statusCode": r.status_code, "detail": r.detail,
+                     "attemptedAt": r.attempted_at.isoformat() if r.attempted_at else None,
+                     "completedAt": r.completed_at.isoformat() if r.completed_at else None}
+                    for r in rows]
+
+    def delete_push_subscription_by_id(self, subscription_id: int) -> "str | None":
+        """Remove a device the push service has declared gone (404/410). Returns its endpoint, so the
+        caller can log which one without having kept it. Not user-scoped: the authority here is the
+        push service, not a reader."""
+        with self.session() as s:
+            row = s.get(PushSubscription, subscription_id)
+            if row is None:
+                return None
+            endpoint = row.endpoint
+            s.delete(row)
+            return endpoint
 
     def prune_notifications(self, user_id: int, keep: int = 200) -> int:
         """Bound the per-user notification history: delete all but the newest ``keep`` rows. Cadence
