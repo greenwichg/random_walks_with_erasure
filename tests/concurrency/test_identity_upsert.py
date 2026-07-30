@@ -13,6 +13,8 @@ markers below turn into XPASS and the suite fails on purpose. That is the signal
 reference implementation from this file and collapse the parametrisation onto the real method.
 
 Baseline: SQLAlchemy 2.0.51, SQLite 3.45.1, Python 3.11.15 / 3.12.3.
+
+Why this suite is shaped this way, and what to do when it goes red: docs/CONCURRENCY_TESTING.md
 """
 
 import pytest

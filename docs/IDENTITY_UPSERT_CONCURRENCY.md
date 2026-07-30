@@ -269,6 +269,11 @@ sequenceDiagram
 **It exists: `tests/concurrency/`.** The experiments that produced every `[M]` measurement in this
 document are kept as runnable tests, not as prose about experiments that were once run.
 
+This section is the mechanics. The reasoning — why these are assumption detectors rather than
+regression tests, how to read a failure after a version upgrade, and when a red test means "revalidate
+the design" rather than "fix the code" — is [`CONCURRENCY_TESTING.md`](CONCURRENCY_TESTING.md). Read
+that one first if the suite has just gone red and you did not change anything.
+
 ```
 pytest tests/concurrency -q                      # fast probes (runs with the normal suite, and in CI
                                                  # on both 3.11 and 3.12)

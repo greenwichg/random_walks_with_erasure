@@ -11,6 +11,8 @@ targets), sqlite3 in legacy transaction control.
 
 Run the fast ones with the normal suite; the two wall-clock ones are marked `slow` and excluded by
 default (`pytest -m slow tests/concurrency` to include them).
+
+Why this suite is shaped this way, and what to do when it goes red: docs/CONCURRENCY_TESTING.md
 """
 
 import time
