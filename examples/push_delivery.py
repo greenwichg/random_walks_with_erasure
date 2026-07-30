@@ -59,11 +59,29 @@ MAX_WORKERS = 4
 
 #: Wall-clock bound on one fan-out. A run that hits this stops cleanly and the next cycle picks up
 #: what is left — unbounded work on a background thread is how a "background" job becomes an outage.
+#:
+#: It bounds BOTH phases. Planning stops between readers; sending stops between waves of
+#: :data:`MAX_WORKERS`, which is the finest grain available without abandoning a send already in
+#: flight. One wave costs at most one send timeout, so the real overrun is bounded by that.
 MAX_RUN_SECONDS = 120.0
 
 #: Retries planned per run. A backlog drains over several cycles rather than in one burst, which is
 #: the point: the service that produced the backlog is the one a burst would land on.
 MAX_RETRIES_PER_RUN = 200
+
+#: Total sends one run may attempt. The deadline above is a *backstop*; this is the mechanism.
+#:
+#: A cap is needed because the fan-out is one job per (notification × device) and every job holds its
+#: notification in memory: without it, both the footprint and the run length scale with the subscriber
+#: base, and a run outgrows the lease that protects its own rows. At typical latencies a run finishes
+#: this many sends in a fraction of the deadline; what the cap actually prevents is the pathological
+#: case where every send takes its full timeout.
+#:
+#: Nothing is lost by capping — an unplanned job is simply not claimed, so the next cycle plans it
+#: fresh with no ledger state to unwind. That is the reason to cap in PLANNING rather than to defer
+#: after claiming: a claim spends an attempt, and spending one on a send that never happened would
+#: shorten the ladder for work the run itself chose not to do.
+MAX_JOBS_PER_RUN = 1000
 
 _lock = threading.Lock()
 _running = False
@@ -212,8 +230,15 @@ def _consents(store_, uid: int, kind: str) -> bool:
         return False
 
 
-def _plan_fresh(store_, *, now, deadline, log, stats) -> "list[_Job]":
-    """First attempts: a live event, the readers who consented, and one job per device."""
+def _plan_fresh(store_, *, now, deadline, budget, log, stats) -> "list[_Job]":
+    """First attempts: a live event, the readers who consented, and one job per device.
+
+    ``budget`` is how many jobs this run may still take (:data:`MAX_JOBS_PER_RUN` minus whatever the
+    retry phase already spent). Reaching it stops planning; nothing is claimed, so the next cycle
+    starts from the same place with nothing to undo."""
+    if budget <= 0:
+        log(logging.WARNING, "push_run_budget_spent", phase="fresh")
+        return []
     categories = _event_categories(store_, now)
     stats.events = len(categories)
 
@@ -240,6 +265,12 @@ def _plan_fresh(store_, *, now, deadline, log, stats) -> "list[_Job]":
         lang = _reader_language(store_, uid)
         for notification in due:
             for sub in subs.values():
+                # Checked per JOB, not per reader: one reader with fifty devices is fifty sends, and
+                # a budget that only bound the outer loop would not bind at all on the shape of
+                # fan-out most likely to be large.
+                if len(jobs) >= budget:
+                    log(logging.WARNING, "push_run_budget_spent", phase="fresh", planned=len(jobs))
+                    return jobs
                 claim = store_.claim_delivery(notification["id"], sub["id"], user_id=uid,
                                               channel=CHANNEL, now=now)
                 if claim is None:
@@ -300,8 +331,15 @@ def _plan_retries(store_, *, now, log, stats) -> "list[_Job]":
 def _retry_job(store_, row: dict, *, now, log, stats) -> "_Job | None":
     """One due ledger row → a job, or ``None`` after closing it. See :func:`_plan_retries`."""
     def abandon(reason: str) -> None:
+        # The last classification is kept, EXCEPT for a row that never got one. A recovered row is
+        # `pending`, and writing that back with a completion time would leave the ledger holding a
+        # row that is simultaneously in flight and finished — a state the schema's own docstring says
+        # cannot happen. `timeout` is the truthful classification for a send whose answer we never
+        # learned, which is exactly what an unresolved claim is.
+        last = row.get("status") or ""
         stats.abandoned += 1
-        store_.record_delivery_result(row["id"], row.get("status") or push_sender.PERMANENT,
+        store_.record_delivery_result(row["id"],
+                                      push_sender.TIMEOUT if last in ("", "pending") else last,
                                       status_code=row.get("statusCode"),
                                       detail=f"abandoned:{reason}"[:255], next_attempt_at=None)
         log(logging.INFO, "push_retry_abandoned", deliveryId=row["id"],
@@ -413,6 +451,30 @@ def _record(store_, job: _Job, result, *, now, log, stats) -> None:
                 userId=job.subscription.get("userId"), statusCode=result.status_code)
 
 
+def _send_all(sender, jobs: "list[_Job]", *, deadline, log, stats) -> "list[tuple]":
+    """Every planned send, in waves of :data:`MAX_WORKERS`, stopping at the deadline.
+
+    Waves rather than one continuous pool, because a continuously-fed pool has no point at which the
+    deadline can be consulted: submitting is instant, so every job is queued before the first second
+    has passed and the "bound" bounds nothing. A wave costs at most one send timeout, which is the
+    finest grain available without abandoning a request already in flight.
+
+    A job left unsent keeps its claim and is recovered by the lease — the same machinery that recovers
+    a run killed mid-send, and for the same reason: from the ledger's point of view an attempt that
+    did not happen and an attempt whose outcome was never written are the same unresolved row. This is
+    the emergency path; :data:`MAX_JOBS_PER_RUN` is what normally keeps a run inside its deadline."""
+    results: "list[tuple]" = []
+    for start in range(0, len(jobs), MAX_WORKERS):
+        if datetime.now(timezone.utc) >= deadline:
+            log(logging.WARNING, "push_run_deadline", phase="send", sent=len(results),
+                unsent=len(jobs) - len(results))
+            break
+        wave = jobs[start:start + MAX_WORKERS]
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+            results += list(zip(wave, pool.map(lambda job: _send(sender, job, log), wave)))
+    return results
+
+
 def run_once(store_, *, now=None, sender=None, log=None) -> RunStats:
     """One fan-out pass. Returns what it did.
 
@@ -430,18 +492,16 @@ def run_once(store_, *, now=None, sender=None, log=None) -> RunStats:
 
     deadline = datetime.now(timezone.utc) + timedelta(seconds=MAX_RUN_SECONDS)
     jobs = _plan_retries(store_, now=now, log=log, stats=stats)
-    jobs += _plan_fresh(store_, now=now, deadline=deadline, log=log, stats=stats)
+    jobs += _plan_fresh(store_, now=now, deadline=deadline,
+                        budget=MAX_JOBS_PER_RUN - len(jobs), log=log, stats=stats)
     stats.considered = len(jobs)
 
-    if jobs:
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-            results = list(pool.map(lambda job: (job, _send(sender, job, log)), jobs))
-        for job, result in results:
-            try:
-                _record(store_, job, result, now=now, log=log, stats=stats)
-            except Exception as exc:         # noqa: BLE001 — one unrecorded row must not lose the rest
-                log(logging.WARNING, "push_record_failed", deliveryId=job.delivery_id,
-                    error=f"{type(exc).__name__}: {exc}")
+    for job, result in _send_all(sender, jobs, deadline=deadline, log=log, stats=stats):
+        try:
+            _record(store_, job, result, now=now, log=log, stats=stats)
+        except Exception as exc:             # noqa: BLE001 — one unrecorded row must not lose the rest
+            log(logging.WARNING, "push_record_failed", deliveryId=job.delivery_id,
+                error=f"{type(exc).__name__}: {exc}")
 
     if stats.considered or stats.abandoned:
         log(logging.INFO, "push_run_complete", considered=stats.considered, sent=stats.sent,

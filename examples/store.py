@@ -1587,7 +1587,15 @@ class Store:
 
         ``attempts`` defaults to 1 for legacy rows, which is true of every one of them: a B2 row was
         claimed exactly once. ``next_attempt_at`` stays NULL, so nothing that predates B3 is suddenly
-        scheduled — those deliveries were settled under the old rules and stay settled."""
+        scheduled — those deliveries were settled under the old rules and stay settled.
+
+        ``first_attempted_at`` is **backfilled from ``attempted_at``**, and that is not cosmetic. The
+        age bound — the rule that stops a four-hour-old "breaking news" being delivered as if it were
+        current — is measured from it, and an unknown start time is deliberately read as "not expired"
+        so a delivery is never abandoned for a fact not in evidence. Left NULL, every B2 row that the
+        process had claimed and never resolved would come due on the first B3 deploy with the age
+        bound inert, and be sent however old it was. On a row that was never resolved, ``attempted_at``
+        IS the first attempt, so the backfill is exact rather than a guess."""
         for name, decl in [("attempts", "INTEGER DEFAULT 1"),
                            ("first_attempted_at", "DATETIME"),
                            ("next_attempt_at", "DATETIME")]:
@@ -1596,6 +1604,12 @@ class Store:
                     s.execute(text(f"ALTER TABLE notification_deliveries ADD COLUMN {name} {decl}"))
             except Exception:
                 pass    # already exists (fresh DB) or a non-sqlite backend — nothing to do
+        try:
+            with self.session() as s:
+                s.execute(text("UPDATE notification_deliveries SET first_attempted_at = attempted_at "
+                               "WHERE first_attempted_at IS NULL"))
+        except Exception:
+            pass        # nothing to backfill, or a backend that rejected the ALTER above
         try:
             with self.session() as s:
                 # The scheduler's only hot query filters on this. Small table today; the index is

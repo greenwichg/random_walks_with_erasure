@@ -773,6 +773,159 @@ def test_one_unrecordable_result_does_not_lose_the_others(st, monkeypatch):
     assert any(e == "push_record_failed" for e, _ in seen)
 
 
+def test_a_run_is_bounded_in_its_SEND_phase_and_not_only_its_planning(st, monkeypatch):
+    """The deadline claimed to bound the whole fan-out and bounded only the planning loop. Sending is
+    where the time actually goes — four workers at a ten-second timeout is over an hour for two
+    thousand devices, which is past the lease that protects the run's own rows."""
+    import time
+    uid = _reader(st)
+    for i in range(20):
+        _subscribe(st, uid, f"https://push.example/dev-{i}")
+    _event(st)
+    # Planning is milliseconds; each wave of four costs 0.4 s. Five waves cannot fit in one second,
+    # so the deadline has to bite in the send phase or not at all.
+    monkeypatch.setattr(push_delivery, "MAX_RUN_SECONDS", 1.0)
+    seen, log = _logs()
+
+    class _Slow(_Scripted):
+        def send(self, subscription, data):
+            time.sleep(0.4)
+            return super().send(subscription, data)
+
+    sender = _Slow(SUCCESS)
+    stats = push_delivery.run_once(st, now=NOW, sender=sender, log=log)
+
+    assert stats.considered == 20, "all twenty were planned"
+    assert 0 < len(sender.calls) < 20, "some sent, and the rest cut off by the deadline"
+    stopped = [f for e, f in seen if e == "push_run_deadline" and f.get("phase") == "send"]
+    assert stopped and stopped[0]["unsent"] > 0
+    assert stats.sent == len(sender.calls), "only what was attempted is recorded"
+
+
+def test_a_run_plans_no_more_jobs_than_it_can_attempt(st):
+    """One job per (notification × device), each holding its notification in memory. Uncapped, both
+    the footprint and the run length scale with the subscriber base. Capped in PLANNING rather than
+    deferred after claiming, because a claim spends an attempt and the run should not shorten a
+    ladder for work it chose not to do."""
+    uid = _reader(st)
+    for i in range(8):
+        _subscribe(st, uid, f"https://push.example/dev-{i}")
+    _event(st)
+    seen, log = _logs()
+    sender = _Scripted(SUCCESS)
+
+    original = push_delivery.MAX_JOBS_PER_RUN
+    try:
+        push_delivery.MAX_JOBS_PER_RUN = 3
+        stats = push_delivery.run_once(st, now=NOW, sender=sender, log=log)
+    finally:
+        push_delivery.MAX_JOBS_PER_RUN = original
+
+    assert stats.considered == 3, "one reader with eight devices is eight sends, and the cap binds"
+    assert len(sender.calls) == 3
+    assert any(e == "push_run_budget_spent" for e, _ in seen)
+    assert len(st.delivery_attempts(user_id=uid)) == 3, "the other five were never claimed"
+
+    # And the next cycle picks the rest up, because nothing was left half-done.
+    rest = push_delivery.run_once(st, now=NOW + timedelta(seconds=1), sender=sender,
+                                  log=lambda *a, **k: None)
+    assert rest.sent == 5
+
+
+def test_a_spent_budget_does_no_work_it_cannot_use(st, monkeypatch):
+    """The per-job check alone would produce the same outcome, having first run the event query and a
+    subscription scan per category. On the run where the budget is already gone — a large backlog —
+    that is the query load the cap exists to avoid."""
+    uid = _reader(st)
+    _subscribe(st, uid)
+    _event(st)
+    touched = []
+    monkeypatch.setattr(st, "recent_notification_events",
+                        lambda **k: touched.append("events") or [])
+
+    original = push_delivery.MAX_JOBS_PER_RUN
+    try:
+        push_delivery.MAX_JOBS_PER_RUN = 0
+        push_delivery.run_once(st, now=NOW, sender=_Scripted(SUCCESS), log=lambda *a, **k: None)
+    finally:
+        push_delivery.MAX_JOBS_PER_RUN = original
+    assert touched == [], "the event query never ran"
+
+
+def test_the_retry_phase_spends_from_the_same_budget_as_the_fresh_one(st):
+    """One budget for the run, not one per phase. Otherwise a large backlog and a large fan-out
+    together produce a run twice the size either was allowed to be — and the cap exists precisely for
+    the case where both are large at once."""
+    uid = _reader(st)
+    for i in range(4):
+        _subscribe(st, uid, f"https://push.example/dev-{i}")
+    _event(st, hours=24)
+    push_delivery.run_once(st, now=NOW, sender=_Scripted(TRANSIENT), log=lambda *a, **k: None)
+
+    later = NOW + timedelta(minutes=10)
+    st.record_notification_event(
+        "story_breaking", "st_second", category="breaking",
+        payload={"storyId": "st_second", "title": "Another thing", "publisherCount": 4},
+        occurred_at=(later - timedelta(minutes=1)).isoformat(),
+        expires_at=(later + timedelta(hours=6)).isoformat())
+
+    sender = _Scripted(SUCCESS)
+    original = push_delivery.MAX_JOBS_PER_RUN
+    try:
+        push_delivery.MAX_JOBS_PER_RUN = 5      # 4 retries + 4 fresh would be 8
+        stats = push_delivery.run_once(st, now=later, sender=sender, log=lambda *a, **k: None)
+    finally:
+        push_delivery.MAX_JOBS_PER_RUN = original
+
+    assert stats.retried == 4, "the ladder is served first"
+    assert stats.considered == 5, "and the fresh fan-out gets only what is left"
+
+
+def test_an_abandoned_recovered_row_is_never_left_looking_in_flight(st):
+    """`pending` means "claimed, outcome unknown". Writing it back alongside a completion time would
+    put the ledger in a state its own schema says cannot exist, and an operator counting `pending`
+    rows to find dying runs would count settled ones too."""
+    uid = _reader(st)
+    sid, nid = _subscribe(st, uid), _notification(st, uid)
+    _event(st, hours=24)
+    st.claim_delivery(nid, sid, user_id=uid, now=NOW)          # the "crashed" run
+    st.delete_push_subscription(uid, "https://push.example/dev-1")
+
+    later = NOW + timedelta(seconds=push_retry.LEASE_SECONDS + 60)
+    push_delivery.run_once(st, now=later, sender=_Scripted(SUCCESS), log=lambda *a, **k: None)
+
+    row = next(r for r in st.delivery_attempts(user_id=uid) if r["id"] == 1)
+    assert row["status"] != "pending", "a settled row is not in flight"
+    assert row["status"] == "timeout", "the truthful classification for an answer never learned"
+    assert row["completedAt"] is not None and row["nextAttemptAt"] is None
+
+
+def test_a_b2_row_left_pending_cannot_be_delivered_years_late(tmp_path):
+    """The age bound reads `first_attempted_at`, and B2 had no such column. Left NULL, an unresolved
+    B2 row would come due on the first B3 deploy with the bound inert — and be sent, however old.
+    The migration backfills it from `attempted_at`, which on a never-resolved row IS the first
+    attempt, so this is exact rather than a guess."""
+    import sqlalchemy as sa
+    db = tmp_path / "legacy-pending.sqlite"
+    legacy = sa.create_engine(f"sqlite:///{db}")
+    with legacy.begin() as c:
+        c.execute(sa.text(
+            "CREATE TABLE notification_deliveries ("
+            " id INTEGER PRIMARY KEY, notification_id INTEGER, channel VARCHAR(32),"
+            " subscription_id INTEGER, user_id INTEGER, status VARCHAR(16), status_code INTEGER,"
+            " detail VARCHAR(255), attempted_at DATETIME, completed_at DATETIME)"))
+        c.execute(sa.text(
+            "INSERT INTO notification_deliveries"
+            " (notification_id, channel, subscription_id, user_id, status, attempted_at)"
+            " VALUES (1,'web_push',1,1,'pending','2020-01-01 00:00:00.000000')"))
+    legacy.dispose()
+
+    upgraded = store_mod.Store(f"sqlite:///{db}")
+    row = upgraded.delivery_attempts(notification_id=1)[0]
+    assert row["firstAttemptedAt"] is not None, "the bound has something to measure from"
+    assert push_retry.expired(now=NOW, first_attempted_at=row["firstAttemptedAt"]) is True
+
+
 def test_retries_are_planned_before_fresh_sends(st):
     """A run that runs out of time should have spent it on the work that expires soonest."""
     uid = _reader(st)

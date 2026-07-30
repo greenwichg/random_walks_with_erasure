@@ -355,7 +355,10 @@ Then, per cycle:
 3. **Per reader**, the Phase A decision path with `channel="push"` — the same evaluation the inbox
    uses, reading `notifications.categories.<c>.push` instead of `.inApp`. The daily cap applies.
 4. **Plan, then send.** Planning reads the database on the worker's own thread; sending happens on a
-   pool of four. A whole run is bounded by 120 seconds; what it does not reach, the next cycle does.
+   pool of four, in waves, with the 120-second run deadline checked between waves. A run also
+   plans at most 1000 sends (`MAX_JOBS_PER_RUN`) — the cap is the mechanism and the deadline is
+   the backstop. Work not planned is not claimed, so the next cycle takes it with nothing to
+   unwind.
 5. **Claim, send, record.** Every attempt takes a row in `notification_deliveries` first
    (`UNIQUE(notification_id, channel, subscription_id)`), which is what stops each cycle re-sending
    every unexpired notification to every device.
@@ -470,7 +473,8 @@ SELECT count(*) FROM notification_deliveries WHERE status = 'pending';
 | `push_retry_plan_failed` | **WARNING** | `deliveryId`, `error` | One due row could not be planned. The rest of the scan continued. |
 | `push_record_failed` | **WARNING** | `deliveryId`, `error` | A send happened but its result could not be written. The lease will re-attempt it — an over-delivery risk that the notification `tag` collapses. |
 | `push_run_complete` | INFO | `considered`, `sent`, `failed`, `pruned`, `skipped`, `retried`, `scheduled`, `exhausted`, `recovered`, `abandoned` | One fan-out finished. `skipped` counts claims an earlier cycle already took (or that the ladder still owns), and a steady non-zero value there is normal. |
-| `push_run_deadline` | **WARNING** | `plannedReaders` | A run hit the 120-second bound while still planning. The remainder goes on the next cycle. Repeated appearances mean the fan-out has outgrown one cycle. |
+| `push_run_deadline` | **WARNING** | `plannedReaders`, or `phase`/`sent`/`unsent` | A run hit the 120-second bound. In the `send` phase the unsent jobs keep their claims and the lease recovers them. Repeated appearances mean the fan-out has outgrown one cycle. |
+| `push_run_budget_spent` | **WARNING** | `phase`, `planned` | A run reached `MAX_JOBS_PER_RUN`. Nothing was claimed beyond it, so the next cycle continues cleanly. Seeing this every cycle means the subscriber base has outgrown the cap. |
 | `push_reader_failed` | **WARNING** | `userId`, `error` | One reader's evaluation raised. The fan-out continued without them. |
 | `push_run_failed` | **WARNING** | `error` | The background run itself died. Should never appear. |
 | `push_delivery_request_failed` | **WARNING** | `error` | The poller could not even start a run. Should never appear. |

@@ -127,10 +127,14 @@ def _header(response, name: str) -> "str | None":
     ``requests`` gives a case-insensitive mapping; a hand-rolled stub or an older release may give a
     plain dict or nothing at all. A header is a nice-to-have on the retry path — failing to read one
     must never cost the classification that surrounds it."""
-    headers = getattr(response, "headers", None)
-    if not headers:
-        return None
     try:
+        # Inside the try, not before it: `getattr` with a default suppresses AttributeError and
+        # nothing else, so a lazily-parsed or proxied response whose `.headers` raises would take the
+        # whole classification down with it — losing the status that decides whether there is a retry
+        # path at all, to fetch a header that only refines the timing.
+        headers = getattr(response, "headers", None)
+        if not headers:
+            return None
         value = headers.get(name)
         if value is None:
             lowered = name.lower()

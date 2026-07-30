@@ -243,6 +243,47 @@ def test_the_sender_never_raises_whatever_the_transport_does():
     assert sender.send({"endpoint": "https://x", "p256dh": "a", "auth": "b"}, "{}").status == "timeout"
 
 
+def test_a_transport_may_answer_with_a_bare_status_or_with_a_response():
+    """Two shapes, deliberately. The real transport returns the push service's **response**, which is
+    where a `Retry-After` lives; a test transport returns an int, because most of what needs driving
+    here is "answer with this status" and making each one build a response object would be noise
+    around the thing under test."""
+    plain = push_sender.WebPushSender(private_key="k", subject="s",
+                                      transport=lambda *a: 201)
+    assert plain.send({"endpoint": "https://x"}, "{}").status_code == 201
+
+    class _Response:
+        status_code = 201
+        headers = {"Retry-After": "45"}
+
+    rich = push_sender.WebPushSender(private_key="k", subject="s",
+                                     transport=lambda *a: _Response())
+    got = rich.send({"endpoint": "https://x"}, "{}")
+    assert got.status_code == 201 and got.retry_after == "45"
+
+
+def test_retry_after_is_read_from_a_rejection_case_insensitively():
+    """It arrives on the exception, because that is how pywebpush reports a non-2xx — and `requests`
+    gives a case-insensitive mapping where a hand-rolled one may not."""
+    response = type("R", (), {"status_code": 429, "headers": {"retry-after": "600"}})()
+    got = push_sender.classify_exception(_WebPushException(response))
+    assert got.status == "transient" and got.retry_after == "600"
+
+
+def test_an_unreadable_header_never_costs_the_classification():
+    """A header is a nice-to-have on the retry path. Failing to read one must not lose the status
+    that decides whether there is a retry path at all."""
+    class _Hostile:
+        status_code = 503
+
+        @property
+        def headers(self):
+            raise RuntimeError("no headers here")
+
+    got = push_sender.classify_exception(_WebPushException(_Hostile()))
+    assert got.status == "transient" and got.status_code == 503 and got.retry_after is None
+
+
 def test_the_sender_hands_the_transport_the_subscription_and_the_deadline():
     seen = {}
 
@@ -703,6 +744,11 @@ def test_a_notification_whose_id_cannot_be_resolved_is_dropped_not_sent(st, monk
     sender = _FakeSender()
     stats = push_delivery.run_once(st, now=NOW, sender=sender, log=lambda *a, **k: None)
     assert stats.considered == 0 and sender.calls == []
+    # `skipped` is the tell. Without the guard the notification reaches `claim_delivery` with a null
+    # id, the insert violates NOT NULL, and the failure is counted as an already-taken claim — the
+    # same zero sends, arrived at by a database error instead of by a decision.
+    assert stats.skipped == 0, "nothing was even attempted"
+    assert st.delivery_attempts(user_id=uid) == []
 
 
 def test_the_fan_out_really_is_concurrent(st):
