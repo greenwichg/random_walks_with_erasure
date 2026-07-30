@@ -8,11 +8,7 @@ import { Button } from "@/components/ui/button";
 import { ScoreRing } from "@/components/shared/score-ring";
 import { SpectrumBar } from "@/components/shared/spectrum-bar";
 import { useSession } from "next-auth/react";
-import {
-  PENDING_ONBOARDING_KEY,
-  clearOnboardingPending,
-  markOnboardingPending,
-} from "@/lib/onboarding";
+import { clearPendingOnboarding, stashPendingOnboarding } from "@/lib/onboarding";
 import { useTranslation } from "@/lib/i18n";
 import { track } from "@/lib/analytics";
 import { cn } from "@/lib/utils";
@@ -357,37 +353,20 @@ function Estimate({
   const takeaway = report.improvements[0];
 
   /**
-   * Stash the selection where OnboardingSync can find it after a session appears, and mark it
-   * pending so the app-shell gate lets the reader through the moment they sign in rather than
-   * bouncing them back into the funnel they just finished. Cookie last: it is a claim about the
-   * payload, so it must not outrun it.
-   */
-  const stash = () => {
-    try {
-      window.localStorage.setItem(PENDING_ONBOARDING_KEY, JSON.stringify({ outlets: outletIds }));
-      markOnboardingPending();
-    } catch {
-      /* ignore storage failures — sign-in still proceeds */
-    }
-  };
-
-  /**
    * Two paths, because there are genuinely two situations.
    *
-   * ANONYMOUS (unchanged): there is nowhere server-side to put a selection made before the account
-   * exists, so it goes to localStorage and `OnboardingSync` flushes it once a session appears.
-   * localStorage is the right tool for exactly this one job.
+   * ANONYMOUS (unchanged): there is no account to attach a selection to yet, so it is stashed in the
+   * browser and `/signin/complete` persists it the moment there is a session — before any gated page
+   * renders. localStorage is the right tool for exactly this one job.
    *
    * AUTHENTICATED (new): a reader sent here by the app-shell gate already HAS an account, so the
-   * round-trip through localStorage is pure risk — a stale pending item from an earlier anonymous
-   * session could clobber the choice just made, and the sync only runs on the
-   * unauthenticated -> authenticated transition, which for this reader never happens again. Write
-   * straight to the server, clear any stale pending item, and go to the app.
+   * round-trip through the stash is pure risk — a stale item from an earlier anonymous session could
+   * clobber the choice just made, and this reader will not cross the sign-in step again where the
+   * stash gets read. Write straight to the server, drop any stale item, and go to the app.
    *
    * If that write fails we stay on this screen and say so, rather than navigating to `/`: the gate
-   * would only bounce them straight back here, so a redirect would look like a loop. The selection
-   * is still stashed in localStorage first, which covers the one case where `/` WOULD work — an
-   * unreachable engine, where the gate fails open and OnboardingSync flushes the stash.
+   * would only bounce them straight back here, so a redirect would look like a loop. The selection is
+   * stashed on the way out, so nothing is lost and pressing the button again retries.
    */
   const save = async () => {
     track("source_connected", { outletCount: outletIds.length }); // PA1 funnel event (best-effort)
@@ -402,22 +381,17 @@ function Estimate({
           body: JSON.stringify({ outlets: outletIds }),
         });
         if (!res.ok) throw new Error("save failed");
-        try {
-          window.localStorage.removeItem(PENDING_ONBOARDING_KEY);   // never let a stale item win
-          clearOnboardingPending();
-        } catch {
-          /* ignore */
-        }
+        clearPendingOnboarding();       // never let a stale item win
         window.location.assign("/");
       } catch {
-        stash();                 // so a retry, or a fail-open app load, still has the selection
+        stashPendingOnboarding(outletIds);
         setSaveFailed(true);
-        setSaving(false);        // the button re-enables: pressing it again retries the POST
+        setSaving(false);               // the button re-enables: pressing it again retries the POST
       }
       return;
     }
 
-    stash();
+    stashPendingOnboarding(outletIds);
     // Signed out: go to the sign-in page (Google, or the demo login when enabled) rather than
     // forcing one provider — so a reader without Google configured can still sign in.
     window.location.assign("/signin");

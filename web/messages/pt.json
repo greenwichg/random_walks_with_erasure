@@ -401,6 +401,7 @@
   "signin.demoSubtitle": "Modo demo — entre como leitor de demonstração descartável para explorar o app. Nenhuma conta necessária.",
   "signin.subtitle": "Faça login para salvar seus relatórios e acompanhar como sua dieta de leitura muda ao longo do tempo.",
   "signin.continueDemo": "Continuar como leitor de demonstração",
+  "signin.finishing": "Salvando suas escolhas…",
   "signin.demoNote": "Cria uma conta de demonstração descartável — sem Google. Apenas dev/demo.",
   "signin.continueGoogle": "Continuar com o Google",
   "signin.googleNote": "Usamos sua conta do Google apenas para fazer login. Seus dados de leitura permanecem privados.",

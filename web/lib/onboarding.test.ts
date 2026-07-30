@@ -1,74 +1,97 @@
-// The onboarding handoff — the marker cookie the server-side gate reads (node --test).
+// The onboarding handoff — the stash an anonymous pick lives in until sign-in lands it (node --test).
 //
-// Small surface, load-bearing contract: the gate in `app/(app)/layout.tsx` looks the cookie up BY
-// NAME, so a rename or a botched clear silently reopens the bug this whole mechanism exists to
-// prevent (a reader who just finished the funnel being sent back through it). These tests pin the
-// name, the TTL, and the fact that clearing actually expires.
+// Small surface, load-bearing contract. `/signin/complete` decides between "persist this" and "carry
+// on" purely from `readPendingOnboarding()`, and the whole architecture rests on that call being
+// consuming and total: a malformed stash must read as "nothing to do" rather than throw (which would
+// strand a reader on the interstitial) or return junk (which would POST junk to the engine).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  PENDING_ONBOARDING_COOKIE,
   PENDING_ONBOARDING_KEY,
-  clearOnboardingPending,
-  markOnboardingPending,
+  clearPendingOnboarding,
+  readPendingOnboarding,
+  stashPendingOnboarding,
 } from "./onboarding.ts";
 
-/** Capture what the helpers write to `document.cookie`, and clean up after. */
-function withDocument(protocol: string, run: (writes: string[]) => void): void {
+/** Install a minimal localStorage, seeded with `raw` under the pending key. */
+function withStorage(raw: string | null, run: (store: Map<string, string>) => void): void {
   const g = globalThis as Record<string, unknown>;
-  const writes: string[] = [];
-  const prevDoc = g.document;
-  const prevLoc = g.location;
-  g.document = { set cookie(v: string) { writes.push(v); }, get cookie() { return ""; } };
-  g.location = { protocol };
+  const prev = g.window;
+  const store = new Map<string, string>();
+  if (raw !== null) store.set(PENDING_ONBOARDING_KEY, raw);
+  g.window = {
+    localStorage: {
+      getItem: (k: string) => (store.has(k) ? store.get(k)! : null),
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+    },
+  };
   try {
-    run(writes);
+    run(store);
   } finally {
-    if (prevDoc === undefined) delete g.document; else g.document = prevDoc;
-    if (prevLoc === undefined) delete g.location; else g.location = prevLoc;
+    if (prev === undefined) delete g.window; else g.window = prev;
   }
 }
 
-test("the two halves of the handoff have distinct names (localStorage key vs cookie)", () => {
-  assert.equal(PENDING_ONBOARDING_KEY, "ih:pendingOnboarding");
-  // A cookie name may not contain a colon-bearing token from the storage key by accident; these are
-  // separate namespaces and the gate imports the cookie one.
-  assert.equal(PENDING_ONBOARDING_COOKIE, "ih_pending_onboarding");
-});
-
-test("marking pending writes a site-wide, lax, half-hour cookie", () => {
-  withDocument("http:", (writes) => {
-    markOnboardingPending();
-    assert.equal(writes.length, 1);
-    const c = writes[0]!;
-    assert.match(c, new RegExp(`^${PENDING_ONBOARDING_COOKIE}=1;`));
-    assert.match(c, /Path=\//);          // readable by the gate on every app route
-    assert.match(c, /Max-Age=1800/);     // self-healing: an abandoned flush re-arms the gate
-    assert.match(c, /SameSite=Lax/);     // survives the OAuth redirect back from the provider
-    assert.doesNotMatch(c, /Secure/);    // plain-http dev would silently drop a Secure cookie
+test("a stashed selection round-trips", () => {
+  withStorage(null, (store) => {
+    stashPendingOnboarding(["nytimes", "foxnews", "reuters"]);
+    assert.equal(store.get(PENDING_ONBOARDING_KEY), '{"outlets":["nytimes","foxnews","reuters"]}');
+    assert.deepEqual(readPendingOnboarding(), ["nytimes", "foxnews", "reuters"]);
   });
 });
 
-test("over https the cookie is Secure", () => {
-  withDocument("https:", (writes) => {
-    markOnboardingPending();
-    assert.match(writes[0]!, /; Secure$/);
+test("clearing is consuming — which is what makes the sign-in landing loop-proof", () => {
+  withStorage('{"outlets":["a"]}', () => {
+    assert.deepEqual(readPendingOnboarding(), ["a"]);
+    clearPendingOnboarding();
+    // The landing page navigates to `/` after clearing. If the gate were ever to send the reader
+    // back, there is nothing left to re-post, so the cycle terminates by construction.
+    assert.equal(readPendingOnboarding(), null);
   });
 });
 
-test("clearing expires the cookie immediately, under the same name and path", () => {
-  withDocument("https:", (writes) => {
-    clearOnboardingPending();
-    const c = writes[0]!;
-    assert.match(c, new RegExp(`^${PENDING_ONBOARDING_COOKIE}=;`));
-    assert.match(c, /Path=\//);          // a different path would leave the original in place
-    assert.match(c, /Max-Age=0/);
+test("nothing stashed reads as null (the returning-reader pass-through)", () => {
+  withStorage(null, () => assert.equal(readPendingOnboarding(), null));
+});
+
+test("an unusable stash reads as null rather than throwing", () => {
+  for (const raw of [
+    "not json at all",
+    "{}",                          // no outlets
+    '{"outlets":[]}',              // empty selection: nothing to persist
+    '{"outlets":"nytimes"}',       // wrong shape
+    '{"outlets":[1,2,3]}',         // wrong member type
+    '{"outlets":["",""]}',         // blank ids only
+    "null",
+  ]) {
+    withStorage(raw, () => {
+      assert.equal(readPendingOnboarding(), null, raw);
+    });
+  }
+});
+
+test("mixed members are filtered, not rejected wholesale", () => {
+  withStorage('{"outlets":["nytimes",null,"","reuters",7]}', () => {
+    assert.deepEqual(readPendingOnboarding(), ["nytimes", "reuters"]);
   });
 });
 
-test("both helpers are inert without a document (they are imported by a server module)", () => {
+test("storage failures are swallowed — a private-mode reader still gets through sign-in", () => {
   const g = globalThis as Record<string, unknown>;
-  assert.equal(g.document, undefined);   // the gate imports this module during SSR
-  assert.doesNotThrow(() => markOnboardingPending());
-  assert.doesNotThrow(() => clearOnboardingPending());
+  const prev = g.window;
+  g.window = {
+    localStorage: {
+      getItem() { throw new Error("blocked"); },
+      setItem() { throw new Error("blocked"); },
+      removeItem() { throw new Error("blocked"); },
+    },
+  };
+  try {
+    assert.doesNotThrow(() => stashPendingOnboarding(["a"]));
+    assert.equal(readPendingOnboarding(), null);
+    assert.doesNotThrow(() => clearPendingOnboarding());
+  } finally {
+    if (prev === undefined) delete g.window; else g.window = prev;
+  }
 });

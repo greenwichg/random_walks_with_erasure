@@ -401,6 +401,7 @@
   "signin.demoSubtitle": "Demo mode — sign in as a throwaway demo reader to explore the app. No account needed.",
   "signin.subtitle": "Sign in to save your reports and track how your reading diet changes over time.",
   "signin.continueDemo": "Continue as demo reader",
+  "signin.finishing": "Saving your picks…",
   "signin.demoNote": "Creates a throwaway demo account — no Google needed. Dev/demo only.",
   "signin.continueGoogle": "Continue with Google",
   "signin.googleNote": "We use your Google account only to sign you in. Your reading data stays private.",

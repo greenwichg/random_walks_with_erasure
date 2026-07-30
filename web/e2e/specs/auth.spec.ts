@@ -30,7 +30,8 @@ test.describe("Authentication", () => {
     await page.goto("/signin");
     await page.getByRole("button", { name: "Continue as demo reader" }).click();
 
-    // The session is genuinely established...
+    // The session is genuinely established... (via `/signin/complete`, which passes a reader with
+    // nothing stashed straight through)
     await page.waitForURL((url) => url.pathname === "/onboarding" || url.pathname === "/");
     const session = await page.request.get("/api/auth/session").then((r) => r.json());
     expect(session?.user).toBeTruthy();
@@ -46,10 +47,10 @@ test.describe("Authentication", () => {
     browser,
   }) => {
     // The other half of the gate's contract, and the flow with the most traffic. An anonymous
-    // visitor's selection is stashed client-side (no account exists yet), so at the moment they
-    // land back on `/` the store still knows nothing about them — a gate reading only the store
-    // would send them through the funnel a second time. The marker cookie is what prevents that;
-    // this test is the reason it exists.
+    // visitor's selection is stashed client-side (no account exists yet), so if sign-in returned
+    // them straight to `/` the store would still know nothing about them and the gate would send
+    // them through the funnel a second time. Sign-in instead returns to `/signin/complete`, which
+    // persists the stash first; this test is the reason that step exists.
     const context = await browser.newContext();
     const page = await context.newPage();
 

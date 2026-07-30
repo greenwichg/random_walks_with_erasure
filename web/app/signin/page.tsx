@@ -11,7 +11,15 @@ import { track } from "@/lib/analytics";
  * Sign-in page — the only auth entry point for the closed beta (Google OAuth).
  * Public route; the middleware redirects here when an unauthenticated visitor
  * requests a protected page. On success NextAuth returns them to `callbackUrl`.
+ *
+ * That callback URL is `/signin/complete`, never `/` directly: a visitor may have picked outlets
+ * while anonymous, and those picks live in the browser until something authenticated persists them.
+ * `/signin/complete` does exactly that and then moves on, so nobody reaches a gated page with an
+ * account the store knows nothing about. For a returning reader it is a pass-through.
  */
+/** Where every provider lands: the step that persists a pre-sign-in outlet selection. */
+const POST_SIGNIN = "/signin/complete";
+
 export default function SignInPage() {
   const { t } = useTranslation();
   // In the Colab demo (dev login on) Google OAuth isn't configured, so showing "Continue with
@@ -67,7 +75,7 @@ export default function SignInPage() {
                 // The CSRF + callback requests are same-origin, so this works over the tunnel; we
                 // navigate ourselves on success.
                 const res = await signIn("dev", { redirect: false });
-                if (res?.ok) window.location.assign("/");
+                if (res?.ok) window.location.assign(POST_SIGNIN);
               }}
             >
               {t("signin.continueDemo")}
@@ -81,7 +89,7 @@ export default function SignInPage() {
               size="lg"
               onClick={() => {
                 track("signin_started", { method: "google" });
-                signIn("google", { callbackUrl: "/" });
+                signIn("google", { callbackUrl: POST_SIGNIN });
               }}
             >
               {t("signin.continueGoogle")}

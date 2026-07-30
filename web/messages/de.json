@@ -401,6 +401,7 @@
   "signin.demoSubtitle": "Demomodus — melden Sie sich als temporärer Demo-Leser an, um die App zu erkunden. Kein Konto nötig.",
   "signin.subtitle": "Melden Sie sich an, um Ihre Berichte zu speichern und zu verfolgen, wie sich Ihre Lesediät entwickelt.",
   "signin.continueDemo": "Als Demo-Leser fortfahren",
+  "signin.finishing": "Ihre Auswahl wird gespeichert…",
   "signin.demoNote": "Erstellt ein temporäres Demo-Konto — kein Google nötig. Nur Dev/Demo.",
   "signin.continueGoogle": "Mit Google fortfahren",
   "signin.googleNote": "Wir verwenden Ihr Google-Konto nur zur Anmeldung. Ihre Lesedaten bleiben privat.",

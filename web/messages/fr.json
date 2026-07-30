@@ -401,6 +401,7 @@
   "signin.demoSubtitle": "Mode démo — connectez-vous en tant que lecteur de démonstration jetable pour explorer l'app. Aucun compte requis.",
   "signin.subtitle": "Connectez-vous pour enregistrer vos rapports et suivre l'évolution de votre régime de lecture.",
   "signin.continueDemo": "Continuer en lecteur de démo",
+  "signin.finishing": "Enregistrement de vos choix…",
   "signin.demoNote": "Crée un compte de démo jetable — pas besoin de Google. Dev/démo uniquement.",
   "signin.continueGoogle": "Continuer avec Google",
   "signin.googleNote": "Nous utilisons votre compte Google uniquement pour vous connecter. Vos données de lecture restent privées.",
