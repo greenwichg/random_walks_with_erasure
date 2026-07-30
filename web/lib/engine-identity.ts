@@ -17,6 +17,7 @@
 // resolves — but a VALUE import between lib modules has to look like this. `moduleResolution: bundler`
 // accepts it, and so do webpack and SWC.
 import { isEmailAllowed } from "./beta-access.ts";
+import { fetchWithTimeout } from "./engine-timeout.ts";
 
 const ENGINE_BASE = process.env.RWE_BACKEND_URL ?? "http://127.0.0.1:8000";
 
@@ -31,7 +32,10 @@ export async function upsertEngineUser(input: {
   displayName?: string | null;
 }): Promise<number | null> {
   try {
-    const res = await fetch(`${ENGINE_BASE}/api/internal/users`, {
+    // fetchWithTimeout, not bare fetch: a wedged engine must fail rather than hang. The recovery path
+    // coalesces concurrent callers onto one in-flight promise, so a promise that never settles would
+    // stall every one of them and record no backoff (see lib/engine-timeout.ts).
+    const res = await fetchWithTimeout(`${ENGINE_BASE}/api/internal/users`, {
       method: "POST",
       // The engine's /api/internal/* surface is fail-closed in production: it trusts a call only when
       // it carries the shared secret as X-IH-Auth (same header engineAuthHeaders sends for /api/me/*).
@@ -56,7 +60,7 @@ export async function upsertEngineUser(input: {
     const data = (await res.json()) as { userId?: number };
     return typeof data.userId === "number" ? data.userId : null;
   } catch {
-    return null; // engine down at sign-in time — resolve to demo until it recovers
+    return null; // engine down, unreachable, or past the deadline — resolve to demo until it recovers
   }
 }
 

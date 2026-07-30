@@ -170,6 +170,8 @@ async function withResolver(
   }
 }
 
+const REAL_NOW = Date.now;
+
 /** Move the clock forward for every subsequent `Date.now()` in the module under test. */
 function advance(ms: number): void {
   const base = Date.now();
@@ -380,4 +382,133 @@ test("expired entries are swept, not merely ignored", async () => {
     assert.equal(__identityCacheStats().entries, 1,
       "the write-time sweep must reclaim expired entries, not leave them for a read that never comes");
   });
+});
+
+// --------------------------------------------------------------------------------------------------
+// Timeout behaviour (commit 3.5). Before `upsertEngineUser` had a deadline, a wedged engine left the
+// in-flight promise pending, recorded no backoff, and every later caller coalesced onto it — measured
+// as "STILL PENDING after 1500ms, 1 in-flight entry, 0 memo entries". These pin the fix.
+// --------------------------------------------------------------------------------------------------
+
+/** A fetch that never answers but honours the abort signal, like a wedged server mid-request. */
+function hanging(observed: { aborts: number }) {
+  return (_url: string, init: RequestInit) =>
+    new Promise<Response>((_resolve, reject) => {
+      init.signal?.addEventListener("abort", () => {
+        observed.aborts += 1;
+        reject(new DOMException("This operation was aborted", "AbortError"));
+      });
+    });
+}
+
+/** Run with a short engine deadline so the real abort path is exercised, not a stubbed rejection. */
+async function withShortDeadline(ms: number, fn: () => Promise<void>): Promise<void> {
+  const real = process.env.RWE_BACKEND_TIMEOUT_MS;
+  process.env.RWE_BACKEND_TIMEOUT_MS = String(ms);
+  try {
+    await fn();
+  } finally {
+    if (real === undefined) delete process.env.RWE_BACKEND_TIMEOUT_MS;
+    else process.env.RWE_BACKEND_TIMEOUT_MS = real;
+  }
+}
+
+test("upsertEngineUser resolves to null when the engine wedges, exactly like any other failure", async () => {
+  // The sign-in path reads this as "engine unavailable": the jwt callback leaves engineUserId unset and
+  // the dev provider's authorize() fails the sign-in cleanly. Both are unchanged by the timeout.
+  const observed = { aborts: 0 };
+  const g = globalThis as unknown as { fetch: unknown };
+  const real = g.fetch;
+  g.fetch = hanging(observed);
+  try {
+    await withShortDeadline(60, async () => {
+      assert.equal(await upsertEngineUser(IDENTITY), null);
+      assert.equal(observed.aborts, 1, "the request must actually be aborted");
+    });
+  } finally {
+    g.fetch = real;
+  }
+});
+
+test("a timed-out recovery settles: in-flight cleared, backoff recorded, no permanent attachment", async () => {
+  const observed = { aborts: 0 };
+  const g = globalThis as unknown as { fetch: unknown };
+  const realFetch = g.fetch;
+  const realWarn = console.warn;
+  __resetIdentityCache();
+  console.warn = () => {};
+  g.fetch = hanging(observed);
+
+  try {
+    await withShortDeadline(60, async () => {
+      const started = Date.now();
+      assert.equal(await resolveEngineUserId(GOOGLE_TOKEN), null);
+      assert.ok(Date.now() - started < 2000, "the caller must not wait on a wedged engine");
+
+      const stats = __identityCacheStats();
+      assert.equal(stats.inflight, 0, "the in-flight entry must be released once the request settles");
+      assert.equal(stats.entries, 1, "the failure must be remembered as a backoff");
+
+      // And the backoff is honoured: further callers get null without touching the engine.
+      const before = observed.aborts;
+      for (let i = 0; i < 5; i++) assert.equal(await resolveEngineUserId(GOOGLE_TOKEN), null);
+      assert.equal(observed.aborts, before, "the backoff must suppress retries against a wedged engine");
+    });
+  } finally {
+    g.fetch = realFetch;
+    console.warn = realWarn;
+    __resetIdentityCache();
+  }
+});
+
+test("concurrent callers share one timed-out request and all of them settle", async () => {
+  // The failure mode this commit removes: 25 callers coalesced onto a promise that never settles.
+  const observed = { aborts: 0 };
+  const g = globalThis as unknown as { fetch: unknown };
+  const realFetch = g.fetch;
+  const realWarn = console.warn;
+  __resetIdentityCache();
+  console.warn = () => {};
+  g.fetch = hanging(observed);
+
+  try {
+    await withShortDeadline(60, async () => {
+      const callers = Array.from({ length: 25 }, () => resolveEngineUserId(GOOGLE_TOKEN));
+      assert.equal(__identityCacheStats().inflight, 1, "they must share one request");
+
+      const results = await Promise.all(callers);            // must not hang
+      assert.deepEqual([...new Set(results)], [null]);
+      assert.equal(observed.aborts, 1, "one shared request, one abort");
+      assert.equal(__identityCacheStats().inflight, 0, "the shared entry must be released");
+    });
+  } finally {
+    g.fetch = realFetch;
+    console.warn = realWarn;
+    __resetIdentityCache();
+  }
+});
+
+test("recovery succeeds on a later attempt once the engine answers again", async () => {
+  const observed = { aborts: 0 };
+  const g = globalThis as unknown as { fetch: unknown };
+  const realFetch = g.fetch;
+  const realWarn = console.warn;
+  __resetIdentityCache();
+  console.warn = () => {};
+  g.fetch = hanging(observed);
+
+  try {
+    await withShortDeadline(60, async () => {
+      assert.equal(await resolveEngineUserId(GOOGLE_TOKEN), null);        // wedged
+      advance(30 * 1000 + 1);                                             // past the backoff
+      g.fetch = async () => ok({ userId: 42 });                           // engine comes back
+      assert.equal(await resolveEngineUserId(GOOGLE_TOKEN), 42);
+      assert.equal(__identityCacheStats().inflight, 0);
+    });
+  } finally {
+    g.fetch = realFetch;
+    console.warn = realWarn;
+    Date.now = REAL_NOW;
+    __resetIdentityCache();
+  }
 });

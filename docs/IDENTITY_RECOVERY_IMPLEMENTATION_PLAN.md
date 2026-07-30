@@ -1,6 +1,6 @@
 # Implementation Plan — Identity Recovery + Transaction-Retry Upsert
 
-**Commits 1–3 are implemented; commits 4–7 are not.** This is the roadmap for two designs that are already
+**Commits 1–3 and 3.5 are implemented; commits 4–7 are not.** This is the roadmap for two designs that are already
 reviewed:
 
 - [`IDENTITY_UPSERT_CONCURRENCY.md`](IDENTITY_UPSERT_CONCURRENCY.md) §4 — the engine-side upsert.
@@ -19,6 +19,7 @@ certified, exactly as planned.
 | **1** | engine | Transaction-retry upsert (§4) + collapse the harness onto the real method — **done** | yes — losers resolve instead of erroring | `git revert`, behaviour-only |
 | **2** | web | Extract `upsertEngineUser` into `lib/engine-identity.ts` — **done** | **no** — pure move | `git revert` |
 | **3** | web | Add the memoized resolver + its unit tests, wired to nothing — **done** | **no** — dead code | `git revert` |
+| **3.5** | web | Give `upsertEngineUser` a deadline — `lib/engine-timeout.ts`, shared with `backend.ts` — **done** | yes — a wedged engine now fails instead of hanging | `git revert` |
 | **4** | web | Persist `provider` + `providerAccountId` claims at sign-in | **no** — nothing reads them yet | `git revert` |
 | **5** | web | Call the resolver from `callbacks.jwt` (durable heal), behind a kill switch | yes — broken sessions start healing | env flag, then revert |
 | **6** | web | Call the resolver from `engineAuthHeaders` (immediate heal) | yes — hot path gains a guarded call | env flag, then revert |
@@ -119,6 +120,29 @@ beyond that. Dropping an entry costs one engine call and never correctness, so t
 unspecified detail rather than changing an approved one.
 
 ---
+
+## Commit 3.5 — web: a deadline for engine calls ✅ implemented
+
+Not in the original plan. The commit-3 review found that `upsertEngineUser` used bare `fetch`, which has
+no request timeout of its own — so a wedged engine left the resolver's in-flight promise unsettled, with
+no backoff recorded, and every coalesced caller attached to it. Measured before the fix: still pending
+after 1500 ms, 1 in-flight entry, 0 memo entries.
+
+**Files** — new `web/lib/engine-timeout.ts` (`engineTimeoutMs`, `fetchWithTimeout`), used by both
+`lib/backend.ts` and `lib/engine-identity.ts`; `web/lib/engine-timeout.test.ts`.
+
+**Why a new module rather than reusing `backend.ts`'s `withTimeout`.** That function is module-private
+and does three things beyond timing out: it merges `X-Forwarded-For`, forces `cache: "no-store"`, and
+swallows failures into `null`. Adopting it wholesale would have started forwarding the client IP on the
+sign-in upsert, which feeds the engine's per-IP rate limiting — a behaviour change outside this fix. The
+*primitive* is shared instead; the policy stays at each call site.
+
+**The deadline both aborts and races.** Aborting frees the socket, which is what a cooperating transport
+needs; the race is what makes "the caller always settles" independent of whether the transport honours
+the signal. A helper whose entire purpose is that nobody is left attached to a pending promise should
+not delegate that guarantee to the thing that is misbehaving.
+
+**Rollback.** `git revert`. Reverting restores bare `fetch` in both call sites.
 
 ## Commit 4 — web: persist the identity claims at sign-in
 

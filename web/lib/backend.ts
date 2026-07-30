@@ -13,8 +13,9 @@
 import { NextResponse } from "next/server";
 import { headers } from "next/headers";
 
+import { fetchWithTimeout } from "./engine-timeout.ts";
+
 const BASE = process.env.RWE_BACKEND_URL ?? "http://127.0.0.1:8000";
-const TIMEOUT_MS = Number(process.env.RWE_BACKEND_TIMEOUT_MS ?? 6000);
 
 /**
  * Forward the originating client's IP to the engine as `X-Forwarded-For`, so the engine's per-IP
@@ -61,19 +62,15 @@ export function engineUnavailable(): NextResponse {
 }
 
 async function withTimeout(input: string, init?: RequestInit): Promise<Response | null> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   // Caller headers (auth / user id) win over the forwarded IP on any conflict.
   const mergedHeaders: Record<string, string> = {
     ...forwardedFor(),
     ...((init?.headers as Record<string, string> | undefined) ?? {}),
   };
   try {
-    return await fetch(input, { ...init, headers: mergedHeaders, signal: controller.signal, cache: "no-store" });
+    return await fetchWithTimeout(input, { ...init, headers: mergedHeaders, cache: "no-store" });
   } catch {
     return null; // ECONNREFUSED, abort/timeout, DNS, …
-  } finally {
-    clearTimeout(timer);
   }
 }
 
