@@ -47,6 +47,7 @@ Engine + web (in `deploy/.env`, prod-hardening lines uncommented in the override
 - [ ] `RWE_BACKEND_URL=http://api:8000`; `RWE_DB_URL=sqlite:////app/data/ih_beta.db` (persistent, not `/tmp`/memory).
 - [ ] **BA1:** `BETA_ACCESS_ENABLED=1` **and** `BETA_ALLOWLIST` = the **5 Wave-0 emails** (fail-closed — an empty list denies everyone).
 - [ ] No `RWE_DEV_LOGIN` / `NEXT_PUBLIC_DEV_LOGIN` in production.
+- [ ] **Identity recovery:** leave `RWE_IDENTITY_RECOVERY` and `RWE_BACKEND_TIMEOUT_MS` **unset** — the defaults (on, 6000 ms) are what you want. Both are declared on the `web` service in both compose files; `deploy/ops/validate-deployment.py` fails if either is missing. Ref: `docs/SESSION_IDENTITY_RECOVERY_DESIGN.md` §5a.
 - [ ] Backup env: `BACKUP_OFFHOST_CMD='aws s3 cp "$1" s3://<bucket>/backups/'`, `BACKUP_KEEP=48`.
 - [ ] Monitoring env: `IH_BASE_URL=http://127.0.0.1:8000`, `ALERT_WEBHOOK=<slack/SNS>`.
 
@@ -64,6 +65,8 @@ Engine + web (in `deploy/.env`, prod-hardening lines uncommented in the override
 - [ ] **Smoke:** report renders; a recommendation opens the real publisher URL; feedback works.
 - [ ] **PA1:** after the smoke session, `curl -H "X-IH-Auth:$RWE_INTERNAL_SECRET" http://127.0.0.1:8000/api/analytics/funnel` shows reachers > 0; the **unauthenticated** call returns **404** (internal-only).
 - [ ] **OBS1:** `/api/health/live` alive; `/api/metrics` (with the secret) shows `request_ms`/`db_query_ms` timers.
+- [ ] **Identity recovery reaches the container** — the one property no test can prove, and the reason this line exists. `docker exec deploy-web-1 printenv | grep -E 'RWE_IDENTITY_RECOVERY|RWE_BACKEND_TIMEOUT_MS'` → `RWE_IDENTITY_RECOVERY=1` and `RWE_BACKEND_TIMEOUT_MS=` (empty). **Nothing printed means the rollback lever is inert**: the compose `environment:` block is an explicit allowlist and there is no `env_file:`, so a variable absent from it never reaches the container whatever `deploy/.env` says. That is how this shipped the first time.
+- [ ] **Recovery is quiet** — `docker logs deploy-web-1 2>&1 | grep engine_identity | tail`. Expect **nothing**, or a short burst of `engine_identity_recovered` right after a deploy that restarted `api` (those are repairs succeeding). Any `engine_identity_recovery_failed` is a real problem: `http_401` = the shared secret differs between tiers, `timeout` = engine wedged, `unreachable` = engine down. Ref: `docs/SESSION_IDENTITY_RECOVERY_DESIGN.md` §5a.
 
 ## G · Backups & monitoring wired (guide §2, §7)
 - [ ] `deploy/ops/backup-offhost.sh --backup-now` → exit 0 (container backup + integrity check + S3 sync; **no host Python**).
@@ -78,6 +81,7 @@ Engine + web (in `deploy/.env`, prod-hardening lines uncommented in the override
 - [ ] Previous good **release tag** known and reachable (`git tag`).
 - [ ] Newest **S3 backup path** noted; the restore steps (guide §7) are understood.
 - [ ] `docker` log rotation configured (`/etc/docker/daemon.json` max-size/max-file).
+- [ ] **Identity-recovery kill switch rehearsed, not just configured.** Set `RWE_IDENTITY_RECOVERY=0` in `deploy/.env` → `bash deploy/ops/restart.sh web` → confirm `docker exec deploy-web-1 printenv RWE_IDENTITY_RECOVERY` prints `0` → **remove the line again and restart**. No rebuild, no revert. Disabling only stops the *repair*: a session that already carries an engine id keeps working, so nobody is signed out or de-attributed.
 
 ---
 
@@ -97,6 +101,7 @@ Engine + web (in `deploy/.env`, prod-hardening lines uncommented in the override
 | 8 | Restore rehearsed | drill done, RTO known |
 | 9 | Monitoring automated + alerts | `ih-monitor` cron + test alert received |
 | 10 | Rollback staged | previous tag + backup path ready |
+| 11 | Identity-recovery switch live | `printenv RWE_IDENTITY_RECOVERY` inside `web` prints `1`, and toggling it to `0` was rehearsed |
 
 **Any NO → hold and remediate. All YES → send the 5 invites**, then follow the Wave-0 monitoring cadence
 in `docs/WAVE0_SUCCESS_PLAN.md` (daily dashboard) and the First-24h checklist in

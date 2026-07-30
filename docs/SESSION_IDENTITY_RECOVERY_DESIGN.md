@@ -444,7 +444,12 @@ traffic, and a dead engine cannot be turned into a retry storm by page views.
 
 ## 8. Required tests
 
-**`web/lib/engine-identity.test.ts`** — written, 45 tests, `node --test` with `fetch` stubbed:
+> The per-file counts below are a snapshot and have gone stale twice — they drift on any commit that
+> adds a test. Re-derive rather than trust:
+> `cd web && node --test --experimental-strip-types lib/<name>.test.ts | grep '^# pass'`.
+> The **named properties** are the contract; the numbers are only a reading aid.
+
+**`web/lib/engine-identity.test.ts`** — written, 53 tests, `node --test` with `fetch` stubbed:
 
 1. A token with a numeric `engineUserId` triggers **zero** engine calls — the guard, asserted by call
    count, because a regression here is a per-request engine call in production.
@@ -475,11 +480,11 @@ under test, so they live where they can be tested.
     guard fails the suite rather than silently doubling the engine calls of a failing sign-in.
     — commit 5
 
-**`web/lib/engine-timeout.test.ts`** — written, 7 tests. Recovery coalesces callers onto one in-flight
+**`web/lib/engine-timeout.test.ts`** — written, 8 tests. Recovery coalesces callers onto one in-flight
 promise, so a promise that never settles is a shared stall; the deadline both aborts *and* races, and a
 test drives a transport that ignores the abort signal to prove the race is what makes it unconditional.
 
-**`web/lib/session-recovery.test.ts`** — written, 9 tests, and the only committed test that exercises
+**`web/lib/session-recovery.test.ts`** — written, 11 tests, and the only committed test that exercises
 the hop *between* the resolver and the callback. It drives the real `AuthHandler` from
 `next-auth/core` — a module outside the package's `exports` map, loaded on purpose — so §2a's claim
 is asserted rather than argued: a heal made in `callbacks.jwt` is in the session body of the same
