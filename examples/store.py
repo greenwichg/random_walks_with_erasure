@@ -2475,6 +2475,30 @@ class Store:
                 r.seen_at = stamp
             return len(rows)
 
+    def notification_counts_today(self, user_id: int, kinds: "list[str]", *,
+                                  day: "str | None" = None) -> "dict[str, int]":
+        """How many notifications of each kind this user already received on ``day`` (``YYYY-MM-DD``,
+        UTC, defaulting to today) — the input to a kind's per-day cap.
+
+        Distinct from :meth:`delivered_notification_keys`, which answers "have they seen THIS item".
+        A cap answers "have they had ENOUGH items", which only fan-out kinds need: one upstream event
+        can mean many notifications, and nothing in the dedupe ledger bounds that.
+
+        Counts the notification's OWN ``created_at`` (the injected evaluation timestamp), not
+        ``recorded_at``, so the cap is anchored to the same clock the evaluation used. Matched by
+        date prefix — ISO-8601 strings sort lexicographically, the same day-bucketing the reading
+        streak uses."""
+        if not kinds:
+            return {}
+        stamp = day or _utcnow().date().isoformat()
+        with self.session() as s:
+            rows = s.execute(
+                select(Notification.kind, func.count())
+                .where(Notification.user_id == user_id, Notification.kind.in_(list(kinds)),
+                       Notification.created_at >= stamp, Notification.created_at < stamp + "~")
+                .group_by(Notification.kind)).all()
+        return {kind: int(n) for kind, n in rows}
+
     # -- notification events (global triggers; see :class:`NotificationEvent`) -------------------
     def record_notification_event(self, source_type: str, source_id: str, *, category: str,
                                   payload: "dict | None" = None, occurred_at: "str | None" = None,

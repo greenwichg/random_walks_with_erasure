@@ -36,6 +36,46 @@ def _recs_window_days() -> int:
     return int(raw) if raw.strip().lstrip("-").isdigit() and int(raw) > 0 else 7
 
 
+def _events_window_hours() -> int:
+    """How far back to look for global events (default 24h). Each event also carries its own
+    ``expires_at`` — the real staleness cutoff, set per category by whoever produced it — so this is
+    only a bound on the query, not the policy. 0/junk falls back rather than going unbounded."""
+    raw = os.environ.get("RWE_NOTIFY_EVENTS_WINDOW_HOURS", "")
+    return int(raw) if raw.strip().lstrip("-").isdigit() and int(raw) > 0 else 24
+
+
+def _recent_events(store, now) -> tuple:
+    """Global events for the context, newest first — or ``()`` if they cannot be read.
+
+    Fail-soft on purpose, and this is the one read here that is allowed to fail quietly: events feed
+    a *supplementary* kind, while the rest of the context feeds the reader's own report, streak and
+    recommendations. A broken event read must cost the reader their breaking notifications, never
+    their whole inbox."""
+    try:
+        since = (now - timedelta(hours=_events_window_hours())).isoformat()
+        return tuple(store.recent_notification_events(since=since, now=now.isoformat(), limit=50))
+    except Exception:                    # noqa: BLE001 — see the docstring; degradation is the point
+        return ()
+
+
+def _capped_kinds() -> tuple:
+    """Kinds that declare a per-day cap — the only ones whose counts need reading."""
+    return tuple(k.kind for k in ns.NOTIFICATION_KINDS if k.max_per_day is not None)
+
+
+def _counts_today(store, uid: int, now) -> dict:
+    """Today's per-kind delivery counts for the capped kinds. Same fail-soft posture as
+    :func:`_recent_events`: without counts a cap would read as "nothing sent yet", so a failure here
+    must not silently *raise* the ceiling — it returns the ceiling itself, closing the cap."""
+    kinds = _capped_kinds()
+    if not kinds:
+        return {}
+    try:
+        return store.notification_counts_today(uid, list(kinds), day=now.date().isoformat())
+    except Exception:                    # noqa: BLE001 — fail CLOSED: assume the cap is spent
+        return {k.kind: k.max_per_day for k in ns.NOTIFICATION_KINDS if k.max_per_day is not None}
+
+
 def _opt_int(value) -> "int | None":
     try:
         return int(value)
@@ -96,7 +136,8 @@ def build_context(store, uid: int, now: "datetime | None" = None) -> "ns.Notific
         now=now,
         settings=settings_service.get(store, uid),
         delivery=ns.DeliveryState(
-            delivered_keys=frozenset(store.delivered_notification_keys(uid))),
+            delivered_keys=frozenset(store.delivered_notification_keys(uid)),
+            counts_today=_counts_today(store, uid, now)),
         report=ns.ReportInputs(
             has_report=report is not None,
             overall=(_opt_int(report.get("overall")) if report else None),
@@ -110,7 +151,11 @@ def build_context(store, uid: int, now: "datetime | None" = None) -> "ns.Notific
         recommendations=ns.RecommendationInputs(
             unopened_count=store.count_unopened_recommendations(
                 uid, since=(now - timedelta(days=_recs_window_days())).isoformat())),
-        reading=reading)
+        reading=reading,
+        # GLOBAL occurrences — the only part of this context that is not about this reader. Read
+        # rather than pushed: the same evaluate-on-fetch shape as everything else here, so a breaking
+        # story reaches a reader on their next request with no scheduler and no queue.
+        events=ns.EventInputs(events=_recent_events(store, now)))
 
 
 def materialize_notifications(store, uid: int, now: "datetime | None" = None) -> int:
@@ -129,6 +174,15 @@ def materialize_notifications(store, uid: int, now: "datetime | None" = None) ->
       only while their condition holds. Here we (a) auto-resolve unseen alerts whose condition has
       cleared, and (b) keep at most ONE outstanding alert per kind, refreshing its payload in place
       instead of minting a new row on each evaluation period.
+    * ``discrete`` (breaking stories) — one-time OCCURRENCES. They get **neither** treatment, and
+      that is load-bearing rather than an omission: (a) would erase a breaking alert the moment the
+      story stopped breaking, when the reader should still see that it broke, and (b) would keep one
+      row for every story ever, when one row per story is the entire point.
+
+    Both exclusions hold by construction rather than by a check here — ``inactive_event_kinds``
+    filters on ``mode == "event"`` and (b) tests membership of ``EVENT_KINDS``, and a discrete kind
+    is in neither. Adding ``DISCRETE_KINDS`` to either branch is the mistake to avoid; the tests in
+    ``test_notification_delivery.py`` assert both directions.
 
     Without (a) the badge kept describing a state the reader had already resolved; without (b) an
     inactive reader accumulated one row per day per kind forever.

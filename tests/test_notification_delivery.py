@@ -14,6 +14,7 @@ from datetime import datetime, timedelta, timezone
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "examples"))
 import notification_delivery as nd   # noqa: E402
+import notification_service as ns    # noqa: E402
 import store as store_mod            # noqa: E402
 
 
@@ -290,3 +291,226 @@ def test_notification_history_is_bounded_and_never_prunes_unseen():
     assert len(remaining) >= 10
     assert len(_unseen(st, uid)) == 10                     # all 10 unseen rows survived pruning
     assert st.prune_notifications(uid, keep=1000) == 0     # nothing to do -> no-op
+
+
+# --------------------------------------------------------------------------- #
+# Global events through the boundary (A4).
+#
+# `build_context` now reads one thing that is not about the reader, and `materialize_notifications`
+# must give a one-time occurrence NEITHER of the two treatments it gives state alerts. These assert
+# both directions, end to end against a real store.
+# --------------------------------------------------------------------------- #
+EV_NOW = datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc)
+
+
+def _breaking_on(st, uid, on=True):
+    st.save_settings(uid, {"notifications": {"categories": {"breaking": {"inApp": on}}}})
+
+
+def _emit(st, i, *, title="Court issues major ruling", occurred=None, expires=None):
+    return st.record_notification_event(
+        "story_breaking", f"st_{i}", category="breaking",
+        payload={"storyId": f"st_{i}", "title": title, "publisherCount": 4},
+        occurred_at=occurred or (EV_NOW - timedelta(hours=1)).isoformat(), expires_at=expires)
+
+
+def _breaking_rows(st, uid):
+    return [n for n in st.list_notifications(uid, limit=100) if n["kind"] == "breaking_story"]
+
+
+def test_events_become_notifications_and_re_evaluation_adds_nothing():
+    """The pipeline in one test: an event exists, the reader fetches, one row appears — and fetching
+    again adds nothing, because the dedupe ledger already holds its key."""
+    st, uid = _store_user("nd-ev-1")
+    _breaking_on(st, uid)
+    _emit(st, 1)
+    _emit(st, 2)
+
+    assert nd.materialize_notifications(st, uid, now=EV_NOW) >= 2
+    assert {r["dedupe_key"] for r in _breaking_rows(st, uid)} == {"ev:1", "ev:2"}
+
+    assert nd.materialize_notifications(st, uid, now=EV_NOW) == 0, "idempotent on re-evaluation"
+    assert len(_breaking_rows(st, uid)) == 2
+
+
+def test_a_breaking_notification_survives_the_story_no_longer_breaking():
+    """F2, end to end and against a real store. State alerts auto-resolve when their condition
+    clears; an occurrence must not. The story stopping breaking does not un-break it — and here the
+    event itself has EXPIRED, which is the strongest form of "the condition is gone"."""
+    st, uid = _store_user("nd-ev-2")
+    _breaking_on(st, uid)
+    _emit(st, 1, expires=(EV_NOW + timedelta(hours=1)).isoformat())
+    nd.materialize_notifications(st, uid, now=EV_NOW)
+    assert len(_breaking_rows(st, uid)) == 1
+
+    later = EV_NOW + timedelta(hours=6)          # the event has expired; no event is in the context
+    nd.materialize_notifications(st, uid, now=later)
+    rows = _breaking_rows(st, uid)
+    assert len(rows) == 1, "the row is still there"
+    assert rows[0]["seenAt"] is None, "and still UNREAD — it was never auto-resolved"
+
+
+def test_many_breaking_stories_accumulate_rather_than_collapsing_to_one():
+    """The other half of F2: state alerts keep at most one outstanding row per kind. One row per
+    story is the entire point of this kind, so the collapse must not apply."""
+    st, uid = _store_user("nd-ev-3")
+    _breaking_on(st, uid)
+    for i in range(1, 4):
+        _emit(st, i)
+    nd.materialize_notifications(st, uid, now=EV_NOW)
+    assert len(_breaking_rows(st, uid)) == 3, "three stories, three rows"
+
+
+def test_the_daily_cap_holds_across_separate_evaluations():
+    """The cap is per DAY, not per evaluation — a reader refreshing the page must not multiply it.
+    This only works because the boundary reads today's counts back out of the store."""
+    st, uid = _store_user("nd-ev-4")
+    _breaking_on(st, uid)
+    for i in range(1, 5):
+        _emit(st, i)
+    nd.materialize_notifications(st, uid, now=EV_NOW)
+    assert len(_breaking_rows(st, uid)) == 4
+
+    for i in range(5, 9):                        # four more stories break later the same day
+        _emit(st, i, occurred=(EV_NOW + timedelta(minutes=30)).isoformat())
+    nd.materialize_notifications(st, uid, now=EV_NOW + timedelta(hours=1))
+    assert len(_breaking_rows(st, uid)) == ns.BREAKING_MAX_PER_DAY, "capped at the daily ceiling"
+
+    # A new day restores the budget — and the three stories the cap held back yesterday are still
+    # live (they were given no TTL here), so they arrive too. The cap DEFERS; expiry is what drops.
+    tomorrow = EV_NOW + timedelta(days=1)
+    _emit(st, 9, occurred=tomorrow.isoformat())
+    nd.materialize_notifications(st, uid, now=tomorrow)
+    assert len(_breaking_rows(st, uid)) == 9, "yesterday's held-back stories were deferred, not lost"
+
+
+def test_the_cap_plus_a_ttl_drops_rather_than_defers():
+    """The production shape: A5 gives every breaking event a TTL, so a story the cap held back is
+    genuinely gone once it goes stale rather than resurfacing a day later as news."""
+    st, uid = _store_user("nd-ev-4b")
+    _breaking_on(st, uid)
+    for i in range(1, 9):
+        _emit(st, i, expires=(EV_NOW + timedelta(hours=6)).isoformat())
+    nd.materialize_notifications(st, uid, now=EV_NOW)
+    assert len(_breaking_rows(st, uid)) == ns.BREAKING_MAX_PER_DAY
+
+    tomorrow = EV_NOW + timedelta(days=1)
+    nd.materialize_notifications(st, uid, now=tomorrow)
+    assert len(_breaking_rows(st, uid)) == ns.BREAKING_MAX_PER_DAY, "the held-back ones expired"
+
+
+def test_the_category_preference_gates_delivery():
+    st, uid = _store_user("nd-ev-5")
+    _breaking_on(st, uid, on=False)
+    _emit(st, 1)
+    nd.materialize_notifications(st, uid, now=EV_NOW)
+    assert _breaking_rows(st, uid) == []
+
+
+def test_an_unreadable_event_store_costs_only_the_breaking_notifications(monkeypatch):
+    """Fail-soft, and specifically WHICH way. Events feed a supplementary kind; the rest of the
+    context feeds the reader's own report and streak. A broken event read must not take the inbox
+    down with it."""
+    st, uid = _store_user("nd-ev-6")
+    _all_on(st, uid)
+    _breaking_on(st, uid)
+    _report(st, uid)                             # so a NON-breaking kind has something to deliver
+    _emit(st, 1)
+
+    def boom(*a, **k):
+        raise RuntimeError("events table is unavailable")
+
+    monkeypatch.setattr(st, "recent_notification_events", boom)
+    created = nd.materialize_notifications(st, uid, now=EV_NOW)   # must not raise
+    assert _breaking_rows(st, uid) == [], "no breaking notifications"
+    assert created > 0 and "weekly_report" in _kinds(st, uid), "the rest of the inbox still arrived"
+
+
+def test_an_unreadable_count_fails_CLOSED_not_open(monkeypatch):
+    """The opposite posture from the events read, deliberately. If today's counts cannot be read, a
+    cap that defaulted to zero-sent would read as "budget untouched" and could deliver the ceiling
+    again on every evaluation. Assume it is spent instead."""
+    st, uid = _store_user("nd-ev-7")
+    _breaking_on(st, uid)
+    _emit(st, 1)
+
+    def boom(*a, **k):
+        raise RuntimeError("cannot count")
+
+    monkeypatch.setattr(st, "notification_counts_today", boom)
+    nd.materialize_notifications(st, uid, now=EV_NOW)
+    assert _breaking_rows(st, uid) == [], "no counts -> assume the cap is spent"
+
+
+def test_the_events_window_bounds_the_query_but_expiry_is_the_policy():
+    """`RWE_NOTIFY_EVENTS_WINDOW_HOURS` only bounds how far back we look; an event outside it is not
+    delivered even though it never expires."""
+    st, uid = _store_user("nd-ev-8")
+    _breaking_on(st, uid)
+    _emit(st, 1, occurred=(EV_NOW - timedelta(days=3)).isoformat(), expires=None)
+    nd.materialize_notifications(st, uid, now=EV_NOW)
+    assert _breaking_rows(st, uid) == [], "older than the 24h window"
+
+
+def test_existing_state_alerts_still_reconcile_exactly_as_before():
+    """The regression that matters: adding a discrete kind must change nothing about how the three
+    event kinds are resolved and collapsed."""
+    st, uid = _store_user("nd-ev-9")
+    _all_on(st, uid)
+    _breaking_on(st, uid)
+    _emit(st, 1)
+    nd.materialize_notifications(st, uid, now=EV_NOW)
+
+    ctx = nd.build_context(st, uid, EV_NOW)
+    inactive = ns.inactive_event_kinds(ctx)
+    assert "breaking_story" not in inactive
+    assert set(inactive) <= set(ns.EVENT_KINDS), "only state alerts are ever resolved"
+    assert "breaking_story" not in ns.EVENT_KINDS, "and it is not one"
+
+
+def test_build_context_carries_events_and_counts():
+    st, uid = _store_user("nd-ev-10")
+    _breaking_on(st, uid)
+    _emit(st, 1)
+    ctx = nd.build_context(st, uid, EV_NOW)
+    assert [e["sourceId"] for e in ctx.events.events] == ["st_1"]
+    assert ctx.delivery.counts_today.get("breaking_story", 0) == 0
+
+    nd.materialize_notifications(st, uid, now=EV_NOW)
+    assert nd.build_context(st, uid, EV_NOW).delivery.counts_today["breaking_story"] == 1
+
+
+def test_within_one_batch_breaking_rows_are_ordered_by_insertion_not_recency():
+    """A known property, pinned so it is not mistaken for a guarantee.
+
+    `_breaking_fanout` returns events NEWEST-FIRST, because `evaluate` truncates the front and the
+    cap must keep the most recent stories. `list_notifications` then orders by `id DESC`, so the
+    first-emitted (newest) event gets the lowest id and appears LAST within that batch.
+
+    This is not specific to breaking stories — every kind materialised in one batch shares
+    `created_at`, so the inbox's intra-batch order has always been insertion order. It matters here
+    only because this is the first kind that can produce several rows at once. Presentation owns the
+    fix if one is wanted: the payload carries `occurredAt` precisely so A6 can sort by it."""
+    st, uid = _store_user("nd-ev-order")
+    _breaking_on(st, uid)
+    _emit(st, 1, occurred=(EV_NOW - timedelta(hours=3)).isoformat())    # older
+    _emit(st, 2, occurred=(EV_NOW - timedelta(hours=1)).isoformat())    # newer
+    nd.materialize_notifications(st, uid, now=EV_NOW)
+
+    rows = _breaking_rows(st, uid)
+    assert [r["dedupe_key"] for r in rows] == ["ev:1", "ev:2"], "insertion order, reversed by id DESC"
+    assert [r["payload"]["occurredAt"] for r in rows] == sorted(
+        r["payload"]["occurredAt"] for r in rows), "…so occurredAt is what presentation must sort on"
+
+
+def test_the_cap_keeps_the_NEWEST_stories_not_an_arbitrary_five():
+    """The reason the fanout is newest-first: when more stories break than the cap allows, the
+    reader should get the most recent ones."""
+    st, uid = _store_user("nd-ev-newest")
+    _breaking_on(st, uid)
+    for i in range(1, 9):                        # 8 stories, one per hour, ev:8 the most recent
+        _emit(st, i, occurred=(EV_NOW - timedelta(hours=9 - i)).isoformat())
+    nd.materialize_notifications(st, uid, now=EV_NOW)
+
+    delivered = {r["dedupe_key"] for r in _breaking_rows(st, uid)}
+    assert delivered == {"ev:8", "ev:7", "ev:6", "ev:5", "ev:4"}, "the five most recent"
