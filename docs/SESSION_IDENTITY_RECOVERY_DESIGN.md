@@ -1,6 +1,8 @@
 # Design Proposal — Recovering a Session With No Engine Identity
 
-**Status:** proposal, not implemented. Written as a follow-up to the onboarding-gate work
+**Status:** partly implemented. The resolver, its deadline, the identity claims and the engine-side
+retry all exist and are tested; **nothing calls the resolver yet** — that is the last behavioural commit
+(commit 5 of the plan). Written as a follow-up to the onboarding-gate work
 ([`ONBOARDING.md`](ONBOARDING.md) §8), which surfaced the failure but deliberately left it alone:
 it predates that work and affects every authenticated surface, not just onboarding.
 
@@ -8,8 +10,13 @@ it predates that work and affects every authenticated surface, not just onboardi
 resolve one automatically, without the reader having to sign out and back in.
 
 **Sequencing:** [`IDENTITY_RECOVERY_IMPLEMENTATION_PLAN.md`](IDENTITY_RECOVERY_IMPLEMENTATION_PLAN.md)
-breaks this and the engine-side upsert into seven reviewable commits, with the rollback strategy and
+breaks this and the engine-side upsert into reviewable commits, with the rollback strategy and
 deployment risks for each.
+
+**Provenance markers.** Claims about how NextAuth behaves are load-bearing here and were originally
+written from reading the source. Where a claim has since been checked by *running* the code, it carries
+`[T]`; where it is still architectural reasoning, `[R]`. Two `[R]` claims were disproved when they were
+finally traced (§2, §3), which is why the distinction is marked rather than assumed.
 
 ---
 
@@ -61,25 +68,75 @@ export async function resolveEngineUserId(token: {
 }): Promise<number | null>;
 ```
 
-Called from two places, both of which already exist:
+**Called from exactly one place: `callbacks.jwt` in `lib/auth-callbacks.ts`.** `[T]`
 
-| Call site | Why | What it gains |
+An earlier revision of this section called for a second call site in `engineAuthHeaders()`, on the
+reasoning that the `jwt` callback can only make a heal *durable* and something else was needed to make
+the *current* server render correct. Tracing the code disproved the second half — see §2a. One call
+site delivers both.
+
+### 2a. Why one call site is enough — traced, not reasoned `[T]`
+
+The claim to establish is that a mutation made inside `callbacks.jwt` is visible to
+`engineAuthHeaders()` **in the same request**, with no cookie written. The path, with line numbers from
+the installed `next-auth`:
+
+| # | Function entered | File:line |
 |---|---|---|
-| `callbacks.jwt` in `lib/auth.ts` | the only place that can write the id back into the token | a **durable** heal — the token is re-issued with the id and the session stops needing recovery |
-| `engineAuthHeaders()` in `lib/engine-auth.ts` | the only place that turns a session into an attributed engine call | an **immediate** heal — the current server render is already correct, not just the next one |
+| 1 | `engineAuthHeaders()` | `lib/engine-auth.ts:22` |
+| 2 | `getServerSession(authOptions)` | `next-auth/next/index.js:100` |
+| 3 | RSC branch builds `req` from `next/headers`, and `res = { getHeader(){}, setCookie(){}, setHeader(){} }` | `next/index.js:102–122` |
+| 4 | `AuthHandler({ options, req: { action: "session" … } })` | `next/index.js:129` |
+| 5 | `switch (action) → case "session"` → `routes.session(...)` | `core/index.js:134–135` |
+| 6 | session route | `core/routes/session.js:8` |
+| 6a | `if (!sessionToken) return response` | `session.js:~44` — exit A |
+| 6b | `jwt.decode(...)`, throws → `catch` → `sessionStore.clean()` | `session.js:~49, ~88` — exit B |
+| 6c | **`callbacks.jwt({ token: decodedToken })`** | `session.js:53` |
+| 6d | **`callbacks.session({ session: {user:…}, token })`** — `token` is 6c's **return value** | `session.js:~66` |
+| 6e | `response.body = updatedSession` | `session.js:~71` |
+| 6f | `jwt.encode` → `sessionStore.chunk` → `response.cookies.push(...)` | `session.js:73–81` |
+| 7 | `if (session.cookies) cookies.push(...)` | `core/index.js:138` |
+| 8 | `cookies.forEach(c => setCookie(res, c))` — the **no-op** from step 3 | `next/index.js:143` |
+| 9 | `return body` | `next/index.js:148` |
+| 10 | reads `session.engineUserId` → `X-IH-User-Id` | `lib/engine-auth.ts:25` |
 
-Both are needed, and the reason is a NextAuth constraint worth stating precisely, because it is the
-whole reason the design is shaped this way:
+Step **6d passes `token`, not `decodedToken`**. The session object is constructed *downstream* of the
+callback, and 6e assigns it to the body that step 9 returns. That is the whole mechanism: the mutation
+is visible because the session is built from the mutated token, in-process, before anything is
+serialised.
 
-> `GET /api/auth/session` calls `callbacks.jwt`, re-encodes the token, and pushes a refreshed cookie
-> (`next-auth/core/routes/session.js`). `getServerSession()` in a Server Component passes a **no-op**
-> `res.setCookie` (`next-auth/next/index.js`), so the `jwt` callback still runs on every server-side
-> read but any mutation is **discarded**.
+Run against that exact code with our real callbacks and recovery simulated `[T]`:
 
-So a token healed during a server render does not persist; it persists when the client's
-`SessionProvider` next fetches `/api/auth/session` (on mount of any page, and on window focus). The
-`jwt` call site makes the heal permanent; the `engineAuthHeaders` call site makes the current request
-work in the meantime; the memo (§4) is what stops the second one from calling the engine per request.
+```
+token BEFORE callbacks.jwt : {…,"provider":"google","providerAccountId":"1084…"}   ← no engineUserId
+token AFTER  callbacks.jwt : {…,"engineUserId":42}
+session body returned      : {"user":{…},"expires":…,"engineUserId":42}
+cookies queued by the route: 3   ← discarded by the RSC no-op setCookie
+=> engineAuthHeaders reads session.engineUserId = 42
+```
+
+**Visibility and persistence are decoupled.** Visibility is same-request and unconditional. Persistence
+needs a response that can set cookies — which is why a token healed during a server render does not
+stick, and persists instead when `SessionProvider` next fetches `/api/auth/session` (on mount of any
+page, and on window focus, where `refetchOnWindowFocus` defaults to `true`). `[T]`
+
+### 2b. Every path that reaches `engineAuthHeaders` without `callbacks.jwt` `[T]`
+
+`engineAuthHeaders` has one statement before it reads the session, so this reduces to: can
+`getServerSession` return without running `callbacks.jwt`? There are three exits, and only two are
+reachable:
+
+| Exit | Condition | Runs `callbacks.jwt`? | Could recovery help? |
+|---|---|---|---|
+| A | no session cookie | no — measured `body={}` | **No token exists.** Nothing to recover from. |
+| B | cookie undecodable (expired, tampered, wrong secret) | no — measured `body={}`, 3 cookies cleared | Same: no token. |
+| C | `sessionStrategy !== "jwt"` | n/a | Unreachable: `lib/auth.ts` sets `session: { strategy: "jwt" }` and there is no adapter. |
+
+Both reachable skips occur precisely where there is no decodable token, so a second call site would be
+equally powerless. Nothing in `app/`, `lib/`, `components/` or `middleware.ts` imports `getToken` or
+`next-auth/jwt` directly, so there is no raw-token bypass. `[T]` The only other producer of
+`X-IH-User-Id` is `engineHeadersForUserId`, on the browser-extension path, where the id comes from a
+per-user API token and no JWT is involved.
 
 ### The identity key
 
@@ -110,13 +167,35 @@ path. Recovery bails on any token whose provider is not `google`.
 | Condition | Behaviour |
 |---|---|
 | `typeof token.engineUserId === "number"` | **No attempt.** A single type check; zero added cost on every healthy request. This is the overwhelming majority. |
+| **`account` is present** (this invocation *is* the sign-in) | **No attempt** — see the invariant below. |
 | id missing, provider resolves to `google`, key available | Attempt, subject to the memo and backoff in §4. |
 | id missing, provider is `dev` or unknown, or no key | **No attempt.** Return `null`; behave exactly as today. |
-| id missing and the email no longer passes the beta allowlist | **No attempt** (§5). |
-| No session at all | Not reached — both call sites already require a token/session. |
+| id missing and the email no longer passes the beta allowlist | **No attempt**, and the denial is remembered (§4, §5). |
+| No session at all | Not reached — the call site already requires a decodable token (§2b). |
 
 Recovery is never triggered by a reader-visible action, has no UI, and needs no new route. It is a
 repair on a path the request was taking anyway.
+
+### INVARIANT: recovery never runs on the sign-in invocation `[T]`
+
+**`callbacks.jwt` must attempt recovery only when `account` is absent.**
+
+`account` is present on exactly one invocation per session — the sign-in — and that is the invocation
+that has *just* run `upsertEngineUser` itself. If that call failed, `token.engineUserId` is unset, and
+an unguarded recovery branch would fire immediately and make a **second upsert attempt milliseconds
+after the first one failed**: two calls into an engine that is already failing, at the moment it is
+failing, with no memo entry yet to suppress the second.
+
+That is not a hypothetical reading of the code — it is what the state-machine walkthrough found when
+flow 3 (*sign-in, engine down*) was traced, and it is the reason this invariant is stated separately
+rather than left implicit in the table above. The guard is one condition:
+
+```ts
+if (!account && token.engineUserId == null) { /* recover */ }
+```
+
+The cost of the guard is nil: on the sign-in invocation there is nothing to recover *to*. Sign-in
+already had its attempt, and its failure is exactly the state the next request will repair.
 
 ## 4. Caching behaviour
 
@@ -125,25 +204,51 @@ Three layers, in order of how long they hold:
 1. **The token itself** — the real cache. Once `callbacks.jwt` writes `engineUserId` and the client
    refetches `/api/auth/session`, the id rides in the signed cookie for the session's lifetime and
    the guard in §3 short-circuits forever after. No expiry of our own; it dies with the session.
-2. **A process-level memo** — `Map<string, number>` keyed by `${provider}:${providerAccountId}`,
-   holding a resolved id for a bounded TTL (proposed: 10 minutes). This is what makes the
-   `engineAuthHeaders` call site affordable: without it, every server render between the failed
-   sign-in and the next client session fetch would issue its own upsert.
+2. **A process-level memo** — `Map<string, CacheEntry>` keyed by `${provider}:${providerAccountId}`,
+   holding a resolved id for a bounded TTL (10 minutes), swept on write and capped at 1 000 identities
+   so a TTL alone cannot leave it growing without limit. This is what keeps the cost bounded while a
+   session is un-healed: `callbacks.jwt` runs on **every** `getServerSession`, so without it every
+   server render between the failed sign-in and the next client session fetch would issue its own
+   upsert. `[T]`
 3. **In-flight coalescing** — `Map<string, Promise<number | null>>`, so N concurrent requests for the
    same identity share **one** engine call. A page render that fans out to several route handlers is
    the normal case, not the exception.
 
 Negative results are cached too, as a **backoff stamp** rather than a value: after a failed attempt,
-suppress further attempts for that identity for a short window (proposed: 30 s, no exponential
-growth — the failure this recovers from is an outage measured in seconds). Without this, an engine
-that is down turns every page view into a retry storm against a service that is already unwell.
+suppress further attempts for that identity for a short window (30 s, no exponential growth — the
+failure this recovers from is an outage measured in seconds). Without this, an engine that is down
+turns every page view into a retry storm against a service that is already unwell.
+
+### Allowlist denials are memoized, and where the check sits matters
+
+A denial is a negative result too, and it must be recorded as one.
+
+The check itself is defence in depth: recovery is the deferred second half of a sign-in, so it re-runs
+the gate that sign-in ran, and a reader removed from the allowlist since must not have an engine account
+created for them by a stale session (§5). But `isEmailAllowed` calls `loadAllowlist`, which does an
+**uncached `readFileSync`**. Placed before the memo and left unrecorded, that produces a session which
+does synchronous file I/O *on every session read* — i.e. on every server render — always returning
+`null`, for the entire 30-day life of the token. No engine calls, but unbounded repeated work on the
+auth path.
+
+So: **a denial writes a negative memo entry**, exactly like an engine failure, and the backoff window
+suppresses the re-check. The check's stated purpose survives intact — a cached denial still prevents
+account creation, which is the thing it exists to prevent — and the cost falls from once per request to
+once per backoff window. An operator who adds someone to the allowlist sees it take effect within that
+window rather than instantly, which is the one trade this makes and is well within what
+`BETA_ACCESS_ENABLED` already implies.
+
+This was found by walking the state machine rather than by writing the resolver, which is why it is
+recorded here as design rather than as a code comment. `[R]` — the repeated `readFileSync` follows from
+reading `loadAllowlist`; it has not been profiled.
 
 State is per-process and lost on restart. That is correct: this is a cache, never a source of truth,
 and the deployment runs one web container. Nothing needs to be shared or persisted — §9 works through
 what changes, and what does not, if that stops being true.
 
 **Explicitly rejected:** carrying the backoff stamp in the token. It would be discarded on exactly
-the reads that need it (server-side, §2), so it would look like it worked while doing nothing.
+the reads that need it — a server render's cookie write is a no-op (§2a step 8, `[T]`) — so it would
+look like it worked while doing nothing.
 
 ## 5. Security implications
 
@@ -152,7 +257,7 @@ the reads that need it (server-side, §2), so it would look like it worked while
 | **Can a client forge an identity?** | No. Every input (`sub`, `provider`, `providerAccountId`, `email`) comes from the JWT, signed with `NEXTAUTH_SECRET`. Anyone able to alter those already owns the session outright. Recovery reads no request body, query param, or header. |
 | **Can recovery attach a session to the wrong account?** | No, provided the key is the provider account id — guaranteed by **I1**/**I5** of the [`IDENTITY_UPSERT_CONCURRENCY.md`](IDENTITY_UPSERT_CONCURRENCY.md), which owns the constraint and its tests. |
 | **Can it be used to hijack by email?** | No — **I5**. If a future change ever made the engine resolve identities by email, a Google session could claim a `dev` account with the same address; that contract's test 4 exists to make such a change fail loudly. |
-| **Does it bypass the beta allowlist?** | It must not. `callbacks.signIn` enforces the allowlist at sign-in only, so recovery is effectively the deferred second half of a sign-in that already passed. The proposal nonetheless **re-checks `isEmailAllowed(token.email)`** before attempting, so a reader removed from the allowlist cannot have an engine account created for them by a stale session. `loadAllowlist` is a small `readFileSync` on a path already read per sign-in; on the recovery path it runs at most once per backoff window. |
+| **Does it bypass the beta allowlist?** | It must not. `callbacks.signIn` enforces the allowlist at sign-in only, so recovery is effectively the deferred second half of a sign-in that already passed. The proposal nonetheless **re-checks `isEmailAllowed(token.email)`** before attempting, so a reader removed from the allowlist cannot have an engine account created for them by a stale session. `loadAllowlist` is a small `readFileSync` on a path already read per sign-in; the denial is memoized so it runs at most once per backoff window rather than once per server render (§4). |
 | **Trust boundary to the engine** | Unchanged. Recovery calls the existing `POST /api/internal/users` with `X-IH-Auth` when `RWE_INTERNAL_SECRET` is set, exactly as sign-in does. No new endpoint, no new surface, no widening of `/api/internal/*`. |
 | **Does it leak anything into logs?** | One OBS1-style structured line per recovery — `{"event":"engine_identity_recovered","provider":"google","userId":N}`. Email is omitted; the existing `beta_access_denied` line logs an email because an operator must know who to approve, and no such need exists here. |
 | **Can it create accounts in a loop?** | No. The upsert creates at most one identity row per `(provider, account id)`; repeated calls resolve. See §7. |
@@ -169,9 +274,27 @@ currently measured at ~0.19 vCPU busy.
 | Broken session, engine up | One `POST /api/internal/users` — a single indexed lookup on `identities` — coalesced across concurrent requests and then memoized for the TTL. Bounded by **one call per identity per 10 minutes per process**. |
 | Broken session, engine down | One attempt per identity per 30 s backoff window, coalesced. This is *lower* than today's implicit cost, where every per-user route already round-trips to the engine and gets a 401. |
 | Cold start after an outage (worst case) | Every affected identity attempts once. With a closed beta the population is small; the coalescing map bounds concurrency per identity, and the backoff bounds repeats. |
+| Denied by the allowlist | One `readFileSync` per backoff window, not per render — the denial is memoized (§4). |
 
 No change to the request path of a healthy user, and no new background work. The `jwt` callback
-already runs on every session read; this adds a branch to it.
+already runs on every session read, and — with the single call site established in §2a — this adds
+**one branch to one callback**, not a branch in two places that must agree.
+
+Measured against the shipped resolver with the engine stubbed `[T]` (`node --expose-gc`, 100 000
+healthy resolutions; the figures the table above asserts):
+
+| Measurement | Result |
+|---|---|
+| Healthy session (`engineUserId` present) | 100 000 resolutions, **0** engine calls, **0** cache entries, 0.52 µs each |
+| 2 / 25 / 250 / 2 000 concurrent callers, one identity | **1** engine call in every case — coalescing is per identity and does not degrade with fan-out |
+| 50 identities × 40 concurrent callers | 50 calls, 40:1 — coalescing is keyed, not global; no caller received another identity's id |
+| 10 identities × 100 requests inside the TTL | 10 calls, 99.0% hit |
+| 1 000 identities × 10 requests | 1 000 calls, 90.0% hit, 1 000 entries — the ceiling, holding |
+| 25 000 distinct identities seen | **1 000** entries (cap held), 196.8 KiB, 202 bytes/entry |
+| 10 000 requests against a dead engine, one identity | **1** call — 9 999 suppressed by the backoff stamp |
+
+The last two rows are the ones that matter operationally: memory is bounded by the cap rather than by
+traffic, and a dead engine cannot be turned into a retry storm by page views.
 
 ## 7. Idempotency
 
@@ -190,7 +313,7 @@ already runs on every session read; this adds a branch to it.
 
 ## 8. Required tests
 
-**`web/lib/engine-identity.test.ts`** (new, `node --test`, fetch stubbed):
+**`web/lib/engine-identity.test.ts`** — written, 25 tests, `node --test` with `fetch` stubbed:
 
 1. A token with a numeric `engineUserId` triggers **zero** engine calls — the guard, asserted by call
    count, because a regression here is a per-request engine call in production.
@@ -204,14 +327,26 @@ already runs on every session read; this adds a branch to it.
    it, one attempt.
 8. An engine 401/500/timeout each return `null` without throwing — callers must keep behaving as they
    do today.
-9. An email that fails `isEmailAllowed` produces no attempt.
+9. An email that fails `isEmailAllowed` produces no attempt, **and the denial is memoized** — a second
+   denied call inside the window does no further `isEmailAllowed` work (§4).
 
-**`web/lib/auth.test.ts`** (new — there is no test for `lib/auth.ts` today):
+**`web/lib/auth-callbacks.test.ts`** — written, 9 tests. Named for the module the callbacks were moved
+into by commit 4 of the plan, not `auth.test.ts`: `lib/auth.ts` constructs providers at module load and
+`next-auth/providers/*` is CommonJS, which bare `node --test` cannot import. The callbacks are the unit
+under test, so they live where they can be tested.
 
-10. `callbacks.jwt` writes `provider` and `providerAccountId` at sign-in.
-11. `callbacks.jwt` on a later invocation (no `account`) with a missing id calls the resolver and
-    writes the result to the token.
-12. `callbacks.jwt` with an id present does not call the resolver.
+10. `callbacks.jwt` writes `provider` and `providerAccountId` at sign-in. ✅
+11. `callbacks.jwt` on a later invocation (**no `account`**) with a missing id calls the resolver and
+    writes the result to the token. — commit 5
+12. `callbacks.jwt` with an id present does not call the resolver. ✅
+13. **`callbacks.jwt` on the sign-in invocation does not call the resolver even when the id is
+    missing** — the §3 invariant, asserted by resolver call count so that removing the `!account`
+    guard fails the suite rather than silently doubling the engine calls of a failing sign-in.
+    — commit 5
+
+**`web/lib/engine-timeout.test.ts`** — written, 7 tests. Recovery coalesces callers onto one in-flight
+promise, so a promise that never settles is a shared stall; the deadline both aborts *and* races, and a
+test drives a transport that ignores the abort signal to prove the race is what makes it unconditional.
 
 **Engine** — already written, in `tests/concurrency/`, and owned by
 [`IDENTITY_UPSERT_CONCURRENCY.md`](IDENTITY_UPSERT_CONCURRENCY.md) §7 rather than duplicated here.
@@ -221,9 +356,10 @@ announce when the upsert change lands. Run them with `pytest tests/concurrency -
 
 **e2e (`web/e2e/specs/auth.spec.ts`)**:
 
-16. Sign in with the engine refusing `/api/internal/users`, then let it recover: the reader's next
+14. Sign in with the engine refusing `/api/internal/users`, then let it recover: the reader's next
     page load is personalised, with no sign-out. This is the scenario in prose form and the only test
-    that proves the whole path.
+    that proves the whole path — in particular the one thing the unit tests cannot show, that the heal
+    is *durable* because `SessionProvider` refetches `/api/auth/session` on mount (§2a).
 
 ## 9. Mixed-version deployments and rolling releases
 
@@ -290,9 +426,17 @@ during the outage.
 
 **The durable cache is not in any instance.** It is the signed session cookie. That is what makes this
 topology-independent: the heal is written by whichever instance handled the client's
-`/api/auth/session` fetch, and from then on *every* instance and *every* version reads the id straight
-off the token and never calls the resolver again. No server-side coordination, no shared cache, no
-sticky sessions.
+`/api/auth/session` fetch — the route whose response can actually set cookies, unlike a server render,
+where the queued cookies are handed to a no-op (§2a step 8, `[T]`) — and from then on *every* instance
+and *every* version reads the id straight off the token and never calls the resolver again. No
+server-side coordination, no shared cache, no sticky sessions.
+
+The same trace also settles a question this section would otherwise have to leave open: because the
+heal is visible in-process the moment `callbacks.jwt` returns, a reader served by an instance whose
+cookie write is discarded is **not** left broken for that render. That instance's render is already
+correct; only the persistence waits for the client's next session fetch. Divergent caches therefore
+cost redundant engine calls and nothing else — there is no window in which one instance shows a
+personalised page and another shows a 401 for the same request. `[T]`
 
 ### c. Concurrent recovery across instances
 

@@ -1,6 +1,7 @@
 # Implementation Plan — Identity Recovery + Transaction-Retry Upsert
 
-**Commits 1–4 are implemented; commits 5–7 are not.** This is the roadmap for two designs that are already
+**Commits 1–4 are implemented; commits 5 and 7 are not. Commit 6 was deleted** — proved redundant by
+execution trace before it was written (see below). This is the roadmap for two designs that are already
 reviewed:
 
 - [`IDENTITY_UPSERT_CONCURRENCY.md`](IDENTITY_UPSERT_CONCURRENCY.md) §4 — the engine-side upsert.
@@ -21,13 +22,45 @@ certified, exactly as planned.
 | **3** | web | Add the memoized resolver + its unit tests, wired to nothing — **done** | **no** — dead code | `git revert` |
 | **3.5** | web | Give `upsertEngineUser` a deadline — `lib/engine-timeout.ts`, shared with `backend.ts` — **done** | yes — a wedged engine now fails instead of hanging | `git revert` |
 | **4** | web | Persist `provider` + `providerAccountId` claims at sign-in — **done** | **no** — nothing reads them yet | `git revert` |
-| **5** | web | Call the resolver from `callbacks.jwt` (durable heal), behind a kill switch | yes — broken sessions start healing | env flag, then revert |
-| **6** | web | Call the resolver from `engineAuthHeaders` (immediate heal) | yes — hot path gains a guarded call | env flag, then revert |
+| **5** | web | Call the resolver from `callbacks.jwt` — the **only** call site — behind a kill switch | yes — broken sessions start healing, current render included | env flag, then revert |
+| ~~**6**~~ | ~~web~~ | ~~Call the resolver from `engineAuthHeaders` (immediate heal)~~ — **deleted, redundant** | — | — |
 | **7** | docs | Flip both designs from proposal to implemented; ops note | no | trivial |
 
-Six of the seven are independently deployable. The ordering constraint is only that **1 should reach
+All six remaining are independently deployable. The ordering constraint is only that **1 should reach
 production no later than 5**, because recovery multiplies concurrent first-sightings and 1 is what makes
 losing one harmless.
+
+### Why commit 6 was deleted
+
+It was planned on a claim that turned out to be false. The reasoning was: `callbacks.jwt` can only make a
+heal *durable*, because a server render cannot set a cookie — so something else must run inside
+`engineAuthHeaders()` to make the *current* render correct. The first half is true. The second does not
+follow, and tracing `next-auth` disproved it.
+
+`getServerSession` → `AuthHandler` → `routes/session.js` calls `callbacks.jwt`, then builds the session
+object **from that callback's return value** and assigns it to the response body. Visibility is
+in-process and does not involve the cookie at all; only persistence does. Executed against the installed
+`next-auth` with our real callbacks and recovery simulated, the token entering `callbacks.jwt` had no
+`engineUserId` and the returned session body carried `engineUserId: 42` — while the three cookies the
+route queued were handed to `getServerSession`'s no-op `setCookie` and discarded.
+
+So a heal in `callbacks.jwt` is already visible to `engineAuthHeaders()` in the same request. A second
+call site would resolve an id that the first call site had, moments earlier, already put on the token it
+was about to read.
+
+The remaining question was whether anything reaches `engineAuthHeaders()` *without* running
+`callbacks.jwt`. `getServerSession` has three exits: no session cookie, an undecodable cookie, and a
+non-JWT session strategy. The third is unreachable (`lib/auth.ts` pins `strategy: "jwt"` and there is no
+adapter); the first two were measured returning `body={}` without entering `callbacks.jwt` — and both
+occur precisely where **no decodable token exists**, so there is nothing for a resolver to recover
+*from*. Nothing in `app/`, `lib/`, `components/` or `middleware.ts` imports `getToken` or
+`next-auth/jwt`, so there is no raw-token bypass either. Full trace: recovery design §2a and §2b.
+
+**What this changes for the plan.** Commit 6 carried the only hot-path risk in the whole sequence — a
+resolver call inside `engineAuthHeaders()`, which runs in every route handler. Deleting it does not move
+that risk to commit 5, it removes it: `callbacks.jwt` already runs once per `getServerSession`, so
+commit 5 adds a branch to a callback that was executing anyway rather than a call to a function that was
+not. The kill switch stays, now guarding one call site instead of two.
 
 ---
 
@@ -176,40 +209,44 @@ call failed, since that is precisely the session recovery will later need to rep
 
 ---
 
-## Commit 5 — web: durable heal in `callbacks.jwt`
+## Commit 5 — web: heal in `callbacks.jwt` (the only call site)
 
-**Files** — `web/lib/auth.ts` (call the resolver when `token.engineUserId` is missing);
-`web/lib/engine-identity.ts` (read the `RWE_IDENTITY_RECOVERY` kill switch); tests.
+**Files** — `web/lib/auth-callbacks.ts` (call the resolver when `token.engineUserId` is missing **and
+`account` is absent**); `web/lib/engine-identity.ts` (read the `RWE_IDENTITY_RECOVERY` kill switch);
+`web/lib/auth-callbacks.test.ts`.
+
+Note the file: the callbacks moved out of `lib/auth.ts` in commit 4 so they could be unit-tested without
+loading the CommonJS provider modules. `lib/auth.ts` is untouched by this commit.
 
 **Behavioural change.** A session that lacks an engine identity is repaired on the next
-`/api/auth/session` fetch — which `SessionProvider` issues on mount of any page — and the healed id then
-rides in the cookie for the session's lifetime.
+`getServerSession` — *both* halves of that, which is the point commit 6 existed to cover and does not
+need to:
 
-**Tests** — design §8 tests 10–12: the callback calls the resolver when the id is missing, does not when
-it is present, and writes the result to the token.
+- **The current request is already correct.** The session object is built from `callbacks.jwt`'s return
+  value, in-process, so `engineAuthHeaders()` reads the healed id on the same render (§2a).
+- **The heal becomes durable** on the next response that can actually set cookies — the
+  `/api/auth/session` fetch `SessionProvider` issues on mount and on window focus — after which the id
+  rides in the signed cookie for the session's lifetime.
+
+**Three things the design added after the walkthrough, all of which land here:**
+
+1. **The `!account` guard** — recovery must not run on the sign-in invocation. Without it, a sign-in that
+   just failed to reach the engine would immediately make a *second* upsert attempt, milliseconds later,
+   with no memo entry yet to suppress it. Stated as an invariant in recovery design §3.
+2. **Allowlist denials are memoized** — `isEmailAllowed` does an uncached `readFileSync`, and
+   `callbacks.jwt` runs on every session read, so an unrecorded denial means synchronous file I/O on
+   every server render for the 30-day life of the token. The denial writes a negative memo entry like any
+   other failure (design §4). *This is resolver-side and is already implemented in commit 3; the test
+   pinning it lands here alongside the caller.*
+3. **The kill switch**, `RWE_IDENTITY_RECOVERY`, read at call time.
+
+**Tests** — design §8 tests 10–13: the callback calls the resolver when the id is missing, does not when
+it is present, writes the result to the token, and — test 13 — **does not call the resolver on the
+sign-in invocation even when the id is missing**, asserted by resolver call count so that removing the
+guard fails the suite.
 
 **Rollback.** `RWE_IDENTITY_RECOVERY=0` in `deploy/.env` + `docker compose up -d web` restores today's
 behaviour without a rebuild. `git revert` if the flag is not enough.
-
----
-
-## Commit 6 — web: immediate heal in `engineAuthHeaders`
-
-**Files** — `web/lib/engine-auth.ts`; test.
-
-**Behavioural change.** The *current* server render is attributed correctly, not just the next one. This
-is the only commit that touches a hot path: `engineAuthHeaders()` runs in every route handler and in the
-app-shell onboarding gate.
-
-**Why last, and why separate.** The memo makes it at most one engine call per identity per 10 minutes per
-process, and the healthy path is a single `typeof` check — but "at most" is an argument, and this is the
-commit where an argument meets production traffic. Separating it means you can keep the durable heal and
-drop the immediate one without unwinding anything else.
-
-**Tests** — a healthy session produces zero extra fetches; a session without an id produces exactly one,
-and the resulting headers carry `X-IH-User-Id`.
-
-**Rollback.** Same kill switch, then revert. Reverting 6 alone leaves 5 working.
 
 ---
 
@@ -227,7 +264,8 @@ and what a *rising* rate indicates (sign-in-time engine unavailability, not a re
 |---|---|---|
 | **Schema migration** | None. No table, column, index or constraint changes anywhere in this work. | — |
 | **Deploy replaces both containers** | `update.sh` runs `dc up -d`; engine and web restart together. Commits 1 and 5 can therefore land in one deploy. | Deploy in branch order; nothing requires a staged rollout. |
-| **The deploy itself creates the bug being fixed** | Restarting the API is exactly when a sign-in can miss its engine upsert. The first deploy carrying recovery cannot heal a session broken *by that same deploy* until the client refetches `/api/auth/session` — which happens on the next page load. | Expected, self-correcting, worth knowing before someone reports it. |
+| **The deploy itself creates the bug being fixed** | Restarting the API is exactly when a sign-in can miss its engine upsert. A session broken by a deploy is repaired on its **next server render**, and the repair becomes durable on the client's next `/api/auth/session` fetch. | Expected, self-correcting, worth knowing before someone reports it. |
+| **Allowlist read on the auth path** | `callbacks.jwt` runs on every session read, so an un-memoized denial would mean a `readFileSync` per render for the life of the token. | The denial is memoized (design §4). The test for it is part of commit 5. |
 | **Edge runtime** | `middleware.ts` imports only `withAuth`, so `lib/beta-access.ts` (which uses `node:fs`) is not in the edge bundle. **Importing the resolver from middleware would break the build.** | Do not. `withAuth` does not invoke `callbacks.jwt`, so there is no reason to. |
 | **Allowlist read on the recovery path** | `isEmailAllowed` does a `readFileSync`; `BETA_ALLOWLIST_FILE` must be mounted in the web container. It is (the read-only `/app/data` mount added earlier). | Bounded by the backoff — at most once per identity per 30 s on the failing path. |
 | **Recovery storm after an outage** | Every affected identity attempts once per process per TTL; coalescing bounds concurrency per identity. | The 30 s negative backoff is what keeps a sick engine from being hammered. Watch the log line. |
@@ -245,8 +283,9 @@ The property to check per commit, and how each satisfies it:
 2. **Commits 2–4** are behaviour-neutral in production by construction: a move, dead code, and two claims
    nothing reads.
 3. **Commit 5** is the first observable web change, and it is fail-soft: the resolver returns `null` on
-   any failure, which reproduces today's behaviour exactly.
-4. **Commit 6** adds a second call site to the same already-tested resolver.
+   any failure, which reproduces today's behaviour exactly. It is also the last one — with commit 6 gone,
+   there is no state in which one call site heals and the other does not, and no possibility of the two
+   disagreeing about when to attempt.
 
 There is no intermediate state in which a token carries a claim something misreads, or in which the
 upsert is half-migrated. The two tiers are independent: web commits work against an unmodified engine
@@ -264,16 +303,21 @@ Commit 1 is done when, with `upsert_reference` deleted:
   [`CONCURRENCY_TESTING.md`](CONCURRENCY_TESTING.md) §4.
 - `pytest tests -q` green on 3.11 and 3.12.
 
-The web commits are done when the twelve tests in the recovery design §8 pass and
-`npm run typecheck && npm run lint && npm run check:i18n && npm test && npm run build` is clean.
+The web commits are done when the tests in the recovery design §8 pass — 1–9 in
+`lib/engine-identity.test.ts`, 10–13 in `lib/auth-callbacks.test.ts`, and the deadline tests in
+`lib/engine-timeout.test.ts` — and
+`npm run typecheck && npm run lint && npm run check:i18n && npm test && npm run build` is clean. Test 14
+is the Playwright e2e, run separately with `npm run e2e`.
 
 ## Where implementation will differ from the design, and why
 
 | # | Design says | Plan does | Why |
 |---|---|---|---|
 | 1 | "One new module, `lib/engine-identity.ts`, exporting a single memoized resolver." | The module also owns `upsertEngineUser`, moved out of `lib/auth.ts`. | That helper is module-private in `auth.ts` today and both the sign-in path and the resolver need it. Exporting it from `auth.ts` would leave the dependency pointing the wrong way — the auth layer would own a helper the identity module depends on. |
-| 2 | No feature flag mentioned. | `RWE_IDENTITY_RECOVERY` (default on, `0` disables), read at call time. | Commit 6 touches a hot path. The repo already uses this idiom (`RWE_BACKUP_COMPRESS`, `RWE_ALLOW_MOCK_FALLBACK`), and it turns a rollback from "rebuild and redeploy" into "edit `.env`, restart web". |
-| 3 | Both call sites presented together. | Two commits (5 and 6). | The durable heal is low-risk and the immediate heal is not. Splitting them makes the risky half independently revertable. |
+| 2 | No feature flag mentioned. | `RWE_IDENTITY_RECOVERY` (default on, `0` disables), read at call time. | Kept even after commit 6 was dropped: recovery is the one change here that puts an outbound engine call on a path that previously made none, and the repo already uses this idiom (`RWE_BACKUP_COMPRESS`, `RWE_ALLOW_MOCK_FALLBACK`). It turns a rollback from "rebuild and redeploy" into "edit `.env`, restart web". |
+| 3 | ~~Both call sites presented together.~~ Superseded — the design now specifies **one** call site (§2), because the second was traced and found redundant. | One commit (5). | See *Why commit 6 was deleted*, above. The plan's original split into 5 and 6 was sound given what the design then claimed; it stopped being needed when the claim was checked. |
+| 6 | Design §3's recovery condition, as first written, was "id missing". | `!account && token.engineUserId == null`. | Found by the state-machine walkthrough: on the sign-in invocation the unguarded form fires a second upsert milliseconds after sign-in's own failed one. Now an invariant in design §3 rather than a plan deviation, but recorded here because it is a change to what was approved. |
+| 7 | Design §5 treated the allowlist re-check as a cheap guard. | The denial is memoized like any other negative result. | `isEmailAllowed` does an uncached `readFileSync` and `callbacks.jwt` runs per session read. Now design §4. |
 | 4 | `_resolve_identity` shown as a free function. | A private method on `Store`. | It needs `self.session()`, and every other operation in that class is a method. |
 | 5 | Recovery logging described as one structured line. | Same, but emitted from the **web** tier (`console.warn(JSON.stringify({event: "engine_identity_recovered", ...}))`), not the engine. | The engine cannot distinguish a recovery upsert from a sign-in upsert — they are the same call. Only the web tier knows why it is calling. |
 

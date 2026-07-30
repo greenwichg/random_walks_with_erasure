@@ -239,10 +239,12 @@ a comprehension bug. Adding guidance on top of it would have decorated the failu
 never resolves `engineUserId`, so the session exists but cannot be attributed. Every per-user call
 401s — the landing step's write included — and no retry can fix it, because `engineUserId` is only
 resolved on the initial sign-in. Signing out and back in is the only recovery. This predates the
-onboarding work and affects every authenticated surface, not just this step; the fix belongs in
-`lib/auth.ts`, and is designed in
-[`SESSION_IDENTITY_RECOVERY_DESIGN.md`](SESSION_IDENTITY_RECOVERY_DESIGN.md) — proposal only, so it can
-be reviewed and implemented independently of the onboarding change.
+onboarding work and affects every authenticated surface, not just this step; the fix belongs in the
+`jwt` callback, and is designed in
+[`SESSION_IDENTITY_RECOVERY_DESIGN.md`](SESSION_IDENTITY_RECOVERY_DESIGN.md) — partly built and
+sequenced in [`IDENTITY_RECOVERY_IMPLEMENTATION_PLAN.md`](IDENTITY_RECOVERY_IMPLEMENTATION_PLAN.md), so
+it can be reviewed and shipped independently of the onboarding change. Until its last commit lands, the
+paragraph above still describes production.
 
 ## 9. Tests that hold it in place
 

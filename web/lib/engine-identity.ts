@@ -76,9 +76,11 @@ export async function upsertEngineUser(input: {
  * Design, including why each cache layer exists and what it may not be relied upon for:
  * docs/SESSION_IDENTITY_RECOVERY_DESIGN.md §3–§5.
  *
- * NOTHING CALLS THIS YET. It is wired to `callbacks.jwt` and `engineAuthHeaders` in later commits of
+ * NOTHING CALLS THIS YET. It is wired to `callbacks.jwt` — the single call site — in commit 5 of
  * docs/IDENTITY_RECOVERY_IMPLEMENTATION_PLAN.md, so that the logic arrives complete and tested before
- * anything depends on it.
+ * anything depends on it. An earlier revision of that plan added a second call site in
+ * `engineAuthHeaders`; it was deleted once tracing showed a heal here is already visible to that
+ * function in the same request (SESSION_IDENTITY_RECOVERY_DESIGN.md §2a).
  * ---------------------------------------------------------------------------------------------- */
 
 /** How long a resolved id is reused without asking the engine again. */
