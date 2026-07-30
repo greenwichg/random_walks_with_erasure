@@ -473,6 +473,8 @@
   "settings.notif.streakDesc": "A nudge before your reading streak lapses.",
   "settings.notif.blindSpot": "Blind-spot alerts",
   "settings.notif.blindSpotDesc": "When a topic or viewpoint drops out of your diet.",
+  "settings.notif.breaking": "Breaking news",
+  "settings.notif.breakingDesc": "When a major story breaks across several outlets. At most 5 a day.",
   "settings.privacy": "Privacy",
   "settings.privacyInfo": "You're in control of your data.",
   "settings.privacy.policy": "Privacy policy",

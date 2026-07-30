@@ -473,6 +473,8 @@
   "settings.notif.streakDesc": "Un rappel avant que votre série de lecture ne s'interrompe.",
   "settings.notif.blindSpot": "Alertes d'angles morts",
   "settings.notif.blindSpotDesc": "Quand un sujet ou un point de vue disparaît de votre régime.",
+  "settings.notif.breaking": "Alerte info",
+  "settings.notif.breakingDesc": "Quand une actualité majeure éclate dans plusieurs médias. 5 par jour au maximum.",
   "settings.privacy": "Confidentialité",
   "settings.privacyInfo": "Vous contrôlez vos données.",
   "settings.privacy.policy": "Politique de confidentialité",

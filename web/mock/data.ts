@@ -518,6 +518,14 @@ export const SETTINGS: Settings = {
     weeklyDigest: true,
     streakReminders: false,
     blindSpotAlerts: false,
+    // Mirrors the engine's defaults (settings_service.DEFAULT_SETTINGS): in-app on, push off until
+    // there is a push channel to honour it.
+    categories: {
+      breaking: { inApp: true, push: false },
+      digests: { inApp: true, push: false },
+      recommendations: { inApp: true, push: false },
+      product: { inApp: true, push: false },
+    },
   },
   // `privacy` intentionally omitted — it's absent from the frontend Settings type (nothing reads
   // it). The engine still stores/returns it; a live response's extra key is ignored structurally.

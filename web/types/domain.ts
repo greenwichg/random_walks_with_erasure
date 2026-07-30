@@ -913,6 +913,12 @@ export interface FollowedLocation {
   level: "country" | "region" | "city";
 }
 
+/** One notification category's per-channel switches (`Settings.notifications.categories`). */
+export interface NotificationChannelPrefs {
+  inApp: boolean;
+  push: boolean;
+}
+
 export interface Settings {
   theme: "light" | "dark" | "system";
   language: string;
@@ -926,6 +932,18 @@ export interface Settings {
     weeklyDigest: boolean;
     streakReminders: boolean;
     blindSpotAlerts: boolean;
+    /**
+     * Preferences by CATEGORY (what it is about) x CHANNEL (how it arrives) — the shape newer
+     * notification kinds gate on, alongside the four per-kind booleans above (both are live). `push`
+     * is part of the contract before there is a push channel to honour it, so enabling one later
+     * needs no settings migration.
+     */
+    categories: {
+      breaking: NotificationChannelPrefs;
+      digests: NotificationChannelPrefs;
+      recommendations: NotificationChannelPrefs;
+      product: NotificationChannelPrefs;
+    };
   };
   /** Location Intelligence Phase 1.5 — edition + followed places (Settings > Places). */
   edition?: string | null;

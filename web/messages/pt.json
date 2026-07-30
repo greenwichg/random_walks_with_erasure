@@ -473,6 +473,8 @@
   "settings.notif.streakDesc": "Um lembrete antes de sua sequência de leitura acabar.",
   "settings.notif.blindSpot": "Alertas de pontos cegos",
   "settings.notif.blindSpotDesc": "Quando um tema ou ponto de vista some da sua dieta.",
+  "settings.notif.breaking": "Última hora",
+  "settings.notif.breakingDesc": "Quando uma notícia importante estoura em vários veículos. No máximo 5 por dia.",
   "settings.privacy": "Privacidade",
   "settings.privacyInfo": "Você controla seus dados.",
   "settings.privacy.policy": "Política de privacidade",

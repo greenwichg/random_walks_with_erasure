@@ -18,6 +18,12 @@ function base(): Settings {
       weeklyDigest: true,
       streakReminders: false,
       blindSpotAlerts: false,
+      categories: {
+        breaking: { inApp: true, push: false },
+        digests: { inApp: true, push: false },
+        recommendations: { inApp: true, push: false },
+        product: { inApp: true, push: false },
+      },
     },
   };
 }
@@ -89,4 +95,61 @@ test("arrays diff by value: identical rebuilt array is no change; a changed arra
   const changed = { ...base(), locations: [{ placeId: "GB", level: "country" }] } as never;
   assert.deepEqual(diffSettings(withUs, same), {});
   assert.deepEqual(diffSettings(withUs, changed), { locations: [{ placeId: "GB", level: "country" }] });
+});
+
+
+// --------------------------------------------------------------------------------------------
+// Two-level nesting (`notifications.categories.<category>.<channel>`). Minimality matters more
+// here than in a flat group: the engine deep-merges, so a patch that restated unchanged siblings
+// would overwrite a change another device made between this page's load and its save.
+// --------------------------------------------------------------------------------------------
+test("a change two levels deep → only that leaf, not the whole matrix", () => {
+  const draft = base();
+  draft.notifications = {
+    ...draft.notifications,
+    categories: {
+      ...draft.notifications.categories,
+      breaking: { ...draft.notifications.categories.breaking, inApp: false },
+    },
+  };
+  assert.deepEqual(diffSettings(base(), draft), {
+    notifications: { categories: { breaking: { inApp: false } } },
+  });
+});
+
+test("the untouched channel of a changed category stays out of the patch", () => {
+  const draft = base();
+  draft.notifications = {
+    ...draft.notifications,
+    categories: {
+      ...draft.notifications.categories,
+      breaking: { inApp: true, push: true }, // only `push` differs from the base
+    },
+  };
+  const patch = diffSettings(base(), draft) as Record<string, any>;
+  assert.deepEqual(patch.notifications.categories.breaking, { push: true });
+});
+
+test("a rebuilt but identical matrix is not a change", () => {
+  const draft = base();
+  draft.notifications = {
+    ...draft.notifications,
+    categories: { ...draft.notifications.categories, breaking: { inApp: true, push: false } },
+  };
+  assert.deepEqual(diffSettings(base(), draft), {});
+});
+
+test("a flat sibling and a deep leaf combine without disturbing each other", () => {
+  const draft = base();
+  draft.notifications = {
+    ...draft.notifications,
+    weeklyDigest: false,
+    categories: {
+      ...draft.notifications.categories,
+      product: { ...draft.notifications.categories.product, inApp: false },
+    },
+  };
+  assert.deepEqual(diffSettings(base(), draft), {
+    notifications: { weeklyDigest: false, categories: { product: { inApp: false } } },
+  });
 });

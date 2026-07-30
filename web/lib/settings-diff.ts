@@ -15,14 +15,30 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
-/** The changed sub-fields of one nested group (a flat record of primitives). */
+/**
+ * The changed sub-fields of one nested group. Recurses through nested groups, so a change to a
+ * single leaf ships as that single leaf: `notifications.categories.breaking.inApp` sends
+ * `{notifications: {categories: {breaking: {inApp: false}}}}` rather than the whole 4x2 matrix.
+ *
+ * Minimality is not cosmetic here — it is what makes two clients safe to edit at once. The engine
+ * deep-merges a patch over the reader's stored preferences, so a patch that restates unchanged
+ * siblings would silently overwrite a change made on another device between this page's load and
+ * its save.
+ */
 function diffGroup(
   base: Record<string, unknown>,
   draft: Record<string, unknown>,
 ): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const key of Object.keys(draft)) {
-    if (!Object.is(base[key], draft[key])) out[key] = draft[key];
+    const b = base[key];
+    const d = draft[key];
+    if (isPlainObject(b) && isPlainObject(d)) {
+      const sub = diffGroup(b, d);
+      if (Object.keys(sub).length > 0) out[key] = sub;
+    } else if (!Object.is(b, d)) {
+      out[key] = d;
+    }
   }
   return out;
 }

@@ -18,8 +18,9 @@ import {
   RotateCcw,
   Loader2,
   AlertCircle,
+  Zap,
 } from "lucide-react";
-import type { Settings } from "@/types/domain";
+import type { Settings, NotificationChannelPrefs } from "@/types/domain";
 import { useQuery } from "@tanstack/react-query";
 import { useSettings, useUpdateSettings } from "@/hooks/use-data";
 import { services, queryKeys } from "@/services";
@@ -126,6 +127,29 @@ export default function SettingsPage() {
   }
   function setNotif<K extends keyof Settings["notifications"]>(key: K, value: boolean) {
     setDraft((d) => (d ? { ...d, notifications: { ...d.notifications, [key]: value } } : d));
+    setSaved(false);
+  }
+  /** One leaf of the category x channel matrix. Copies only the path being changed, so the diff
+   *  stays a single leaf and a save cannot restate (and thereby overwrite) its siblings. */
+  function setCategory(
+    category: keyof Settings["notifications"]["categories"],
+    channel: keyof NotificationChannelPrefs,
+    value: boolean,
+  ) {
+    setDraft((d) =>
+      d
+        ? {
+            ...d,
+            notifications: {
+              ...d.notifications,
+              categories: {
+                ...d.notifications.categories,
+                [category]: { ...d.notifications.categories[category], [channel]: value },
+              },
+            },
+          }
+        : d,
+    );
     setSaved(false);
   }
 
@@ -374,6 +398,17 @@ export default function SettingsPage() {
                 description={t("settings.notif.blindSpotDesc")}
                 checked={draft.notifications.blindSpotAlerts}
                 onChange={(v) => setNotif("blindSpotAlerts", v)}
+              />
+              {/* The first CATEGORY preference (as opposed to the four per-kind toggles above): it
+                  names what the notification is about, and carries a switch per channel. Only the
+                  in-app switch is shown while in-app is the only channel — a control for a channel
+                  that cannot deliver would be a promise we don't keep. */}
+              <ToggleRow
+                icon={Zap}
+                title={t("settings.notif.breaking")}
+                description={t("settings.notif.breakingDesc")}
+                checked={draft.notifications.categories.breaking.inApp}
+                onChange={(v) => setCategory("breaking", "inApp", v)}
               />
             </div>
           </SectionCard>

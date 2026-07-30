@@ -473,6 +473,8 @@
   "settings.notif.streakDesc": "Ein Hinweis, bevor Ihre Lese-Serie endet.",
   "settings.notif.blindSpot": "Blind-Fleck-Warnungen",
   "settings.notif.blindSpotDesc": "Wenn ein Thema oder eine Sichtweise aus Ihrer Diät verschwindet.",
+  "settings.notif.breaking": "Eilmeldung",
+  "settings.notif.breakingDesc": "Wenn eine wichtige Nachricht bei mehreren Medien aufschlägt. Höchstens 5 pro Tag.",
   "settings.privacy": "Datenschutz",
   "settings.privacyInfo": "Sie haben Ihre Daten unter Kontrolle.",
   "settings.privacy.policy": "Datenschutzerklärung",
