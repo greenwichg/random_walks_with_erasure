@@ -123,9 +123,16 @@ nothing.
 
 Then from a browser, signed in:
 
-1. **Settings → Notifications** shows "Push notifications on this device". If it does not, the config
-   endpoint is reporting the feature unavailable — go back to §1.
-2. Toggling it on produces the browser's permission prompt. Granting it registers a subscription.
+1. **Settings → Notifications** shows two push controls once the config endpoint reports the feature
+   available. If neither appears, go back to §1.
+   - **"Breaking news on your devices"** — the account-level preference for the push *channel*. It is
+     **off by default** and travels with the reader to every device they own. Nothing is delivered
+     until it is on, however many devices are registered.
+   - **"Push notifications on this device"** — the per-device control. It prompts for permission and
+     registers a subscription; it is not part of the Save flow.
+2. Turn on **both**. They answer different questions — *what may be sent* and *where it may go* — and
+   a device registered without the channel preference receives nothing, silently. That combination
+   shipped once and is the reason this step now spells it out.
 3. Confirm the engine stored it:
    ```bash
    docker exec -i deploy-api-1 python - <<'PY'

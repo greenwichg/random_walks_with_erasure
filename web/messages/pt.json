@@ -475,6 +475,8 @@
   "settings.notif.blindSpotDesc": "Quando um tema ou ponto de vista some da sua dieta.",
   "settings.notif.breaking": "Última hora",
   "settings.notif.breakingDesc": "Quando uma notícia importante estoura em vários veículos. No máximo 5 por dia.",
+  "settings.notif.breakingPush": "Última hora nos seus dispositivos",
+  "settings.notif.breakingPushDesc": "Enviar também as notícias de última hora como notificações, em cada dispositivo onde ativou o push.",
   "settings.notif.push": "Notificações push neste dispositivo",
   "settings.notif.pushDesc": "Receba avisos mesmo com o Hidden View fechado. Vale só para este navegador.",
   "settings.notif.pushBlockedDesc": "As notificações estão bloqueadas para este site. Permita-as nas configurações do navegador para ativar.",

@@ -31,31 +31,23 @@ interface PushConfig {
   publicKey: string;
 }
 
-export interface UsePush {
-  state: PushUiState;
-  permission: PushPermission;
-  /** A request is in flight (the permission prompt is open, or we are registering). */
-  busy: boolean;
-  /** The last attempt failed for a reason that is not "blocked" — shown as an inline error. */
-  failed: boolean;
-  enable: () => Promise<void>;
-  disable: () => Promise<void>;
-}
+const NO_PUSH: PushConfig = { enabled: false, publicKey: "" };
 
-export function usePush(): UsePush {
-  const [config, setConfig] = React.useState<PushConfig>({ enabled: false, publicKey: "" });
-  const [permission, setPermission] = React.useState<PushPermission>("unsupported");
-  const [subscribed, setSubscribed] = React.useState(false);
-  // Tracked separately from `subscribed` because the two answer different questions, and during a
-  // rollback only this one can be answered: `subscribed` needs a server key to compare against, and a
-  // switched-off deployment serves none — so without this a still-registered device would look like a
-  // device that was never registered, and the reader would lose the only control that removes it.
-  const [hasSubscription, setHasSubscription] = React.useState(false);
-  const [busy, setBusy] = React.useState(false);
-  const [failed, setFailed] = React.useState(false);
-
-  // Ask the server whether push is available at all before touching any browser API. A reader on a
-  // deployment with no VAPID key must never see the control, let alone a permission prompt.
+/**
+ * Whether this DEPLOYMENT offers push, and the key to subscribe against.
+ *
+ * Split out of {@link usePush} because the two questions have different scopes and different
+ * consumers. This one is about the server and nothing else — no browser APIs are touched, no worker
+ * is registered, no subscription is read — which is what lets the **account-level** category
+ * preference ask it. That preference travels with the reader to every device they own, so gating it
+ * on whether *this* browser happens to support push would hide a setting that is not about this
+ * browser at all.
+ *
+ * Fails closed: an unreachable engine reports push unavailable, the same posture the proxy route
+ * behind it takes.
+ */
+export function usePushConfig(): PushConfig {
+  const [config, setConfig] = React.useState<PushConfig>(NO_PUSH);
   React.useEffect(() => {
     let alive = true;
     (async () => {
@@ -72,6 +64,31 @@ export function usePush(): UsePush {
       alive = false;
     };
   }, []);
+  return config;
+}
+
+export interface UsePush {
+  state: PushUiState;
+  permission: PushPermission;
+  /** A request is in flight (the permission prompt is open, or we are registering). */
+  busy: boolean;
+  /** The last attempt failed for a reason that is not "blocked" — shown as an inline error. */
+  failed: boolean;
+  enable: () => Promise<void>;
+  disable: () => Promise<void>;
+}
+
+export function usePush(): UsePush {
+  const config = usePushConfig();
+  const [permission, setPermission] = React.useState<PushPermission>("unsupported");
+  const [subscribed, setSubscribed] = React.useState(false);
+  // Tracked separately from `subscribed` because the two answer different questions, and during a
+  // rollback only this one can be answered: `subscribed` needs a server key to compare against, and a
+  // switched-off deployment serves none — so without this a still-registered device would look like a
+  // device that was never registered, and the reader would lose the only control that removes it.
+  const [hasSubscription, setHasSubscription] = React.useState(false);
+  const [busy, setBusy] = React.useState(false);
+  const [failed, setFailed] = React.useState(false);
 
   const refresh = React.useCallback(async (key: string) => {
     setPermission(currentPermission());

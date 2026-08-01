@@ -33,6 +33,59 @@ test.describe("Browser push foundation", () => {
     await expect(authedPage.getByText("Push notifications on this device")).toHaveCount(0);
   });
 
+  test("the breaking-news PUSH preference is absent when the deployment cannot send", async ({
+    authedPage,
+  }) => {
+    // Same reasoning as the per-device control above, applied to the account-level preference: a
+    // switch for a channel with no sender behind it is a promise we don't keep. The in-app switch for
+    // the same category stays, because that channel does deliver.
+    await authedPage.goto("/settings");
+    await expect(authedPage.getByRole("switch", { name: "Breaking news" })).toBeVisible();
+    await expect(
+      authedPage.getByRole("switch", { name: "Breaking news on your devices" }),
+    ).toHaveCount(0);
+  });
+
+  test("the breaking-news PUSH preference appears and saves once push is configured", async ({
+    authedPage,
+  }) => {
+    // The gap this test exists for: B2 shipped a sender and nothing in the UI could turn the push
+    // channel on, so every reader who registered a device received exactly nothing. Found by walking
+    // the pipeline end to end on production, not by any test — hence this one.
+    //
+    // The config route is stubbed rather than the deployment reconfigured: what is under test is the
+    // UI's response to an install that CAN send, and minting a real subscription needs a live push
+    // service this suite does not have.
+    await authedPage.route("**/api/push/config", (route) =>
+      route.fulfill({ json: { enabled: true, publicKey: `B${"x".repeat(86)}` } }),
+    );
+    await authedPage.goto("/settings");
+
+    const pushPref = authedPage.getByRole("switch", { name: "Breaking news on your devices" });
+    await expect(pushPref).toBeVisible();
+    await expect(pushPref).toHaveAttribute("data-state", "unchecked"); // off by default — consent
+
+    const [response] = await Promise.all([
+      authedPage.waitForResponse(
+        (r) => r.url().includes("/api/settings") && r.request().method() === "POST",
+      ),
+      (async () => {
+        await pushPref.click();
+        await authedPage.getByRole("button", { name: "Save changes" }).click();
+      })(),
+    ]);
+
+    // The preference reached the server on the right leaf of the category x channel matrix, and the
+    // in-app sibling was not restated — a save must carry the leaf that changed and nothing else.
+    const sent = JSON.parse(response.request().postData() ?? "{}");
+    expect(sent.notifications.categories.breaking).toEqual({ push: true });
+
+    await authedPage.reload();
+    await expect(
+      authedPage.getByRole("switch", { name: "Breaking news on your devices" }),
+    ).toHaveAttribute("data-state", "checked");
+  });
+
   test("reads and deletes stay open while registration is closed (P4)", async ({ authedPage }) => {
     // The suite runs with push UNCONFIGURED, which is the rolled-back state. Registration must be
     // refused and the other two must not be: a row survives a rollback by design, so the way out has

@@ -19,6 +19,7 @@ import {
   Loader2,
   AlertCircle,
   Zap,
+  BellRing,
 } from "lucide-react";
 import type { Settings, NotificationChannelPrefs } from "@/types/domain";
 import { useQuery } from "@tanstack/react-query";
@@ -31,6 +32,7 @@ import { SectionCard } from "@/components/shared/section-card";
 import { ErrorState } from "@/components/shared/states";
 import { ExtensionConnect } from "@/components/settings/extension-connect";
 import { PushToggle } from "@/components/settings/push-toggle";
+import { usePushConfig } from "@/hooks/use-push";
 import { CountryBadge } from "@/components/shared/country-badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
@@ -68,6 +70,10 @@ export default function SettingsPage() {
   const persistTheme = useUpdateSettings(); // theme's own write-through — separate from the Save button
   const { theme, setTheme } = useTheme();
   const { t } = useTranslation();
+  // Deployment-level only: does this install offer push at all? Deliberately NOT `usePush`, which
+  // registers the worker and reads this browser's subscription — side effects a preference row has
+  // no business triggering, and answers to a question it is not asking.
+  const pushConfig = usePushConfig();
 
   // `base` is the server snapshot the draft was seeded from; `draft` is the reader's working copy.
   // Both are local (no new global state). Diffing the draft against `base` — not the live `data` —
@@ -401,9 +407,9 @@ export default function SettingsPage() {
                 onChange={(v) => setNotif("blindSpotAlerts", v)}
               />
               {/* The first CATEGORY preference (as opposed to the four per-kind toggles above): it
-                  names what the notification is about, and carries a switch per channel. Only the
-                  in-app switch is shown while in-app is the only channel — a control for a channel
-                  that cannot deliver would be a promise we don't keep. */}
+                  names what the notification is about, and carries a switch per CHANNEL. The two
+                  rows below are the same category on different channels, and the third control is a
+                  different kind of thing entirely — see its comment. */}
               <ToggleRow
                 icon={Zap}
                 title={t("settings.notif.breaking")}
@@ -411,6 +417,24 @@ export default function SettingsPage() {
                 checked={draft.notifications.categories.breaking.inApp}
                 onChange={(v) => setCategory("breaking", "inApp", v)}
               />
+              {/* The push channel. Absent until B2 shipped a sender, because a switch for a channel
+                  that cannot deliver is a promise we don't keep — but leaving it absent AFTER that
+                  outlived its reason and became the opposite failure: readers could register a device
+                  and receive nothing, because this preference defaults to off and nothing in the UI
+                  could turn it on. Found by walking the pipeline end to end on production.
+
+                  Gated on the DEPLOYMENT offering push, not on this browser supporting it: the
+                  preference is account-level and travels to every device the reader owns, so a
+                  desktop without the Push API must not hide a setting that governs their phone. */}
+              {pushConfig.enabled && (
+                <ToggleRow
+                  icon={BellRing}
+                  title={t("settings.notif.breakingPush")}
+                  description={t("settings.notif.breakingPushDesc")}
+                  checked={draft.notifications.categories.breaking.push}
+                  onChange={(v) => setCategory("breaking", "push", v)}
+                />
+              )}
               {/* Per-DEVICE, not per-account: it takes effect immediately and is deliberately outside
                   the draft / Save flow, because a browser permission prompt cannot be staged. Renders
                   nothing when the browser or the deployment cannot support push. */}

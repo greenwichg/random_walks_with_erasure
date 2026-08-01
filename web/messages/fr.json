@@ -475,6 +475,8 @@
   "settings.notif.blindSpotDesc": "Quand un sujet ou un point de vue disparaît de votre régime.",
   "settings.notif.breaking": "Alerte info",
   "settings.notif.breakingDesc": "Quand une actualité majeure éclate dans plusieurs médias. 5 par jour au maximum.",
+  "settings.notif.breakingPush": "Alertes info sur vos appareils",
+  "settings.notif.breakingPushDesc": "Envoyer aussi les actualités urgentes en notifications, sur chaque appareil où vous avez activé le push.",
   "settings.notif.push": "Notifications push sur cet appareil",
   "settings.notif.pushDesc": "Soyez averti même quand Hidden View est fermé. Concerne uniquement ce navigateur.",
   "settings.notif.pushBlockedDesc": "Les notifications sont bloquées pour ce site. Autorisez-les dans les paramètres du navigateur pour activer cette option.",
