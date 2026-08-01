@@ -29,6 +29,7 @@ from typing import Optional
 import clustering                 # the deterministic union-find Jaccard primitive (algorithm only)
 import discover                   # feed_article_to_article — the shared Article serializer (Read flow)
 import media                      # centralised hero-image selection (additive; no clustering change)
+import obs_metrics                # OBS1 counters (stdlib-only leaf) — stale serves land in /api/metrics
 import outlet_registry            # curated source identity — supplies the wire/news distinction
 import publisher_identity         # one outlet, one identity, whatever form the feed used
 from pagination import OffsetPagination
@@ -1118,6 +1119,72 @@ def clear_cache() -> None:
         # The build locks go too. Leaving them would leak one Lock per key across a test suite that
         # clears between cases, and a lock whose entry is gone protects nothing.
         _BUILD_LOCKS.clear()
+        # And the pending-refresh set: a test that cleared the cache must not have its first stale
+        # serve silently coalesced into a refresh a PREVIOUS test left in flight.
+        _REFRESH_PENDING.clear()
+
+
+def serve_stale() -> bool:
+    """Whether a stale-but-inside-TTL build is served while one background rebuild replaces it.
+    ON — ``RWE_STORIES_SERVE_STALE=0`` restores the reader-paid rebuild.
+
+    Measured before this existed (production, 2026-08-01): the rebuild was **11,476 ms** at a
+    47k-article catalog, the web tier abandons every engine call at **6,000 ms**, and the cache was
+    invalidated by every ingest — so several times an hour, readers of the highest-traffic pages
+    drew a guaranteed timeout and the app rendered "We couldn't load this. Please try again." The
+    11.5 s did not need to be faster; it needed to not be in front of a reader.
+
+    The trade is ~12 s of extra staleness on content already declared tolerant of 600 s of drift
+    (:func:`cache_ttl`). The kill switch exists because that trade is a product judgment, and
+    reverting it must not require a deploy."""
+    v = os.environ.get("RWE_STORIES_SERVE_STALE", "").strip().lower()
+    return v not in {"0", "false", "no", "off"}
+
+
+#: Logical keys with a background rebuild in flight — the single-flight guard for stale refreshes.
+#: Guarded by ``_CACHE_LOCK``. Without it, every reader who lands on the same stale entry during
+#: the ~12 s rebuild would spawn another identical rebuild — recreating, as background load, the
+#: exact convoy of duplicate builds the build-lock exists to prevent inline.
+_REFRESH_PENDING: set = set()
+
+
+def _request_stale_refresh(store_, logical) -> bool:
+    """Queue exactly one background rebuild for this logical key. Non-blocking. Returns whether a
+    refresh was spawned (``False`` = coalesced into one already in flight, which is the common case
+    for every stale hit after the first)."""
+    with _CACHE_LOCK:
+        if logical in _REFRESH_PENDING:
+            obs_metrics.incr("story_stale_refresh_coalesced_total")
+            return False
+        _REFRESH_PENDING.add(logical)
+    obs_metrics.incr("story_stale_refresh_spawned_total")
+    _spawn_refresh(store_, logical)
+    return True
+
+
+def _spawn_refresh(store_, logical) -> None:
+    """Start :func:`_run_refresh` on a daemon thread. Separated from the request so tests can run
+    the refresh inline (monkeypatching this) and assert on the state it leaves behind."""
+    threading.Thread(target=_run_refresh, args=(store_, logical),
+                     name="story-stale-refresh", daemon=True).start()
+
+
+def _run_refresh(store_, logical) -> None:
+    """The background rebuild's body: build fresh for one logical key, then release the key.
+
+    ``allow_stale=False`` or this would serve the stale entry to itself and re-queue forever.
+    A build that raises is swallowed: the stale entry keeps serving inside its TTL, and the next
+    stale hit requests again — a failed refresh degrades to the previous behaviour minus the
+    reader-visible cost, never to a wedged key (the ``finally`` releases it on every path)."""
+    topic, date_from, date_to, max_scan, min_articles, min_publishers = logical
+    try:
+        _cached_build(store_, topic=topic, date_from=date_from, date_to=date_to, max_scan=max_scan,
+                      min_articles=min_articles, min_publishers=min_publishers, allow_stale=False)
+    except Exception:
+        pass
+    finally:
+        with _CACHE_LOCK:
+            _REFRESH_PENDING.discard(logical)
 
 
 _WARM_LOCK = threading.Lock()
@@ -1143,8 +1210,11 @@ def warm_cache(store_) -> Optional[int]:
     if not _WARM_LOCK.acquire(blocking=False):
         return None
     try:
+        # allow_stale=False: the warm's one purpose is a FRESH build. Left at the default it would
+        # find the entry it is here to replace, serve it to itself, and queue a background refresh
+        # — a warm that never warms.
         return len(_cached_build(store_, topic=None, date_from=None, date_to=None, max_scan=None,
-                                 min_articles=2, min_publishers=2))
+                                 min_articles=2, min_publishers=2, allow_stale=False))
     finally:
         _WARM_LOCK.release()
 
@@ -1152,11 +1222,15 @@ def warm_cache(store_) -> Optional[int]:
 # --------------------------------------------------------------------------- #
 # Coalesced warming.
 #
-# WHY THIS IS SAFE, stated first because everything else depends on it: the cache key contains the
-# catalog fingerprint. A reader whose fingerprint matches no cached entry MISSES and builds fresh.
-# So a warm can never make a reader see stale data — it can only decide who PAYS for a build. That
-# makes deferring, coalescing or skipping a warm a pure scheduling question, with no correctness
-# dimension at all. (Delete the fingerprint from the key and every word of this stops being true.)
+# WHY THIS IS SAFE, stated first because everything else depends on it: the cached entry carries
+# the catalog fingerprint, so the lookup always KNOWS whether it is fresh. Historically the
+# fingerprint was part of the key and a mismatch meant the reader rebuilt; since serve-stale
+# (`serve_stale`, measured rationale on that function) a mismatch inside the TTL is served as-is
+# while one background rebuild replaces it. Either way, a warm can never make a reader see data the
+# policy forbids — it decides who PAYS for a build and how soon staleness ends, never whether the
+# staleness bound holds. That keeps deferring, coalescing or skipping a warm a pure scheduling
+# question. (Serve a fingerprint the lookup cannot check, or an entry past its TTL, and every word
+# of this stops being true.)
 #
 # WHAT IT FIXES. `MultiSourcePoller` runs one thread per adapter and holds a global lock across
 # `poll_once` + `_post_cycle`, so the adapters' warms are SERIALIZED, never concurrent — which
@@ -1366,23 +1440,42 @@ def shutdown_warmer() -> None:
             _WARMER = None
 
 
-def _cached_build(store_, *, topic, date_from, date_to, max_scan, min_articles, min_publishers) -> list:
+def _cached_build(store_, *, topic, date_from, date_to, max_scan, min_articles, min_publishers,
+                  allow_stale: bool = True) -> list:
     """``build_stories(_fetch(...))`` behind a cache with TWO independent invalidation conditions,
     because either alone is wrong:
 
-    * **A catalog fingerprint** ``(row count, newest fetched_at)`` is part of the KEY, so any
-      catalog write immediately invalidates. A pure TTL cache would keep serving pre-ingest
-      clusters — a reader could open a story link the list had just rendered and get a stale member
-      set. A bare row COUNT is not enough either: a retention prune plus an ingest in the same
-      interval leaves the count identical while the content differs entirely. Between polls
-      (``RWE_POLL_INTERVAL``, default 600 s) the fingerprint is stable, so this is a long-lived
-      cache in practice, not a permanently-cold one.
+    * **A catalog fingerprint** ``(row count, newest fetched_at)`` decides freshness, so any
+      catalog write immediately marks the entry stale. A pure TTL cache would keep serving
+      pre-ingest clusters indefinitely — a reader could open a story link the list had just
+      rendered and get a stale member set. A bare row COUNT is not enough either: a retention
+      prune plus an ingest in the same interval leaves the count identical while the content
+      differs entirely. Between polls (``RWE_POLL_INTERVAL``, default 600 s) the fingerprint is
+      stable, so this is a long-lived cache in practice, not a permanently-cold one.
     * **TTL** bounds staleness on the other axis. ``date_from`` defaults to a rolling ``now −
       scan_days``, so a quiet catalog would otherwise pin an ever-older window.
 
-    The store's identity is in the key too: two stores must never share a build. One process serves
-    one database in production, but tests and any future multi-tenant caller would silently read
-    each other's clusters without it."""
+    **A stale entry is SERVED, and the rebuild happens behind the reader** (``serve_stale``, on by
+    default). The fingerprint used to live in the cache key itself, which made invalidation an
+    eviction: the instant any adapter ingested one article, the next reader owned the whole
+    rebuild. Measured in production (2026-08-01): the rebuild is **11,476 ms** against a web tier
+    that abandons the call at **6,000 ms** — so every ingest handed some reader a guaranteed
+    failure, on the highest-traffic pages, several times an hour. Now the entry keyed by the
+    LOGICAL parameters is returned as it stands and one background thread rebuilds it; the reader
+    who found the stale entry gets the previous poll's stories in under a millisecond instead of a
+    timeout. The staleness this admits is bounded by the rebuild duration (~12 s today) on content
+    this deployment already declares tolerant of 600 s of drift (``RWE_STORIES_CACHE_TTL``) — two
+    percent of the envelope, spent to delete the one deterministic failure in the request path.
+    An entry past its TTL is *never* served stale: the TTL bounds rolling-window drift, and
+    serve-stale must not stretch a bound it did not set.
+
+    ``allow_stale=False`` is for callers whose PURPOSE is a fresh build — the poller's
+    :func:`warm_cache` and the background refresh itself. Without it the warm would find the stale
+    entry, serve it to itself, request another refresh, and never build anything.
+
+    The store's identity still scopes every entry: two stores must never share a build. One process
+    serves one database in production, but tests and any future multi-tenant caller would silently
+    read each other's clusters without it."""
     def _build():
         # Identity is applied HERE and not inside build_stories, which stays a pure function of its
         # rows. Only the unfiltered build owns identity: a topic- or date-filtered view sees a
@@ -1404,19 +1497,35 @@ def _cached_build(store_, *, topic, date_from, date_to, max_scan, min_articles, 
     except Exception:                       # a store without the fingerprint is simply uncached
         return _build()
 
-    key = (topic, date_from, date_to, max_scan, min_articles, min_publishers, fingerprint)
+    # The LOGICAL key: what the caller asked for, minus the catalog generation it is answered from.
+    # The fingerprint moved out of the key and into the entry — that one change is the whole fix,
+    # because it turns "the catalog changed" from an eviction (next reader rebuilds) into a state
+    # the lookup can see and route around (serve the previous build, rebuild behind them).
+    logical = (topic, date_from, date_to, max_scan, min_articles, min_publishers)
 
     def _lookup():
+        """('fresh' | 'stale' | None, stories). Expired entries answer None, never 'stale' —
+        the TTL bounds rolling-window drift and stale-serving must not stretch it."""
         with _CACHE_LOCK:
             entries = _CACHE.get(store_)
-            hit = entries.get(key) if entries else None
-            return hit[1] if (hit is not None and (_time.time() - hit[0]) < ttl) else None
+            hit = entries.get(logical) if entries else None
+            if hit is None:
+                return None, None
+            built_at, built_fp, stories = hit
+            if (_time.time() - built_at) >= ttl:
+                return None, None
+            return ("fresh" if built_fp == fingerprint else "stale"), stories
 
-    hit = _lookup()
-    if hit is not None:
-        return hit
+    state, stories = _lookup()
+    if state == "fresh":
+        return stories
+    if state == "stale" and allow_stale and serve_stale():
+        _request_stale_refresh(store_, logical)
+        obs_metrics.incr("story_stale_served_total")
+        return stories
 
-    # SINGLE-FLIGHT the cold build. `warm_cache` has always guarded the POLLER's threads against
+    # SINGLE-FLIGHT the inline build — the true cold start (boot, TTL expiry, kill switch, and the
+    # two fresh-on-purpose callers). `warm_cache` has always guarded the POLLER's threads against
     # each other; the reader path had no such guard, so every request that arrived during a rebuild
     # started a rebuild of its own. At the measured 20k-article cost that is ~10 s of CPU each, on a
     # box with far fewer cores than that has concurrent readers — the requests do not merely wait,
@@ -1427,24 +1536,38 @@ def _cached_build(store_, *, topic, date_from, date_to, max_scan, min_articles, 
     # build, so they return it instead of repeating it. A build that RAISES releases the lock via
     # `with` and the next waiter tries — a failure is never cached and never wedges the key.
     with _CACHE_LOCK:
-        lock = _BUILD_LOCKS.setdefault(key, threading.Lock())
+        lock = _BUILD_LOCKS.setdefault(logical, threading.Lock())
     with lock:
-        hit = _lookup()
-        if hit is not None:
-            return hit
+        # Re-read the fingerprint under the lock, THEN re-check. A waiter that kept its entry-time
+        # fingerprint would judge the winner's just-stored build "stale" — the winner read a newer
+        # catalog — and rebuild an answer it is already holding. Re-reading makes the winner's
+        # build "fresh" to every waiter, which is the entire point of them having waited.
+        try:
+            fingerprint = store_.catalog_fingerprint()
+        except Exception:                   # transient — keep the entry-time fingerprint;
+            pass                            # worst case is one redundant background refresh later
+        state, stories = _lookup()
+        if state == "fresh":
+            return stories
+        # 'stale' here is NOT served, deliberately: every arrival at this lock wants a fresh build.
+        # The fresh-on-purpose callers (warm, background refresh) came for exactly that; a reader
+        # with the kill switch off asked for the old behaviour back; and a reader who found nothing
+        # servable at entry only sees 'stale' now because the catalog moved again while they waited.
         built = _build()
         with _CACHE_LOCK:
             entries = _CACHE.setdefault(store_, {})
-            # Bounded per store: evict oldest first rather than grow without limit across topics/dates.
-            if len(entries) >= _CACHE_MAX:
-                for stale in sorted(entries, key=lambda k: entries[k][0])[: len(entries) - _CACHE_MAX + 1]:
-                    entries.pop(stale, None)
-            entries[key] = (_time.time(), built)
-            # The key contains the catalog fingerprint, so a new key is minted on every write and the
-            # old one is dead. Bound the lock map the same way the entry map is bounded, or a
-            # long-running process accumulates one dead Lock per ingest cycle forever.
+            # Bounded per store: evict oldest first rather than grow without limit across
+            # topics/dates. Replacing an existing logical key needs no eviction — the map only
+            # grows when the KEY is new, so only then may a neighbour be dropped for room.
+            if len(entries) >= _CACHE_MAX and logical not in entries:
+                for old in sorted(entries, key=lambda k: entries[k][0])[: len(entries) - _CACHE_MAX + 1]:
+                    entries.pop(old, None)
+            entries[logical] = (_time.time(), fingerprint, built)
+            # Logical keys are a small, stable set (one per filter combination in actual use), but
+            # the map is still bounded the same way the entry map is — an unbounded map of Locks
+            # outliving their entries is the leak the previous fingerprint-keyed scheme had.
             if len(_BUILD_LOCKS) > _CACHE_MAX * 4:
-                for dead in [k for k in _BUILD_LOCKS if k != key][: len(_BUILD_LOCKS) // 2]:
+                for dead in [k for k in _BUILD_LOCKS if k != logical][: len(_BUILD_LOCKS) // 2]:
                     _BUILD_LOCKS.pop(dead, None)
     return built
 

@@ -50,3 +50,24 @@ def _push_worker_is_running():
     push_delivery._stop.clear()
     yield
     push_delivery._stop.clear()
+
+
+@pytest.fixture(autouse=True)
+def _fresh_story_cache():
+    """Start every test with an empty story cache — the serve-stale analogue of the push fixture
+    above, for the same reason: module state outliving what a single test believes it set up.
+
+    Since serve-stale (P0-1), a reader who finds a stale entry is handed the PREVIOUS build while a
+    real daemon thread rebuilds behind them. In production that is the fix; in a suite it is
+    pollution — a store reused across tests carries the previous test's build, so an
+    ingest-then-list test reads the old catalog and races a refresh thread it never started.
+    Clearing turns every test's first read into a cold (fresh) build, which is the pre-P0-1
+    behaviour every existing ingest-then-assert test was written against. Tests that exercise the
+    stale path itself opt in by warming first (see test_story_service.py's serve-stale block).
+
+    Before AND after, like its neighbour: before isolates from history, after keeps a test that
+    left a pending refresh from leaking it forward."""
+    import story_service
+    story_service.clear_cache()
+    yield
+    story_service.clear_cache()

@@ -206,13 +206,22 @@ services:
       # 600, matching RWE_POLL_INTERVAL, and the reason is measured (examples/perf_profile.py).
       # A cold story build is QUADRATIC in catalog size — 0.4 s of clustering at 5k articles, 1.6 s
       # at 10k, 7.4 s at 20k, 32 s at 40k — while a warm hit is 0.65 ms. Correctness never depended
-      # on this TTL: the catalog fingerprint is part of the cache key so any write invalidates
-      # immediately, and the poller calls warm_cache right after it ingests so that rebuild is paid
-      # off the request path. At 120 s the TTL therefore expired four STILL-CORRECT builds per poll
+      # on this TTL: the cached entry carries the catalog fingerprint so any write marks it stale
+      # immediately (served briefly under SERVE_STALE below, never past this TTL), and the poller
+      # warms right after it ingests so the rebuild is paid off the request path. At 120 s the TTL
+      # therefore expired four STILL-CORRECT builds per poll
       # cycle, each one a multi-second stall for whichever reader arrived first, buying nothing.
       # What it trades away is drift of the rolling 6-day window start: 10 minutes instead of 2,
       # well under a percent of the window.
       RWE_STORIES_CACHE_TTL: ${RWE_STORIES_CACHE_TTL:-600}
+      # Serve-stale-while-revalidate (P0-1) — ON. A stale-but-inside-TTL build is served while ONE
+      # background thread rebuilds it; before this, the fingerprint lived in the cache key, so every
+      # ingest handed the next reader the whole rebuild — measured in production (2026-08-01) at
+      # 11.5 s against the web tier's 6 s deadline: a guaranteed timeout, on the highest-traffic
+      # pages, several times an hour. The trade is ~12 s of extra staleness inside the 600 s
+      # envelope the TTL above already accepts. `0` restores the reader-paid rebuild (kill switch,
+      # no rebuild required — restart api).
+      RWE_STORIES_SERVE_STALE: ${RWE_STORIES_SERVE_STALE:-}
       # Coalesced story-cache warming — SHIPPED OFF (0), which is the measured conclusion.
       #
       # The hypothesis: each provider invalidates the catalog fingerprint and triggers its own full

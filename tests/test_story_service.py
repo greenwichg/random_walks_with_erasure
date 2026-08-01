@@ -146,12 +146,17 @@ def test_coverage_calculation_and_blindspot():
 # --------------------------------------------------------------------------- #
 # Stable IDs survive new coverage of the same event
 # --------------------------------------------------------------------------- #
-def test_stable_id_survives_new_coverage():
+def test_stable_id_survives_new_coverage(monkeypatch):
+    _refresh_inline(monkeypatch)
     st = store_mod.Store("sqlite://"); _senate_and_wildfire(st)
     sid = next(s for s in ss.cluster_from_store(st) if "Senate" in s["title"])["id"]
     assert ss.get_story(st, sid) is not None
-    # a new outlet covers the SAME event -> the cluster grows but the anchored id is unchanged
+    # a new outlet covers the SAME event -> the cluster grows but the anchored id is unchanged.
+    # The id must hold on BOTH sides of the refresh: the stale serve right after the write, and
+    # the rebuilt view after it — a link that 404s for the duration of a rebuild is churn too.
     _add(st, "https://ap.org/a4", "AP", 0.1, "Senate passes funding bill in late vote", days=1)
+    stale = ss.get_story(st, sid)
+    assert stale is not None and stale["id"] == sid
     grown = ss.get_story(st, sid)
     assert grown is not None and grown["totalCoverage"] == 4 and grown["id"] == sid
 
@@ -452,12 +457,26 @@ def test_cache_serves_repeat_calls_without_reclustering(monkeypatch):
     assert third["total"] >= 0
 
 
-def test_ingest_invalidates_the_cache_immediately():
-    """A new article must be visible at once — a pure TTL cache would hide it, and the story detail
-    page would disagree with the list that linked to it."""
+def _refresh_inline(monkeypatch):
+    """Run background stale-refreshes synchronously on the requesting thread, so a test can assert
+    the serve-stale sequence (stale first, fresh after one refresh) without real threads."""
+    monkeypatch.setattr(ss, "_spawn_refresh", lambda store_, logical: ss._run_refresh(store_, logical))
+
+
+def test_an_ingest_is_detected_immediately_and_visible_after_one_refresh(monkeypatch):
+    """A new article must never be hidden by a TTL — the entry goes stale the moment the write
+    lands. What changed with serve-stale: the reader who FINDS the stale entry is handed the
+    previous build instead of the rebuild bill, and visibility follows one background refresh.
+    List and detail stay mutually consistent throughout — both read the same cached build, so they
+    flip to the new coverage together, never disagreeing about a link between them."""
+    _refresh_inline(monkeypatch)
     st = store_mod.Store("sqlite://"); _senate_and_wildfire(st)
     before = next(s for s in ss.list_stories(st)["stories"] if "Senate" in s["title"])
     _add(st, "https://ap.org/a9", "AP", 0.1, "Senate passes funding bill in late vote", days=1)
+    # The finder is served the pre-ingest build — that is the point of the policy — and their
+    # request triggers the (here: inline) refresh that ends the staleness.
+    stale = next(s for s in ss.list_stories(st)["stories"] if "Senate" in s["title"])
+    assert stale["totalCoverage"] == before["totalCoverage"]
     after = next(s for s in ss.list_stories(st)["stories"] if "Senate" in s["title"])
     assert after["totalCoverage"] == before["totalCoverage"] + 1
 
@@ -490,12 +509,15 @@ def test_get_story_sees_the_same_window_as_the_list():
         assert ss.get_story(st, s["id"]) is not None, f"list rendered {s['id']} but detail 404s"
 
 
-def test_cache_invalidates_when_content_changes_at_constant_row_count():
-    """Regression: the cache key must be a content fingerprint, not a row COUNT.
+def test_cache_invalidates_when_content_changes_at_constant_row_count(monkeypatch):
+    """Regression: staleness must be judged by a content fingerprint, not a row COUNT.
 
     Deleting N articles and inserting N others leaves the count identical while the catalog is
     entirely different — which is exactly what a retention prune plus an ingest in the same interval
-    does. Keyed on count alone, the second read is served the first read's clusters."""
+    does. Fingerprinted on count alone, the change is never DETECTED: no refresh is ever requested
+    and the old clusters are served forever, not merely for one serve-stale interval. The read
+    after the refresh is where the two designs diverge, so that is the read this asserts on."""
+    _refresh_inline(monkeypatch)
     st = store_mod.Store("sqlite://")
     first = ["https://one.example/a", "https://two.example/a"]
     for cu, pub in zip(first, ("NPR", "BBC News")):
@@ -507,8 +529,9 @@ def test_cache_invalidates_when_content_changes_at_constant_row_count():
     for cu, pub in zip(second, ("CNN", "Fox News")):
         _add(st, cu, pub, 0.0, "Rail operators publish the winter timetable", days=1)
 
+    ss.list_stories(st)                     # the finder: served stale, triggers the (inline) refresh
     titles = {s["title"] for s in ss.list_stories(st)["stories"]}     # same row count as before
-    assert any("Rail operators" in t for t in titles), "stale build served at constant row count"
+    assert any("Rail operators" in t for t in titles), "change at constant row count never detected"
     assert not any("Harbour" in t for t in titles)
 
 
@@ -530,14 +553,208 @@ def test_warm_cache_populates_the_default_view():
         ss.build_stories = real
 
 
-def test_warm_cache_is_invalidated_by_the_next_ingest():
-    """A warm build must not outlive the catalog it was built from."""
+def test_warm_cache_is_invalidated_by_the_next_ingest(monkeypatch):
+    """A warm build must not outlive the catalog it was built from — it serves for at most one
+    refresh after the write, then the rebuilt view takes over."""
+    _refresh_inline(monkeypatch)
     st = store_mod.Store("sqlite://"); _senate_and_wildfire(st)
     ss.clear_cache()
     assert ss.warm_cache(st) == 2
     _add(st, "https://ap.org/new", "AP", 0.1, "Harbour pilots ratify their contract", days=1)
     _add(st, "https://re.example/new", "Reuters", 0.0, "Harbour pilots ratify contract", days=1)
+    assert ss.list_stories(st)["total"] == 2      # the finder still reads the warm's build…
+    assert ss.list_stories(st)["total"] == 3      # …and the refresh it triggered replaces it
+
+
+# --------------------------------------------------------------------------- #
+# Serve-stale-while-revalidate (P0-1). The measured failure this closes: an 11.5 s rebuild in
+# front of a 6 s web deadline, handed to whichever reader arrived first after every ingest.
+# --------------------------------------------------------------------------- #
+def test_a_stale_build_is_served_and_the_rebuild_leaves_the_reader_thread(monkeypatch):
+    """The core of the fix, asserted from both sides: the reader gets the previous build with ZERO
+    build work on their thread, and exactly one background refresh is requested for the key."""
+    st = store_mod.Store("sqlite://"); _senate_and_wildfire(st)
+    assert ss.warm_cache(st) == 2
+    _add(st, "https://ap.org/new", "AP", 0.1, "Harbour pilots ratify their contract", days=1)
+    _add(st, "https://re.example/new", "Reuters", 0.0, "Harbour pilots ratify contract", days=1)
+
+    spawned = []
+    monkeypatch.setattr(ss, "_spawn_refresh", lambda store_, logical: spawned.append(logical))
+    calls = {"n": 0}
+    real = ss.build_stories
+    monkeypatch.setattr(ss, "build_stories",
+                        lambda *a, **kw: (calls.__setitem__("n", calls["n"] + 1), real(*a, **kw))[1])
+
+    body = ss.list_stories(st)
+    assert body["total"] == 2, "the reader was made to wait for the new catalog"
+    assert calls["n"] == 0, "the rebuild ran on the reader's thread"
+    assert len(spawned) == 1
+
+    ss._run_refresh(st, spawned[0])               # the background thread's body, run inline
+    assert calls["n"] == 1
     assert ss.list_stories(st)["total"] == 3
+    assert calls["n"] == 1, "the refreshed build was not served from cache"
+
+
+def test_stale_refresh_requests_are_single_flight_per_key(monkeypatch):
+    """Every reader landing on the same stale entry during the rebuild coalesces into ONE refresh —
+    otherwise the ~12 s window would spawn one identical rebuild per request, recreating in the
+    background the duplicate-build convoy the build lock exists to prevent inline."""
+    st = store_mod.Store("sqlite://"); _senate_and_wildfire(st)
+    assert ss.warm_cache(st) == 2
+    _add(st, "https://ap.org/new", "AP", 0.1, "Harbour pilots ratify their contract", days=1)
+    _add(st, "https://re.example/new", "Reuters", 0.0, "Harbour pilots ratify contract", days=1)
+
+    spawned = []
+    monkeypatch.setattr(ss, "_spawn_refresh", lambda store_, logical: spawned.append(logical))
+    ss.list_stories(st); ss.list_stories(st); ss.list_stories(st)
+    assert len(spawned) == 1, "concurrent stale hits each spawned their own rebuild"
+
+    ss._run_refresh(st, spawned[0])
+    assert ss.list_stories(st)["total"] == 3      # fresh now…
+    assert len(spawned) == 1, "…and a fresh hit must request nothing"
+
+
+def test_serve_stale_kill_switch_restores_the_reader_paid_rebuild(monkeypatch):
+    """RWE_STORIES_SERVE_STALE=0 must be a true kill switch: the old behaviour back, byte for byte
+    — the reader rebuilds inline, sees the new catalog at once, and nothing is spawned."""
+    monkeypatch.setenv("RWE_STORIES_SERVE_STALE", "0")
+    st = store_mod.Store("sqlite://"); _senate_and_wildfire(st)
+    assert ss.warm_cache(st) == 2
+    _add(st, "https://ap.org/new", "AP", 0.1, "Harbour pilots ratify their contract", days=1)
+    _add(st, "https://re.example/new", "Reuters", 0.0, "Harbour pilots ratify contract", days=1)
+
+    spawned = []
+    monkeypatch.setattr(ss, "_spawn_refresh", lambda store_, logical: spawned.append(logical))
+    calls = {"n": 0}
+    real = ss.build_stories
+    monkeypatch.setattr(ss, "build_stories",
+                        lambda *a, **kw: (calls.__setitem__("n", calls["n"] + 1), real(*a, **kw))[1])
+
+    body = ss.list_stories(st)
+    assert body["total"] == 3 and calls["n"] == 1 and spawned == []
+
+
+def test_an_entry_past_its_ttl_is_never_served_stale(monkeypatch):
+    """The TTL bounds rolling-window drift, and serve-stale must not stretch a bound it did not
+    set: past the TTL the reader rebuilds inline, exactly as before the policy existed."""
+    st = store_mod.Store("sqlite://"); _senate_and_wildfire(st)
+    assert ss.warm_cache(st) == 2
+    _add(st, "https://ap.org/new", "AP", 0.1, "Harbour pilots ratify their contract", days=1)
+    _add(st, "https://re.example/new", "Reuters", 0.0, "Harbour pilots ratify contract", days=1)
+    with ss._CACHE_LOCK:                          # age the entry past the TTL, internals on purpose
+        entries = ss._CACHE[st]
+        for k, (built_at, fp, stories) in list(entries.items()):
+            entries[k] = (built_at - ss.cache_ttl() - 1.0, fp, stories)
+
+    spawned = []
+    monkeypatch.setattr(ss, "_spawn_refresh", lambda store_, logical: spawned.append(logical))
+    body = ss.list_stories(st)
+    assert body["total"] == 3, "an expired entry was served stale"
+    assert spawned == [], "an expired entry is a cold miss, not a stale serve"
+
+
+def test_warm_cache_builds_fresh_even_over_a_stale_entry():
+    """The warm's allow_stale=False: its one purpose is a fresh build. Served its own stale entry
+    it would 'warm' with the build it exists to replace and queue a refresh forever."""
+    st = store_mod.Store("sqlite://"); _senate_and_wildfire(st)
+    assert ss.warm_cache(st) == 2
+    _add(st, "https://ap.org/new", "AP", 0.1, "Harbour pilots ratify their contract", days=1)
+    _add(st, "https://re.example/new", "Reuters", 0.0, "Harbour pilots ratify contract", days=1)
+    assert ss.warm_cache(st) == 3
+    assert ss.list_stories(st)["total"] == 3
+
+
+def test_a_refresh_that_loses_the_race_to_the_warm_stands_down(monkeypatch):
+    """The poller's warm and a reader-triggered refresh can chase the same key. The build lock
+    serialises them and the loser's under-lock re-check finds the winner's build fresh — one
+    rebuild total, not two."""
+    st = store_mod.Store("sqlite://"); _senate_and_wildfire(st)
+    assert ss.warm_cache(st) == 2
+    _add(st, "https://ap.org/new", "AP", 0.1, "Harbour pilots ratify their contract", days=1)
+    _add(st, "https://re.example/new", "Reuters", 0.0, "Harbour pilots ratify contract", days=1)
+
+    spawned = []
+    monkeypatch.setattr(ss, "_spawn_refresh", lambda store_, logical: spawned.append(logical))
+    ss.list_stories(st)                           # stale serve; refresh queued but not yet run
+    assert ss.warm_cache(st) == 3                 # the warm wins the rebuild
+
+    calls = {"n": 0}
+    real = ss.build_stories
+    monkeypatch.setattr(ss, "build_stories",
+                        lambda *a, **kw: (calls.__setitem__("n", calls["n"] + 1), real(*a, **kw))[1])
+    ss._run_refresh(st, spawned[0])               # the loser arrives second…
+    assert calls["n"] == 0, "the losing refresh rebuilt an answer it was already holding"
+    assert ss.list_stories(st)["total"] == 3
+
+
+def test_a_completed_refresh_releases_its_key_for_the_next_cycle(monkeypatch):
+    """Found by mutation: dropping the ``finally`` discard left every test above green. One stale
+    cycle worked; the SECOND ingest's stale hit then coalesced into a refresh that no longer
+    existed, and staleness became permanent until the poller's next warm."""
+    st = store_mod.Store("sqlite://"); _senate_and_wildfire(st)
+    assert ss.warm_cache(st) == 2
+    spawned = []
+    monkeypatch.setattr(ss, "_spawn_refresh", lambda store_, logical: spawned.append(logical))
+
+    _add(st, "https://ap.org/new", "AP", 0.1, "Harbour pilots ratify their contract", days=1)
+    _add(st, "https://re.example/new", "Reuters", 0.0, "Harbour pilots ratify contract", days=1)
+    assert ss.list_stories(st)["total"] == 2 and len(spawned) == 1
+    ss._run_refresh(st, spawned[0])
+    assert ss.list_stories(st)["total"] == 3
+
+    _add(st, "https://cnn.com/w2", "CNN", -1.0, "Rail operators publish the winter timetable", days=1)
+    _add(st, "https://fox.com/w2", "Fox News", 1.4, "Rail operators publish winter timetable", days=1)
+    assert ss.list_stories(st)["total"] == 3, "second cycle should serve stale first"
+    assert len(spawned) == 2, "the released key must accept the second cycle's refresh"
+    ss._run_refresh(st, spawned[1])
+    assert ss.list_stories(st)["total"] == 4
+
+
+def test_a_waiter_adopts_the_winners_fingerprint_instead_of_rebuilding(monkeypatch):
+    """Found by mutation: without the under-lock fingerprint re-read, a caller whose entry-time
+    fingerprint predates the winner's build judges that build 'stale' and rebuilds the answer it is
+    already holding. Deterministic construction: the first fingerprint read lies (an old value),
+    every later read tells the truth — the re-read under the lock is what must save the caller."""
+    st = store_mod.Store("sqlite://"); _senate_and_wildfire(st)
+    assert ss.warm_cache(st) == 2                 # entry stored under the REAL fingerprint
+
+    real_fp = st.catalog_fingerprint
+    reads = {"n": 0}
+
+    def lying_first_read():
+        reads["n"] += 1
+        return ("bogus", "old") if reads["n"] == 1 else real_fp()
+
+    monkeypatch.setattr(st, "catalog_fingerprint", lying_first_read)
+    calls = {"n": 0}
+    real_build = ss.build_stories
+    monkeypatch.setattr(ss, "build_stories",
+                        lambda *a, **kw: (calls.__setitem__("n", calls["n"] + 1), real_build(*a, **kw))[1])
+
+    # allow_stale=False routes past the stale-serve branch straight to the lock — the path a real
+    # waiter takes. Its entry read got the bogus old fingerprint; the re-read gets the truth.
+    assert ss.warm_cache(st) == 2
+    assert calls["n"] == 0, "the waiter rebuilt an answer the cache already held fresh"
+    assert reads["n"] >= 2, "the under-lock re-read never happened"
+
+
+def test_the_default_refresh_path_really_runs_on_a_thread():
+    """One real-thread smoke over the unpatched wiring: a stale serve spawns the daemon thread,
+    the thread builds, the key is released, and the next read is fresh — no monkeypatch."""
+    st = store_mod.Store("sqlite://"); _senate_and_wildfire(st)
+    assert ss.warm_cache(st) == 2
+    _add(st, "https://ap.org/new", "AP", 0.1, "Harbour pilots ratify their contract", days=1)
+    _add(st, "https://re.example/new", "Reuters", 0.0, "Harbour pilots ratify contract", days=1)
+
+    assert ss.list_stories(st)["total"] == 2      # stale serve; real refresh thread started
+    deadline = datetime.now(timezone.utc) + timedelta(seconds=10)
+    while datetime.now(timezone.utc) < deadline:
+        with ss._CACHE_LOCK:
+            done = not ss._REFRESH_PENDING
+        if done and ss.list_stories(st)["total"] == 3:
+            break
+    assert ss.list_stories(st)["total"] == 3, "the background refresh never landed"
 
 
 # --------------------------------------------------------------------------- #
@@ -1473,23 +1690,24 @@ def test_continuous_ingestion_cannot_starve_the_warm(monkeypatch):
         ss.shutdown_warmer()
 
 
-def test_coalescing_can_never_serve_stale_data(monkeypatch):
-    """The safety argument the whole design rests on, made executable.
+def test_a_suppressed_warm_cannot_extend_staleness_past_one_refresh(monkeypatch):
+    """The safety argument the whole design rests on, made executable — updated for serve-stale.
 
-    The cache key contains the catalog fingerprint, so a reader whose fingerprint matches no cached
-    entry MISSES and builds fresh. A warm therefore only decides who PAYS for a build — it can
-    never decide what a reader SEES. That is what makes deferring, coalescing or skipping a warm a
-    pure scheduling question.
-
-    Here the warmer is suppressed entirely and a write lands: the reader must still see it."""
+    The cached entry carries the catalog fingerprint, so the lookup always KNOWS the entry is
+    stale; a warm only decides who pays for a build and how soon the staleness ends, never whether
+    the bound holds. The failure this pins: a suppressed warm must not leave readers on the old
+    build indefinitely — the reader's own stale hit requests the refresh that ends it, so
+    visibility never depends on the warmer being alive at all."""
     monkeypatch.setenv("RWE_STORY_WARM_COALESCE", "3600")   # a warm will not fire during this test
     monkeypatch.setenv("RWE_STORY_WARM_MAX_DELAY", "3600")
+    _refresh_inline(monkeypatch)
     st = store_mod.Store("sqlite://"); _senate_and_wildfire(st)
     ss.clear_cache(); ss.shutdown_warmer()
     try:
         before = next(s for s in ss.list_stories(st)["stories"] if "Senate" in s["title"])
         _add(st, "https://ap.org/late", "AP", 0.1, "Senate passes funding bill in late vote", days=1)
         ss.request_warm(st)                       # queued, and deliberately never serviced
+        ss.list_stories(st)                       # the finder: stale serve + the refresh request
         after = next(s for s in ss.list_stories(st)["stories"] if "Senate" in s["title"])
         assert after["totalCoverage"] == before["totalCoverage"] + 1, \
             "a reader must see the write whether or not a warm ever ran"
