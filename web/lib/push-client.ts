@@ -98,6 +98,29 @@ export async function subscriptionIsCurrent(serverKey: string): Promise<boolean>
   return subscriptionMatchesKey(options?.applicationServerKey, serverKey);
 }
 
+/**
+ * Does the engine still hold a row for this endpoint?
+ *
+ * Answers the half of the desynchronisation the device cannot otherwise see. A `410` from the push
+ * service prunes the row on the server (B2) and the browser is never told — it keeps a subscription
+ * object whose key still matches, so nothing in the rotation repair fires and the reader's toggle
+ * goes on reading "on" while the engine has no way to reach them.
+ *
+ * Returns `undefined` rather than `false` when the answer cannot be established. The difference
+ * matters: `false` triggers a re-subscribe, so a failed request that answered `false` would make
+ * every reader re-subscribe every time the engine hiccuped.
+ */
+async function engineKnowsEndpoint(endpoint: string): Promise<boolean | undefined> {
+  try {
+    const res = await fetch("/api/push/subscriptions");
+    if (!res.ok) return undefined;
+    const rows = (await res.json()) as Array<{ endpoint?: string }>;
+    return Array.isArray(rows) ? rows.some((r) => r.endpoint === endpoint) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Tell the engine to forget an endpoint. Best-effort: used to retire a rotated-away subscription,
  *  where failing to clean up leaves a stale row rather than breaking the live one. */
 async function deregisterEndpoint(endpoint: string, reason: PushReason): Promise<void> {
@@ -201,6 +224,7 @@ export async function repairSubscription(serverKey: string, configured: boolean)
         permission: currentPermission(),
         hasSubscription: !!sub,
         keyMatches,
+        knownToServer: sub ? await engineKnowsEndpoint(sub.endpoint) : undefined,
       })
     ) {
       return false;

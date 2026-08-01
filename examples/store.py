@@ -2850,6 +2850,8 @@ class Store:
                         setattr(row, column, value)
                     row.updated_at = _utcnow()
                     s.flush()                        # surface the conflict here, not at commit
+                    if outcome == "created":
+                        self._discard_inherited_deliveries(s, row.id)
                     # After the flush, so the row just written is the newest and can never be the one
                     # the cap drops.
                     evicted = self._evict_excess_push_subscriptions(s, user_id, max_devices)
@@ -2859,6 +2861,29 @@ class Store:
                 if attempt:                          # not the race: a genuine constraint failure
                     raise
         raise AssertionError("unreachable")          # the loop returns or raises on both passes
+
+    @staticmethod
+    def _discard_inherited_deliveries(s, subscription_id: int) -> int:
+        """Drop delivery-ledger rows left over from a **previous** device that held this row id.
+
+        SQLite reuses rowids. Delete the only subscription and the next insert is handed id 1 again —
+        so a reader who is pruned by a `410` and then re-subscribes gets a row that the ledger already
+        believes was delivered to, and the fan-out skips them for every notification the *old* device
+        received. Silent, and worst exactly when it matters: a `410` prune is ordinary attrition, so
+        this is the normal path back, not an exotic one. It happened during the first production
+        end-to-end test and showed up only as an unexplained `skipped=2`.
+
+        Called ONLY on the insert branch, and that is what makes it precise rather than destructive: a
+        refresh or a reassignment keeps the same row and its history, because the same physical device
+        still holds that endpoint. A fresh INSERT is the one case where any pre-existing row carrying
+        this id must refer to a device that no longer exists.
+
+        The cost is the pruned device's audit trail, and it is unavoidable rather than chosen: the id
+        is how the ledger names a device, so once the id is reused there is no longer anything for
+        those rows to mean. Keeping them would preserve bytes at the price of the correctness they
+        were supposed to provide."""
+        return int(s.execute(delete(NotificationDelivery).where(
+            NotificationDelivery.subscription_id == subscription_id)).rowcount or 0)
 
     @staticmethod
     def _evict_excess_push_subscriptions(s, user_id: int, max_devices: "int | None") -> list:

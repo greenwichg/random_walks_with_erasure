@@ -193,21 +193,58 @@ async function registerSubscription(subscription) {
       p256dh: keys.p256dh,
       auth: keys.auth,
       expirationTime: json.expirationTime ?? null,
+      reason: "worker",
     }),
   });
 }
 
+/** base64url → bytes, mirroring `lib/push.ts::urlBase64ToUint8Array`. Inlined because the worker has
+ *  no bundler and therefore no imports, and because it is needed on a path that must not fail. */
+function keyBytes(base64url) {
+  const raw = atob(String(base64url).replace(/-/g, "+").replace(/_/g, "/"));
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i += 1) out[i] = raw.charCodeAt(i);
+  return out;
+}
+
+/** The server's current VAPID key — the LAST resort for re-subscribing (see the handler below). */
+async function serverApplicationServerKey() {
+  try {
+    const res = await fetch("/api/push/config");
+    if (!res.ok) return null;
+    const cfg = await res.json();
+    return cfg && cfg.enabled && cfg.publicKey ? keyBytes(cfg.publicKey) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The browser rotated this device's subscription.
+ *
+ * Three sources for the key to re-subscribe against, in descending order of confidence, and the
+ * third is the fix: `newSubscription` (Chromium hands it over), then `oldSubscription.options`, then
+ * **the server's current key**. Without that last fallback a browser firing this event with neither
+ * of the first two — which the spec permits and implementations differ on — left the device
+ * unsubscribed with the engine never told: the old endpoint kept failing until a `410` pruned it, and
+ * the reader silently stopped receiving anything while their toggle still read "on".
+ *
+ * A network call is fine here, unlike on the render path (§2 P4): nothing is waiting to be shown, and
+ * the alternative to fetching is losing the device.
+ */
 self.addEventListener("pushsubscriptionchange", (event) => {
   event.waitUntil(
     (async () => {
       let next = event.newSubscription;
       if (!next) {
         const old = event.oldSubscription;
-        const options = old && old.options ? old.options : null;
-        if (options) {
+        const key =
+          (old && old.options && old.options.applicationServerKey) ||
+          (await serverApplicationServerKey());
+        if (key) {
           next = await self.registration.pushManager.subscribe({
             userVisibleOnly: true,
-            applicationServerKey: options.applicationServerKey,
+            applicationServerKey: key,
           });
         }
       }

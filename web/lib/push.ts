@@ -171,11 +171,24 @@ export function shouldRepairSubscription(caps: {
   permission: PushPermission;
   hasSubscription: boolean;
   keyMatches: boolean;
+  /**
+   * Whether the ENGINE has a row for the subscription this browser holds.
+   *
+   * The second way the two sides desynchronise, and the more common one. A push service answering
+   * `410 Gone` makes the engine prune the row immediately (B2) — ordinary attrition, not an error —
+   * but the browser is never told, so it keeps its subscription object and the toggle keeps reading
+   * "on" while nothing can reach the reader. The key still matches, so the rotation repair above
+   * does not fire; from every signal the device has, it is subscribed.
+   *
+   * `undefined` means "not established" — the check was skipped or the request failed — and is
+   * treated as known, so an unreachable engine cannot trigger a re-subscribe storm.
+   */
+  knownToServer?: boolean;
 }): boolean {
   if (!caps.supported || !caps.configured) return false;
   if (caps.permission !== "granted") return false;
   if (!caps.hasSubscription) return false;
-  return !caps.keyMatches;
+  return !caps.keyMatches || caps.knownToServer === false;
 }
 
 /**

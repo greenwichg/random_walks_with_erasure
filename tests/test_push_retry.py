@@ -328,6 +328,41 @@ def test_leasing_a_row_takes_it_out_of_the_scan_immediately(st):
         "and recoverable once the lease has run out"
 
 
+def test_a_recreated_device_does_not_inherit_the_pruned_one_s_deliveries(st):
+    """SQLite reuses rowids. Delete the only subscription and the next insert is handed id 1 again —
+    so a reader pruned by a `410` who then re-subscribes gets a row the ledger already believes was
+    delivered to, and the fan-out skips them for everything the OLD device received.
+
+    Not hypothetical: it happened on the first production end-to-end test, and surfaced only as an
+    unexplained `skipped=2`. The prune path is ordinary attrition, so this is the normal way back."""
+    uid = _reader(st)
+    sid, nid = _subscribe(st, uid), _notification(st, uid)
+    claim = st.claim_delivery(nid, sid, user_id=uid, now=NOW)
+    st.record_delivery_result(claim, "success", status_code=201)
+
+    assert st.delete_push_subscription_by_id(sid) is not None
+    new_sid = _subscribe(st, uid, "https://push.example/a-different-device")
+    assert new_sid == sid, "the id really is reused — the premise of this test"
+
+    assert st.delivery_attempts(user_id=uid) == [], "the old device's rows went with its id"
+    assert st.claim_delivery(nid, new_sid, user_id=uid, now=NOW) is not None, \
+        "so the new device can still be delivered to"
+
+
+def test_a_refresh_keeps_the_history_that_a_recreation_discards(st):
+    """The discard is scoped to the INSERT branch, and that is what makes it precise. A browser
+    re-subscribing to the same endpoint keeps its row, so it is the same physical device and its
+    history still describes it — dropping that would be destroying an audit trail for nothing."""
+    uid = _reader(st)
+    sid, nid = _subscribe(st, uid), _notification(st, uid)
+    claim = st.claim_delivery(nid, sid, user_id=uid, now=NOW)
+    st.record_delivery_result(claim, "success", status_code=201)
+
+    _subscribe(st, uid)                       # same endpoint -> update, not insert
+    assert len(st.delivery_attempts(user_id=uid)) == 1
+    assert st.claim_delivery(nid, sid, user_id=uid, now=NOW) is None, "still delivered"
+
+
 def test_a_notification_body_can_never_shadow_its_own_row_id(st):
     """The body is stored JSON, and the delivery ledger keys on the ROW id. A body that happens to
     carry an `id` would otherwise be claimed and recorded against whatever integer it contained."""

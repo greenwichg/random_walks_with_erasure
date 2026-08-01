@@ -44,6 +44,16 @@ function loadWorker() {
     },
     clients: { matchAll: async () => [], openWindow: async () => null, claim: async () => {} },
     skipWaiting: async () => {},
+    registration_subscribeCalls: [] as unknown[],
+  };
+  self.registration.pushManager = {
+    subscribe: async (options: Record<string, unknown>) => {
+      self.registration_subscribeCalls.push(options);
+      return {
+        endpoint: "https://push.example/rotated",
+        toJSON: () => ({ endpoint: "https://push.example/rotated", keys: { p256dh: "P", auth: "A" } }),
+      };
+    },
   };
   const context: Record<string, any> = {
     self,
@@ -54,7 +64,24 @@ function loadWorker() {
           langInCache === null ? undefined : { text: async () => langInCache as string },
       }),
     },
-    fetch: async () => ({ ok: true }),
+    fetch: async (url: string, init?: Record<string, unknown>) => {
+      context.posted.push({ url, init });
+      return String(url).includes("/api/push/config")
+        ? { ok: true, json: async () => context.pushConfig }
+        : { ok: true };
+    },
+    posted: [] as Record<string, unknown>[],
+    pushConfig: { enabled: true, publicKey: `B${"x".repeat(86)}` },
+    // Faithful to the BROWSER's `atob`, which is strict: it throws `InvalidCharacterError` on any
+    // character outside the standard base64 alphabet. Node's `Buffer.from(s, "base64")` is lenient
+    // and silently accepts base64url — so a stub built on it alone would decode `-` and `_` happily
+    // and hide a missing conversion, which is exactly what it did until a mutation run caught it.
+    atob: (s: string) => {
+      if (!/^[A-Za-z0-9+/]*={0,2}$/.test(s)) throw new Error("InvalidCharacterError");
+      return Buffer.from(s, "base64").toString("binary");
+    },
+    Uint8Array,
+    Buffer,
     console,
     setTimeout,
     Date,
@@ -86,6 +113,19 @@ async function push(data: unknown): Promise<Shown> {
   await Promise.all(waits);
   assert.equal(shown.length, 1, "exactly one notification per push, always");
   return shown[0];
+}
+
+
+/** Drive the real `pushsubscriptionchange` handler and return what was POSTed, if anything. */
+async function rotate(event: Record<string, unknown>): Promise<Record<string, unknown> | null> {
+  const waits: Promise<unknown>[] = [];
+  sandbox.listeners.pushsubscriptionchange({
+    ...event,
+    waitUntil: (p: Promise<unknown>) => waits.push(p),
+  });
+  await Promise.all(waits);
+  const post = sandbox.posted.find((r: Record<string, any>) => r.init?.method === "POST");
+  return post ? JSON.parse(post.init.body) : null;
 }
 
 const BREAKING = {
@@ -325,4 +365,95 @@ test("no fetch happens on the render path", async () => {
   };
   await push(BREAKING);
   assert.equal(fetched, 0);
+});
+
+// --------------------------------------------------------------------------------------------- //
+// `pushsubscriptionchange` — the browser rotating this device's subscription behind our back.
+//
+// Not the render path, so a network call is allowed here (§2 P4 constrains the push handler only).
+// The reason it is allowed is the whole point of these tests: without a network fallback, a browser
+// that fires this event with neither a new subscription nor the old options leaves the device
+// unsubscribed and the engine never told — silent, and indistinguishable from a reader who turned
+// push off.
+// --------------------------------------------------------------------------------------------- //
+test("a rotation with a new subscription registers it without asking the server", async () => {
+  sandbox = loadWorker();
+  const body = await rotate({
+    newSubscription: {
+      endpoint: "https://push.example/fresh",
+      toJSON: () => ({ endpoint: "https://push.example/fresh", keys: { p256dh: "P", auth: "A" } }),
+    },
+  });
+  assert.equal(body?.endpoint, "https://push.example/fresh");
+  assert.equal(body?.reason, "worker", "attributable in the log, not indistinguishable from a reader");
+  assert.equal(sandbox.self.registration_subscribeCalls.length, 0, "nothing to re-subscribe");
+});
+
+test("a rotation without a new subscription re-subscribes from the old options", async () => {
+  sandbox = loadWorker();
+  const key = new Uint8Array([4, 1, 2, 3]);
+  const body = await rotate({ oldSubscription: { options: { applicationServerKey: key } } });
+  assert.equal(sandbox.self.registration_subscribeCalls[0].applicationServerKey, key);
+  assert.equal(body?.endpoint, "https://push.example/rotated");
+});
+
+test("a rotation with NOTHING to go on falls back to the server's key", async () => {
+  // The gap: the spec permits an event carrying neither, and implementations differ. Before this
+  // fallback the handler returned silently — the old endpoint kept failing until a `410` pruned it,
+  // and the reader stopped receiving anything while their toggle still read "on".
+  sandbox = loadWorker();
+  const body = await rotate({});
+  assert.equal(sandbox.self.registration_subscribeCalls.length, 1, "it re-subscribed");
+  assert.ok(
+    sandbox.posted.some((r: Record<string, any>) => String(r.url).includes("/api/push/config")),
+    "and it asked the server for the key to do it with",
+  );
+  assert.equal(body?.endpoint, "https://push.example/rotated");
+});
+
+test("a rotation decodes a real base64url key, not a base64 one", async () => {
+  // A VAPID key routinely contains `-` and `_`. Handed to `atob` unconverted it throws, the fallback
+  // returns null, and the device is lost in exactly the case this fallback exists for — a failure
+  // that every key WITHOUT those two characters hides.
+  sandbox = loadWorker();
+  sandbox.pushConfig = {
+    enabled: true,
+    publicKey:
+      "BL1RENubg-oBKgqFaC9dBBqqmfnp1uJ_xl4o1D-WRUEoyTIVt_rOhCFQ0DM80BRTkoasGfN0gql_l9jCzL0J29U",
+  };
+  await rotate({});
+  const key = sandbox.self.registration_subscribeCalls[0]?.applicationServerKey;
+  assert.ok(key, "it re-subscribed rather than throwing on the key");
+  assert.deepEqual([...key.slice(0, 4)], [4, 189, 81, 16], "decoded as base64url, byte for byte");
+  assert.equal(key.length, 65, "an uncompressed P-256 point");
+});
+
+test("a rotation respects the switch, not just the presence of a key", async () => {
+  // The rollback state is `enabled: false` with the key STILL configured — §5 keeps the pair in place
+  // so push can be switched back on without regenerating it. Reading only the key would re-subscribe
+  // devices against a deployment that has been told to stop sending.
+  sandbox = loadWorker();
+  sandbox.pushConfig = { enabled: false, publicKey: `B${"x".repeat(86)}` };
+  assert.equal(await rotate({}), null);
+  assert.equal(sandbox.self.registration_subscribeCalls.length, 0);
+});
+
+test("a rotation gives up quietly when the deployment no longer offers push", async () => {
+  // Rolled back server-side: there is no key to subscribe against, and inventing one would produce a
+  // subscription nothing can ever sign for. Doing nothing is correct here — unlike the case above,
+  // it is not a silent loss, because there is nothing to lose.
+  sandbox = loadWorker();
+  sandbox.pushConfig = { enabled: false, publicKey: "" };
+  assert.equal(await rotate({}), null);
+  assert.equal(sandbox.self.registration_subscribeCalls.length, 0);
+});
+
+test("a rotation survives an unreachable server", async () => {
+  // It runs inside `waitUntil`; an exception escaping would be an unhandled rejection in the worker.
+  sandbox = loadWorker();
+  sandbox.fetch = async () => {
+    throw new Error("offline");
+  };
+  await rotate({});                       // must not reject
+  assert.equal(sandbox.self.registration_subscribeCalls.length, 0);
 });

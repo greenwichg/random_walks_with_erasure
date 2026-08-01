@@ -224,6 +224,28 @@ test("a subscription bound to a retired key IS repaired", () => {
   assert.equal(shouldRepairSubscription(REPAIR), true);
 });
 
+test("a subscription the engine has forgotten is repaired, even with a matching key", () => {
+  // The second way the two sides desynchronise, and the more common one: a `410` prunes the row on
+  // the server (ordinary attrition) and the browser is never told. The key still matches, so the
+  // rotation repair does not fire, and every signal the device has says it is subscribed — while
+  // nothing can reach the reader. Seen in production during the first end-to-end test.
+  assert.equal(shouldRepairSubscription({ ...REPAIR, keyMatches: true }), false);
+  assert.equal(
+    shouldRepairSubscription({ ...REPAIR, keyMatches: true, knownToServer: false }),
+    true,
+  );
+});
+
+test("an unanswerable server check never triggers a re-subscribe", () => {
+  // `undefined` is "not established", not "absent". Collapsing the two would make every reader
+  // re-subscribe whenever the engine hiccuped — turning a transient fault into a write storm against
+  // the push service, which is the failure this whole area exists to avoid.
+  assert.equal(
+    shouldRepairSubscription({ ...REPAIR, keyMatches: true, knownToServer: undefined }),
+    false,
+  );
+});
+
 test("a device that never subscribed is never subscribed FOR the reader", () => {
   // Repair restores what a reader chose; it must not choose for them. This is the guard that keeps a
   // silent, promptless operation honest.
