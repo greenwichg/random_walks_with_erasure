@@ -214,3 +214,48 @@ export function subscriptionMatchesKey(
   if (have.length !== want.length) return false;
   return have.every((byte, i) => byte === want[i]);
 }
+
+/**
+ * At most one run of `job` per `key` at a time; every concurrent caller gets the same promise.
+ *
+ * Reconciliation is triggered from two independent places — the app-wide reconciler mounted in the
+ * authenticated shell, and `usePush` on the settings page, which must await it before reading the
+ * subscription state it renders. On the settings page both mount, and without this they would race:
+ * two `pushManager.subscribe()` calls, two `POST`s, and an endpoint rotated out from under the
+ * registration that is still in flight. Deduplicating at the *caller* would mean each new caller
+ * remembering that the other exists, which is exactly the coupling that goes stale.
+ *
+ * The slot is released when the job settles rather than cached, so this coalesces concurrency and
+ * nothing else. A repair that failed must be free to run again on the next trigger — caching the
+ * result would turn one bad network moment into a session-long outage, which is the failure mode
+ * this whole path exists to prevent.
+ *
+ * Keyed because the thing being guarded is per-VAPID-key: a server that started serving a different
+ * key wants a new repair, not the answer to the question about the old one.
+ *
+ * Returned as a factory rather than exported as a module-level map so tests get a fresh one per case
+ * and cannot leak state into each other.
+ */
+export function singleFlight<T>(): (key: string, job: () => Promise<T>) => Promise<T> {
+  let pending: { key: string; promise: Promise<T> } | null = null;
+  return (key, job) => {
+    if (pending && pending.key === key) return pending.promise;
+    // `job()` runs SYNCHRONOUSLY — deferring it to a microtask would leave a window in which the
+    // work has been promised but not started, which is a distinction no caller wants to reason
+    // about. The try/catch is what an `async` wrapper would have bought: a job that throws before
+    // its first `await` becomes a rejection like any other, so callers see one failure shape.
+    let promise: Promise<T>;
+    try {
+      promise = job();
+    } catch (error) {
+      promise = Promise.reject(error);
+    }
+    const entry = { key, promise };
+    pending = entry;
+    // Release on settle, success or not. `.finally` runs whether or not anyone awaits the result,
+    // so a fire-and-forget caller still frees the slot for the next trigger.
+    return promise.finally(() => {
+      if (pending === entry) pending = null;
+    });
+  };
+}

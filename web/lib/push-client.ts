@@ -11,6 +11,7 @@ import {
   normalizePermission,
   serializeSubscription,
   shouldRepairSubscription,
+  singleFlight,
   subscriptionMatchesKey,
   urlBase64ToUint8Array,
   type PushPermission,
@@ -18,6 +19,43 @@ import {
 } from "./push";
 
 export const SW_URL = "/sw.js";
+
+/**
+ * Why an `ensureSubscribed` call did not leave the device registered.
+ *
+ * A bare `false` was enough while the only caller was reader-initiated — the reader is looking at
+ * the toggle, and the inline error tells them it did not work. It is not enough for the silent
+ * repair path, where nobody is watching and "did nothing" and "tried and failed" are the same
+ * observation. Naming the failure is what lets {@link repairSubscription} log something an operator
+ * can act on instead of a shrug.
+ */
+type SubscribeResult =
+  | { ok: true }
+  | { ok: false; failure: "unserializable" | "rejected"; status?: number };
+
+/**
+ * Structured client-side log line, same shape as the engine's: one JSON object per event, so both
+ * sides of the boundary read alike when an operator is chasing a device that has gone dark.
+ *
+ * `console.warn` rather than `console.log` because every call site here is an anomaly — the silent
+ * happy path stays silent, and anything this prints is something that did not work.
+ *
+ * Endpoints are NEVER logged. They are the address of a specific browser and appear in support
+ * transcripts and screenshots; the last twelve characters are enough to correlate two lines about
+ * the same device without publishing a way to reach it.
+ */
+function pushLog(event: string, fields: Record<string, unknown> = {}): void {
+  try {
+    console.warn(JSON.stringify({ event, ...fields }));
+  } catch {
+    /* a log line must never be the reason push breaks */
+  }
+}
+
+/** Enough of an endpoint to correlate log lines, not enough to deliver to. */
+function endpointTail(endpoint: string | undefined): string | undefined {
+  return endpoint ? `…${endpoint.slice(-12)}` : undefined;
+}
 
 /** Every capability this feature needs, present. Checked as a set because a browser missing any one
  *  of them cannot hold a subscription, and partial support is not a degraded mode. */
@@ -150,7 +188,7 @@ async function ensureSubscribed(
   reg: ServiceWorkerRegistration,
   serverKey: string,
   reason: PushReason,
-): Promise<boolean> {
+): Promise<SubscribeResult> {
   let sub = await reg.pushManager.getSubscription();
   let retired: string | null = null;
   if (sub && !subscriptionMatchesKey((sub.options as PushSubscriptionOptions)?.applicationServerKey, serverKey)) {
@@ -166,7 +204,7 @@ async function ensureSubscribed(
   }
 
   const body = serializeSubscription(sub.toJSON() as never, navigator.userAgent);
-  if (!body) return false;
+  if (!body) return { ok: false, failure: "unserializable" };
   const res = await fetch("/api/push/subscriptions", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -174,12 +212,12 @@ async function ensureSubscribed(
   });
   if (!res.ok) {
     await sub.unsubscribe();            // roll back, so the two sides cannot disagree
-    return false;
+    return { ok: false, failure: "rejected", status: res.status };
   }
   // Only now that the replacement is live: the endpoint we rotated away from can never be delivered
   // to again, and leaving it behind means the engine pays to attempt a dead device on every fan-out.
   if (retired && retired !== body.endpoint) await deregisterEndpoint(retired, "repair_retire");
-  return true;
+  return { ok: true };
 }
 
 /**
@@ -195,7 +233,9 @@ export async function subscribe(serverKey: string): Promise<"on" | "blocked" | "
 
   const reg = await registerServiceWorker();
   if (!reg) return "failed";
-  return (await ensureSubscribed(reg, serverKey, "user")) ? "on" : "failed";
+  const result = await ensureSubscribed(reg, serverKey, "user");
+  if (!result.ok) pushLog("push_subscribe_failed", { failure: result.failure, status: result.status });
+  return result.ok ? "on" : "failed";
 }
 
 /**
@@ -209,14 +249,31 @@ export async function subscribe(serverKey: string): Promise<"on" | "blocked" | "
  *
  * Returns whether it repaired anything. Never throws: a failed repair leaves the reader exactly where
  * a rotation had already left them, and the next visit tries again.
+ *
+ * **Every exit that is not the silent happy path logs.** This function used to swallow errors whole,
+ * and the cost of that was measured rather than theorised: a device stuck unregistered produced
+ * exactly the same client-side evidence — none — as a device with nothing to repair, and the only way
+ * to tell them apart was to replay the sequence by hand in a console. "Did nothing" and "tried and
+ * failed" must never be the same observation on a path nobody is watching.
+ *
+ * Coalesced by {@link singleFlight}: the app-wide reconciler and `usePush` both trigger this, and on
+ * the settings page both are mounted.
  */
-export async function repairSubscription(serverKey: string, configured: boolean): Promise<boolean> {
+const repairFlight = singleFlight<boolean>();
+
+export function repairSubscription(serverKey: string, configured: boolean): Promise<boolean> {
+  return repairFlight(serverKey, () => runRepair(serverKey, configured));
+}
+
+async function runRepair(serverKey: string, configured: boolean): Promise<boolean> {
+  let sub: PushSubscription | null = null;
   try {
-    const sub = await currentSubscription();
+    sub = await currentSubscription();
     const keyMatches = subscriptionMatchesKey(
       (sub?.options as PushSubscriptionOptions | undefined)?.applicationServerKey,
       serverKey,
     );
+    const knownToServer = sub ? await engineKnowsEndpoint(sub.endpoint) : undefined;
     if (
       !shouldRepairSubscription({
         supported: pushSupported(),
@@ -224,14 +281,38 @@ export async function repairSubscription(serverKey: string, configured: boolean)
         permission: currentPermission(),
         hasSubscription: !!sub,
         keyMatches,
-        knownToServer: sub ? await engineKnowsEndpoint(sub.endpoint) : undefined,
+        knownToServer,
       })
     ) {
+      return false;                     // nothing to repair — the overwhelmingly common case, silent
+    }
+    // Say WHY before attempting, so a log with only this line still identifies which of the two
+    // desynchronisations fired: a rotated-away key, or a row the engine pruned on a `410`.
+    pushLog("push_repair_started", {
+      cause: keyMatches ? "unknown_to_server" : "key_rotated",
+      endpoint: endpointTail(sub?.endpoint),
+    });
+    const reg = await registerServiceWorker();
+    if (!reg) {
+      pushLog("push_repair_failed", { failure: "no_service_worker" });
       return false;
     }
-    const reg = await registerServiceWorker();
-    return reg ? await ensureSubscribed(reg, serverKey, "repair") : false;
-  } catch {
+    const result = await ensureSubscribed(reg, serverKey, "repair");
+    if (!result.ok) {
+      pushLog("push_repair_failed", { failure: result.failure, status: result.status });
+      return false;
+    }
+    pushLog("push_repair_succeeded", {});
+    return true;
+  } catch (error) {
+    // The `catch` that used to be the whole error handling. `pushManager.subscribe` throws on a
+    // browser holding a subscription it will not replace, and `unsubscribe` throws on a revoked one
+    // — both plausible, neither previously visible.
+    pushLog("push_repair_failed", {
+      failure: "threw",
+      error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+      endpoint: endpointTail(sub?.endpoint),
+    });
     return false;
   }
 }

@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Header } from "@/components/layout/header";
 import { FooterSlot, UtilityBarSlot } from "@/components/layout/chrome-slots";
+import { PushReconciler } from "@/components/push/push-reconciler";
 import { backendGet } from "@/lib/backend";
 import { engineAuthHeaders } from "@/lib/engine-auth";
 import { needsOnboarding, type OnboardingState } from "@/lib/onboarding";
@@ -44,6 +45,11 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   return (
     <div className="min-h-screen">
+      {/* Renders nothing. Here rather than in the settings page because the two desynchronisations
+          it repairs — a VAPID rotation, a `410` prune — happen while the reader is anywhere but
+          Settings, and this layout is the one client boundary every authenticated page passes
+          through. It persists across route changes, so it runs once per app load, not per navigation. */}
+      <PushReconciler />
       <Sidebar />
       <div className="lg:pl-64">
         <Header />

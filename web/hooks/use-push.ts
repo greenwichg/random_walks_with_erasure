@@ -101,10 +101,11 @@ export function usePush(): UsePush {
   // against, and it is also what makes `pushsubscriptionchange` reach us on a device that already
   // granted permission on a previous visit.
   //
-  // Then repair a subscription the server's current VAPID key can no longer be used with. This is the
-  // automatic half of a key rotation: it prompts for nothing, does nothing unless this device holds a
-  // subscription bound to a retired key, and without it a rotated deployment leaves every device dark
-  // until each reader notices a toggle that switched itself off.
+  // Then reconcile. `PushReconciler` in the app shell triggers the same repair on every page, so this
+  // is no longer the only caller and is no longer what makes repair happen — but it stays, because
+  // this hook must AWAIT the repair before `refresh` reads the subscription it renders. Dropping it
+  // would let the toggle paint from state the reconciler was still changing. `singleFlight` collapses
+  // the two triggers into one run, so mounting both costs one repair, not two.
   React.useEffect(() => {
     if (!pushSupported()) return;
     let alive = true;

@@ -8,6 +8,7 @@ import {
   pushUiState,
   shouldRepairSubscription,
   subscriptionMatchesKey,
+  singleFlight,
   type PushCapabilities,
 } from "./push.ts";
 
@@ -300,4 +301,123 @@ test("a missing key, a length mismatch, or an unreadable server key never report
   assert.equal(subscriptionMatchesKey(new Uint8Array([4, 5]).buffer, VAPID), false);
   assert.equal(subscriptionMatchesKey(urlBase64ToUint8Array(VAPID).buffer, ""), false);
   assert.equal(subscriptionMatchesKey(urlBase64ToUint8Array(VAPID).buffer, "!!!not-base64!!!"), false);
+});
+
+// --------------------------------------------------------------------------------------------- //
+// `singleFlight` — the guard that lets reconciliation be triggered from more than one place.
+// --------------------------------------------------------------------------------------------- //
+/** A promise plus its resolver, so a test can hold a job open and assert on what happened meanwhile. */
+function deferred<T>() {
+  let resolve!: (v: T) => void;
+  let reject!: (e: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+test("concurrent callers with the same key share ONE run", async () => {
+  // The whole point. On /settings both the app-wide reconciler and `usePush` trigger a repair; two
+  // runs would mean two `pushManager.subscribe()` calls and two POSTs, with the second rotating the
+  // endpoint out from under the first.
+  const flight = singleFlight<number>();
+  const gate = deferred<number>();
+  let runs = 0;
+  const job = () => {
+    runs += 1;
+    return gate.promise;
+  };
+
+  const a = flight("key", job);
+  const b = flight("key", job);
+  assert.equal(runs, 1);
+
+  gate.resolve(7);
+  assert.deepEqual([await a, await b], [7, 7]);
+  assert.equal(runs, 1);
+});
+
+test("a caller AFTER the first has settled runs again", async () => {
+  // Coalescing concurrency, not caching a result. A repair that failed must be free to retry on the
+  // next trigger, or one bad network moment becomes a session-long outage.
+  const flight = singleFlight<number>();
+  let runs = 0;
+  const job = async () => {
+    runs += 1;
+    return runs;
+  };
+
+  assert.equal(await flight("key", job), 1);
+  assert.equal(await flight("key", job), 2);
+});
+
+test("a REJECTED run releases the slot too", async () => {
+  // Released on settle, not on success. A slot held by a failed run would never repair again.
+  const flight = singleFlight<string>();
+  let runs = 0;
+  await assert.rejects(
+    flight("key", () => {
+      runs += 1;
+      return Promise.reject(new Error("network"));
+    }),
+    /network/,
+  );
+  assert.equal(await flight("key", async () => "second"), "second");
+  assert.equal(runs, 1);
+});
+
+test("a job that throws SYNCHRONOUSLY rejects rather than throwing at the call site", async () => {
+  // Callers must see one failure shape. A synchronous throw escaping here would bypass the `catch`
+  // every caller wraps the returned promise in, and the slot would never be released.
+  const flight = singleFlight<string>();
+  await assert.rejects(
+    flight("key", () => {
+      throw new Error("sync");
+    }),
+    /sync/,
+  );
+  assert.equal(await flight("key", async () => "recovered"), "recovered");
+});
+
+test("a DIFFERENT key is not coalesced into the in-flight run", async () => {
+  // The guarded work is per-VAPID-key. A server that started serving a different key wants a fresh
+  // repair, not the answer to the question about the retired one.
+  const flight = singleFlight<string>();
+  const first = deferred<string>();
+  const second = deferred<string>();
+
+  const a = flight("old-key", () => first.promise);
+  const b = flight("new-key", () => second.promise);
+
+  second.resolve("new");
+  first.resolve("old");
+  assert.deepEqual([await a, await b], ["old", "new"]);
+});
+
+test("an EARLIER run settling does not release a LATER key's slot", async () => {
+  // Why the release is guarded by identity rather than just clearing the slot. A rotation can leave
+  // two repairs alive at once — one for the retired key, one for the new. If the older one's cleanup
+  // cleared whatever happened to be in the slot, the newer run would stop coalescing while it was
+  // still in flight, and the next trigger would start a SECOND subscribe against the same key.
+  const flight = singleFlight<string>();
+  const first = deferred<string>();
+  const second = deferred<string>();
+  let laterRuns = 0;
+  const laterJob = () => {
+    laterRuns += 1;
+    return second.promise;
+  };
+
+  const a = flight("old-key", () => first.promise);
+  const b = flight("new-key", laterJob);
+
+  first.resolve("old");
+  await a;                       // the earlier run settles while the later one is still in flight
+
+  const c = flight("new-key", laterJob);
+  assert.equal(laterRuns, 1);    // still coalesced into the run that has not finished
+
+  second.resolve("new");
+  assert.deepEqual([await b, await c], ["new", "new"]);
 });

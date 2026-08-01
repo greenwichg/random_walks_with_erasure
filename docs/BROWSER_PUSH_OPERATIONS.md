@@ -307,6 +307,35 @@ pairs as readers return; the count of distinct `userId`s in those lines is how m
 actually healed. Without it every registration looks alike and "did the rotation work?" has no answer
 short of querying the table.
 
+### The client half — reconciliation, in the browser console
+
+The events above are everything the **engine** sees, and there is a blind spot in them by
+construction: a repair that never reaches the engine leaves no engine-side trace. That is not
+hypothetical, it is how the device-goes-dark case presents — the browser holds a subscription, the
+engine holds no row, and the engine's log is silent because nothing asked it anything.
+
+So the client logs too, in the same one-JSON-object-per-line shape, via `console.warn`
+(`web/lib/push-client.ts`). These appear in the reader's DevTools console, not in `docker logs`, and
+are what to ask for when a specific device will not register. **Endpoints are truncated to their last
+twelve characters** — enough to tell two lines about the same device apart, not enough to deliver to.
+
+| Event | Fields | What it tells you |
+|---|---|---|
+| `push_repair_started` | `cause`, `endpoint` | Reconciliation decided this device needs re-registering. `cause=key_rotated` is a VAPID rotation; `cause=unknown_to_server` is a row the engine pruned on a `410`. |
+| `push_repair_succeeded` | — | The device is registered again. Pairs with a `push_subscription_created` engine-side. |
+| `push_repair_failed` | `failure`, `status`, `error`, `endpoint` | It tried and did not get there. `no_service_worker` = registration failed; `unserializable` = the browser gave a subscription with no keys; `rejected` + `status` = the engine refused the POST; `threw` + `error` = a platform call raised, which is the common one on a browser holding a subscription it will not replace. |
+| `push_subscribe_failed` | `failure`, `status` | The reader-initiated path — the Settings toggle — failed. Same `failure` vocabulary. |
+
+**The silent case is silent on purpose.** Reconciliation runs on every authenticated page load, and
+on almost all of them there is nothing to repair. Only anomalies print, so a console with no
+`push_repair_*` lines means the device and the engine already agree — not that nothing ran.
+
+**Where reconciliation runs.** `components/push/push-reconciler.tsx`, mounted in the authenticated
+app shell (`app/(app)/layout.tsx`) — every signed-in page, once per app load. It was originally
+reached only through the settings toggle's hook, which meant a device pruned by a `410` stayed dark
+until the reader happened to open Settings; both failures it repairs happen while they are somewhere
+else entirely. It prompts for nothing and cannot subscribe a reader who never opted in.
+
 ### Reading the volumes
 
 ```bash
@@ -627,7 +656,9 @@ quiet log is equally consistent with the worker never having run.
 | Every send is `permanent` with 401/403 | §2 | A mismatched VAPID pair — a public key from one generation with a private key from another. Regenerate both together. |
 | A burst of `expired` right after a rotation | §5 | Expected. Every subscription is bound to the key it was created against; devices heal on their readers' next visit. |
 | A reader says push stopped after they re-enabled it | — | Fixed in the subscription-lifecycle commit. SQLite reuses row ids, so a device recreated after a `410` prune used to inherit the pruned one's ledger rows and be skipped for anything the old device received. A fresh registration now discards them. |
-| A device goes quiet with the toggle still reading "on" | `push_subscription_created` with `reason=repair` | Two ways the browser and the engine desynchronise, both now self-healing on the reader's next page load: the engine pruned the row on a `410` while the browser kept its subscription, or the browser rotated the subscription without telling the page. The repair re-registers and the log line says which. |
+| A device goes quiet with the toggle still reading "on" | `push_subscription_created` with `reason=repair` | Two ways the browser and the engine desynchronise, both self-healing on the reader's next page load — **any** page, since reconciliation moved into the app shell: the engine pruned the row on a `410` while the browser kept its subscription, or the browser rotated the subscription without telling the page. The repair re-registers and the log line says which. |
+| The browser holds a subscription but `push_subscriptions` has no row, and reloading does not fix it | `push_repair_*` in the **browser** console (§6) | Reconciliation ran and gave up, and the engine log cannot show you why — nothing reached it. `push_repair_failed` names the step. Before this was logged, this state was indistinguishable from "nothing to repair" and could only be diagnosed by replaying the sequence by hand. |
+| No `push_repair_*` lines at all, on a device that should need one | the page is under `/(app)` and signed in | The reconciler mounts in the authenticated shell only — a user-scoped request would be a 401 for an anonymous visitor. The landing, sign-in and onboarding pages do not reconcile. |
 | The same notification arrives twice on one device | `push_record_failed`, `push_delivery_recovered` (§7) | Delivery is at-least-once; the Notification `tag` normally collapses a repeat at the OS level. Two visible copies means the two payloads carried different `dedupeKey`s, which is a bug worth reporting. |
 | A delivery sits `pending` for a long time | the `pending` query in §7.1 | A process died mid-send. It is recovered after the 15-minute lease. A *growing* count means runs are dying, not just one. |
 | `push_retry_exhausted` with `reason: age` | §7.1 | The delivery outlived its usefulness rather than running out of attempts. Expected after a long push-service outage; the notification was correctly not sent. |
