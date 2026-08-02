@@ -297,3 +297,69 @@ def test_ingest_persists_event_locations(st):
     rss_ingest.ingest_entries([entry], "Smalltown", "feed://x", rss_ingest.make_scorer(), st)
     facets = {f["country"]: f for f in st.feed_article_country_facets()}
     assert "JP" in facets and facets["JP"]["articles"] == 1
+
+
+# --------------------------------------------------------------------------- #
+# ?country= query SHAPE (2026-08-02 outage gate).
+#
+# The clause was a CORRELATED EXISTS keyed on the outer row's canonical_url, so the companion
+# count() re-evaluated it once per catalog row: SQLite planned a full SCAN of feed_articles with a
+# per-row subquery. Measured 5,366 ms in production for ?country=IL against a web tier that
+# abandons every engine call at 6,000 ms — the home rail's "From your places" card 503'd and
+# rendered blank whenever anything else was running, for every country equally (the scan does not
+# care how many articles the country has). Benchmarked at production scale: 2,494 ms -> 4 ms.
+# --------------------------------------------------------------------------- #
+
+
+def _plan_for(st, **search_kwargs) -> str:
+    """The SQLite query plan for the COUNT that ``search_feed_articles`` actually issues.
+
+    Captured off the engine rather than rebuilt from the private condition builder, so the test
+    tracks the query the product runs instead of a copy of it that could drift."""
+    from sqlalchemy import event as sa_event
+
+    captured: list = []
+
+    def before(conn, cursor, statement, params, context, executemany):
+        captured.append((statement, params))
+
+    sa_event.listen(st.engine, "before_cursor_execute", before)
+    try:
+        st.search_feed_articles(**search_kwargs)
+    finally:
+        sa_event.remove(st.engine, "before_cursor_execute", before)
+    counts = [(s, p) for s, p in captured if "count(" in s.lower()]
+    assert counts, "expected search_feed_articles to issue a COUNT"
+    sql, params = counts[0]
+    with st.engine.connect() as c:
+        rows = c.exec_driver_sql("EXPLAIN QUERY PLAN " + sql, params).all()
+    return " | ".join(str(r[-1]) for r in rows)
+
+
+def test_country_search_never_uses_a_correlated_subquery(st):
+    """Asserted on the PLAN rather than the clock: a timing budget tight enough to catch the old
+    shape on a small fixture (21 ms vs 0.5 ms at 3k articles) is far too tight to survive a loaded
+    CI box, while the plan states the property exactly — the located urls are selected ONCE and the
+    catalog is probed by index, never re-queried per row."""
+    _upsert(st, "https://x.test/il")
+    st.replace_article_event_locations(
+        "https://x.test/il", location.resolve_event_locations([{"country": "IL", "source": "gdelt-gkg"}]))
+
+    plan = _plan_for(st, country="IL")
+    assert "CORRELATED" not in plan.upper(), f"a per-row subquery is back in the country filter: {plan}"
+    assert "SCAN feed_articles" not in plan, (
+        f"the catalog is scanned once per row rather than probed by index: {plan}")
+
+
+def test_country_search_counts_an_article_once_despite_repeated_event_rows(st):
+    """The rewrite's own trap. The located-url subquery legitimately yields the same url several
+    times (an article with several event rows in one country), so membership — not a join — is what
+    keeps `total` honest: a JOIN-shaped rewrite would multiply the row and paginate duplicates."""
+    _upsert(st, "https://x.test/multi")
+    st.replace_article_event_locations("https://x.test/multi", location.resolve_event_locations([
+        {"country": "IL", "city": "Tel Aviv", "source": "gdelt-gkg"},
+        {"country": "IL", "city": "Haifa", "source": "gdelt-gkg"},
+    ]))
+    rows, total = st.search_feed_articles(country="IL")
+    assert total == 1, "an article with several event rows in one country must count once"
+    assert [r["canonicalUrl"] for r in rows] == ["https://x.test/multi"]

@@ -1717,10 +1717,20 @@ class Store:
             # country". The publisher's home (FeedArticle.country) is a separate PROVENANCE
             # dimension — reader analytics and publisher intelligence read it; content filters
             # never do. Same rule as stories + facets, so every surface agrees.
+            #
+            # UNCORRELATED, and that is the whole point. This was a correlated EXISTS keyed on the
+            # outer row's canonical_url, so the companion count() re-evaluated it once per catalog
+            # row — a full scan with a per-row subquery whose cost tracked the CATALOG rather than
+            # the located set. Measured in production (2026-08-02): 5,366 ms for ?country=IL
+            # against a web tier that abandons every engine call at 6,000 ms, so the home rail's
+            # "From your places" card 503'd and blanked whenever anything else was running, for
+            # every country equally (the scan does not care how many articles the country has).
+            # Selecting the located urls ONCE and testing membership is the same answer for
+            # 1/577th of the cost: 2,494 ms -> 4 ms at 25k articles / 17.4k event rows.
             want = str(country).strip().upper()
-            conds.append(select(ArticleEventLocation.id)
-                         .where(ArticleEventLocation.canonical_url == FeedArticle.canonical_url,
-                                ArticleEventLocation.country == want).exists())
+            conds.append(FeedArticle.canonical_url.in_(
+                select(ArticleEventLocation.canonical_url)
+                .where(ArticleEventLocation.country == want)))
         if topic and topic.strip():
             conds.append(func.lower(self._category_expr()) == topic.strip().lower())
         if lean == "left":
