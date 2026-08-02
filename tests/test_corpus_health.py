@@ -8,6 +8,8 @@ every other user-keyed table survive)."""
 import pathlib
 import sys
 import time
+
+import pytest
 from datetime import datetime, timedelta, timezone
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -251,10 +253,120 @@ def test_retention_builds_the_kept_set_exactly_once(monkeypatch):
         return plan
     monkeypatch.setattr(ch, "plan_retention", counting_plan)
 
-    res = ch.run_retention(st, max_count=1000, thresholds=TH(), now=NOW)   # cap never binds
+    # An age policy is supplied alongside the never-binding count cap so this still exercises the
+    # full planner: a count-ONLY policy under its cap now takes the cheap pre-gate and never loads
+    # the catalog at all (see the under-cap tests below), which would bypass the very loop this
+    # test exists to guard. 3650 days prunes nothing, so the assertions below are unchanged.
+    res = ch.run_retention(st, max_age_days=3650, max_count=1000, thresholds=TH(), now=NOW)
 
     assert res["pruned"] == 0, "the cap does not bind, so this is the steady-state no-op case"
     assert res["metrics"]["total"] == 40, "every article must still reach the metrics pass"
     assert seen["keep"].iterations == 1, (
         f"the kept set was built {seen['keep'].iterations} times for 40 articles — that is the "
         f"quadratic set-in-comprehension back; it must be hoisted out of the loop")
+
+
+# --------------------------------------------------------------------------- #
+# R1 — the cheap pre-gate for a COUNT-ONLY policy.
+#
+# Production, 2026-08-02: the catalog held 50,899 articles against a 150,000 count cap, so the
+# planner could not possibly prune anything — yet `run_retention` loaded and planned the whole
+# catalog on every ingest cycle, measured at 3,433-4,543 ms (96-98% of the cleanup pass), ~25
+# times an hour, deleting nothing. The gate answers the same question with an indexed COUNT.
+#
+# The tests below pin both halves of the contract: the fast path must not touch the catalog, and
+# an AGE policy must always take precedence over it — including a future one that is configured
+# without any code change (R2).
+# --------------------------------------------------------------------------- #
+
+
+def _seed(st, n, *, prefix="r1", days_apart=1):
+    """`n` articles, newest first at `NOW`, one publisher, spaced `days_apart` days."""
+    for i in range(n):
+        u = f"https://{prefix}{i}.example/{i}"
+        st.upsert_feed_article(canonical_url=u, url=u, publisher="P", source_publisher="P",
+                               title="t", description="", body=None,
+                               published_at=(NOW - timedelta(days=i * days_apart)).isoformat(),
+                               source_feed="f",
+                               scored={"article_id": u, "outlet": "P", "lean": 0.0, "category": "x"})
+    return st
+
+
+def _no_catalog_load(monkeypatch, st):
+    """Make loading the catalog fatal, so a test can prove the fast path never does."""
+    def boom(*a, **kw):
+        raise AssertionError("the full catalog was loaded even though the count cap cannot bind")
+    monkeypatch.setattr(st, "list_feed_articles", boom)
+
+
+def test_count_only_under_cap_skips_the_catalog_load_entirely(monkeypatch):
+    st = _seed(store.Store("sqlite://"), 10)
+    _no_catalog_load(monkeypatch, st)
+
+    res = ch.run_retention(st, max_count=1000, thresholds=TH(), now=NOW)
+
+    assert res == {"pruned": 0, "kept": 10, "skipped": "under_count_cap"}
+    assert st.count_feed_articles() == 10, "a skipped run must delete nothing"
+
+
+def test_the_gate_reports_the_headroom_so_an_operator_can_see_when_it_will_bind(monkeypatch):
+    """A skipped run still logs under `feed_retention`, carrying catalog size and cap — otherwise
+    a gated retention is indistinguishable from one that never ran."""
+    st = _seed(store.Store("sqlite://"), 10)
+    _no_catalog_load(monkeypatch, st)
+    lines = []
+
+    ch.run_retention(st, max_count=1000, thresholds=TH(), now=NOW,
+                     log=lambda level, event, **f: lines.append((event, f)))
+
+    assert lines and lines[0][0] == "feed_retention"
+    assert lines[0][1]["skipped"] == "under_count_cap"
+    assert lines[0][1]["catalog"] == 10 and lines[0][1]["cap"] == 1000
+
+
+def test_the_gate_opens_exactly_at_the_cap_not_one_row_early():
+    """`<=` is the boundary: a count policy keeps at most `max_count` newest rows, so AT the cap
+    there is still nothing to prune. One row over, the planner must run."""
+    st = _seed(store.Store("sqlite://"), 10)
+    assert ch.run_retention(st, max_count=10, thresholds=TH(), now=NOW)["skipped"] == "under_count_cap"
+
+    over = ch.run_retention(st, max_count=9, thresholds=TH(minArticles=0, minPublishers=0), now=NOW)
+    assert "skipped" not in over, "one row over the cap must reach the planner"
+    assert over["pruned"] == 1 and st.count_feed_articles() == 9
+
+
+def test_count_only_over_cap_prunes_exactly_as_before():
+    """Regression: the gate must not change what a binding count policy deletes."""
+    st = _seed(store.Store("sqlite://"), 10)
+    res = ch.run_retention(st, max_count=4, thresholds=TH(), now=NOW)
+    assert res["pruned"] == 6 and st.count_feed_articles() == 4
+    assert "skipped" not in res
+
+
+def test_an_age_policy_takes_precedence_over_the_count_fast_path(monkeypatch):
+    """The R2 compatibility contract, and the one that must never regress: an age policy prunes at
+    ANY catalog size, so configuring one — here alongside a count cap that cannot bind — must run
+    the full planner. If the gate ever swallowed this case, enabling age-based retention later
+    would silently do nothing."""
+    st = _seed(store.Store("sqlite://"), 10, days_apart=10)   # spans 90 days
+    _no_catalog_load(monkeypatch, st)                          # the fast path would trip this
+
+    with pytest.raises(AssertionError, match="count cap cannot bind"):
+        ch.run_retention(st, max_age_days=30, max_count=1000, thresholds=TH(), now=NOW)
+
+
+def test_an_age_policy_still_prunes_by_age_under_a_count_cap():
+    """The same precedence, asserted on the outcome rather than the code path: older-than-30-days
+    rows go, and the never-binding count cap does not suppress them."""
+    st = _seed(store.Store("sqlite://"), 10, days_apart=10)   # 0, 10, 20 ... 90 days old
+    res = ch.run_retention(st, max_age_days=30, max_count=1000,
+                           thresholds=TH(minArticles=0, minPublishers=0, freshMaxAgeDays=365), now=NOW)
+    assert res["pruned"] > 0, "an age policy under a slack count cap must still prune"
+    assert st.count_feed_articles() == 10 - res["pruned"]
+    assert "skipped" not in res
+
+
+def test_no_policy_at_all_is_unchanged():
+    st = _seed(store.Store("sqlite://"), 5)
+    res = ch.run_retention(st, thresholds=TH(), now=NOW)
+    assert res == {"pruned": 0, "kept": 5, "skipped": "no_policy"}

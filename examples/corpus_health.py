@@ -493,6 +493,35 @@ def run_retention(store_, *, max_age_days: Optional[float] = None, max_count: Op
     if not max_age_days and not max_count:
         return {"pruned": 0, "kept": store_.count_feed_articles(), "skipped": "no_policy"}
 
+    # Cheap pre-gate for a COUNT-ONLY policy. Loading and planning the entire catalog just to
+    # discover that the cap does not bind cost a measured 3,433-4,543 ms per run against 50,899
+    # articles — 96-98% of the whole cleanup pass — roughly 25 times an hour, deleting nothing
+    # (production, 2026-08-02). Worse, it scales with the catalog: at the 150,000-row cap where
+    # the policy finally starts doing something it would be ~11 s per run. `count_feed_articles`
+    # is an indexed COUNT and answers the same question in single-digit milliseconds.
+    #
+    # `<=` because a count policy keeps at most `max_count` newest rows: at or under the cap there
+    # is nothing for it to prune, so the planner can only ever return an empty prune set here.
+    #
+    # Guarded on `not max_age_days`, and that guard is the whole forward-compatibility contract:
+    # an AGE policy can have prunable rows at ANY catalog size, so the moment one is configured —
+    # by env or by argument, now or in the future — this gate is skipped and the full
+    # validation-aware planner runs exactly as it does today. Age always takes precedence; the
+    # fast path is only ever reachable when count is the only policy in force.
+    #
+    # The skip is logged under the same `feed_retention` event as a real prune, carrying the
+    # catalog size and the cap, so one grep still answers "what is retention doing" and now also
+    # shows the headroom. What a skipped run does NOT log is the corpus_metrics snapshot
+    # (publishers / perBucket / fresh): computing it requires the very catalog load this exists to
+    # avoid. That is observability, not retention semantics — nothing about which rows get deleted
+    # changes — and the metrics remain available on demand from this module's own entry points.
+    if not max_age_days and max_count:
+        catalog = store_.count_feed_articles()
+        if catalog <= max_count:
+            log(logging.INFO, "feed_retention", pruned=0, kept=catalog, catalog=catalog,
+                cap=max_count, skipped="under_count_cap")
+            return {"pruned": 0, "kept": catalog, "skipped": "under_count_cap"}
+
     articles = store_.list_feed_articles(limit=10_000_000)
     plan = plan_retention(articles, max_age_days=max_age_days, max_count=max_count,
                           thresholds=thresholds, now=now)
