@@ -98,6 +98,16 @@ def _log(level: int, event: str, **fields) -> None:
     logger.log(level, json.dumps({"event": event, "requestId": _request_id.get(), **fields}))
 
 
+def _obs_ms(name: str, t0: float) -> None:
+    """Record ``now - t0`` (ms) under ``name``. Observational only, and guarded: a metrics failure
+    must never surface as a failed request, so the caller's work is already done by the time we
+    reach here and nothing below can change what it returns."""
+    try:
+        obs_metrics.observe(name, (time.perf_counter() - t0) * 1000.0)
+    except Exception:
+        pass
+
+
 def _install_db_timing(st) -> None:
     """OBS1 — record each SQL statement's latency into ``obs_metrics`` via SQLAlchemy cursor events.
     Purely observational: the listeners only read the clock, never touch the statement, and are guarded
@@ -2731,9 +2741,17 @@ def add_reads(request: Request, req: ReadsRequest) -> dict:
                              category=item.category or "", political=item.political,
                              read_at=item.observedAt, subtitle=item.subtitle or "",
                              description=item.description or "")
+        # Read persistence, split into its two real costs: scoring (cached per article) and the
+        # idempotent row write. Observational only — the same two calls, timed.
+        _t0 = time.perf_counter()
         scored = ingest.score_with_cache(raw, scorer, st)
-        if st.add_read(uid, scored.article_id, dataclasses.asdict(scored), scored.read_at,
-                       read_source=item.readSource, opened_from=item.openedFrom, device=item.device):
+        _obs_ms("read_score_ms", _t0)
+        _t0 = time.perf_counter()
+        _added = st.add_read(uid, scored.article_id, dataclasses.asdict(scored), scored.read_at,
+                             read_source=item.readSource, opened_from=item.openedFrom,
+                             device=item.device)
+        _obs_ms("read_persist_ms", _t0)
+        if _added:
             accepted += 1
         else:
             duplicates += 1
@@ -3255,19 +3273,43 @@ def recommendations(
             params = engine.rec_params_from_settings(state.store.get_settings(uid))
         except Exception:
             params = None
-    recs = (active.personalizer.recommendations(val, strategy, params) if kind == "personal"
-            else active.backend.recommendations(val, strategy, params))
-    _enrich_rec_media(recs)     # attach image (from the live FeedArticle) + publisher logo — additive
-    _attach_explanations(recs, active, kind, val)   # Evidence Resolver (21a.3) — additive post-pass
+    # Stage timers (observational only): the handler's own post-passes are on the critical path of
+    # every feed, so a breakdown that stopped at `recommendations()` would attribute their cost to
+    # the recommender. Each is recorded through obs_metrics, which swallows its own failures.
+    _ms: dict = {}
+
+    def _t(name, fn):
+        t0 = time.perf_counter()
+        try:
+            return fn()
+        finally:
+            d = (time.perf_counter() - t0) * 1000.0
+            try:
+                _ms[name] = round(d, 1)
+                obs_metrics.observe(f"rec_{name}_ms", d)
+            except Exception:                   # never let a timer fail a served feed
+                pass
+
+    recs = _t("handler_recommend",
+              lambda: (active.personalizer.recommendations(val, strategy, params) if kind == "personal"
+                       else active.backend.recommendations(val, strategy, params)))
+    # attach image (from the live FeedArticle) + publisher logo — additive
+    _t("handler_media", lambda: _enrich_rec_media(recs))
+    # Evidence Resolver (21a.3) — additive post-pass
+    _t("handler_explanations", lambda: _attach_explanations(recs, active, kind, val))
     # A recommendation the engine surfaced to a signed-in reader becomes a measurable event: record
     # which (cross-cutting) recs were shown — the denominator for Open-Mindedness. Best-effort; a
     # recording failure must never fail the recommendations response. No new recommender is created.
     if uid is not None and state.store is not None and not _is_demo_account(uid):
-        try:
-            state.store.record_recommendations_shown(
-                uid, ((r["article"]["id"], r["crossCutting"]) for r in recs))
-        except Exception:
-            _log(logging.WARNING, "rec_shown_record_failed", userId=uid)
+        def _record():
+            try:
+                state.store.record_recommendations_shown(
+                    uid, ((r["article"]["id"], r["crossCutting"]) for r in recs))
+            except Exception:
+                _log(logging.WARNING, "rec_shown_record_failed", userId=uid)
+        _t("handler_record_shown", _record)
+    _log(logging.INFO, "rec_handler_stages", ms=_ms, totalMs=round(sum(_ms.values()), 1),
+         kind=kind, strategy=strategy or "all", cards=len(recs))
     return recs
 
 

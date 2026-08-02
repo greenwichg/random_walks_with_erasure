@@ -37,8 +37,12 @@ reads into the existing engine and reuses the Backend's serialisers. The researc
 
 from __future__ import annotations
 
+import contextlib
+import json
+import logging
 import os
 import threading
+import time as _time
 from dataclasses import dataclass, fields as _dc_fields, replace as _dc_replace
 from typing import Dict, Tuple
 
@@ -48,8 +52,63 @@ import health_report as hr
 import augmented_corpus as ac
 import api_server as engine
 import measurement                      # generic per-metric Measurement envelopes (ADR-001)
+import obs_metrics                      # OBS: stage timers (observational only — never a behaviour)
 from enrich import enricher_source       # names the enricher for the register/emotion measurements' provenance
 from ingest import canonical_url as _canonical_url
+
+_logger = logging.getLogger("ih.personalize")
+if not _logger.handlers:
+    # Self-configuring, exactly like ``ih.api`` — and for a measured reason, not symmetry. Under
+    # uvicorn's default logging config the root logger has NO handler and NO level, so a record on
+    # a bare ``ih.*`` logger is neither enabled at INFO nor reachable by any handler: these lines
+    # would vanish in production while looking fine in tests. Instrumentation whose failure mode is
+    # silence is worse than none, because it gets quoted later.
+    _h = logging.StreamHandler()
+    _h.setFormatter(logging.Formatter("%(message)s"))
+    _logger.addHandler(_h)
+    _logger.setLevel(os.environ.get("RWE_LOG_LEVEL", "INFO").upper())
+    _logger.propagate = False
+
+
+@contextlib.contextmanager
+def _stage(name: str, sink: "dict | None" = None):
+    """Time one pipeline stage into ``obs_metrics`` and (optionally) a per-request breakdown dict.
+
+    Purely observational: the timer is read from the clock and recorded through the already
+    exception-swallowing ``obs_metrics``; the recording itself is wrapped again so instrumentation
+    can never turn a served feed into an error. ``finally`` so a raising stage is still timed —
+    a slow failure is exactly the case worth seeing."""
+    t0 = _time.perf_counter()
+    try:
+        yield
+    finally:
+        ms = (_time.perf_counter() - t0) * 1000.0
+        try:
+            obs_metrics.observe(f"rec_{name}_ms", ms)
+            if sink is not None:
+                sink[name] = round(ms, 1)
+        except Exception:
+            pass
+
+
+def _count(name: str) -> None:
+    """Increment an observational counter. Guarded like :func:`_stage`: the shipped ``obs_metrics``
+    swallows its own failures, but instrumentation must not depend on that being true of whatever
+    backend is wired in later."""
+    try:
+        obs_metrics.incr(name)
+    except Exception:
+        pass
+
+
+def _log_stages(event: str, sink: dict, **fields) -> None:
+    """One structured line per build/serve, so a single production request can be read end to end
+    rather than inferred from percentiles. Never raises."""
+    try:
+        _logger.info(json.dumps({"event": event, "ms": sink,
+                                 "totalMs": round(sum(sink.values()), 1), **fields}, default=str))
+    except Exception:
+        pass
 
 
 # Field names of the B4 ScoredRead, so a stored read dict (dataclasses.asdict verbatim) is
@@ -222,7 +281,9 @@ class Personalizer:
         """Reconstruct the user's reads, augment the reference corpus, recompute the population
         with the unchanged engine, and build the augmented recommender stack. Expensive; called
         once per ``(reading_version, reception_version)`` via :meth:`_model`."""
-        reads = [_scored_read_from_row(r) for r in self.store.get_reads(user_id)]
+        ms: dict = {}
+        with _stage("build_reads", ms):
+            reads = [_scored_read_from_row(r) for r in self.store.get_reads(user_id)]
         if not reads:
             raise ValueError("cannot build a measured model without stored reads")
         # Join reads to the corpus id space: a read whose (canonical) URL is a catalog article lands
@@ -230,17 +291,20 @@ class Personalizer:
         # connected click graph and the walk-based recommenders (RWE-B bridging, cross-cutting) work
         # as designed. A URL not in the catalog keeps the previous behaviour (a novel column).
         if self._catalog_ids:
-            reads = [(_dc_replace(r, article_id=self._catalog_ids[str(r.article_id)])
-                      if str(r.article_id) in self._catalog_ids else r) for r in reads]
+            with _stage("build_catalog_join", ms):
+                reads = [(_dc_replace(r, article_id=self._catalog_ids[str(r.article_id)])
+                          if str(r.article_id) in self._catalog_ids else r) for r in reads]
 
         # Per-metric Measurement envelopes (ADR-001) from the SAME scored reads the corpus is built
         # from — coverage + provenance computed alongside the metric values, never a second read load.
         # The catalog-id join above only rewrites ``article_id``; political / lean / emotion (all a
         # measurement reads) are untouched, so this is the exact projection behind the metric values.
-        measurements = measurement.measurements_for_reads(reads, enricher_source=enricher_source())
+        with _stage("build_measurements", ms):
+            measurements = measurement.measurements_for_reads(reads, enricher_source=enricher_source())
 
-        base = ac.bundle_from_backend(self.backend)               # read-only view of the corpus
-        aug = ac.augment(base, reads, user_id=f"__real_user_{user_id}__")
+        with _stage("build_augment", ms):
+            base = ac.bundle_from_backend(self.backend)           # read-only view of the corpus
+            aug = ac.augment(base, reads, user_id=f"__real_user_{user_id}__")
         b = aug.bundle
 
         # UNCHANGED engine over the augmented population. source=None keeps the outlet source axis
@@ -248,19 +312,23 @@ class Personalizer:
         # (else None), so Open-Mindedness populates once they've engaged with cross-cutting recs and
         # stays an honest n/a before then — the same array shape the population already uses.
         source = None if self.backend.domain == "news" else np.asarray(b.mind.titles)
-        selective = self._augmented_selective(user_id, aug.reader_row)
-        pop = hr.compute(b.mind, register=b.register, emotion=b.emotion,
-                         confidence=b.confidence, source=source, selective=selective)
+        with _stage("build_selective", ms):
+            selective = self._augmented_selective(user_id, aug.reader_row)
+        with _stage("build_population", ms):
+            pop = hr.compute(b.mind, register=b.register, emotion=b.emotion,
+                             confidence=b.confidence, source=source, selective=selective)
 
-        corpus = engine._Corpus(mind=b.mind, pop=pop, register=b.register, emotion=b.emotion,
-                                confidence=b.confidence,
-                                outlet_lean=self.backend._build_outlet_lean(b.mind))
+        with _stage("build_outlet_lean", ms):
+            corpus = engine._Corpus(mind=b.mind, pop=pop, register=b.register, emotion=b.emotion,
+                                    confidence=b.confidence,
+                                    outlet_lean=self.backend._build_outlet_lean(b.mind))
         # W2: give the real reader their measured adaptive exposure (gated + shrunk toward 0.5);
         # everyone else in the augmented population keeps the neutral prior. Only the reader is served.
         rexp = self._reader_exposure(user_id)
         ruid = str(b.mind.dataset.user_ids[aug.reader_row])
-        rec = self.backend._build_recommenders(
-            b.mind, reader_exposure=((ruid, rexp) if rexp is not None else None))
+        with _stage("build_recommenders", ms):
+            rec = self.backend._build_recommenders(
+                b.mind, reader_exposure=((ruid, rexp) if rexp is not None else None))
         model = PersonalModel(reading_version=reading_version, reception_version=reception_version,
                               corpus=corpus, reader_row=aug.reader_row, rec=rec,
                               measurements=measurements)
@@ -269,25 +337,40 @@ class Personalizer:
             # Persist the Measured snapshot once per version so /api/me reflects the latest
             # result (append-only history). Serialising the report here is cheap next to the
             # compute above; a failure to persist must never fail the request.
-            try:
-                self.store.save_report(user_id,
-                                       self.backend._serialize_report(corpus, aug.reader_row,
-                                                                      measurements=measurements))
-            except Exception:
-                pass
+            #
+            # "Cheap next to the compute above" is an unmeasured claim from before this timer
+            # existed — `build_persist_report` now says what it actually costs, on the critical
+            # path of the first feed after every read.
+            with _stage("build_persist_report", ms):
+                try:
+                    self.store.save_report(user_id,
+                                           self.backend._serialize_report(corpus, aug.reader_row,
+                                                                          measurements=measurements))
+                except Exception:
+                    pass
+        _log_stages("rec_model_build", ms, userId=user_id, reads=len(reads),
+                    readingVersion=reading_version)
         return model
 
     def _model(self, user_id: int) -> PersonalModel:
         """The user's cached augmented model, rebuilt when their reads *or* their cross-cutting
         recommendation reception changed (either shifts the version, so the Measured report and
         Open-Mindedness stay current)."""
-        version = self.store.count_reads(user_id)
-        reception = self._reception_key(user_id)
+        ms: dict = {}
+        # The cache KEY is two store reads — the reading version (count_reads) and the reception
+        # version. Timed separately because they are paid on every request, hit or miss, and a
+        # cheap-looking key check over a growing table is the shape that hides.
+        with _stage("cache_key", ms):
+            version = self.store.count_reads(user_id)
+            reception = self._reception_key(user_id)
         with self._lock:
             cached = self._cache.get(user_id)
             if (cached is not None and cached.reading_version == version
                     and cached.reception_version == reception):
+                _count("rec_model_cache_hit_total")
+                _log_stages("rec_model_lookup", ms, userId=user_id, hit=True)
                 return cached
+            _count("rec_model_cache_miss_total")
             model = self._build_model(user_id, version, reception)
             self._cache[user_id] = model      # keep only the latest version per user (bounded)
             return model
@@ -325,10 +408,16 @@ class Personalizer:
         With ``RWE_STORY_SLOT`` enabled, the DEFAULT feed (no explicit ``strategy``) additionally
         applies the conditional Story-Match slot post-pass (:meth:`_apply_story_slot`). An explicit
         strategy request stays a faithful single-model view and never gets the slot."""
-        m = self._model(user_id)
-        recs = self.backend._serialize_recommendations(m.corpus, m.rec, m.reader_row, strategy, params)
+        ms: dict = {}
+        with _stage("serve_model", ms):            # cache hit, or the whole rebuild
+            m = self._model(user_id)
+        with _stage("serve_rank_serialize", ms):   # blend -> per-strategy columns -> serialise
+            recs = self.backend._serialize_recommendations(m.corpus, m.rec, m.reader_row,
+                                                           strategy, params)
         if strategy is None and story_slot_enabled():
-            recs, _diag = self._apply_story_slot(user_id, m, recs)
+            with _stage("serve_story_slot", ms):
+                recs, _diag = self._apply_story_slot(user_id, m, recs)
+        _log_stages("rec_serve", ms, userId=user_id, strategy=strategy or "all", cards=len(recs))
         return recs
 
     def _apply_story_slot(self, user_id: int, m: PersonalModel, recs: list) -> "tuple[list, dict]":
@@ -356,41 +445,54 @@ class Personalizer:
         card, with the truthful provenance ``strategy="story"`` (never a fabricated RWE label)."""
         import evidence_resolver as er
         diag: dict = {"enabled": True, "fired": False}
-        idx = er.story_index(self.store)
+        # Sub-stages: this post-pass runs on EVERY served feed, warm or cold — the model cache does
+        # nothing for it — so a breakdown that stopped at the slot boundary would show one large
+        # opaque number where the actionable split (index build vs. reader join vs. re-resolving
+        # every card's explanation) actually lives.
+        sms: dict = {}
+        with _stage("slot_index", sms):
+            idx = er.story_index(self.store)
         if not recs or not idx:
             return recs, {**diag, "reason": "empty feed" if not recs else "no story clusters"}
-        read_urls = {_canonical_url(str(r.get("article_id") or ""))
-                     for r in self.store.get_reads(user_id)}
+        with _stage("slot_reads", sms):
+            read_urls = {_canonical_url(str(r.get("article_id") or ""))
+                         for r in self.store.get_reads(user_id)}
         served = {_canonical_url(str((r.get("article") or {}).get("url") or "")) for r in recs}
         item_of = {str(m.rec.rec_ids[j]): j for j in range(len(m.rec.rec_ids))}
         candidates: dict = {}
-        for ru in read_urls:
-            story = idx.get(ru)
-            if not story:
-                continue
-            anchor = next((c for c in story["coverage"]
-                           if _canonical_url(str(c.get("url") or "")) == ru), None)
-            anchor_pub = str((anchor or {}).get("publisher") or "")
-            anchor_lean = (anchor or {}).get("lean")
-            for member in story["coverage"]:
-                cu = _canonical_url(str(member.get("url") or ""))
-                if (not cu or cu in read_urls or cu in served
-                        or str(member.get("publisher") or "") == anchor_pub):
+        with _stage("slot_candidates", sms):
+            for ru in read_urls:
+                story = idx.get(ru)
+                if not story:
                     continue
-                col = item_of.get(str(self._catalog_ids.get(cu)))
-                if col is None:                      # not a recommendable corpus node -> never fabricate
-                    continue
-                entry = candidates.setdefault(cu, {"col": int(col), "url": cu,
-                                                   "publishedAt": str(member.get("publishedAt") or ""),
-                                                   "opposite": False})
-                # OR across pairings: the reader may have read several members of this cluster, and
-                # a sibling that opposes ANY of those read anchors is a genuine other-side offer.
-                if _opposing_leans(anchor_lean, member.get("lean")):
-                    entry["opposite"] = True
+                anchor = next((c for c in story["coverage"]
+                               if _canonical_url(str(c.get("url") or "")) == ru), None)
+                anchor_pub = str((anchor or {}).get("publisher") or "")
+                anchor_lean = (anchor or {}).get("lean")
+                for member in story["coverage"]:
+                    cu = _canonical_url(str(member.get("url") or ""))
+                    if (not cu or cu in read_urls or cu in served
+                            or str(member.get("publisher") or "") == anchor_pub):
+                        continue
+                    col = item_of.get(str(self._catalog_ids.get(cu)))
+                    if col is None:                  # not a recommendable corpus node -> never fabricate
+                        continue
+                    entry = candidates.setdefault(cu, {"col": int(col), "url": cu,
+                                                      "publishedAt": str(member.get("publishedAt") or ""),
+                                                      "opposite": False})
+                    # OR across pairings: the reader may have read several members of this cluster,
+                    # and a sibling that opposes ANY of those read anchors is a genuine other-side
+                    # offer.
+                    if _opposing_leans(anchor_lean, member.get("lean")):
+                        entry["opposite"] = True
         if not candidates:
+            _log_stages("rec_story_slot", sms, userId=user_id, fired=False)
             return recs, {**diag, "reason": "no qualifying story sibling in the current corpus"}
-        ctx = self.explanation_context(user_id)
-        types = [er.resolve(r, ctx, idx).get("type") for r in recs]
+        with _stage("slot_context", sms):
+            ctx = self.explanation_context(user_id)
+        with _stage("slot_resolve_types", sms):
+            types = [er.resolve(r, ctx, idx).get("type") for r in recs]
+        _log_stages("rec_story_slot", sms, userId=user_id, fired=True, cards=len(recs))
         if "story_match" in types:
             return recs, {**diag, "reason": "an organic story_match card is served (cap 1)"}
         # Opposite-view group first; recency orders within each group. `True > False` does the

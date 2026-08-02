@@ -496,3 +496,71 @@ def test_the_flag_is_wired_through_the_production_compose():
         "the api service must pass RWE_STORY_SLOT through, or deploy/.env cannot enable the slot"
     assert "${RWE_STORY_SLOT:-0}" in api_block, \
         "the compose default must preserve OFF — enabling is an explicit deploy/.env decision"
+
+
+# --------------------------------------------------------------------------- #
+# Stage instrumentation (2026-08-02) — OBSERVATIONAL ONLY.
+#
+# The timers exist to answer "which stage dominates the post-read feed latency" with measurement
+# rather than inference. They are on the critical path of every recommendation, so the property
+# that matters is that they cannot change or break what is served: a metrics backend that throws
+# must not cost a reader their feed.
+# --------------------------------------------------------------------------- #
+
+
+def test_stage_timers_record_without_changing_the_feed(stack, monkeypatch):
+    import obs_metrics
+    obs_metrics.metrics().reset()
+    st, pers, uid = stack
+
+    before = _urls(pers.recommendations(uid))               # cold: builds the model
+    timers = set(obs_metrics.metrics().snapshot()["timers"])
+    assert {"rec_serve_model_ms", "rec_serve_rank_serialize_ms"} <= timers, sorted(timers)
+    assert {"rec_cache_key_ms", "rec_build_augment_ms", "rec_build_recommenders_ms",
+            "rec_build_population_ms"} <= timers, sorted(timers)
+
+    # A cache HIT is counted separately from a MISS — that split is the whole cold/warm story, so
+    # the report can't attribute a warm serve to a rebuild (or the reverse).
+    after = _urls(pers.recommendations(uid))                # warm: same version -> cache hit
+    counters = obs_metrics.metrics().snapshot()["counters"]
+    assert counters.get("rec_model_cache_miss_total") == 1, counters
+    assert counters.get("rec_model_cache_hit_total") == 1, counters
+    assert after == before, "timers must not perturb the served feed"
+
+
+def test_stage_lines_are_reachable_without_a_configured_root_logger():
+    """Under uvicorn's default logging config the ROOT logger has no handler and no level, so a
+    bare ``ih.*`` logger is not enabled at INFO and no handler can see it — the breakdown lines
+    would be silently dropped in production while passing every test (pytest configures root).
+    The invariant that survives that: the logger owns its handler and its own level."""
+    import logging
+    assert personalize._logger.handlers, "ih.personalize must not depend on root being configured"
+    assert personalize._logger.level <= logging.INFO
+    assert not personalize._logger.propagate, "own handler + propagate -> duplicate lines"
+
+
+def test_the_report_persist_stage_is_timed_on_the_production_path(stack):
+    """``persist=True`` is production's setting (and the fixture's opposite), so the report write —
+    the one stage carrying an *unmeasured* "cheap next to the compute above" comment — would
+    otherwise never appear in a timing breakdown taken from the tests."""
+    import obs_metrics
+    st, pers, uid = stack
+    live = personalize.Personalizer(pers.backend, st, persist=True)
+    obs_metrics.metrics().reset()
+
+    assert _urls(live.recommendations(uid)) == _urls(pers.recommendations(uid))
+    assert "rec_build_persist_report_ms" in obs_metrics.metrics().snapshot()["timers"]
+
+
+def test_a_failing_metrics_backend_never_costs_a_reader_their_feed(stack, monkeypatch):
+    st, pers, uid = stack
+    expected = _urls(pers.recommendations(uid))
+
+    def boom(*a, **kw):
+        raise RuntimeError("metrics backend down")
+    monkeypatch.setattr(personalize.obs_metrics, "observe", boom)
+    monkeypatch.setattr(personalize.obs_metrics, "incr", boom)
+    monkeypatch.setattr(personalize._logger, "info", boom)
+    pers._cache.clear()                                   # force the instrumented cold path too
+
+    assert _urls(pers.recommendations(uid)) == expected

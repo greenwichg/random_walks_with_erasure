@@ -135,18 +135,43 @@ def story_index(store_) -> dict:
     Priority 1 consumes the SAME stories the Stories page shows (coverage carries the URLs)."""
     if store_ is None:
         return {}
+    import obs_metrics
     import story_service
+    t0 = time.perf_counter()
     key = (int(store_.count_feed_articles()), int(time.time() // _INDEX_TTL_S))
     if _INDEX_CACHE["key"] == key and _INDEX_CACHE["index"] is not None:
+        try:
+            obs_metrics.incr("rec_story_index_hit_total")
+            obs_metrics.observe("rec_story_index_hit_ms", (time.perf_counter() - t0) * 1000.0)
+        except Exception:                       # instrumentation must never break resolution
+            pass
         return _INDEX_CACHE["index"]
     index: dict = {}
     # The cached default view (see story_service.default_story_view): an index rebuild no longer
     # pays a full clustering on the request thread — it reads the build the poller already warmed.
-    for s in story_service.default_story_view(store_):
+    #
+    # "Reads the build the poller already warmed" is the intended case, not a guaranteed one:
+    # `default_story_view` falls back to a read-only INLINE build whenever the peek misses, and
+    # that fallback is a full clustering on this request thread. The two cost ~2 ms and ~600 ms at
+    # 2k articles, so which one production actually takes decides the whole latency picture —
+    # hence timed apart rather than assumed.
+    t_view = time.perf_counter()
+    view = story_service.default_story_view(store_)
+    view_ms = (time.perf_counter() - t_view) * 1000.0
+    for s in view:
         for m in s.get("coverage") or []:
             if m.get("url"):
                 index[_canon(str(m["url"]))] = {"storyId": s["id"], "coverage": s["coverage"]}
     _INDEX_CACHE.update(key=key, index=index)
+    # The KEY carries the catalog row count, so under continuous ingestion this misses whenever a
+    # single article lands — measuring the miss rate and its cost is the point of these counters,
+    # not an assumption that it is cheap.
+    try:
+        obs_metrics.incr("rec_story_index_miss_total")
+        obs_metrics.observe("rec_story_index_build_ms", (time.perf_counter() - t0) * 1000.0)
+        obs_metrics.observe("rec_story_index_view_ms", view_ms)
+    except Exception:
+        pass
     return index
 
 

@@ -1783,8 +1783,18 @@ def default_story_view(store_) -> list:
     Callers must treat the list as read-only: it is (usually) the cache's own object."""
     stories = _peek_default_view(store_)
     if stories is not None:
+        obs_metrics.incr("story_default_view_peek_hit_total")
         return stories
-    return build_stories(_fetch(store_), min_articles=2, min_publishers=2)
+    # The inline build is the documented TRUE-COLD contract, not a bug — but it is ~300x the cost
+    # of the peek, and every consumer on it (the evidence/story index among them) pays that on a
+    # request thread. Counted so "rare" is a measurement rather than an expectation.
+    obs_metrics.incr("story_default_view_inline_build_total")
+    _t = _time.perf_counter()
+    try:
+        return build_stories(_fetch(store_), min_articles=2, min_publishers=2)
+    finally:
+        obs_metrics.observe("story_default_view_inline_build_ms",
+                            (_time.perf_counter() - _t) * 1000.0)
 
 
 def _peek_default_view(store_) -> "list | None":
