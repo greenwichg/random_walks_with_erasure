@@ -407,3 +407,28 @@ synchronous `build_stories`, exactly one kick, healed after the refresh runs),
 entry), `test_cache_disabled_keeps_the_inline_build_for_everyone`, and the two updated
 expired/kill-switch contract tests. The probe's `[5]` now separates `async kicks` (healthy) from
 `inline builds` (analyze/cache-off only).
+
+## Final verification (2026-08-02, `737022c`, probe at 16:00 — minutes after the deploy restart)
+
+The first post-deploy probe in this investigation that shows neither the thrash nor the storm:
+
+| | 14:48 pre-fix, contended | 15:10 pre-fix, quiet | 15:16 rec-fix, boot storm | **16:00 all fixes, fresh boot** |
+|---|---:|---:|---:|---:|
+| read → recommendations visible | 7,064 ms | 677 ms | 3,275 ms | **290.6 ms** |
+| warm serve walls | 554–1,376 ms | 284–645 ms | 377–3,883 ms | **70.6–286.5 ms** |
+| `cache_key` per lookup | 124–618 ms | 37–167 ms | 6.6–23.7 ms | **6.3–6.9 ms** |
+| model-cache misses, no-read window | +2 (thrash) | +2 (thrash) | +0 | **+1 = the post-restart first build; hits after** |
+| inline clusterings on request threads | masked | 0 (poller-warmed) | **4 × ~24 s** | **0** |
+
+`[5]` after a restart: `inline builds: 0`, peek hits + stale-serves only — the boot window passed
+with zero request-thread clusterings (the poller's first warm landed before the probe; had it
+not, the kick path would have shown `async kicks ≥ 1` and still zero inline). The one `[3]` miss
+is the legitimate post-read rebuild: **102.2 ms** at 52k articles (`build_population` 52.6 ms) —
+the same build that cost 1,996 ms mid-storm and was once misattributed as a ~2.6 s fixed cost.
+The slot fires (`top card: The Economic Times — strategy=story`) at ~20 ms steady overhead.
+
+Remaining residue, none of it blocking: the story-index rebuild (~100 ms) recurs once per
+key rotation because the index key carries `count_feed_articles`, which moves with every ingest —
+visible as warm serve #1 at 286 ms vs 71 ms steady; handler explanations ~15 ms; `record_shown`
+~10 ms. End state for the reader: a Discovery read surfaces updated recommendations in
+**~290 ms cold / ~75 ms warm**, and the P3 invalidation refetches them immediately.
