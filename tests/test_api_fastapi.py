@@ -853,13 +853,18 @@ def test_open_mindedness_completes_the_metric_set(client):
     # titled, known-outlet, two-sided political reads -> a Measured report with the 7 read-derived
     # metrics (topic/source/reporting/emotional/echo/viewpoint + confidence) available, and the
     # Open-Mindedness card present but not yet available (an empty state until reception arrives).
+    # A diet balanced to EXACTLY zero on the graded position lattice (three registry −1 outlets
+    # against three +1 outlets), so the reader is genuinely sideless and no served card is
+    # cross-cutting — the premise behind shownCross tracking the opens 1:1 below. The previous
+    # mix summed to zero only on the raw registry scale (Fox's +2 cancelling two lean-lefts),
+    # an artifact the F4 novel-read grading (docs/LEAN_CONSISTENCY.md) correctly removed.
     reads = [
         {"url": "https://www.nytimes.com/2026/us/politics/a", "title": "Senate advances the bill, leaders say"},
-        {"url": "https://www.foxnews.com/politics/b", "title": "Outrage as officials slam the deadly crisis"},
-        {"url": "https://www.wsj.com/politics/c", "title": "Opinion: we must act now on the economy"},
-        {"url": "https://www.washingtonpost.com/politics/d", "title": "Analysis: what to know about the vote"},
+        {"url": "https://www.wsj.com/politics/b", "title": "Outrage as officials slam the deadly crisis"},
+        {"url": "https://www.washingtonpost.com/politics/c", "title": "Opinion: we must act now on the economy"},
+        {"url": "https://economictimes.indiatimes.com/politics/d", "title": "Analysis: what to know about the vote"},
         {"url": "https://www.theguardian.com/us-news/politics/e", "title": "Hope as historic deal is celebrated"},
-        {"url": "https://apnews.com/hub/politics/f", "title": "Poll finds shifting views, new data shows"},
+        {"url": "https://www.geo.tv/politics/f", "title": "Poll finds shifting views, new data shows"},
     ]
     assert client.post("/api/me/reads", json={"reads": reads}, headers=_signed(uid)).json()["sufficient"]
 

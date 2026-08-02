@@ -178,8 +178,13 @@ def augment(base: CorpusBundle, reads: Sequence[ScoredRead],
     outlets = _concat_obj(base.mind.outlets, (r.outlet for r in novel))
     political = np.concatenate([np.asarray(base.mind.political, dtype=bool),
                                 np.array([r.political for r in novel], dtype=bool)])
+    # Novel columns land on the SAME position lattice as the corpus ({0, ±0.6, ±1}) — a read's
+    # ``lean`` is the registry-scale [-2, 2] scored value, and concatenating it raw made a novel
+    # Fox read weigh +2.0 in the reader's click-mean where a catalog-joined one weighed +1.0
+    # (docs/LEAN_CONSISTENCY.md F4). Unknown leans stay NaN, exactly as before.
+    from validate_qbias import scored_to_position
     positions = np.concatenate([np.asarray(base.mind.item_positions, dtype=float),
-                                np.array([r.lean for r in novel], dtype=float)])
+                                np.array([scored_to_position(r.lean) for r in novel], dtype=float)])
     item_ids = _concat_obj(base.mind.dataset.item_ids, (str(r.article_id) for r in novel))
     user_ids = _concat_obj(base.mind.dataset.user_ids, [user_id])
 

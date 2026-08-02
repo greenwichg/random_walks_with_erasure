@@ -3335,7 +3335,18 @@ def _enrich_rec_media(recs: list) -> None:
     for a in arts:
         m = by_url.get(ingest.canonical_url(a["url"])) if a.get("url") else None
         if m:
-            a.update({k: v for k, v in m.items() if v is not None})
+            a.update({k: v for k, v in m.items() if v is not None and k != "catalogLean"})
+            # ONE lean vocabulary for the UI (docs/LEAN_CONSISTENCY.md F1/F3): the card's lean is
+            # the catalog's SCORED registry value — the same number Discover, search, stories and
+            # the analyzer serve for this article — never the corpus-internal ranking position
+            # (which had CNN at −0.6 on a rec card and −1.0 everywhere else). The crossCutting
+            # flag was computed from the position upstream and cannot disagree on sidedness: the
+            # scored/position partition is byte-identical (|v| ≥ 0.5), pinned by tests.
+            cl = m.get("catalogLean")
+            if cl is not None:
+                a["lean"] = float(cl)
+                a["leanBucket"] = engine._lean_bucket(float(cl))
+                a["publisherLean"] = round(float(cl), 2)
         a.update(media.pick_best_logo(a.get("publisher", ""), a.get("url")))
 
 

@@ -1510,6 +1510,15 @@ class Store:
                 for r in rows:
                     rec = {"publishedAt": r.published_at
                            or (r.fetched_at.isoformat() if r.fetched_at else None)}
+                    # The article's SCORED (registry-scale) lean, under its own key so consumers
+                    # opt in explicitly: the rec enrichment rewrites the card's lean with it (one
+                    # UI value space — docs/LEAN_CONSISTENCY.md F1), while the history attach
+                    # copies only publishedAt and never sees it.
+                    try:
+                        lv = (json.loads(r.scored) or {}).get("lean")
+                        rec["catalogLean"] = float(lv) if lv is not None else None
+                    except (TypeError, ValueError):
+                        rec["catalogLean"] = None
                     if r.image:
                         rec.update({
                             "image": r.image, "imageWidth": r.image_width, "imageHeight": r.image_height,

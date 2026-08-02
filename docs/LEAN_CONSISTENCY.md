@@ -2,7 +2,8 @@
 
 **Scope:** every place a political position is computed, ranked on, or displayed — registry →
 scoring → corpus positions → ranking → explanations → Information Health metrics → web UI.
-**Status:** verification only. **Nothing is implemented.**
+**Status:** verification complete; fixes 1–4 are **implemented** — see
+"Implemented" at the end.
 **Date:** 2026-08-02, at `f2fb88d`.
 
 **Verdict in one line:** every *computation* is internally consistent and scale-safe — but the
@@ -83,7 +84,7 @@ F1's twin on the publisher field.
 inequality (≥/≤ 0.5, > 0.9, > 1.4), none does an equality or three-way-set test against the old
 quantized values. The grep sweep and 2,587-test suite agree.
 
-## Smallest recommended fixes (ranked; none implemented)
+## Smallest recommended fixes (ranked; implemented — see the section at the end)
 
 1. **Serve ONE space to the UI — the scored registry lean — on recommendation cards too.** The
    rec enrichment pass (`_enrich_rec_media` / `_attach_published_at`) already joins each card to
@@ -109,3 +110,37 @@ catalog, boots the real app, and prints the actual-vs-expected table above from
 box, the same spot-check needs only two browser tabs: any CNN card on Discover (−1.0, "Left")
 next to a CNN recommendation card (−0.6, "Lean Left") — if both tabs show the same number, F1
 has been fixed.
+
+---
+
+## Implemented (2026-08-02): fixes 1–4, in the recommended order
+
+1. **One UI value space (F1).** `store.feed_article_media` now carries the article's scored
+   registry lean under its own `catalogLean` key, and the rec enrichment pass rewrites the card's
+   `lean` / `leanBucket` with it — the same numbers Discover, search, stories, and the analyzer
+   serve. Positions remain what they always were: the internal ranking geometry. The history
+   attach copies only `publishedAt` and never sees the new key. The cross-surface contract is
+   pinned by `tests/test_lean_consistency.py` (rec card lean == Discover lean for every catalog
+   card, mutation-checked), plus a sidedness guard: the `crossCutting` flag (computed from the
+   position upstream) can never disagree with the served scored lean, because the two spaces'
+   sided/centre partition is byte-identical.
+2. **AllSides tiers in the web labels (F2).** `leanLabelKey` cuts at the lattice midpoint 1.5:
+   Lean Left/Right at ±1, Left/Right at ±2; the invented "Strong" tier is retired and its i18n
+   keys removed from all five catalogs. CNN now reads "Lean Left" on every page; Fox News reads
+   "Right" everywhere (it read "Strong Right" on Discover before).
+3. **`publisherLean` unified and rounded (F3)** — scored space, no float noise, same enrichment
+   site.
+4. **Novel reads land on the position lattice (F4).** `validate_qbias.scored_to_position` maps
+   the registry scale through the same 0.5/1.5 grading as the labels (parity pinned by test), and
+   `augmented_corpus.augment` uses it for novel columns — a novel Fox read now weighs +1.0 in the
+   reader's click-mean like a catalog-joined one, and an unknown lean stays NaN.
+
+**Known residual, deliberate:** the explain panel's *viewpoint-impact* numbers (Your position /
+Article / Gap / Estimated effect) remain in position space — they are the ranking's own
+arithmetic and stay internally consistent; converting them to scored space would require
+re-deriving the reader mean and shift math in scored space wholesale. The panel's metadata row
+(bucket label) follows the card and is therefore scored-consistent. Flagged for a product
+decision if the magnitude difference (card −1.0 vs panel −0.60 for CNN) proves confusing.
+
+F3's spectrum-bar item (`leanToPercent`) dissolved with F1: only scored values reach the UI, so
+each outlet has one bar position again.

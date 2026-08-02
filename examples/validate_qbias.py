@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import argparse
 import csv as _csv
+import math
 import sys
 from pathlib import Path
 
@@ -147,6 +148,26 @@ def load_qbias(path, headline_col=None, text_col=None, bias_col=None, outlet_col
                 break
     return texts, np.asarray(gold, dtype=float), outlets, dict(headline=hc, text=tc,
                                                                bias=bc, outlet=oc)
+
+
+def scored_to_position(lean) -> float:
+    """Map a registry-scale scored lean (the [-2, 2] AllSides lattice) onto the corpus position
+    lattice ({0, ±LEAN_GRADE, ±1}) — the SAME 0.5 / 1.5 grading ``_bias_label`` +
+    ``label_to_pos(graded=True)`` apply, for callers holding the raw number instead of a label.
+    Exists for ``augmented_corpus.augment``'s novel columns, which previously concatenated raw
+    [-2, 2] values into the [-1, 1] positions array — a novel Fox read weighed +2.0 in the
+    reader's click-mean where a catalog-joined one weighed +1.0 (docs/LEAN_CONSISTENCY.md F4).
+    ``None``/non-finite stays ``nan`` (unknown lean licenses no position)."""
+    try:
+        v = float(lean)
+    except (TypeError, ValueError):
+        return float("nan")
+    if not math.isfinite(v):
+        return float("nan")
+    a = abs(v)
+    if a < 0.5:
+        return 0.0
+    return math.copysign(LEAN_GRADE if a < 1.5 else 1.0, v)
 
 
 def outlet_positions(outlets, lean_table) -> np.ndarray:

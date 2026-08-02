@@ -1,5 +1,5 @@
 import type { EmotionShare, Lean, LeanBucket } from "@/types/domain";
-import { EMOTION_META } from "@/lib/metrics";
+import { EMOTION_META } from "./metrics.ts";
 
 /** Map a continuous lean [-2, 2] to a coarse bucket (tau = 0.5, matches backend). */
 export function leanBucket(lean: Lean, tau = 0.5): LeanBucket {
@@ -15,16 +15,14 @@ export function leanBucket(lean: Lean, tau = 0.5): LeanBucket {
  */
 export function leanLabelKey(lean: Lean): string {
   const bucket = leanBucket(lean);
-  const strength = Math.abs(lean);
+  // AllSides' own tiers on the registry lattice the backend serves (one UI value space since
+  // docs/LEAN_CONSISTENCY.md F1): Lean Left/Right at ±1, Left/Right at ±2, cut at the lattice
+  // midpoint 1.5. The former 0.9/1.4 cuts labelled AllSides "Lean" outlets as plain Left/Right
+  // and invented a "Strong" tier AllSides does not have.
+  const full = Math.abs(lean) >= 1.5;
   if (bucket === "center") return "lean.center";
-  if (bucket === "left") {
-    if (strength > 1.4) return "lean.strongLeft";
-    if (strength > 0.9) return "lean.left";
-    return "lean.leanLeft";
-  }
-  if (strength > 1.4) return "lean.strongRight";
-  if (strength > 0.9) return "lean.right";
-  return "lean.leanRight";
+  if (bucket === "left") return full ? "lean.left" : "lean.leanLeft";
+  return full ? "lean.right" : "lean.leanRight";
 }
 
 /** Normalise a lean to a 0–100 position on the spectrum bar (0 = far left). */
