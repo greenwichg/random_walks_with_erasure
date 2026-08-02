@@ -56,9 +56,18 @@ test.describe("Browser push foundation", () => {
     // The config route is stubbed rather than the deployment reconfigured: what is under test is the
     // UI's response to an install that CAN send, and minting a real subscription needs a live push
     // service this suite does not have.
-    await authedPage.route("**/api/push/config", (route) =>
-      route.fulfill({ json: { enabled: true, publicKey: `B${"x".repeat(86)}` } }),
+    //
+    // Since R1b the config usually arrives inside `/api/bootstrap` (whose handler asks the engine
+    // server-side, out of `page.route`'s reach), so the bootstrap is stubbed too: its pushConfig
+    // section carries the same capable config, and the null sections make every other shell query
+    // fall back to its real endpoint. The direct stub stays for the fallback path.
+    const capable = { enabled: true, publicKey: `B${"x".repeat(86)}` };
+    await authedPage.route("**/api/bootstrap", (route) =>
+      route.fulfill({
+        json: { dashboard: null, settings: null, notifications: null, pushConfig: capable },
+      }),
     );
+    await authedPage.route("**/api/push/config", (route) => route.fulfill({ json: capable }));
     await authedPage.goto("/settings");
 
     const pushPref = authedPage.getByRole("switch", { name: "Breaking news on your devices" });

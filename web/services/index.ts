@@ -92,6 +92,9 @@ export const services = {
   storyIntelligence: (id: string) => getJson<StoryIntelligence>(`/stories/${id}/intelligence`),
   profile: () => getJson<Profile>("/profile"),
   settings: () => getJson<Settings>("/settings"),
+  // Deployment-level push availability (R1b: cached via react-query so the reconciler, the settings
+  // toggle and the account-level preference share ONE fetch instead of each asking again).
+  pushConfig: () => getJson<{ enabled: boolean; publicKey: string }>("/push/config"),
   // Persist a (partial) preferences patch; the engine merges + returns the full normalised settings.
   updateSettings: (patch: Partial<Settings>) => postJson<Settings>("/settings", patch),
   // Notifications (N3): the signed-in reader's materialised notifications, newest first.
@@ -159,6 +162,7 @@ export const queryKeys = {
   profile: ["profile"] as const,
   saved: ["saved"] as const,
   settings: ["settings"] as const,
+  pushConfig: ["push-config"] as const,
   notifications: ["notifications"] as const,
   analytics: ["analytics"] as const,
   coach: ["coach"] as const,

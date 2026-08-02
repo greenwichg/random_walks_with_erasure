@@ -35,14 +35,47 @@ export function ShellPrefetch({ hasSession }: { hasSession: boolean }) {
   React.useEffect(() => {
     if (!hasSession || fired.current) return;
     fired.current = true;               // once per app load; StrictMode double-mount included
-    void queryClient.prefetchQuery({ queryKey: queryKeys.dashboard, queryFn: services.dashboard });
-    void queryClient.prefetchQuery({ queryKey: queryKeys.settings, queryFn: services.settings });
+    // R1b: ONE round trip for the whole shell. The mechanism matters more than the endpoint: a
+    // seed applied AFTER the response arrives loses the race — the sidebar's, header's and
+    // reconciler's hooks fire their own queryFns in this same commit, milliseconds from now. So
+    // each shell key gets an in-flight PREFETCH registered synchronously here, whose queryFn
+    // resolves from one shared bootstrap promise; a consumer mounting later joins the pending
+    // query instead of fetching. (The first draft used setQueryData-on-arrival and the RUM
+    // harness showed five shell requests riding alongside the bootstrap — measured, not assumed.)
+    //
+    // Resilience is per section, inside the queryFn: a null section — or a failed bootstrap,
+    // which nulls them all — falls back to that section's own service call, so a broken aggregate
+    // degrades to exactly R1a's parallel prefetches and never worse.
+    interface BootstrapBody {
+      dashboard?: unknown; settings?: unknown; notifications?: unknown; pushConfig?: unknown;
+    }
+    const bootstrap: Promise<BootstrapBody | null> = fetch("/api/bootstrap")
+      .then((res) => (res.ok ? (res.json() as Promise<BootstrapBody>) : null))
+      .catch(() => null);
+    const section = async <T,>(key: keyof BootstrapBody, fallback: () => Promise<T>): Promise<T> => {
+      const body = await bootstrap;
+      const value = body?.[key];
+      return value != null ? (value as T) : fallback();
+    };
+    void queryClient.prefetchQuery({
+      queryKey: queryKeys.dashboard,
+      queryFn: () => section("dashboard", services.dashboard),
+    });
+    void queryClient.prefetchQuery({
+      queryKey: queryKeys.settings,
+      queryFn: () => section("settings", services.settings),
+    });
     void queryClient.prefetchQuery({
       queryKey: queryKeys.notifications,
-      queryFn: services.notifications,
+      queryFn: () => section("notifications", services.notifications),
       // Match the consumer's staleTime (`useNotifications`): a prefetch that expired before the
       // header mounted would fetch twice — the opposite of the point.
       staleTime: 60_000,
+    });
+    void queryClient.prefetchQuery({
+      queryKey: queryKeys.pushConfig,
+      queryFn: () => section("pushConfig", services.pushConfig),
+      staleTime: 300_000,               // matches usePushConfig
     });
   }, [hasSession, queryClient]);
 

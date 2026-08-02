@@ -14,6 +14,8 @@
  * `permissions` listener the toggle would keep describing a state that stopped being true.
  */
 import * as React from "react";
+import { useQuery } from "@tanstack/react-query";
+import { queryKeys, services } from "@/services";
 import {
   currentPermission,
   currentSubscription,
@@ -47,24 +49,17 @@ const NO_PUSH: PushConfig = { enabled: false, publicKey: "" };
  * behind it takes.
  */
 export function usePushConfig(): PushConfig {
-  const [config, setConfig] = React.useState<PushConfig>(NO_PUSH);
-  React.useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const res = await fetch("/api/push/config");
-        if (!res.ok) return;
-        const cfg = (await res.json()) as PushConfig;
-        if (alive) setConfig({ enabled: !!cfg.enabled, publicKey: cfg.publicKey ?? "" });
-      } catch {
-        /* leave push unavailable */
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, []);
-  return config;
+  // React-query rather than a per-mount fetch (R1b): three consumers mount app-wide (the
+  // reconciler, the settings toggle, the account-level preference), and each used to ask the
+  // server again — the RUM waterfalls showed /api/push/config two and three times per page. One
+  // cached answer serves them all, and ShellPrefetch seeds it from the bootstrap payload so the
+  // common path never fetches here at all. Fails closed exactly as before: no answer is NO_PUSH.
+  const { data } = useQuery({
+    queryKey: queryKeys.pushConfig,
+    queryFn: services.pushConfig,
+    staleTime: 300_000,          // deployment-level fact; five minutes is generous, not risky
+  });
+  return data ? { enabled: !!data.enabled, publicKey: data.publicKey ?? "" } : NO_PUSH;
 }
 
 export interface UsePush {
