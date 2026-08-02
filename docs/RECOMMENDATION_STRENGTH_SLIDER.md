@@ -3,7 +3,8 @@
 **Scope:** the Settings slider "Recommendation strength — how aggressively we diversify away from
 your usual diet" (0–100, UI labels Gentle/Balanced/Bold), and its effect on the political
 distance |article lean − reader position| of the served recommendations.
-**Status:** investigation only. **Nothing is implemented.**
+**Status:** investigation complete; the smallest recommended fix (copy only) is
+**implemented** — see "Implemented" at the end. Engine behaviour untouched.
 **Date:** 2026-08-02.
 
 The observation that started it (production screenshots): with the slider at Bold, the explain
