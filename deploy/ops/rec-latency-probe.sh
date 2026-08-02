@@ -296,7 +296,8 @@ for k in sorted(set(after_c) | set(before_c)):
         print(f"    {k}: +{d}")
 if isinstance(recs, list) and recs:
     top = recs[0].get("article", {})
-    print(f"  top card: {str(top.get('outlet') or '')} — strategy={recs[0].get('strategy')}")
+    print(f"  top card: {str(top.get('publisher') or top.get('outlet') or '?')}"
+          f" — strategy={recs[0].get('strategy')}")
 PY
 
 # ── 4. The structured stage lines the run just emitted ─────────────────────────────────────────

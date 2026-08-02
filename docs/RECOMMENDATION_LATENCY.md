@@ -2,7 +2,9 @@
 
 **Scope:** `POST /api/me/reads` → `GET /api/recommendations` returning, for a signed-in reader.
 **Status:** investigation only. Instrumentation shipped; **no behaviour changed, nothing optimised.**
-**Date:** 2026-08-02.
+**Date:** 2026-08-02. Production measurements added the same day — **they supersede the local
+findings below wherever they disagree, and they disagree on the headline.** See
+"Measured in production".
 
 The question behind this: after reading a Discovery article, the new recommendation takes long
 enough to appear that it reads as broken. Before changing anything, find out *which stage* the
@@ -183,8 +185,8 @@ Both are follow-on work. **Neither is implemented.**
 ## Confirming this in production
 
 ```bash
-sudo bash /opt/ih/deploy/ops/rec-latency-probe.sh --user <uid>     # full flow, cold + warm
-sudo bash /opt/ih/deploy/ops/rec-latency-probe.sh --warm-only      # no write
+sudo bash /opt/ih/deploy/ops/rec-latency-probe.sh --email you@example.com   # full flow
+sudo bash /opt/ih/deploy/ops/rec-latency-probe.sh --warm-only               # no write
 ```
 
 Section `[5]` is the one that settles it: if `story_default_view_inline_build_total` is non-zero,
@@ -195,3 +197,95 @@ re-derived from the probe's own table rather than from these local constants.
 The probe records one read for the chosen reader (the flow under measurement begins with a read,
 and the model cache key *is* the read count — a rebuild cannot be forced any other way). It says
 so before it does it. Everything else is read-only.
+
+---
+
+# Measured in production (2026-08-02, `c7034d3`)
+
+Probe run on the live box: catalog **51,733** articles, reader uid=1 with **93 reads**,
+`RWE_STORY_SLOT=1`, Open-Mindedness **active** for this reader (that last fact turns out to be
+the story). These numbers supersede the local ones above wherever they disagree.
+
+| measured | value |
+|---|---:|
+| `POST /api/me/reads` | 379.1 ms (persist 233.1, score 22.7) |
+| first `GET /api/recommendations` after the read | **6,685.0 ms** |
+| next `GET` (expected warm) | 725.4 ms |
+| read → recommendations visible | **7,064.0 ms** |
+| three warm GETs, no read in between | 730.5 / **1,376.0** / 554.3 ms |
+
+## The local headline hypothesis is refuted in production
+
+`[5]`: `peek hits: 1, inline builds: 0`, one stale serve with a background refresh spawned,
+story-index build 103.7 ms once, hits ~2 ms. **The serve-stale machinery works; nobody paid an
+inline clustering.** The story view is not production's problem, and the "smallest fix" proposed
+from the local bench does not apply. The slot's candidate join, 66 % of a local warm serve, is
+**4.1 ms** in production. Local constants pointed at the wrong stage twice; the probe existing is
+what caught it.
+
+## What production actually shows — three compounding causes
+
+### 1. Serving recommendations invalidates the model cache (the thrash is real here)
+
+`_reception_key` returns `(shownCross, openedCross)` once Open-Mindedness is active, and
+`record_recommendations_shown` — which runs **after every serve** — creates a RecEvent row for
+each newly surfaced rec, moving `shownCross`. So the serve itself moves the next request's cache
+key. Proof, not inference:
+
+* two `rec_model_build` events with the **same** `readingVersion=94` in one probe window — the
+  second rebuild (407.4 ms) was triggered by reception, not by a read;
+* `+2 rec_model_cache_miss_total` during the warm section, where **no read happened**;
+* the 1,376.0 ms "warm" wall is exactly the serve that ate one of those rebuilds.
+
+The local report called this "not observed" — correct locally, because the bench reader was not
+Open-Mindedness-active. The docstring even announces the behaviour ("once active it tracks
+(shown, opened) so opening more rebuilds") — but it is not just *opening*: **showing** moves it,
+and showing is something the serve does to itself.
+
+### 2. The cache key costs 40–170 ms per lookup, and every request pays it three times
+
+`rec_cache_key_ms`: mean 127 ms across 9 lookups warm (sum 1,143 ms); around the write, the two
+miss-path samples sum to ~3.3 s. The key is `count_reads` + `recommendation_reception` — and
+`recommendation_reception` **loads every cross-cutting RecEvent row as a full ORM object to count
+it** (`store.py:2304-2308`), a per-serve-growing table for an active reader.
+
+Three `_model` calls per request pay it: the serve itself, the slot's `explanation_context`, and
+the handler's `_attach_explanations` → `_resolver_ctx` → `explanation_context`. 9 lookups / 3
+requests, measured.
+
+The same query then runs **twice more inside every rebuild** — `build_selective` (398.9 ms mean
+cold) and `_reader_exposure` (unstaged in the probe run; staged as `build_reader_exposure` since,
+which is why the 6,151.9 ms `serve_model` had ~2 s no stage claimed).
+
+### 3. Everything store-touching was 5–10× slower in the post-write window
+
+`read_persist` 233.1 ms (1.2 ms locally); cache-key hits 124–166 ms immediately after the write
+vs 37.9–38.3 ms later in the same run. Consistent with WAL checkpointing after the write plus the
+background poller on the same SQLite file — the 6.7 s first GET landed inside that window. This
+multiplies causes 1 and 2; it is not independent of them.
+
+### Where a warm serve's floor comes from (554.3 ms, no rebuild)
+
+cache_key ×3 (~120–400 ms) + `slot_context` (~110 ms — `user_report` + `get_reads` +
+familiarity) + `handler_explanations` (~45–165 ms, a second `explanation_context`) +
+`record_shown` (~11 ms) + serialisation (~6 ms). The earlier 758.1 ms production "warm"
+measurement matches this floor plus jitter.
+
+## Revised smallest, highest-confidence optimisation
+
+**Stop the serve from invalidating its own cache.** `_reception_key`'s active branch should not
+move on `shownCross` at serve granularity — key on `openedCross` (a real reader action) with
+`shownCross` bucketed, or simply on `openedCross` alone. Rebuilds observed in the probe would
+drop from 3 to 1 (the legitimate post-read one); the 1,376 ms warm outlier and the 725 ms
+"should be warm" serve are exactly the rebuilds this removes. Freshness is preserved where it
+matters: a new read still invalidates (reading version), an open still invalidates, and the
+Measured report's Open-Mindedness *values* still come from the live query at build time — only
+the rebuild *trigger* coarsens.
+
+Close second (compounds with the first): **make `recommendation_reception` a COUNT query** instead
+of materialising every row (two `SELECT count(*)` with the existing `user_id` index), and **reuse
+one `_model` result per request** instead of three lookups. Together they attack the ~350–550 ms
+warm floor.
+
+**None of this is implemented.** The report's earlier story-view recommendation stands *only* as
+a latent risk (`[5]` proves the machinery works today); it is no longer the recommended fix.

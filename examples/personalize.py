@@ -324,7 +324,12 @@ class Personalizer:
                                     outlet_lean=self.backend._build_outlet_lean(b.mind))
         # W2: give the real reader their measured adaptive exposure (gated + shrunk toward 0.5);
         # everyone else in the augmented population keeps the neutral prior. Only the reader is served.
-        rexp = self._reader_exposure(user_id)
+        # Staged after the first production run: this is a THIRD recommendation_reception query per
+        # rebuild (after the cache key's and build_selective's), and it was the one unattributed
+        # store read inside serve_model — 6,151.9 ms of serve with only ~4,200 ms named is exactly
+        # the hole an unstaged query leaves.
+        with _stage("build_reader_exposure", ms):
+            rexp = self._reader_exposure(user_id)
         ruid = str(b.mind.dataset.user_ids[aug.reader_row])
         with _stage("build_recommenders", ms):
             rec = self.backend._build_recommenders(
