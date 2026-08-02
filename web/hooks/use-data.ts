@@ -187,6 +187,12 @@ export function useRecordRead() {
       for (const key of [queryKeys.history, queryKeys.dashboard, queryKeys.analytics, queryKeys.report]) {
         qc.invalidateQueries({ queryKey: key });
       }
+      // P3 (2026-08-02): a read changes the feed — the engine rebuilds the personal model on the
+      // very next fetch (measured ~50 ms), but this list was missing, so the reader kept seeing
+      // the pre-read feed until the 60 s staleTime lapsed AND the page remounted (never, if they
+      // stayed on /recommendations: no focus refetch, no polling). Bare prefix, same as the
+      // settings-save invalidation above: it matches every strategy variant and the explain query.
+      qc.invalidateQueries({ queryKey: ["recommendations"] });
     },
   });
 }

@@ -354,3 +354,145 @@ def test_auditor_cap_bucket_vs_ranking_bucket(tmp_path, monkeypatch):
     assert doc_off["opportunities"]["capSatisfied"] == 0
     assert doc_off["opportunities"]["rankedBelowCutoff"] == 2
     assert doc_off["verdict"]["code"] == "ranking"
+
+
+# --------------------------------------------------------------------------- #
+# P2 (2026-08-02): opposite-viewpoint siblings rank ahead of same-side ones.
+#
+# Verified in production before this existed: selection was (publishedAt, url), so with a same-side
+# sibling published 2.4h after an opposite-side one, the slot served the same side the reader had
+# just read. "Opposite" is relative to the ANCHOR — the article just read — by the catalog's own
+# +-0.5 buckets; recency orders WITHIN each viewpoint group; and with no opposite-side sibling the
+# key degenerates to the original, which the twelve pre-P2 tests above continue to pin unchanged.
+# --------------------------------------------------------------------------- #
+
+LEAN_STORY = "Tribunal overturns the coastal levy accord decision"
+
+
+def _lean_stack(tmp_path, monkeypatch, members):
+    """The real serving stack around ONE lean-controlled cluster.
+
+    ``members``: ``(url, publisher, lean, days_ago)``; ``members[0]`` is the ANCHOR the reader
+    read. Titles share the cluster vocabulary; filler is token-disjoint and sized so no sibling is
+    served organically. The reader's own diet is LEFT (NPR filler reads) — deliberately, so a test
+    can tell anchor-relative opposition from reader-relative opposition."""
+    monkeypatch.setenv("RWE_RECS_SOURCE", "feed")
+    monkeypatch.setenv("RWE_FEED_MIN_ARTICLES", "5")
+    monkeypatch.setenv("RWE_SEED", "0")
+    monkeypatch.setenv("RWE_STORY_SLOT", "1")
+    st = store_mod.Store(f"sqlite:///{tmp_path / 'lean.db'}")
+    suffixes = ["", " again", " today", " briefing", " update"]
+    for i, (url, pub, lean, days_ago) in enumerate(members):
+        _feed(st, url, pub, LEAN_STORY + suffixes[i % len(suffixes)], days_ago=days_ago, lean=lean)
+    pubs = [("AP", 0.0), ("Reuters", 0.0), ("NPR", -1.0), ("BBC News", 0.0),
+            ("The Hill", 0.5), ("Newsmax", 1.5)]
+    for k in range(120):
+        pub, lean = pubs[k % len(pubs)]
+        _feed(st, f"https://{pub.split()[0].lower()}{k % len(pubs)}.example.com/x/{k}", pub,
+              f"filing{k} memo{k} briefing{k} notice{k} dossier{k}",
+              days_ago=1.0 + (k % 5) * 0.1, lean=lean)
+    uid = st.upsert_user_by_identity("dev", "lean-reader").id
+    _read(st, uid, members[0][0], members[0][1], LEAN_STORY)
+    for k in (2, 8, 14, 20):                        # NPR filler -> a LEFT diet
+        _read(st, uid, f"https://npr2.example.com/x/{k}", "NPR",
+              f"filing{k} memo{k} briefing{k} notice{k} dossier{k}")
+    er._INDEX_CACHE.update(key=None, index=None)
+
+    import api_server as engine
+    import feed_source
+    ns = SimpleNamespace(profile=None, npz=None, qbias=None, register_csv=None, emotion_csv=None,
+                         behaviors=None, lean_tau=None, domain=None, n_users=None,
+                         max_items=None, seed=0)
+    feed_csv = feed_source.prepare(st)
+    assert feed_csv
+    monkeypatch.setenv("RWE_QBIAS", feed_csv)
+    monkeypatch.setenv("RWE_PROFILE", "qbias")
+    be = engine.Backend(engine.resolve_profile(ns))
+    be.attach_url_resolver(feed_source.load_url_map(feed_csv))
+    return personalize.Personalizer(be, st, persist=False), uid
+
+
+def _top(pers, uid):
+    feed = pers.recommendations(uid)
+    card = feed[0]
+    assert card["strategy"] == "story", f"the slot must fire; top was {card['strategy']}"
+    return er._canon(str(card["article"]["url"]))
+
+
+def test_opposite_view_sibling_beats_a_newer_same_side_one(tmp_path, monkeypatch):
+    """The production case that motivated P2, now inverted: the LEFT reader read the LEFT anchor;
+    a LEFT sibling is the newest coverage but a RIGHT one exists — the RIGHT one must win."""
+    pers, uid = _lean_stack(tmp_path, monkeypatch, [
+        ("https://cnn2.example.com/story/levy", "CNN", -1.0, 1.2),        # anchor, read
+        ("https://fox2.example.com/story/levy", "Fox News", 1.5, 1.1),    # opposite, OLDER
+        ("https://guardian2.example.com/story/levy", "The Guardian", -1.5, 1.0),  # same side, newest
+    ])
+    assert _top(pers, uid) == er._canon("https://fox2.example.com/story/levy")
+
+
+def test_opposition_is_anchor_relative_not_reader_relative(tmp_path, monkeypatch):
+    """The discriminator. The reader's DIET is left, but the article just read is RIGHT — so the
+    other side of *this story* is LEFT. A reader-relative implementation (or the old plain-recency
+    key) would pick the newer RIGHT sibling; anchor-relative picks the older LEFT one."""
+    pers, uid = _lean_stack(tmp_path, monkeypatch, [
+        ("https://fox3.example.com/story/levy", "Fox News", 1.5, 1.2),    # anchor, read (RIGHT)
+        ("https://cnn3.example.com/story/levy", "CNN", -1.0, 1.1),        # opposite-of-anchor, older
+        ("https://newsmax3.example.com/story/levy", "Newsmax", 1.5, 1.0), # same-as-anchor, newest
+    ])
+    assert _top(pers, uid) == er._canon("https://cnn3.example.com/story/levy")
+
+
+def test_same_side_by_a_different_number_is_not_opposite(tmp_path, monkeypatch):
+    """-1.5 vs an anchor of -1.0 differs numerically and opposes nothing. The newest sibling's
+    lean EQUALS the anchor's — deliberately: a mutant that reads "opposite" as "any different
+    number" promotes only the older -1.5 and picks it, while the true bucket rule sees one
+    viewpoint group and keeps the pre-P2 behaviour verbatim: newest coverage wins."""
+    pers, uid = _lean_stack(tmp_path, monkeypatch, [
+        ("https://cnn4.example.com/story/levy", "CNN", -1.0, 1.2),          # anchor, read
+        ("https://guardian4.example.com/story/levy", "The Guardian", -1.5, 1.1),  # same side, older
+        ("https://msnbc4.example.com/story/levy", "MSNBC", -1.0, 1.0),      # same side, NEWEST
+    ])
+    assert _top(pers, uid) == er._canon("https://msnbc4.example.com/story/levy")
+
+
+def test_recency_breaks_ties_inside_the_opposite_group(tmp_path, monkeypatch):
+    pers, uid = _lean_stack(tmp_path, monkeypatch, [
+        ("https://cnn5.example.com/story/levy", "CNN", -1.0, 1.2),          # anchor, read
+        ("https://fox5.example.com/story/levy", "Fox News", 1.5, 1.1),      # opposite, older
+        ("https://nypost5.example.com/story/levy", "New York Post", 1.0, 1.0),  # opposite, NEWEST
+    ])
+    assert _top(pers, uid) == er._canon("https://nypost5.example.com/story/levy")
+
+
+def test_opposing_leans_is_bucketed_and_licenses_no_claim_from_unrated():
+    """The predicate itself (L2.2 at the slot). Unit-level ON PURPOSE: an unrated article never
+    even reaches selection end-to-end — the corpus export drops lean-less articles, so the
+    `col is None` gate excludes them upstream — which made an integration assertion here vacuous
+    (the first draft of this test passed against a mutant that counted unrated as opposite).
+    The predicate is the one place the rule lives, so it is pinned directly."""
+    assert personalize._opposing_leans(-1.0, 1.5) and personalize._opposing_leans(1.5, -1.0)
+    assert personalize._opposing_leans(-0.5, 0.5), "the buckets' own boundary is inclusive"
+    assert not personalize._opposing_leans(-1.0, -1.5), "same side, different number"
+    assert not personalize._opposing_leans(-1.0, 0.4), "centre opposes nothing"
+    assert not personalize._opposing_leans(0.0, 0.0)
+    assert not personalize._opposing_leans(None, 1.5), "unrated anchor licenses no claim"
+    assert not personalize._opposing_leans(-1.0, None), "unrated sibling licenses no claim"
+    assert not personalize._opposing_leans(float("nan"), 1.5), "NaN survives float() and must fail"
+    assert not personalize._opposing_leans("garbage", 1.5)
+
+
+# --------------------------------------------------------------------------- #
+# P1 (2026-08-02): the flag must be deployable. It existed only in the Colab notebooks; the
+# production compose `environment:` block is an explicit allowlist with no env_file, so
+# RWE_STORY_SLOT in deploy/.env could never reach the api container — the feature was
+# structurally off in production regardless of operator intent.
+# --------------------------------------------------------------------------- #
+
+
+def test_the_flag_is_wired_through_the_production_compose():
+    compose = (ROOT / "deploy" / "docker-compose.yml").read_text()
+    api_block = compose.split("\n  api:", 1)[1].split("\n  web:", 1)[0]
+    assert "RWE_STORY_SLOT" in api_block, \
+        "the api service must pass RWE_STORY_SLOT through, or deploy/.env cannot enable the slot"
+    assert "${RWE_STORY_SLOT:-0}" in api_block, \
+        "the compose default must preserve OFF — enabling is an explicit deploy/.env decision"

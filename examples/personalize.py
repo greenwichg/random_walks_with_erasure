@@ -80,6 +80,23 @@ _EXPLANATION_PRIORITY = ("story_match", "bridge", "new_publisher", "topic_contin
                          "long_tail", "coverage_breadth")
 
 
+def _opposing_leans(anchor_lean, sibling_lean) -> bool:
+    """Whether a sibling sits on the OPPOSITE side of the spectrum from the anchor the reader read.
+
+    Bucket thresholds are the catalog's own (left <= -0.5, right >= +0.5 — the same cut every lean
+    filter uses), so "opposite" here means left-vs-right, never merely "a different number":
+    -1.5 vs -0.8 is the same side, and centre opposes nothing. Unrated (None/NaN) leans license no
+    claim (L2.2) and are never counted as opposite — a fabricated opposition would be worse than a
+    same-side card."""
+    try:
+        a, s = float(anchor_lean), float(sibling_lean)
+    except (TypeError, ValueError):
+        return False
+    if a != a or s != s:                                 # NaN — unrated survives float()
+        return False
+    return (a <= -0.5 and s >= 0.5) or (a >= 0.5 and s <= -0.5)
+
+
 @dataclass
 class PersonalModel:
     """A real user's augmented model, cached by ``reading_version``.
@@ -327,7 +344,12 @@ class Personalizer:
 
         Cap: one card, and an organically-selected ``story_match`` card counts toward it (the slot
         then no-ops; organic cards are never removed). Selection among qualifying siblings is
-        deterministic and order-free: newest ``publishedAt`` first, ties by canonical URL.
+        deterministic and order-free: siblings whose lean OPPOSES the read anchor's (left-vs-right
+        by the catalog's own +-0.5 buckets — see :func:`_opposing_leans`) rank ahead of same-side /
+        centre / unrated ones, and recency (newest ``publishedAt``, ties by canonical URL) orders
+        WITHIN each viewpoint group. With no opposite-side sibling the ordering is therefore
+        exactly the pre-viewpoint behaviour, newest first — verified, not assumed, by the tests
+        that predate the preference and still pass unchanged.
         Displacement is semantic: the served card whose resolved explanation sits lowest on the
         resolver's own priority ladder leaves the feed (ties by canonical URL) — never dependent
         on feed ordering. The card is serialized by the SAME ``_serialize_rec`` as every other
@@ -346,8 +368,10 @@ class Personalizer:
             story = idx.get(ru)
             if not story:
                 continue
-            anchor_pub = next((str(c.get("publisher") or "") for c in story["coverage"]
-                               if _canonical_url(str(c.get("url") or "")) == ru), "")
+            anchor = next((c for c in story["coverage"]
+                           if _canonical_url(str(c.get("url") or "")) == ru), None)
+            anchor_pub = str((anchor or {}).get("publisher") or "")
+            anchor_lean = (anchor or {}).get("lean")
             for member in story["coverage"]:
                 cu = _canonical_url(str(member.get("url") or ""))
                 if (not cu or cu in read_urls or cu in served
@@ -356,15 +380,23 @@ class Personalizer:
                 col = item_of.get(str(self._catalog_ids.get(cu)))
                 if col is None:                      # not a recommendable corpus node -> never fabricate
                     continue
-                candidates.setdefault(cu, {"col": int(col), "url": cu,
-                                           "publishedAt": str(member.get("publishedAt") or "")})
+                entry = candidates.setdefault(cu, {"col": int(col), "url": cu,
+                                                   "publishedAt": str(member.get("publishedAt") or ""),
+                                                   "opposite": False})
+                # OR across pairings: the reader may have read several members of this cluster, and
+                # a sibling that opposes ANY of those read anchors is a genuine other-side offer.
+                if _opposing_leans(anchor_lean, member.get("lean")):
+                    entry["opposite"] = True
         if not candidates:
             return recs, {**diag, "reason": "no qualifying story sibling in the current corpus"}
         ctx = self.explanation_context(user_id)
         types = [er.resolve(r, ctx, idx).get("type") for r in recs]
         if "story_match" in types:
             return recs, {**diag, "reason": "an organic story_match card is served (cap 1)"}
-        best = max(candidates.values(), key=lambda c: (c["publishedAt"], c["url"]))
+        # Opposite-view group first; recency orders within each group. `True > False` does the
+        # grouping, so with zero opposite candidates this key degenerates to the original
+        # (publishedAt, url) — the no-opposite case is the old behaviour by construction.
+        best = max(candidates.values(), key=lambda c: (c["opposite"], c["publishedAt"], c["url"]))
         prio = {t: i for i, t in enumerate(_EXPLANATION_PRIORITY)}
         drop = max(range(len(recs)), key=lambda i: (
             prio.get(types[i], len(prio)),
@@ -377,7 +409,7 @@ class Personalizer:
             familiarity = None
         card = self.backend._serialize_rec(m.corpus, best["col"], "story", user_side, familiarity)
         out = [card] + [r for i, r in enumerate(recs) if i != drop]
-        diag.update(fired=True, inserted=best["url"],
+        diag.update(fired=True, inserted=best["url"], opposite=best["opposite"],
                     displaced={"url": _canonical_url(str((recs[drop].get("article") or {})
                                                          .get("url") or "")),
                                "explanation": types[drop]})

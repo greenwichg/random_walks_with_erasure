@@ -230,6 +230,13 @@ services:
       # envelope the TTL above already accepts. `0` restores the reader-paid rebuild (kill switch,
       # no rebuild required — restart api).
       RWE_STORIES_SERVE_STALE: ${RWE_STORIES_SERVE_STALE:-}
+      # Story-Match slot (P1, 2026-08-02): AT MOST ONE card of the default feed for another
+      # publisher's coverage of a story the reader actually read — opposite-viewpoint siblings
+      # first (P2), P1-explainable by construction. Default 0 = OFF, the flag's shipped default:
+      # enabling is an explicit deploy/.env decision (RWE_STORY_SLOT=1 + restart api). This line
+      # exists because the compose environment is an allowlist — without it the flag could never
+      # reach the container, and the built, tested feature was structurally undeployable.
+      RWE_STORY_SLOT: ${RWE_STORY_SLOT:-0}
       # The build subprocess (P0-2') — ON. Story clustering is pure Python; on a thread it holds
       # the GIL against every request handler, which is the measured mechanism behind the
       # post-ingest windows (2026-08-01: /api/health 2-3 ms -> 55 ms while the 11.5 s warm ran).
