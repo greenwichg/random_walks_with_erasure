@@ -1854,11 +1854,31 @@ def list_stories(store_, *, topic=None, publisher=None, lean=None, country=None,
     sort = sort if sort in SORTS else "top"
     pg = OffsetPagination.from_params(limit, offset)
     t0 = _time.perf_counter()
-    stories = _cached_build(store_, topic=topic, date_from=date_from, date_to=date_to,
-                            max_scan=max_scan, min_articles=min_articles,
-                            min_publishers=min_publishers)
+    # ONE story universe (2026-08-02). `topic` used to be a BUILD parameter — a separate clustering
+    # over the topic's rows — and clustering is corpus-relative (IDF weights, token-commonness
+    # blocking, merge decisions), so a topic build could compose stories the default build splits
+    # differently: a probe found a 12-member Business story whose ledger votes fractured 4/4/2
+    # across three default-view ids (best share 0.33 < the 0.5 carryover), unresolvable by any id
+    # mapping — 59 of 1,257 rendered topic links (4.7%) were dead this way even after filtered
+    # builds learned to read the ledger. `get_story` resolves against the default view only, so a
+    # listed story must BE a default-view story: topic now post-filters the one build by the
+    # dominant `story.topic`, exactly as publisher/lean/country/blindspot always have. An explicit
+    # date range still gets its own (read-only-stabilized) build: it is the one filter whose rows
+    # can lie outside the default window, and no UI surface sends it.
+    topic_filter = (topic or "").strip().lower()
+    if date_from or date_to:
+        stories = _cached_build(store_, topic=topic, date_from=date_from, date_to=date_to,
+                                max_scan=max_scan, min_articles=min_articles,
+                                min_publishers=min_publishers)
+        topic_filter = ""                     # the build already narrowed by topic
+    else:
+        stories = _cached_build(store_, topic=None, date_from=None, date_to=None,
+                                max_scan=max_scan, min_articles=min_articles,
+                                min_publishers=min_publishers)
     cluster_ms = round((_time.perf_counter() - t0) * 1000.0, 2)
 
+    if topic_filter:
+        stories = [s for s in stories if (s.get("topic") or "").lower() == topic_filter]
     if publisher and publisher.strip():
         want = publisher.strip().lower()
         stories = [s for s in stories if want in {p.lower() for p in s["publishers"]}]

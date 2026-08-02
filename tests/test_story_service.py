@@ -2075,19 +2075,63 @@ def test_topic_filtered_lists_render_ids_the_detail_endpoint_resolves():
                 f"topic list rendered a dead link: {s['id']}"
 
 
-def test_filtered_builds_never_write_the_identity_ledger():
-    """The write ban stands: reading the map is the fix, writing it from a partial view is the
-    churn the original design refused. The ledger must be byte-identical across a filtered build
-    even when that build's raw ids disagree with it."""
+def test_date_range_builds_never_write_the_identity_ledger():
+    """The write ban stands on the one remaining per-key path: an explicit date range (the debug
+    surface — no UI sends one) builds its own clustering with READ-ONLY stabilization. The ledger
+    must be byte-identical across such a build even when its raw ids disagree with it. (Topic
+    queries no longer have a per-key build to test: they post-filter the default universe, whose
+    build rightly owns the write.)"""
     st = store_mod.Store("sqlite://")
     title, desc = _disjoint_cluster(st, 0, "Politics")
     ss.list_stories(st, limit=50)                       # ledger written by the default build
     _churn_anchor(st, 0, "Politics", title, desc)       # raw id now diverges from the ledger
     ss.clear_cache()
     ledger_before = st.story_member_ids()
-    ss.list_stories(st, topic="Politics", limit=50)     # filtered build: read-only stabilization
+    wide = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+    got = ss.list_stories(st, topic="Politics", date_from=wide, limit=50)["stories"]
+    assert got, "the date build must still produce the cluster"
     assert st.story_member_ids() == ledger_before, \
-        "a filtered build wrote the identity ledger — partial clusters must never own identity"
+        "a date-range build wrote the identity ledger — partial views must never own identity"
+
+
+def test_topic_queries_share_the_default_universe_not_a_second_clustering():
+    """The residual dead-link class (2026-08-02): clustering is corpus-relative, so a topic-only
+    build could compose stories the default build splits differently — a production specimen's
+    ledger votes fractured 4/4/2 (best share 0.33 < 0.5), unresolvable by any id mapping. Topic
+    queries therefore consume the ONE default build: no second cache entry, and every rendered id
+    is a default-view id by construction."""
+    st = store_mod.Store("sqlite://")
+    for k in range(4):
+        _disjoint_cluster(st, k, ["Politics", "Climate"][k % 2])
+    default_ids = {s["id"] for s in ss.list_stories(st, limit=50)["stories"]}
+    for topic in ("Politics", "Climate"):
+        listed = ss.list_stories(st, topic=topic, limit=50)["stories"]
+        assert listed and all(s["id"] in default_ids for s in listed)
+        assert all(ss.get_story(st, s["id"]) is not None for s in listed)
+    with ss._CACHE_LOCK:
+        assert len(ss._CACHE.get(st, {})) == 1, \
+            "a topic query built a second clustering instead of filtering the default universe"
+
+
+def test_topic_filter_matches_the_dominant_topic_case_insensitively():
+    st = store_mod.Store("sqlite://")
+    _disjoint_cluster(st, 0, "Politics")
+    _disjoint_cluster(st, 1, "Climate")
+    politics = ss.list_stories(st, topic="politics", limit=50)["stories"]
+    assert [s["topic"] for s in politics] == ["Politics"]
+    assert ss.list_stories(st, topic="Sports", limit=50)["stories"] == []
+
+
+def test_explicit_date_ranges_still_get_their_own_build():
+    """The one filter whose rows can lie outside the default window keeps its per-key build —
+    narrowing it to a post-filter would silently empty historical queries."""
+    st = store_mod.Store("sqlite://")
+    _disjoint_cluster(st, 0, "Politics")
+    ss.list_stories(st, limit=50)
+    wide = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+    ss.list_stories(st, date_from=wide, limit=50)
+    with ss._CACHE_LOCK:
+        assert len(ss._CACHE.get(st, {})) == 2, "a date range must key its own build"
 
 
 def test_empty_string_topic_is_the_default_view_not_an_unstabilized_twin():
