@@ -177,8 +177,12 @@ distance dial) remains flagged above, unimplemented by design.
 
 The flagged follow-up, at the approved scope — the ranking space now carries the grade:
 
-* **`feed_source._bias_label` is 5-point**: a moderate sided lean (`center ≤ |v| < (1+center)/2`,
-  i.e. [0.5, 0.75) at the default) emits `lean left`/`lean right`; strong leans keep the poles.
+* **`feed_source._bias_label` is 5-point**: a moderate sided lean (|v| in [0.5, **1.5**)) emits
+  `lean left`/`lean right`; strong leans (|v| ≥ 1.5) keep the poles. The 1.5 boundary is the
+  midpoint of the **declared [−2, 2] AllSides lattice** — the registry (the scorer's single lean
+  source) writes Lean Left/Right as ±1 and Left/Right as ±2. An earlier draft cut at 0.75, which
+  the registry audit caught before deploy: on the integer lattice that band is EMPTY, and nothing
+  would ever have graded in production.
   The sided/centre **partition is byte-identical** to the 3-point mapping (pinned by an
   exhaustive-sweep test), so cross-cutting membership and report bucket shares cannot move.
 * **`validate_qbias.label_to_pos(graded=True)`** resolves the lean variants to `±LEAN_GRADE`

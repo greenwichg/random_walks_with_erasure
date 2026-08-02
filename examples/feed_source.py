@@ -48,13 +48,17 @@ def _bias_label(lean, center: float = 0.5) -> str:
     """Map a numeric outlet lean to the AllSides-style label ``catalog_from_qbias`` parses.
 
     FIVE-point since the fractional-leans work (docs/RECOMMENDATION_STRENGTH_SLIDER.md): a strong
-    lean (|v| at or past midway between ``center`` and 1) stays ``left``/``right``; a moderate one
-    emits ``lean left``/``lean right``, so the ranking space keeps the grade instead of collapsing
-    CNN (−0.6) and Truthout (−1.0) onto one point — the measured reason every distance-graded
-    recommendation knob was inert. The sided/centre PARTITION is unchanged: every |v| >= center is
-    still sided, so cross-cutting membership and the report's bucket shares are untouched; only
-    the grade WITHIN the sided bucket is new. An unknown lean yields ``""`` — the builder then
-    drops the row, exactly as it does for a qbias row with no resolvable bias."""
+    lean stays ``left``/``right``; a moderate one emits ``lean left``/``lean right``, so the
+    ranking space keeps the grade instead of collapsing AllSides *Lean Left* outlets onto the same
+    point as the far poles — the measured reason every distance-graded recommendation knob was
+    inert. The full/lean boundary is **1.5** — the midpoint of the AllSides lattice this scale
+    declares, where the registry (the scorer's single lean source) writes Lean Left/Right as ±1
+    and Left/Right as ±2; a boundary derived from ``center`` (an early draft used
+    ``(1+center)/2 = 0.75``) leaves the lean band EMPTY on that integer lattice and nothing ever
+    grades in production. The sided/centre PARTITION is unchanged: every |v| >= center is still
+    sided, so cross-cutting membership and the report's bucket shares are untouched; only the
+    grade WITHIN the sided bucket is new. An unknown lean yields ``""`` — the builder then drops
+    the row, exactly as it does for a qbias row with no resolvable bias."""
     if lean is None:
         return ""
     try:
@@ -63,7 +67,7 @@ def _bias_label(lean, center: float = 0.5) -> str:
         return ""
     if not math.isfinite(v):
         return ""
-    full = (1.0 + center) / 2.0
+    full = 1.5                       # midway between AllSides Lean (±1) and full (±2)
     if v <= -full:
         return "left"
     if v <= -center:

@@ -53,21 +53,24 @@ def test_bias_label_is_five_point_and_preserves_the_sided_partition():
     """Fractional leans: a moderate sided lean emits the *lean* label (the grade the ranking space
     was measured to be missing), a strong one stays at the pole — and the sided/centre PARTITION
     is byte-identical to the 3-point mapping, so cross-cutting membership and report bucket
-    shares cannot move. Boundaries: sided at |v| >= center (0.5, inclusive — unchanged), full at
-    |v| >= (1 + center)/2 = 0.75."""
-    assert feed_source._bias_label(-0.6) == "lean left"      # CNN-grade
-    assert feed_source._bias_label(0.7) == "lean right"      # Fox-grade
+    shares cannot move. Boundaries on the DECLARED [-2, 2] AllSides scale, where the registry (the
+    scorer's single lean source) writes Lean Left/Right as ±1 and Left/Right as ±2: sided at
+    |v| >= center (0.5, inclusive — unchanged), full at |v| >= 1.5 (the lattice midpoint). A cut
+    derived from ``center`` instead — the first draft's 0.75 — leaves the lean band EMPTY on the
+    registry's integer lattice, and nothing ever grades in production."""
+    assert feed_source._bias_label(-1.0) == "lean left"      # AllSides Lean Left (CNN, NPR, …)
+    assert feed_source._bias_label(1.0) == "lean right"      # AllSides Lean Right (Geo TV, …)
+    assert feed_source._bias_label(-2.0) == "left"           # AllSides Left
+    assert feed_source._bias_label(2.0) == "right"           # AllSides Right (Fox News, NY Post)
     assert feed_source._bias_label(-0.5) == "lean left"      # sided boundary, inclusive as before
     assert feed_source._bias_label(0.5) == "lean right"
-    assert feed_source._bias_label(-0.75) == "left"          # full boundary, inclusive
-    assert feed_source._bias_label(0.75) == "right"
-    assert feed_source._bias_label(-1.0) == "left"
-    assert feed_source._bias_label(1.0) == "right"
+    assert feed_source._bias_label(-1.5) == "left"           # full boundary, inclusive
+    assert feed_source._bias_label(1.5) == "right"
     assert feed_source._bias_label(0.49) == "center"         # centre unchanged
-    # the partition invariant, exhaustively over a fine sweep: sided iff |v| >= 0.5, exactly as
-    # the 3-point mapping had it — the grade never moves an article across the centre line.
-    for i in range(-20, 21):
-        v = i / 10.0
+    # the partition invariant, exhaustively over a fine sweep of the declared scale: sided iff
+    # |v| >= 0.5, exactly as the 3-point mapping had it — the grade never crosses the centre line.
+    for i in range(-40, 41):
+        v = i / 20.0
         sided = feed_source._bias_label(v) in ("left", "lean left", "lean right", "right")
         assert sided == (abs(v) >= 0.5), v
 
@@ -83,7 +86,8 @@ def test_export_catalog_csv_format(tmp_path):
     # qbias-format + the Commit R1 political column (the scored article-level flag)
     assert set(rows[0].keys()) == {"title", "source", "bias_rating", "tags", "url", "political"}
     by = {r["source"]: r for r in rows}
-    assert by["Fox News"]["bias_rating"] == "right" and by["New York Times"]["bias_rating"] == "left"
+    assert by["Fox News"]["bias_rating"] == "right"          # 1.6 -> past the 1.5 lattice midpoint
+    assert by["New York Times"]["bias_rating"] == "lean left"  # -1.4 -> the grade now survives
     assert by["Fox News"]["url"].startswith("https://www.foxnews.com")  # url carried (builder ignores it)
     assert by["Fox News"]["tags"] == "Politics"
     assert by["Fox News"]["political"] == "1"     # the seed scores political=True
@@ -245,8 +249,8 @@ def test_graded_positions_flow_into_the_corpus_and_stay_consistent(tmp_path):
     import health_report as hr
 
     st = store.Store("sqlite://")
-    for name, lean in [("Truthout", -1.0), ("CNN", -0.6), ("AP", 0.0),
-                       ("Fox News", 0.7), ("Daily Caller", 1.0)]:
+    for name, lean in [("Truthout", -2.0), ("CNN", -1.0), ("AP", 0.0),
+                       ("Geo TV", 1.0), ("Daily Caller", 2.0)]:
         for k in range(8):
             u = f"https://ex.com/{name.replace(' ', '').lower()}/{k}"
             _add(st, u, u, name, lean, title=f"{name} covers the vote and the economy, item {k}")
@@ -257,8 +261,8 @@ def test_graded_positions_flow_into_the_corpus_and_stay_consistent(tmp_path):
     for o, p in zip(cat.outlets, cat.positions):
         by_outlet.setdefault(str(o), set()).add(round(float(p), 2))
     assert by_outlet["Truthout"] == {-1.0} and by_outlet["Daily Caller"] == {1.0}
-    assert by_outlet["CNN"] == {-LEAN_GRADE}, "a lean outlet must keep its grade, not the pole"
-    assert by_outlet["Fox News"] == {LEAN_GRADE}
+    assert by_outlet["CNN"] == {-LEAN_GRADE}, "an AllSides Lean Left outlet keeps its grade"
+    assert by_outlet["Geo TV"] == {LEAN_GRADE}
     assert by_outlet["AP"] == {0.0}
     assert len(set(np.round(cat.positions, 2))) == 5
 
@@ -283,8 +287,8 @@ def test_graded_positions_give_the_bridge_geometry_something_to_grade(tmp_path):
     from rwe import RWEB, FeedbackGraph
 
     st = store.Store("sqlite://")
-    for name, lean in [("Truthout", -1.0), ("CNN", -0.6), ("AP", 0.0),
-                       ("Fox News", 0.7), ("Daily Caller", 1.0)]:
+    for name, lean in [("Truthout", -2.0), ("CNN", -1.0), ("AP", 0.0),
+                       ("Geo TV", 1.0), ("Daily Caller", 2.0)]:
         for k in range(8):
             u = f"https://ex.com/{name.replace(' ', '').lower()}/{k}"
             _add(st, u, u, name, lean, title=f"{name} covers the vote and the economy, item {k}")

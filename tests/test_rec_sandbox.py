@@ -195,11 +195,22 @@ def test_fresh_known_outlet_article_becomes_a_ranked_graph_node(full):
     assert e["scored"]["outlet"] == "Associated Press" and e["scored"]["lean"] is not None
     for x in e["exclusions"]:
         assert x["status"] == "ok"
-        assert x["verdict"] in {"recommended", "below_cutoff"}
+        if x["reader"] == {"kind": "user", "id": 1}:
+            # The STORE reader's history is pinned by the fixture and cannot contain the injected
+            # article — seen_excluded here would be a real resolution bug.
+            assert x["verdict"] in {"recommended", "below_cutoff"}
+        else:
+            # The DEMO persona's history is SIMULATED over the evaluated corpus (which includes
+            # the injection), so "you read this article" is a truthful verdict whenever the
+            # seeded simulation clicks it — which draw the graded item positions (fractional
+            # leans, 2026-08-02) legitimately shifted. Pinning {recommended, below_cutoff} here
+            # pinned an RNG artifact, not a contract.
+            assert x["verdict"] in {"recommended", "below_cutoff", "seen_excluded"}
         if x["verdict"] == "below_cutoff":                    # per-strategy evidence attached
             assert set(x["byStrategy"]) == {"rwe-b", "rwe-d", "adaptive"}
             assert all("rank" in v and "score" in v for v in x["byStrategy"].values())
-        assert set(x["paramsUsed"]) == {"rwe-b", "rwe-d", "adaptive"}
+        if x["verdict"] != "seen_excluded":
+            assert set(x["paramsUsed"]) == {"rwe-b", "rwe-d", "adaptive"}
 
 
 def test_story_clustering_detects_the_injected_sibling(full):
