@@ -7,9 +7,15 @@
 # ranking, or the handler's own post-passes — is a property of this catalog, this reader's history
 # and this box. It has to be measured there.
 #
-#   bash deploy/ops/rec-latency-probe.sh --user 3          # full flow (cold + warm)
+#   bash deploy/ops/rec-latency-probe.sh                   # full flow, busiest reader
+#   bash deploy/ops/rec-latency-probe.sh --email you@x.com # …or name yourself by address
+#   bash deploy/ops/rec-latency-probe.sh --user 3          # …or by engine user id
 #   bash deploy/ops/rec-latency-probe.sh --warm-only       # no write: warm serves + live ratios
-#   bash deploy/ops/rec-latency-probe.sh --users           # just list candidate readers
+#   bash deploy/ops/rec-latency-probe.sh --users           # just list readers (uid, email, reads)
+#
+# The "uid" is the engine's own user id (users.id) — the integer the web tier sends as
+# X-IH-User-Id after Google sign-in. It is not shown in the product, so --users and --email exist
+# so nobody has to go looking for it.
 #
 # WRITES: unless --warm-only, this records ONE read for the chosen user (the flow under
 # measurement begins with a read; a rebuild cannot be forced any other way, because the model
@@ -20,14 +26,16 @@ set -uo pipefail
 API_CONTAINER="${API_CONTAINER:-deploy-api-1}"
 REPEATS="${REPEATS:-3}"
 UID_ARG=""
+EMAIL_ARG=""
 MODE="full"
 while [ $# -gt 0 ]; do
   case "$1" in
     --user)      UID_ARG="${2:-}"; shift 2 ;;
+    --email)     EMAIL_ARG="${2:-}"; shift 2 ;;
     --repeats)   REPEATS="${2:-3}"; shift 2 ;;
     --warm-only) MODE="warm"; shift ;;
     --users)     MODE="users"; shift ;;
-    -h|--help)   sed -n '2,17p' "$0"; exit 0 ;;
+    -h|--help)   sed -n '2,23p' "$0"; exit 0 ;;
     *)           echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -131,6 +139,27 @@ def user_ids(store_mod, st_):
     from sqlalchemy import select as _sel
     with st_.session() as s:
         return list(s.scalars(_sel(store_mod.User.id).order_by(store_mod.User.id)).all())
+
+def user_rows(store_mod, st_):
+    """(uid, email, reads) per reader, busiest first — so an operator can recognise themselves
+    without already knowing the number this script wants."""
+    from sqlalchemy import select as _sel
+    with st_.session() as s:
+        rows = list(s.execute(_sel(store_mod.User.id, store_mod.User.email)).all())
+    return sorted(((u, e or "", st_.count_reads(u)) for u, e in rows), key=lambda r: -r[2])
+
+def resolve_uid(store_mod, st_, uid_arg, email_arg):
+    """uid > email > busiest reader. Returns (uid, how) or (None, reason)."""
+    if uid_arg:
+        return (int(uid_arg), "given") if st_.get_user(int(uid_arg)) else (None, f"no user {uid_arg}")
+    rows = user_rows(store_mod, st_)
+    if email_arg:
+        want = email_arg.strip().lower()
+        for u, e, _n in rows:
+            if e.strip().lower() == want:
+                return u, f"matched {email_arg}"
+        return None, f"no user with email {email_arg} (try --users)"
+    return (rows[0][0], "busiest reader") if rows else (None, "no users")
 PYPRE
 
 say "=================================================================="
@@ -158,13 +187,15 @@ PY
 # ── 1. Candidate readers ──────────────────────────────────────────────────────────────────────
 say ""
 say "[1] Readers (a model rebuild is proportional to reads x catalog, so the reader matters)"
-api_py <<PY || true
+api_py "${EMAIL_ARG}" <<PY || true
 $PREAMBLE
 store_mod, st_ = open_store()
-rows = sorted(((u, st_.count_reads(u)) for u in user_ids(store_mod, st_)), key=lambda r: -r[1])
-for uid, n in rows[:10]:
-    print(f"  uid={uid:<5} reads={n}")
+rows = user_rows(store_mod, st_)
+for uid, email, n in rows[:15]:
+    print(f"  uid={uid:<5} reads={n:<6} {email}")
 print(f"  catalog articles: {st_.count_feed_articles()}")
+chosen, how = resolve_uid(store_mod, st_, "${UID_ARG}", sys.argv[1] if len(sys.argv) > 1 else "")
+print(f"  -> this run will use uid={chosen} ({how})")
 PY
 [ "$MODE" = "users" ] && exit 0
 
@@ -173,9 +204,13 @@ PY
 # holding — which is a different fix from "the rebuild is slow", so the two are measured apart.
 say ""
 say "[2] WARM path — repeated GET /api/recommendations, no read in between"
-api_py <<PY || true
+api_py "${EMAIL_ARG}" <<PY || true
 $PREAMBLE
-UID = ${UID_ARG:-0} or None
+store_mod, st_ = open_store()
+UID, how = resolve_uid(store_mod, st_, "${UID_ARG}", sys.argv[1] if len(sys.argv) > 1 else "")
+if UID is None:
+    print(f"  !! {how}"); raise SystemExit(0)
+print(f"  uid={UID} ({how})")
 before_t, before_c = rec_metrics()
 walls = []
 for i in range($REPEATS):
@@ -207,15 +242,12 @@ fi
 say ""
 say "[3] COLD path — POST /api/me/reads (1 NEW read) -> GET /api/recommendations"
 say "    NOTE: this writes one read row for the chosen reader."
-api_py <<PY || true
+api_py "${EMAIL_ARG}" <<PY || true
 $PREAMBLE
 store_mod, st_ = open_store()
-UID = ${UID_ARG:-0}
-if not UID:
-    cand = sorted(user_ids(store_mod, st_), key=lambda i: -st_.count_reads(i))
-    UID = cand[0] if cand else None
+UID, how = resolve_uid(store_mod, st_, "${UID_ARG}", sys.argv[1] if len(sys.argv) > 1 else "")
 if UID is None:
-    print("  !! no users — cannot measure the signed-in path"); raise SystemExit(0)
+    print(f"  !! {how} — cannot measure the signed-in path"); raise SystemExit(0)
 
 read_urls = {r.get("article_id") for r in st_.get_reads(UID)}
 pick = None
@@ -225,7 +257,7 @@ for a in st_.list_feed_articles(limit=400):
         break
 if pick is None:
     print("  !! every recent catalog article is already read by this user"); raise SystemExit(0)
-print(f"  uid={UID}  reads_before={st_.count_reads(UID)}")
+print(f"  uid={UID} ({how})  reads_before={st_.count_reads(UID)}")
 print(f"  article: ...{str(pick['url'])[-42:]}  ({pick.get('publisher')})")
 
 before_t, before_c = rec_metrics()
