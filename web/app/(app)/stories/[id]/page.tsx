@@ -33,26 +33,48 @@ const fmtDate = (iso?: string) =>
  * (filterable coverage list + the intelligence timeline), where coverage is thin (breakdown panel's
  * zero-side callouts), and what to read next (related stories + the reader's own feed).
  *
- * Three queries: the story, its intelligence (inside StoryIntelligencePanel), and the SAME
- * top-stories page the home page runs — usually a cache hit — for related coverage. The reader's
- * recommendations reuse their existing cached feed. No new endpoints.
+ * Queries: the story, its intelligence (inside StoryIntelligencePanel), and — for the four-item
+ * related module — two SMALL story queries instead of the home page's full 60-story list. The RUM
+ * investigation measured that list at ~200 KB and ~a third of this page's entire API transfer, all
+ * to pick 4 cards; on the entry paths that matter most (a shared link, a push-notification tap)
+ * nothing has warmed the cache, so every such visitor paid it. The reader's recommendations reuse
+ * their existing cached feed. No new endpoints — both queries are existing `/api/stories` filters.
  */
 export default function StoryDetailPage() {
   const { t, timeAgo } = useTranslation();
   const params = useParams<{ id: string }>();
   const id = params?.id ?? "";
   const { data: story, isLoading, isError, refetch } = useStory(id);
-  const stories = useStories({ sort: "top", limit: 60 });
+  // Related coverage, same editorial rule as before — same topic first, then the day's top events,
+  // never this story itself — served by two bounded queries whose limits are worst-case sized: the
+  // topic query needs 4 after excluding self (5 covers it), and the top-6 fill still yields 4 when
+  // every one of its members is either self or a topic duplicate. One deliberate edge improved: a
+  // same-topic story ranked below the old top-60 window is now eligible — deeper topic coverage,
+  // same intent. The topic query waits for the story (its input); the fill query fires at once.
+  const topStories = useStories({ sort: "top", limit: 6 });
+  const topicStories = useStories(
+    { topic: story?.topic, sort: "top", limit: 5 },
+    { enabled: !!story?.topic },
+  );
   const recommendations = useRecommendations();
 
-  // Related coverage: same topic first, then the day's top events, never this story itself.
+  // Wait for the topic query to settle before composing, or the top-6 fill — which usually lands
+  // first now — would paint an unprioritised list and visibly reshuffle when the topic results
+  // arrive. The old code never showed that (its one big query carried both halves at once), and a
+  // below-fold module appearing ~100 ms later is better than one that rearranges itself.
+  const topicSettled = !story?.topic || topicStories.isSuccess || topicStories.isError;
   const related = React.useMemo(() => {
-    const all = stories.data?.stories ?? [];
-    const others = all.filter((s) => s.id !== id);
-    const sameTopic = story ? others.filter((s) => s.topic === story.topic) : [];
-    const rest = story ? others.filter((s) => s.topic !== story.topic) : others;
-    return [...sameTopic, ...rest].slice(0, 4);
-  }, [stories.data, story, id]);
+    if (!topicSettled) return [];
+    const seen = new Set([id]);
+    const merged = [];
+    for (const s of [...(topicStories.data?.stories ?? []), ...(topStories.data?.stories ?? [])]) {
+      if (!seen.has(s.id)) {
+        seen.add(s.id);
+        merged.push(s);
+      }
+    }
+    return merged.slice(0, 4);
+  }, [topicSettled, topicStories.data, topStories.data, id]);
 
   const back = (
     <Link

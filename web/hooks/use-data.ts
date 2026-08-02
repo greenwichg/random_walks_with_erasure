@@ -28,8 +28,14 @@ export const useHistory = () => useQuery({ queryKey: queryKeys.history, queryFn:
 export const useTopics = () => useQuery({ queryKey: queryKeys.topics, queryFn: services.topics });
 export const useDiscover = (filters?: import("@/lib/discover-params").DiscoverFilters) =>
   useQuery({ queryKey: queryKeys.discover(filters), queryFn: () => services.discover(filters) });
-export const useStories = (query?: StoryQuery) =>
-  useQuery({ queryKey: queryKeys.stories(query), queryFn: () => services.stories(query) });
+export const useStories = (query?: StoryQuery, opts?: { enabled?: boolean }) =>
+  useQuery({
+    queryKey: queryKeys.stories(query),
+    queryFn: () => services.stories(query),
+    // `enabled` lets a caller wait for an input another query produces (the story-detail page's
+    // topic-scoped related query needs the story's topic first) without a conditional hook call.
+    enabled: opts?.enabled ?? true,
+  });
 export const useStory = (id: string) =>
   useQuery({ queryKey: queryKeys.story(id), queryFn: () => services.story(id), enabled: !!id });
 /** Publisher Intelligence profile; a 404 (unknown publisher) is surfaced, not retried. */
