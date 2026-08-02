@@ -7,6 +7,7 @@ import { useState, type ReactNode } from "react";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { LanguageProvider } from "@/lib/i18n";
 import { AnalyticsListener } from "@/components/analytics-listener";
+import { RumListener } from "@/components/rum-listener";
 
 /**
  * App-wide client providers: theme (light/dark/system), React Query, and the
@@ -33,6 +34,7 @@ export function Providers({ children }: { children: ReactNode }) {
           <LanguageProvider>
             <TooltipProvider delayDuration={200}>
               <AnalyticsListener />
+              <RumListener />
               {children}
             </TooltipProvider>
           </LanguageProvider>
