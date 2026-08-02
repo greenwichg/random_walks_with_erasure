@@ -59,6 +59,33 @@ function env_val() {
   printf '%s' "$v"
 }
 
+# Keys defined more than once in the env-file. docker compose keeps only the LAST occurrence, so an
+# appended line looks additive while silently discarding every earlier line of the same key — which
+# is how BETA_ALLOWLIST lost the operator's own address (three lines, only the last effective; the
+# owner locked out with not_allowlisted — 2026-08-02 prod incident). Prints key names only, never
+# values: the same file holds NEXTAUTH_SECRET and friends, and a hygiene warning must not become the
+# thing that leaks them into a pasted terminal log.
+function env_dup_keys() {
+  [ -f "$ENV_FILE" ] || return 0
+  grep -E '^[A-Za-z_][A-Za-z0-9_]*=' "$ENV_FILE" | cut -d= -f1 | sort | uniq -d
+}
+
+# Warn-only by design: a duplicate is always a mistake, but failing here would gate every deploy,
+# restart and backup behind cleanup — turning an old cosmetic duplicate into an outage lever. The
+# warning names each key, how many lines it has, and the one command that shows them.
+function warn_env_dups() {
+  local dups k n
+  dups="$(env_dup_keys)"
+  [ -n "$dups" ] || return 0
+  echo "WARNING: duplicate keys in ${ENV_FILE} — docker compose keeps only the LAST line of each;" >&2
+  echo "  every earlier line is silently ignored (this evicted BETA_ALLOWLIST entries, 2026-08-02):" >&2
+  for k in $dups; do
+    n="$(grep -cE "^${k}=" "$ENV_FILE")"
+    echo "    ${k} — ${n} lines; inspect with:  grep -nE '^${k}=' ${ENV_FILE}" >&2
+  done
+  echo "  Collapse each key to ONE line, then re-run." >&2
+}
+
 function need_env() {
   if [ ! -f "$ENV_FILE" ]; then
     echo "ERROR: $ENV_FILE not found." >&2
@@ -66,6 +93,7 @@ function need_env() {
     echo "  Then fill in the REQUIRED values (secrets, domain, OAuth, allowlist)." >&2
     exit 1
   fi
+  warn_env_dups
 }
 
 # Poll the engine's OBS1 readiness endpoint from INSIDE the api container (no host port needed — works

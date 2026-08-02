@@ -57,6 +57,14 @@ services:
   web:
     restart: unless-stopped
     ports: !reset []           # not published to the host — reachable only via Caddy on the Docker network
+    # journald, not the default json-file: json-file logs live and die with the CONTAINER, and every
+    # deploy recreates it — which erased the beta_access_denied audit trail exactly when the
+    # 2026-08-02 access investigation needed it (two days of denials, gone). The journal is host-side
+    # and persistent, so access-control lines survive any number of deploys. `docker logs` still
+    # works (journald is a read-back-capable driver); the durable cross-deploy query is
+    #   journalctl CONTAINER_NAME=deploy-web-1 --since '2 days ago' | grep beta_access_denied
+    logging:
+      driver: journald
     environment:
       # Turns ON the app's existing fail-closed production mode. The web container validates these at
       # startup (web/instrumentation.ts) and refuses to boot if any required value is missing.
@@ -94,6 +102,11 @@ services:
   api:
     restart: unless-stopped
     ports: !reset []           # engine is private: only `web` (same Docker network) calls it
+    # Same durable-audit reasoning as `web` above: the engine's identity/push/request lines kept
+    # vanishing at every deploy ("empty docker logs right after deploys" was a recurring
+    # investigation dead-end), so the journal is the log store and the container is not.
+    logging:
+      driver: journald
     environment:
       # Fail-closed engine auth: with RWE_ENV=production it refuses per-user calls without the shared
       # secret, and refuses to boot if the secret is unset.

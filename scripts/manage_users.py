@@ -32,8 +32,17 @@ is to tell you who can get in. ``tests/fixtures/beta_allowlist_parity.json`` is 
 suites (``tests/test_manage_users.py`` and ``web/lib/beta-access.test.ts``) so drift fails a build
 rather than surfacing as a locked-out tester.
 
-Exit codes: 0 the requested state now holds · 1 invalid input · 2 cannot read/write the file ·
-3 ``check`` says the gate would DENY (so it is scriptable).
+Parity covers PATH RESOLUTION, not just the parser. ``loadAllowlist`` opens a file only when
+``BETA_ALLOWLIST_FILE`` is a non-empty string — the gate has no default path. This CLI used to fall
+back to ``/app/data/allowlist.txt`` when the variable was unset or empty, which is precisely the
+drifted state: ``grant-access`` wrote the default path and promised "takes effect on their next
+sign-in" while the gate consulted env entries only, and ``check`` read the same phantom file back as
+ALLOW. The 2026-08-02 access investigation found that asymmetry in the tree (dormant in production
+only because ``deploy/.env`` happens to name the path), so the fallback is gone: with no configured
+file, grant/revoke refuse loudly and check/list answer from exactly what the gate would read.
+
+Exit codes: 0 the requested state now holds · 1 invalid input · 2 cannot read/write the file (or no
+allowlist file is configured) · 3 ``check`` says the gate would DENY (so it is scriptable).
 """
 
 from __future__ import annotations
@@ -50,7 +59,9 @@ from typing import Optional
 
 EXIT_OK, EXIT_INVALID, EXIT_IO, EXIT_DENIED = 0, 1, 2, 3
 
-DEFAULT_ALLOWLIST_FILE = "/app/data/allowlist.txt"
+#: The path deployments conventionally use — SUGGESTED in error messages, never silently assumed.
+#: (It was once a fallback; see "parity covers path resolution" in the module docstring.)
+SUGGESTED_ALLOWLIST_FILE = "/app/data/allowlist.txt"
 
 #: Mirrors `parseAllowlist` in web/lib/beta-access.ts. Splitting on newline/comma/semicolon is what
 #: lets one line hold several entries, which revoke has to handle without destroying its neighbours.
@@ -113,9 +124,26 @@ def env_entries(env=None) -> "list[Entry]":
     return parse_allowlist(env.get("BETA_ALLOWLIST"))
 
 
-def allowlist_path(explicit: Optional[str], env=None) -> str:
+def allowlist_path(explicit: Optional[str], env=None) -> "Optional[str]":
+    """The file the GATE will read, or ``None`` when it reads no file at all.
+
+    Mirrors ``loadAllowlist``: a set-but-empty ``BETA_ALLOWLIST_FILE`` (exactly what compose renders
+    from ``${BETA_ALLOWLIST_FILE:-}`` when ``deploy/.env`` lacks the key) means NO file — in both
+    languages the empty string is falsy, so the two sides agree by construction. An explicit
+    ``--file`` still wins: that is the operator naming a file, and grant warns if it is not the one
+    the gate reads."""
     env = os.environ if env is None else env
-    return explicit or env.get("BETA_ALLOWLIST_FILE") or DEFAULT_ALLOWLIST_FILE
+    return explicit or env.get("BETA_ALLOWLIST_FILE") or None
+
+
+def _no_file_error(verb: str) -> int:
+    print(f"error: cannot {verb} — no allowlist file is configured here.\n"
+          f"  BETA_ALLOWLIST_FILE is unset (or empty), and the sign-in gate reads a file ONLY when\n"
+          f"  it names one; there is no default on either side. Anything written to an assumed path\n"
+          f"  would grant nothing. Set it in deploy/.env for BOTH web and api (e.g.\n"
+          f"  BETA_ALLOWLIST_FILE={SUGGESTED_ALLOWLIST_FILE}), `docker compose … up -d`, and retry —\n"
+          f"  or pass --file to edit a specific file deliberately.", file=sys.stderr)
+    return EXIT_IO
 
 
 def read_lines(path: str) -> "list[str]":
@@ -196,6 +224,8 @@ def cmd_grant(args) -> int:
         print(f"error: {e}", file=sys.stderr)
         return EXIT_INVALID
     path = allowlist_path(args.file)
+    if path is None:
+        return _no_file_error(f"grant {args.email}")
     lines = read_lines(path)
     existing = parse_allowlist("\n".join(lines))
 
@@ -217,7 +247,15 @@ def cmd_grant(args) -> int:
               f"if that domain is ever removed")
     if not gate_enabled():
         print("  note: BETA_ACCESS_ENABLED is off here, so the gate is currently allowing everyone")
-    print("  takes effect on their next sign-in attempt — the file is re-read each time, no restart")
+    # The promise below is only true for the file the gate actually reads. With --file pointing
+    # anywhere else, saying it would repeat the exact lie this tool once told (see the docstring).
+    gate_file = os.environ.get("BETA_ALLOWLIST_FILE") or None
+    if gate_file == path:
+        print("  takes effect on their next sign-in attempt — the file is re-read each time, no restart")
+    else:
+        target = gate_file if gate_file else "NO file (BETA_ALLOWLIST_FILE is not set here)"
+        print(f"  WARNING: the sign-in gate reads {target} — this grant has no effect until "
+              f"BETA_ALLOWLIST_FILE names the file just written")
     return EXIT_OK
 
 
@@ -228,6 +266,8 @@ def cmd_revoke(args) -> int:
         print(f"error: {e}", file=sys.stderr)
         return EXIT_INVALID
     path = allowlist_path(args.file)
+    if path is None:
+        return _no_file_error(f"revoke {args.email}")
     lines = read_lines(path)
 
     kept, removed = [], 0
@@ -272,7 +312,7 @@ def cmd_revoke(args) -> int:
 
 def cmd_list(args) -> int:
     path = allowlist_path(args.file)
-    file_entries = parse_allowlist("\n".join(read_lines(path)))
+    file_entries = parse_allowlist("\n".join(read_lines(path))) if path else []
     env_e = env_entries()
     users = signed_in_emails()
 
@@ -286,8 +326,12 @@ def cmd_list(args) -> int:
         return EXIT_OK
 
     print(f"beta gate: {'ENABLED' if gate_enabled() else 'DISABLED (everyone is allowed)'}")
-    print(f"allowlist file: {path}"
-          f"{'' if pathlib.Path(path).exists() else '  (does not exist yet)'}")
+    if path is None:
+        print("allowlist file: NONE — file mode is OFF (BETA_ALLOWLIST_FILE is not set; "
+              "the gate reads BETA_ALLOWLIST env entries only)")
+    else:
+        print(f"allowlist file: {path}"
+              f"{'' if pathlib.Path(path).exists() else '  (does not exist yet)'}")
     if not file_entries and not env_e and gate_enabled():
         print("\n  ! FAIL-CLOSED: the gate is on and the allowlist is empty, so NOBODY can sign in.")
 
@@ -308,10 +352,11 @@ def cmd_list(args) -> int:
 
 
 def cmd_check(args) -> int:
-    """The decision the gate would actually make, by the same rules it uses."""
+    """The decision the gate would actually make, by the same rules it uses — including which file
+    (if any) it reads: with no configured file, only env entries count, exactly as in the gate."""
     email = (args.email or "").strip()
     path = allowlist_path(args.file)
-    entries = parse_allowlist("\n".join(read_lines(path))) + env_entries()
+    entries = (parse_allowlist("\n".join(read_lines(path))) if path else []) + env_entries()
     if not gate_enabled():
         print(f"ALLOW {email}: the gate is disabled here (BETA_ACCESS_ENABLED / RWE_ENV)")
         return EXIT_OK
@@ -334,8 +379,8 @@ def build_parser() -> argparse.ArgumentParser:
         prog="manage_users.py", description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--file", default=None,
-                    help="allowlist file (default: $BETA_ALLOWLIST_FILE, else "
-                         f"{DEFAULT_ALLOWLIST_FILE})")
+                    help="allowlist file (default: $BETA_ALLOWLIST_FILE — when that is unset the "
+                         "gate reads no file, and grant/revoke refuse rather than write one)")
     sub = ap.add_subparsers(dest="command", required=True)
 
     g = sub.add_parser("grant-access", help="allow an email (or @domain) to sign in")

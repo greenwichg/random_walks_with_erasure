@@ -67,6 +67,11 @@ def _fresh_story_cache():
 
     Before AND after, like its neighbour: before isolates from history, after keeps a test that
     left a pending refresh from leaking it forward."""
+    import sys
+    # Self-sufficient on purpose: relying on the neighbour fixture's insert made this the first
+    # fixture to fail whenever a test file (e.g. test_manage_users.py) ran standalone without any
+    # module-level engine import — masked in full-suite runs, where earlier files seed the path.
+    sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent.parent / "examples"))
     import story_service
     story_service.clear_cache()
     yield

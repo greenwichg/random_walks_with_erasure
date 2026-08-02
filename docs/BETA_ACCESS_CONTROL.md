@@ -28,9 +28,16 @@ Set on the **web tier** (the app that runs NextAuth):
 
 | Variable | Meaning |
 |---|---|
-| `BETA_ALLOWLIST` | Approved entries: comma / newline / semicolon separated. Each is an **email** (`ada@example.com`) or a **domain** (`@example.com`, approves everyone at that domain). Case-insensitive; whitespace trimmed; `#` starts a comment. |
-| `BETA_ALLOWLIST_FILE` | Optional path to a file in the same format, **appended** to `BETA_ALLOWLIST`. Lets you keep a long list in a mounted file and edit it without changing env. |
+| `BETA_ALLOWLIST` | Approved entries: comma / newline / semicolon separated. Each is an **email** (`ada@example.com`) or a **domain** (`@example.com`, approves everyone at that domain). Case-insensitive; whitespace trimmed; `#` starts a comment. **Exactly ONE line in `deploy/.env`** — see the pitfall below. |
+| `BETA_ALLOWLIST_FILE` | Path to a file in the same format, **appended** to `BETA_ALLOWLIST`. The gate reads a file **only when this is set to a non-empty value — there is no default path on either side**, and the CLI refuses to grant/revoke without it (writing to an assumed path would grant nothing). Set it on **both** `web` (the gate) and `api` (the CLI); mount the file's directory into `web`. |
 | `BETA_ACCESS_ENABLED` | `1`/`0` to force the gate on/off. **Defaults to ON in production** (`RWE_ENV=production`) and OFF in dev. |
+
+**One line per key in `deploy/.env` (2026-08-02 incident).** dotenv/compose semantics keep only the
+**last** line of a duplicated key — appending `BETA_ALLOWLIST=new@person.com` does not add an entry,
+it silently **replaces the whole list** and evicts everyone on earlier lines (this locked the
+operator out of their own beta). To add someone in env mode, edit the one existing line. The ops
+scripts now warn on every entry point when `deploy/.env` holds duplicate keys, and the web tier
+warns at boot when the gate is enabled with zero readable entries or an unreadable allowlist file.
 
 **Fail-closed:** when the gate is **enabled but the allowlist is empty**, **everyone is denied** (a
 misconfigured deploy stays private rather than accidentally opening) — and a warning is logged. So in
@@ -136,13 +143,18 @@ boundary and a friendly denial screen — nothing else.
 The gate logs its reason on every denial. Read that first — it distinguishes every cause in one line:
 
 ```bash
-docker logs deploy-web-1 2>&1 | grep beta_access_denied | tail -5
+docker logs deploy-web-1 2>&1 | grep beta_access_denied | tail -5          # current container only
+journalctl CONTAINER_NAME=deploy-web-1 --since '7 days ago' | grep beta_access_denied   # survives deploys
 ```
+
+`docker logs` spans one container, and **every deploy recreates it** — the journald logging driver
+(production compose) is what keeps the audit trail; use the `journalctl` form for anything that may
+predate the last deploy. (The 2026-08-02 investigation lost two days of denials to exactly this.)
 
 | `reason` | what it means | fix |
 |---|---|---|
 | `empty_allowlist` | the gate is ON and it read **no entries at all** | the file is unreadable from `web`, or `BETA_ALLOWLIST_FILE` is unset — see below |
-| `not_allowlisted` | entries were read, this address is not among them | the address does not match their Google account exactly |
+| `not_allowlisted` | entries were read, this address is not among the **effective** ones | three distinct causes, in observed order of likelihood: **(1)** duplicate `BETA_ALLOWLIST=` lines in `deploy/.env` — compose keeps only the last, earlier lines are dead (the 2026-08-02 lockout); **(2)** the denied `email` field doesn't match the entry character-for-character — the gate compares the exact address Google presents (dots and spelling literal, no Gmail alias folding); **(3)** the grant went to the file while `BETA_ALLOWLIST_FILE` is unset, so only env entries are effective (the CLI now refuses this instead of "succeeding") |
 | `no_email` | Google returned no email | rare; check the OAuth scopes |
 
 ### `empty_allowlist` while the file clearly has entries

@@ -191,6 +191,64 @@ def test_the_file_is_written_atomically(allowlist, monkeypatch):
     assert not leftovers, f"temp files left behind: {leftovers}"
 
 
+# --------------------------------------------------------------------------- path parity with the gate
+#
+# `loadAllowlist` (web/lib/beta-access.ts) opens a file only when BETA_ALLOWLIST_FILE is a non-empty
+# string — the gate has no default path. The CLI once fell back to /app/data/allowlist.txt, so with
+# the variable unset it maintained (and `check` read back as ALLOW) a file the gate never consulted.
+# Found live in the tree during the 2026-08-02 access investigation; these pin the repaired parity.
+
+
+@pytest.mark.parametrize("env", [{}, {"BETA_ALLOWLIST_FILE": ""}],
+                         ids=["unset", "set-but-empty (compose ${VAR:-} default)"])
+def test_allowlist_path_mirrors_the_gates_file_resolution(env):
+    """Empty means NO FILE on both sides — never a silently assumed default. The set-but-empty case
+    is what every container gets when deploy/.env lacks the key."""
+    assert mu.allowlist_path(None, env) is None
+    assert mu.allowlist_path("/x/y.txt", env) == "/x/y.txt", "--file must still win"
+
+
+@pytest.mark.parametrize("cmd", ["grant-access", "revoke-access"])
+def test_writes_refuse_when_the_gate_reads_no_file(cmd, monkeypatch, capsys):
+    """Writing to an assumed path would grant nothing; the tool must say so instead of succeeding."""
+    monkeypatch.setenv("BETA_ALLOWLIST_FILE", "")
+    monkeypatch.setenv("BETA_ACCESS_ENABLED", "1")
+    monkeypatch.delenv("BETA_ALLOWLIST", raising=False)
+    assert run(cmd, "alice@example.com") == mu.EXIT_IO
+    err = capsys.readouterr().err
+    assert "BETA_ALLOWLIST_FILE" in err and "no allowlist file" in err
+
+
+def test_check_answers_from_env_only_when_no_file_is_configured(monkeypatch):
+    """`check` must mirror the gate's sources exactly: no configured file ⇒ env entries decide."""
+    monkeypatch.setenv("BETA_ALLOWLIST_FILE", "")
+    monkeypatch.setenv("BETA_ACCESS_ENABLED", "1")
+    monkeypatch.setenv("BETA_ALLOWLIST", "bob@example.com")
+    assert run("check", "bob@example.com") == mu.EXIT_OK
+    assert run("check", "alice@example.com") == mu.EXIT_DENIED
+
+
+def test_list_access_names_file_mode_off(monkeypatch, capsys):
+    monkeypatch.setenv("BETA_ALLOWLIST_FILE", "")
+    monkeypatch.setenv("BETA_ACCESS_ENABLED", "1")
+    monkeypatch.setenv("BETA_ALLOWLIST", "bob@example.com")
+    assert run("list-access") == mu.EXIT_OK
+    assert "file mode is OFF" in capsys.readouterr().out
+
+
+def test_grant_promises_effect_only_for_the_file_the_gate_reads(allowlist, tmp_path, monkeypatch, capsys):
+    """The takes-effect line was the lie the old fallback told. It may appear only when the written
+    file IS the gate's file; an explicit --file elsewhere gets a warning naming the divergence."""
+    run("grant-access", "alice@example.com")
+    assert "takes effect on their next sign-in" in capsys.readouterr().out
+
+    other = tmp_path / "other.txt"
+    assert run("--file", str(other), "grant-access", "bob@example.com") == mu.EXIT_OK
+    out = capsys.readouterr().out
+    assert "takes effect" not in out
+    assert "no effect until" in out and str(allowlist) in out
+
+
 # --------------------------------------------------------------------------- shipped where documented
 
 

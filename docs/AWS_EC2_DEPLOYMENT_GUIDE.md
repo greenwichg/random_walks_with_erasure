@@ -182,8 +182,8 @@ in your copy of the compose (config edit on your box, not an app-code change). F
 | `NEXTAUTH_SECRET` | `openssl rand -base64 32` | Signs session JWTs. Rotating it invalidates all sessions (see §7). |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | from Google Cloud Console | The only sign-in method in prod. |
 | **`BETA_ACCESS_ENABLED`** | `1` | BA1 invite-only gate (defaults on in prod; set explicitly to be sure). |
-| **`BETA_ALLOWLIST`** | `a@x.com, b@y.com, …` (the 5 Wave-0 emails) or `@yourteam.com` | Fail-closed: enabled + empty = **everyone denied**. See `docs/BETA_ACCESS_CONTROL.md`. |
-| `BETA_ALLOWLIST_FILE` | *(optional)* `/app/data/allowlist.txt` | A file re-read per sign-in (add testers with **no restart**); mount it via the data volume. |
+| **`BETA_ALLOWLIST`** | `a@x.com, b@y.com, …` (the 5 Wave-0 emails) or `@yourteam.com` | Fail-closed: enabled + empty = **everyone denied**. **Exactly ONE line** — a second `BETA_ALLOWLIST=` line does not add, it **replaces** (last line wins; 2026-08-02 lockout). See `docs/BETA_ACCESS_CONTROL.md`. |
+| `BETA_ALLOWLIST_FILE` | `/app/data/allowlist.txt` (file mode) | A file re-read per sign-in (add testers with **no restart**); mount it via the data volume. The gate reads a file **only when this is set** (no default path), and the CLI refuses grant/revoke without it — so file mode is set-or-absent, never assumed. |
 
 ### Backups & monitoring (host-side)
 | Variable | Value | Used by |
@@ -547,7 +547,10 @@ $COMPOSE up -d && deploy/ops/healthcheck.sh          # back to ready
   access after a revoke. See `docs/BETA_ACCESS_CONTROL.md`.
 - **File mode (no restart):** edit `/opt/ih/data/allowlist.txt` (the `BETA_ALLOWLIST_FILE`) — re-read on
   the next sign-in.
-- **Env mode:** edit `BETA_ALLOWLIST` in `deploy/.env`, then `$COMPOSE up -d web`.
+- **Env mode:** edit the **one existing** `BETA_ALLOWLIST` line in `deploy/.env` (never append a
+  second line of the same key — compose keeps only the last, which silently evicts everyone on
+  earlier lines), then `$COMPOSE up -d web`. The ops scripts warn when `deploy/.env` holds
+  duplicate keys.
 - To **evict** someone already signed in immediately, rotate `NEXTAUTH_SECRET` (below) — this ends all
   sessions; the removed email is then denied on re-sign-in.
 
