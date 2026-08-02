@@ -2300,12 +2300,18 @@ class Store:
         """A user's **cross-cutting recommendation reception**: how many cross-cutting recs were
         surfaced (``shownCross``) and how many they opened (``openedCross``). ``rate`` =
         openedCross / shownCross is the real-user analogue of the population's cross-cutting
-        click-through that Open-Mindedness ranks; ``None`` when none have been surfaced."""
+        click-through that Open-Mindedness ranks; ``None`` when none have been surfaced.
+
+        Two indexed COUNTs, deliberately not a row fetch. This sits inside the personal-model
+        cache key — paid three times per recommendations request — and the production probe
+        measured the previous materialise-then-``len()`` shape at 40–170 ms per call once an
+        active reader's ``rec_events`` had grown; the rows were never used, only their number."""
         with self.session() as s:
-            rows = s.scalars(select(RecEvent).where(RecEvent.user_id == user_id,
-                                                    RecEvent.cross_cutting.is_(True))).all()
-        shown = len(rows)
-        opened = sum(1 for r in rows if r.opened_at is not None)
+            cross = and_(RecEvent.user_id == user_id, RecEvent.cross_cutting.is_(True))
+            shown = int(s.scalar(select(func.count()).select_from(RecEvent)
+                                 .where(cross)) or 0)
+            opened = int(s.scalar(select(func.count()).select_from(RecEvent)
+                                  .where(cross, RecEvent.opened_at.is_not(None))) or 0)
         return {"shownCross": shown, "openedCross": opened,
                 "rate": (opened / shown) if shown else None}
 

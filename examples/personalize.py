@@ -228,13 +228,23 @@ class Personalizer:
 
     # -- Open-Mindedness feedback loop ------------------------------------
     def _reception_key(self, user_id: int) -> Tuple[int, int]:
-        """Cache key for the user's recommendation reception. ``(0, 0)`` until Open-Mindedness is
-        active (enough cross-cutting recs surfaced *and* opened), so merely surfacing recs doesn't
-        churn the cache; once active it tracks ``(shown, opened)`` so opening more rebuilds."""
+        """Cache key for the user's recommendation reception: ``(0, 0)`` until Open-Mindedness is
+        active (enough cross-cutting recs surfaced *and* opened), then ``(1, openedCross)`` — the
+        activation edge and every OPEN rebuild the model.
+
+        ``shownCross`` is deliberately NOT in the key. Surfacing is something the SERVE does —
+        ``record_recommendations_shown`` runs after every response — so a shown-carrying key made
+        each request invalidate the model it had just used: the production probe caught two
+        rebuilds at the same ``readingVersion`` inside one window, 400–1,000 ms apiece, pure
+        waste (docs/RECOMMENDATION_LATENCY.md). Opens and reads are the READER's actions; both
+        still invalidate (opens twice over — the endpoint also calls :meth:`invalidate` eagerly).
+        The reception VALUES stay live — every rebuild re-reads them — so between-open serves see
+        a bounded-stale Open-Mindedness rank, never a wrong one, exactly as pre-activation serves
+        always have. ``min_opened`` is clamped ≥ 1, so an active key can never be ``(0, 0)``."""
         r = self.store.recommendation_reception(user_id)
         if (r["openedCross"] >= self._openmind_min_opened
                 and r["shownCross"] >= self._openmind_min_shown):
-            return (int(r["shownCross"]), int(r["openedCross"]))
+            return (1, int(r["openedCross"]))
         return (0, 0)
 
     def _augmented_selective(self, user_id: int, reader_row: int):
@@ -358,9 +368,9 @@ class Personalizer:
         return model
 
     def _model(self, user_id: int) -> PersonalModel:
-        """The user's cached augmented model, rebuilt when their reads *or* their cross-cutting
-        recommendation reception changed (either shifts the version, so the Measured report and
-        Open-Mindedness stay current)."""
+        """The user's cached augmented model, rebuilt on the READER's own actions: a new read
+        (reading version), a cross-cutting OPEN, or Open-Mindedness activating (both shift the
+        reception key — see :meth:`_reception_key` for why merely being shown more never does)."""
         ms: dict = {}
         # The cache KEY is two store reads — the reading version (count_reads) and the reception
         # version. Timed separately because they are paid on every request, hit or miss, and a
@@ -494,7 +504,7 @@ class Personalizer:
             _log_stages("rec_story_slot", sms, userId=user_id, fired=False)
             return recs, {**diag, "reason": "no qualifying story sibling in the current corpus"}
         with _stage("slot_context", sms):
-            ctx = self.explanation_context(user_id)
+            ctx = self.explanation_context(user_id, model=m)
         with _stage("slot_resolve_types", sms):
             types = [er.resolve(r, ctx, idx).get("type") for r in recs]
         _log_stages("rec_story_slot", sms, userId=user_id, fired=True, cards=len(recs))
@@ -557,11 +567,15 @@ class Personalizer:
             _, out["storySlot"] = self._apply_story_slot(user_id, m, base)
         return out
 
-    def explanation_context(self, user_id: int) -> dict:
+    def explanation_context(self, user_id: int, model: "PersonalModel | None" = None) -> dict:
         """Reader context for the Evidence Resolver (Commit 21a.3): the measured reader's reads
         (canonical URL + outlet, oldest first — recency by order), the same familiarity lookup
-        the reason gating uses, and their top reading topics. Read-only over the cached model."""
-        m = self._model(user_id)
+        the reason gating uses, and their top reading topics. Read-only over the cached model.
+
+        ``model`` lets a caller already holding this request's model (the story slot) reuse it
+        instead of paying a second cache-key lookup — identical semantics, since the lookup would
+        return that same cached object, and strictly better consistency within one request."""
+        m = model if model is not None else self._model(user_id)
         rep = hr.user_report(m.corpus.pop, m.corpus.mind, m.reader_row)
         reads = [{"url": _canonical_url(str(r.get("article_id") or "")),
                   "publisher": str(r.get("outlet") or ""),

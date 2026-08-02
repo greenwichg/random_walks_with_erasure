@@ -1,7 +1,8 @@
 # Recommendation latency — stage-by-stage investigation
 
 **Scope:** `POST /api/me/reads` → `GET /api/recommendations` returning, for a signed-in reader.
-**Status:** investigation only. Instrumentation shipped; **no behaviour changed, nothing optimised.**
+**Status:** investigation complete; the recommended fix is **implemented** — see
+"Implemented" at the end.
 **Date:** 2026-08-02. Production measurements added the same day — **they supersede the local
 findings below wherever they disagree, and they disagree on the headline.** See
 "Measured in production".
@@ -287,5 +288,44 @@ of materialising every row (two `SELECT count(*)` with the existing `user_id` in
 one `_model` result per request** instead of three lookups. Together they attack the ~350–550 ms
 warm floor.
 
-**None of this is implemented.** The report's earlier story-view recommendation stands *only* as
-a latent risk (`[5]` proves the machinery works today); it is no longer the recommended fix.
+The report's earlier story-view recommendation stands *only* as a latent risk (`[5]` proves the
+machinery works today); it is no longer the recommended fix.
+
+---
+
+# Implemented (2026-08-02)
+
+Three changes, matching the revised recommendation exactly:
+
+1. **`personalize._reception_key`** — the active key is now `(1, openedCross)`; `shownCross` is
+   out of the key. A serve recording what it showed no longer invalidates the model it just used;
+   the activation edge and every open (and, as always, every read) still rebuild. `min_opened` is
+   clamped ≥ 1, so an active key can never collide with the inactive `(0, 0)`. The reception
+   VALUES are re-read live at every rebuild — only the rebuild *trigger* coarsened.
+2. **`store.recommendation_reception`** — two indexed `COUNT`s instead of materialising every
+   cross-cutting `RecEvent` row as an ORM object to `len()` it. Same contract, bit for bit
+   (cross-only in both counts, opened ⊆ shown, `rate: None` at zero shown) — the pre-existing
+   equivalence tests in `tests/test_store.py` run unchanged against the new query.
+3. **`personalize.explanation_context(user_id, model=None)`** — the story slot passes the model
+   it already holds, removing one of the three per-request cache-key lookups. The handler's
+   explanations pass keeps its own lookup: it sits on the other side of a module boundary whose
+   shared Backend/Personalizer signature is not worth changing for a lookup that items 1–2 made
+   cheap.
+
+**Verification.**
+`test_surfacing_more_recs_does_not_rebuild_the_active_model` reproduces the production loop
+(active reader; shown-write after the serve) and fails against the reverted key — checked by
+mutation, not asserted. The production loop replayed locally: five serves with a shown-write
+after each = **1 miss + 4 hits** (pre-fix: a miss per serve), walls 15.8 → ~3 ms.
+
+**To confirm on the box** (the same probe, same sections):
+
+```bash
+sudo bash /opt/ih/deploy/ops/rec-latency-probe.sh --email you@example.com
+```
+
+Expected against the pre-fix run: `[2]`'s cache decisions show `+0 rec_model_cache_miss_total`
+(was `+2`) and no `rec_build_*` rows in the warm delta; `rec_cache_key_ms` collapses from
+~127 ms mean toward single digits; the warm floor drops from ~554 ms toward the
+explanations + slot-context + record-shown residue. The cold path after a read keeps its one
+legitimate rebuild.

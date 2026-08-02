@@ -290,6 +290,32 @@ def test_model_rebuilds_on_reception_change(backend, store):
     assert m2.reception_version != m1.reception_version
 
 
+def test_surfacing_more_recs_does_not_rebuild_the_active_model(backend, store):
+    """The production finding behind docs/RECOMMENDATION_LATENCY.md: the handler records what it
+    showed (``record_recommendations_shown``) AFTER every serve, so a ``shownCross``-carrying
+    cache key made each request invalidate the model it had just used — the probe caught two
+    rebuilds at the same readingVersion inside one window, 400–1,000 ms each, all waste.
+    Showing is the SYSTEM's act; only the reader's own actions rebuild."""
+    p = personalize.Personalizer(backend, store, persist=False)
+    uid = _new_user(store, "om-thrash")
+    _store_reads(store, uid, _catalog_reads(backend, n=8))
+    _surface_and_open(store, p, uid, n_open=1)          # Open-Mindedness ACTIVE from here on
+    m1 = p._model(uid)
+    assert m1.reception_version != (0, 0), "fixture must actually cross the activation gate"
+
+    # A later serve surfaces MORE cross-cutting cards — the exact write every response performs.
+    store.record_recommendations_shown(uid, [(f"__shown_only_{i}", True) for i in range(5)])
+    assert p._model(uid) is m1, "being shown more must not invalidate the model the serve used"
+
+    # …but an OPEN is the reader's action, and still rebuilds (openedCross is in the key).
+    assert store.record_recommendation_open(uid, "__shown_only_0", cross_cutting=True)
+    m2 = p._model(uid)
+    assert m2 is not m1 and m2.reception_version != m1.reception_version
+    # The rebuilt model reads the LIVE counts: the 5 extra surfaced cards lower the rate the
+    # selective array carries — bounded staleness between opens, never a wrong value at build.
+    assert store.recommendation_reception(uid)["shownCross"] > 5
+
+
 def test_reception_does_not_perturb_base_or_estimate(backend, store):
     """The feedback loop only adds the reader's own Open-Mindedness — the shared base/demo report
     (built with the population's own selective signal) is untouched by a real user's reception."""
