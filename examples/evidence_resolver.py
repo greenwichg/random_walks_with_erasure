@@ -140,7 +140,9 @@ def story_index(store_) -> dict:
     if _INDEX_CACHE["key"] == key and _INDEX_CACHE["index"] is not None:
         return _INDEX_CACHE["index"]
     index: dict = {}
-    for s in story_service.cluster_from_store(store_):
+    # The cached default view (see story_service.default_story_view): an index rebuild no longer
+    # pays a full clustering on the request thread — it reads the build the poller already warmed.
+    for s in story_service.default_story_view(store_):
         for m in s.get("coverage") or []:
             if m.get("url"):
                 index[_canon(str(m["url"]))] = {"storyId": s["id"], "coverage": s["coverage"]}

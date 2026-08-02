@@ -120,14 +120,18 @@ def _topic_gaps(raw_topics: list, catalog: dict) -> Optional[list]:
 
 def _co_coverage(store_, names: "set[str]") -> Optional[dict]:
     """Publishers that appear in the SAME clustered stories — counted co-membership over the
-    story layer (one count per shared story), never a similarity ranking. Uses the same
-    clustering the Stories surface serves. Omitted below CO_COVERAGE_MIN_STORIES shared
-    stories — one coincidental cluster is not a relationship."""
+    story layer (one count per shared story), never a similarity ranking. Reads the CACHED default
+    view — now literally the same build the Stories surface serves, not merely the same algorithm.
+    It re-clustered fresh per profile request until the cost crossed the web tier's 6 s deadline
+    and every publisher page rendered "Try again" (root-cause report, 2026-08-02); the counts are
+    identical, up to one rebuild (~seconds) of staleness that a co-membership tally cannot feel.
+    Omitted below CO_COVERAGE_MIN_STORIES shared stories — one coincidental cluster is not a
+    relationship."""
     import story_service    # lazy: the story layer is only needed when the profile has coverage
     lowered = {n.lower() for n in names}
     counts: dict = {}
     shared = 0
-    for s in story_service.cluster_from_store(store_):
+    for s in story_service.default_story_view(store_):
         pubs = s.get("publishers") or []
         if not any(p.lower() in lowered for p in pubs):
             continue

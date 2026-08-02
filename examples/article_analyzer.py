@@ -101,7 +101,11 @@ def _story_block(store_, canon: str, title: str) -> Optional[dict]:
     """Membership from the Story Service's own clusters for catalog articles; at most a
     ``similarStory`` advisory (never membership) for anything else."""
     try:
-        stories = story_service.cluster_from_store(store_)
+        # The cached default view, not a fresh per-request clustering — the same fix, for the same
+        # measured reason, as publisher co-coverage (root-cause report, 2026-08-02). Bonus: the ids
+        # are the stabilized ones /api/stories serves, so a membership link now lands on the same
+        # story id the story page itself uses.
+        stories = story_service.default_story_view(store_)
     except Exception:
         return None
     best, best_sim = None, 0.0

@@ -1720,11 +1720,81 @@ def _sort_stories(stories: list, sort: str) -> list:
     return stories       # "top" — build_stories already ordered biggest+freshest first
 
 
+def default_story_view(store_) -> list:
+    """The cached default clustered view — the SAME build the poller warms, serve-stale protects,
+    and the build subprocess computes. For request-path consumers that need the story layer as
+    data (co-coverage counting, analyzer membership, the evidence index) rather than the paginated
+    envelope.
+
+    This exists because of a measured production outage: every publisher profile called
+    :func:`cluster_from_store` — a full, cold, uncached clustering on the request thread — and the
+    cost crossed the web tier's 6 s deadline as the window grew (283 ms at 600 articles, 4,891 ms
+    at 15.3k on a fast idle box; slower still on the production host), turning every publisher
+    page into "Try again". The cached view answers the same question in ~2 ms once warm, and a
+    caller here inherits every protection the cache path has.
+
+    Served from the cache (fresh, or stale-within-TTL with the usual background refresh) in the
+    overwhelmingly common case — the poller warms this exact key on every ingest. Ids are then the
+    STABILIZED ones ``/api/stories`` serves, which is what a caller linking a reader to a story
+    page should have been using all along.
+
+    The TRUE-COLD case (pre-first-warm boot; expired TTL on a quiet catalog) builds inline,
+    **read-only and uncached** — raw ids, no identity write, exactly the pre-P0 behaviour minus
+    its every-request repetition. That is a contract, not a shortcut: ``/api/analyze`` documents
+    itself as writing nothing anywhere, and ``test_analysis_writes_nothing_anywhere`` failed the
+    first draft of this function for caching (and thereby id-stabilising) on its cold path.
+    Identity writes belong to the warm and refresh paths, which already own them.
+
+    Callers must treat the list as read-only: it is (usually) the cache's own object."""
+    stories = _peek_default_view(store_)
+    if stories is not None:
+        return stories
+    return build_stories(_fetch(store_), min_articles=2, min_publishers=2)
+
+
+def _peek_default_view(store_) -> "list | None":
+    """The cached default build if servable, else ``None`` — a LOOK, never a build.
+
+    Mirrors ``_cached_build``'s lookup semantics for the default key, including the serve-stale
+    contract: a stale-within-TTL entry is served AND a background refresh is requested, so a
+    consumer arriving through the peek keeps the staleness bound a reader arriving through
+    ``list_stories`` gets. Expired, missing, or stale-with-the-kill-switch-off answers ``None``
+    and the caller decides what a miss means (``default_story_view``: a read-only inline build)."""
+    ttl = cache_ttl()
+    if ttl <= 0:
+        return None
+    try:
+        fingerprint = store_.catalog_fingerprint()
+    except Exception:
+        return None
+    logical = (None, None, None, None, 2, 2)
+    with _CACHE_LOCK:
+        entries = _CACHE.get(store_)
+        hit = entries.get(logical) if entries else None
+    if hit is None:
+        return None
+    built_at, built_fp, stories = hit
+    if (_time.time() - built_at) >= ttl:
+        return None
+    if built_fp == fingerprint:
+        return stories
+    if not serve_stale():
+        return None
+    _request_stale_refresh(store_, logical)
+    obs_metrics.incr("story_stale_served_total")
+    return stories
+
+
 def cluster_from_store(store_, *, min_articles: int = 2, min_publishers: int = 2,
                        sim: float = clustering.DEFAULT_SIM,
                        window_days: float = clustering.DEFAULT_WINDOW_DAYS, max_scan: int = None) -> list:
-    """The bare Story list for the current window (what ``discover.cluster_stories`` delegates to).
-    Uncached on purpose: it takes ``sim``/``window_days`` overrides the cache key does not carry."""
+    """The bare Story list for the current window, built FRESH on the calling thread.
+
+    Uncached on purpose: it takes ``sim``/``window_days`` overrides the cache key does not carry —
+    and that rationale is the whole contract. A caller passing NO overrides is asking the default
+    question and belongs on :func:`default_story_view`; three request-path callers sat here anyway
+    and one of them took every publisher page down when the catalog outgrew the web deadline.
+    Operator diagnostics and parameterised audits are what this function is for."""
     return build_stories(_fetch(store_, max_scan=max_scan), min_articles=min_articles,
                          min_publishers=min_publishers, sim=sim, window_days=window_days)
 

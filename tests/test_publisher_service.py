@@ -263,3 +263,49 @@ def test_co_coverage_omitted_below_floor():
     st = store_mod.Store("sqlite://")
     _shared_story(st, 1, "Dockworkers strike closes the main port", ["Alpha Post", "Beta Times"])
     assert "coCoverage" not in ps.get_publisher(st, "Alpha Post")
+
+
+# --------------------------------------------------------------------------- #
+# P0 (publisher-page outage, 2026-08-02): the profile's story-layer read rides the CACHED default
+# view. A fresh clustering per profile request crossed the web tier's 6 s deadline as the window
+# grew, and every publisher page rendered "Try again". These pin the mechanism, not the numbers.
+# --------------------------------------------------------------------------- #
+def test_a_profile_never_rebuilds_a_warmed_story_view(monkeypatch):
+    import story_service as ss
+    st = store_mod.Store("sqlite://")
+    _shared_story(st, 1, "Dockworkers strike closes the main port", ["Alpha Post", "Beta Times"])
+    _shared_story(st, 2, "Wildfires spread across the western coast", ["Alpha Post", "Beta Times"])
+    _shared_story(st, 3, "Senate passes the funding bill after debate", ["Alpha Post", "Beta Times"])
+    assert ss.warm_cache(st) is not None          # the poller's warm, as production runs it
+
+    calls = {"n": 0}
+    real = ss.build_stories
+    monkeypatch.setattr(ss, "build_stories",
+                        lambda *a, **kw: (calls.__setitem__("n", calls["n"] + 1), real(*a, **kw))[1])
+    prof = ps.get_publisher(st, "Alpha Post")
+    assert prof and prof["coCoverage"]["sharedStories"] == 3
+    assert calls["n"] == 0, "the profile re-clustered on the request thread — the outage's mechanism"
+
+
+def test_a_profile_during_a_stale_window_serves_without_an_inline_build(monkeypatch):
+    """After an ingest invalidates the story cache, a profile request must ride serve-stale — the
+    previous build plus a background refresh — never pay the rebuild inline. This is exactly the
+    protection the old cluster_from_store call bypassed."""
+    import story_service as ss
+    st = store_mod.Store("sqlite://")
+    _shared_story(st, 1, "Dockworkers strike closes the main port", ["Alpha Post", "Beta Times"])
+    _shared_story(st, 2, "Wildfires spread across the western coast", ["Alpha Post", "Beta Times"])
+    _shared_story(st, 3, "Senate passes the funding bill after debate", ["Alpha Post", "Beta Times"])
+    assert ss.warm_cache(st) is not None
+    _shared_story(st, 4, "Markets rally on tech earnings today", ["Alpha Post", "Beta Times"])
+
+    spawned = []
+    monkeypatch.setattr(ss, "_spawn_refresh", lambda s, k: spawned.append(k))
+    calls = {"n": 0}
+    real = ss.build_stories
+    monkeypatch.setattr(ss, "build_stories",
+                        lambda *a, **kw: (calls.__setitem__("n", calls["n"] + 1), real(*a, **kw))[1])
+    prof = ps.get_publisher(st, "Alpha Post")
+    assert prof and prof["coCoverage"]["sharedStories"] == 3   # the previous build's answer, served
+    assert calls["n"] == 0, "the stale window was paid inline instead of served stale"
+    assert len(spawned) == 1, "no background refresh was requested"

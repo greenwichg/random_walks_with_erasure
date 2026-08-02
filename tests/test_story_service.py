@@ -1969,3 +1969,61 @@ def test_shutdown_build_pool_is_idempotent(tmp_path):
     assert ss._BUILD_POOL is None
     ss.shutdown_build_pool()                           # second call: nothing to stop, no error
     assert ss._BUILD_POOL is None
+
+
+# --------------------------------------------------------------------------- #
+# default_story_view (publisher-page outage P0): cache when servable, read-only build when not.
+# --------------------------------------------------------------------------- #
+def test_default_view_serves_the_warmed_build_without_building(monkeypatch):
+    st = store_mod.Store("sqlite://"); _senate_and_wildfire(st)
+    assert ss.warm_cache(st) == 2
+    calls = {"n": 0}
+    real = ss.build_stories
+    monkeypatch.setattr(ss, "build_stories",
+                        lambda *a, **kw: (calls.__setitem__("n", calls["n"] + 1), real(*a, **kw))[1])
+    assert len(ss.default_story_view(st)) == 2
+    assert calls["n"] == 0
+
+
+def test_default_view_expired_entry_builds_inline_read_only(monkeypatch):
+    """Past the TTL the peek answers None and the fallback builds fresh — WITHOUT caching or
+    stabilising (the read-only contract /api/analyze depends on), and without a refresh spawn."""
+    st = store_mod.Store("sqlite://"); _senate_and_wildfire(st)
+    assert ss.warm_cache(st) == 2
+    with ss._CACHE_LOCK:
+        entries = ss._CACHE[st]
+        for k, (t, fp, stories) in list(entries.items()):
+            entries[k] = (t - ss.cache_ttl() - 1.0, fp, stories)
+    spawned = []
+    monkeypatch.setattr(ss, "_spawn_refresh", lambda s, k: spawned.append(k))
+    stabilized = {"n": 0}
+    real_st = ss.stabilize_ids
+    monkeypatch.setattr(ss, "stabilize_ids",
+                        lambda *a, **kw: (stabilized.__setitem__("n", stabilized["n"] + 1), real_st(*a, **kw))[1])
+    calls = {"n": 0}
+    real_build = ss.build_stories
+    monkeypatch.setattr(ss, "build_stories",
+                        lambda *a, **kw: (calls.__setitem__("n", calls["n"] + 1), real_build(*a, **kw))[1])
+    assert len(ss.default_story_view(st)) == 2
+    # The build MUST run: an expired entry served from the peek would leave `calls` at 0 — the
+    # mutant that survived the first version of this test, which asserted only the read-only side.
+    assert calls["n"] == 1, "an expired entry was served instead of rebuilt"
+    assert spawned == [] and stabilized["n"] == 0, "the cold fallback must stay read-only"
+
+
+def test_default_view_respects_the_serve_stale_kill_switch(monkeypatch):
+    """Switch off, stale entry: the peek must answer None (not serve stale against the operator's
+    setting) and the fallback builds inline."""
+    monkeypatch.setenv("RWE_STORIES_SERVE_STALE", "0")
+    st = store_mod.Store("sqlite://"); _senate_and_wildfire(st)
+    assert ss.warm_cache(st) == 2
+    _add(st, "https://ap.org/kv", "AP", 0.1, "Harbour pilots ratify their contract", days=1)
+    _add(st, "https://re.example/kv", "Reuters", 0.0, "Harbour pilots ratify contract", days=1)
+    calls = {"n": 0}
+    real = ss.build_stories
+    monkeypatch.setattr(ss, "build_stories",
+                        lambda *a, **kw: (calls.__setitem__("n", calls["n"] + 1), real(*a, **kw))[1])
+    spawned = []
+    monkeypatch.setattr(ss, "_spawn_refresh", lambda s, k: spawned.append(k))
+    assert len(ss.default_story_view(st)) == 3      # fresh inline build, new story included
+    assert calls["n"] == 1 and spawned == []
