@@ -49,6 +49,29 @@ def test_bias_label_matches_allsides_buckets():
     assert feed_source._bias_label(None) == ""
 
 
+def test_bias_label_is_five_point_and_preserves_the_sided_partition():
+    """Fractional leans: a moderate sided lean emits the *lean* label (the grade the ranking space
+    was measured to be missing), a strong one stays at the pole — and the sided/centre PARTITION
+    is byte-identical to the 3-point mapping, so cross-cutting membership and report bucket
+    shares cannot move. Boundaries: sided at |v| >= center (0.5, inclusive — unchanged), full at
+    |v| >= (1 + center)/2 = 0.75."""
+    assert feed_source._bias_label(-0.6) == "lean left"      # CNN-grade
+    assert feed_source._bias_label(0.7) == "lean right"      # Fox-grade
+    assert feed_source._bias_label(-0.5) == "lean left"      # sided boundary, inclusive as before
+    assert feed_source._bias_label(0.5) == "lean right"
+    assert feed_source._bias_label(-0.75) == "left"          # full boundary, inclusive
+    assert feed_source._bias_label(0.75) == "right"
+    assert feed_source._bias_label(-1.0) == "left"
+    assert feed_source._bias_label(1.0) == "right"
+    assert feed_source._bias_label(0.49) == "center"         # centre unchanged
+    # the partition invariant, exhaustively over a fine sweep: sided iff |v| >= 0.5, exactly as
+    # the 3-point mapping had it — the grade never moves an article across the centre line.
+    for i in range(-20, 21):
+        v = i / 10.0
+        sided = feed_source._bias_label(v) in ("left", "lean left", "lean right", "right")
+        assert sided == (abs(v) >= 0.5), v
+
+
 def test_export_catalog_csv_format(tmp_path):
     st = store.Store("sqlite://")
     _add(st, "https://foxnews.com/a", "https://www.foxnews.com/a", "Fox News", 1.6, title="Border plan")
@@ -205,3 +228,83 @@ def test_export_read_demand_exemption(tmp_path):
     # and the cap still binds for everything unread (composition stays balanced)
     guardian = [x for x in urls if "theguardian" in x]
     assert len(guardian) <= 5 + 1                              # capped set + the exempt read article
+
+
+def test_graded_positions_flow_into_the_corpus_and_stay_consistent(tmp_path):
+    """End to end: catalog leans -> 5-point labels -> catalog_from_qbias positions. A lean outlet
+    (0.6/0.7-grade) lands at ±LEAN_GRADE in ranking space, a pole outlet at ±1.0 — five distinct
+    positions where the pre-fractional pipeline produced three. And the consistency triple that
+    picked LEAN_GRADE = 0.6 holds for every graded position: sided for the report
+    (|pos| > LEAN_TAU, strict), cross-cutting-eligible (|pos| >= 0.5), sided for the web
+    (strict > 0.5) — no position may be centre on one surface and cross-cutting on another."""
+    import numpy as np
+    import sys
+    sys.path.insert(0, str(ROOT / "examples"))
+    from simulate_users import catalog_from_qbias
+    from validate_qbias import LEAN_GRADE
+    import health_report as hr
+
+    st = store.Store("sqlite://")
+    for name, lean in [("Truthout", -1.0), ("CNN", -0.6), ("AP", 0.0),
+                       ("Fox News", 0.7), ("Daily Caller", 1.0)]:
+        for k in range(8):
+            u = f"https://ex.com/{name.replace(' ', '').lower()}/{k}"
+            _add(st, u, u, name, lean, title=f"{name} covers the vote and the economy, item {k}")
+    out = feed_source.prepare(st, str(tmp_path / "graded.csv"), min_articles=5)
+    cat = catalog_from_qbias(out)
+
+    by_outlet = {}
+    for o, p in zip(cat.outlets, cat.positions):
+        by_outlet.setdefault(str(o), set()).add(round(float(p), 2))
+    assert by_outlet["Truthout"] == {-1.0} and by_outlet["Daily Caller"] == {1.0}
+    assert by_outlet["CNN"] == {-LEAN_GRADE}, "a lean outlet must keep its grade, not the pole"
+    assert by_outlet["Fox News"] == {LEAN_GRADE}
+    assert by_outlet["AP"] == {0.0}
+    assert len(set(np.round(cat.positions, 2))) == 5
+
+    for p in set(float(x) for x in cat.positions):
+        if p == 0.0:
+            continue
+        assert abs(p) > hr.LEAN_TAU, f"{p} would sit in the report's centre bucket"
+        assert abs(p) >= 0.5, f"{p} would fail the cross-cutting gate"
+
+
+def test_graded_positions_give_the_bridge_geometry_something_to_grade(tmp_path):
+    """The point of the exercise (docs/RECOMMENDATION_STRENGTH_SLIDER.md): with 3-point positions,
+    RWEB's max_distance had nothing to grade — measured byte-identical slices at every setting.
+    With graded positions a bound that admits the near side but not the far side must change the
+    bridge erasure: the far pole stays suppressed at epsilon while the lean article becomes a
+    bridge. Mutation-checked: collapse the labels back to 3-point and this fails."""
+    import numpy as np
+    import sys
+    sys.path.insert(0, str(ROOT / "examples"))
+    from simulate_users import catalog_from_qbias
+    from validate_qbias import LEAN_GRADE
+    from rwe import RWEB, FeedbackGraph
+
+    st = store.Store("sqlite://")
+    for name, lean in [("Truthout", -1.0), ("CNN", -0.6), ("AP", 0.0),
+                       ("Fox News", 0.7), ("Daily Caller", 1.0)]:
+        for k in range(8):
+            u = f"https://ex.com/{name.replace(' ', '').lower()}/{k}"
+            _add(st, u, u, name, lean, title=f"{name} covers the vote and the economy, item {k}")
+    cat = catalog_from_qbias(feed_source.prepare(st, str(tmp_path / "g2.csv"), min_articles=5))
+
+    pos = np.asarray(cat.positions, dtype=float)
+    n = len(pos)
+    A = np.zeros((2, n))
+    A[0, np.flatnonzero(pos >= LEAN_GRADE)[:4]] = 1     # a right-diet reader
+    A[1, np.flatnonzero(pos <= -LEAN_GRADE)[:4]] = 1    # and a left one, so center isn't degenerate
+    fg = FeedbackGraph(A)
+    theta = np.array([0.8, -0.8])
+    i_lean, i_pole = int(np.argmin(np.abs(pos + LEAN_GRADE))), int(np.argmin(np.abs(pos + 1.0)))
+
+    bounded = RWEB(fg, theta, pos, epsilon=0.9, max_distance=1.5)   # reader@0.8: -0.6 in, -1.0 out
+    q = np.asarray(bounded._compute(np.array([0])))[0]
+    assert q[i_pole] == 0.9, "beyond the bound: suppressed at epsilon, not treated as a bridge"
+    assert q[i_lean] < 0.9, "within the bound: a graded bridge with sim-based erasure"
+
+    unbounded = RWEB(fg, theta, pos, epsilon=0.9, max_distance=None)
+    q2 = np.asarray(unbounded._compute(np.array([0])))[0]
+    assert q2[i_pole] < q2[i_lean] < 0.9, \
+        "unbounded: both are bridges and the farther one is preferred (lower erasure)"

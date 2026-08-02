@@ -17,10 +17,29 @@ LEAN_CSV = str(ROOT / "examples" / "data" / "outlet_lean.csv")
 
 
 def test_label_to_pos():
+    # DEFAULT stays 3-point: the validation CLI enumerates gold over (-1, 0, 1) and the Qbias
+    # dataset itself is 3-class — a graded value here would silently break the accuracy tables.
     assert vq.label_to_pos("left") == -1 and vq.label_to_pos("Lean Left") == -1
     assert vq.label_to_pos("right") == 1 and vq.label_to_pos("RIGHT") == 1
     assert vq.label_to_pos("center") == 0 and vq.label_to_pos("neutral") == 0
     assert np.isnan(vq.label_to_pos("")) and np.isnan(vq.label_to_pos("mixed"))
+
+
+def test_label_to_pos_graded_resolves_the_lean_variants():
+    """The corpus path (graded=True) keeps the AllSides grade: lean variants land at ±LEAN_GRADE,
+    the poles and centre stay put. ±0.6 and not ±0.5 because the report's centre bucket is
+    |pos| <= 0.5 INCLUSIVE while cross-cutting needs |pos| >= 0.5 — an article AT ±0.5 would be
+    'centre' on the report and 'cross-cutting' in the feed at the same time."""
+    g = vq.LEAN_GRADE
+    assert 0.5 < g < 1.0, "the grade must be sided under every cut yet distinct from the poles"
+    for lab in ("Lean Left", "leans left", "left-leaning", "lean-left"):
+        assert vq.label_to_pos(lab, graded=True) == -g, lab
+    for lab in ("Lean Right", "leans right", "right-leaning", "lean-right"):
+        assert vq.label_to_pos(lab, graded=True) == g, lab
+    assert vq.label_to_pos("left", graded=True) == -1        # poles unchanged
+    assert vq.label_to_pos("right", graded=True) == 1
+    assert vq.label_to_pos("center", graded=True) == 0
+    assert np.isnan(vq.label_to_pos("mixed", graded=True))
 
 
 def test_pick_col_autodetect_and_override():

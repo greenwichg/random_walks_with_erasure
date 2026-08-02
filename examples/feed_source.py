@@ -45,10 +45,16 @@ def _data_dir() -> str:
 
 
 def _bias_label(lean, center: float = 0.5) -> str:
-    """Map a numeric outlet lean in ``[-2, 2]`` to the AllSides-style label ``catalog_from_qbias``
-    parses (``left`` / ``center`` / ``right``), matching how the qbias corpus is positioned. An
-    unknown lean yields ``""`` — the builder then drops the row, exactly as it does for a qbias row
-    with no resolvable bias."""
+    """Map a numeric outlet lean to the AllSides-style label ``catalog_from_qbias`` parses.
+
+    FIVE-point since the fractional-leans work (docs/RECOMMENDATION_STRENGTH_SLIDER.md): a strong
+    lean (|v| at or past midway between ``center`` and 1) stays ``left``/``right``; a moderate one
+    emits ``lean left``/``lean right``, so the ranking space keeps the grade instead of collapsing
+    CNN (−0.6) and Truthout (−1.0) onto one point — the measured reason every distance-graded
+    recommendation knob was inert. The sided/centre PARTITION is unchanged: every |v| >= center is
+    still sided, so cross-cutting membership and the report's bucket shares are untouched; only
+    the grade WITHIN the sided bucket is new. An unknown lean yields ``""`` — the builder then
+    drops the row, exactly as it does for a qbias row with no resolvable bias."""
     if lean is None:
         return ""
     try:
@@ -57,10 +63,15 @@ def _bias_label(lean, center: float = 0.5) -> str:
         return ""
     if not math.isfinite(v):
         return ""
-    if v <= -center:
+    full = (1.0 + center) / 2.0
+    if v <= -full:
         return "left"
-    if v >= center:
+    if v <= -center:
+        return "lean left"
+    if v >= full:
         return "right"
+    if v >= center:
+        return "lean right"
     return "center"
 
 

@@ -188,7 +188,9 @@ def catalog_from_qbias(csv_path, max_items=None, seed=0) -> ItemCatalog:
         pc = _pick_col(rd.fieldnames, ("political",))
         uc = _pick_col(rd.fieldnames, ("url", "link"))
         for i, row in enumerate(rd):
-            g = label_to_pos(row.get(bc, ""))
+            # graded: 'lean left'/'lean right' land at ±LEAN_GRADE, not the poles — the corpus
+            # keeps the registry's grade so distance-graded recommendation is possible at all.
+            g = label_to_pos(row.get(bc, ""), graded=True)
             if not np.isfinite(g):
                 continue
             pos.append(g)

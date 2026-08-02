@@ -79,8 +79,8 @@ Two stacked mechanisms, both measured:
 
 1. **The ranking space carries only three political positions.** `feed_source._bias_label`
    collapses every article's numeric lean to `left` / `center` / `right` at a ±0.5 cut
-   (`feed_source.py:47`), and the qbias corpus positions items from those labels
-   (`rwe/mind.py:52`). Measured in the recommender: `unique(item_positions) = {−1.0, 0.0, +1.0}`.
+   (`feed_source.py:47`), and `validate_qbias.label_to_pos` — the qbias corpus's label parser —
+   snapped even the *lean* variants onto the poles. Measured in the recommender: `unique(item_positions) = {−1.0, 0.0, +1.0}`.
    CNN (−0.6) and Truthout (−1.0) are **the same point** in ranking space. "Different but not too
    far" (the paper's `max_distance` criterion) has nothing to grade — there is no intermediate
    distance to prefer, which is exactly why `max_distance` measured inert.
@@ -170,3 +170,42 @@ are untouched — `rec_params_from_settings` still produces byte-identical param
 
 The structural follow-up (fractional leans through `_bias_label` to enable a true per-card
 distance dial) remains flagged above, unimplemented by design.
+
+---
+
+## Implemented (2026-08-02): the fractional-leans enabling work
+
+The flagged follow-up, at the approved scope — the ranking space now carries the grade:
+
+* **`feed_source._bias_label` is 5-point**: a moderate sided lean (`center ≤ |v| < (1+center)/2`,
+  i.e. [0.5, 0.75) at the default) emits `lean left`/`lean right`; strong leans keep the poles.
+  The sided/centre **partition is byte-identical** to the 3-point mapping (pinned by an
+  exhaustive-sweep test), so cross-cutting membership and report bucket shares cannot move.
+* **`validate_qbias.label_to_pos(graded=True)`** resolves the lean variants to `±LEAN_GRADE`
+  (**0.6** — and the value is load-bearing: the report's centre bucket is `|pos| ≤ 0.5`
+  *inclusive* while cross-cutting needs `|pos| ≥ 0.5`, so an article AT ±0.5 would be centre on
+  one surface and cross-cutting on another; ±0.6 is sided under every cut in the system). The
+  **default stays 3-point**: the validation CLI's gold enumeration and the Qbias dataset itself
+  are 3-class. `catalog_from_qbias` opts in.
+* Verified end to end: catalog leans → 5 CSV labels → **5 distinct corpus positions**
+  ({−1, −0.6, 0, +0.6, +1}); CNN-grade outlets keep their grade instead of the pole; the
+  consistency triple holds for every graded position. The augmented reader's own position is
+  graded too (the click-mean now averages graded values — a balanced-diet reader measured +0.030
+  where the quantized corpus said +0.100).
+* **The geometry now grades** (the point of the exercise, mutation-checked): with a
+  `max_distance` bound that admits the near side but not the far side, RWEB suppresses the pole
+  at ε while the lean article becomes a sim-graded bridge; unbounded, both are bridges with the
+  farther preferred — where the quantized corpus measured byte-identical erasure at every
+  setting.
+
+**What a serving-visible dial still needs, measured honestly:** the *served* bridge slice's
+ordering is dominated by walk mass (`p`) and cross-first inclusion — a 3.4× erasure spread did
+not reorder the slice on the production-like harness. Wiring a knob (which the shipped slider
+copy deliberately does not promise) therefore additionally needs a selection-level distance
+preference in the bridge slice, a design decision reserved for when a product surface actually
+asks for it. No knob was wired here; served feeds change only in that graded positions flow into
+ranking, explain panels (an article can now read `Right (0.60)` instead of a false `(1.00)`),
+and the reader's measured position.
+
+Full suite after the change: 2,587 passed, zero failures — the partition invariant held across
+every report, filter, and recommendation test.

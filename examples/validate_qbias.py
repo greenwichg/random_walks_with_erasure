@@ -76,12 +76,31 @@ def _pick_col(fieldnames, candidates, override=None):
     return None
 
 
-def label_to_pos(label) -> float:
+#: Graded position for the *lean* variants under ``label_to_pos(graded=True)``. 0.6, not 0.5, and
+#: the value is load-bearing: the report's centre bucket is ``|pos| <= 0.5`` INCLUSIVE
+#: (health_report.LEAN_TAU), cross-cutting needs ``|pos| >= 0.5``, and the web buckets cut strictly
+#: at ``> 0.5`` — an article AT ±0.5 would count "centre" in the report while "cross-cutting" in
+#: the feed, an inconsistency no position may occupy. ±0.6 is sided under every cut in the system.
+LEAN_GRADE = 0.6
+
+
+def label_to_pos(label, graded: bool = False) -> float:
     """AllSides bias label -> gold position ``-1`` (left) / ``0`` (center) / ``+1`` (right);
-    ``nan`` if unrecognised. Tolerant of 'lean left', 'centrist', 'neutral', etc."""
+    ``nan`` if unrecognised. Tolerant of 'lean left', 'centrist', 'neutral', etc.
+
+    ``graded=True`` (the corpus-construction path) resolves the *lean* variants to
+    ``±LEAN_GRADE`` instead of snapping them onto the poles — the fractional-leans work
+    (docs/RECOMMENDATION_STRENGTH_SLIDER.md): with only three positions in ranking space,
+    every distance-graded recommendation knob measured inert. The DEFAULT stays 3-point
+    because this CLI's gold enumeration — and the Qbias dataset itself — are 3-class."""
     s = str(label).strip().lower()
     if not s or s in ("nan", "none", "mixed", "n/a"):
         return float("nan")
+    if graded and "lean" in s:          # 'lean left', 'leans right', 'left-leaning', 'lean-left'
+        if "left" in s:
+            return -LEAN_GRADE
+        if "right" in s:
+            return LEAN_GRADE
     if s in ("left", "lean left", "leans left", "left-leaning", "-1"):
         return -1.0
     if s in ("right", "lean right", "leans right", "right-leaning", "1", "+1"):
