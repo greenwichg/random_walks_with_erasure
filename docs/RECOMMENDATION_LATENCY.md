@@ -329,3 +329,49 @@ Expected against the pre-fix run: `[2]`'s cache decisions show `+0 rec_model_cac
 ~127 ms mean toward single digits; the warm floor drops from ~554 ms toward the
 explanations + slot-context + record-shown residue. The cold path after a read keeps its one
 legitimate rebuild.
+
+## Post-deploy verification (2026-08-02, `f8dbf57`, probe at 15:16 — ~90 s after the restart)
+
+**The fix verified, by the counters it was specified in:**
+
+* `[2]` warm window: **`+0 rec_model_cache_miss_total`** across 4 serves (`+8` hits) and zero
+  `rec_build_*` rows in the delta — pre-fix the same window showed `+2` misses with two full
+  rebuilds. The serve no longer invalidates its own model.
+* `rec_cache_key_ms` per lookup: **8.9–23.7 ms** in the stage lines — measured *under heavy
+  load* (below) — versus 36–167 ms on a *quiet* box pre-fix. The COUNT rewrite works.
+* Lookups per serve: `cache_key` fired **8× for 4 serves** (2 each: the serve + the handler's
+  explanations pass) — was 3 each; the slot now reuses the request's model.
+* `[3]`: exactly **`+1` miss** — the legitimate post-read rebuild — and the build line now
+  carries `build_reader_exposure`, confirming the running build.
+
+**And the run caught the "latent risk" live — it is now the measured #1 problem.** The deploy
+restarted the process with an empty story cache, the probe (and the reader's open browser) hit it
+before the poller's first warm, and `[5]` recorded:
+
+```
+peek hits    : 1
+inline builds: 4        <- full clusterings on REQUEST threads
+story_default_view_inline_build_ms  count=2  avg=23,840.7  max=24,175.1
+```
+
+Four inline story builds started in the boot window; the two that had finished by the snapshot
+cost **~24 s each** at 51,829 articles. The inline branch is deliberately **uncached** (the
+`/api/analyze` read-only contract), so until the poller's first warm every story-consuming
+request repeats it — and on a 2-vCPU box, two concurrent 24 s clusterings starve everything
+else. That contention, not the recommendation pipeline, is why this run's walls are *worse* than
+the quiet pre-fix run: the `[3]` model rebuild cost 1,996 ms against 93.9 ms for the identical
+build on the same code base quiet — a 21× inflation with `build_population` at 1,360 ms, and
+`slot_reads` (a per-user reads fetch measured at 3–5 ms quiet) at 340 ms. The probe effectively
+measured the box mid-clustering-storm, which is exactly what a reader hitting the site in the
+first minute after any deploy experiences.
+
+Two consequences:
+
+1. **Steady-state verification needs a re-run** on the warmed process — the fix's wall-clock
+   effect (warm floor toward ~100–250 ms) is masked here by the boot storm.
+2. **The story-view boot window is promoted from latent risk to the recommended next fix**, in
+   its original form: a request-thread peek miss must not cluster inline — serve last-known (or
+   empty, which every consumer already tolerates) and kick the existing single-flighted
+   background refresh, while keeping a genuinely read-only inline path for `/api/analyze`'s
+   documented zero-write contract. At 24 s × N concurrent consumers × every restart, this is
+   now the largest single latency source in the system.
