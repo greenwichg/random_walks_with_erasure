@@ -5,6 +5,7 @@ ordering, coverage calculation, stable IDs that survive new coverage, pagination
 diagnostics, that Discover + Stories reuse this one service, and that it never touches the recommender.
 """
 
+import os
 import pathlib
 import sys
 from datetime import datetime, timedelta, timezone
@@ -1866,3 +1867,105 @@ def test_inline_warm_logs_story_cache_warm(monkeypatch):
     assert warms[0]["stories"] >= 1
     assert warms[0]["durationMs"] >= 0.0, "duration is the field the cost was measured with"
     assert warms[0]["coalesced"] == 1, "inline absorbs exactly one write notification"
+
+
+# --------------------------------------------------------------------------- #
+# The build subprocess (P0-2′): clustering runs off the serving process's GIL.
+# Real forkserver spawns below — slow-ish (~2 s once per test) and worth it: the equality and
+# stable-id claims are exactly the ones a fake would assume away.
+# --------------------------------------------------------------------------- #
+def _file_store(tmp_path):
+    st = store_mod.Store(f"sqlite:///{tmp_path}/stories.db")
+    _senate_and_wildfire(st)
+    return st
+
+
+def _counter(name):
+    import obs_metrics
+    return obs_metrics.snapshot().get("counters", {}).get(name, 0)
+
+
+def test_the_offloaded_build_matches_the_inline_build_exactly(tmp_path):
+    """The child is the same `_fetch` + `build_stories` over the same file — same stories, same
+    order, and (because identity is applied in the parent either way) the same stable ids."""
+    st = _file_store(tmp_path)
+    before = _counter("story_build_subprocess_total")
+    assert ss.warm_cache(st) == 2                      # eligible: file-backed + enabled by default
+    offloaded = ss.list_stories(st)["stories"]
+    assert _counter("story_build_subprocess_total") == before + 1, "the build never left the process"
+
+    os.environ["RWE_STORY_BUILD_SUBPROCESS"] = "0"
+    try:
+        ss.clear_cache()
+        inline = ss.list_stories(st)["stories"]
+    finally:
+        os.environ.pop("RWE_STORY_BUILD_SUBPROCESS", None)
+    assert [s["id"] for s in offloaded] == [s["id"] for s in inline]
+    assert [s["title"] for s in offloaded] == [s["title"] for s in inline]
+    assert [s["totalCoverage"] for s in offloaded] == [s["totalCoverage"] for s in inline]
+
+
+def test_stable_ids_survive_the_offloaded_path(tmp_path):
+    """`stabilize_ids` runs in the PARENT over the child's output; a story must keep its id across
+    an offloaded rebuild that grew its coverage — the same promise the inline path makes."""
+    st = _file_store(tmp_path)
+    assert ss.warm_cache(st) == 2
+    sid = next(s for s in ss.list_stories(st)["stories"] if "Senate" in s["title"])["id"]
+    # An EARLIER member on purpose (days=3): it becomes the cluster's earliest article, so the RAW
+    # derived id changes — only the parent's stabilize pass can keep the served id constant. A
+    # later member would leave the raw id equal to the stable one and prove nothing (a mutant that
+    # skipped identity on the offloaded path survived exactly that version of this test).
+    _add(st, "https://ap.org/sub1", "AP", 0.1, "Senate passes funding bill in late vote", days=3)
+    assert ss.warm_cache(st) == 2                      # rebuilt (offloaded), same two stories
+    grown = next(s for s in ss.list_stories(st)["stories"] if "Senate" in s["title"])
+    assert grown["id"] == sid and grown["totalCoverage"] == 4
+
+
+@pytest.mark.parametrize("url", ["sqlite://", "sqlite:///:memory:"])
+def test_an_in_memory_store_never_reaches_the_pool(monkeypatch, url):
+    """A child cannot see the parent's in-memory database; offloading would silently build from an
+    EMPTY catalog. Eligibility must refuse before the pool is ever touched."""
+    st = store_mod.Store(url); _senate_and_wildfire(st)
+    monkeypatch.setattr(ss, "_offloaded_build",
+                        lambda *a, **kw: (_ for _ in ()).throw(AssertionError("pool touched")))
+    assert ss.list_stories(st)["total"] == 2
+
+
+def test_the_subprocess_kill_switch_keeps_the_build_inline(tmp_path, monkeypatch):
+    monkeypatch.setenv("RWE_STORY_BUILD_SUBPROCESS", "0")
+    st = _file_store(tmp_path)
+    monkeypatch.setattr(ss, "_offloaded_build",
+                        lambda *a, **kw: (_ for _ in ()).throw(AssertionError("pool touched")))
+    assert ss.list_stories(st)["total"] == 2
+
+
+def test_a_broken_pool_falls_back_inline_and_resets_for_the_next_build(tmp_path, monkeypatch):
+    """A worker OOM-killed mid-build must cost the caller nothing but the inline build they would
+    have run anyway — and must tear the pool down so the NEXT build gets a fresh one."""
+    st = _file_store(tmp_path)
+
+    class _BrokenPool:
+        def submit(self, *a, **kw):
+            raise RuntimeError("worker died")
+
+        def shutdown(self, *a, **kw):
+            pass
+    # Install the broken pool as the REAL global, not behind a monkeypatched `_build_pool`: the
+    # mutant this kills leaves the installed pool in place after a failure, and a stub accessor
+    # would hide exactly that state from the assertion.
+    with ss._BUILD_POOL_LOCK:
+        ss._BUILD_POOL = _BrokenPool()
+
+    failed_before = _counter("story_build_subprocess_failed_total")
+    assert ss.list_stories(st)["total"] == 2, "the fallback did not serve"
+    assert _counter("story_build_subprocess_failed_total") == failed_before + 1
+    assert ss._BUILD_POOL is None, "a broken pool must not be left installed"
+
+
+def test_shutdown_build_pool_is_idempotent(tmp_path):
+    st = _file_store(tmp_path)
+    assert ss.warm_cache(st) == 2                      # boots the real pool
+    ss.shutdown_build_pool()
+    assert ss._BUILD_POOL is None
+    ss.shutdown_build_pool()                           # second call: nothing to stop, no error
+    assert ss._BUILD_POOL is None

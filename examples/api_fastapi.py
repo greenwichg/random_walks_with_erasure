@@ -333,6 +333,13 @@ async def lifespan(app: FastAPI):
         story_service.shutdown_warmer()
     except Exception:                # shutdown must never raise out of the lifespan
         pass
+    # And the build subprocess (P0-2′), after the warmer for the same reason: the warmer is the
+    # main thing that submits to it, and stopping the pool first would turn the warmer's last
+    # build into a broken-pool fallback on the GIL during shutdown.
+    try:
+        story_service.shutdown_build_pool()
+    except Exception:                # shutdown must never raise out of the lifespan
+        pass
     state.poller = None
     state.active = None
     state.refresh = None

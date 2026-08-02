@@ -20,10 +20,12 @@ an API change.
 from __future__ import annotations
 
 import hashlib
+import multiprocessing
 import os
 import threading
 import weakref
 import time as _time
+from concurrent.futures import ProcessPoolExecutor
 from typing import Optional
 
 import clustering                 # the deterministic union-find Jaccard primitive (algorithm only)
@@ -1124,6 +1126,127 @@ def clear_cache() -> None:
         _REFRESH_PENDING.clear()
 
 
+def build_subprocess_enabled() -> bool:
+    """Whether an eligible story build runs in the dedicated build subprocess.
+    ON — ``RWE_STORY_BUILD_SUBPROCESS=0`` runs every build on the calling thread, as before.
+
+    **Why a subprocess and not a thread (P0-2′):** the build is pure-Python clustering, and a
+    thread running it holds the GIL against every request handler in the process. Measured in
+    production (2026-08-01): during the post-cycle warm, ``/api/health`` — a no-op — inflated from
+    2–3 ms to 55 ms (~20×), and the warm itself ran 11,476 ms; the serving process spent that whole
+    window degrading every endpoint at once. A subprocess has its own GIL, so the second core does
+    the clustering while the first keeps serving. The worker is persistent (spawn cost and the
+    ``api_server`` import are paid once, not per build) and single (`max_workers=1` — two
+    concurrent builds on a 2-core box would starve the OS scheduler the same way the GIL was).
+
+    **Eligibility is strict, and silently falling back is the design.** The child opens its OWN
+    store on the database URL, so the database must be a real file: an in-memory store
+    (``sqlite://``) is invisible to another process, and a child building from it would return an
+    EMPTY story list that looks exactly like a quiet catalog. File-backed SQLite in WAL mode is
+    built for concurrent readers in separate processes — the child only ever reads.
+
+    Identity (``stabilize_ids``) stays in the PARENT, deliberately: it writes the id map, and
+    keeping the child read-only means a crashed or killed worker can never leave a half-written
+    row behind — the failure mode is always "the build happened on the caller's thread instead"."""
+    v = os.environ.get("RWE_STORY_BUILD_SUBPROCESS", "").strip().lower()
+    return v not in {"0", "false", "no", "off"}
+
+
+def _subprocess_eligible(store_) -> bool:
+    """Only a file-backed store can be re-opened by another process — see the enable switch."""
+    if not build_subprocess_enabled():
+        return False
+    url = str(getattr(store_, "url", "") or "")
+    return url.startswith("sqlite:///") and ":memory:" not in url
+
+
+def _subprocess_build(db_url: str, topic, date_from, date_to, max_scan,
+                      min_articles: int, min_publishers: int) -> list:
+    """The child's whole job: open the database, fetch the slice, cluster it, return plain dicts.
+
+    Top-level (spawn must import it by name), read-only (identity is the parent's), and it opens a
+    fresh store per call so a long-lived worker never accumulates connection state against a
+    database the parent may be migrating."""
+    import store as _store_mod
+    st = _store_mod.Store(db_url)
+    try:
+        return build_stories(_fetch(st, topic=topic, date_from=date_from, date_to=date_to,
+                                    max_scan=max_scan),
+                             min_articles=min_articles, min_publishers=min_publishers)
+    finally:
+        try:
+            st.engine.dispose()
+        except Exception:
+            pass
+
+
+_BUILD_POOL: "ProcessPoolExecutor | None" = None
+_BUILD_POOL_LOCK = threading.Lock()
+
+
+def _build_pool() -> ProcessPoolExecutor:
+    """The persistent single-worker pool, created on first use.
+
+    ``forkserver``, never plain ``fork``: this process runs a dozen threads (pollers, warmer, push
+    delivery), and forking a threaded process copies locks in whatever state some other thread held
+    them — a child that inherits a held lock deadlocks in ways that reproduce roughly never.
+    Forkserver's workers fork from a clean single-threaded helper instead, and the helper preloads
+    this module (below) so forks start with the import graph already warm.
+
+    One prepare-step behaviour is shared by every non-fork start method and is accepted here rather
+    than fought: **each worker re-initialises the parent's ``__main__``** (as ``__mp_main__`` —
+    measured with a pid-printing probe, then confirmed in ``multiprocessing/spawn.py``'s
+    ``get_preparation_data``, which sends the main module for both spawn and forkserver). Guarded
+    entry points make this a non-event: the production launch (``python examples/api_fastapi.py``)
+    re-imports the app module once per worker without starting anything, and console scripts like
+    pytest's carry the ``__name__`` guard. A guard-less script that reaches this pool would run its
+    own body inside the worker — one more reason :func:`_offloaded_build` treats ANY worker failure
+    as "build inline instead" rather than as an error worth surfacing to a caller."""
+    global _BUILD_POOL
+    with _BUILD_POOL_LOCK:
+        if _BUILD_POOL is None:
+            ctx = multiprocessing.get_context("forkserver")
+            # Preload THIS module, not the default `__main__`. The default re-executes whatever
+            # script started the process inside the helper — measured here: a guard-less probe ran
+            # its entire body twice, and in production the helper would import the whole FastAPI
+            # app it never uses. Naming the real dependency instead means the helper pays this
+            # module's import graph once, and every forked worker starts warm.
+            ctx.set_forkserver_preload(["story_service"])
+            _BUILD_POOL = ProcessPoolExecutor(max_workers=1, mp_context=ctx)
+        return _BUILD_POOL
+
+
+def shutdown_build_pool() -> None:
+    """Stop the worker (lifespan shutdown, and test teardown). Idempotent; the next eligible build
+    simply creates a fresh pool."""
+    global _BUILD_POOL
+    with _BUILD_POOL_LOCK:
+        pool, _BUILD_POOL = _BUILD_POOL, None
+    if pool is not None:
+        pool.shutdown(wait=False, cancel_futures=True)
+
+
+def _offloaded_build(store_, *, topic, date_from, date_to, max_scan,
+                     min_articles, min_publishers) -> "list | None":
+    """Run the build in the subprocess, or return ``None`` to say "build inline instead".
+
+    ``None`` on ANY failure — a broken pool (worker OOM-killed), a spawn refusal, or the build
+    itself raising in the child. The caller's thread then does the work exactly as it always did:
+    offloading is a scheduling optimisation, and no scheduling optimisation is allowed to become
+    the reason a build fails. A broken pool is torn down so the next call starts a fresh one."""
+    try:
+        future = _build_pool().submit(
+            _subprocess_build, str(store_.url), topic, date_from, date_to, max_scan,
+            min_articles, min_publishers)
+        stories = future.result()
+        obs_metrics.incr("story_build_subprocess_total")
+        return stories
+    except Exception:
+        obs_metrics.incr("story_build_subprocess_failed_total")
+        shutdown_build_pool()
+        return None
+
+
 def serve_stale() -> bool:
     """Whether a stale-but-inside-TTL build is served while one background rebuild replaces it.
     ON — ``RWE_STORIES_SERVE_STALE=0`` restores the reader-paid rebuild.
@@ -1477,14 +1600,25 @@ def _cached_build(store_, *, topic, date_from, date_to, max_scan, min_articles, 
     serves one database in production, but tests and any future multi-tenant caller would silently
     read each other's clusters without it."""
     def _build():
-        # Identity is applied HERE and not inside build_stories, which stays a pure function of its
-        # rows. Only the unfiltered build owns identity: a topic- or date-filtered view sees a
-        # subset of each cluster, so letting it write the map would hand ids to partial clusters
-        # and then hand them back to the full ones on the next unfiltered build — churn caused by
-        # the fix for churn.
-        stories = build_stories(_fetch(store_, topic=topic, date_from=date_from, date_to=date_to,
-                                       max_scan=max_scan),
-                                min_articles=min_articles, min_publishers=min_publishers)
+        # The clustering runs in the build subprocess when it can (P0-2′ — see
+        # `build_subprocess_enabled` for why, and why falling back inline is silent): the caller
+        # here is a background thread (warmer, stale refresh) or a cold-start reader, and either
+        # way the CPU belongs off this process's GIL. `None` means "do it here after all".
+        stories = None
+        if _subprocess_eligible(store_):
+            stories = _offloaded_build(store_, topic=topic, date_from=date_from, date_to=date_to,
+                                       max_scan=max_scan, min_articles=min_articles,
+                                       min_publishers=min_publishers)
+        if stories is None:
+            stories = build_stories(_fetch(store_, topic=topic, date_from=date_from,
+                                           date_to=date_to, max_scan=max_scan),
+                                    min_articles=min_articles, min_publishers=min_publishers)
+        # Identity is applied HERE — in the parent, never the child — and not inside build_stories,
+        # which stays a pure function of its rows. Only the unfiltered build owns identity: a
+        # topic- or date-filtered view sees a subset of each cluster, so letting it write the map
+        # would hand ids to partial clusters and then hand them back to the full ones on the next
+        # unfiltered build — churn caused by the fix for churn. Parent-side also keeps the child
+        # read-only, which is what makes a killed worker recoverable by construction.
         if stable_ids() and topic is None and date_from is None and date_to is None:
             stories = stabilize_ids(store_, stories)
         return stories

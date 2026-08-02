@@ -71,3 +71,8 @@ def _fresh_story_cache():
     story_service.clear_cache()
     yield
     story_service.clear_cache()
+    # And the build subprocess (P0-2′). The worker takes its database URL per call, so it is not
+    # stale across tests — this is process hygiene: without it, the first offloading test leaves a
+    # child python alive for the rest of the suite. Cheap no-op when nothing offloaded (the pool is
+    # created lazily).
+    story_service.shutdown_build_pool()
