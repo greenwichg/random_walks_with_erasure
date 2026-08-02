@@ -2027,3 +2027,84 @@ def test_default_view_respects_the_serve_stale_kill_switch(monkeypatch):
     monkeypatch.setattr(ss, "_spawn_refresh", lambda s, k: spawned.append(k))
     assert len(ss.default_story_view(st)) == 3      # fresh inline build, new story included
     assert calls["n"] == 1 and spawned == []
+
+
+# --------------------------------------------------------------------------- #
+# Filtered views render SERVED identity (P0, 2026-08-02). `get_story` resolves ids against the
+# stabilized default view only, so a filtered list serving raw `_story_id` output is a list of
+# dead links for every cluster whose anchor ever churned — measured in production at 110 of 1,257
+# rendered topic-filtered links (8.8%), with one 93-member cluster's urls voting 93/93 for a
+# ledger id that served 200 while its rendered raw id served 404. Filtered builds therefore READ
+# the ledger (stabilize_ids_readonly) and still never WRITE it.
+# --------------------------------------------------------------------------- #
+
+
+def _disjoint_cluster(st, k, topic, publishers=("NPR", "Fox News", "BBC News")):
+    """A three-publisher cluster whose vocabulary is shared with no other cluster — any common
+    filler and the duplicate-merge pass glues unrelated clusters into one mega-story."""
+    title = f"Alphax{k} bravox{k} charliex{k} deltax{k} echox{k} foxtrotx{k}"
+    desc = f"Golfx{k} hotelx{k} indiax{k} julietx{k} kilox{k} limax{k} mikex{k}."
+    for j, pub in enumerate(publishers):
+        _add(st, f"https://p{j}.example/{k}", pub, 0.0, title, category=topic, days=1 + j, desc=desc)
+    return title, desc
+
+
+def _churn_anchor(st, k, topic, title, desc):
+    """Backfill an OLDER article into cluster k — the documented anchor displacement that changes
+    the raw `_story_id` (the 5.1%/day mechanism the ledger exists to absorb)."""
+    _add(st, f"https://backfill.example/{k}", "CNN", 0.0, title, category=topic, days=6, desc=desc)
+
+
+def test_topic_filtered_lists_render_ids_the_detail_endpoint_resolves():
+    """The production failure as an assertion: churn an anchor, then every id a topic-filtered
+    list renders must still resolve through get_story — and must BE the default view's id."""
+    st = store_mod.Store("sqlite://")
+    seeds = {k: _disjoint_cluster(st, k, ["Politics", "Climate"][k % 2]) for k in range(4)}
+    before = {s["id"] for s in ss.list_stories(st, limit=50)["stories"]}   # ledger written
+    assert len(before) == 4
+    for k in (0, 1):
+        _churn_anchor(st, k, ["Politics", "Climate"][k % 2], *seeds[k])
+    ss.clear_cache()
+    default_ids = {s["id"] for s in ss.list_stories(st, limit=50)["stories"]}
+    assert default_ids == before, "control: the ledger absorbs the churn on the default view"
+    for topic in ("Politics", "Climate"):
+        for s in ss.list_stories(st, topic=topic, limit=50)["stories"]:
+            assert s["id"] in default_ids, \
+                f"topic list rendered {s['id']}, which the default view does not serve"
+            assert ss.get_story(st, s["id"]) is not None, \
+                f"topic list rendered a dead link: {s['id']}"
+
+
+def test_filtered_builds_never_write_the_identity_ledger():
+    """The write ban stands: reading the map is the fix, writing it from a partial view is the
+    churn the original design refused. The ledger must be byte-identical across a filtered build
+    even when that build's raw ids disagree with it."""
+    st = store_mod.Store("sqlite://")
+    title, desc = _disjoint_cluster(st, 0, "Politics")
+    ss.list_stories(st, limit=50)                       # ledger written by the default build
+    _churn_anchor(st, 0, "Politics", title, desc)       # raw id now diverges from the ledger
+    ss.clear_cache()
+    ledger_before = st.story_member_ids()
+    ss.list_stories(st, topic="Politics", limit=50)     # filtered build: read-only stabilization
+    assert st.story_member_ids() == ledger_before, \
+        "a filtered build wrote the identity ledger — partial clusters must never own identity"
+
+
+def test_empty_string_topic_is_the_default_view_not_an_unstabilized_twin():
+    """`?topic=` reached the row fetch as "no filter" but the cache key and identity gate as
+    "filtered" — building a full-catalog twin of the default view under ('', …) with raw ids
+    (the production probe's 93-member case came from exactly this key). Normalized: '' and None
+    are one build, one cache entry, one set of served ids."""
+    st = store_mod.Store("sqlite://")
+    title, desc = _disjoint_cluster(st, 0, "Politics")
+    ss.list_stories(st, limit=50)
+    _churn_anchor(st, 0, "Politics", title, desc)
+    ss.clear_cache()
+    default_ids = {s["id"] for s in ss.list_stories(st, limit=50)["stories"]}
+    twin_ids = {s["id"] for s in ss.list_stories(st, topic="", date_from="", date_to="",
+                                                 limit=50)["stories"]}
+    assert twin_ids == default_ids
+    assert all(ss.get_story(st, i) is not None for i in twin_ids)
+    with ss._CACHE_LOCK:
+        assert len(ss._CACHE.get(st, {})) == 1, \
+            "'' must share the default view's cache entry, not build a twin under ('', …)"

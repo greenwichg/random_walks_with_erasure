@@ -750,6 +750,30 @@ def reassign_ids(prior: dict, stories: list) -> dict:
     return out
 
 
+def stabilize_ids_readonly(store_, stories: list) -> list:
+    """Give each story back the id it was last served under — reading the ledger, never writing it.
+
+    The read half of :func:`stabilize_ids`, split out for the FILTERED builds. A filtered view sees
+    a subset of each cluster, so it must never write the identity map (partial clusters would claim
+    ids the next unfiltered build takes back — churn caused by the fix for churn). But not READING
+    the map either meant filtered lists rendered raw ``_story_id`` output while ``get_story``
+    searches only the stabilized default view — so every cluster whose anchor had ever churned was
+    a dead link from every topic-filtered surface. Measured in production (2026-08-02): 110 of
+    1,257 rendered topic-filtered links (8.8%) returned 404 on click; one 93-member cluster's urls
+    voted 93/93 for a ledger id that served 200 while its rendered raw id served 404.
+
+    Fails soft like its writing sibling: an unreadable identity table keeps derived ids."""
+    if not stories:
+        return stories
+    try:
+        prior = store_.story_member_ids()
+    except Exception:
+        return stories
+    for i, pid in reassign_ids(prior, stories).items():
+        stories[i] = dict(stories[i], id=pid)
+    return stories
+
+
 def stabilize_ids(store_, stories: list) -> list:
     """Give each story back the id it was last served under, then record the new mapping.
 
@@ -760,14 +784,9 @@ def stabilize_ids(store_, stories: list) -> list:
 
     Fails soft: if the identity table cannot be read or written, stories keep their derived ids.
     A churned id is a broken link; a 500 is a broken page."""
+    stories = stabilize_ids_readonly(store_, stories)
     if not stories:
         return stories
-    try:
-        prior = store_.story_member_ids()
-    except Exception:
-        return stories
-    for i, pid in reassign_ids(prior, stories).items():
-        stories[i] = dict(stories[i], id=pid)
     try:
         store_.replace_story_members({c["url"]: s["id"] for s in stories for c in s["coverage"]})
     except Exception:
@@ -1599,6 +1618,15 @@ def _cached_build(store_, *, topic, date_from, date_to, max_scan, min_articles, 
     The store's identity still scopes every entry: two stores must never share a build. One process
     serves one database in production, but tests and any future multi-tenant caller would silently
     read each other's clusters without it."""
+    # '' and None must be ONE value from here down. The row fetch treats '' as "no filter"
+    # (truthiness), but the cache KEY and the identity gate compared against None — so a
+    # ``?topic=`` request built a full-catalog TWIN of the default view under the key ('', …),
+    # unstabilized. Probe-measured in production (2026-08-02): that twin rendered a raw id for a
+    # 93-member cluster whose ledger id was what the default view (and the detail endpoint) served.
+    topic = topic or None
+    date_from = date_from or None
+    date_to = date_to or None
+
     def _build():
         # The clustering runs in the build subprocess when it can (P0-2′ — see
         # `build_subprocess_enabled` for why, and why falling back inline is silent): the caller
@@ -1614,13 +1642,20 @@ def _cached_build(store_, *, topic, date_from, date_to, max_scan, min_articles, 
                                            date_to=date_to, max_scan=max_scan),
                                     min_articles=min_articles, min_publishers=min_publishers)
         # Identity is applied HERE — in the parent, never the child — and not inside build_stories,
-        # which stays a pure function of its rows. Only the unfiltered build owns identity: a
+        # which stays a pure function of its rows. Only the unfiltered build WRITES identity: a
         # topic- or date-filtered view sees a subset of each cluster, so letting it write the map
         # would hand ids to partial clusters and then hand them back to the full ones on the next
-        # unfiltered build — churn caused by the fix for churn. Parent-side also keeps the child
-        # read-only, which is what makes a killed worker recoverable by construction.
-        if stable_ids() and topic is None and date_from is None and date_to is None:
-            stories = stabilize_ids(store_, stories)
+        # unfiltered build — churn caused by the fix for churn. But filtered views must still READ
+        # the map: they render links, and `get_story` resolves ids against the stabilized default
+        # view only — a filtered list serving raw ids is a list of dead links for every cluster
+        # whose anchor ever churned (measured 8.8% of rendered topic-filtered links in production,
+        # 2026-08-02). Parent-side also keeps the child read-only, which is what makes a killed
+        # worker recoverable by construction.
+        if stable_ids():
+            if topic is None and date_from is None and date_to is None:
+                stories = stabilize_ids(store_, stories)
+            else:
+                stories = stabilize_ids_readonly(store_, stories)
         return stories
 
     ttl = cache_ttl()
