@@ -252,6 +252,8 @@ def test_co_coverage_counts_shared_clustered_stories():
     _shared_story(st, 2, "Wildfires spread across the western coast", ["Alpha Post", "Beta Times", "Gamma Herald"])
     _shared_story(st, 3, "Senate passes the funding bill after debate", ["Alpha Post", "Gamma Herald"])
     _shared_story(st, 4, "Markets rally on tech earnings today", ["Beta Times", "Gamma Herald"])
+    import story_service
+    story_service.warm_cache(st)      # production steady state: the poller warms; requests never build
     co = ps.get_publisher(st, "Alpha Post")["coCoverage"]
     assert co["sharedStories"] == 3
     assert co["publishers"] == [{"publisher": "Beta Times", "stories": 2},

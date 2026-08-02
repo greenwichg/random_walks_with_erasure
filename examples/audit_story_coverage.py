@@ -42,7 +42,7 @@ import store as store_mod
 def audit(st, user_id: int) -> dict:
     """The coverage half (steps 1–4): per-read story membership + sibling availability."""
     catalog_n = st.count_feed_articles()
-    index = er.story_index(st)
+    index = er.story_index(st, build_inline=True)
     stories = {}
     for v in index.values():
         stories.setdefault(v["storyId"], v["coverage"])
@@ -142,7 +142,7 @@ def serve_and_diagnose(st, user_id: int) -> dict:
     # API runs — INCLUDING the conditional Story-Match slot when RWE_STORY_SLOT is enabled — so
     # this breakdown matches the cards a reader actually sees)
     er._INDEX_CACHE.update(key=None, index=None)
-    idx = er.story_index(st)
+    idx = er.story_index(st, build_inline=True)
     ctx = pers.explanation_context(user_id)
     served = pers.recommendations(user_id)
     resolved = [er.resolve(r, ctx, idx) for r in served]

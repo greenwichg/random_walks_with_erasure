@@ -1985,9 +1985,11 @@ def test_default_view_serves_the_warmed_build_without_building(monkeypatch):
     assert calls["n"] == 0
 
 
-def test_default_view_expired_entry_builds_inline_read_only(monkeypatch):
-    """Past the TTL the peek answers None and the fallback builds fresh — WITHOUT caching or
-    stabilising (the read-only contract /api/analyze depends on), and without a refresh spawn."""
+def test_default_view_expired_entry_serves_empty_and_kicks_not_builds(monkeypatch):
+    """Past the TTL the peek answers None — and the request path must NOT rebuild inline (the
+    pre-2026-08-02 contract this test used to pin: measured at ~24 s per repetition on request
+    threads at 51.8k articles). It serves ``[]``, kicks ONE refresh, and heals on the next call.
+    The TTL's bound is still honoured: nothing older than the TTL is ever served."""
     st = store_mod.Store("sqlite://"); _senate_and_wildfire(st)
     assert ss.warm_cache(st) == 2
     with ss._CACHE_LOCK:
@@ -1996,24 +1998,21 @@ def test_default_view_expired_entry_builds_inline_read_only(monkeypatch):
             entries[k] = (t - ss.cache_ttl() - 1.0, fp, stories)
     spawned = []
     monkeypatch.setattr(ss, "_spawn_refresh", lambda s, k: spawned.append(k))
-    stabilized = {"n": 0}
-    real_st = ss.stabilize_ids
-    monkeypatch.setattr(ss, "stabilize_ids",
-                        lambda *a, **kw: (stabilized.__setitem__("n", stabilized["n"] + 1), real_st(*a, **kw))[1])
     calls = {"n": 0}
     real_build = ss.build_stories
     monkeypatch.setattr(ss, "build_stories",
                         lambda *a, **kw: (calls.__setitem__("n", calls["n"] + 1), real_build(*a, **kw))[1])
-    assert len(ss.default_story_view(st)) == 2
-    # The build MUST run: an expired entry served from the peek would leave `calls` at 0 — the
-    # mutant that survived the first version of this test, which asserted only the read-only side.
-    assert calls["n"] == 1, "an expired entry was served instead of rebuilt"
-    assert spawned == [] and stabilized["n"] == 0, "the cold fallback must stay read-only"
+    assert ss.default_story_view(st) == [], "an expired entry must not be served"
+    assert calls["n"] == 0, "a request thread rebuilt an expired entry inline"
+    assert spawned == [ss._DEFAULT_LOGICAL]
+    ss._run_refresh(st, spawned[0])
+    assert len(ss.default_story_view(st)) == 2      # healed, within the TTL bound
 
 
 def test_default_view_respects_the_serve_stale_kill_switch(monkeypatch):
     """Switch off, stale entry: the peek must answer None (not serve stale against the operator's
-    setting) and the fallback builds inline."""
+    setting). The request path then serves ``[]`` and kicks the refresh — the switch forbids
+    serving STALE data, and neither an empty list nor a background rebuild is that."""
     monkeypatch.setenv("RWE_STORIES_SERVE_STALE", "0")
     st = store_mod.Store("sqlite://"); _senate_and_wildfire(st)
     assert ss.warm_cache(st) == 2
@@ -2025,8 +2024,10 @@ def test_default_view_respects_the_serve_stale_kill_switch(monkeypatch):
                         lambda *a, **kw: (calls.__setitem__("n", calls["n"] + 1), real(*a, **kw))[1])
     spawned = []
     monkeypatch.setattr(ss, "_spawn_refresh", lambda s, k: spawned.append(k))
-    assert len(ss.default_story_view(st)) == 3      # fresh inline build, new story included
-    assert calls["n"] == 1 and spawned == []
+    assert ss.default_story_view(st) == []          # stale data withheld, nothing built inline
+    assert calls["n"] == 0 and spawned == [ss._DEFAULT_LOGICAL]
+    ss._run_refresh(st, spawned[0])
+    assert len(ss.default_story_view(st)) == 3      # fresh build, new story included
 
 
 # --------------------------------------------------------------------------- #
@@ -2152,3 +2153,53 @@ def test_empty_string_topic_is_the_default_view_not_an_unstabilized_twin():
     with ss._CACHE_LOCK:
         assert len(ss._CACHE.get(st, {})) == 1, \
             "'' must share the default view's cache entry, not build a twin under ('', …)"
+
+
+# --------------------------------------------------------------------------- #
+# Boot window: a request-path peek miss must never cluster inline.
+# The post-deploy probe of 2026-08-02 measured the alternative: four inline clusterings on
+# request threads at ~24 s each in the first two minutes after a restart, repeated per consumer
+# because the inline build is uncached, two at once starving the whole box.
+# --------------------------------------------------------------------------- #
+def test_request_path_peek_miss_serves_empty_and_kicks_one_refresh(monkeypatch):
+    st = store_mod.Store("sqlite://"); _senate_and_wildfire(st)
+    spawned = []
+    monkeypatch.setattr(ss, "_spawn_refresh", lambda store_, logical: spawned.append(logical))
+    calls = {"n": 0}
+    real = ss.build_stories
+    monkeypatch.setattr(ss, "build_stories",
+                        lambda *a, **kw: (calls.__setitem__("n", calls["n"] + 1), real(*a, **kw))[1])
+
+    assert ss.default_story_view(st) == []          # cold: nothing to serve…
+    assert ss.default_story_view(st) == []          # …and a second consumer coalesces
+    assert calls["n"] == 0, "a request thread clustered inline"
+    assert spawned == [ss._DEFAULT_LOGICAL], "exactly one background refresh must be kicked"
+
+    ss._run_refresh(st, spawned[0])                 # the kicked refresh heals the window
+    assert len(ss.default_story_view(st)) == 2      # …for every consumer after it
+    assert spawned == [ss._DEFAULT_LOGICAL], "a peek hit must request nothing"
+
+
+def test_the_analyzer_inline_path_still_builds_read_only(monkeypatch):
+    """/api/analyze's zero-write contract: data on a cold cache, no cache entry left behind, and
+    no background spawn (a kick would eventually write the cache + ledger from an analyze
+    request — test_analysis_writes_nothing_anywhere hashes the whole DB file to forbid that)."""
+    st = store_mod.Store("sqlite://"); _senate_and_wildfire(st)
+    spawned = []
+    monkeypatch.setattr(ss, "_spawn_refresh", lambda store_, logical: spawned.append(logical))
+
+    assert len(ss.default_story_view(st, build_inline=True)) == 2
+    assert spawned == [], "the zero-write path spawned a cache-writing refresh"
+    with ss._CACHE_LOCK:
+        assert not ss._CACHE.get(st), "the inline build must stay uncached"
+
+
+def test_cache_disabled_keeps_the_inline_build_for_everyone(monkeypatch):
+    """RWE_STORIES_CACHE_TTL=0 opts out of the caching layer entirely: there is no cache to kick
+    a refresh into, so the pre-existing uncached inline behaviour is the only correct one."""
+    monkeypatch.setenv("RWE_STORIES_CACHE_TTL", "0")
+    st = store_mod.Store("sqlite://"); _senate_and_wildfire(st)
+    spawned = []
+    monkeypatch.setattr(ss, "_spawn_refresh", lambda store_, logical: spawned.append(logical))
+    assert len(ss.default_story_view(st)) == 2
+    assert spawned == []

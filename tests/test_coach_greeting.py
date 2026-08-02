@@ -112,6 +112,17 @@ def stack(tmp_path_factory):
     return st, pers, uids
 
 
+@pytest.fixture(autouse=True)
+def _warm_story_cache(stack):
+    """conftest's ``_fresh_story_cache`` (autouse) clears the story cache before EVERY test, so a
+    warm inside the module-scoped ``stack`` is wiped before each test body. Post Boot-P0 a cold
+    request path serves ``[]`` and heals via a background refresh — in a suite that is a daemon
+    racing the clears, i.e. nondeterminism. Re-warm per test: conftest autouse fixtures
+    instantiate first, so this runs after the clear, peeks hit, and nothing is ever kicked."""
+    import story_service
+    story_service.warm_cache(stack[0])
+
+
 def _greet(stack, who):
     st, pers, uids = stack
     return cs.greeting_turn(pers, st, uids[who])

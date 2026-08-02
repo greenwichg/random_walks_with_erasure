@@ -21,6 +21,7 @@ sys.path.insert(0, str(ROOT / "examples"))
 
 import evidence_resolver as er   # noqa: E402
 import personalize               # noqa: E402
+import story_service             # noqa: E402
 import store as store_mod        # noqa: E402
 
 
@@ -83,6 +84,7 @@ def stack(tmp_path, monkeypatch):
     _seed_corpus(st)
     uid = _reader(st)
     er._INDEX_CACHE.update(key=None, index=None)
+    story_service.warm_cache(st)      # request paths never build; the poller's warm is steady state
 
     import api_server as engine
     import feed_source
@@ -134,6 +136,7 @@ def test_slot_inserts_validated_sibling_at_top(stack, monkeypatch):
     assert sum(1 for r in feed if r.get("strategy") == "story") == 1
     # P1-explainable by construction + every validation gate green
     er._INDEX_CACHE.update(key=None, index=None)
+    story_service.warm_cache(st)      # request paths never build; the poller's warm is steady state
     idx = er.story_index(st)
     ctx = pers.explanation_context(uid)
     exp = er.resolve(card, ctx, idx)
@@ -150,6 +153,7 @@ def test_slot_displacement_is_semantic_not_positional(stack, monkeypatch):
     st, pers, uid = stack
     base = pers.recommendations(uid)
     er._INDEX_CACHE.update(key=None, index=None)
+    story_service.warm_cache(st)      # request paths never build; the poller's warm is steady state
     idx = er.story_index(st)
     ctx = pers.explanation_context(uid)
     types = [er.resolve(r, ctx, idx).get("type") for r in base]
@@ -196,6 +200,7 @@ def test_no_opportunity_is_a_noop(tmp_path, monkeypatch):
         _read(st, uid, f"https://ap.example.com/n/{k}", "AP",
               f"solo{k} item{k} report{k} entry{k}")
     er._INDEX_CACHE.update(key=None, index=None)
+    story_service.warm_cache(st)      # request paths never build; the poller's warm is steady state
     import api_server as engine
     import feed_source
     ns = SimpleNamespace(profile=None, npz=None, qbias=None, register_csv=None, emotion_csv=None,
@@ -245,6 +250,7 @@ def test_auditor_accounts_the_slot_card_as_served(stack, monkeypatch):
     st, pers, uid = stack
     monkeypatch.setenv("RWE_STORY_SLOT", "1")
     er._INDEX_CACHE.update(key=None, index=None)
+    story_service.warm_cache(st)      # request paths never build; the poller's warm is steady state
     doc = asc.full_report(st, uid)
     feed = doc["feed"] or {}
     assert feed.get("byStrategy", {}).get("story") == 1
@@ -309,6 +315,7 @@ def test_auditor_not_in_graph_bucket_and_servable_coverage(tmp_path, monkeypatch
                              f"filing{k} memo{k} briefing{k} notice{k} dossier{k}")
                             for k in (0, 6, 12, 18)])
     er._INDEX_CACHE.update(key=None, index=None)
+    story_service.warm_cache(st)      # request paths never build; the poller's warm is steady state
     doc = asc.full_report(st, uid)
     assert doc["opportunities"] == {"converted": 0, "capSatisfied": 0, "rankedBelowCutoff": 0,
                                     "notInGraph": 1, "freshness": 0}
@@ -342,6 +349,7 @@ def test_auditor_cap_bucket_vs_ranking_bucket(tmp_path, monkeypatch):
                             for k in (0, 6, 12)])
     monkeypatch.setenv("RWE_STORY_SLOT", "1")
     er._INDEX_CACHE.update(key=None, index=None)
+    story_service.warm_cache(st)      # request paths never build; the poller's warm is steady state
     doc = asc.full_report(st, uid)
     assert doc["opportunities"] == {"converted": 1, "capSatisfied": 1, "rankedBelowCutoff": 0,
                                     "notInGraph": 0, "freshness": 0}
@@ -350,6 +358,7 @@ def test_auditor_cap_bucket_vs_ranking_bucket(tmp_path, monkeypatch):
     # the same store with the slot OFF: no cap exists, so the truthful bucket is ranking
     monkeypatch.delenv("RWE_STORY_SLOT", raising=False)
     er._INDEX_CACHE.update(key=None, index=None)
+    story_service.warm_cache(st)      # request paths never build; the poller's warm is steady state
     doc_off = asc.full_report(st, uid)
     assert doc_off["opportunities"]["capSatisfied"] == 0
     assert doc_off["opportunities"]["rankedBelowCutoff"] == 2
@@ -397,6 +406,7 @@ def _lean_stack(tmp_path, monkeypatch, members):
         _read(st, uid, f"https://npr2.example.com/x/{k}", "NPR",
               f"filing{k} memo{k} briefing{k} notice{k} dossier{k}")
     er._INDEX_CACHE.update(key=None, index=None)
+    story_service.warm_cache(st)      # request paths never build; the poller's warm is steady state
 
     import api_server as engine
     import feed_source

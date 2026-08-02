@@ -428,7 +428,10 @@ def enrich_for_reader(personalizer, store, uid: "int | None", analysis: dict) ->
         if not personalizer.has_measured(uid):
             return dict(_NULL)
         ctx = personalizer.explanation_context(uid)
-        index = er.story_index(store) if store is not None else {}
+        # build_inline: this runs inside /api/analyze, whose documented contract is that the
+        # request writes nothing anywhere — the default path's boot-window kick spawns a refresh
+        # that eventually writes the cache and identity ledger, which that contract forbids.
+        index = er.story_index(store, build_inline=True) if store is not None else {}
         return enrich(analysis, ctx, index=index, blind_spot_topics=_blind_spot_topics(store, uid),
                       store=store,
                       feed_next=lambda: _feed_next(personalizer, store, uid, ctx, index))

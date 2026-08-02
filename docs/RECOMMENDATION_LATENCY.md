@@ -375,3 +375,35 @@ Two consequences:
    background refresh, while keeping a genuinely read-only inline path for `/api/analyze`'s
    documented zero-write contract. At 24 s × N concurrent consumers × every restart, this is
    now the largest single latency source in the system.
+
+## Boot-P0 (2026-08-02): request threads never cluster
+
+The fix the 15:16 probe demanded, in the form the original report specified:
+
+* **`story_service.default_story_view`** — a request-path peek miss now serves `[]` (a shape
+  every consumer already tolerates — it is what an empty catalog produces) and kicks the
+  EXISTING single-flighted background refresh, so the first consumer heals the boot window for
+  everyone at one build's cost, off the request threads. The expired-entry and
+  serve-stale-off misses take the same branch: the TTL's staleness bound is still honoured —
+  nothing past it is ever served — it is just no longer honoured *at the reader's expense*.
+* **`build_inline=True`** preserves the read-only inline build for the two `/api/analyze` routes
+  (`article_analyzer._story_block`, `analysis_enrichment.enrich_for_reader` via
+  `story_index`) — their endpoint contracts a request that writes nothing anywhere, which a
+  refresh kick would violate asynchronously — and for the offline audit CLI, where no poller
+  ever warms the cache. With `RWE_STORIES_CACHE_TTL=0` everyone builds inline: an explicit
+  opt-out of the caching layer is an opt-in to uncached costs.
+* **`evidence_resolver.story_index`** forwards the flag, and no longer pins an *empty* index:
+  during the boot window the view serves `[]`, and caching `{}` would have kept "no story
+  evidence" alive for up to a full TTL after the refresh landed. An empty index now re-derives
+  off the ~1 ms peek per call, so healing is immediate.
+
+Degradation during the (now single-build-length) boot window: recommendations carry no
+story-slot card and no `story_match` explanations, publisher profiles show no co-coverage —
+each exactly the documented empty-catalog behaviour, healing without intervention.
+
+Verification: `test_request_path_peek_miss_serves_empty_and_kicks_one_refresh` (cold: `[]`, no
+synchronous `build_stories`, exactly one kick, healed after the refresh runs),
+`test_the_analyzer_inline_path_still_builds_read_only` (data on a cold cache, no spawn, no cache
+entry), `test_cache_disabled_keeps_the_inline_build_for_everyone`, and the two updated
+expired/kill-switch contract tests. The probe's `[5]` now separates `async kicks` (healthy) from
+`inline builds` (analyze/cache-off only).

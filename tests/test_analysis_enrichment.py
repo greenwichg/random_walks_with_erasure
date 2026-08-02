@@ -31,7 +31,9 @@ def store():
 
 @pytest.fixture()
 def index(store):
-    return er.story_index(store)
+    # build_inline mirrors the production analyze route (analysis_enrichment.enrich_for_reader):
+    # the zero-write contract path builds read-only on a cold cache instead of kicking a refresh.
+    return er.story_index(store, build_inline=True)
 
 
 def _rec(analysis, explanation):
@@ -187,7 +189,7 @@ def test_story_pick_prefers_cross_viewpoint_then_newest():
             scored={"article_id": er._canon(url), "outlet": pub, "category": "Politics",
                     "lean": lean, "political": True, "title": "t"})
     er._INDEX_CACHE.update(key=None, index=None)
-    idx = er.story_index(st)
+    idx = er.story_index(st, build_inline=True)   # the analyze route builds read-only
     analysis = aa.analyze(st, "https://theguardian.com/story/cv-case")
     assert analysis["story"]["matched"] is True                     # the cluster actually formed
     ctx = fx._authed_contexts()["authed_bridge"]

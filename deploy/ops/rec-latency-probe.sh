@@ -309,23 +309,22 @@ docker logs "$API_CONTAINER" --since 5m 2>&1 \
   | grep -E '"event": *"(rec_model_build|rec_serve|rec_story_slot|rec_model_lookup|rec_handler_stages)"' \
   | tail -14 || say "  (none captured — see [0]: are the stage lines reachable?)"
 
-# ── 5. The one question that decides the fix ──────────────────────────────────────────────────
-# `default_story_view` either PEEKS at the poller-warmed build (~1 ms locally) or falls back to a
-# read-only INLINE clustering on the request thread (~600 ms locally at 2k articles, and the
-# production build was measured at 3,681 ms at 21.9k). Every recommendation serve consumes it via
-# the evidence/story index. Which branch production takes is a 60x difference in the dominant
-# stage, so it is counted rather than argued about.
+# ── 5. Story-view branch accounting ───────────────────────────────────────────────────────────
+# Post Boot-P0: a request-path peek miss serves [] and KICKS the single-flighted background
+# refresh — `async kicks` is the healthy boot-window signal. An `inline build` can now come ONLY
+# from the analyze route (its zero-write contract) or an operator with the cache disabled; inline
+# builds attributed to ordinary request traffic would mean the fix is not running.
 say ""
-say "[5] Story-view branch — lifetime counters (peek hit vs inline build on a request thread)"
+say "[5] Story-view branch — lifetime counters"
 api_py <<PY || true
 $PREAMBLE
 _, c = rec_metrics()
 hit = int(c.get("story_default_view_peek_hit_total", 0))
 inline = int(c.get("story_default_view_inline_build_total", 0))
-tot = hit + inline
+kicks = int(c.get("story_default_view_async_kick_total", 0))
 print(f"  peek hits    : {hit}")
-print(f"  inline builds: {inline}" + (f"   <-- {100.0*inline/tot:.1f}% of consumers pay a full"
-                                      " clustering on the request thread" if tot and inline else ""))
+print(f"  async kicks  : {kicks}   (boot-window misses healed in the background)")
+print(f"  inline builds: {inline}   (analyze route / cache-disabled ONLY — see header)")
 print(f"  stale serves : {c.get('story_stale_served_total', 0)}")
 t, _ = rec_metrics()
 for k in ("story_default_view_inline_build_ms", "rec_story_index_view_ms",

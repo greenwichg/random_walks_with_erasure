@@ -1755,7 +1755,13 @@ def _sort_stories(stories: list, sort: str) -> list:
     return stories       # "top" — build_stories already ordered biggest+freshest first
 
 
-def default_story_view(store_) -> list:
+#: The default (unfiltered) build's logical cache key — the one the poller warms, ``list_stories``
+#: serves, and every ``default_story_view`` consumer reads. One definition, so the peek and the
+#: boot-window refresh kick can never drift onto different keys.
+_DEFAULT_LOGICAL = (None, None, None, None, 2, 2)
+
+
+def default_story_view(store_, *, build_inline: bool = False) -> list:
     """The cached default clustered view — the SAME build the poller warms, serve-stale protects,
     and the build subprocess computes. For request-path consumers that need the story layer as
     data (co-coverage counting, analyzer membership, the evidence index) rather than the paginated
@@ -1773,28 +1779,42 @@ def default_story_view(store_) -> list:
     STABILIZED ones ``/api/stories`` serves, which is what a caller linking a reader to a story
     page should have been using all along.
 
-    The TRUE-COLD case (pre-first-warm boot; expired TTL on a quiet catalog) builds inline,
-    **read-only and uncached** — raw ids, no identity write, exactly the pre-P0 behaviour minus
-    its every-request repetition. That is a contract, not a shortcut: ``/api/analyze`` documents
-    itself as writing nothing anywhere, and ``test_analysis_writes_nothing_anywhere`` failed the
-    first draft of this function for caching (and thereby id-stabilising) on its cold path.
-    Identity writes belong to the warm and refresh paths, which already own them.
+    The TRUE-COLD case (pre-first-warm boot; expired TTL on a quiet catalog) FORKS on the caller's
+    contract, and the fork was decided by a production measurement, not taste. The post-deploy
+    probe of 2026-08-02 caught FOUR inline clusterings on request threads in the first ~2 minutes
+    after a restart, ~24 s each at 51.8k articles — uncached by design, so every consumer repeated
+    the cost until the poller's first warm, and two at once starved a 2-vCPU box for everything
+    else (docs/RECOMMENDATION_LATENCY.md, "Post-deploy verification").
+
+    * **Request-path consumers (the default)** never build here. They get ``[]`` — a shape every
+      consumer already tolerates, because it is exactly what an empty catalog produces — and the
+      existing single-flighted background refresh is kicked, so the FIRST consumer heals the
+      window for everyone at one build's cost, off the request threads.
+    * **``build_inline=True``** keeps the pre-existing read-only inline build: uncached, raw ids,
+      no identity write, and NO background spawn (a kick would eventually write the cache + the
+      ledger, which the flag's one caller has contracted never to cause). That is ``/api/analyze``:
+      it documents itself as writing nothing anywhere, and ``test_analysis_writes_nothing_anywhere``
+      failed the first draft of this function for caching on its cold path. Offline CLI audits use
+      it too — no cache-warming poller runs in a one-shot process.
+    * With the cache disabled entirely (``RWE_STORIES_CACHE_TTL=0``) everyone builds inline: there
+      is no cache to kick a refresh into, and the opt-out asks for exactly the uncached behaviour.
 
     Callers must treat the list as read-only: it is (usually) the cache's own object."""
     stories = _peek_default_view(store_)
     if stories is not None:
         obs_metrics.incr("story_default_view_peek_hit_total")
         return stories
-    # The inline build is the documented TRUE-COLD contract, not a bug — but it is ~300x the cost
-    # of the peek, and every consumer on it (the evidence/story index among them) pays that on a
-    # request thread. Counted so "rare" is a measurement rather than an expectation.
-    obs_metrics.incr("story_default_view_inline_build_total")
-    _t = _time.perf_counter()
-    try:
-        return build_stories(_fetch(store_), min_articles=2, min_publishers=2)
-    finally:
-        obs_metrics.observe("story_default_view_inline_build_ms",
-                            (_time.perf_counter() - _t) * 1000.0)
+    if build_inline or cache_ttl() <= 0:
+        obs_metrics.incr("story_default_view_inline_build_total")
+        _t = _time.perf_counter()
+        try:
+            return build_stories(_fetch(store_), min_articles=2, min_publishers=2)
+        finally:
+            obs_metrics.observe("story_default_view_inline_build_ms",
+                                (_time.perf_counter() - _t) * 1000.0)
+    obs_metrics.incr("story_default_view_async_kick_total")
+    _request_stale_refresh(store_, _DEFAULT_LOGICAL)
+    return []
 
 
 def _peek_default_view(store_) -> "list | None":
@@ -1812,7 +1832,7 @@ def _peek_default_view(store_) -> "list | None":
         fingerprint = store_.catalog_fingerprint()
     except Exception:
         return None
-    logical = (None, None, None, None, 2, 2)
+    logical = _DEFAULT_LOGICAL
     with _CACHE_LOCK:
         entries = _CACHE.get(store_)
         hit = entries.get(logical) if entries else None

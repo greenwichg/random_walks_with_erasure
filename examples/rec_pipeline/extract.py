@@ -149,7 +149,9 @@ def build(fixture: dict, *, keep_env: bool = False) -> Case:
             ctx = _base_context(be, st, reader_uid, reads)
             recs = be.recommendations(be.demo_user)
         ctx["_mean_lean"] = _mean_lean(reads, catalog_by_url)
-        idx = er.story_index(st)
+        # Offline one-shot harness: no poller ever warms the story cache in this process, so the
+        # read-only inline build is the only way the scenario's clusters exist.
+        idx = er.story_index(st, build_inline=True)
 
         # Mirror the API's serialization-time enrichment (api_fastapi feed-article join): attach the
         # catalog's REAL publication timestamp to each served article, so explanation resolution

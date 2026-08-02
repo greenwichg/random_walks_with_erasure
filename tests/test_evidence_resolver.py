@@ -337,6 +337,8 @@ def test_story_index_from_real_clusters(tmp_path):
             scored={"article_id": url, "outlet": pub, "category": "Science", "lean": 0.0,
                     "political": False, "title": "Fusion milestone reached"})
     er._INDEX_CACHE.update(key=None, index=None)      # isolate from other tests
+    import story_service
+    story_service.warm_cache(st)      # production steady state: the poller warms; requests never build
     idx = er.story_index(st)
     assert er._canon(FOX) in idx and er._canon(CNN) in idx
     assert idx[er._canon(FOX)]["storyId"] == idx[er._canon(CNN)]["storyId"]

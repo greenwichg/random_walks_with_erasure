@@ -130,9 +130,14 @@ _INDEX_TTL_S = 60
 _INDEX_CACHE: dict = {"key": None, "index": None}
 
 
-def story_index(store_) -> dict:
+def story_index(store_, *, build_inline: bool = False) -> dict:
     """``canonical url → {"storyId", "coverage"}`` from the Story Service's own clusters —
-    Priority 1 consumes the SAME stories the Stories page shows (coverage carries the URLs)."""
+    Priority 1 consumes the SAME stories the Stories page shows (coverage carries the URLs).
+
+    ``build_inline`` forwards to :func:`story_service.default_story_view`: the analyze path (whose
+    endpoint contracts to write nothing anywhere, not even via a background spawn) sets it; every
+    request-path consumer keeps the default, where a boot-window miss yields an empty index this
+    resolver already treats as "no story evidence" rather than a ~24 s inline clustering."""
     if store_ is None:
         return {}
     import obs_metrics
@@ -156,13 +161,18 @@ def story_index(store_) -> dict:
     # 2k articles, so which one production actually takes decides the whole latency picture —
     # hence timed apart rather than assumed.
     t_view = time.perf_counter()
-    view = story_service.default_story_view(store_)
+    view = story_service.default_story_view(store_, build_inline=build_inline)
     view_ms = (time.perf_counter() - t_view) * 1000.0
     for s in view:
         for m in s.get("coverage") or []:
             if m.get("url"):
                 index[_canon(str(m["url"]))] = {"storyId": s["id"], "coverage": s["coverage"]}
-    _INDEX_CACHE.update(key=key, index=index)
+    # An EMPTY index is never pinned: during the boot window the view serves [] while the kicked
+    # background refresh runs, and caching {} here would keep serving "no story evidence" for up
+    # to a full TTL after the refresh lands. Re-deriving an empty index costs one ~1 ms peek per
+    # call, so a genuinely story-less catalog loses nothing.
+    if index:
+        _INDEX_CACHE.update(key=key, index=index)
     # The KEY carries the catalog row count, so under continuous ingestion this misses whenever a
     # single article lands — measuring the miss rate and its cost is the point of these counters,
     # not an assumption that it is cheap.

@@ -105,7 +105,11 @@ def _story_block(store_, canon: str, title: str) -> Optional[dict]:
         # measured reason, as publisher co-coverage (root-cause report, 2026-08-02). Bonus: the ids
         # are the stabilized ones /api/stories serves, so a membership link now lands on the same
         # story id the story page itself uses.
-        stories = story_service.default_story_view(store_)
+        #
+        # build_inline: /api/analyze's zero-write contract. The default path's boot-window kick
+        # spawns a refresh that eventually writes the cache and the identity ledger — writes this
+        # endpoint has contracted never to cause. The inline build is read-only and uncached.
+        stories = story_service.default_story_view(store_, build_inline=True)
     except Exception:
         return None
     best, best_sim = None, 0.0

@@ -135,7 +135,7 @@ def build_authed_from_fresh_store() -> "dict[str, dict]":
     st = store_mod.Store("sqlite://")
     seed(st)
     er._INDEX_CACHE.update(key=None, index=None)     # force a fresh story index for this store
-    index = er.story_index(st)
+    index = er.story_index(st, build_inline=True)   # the analyze route builds read-only
     out = {}
     for name, ctx in _authed_contexts().items():
         analysis = aa.analyze(st, GUARDIAN_URL)
