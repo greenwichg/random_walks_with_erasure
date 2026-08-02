@@ -21,12 +21,21 @@ import { cn } from "@/lib/utils";
 export function StoryCard({ story, index = 0, priority = false }: { story: Story; index?: number; priority?: boolean }) {
   const { t, formatCompact, timeAgo } = useTranslation();
   const hasImage = Boolean(story.image);
+  // The entrance animation exists for the cards a reader can SEE arrive. Below the first grid rows
+  // it plays offscreen — pure main-thread cost with no visible effect (R3: a framer wrapper per
+  // card was a measurable share of the 24-card grid's 1.4 s of 4x-CPU long tasks). Static cards
+  // keep the identical DOM inside a plain div; `cv-card` lets the browser skip offscreen paint.
+  const Wrapper = index < 8 ? motion.div : "div";
+  const entrance =
+    index < 8
+      ? {
+          initial: { opacity: 0, y: 10 },
+          animate: { opacity: 1, y: 0 },
+          transition: { delay: Math.min(index * 0.05, 0.35), ease: [0.16, 1, 0.3, 1] as const },
+        }
+      : {};
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: Math.min(index * 0.05, 0.35), ease: [0.16, 1, 0.3, 1] }}
-    >
+    <Wrapper className="cv-card" {...entrance}>
       <Link
         href={`/stories/${story.id}`}
         className="group flex h-full flex-col rounded-lg border bg-card p-5 shadow-soft transition-all hover:-translate-y-0.5 hover:shadow-card"
@@ -85,7 +94,7 @@ export function StoryCard({ story, index = 0, priority = false }: { story: Story
           </span>
         </div>
       </Link>
-    </motion.div>
+    </Wrapper>
   );
 }
 

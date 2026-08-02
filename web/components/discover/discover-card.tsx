@@ -30,7 +30,13 @@ export function DiscoverCard({
   return (
     <motion.article
       layout
-      initial={{ opacity: 0, y: 10 }}
+      /* R3: `layout` stays on every card — the FLIP on filter changes is visible behaviour — but the
+         ENTRANCE below the first rows plays offscreen and is skipped (`initial={false}` mounts the
+         card at its final state with no animation work). Deliberately NO `cv-card` here, measured:
+         with it, this page's 4x-CPU long tasks went UP (~840 -> ~1000 ms) — framer's layout
+         measurements keep forcing the browser to size the very boxes content-visibility is trying
+         to skip, the one combination where the two features fight. */
+      initial={index < 8 ? { opacity: 0, y: 10 } : false}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: Math.min(index * 0.04, 0.4), duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
       className="flex flex-col rounded-lg border bg-card p-5 shadow-soft transition-shadow hover:shadow-card"

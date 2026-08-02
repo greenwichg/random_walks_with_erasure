@@ -155,11 +155,15 @@ export default function HomePage() {
 
             {/* Alternating feature placement gives consecutive topic modules a magazine rhythm. */}
             {categories.map((group, i) => (
-              <CategorySection key={group.topic} group={group} limit={6} flip={i % 2 === 1} />
+              /* R3: every category section starts below the fold — cv-section defers its layout
+                 and paint until the reader scrolls toward it. */
+              <div key={group.topic} className="cv-section">
+                <CategorySection group={group} limit={6} flip={i % 2 === 1} />
+              </div>
             ))}
 
             {latest.length > 0 && (
-              <section aria-labelledby="latest-heading">
+              <section aria-labelledby="latest-heading" className="cv-section">
                 <SectionHeader
                   id="latest-heading"
                   title={t("home.latest.title")}

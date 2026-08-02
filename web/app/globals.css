@@ -191,3 +191,18 @@
     min-width: 2.75rem;
   }
 }
+
+/* R3: skip layout + paint for offscreen list content. `content-visibility: auto` lets the browser
+ * defer rendering work for cards/sections outside the viewport — measured at 4x CPU throttling,
+ * the 24-card grids and the home page's stacked sections were 840-1,990 ms of main-thread long
+ * tasks per load. The intrinsic sizes approximate a card / a section so the scrollbar stays
+ * stable; a mis-estimate costs scrollbar accuracy only, never layout correctness. Browsers
+ * without support simply render everything, exactly as before this class existed. */
+.cv-card {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 380px;
+}
+.cv-section {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 640px;
+}
