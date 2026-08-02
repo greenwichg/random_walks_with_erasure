@@ -2,13 +2,26 @@
 
 import * as React from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { ArrowLeft, ArrowLeftRight, Check, Loader2, Search, Sparkles } from "lucide-react";
+import {
+  ArrowLeft,
+  ArrowLeftRight,
+  Check,
+  Loader2,
+  Lock,
+  Search,
+  Sparkles,
+} from "lucide-react";
 import type { EstimateHealthReport, LeanBucket, Outlet } from "@/types/domain";
 import { Button } from "@/components/ui/button";
+import { Logo } from "@/components/layout/logo";
+import { OnboardingHero } from "@/components/onboarding/onboarding-hero";
 import { ScoreRing } from "@/components/shared/score-ring";
 import { SpectrumBar } from "@/components/shared/spectrum-bar";
 import { useSession } from "next-auth/react";
-import { clearPendingOnboarding, stashPendingOnboarding } from "@/lib/onboarding";
+import {
+  clearPendingOnboarding,
+  stashPendingOnboarding,
+} from "@/lib/onboarding";
 import { useTranslation } from "@/lib/i18n";
 import { track } from "@/lib/analytics";
 import { cn } from "@/lib/utils";
@@ -40,10 +53,13 @@ const fade = {
  * the progressive account step (Google sign-in), asked only after the user has seen value.
  */
 export function OnboardingFlow() {
+  const { t } = useTranslation();
   const [step, setStep] = React.useState<Step>("welcome");
   const [outlets, setOutlets] = React.useState<Outlet[]>([]);
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
-  const [estimate, setEstimate] = React.useState<EstimateHealthReport | null>(null);
+  const [estimate, setEstimate] = React.useState<EstimateHealthReport | null>(
+    null,
+  );
   const [error, setError] = React.useState(false);
 
   // PA1: the visitor entered the onboarding funnel (once per mount, best-effort).
@@ -106,52 +122,109 @@ export function OnboardingFlow() {
     void build(spread);
   }, [outlets, build]);
 
+  // The pitch rides beside the card on the first screen only. Once the reader has committed,
+  // every later step is a task — a marketing column next to it would be noise competing with
+  // the thing they are trying to finish.
+  const isWelcome = step === "welcome";
+
   return (
-    <main className="relative min-h-screen overflow-hidden bg-background">
+    <main className="relative flex min-h-screen flex-col overflow-hidden bg-background">
       <div
         aria-hidden
         className="pointer-events-none absolute inset-0 [background:radial-gradient(60%_50%_at_50%_-10%,hsl(var(--primary)/0.10),transparent)]"
       />
-      <div className="relative mx-auto flex min-h-screen max-w-md flex-col justify-center px-5 py-10">
-        <AnimatePresence mode="wait">
-          {step === "welcome" && (
-            <Welcome key="welcome" onBuild={() => setStep("pick")} onSample={sample} />
-          )}
-          {step === "pick" && (
-            <Pick
-              key="pick"
-              outlets={outlets}
-              selected={selected}
-              onToggle={toggle}
-              onBack={() => setStep("welcome")}
-              onBuild={() => build([...selected])}
-            />
-          )}
-          {step === "building" && (
-            <Building
-              key="building"
-              error={error}
-              onRetry={() => build([...selected])}
-              onBack={() => setStep("pick")}
-            />
-          )}
-          {step === "estimate" && estimate && (
-            <Estimate
-              key="estimate"
-              report={estimate}
-              outletIds={[...selected]}
-              onAdjust={() => setStep("pick")}
-            />
-          )}
-        </AnimatePresence>
+      {/* Second light source, low and to the right, so the split layout has a direction rather
+          than a single symmetric wash. Decorative only. */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute -bottom-48 -right-32 h-[32rem] w-[32rem] rounded-full bg-primary/10 blur-3xl"
+      />
+
+      {isWelcome && (
+        <header className="relative z-10 mx-auto flex w-full max-w-6xl items-center justify-between gap-4 px-5 py-6">
+          <Logo className="flex-none whitespace-nowrap" />
+          {/* The returning reader's route in. It lives here rather than at the foot of the card
+              because it answers a question asked on arrival ("I already have one of these"),
+              not after reading the pitch.
+              The lead-in hides on a phone: at 390px it and the wordmark fought for one row and
+              broke "Hidden View" across two lines. "Sign in" alone still says it. */}
+          <button
+            onClick={() => window.location.assign("/signin")}
+            className="flex-none whitespace-nowrap rounded-full border bg-card/60 px-4 py-2 text-sm backdrop-blur-sm transition-colors hover:bg-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+          >
+            <span className="hidden text-muted-foreground sm:inline">
+              {t("onboarding.haveAccount")}{" "}
+            </span>
+            <span className="font-medium text-primary">
+              {t("onboarding.signIn")}
+            </span>
+          </button>
+        </header>
+      )}
+
+      <div
+        className={cn(
+          "relative mx-auto flex w-full flex-1 flex-col justify-center gap-12 px-5 py-10",
+          isWelcome
+            ? "max-w-6xl lg:flex-row lg:items-center lg:gap-16 lg:py-16"
+            : "max-w-md",
+        )}
+      >
+        {isWelcome && <OnboardingHero />}
+        <div className={cn("w-full", isWelcome && "lg:w-[26rem] lg:flex-none")}>
+          <AnimatePresence mode="wait">
+            {step === "welcome" && (
+              <Welcome
+                key="welcome"
+                onBuild={() => setStep("pick")}
+                onSample={sample}
+              />
+            )}
+            {step === "pick" && (
+              <Pick
+                key="pick"
+                outlets={outlets}
+                selected={selected}
+                onToggle={toggle}
+                onBack={() => setStep("welcome")}
+                onBuild={() => build([...selected])}
+              />
+            )}
+            {step === "building" && (
+              <Building
+                key="building"
+                error={error}
+                onRetry={() => build([...selected])}
+                onBack={() => setStep("pick")}
+              />
+            )}
+            {step === "estimate" && estimate && (
+              <Estimate
+                key="estimate"
+                report={estimate}
+                outletIds={[...selected]}
+                onAdjust={() => setStep("pick")}
+              />
+            )}
+          </AnimatePresence>
+        </div>
       </div>
     </main>
   );
 }
 
-function Frame({ children, className }: { children: React.ReactNode; className?: string }) {
+function Frame({
+  children,
+  className,
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
   return (
-    <motion.div {...fade} className={cn("rounded-2xl border bg-card p-7 shadow-sm", className)}>
+    <motion.div
+      {...fade}
+      className={cn("rounded-2xl border bg-card p-7 shadow-sm", className)}
+    >
       {children}
     </motion.div>
   );
@@ -182,25 +255,57 @@ function Steps({ n }: { n: 1 | 2 | 3 }) {
   return (
     <div className="mb-5 flex items-center gap-1.5">
       {[1, 2, 3].map((i) => (
-        <span key={i} className={cn("h-1.5 flex-1 rounded-full", i <= n ? "bg-primary" : "bg-muted")} />
+        <span
+          key={i}
+          className={cn(
+            "h-1.5 flex-1 rounded-full",
+            i <= n ? "bg-primary" : "bg-muted",
+          )}
+        />
       ))}
-      <span className="ml-1.5 font-mono text-[10px] text-muted-foreground">{t("onboarding.stepOf", { n })}</span>
+      <span className="ml-1.5 font-mono text-[10px] text-muted-foreground">
+        {t("onboarding.stepOf", { n })}
+      </span>
     </div>
   );
 }
 
-function Welcome({ onBuild, onSample }: { onBuild: () => void; onSample: () => void }) {
+function Welcome({
+  onBuild,
+  onSample,
+}: {
+  onBuild: () => void;
+  onSample: () => void;
+}) {
   const { t } = useTranslation();
   const values = [
-    { icon: <Sparkles className="h-3.5 w-3.5" />, t: t("onboarding.value1.t"), d: t("onboarding.value1.d") },
-    { icon: <Search className="h-3.5 w-3.5" />, t: t("onboarding.value2.t"), d: t("onboarding.value2.d") },
-    { icon: <ArrowLeftRight className="h-3.5 w-3.5" />, t: t("onboarding.value3.t"), d: t("onboarding.value3.d") },
+    {
+      icon: <Sparkles className="h-3.5 w-3.5" />,
+      t: t("onboarding.value1.t"),
+      d: t("onboarding.value1.d"),
+    },
+    {
+      icon: <Search className="h-3.5 w-3.5" />,
+      t: t("onboarding.value2.t"),
+      d: t("onboarding.value2.d"),
+    },
+    {
+      icon: <ArrowLeftRight className="h-3.5 w-3.5" />,
+      t: t("onboarding.value3.t"),
+      d: t("onboarding.value3.d"),
+    },
   ];
   return (
     <Frame>
       <Brand />
-      <h1 className="text-balance text-2xl font-bold tracking-tight">{t("onboarding.welcome.title")}</h1>
-      <p className="mt-2 text-sm text-muted-foreground">{t("onboarding.welcome.subtitle")}</p>
+      {/* h2, not h1: the hero column beside this card owns the page's first-level heading, and two
+          competing h1s make a worse outline for a screen reader than one extra level of depth. */}
+      <h2 className="text-balance text-2xl font-bold tracking-tight">
+        {t("onboarding.welcome.title")}
+      </h2>
+      <p className="mt-2 text-sm text-muted-foreground">
+        {t("onboarding.welcome.subtitle")}
+      </p>
       <ul className="my-6 space-y-3">
         {values.map((v) => (
           <li key={v.t} className="flex gap-3">
@@ -217,7 +322,12 @@ function Welcome({ onBuild, onSample }: { onBuild: () => void; onSample: () => v
       <Button className="w-full" size="lg" onClick={onBuild}>
         {t("onboarding.buildReport")}
       </Button>
-      <Button className="mt-2 w-full" size="lg" variant="outline" onClick={onSample}>
+      <Button
+        className="mt-2 w-full"
+        size="lg"
+        variant="outline"
+        onClick={onSample}
+      >
         {t("onboarding.sampleFirst")}
       </Button>
       {/* Tertiary escape hatch: the anonymous, zero-commitment single-article analyzer. */}
@@ -230,16 +340,24 @@ function Welcome({ onBuild, onSample }: { onBuild: () => void; onSample: () => v
           {t("onboarding.analyzeLink")}
         </button>
       </p>
-      <p className="mt-3 text-center text-xs text-muted-foreground">{t("onboarding.takesMinute")}</p>
-      <p className="mt-4 text-center text-xs text-muted-foreground">
-        {t("onboarding.haveAccount")}{" "}
-        <button
-          onClick={() => window.location.assign("/signin")}
-          className="font-medium text-primary underline-offset-2 hover:underline"
-        >
-          {t("onboarding.signIn")}
-        </button>
+      <p className="mt-3 text-center text-xs text-muted-foreground">
+        {t("onboarding.takesMinute")}
       </p>
+      {/* The objection this page actually has to answer. A reader is being asked to hand over what
+          they read, which is about as personal as a browsing history — so the answer belongs on the
+          screen where the ask is made, not a click away in a policy page.
+          (Sign-in moved to the page header: it answers an arrival question, not a closing one.) */}
+      <div className="mt-4 flex items-start gap-2.5 rounded-xl border bg-muted/30 p-3">
+        <Lock className="mt-0.5 h-4 w-4 flex-none text-primary" aria-hidden />
+        <p className="text-xs leading-relaxed">
+          <span className="font-medium text-primary">
+            {t("onboarding.privacy.title")}
+          </span>{" "}
+          <span className="text-muted-foreground">
+            {t("onboarding.privacy.body")}
+          </span>
+        </p>
+      </div>
     </Frame>
   );
 }
@@ -263,10 +381,18 @@ function Pick({
   return (
     <Frame>
       <Steps n={2} />
-      <h2 className="text-xl font-bold tracking-tight">{t("onboarding.pick.title")}</h2>
-      <p className="mt-1 text-sm text-muted-foreground">{t("onboarding.pick.subtitle")}</p>
+      <h2 className="text-xl font-bold tracking-tight">
+        {t("onboarding.pick.title")}
+      </h2>
+      <p className="mt-1 text-sm text-muted-foreground">
+        {t("onboarding.pick.subtitle")}
+      </p>
       <div className="my-4 flex flex-wrap gap-2">
-        {outlets.length === 0 && <p className="text-sm text-muted-foreground">{t("onboarding.loadingPublishers")}</p>}
+        {outlets.length === 0 && (
+          <p className="text-sm text-muted-foreground">
+            {t("onboarding.loadingPublishers")}
+          </p>
+        )}
         {outlets.map((o) => {
           const on = selected.has(o.id);
           return (
@@ -276,10 +402,15 @@ function Pick({
               aria-pressed={on}
               className={cn(
                 "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition-colors",
-                on ? "border-primary bg-primary/10 font-medium text-primary" : "border-border bg-card hover:bg-accent",
+                on
+                  ? "border-primary bg-primary/10 font-medium text-primary"
+                  : "border-border bg-card hover:bg-accent",
               )}
             >
-              <span className="h-1.5 w-1.5 rounded-full" style={{ background: LEAN_HUE[o.leanBucket] }} />
+              <span
+                className="h-1.5 w-1.5 rounded-full"
+                style={{ background: LEAN_HUE[o.leanBucket] }}
+              />
               {o.name}
               {on && <Check className="h-3 w-3" />}
             </button>
@@ -297,17 +428,30 @@ function Pick({
       >
         <ArrowLeft className="h-3 w-3" /> {t("common.back")}
       </button>
-      <p className="mt-3 text-center text-[11px] text-muted-foreground">{t("onboarding.autoHint")}</p>
+      <p className="mt-3 text-center text-[11px] text-muted-foreground">
+        {t("onboarding.autoHint")}
+      </p>
     </Frame>
   );
 }
 
-function Building({ error, onRetry, onBack }: { error: boolean; onRetry: () => void; onBack: () => void }) {
+function Building({
+  error,
+  onRetry,
+  onBack,
+}: {
+  error: boolean;
+  onRetry: () => void;
+  onBack: () => void;
+}) {
   const { t } = useTranslation();
   const [line, setLine] = React.useState(0);
   React.useEffect(() => {
     if (error) return undefined;
-    const id = setInterval(() => setLine((l) => (l + 1) % BUILD_LINE_KEYS.length), 1100);
+    const id = setInterval(
+      () => setLine((l) => (l + 1) % BUILD_LINE_KEYS.length),
+      1100,
+    );
     return () => clearInterval(id);
   }, [error]);
 
@@ -315,11 +459,16 @@ function Building({ error, onRetry, onBack }: { error: boolean; onRetry: () => v
     return (
       <Frame className="text-center">
         <h2 className="text-lg font-semibold">{t("onboarding.error.title")}</h2>
-        <p className="mt-2 text-sm text-muted-foreground">{t("onboarding.error.body")}</p>
+        <p className="mt-2 text-sm text-muted-foreground">
+          {t("onboarding.error.body")}
+        </p>
         <Button className="mt-5 w-full" size="lg" onClick={onRetry}>
           {t("common.tryAgain")}
         </Button>
-        <button onClick={onBack} className="mt-3 text-xs text-muted-foreground hover:text-foreground">
+        <button
+          onClick={onBack}
+          className="mt-3 text-xs text-muted-foreground hover:text-foreground"
+        >
           {t("onboarding.backToPicks")}
         </button>
       </Frame>
@@ -331,8 +480,12 @@ function Building({ error, onRetry, onBack }: { error: boolean; onRetry: () => v
       <div className="mx-auto mt-4 grid h-28 w-28 place-items-center">
         <Loader2 className="h-16 w-16 animate-spin text-primary" />
       </div>
-      <p className="mt-5 text-lg font-semibold">{t("onboarding.readingDiet")}</p>
-      <p className="mt-1 font-mono text-xs text-muted-foreground">{t(BUILD_LINE_KEYS[line] ?? "onboarding.loading.scoring")}</p>
+      <p className="mt-5 text-lg font-semibold">
+        {t("onboarding.readingDiet")}
+      </p>
+      <p className="mt-1 font-mono text-xs text-muted-foreground">
+        {t(BUILD_LINE_KEYS[line] ?? "onboarding.loading.scoring")}
+      </p>
     </Frame>
   );
 }
@@ -381,12 +534,12 @@ function Estimate({
           body: JSON.stringify({ outlets: outletIds }),
         });
         if (!res.ok) throw new Error("save failed");
-        clearPendingOnboarding();       // never let a stale item win
+        clearPendingOnboarding(); // never let a stale item win
         window.location.assign("/");
       } catch {
         stashPendingOnboarding(outletIds);
         setSaveFailed(true);
-        setSaving(false);               // the button re-enables: pressing it again retries the POST
+        setSaving(false); // the button re-enables: pressing it again retries the POST
       }
       return;
     }
@@ -403,7 +556,12 @@ function Estimate({
         <Sparkles className="h-3 w-3" /> {t("onboarding.estimateBadge")}
       </div>
       <div className="flex flex-col items-center">
-        <ScoreRing score={report.overall} band={report.band} label={t("common.of100")} size={132} />
+        <ScoreRing
+          score={report.overall}
+          band={report.band}
+          label={t("common.of100")}
+          size={132}
+        />
         {report.band && (
           <span className="mt-2 rounded-full bg-muted px-3 py-1 font-mono text-[11px] font-semibold uppercase tracking-wide">
             {t(`band.${report.band}`)}
@@ -413,19 +571,28 @@ function Estimate({
       <SpectrumBar distribution={report.viewpoint} className="mt-5" />
       {takeaway && (
         <div className="mt-5 rounded-xl border bg-muted/50 p-3.5 text-sm">
-          <span className="mb-1 block font-mono text-[10px] font-bold uppercase tracking-wide text-primary">{t("onboarding.yourOneThing")}</span>
+          <span className="mb-1 block font-mono text-[10px] font-bold uppercase tracking-wide text-primary">
+            {t("onboarding.yourOneThing")}
+          </span>
           {takeaway.detail}
         </div>
       )}
       <div className="mt-4 rounded-xl border border-dashed p-3.5 text-xs text-muted-foreground">
-        <span className="mb-1.5 block font-medium text-foreground">{t("onboarding.whatThis")}</span>
+        <span className="mb-1.5 block font-medium text-foreground">
+          {t("onboarding.whatThis")}
+        </span>
         <ul className="space-y-1">
           <li>• {t("onboarding.what1")}</li>
           <li>• {t("onboarding.what2")}</li>
           <li>• {t("onboarding.what3")}</li>
         </ul>
       </div>
-      <Button className="mt-5 w-full" size="lg" onClick={save} disabled={saving}>
+      <Button
+        className="mt-5 w-full"
+        size="lg"
+        onClick={save}
+        disabled={saving}
+      >
         {t("onboarding.saveTrack")}
       </Button>
       {saveFailed && (
@@ -439,7 +606,9 @@ function Estimate({
       >
         <ArrowLeft className="h-3 w-3" /> {t("onboarding.adjustOutlets")}
       </button>
-      <p className="mt-3 text-center text-[11px] text-muted-foreground">{t("onboarding.privacyNote")}</p>
+      <p className="mt-3 text-center text-[11px] text-muted-foreground">
+        {t("onboarding.privacyNote")}
+      </p>
     </Frame>
   );
 }
