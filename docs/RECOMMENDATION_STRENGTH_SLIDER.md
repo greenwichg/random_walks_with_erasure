@@ -146,3 +146,26 @@ prints every table above. The persistence check runs through the real FastAPI ap
 `TestClient`. No production data was touched; production persistence semantics are the same code
 path (`POST /api/me/settings` → `store.save_settings` → per-request `rec_params_from_settings`),
 verified working.
+
+---
+
+## Implemented (2026-08-02): the smallest fix — labels, not engine
+
+Two i18n keys across all five catalogs (`web/messages/{en,es,fr,de,pt}.json`); no engine, API, or
+behaviour change of any kind:
+
+* `settings.opennessDesc` → *"How much of your feed reaches across the political spectrum to the
+  other side."* — plainly claiming the political axis this slider measurably owns (the bridge-slot
+  budget; meanGap +0.19/+0.20, cross-cutting 6→10 and 5→8 across its range). The previous copy
+  ("…how strongly the rest of your political mix leans…") also mis-described the mechanism — the
+  slider moves how MANY slots bridge, not how strongly the rest leans.
+* `settings.strengthDesc` → *"How far we go beyond the most-covered, mainstream stories."* — what
+  RWE-D `beta` measurably does (popularity suppression in its slice), replacing "how aggressively
+  we diversify away from your usual diet", which promised the other slider's behaviour.
+
+Slider titles, value labels (Gentle/Balanced/Bold…), ranges, defaults, and every engine mapping
+are untouched — `rec_params_from_settings` still produces byte-identical parameters. Verified:
+`check-i18n` (838 keys × 5 languages, parity + placeholders), `tsc`, `eslint`, 357 web unit tests.
+
+The structural follow-up (fractional leans through `_bias_label` to enable a true per-card
+distance dial) remains flagged above, unimplemented by design.
