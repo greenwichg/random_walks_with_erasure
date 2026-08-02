@@ -64,6 +64,19 @@ api_py() {
 # sends (X-IH-Auth + X-IH-User-Id), so this measures the served path, not a private one.
 read -r -d '' PREAMBLE <<'PYPRE'
 import json, os, sys, time, urllib.request, urllib.error
+
+# `python -` reads from stdin, so sys.path[0] is the CWD — not the script directory the engine
+# gets from `python examples/api_fastapi.py`. Without this every `import store` in this probe
+# fails with ModuleNotFoundError while the app itself is perfectly healthy. Searched rather than
+# hardcoded so a moved WORKDIR says so instead of looking like a broken engine.
+for _cand in ("/app/examples", os.path.join(os.getcwd(), "examples"), "/opt/ih/examples"):
+    if os.path.exists(os.path.join(_cand, "store.py")):
+        sys.path.insert(0, _cand)
+        break
+else:
+    print(f"  !! cannot find the engine modules (cwd={os.getcwd()}) — looked in /app/examples,"
+          f" ./examples, /opt/ih/examples", file=sys.stderr)
+
 BASE = "http://127.0.0.1:8000"
 SECRET = os.environ.get("RWE_INTERNAL_SECRET", "")
 
