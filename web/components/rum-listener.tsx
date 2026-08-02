@@ -91,9 +91,26 @@ export function RumListener() {
   const pathRef = React.useRef(path);
   pathRef.current = path;
 
-  // Web Vitals + Next custom metrics. The hook re-reports per navigation for the route-scoped ones.
+  // Per-metric-instance memory, and it earns its two maps. The FIRST day of production data showed
+  // every page reporting the same two LCP values: the vitals hook re-reports each metric on every
+  // soft navigation, and this listener recorded each re-report stamped with the CURRENT route — one
+  // hard load smeared across every page the reader visited after it. A metric instance (`metric.id`)
+  // therefore gets: its path captured at FIRST sighting (the page it actually measured — the first
+  // report always happens there), and a record only when its VALUE changed (a candidate update, e.g.
+  // LCP growing or INP worsening — never a soft-nav echo). The id ships in the event so the
+  // aggregation can collapse candidates to their final value per (session, id).
+  const vitalPath = React.useRef(new Map<string, string>());
+  const vitalValue = React.useRef(new Map<string, number>());
   useReportWebVitals((metric) => {
-    record({ t: "vital", name: metric.name, value: metric.value, path: pathRef.current });
+    let measuredPath = vitalPath.current.get(metric.id);
+    if (measuredPath === undefined) {
+      measuredPath = pathRef.current;
+      vitalPath.current.set(metric.id, measuredPath);
+    }
+    if (vitalValue.current.get(metric.id) === metric.value) return;
+    vitalValue.current.set(metric.id, metric.value);
+    record({ t: "vital", name: metric.name, value: metric.value,
+             id: String(metric.id).slice(-12), path: measuredPath });
   });
 
   // Soft-navigation boundaries.

@@ -24,6 +24,8 @@ export interface RumEvent {
   start?: number;
   /** Transfer size in bytes for API resources (0 when served from cache). */
   size?: number;
+  /** Metric-instance id (vitals): lets the sink collapse candidate updates to a final value. */
+  id?: string;
   /** Wall-clock ms since epoch at record time. */
   ts?: number;
 }
@@ -80,6 +82,7 @@ export function clampEvents(raw: unknown, maxEvents = 100): RumEvent[] {
     if (typeof e.name === "string") keep.name = e.name.slice(0, 60);
     if (typeof e.path === "string") keep.path = e.path.slice(0, 200);
     if (typeof e.api === "string") keep.api = e.api.slice(0, 200);
+    if (typeof e.id === "string") keep.id = e.id.slice(0, 16);
     for (const k of ["value", "ms", "start", "ts", "size"] as const) {
       const v = e[k];
       if (typeof v === "number" && Number.isFinite(v)) keep[k] = Math.round(v * 10) / 10;
