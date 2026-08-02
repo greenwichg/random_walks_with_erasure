@@ -32,6 +32,14 @@ services:
       # uses. WITHOUT this (and the matching mount below) the poller loads ZERO feeds and silently no-ops,
       # so the catalog only ever refreshes at `up` time. Keep this pair in sync with the ingest service.
       RWE_RSS_FEEDS: /app/feeds/rss_feeds.txt
+      # Cheap corpus change-detection (P1-1) — ON. When the catalog fingerprint is unchanged since
+      # the last candidate build, the refresh check skips its full-catalog load (measured 4,495 ms
+      # at 47k rows, 2026-08-01 — a cost that otherwise grows with catalog age forever, since
+      # catalog retention defaults off). Honestly sized: most ingest-bearing cycles change the
+      # catalog and take the full path regardless; the gate pays on dirty nudges and no-change
+      # cycles, and its two /api/metrics counters (corpus_refresh_cheap_skip_total vs
+      # corpus_refresh_candidate_built_total) measure that split in production. `0` disables.
+      RWE_REFRESH_CHEAP_CHECK: ${RWE_REFRESH_CHEAP_CHECK:-}
       # --- GDELT ingestion (keyless; adapter already registered in default_registry) — OFF by default -
       # A SECOND live source, wired but disabled. Enable a controlled trial via RWE_GDELT_ENABLED=1 in
       # deploy/.env; the MultiSourcePoller picks it up with NO scheduler change (docs/GDELT_TRIAL_RUNBOOK.md).

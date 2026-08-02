@@ -372,3 +372,140 @@ def test_maybe_refresh_consumes_the_dirty_flag(monkeypatch):
     assert mgr.is_catalog_dirty() is True
     mgr.on_poll_cycle({})                     # runs _maybe_refresh
     assert mgr.is_catalog_dirty() is False    # consumed, regardless of whether a swap happened
+
+
+# --------------------------------------------------------------------------- #
+# The cheap fingerprint gate (P1-1): an unchanged catalog skips the full-catalog candidate build.
+# Production sizing on the function's docstring; these pin the gate's safety edges.
+# --------------------------------------------------------------------------- #
+def _counting(monkeypatch):
+    """Route `build_candidate_for` through a counter; returns the count dict."""
+    calls = {"n": 0}
+    real = cr.build_candidate_for
+    monkeypatch.setattr(cr, "build_candidate_for",
+                        lambda store_, th=None: (calls.__setitem__("n", calls["n"] + 1),
+                                                 real(store_, th))[1])
+    return calls
+
+
+def test_an_unchanged_catalog_skips_the_candidate_build_entirely(monkeypatch):
+    monkeypatch.setenv("RWE_CORPUS_MIN_ARTICLES", "1")
+    st = store_mod.Store("sqlite://")
+    _seed_catalog(st)
+    app, mgr = _manager(st, monkeypatch)
+    mgr.on_poll_cycle({"new": 18})            # first cycle: full path, fingerprint recorded
+    assert mgr.refresh_count == 1
+    calls = _counting(monkeypatch)
+    mgr.on_poll_cycle({"new": 0})             # catalog unchanged -> the gate closes the whole check
+    assert calls["n"] == 0, "the gate did not skip the full-catalog load"
+    assert mgr.refresh_count == 1 and app.active.generation == 2
+
+
+def test_a_catalog_write_reopens_the_gate(monkeypatch):
+    monkeypatch.setenv("RWE_CORPUS_MIN_ARTICLES", "1")
+    st = store_mod.Store("sqlite://")
+    _seed_catalog(st, prefix="a")
+    app, mgr = _manager(st, monkeypatch)
+    mgr.on_poll_cycle({"new": 18})
+    calls = _counting(monkeypatch)
+    _seed_catalog(st, prefix="b")             # fingerprint moves
+    mgr.on_poll_cycle({"new": 18})
+    assert calls["n"] == 1, "a changed catalog must take the full path"
+    assert app.active.generation == 3
+
+
+def test_a_dirty_nudge_bypasses_the_gate(monkeypatch):
+    """The nudge is the request path explicitly asking for a check (D6); the gate must honour it
+    with a REAL check even though the fingerprint alone would have closed it."""
+    monkeypatch.setenv("RWE_CORPUS_MIN_ARTICLES", "1")
+    st = store_mod.Store("sqlite://")
+    _seed_catalog(st)
+    app, mgr = _manager(st, monkeypatch)
+    mgr.on_poll_cycle({"new": 18})
+    calls = _counting(monkeypatch)
+    mgr.mark_catalog_dirty()
+    mgr.on_poll_cycle({})                     # unchanged fingerprint + dirty -> full check anyway
+    assert calls["n"] == 1, "a dirty nudge was silently absorbed by the gate"
+    assert mgr.refresh_count == 1             # signature unchanged -> still no rebuild, as before
+
+
+def test_the_gate_kill_switch_restores_a_build_every_cycle(monkeypatch):
+    monkeypatch.setenv("RWE_CORPUS_MIN_ARTICLES", "1")
+    monkeypatch.setenv("RWE_REFRESH_CHEAP_CHECK", "0")
+    st = store_mod.Store("sqlite://")
+    _seed_catalog(st)
+    app, mgr = _manager(st, monkeypatch)
+    mgr.on_poll_cycle({"new": 18})
+    calls = _counting(monkeypatch)
+    mgr.on_poll_cycle({"new": 0})             # unchanged catalog, gate disabled -> old behaviour
+    assert calls["n"] == 1
+    assert mgr.refresh_count == 1
+
+
+def test_an_unreadable_fingerprint_fails_open_to_the_full_check(monkeypatch):
+    monkeypatch.setenv("RWE_CORPUS_MIN_ARTICLES", "1")
+    st = store_mod.Store("sqlite://")
+    _seed_catalog(st)
+    app, mgr = _manager(st, monkeypatch)
+    mgr.on_poll_cycle({"new": 18})
+    monkeypatch.setattr(st, "catalog_fingerprint",
+                        lambda: (_ for _ in ()).throw(RuntimeError("db momentarily unreadable")))
+    calls = _counting(monkeypatch)
+    mgr.on_poll_cycle({"new": 0})
+    assert calls["n"] == 1, "an unreadable fingerprint must cost a full check, never a skip"
+
+
+def test_a_write_landing_mid_build_reopens_the_gate(monkeypatch):
+    """The fingerprint recorded with a build is the PRE-build read. A write that lands during the
+    multi-second candidate build must reopen the gate next cycle — recording the post-build
+    fingerprint instead would skip straight over that write's articles."""
+    monkeypatch.setenv("RWE_CORPUS_MIN_ARTICLES", "1")
+    st = store_mod.Store("sqlite://")
+    _seed_catalog(st, prefix="a")
+    app, mgr = _manager(st, monkeypatch)
+
+    real = cr.build_candidate_for
+    def build_then_write(store_, th=None):
+        out = real(store_, th)
+        _seed_catalog(st, prefix="mid")       # lands while the "build" is still in flight
+        return out
+    monkeypatch.setattr(cr, "build_candidate_for", build_then_write)
+    mgr.on_poll_cycle({"new": 18})            # builds; must record the PRE-build fingerprint
+
+    calls = _counting(monkeypatch)
+    mgr.on_poll_cycle({"new": 0})             # the mid-build write must force a full check
+    assert calls["n"] == 1, "the mid-build write was skipped over"
+
+
+def test_a_failed_activation_never_lets_the_gate_close_over_it(monkeypatch):
+    """Found by mutation: fingerprint recorded + activation failed leaves no active bundle, and a
+    gate that skips in that state strands the app with no corpus and no retry. The gate must stay
+    open until something is actually serving."""
+    monkeypatch.setenv("RWE_CORPUS_MIN_ARTICLES", "1")
+    st = store_mod.Store("sqlite://")
+    _seed_catalog(st)
+    app = types.SimpleNamespace(store=st, active=None)     # deliberately never seeded
+    mgr = cr.RefreshManager(app, log=lambda *a, **k: None)
+    monkeypatch.setattr(mgr, "build_active",
+                        lambda *a, **kw: (None, None, "forced build failure"))
+
+    calls = _counting(monkeypatch)
+    mgr.on_poll_cycle({"new": 18})            # full path; fingerprint recorded; activation fails
+    assert calls["n"] == 1 and app.active is None
+    mgr.on_poll_cycle({"new": 0})             # unchanged catalog — but nothing is serving yet
+    assert calls["n"] == 2, "the gate closed over a failed activation and stopped the retry"
+
+
+def test_a_fingerprint_unreadable_from_the_start_never_skips(monkeypatch):
+    """Found by mutation: if the fingerprint is unreadable on the RECORDING cycle too, both sides
+    of the comparison are None — and None == None must read as "unknown", never as "unchanged"."""
+    monkeypatch.setenv("RWE_CORPUS_MIN_ARTICLES", "1")
+    st = store_mod.Store("sqlite://")
+    _seed_catalog(st)
+    app, mgr = _manager(st, monkeypatch)
+    monkeypatch.setattr(st, "catalog_fingerprint",
+                        lambda: (_ for _ in ()).throw(RuntimeError("unreadable")))
+    calls = _counting(monkeypatch)
+    mgr.on_poll_cycle({"new": 18})
+    mgr.on_poll_cycle({"new": 0})
+    assert calls["n"] == 2, "None == None was treated as an unchanged catalog"

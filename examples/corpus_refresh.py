@@ -36,6 +36,7 @@ import api_server as engine        # Backend + DatasetProfile — the UNCHANGED 
 import feed_source                 # export_candidate_csv + load_url_map (the single qbias serializer)
 import corpus_validation           # Commit 4: build_candidate + validate_corpus (consumed as-is)
 import corpus_health               # thresholds_from_env (shared floors + ceilings)
+import obs_metrics                 # OBS1 counters — the gate's skip/build split lands in /api/metrics
 import personalize                 # Personalizer — rebuilt over the new backend on every swap
 
 
@@ -112,6 +113,35 @@ def build_candidate_for(store_, thresholds: Optional[dict] = None) -> list:
     return candidate
 
 
+def cheap_check_enabled() -> bool:
+    """Whether an unchanged catalog fingerprint may skip the candidate build outright.
+    ON — ``RWE_REFRESH_CHEAP_CHECK=0`` restores a full candidate build on every cycle.
+
+    The candidate build loads the ENTIRE catalog (``list_feed_articles(limit=10_000_000)``) —
+    measured in production (2026-08-01) at **4,495 ms** at 47k rows, paid on every post-cycle just
+    to learn whether anything changed, and growing with catalog age forever because catalog
+    retention defaults off. The fingerprint (row count + newest ``fetched_at``) answers the same
+    question for the no-change case in one aggregate query.
+
+    **Honest sizing, from the same production evidence:** generation 17 within ~75 minutes of boot
+    means most ingest-bearing cycles genuinely rebuild — the gate cannot open on those, so its
+    steady-state saving is the minority of cycles (dirty nudges, cap-absorbed ingests, retention-
+    only cycles). It is shipped because it is cheap insurance that also *arrests the growth path*
+    (a no-change cycle's cost no longer scales with catalog size), and because its two counters
+    (``corpus_refresh_cheap_skip_total`` / ``corpus_refresh_candidate_built_total``) finally
+    measure the skip fraction the estimate depends on, in /api/metrics, instead of modelling it.
+
+    Why skipping is safe here and would not be in general: the candidate is time-dependent
+    (:func:`corpus_validation.build_candidate` ages articles out at 60 days), so "same catalog"
+    does not strictly imply "same candidate" over long spans. But this check only runs inside the
+    poller's post-cycle, which itself only runs when items were ingested (fingerprint changed →
+    gate open) or the request path marked the catalog dirty (bypasses the gate below). A skip can
+    therefore only defer aging-out until the next real write — minutes in practice, and exactly the
+    latency bound D6 already accepts for quiet feeds."""
+    v = os.environ.get("RWE_REFRESH_CHEAP_CHECK", "").strip().lower()
+    return v not in {"0", "false", "no", "off"}
+
+
 def initial_signature(store_) -> str:
     """Signature of the startup catalog's candidate, so the first poll cycle skips a rebuild when the
     catalog hasn't changed since boot."""
@@ -153,6 +183,12 @@ class RefreshManager:
         self.state = RefreshState.IDLE
         self.generation = 0
         self.refresh_count = 0
+        # The catalog fingerprint the last-built candidate was constructed against — read BEFORE
+        # that build, so a write landing mid-build makes the next cycle rebuild rather than skip.
+        # Deliberately NOT set by `seed`: the boot candidate is built before seeding and a write in
+        # that gap would otherwise be skipped over, so the first poll cycle always pays one full
+        # check — exactly what it paid before the gate existed.
+        self.last_catalog_fp = None
         self.last_candidate_sig: Optional[str] = None
         self.last_validation_at: Optional[str] = None
         self.last_success_at: Optional[str] = None
@@ -235,6 +271,16 @@ class RefreshManager:
         return active, result, None
 
     # -- the poller seam (runs in the poller thread; off the request path) -- #
+    @staticmethod
+    def _catalog_fp(store_):
+        """The store's cheap catalog fingerprint (one aggregate query), or ``None`` when it cannot
+        be read — and ``None`` never matches anything, so an unreadable fingerprint always falls
+        through to the full check rather than to a skip."""
+        try:
+            return store_.catalog_fingerprint()
+        except Exception:
+            return None
+
     def mark_catalog_dirty(self) -> None:
         """A request-path producer (extension read) created a catalog article: make sure the NEXT
         poll cycle runs the refresh check even if the feeds themselves bring nothing new (D6)."""
@@ -260,16 +306,34 @@ class RefreshManager:
         store_ = self.app.store
         if store_ is None:
             return
+        was_dirty = self.catalog_dirty
         self.catalog_dirty = False           # consuming the nudge: this check covers everything so far
+        # THE CHEAP GATE (P1-1): an unchanged catalog fingerprint cannot have changed the candidate
+        # (modulo the bounded aging deferral argued on `cheap_check_enabled`), so skip the
+        # full-catalog load outright. A dirty nudge BYPASSES the gate: it is the request path
+        # explicitly asking for a check, and honouring it with a real one keeps D6's latency bound
+        # a promise rather than a probability. Fail-open on every uncertainty — an unreadable
+        # fingerprint, no recorded baseline, no active bundle — because the failure mode of
+        # skipping wrongly (a stale corpus) is worse than the 4.5 s it saves.
+        fp = self._catalog_fp(store_)
+        if (cheap_check_enabled() and not was_dirty and self.app.active is not None
+                and fp is not None and self.last_catalog_fp is not None
+                and fp == self.last_catalog_fp):
+            obs_metrics.incr("corpus_refresh_cheap_skip_total")
+            self._log(logging.INFO, "corpus_refresh_check", rebuilt=False, skipped="fingerprint")
+            return
         th = corpus_health.thresholds_from_env()
         t0 = time.perf_counter()
         candidate = build_candidate_for(store_, th)
         sig = candidate_signature(candidate)
-        # The candidate is built on EVERY cycle — it is how the signature is computed — and it loads
-        # the entire catalog (`list_feed_articles(limit=10_000_000)`). So this cost is paid whether
-        # or not anything gets rebuilt, and until now only the rebuild had a duration in the log.
+        # The candidate is built on every cycle THE GATE LETS THROUGH — it is how the signature is
+        # computed — and it loads the entire catalog (`list_feed_articles(limit=10_000_000)`). The
+        # fingerprint recorded here is the PRE-build read from above, so a write landing during the
+        # multi-second build reopens the gate next cycle instead of being skipped over.
         self.last_candidate_ms = round((time.perf_counter() - t0) * 1000.0, 1)
         self.last_candidate_sig = sig
+        self.last_catalog_fp = fp
+        obs_metrics.incr("corpus_refresh_candidate_built_total")
         current = self.app.active
         if current is not None and sig == current.candidate_sig:
             self._log(logging.INFO, "corpus_refresh_check", candidateMs=self.last_candidate_ms,
