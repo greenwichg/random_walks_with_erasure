@@ -168,6 +168,7 @@ export default function StoryDetailPage() {
             <ArticleImage
               src={story.image}
               alt={story.title}
+              priority
               aspect="aspect-[21/9]"
               className="w-full rounded-none border-0"
             />

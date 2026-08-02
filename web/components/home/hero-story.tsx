@@ -29,6 +29,7 @@ export function HeroStory({ story }: { story: Story }) {
         <ArticleImage
           src={story.image}
           alt={story.title}
+          priority
           className="aspect-[16/9] w-full rounded-none border-0 transition-transform duration-700 ease-out motion-safe:group-hover:scale-[1.02]"
         />
 

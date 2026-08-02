@@ -117,7 +117,7 @@ export default function DiscoverPage() {
           consistent rows over packed columns. (Search/Saved keep MasonryColumns.) */}
       <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
         {shown.map((article, i) => (
-          <DiscoverCard key={article.id} article={article} index={i % PAGE} />
+          <DiscoverCard key={article.id} article={article} index={i % PAGE} priority={i < 2} />
         ))}
       </div>
 

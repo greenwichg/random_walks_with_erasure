@@ -183,7 +183,7 @@ export function StoryBrowser({
 
       <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
         {stories.map((story, i) => (
-          <StoryCard key={story.id} story={story} index={i} />
+          <StoryCard key={story.id} story={story} index={i} priority={i < 2} />
         ))}
       </div>
 

@@ -18,10 +18,12 @@ export function DiscoverCard({
   article,
   index = 0,
   openedFrom = "discover",
+  priority = false,
 }: {
   article: Article;
   index?: number;
   openedFrom?: string;
+  priority?: boolean;
 }) {
   const { timeAgo } = useTranslation();
   const hasImage = Boolean(article.image);
@@ -33,7 +35,7 @@ export function DiscoverCard({
       transition={{ delay: Math.min(index * 0.04, 0.4), duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
       className="flex flex-col rounded-lg border bg-card p-5 shadow-soft transition-shadow hover:shadow-card"
     >
-      <ArticleImage src={article.image} alt={article.headline} className="mb-3" />
+      <ArticleImage src={article.image} alt={article.headline} priority={priority} className="mb-3" />
 
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <PublisherBadge name={article.publisher} lean={article.publisherLean} logo={article.publisherLogo} />

@@ -18,7 +18,7 @@ import { cn } from "@/lib/utils";
  * one skeleton and grid rows never leave a void — and the visual is a counted fact unique to
  * each story, never a stock illustration or category artwork. (The figure replaces the small
  * spectrum strip; showing both would say the same thing twice.) */
-export function StoryCard({ story, index = 0 }: { story: Story; index?: number }) {
+export function StoryCard({ story, index = 0, priority = false }: { story: Story; index?: number; priority?: boolean }) {
   const { t, formatCompact, timeAgo } = useTranslation();
   const hasImage = Boolean(story.image);
   return (
@@ -32,7 +32,7 @@ export function StoryCard({ story, index = 0 }: { story: Story; index?: number }
         className="group flex h-full flex-col rounded-lg border bg-card p-5 shadow-soft transition-all hover:-translate-y-0.5 hover:shadow-card"
       >
         {hasImage ? (
-          <ArticleImage src={story.image} alt={story.title} className="mb-3" />
+          <ArticleImage src={story.image} alt={story.title} priority={priority} className="mb-3" />
         ) : (
           <CoverageFigure story={story} />
         )}
