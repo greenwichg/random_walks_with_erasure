@@ -1,5 +1,7 @@
 import type { Metadata, Viewport } from "next";
+import { getServerSession } from "next-auth";
 import "./globals.css";
+import { authOptions } from "@/lib/auth";
 import { Providers } from "@/components/providers";
 
 export const metadata: Metadata = {
@@ -36,11 +38,19 @@ export const viewport: Viewport = {
   viewportFit: "cover",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  // R1a: resolve the session ON THE SERVER and hand it to the client provider, so the browser does
+  // not spend its first round trip asking `/api/auth/session` a question this render already
+  // answered. Measured before this existed (RUM harness, 1x CPU): the session request sat at
+  // ~337 ms in every hard load's waterfall, and the shell queries gated on its answer fired at
+  // ~370-430 ms — one full serial phase, on every page, bought by one `await` here that costs the
+  // server ~1-3 ms of JWT decode. Public pages resolve to null, which is exactly what their
+  // anonymous session state was anyway.
+  const session = await getServerSession(authOptions);
   return (
     <html lang="en" suppressHydrationWarning>
       <body className="min-h-screen font-sans">
-        <Providers>{children}</Providers>
+        <Providers session={session}>{children}</Providers>
       </body>
     </html>
   );
