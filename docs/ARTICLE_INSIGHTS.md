@@ -42,7 +42,8 @@ web          ──▶ analyzer panel renders "AI summary" + "How this article f
 | piece | file | contract |
 |---|---|---|
 | store table | `examples/store.py` | `article_insights`: `article_id` (canonical URL, PK), `status` (`pending/ok/failed`), `summary` TEXT, `bias` JSON, `model`, `attempts` INT, `next_attempt_at`, `generated_at`, `content_hash`. Accessors: `enqueue_insights(urls)` (idempotent), `claim_insights_batch(n, now)`, `finish_insights(id, ok, payload/err)`, `get_insights(urls)` (batched, ok-only) |
-| generator | `examples/article_insights.py` (new) | `generate(article, client) -> dict` — builds the grounded prompt, calls the Messages API, validates/parses the structured JSON, enforces the 2–4 sentence bound and the no-label rule (rejects outputs containing left/right labels); pure & injectable (tests pass a fake client) |
+| provider port | `examples/insights_provider.py` (new) | `AIInsightsProvider` — the one interface the worker depends on: `complete(system, user, model, max_tokens) -> str` plus `name`/`default_model`/`build()`. `from_env()` selects the implementation by `RWE_INSIGHTS_PROVIDER` (default `anthropic`); a provider that cannot run (missing key/SDK, unimplemented name) resolves to `None` = dormant. Adding a vendor = one class + one registry row; worker/storage/API/UI never name an SDK |
+| generator | `examples/article_insights.py` (new) | `generate(article, provider) -> dict` — builds the grounded prompt, calls `provider.complete(...)`, validates/parses the structured JSON, enforces the 2–4 sentence bound and the no-label rule (rejects outputs containing left/right labels); pure & injectable (tests pass a fake provider). Policy lives HERE, identically for every provider |
 | worker hook | poller post-cycle seam (`api_server` / feed poller) | `run_insights_cycle(store, limit)` — enqueue new + process batch; identical seam and failure isolation as push delivery: an exception never breaks ingestion |
 | API | `api_fastapi.py` | article serializers attach `insights` (nullable) from one batched `get_insights` call per response — additive, no schema break |
 | web | analyzer panel component + `web/messages/*` ×5 | render-when-present; loading nothing, requesting nothing extra (insights ride the existing article payload) |
@@ -50,9 +51,15 @@ web          ──▶ analyzer panel renders "AI summary" + "How this article f
 
 ### LLM call
 
-- SDK: official `anthropic` Python package (added to requirements); model from
-  `RWE_INSIGHTS_MODEL`, **default `claude-opus-4-8`**.
-- One Messages API call per article, structured JSON output
+- **Provider-agnostic by construction**: the worker calls the `AIInsightsProvider` port; the
+  first implementation is Claude via the official `anthropic` package (added to requirements).
+  `RWE_INSIGHTS_PROVIDER` switches vendors (`gemini` / `openai` / `grok` / `local` are reserved
+  names that report "not implemented yet" until their adapters land) and `RWE_INSIGHTS_MODEL`
+  overrides the provider's own default (Anthropic's is `claude-opus-4-8`) — a vendor or model
+  switch is env-only, no application code. Credentials stay in each vendor's conventional
+  variable (`ANTHROPIC_API_KEY` today). Stored rows stamp `"<provider>:<model>"` so every
+  cached artifact stays attributable across switches.
+- One completion call per article, structured JSON output
   (`{"summary": str, "bias": {"framing": str, "tone": str, "loadedLanguage": [str],
   "omissions": str, "viewpoint": str}}`), `max_tokens` ≈ 700, temperature 0.2.
 - The prompt passes ONLY the article's own text (title + description + body excerpt, capped
@@ -75,9 +82,10 @@ web          ──▶ analyzer panel renders "AI summary" + "How this article f
 
 ### Env
 
-`RWE_INSIGHTS_ENABLED` (default 0) · `ANTHROPIC_API_KEY` · `RWE_INSIGHTS_MODEL`
-(claude-opus-4-8) · `RWE_INSIGHTS_BATCH` (6) · `RWE_INSIGHTS_MIN_CHARS` (200) — all through the
-compose allowlist.
+`RWE_INSIGHTS_ENABLED` (default 0) · `RWE_INSIGHTS_PROVIDER` (anthropic) · `ANTHROPIC_API_KEY`
+(or the chosen vendor's conventional key) · `RWE_INSIGHTS_MODEL` (provider's default;
+Anthropic → claude-opus-4-8) · `RWE_INSIGHTS_BATCH` (6) · `RWE_INSIGHTS_MIN_CHARS` (200) — all
+through the compose allowlist.
 
 ## Trade-offs considered
 
@@ -91,6 +99,11 @@ compose allowlist.
 - **Reusing the rule-based analyzer output as the "bias analysis"** (rejected): the existing
   analyzer serves registry-derived numbers; the requested artifact is *prose about framing*,
   which only generation produces. The two are complementary and both render.
+- **Per-provider generation pipelines** (rejected in the provider refactor): the port is a thin
+  *completion* interface (`system + user + model → text`), not a per-vendor insights pipeline —
+  the grounding prompt, output contract, and no-label validation are product policy and must be
+  byte-identical across providers. A vendor whose SDK offers structured-output modes can adopt
+  them inside its adapter later without the contract moving an inch.
 
 ## Test & measurement plan
 

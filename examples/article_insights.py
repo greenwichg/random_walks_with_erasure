@@ -7,15 +7,17 @@ lean already covers placement).
 
 Shape of the machinery (the push-delivery pattern):
 
-* :func:`generate` is pure and injectable — it takes the article dict and a client, builds the
-  grounded prompt, and validates the model's JSON hard (sentence bound, no-label rule). Tests
-  pass a fake client; no network in the test suite.
+* :func:`generate` is pure and injectable — it takes the article dict and an
+  :class:`insights_provider.AIInsightsProvider`, builds the grounded prompt, and validates the
+  model's JSON hard (sentence bound, no-label rule). The worker, storage, API, and UI depend
+  only on that interface — never on a vendor SDK; tests pass a fake provider, no network.
 * :func:`request_generation` hangs off the poller's post-cycle seam: enqueue new eligible
   catalog articles (idempotent — canonical URL is the dedup key), then process a bounded batch
   in a SINGLE-FLIGHT daemon thread. One run at a time; a request during a run is dropped, so a
   slow API cannot stack threads. An exception never reaches the poll loop.
-* OFF unless ``RWE_INSIGHTS_ENABLED`` is truthy AND an API key AND the ``anthropic`` package are
-  present — dormant means zero table writes and a byte-identical request path.
+* OFF unless ``RWE_INSIGHTS_ENABLED`` is truthy AND the configured provider can run (its key +
+  SDK present; see ``insights_provider.from_env``) — dormant means zero table writes and a
+  byte-identical request path.
 
 The request path never generates: serving reads the cache (``store.get_insights``) or serves
 ``insights: null``.
@@ -32,9 +34,7 @@ import time
 from typing import Callable, Optional
 
 import obs_metrics
-
-#: Model for generation. Overridable per deployment; the default is the current Opus.
-DEFAULT_MODEL = "claude-opus-4-8"
+import insights_provider
 
 #: Per-cycle generation cap — the spend bound. 6 articles/cycle ≈ the ingest rate of new,
 #: eligible articles in steady state, so coverage catches up within hours without bursts.
@@ -81,8 +81,13 @@ def enabled() -> bool:
     return os.environ.get("RWE_INSIGHTS_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}
 
 
-def model_name() -> str:
-    return os.environ.get("RWE_INSIGHTS_MODEL", "").strip() or DEFAULT_MODEL
+def model_name(provider=None) -> str:
+    """The model to use: the env override, else the provider's own default. Provider-agnostic —
+    the fallback travels with the provider, so switching vendors never leaves a stale model id."""
+    override = os.environ.get("RWE_INSIGHTS_MODEL", "").strip()
+    if override:
+        return override
+    return provider.default_model if provider is not None else ""
 
 
 def batch_size() -> int:
@@ -99,15 +104,10 @@ def min_chars() -> int:
         return DEFAULT_MIN_CHARS
 
 
-def build_client():
-    """The real Anthropic client, or ``None`` when the key or package is absent (dormant)."""
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        return None
-    try:
-        import anthropic
-    except ImportError:
-        return None
-    return anthropic.Anthropic()
+def build_provider(log=None):
+    """The configured provider (``RWE_INSIGHTS_PROVIDER``), or ``None`` when it cannot run —
+    a thin re-export so callers of this module never import the provider registry directly."""
+    return insights_provider.from_env(log=log)
 
 
 def article_text(article: dict) -> str:
@@ -155,20 +155,17 @@ def parse_and_validate(raw: str) -> dict:
                      "viewpoint": str(bias["viewpoint"]).strip()}}
 
 
-def generate(article: dict, client) -> dict:
-    """One article → validated insights dict. Pure given (article, client); raises on failure."""
+def generate(article: dict, provider) -> dict:
+    """One article → validated insights dict. Pure given (article, provider); raises on failure.
+    ``provider`` is any :class:`insights_provider.AIInsightsProvider` — the policy here (prompt,
+    contract, validation) is identical whichever vendor produced the text."""
     text = article_text(article)
     if not text:
         raise ValueError("no article text")
-    msg = client.messages.create(
-        model=model_name(),
-        max_tokens=700,
-        system=_SYSTEM,
-        messages=[{"role": "user", "content": f"ARTICLE TEXT:\n\n{text}"}],
-    )
-    raw = "".join(getattr(b, "text", "") for b in (msg.content or []))
+    raw = provider.complete(system=_SYSTEM, user=f"ARTICLE TEXT:\n\n{text}",
+                            model=model_name(provider), max_tokens=700)
     # Models sometimes fence JSON; strip a fence if present before parsing.
-    raw = re.sub(r"^\s*```(?:json)?\s*|\s*```\s*$", "", raw.strip())
+    raw = re.sub(r"^\s*```(?:json)?\s*|\s*```\s*$", "", (raw or "").strip())
     return parse_and_validate(raw)
 
 
@@ -179,23 +176,28 @@ def generate(article: dict, client) -> dict:
 _run_lock = threading.Lock()
 
 
-def run_cycle(store, *, client=None, limit: Optional[int] = None,
+def run_cycle(store, *, provider=None, limit: Optional[int] = None,
               log: Optional[Callable] = None, now: Optional[float] = None) -> dict:
     """Enqueue new eligible articles, then process one bounded batch. Synchronous — callers
-    wanting the seam behaviour use :func:`request_generation`. Returns counters (tested)."""
+    wanting the seam behaviour use :func:`request_generation`. Returns counters (tested).
+    ``provider`` is any :class:`insights_provider.AIInsightsProvider`; ``None`` resolves the
+    configured one (``RWE_INSIGHTS_PROVIDER``) — the worker never names a vendor SDK."""
     _log = log or (lambda lvl, ev, **f: None)
-    client = client or build_client()
-    if client is None:
-        return {"enqueued": 0, "generated": 0, "failed": 0, "skipped": "no client"}
+    provider = provider or build_provider(log=_log)
+    if provider is None:
+        return {"enqueued": 0, "generated": 0, "failed": 0, "skipped": "no provider"}
     now = time.time() if now is None else now
     enq = store.enqueue_insights(min_chars=min_chars())
     stats = {"enqueued": enq, "generated": 0, "failed": 0}
+    # Stored rows record "<provider>:<model>" so a cached artifact is forever attributable to
+    # what generated it, across provider switches.
+    stamp = f"{provider.name}:{model_name(provider)}"
     for row in store.claim_insights_batch(limit or batch_size(), now=now):
         t0 = time.perf_counter()
         try:
-            payload = generate(row["article"], client)
+            payload = generate(row["article"], provider)
             store.finish_insights(row["article_id"], ok=True, payload=payload,
-                                  model=model_name(), content_hash=row.get("content_hash"))
+                                  model=stamp, content_hash=row.get("content_hash"))
             stats["generated"] += 1
             obs_metrics.observe("insights_generate_ms", (time.perf_counter() - t0) * 1000.0)
             obs_metrics.incr("insights_generated_total")
