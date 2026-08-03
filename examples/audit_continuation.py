@@ -202,15 +202,19 @@ def main() -> int:
           f"\nflag           RWE_STORY_CONTINUATION={'on' if sc.enabled() else 'OFF (resolver is dark)'}")
 
     if args.ceiling:
-        seen, anchors = set(), []
-        for url in index:                      # dict order is insertion order = story build order
-            if url in seen:
-                continue
-            seen.add(url)
-            anchors.append((None, url))
-            if len(anchors) >= args.sample:
-                break
-        label = f"CEILING — {len(anchors):,} hypothetical anchors, no reader state"
+        # STRIDE, never the head. The index is built in story_service's own ranked order
+        # (`_size_rank`, reverse) — trusted first, then publisherCount, then totalCoverage — so
+        # taking the first N urls samples only the biggest trusted stories and reports a ceiling
+        # that no reader experiences. The first draft did exactly that and returned zero
+        # `cluster_untrusted` over 800 anchors, which is not a fact about the catalog.
+        # Members are NOT deduplicated per story on purpose: a 40-member story really is 20x more
+        # likely to be the one a reader clicked than a 2-member one, so member-weighting is the
+        # distribution the realized rate is drawn from.
+        urls = list(index)
+        step = max(1, len(urls) // max(1, args.sample))
+        anchors = [(None, u) for u in urls[::step]][:args.sample]
+        label = (f"CEILING — {len(anchors):,} hypothetical anchors (every {step:,}th member "
+                 f"across all {len(stories):,} stories), no reader state")
     else:
         readers = [args.user] if args.user is not None else _reader_ids(st)
         anchors = [(uid, str(r.get("canonicalUrl") or ""))

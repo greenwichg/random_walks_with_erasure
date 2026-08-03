@@ -190,3 +190,23 @@ def test_end_to_end_over_a_real_store(tmp_path, monkeypatch, capsys):
     assert "REALIZED" in out and "eligible AT CLICK TIME" in out
     assert "DISAGREE" not in out
     er._INDEX_CACHE.update(key=None, index=None)
+
+
+def test_ceiling_samples_across_all_stories_not_the_head(monkeypatch, capsys, tmp_path):
+    """The index is built in story_service's RANKED order (trusted first, then publisherCount), so
+    taking the first N urls samples only the biggest trusted stories. The first draft did that and
+    reported zero `cluster_untrusted` over 800 production anchors — not a fact about the catalog.
+    A stride must reach the tail."""
+    members = [_member(f"https://p{i}.example.com/s/{i}", f"Pub {i}", -0.6 if i % 2 else 0.6)
+               for i in range(100)]
+    head = _story(members[:50], story_id="s-big")
+    tail = _story(members[50:], story_id="s-small", trust="low")     # only reachable by a stride
+    index = {**_index(head), **_index(tail)}
+
+    monkeypatch.setattr(ac.er, "story_index", lambda *a, **k: index)
+    monkeypatch.setattr(sys, "argv", ["audit_continuation.py", "--db",
+                                      f"sqlite:///{tmp_path / 'c.db'}", "--ceiling", "--sample", "10"])
+    ac.main()
+    out = capsys.readouterr().out
+    assert "cluster_untrusted" in out, "a strided sample must reach the demoted tail of the ranking"
+    assert "across all" in out          # the label states the sampling, so a reader can judge it
