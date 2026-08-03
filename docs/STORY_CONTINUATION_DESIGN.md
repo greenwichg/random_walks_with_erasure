@@ -360,9 +360,45 @@ bottleneck is data, not UX, and shipping a prompt that almost never fires wastes
 
 Everything in §§1–8, behind `RWE_STORY_CONTINUATION` (default off), signed-in readers only.
 Ship with the Phase 0 probe re-runnable so the eligible rate can be tracked as registry coverage
-improves.
+improves — that is `examples/audit_continuation.py`, offline by default and `--serve` against the
+running engine.
+
+**Measured on production, 2026-08-03** (59.2k articles, 1,757 stories, one reader, 99 stored reads):
+
+| measure | value |
+|---|---|
+| offers from real reads, through the live endpoint | **9 of 99 (9.1%)**, 0 errors |
+| structural ceiling over cluster members (`--ceiling`, n=800) | 25.6% eligible |
+| dominant loss, realized | `not_clustered` — only ~21% of the clustering window is in any cluster |
+| dominant loss, structural | `anchor_unrated` 35.8%, `no_opposing_sibling` 30.1% |
+| index cost on the serving path | one build 64.7 ms; 100 hits averaging 6.6 ms |
+
+Two conclusions the numbers settled. **Registry lean coverage is not the lever** it was assumed to
+be in §0.1: `audit_registry_coverage` shows 4,318 untracked outlets of which only 35 sit in a
+one-short story, worth 40 claims between them, and the high-volume unrated outlets are deliberately
+unrated (aggregator / wire / research / forum). The backlog is a flat tail, not a head. **Cluster
+membership is the binding constraint**, and loosening clustering admission re-opens the merge
+defects in `docs/STORY_CLUSTER_MERGES.md` — not something to trade for this feature.
 
 ### 9.2 V1.1 — small, high-value
+
+- **A topic gate for non-political stories.** *Measured on production, 2026-08-03, and the largest
+  quality problem the live probe found.* Of nine offers resolved from 99 real reads, two were about
+  a mile race at the Commonwealth Games (`The Independent` → `The Straits Times`) and a film's
+  Chinese box office (`Variety` → `The Times of India`). Registry leans are an **outlet-level**
+  political rating, so a sports result inherits its publisher's rating and the strip would say
+  *"The Straits Times is rated right of centre — you read a left-of-centre account"* about who won a
+  mile. The copy rules in §1.3 are technically satisfied and substantively absurd: there is no
+  opposing viewpoint on a finishing time, and offering one teaches readers the ratings mean less
+  than they do.
+
+  `_TEMPLATE_PATTERNS` does not catch this — it targets betting, lottery and obituary mills, not
+  ordinary sports and entertainment reporting. The natural gate is the story's own `topic` (the mode
+  across members, already computed by `story_service._mode_topic`), which would need adding to
+  `evidence_resolver.story_index`'s entries — the same additive extension `clusterTrust` /
+  `publisherCount` / `title` already took. Deliberately NOT in v1: it narrows an eligible rate
+  measured at 9.1%, and which topics genuinely carry viewpoint is a product judgement that the
+  `continuation_opened` rate per topic can answer with evidence instead of assertion.
 
 - **Deep-link "View all outlets" pre-filtered** to the opposing side (§0.7). Needs a URL param on
   `CoverageList`'s lean filter.
