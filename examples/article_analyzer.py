@@ -147,6 +147,10 @@ def analyze(store_, url: str, metadata: Optional[dict] = None) -> dict:
               "input": {"url": norm, "canonicalUrl": None},
               "status": "analyzed", "source": None, "article": None, "scoring": None,
               "story": None, "recommendation": None, "personal": None, "explanation": None,
+              # Article Insights (docs/ARTICLE_INSIGHTS.md): pinned null HERE, filled by the
+              # endpoint from the insights cache — the same shape as the A3 enrichment sections,
+              # so wire-vs-service byte parity holds for un-enriched requests.
+              "insights": None,
               "notes": []}
     if not ingest.has_host(norm):
         report["status"] = "invalid_url"

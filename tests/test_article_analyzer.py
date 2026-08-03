@@ -68,7 +68,7 @@ def store(db_path):
 
 
 CONTRACT_KEYS = {"analysisVersion", "input", "status", "source", "article", "scoring",
-                 "story", "recommendation", "personal", "explanation", "notes"}
+                 "story", "recommendation", "personal", "explanation", "insights", "notes"}
 
 
 # --------------------------------------------------------------------------- #
@@ -81,6 +81,7 @@ def test_contract_v1_shape_and_deferred_sections(store):
     # A2/A3 sections exist in the envelope but are pinned null until those milestones
     assert out["recommendation"] is None and out["personal"] is None
     assert out["explanation"] is None
+    assert out["insights"] is None            # filled by the endpoint from the cache, never here
     json.dumps(out, allow_nan=False)
 
 

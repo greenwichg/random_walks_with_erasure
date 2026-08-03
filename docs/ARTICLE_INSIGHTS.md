@@ -119,6 +119,39 @@ through the compose allowlist.
   serve cost (`get_insights` added ms on the article endpoints, before/after), coverage %
   after N cycles.
 
-## Implemented
+## Implemented (2026-08-03)
 
-(filled in as the implementation lands)
+Everything above, plus the provider-agnostic refactor requested mid-build:
+
+- **Provider port** (`insights_provider.py`): `AIInsightsProvider` — `complete(system, user,
+  model, max_tokens) → str` + `name`/`default_model`/`build()`. Anthropic is the first adapter;
+  `RWE_INSIGHTS_PROVIDER` switches vendors env-only; reserved names report "not implemented
+  yet"; a provider that cannot run resolves to `None` = dormant. Policy (prompt, contract,
+  sentence bound, no-label rule) lives in `article_insights.py`, identical for every provider.
+- **Store**: `article_insights` table + `enqueue_insights` (idempotent outer-join scan; the
+  content-hash rule resets an `ok` row when a description backfill changes the text — the one
+  real path where article text changes, since `upsert_feed_article` never rewrites first-seen
+  metadata), `claim_insights_batch`, `finish_insights` (backoff, terminal `failed`),
+  `get_insights` (batched `ok`-only; the only request-path accessor).
+- **Seam**: `feed_service` post-cycle hook after push delivery — lazy import, single-flight,
+  never raises into the poller.
+- **API**: the contract gained a pinned-null `insights` key in `article_analyzer` (so wire ==
+  service byte parity holds, same shape as the A3 sections) and `/api/analyze` fills it from
+  one cache-only read; `AnalysisModel` carries the field; `insights_served_total` counts hits.
+- **Web**: `/analyze` renders "AI summary & framing" when present — summary, framing / tone /
+  loaded-language chips / omissions / viewpoint + an AI disclaimer; nothing otherwise.
+  `ArticleInsights` type; i18n ×5 (844 keys, parity green).
+- **Config**: compose allowlist rows (`RWE_INSIGHTS_*`, `ANTHROPIC_API_KEY`), dormant defaults;
+  `anthropic` in requirements.
+
+**Tests**: 19 engine tests (fake-provider unit paths, real-store round-trips incl. backoff,
+terminal failure, and hash regeneration via the real backfill path, and an app-level
+`/api/analyze` attach test), contract pins updated (`CONTRACT_KEYS` + regenerated analysis
+goldens — regenerate with `RWE_STORIES_SCAN_DAYS=36500 python
+tests/fixtures/analysis/build_analysis_fixtures.py`), and a Playwright e2e spec (cached
+artifact renders the section; absence renders nothing). Gates at completion: engine **2,610
+passed**, web tsc/eslint/`check:i18n` (844×5)/359 unit tests, e2e insights spec green (two
+unrelated pre-existing failures in the dev container reproduce against the pre-change engine).
+
+Production verification (deploy + dormant-mode checks + enablement gate) is tracked in
+`docs/ARTICLE_INSIGHTS_VERIFICATION.md` once measured on the box.
