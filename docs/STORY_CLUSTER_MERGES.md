@@ -313,8 +313,10 @@ cd /opt/ih && sudo docker exec -i deploy-api-1 \
 ```
 
 Adopt by setting `RWE_CLUSTER_LINK_QUORUM=<largest ADOPT value>` in `deploy/.env` and restarting
-the engine; re-run the forensic print from §5 afterwards — the expected output is "no current
-story carries that headline" once the Jana articles form their own story.
+the engine; re-run the forensic print from §5 afterwards — the expected output is the Jana
+articles as their **own small story** (3 articles / 2 publishers: Koimoi + The Indian Express,
+every member at hop ≤ 1, no Spider-Man articles), since the needle headline still exists in the
+catalog and correctly anchors its own cluster.
 
 ### Titration results (2026-08-03) — and a corrected expectation
 
@@ -366,3 +368,42 @@ CLI's stricter 5% default prints REJECT. Options, ranked:
 
 A then B is compatible: the gate is worth building regardless, and adopting 0.2 first fixes the
 user-visible defect this report exists for.
+
+---
+
+## Adopted (2026-08-03): Option A — `RWE_CLUSTER_LINK_QUORUM=0.2`
+
+The product owner chose Option A after the titration. Facts that make the change one line:
+
+* The base compose already passes the variable through:
+  `RWE_CLUSTER_LINK_QUORUM: ${RWE_CLUSTER_LINK_QUORUM:-0}` (`deploy/docker-compose.yml:294`) —
+  the same interpolation-default mechanism that has been supplying the box's `repair 0.5` and
+  `merge 0.33` all along. The `environment:` block is an explicit allowlist, so this passthrough
+  is *why* an `.env` line is sufficient.
+* The code default stays `0.0` (the measured baseline): production opts in via env, exactly the
+  rollback lever `link_quorum()`'s docstring reserves — remove the line and restart to revert.
+* `deploy/ops/restart.sh api` is the sanctioned apply step: it runs `up -d` (not `restart`)
+  precisely so an `.env` change is re-read, then blocks on engine readiness.
+
+On the box:
+
+```bash
+cd /opt/ih
+grep -n '^RWE_CLUSTER_LINK_QUORUM=' deploy/.env \
+  || echo 'RWE_CLUSTER_LINK_QUORUM=0.2' | sudo tee -a deploy/.env
+sudo bash deploy/ops/restart.sh api
+```
+
+(`grep` first because docker compose keeps only the LAST line of a duplicated key — the
+2026-08-02 BETA_ALLOWLIST incident; `restart.sh` will also print a pre-existing duplicate-key
+warning for `GOOGLE_CLIENT_SECRET`, which is unrelated and expected.)
+
+Verification, in order:
+
+1. The §5 forensic print → a Jana-only story (3 articles / 2 publishers, hop ≤ 1, zero
+   Spider-Man members).
+2. A flagless audit run (`python examples/audit_clustering_change.py`) → the baseline tag now
+   reads `quorum 0.2 … [PRODUCTION BASELINE]` and before == after (a no-op diff), proving the
+   running configuration is the measured one.
+3. The Stories surface → the Spider-Man story titled by a Spider-Man headline; largest cluster
+   in the catalog ≈ 66 rather than 204.
