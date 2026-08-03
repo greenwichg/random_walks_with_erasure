@@ -1244,6 +1244,18 @@ class Store:
     # only briefly and can never stall ingestion; the orchestrator re-runs until a pass is a no-op.
     # None of these touch a table in retention_policy.PROTECTED_TABLES.
 
+    def article_event_countries(self, canonical_url: str) -> list:
+        """One article's provider-extracted EVENT countries (ISO-3166-1 alpha-2, sorted).
+
+        Read-only companion to :meth:`replace_article_event_locations`. Coverage Comparison needs
+        the article's own located facts to compare against the story's consensus; it must never
+        infer a location from text, so an article with no rows returns ``[]`` and the comparison
+        reports "not comparable" rather than an omission."""
+        with self._Session() as s:
+            rows = s.execute(select(ArticleEventLocation.country)
+                             .where(ArticleEventLocation.canonical_url == canonical_url)).all()
+        return sorted({str(r[0]).upper() for r in rows if r[0]})
+
     def prune_orphan_event_locations(self, limit: int = 5000) -> int:
         """Delete ``article_event_locations`` rows whose article is gone from the catalog.
 

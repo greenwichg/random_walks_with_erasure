@@ -68,7 +68,8 @@ def store(db_path):
 
 
 CONTRACT_KEYS = {"analysisVersion", "input", "status", "source", "article", "scoring",
-                 "story", "recommendation", "personal", "explanation", "insights", "notes"}
+                 "story", "coverageComparison", "recommendation", "personal", "explanation",
+                 "insights", "notes"}
 
 
 # --------------------------------------------------------------------------- #
@@ -82,6 +83,9 @@ def test_contract_v1_shape_and_deferred_sections(store):
     assert out["recommendation"] is None and out["personal"] is None
     assert out["explanation"] is None
     assert out["insights"] is None            # filled by the endpoint from the cache, never here
+    # coverageComparison is computed HERE (it is article+story only, never reader-relative), so it
+    # is null only when the article is not a trusted-cluster member — which this fixture is not.
+    assert "coverageComparison" in out
     json.dumps(out, allow_nan=False)
 
 

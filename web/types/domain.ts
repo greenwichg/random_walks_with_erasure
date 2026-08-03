@@ -1104,11 +1104,52 @@ export interface AnalysisResult {
   recommendation: AnalysisRecommendation | null;
   explanation: RecommendationExplanation | null;
   personal: AnalysisPersonal | null;
+  /** Coverage Comparison L0 — counted facts about this article's story cluster, or a refusal
+   *  ({available:false, reason}) the UI renders as nothing. Never a text-derived omission. */
+  coverageComparison?: CoverageComparison | null;
   // AI summary + bias analysis (docs/ARTICLE_INSIGHTS.md): generated asynchronously by the
   // engine, cached, attached when present. Optional for back-compat with pre-insights payloads.
   insights?: ArticleInsights | null;
   notes: string[];
 }
+
+/** One counted finding, carrying the evidence its count came from (design §4/§6). */
+export interface CoverageFinding {
+  kind: "outlets" | "geography" | "register" | "timing" | "viewpoint" | "language";
+  key: string;
+  label: string;
+  support: number;
+  of: number;
+  coverageShare: number;
+  confidence: "high" | "medium" | "low";
+  evidence: { publisher: string | null; url: string | null; headline: string | null }[];
+  countries?: string[];
+  note?: string;
+}
+
+/** Coverage Comparison (docs/COVERAGE_COMPARISON_DESIGN.md). `available:false` carries a machine
+ *  reason and the card must render nothing at all. `textClaims` is false at tier L0: no article
+ *  text is examined, so no content-level omission is ever asserted. */
+export type CoverageComparison =
+  | { available: false; reason: string; algoVersion: number; tier: string }
+  | {
+      available: true;
+      algoVersion: number;
+      tier: string;
+      storyId: string;
+      articles: number;
+      outlets: number;
+      clusterTrust: string | null;
+      missingViewpoints: LeanBucket[];
+      reportedElsewhere: CoverageFinding[];
+      uniqueHere: CoverageFinding[];
+      timing: {
+        position: number; of: number; hoursAfterFirst: number;
+        isFirstReport: boolean; tiedAtFirst: boolean; firstBy: string | null;
+      } | null;
+      textParity: number | null;
+      textClaims: boolean;
+    };
 
 /** AI-generated article insights. `bias` explains HOW the writing works — framing, tone, loaded
  *  language (quoted), omissions, and viewpoint — deliberately never a left/right label (the

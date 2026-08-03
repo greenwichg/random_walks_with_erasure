@@ -3,7 +3,7 @@
 import * as React from "react";
 import { AlertCircle, BarChart3, Building2, Check, ExternalLink, History, Info, Layers, Globe,
          Sparkles, type LucideIcon } from "lucide-react";
-import type { AnalysisResult, LeanBucket } from "@/types/domain";
+import type { AnalysisResult, CoverageFinding, LeanBucket } from "@/types/domain";
 import { analysisPresentation } from "@/lib/analysis-presentation";
 import { presentRecommendation } from "@/lib/rec-presentation";
 import { Badge } from "@/components/ui/badge";
@@ -136,6 +136,15 @@ export function AnalysisResult({ result }: { result: AnalysisResult }) {
             ) : null}
           </div>
         </SectionCard>
+      )}
+
+      {/* Coverage comparison (L0) — counted facts about this article's story cluster. Renders
+          ONLY when the engine says `available`; every refusal reason (untrusted cluster, too few
+          publishers, template genre, cross-language, disabled) renders nothing at all. No claim
+          here is derived from article text: `textClaims` is false at this tier, and the standing
+          caveat says so rather than implying the article omitted anything. */}
+      {result.coverageComparison?.available && (
+        <CoverageComparisonCard data={result.coverageComparison} />
       )}
 
       {/* AI summary + bias analysis — rendered ONLY when the engine has a cached artifact for
@@ -413,6 +422,132 @@ function NextArticleBlock({
       </div>
       {next.explanation ? <ExplanationLines explanation={next.explanation} compact /> : null}
       <ReadArticleButton article={a} openedFrom="analyze" className="mt-1" />
+    </div>
+  );
+}
+
+/**
+ * Coverage comparison, tier L0 (docs/COVERAGE_COMPARISON_DESIGN.md §10 sketch A).
+ *
+ * Every line is a count with its own evidence: the outlets a finding came from are listed and
+ * linkable, so the reader checks rather than trusts. The card deliberately does NOT say the
+ * article "omitted" anything — L0 examines no article text, and the footer states that plainly
+ * (design §5.1/§9.1). "Unique to this article" sits beside the coverage context so the comparison
+ * is balanced rather than a deficit report (§5.5).
+ */
+function CoverageComparisonCard({
+  data,
+}: {
+  data: Extract<NonNullable<AnalysisResult["coverageComparison"]>, { available: true }>;
+}) {
+  const { t } = useTranslation();
+  const hasContext = data.reportedElsewhere.length > 0;
+  const hasUnique = data.uniqueHere.length > 0;
+  if (!hasContext && !hasUnique && !data.missingViewpoints.length) return null;
+
+  return (
+    <SectionCard title={t("analyze.coverage.title")}>
+      <div className="space-y-3">
+        <p className="text-xs text-muted-foreground">
+          {t("analyze.coverage.scope")
+            .replace("{outlets}", String(data.outlets))
+            .replace("{articles}", String(data.articles))}
+        </p>
+
+        {data.timing && (
+          <Row label={t("analyze.coverage.timing")}>
+            <span className="text-sm">
+              {data.timing.isFirstReport
+                ? t("analyze.coverage.timingFirst")
+                : t("analyze.coverage.timingLater")
+                    .replace("{position}", String(data.timing.position))
+                    .replace("{of}", String(data.timing.of))
+                    .replace("{hours}", String(data.timing.hoursAfterFirst))}
+            </span>
+          </Row>
+        )}
+
+        {hasContext && (
+          <div className="space-y-2 border-t border-border/60 pt-3">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              {t("analyze.coverage.contextTitle")}
+            </p>
+            {data.reportedElsewhere.map((f) => (
+              <FindingRow key={f.key} f={f} />
+            ))}
+          </div>
+        )}
+
+        {hasUnique && (
+          <div className="space-y-2 border-t border-border/60 pt-3">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              {t("analyze.coverage.uniqueTitle")}
+            </p>
+            {data.uniqueHere.map((f) => (
+              <FindingRow key={f.key} f={f} />
+            ))}
+          </div>
+        )}
+
+        {data.missingViewpoints.length > 0 && (
+          <Row label={t("analyze.coverage.missingViewpoints")}>
+            <span className="flex flex-wrap gap-1.5">
+              {data.missingViewpoints.map((b) => (
+                <Badge key={b} variant={b}>
+                  {t(`filter.${b}`)}
+                </Badge>
+              ))}
+            </span>
+          </Row>
+        )}
+
+        <p className="flex items-start gap-1.5 border-t border-border/60 pt-3 text-xs text-muted-foreground">
+          <Info className="mt-0.5 h-3 w-3 shrink-0" aria-hidden />
+          {t("analyze.coverage.caveat")}
+        </p>
+      </div>
+    </SectionCard>
+  );
+}
+
+/** One finding: its label, its count, and the outlets the count came from. */
+function FindingRow({ f }: { f: CoverageFinding }) {
+  const { t } = useTranslation();
+  return (
+    <div className="text-sm">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <span>
+          {f.label}
+          {f.countries?.length ? ` (${f.countries.join(", ")})` : null}
+        </span>
+        {f.support > 0 && (
+          <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+            {t("analyze.coverage.support")
+              .replace("{support}", String(f.support))
+              .replace("{of}", String(f.of))}
+          </span>
+        )}
+      </div>
+      {f.evidence.length > 0 && (
+        <ul className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
+          {f.evidence.map((e) => (
+            <li key={`${e.url}`} className="text-xs text-muted-foreground">
+              {e.url ? (
+                <a
+                  href={e.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="hover:text-foreground hover:underline"
+                >
+                  {e.publisher}
+                </a>
+              ) : (
+                e.publisher
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

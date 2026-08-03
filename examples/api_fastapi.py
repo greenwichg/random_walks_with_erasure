@@ -1540,6 +1540,10 @@ class AnalysisModel(BaseModel):
     article: Optional[dict] = None
     scoring: Optional[dict] = None
     story: Optional[dict] = None
+    #: Coverage Comparison L0 (docs/COVERAGE_COMPARISON_DESIGN.md) — counted facts about the
+    #: article's story cluster, or an {"available": false, "reason": …} refusal. Untyped for the
+    #: same reason as the sections above: the shape is owned by coverage_comparison.
+    coverageComparison: Optional[dict] = None
     recommendation: Optional[dict] = None    # pinned null until A3-Enrich
     personal: Optional[dict] = None          # pinned null until A4
     explanation: Optional[dict] = None       # pinned null until A3-Enrich

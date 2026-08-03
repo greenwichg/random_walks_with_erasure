@@ -58,6 +58,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 import api_server as engine            # noqa: E402  _lean_bucket / _prettify (serializer helpers)
 import clustering                      # noqa: E402  title_tokens / jaccard (production thresholds)
+import coverage_comparison             # noqa: E402  L0 cluster comparison (deterministic, no text)
 import discover                        # noqa: E402  feed_article_to_article (the Article shape)
 import ingest                          # noqa: E402  normalize/validate/canonicalize + RawRead
 import rss_ingest                      # noqa: E402  make_scorer — the ONE scoring configuration
@@ -97,9 +98,13 @@ def _scoring_block(outlet, lean, topic, political, emotion, register, confidence
             "confidence": _num_or_none(confidence)}
 
 
-def _story_block(store_, canon: str, title: str) -> Optional[dict]:
+def _story_block(store_, canon: str, title: str, out: Optional[dict] = None) -> Optional[dict]:
     """Membership from the Story Service's own clusters for catalog articles; at most a
-    ``similarStory`` advisory (never membership) for anything else."""
+    ``similarStory`` advisory (never membership) for anything else.
+
+    ``out``, when given, receives ``{"story": <the matched Story>, "member": <its coverage row>}``
+    on a membership hit. Coverage Comparison needs the cluster this call already found, and
+    resolving it twice would mean a second story view build on a zero-write endpoint."""
     try:
         # The cached default view, not a fresh per-request clustering — the same fix, for the same
         # measured reason, as publisher co-coverage (root-cause report, 2026-08-02). Bonus: the ids
@@ -121,6 +126,8 @@ def _story_block(store_, canon: str, title: str) -> Optional[dict]:
                 # the Story's own normalized per-bucket publisher SHARES (sum to 1)
                 dist = {b: round(float((s.get("distribution") or {}).get(b) or 0.0), 3)
                         for b in _BUCKETS}
+                if out is not None:
+                    out["story"], out["member"] = s, m
                 return {"matched": True, "storyId": s["id"],
                         "articleCount": s.get("totalCoverage"),
                         "publisherCount": s.get("publisherCount"),
@@ -146,7 +153,8 @@ def analyze(store_, url: str, metadata: Optional[dict] = None) -> dict:
     report = {"analysisVersion": ANALYSIS_VERSION,
               "input": {"url": norm, "canonicalUrl": None},
               "status": "analyzed", "source": None, "article": None, "scoring": None,
-              "story": None, "recommendation": None, "personal": None, "explanation": None,
+              "story": None, "coverageComparison": None,
+              "recommendation": None, "personal": None, "explanation": None,
               # Article Insights (docs/ARTICLE_INSIGHTS.md): pinned null HERE, filled by the
               # endpoint from the insights cache — the same shape as the A3 enrichment sections,
               # so wire-vs-service byte parity holds for un-enriched requests.
@@ -190,5 +198,22 @@ def analyze(store_, url: str, metadata: Optional[dict] = None) -> dict:
             report["notes"].append("outlet not in the registry — political lean unknown "
                                    "(excluded from lean-based claims, as everywhere)")
 
-    report["story"] = _story_block(store_, canon, title)
+    matched: dict = {}
+    report["story"] = _story_block(store_, canon, title, out=matched)
+    # Coverage Comparison (docs/COVERAGE_COMPARISON_DESIGN.md), tier L0: counted facts about the
+    # cluster this article is already known to belong to. Pure computation over the story just
+    # resolved plus the article's own located facts — no text is examined, nothing is written, and
+    # a gated cluster yields an explicit "unavailable + reason" the UI renders as nothing.
+    if matched.get("story") is not None:
+        try:
+            m = matched.get("member") or {}
+            countries = store_.article_event_countries(canon) if store_ is not None else []
+            report["coverageComparison"] = coverage_comparison.compare(
+                {"publisher": m.get("publisher") or (report["scoring"] or {}).get("outlet"),
+                 "url": m.get("url") or canon,
+                 "leanBucket": m.get("leanBucket") or (report["scoring"] or {}).get("leanBucket"),
+                 "register": m.get("register")},
+                matched["story"], target_countries=countries, member=m)
+        except Exception:
+            report["coverageComparison"] = None      # never fail an analysis over a comparison
     return _json_safe(report)
