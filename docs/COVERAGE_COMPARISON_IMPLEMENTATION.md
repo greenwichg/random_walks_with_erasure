@@ -7,7 +7,7 @@ approved design stated and justified before it is taken**.
 | phase | scope | state |
 |---|---|---|
 | **0a** | comparable-set readiness probe (design §11 items 1, 2, 3, 8) | **PASS on `f72f4e9`** — 339/779 clusters (bar: 100) |
-| 0b | generation-dependent readiness (§11 items 4–7) | harness built; run blocked on a reachable provider |
+| 0b | generation-dependent readiness (§11 items 4–7) | harness built; **local model rejected** (see below); needs a hosted run |
 | **1** | contract extension + validation + worker scale (dormant) | **verified dormant on `f72f4e9`** — 0 rows, `insights: null` |
 | 2 | enablement on the designated recipe | blocked on 0b |
 | 3–5 | tiers C1 / C2 / C3 | not started |
@@ -419,9 +419,15 @@ print('insights:', article_analyzer.analyze(store.Store(),'https://www.bbc.com/n
 
 Expect `enabled False`, `provider None`, `concurrency 1`, `scope all`, **0 rows**, `insights: None`.
 
-### Step 4 — a local provider, for a free Phase 0b
+### Step 4 — a provider
 
-Ollama on the **host**, not in the api container:
+> **Do not install an inference server on the production host.** This was tried and it took the
+> site down: a t3.medium (2 burstable vCPUs, 3.7 GiB) cannot run a 3b model beside the app stack,
+> and EC2 reports the instance healthy while SSM cannot reach it. See "local inference rejected"
+> below. If a local model is wanted, it belongs on a **separate machine**, reached via
+> `OLLAMA_HOST`. The steps below are kept for that case only.
+
+Ollama on a **separate host**, never the api container and never the web server:
 
 ```bash
 curl -fsSL https://ollama.com/install.sh | sh
@@ -623,3 +629,77 @@ runbook above:
 
 The harness behaved correctly throughout: an unreachable provider is a **reported outcome**
 (`skipped — no Ollama server answering`), not a crash, and no row was written.
+
+---
+
+## Phase 0b — local inference rejected, with evidence (2026-08-03)
+
+The attempt to run Phase 0b on a local model failed on three independent counts and **took the
+production site down**. Recorded in full because it is a real input to the design's §9.5 variant
+choice, which had listed `ollama` as a $0 production option.
+
+### 1. Co-tenancy: it cannot share the box
+
+The host is a **t3.medium — 2 burstable vCPUs, 3.7 GiB RAM**, already carrying ~1.7 GiB for the
+api/web/caddy/backup stack. `llama3.2:3b` is ~2 GB resident, which does not fit in what is left,
+and sustained 100% CPU on a burstable instance drains CPU credits until the instance is throttled
+to its baseline.
+
+The failure mode is worth naming because it is misleading: **EC2 reported
+`InstanceStatus: ok / SystemStatus: ok` while SSM reported `TargetNotConnected`.** The instance was
+alive and passing hardware checks; it was starved. The site returned nothing and the box could not
+be reached to find out why. Recovery was a reboot plus `systemctl disable --now ollama`.
+
+Disk was **not** the cause — `/` was at 71% with 8.4 GiB free, so the ~4 GB of pulled models were
+not the problem, though they were removed anyway.
+
+**Recommending an inference server on the production host was a mistake**, and the runbook now says
+so: if a local model is ever wanted it belongs on a separate machine, reached via `OLLAMA_HOST`.
+
+### 2. Throughput: 153 s per call
+
+Measured, not estimated: 178 s / 98 s / 153 s across three single calls on the golden set. At
+153 s serial that is **~4 generations per 600 s cycle → ~626/day, against the 945/day** the
+measured arrival rate demands (§0a item 3). Concurrency does not rescue it — 2 vCPUs running one
+loaded model queue rather than parallelise.
+
+The latency is **not** the token budget. The response was 850 chars ≈ 210 output tokens, nowhere
+near `MAX_TOKENS=1000`, so the earlier hypothesis that the Phase 1 budget raise was driving the
+cost is wrong: it is plain CPU inference speed.
+
+### 3. Contract compliance: the closed vocabularies are ignored
+
+The decisive finding, and the one that would apply on any hardware. `llama3.2:3b` returned valid
+JSON with the right *shape* and the wrong *values*:
+
+| field | returned | verdict |
+|---|---|---|
+| `format` | `news_report` | ✓ in vocabulary |
+| `depth` | `thematic` | ✓ in vocabulary |
+| `frames` | `development`, `public concern` | ✗ **invented** — neither is one of the five |
+| `voices` | `officials`, `residents` | ✗ **invented** — not `official_government` / `affected_person` |
+| `centeredVoice` | `council's perspective` | ✗ free text, not an enum value |
+| `quantities` | key absent | ✗ nothing extracted |
+
+**Two of six facet fields survive validation.** C1 needs `frames`, C2 needs `quantities`, C3 needs
+`voices` — so all three tiers would have no data from this model. The summary also failed the
+2–4-sentence bound (it wrote a headline), but that is the lesser problem.
+
+The prompt lists the permitted values explicitly, so this is capability rather than a missing
+instruction. One call cannot prove the prompt is optimal for small models, and a stricter phrasing
+or a structured-output mode might help — but the constraint was stated plainly and disregarded, and
+comparability is a property of the schema **only if the model actually picks from the schema**.
+
+### Consequence for the design
+
+`docs/COVERAGE_COMPARISON_REVISED_DESIGN.md` §9.5 lists `ollama` at $0 alongside the hosted
+variants. That row should be read as **"$0 in tokens, unavailable in practice"** on this
+deployment: it fails contract compliance regardless of hardware, and it cannot co-reside with the
+application on the current instance.
+
+### The cost framing that actually matters
+
+The spend worth avoiding is the **catalog backfill** (~$1,080/mo on Opus, ~$225/mo on Haiku at the
+measured 945/day). A Phase 0b **measurement** is ~40 calls: **≈ $0.25 on Haiku, ≈ $1.20 on Opus**.
+Running the measurement on a hosted model costs about a quarter, executes nothing on the web
+server, and commits to no production recipe.
