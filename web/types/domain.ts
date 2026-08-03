@@ -1156,3 +1156,34 @@ export interface AnalyzeMetadata {
   outlet?: string;
   category?: string;
 }
+
+// ---- Story Continuation (docs/STORY_CONTINUATION_DESIGN.md) ------------------------------------
+/** One side of a continuation comparison. `lean`/`leanBucket` are nullable in the SHAPE and never
+ *  null in a served payload — the engine's gate 5 requires both outlets rated, because the copy
+ *  names both on the same axis and rating only one implies the other is neutral (§1.3.3). */
+export interface ContinuationOutlet {
+  url: string;
+  publisher: string;
+  lean: number | null;
+  leanBucket: LeanBucket | null;
+}
+
+export interface ContinuationSibling extends ContinuationOutlet {
+  headline: string;
+  publishedAt: string;
+}
+
+/** The offer for one article the reader just opened, or `null` — which is the ordinary answer for
+ *  the large majority of reads and renders nothing at all. */
+export interface Continuation {
+  storyId: string;
+  storyTitle: string | null;
+  /** Distinct OUTLETS on the story — "20 outlets covered this event". */
+  outlets: number;
+  anchor: ContinuationOutlet;
+  sibling: ContinuationSibling;
+  /** |lean difference|, carried for the analytics decay curve. */
+  distance: number;
+  /** How many opposing siblings qualified before ranking picked one. */
+  candidateCount: number;
+}
