@@ -6,7 +6,9 @@ Single Minute…" (Koimoi), an article about a different film.
 **Scope:** the complete clustering pipeline — candidate generation, similarity, temporal
 constraints, normalization, linkage, canonical-headline selection, post-processing.
 **Status:** investigation complete; **nothing implemented** — the recommended fix is an env-var
-change gated on a measurement the audit CLI computes a verdict for.
+change gated on a measurement the audit CLI computes a verdict for. Production measurements
+(2026-08-03) are appended at the end: mechanism and bridge confirmed on the live catalog;
+quorum 0.3 lands in the judgment band, titration runs prescribed.
 **Date:** 2026-08-03, at `018c62e`.
 
 **Verdict in one line:** the two articles were never judged similar — every direct pair between
@@ -35,8 +37,8 @@ Stages the request asked about that **do not exist** are named honestly.
 | IDF rarity weighting | implemented, **OFF** (`use_idf()`; measured revert — cost 10.5% of covered articles) | `story_service.py:435` |
 | Temporal constraint | 6-day window (`DEFAULT_WINDOW_DAYS`); missing timestamps never block | `clustering.py:138` |
 | Linkage / merge logic | union-find, **single linkage** — `link_quorum() = 0.0`: A~B and B~C merges A, B, C even when A and C share nothing. The cluster-aware alternative (`_quorum_ok`) is implemented and shipped **off** | `clustering.py:287`, `story_service.py:473` |
-| Second-pass duplicate merge | `_merge_duplicates` — **OFF** (`merge_similarity() = 0.0`, the pass never runs) | `story_service.py:524,827` |
-| Targeted repair | `_repair` re-splits condemned clusters — **OFF** (`repair_quorum() = 0.0`) | `story_service.py:597` |
+| Second-pass duplicate merge | `_merge_duplicates` — code default OFF; **the box runs it at 0.33** (`RWE_STORY_MERGE_SIM`, revealed by the audit's baseline tag). Complete linkage over headline+description profiles, geo veto, size cap | `story_service.py:524,827` |
+| Targeted repair | `_repair` re-splits condemned clusters — code default OFF; **the box runs it at 0.5** (`RWE_STORY_REPAIR_QUORUM`). Split-only, and only where `_cluster_trust` condemns | `story_service.py:597` |
 | Canonical headline | representative = **earliest-published member** (deterministic); its headline titles the event, its description is the summary | `story_service.py:279,306` |
 | Post-processing | admission (≥ 2 articles, ≥ 2 publishers), trust scoring (`geoCoherence` vs floor 0.7), trust-aware ranking that *demotes* condemned clusters — containment, not correction | `story_service.py:662,643` |
 
@@ -93,8 +95,8 @@ the cluster; a chaining bridge resembles exactly one member."
 | hypothesis | evidence against |
 |---|---|
 | Direct similarity match between the two articles | Measured with the real tokenizer: every Jana↔Spider-Man pair scores 0.150–0.167 vs gate 0.28. Impossible directly. |
-| `_merge_duplicates` (second-pass, description-backed merge) joined them | The pass is **disabled** (`merge_similarity()` returns 0.0 unless `RWE_STORY_MERGE_SIM` is set — it is not in `deploy/.env`); and even enabled it requires *complete* linkage (every cross-pair ≥ the bar) plus a geo-coherence veto — the failing cross-pairs above would veto it. |
-| `_repair` re-split something wrongly | Disabled (`repair_quorum() = 0.0`); it can only *split*, never join. |
+| `_merge_duplicates` (second-pass, description-backed merge) joined them | The box runs the pass at 0.33, but it is irrelevant to this weld: the production forensic (below) shows the Jana articles reach the Spider-Man core over **primary-gate edges alone** — the weld edge scores 0.33 ≥ 0.28 on the plain pairwise gate — so single linkage by itself produces the membership. A profile merge additionally requires *complete* linkage (every cross-pair ≥ the bar), which the failing direct pairs above rule out. |
+| `_repair` re-split something wrongly | Runs at 0.5 on the box but can only *split*, never join — and it never sees this cluster: measured `trust=ok` at geoCoherence 0.824 (below), so the condemnation it is scoped to never fires. |
 | An embedding/NER stage mis-fired | No such stages exist anywhere in the pipeline (swept `clustering.py`, `story_service.py`, `ingest.py`, `feed_source.py`). |
 | IDF weighting distorted the score | OFF in production; and IDF would *lower* the template pair's score (box/office/collection/day are the commonest tokens in the entertainment window), not raise it. |
 | Temporal gate too wide | Irrelevant here: both films were genuinely in theatres the same week; no window short enough to separate them would leave multi-day stories intact. |
@@ -118,9 +120,11 @@ carry the measured trail:
 
 Every templated genre the feeds carry (box-office trackers, market wraps, sports round-ups)
 reproduces it, because a template headline's content tokens describe the *format*, not the event.
-Note the containment already live is *ranking-only*: a small welded cluster with no geo signal —
-exactly this story (`clusterTrust` is `"unverified"` or `"ok"` below 4 located members /
-size 50) — is never demoted and sails to the product surface.
+Note the containment already live is *ranking-only* — and measured blind to this weld: the
+107-article Spider-Man cluster scores `trust=ok` at geoCoherence **0.824**, because three Indian
+articles inside a hundred co-located entertainment reports do not dent the consensus. A welded
+cluster the geo signal *approves of* is demoted by nothing and repaired by nothing; it sails to
+the product surface.
 
 ## 5. Quantifying it on the current production catalog
 
@@ -235,3 +239,82 @@ content-bearing tokens of a *legitimate* single-film box-office story — removi
 un-cluster the very coverage the template genre correctly produces), raising `sim`/`min_shared`
 (shown in §3 to destroy genuine stories before separating these), or re-titling rules (the
 headline is a symptom; any member of a wrong cluster is the wrong title for someone).
+
+---
+
+## Measured on production (2026-08-03, 35,662-article window)
+
+Both commands from §5 were run on the box. Production's real baseline, revealed by the audit's
+tag line: `shared>=3, tokens>=3, repair 0.5, merge 0.33` — the box **already runs** the targeted
+repair and the duplicate merge via env overrides (which is why the mega-cluster now tops out at
+204, not the historical 486). The §1 table rows above are corrected accordingly.
+
+### The weld, found
+
+The Jana article lives in the **107-article / 58-publisher** "Zendaya Stuns 'Spider-Man: Brand
+New Day' Premiere…" cluster — `trust=ok`, `geoCoherence=0.824`. The bridge chain is exactly the
+reproduced mechanism, hop for hop:
+
+```
+hop 0  Koimoi              Jana Nayagan Box Office Day 11 BMS Sales…
+hop 1  The Indian Express  Jana Nayagan Box Office Collection Day 7/9 Updates   j=0.30–0.32
+hop 2  India Today         Spider-Man Brand New Day box office Day 2…           j=0.33
+       via {box, crore, day, earns, film, office}   ← THE WELD: six shared tokens,
+                                                       none naming a film, two of them currency
+hop 3+ 100 legitimate Spider-Man articles                                       j=0.29–1.00
+```
+
+The same cluster also holds **Fortnite v41.30 patch notes** (welded through the
+Fortnite×Spider-Man collab article on `{all, fortnite, skins}`) and a **Norway "Viking Row"
+World-Cup fan piece** (through premiere fan coverage) — three foreign events inside one story the
+trust signal approves. This settles the fallback question in §6.3: `repair` (running at 0.5!)
+never fires on a trust-ok cluster, so **only the global link quorum can fix this class**.
+
+### The quantification
+
+At `--link-quorum 0.3` against the production baseline: **208 of 1,686 stories (12.3%) split** —
+they are held together only by bridges fewer than 30% of cross-pairs support. That is the upper
+bound on chained merges, and the split lists read as real welds: the Fauci cluster contained an
+unrelated St. Paul police-chief story (15 articles); the "UPS earnings" cluster was
+Apple + Corning + GE HealthCare + SoFi + transcript boilerplate; the sports blob mixed MLB trade
+coverage, ATP previews and Polymarket promo codes. The trigger case resolves correctly: the
+`--pieces` output shows "Jana Nayagan Box Office Collection Day 7 Updates…" re-emerging as its
+own 3-article/2-publisher story. Side effects on identical rows: blindspot claims 214 → 231, and
+49 legitimate same-event consolidations (Vincent Pastore, FIFA/Infantino, Japan quake, Idaho
+shooting…) once the blobs release their members. Independent signal: 4/96 → 5/75 bad clusters
+(mean 0.922 → 0.919) — one new bad cluster, worth re-checking at the adopted value.
+
+### The verdict, read honestly
+
+The CLI printed **REJECT: dropped 9.3%** of covered articles (741 of 7,926) against its 5%
+default. The in-code policy bar (§6.1 / `story_service.py:483`) is *adopt ≤ 5%, reject > 10%* —
+9.3% is the judgment band, and the audit's own attribution table shows the mix: six clusters
+with the template signature (articles-per-publisher ≥ 4) account for **337 of the 741** —
+WWE Raw 114 (a/p 12.8), an obituary blob of 166 articles from **two** publishers 91 (a/p 83.0),
+a sports-betting blob 76, betting tips 30, earnings-call transcripts 18, one club template 8.
+Those are drops the audit's own docs class as "the change working" (one outlet repeating a
+format is not coverage). But the genuine losses are real too — Fauci 19, Zendaya 16, Purja 8,
+Seattle 9 — so 0.3 does not ship.
+
+### Next measurement: titrate the quorum down
+
+The weld's support in the production graph is tiny: the Jana side has 3 members against a
+32-member sample of the Spider-Man side, with ~2–6 passing cross-pairs out of ~96 ≈ **2–6%
+support** — a quorum of 0.15, even 0.10, still severs it. The dense template blobs (whose
+splitting causes most of the 9.3%) hold much higher internal support, so a lower quorum leaves
+more of them intact — the status quo, not a regression — while still breaking single-bridge
+welds. Find the largest value that lands ADOPT:
+
+```bash
+cd /opt/ih && sudo docker exec -i deploy-api-1 \
+  python examples/audit_clustering_change.py --link-quorum 0.2 --show 12 --pieces 5
+cd /opt/ih && sudo docker exec -i deploy-api-1 \
+  python examples/audit_clustering_change.py --link-quorum 0.15 --show 12 --pieces 5
+```
+
+Adopt by setting `RWE_CLUSTER_LINK_QUORUM=<largest ADOPT value>` in `deploy/.env` and restarting
+the engine; re-run the forensic print from §5 afterwards — the expected output is "no current
+story carries that headline" once the Jana articles form their own story. The template blobs
+that survive at the adopted value are a *different, pre-existing* defect (intra-template,
+single-outlet — the obituary blob is the extreme case) best addressed separately, e.g. by an
+articles-per-publisher gate; deliberately out of scope here.
