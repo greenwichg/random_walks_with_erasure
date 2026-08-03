@@ -74,7 +74,9 @@ from typing import Optional
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 import article_insights          # the real policy: prompt, contract, validation
+import facet_quality             # agreement / throughput arithmetic (design §11.5, §9.3)
 import insights_provider         # the real port: selection by environment
+import obs_metrics               # the real counters: span + facet drops, read not recomputed
 
 DATA = pathlib.Path(__file__).resolve().parent / "data"
 GOLDEN_SET = DATA / "insights_golden_set.json"
@@ -118,9 +120,12 @@ class Call:
     article_id: str
     ok: bool
     ms: float
-    failure_kind: str = ""        # "" | "transport" | "validation"
+    failure_kind: str = ""        # "" | "transport" | "validation" | "truncation"
     failure: str = ""
     payload: Optional[dict] = None
+    repeat: int = 0               # which extraction of this article — the second is the 2nd rater
+    spans_dropped: int = 0        # evidence not verbatim in the article (design §3.4)
+    facets_dropped: int = 0       # enum/shape violations, dropped per ITEM not per record
     tokens_in: Optional[int] = None
     tokens_out: Optional[int] = None
     chars_in: int = 0
@@ -326,6 +331,11 @@ def _env_for(target: Target):
         os.environ.update(prior)
 
 
+def _delta(before: dict, after: dict, name: str) -> int:
+    """How much a production counter moved across one call."""
+    return max(0, int(after.get(name, 0)) - int(before.get(name, 0)))
+
+
 def run_target(target: Target, articles: list, repeats: int, verbose: bool = False) -> dict:
     """All articles × repeats through one target. Never raises: an unavailable provider is a
     reported outcome, not a crashed benchmark."""
@@ -342,25 +352,43 @@ def run_target(target: Target, articles: list, repeats: int, verbose: bool = Fal
             payload_in = {"headline": art["headline"], "description": art.get("description", ""),
                           "body": art.get("body")}
             chars_in = len(article_insights.article_text(payload_in))
-            for _ in range(repeats):
+            for rep in range(repeats):
+                # Span and facet drops are read from the PRODUCTION counters around each call,
+                # not recomputed here — the harness must measure what the validator actually did,
+                # and a second implementation of the rule would eventually disagree with it.
+                before = obs_metrics.snapshot().get("counters", {})
                 with _meter(provider) as usage:
                     t0 = time.perf_counter()
                     try:
                         out = article_insights.generate(payload_in, provider)
                         ms = (time.perf_counter() - t0) * 1000
-                        calls.append(Call(art["id"], True, ms, payload=out,
+                        after = obs_metrics.snapshot().get("counters", {})
+                        calls.append(Call(art["id"], True, ms, payload=out, repeat=rep,
+                                          spans_dropped=_delta(before, after,
+                                                               "insights_span_unverified_total"),
+                                          facets_dropped=_delta(before, after,
+                                                                "insights_facet_dropped_total"),
                                           tokens_in=usage.get("in"), tokens_out=usage.get("out"),
                                           chars_in=chars_in,
                                           chars_out=len(json.dumps(out))))
+                    except article_insights.TruncatedOutput as e:
+                        # A BUDGET problem, not a contract violation. Counted apart because the
+                        # fix is different: raise max_tokens, not reject the article.
+                        ms = (time.perf_counter() - t0) * 1000
+                        calls.append(Call(art["id"], False, ms, "truncation", str(e)[:160],
+                                          repeat=rep, tokens_in=usage.get("in"),
+                                          tokens_out=usage.get("out"), chars_in=chars_in))
                     except ValueError as e:                 # the contract rejected the answer
                         ms = (time.perf_counter() - t0) * 1000
                         calls.append(Call(art["id"], False, ms, "validation", str(e)[:160],
+                                          repeat=rep,
                                           tokens_in=usage.get("in"), tokens_out=usage.get("out"),
                                           chars_in=chars_in))
                     except Exception as e:                  # transport / vendor failure
                         ms = (time.perf_counter() - t0) * 1000
                         calls.append(Call(art["id"], False, ms, "transport",
-                                          f"{type(e).__name__}: {e}"[:160], chars_in=chars_in))
+                                          f"{type(e).__name__}: {e}"[:160], repeat=rep,
+                                          chars_in=chars_in))
                 if verbose:
                     c = calls[-1]
                     print(f"    {target.name:26} {c.article_id:10} "
@@ -372,6 +400,26 @@ def run_target(target: Target, articles: list, repeats: int, verbose: bool = Fal
 # --------------------------------------------------------------------------- #
 # Aggregation + report
 # --------------------------------------------------------------------------- #
+
+
+def _facet_item_count(payload: "dict | None") -> int:
+    """Span-bearing items that SURVIVED validation, so the drop rate has a denominator."""
+    f = (payload or {}).get("facets") or {}
+    return sum(len(f.get(k) or []) for k in ("frames", "voices", "quantities"))
+
+
+def _agreement_across_repeats(calls: list) -> "dict | None":
+    """Inter-rater agreement using repeat 0 and repeat 1 as the two raters (design §11.5).
+
+    The same model, the same prompt, the same article, twice: if the labels move, the counts a
+    tier would build on them are noise wearing a number. Needs ``--repeats >= 2``; returns None
+    otherwise rather than inventing a figure from one extraction."""
+    a = {c.article_id: (c.payload or {}).get("facets") for c in calls if c.ok and c.repeat == 0}
+    b = {c.article_id: (c.payload or {}).get("facets") for c in calls if c.ok and c.repeat == 1}
+    if not a or not b:
+        return None
+    return facet_quality.agreement(a, b)
+
 
 def summarize(run: dict) -> dict:
     t: Target = run["target"]
@@ -396,6 +444,15 @@ def summarize(run: dict) -> dict:
         "ok": len(ok),
         "transport_fail": len([c for c in calls if c.failure_kind == "transport"]),
         "validation_fail": len([c for c in calls if c.failure_kind == "validation"]),
+        # Phase 0b (design §11.4-§11.6). Truncation is separated from validation because the
+        # remedy differs: raise max_tokens vs reject the article.
+        "truncation_fail": len([c for c in calls if c.failure_kind == "truncation"]),
+        "truncation_rate": (len([c for c in calls if c.failure_kind == "truncation"]) / len(calls))
+                            if calls else 0.0,
+        "spans_dropped": sum(c.spans_dropped for c in ok),
+        "facets_dropped": sum(c.facets_dropped for c in ok),
+        "facet_items": sum(_facet_item_count(c.payload) for c in ok),
+        "agreement": _agreement_across_repeats(calls),
         "pass_rate": (len(ok) / len(calls)) if calls else 0.0,
         "p50": statistics.median(lat), "p95": lat[max(0, int(len(lat) * 0.95) - 1)],
         "avg_in": avg_in, "avg_out": avg_out, "measured_tokens": measured,
@@ -462,6 +519,8 @@ def _suite_section(suite: Suite, summaries: list, runs: list, L: list) -> None:
     A("- **cost / 1k articles** uses the operator-maintained prices in "
       "`data/insights_benchmark_targets.json`. Vendor prices move — verify before quoting.")
 
+    _facet_quality_section(summaries, A)
+
     A("\n### Failure breakdown\n")
     any_fail = False
     for s in summaries:
@@ -515,6 +574,67 @@ def _suite_section(suite: Suite, summaries: list, runs: list, L: list) -> None:
             A(f"- **loaded language** — {', '.join(b['loadedLanguage']) or '(none)'}")
             A(f"- **omissions** — {b['omissions']}")
             A(f"- **viewpoint** — {b['viewpoint']}\n")
+
+
+
+def _facet_quality_section(summaries: list, A) -> None:
+    """Phase 0b: extraction quality (design §11.4-§11.6, §9.3).
+
+    These are the numbers that decide whether a tier may ship at all. A count over unstable labels
+    is precision theatre, so agreement is reported per field against the pre-registered bar rather
+    than as one flattering average."""
+    live = [s for s in summaries if not s["skipped"]]
+    if not live:
+        return
+    A("\n### Extraction quality (Phase 0b)\n")
+    A("| target | span drops | facet drops | facet items kept | truncation rate | "
+      "throughput @1 | @8 |")
+    A("|---|---:|---:|---:|---:|---:|---:|")
+    for s in live:
+        kept = s["facet_items"]
+        drops = s["spans_dropped"]
+        denom = kept + drops
+        span_pct = f"{drops}/{denom} ({drops / denom:.0%})" if denom else "—"
+        t1 = facet_quality.throughput(s["p50"], concurrency=1)["per_day_capacity"]
+        t8 = facet_quality.throughput(s["p50"], concurrency=8)["per_day_capacity"]
+        A(f"| `{s['name']}` | {span_pct} | {s['facets_dropped']} | {kept} | "
+          f"{s['truncation_rate']:.0%} | {t1:,}/day | {t8:,}/day |")
+    A("")
+    A("- **span drops** are items whose evidence was NOT verbatim in the article and were "
+      "therefore discarded (design §3.4). A high rate is not a bug in the gate — it is the gate "
+      "doing its job, and it says the model invents quotations, which is exactly what would have "
+      "become a false statement about a publisher once counted.")
+    A("- **truncation rate** is a BUDGET signal, not a quality one: raise `max_tokens`. It is "
+      "separated because three failures of any kind mark an article terminally `failed`.")
+    A("- **throughput** is p50 latency projected onto a 600 s poll cycle. Compare it with the "
+      "arrival rate from `audit_coverage_readiness.py` (§3) to size `RWE_INSIGHTS_BATCH` and "
+      "`RWE_INSIGHTS_CONCURRENCY`; a batch above the per-cycle capacity overruns the interval and "
+      "the next cycle's request is dropped.")
+
+    graded = [s for s in live if s.get("agreement")]
+    A("\n#### Inter-rater agreement — the ship gate\n")
+    if not graded:
+        A("*Not measured: needs `--repeats 2` or more. Two extractions of the same article are "
+          "the two raters; one extraction cannot tell you whether a label is stable, and a tier "
+          "counting unstable labels produces a precise-looking number over noise.*")
+        return
+    A(f"Bar: **κ ≥ {facet_quality.KAPPA_SHIP_BAR}** (Landis–Koch \"substantial\") for the fields a "
+      "tier uses. Set-valued fields are scored by mean Jaccard, where κ does not apply.\n")
+    A("| target | n | field | measure | value | reading | ships |")
+    A("|---|---:|---|---|---:|---|:--:|")
+    for s in graded:
+        ag = s["agreement"]
+        for field_name, d in ag["fields"].items():
+            v = d["value"]
+            A(f"| `{s['name']}` | {ag['n']} | `{field_name}` | {d['kind']} | "
+              f"{'—' if v is None else f'{v:.2f}'} | {d['band']} | "
+              f"{'yes' if d['ships'] else '**no**'} |")
+    A("")
+    A("- `format` and `frames` gate **C1**; `voices`/`centeredVoice` gate **C3**; `quantities` "
+      "gates **C2**. A field below the bar does not block the others — it blocks its own tier.")
+    A("- A high `raw_agreement` with a low κ means one category dominates: the model is answering "
+      "the same thing every time, which is stable and uninformative. That is a reason to drop the "
+      "field from a tier, not to celebrate it.")
 
 
 def report_markdown(sections: list, *, repeats: int, note: str = "") -> str:

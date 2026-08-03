@@ -71,12 +71,19 @@ def _catalog_text(store_, canon_urls: set) -> dict:
     return out
 
 
-def _cands(members: list, texts: dict) -> list:
-    """Coverage members as comparable-set candidates, resolved through the canonical join."""
+def _cands(members: list, texts: dict, insights: "dict | None" = None) -> list:
+    """Coverage members as comparable-set candidates, resolved through the canonical join.
+
+    With ``insights`` supplied, each candidate also carries its stored facets, which is what turns
+    the structural upper bound into the real comparable set."""
     out = []
     for m in members:
-        gen, dedup = texts.get(_canon(m), ("", ""))
-        out.append(ci.candidate(m, gen, dedup))
+        canon = _canon(m)
+        gen, dedup = texts.get(canon, ("", ""))
+        c = ci.candidate(m, gen, dedup)
+        if insights is not None:
+            c = ci.with_insight(c, insights.get(canon))
+        out.append(c)
     return out
 
 
@@ -88,6 +95,9 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--db", default=None)
     ap.add_argument("--show", type=int, default=8, help="sample clusters to print")
+    ap.add_argument("--with-insights", action="store_true",
+                    help="measure the TRUE comparable set using stored facets (recipe + format "
+                         "parity), not the structural upper bound. Needs generated insights.")
     args = ap.parse_args(argv)
 
     st = store_mod.Store(args.db)
@@ -106,6 +116,16 @@ def main(argv=None) -> int:
     if not texts:
         print("  no member rows resolved — cannot assess readiness")
         return 1
+
+    insights = None
+    if args.with_insights:
+        insights = st.get_insights(sorted(urls))
+        with_facets = sum(1 for v in insights.values() if (v or {}).get("facets"))
+        print(f"members with stored facets : {with_facets:,} / {len(urls):,} "
+              f"({with_facets / max(1, len(urls)):.1%})")
+        if not with_facets:
+            print("  no facets generated yet — run without --with-insights for the upper bound")
+            return 1
 
     # ---- L0-gated clusters: the only ones any card can render for -----------------------------
     gated = []
@@ -126,12 +146,14 @@ def main(argv=None) -> int:
     samples: list = []
     for s in gated:
         mem = list(s.get("coverage") or [])
-        cands = _cands(mem, texts)
+        cands = _cands(mem, texts, insights)
         eligible = [c for c in cands if c["inputChars"] >= floor]
         # Per-member comparable sets; a cluster "reaches" when ANY member could render a card.
         best, best_target = 0, None
         for t in eligible:
-            units = ci.support_units(ci.comparable_stage1(t, eligible))
+            peers = (ci.comparable_set(t, eligible) if insights is not None
+                     else ci.comparable_stage1(t, eligible))
+            units = ci.support_units(peers)
             if units > best:
                 best, best_target = units, t
         sizes.append(best)
@@ -141,7 +163,9 @@ def main(argv=None) -> int:
                 samples.append((s, best, len(mem), len(eligible), best_target))
 
     share = reach / max(1, len(gated))
-    print("\n== 1. comparable-set size (UPPER BOUND: recipe+format parity can only reduce) ==")
+    headline = ("TRUE set: recipe + format parity applied" if insights is not None
+                else "UPPER BOUND: recipe+format parity can only reduce")
+    print(f"\n== 1. comparable-set size ({headline}) ==")
     if sizes:
         srt = sorted(sizes)
         print(f"  support units per cluster : p10 {srt[len(srt) // 10]}  "

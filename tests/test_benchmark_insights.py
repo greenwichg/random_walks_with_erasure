@@ -309,3 +309,100 @@ def test_cli_list_and_a_full_run_work_end_to_end(server, tmp_path, capsys, monke
     assert "# Article Insights — provider/model benchmark" in out_md.read_text()
     raw = json.loads(out_json.read_text())
     assert raw[0]["target"] == "local/fine" and raw[0]["calls"][0]["ok"] is True
+
+
+# ------------------------------------------------------------------ #
+# Phase 0b: extraction quality (design revision 2 §11.4-§11.6)
+# ------------------------------------------------------------------ #
+
+FACETS_OK = {
+    "format": "news_report",
+    "frames": [{"key": "conflict", "evidence": "objected"}],
+    "depth": "episodic",
+    "voices": [{"role": "official_government", "name": "the council", "evidence": "objected"}],
+    "centeredVoice": "official_government",
+    "quantities": [{"kind": "money", "value": 340, "unit": None, "subject": "cost",
+                    "evidence": "objected"}],
+}
+
+
+class _FacetH(_H):
+    """Answers with facets whose evidence spans are deliberately NOT in the article, so the
+    production span gate must drop every one of them — the harness has to report that."""
+
+    def do_POST(self):
+        self.rfile.read(int(self.headers["Content-Length"] or 0))
+        self._send(200, {"message": {"content": json.dumps({**GOOD, "facets": FACETS_OK})},
+                         "prompt_eval_count": 10, "eval_count": 20})
+
+
+@pytest.fixture()
+def facet_server():
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), _FacetH)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    yield f"127.0.0.1:{srv.server_address[1]}"
+    srv.shutdown()
+
+
+def test_span_drops_are_read_from_the_production_counters(facet_server, articles):
+    """Not recomputed here: the harness must measure what the real validator did, or the two
+    implementations will eventually disagree and the report will be about the harness."""
+    run = bench.run_target(_target("facets", "m", facet_server), articles, repeats=1)
+    s = bench.summarize(run)
+    assert s["ok"] == len(articles)
+    assert s["spans_dropped"] >= 3 * len(articles)   # frame + voice + quantity, each unverifiable
+    assert s["facet_items"] == 0                     # …so nothing survived into the record
+
+
+def test_agreement_needs_two_repeats_and_is_absent_otherwise(facet_server, articles):
+    one = bench.summarize(bench.run_target(_target("f", "m", facet_server), articles, repeats=1))
+    assert one["agreement"] is None
+    two = bench.summarize(bench.run_target(_target("f", "m", facet_server), articles, repeats=2))
+    assert two["agreement"] is not None and two["agreement"]["n"] == len(articles)
+    # this stub is deterministic, so every field agrees with itself
+    assert all(d["value"] == 1.0 for d in two["agreement"]["fields"].values())
+
+
+class _TruncH(_H):
+    """A response that starts as JSON and stops — the budget failure, not a contract failure."""
+
+    def do_POST(self):
+        self.rfile.read(int(self.headers["Content-Length"] or 0))
+        self._send(200, {"message": {"content": '{"summary": "First. Second.", "bias": {"fra'},
+                         "prompt_eval_count": 10, "eval_count": 20})
+
+
+@pytest.fixture()
+def trunc_server():
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), _TruncH)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    yield f"127.0.0.1:{srv.server_address[1]}"
+    srv.shutdown()
+
+
+def test_truncation_is_counted_apart_from_validation(trunc_server, articles):
+    """Three failures of any kind are terminal, so a budget problem filed as a contract violation
+    would permanently reject the richest articles."""
+    s = bench.summarize(bench.run_target(_target("t", "m", trunc_server), articles, repeats=1))
+    assert s["truncation_fail"] == len(articles)
+    assert s["validation_fail"] == 0
+    assert s["truncation_rate"] == 1.0
+
+
+def test_the_quality_section_renders_the_ship_gate(facet_server, articles):
+    run = bench.run_target(_target("f", "m", facet_server), articles, repeats=2)
+    lines = []
+    bench._facet_quality_section([bench.summarize(run)], lines.append)
+    text = "\n".join(lines)
+    assert "Extraction quality (Phase 0b)" in text
+    assert "Inter-rater agreement" in text
+    assert f"κ ≥ {bench.facet_quality.KAPPA_SHIP_BAR}" in text
+    assert "throughput" in text.lower()
+
+
+def test_the_quality_section_says_so_when_agreement_was_not_measured(facet_server, articles):
+    run = bench.run_target(_target("f", "m", facet_server), articles, repeats=1)
+    lines = []
+    bench._facet_quality_section([bench.summarize(run)], lines.append)
+    text = "\n".join(lines)
+    assert "needs `--repeats 2`" in text

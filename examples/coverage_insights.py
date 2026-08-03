@@ -1,9 +1,10 @@
 """coverage_insights.py — the COMPARABLE SET, the one membership test the insight tiers count over.
 
-Design: docs/COVERAGE_COMPARISON_REVISED_DESIGN.md (revision 2). **This module implements the
-model-free stage only** (design §4, conditions 3 and 4, plus syndication collapse). The two
-conditions that need a generated insight — recipe parity and format parity — arrive with the tiers
-in a later phase, and :func:`comparable_set` is where they will land.
+Design: docs/COVERAGE_COMPARISON_REVISED_DESIGN.md (revision 2). All four conditions live here:
+:func:`comparable_stage1` is the model-free half (conditions 3 and 4, plus syndication collapse),
+usable before a single insight exists, and :func:`comparable_set` adds recipe and format parity
+once members carry facets. The stage-1 result is always an UPPER BOUND on the full set, which is
+what makes it a sound readiness measurement.
 
 Why this is a module and not a private helper: the readiness probe
 (``examples/audit_coverage_readiness.py``) and production must apply the SAME rule. The repo has
@@ -13,10 +14,10 @@ in the Phase 0 report is produced by the functions the feature itself will call.
 
 The rule, in one place (design §4). A member ``m`` is comparable to target ``t`` when:
 
-    1. recipe   m.recipeHash == t.recipeHash          (later phase — needs insights)
-    2. format   m.format == t.format                  (later phase — needs insights)
-    3. input    m.inputChars >= parity x median(...)   HERE
-    4. time     m.publishedAt <= t.publishedAt + grace HERE
+    1. recipe   m.recipeHash == t.recipeHash           comparable_set   (needs insights)
+    2. format   m.format == t.format                   comparable_set   (needs insights)
+    3. input    m.inputChars >= parity x median(...)    comparable_stage1
+    4. time     m.publishedAt <= t.publishedAt + grace  comparable_stage1
 
 and, before anything is counted, near-duplicate members collapse into ONE support unit, because
 ``publisher_identity`` collapses many NAMES of one outlet and not six outlets running one wire
@@ -178,3 +179,51 @@ def comparable_stage1(target: dict, cands: list, *, parity: Optional[float] = No
     med = statistics.median([c["inputChars"] for c in timed])
     floor = floor_ratio * med
     return [c for c in timed if c["inputChars"] >= floor]
+
+
+def with_insight(cand: dict, insight: "dict | None") -> dict:
+    """Attach a stored insight to a candidate, reading only what the comparable set needs.
+
+    A member with no insight, no facets, or a facets object from a different ``vocabVersion`` is
+    marked NOT comparable rather than given a default: a value the model could not have chosen is
+    not evidence it rejected the value, and silently treating an absent field as agreement is the
+    defect class that made three L0 findings dead code."""
+    facets = (insight or {}).get("facets") or {}
+    ok = bool(insight) and bool(facets)
+    return {**cand,
+            "hasInsight": ok,
+            "recipeHash": (insight or {}).get("recipeHash") if ok else None,
+            "format": facets.get("format") if ok else None,
+            "vocabVersion": facets.get("vocabVersion") if ok else None,
+            "facets": facets if ok else None}
+
+
+def comparable_set(target: dict, cands: list, *, vocab_version: "int | None" = None) -> list:
+    """The full comparable set (design §4): stage 1 plus recipe and format parity.
+
+    ``target`` and ``cands`` are candidates that have been through :func:`with_insight`. All four
+    conditions in one place, and the result's size is the only denominator a reader is shown.
+
+    Recipe parity is not a nicety: a cluster whose members were extracted by different models is a
+    MODEL comparison wearing a coverage comparison's clothes, and its numbers would differ by tier
+    rather than by outlet. Format parity is the production case the evaluation found — a film
+    review and a box-office report inside one cluster are not alternative treatments of one event.
+    """
+    if not target.get("hasInsight"):
+        return []
+    stage1 = comparable_stage1(target, cands)
+    want_vocab = target.get("vocabVersion") if vocab_version is None else vocab_version
+    out = []
+    for c in stage1:
+        if not c.get("hasInsight"):
+            continue
+        if c.get("recipeHash") != target.get("recipeHash"):
+            continue
+        if c.get("vocabVersion") != want_vocab:
+            continue
+        # A member whose format the model declined to name cannot be shown to share the target's,
+        # so it is excluded — the same "absence is not agreement" rule as everywhere else here.
+        if not c.get("format") or c.get("format") != target.get("format"):
+            continue
+        out.append(c)
+    return out

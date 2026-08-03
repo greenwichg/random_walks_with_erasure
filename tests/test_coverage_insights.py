@@ -208,3 +208,81 @@ def test_stage1_is_a_pure_function():
 def test_support_units_never_exceeds_membership(n):
     cands = [cand(f"Outlet {i}", LONG + f" variant {i} " * (i + 1)) for i in range(n)]
     assert 0 < ci.support_units(cands) <= n
+
+
+# --------------------------------------------------------------------------- stage 2
+
+
+def insight(recipe="r1", fmt="news_report", vocab=1, frames=("conflict",)):
+    return {"recipeHash": recipe, "inputChars": 500,
+            "facets": {"vocabVersion": vocab, "format": fmt, "depth": "episodic",
+                       "frames": [{"key": f, "evidence": "x"} for f in frames],
+                       "voices": [], "centeredVoice": None, "quantities": []}}
+
+
+def enriched(pub, ins, *, published="2026-08-01T00:00:00Z", text=None):
+    return ci.with_insight(cand(pub, text or LONG, published=published), ins)
+
+
+def test_a_member_without_an_insight_is_not_comparable():
+    """Absence is never treated as agreement — the defect class that made three L0 findings dead
+    code was exactly a module reading a field its producer never set."""
+    t = enriched("Ledger", insight(), published="2026-08-02T00:00:00Z")
+    peers = [enriched(f"P{i}", insight()) for i in range(2)] + [enriched("Nope", None)]
+    out = ci.comparable_set(t, peers)
+    assert {c["publisher"] for c in out} == {"P0", "P1"}
+
+
+def test_a_target_without_an_insight_has_no_comparable_set_at_all():
+    t = enriched("Ledger", None, published="2026-08-02T00:00:00Z")
+    assert ci.comparable_set(t, [enriched(f"P{i}", insight()) for i in range(3)]) == []
+
+
+def test_recipe_parity_partitions_the_cluster():
+    """A cluster extracted by two models is a MODEL comparison wearing a coverage comparison's
+    clothes; its numbers would differ by subscription tier rather than by outlet."""
+    t = enriched("Ledger", insight(recipe="opus"), published="2026-08-02T00:00:00Z")
+    peers = [enriched("A", insight(recipe="opus")), enriched("B", insight(recipe="opus")),
+             enriched("C", insight(recipe="llama")), enriched("D", insight(recipe="llama"))]
+    assert {c["publisher"] for c in ci.comparable_set(t, peers)} == {"A", "B"}
+
+
+def test_format_parity_keeps_a_review_out_of_a_news_comparison():
+    """The production case: a film review clustered with a box-office report (evaluation §4)."""
+    t = enriched("Ledger", insight(fmt="news_report"), published="2026-08-02T00:00:00Z")
+    peers = [enriched("A", insight(fmt="news_report")),
+             enriched("B", insight(fmt="review")),
+             enriched("C", insight(fmt=None))]        # the model declined to name a format
+    assert {c["publisher"] for c in ci.comparable_set(t, peers)} == {"A"}
+
+
+def test_a_vocabulary_change_makes_records_incomparable():
+    """A value the model could not have chosen is not evidence it rejected the value, so a vocab
+    bump is a full re-extraction (design §14.2) — not a silent mixing of two label sets."""
+    t = enriched("Ledger", insight(vocab=1), published="2026-08-02T00:00:00Z")
+    peers = [enriched("A", insight(vocab=1)), enriched("B", insight(vocab=2))]
+    assert {c["publisher"] for c in ci.comparable_set(t, peers)} == {"A"}
+
+
+def test_stage2_still_obeys_the_time_window_and_input_parity():
+    """The four conditions compose: stage 2 narrows stage 1, it never widens it."""
+    t = enriched("Ledger", insight(), published="2026-08-02T00:00:00Z")
+    later = enriched("Late", insight(), published="2026-08-05T00:00:00Z")
+    stub = enriched("Stub", insight(), text="Council approves plan")
+    peers = [enriched("A", insight()), enriched("B", insight()), later, stub]
+    out = {c["publisher"] for c in ci.comparable_set(t, peers)}
+    assert out == {"A", "B"}
+
+
+def test_stage2_is_a_subset_of_stage1():
+    t = enriched("Ledger", insight(), published="2026-08-02T00:00:00Z")
+    peers = [enriched("A", insight()), enriched("B", insight(recipe="other")),
+             enriched("C", insight(fmt="review"))]
+    s1 = {c["publisher"] for c in ci.comparable_stage1(t, peers)}
+    s2 = {c["publisher"] for c in ci.comparable_set(t, peers)}
+    assert s2 <= s1 and s2 == {"A"}
+
+
+def test_with_insight_marks_an_empty_facets_object_as_no_extraction():
+    c = ci.with_insight(cand("Ledger", LONG), {"recipeHash": "r", "facets": {}})
+    assert c["hasInsight"] is False and c["format"] is None

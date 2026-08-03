@@ -275,3 +275,96 @@ Expected: `enabled False`, `provider None`, `concurrency 1`, `scope all`, **0 ro
 empty, which is the point of landing the contract before enablement.
 
 *(Results are recorded here once the run comes back.)*
+
+---
+
+## Phase 0b — the extraction-quality harness (built, not yet run)
+
+Phase 0b cannot be *run* without a provider, but all of it can be **built**, so that enabling the
+pipeline and getting the five numbers is one command rather than a project. Nothing here changes
+production behaviour.
+
+### What was built
+
+| file | role |
+|---|---|
+| `examples/facet_quality.py` | the measures: Cohen's κ, set-field Jaccard, throughput arithmetic, and `KAPPA_SHIP_BAR` |
+| `examples/benchmark_insights.py` | records span drops, facet drops, truncation and repeat index per call; reports them against the bar |
+| `examples/coverage_insights.py` | `with_insight` + `comparable_set` — stage 2 (recipe + format parity) |
+| `examples/audit_coverage_readiness.py` | `--with-insights`: the TRUE comparable set instead of the upper bound |
+| `tests/test_facet_quality.py` (26), `tests/test_benchmark_insights.py` (+6), `tests/test_coverage_insights.py` (+8) | |
+
+### The five numbers, and where each comes from
+
+| metric | source | bar |
+|---|---|---|
+| **inter-rater agreement** | `--repeats 2`: extraction 0 and extraction 1 are the two raters | **κ ≥ 0.6** per field, pre-registered |
+| **span-verification success** | production counters read around each call, not recomputed | reported; a high drop rate means the model invents quotations |
+| **truncation rate** | `TruncatedOutput` counted apart from validation failures | ~0; non-zero ⇒ raise `max_tokens` |
+| **throughput** | p50 latency projected onto the 600 s cycle at 1 and 8 concurrency | must exceed the arrival rate from probe §3 |
+| **comparable-set coverage** | `audit_coverage_readiness.py --with-insights` | the design's ≥ 100 clusters, now measured for real |
+
+### Why κ and not raw agreement
+
+A model that answers `news_report` every time agrees with itself 100% of the time and has
+discriminated nothing. κ discounts chance agreement, which is exactly that flattery. The report
+prints the category count beside κ so the degenerate case is visible: κ = 1.00 with
+`categories: 1` is a constant, not a signal, and the honest response is to drop the field from a
+tier rather than celebrate it. `None` is treated as a real category throughout — stability of the
+model's refusal matters as much as stability of its choice.
+
+Set-valued fields (`frames`, `voices`, `quantities`) are scored by mean Jaccard instead, because κ
+does not apply when a rater assigns several labels at once. Free text is excluded from both: a
+voice's `name` and a quantity's `subject` would make every extraction disagree and would measure
+prose style, not label stability — and no tier counts them.
+
+### Deviation D5 — `comparable_set` (stage 2) lands in Phase 0b, not with the tiers
+
+**Approved design:** §4 defines the full rule; §13 puts the tiers in phases 3–5.
+
+**What was built:** stage 2 now, unused by any serving path.
+
+**Justification.** "Comparable-set coverage" is one of the five numbers Phase 0b has to report, and
+the *true* figure requires recipe and format parity — the structural upper bound cannot answer it.
+Implementing the rule inside the measurement would have created a second copy of production logic,
+which is precisely what `coverage_insights.py` exists to prevent. The function is pure, tested, and
+read by nothing but the probe until the tiers arrive.
+
+### Span verification measured from production counters
+
+The harness reads `insights_span_unverified_total` and `insights_facet_dropped_total` around each
+call rather than re-deriving the drop rate. A second implementation of the rule would eventually
+disagree with the first, and then the report would be about the harness. A test pins this: a stub
+model returning facets whose evidence is *not* in the article must show every item dropped and zero
+items kept.
+
+### Local model: not runnable here
+
+`ollama` is absent from this container and `registry.ollama.ai` is unreachable through the proxy
+(both re-checked, not recalled). Phase 0b therefore has to run where a provider exists — the box
+with `OLLAMA_HOST` set, or with a key. The harness reports `skipped — no Ollama server answering`
+rather than failing, which is what a benchmark should do when a target is unavailable.
+
+### Gates
+
+- `tests/test_facet_quality.py` 26 · `tests/test_benchmark_insights.py` 21 ·
+  `tests/test_coverage_insights.py` 31.
+- Full engine suite — **2,764 passed**, 1 skipped.
+- The harness was smoke-run end to end; with no provider available every target skipped, so the
+  new section is exercised by tests against a local stub server instead.
+
+### Running Phase 0b
+
+```bash
+# quality, against whatever provider is configured (ollama needs no key)
+sudo docker exec -e RWE_INSIGHTS_PROVIDER=ollama -e OLLAMA_HOST=<host:port> -i deploy-api-1 \
+  python examples/benchmark_insights.py --repeats 2 --sample-production 40 --seed 7 \
+  --out /tmp/insights_0b.md
+sudo docker exec -i deploy-api-1 sed -n '/Extraction quality/,$p' /tmp/insights_0b.md
+
+# comparable-set coverage, AFTER a generation run has produced facets
+sudo docker exec -i deploy-api-1 python examples/audit_coverage_readiness.py --with-insights
+```
+
+`--repeats 2` is not optional: one extraction cannot tell you whether a label is stable, and the
+report says so rather than printing a number it cannot support.
