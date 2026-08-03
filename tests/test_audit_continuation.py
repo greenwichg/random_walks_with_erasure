@@ -9,6 +9,7 @@ data. That makes the audit itself load-bearing, and two properties have to hold:
     to name WHICH one fired, and a re-walk that has drifted from the module reports a comfortable
     number that is not true. The script self-checks this; these tests prove the self-check works.
 """
+import json
 import pathlib
 import sys
 
@@ -210,3 +211,72 @@ def test_ceiling_samples_across_all_stories_not_the_head(monkeypatch, capsys, tm
     out = capsys.readouterr().out
     assert "cluster_untrusted" in out, "a strided sample must reach the demoted tail of the ranking"
     assert "across all" in out          # the label states the sampling, so a reader can judge it
+
+
+# --------------------------------------------------------------------------- --serve
+def test_resolve_reader_prefers_an_explicit_user_id(st):
+    assert ac._resolve_reader(st, "nobody@example.com", 7) == 7      # --user wins outright
+
+
+def test_resolve_reader_finds_the_account_by_email(st, capsys):
+    uid = st.upsert_user_by_identity("google", "acct-1", email="reader@example.com").id
+    assert ac._resolve_reader(st, "reader@example.com", None) == uid
+
+
+def test_a_missed_email_names_the_store_it_looked_in(st, capsys):
+    """The failure that sent me hunting for the wrong bug in production: 'no such user' without
+    saying WHICH store was opened is indistinguishable from a typo, an empty DB, and the wrong
+    container."""
+    st.upsert_user_by_identity("google", "acct-2", email="someone@example.com")
+    assert ac._resolve_reader(st, "typo@example.com", None) is None
+    out = capsys.readouterr().out
+    assert "typo@example.com" in out and "someone@example.com" in out
+
+
+def test_serve_aborts_instead_of_sleeping_when_the_server_is_unreachable(st, monkeypatch, capsys):
+    """A connection refused or a 401 will not heal by waiting; six 20 s sleeps would just look like
+    a hang. Retrying is only for the BACKGROUND index build."""
+    import time
+    calls, slept = [], []
+    monkeypatch.setattr(ac, "_http",
+                        lambda base, path, hdr, timeout=90:
+                        (calls.append(path), (0, "ConnectionRefused"))[1])
+    monkeypatch.setattr(time, "sleep", lambda s: slept.append(s))   # so a regression fails fast
+    uid = st.upsert_user_by_identity("google", "acct-3", email="x@example.com").id
+    assert ac.serve_and_probe(st, "http://127.0.0.1:9", uid) == 2
+    assert sum(1 for p in calls if p == "/api/me/recommendations") == 1   # ONE attempt, then stop
+    assert slept == [], "an unreachable server must not be waited on at all"
+    assert "aborting the warm loop" in capsys.readouterr().out
+
+
+def test_serve_counts_offers_nulls_and_errors(st, monkeypatch, capsys):
+    """The probe's arithmetic, with the HTTP layer stubbed: a warm index, then one offer, one null
+    and one error across three reads."""
+    uid = st.upsert_user_by_identity("google", "acct-4", email="y@example.com").id
+    for n, url in enumerate(("https://a.example.com/1", "https://b.example.com/2",
+                             "https://c.example.com/3")):
+        _read(st, uid, url, f"Pub {n}")
+
+    offer = json.dumps({"storyId": "s1", "storyTitle": "T", "outlets": 4,
+                        "anchor": {"url": "u", "publisher": "CNN", "lean": -0.6,
+                                   "leanBucket": "left"},
+                        "sibling": {"url": "v", "publisher": "WSJ", "headline": "h", "lean": 0.6,
+                                    "leanBucket": "right", "publishedAt": "2026-08-03T00:00:00Z"},
+                        "distance": 1.2, "candidateCount": 2})
+    bodies = iter([offer, "null", None])          # None -> a non-200
+
+    def fake_http(base, path, hdr, timeout=90):
+        if path == "/api/metrics":
+            return 200, json.dumps({"counters": {"rec_story_index_hit_total": 3},
+                                    "timers": {"rec_story_index_hit_ms": {"p50": 1.2}}})
+        if path == "/api/me/recommendations":
+            return 200, "[]"
+        b = next(bodies)
+        return (200, b) if b is not None else (503, "upstream")
+
+    monkeypatch.setattr(ac, "_http", fake_http)
+    assert ac.serve_and_probe(st, "http://x", uid) == 1        # 1 == some read errored
+    out = capsys.readouterr().out
+    assert "offers=1 null=1 errors=1 of 3 reads" in out
+    assert "CNN" in out and "WSJ" in out                        # the payload is shown, not just counted
+    assert "rec_story_index_hit_total" in out                   # metrics reported from the server

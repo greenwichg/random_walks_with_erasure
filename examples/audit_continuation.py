@@ -32,7 +32,14 @@ read-only clustering, which on a small production host costs real CPU — see th
 
     docker exec deploy-api-1 python examples/audit_continuation.py
     docker exec deploy-api-1 python examples/audit_continuation.py --ceiling --sample 400
+    docker exec deploy-api-1 python examples/audit_continuation.py --serve --email me@example.com
     python examples/audit_continuation.py --db sqlite:///... --user 3 --openness 0
+
+``--serve`` probes the RUNNING server's ``GET /api/me/continuation`` instead of resolving offline:
+it warms the story index (a restarted server's is cold, and the continuation endpoint never builds
+one inline), then asks the endpoint about each of one reader's stored reads and reports the offers,
+the payload shape, and the serving process's own index metrics. That is the end-to-end check —
+auth, flag, response contract — which the offline audit cannot make.
 """
 
 from __future__ import annotations
@@ -148,6 +155,122 @@ def _reader_ids(st) -> list:
         return sorted({int(u) for u in s.scalars(select(store_mod.Read.user_id).distinct()).all()})
 
 
+# ---------------------------------------------------------------- --serve (the live endpoint)
+def _http(base: str, path: str, hdr: dict, timeout: float = 90.0) -> tuple:
+    """``(status, body)``; status 0 with the exception name when the call could not be made."""
+    import urllib.error
+    import urllib.request
+    try:
+        r = urllib.request.urlopen(urllib.request.Request(base + path, headers=hdr), timeout=timeout)
+        return r.status, r.read().decode()
+    except urllib.error.HTTPError as e:
+        return e.code, e.read().decode()[:300]
+    except Exception as e:                       # connection refused, timeout, DNS — all reportable
+        return 0, f"{type(e).__name__}: {e}"
+
+
+def serve_and_probe(st, base: str, uid: int, *, warm_tries: int = 6, samples: int = 3) -> int:
+    """Probe the RUNNING server's ``GET /api/me/continuation`` for one reader's stored reads.
+
+    The offline audit above proves the resolver's answer. This proves the *endpoint* — auth, the
+    flag, the response shape, and the story index as the SERVING process sees it, which is a
+    different object from the one this script builds (the index cache is a per-process global).
+
+    Ordering matters and is the reason this is scripted rather than typed: a freshly restarted
+    server has a COLD index, ``/api/me/continuation`` never builds one inline, and the
+    recommendations path that does warm it kicks a BACKGROUND build on the first miss. So the warm
+    loop retries until ``rec_story_index_hit_total`` moves before any probing begins — otherwise
+    every answer is a null that means "cold cache", not "no offer"."""
+    import json
+    hdr = {"X-IH-User-Id": str(uid)}
+    secret = os.environ.get("RWE_INTERNAL_SECRET")
+    if secret:
+        hdr["x-ih-auth"] = secret                # the header is only honoured by a trusted caller
+
+    def metrics() -> dict:
+        code, body = _http(base, "/api/metrics", hdr, timeout=20)
+        try:
+            return json.loads(body) if code == 200 else {}
+        except ValueError:
+            return {}
+
+    print(f"\nSERVE   {base}   uid={uid}   secret={'yes' if secret else 'no'}")
+    print(f"        flag RWE_STORY_CONTINUATION="
+          f"{os.environ.get('RWE_STORY_CONTINUATION') or '(unset -> off)'}   "
+          f"window={sc.freshness_hours()}h")
+
+    import time as _t
+    for attempt in range(warm_tries):
+        code, _body = _http(base, "/api/me/recommendations", hdr)
+        c = metrics().get("counters", {})
+        hits, miss = c.get("rec_story_index_hit_total", 0), c.get("rec_story_index_miss_total", 0)
+        print(f"        warm {attempt + 1}/{warm_tries}: recs HTTP {code}  "
+              f"index hits={hits} misses={miss}")
+        if hits:
+            break
+        if code in (0, 401):                     # unreachable or unauthorized — retrying won't help
+            print("        aborting the warm loop: fix connectivity/auth first")
+            return 2
+        _t.sleep(20)
+
+    reads = st.list_reads(uid)
+    print(f"\n        probing {len(reads):,} stored reads ...")
+    offers = nulls = errors = shown = 0
+    for r in reads:
+        url = str(r.get("canonicalUrl") or "")
+        code, body = _http(base, "/api/me/continuation?url=" + _quote(url), hdr, timeout=30)
+        if code != 200:
+            errors += 1
+            if errors <= 2:
+                print(f"        HTTP {code}: {body}")
+            continue
+        if body.strip() == "null":
+            nulls += 1
+            continue
+        offers += 1
+        if shown < samples:
+            shown += 1
+            o = json.loads(body)
+            a, sib = o["anchor"], o["sibling"]
+            print(f"\n        OFFER {a['publisher']} ({a['lean']}, {a['leanBucket']}) -> "
+                  f"{sib['publisher']} ({sib['lean']}, {sib['leanBucket']})")
+            print(f"              distance={o['distance']} candidates={o['candidateCount']} "
+                  f"outlets={o['outlets']}")
+            print(f"              story: {str(o['storyTitle'] or '')[:66]}")
+            print(f"              keys:  {sorted(o)}")
+
+    print(f"\n        RESULT offers={offers} null={nulls} errors={errors} of {len(reads):,} reads")
+    m = metrics()
+    print("\n        story-index metrics (the SERVING process, since its restart):")
+    for grp in ("counters", "timers"):
+        for k, v in sorted((k, v) for k, v in m.get(grp, {}).items() if "story_index" in k):
+            print(f"          {k:32} {v}")
+    return 0 if errors == 0 else 1
+
+
+def _quote(url: str) -> str:
+    from urllib.parse import quote
+    return quote(url, safe="")
+
+
+def _resolve_reader(st, email: "str | None", user: "int | None") -> "int | None":
+    """``--user`` wins; else the account for ``--email``. Prints what the store actually holds when
+    the lookup fails — a probe that says "no such user" without saying which DB it opened sends the
+    operator hunting for the wrong bug."""
+    from sqlalchemy import select
+    if user is not None:
+        return user
+    with st.session() as s:
+        if email:
+            row = s.scalar(select(store_mod.User).where(store_mod.User.email == email))
+            if row is not None:
+                return row.id
+            print(f"no account for {email!r}")
+        known = [(u.id, u.email) for u in s.scalars(select(store_mod.User)).all()]
+    print(f"accounts in this store: {known[:10] or 'NONE'}")
+    return known[0][0] if (not email and known) else None
+
+
 def _run(st, index: dict, anchors: list, openness: int, samples: int) -> tuple:
     """``(counter, drift, examples)`` over ``[(user_id, url), …]``."""
     counter: Counter = Counter()
@@ -181,9 +304,25 @@ def main() -> int:
     ap.add_argument("--examples", type=int, default=5, help="offers to print (default 5)")
     ap.add_argument("--inline", action="store_true",
                     help="build the story index inline if the warm cache misses (COSTS CPU)")
+    ap.add_argument("--serve", action="store_true",
+                    help="probe the RUNNING server's GET /api/me/continuation instead of resolving "
+                         "offline (warms the index first, then reports offers + index metrics)")
+    ap.add_argument("--base", default="http://127.0.0.1:8000", help="--serve: the engine's base URL")
+    ap.add_argument("--email", default=None, help="--serve: the reader, by account email")
     args = ap.parse_args()
 
     st = store_mod.Store(args.db) if args.db else store_mod.Store()
+    # Which database this process actually opened. Printed ALWAYS: a probe that reports "no such
+    # user" without naming the store it looked in sends the operator hunting for the wrong bug.
+    try:
+        print(f"store          {st.engine.url}")
+    except Exception:
+        print(f"store          {args.db or os.environ.get('RWE_DB_URL') or '(default)'}")
+
+    if args.serve:
+        uid = _resolve_reader(st, args.email, args.user)
+        return 2 if uid is None else serve_and_probe(st, args.base.rstrip("/"), uid,
+                                                     samples=args.examples)
     if args.inline:
         print("! --inline: a full read-only clustering runs on THIS process. On a small host that "
               "is real CPU for tens of seconds.\n")
