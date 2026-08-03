@@ -422,3 +422,7 @@ follows on its next background refresh (serve-stale design).
 Deferred follow-up, tracked separately: the articles-per-publisher admission gate (Option B), so
 content-mill blobs (WWE / obituaries / betting templates) stop forming and a future global
 re-audit can land a clean computed ADOPT at its 5% bar.
+
+**Catalog-wide verification (2026-08-03):** see `docs/STORY_CLUSTER_QUORUM_VERIFICATION.md` —
+weld risk −88% on identical rows, grouping improved (consolidated anchors fragment *without* the
+quorum), over-splitting bounded at ~2% of stories, all watch items enumerated.
