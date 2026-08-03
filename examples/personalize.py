@@ -54,6 +54,7 @@ import api_server as engine
 import measurement                      # generic per-metric Measurement envelopes (ADR-001)
 import obs_metrics                      # OBS: stage timers (observational only — never a behaviour)
 from enrich import enricher_source       # names the enricher for the register/emotion measurements' provenance
+from evidence_resolver import opposing_leans as _er_opposing_leans   # one +-0.5 opposition test
 from ingest import canonical_url as _canonical_url
 
 _logger = logging.getLogger("ih.personalize")
@@ -139,21 +140,11 @@ _EXPLANATION_PRIORITY = ("story_match", "bridge", "new_publisher", "topic_contin
                          "long_tail", "coverage_breadth")
 
 
-def _opposing_leans(anchor_lean, sibling_lean) -> bool:
-    """Whether a sibling sits on the OPPOSITE side of the spectrum from the anchor the reader read.
-
-    Bucket thresholds are the catalog's own (left <= -0.5, right >= +0.5 — the same cut every lean
-    filter uses), so "opposite" here means left-vs-right, never merely "a different number":
-    -1.5 vs -0.8 is the same side, and centre opposes nothing. Unrated (None/NaN) leans license no
-    claim (L2.2) and are never counted as opposite — a fabricated opposition would be worse than a
-    same-side card."""
-    try:
-        a, s = float(anchor_lean), float(sibling_lean)
-    except (TypeError, ValueError):
-        return False
-    if a != a or s != s:                                 # NaN — unrated survives float()
-        return False
-    return (a <= -0.5 and s >= 0.5) or (a >= 0.5 and s <= -0.5)
+#: The +-0.5 opposition test, now owned by the Evidence Resolver — Story Continuation asserts the
+#: same thing about the same pair of outlets, and one definition means the two surfaces cannot drift
+#: into disagreeing about what "the other side" is. Kept under the private name the slot and its
+#: tests already use; the behaviour is byte-identical.
+_opposing_leans = _er_opposing_leans
 
 
 @dataclass

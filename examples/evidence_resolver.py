@@ -65,6 +65,29 @@ _FOLLOW_UP_MIN_HOURS = 6.0
 _READER_LEAN_TAU = 0.5
 
 
+def opposing_leans(anchor_lean, sibling_lean) -> bool:
+    """Whether a sibling sits on the OPPOSITE side of the spectrum from the anchor the reader read.
+
+    Bucket thresholds are the catalog's own (left <= -0.5, right >= +0.5 — the same cut every lean
+    filter uses), so "opposite" here means left-vs-right, never merely "a different number":
+    -1.5 vs -0.8 is the same side, and centre opposes nothing. Unrated (None/NaN) leans license no
+    claim (L2.2) and are never counted as opposite — a fabricated opposition would be worse than a
+    same-side card.
+
+    Lives HERE, in the explanation vocabulary, because two surfaces now assert the same thing about
+    the same pair of outlets: the feed's story slot (``personalize._apply_story_slot``) and Story
+    Continuation (``story_continuation``). One definition means they cannot drift into disagreeing
+    about whether a given sibling is "the other side"."""
+    try:
+        a, s = float(anchor_lean), float(sibling_lean)
+    except (TypeError, ValueError):
+        return False
+    if a != a or s != s:                                 # NaN — unrated survives float()
+        return False
+    return (a <= -_READER_LEAN_TAU and s >= _READER_LEAN_TAU) or (
+        a >= _READER_LEAN_TAU and s <= -_READER_LEAN_TAU)
+
+
 def _reader_political_profile(ctx: dict) -> str:
     """``balanced`` / ``leans_left`` / ``leans_right`` from the context's reader mean lean.
     Missing or near-center means (|mean| < tau) are ``balanced`` — the no-claim default, so an
@@ -131,8 +154,15 @@ _INDEX_CACHE: dict = {"key": None, "index": None}
 
 
 def story_index(store_, *, build_inline: bool = False) -> dict:
-    """``canonical url → {"storyId", "coverage"}`` from the Story Service's own clusters —
-    Priority 1 consumes the SAME stories the Stories page shows (coverage carries the URLs).
+    """``canonical url → {"storyId", "coverage", "clusterTrust", "publisherCount", "title"}`` from
+    the Story Service's own clusters — Priority 1 consumes the SAME stories the Stories page shows
+    (coverage carries the URLs).
+
+    The three scalars beyond ``coverage`` are Story Continuation's gate inputs (``clusterTrust``)
+    and its copy inputs (``publisherCount`` for "20 outlets covered this event", ``title``). They
+    are additive and cost nothing measurable: strings and ints already built by ``_build_story``,
+    stored by reference exactly as ``coverage`` is. Existing consumers read ``storyId`` /
+    ``coverage`` and are untouched.
 
     ``build_inline`` forwards to :func:`story_service.default_story_view`: the analyze path (whose
     endpoint contracts to write nothing anywhere, not even via a background spawn) sets it; every
@@ -164,9 +194,13 @@ def story_index(store_, *, build_inline: bool = False) -> dict:
     view = story_service.default_story_view(store_, build_inline=build_inline)
     view_ms = (time.perf_counter() - t_view) * 1000.0
     for s in view:
+        entry = {"storyId": s["id"], "coverage": s["coverage"],
+                 "clusterTrust": s.get("clusterTrust"),
+                 "publisherCount": s.get("publisherCount"),
+                 "title": s.get("title")}
         for m in s.get("coverage") or []:
             if m.get("url"):
-                index[_canon(str(m["url"]))] = {"storyId": s["id"], "coverage": s["coverage"]}
+                index[_canon(str(m["url"]))] = entry
     # An EMPTY index is never pinned: during the boot window the view serves [] while the kicked
     # background refresh runs, and caching {} here would keep serving "no story evidence" for up
     # to a full TTL after the refresh lands. Re-deriving an empty index costs one ~1 ms peek per
