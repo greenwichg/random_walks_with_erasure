@@ -407,3 +407,18 @@ Verification, in order:
    running configuration is the measured one.
 3. The Stories surface → the Spider-Man story titled by a Spider-Man headline; largest cluster
    in the catalog ≈ 66 rather than 204.
+
+**Verified (2026-08-03, post-restart):** all three checks passed on the box.
+`link_quorum()` reports 0.2 inside the recreated container. The forensic print finds the Jana
+articles as their own story — 3 articles / 2 publishers (Koimoi + The Indian Express Day 7/9
+updates), every member at hop ≤ 1 on film-named tokens, zero Spider-Man members, titled by a
+Jana headline ("…Day 7 Updates", its earliest-published member). The flagless audit reads
+`quorum 0.2 … [PRODUCTION BASELINE]` with before == after (0 split, 0 merged, 0 dropped,
+VERDICT ADOPT 0.0%): **1,815 stories, largest cluster 66** (was 1,687 / 204), independent
+signal 4/87 bad at mean 0.932 — matching the titration's after-side within catalog drift. The
+trigger defect this report opened with is resolved in production; the served Stories page
+follows on its next background refresh (serve-stale design).
+
+Deferred follow-up, tracked separately: the articles-per-publisher admission gate (Option B), so
+content-mill blobs (WWE / obituaries / betting templates) stop forming and a future global
+re-audit can land a clean computed ADOPT at its 5% bar.
