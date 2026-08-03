@@ -791,6 +791,46 @@ class PublisherMetadata(Base):
     fetched_at: Mapped[datetime] = mapped_column(default=_utcnow, index=True)
 
 
+class ArticleInsight(Base):
+    """AI-generated summary + bias analysis for one catalog article (docs/ARTICLE_INSIGHTS.md).
+
+    A cache-forever artifact keyed by the article's ``canonical_url`` — the same dedup key the
+    catalog uses, so a re-polled URL can never generate twice. Isolation is identical to
+    :class:`PublisherMetadata`: no foreign key, no influence on corpus construction, clustering,
+    recommendation, or ranking; the request path only ever READS rows with ``status='ok'``.
+
+    ``status`` drives the worker's cheap, idempotent cycle:
+
+        pending  enqueued, not yet generated (or text changed and it regenerates)
+        ok       generated, validated, serveable
+        failed   gave up after ``max_attempts`` — a terminal negative cache, so a permanently
+                 rejected article does not burn a slot in every future batch
+
+    ``model`` records ``"<provider>:<model>"`` (see :mod:`insights_provider`) so every cached
+    artifact stays attributable across provider switches. ``content_hash`` is the regeneration
+    rule: title+description hashed at enqueue; a changed text resets the row to pending."""
+
+    __tablename__ = "article_insights"
+
+    article_id: Mapped[str] = mapped_column(String(2048), primary_key=True)   # canonical_url
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    summary: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    bias: Mapped[Optional[str]] = mapped_column(Text, default=None)           # JSON (BIAS_KEYS)
+    model: Mapped[Optional[str]] = mapped_column(String(128), default=None)   # provider:model
+    content_hash: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+    attempts: Mapped[int] = mapped_column(default=0)
+    next_attempt_at: Mapped[float] = mapped_column(default=0.0)               # epoch seconds
+    error: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    generated_at: Mapped[Optional[datetime]] = mapped_column(default=None)
+    created_at: Mapped[datetime] = mapped_column(default=_utcnow, index=True)
+
+
+def _insights_hash(title: "str | None", description: "str | None") -> str:
+    """The regeneration key: hash of the text the generator actually reads."""
+    raw = f"{title or ''}\n{description or ''}".encode("utf-8", "replace")
+    return hashlib.sha256(raw).hexdigest()[:16]
+
+
 class StoryMember(Base):
     """article url -> the story id it was last served under. The memory that makes a story id stable.
 
@@ -1918,6 +1958,108 @@ class Store:
             "logoSource": r.logo_source, "error": r.error,
             "fetchedAt": r.fetched_at.isoformat() if r.fetched_at else None,
         }
+
+    # ------------------------------------------------------------------ #
+    # Article Insights (docs/ARTICLE_INSIGHTS.md) — enqueue / claim / finish / read.
+    # The worker calls the first three on the poller seam; the request path calls ONLY
+    # ``get_insights`` (a batched, status='ok' read) — it can never generate.
+    # ------------------------------------------------------------------ #
+
+    def enqueue_insights(self, *, min_chars: int = 0, limit: int = 500) -> int:
+        """Insert ``pending`` rows for eligible catalog articles that have none — idempotent
+        (the canonical URL is the primary key, so a re-polled article never enqueues twice).
+        The content-hash rule rides the same scan: an ``ok`` row whose article text has since
+        changed resets to ``pending`` (attempts cleared) so it regenerates. Bounded per call."""
+        added = 0
+        with self._Session() as s:
+            rows = s.execute(
+                select(FeedArticle.canonical_url, FeedArticle.title, FeedArticle.description,
+                       ArticleInsight.article_id, ArticleInsight.content_hash,
+                       ArticleInsight.status)
+                .outerjoin(ArticleInsight,
+                           ArticleInsight.article_id == FeedArticle.canonical_url)).all()
+            for canon, title, desc, iid, ihash, istatus in rows:
+                if len(title or "") + len(desc or "") < min_chars:
+                    continue
+                h = _insights_hash(title, desc)
+                if iid is None:
+                    s.add(ArticleInsight(article_id=canon, content_hash=h))
+                    added += 1
+                elif istatus == "ok" and ihash and ihash != h:
+                    row = s.get(ArticleInsight, iid)
+                    row.status, row.attempts, row.next_attempt_at = "pending", 0, 0.0
+                    row.content_hash = h
+                    added += 1
+                if added >= limit:
+                    break
+            s.commit()
+        return added
+
+    def claim_insights_batch(self, n: int, *, now: float) -> list:
+        """Up to ``n`` pending rows whose backoff has passed, oldest first, each joined to its
+        article's text. No claim marker: the worker is single-flight by construction, so a crash
+        mid-batch simply leaves rows pending for the next cycle."""
+        with self._Session() as s:
+            rows = s.execute(
+                select(ArticleInsight, FeedArticle)
+                .join(FeedArticle, FeedArticle.canonical_url == ArticleInsight.article_id)
+                .where(ArticleInsight.status == "pending",
+                       ArticleInsight.next_attempt_at <= float(now))
+                .order_by(ArticleInsight.created_at)
+                .limit(int(n))).all()
+            return [{"article_id": ins.article_id, "content_hash": ins.content_hash,
+                     "article": {"headline": fa.title, "description": fa.description,
+                                 "body": fa.body}} for ins, fa in rows]
+
+    def finish_insights(self, article_id: str, *, ok: bool, payload: "dict | None" = None,
+                        model: "str | None" = None, content_hash: "str | None" = None,
+                        error: "str | None" = None, backoff_base_s: float = 600.0,
+                        max_attempts: int = 3, now: "float | None" = None) -> None:
+        """Record one generation outcome. Success stores the validated payload verbatim;
+        failure books an attempt with exponential backoff (``2^(attempts-1) × base``) and goes
+        terminal ``failed`` at ``max_attempts`` — a permanent reject never burns another slot."""
+        with self._Session() as s:
+            row = s.get(ArticleInsight, article_id)
+            if row is None:
+                return
+            if ok:
+                row.status, row.error = "ok", None
+                row.summary = (payload or {}).get("summary")
+                row.bias = json.dumps((payload or {}).get("bias") or {})
+                row.model, row.generated_at = model, _utcnow()
+                if content_hash:
+                    row.content_hash = content_hash
+            else:
+                row.attempts = int(row.attempts or 0) + 1
+                row.error = (error or "")[:1000]
+                if row.attempts >= int(max_attempts):
+                    row.status = "failed"
+                else:
+                    row.next_attempt_at = (float(now or 0.0)
+                                           + float(backoff_base_s) * (2 ** (row.attempts - 1)))
+            s.commit()
+
+    def get_insights(self, urls) -> dict:
+        """Batched cache read: canonical URL → served insights dict, ``ok`` rows only. The one
+        insights accessor on the request path."""
+        ids = [u for u in (urls or []) if u]
+        if not ids:
+            return {}
+        out: dict = {}
+        with self._Session() as s:
+            rows = s.execute(select(ArticleInsight)
+                             .where(ArticleInsight.article_id.in_(ids),
+                                    ArticleInsight.status == "ok")).all()
+            for (r,) in rows:
+                try:
+                    bias = json.loads(r.bias) if r.bias else None
+                except ValueError:
+                    bias = None
+                out[r.article_id] = {
+                    "summary": r.summary, "bias": bias, "model": r.model,
+                    "generatedAt": r.generated_at.isoformat() if r.generated_at else None,
+                }
+        return out
 
     def upsert_publisher_metadata(self, publisher: str, *, status: str = "ok",
                                   source: "str | None" = None, at: "datetime | None" = None,

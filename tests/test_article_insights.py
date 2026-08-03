@@ -187,3 +187,133 @@ def test_request_generation_is_gated_by_the_env_flag(monkeypatch):
     monkeypatch.delenv("RWE_INSIGHTS_ENABLED", raising=False)
     # store=None proves the gate fires before any store access
     assert ai.request_generation(None) is False
+
+
+# ------------------------------------------------------------------ #
+# The real store: enqueue / claim / finish / read round-trip
+# ------------------------------------------------------------------ #
+
+@pytest.fixture()
+def seeded_store(tmp_path):
+    import store as store_mod
+    st = store_mod.Store(f"sqlite:///{tmp_path}/insights.db")
+    long_desc = "A real description with plenty of grounding text. " * 8
+    for i, desc in enumerate([long_desc, long_desc, "stub"]):
+        url = f"https://outlet{i}.example.com/a/{i}"
+        st.upsert_feed_article(
+            canonical_url=url, url=url, publisher=f"Outlet {i}", source_publisher=None,
+            title=f"Headline number {i} about a real event", description=desc, body=None,
+            published_at="2026-08-01T00:00:00Z", source_feed="f",
+            scored={"article_id": url, "outlet": f"Outlet {i}", "category": "Politics",
+                    "lean": 0.0, "political": True, "title": f"Headline {i}"})
+    return st
+
+
+def test_store_round_trip_enqueue_claim_finish_read(seeded_store):
+    st = seeded_store
+    # enqueue is idempotent and honours the eligibility floor (the "stub" article stays out)
+    assert st.enqueue_insights(min_chars=100) == 2
+    assert st.enqueue_insights(min_chars=100) == 0
+    rows = st.claim_insights_batch(10, now=0.0)
+    assert len(rows) == 2 and rows[0]["article"]["headline"].startswith("Headline")
+    # one success, one failure
+    ok_id, bad_id = rows[0]["article_id"], rows[1]["article_id"]
+    st.finish_insights(ok_id, ok=True, payload=json.loads(good_payload()),
+                       model="fake:fake-model-1", content_hash=rows[0]["content_hash"])
+    st.finish_insights(bad_id, ok=False, error="boom", backoff_base_s=600.0,
+                       max_attempts=3, now=1000.0)
+    served = st.get_insights([ok_id, bad_id, "https://never.seen/x"])
+    assert set(served) == {ok_id}                       # ok rows only, batched
+    assert served[ok_id]["summary"].startswith("First")
+    assert served[ok_id]["bias"]["loadedLanguage"] == ["chaos erupted"]
+    assert served[ok_id]["model"] == "fake:fake-model-1"
+    # the failed row backs off (not claimable now), then becomes claimable after the backoff
+    assert st.claim_insights_batch(10, now=1000.0) == []
+    assert [r["article_id"] for r in st.claim_insights_batch(10, now=1000.0 + 601)] == [bad_id]
+
+
+def test_store_terminal_failure_after_max_attempts(seeded_store):
+    st = seeded_store
+    st.enqueue_insights(min_chars=100)
+    row = st.claim_insights_batch(1, now=0.0)[0]
+    aid = row["article_id"]
+    for i in range(3):                                   # three strikes -> terminal failed
+        st.finish_insights(aid, ok=False, error=f"e{i}", max_attempts=3, now=0.0)
+    # terminal: never claimable again, even in the distant future
+    assert all(r["article_id"] != aid for r in st.claim_insights_batch(10, now=10**12))
+
+
+def test_store_content_hash_regeneration_on_description_backfill(seeded_store):
+    """The one real path where an article's text changes: ``upsert_feed_article`` never rewrites
+    first-seen metadata, but it DOES backfill a field that was empty — and a description arriving
+    late must reset an already-generated row to pending (the regeneration rule)."""
+    st = seeded_store
+    bid = "https://outlet9.example.com/late-description"
+
+    def _upsert(desc):
+        st.upsert_feed_article(
+            canonical_url=bid, url=bid, publisher="Outlet 9", source_publisher=None,
+            title="A sufficiently long standalone headline about one real event", description=desc,
+            body=None, published_at="2026-08-01T00:00:00Z", source_feed="f",
+            scored={"article_id": bid, "outlet": "Outlet 9", "category": "Politics",
+                    "lean": 0.0, "political": True, "title": "late"})
+
+    _upsert("")                                          # first seen WITHOUT a description
+    assert st.enqueue_insights(min_chars=40) >= 1        # title alone clears the floor
+    st.finish_insights(bid, ok=True, payload=json.loads(good_payload()), model="m")
+    assert bid in st.get_insights([bid])
+    _upsert("The description arrives on a later poll. " * 10)   # backfill into the empty field
+    assert st.enqueue_insights(min_chars=40) >= 1        # hash changed -> reset to pending
+    assert bid not in st.get_insights([bid])             # no longer served until regenerated
+    assert any(r["article_id"] == bid for r in st.claim_insights_batch(10, now=10**12))
+
+
+# ------------------------------------------------------------------ #
+# The API: /api/analyze attaches insights (cache-only, nullable)
+# ------------------------------------------------------------------ #
+
+@pytest.fixture(scope="module")
+def analyze_client(tmp_path_factory):
+    import importlib.util
+    import os
+    import store as store_mod
+    tmp = tmp_path_factory.mktemp("insightsapi")
+    os.environ.update({"RWE_DB_URL": f"sqlite:///{tmp}/ins.db", "RWE_RECS_SOURCE": "feed",
+                       "RWE_FEED_MIN_ARTICLES": "5", "RWE_CORPUS_MIN_ARTICLES": "5",
+                       "RWE_SEED": "0", "RWE_STORY_SLOT": "0"})
+    os.environ.pop("RWE_INTERNAL_SECRET", None)
+    os.environ.pop("RWE_INSIGHTS_ENABLED", None)         # feature dormant: reads are cache-only
+    st = store_mod.Store(os.environ["RWE_DB_URL"])
+    long_desc = "A seeded article description with plenty of grounding text. " * 6
+    for i in range(6):
+        url = f"https://seeded{i}.example.com/story/{i}"
+        st.upsert_feed_article(
+            canonical_url=url, url=url, publisher=f"Seeded {i}", source_publisher=None,
+            title=f"Seeded headline {i} about one distinct event entirely", description=long_desc,
+            body=None, published_at="2026-08-01T00:00:00Z", source_feed="f",
+            scored={"article_id": url, "outlet": f"Seeded {i}", "category": "Politics",
+                    "lean": 0.0, "political": True, "title": f"Seeded {i}"})
+    spec = importlib.util.spec_from_file_location("api_insights_test",
+                                                  ROOT / "examples" / "api_fastapi.py")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["api_insights_test"] = mod
+    spec.loader.exec_module(mod)
+    from fastapi.testclient import TestClient
+    with TestClient(mod.app) as client:
+        yield client, st
+
+
+def test_analyze_attaches_cached_insights_and_nulls_when_absent(analyze_client):
+    client, st = analyze_client
+    with_row = "https://seeded0.example.com/story/0"
+    without = "https://seeded1.example.com/story/1"
+    st.enqueue_insights(min_chars=40)
+    st.finish_insights(with_row, ok=True, payload=json.loads(good_payload()),
+                       model="fake:fake-model-1")
+    a = client.post("/api/analyze", json={"url": with_row}).json()
+    assert a["status"] == "analyzed"
+    assert a["insights"]["summary"].startswith("First sentence")
+    assert a["insights"]["bias"]["loadedLanguage"] == ["chaos erupted"]
+    assert a["insights"]["model"] == "fake:fake-model-1"
+    b = client.post("/api/analyze", json={"url": without}).json()
+    assert b["status"] == "analyzed" and b["insights"] is None

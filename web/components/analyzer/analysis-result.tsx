@@ -138,6 +138,51 @@ export function AnalysisResult({ result }: { result: AnalysisResult }) {
         </SectionCard>
       )}
 
+      {/* AI summary + bias analysis — rendered ONLY when the engine has a cached artifact for
+          this article (docs/ARTICLE_INSIGHTS.md). No placeholder, no loading state: absence
+          means not generated yet, and the page is complete without it. */}
+      {result.insights && (
+        <SectionCard title={t("analyze.insights.title")}>
+          <div className="space-y-3">
+            <p className="text-sm leading-relaxed">{result.insights.summary}</p>
+            {result.insights.bias && (
+              <div className="space-y-2 border-t border-border/60 pt-3">
+                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  {t("analyze.insights.biasTitle")}
+                </p>
+                <Row label={t("analyze.insights.framing")}>
+                  <span className="text-sm">{result.insights.bias.framing}</span>
+                </Row>
+                <Row label={t("analyze.insights.tone")}>
+                  <span className="text-sm">{result.insights.bias.tone}</span>
+                </Row>
+                {result.insights.bias.loadedLanguage.length > 0 && (
+                  <Row label={t("analyze.insights.loaded")}>
+                    <span className="flex flex-wrap gap-1.5">
+                      {result.insights.bias.loadedLanguage.map((phrase) => (
+                        <Badge key={phrase} variant="outline" className="font-normal">
+                          &ldquo;{phrase}&rdquo;
+                        </Badge>
+                      ))}
+                    </span>
+                  </Row>
+                )}
+                <Row label={t("analyze.insights.omissions")}>
+                  <span className="text-sm">{result.insights.bias.omissions}</span>
+                </Row>
+                <Row label={t("analyze.insights.viewpoint")}>
+                  <span className="text-sm">{result.insights.bias.viewpoint}</span>
+                </Row>
+              </div>
+            )}
+            <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Sparkles className="h-3 w-3" aria-hidden />
+              {t("analyze.insights.disclaimer")}
+            </p>
+          </div>
+        </SectionCard>
+      )}
+
       {/* Story context — membership only when catalog-backed; otherwise advisory or nothing. */}
       {view.story && (
         <SectionCard title={t("analyze.story.title")}>

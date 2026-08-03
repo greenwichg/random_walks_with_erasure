@@ -1543,6 +1543,10 @@ class AnalysisModel(BaseModel):
     recommendation: Optional[dict] = None    # pinned null until A3-Enrich
     personal: Optional[dict] = None          # pinned null until A4
     explanation: Optional[dict] = None       # pinned null until A3-Enrich
+    #: AI summary + bias analysis (docs/ARTICLE_INSIGHTS.md) — a cache-only read attached when a
+    #: generated artifact exists for the canonical URL; null otherwise. Untyped dict for the same
+    #: reason as the sections above: the shape is owned by article_insights' validator.
+    insights: Optional[dict] = None
     notes: list[str] = []
 
 
@@ -2645,6 +2649,18 @@ def analyze_article(request: Request, req: AnalyzeRequest) -> dict:
         sections = analysis_enrichment.enrich_for_reader(state.personalizer, state.store, uid, analysis)
         if sections.get("explanation") is not None or sections.get("recommendation") is not None:
             analysis = {**analysis, **sections}
+    # Article Insights (docs/ARTICLE_INSIGHTS.md): a CACHE-ONLY batched read — the request path
+    # never generates, so a miss costs one indexed lookup and serves null. Best-effort: an
+    # insights read failure never fails an analysis.
+    try:
+        canon = (analysis.get("input") or {}).get("canonicalUrl")
+        if canon:
+            hit = _require_store().get_insights([canon]).get(canon)
+            if hit is not None:
+                analysis = {**analysis, "insights": hit}
+                obs_metrics.incr("insights_served_total")
+    except Exception:
+        pass
     return analysis
 
 

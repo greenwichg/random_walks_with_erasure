@@ -332,6 +332,16 @@ services:
       # hostnames. Measured: 181 of 1,367 names were duplicates, 60 stories had an inflated count,
       # and 35 cleared min_publishers only because one outlet was counted twice. 0 counts strings.
       RWE_STORY_PUBLISHER_IDENTITY: ${RWE_STORY_PUBLISHER_IDENTITY:-1}
+      # Article Insights (docs/ARTICLE_INSIGHTS.md) — AI summaries + bias analysis, generated on
+      # the poller's post-cycle seam, cached forever, served cache-only. OFF by default: enabling
+      # is an explicit deploy/.env decision (RWE_INSIGHTS_ENABLED=1 + a provider key + restart
+      # api). Provider and model are pure configuration (insights_provider registry).
+      RWE_INSIGHTS_ENABLED: ${RWE_INSIGHTS_ENABLED:-0}
+      RWE_INSIGHTS_PROVIDER: ${RWE_INSIGHTS_PROVIDER:-anthropic}
+      RWE_INSIGHTS_MODEL: ${RWE_INSIGHTS_MODEL:-}
+      RWE_INSIGHTS_BATCH: ${RWE_INSIGHTS_BATCH:-6}
+      RWE_INSIGHTS_MIN_CHARS: ${RWE_INSIGHTS_MIN_CHARS:-200}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       # Breaking-story notifications (Phase A). Detection runs on the POLLER's thread, inside THIS
       # service — `story_events.detect_breaking_stories` hangs off the same post-cycle seam as the
       # story-cache warm (feed_service.poll_once / sources.MultiSourcePoller._post_cycle), never off a
