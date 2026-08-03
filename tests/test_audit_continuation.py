@@ -26,7 +26,18 @@ from test_story_continuation import ANCHOR, FAR, NEAR, _index, _member, _story  
 
 @pytest.fixture()
 def st(tmp_path):
-    return store_mod.Store(f"sqlite:///{tmp_path / 'audit.db'}")
+    """A store whose CATALOG contains the anchor. Catalog membership is what separates
+    ``not_clustered`` (a real structural limit) from ``anchor_aged_out`` (a measurement artifact),
+    so the default fixture has to take a side — and "still in the catalog" is the case every gate
+    below the index lookup is actually about."""
+    st = store_mod.Store(f"sqlite:///{tmp_path / 'audit.db'}")
+    st.upsert_feed_article(
+        canonical_url=er._canon(ANCHOR), url=ANCHOR, publisher="CNN", source_publisher="CNN",
+        title="Harbor bridge oversight ruling lands", description="d", body=None,
+        published_at="2026-08-03T09:00:00+00:00", source_feed="f",
+        scored={"article_id": er._canon(ANCHOR), "outlet": "CNN", "category": "Politics",
+                "lean": -0.6, "political": True, "title": "Harbor bridge oversight ruling lands"})
+    return st
 
 
 @pytest.fixture()
@@ -44,7 +55,7 @@ def _read(st, uid, url, publisher):
 def _cases():
     ok = _story([_member(ANCHOR, "CNN", -0.6), _member(NEAR, "The Wall Street Journal", 0.6)])
     return [
-        ("not_in_any_story", _story([_member(NEAR, "The Wall Street Journal", 0.6)]), False),
+        ("not_clustered", _story([_member(NEAR, "The Wall Street Journal", 0.6)]), False),
         ("cluster_untrusted", _story([_member(ANCHOR, "CNN", -0.6),
                                       _member(NEAR, "The Wall Street Journal", 0.6)],
                                      trust="low"), False),
@@ -115,7 +126,25 @@ def test_gate_list_matches_what_attribution_can_return(st, uid):
     counted and never shown."""
     returned = {ac._attribute(st, uid, ANCHOR, _index(s)) for _n, s, _e in _cases()}
     assert returned <= set(ac.GATES)
-    assert returned == set(ac.GATES) - {"stale_read"}      # stale_read needs a clock, tested below
+    assert returned == set(ac.GATES) - {"stale_read", "anchor_aged_out",
+                                        "index_inconsistent"}  # covered by their own tests below
+
+
+def test_an_aged_out_read_is_separated_from_an_unclustered_one(st, uid):
+    """The distinction the first draft got wrong. A read whose article has left the catalog says
+    NOTHING about live behaviour — at prefetch the reader has just clicked something that is in the
+    catalog by construction — while an article still in the catalog but in no cluster is a real
+    structural limit. Collapsing them made the production headline uninterpretable."""
+    gone = "https://vanished.example.com/story/last-month"
+    assert ac._attribute(st, uid, gone, {}) == "anchor_aged_out"
+    assert ac._attribute(st, uid, ANCHOR, {}) == "not_clustered"
+    assert "anchor_aged_out" in ac._ARTIFACT and "not_clustered" not in ac._ARTIFACT
+
+
+def test_at_click_time_counts_the_stale_bucket(st, uid):
+    """Every historical read fails the freshness gate by construction, so the raw eligible rate over
+    a backlog is ~0 however good the feature is. The predictive number adds the stale bucket back."""
+    assert set(ac._AT_CLICK_TIME) == {"ELIGIBLE", "stale_read"}
 
 
 def test_stale_read_is_attributed(st, uid):
@@ -158,6 +187,6 @@ def test_end_to_end_over_a_real_store(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(sys, "argv", ["audit_continuation.py", "--db", db, "--inline"])
     assert ac.main() == 0                                  # 0 == no drift
     out = capsys.readouterr().out
-    assert "REALIZED" in out and "eligible rate" in out
+    assert "REALIZED" in out and "eligible AT CLICK TIME" in out
     assert "DISAGREE" not in out
     er._INDEX_CACHE.update(key=None, index=None)

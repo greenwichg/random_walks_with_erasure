@@ -54,9 +54,27 @@ import store as store_mod                     # noqa: E402
 
 #: Gates in the resolver's own evaluation order. Attribution reports the first one that fails, so
 #: the counts partition the population exactly once.
-GATES = ("not_in_any_story", "cluster_untrusted", "template_genre", "anchor_unrated",
-         "no_unread_other_outlet", "no_rated_sibling", "no_opposing_sibling", "stale_read",
-         "ELIGIBLE")
+#:
+#: ``anchor_aged_out`` and ``not_clustered`` are one gate in the resolver (the index lookup) and two
+#: buckets here, because they mean opposite things. An article that has left the catalog entirely
+#: tells us NOTHING about live behaviour — it is an artifact of measuring reads from weeks ago
+#: against today's index, and at prefetch time the reader has just clicked something that is in the
+#: catalog by construction. An article still in the catalog but in no cluster is a real structural
+#: limit. Reporting them as one number was the first draft's mistake and made the headline
+#: uninterpretable.
+GATES = ("anchor_aged_out", "not_clustered", "index_inconsistent", "cluster_untrusted",
+         "template_genre", "anchor_unrated", "no_unread_other_outlet", "no_rated_sibling",
+         "no_opposing_sibling", "stale_read", "ELIGIBLE")
+
+#: ``stale_read`` is evaluated LAST, so it means "cleared every structural gate, failed only on
+#: age". Every stored read older than the window fails it by construction, which makes the raw
+#: eligible rate over historical reads ~0 no matter how good the feature is. The predictive number
+#: is therefore ELIGIBLE + stale_read: what the resolver would have said at click time, when the
+#: read age is zero by definition.
+_AT_CLICK_TIME = ("ELIGIBLE", "stale_read")
+
+#: Buckets that are artifacts of the measurement rather than facts about the feature.
+_ARTIFACT = ("anchor_aged_out",)
 
 
 def _attribute(st, user_id, url: str, index: dict, now=None) -> str:
@@ -68,15 +86,19 @@ def _attribute(st, user_id, url: str, index: dict, now=None) -> str:
     anchor_url = er._canon(str(url or ""))
     story = index.get(anchor_url)
     if not story:
-        return "not_in_any_story"
+        try:
+            in_catalog = st.get_feed_article(anchor_url) is not None
+        except Exception:
+            in_catalog = True                # unknown -> the conservative (non-artifact) bucket
+        return "not_clustered" if in_catalog else "anchor_aged_out"
     if str(story.get("clusterTrust") or "") != "ok":
         return "cluster_untrusted"
     members = story.get("coverage") or []
     if coverage_comparison._is_template_cluster(members):
         return "template_genre"
     anchor = next((m for m in members if er._canon(str(m.get("url") or "")) == anchor_url), None)
-    if anchor is None:
-        return "not_in_any_story"
+    if anchor is None:                       # the index says this url is a member, coverage disagrees
+        return "index_inconsistent"
     if sc._lean_of(anchor) is None:
         return "anchor_unrated"
 
@@ -202,15 +224,34 @@ def main() -> int:
     counter, drift, examples = _run(st, index, anchors, args.openness, args.examples)
     total = sum(counter.values())
 
-    print(f"\n{label}\n" + "-" * 62)
+    print(f"\n{label}\n" + "-" * 68)
     for gate in GATES:
         n = counter.get(gate, 0)
         if n or gate == "ELIGIBLE":
-            print(f"  {gate:<24} {n:>7,}  {_pct(n, total)}")
-    print("-" * 62)
+            note = "  <- measurement artifact" if gate in _ARTIFACT else ""
+            print(f"  {gate:<24} {n:>7,}  {_pct(n, total)}{note}")
+    print("-" * 68)
+
     elig = counter.get("ELIGIBLE", 0)
-    print(f"  {'eligible rate':<24} {elig:>7,}  {_pct(elig, total)} of {total:,}")
-    if args.ceiling:
+    at_click = sum(counter.get(g, 0) for g in _AT_CLICK_TIME)
+    artifact = sum(counter.get(g, 0) for g in _ARTIFACT)
+    live = total - artifact
+
+    print(f"  {'eligible NOW':<24} {elig:>7,}  {_pct(elig, total)} of {total:,}")
+    if not args.ceiling:
+        # The number that predicts live behaviour. Historical reads fail the freshness gate by
+        # construction, so `eligible NOW` over a backlog is ~0 however good the feature is.
+        print(f"  {'eligible AT CLICK TIME':<24} {at_click:>7,}  {_pct(at_click, total)} of "
+              f"{total:,}   <- predicts the live rate")
+        if artifact:
+            print(f"  {'  … of reads still live':<24} {at_click:>7,}  {_pct(at_click, live)} of "
+                  f"{live:,} (excludes {artifact:,} aged out of the catalog)")
+        clustered = total - sum(counter.get(g, 0) for g in
+                                ("anchor_aged_out", "not_clustered", "index_inconsistent"))
+        if clustered:
+            print(f"  {'  … of reads in a cluster':<24} {at_click:>7,}  {_pct(at_click, clustered)}"
+                  f" of {clustered:,}   <- conversion once clustering succeeds")
+    else:
         print("  (ceiling ignores the unread + freshness gates — the realized rate is lower)")
 
     if drift:
