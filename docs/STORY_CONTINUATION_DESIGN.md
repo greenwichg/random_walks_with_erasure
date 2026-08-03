@@ -1,277 +1,481 @@
-# Story Continuation — design
+# Story Continuation — technical design
 
-**What it is:** when a reader returns to Hidden View after opening an article, the card they read
-from expands in place with one offer — *another outlet's account of the same event, from the
-opposite side of the spectrum*.
+**What it is:** when a reader returns to Hidden View after opening an article on a publisher's site,
+the card they read from expands in place with one offer — another outlet's account of the *same
+event*, from the opposite side of the rated spectrum.
+
+**What it is not:** an expansion of the Same-Story recommendation quota. The feed slot stays at
+**one card per story, unchanged**, and serves as the fallback for readers who return later or in a
+different session.
+
 **Status:** design only. Nothing implemented.
-**Relationship to the feed:** the existing Same-Story feed slot stays at **one card, quota
-unchanged**. This is a second, complementary surface — not a replacement and not an expansion.
 **Date:** 2026-08-03.
+**Depends on:** story clustering (`story_service`), `evidence_resolver.story_index`, the outlet lean
+registry, `publisher_identity`, and the shared `ReadArticleButton`.
 
 ---
 
-## 1. Why a continuation rather than more feed cards
+## 0. Where I'd challenge the brief
 
-The feed and the continuation answer different questions at different moments, and the second
-moment is the better one.
+The requirements are sound and I'd build to them. Seven places where I think the design should
+differ from the obvious reading, in descending order of importance.
 
-| | Same-Story feed card | Story Continuation |
-|---|---|---|
-| Reader's question | "what should I read next?" | "I just read this — what else is there about it?" |
-| Anchor freshness | hours or days old | **seconds** |
-| Cost of the offer | zero-sum — evicts a discovery / bridge / publisher card | **additive** — occupies space that holds nothing today |
-| Works for balanced readers | yes, but competes for capacity | yes, at no cost |
-| Reach | everyone who opens the feed | only readers who return in-session |
+**0.1 — A Phase 0 probe must gate implementation.** The eligibility rules are strict by design:
+trusted cluster, unread sibling, *both* outlets rated, genuinely opposing, non-template. Nobody
+knows what share of production reads satisfy all five. If it is 2%, this is a feature with no
+audience, and the answer is to improve registry lean coverage first. This project has been here
+before — the L1–L3 Coverage Comparison roadmap was built and then retired because its readiness
+measurement was deferred. **Measure the eligible rate against real reads before writing UI code**
+(§9.0).
 
-**Cognitive flow is the decisive argument.** Comparing two accounts is only cheap while the first
-one's claims are still in working memory — you can only notice what is *different* if you remember
-what the first article said. That window decays in minutes, and the feed is the surface with the
-longest possible delay between anchor and offer.
+**0.2 — `visibilitychange` alone is the wrong trigger.** It fires when the reader alt-tabs to Slack
+for four seconds. That is not a read, and a comparison prompt after it is noise. **Require a minimum
+hidden duration** (~20 s) before the strip is eligible. Cheap, and it converts a tab-focus event into
+a weak-but-real "they probably read something" signal.
 
-**The zero-sum problem disappears.** Every attempt to expand the feed slot required a displacement
-policy — which explanation tier may be evicted, whether `topic_continuity` is protected, whether
-same-story cards may spend the bridge budget. A continuation evicts nothing, so none of those
-questions arise.
+**0.3 — Prefetch at click, don't fetch on return.** My earlier sketch had the client resolve
+eligibility on return. That puts a network round-trip at the latency-sensitive moment. Resolve at
+**Read-click time** instead and cache the answer, so the strip renders instantly.
+And *not* by extending `/api/me/reads`: that is a **batch** endpoint (`reads: list[ReadInput]`)
+returning counts, shared with the browser extension where no return moment exists. It needs its own
+small read-only endpoint (§10.2).
 
-**The destination already exists.** The story page's `CoverageList` is lean-filterable and the
-analyze page carries the Coverage Comparison card. This feature is a **prompt at the right moment
-toward machinery already built**, not a new comparison experience.
+**0.4 — The freshness window should start at 4 hours, not 90 minutes.** The memory-decay argument
+justifies why a continuation beats a feed card; it does not justify a specific cutoff. A reader
+returning after lunch still remembers the gist, and the cost of showing slightly stale is lower than
+the cost of never showing. The window's real job is preventing a strip about something read on
+Tuesday from a tab left open all week. Instrument it and let the decay curve set it.
 
-**But reach is genuinely worse**, which is exactly why the feed slot stays. A reader who closes the
-tab, or returns tomorrow, never sees a continuation. The two surfaces cover different populations:
+**0.5 — Showing lean labels *is* a bias statement, and the copy has to earn it.** The brief says the
+UI must not imply one outlet is biased, but "Left of centre / Right of centre" is exactly a claim
+about outlets. It is defensible only as a *sourced, descriptive* fact — where each outlet sits on a
+published spectrum — never as an evaluation. §1.3 sets the copy rules that keep it on the right side
+of that line.
 
-- **Continuation** — hot anchor, in-session, high intent, narrow reach.
-- **Feed slot (1 card)** — cold anchor, cross-session, low intent, broad reach.
+**0.6 — Cap continuation chains.** A reader who takes a continuation has now read both sides; that
+was the goal. Offering a third account on return from the second turns a moment into a treadmill.
+**At most one continuation per story per session.**
 
-Neither should be grown to cover the other's gap.
+**0.7 — Deep-link the secondary action, pre-filtered.** "View all outlets" should land on the story
+page *already filtered to the opposing side*, not on an unfiltered list the reader must re-filter.
+`CoverageList` holds its lean filter in `useState`, so this needs a small URL-param addition — a
+v1.1 item with real payoff.
 
-## 2. The trigger
+---
 
-Verified against the code rather than assumed:
+## 1. UX flow
 
-`ReadArticleButton` records the read to `/api/me/reads` (tagged with `openedFrom`) **before**
-calling `window.open(href, "_blank", "noopener,noreferrer")`. The app is never navigated away from.
-
-So the reader returns to a **live SPA instance**, on the page they left, at the scroll position they
-left, with the source card already rendering its `Check` state. The trigger is
-`document.visibilitychange → visible`, not a page load — the same hook `rum-listener.tsx` and
-`lib/analytics.ts` already use.
-
-## 3. Placement — in the card, not above the feed
-
-The continuation strip attaches **to the card the reader read from**.
+### 1.1 The path
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│  The Guardian · Left of centre               Politics · 2h ago   │
-│  Hamas agrees to complete disarmament under Gaza agreement       │
-│  …                                                    ✓ Read     │
-├──────────────────────────────────────────────────────────────────┤
-│ ⇄  Continue this story                                        ×  │
-│    Wall Street Journal · Right of centre · 20 outlets covering   │
-│    [ Read this account ]        Compare all coverage →           │
-└──────────────────────────────────────────────────────────────────┘
+  Feed / Discover / Search / Stories / Saved
+        │
+        │  reader clicks [ Read article ]
+        ▼
+  read recorded → continuation prefetched → publisher tab opens (_blank)
+        │
+        │  … reader reads on the publisher's site …
+        │
+        ▼  returns to the Hidden View tab
+  visibilitychange → visible,  hidden ≥ 20 s,  candidate cached,  card still mounted
+        ▼
+  strip animates in beneath the source card
+        │
+        ├─ [ Read another perspective ] → records a read, opens the sibling
+        ├─ [ View all outlets → ]       → story page, pre-filtered to the opposing side
+        └─ [ × ]                        → collapse; suppressed for this story permanently
 ```
 
-Why in-place beats a banner above the feed:
+### 1.2 Mockup — desktop
 
-1. **The two accounts sit adjacent.** "Compare these" is legible when the things being compared are
-   next to each other; a top-of-page banner separates them.
-2. **No layout disruption elsewhere.** A banner on a page the reader has scrolled into either
-   shifts everything or renders off-screen.
-3. **Every surface gets it for free.** `ReadArticleButton` is shared by Recommendations, Discover,
-   Search, Stories and Saved. Attach to the card and there is no per-page banner logic.
-4. **Multiplicity resolves itself** (§7).
-5. **It fails correctly.** If the reader navigated away the card is gone and the moment has passed.
-   A continuation is a moment, not a campaign.
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│  The Guardian · Left of centre                       Politics · 2h ago │
+│  Hamas agrees to complete disarmament under 'historic' Gaza agreement  │
+│  Officials said the framework would be signed within the week…         │
+│                                                          ✓ Read        │
+├────────────────────────────────────────────────────────────────────────┤
+│ ⇄  Compare this story                                               ×  │
+│    20 outlets covered this event. The Wall Street Journal is rated     │
+│    right of centre — you read a left-of-centre account.                │
+│                                                                        │
+│    [ Read another perspective ]          View all 20 outlets →         │
+└────────────────────────────────────────────────────────────────────────┘
+```
 
-## 4. Eligibility — every gate, and why
+### 1.3 Copy rules — how the framing stays descriptive
 
-The strip renders **only** when all of these hold. Any failure renders nothing, silently.
+The brief's "must not imply one outlet is correct or biased" is the hardest requirement to satisfy
+while showing lean ratings at all. Four rules:
 
-| gate | rule | why |
-|---|---|---|
-| **Read recency** | read within the last **90 minutes** | The comparison's value decays with memory of the first article. Past that the reader is starting fresh and the prompt is noise. |
-| **Cluster membership** | the read article is in a validated multi-publisher story cluster | The existing P1 licensing gate; identical to `evidence_resolver`'s. |
-| **Cluster trust** | `clusterTrust == "ok"` | A welded cluster produces a "same story" offer that isn't the same story. This project measured that failure (`docs/STORY_CLUSTER_MERGES.md`). |
-| **Genre** | cluster does not match `_TEMPLATE_PATTERNS` | "Compare coverage" on a lottery-numbers or box-office piece is noise. |
-| **Both leans rated** | anchor and sibling both carry a registry lean | Never infer opposition. Unrated licenses no claim (L2.2). |
-| **Genuinely opposing** | opposite sides by the catalog's ±0.5 buckets | Centre opposes nothing; −1.5 vs −0.8 is the same side. |
-| **Unread** | sibling not in the reader's read history | Offering something already read is a broken promise. |
-| **Different publisher** | sibling's publisher ≠ anchor's publisher | Syndicated reprints are not another account. |
-| **Live article** | sibling resolves in the current catalog with a usable URL | Never offer a dead link. |
-| **Not dismissed** | this story not dismissed by this reader | §6. |
-| **Impression cap** | shown < 2 times for this story | §6. |
+1. **Foreground the event, not the outlets.** The heading is *"Compare this story"* — not "See the
+   other side," which frames the reader's own read as a side to be corrected.
+2. **State ratings as sourced placement, never as judgement.** *"The Wall Street Journal is rated
+   right of centre"* — the passive "is rated" points at the registry. Never "is biased," "leans," or
+   "skews."
+3. **Name the reader's own article symmetrically.** *"you read a left-of-centre account"* puts both
+   outlets on the same axis. Rating only the sibling would imply the anchor is neutral.
+4. **No corrective verbs.** Never "balance," "correct," "counter," "fix," or "the full picture." The
+   offer is a comparison, and comparison is the reader's to make.
 
-**v1 shows opposite-lean siblings only.** A same-side sibling is legitimate "more coverage," but a
-pattern that sometimes means *another perspective* and sometimes means *another article* stops being
-trusted. Keep the promise narrow. Same-side is a v2 with different copy, never a fallback.
+The disclosure affordance on the lean rating links to the existing registry methodology, so the
+claim is checkable rather than asserted.
 
-**Expected consequence, stated up front:** these gates are strict, and the strip will fire on a
-minority of reads. That is the correct trade for a prompt that always means what it says — but §9's
-first measurement is precisely how small that minority is.
+### 1.4 States
 
-## 5. Ranking — and the slider's only role here
+| state | render |
+|---|---|
+| Not eligible | nothing. No placeholder, no "no comparison available." |
+| Eligible, not yet returned | nothing. The strip is a response to return, not to the click. |
+| Eligible, returned, card mounted | strip animates in (`prefers-reduced-motion` respected) |
+| Dismissed | plain read-state card, permanently for that story |
+| Sibling read in the meantime | strip disappears — derived from live read state, not a snapshot |
+| Prefetch failed | nothing. Never a spinner or an error; the feed slot covers it. |
 
-When several siblings qualify, choose in this order:
+---
 
-1. **Opposing and rated** — the eligibility gate; everything below applies within that set.
-2. **Ideological distance, modulated by the Political Openness slider** (below).
-3. **Publisher novelty** — `never` / `rarely` familiarity bands first, so the offer doubles as
-   source diversification.
-4. **Recency** — newest `publishedAt`, ties broken by canonical URL so the choice is deterministic.
+## 2. Trigger and lifecycle
 
-### The slider's role — narrow and deliberate
+### 2.1 Trigger conditions
+
+All must hold:
+
+1. `document.visibilitychange` → `visible`
+2. **hidden duration ≥ `MIN_HIDDEN_MS` (20 s)** — the dwell gate from §0.2
+3. a cached continuation candidate exists for a read made in this session
+4. the source card is currently **mounted** (not necessarily in the viewport)
+5. read age ≤ `FRESHNESS_WINDOW` (4 h)
+6. story not dismissed, and shown < `MAX_IMPRESSIONS` (2) this session
+
+### 2.2 Lifecycle
+
+```
+  idle ──[Read click]──▶ prefetching ──▶ armed ──[return, gates pass]──▶ shown
+                              │                                            │
+                              └──[no candidate]──▶ inert                    ├──[×]──▶ dismissed (persisted)
+                                                                           ├──[open]──▶ consumed
+                                                                           └──[read elsewhere in cluster]──▶ retired
+```
+
+- **No auto-dismiss timer.** The strip is inline content, covers nothing, and does not need to
+  expire on its own. A timed disappearance would also punish a reader who is still reading.
+- **Superseded, not stacked**: reading another member of the same cluster moves the strip to the
+  newest card rather than adding a second.
+
+---
+
+## 3. Eligibility rules
+
+Evaluated **server-side** at prefetch. Any failure returns `null` and the client renders nothing.
+
+| # | gate | rule | rationale |
+|---|---|---|---|
+| 1 | Cluster membership | the read article resolves in `evidence_resolver.story_index` | Same P1 licensing gate the feed slot uses — one definition of "same story". |
+| 2 | Cluster trust | `story.clusterTrust == "ok"` | A welded cluster offers an account of a *different* event. Measured failure mode — `docs/STORY_CLUSTER_MERGES.md`. |
+| 3 | Genre | cluster does not match `coverage_comparison._TEMPLATE_PATTERNS` | "Compare coverage" on a lottery-results or box-office tracker is noise by construction. |
+| 4 | Sibling exists | ≥1 cluster member that is unread, from a different publisher identity, with a usable absolute URL | `publisher_identity` collapse, so a syndicated reprint is not "another outlet". |
+| 5 | Both rated | anchor **and** sibling carry a registry lean | Never infer opposition. Unrated licenses no claim (L2.2). |
+| 6 | Genuinely opposing | opposite sides by the catalog's ±0.5 buckets (`_opposing_leans`) | Centre opposes nothing; −1.5 vs −0.8 is the same side. |
+| 7 | Freshness | read age ≤ 4 h | §0.4. |
+| 8 | Not dismissed | story not in the dismissal set | §6. |
+| 9 | Chain cap | no continuation already consumed for this story this session | §0.6. |
+
+**Deliberately excluded from v1:** same-side siblings. A pattern that sometimes means *another
+perspective* and sometimes means *another article* stops being trusted. Same-side is a v2 with
+different copy (§9), never a v1 fallback.
+
+---
+
+## 4. Ranking
+
+Among candidates passing §3, choose deterministically:
+
+```
+sort key = ( slider_distance_preference(|lean_sib − lean_anchor|),
+             publisher_novelty_rank,        # never > rarely > familiar
+             −publishedAt,                  # newest first
+             canonical_url )                # deterministic tiebreak
+```
+
+### 4.1 The slider's only role here
 
 **Political Openness continues to control only the RWE-B bridge-slot budget in the feed
-(`blend_plan_for`). Nothing here changes that.**
+(`blend_plan_for`). It does not gate this feature.** A reader at slider 0 still sees continuations,
+because the strip responds to their own reading act rather than injecting into their feed.
 
-Its only influence on this feature is **which** opposing candidate is chosen when more than one
-qualifies — never *whether* the strip appears:
+Its sole influence is *which* opposing candidate wins when several qualify:
 
-| slider | candidate preference | rationale |
+| slider | preference | rationale |
 |---|---|---|
-| low (0–37) | the **nearest** opposing outlet | Opposition, but the gentlest available; a reader who asked for less cross-perspective content still gets a genuine comparison, not the most distant one. |
-| mid (38–62) | balanced — rank by publisher novelty first | The default; no distance preference. |
-| high (63–100) | the **furthest** opposing outlet | A reader who asked for more cross-perspective content gets the sharpest available contrast. |
+| 0–37 | **nearest** opposing outlet | Genuine opposition, gentlest available. A reader who asked for less cross-perspective content is not force-fed the sharpest contrast. |
+| 38–62 | no distance preference; novelty ranks first | The default. |
+| 63–100 | **furthest** rated opposing outlet | A reader who asked for more contrast gets the sharpest available. |
 
-This uses `_piecewise`-style anchors over `|lean_sibling − lean_anchor|`. It respects the slider's
-meaning — *how much ideological distance you want* — without letting it gate a feature whose whole
-value is being shown at the right moment. **A reader at slider 0 still sees continuations**, because
-the strip is a response to their own reading act, not an injection into their feed.
+Implemented as a `_piecewise`-style preference over `|lean_sib − lean_anchor|`, matching the existing
+slider-mapping idiom.
+
+**Trade-off:** at low openness the nearest opposing outlet may be only just across the ±0.5
+threshold, making the comparison subtle. That is the honest reading of the reader's stated
+preference, and the alternative — ignoring the slider — would be worse.
+
+---
+
+## 5. Desktop and mobile
+
+**Desktop.** `_blank` keeps the app tab alive. Return is a genuine `visibilitychange` on a live SPA
+instance with the card still mounted at the same scroll position. Best case; the design is built for
+it.
+
+**Mobile — the harder case, in two ways:**
+
+1. **Tab eviction.** iOS Safari and Android Chrome routinely discard background tabs. Return is then
+   a **full page load**, and the in-memory candidate is gone. `sessionStorage` survives reload in the
+   same tab, so the armed candidate rehydrates from there (§6.2). If the tab itself was replaced,
+   nothing shows — correct, and what the feed slot exists for.
+2. **PWA / standalone.** With the service worker installed, `window.open` may hand off to the system
+   browser and return is via the app switcher. Handled identically to eviction.
+
+**Mobile layout** — the strip stacks in a narrow column:
+
+```
+┌──────────────────────────────────┐
+│  The Guardian · Left of centre   │
+│  Hamas agrees to complete…       │
+│                       ✓ Read     │
+├──────────────────────────────────┤
+│ ⇄ Compare this story          ×  │
+│   20 outlets covered this.       │
+│   The Wall Street Journal is     │
+│   rated right of centre.         │
+│                                  │
+│ ┌──────────────────────────────┐ │
+│ │  Read another perspective    │ │
+│ └──────────────────────────────┘ │
+│   View all 20 outlets →          │
+└──────────────────────────────────┘
+```
+
+- Full-width primary button; × as a **44×44** touch target.
+- No horizontal scroll; publisher names wrap rather than truncate.
+- **Never scroll-jack.** If the card is off-screen on return, the moment has passed.
+
+---
 
 ## 6. Dismissal and persistence
 
-- **× on the strip.** Dismissing collapses it back to the plain read-state card. No confirmation.
-- **Dismissal is per STORY, not per card.** Dismissing on one member suppresses the strip for every
-  other member of that cluster.
-- **Dismissal is permanent for that story.** A reader who has declined to compare this story once
-  should not be asked again. Session-scoped dismissal would be nagging by another name.
-- **Storage:** `localStorage`, following `lib/onboarding.ts`'s existing pattern —
-  `hv.continue` → `{ [storyId]: { dismissed?: true, shown: number, ts: number } }`. Device-local is
-  right: this is a UI preference, not user data worth a table, and losing it on a new device costs
-  one dismissible strip. Prune entries older than the freshness window on every read of the key so
-  it cannot grow unbounded.
+### 6.1 Dismissal
 
-### Surviving refresh
+- **× collapses the strip**, no confirmation.
+- **Per story, not per card** — dismissing on one member suppresses every other member of the
+  cluster.
+- **Permanent for that story.** A reader who has declined once should not be asked again;
+  session-scoped dismissal is nagging by another name.
 
-**Yes, but bounded — and the obvious answer is wrong.** Read state comes from the server, so after a
-refresh the card can re-derive "read + opposing sibling exists." Letting it re-render freely would
-mean the strip returns on every page view for 90 minutes.
+### 6.2 Storage — two tiers, deliberately
 
-- Re-renders after refresh **only if** not dismissed **and** `shown < 2`.
-- After two impressions without engagement, treat it as declined and stop permanently.
-
-This matters more on mobile than desktop (§8), where tab eviction makes refresh the *normal* return
-path rather than the exception.
-
-## 7. Multiple recently read stories
-
-**The placement dissolves the problem.** Each strip is anchored to its own card, so three reads
-produce three strips on three different cards — no queue, no stacking, no priority ordering, no
-"which one wins."
-
-Two bounds:
-
-- **One strip per story cluster.** Reading three members of one story yields one strip, on the most
-  recently read card.
-- **At most three strips visible at once.** A reader who opens eight tabs should not return to a
-  feed peppered with them; keep the three most recent reads and let the rest fall to the feed slot.
-
-## 8. Desktop and mobile
-
-The return path differs materially, and mobile is the harder case.
-
-**Desktop.** `_blank` opens a background/foreground tab; the app tab survives. Return is a genuine
-`visibilitychange` on a live instance. The strip animates in below the source card
-(`prefers-reduced-motion` respected). This is the design's best case.
-
-**Mobile.** Two complications:
-
-1. **Tab eviction.** iOS Safari and Android Chrome routinely discard background tabs under memory
-   pressure. Return is then a **full page load**, not a visibility event — which is exactly why §6's
-   refresh-survival path exists. On mobile it is the primary path, not a fallback. The card must be
-   able to derive its strip from server read-state alone.
-2. **PWA / standalone.** With the service worker installed, `window.open` may hand off to the system
-   browser, and return is via the app switcher. Same handling as eviction: derive from read state.
-
-**Mobile layout.** The single-column card is narrow, so the strip stacks: publisher + lean on one
-line, actions on the next, full-width primary button, × as a 44×44 touch target in the corner. No
-horizontal scrolling, no truncated publisher names.
-
-**Mobile scroll position.** Browsers restore scroll inconsistently after eviction. Never scroll-jack
-to reveal the strip — if the card is off-screen on return, the moment has passed.
-
-## 9. Interaction with existing recommendation cards
-
-- **The feed's Same-Story slot is unchanged** — one card, existing displacement rule, no quota
-  increase. It serves cold anchors; the continuation serves hot ones.
-- **Deduplication:** a sibling offered as a continuation should not also appear as the feed's
-  Same-Story card in the same session. The continuation is the stronger offer; the feed slot should
-  pick its next candidate or yield.
-- **No effect on the blend plan.** The strip is not a feed card, occupies no slot, and never touches
-  `DEFAULT_BLEND_PLAN`'s fixed total, `blend_plan_for`'s arithmetic, or `rec_explain`'s parity
-  guarantee. This isolation is the main architectural argument for the surface.
-- **No effect on the explanation ladder.** Nothing is displaced, so no explanation is lost.
-- **Reception signals:** opening a continuation records a read exactly as any other
-  `ReadArticleButton` does — the Health/History/Analytics pipeline is fed identically, so a
-  continuation read counts toward viewpoint balance like any other.
-
-## 10. Analytics
-
-Following `lib/analytics.ts`'s existing `track(event, props)` convention and naming style
-(`article_read`, `recommendation_opened`):
-
-| event | props | question it answers |
+| what | where | why |
 |---|---|---|
-| `continuation_eligible` | `storyId`, `anchorLean`, `siblingLean`, `distance`, `candidateCount`, `minutesSinceRead` | **How often can this fire at all?** The single most important number — it sizes the audience before anything else matters. |
-| `continuation_shown` | + `openedFrom`, `surface`, `impressionIndex` | Eligible-to-shown ratio; catches gating or viewport losses. |
-| `continuation_opened` | + `minutesSinceRead`, `sliderBucket` | Click-through, and the **decay curve** that should set the 90-minute window empirically. |
-| `continuation_dismissed` | + `impressionIndex` | Irritation signal. A high dismissal rate at first impression means the offer is wrong, not the timing. |
-| `continuation_compare_opened` | `storyId` | Secondary CTA — do readers want the full coverage list rather than one article? |
+| Armed candidate (pending strip) | `sessionStorage` | Survives reload in the same tab — the mobile eviction path. Dies with the tab, which is correct: a new session is the feed slot's job. |
+| Dismissals + impression counts | `localStorage` (`hv.continue`) | Must outlive the session. Follows the existing `lib/onboarding.ts` pattern. |
 
-**Success is not click-through.** The product goal is exposure to alternative perspectives, so the
-measure that matters is whether readers who take a continuation subsequently read **more
-opposite-lean articles organically** than a matched cohort who did not. Click-through measures the
-card; this measures the goal.
+`hv.continue` shape: `{ [storyId]: { d?: 1, n: <impressions>, t: <epoch ms> } }`. Prune entries older
+than 30 days on every read so the key cannot grow unbounded.
 
-**Guardrail metric:** total reads per session must not fall. If continuations merely redirect
-attention that would have gone to the feed, the feature is moving reading around rather than adding
-perspective.
+**No cross-session continuation, by design.** The brief assigns that case to the feed slot, and
+honouring that keeps the two surfaces cleanly separated.
 
-**Segment everything by whether the reader's `user_side` is zero.** Model-bridging is structurally
-inert for balanced readers (`_cross_of` requires `user_side != 0`), so if continuations perform well
-for that segment specifically, this surface is doing work the feed provably cannot.
+### 6.3 Impression cap
 
-## 11. Trade-offs
+Re-render after reload only if not dismissed **and** `n < 2`. After two impressions without
+engagement, treat it as declined and stop. Without this the strip would return on every page view
+for four hours — which on mobile, where reload *is* the return path, would be the common case.
 
-**Reach is the real cost.** In-session return only. This is why the feed slot stays, and why neither
-surface should be grown to cover the other.
+---
 
-**The strict gates may make it rare.** Both leans rated, genuinely opposite, trusted cluster,
-non-template genre. If `continuation_eligible` fires on only a few percent of reads, the honest
-response is to improve registry lean coverage — not to loosen the bar. A weakened gate at a
-high-attention moment is worse than no feature.
+## 7. Analytics and success metrics
 
-**Higher salience means a higher cost of error.** A weak card in a 14-card feed is ignorable; a weak
-prompt at the moment of return is an irritation. Every gate in §4 exists because of this asymmetry.
+Following `lib/analytics.ts`'s `track(event, props)` convention and existing naming
+(`article_read`, `recommendation_opened`).
 
-**Layout shift.** Expanding under a card pushes content below it down. Animation makes it read as a
-response rather than a glitch, but it is a genuine cost of in-place over a fixed banner.
+| event | props | question |
+|---|---|---|
+| `continuation_eligible` | `storyId`, `anchorLean`, `siblingLean`, `distance`, `candidateCount` | **How often can this fire at all?** The number that sizes the audience — and §9.0's gate. |
+| `continuation_armed` | `storyId`, `openedFrom` | Prefetch succeeded; the difference from `eligible` is client-side loss. |
+| `continuation_shown` | + `hiddenMs`, `minutesSinceRead`, `impressionIndex`, `surface` | Armed→shown ratio; catches dwell-gate and mount losses. |
+| `continuation_opened` | + `minutesSinceRead`, `sliderBucket`, `distance` | Click-through, and the **decay curve** that should replace the 4 h guess. |
+| `continuation_dismissed` | + `impressionIndex` | Irritation. High dismissal at first impression means the *offer* is wrong, not the timing. |
+| `continuation_all_outlets` | `storyId` | Do readers prefer the overview to a single article? If this beats `opened`, swap the CTAs. |
 
-**Two surfaces to maintain** for one product idea, with different triggers, different storage and
-different failure modes. Justified only because they serve non-overlapping populations — if
-measurement shows the continuation reaches nearly everyone the feed slot does, one of them should
-be retired.
+### 7.1 Success is not click-through
+
+The product goal is exposure to alternative perspectives, so the primary measure is whether readers
+who take a continuation subsequently read **more opposite-lean articles organically** than a matched
+cohort who did not. Click-through measures the card; this measures the goal.
+
+**Guardrail:** reads per session must not fall. If continuations only redirect attention that would
+have gone to the feed, the feature moves reading around rather than adding perspective.
+
+**Segment everything by `user_side == 0`.** Model-bridging is structurally inert for balanced readers
+(`_cross_of` requires `user_side != 0`). If continuations perform well for that segment specifically,
+this surface is doing work the feed provably cannot — the strongest possible justification for it.
+
+---
+
+## 8. Edge cases and failure modes
+
+| case | behaviour |
+|---|---|
+| Reader never leaves (middle-click, copy link) | No `visibilitychange`, no strip. Correct — no return, no return moment. |
+| Alt-tab for 4 s | Blocked by the dwell gate (§0.2). |
+| Reader returns after 6 h | Outside the freshness window; nothing. Feed slot covers it. |
+| Sibling read in another tab meanwhile | Strip retires — derived from live read state. |
+| Sibling URL dead / 404 | Not preventable at prefetch. Mitigation: prefer siblings from the current recommendable corpus, which inherits the freshness gates. |
+| Cluster re-clusters between read and return | Candidate is resolved at prefetch and cached; a re-cluster does not retroactively invalidate it. Acceptable — the offer was true when made. |
+| Reader takes the continuation, returns again | Chain cap: no second continuation for this story this session (§0.6). |
+| Anchor is itself a continuation target | Same cap applies. |
+| Both outlets rated, but the *same* outlet under two names | `publisher_identity` collapse prevents it. |
+| Extension-captured read (outside the app) | Never prefetched, never armed. Correct — there is no return moment to attach to. |
+| Anonymous / signed-out reader | No read history, no reliable "unread" gate. **Signed-in only in v1.** |
+| Prefetch fails (network, 5xx) | Silent no-op. Never a spinner, never an error state. |
+| `story_index` cold at prefetch | Returns empty → no candidate. Never trigger an inline ~24 s clustering on a click path. |
+
+---
+
+## 9. Rollout
+
+### 9.0 Phase 0 — the gate (before any UI)
+
+A read-only probe over production reads, in the style of `audit_story_coverage.py`:
+
+- share of reads in a **trusted** cluster
+- of those, share with an **unread different-publisher** sibling
+- of those, share where **both leans are rated**
+- of those, share **genuinely opposing**
+- the resulting **end-to-end eligible rate**, and its distribution by topic
+
+**Gate: ≥10% of reads eligible.** Below that, stop and improve registry lean coverage — the
+bottleneck is data, not UX, and shipping a prompt that almost never fires wastes the surface.
+
+### 9.1 V1
+
+Everything in §§1–8, behind `RWE_STORY_CONTINUATION` (default off), signed-in readers only.
+Ship with the Phase 0 probe re-runnable so the eligible rate can be tracked as registry coverage
+improves.
+
+### 9.2 V1.1 — small, high-value
+
+- **Deep-link "View all outlets" pre-filtered** to the opposing side (§0.7). Needs a URL param on
+  `CoverageList`'s lean filter.
+- **Story Intelligence hook**: for a `Breaking` / `Growing` cluster, add one counted line —
+  *"6 more outlets have covered this since you read."* The panel already computes momentum; this is
+  a stronger reason to compare than a static offer.
+- Tune the freshness window from the measured decay curve.
+
+### 9.3 V2 — only if V1 earns it
+
+- **Same-side siblings** with distinct copy ("another account", not "another perspective") — only
+  after v1 establishes the pattern is trusted.
+- **Coverage Comparison inline**: the L0 card already computes counted differences between an
+  article and its cluster. Surfacing one finding in the strip (*"12 of 20 outlets place this in
+  Israel; this account does not"*) would make the comparison concrete before the click.
+- **Cross-session continuation** — only if `continuation_eligible` shows the feed slot is failing
+  to cover returning readers.
+
+---
+
+## 10. Technical architecture
+
+### 10.1 Reuse, not new machinery
+
+| existing | reused for |
+|---|---|
+| `story_service` clusters + `clusterTrust` | cluster membership and trust gate |
+| `evidence_resolver.story_index` (TTL-cached) | canonical-url → story lookup, already warmed by the feed path |
+| `personalize._opposing_leans` | the ±0.5 opposition test — **lift to a shared module** so the feed slot and the continuation cannot drift |
+| `publisher_identity.groups` | same-outlet collapse |
+| `coverage_comparison._TEMPLATE_PATTERNS` | the mill/template gate |
+| `store.get_reads` | the unread test |
+| `ReadArticleButton` | the trigger point *and* the sibling's open action |
+| story page `CoverageList` | the "all outlets" destination — already lean-filterable |
+| `lib/analytics.track` | events |
+
+**No new table. No new worker. No model.** This is a lookup over an index the feed path already
+builds and caches.
+
+### 10.2 The one new endpoint
+
+```
+GET /api/me/continuation?url=<canonical>          (signed-in, read-only)
+  → { storyId, outlets, sibling: { url, publisher, lean, leanBucket, publishedAt } } | null
+```
+
+**Why not extend `/api/me/reads`:** it is a **batch** endpoint (`reads: list[ReadInput]`) returning
+`IngestResultModel` counts, and it is shared with the browser extension where no return moment
+exists. A single-candidate payload does not belong on a batch counts contract.
+
+**Why prefetch at click, not fetch on return:** the strip must appear instantly. Calling at click
+time overlaps the request with the tab switch — by the time the reader is back, the answer is
+cached. Degrades gracefully: if the prefetch failed, the client may retry once on return, and
+failing that renders nothing.
+
+**Cost:** one `story_index` lookup (dict access on a TTL-cached index the feed already builds), a
+scan of that cluster's members, and registry lean reads. Sub-millisecond warm; the index build cost
+is already paid and instrumented (`rec_story_index_hit_ms`).
+
+### 10.3 Client
+
+```
+ReadArticleButton.onClick
+   ├─ recordRead.mutate(...)                     (unchanged)
+   ├─ track("article_read")                      (unchanged)
+   ├─ prefetchContinuation(url) ──▶ sessionStorage[hv.continue.armed]
+   └─ window.open(href, "_blank")                (unchanged)
+
+<ContinuationStrip storyId anchorUrl />           mounted by each card that has been read
+   ├─ useVisibilityReturn({ minHiddenMs: 20_000 })
+   ├─ reads armed candidate + hv.continue (localStorage)
+   └─ renders, or nothing
+```
+
+`ContinuationStrip` is a leaf component with no data dependency of its own beyond the cached
+candidate. It touches **no** recommendation infrastructure: no blend-plan slot, no
+`DEFAULT_BLEND_PLAN` total, no `blend_plan_for` arithmetic, no `rec_explain` parity, no explanation
+ladder. That isolation is the main architectural argument for this surface over expanding the feed.
+
+### 10.4 Testing
+
+- **Engine**: eligibility unit tests per gate (untrusted cluster, template genre, unrated lean,
+  same-side, already-read, no sibling), determinism of ranking, slider-distance selection at each
+  plateau.
+- **Web**: dwell gate (19 s vs 21 s), dismissal persistence across reload, impression cap, "sibling
+  read meanwhile" retirement, reduced-motion.
+- **E2E**: read → simulated visibility cycle → strip appears → open records a read; dismissal
+  survives reload.
+- **Shape-contract test** binding the endpoint's response keys to what the strip reads — the defect
+  class that has bitten this repo repeatedly.
+
+---
+
+## 11. Risks
+
+| risk | severity | mitigation |
+|---|---|---|
+| **Eligible rate too low to matter** | High | §9.0 gate before building. Improve lean coverage rather than loosening gates. |
+| **Reach limited to in-session returns** | High | Accepted by design; the feed slot covers the rest. Do not grow either to cover the other. |
+| **A weak prompt at a high-attention moment** | High | Every §3 gate exists for this asymmetry. A weak feed card is ignorable; a weak interstitial is an irritation. |
+| **Lean labels read as accusation** | Medium | §1.3 copy rules; sourced phrasing; symmetric labelling of both outlets; methodology link. |
+| **Layout shift on expand** | Medium | Animate; respect reduced-motion; never scroll-jack. |
+| **Two surfaces for one idea** | Medium | Justified only while they serve non-overlapping populations. If measurement shows overlap, retire one. |
+| **Cluster quality** | Medium | Trust gate + template gate. Comparison quality is capped by clustering quality; story fragmentation also makes "20 outlets" an undercount. |
+| **`localStorage` unavailable** (private mode) | Low | Degrade to in-memory; the strip may reappear next session. Acceptable. |
 
 ## 12. Open questions
 
-1. **The 90-minute window and the 2-impression cap are judgement calls, not derived numbers.** The
-   `continuation_opened` decay curve should replace both within a few weeks of data.
-2. **Should the primary CTA open the article or the story page?** This design opens the article —
-   the goal is reading the other account. If `continuation_compare_opened` outperforms
-   `continuation_opened`, readers prefer the overview and the CTAs should swap.
-3. **Same-side siblings as a v2** — legitimate content, different promise, different copy. Only
-   after v1 establishes that the pattern is trusted.
-4. **Does dismissal deserve a server-side home?** `localStorage` loses on a new device. Acceptable
-   for v1; revisit only if cross-device nagging shows up in `continuation_dismissed`.
+1. **4 h freshness and 2-impression cap are judgement calls.** The `continuation_opened` decay curve
+   should replace both within weeks of data.
+2. **Primary CTA — article or story page?** This design opens the article. If
+   `continuation_all_outlets` outperforms `continuation_opened`, swap them.
+3. **Should the strip show when the reader dismisses *quickly and often*?** A per-reader global
+   opt-out after N dismissals may be kinder than per-story suppression alone.
+4. **Anonymous readers** are excluded for lack of a reliable unread signal. Worth revisiting if the
+   signed-out population is large.
