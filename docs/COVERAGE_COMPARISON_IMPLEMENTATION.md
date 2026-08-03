@@ -6,10 +6,10 @@ approved design stated and justified before it is taken**.
 
 | phase | scope | state |
 |---|---|---|
-| **0a** | comparable-set readiness probe (design §11 items 1, 2, 3, 8) | **built; awaiting production run** |
-| 0b | generation-dependent readiness (§11 items 4–7) | unblocked by Phase 1; runs at enablement |
-| **1** | contract extension + validation + worker scale (dormant) | **built; awaiting production run** |
-| 2 | enablement on the designated recipe | blocked on the 0a gate **and** 0b |
+| **0a** | comparable-set readiness probe (design §11 items 1, 2, 3, 8) | **PASS on `f72f4e9`** — 339/779 clusters (bar: 100) |
+| 0b | generation-dependent readiness (§11 items 4–7) | harness built; run blocked on a reachable provider |
+| **1** | contract extension + validation + worker scale (dormant) | **verified dormant on `f72f4e9`** — 0 rows, `insights: null` |
+| 2 | enablement on the designated recipe | blocked on 0b |
 | 3–5 | tiers C1 / C2 / C3 | not started |
 
 ---
@@ -426,27 +426,57 @@ Ollama on the **host**, not in the api container:
 ```bash
 curl -fsSL https://ollama.com/install.sh | sh
 ollama pull llama3.2:3b && ollama pull qwen2.5:3b
-sudo systemctl edit ollama      # add:  [Service]  Environment="OLLAMA_HOST=0.0.0.0:11434"
-sudo systemctl restart ollama
+# `systemctl edit` opens an editor; write the drop-in directly instead, and avoid heredocs —
+# a mangled paste leaves the override unwritten and the failure only shows up as "skipped".
+sudo mkdir -p /etc/systemd/system/ollama.service.d
+printf '[Service]\nEnvironment="OLLAMA_HOST=0.0.0.0:11434"\n' \
+  | sudo tee /etc/systemd/system/ollama.service.d/override.conf
+sudo systemctl daemon-reload && sudo systemctl restart ollama
 ```
 
-**The container cannot reach `127.0.0.1`** — inside the container that is the container. Use the
-docker bridge gateway, and confirm the container can actually see it before benchmarking:
+**The container cannot reach `127.0.0.1`** — inside the container that is the container. It needs
+the gateway of **its own network**, and for a compose stack that is NOT `docker0`: the api service
+sits on the project's user-defined bridge (`deploy_default`), whose gateway is `172.18.0.1` on this
+box. Reading `docker0` gives the wrong address, and on a host with no default-bridge containers it
+gives an empty one — which silently becomes `OLLAMA_HOST=:11434` and fails in 0.2 s.
+
+Ask the container what its own gateway is, then prove it can reach the port:
 
 ```bash
-GW=$(ip -4 addr show docker0 | awk '/inet /{print $2}' | cut -d/ -f1)   # usually 172.17.0.1
+GW=$(sudo docker exec -i deploy-api-1 python -c "
+import socket, struct
+with open('/proc/net/route') as f:
+    for line in f.readlines()[1:]:
+        p = line.split()
+        if p[1] == '00000000':
+            print(socket.inet_ntoa(struct.pack('<L', int(p[2], 16)))); break")
 sudo docker exec -i deploy-api-1 python -c "
-import urllib.request,sys
+import urllib.request
 print(urllib.request.urlopen('http://$GW:11434/api/tags', timeout=5).status)"
 ```
 
-A 200 means the next step will run; anything else means the benchmark would report every target
-`skipped` and measure nothing.
+A 200 means the next step will run; anything else means the benchmark reports every target
+`skipped` and measures nothing. Two failures to check for first, in this order:
+
+```bash
+systemctl show ollama -p Environment    # must contain OLLAMA_HOST=0.0.0.0:11434
+sudo ss -lntp | grep 11434              # must LISTEN on 0.0.0.0, not 127.0.0.1
+```
+
+The installer binds to `127.0.0.1` by default, so the drop-in above is required, not optional.
+`ConnectionRefused` from the container means the bind; a *hang* means a host firewall
+(`sudo ufw allow from 172.16.0.0/12 to any port 11434`).
 
 ### Step 5 — Phase 0b
 
 ```bash
-GW=$(ip -4 addr show docker0 | awk '/inet /{print $2}' | cut -d/ -f1)
+GW=$(sudo docker exec -i deploy-api-1 python -c "
+import socket, struct
+with open('/proc/net/route') as f:
+    for line in f.readlines()[1:]:
+        p = line.split()
+        if p[1] == '00000000':
+            print(socket.inet_ntoa(struct.pack('<L', int(p[2], 16)))); break")
 sudo docker exec -e OLLAMA_HOST=$GW:11434 -e RWE_INSIGHTS_PROVIDER=ollama \
   -e RWE_INSIGHTS_OLLAMA_TIMEOUT=300 -i deploy-api-1 \
   python examples/benchmark_insights.py --targets ollama/llama3.2:3b,ollama/qwen2.5:3b \
@@ -492,3 +522,104 @@ structural upper bound. **Phase 2 begins only if that still clears 100 clusters 
 cleared 0.6 for the fields C1 uses.**
 
 *(Results are recorded here as they come back.)*
+
+---
+
+## Results — Phase 0a and Phase 1 dormancy, on `f72f4e9` (2026-08-03)
+
+### Phase 0a: **PASS**
+
+```
+stories in the served view : 1,772
+clustered articles         : 7,440   (window 6 days)
+clusters past the L0 gates :   779
+members resolved in catalog: 7,440 / 7,440        <- the canonical join, 100%
+
+comparable-set size (UPPER BOUND)
+  support units per cluster : p10 0  median 2  p90 6  max 29
+  clusters reaching >= 3    : 339 / 779 (43.5%)
+  GATE                      : PASS  (needs >= 100)
+```
+
+**The gate clears by 3.4×, and the distribution is the more important number.** The median gated
+cluster reaches **2** support units — below the threshold — and the bottom decile reaches zero. So
+43.5% of gated clusters can carry an insight-derived card, against L0's 66.7% of *members*, and
+this is the **upper bound**: recipe and format parity can only reduce it. The reach of C1–C3 will
+be materially narrower than L0's, and that expectation belongs here rather than being discovered at
+Phase 3. The samples show the reaching set is dominated by large clusters (29 units on the
+Spider-Man cluster, 22 on the Purja avalanche), so member-weighted coverage is plausibly higher
+than 43.5% — but that is an inference, not a measurement, and the probe reports clusters.
+
+### Eligibility sensitivity — hold `RWE_INSIGHTS_MIN_CHARS` at 200
+
+```
+generator input length : p10 134  median 310  p90 549
+  min_chars=150  eligible 6,549 (88.0%)   clusters reaching: 384
+  min_chars=200  eligible 5,670 (76.2%)   clusters reaching: 339
+  min_chars=250  eligible 4,379 (58.9%)   clusters reaching: 274
+```
+
+Loosening to 150 buys 45 clusters (+13%) by feeding the model 134-character inputs; tightening to
+250 costs 65. **Hold at 200 until Phase 0b reports κ**, because whether extraction survives short
+input is exactly what that measures — moving the floor first would change the thing being measured.
+
+### Arrival rate — the review's arithmetic, confirmed on the box
+
+```
+clustered articles/day        : 1,240
+…eligible at min_chars=200    :   945/day
+required RWE_INSIGHTS_BATCH   :    11   (600 s cycle, 1.5x headroom)
+today's default 6             →   864/day capacity
+```
+
+**864 < 945: the queue diverges by ~81 articles/day.** The pre-implementation review predicted this
+from ~1,250/day and a 864/day ceiling; the measured eligible rate is lower than that estimate but
+still above capacity, so the conclusion holds and `RWE_INSIGHTS_BATCH` must be ≥ 11 at enablement.
+
+### Syndication — the 0.9 threshold is well calibrated
+
+```
+members in gated clusters : 4,977
+after wire collapse       : 4,650   (6.6% folded)
+clusters with wire copy   :   190 / 779 (24.4%)
+largest groups            :  11x:1  7x:1  6x:1  5x:6  4x:16  3x:52
+```
+
+This was the constant most at risk of being wrong, and it is not. A quarter of gated clusters
+contain wire copy, and folding removes 6.6% of members — it is finding real syndication without
+flattening distinct reporting. The single 11× group is one act of journalism that would otherwise
+have counted as eleven corroborating outlets, which is precisely the overstatement
+`publisher_identity` cannot catch.
+
+### Phase 1: **dormant, confirmed**
+
+```
+enabled           : False
+provider          : None
+batch/concurrency : 6 / 1
+scope/temperature : all / 0.0
+max_tokens        : 1000
+article_insights rows: 0
+insights: None                     <- /api/analyze, unchanged
+```
+
+Zero rows, the request path byte-identical, and the new columns present and empty — which is the
+whole point of landing the contract while `article_insights` is empty.
+
+### Phase 0b: blocked on provider reachability, not on the harness
+
+Ollama installed on the box (CPU-only, `llama3.2:3b` + `qwen2.5:3b` pulled) but its installer binds
+to `127.0.0.1`, and the container cannot reach that. Two errors on the way, both now fixed in the
+runbook above:
+
+1. **My instruction read `docker0`.** The api service is on the compose bridge `deploy_default`,
+   whose gateway is `172.18.0.1`; `docker0` is a different network. Worse, when `docker0` does not
+   resolve, `$GW` is empty and `OLLAMA_HOST=:11434` fails in 0.2 s — which looks identical to "the
+   provider is down".
+2. **The `systemctl edit` drop-in never applied** (`systemctl show ollama -p Environment` returned
+   only `PATH`, and `ss` still showed `LISTEN 127.0.0.1:11434`). The runbook now writes the drop-in
+   with `printf | tee` on one line rather than a heredoc, because a mangled multi-line paste leaves
+   the override unwritten and the failure only surfaces later as `skipped`.
+
+The harness behaved correctly throughout: an unreachable provider is a **reported outcome**
+(`skipped — no Ollama server answering`), not a crash, and no row was written.
