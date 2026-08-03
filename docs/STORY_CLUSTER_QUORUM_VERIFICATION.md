@@ -139,3 +139,10 @@ the FIFA saga's consolidation, the Zendaya satellites, Waddell-style deep chains
 worth a measured look separately — whether `RWE_STORY_MERGE_SIM` slightly below 0.33 closes the
 duplicate pairs in §6.1 without waking the blob (its own adopt/reject bar is already documented
 in `story_service.merge_similarity()`).
+
+**Option B update (2026-08-03):** the articles-per-publisher gate floated above was challenged
+with production measurements and **rejected** — see `docs/CONTENT_MILL_STORY_EVALUATION.md`
+(second rejection after `docs/PUBLISHER_CONCENTRATION_EVALUATION.md`): the mill class is
+correctly clustered non-news with a low-a/p broad-syndication shape the gate cannot see, and
+the smallest effective alternative is source curation, with do-nothing defensible (top-20
+already clean).
