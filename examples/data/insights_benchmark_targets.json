@@ -22,16 +22,28 @@
       "name": "ollama/llama3.2:1b",
       "provider": "ollama",
       "model": "llama3.2:1b",
-      "env": {"OLLAMA_HOST": "127.0.0.1:11434", "RWE_INSIGHTS_OLLAMA_TIMEOUT": "300"},
-      "pricing": {"input_per_mtok": 0.0, "output_per_mtok": 0.0},
+      "env": {
+        "OLLAMA_HOST": "127.0.0.1:11434",
+        "RWE_INSIGHTS_OLLAMA_TIMEOUT": "300"
+      },
+      "pricing": {
+        "input_per_mtok": 0.0,
+        "output_per_mtok": 0.0
+      },
       "notes": "local, no egress"
     },
     {
       "name": "ollama/qwen2.5:0.5b",
       "provider": "ollama",
       "model": "qwen2.5:0.5b",
-      "env": {"OLLAMA_HOST": "127.0.0.1:11434", "RWE_INSIGHTS_OLLAMA_TIMEOUT": "300"},
-      "pricing": {"input_per_mtok": 0.0, "output_per_mtok": 0.0},
+      "env": {
+        "OLLAMA_HOST": "127.0.0.1:11434",
+        "RWE_INSIGHTS_OLLAMA_TIMEOUT": "300"
+      },
+      "pricing": {
+        "input_per_mtok": 0.0,
+        "output_per_mtok": 0.0
+      },
       "notes": "local, smallest useful size"
     },
     {
@@ -39,8 +51,31 @@
       "provider": "anthropic",
       "model": "claude-opus-4-8",
       "env": {},
-      "pricing": {"input_per_mtok": 5.0, "output_per_mtok": 25.0},
+      "pricing": {
+        "input_per_mtok": 5.0,
+        "output_per_mtok": 25.0
+      },
       "notes": "hosted; skipped automatically when ANTHROPIC_API_KEY is absent"
+    },
+    {
+      "name": "ollama/llama3.2:3b",
+      "provider": "ollama",
+      "model": "llama3.2:3b",
+      "pricing": {
+        "input_per_mtok": 0.0,
+        "output_per_mtok": 0.0
+      },
+      "notes": "Local. The realistic floor for the facets schema: 1b/0.5b models routinely ignore a long closed-vocabulary contract, which reads as a low pass rate rather than as a fact about the design."
+    },
+    {
+      "name": "ollama/qwen2.5:3b",
+      "provider": "ollama",
+      "model": "qwen2.5:3b",
+      "pricing": {
+        "input_per_mtok": 0.0,
+        "output_per_mtok": 0.0
+      },
+      "notes": "Local. Second 3b-class opinion — two models at the same size is how a cross-recipe agreement number gets a denominator."
     }
   ]
 }

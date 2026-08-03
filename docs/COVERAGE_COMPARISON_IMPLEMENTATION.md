@@ -368,3 +368,127 @@ sudo docker exec -i deploy-api-1 python examples/audit_coverage_readiness.py --w
 
 `--repeats 2` is not optional: one extraction cannot tell you whether a label is stable, and the
 report says so rather than printing a number it cannot support.
+
+---
+
+## Runbook — the operator steps for Phases 0a, 1 and 0b
+
+Deploys and box commands are run by the operator; this section is the exact sequence, with the
+decision each step feeds. **Stop where a gate says stop** — that is the point of having gates.
+
+### Step 1 — deploy
+
+```bash
+cd /opt/ih && sudo bash deploy/ops/update.sh <sha>
+```
+
+### Step 2 — Phase 0a gate
+
+```bash
+sudo docker exec -i deploy-api-1 python examples/audit_coverage_readiness.py --show 10
+```
+
+`GATE ... PASS` needs ≥ 100 clusters reaching `MIN_COMPARABLE`. **On FAIL the roadmap stops here**
+and no generation has been paid for. Also read: item 2 (whether `RWE_INSIGHTS_MIN_CHARS` should
+move off 200), item 3 (the batch size the arrival rate demands), item 8 (whether the 0.9
+syndication threshold is calibrated — a very high fold rate means the constant is wrong, not that
+the catalog is all wire copy).
+
+### Step 3 — Phase 1 dormancy
+
+```bash
+sudo docker exec -i deploy-api-1 python - <<'PY'
+import sys; sys.path.insert(0, "/app/examples")
+from sqlalchemy import func, select
+import article_insights as ai, insights_provider as ip, store as store_mod
+st = store_mod.Store()
+print("enabled           :", ai.enabled())
+print("provider          :", ip.from_env())
+print("batch/concurrency :", ai.batch_size(), "/", ai.concurrency())
+print("scope/temperature :", ai.scope(), "/", ai.temperature())
+print("max_tokens        :", ai.MAX_TOKENS)
+with st._Session() as s:
+    print("article_insights rows:", s.execute(
+        select(func.count()).select_from(store_mod.ArticleInsight)).scalar())
+PY
+sudo docker exec -i deploy-api-1 python -c "
+import sys; sys.path.insert(0,'/app/examples')
+import article_analyzer, store
+print('insights:', article_analyzer.analyze(store.Store(),'https://www.bbc.com/news')['insights'])"
+```
+
+Expect `enabled False`, `provider None`, `concurrency 1`, `scope all`, **0 rows**, `insights: None`.
+
+### Step 4 — a local provider, for a free Phase 0b
+
+Ollama on the **host**, not in the api container:
+
+```bash
+curl -fsSL https://ollama.com/install.sh | sh
+ollama pull llama3.2:3b && ollama pull qwen2.5:3b
+sudo systemctl edit ollama      # add:  [Service]  Environment="OLLAMA_HOST=0.0.0.0:11434"
+sudo systemctl restart ollama
+```
+
+**The container cannot reach `127.0.0.1`** — inside the container that is the container. Use the
+docker bridge gateway, and confirm the container can actually see it before benchmarking:
+
+```bash
+GW=$(ip -4 addr show docker0 | awk '/inet /{print $2}' | cut -d/ -f1)   # usually 172.17.0.1
+sudo docker exec -i deploy-api-1 python -c "
+import urllib.request,sys
+print(urllib.request.urlopen('http://$GW:11434/api/tags', timeout=5).status)"
+```
+
+A 200 means the next step will run; anything else means the benchmark would report every target
+`skipped` and measure nothing.
+
+### Step 5 — Phase 0b
+
+```bash
+GW=$(ip -4 addr show docker0 | awk '/inet /{print $2}' | cut -d/ -f1)
+sudo docker exec -e OLLAMA_HOST=$GW:11434 -e RWE_INSIGHTS_PROVIDER=ollama \
+  -e RWE_INSIGHTS_OLLAMA_TIMEOUT=300 -i deploy-api-1 \
+  python examples/benchmark_insights.py --targets ollama/llama3.2:3b,ollama/qwen2.5:3b \
+    --repeats 2 --sample-production 40 --seed 7 --out /tmp/insights_0b.md
+sudo docker exec -i deploy-api-1 sed -n '/Extraction quality/,$p' /tmp/insights_0b.md
+```
+
+`--repeats 2` is not optional: extraction 0 and extraction 1 are the two raters, and one
+extraction cannot tell you whether a label is stable. This run **writes nothing** — the harness
+calls `generate` directly, never `run_cycle`, so no `article_insights` row is created.
+
+Read against the pre-registered bars:
+
+| number | bar | what a miss means |
+|---|---|---|
+| κ per field | ≥ 0.6 | that field's tier does not ship. `format`/`frames` gate C1, `quantities` gates C2, `voices` gates C3 |
+| κ = 1.00 with `categories: 1` | — | a constant, not a signal: the field is stable and uninformative, so drop it from the tier |
+| span drops | reported | high = the model invents quotations, and the gate is doing its job |
+| truncation rate | ~0 | raise `MAX_TOKENS`; do not read it as a quality problem |
+| throughput @1 / @8 | > the arrival rate from step 2 | sets `RWE_INSIGHTS_BATCH` and `RWE_INSIGHTS_CONCURRENCY` |
+
+### Step 6 — comparable-set coverage (needs real rows)
+
+Only after steps 2–5 pass. This is the first step that **writes**:
+
+```bash
+# deploy/.env — sized from steps 2 and 5, not guessed
+RWE_INSIGHTS_ENABLED=1
+RWE_INSIGHTS_PROVIDER=ollama
+RWE_INSIGHTS_MODEL=llama3.2:3b
+OLLAMA_HOST=172.17.0.1:11434
+RWE_INSIGHTS_SCOPE=clustered      # spend only where a card can result
+RWE_INSIGHTS_BATCH=<from step 2 item 3>
+RWE_INSIGHTS_CONCURRENCY=<from step 5 throughput>
+
+sudo bash deploy/ops/restart.sh api
+# let it run, then:
+sudo docker exec -i deploy-api-1 python examples/audit_coverage_readiness.py --with-insights
+```
+
+That prints the TRUE comparable set — recipe and format parity applied — rather than the
+structural upper bound. **Phase 2 begins only if that still clears 100 clusters and step 5's κ
+cleared 0.6 for the fields C1 uses.**
+
+*(Results are recorded here as they come back.)*
