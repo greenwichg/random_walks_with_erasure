@@ -6,8 +6,8 @@ that this article does not — and what does this article have that nobody else 
 answer path (§8 says why, and where one would be defensible).
 **Status:** design only. Nothing implemented.
 **Related:** `docs/STORY_CLUSTER_MERGES.md` + `docs/STORY_CLUSTER_QUORUM_VERIFICATION.md` (the
-clusters this stands on), `docs/ARTICLE_INSIGHTS.md` (the generated sibling this deliberately is
-not), `docs/SIGNAL_INTEGRITY.md` (the honesty rules this inherits).
+clusters this stands on), `docs/archive/ARTICLE_INSIGHTS.md` (the generated sibling this
+deliberately is not — since removed from the milestone; see docs/archive/README.md), `docs/SIGNAL_INTEGRITY.md` (the honesty rules this inherits).
 **Date:** 2026-08-03.
 
 ---

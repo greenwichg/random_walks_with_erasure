@@ -271,16 +271,6 @@ class FeedPoller:
         except Exception as e:
             self._log(logging.WARNING, "push_delivery_request_failed", error=f"{type(e).__name__}: {e}")
 
-        # Article Insights (OFF unless RWE_INSIGHTS_ENABLED — docs/ARTICLE_INSIGHTS.md). Same
-        # seam, same shape as push delivery: enqueue-new + one bounded generation batch in a
-        # single-flight daemon thread, so a slow LLM API can neither block ingestion nor stack
-        # runs. Dormant (no key/package/flag) means zero writes and no thread at all.
-        try:
-            import article_insights              # lazy: keeps the provider stack out of this graph
-            article_insights.request_generation(self.store, log=lambda lvl, ev, **f: self._log(lvl, ev, **f))
-        except Exception as e:
-            self._log(logging.WARNING, "insights_request_failed", error=f"{type(e).__name__}: {e}")
-
         # Optional seam: a later commit hangs the (validated) hot corpus refresh off this — and only
         # when the catalog actually changed (agg["new"] > 0). The poller itself never refreshes it.
         if self._on_cycle is not None:

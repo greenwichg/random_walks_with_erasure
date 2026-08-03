@@ -1107,9 +1107,6 @@ export interface AnalysisResult {
   /** Coverage Comparison L0 — counted facts about this article's story cluster, or a refusal
    *  ({available:false, reason}) the UI renders as nothing. Never a text-derived omission. */
   coverageComparison?: CoverageComparison | null;
-  // AI summary + bias analysis (docs/ARTICLE_INSIGHTS.md): generated asynchronously by the
-  // engine, cached, attached when present. Optional for back-compat with pre-insights payloads.
-  insights?: ArticleInsights | null;
   notes: string[];
 }
 
@@ -1150,22 +1147,6 @@ export type CoverageComparison =
       textParity: number | null;
       textClaims: boolean;
     };
-
-/** AI-generated article insights. `bias` explains HOW the writing works — framing, tone, loaded
- *  language (quoted), omissions, and viewpoint — deliberately never a left/right label (the
- *  scored registry lean already covers placement). */
-export interface ArticleInsights {
-  summary: string;
-  bias: {
-    framing: string;
-    tone: string;
-    loadedLanguage: string[];
-    omissions: string;
-    viewpoint: string;
-  } | null;
-  model: string | null;
-  generatedAt: string | null;
-}
 
 /** The optional client-supplied page context that improves fetchless scoring (a subset of the
  *  read metadata the extension captures). All optional; never trusted for canonicalization. */
