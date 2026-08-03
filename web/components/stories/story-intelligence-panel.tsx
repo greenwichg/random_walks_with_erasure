@@ -20,7 +20,6 @@ import {
 } from "lucide-react";
 import { useStoryIntelligence } from "@/hooks/use-data";
 import { condenseTimeline } from "@/lib/story-timeline";
-import { FreshnessBadge } from "@/components/stories/freshness-badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { StoryLifecycle, StoryMomentum, StoryTimelineEventType } from "@/types/domain";
 import { LEAN_META } from "@/lib/metrics";
@@ -61,8 +60,9 @@ const fmtTime = (iso?: string) => {
     : d.toLocaleTimeString(activeLang(), { hour: "numeric", minute: "2-digit" });
 };
 
-/** Condensed rows shown before "Show all" expands the log. */
-const TIMELINE_LIMIT = 10;
+/** Condensed rows shown before "Show all" expands the log. Deliberately short: in the rail
+ *  the timeline is a glanceable "first beats" summary, and the full log is one click away. */
+const TIMELINE_LIMIT = 4;
 /** How many publisher chips a grouped join row names before the "+n" overflow chip. */
 const GROUP_CHIP_LIMIT = 4;
 
@@ -76,10 +76,15 @@ function Stat({ label, value }: { label: string; value: string }) {
 }
 
 /**
- * Story Intelligence panel — deterministic freshness / lifecycle / momentum, "new since your last
- * visit", coverage alerts, an expanded timeline, and coverage statistics for one event. Fetched from
+ * Story Intelligence panel — lifecycle / momentum, "new since your last visit", coverage alerts, a
+ * collapsed timeline and coverage statistics for one event. Fetched from
  * /api/stories/[id]/intelligence; renders nothing if the engine can't supply it (graceful — the page's
  * coverage list stands on its own). Read-only: it changes no recommendation, report, or read tracking.
+ *
+ * Lives in the story page's RIGHT RAIL, alongside the other "facts about the coverage" modules
+ * (balance, publishers). It is orientation, not a task: high-glance, low-interaction, so it sits
+ * beside the article list rather than interrupting it. Everything the hero already states — the
+ * freshness badge, the article count, the last-coverage time — is deliberately absent here.
  */
 export function StoryIntelligencePanel({ storyId }: { storyId: string }) {
   const { t, timeAgo } = useTranslation();
@@ -90,32 +95,28 @@ export function StoryIntelligencePanel({ storyId }: { storyId: string }) {
   const rows = React.useMemo(() => condenseTimeline(data?.timeline ?? []), [data?.timeline]);
 
   if (isLoading) {
-    return <Skeleton className="mt-6 h-40 rounded-lg" />;
+    return <Skeleton className="h-56 rounded-lg" />;
   }
   if (!data) return null;
 
   const visibleRows = expanded ? rows : rows.slice(0, TIMELINE_LIMIT);
   const hiddenCount = rows.length - visibleRows.length;
 
-  const { freshness, lifecycle, momentum, newSinceLastVisit: nsv, alerts } = data;
+  const { lifecycle, momentum, newSinceLastVisit: nsv, alerts } = data;
   const cs = data.coverageStatistics;
   const mo = MOMENTUM_META[momentum.state] ?? MOMENTUM_META.Stable;
   const MoIcon = mo.icon;
 
   return (
-    <section className="mt-6 rounded-lg border bg-card p-5 shadow-soft">
-      <div className="flex items-center justify-between gap-2">
-        <h2 className="inline-flex items-center gap-1.5 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-          <Activity className="h-4 w-4" /> {t("storyIntel.title")}
-        </h2>
-        {data.lastUpdated && (
-          <span className="text-xs text-muted-foreground">{t("storyIntel.latestCoverage", { time: timeAgo(data.lastUpdated) })}</span>
-        )}
-      </div>
+    <section className="rounded-lg border bg-card p-4 shadow-soft">
+      <h2 className="inline-flex items-center gap-1.5 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+        <Activity className="h-4 w-4" /> {t("storyIntel.title")}
+      </h2>
 
-      {/* State badges */}
+      {/* Status: lifecycle + momentum. The freshness badge lives in the hero — repeating it here
+          said "Breaking" twice whenever the band and the lifecycle stage coincided, which for a
+          fast-moving story is most of the time. */}
       <div className="mt-3 flex flex-wrap items-center gap-2">
-        <FreshnessBadge band={freshness.band} score={freshness.score} showScore />
         <span
           className={cn(
             "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium",
@@ -178,8 +179,7 @@ export function StoryIntelligencePanel({ storyId }: { storyId: string }) {
       )}
 
       {/* Coverage statistics */}
-      <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <Stat label={t("storyIntel.articles")} value={String(cs.articleCount)} />
+      <div className="mt-4 grid grid-cols-2 gap-2">
         <Stat label={t("storyIntel.perDay")} value={cs.coverageVelocityPerDay.toFixed(1)} />
         <Stat
           label={t("storyIntel.recentVsPrior")}

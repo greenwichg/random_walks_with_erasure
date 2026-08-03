@@ -151,8 +151,12 @@ export default function StoryDetailPage() {
 
       <PageGrid
         rail={
-          /* Companion rail: how balanced is THIS story, who's on it, what next for YOU. */
+          /* Companion rail: how is this story MOVING, how balanced is it, who's on it, what next
+             for YOU. Story Intelligence leads because "is this still developing?" is the question a
+             reader asks before "is the coverage balanced?" — and because it was previously below a
+             40-row article list, at a scroll depth almost nobody reached. */
           <>
+            <StoryIntelligencePanel storyId={story.id} />
             <StoryCoveragePanel distribution={story.distribution} coverage={story.coverage} />
             <PublisherSpotlight
               publishers={publisherCounts}
@@ -228,9 +232,6 @@ export default function StoryDetailPage() {
 
           {/* How is it covered — every article, filterable by the facets the data really has. */}
           <CoverageList coverage={story.coverage} />
-
-          {/* How it developed — freshness / momentum / timeline (existing panel, unchanged). */}
-          <StoryIntelligencePanel storyId={story.id} />
 
           {/* What to read next — same-topic first, from the same cached top-stories page. */}
           {related.length > 0 && (
