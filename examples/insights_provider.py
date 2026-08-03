@@ -52,9 +52,16 @@ class AIInsightsProvider(ABC):
         return None
 
     @abstractmethod
-    def complete(self, *, system: str, user: str, model: str, max_tokens: int) -> str:
+    def complete(self, *, system: str, user: str, model: str, max_tokens: int,
+                 temperature: "Optional[float]" = None) -> str:
         """One completion: the model's raw text. Raises on transport/API failure — the worker
-        turns that into a failed attempt with backoff."""
+        turns that into a failed attempt with backoff.
+
+        ``temperature`` is optional and vendor-neutral: ``None`` sends nothing and leaves the
+        vendor's own default in place, which is what every caller got before this parameter
+        existed. The facets contract is an EXTRACTION task and asks for 0 (design §3.5) — the
+        port previously had no way to express that, so ``docs/ARTICLE_INSIGHTS.md`` documented a
+        temperature the code could not set."""
 
 
 class AnthropicProvider(AIInsightsProvider):
@@ -77,10 +84,14 @@ class AnthropicProvider(AIInsightsProvider):
             return None
         return cls(anthropic.Anthropic())
 
-    def complete(self, *, system: str, user: str, model: str, max_tokens: int) -> str:
+    def complete(self, *, system: str, user: str, model: str, max_tokens: int,
+                 temperature: "Optional[float]" = None) -> str:
+        kwargs = {}
+        if temperature is not None:
+            kwargs["temperature"] = float(temperature)
         msg = self._client.messages.create(
             model=model, max_tokens=max_tokens, system=system,
-            messages=[{"role": "user", "content": user}],
+            messages=[{"role": "user", "content": user}], **kwargs,
         )
         return "".join(getattr(b, "text", "") for b in (msg.content or []))
 
@@ -155,14 +166,18 @@ class OllamaProvider(AIInsightsProvider):
             return None                       # unreachable → dormant, never broken
         return cls(base, cls.timeout_s())
 
-    def complete(self, *, system: str, user: str, model: str, max_tokens: int) -> str:
+    def complete(self, *, system: str, user: str, model: str, max_tokens: int,
+                 temperature: "Optional[float]" = None) -> str:
+        options: dict = {"num_predict": int(max_tokens)}
+        if temperature is not None:
+            options["temperature"] = float(temperature)
         payload = {
             "model": model,
             "messages": [{"role": "system", "content": system},
                          {"role": "user", "content": user}],
             "stream": False,
             "format": "json",
-            "options": {"num_predict": int(max_tokens)},
+            "options": options,
         }
         req = urllib.request.Request(
             f"{self._base}/api/chat", method="POST",

@@ -126,9 +126,16 @@ def test_switching_providers_is_only_an_env_change(ollama, monkeypatch):
     assert isinstance(a, ip.OllamaProvider) and isinstance(b, ip.AnthropicProvider)
 
     # …and the product output is identical through either: same prompt, same validation, same
-    # contract. Only the transport differed.
-    assert ai.generate(ARTICLE, a) == ai.generate(ARTICLE, b) == {
-        "summary": VALID["summary"], "bias": VALID["bias"]}
+    # contract. Only the transport differed. This equality is the claim; the field-level pins
+    # below say what "the contract" currently is.
+    out_a, out_b = ai.generate(ARTICLE, a), ai.generate(ARTICLE, b)
+    assert out_a == out_b
+    assert out_a["summary"] == VALID["summary"] and out_a["bias"] == VALID["bias"]
+    # A payload carrying no facets yields the full empty SHAPE, never a missing key — every
+    # consumer reads one shape, so a comparable set can never be built on an absent field.
+    assert out_a["facets"] == {"vocabVersion": ai.VOCAB_VERSION, "format": None, "frames": [],
+                               "depth": None, "voices": [], "centeredVoice": None,
+                               "quantities": []}
 
 
 def test_model_resolution_prefers_the_env_override_then_the_provider_default(ollama, monkeypatch):
@@ -171,7 +178,8 @@ def test_request_body_matches_ollamas_chat_api(ollama):
     sent = ollama.calls[-1]
     assert sent["stream"] is False                            # a single, non-streamed answer
     assert sent["format"] == "json"                           # transport-level JSON constraint
-    assert sent["options"]["num_predict"] == 700              # max_tokens, unchanged budget
+    assert sent["options"]["num_predict"] == ai.MAX_TOKENS     # the shared budget, carried through
+    assert sent["options"]["temperature"] == 0.0               # extraction, not sampling
     roles = [m["role"] for m in sent["messages"]]
     assert roles == ["system", "user"]
     # the grounding prompt reaches the model verbatim — no provider-side rewriting
@@ -216,7 +224,7 @@ class _FakeStore:
     def __init__(self, rows):
         self.rows, self.finished = rows, []
 
-    def enqueue_insights(self, *, min_chars):
+    def enqueue_insights(self, *, min_chars, scope="all", need=0):
         return 0
 
     def claim_insights_batch(self, n, *, now):

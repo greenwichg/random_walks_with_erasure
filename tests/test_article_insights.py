@@ -12,6 +12,7 @@ import pathlib
 import sys
 
 import pytest
+from sqlalchemy import select
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "examples"))
@@ -28,9 +29,9 @@ class FakeProvider(ip.AIInsightsProvider):
     def __init__(self, payload=None, error=None):
         self.payload, self.error, self.calls = payload, error, []
 
-    def complete(self, *, system, user, model, max_tokens):
+    def complete(self, *, system, user, model, max_tokens, temperature=None):
         self.calls.append({"system": system, "user": user, "model": model,
-                           "max_tokens": max_tokens})
+                           "max_tokens": max_tokens, "temperature": temperature})
         if self.error is not None:
             raise self.error
         return self.payload
@@ -141,7 +142,7 @@ class FakeStore:
     def __init__(self, rows):
         self.rows, self.finished = rows, []
 
-    def enqueue_insights(self, *, min_chars):
+    def enqueue_insights(self, *, min_chars, scope="all", need=0):
         return 0
 
     def claim_insights_batch(self, n, *, now):
@@ -317,3 +318,369 @@ def test_analyze_attaches_cached_insights_and_nulls_when_absent(analyze_client):
     assert a["insights"]["model"] == "fake:fake-model-1"
     b = client.post("/api/analyze", json={"url": without}).json()
     assert b["status"] == "analyzed" and b["insights"] is None
+
+
+# ------------------------------------------------------------------ #
+# The FACETS contract (docs/COVERAGE_COMPARISON_REVISED_DESIGN.md §3)
+#
+# The comparison surface. The properties tested hardest are the ones that stop a generated record
+# from becoming a false statement about a publisher once it is COUNTED: an evidence span must be
+# verbatim in the article, a value outside the closed vocabulary is not evidence of anything, and
+# a bad item is dropped without discarding the good record around it.
+# ------------------------------------------------------------------ #
+
+FACET_ARTICLE = {
+    "headline": "Council approves harbour redevelopment after seven hour hearing",
+    "description": ("Residents objected to the compensation offer while the developer defended "
+                    "the cost. The council said the scheme would cost 340 million over three "
+                    "decades. " * 3),
+}
+
+
+def facet_payload(**over):
+    facets = {"format": "news_report",
+              "frames": [{"key": "conflict", "evidence": "Residents objected"}],
+              "depth": "episodic",
+              "voices": [{"role": "affected_person", "name": "Residents",
+                          "evidence": "Residents objected to the compensation offer"},
+                         {"role": "corporate", "name": None,
+                          "evidence": "the developer defended the cost"}],
+              "centeredVoice": "official_government",
+              "quantities": [{"kind": "money", "value": 340000000, "unit": "GBP",
+                              "subject": "scheme cost",
+                              "evidence": "cost 340 million over three decades"}]}
+    facets.update(over)
+    d = json.loads(good_payload())
+    d["facets"] = facets
+    return json.dumps(d)
+
+
+def _facets(raw, article=FACET_ARTICLE):
+    return ai.parse_and_validate(raw, ai.article_text(article))["facets"]
+
+
+def test_facets_round_trip_with_every_vocabulary():
+    f = _facets(facet_payload())
+    assert f["vocabVersion"] == ai.VOCAB_VERSION
+    assert f["format"] == "news_report" and f["depth"] == "episodic"
+    assert [x["key"] for x in f["frames"]] == ["conflict"]
+    assert [x["role"] for x in f["voices"]] == ["affected_person", "corporate"]
+    assert f["centeredVoice"] == "official_government"
+    assert f["quantities"][0]["value"] == 340000000
+    assert f["quantities"][0]["subject"] == "scheme cost"
+
+
+def test_evidence_span_must_be_verbatim_in_the_article():
+    """The anti-hallucination gate (design §3.4). An invented span becomes a false statement
+    about a named publisher the moment it is counted, so the item is dropped, not trusted."""
+    f = _facets(facet_payload(frames=[{"key": "conflict",
+                                       "evidence": "the mayor resigned in disgrace"}]))
+    assert f["frames"] == []
+
+
+def test_span_verification_is_whitespace_and_case_insensitive():
+    """A model that re-wraps a quotation has not invented it."""
+    f = _facets(facet_payload(frames=[{"key": "conflict",
+                                       "evidence": "RESIDENTS\n   OBJECTED"}]))
+    assert [x["key"] for x in f["frames"]] == ["conflict"]
+
+
+def test_a_bad_item_is_dropped_without_discarding_the_record():
+    f = _facets(facet_payload(voices=[
+        {"role": "affected_person", "evidence": "Residents objected"},      # good
+        {"role": "not_a_real_role", "evidence": "Residents objected"},      # bad enum
+        {"role": "witness", "evidence": "nothing like this is in the text"},  # bad span
+    ]))
+    assert [x["role"] for x in f["voices"]] == ["affected_person"]
+
+
+def test_values_outside_the_closed_vocabulary_become_null_not_guesses():
+    f = _facets(facet_payload(format="think_piece", depth="both",
+                              centeredVoice="the residents"))
+    assert f["format"] is None and f["depth"] is None and f["centeredVoice"] is None
+
+
+def test_missing_facets_yield_the_full_empty_shape():
+    """Never a missing key: every consumer reads one shape, so the comparable set can never be
+    built on an absent field — the defect class that made three L0 findings dead code."""
+    f = _facets(good_payload())
+    assert f == {"vocabVersion": ai.VOCAB_VERSION, "format": None, "frames": [], "depth": None,
+                 "voices": [], "centeredVoice": None, "quantities": []}
+
+
+def test_facet_lists_are_capped():
+    many = [{"role": "witness", "evidence": "Residents objected"} for _ in range(20)]
+    assert len(_facets(facet_payload(voices=many))["voices"]) == ai.FACET_CAPS["voices"]
+
+
+def test_quantities_without_a_usable_value_or_subject_are_dropped():
+    """A figure nobody can match to anyone else's figure is not a comparison input."""
+    bad = [{"kind": "money", "value": "lots", "subject": "cost",
+            "evidence": "cost 340 million over three decades"},
+           {"kind": "money", "value": 1, "subject": "",
+            "evidence": "cost 340 million over three decades"}]
+    assert _facets(facet_payload(quantities=bad))["quantities"] == []
+
+
+def test_no_label_rule_extends_to_the_open_facet_fields():
+    """The rule that guards the bias prose has to guard the free-text facets too."""
+    f = _facets(facet_payload(
+        quantities=[{"kind": "money", "value": 1, "subject": "far-left funding",
+                     "evidence": "cost 340 million over three decades"}],
+        voices=[{"role": "corporate", "name": "A right-wing lobby",
+                 "evidence": "the developer defended the cost"}]))
+    assert f["quantities"] == [] and f["voices"] == []
+
+
+def test_parse_without_the_article_text_drops_every_span_rather_than_trusting_it():
+    """Failing safe: a caller that forgets the text gets an empty facets object, never an
+    unverified one."""
+    f = ai.parse_and_validate(facet_payload())["facets"]
+    assert f["frames"] == [] and f["voices"] == [] and f["quantities"] == []
+    assert f["format"] == "news_report"          # enum fields need no span
+
+
+def test_generate_passes_the_article_text_to_span_verification():
+    p = FakeProvider(facet_payload())
+    out = ai.generate(FACET_ARTICLE, p)
+    assert [x["key"] for x in out["facets"]["frames"]] == ["conflict"]
+    assert out["inputChars"] == len(ai.article_text(FACET_ARTICLE))
+
+
+def test_generate_asks_for_temperature_zero_by_default(monkeypatch):
+    monkeypatch.delenv("RWE_INSIGHTS_TEMPERATURE", raising=False)
+    p = FakeProvider(good_payload())
+    ai.generate(ARTICLE, p)
+    assert p.calls[0]["temperature"] == 0.0 and p.calls[0]["max_tokens"] == ai.MAX_TOKENS
+
+
+def test_empty_temperature_means_send_nothing(monkeypatch):
+    """The port's None sends no temperature at all, leaving the vendor default — what every
+    caller got before the parameter existed."""
+    monkeypatch.setenv("RWE_INSIGHTS_TEMPERATURE", "")
+    assert ai.temperature() is None
+
+
+def test_prompt_names_no_other_article():
+    """Invariant 1 (design §2): the model sees ONE article. The prompt must not merely omit other
+    coverage — it must forbid comparison, because the facets read like a comparison schema."""
+    p = FakeProvider(good_payload())
+    ai.generate(ARTICLE, p)
+    system = p.calls[0]["system"]
+    assert "Never compare it to other coverage" in system
+    assert "you have not been shown any" in system.lower()
+
+
+# ------------------------------------------------------------------ #
+# Truncation: a budget problem, not a model error
+# ------------------------------------------------------------------ #
+
+def test_truncated_json_is_distinguished_from_malformed_json():
+    """Three failures mark an article terminally `failed`, so misfiling a budget problem as a
+    contract violation would permanently destroy coverage on the richest articles."""
+    with pytest.raises(ai.TruncatedOutput, match="ended mid-JSON"):
+        ai.parse_and_validate('{"summary": "First. Second.", "bias": {"framing": "a')
+    with pytest.raises(ValueError, match="not JSON"):
+        ai.parse_and_validate("I'm sorry, I can't help with that.")
+    # …and the truncation type is still a ValueError, so every existing caller still catches it
+    assert issubclass(ai.TruncatedOutput, ValueError)
+
+
+def test_prose_that_was_never_json_is_not_called_truncation():
+    with pytest.raises(ValueError) as e:
+        ai.parse_and_validate("not json at all")
+    assert not isinstance(e.value, ai.TruncatedOutput)
+
+
+# ------------------------------------------------------------------ #
+# Worker scale (design §9.4)
+# ------------------------------------------------------------------ #
+
+def test_concurrency_defaults_to_serial_and_is_bounded(monkeypatch):
+    monkeypatch.delenv("RWE_INSIGHTS_CONCURRENCY", raising=False)
+    assert ai.concurrency() == 1                  # provably inert until an operator raises it
+    monkeypatch.setenv("RWE_INSIGHTS_CONCURRENCY", "8")
+    assert ai.concurrency() == 8
+    monkeypatch.setenv("RWE_INSIGHTS_CONCURRENCY", "9999")
+    assert ai.concurrency() == 16                 # bounded: never an unbounded fan-out
+    monkeypatch.setenv("RWE_INSIGHTS_CONCURRENCY", "junk")
+    assert ai.concurrency() == 1
+
+
+def test_concurrent_cycle_generates_every_row_exactly_once(monkeypatch):
+    monkeypatch.setenv("RWE_INSIGHTS_CONCURRENCY", "4")
+    st = FakeStore([_row(i) for i in range(9)])
+    stats = ai.run_cycle(st, provider=FakeProvider(good_payload()), limit=9)
+    assert stats["generated"] == 9 and stats["failed"] == 0
+    assert len({aid for aid, _ok, _kw in st.finished}) == 9
+
+
+def test_concurrent_cycle_still_isolates_one_failing_article(monkeypatch):
+    monkeypatch.setenv("RWE_INSIGHTS_CONCURRENCY", "4")
+
+    class Flaky(FakeProvider):
+        def complete(self, *, system, user, model, max_tokens, temperature=None):
+            if "boom" in user:
+                raise RuntimeError("api down")
+            return self.payload
+
+    st = FakeStore([_row(1), {"article_id": "https://x.test/boom",
+                              "article": {"headline": "boom", "description": "boom " * 60},
+                              "content_hash": "hb"}])
+    stats = ai.run_cycle(st, provider=Flaky(good_payload()), limit=2)
+    assert stats == {"enqueued": 0, "generated": 1, "failed": 1}
+
+
+def test_scope_is_all_by_default(monkeypatch):
+    monkeypatch.delenv("RWE_INSIGHTS_SCOPE", raising=False)
+    assert ai.scope() == "all"
+    monkeypatch.setenv("RWE_INSIGHTS_SCOPE", "clustered")
+    assert ai.scope() == "clustered"
+    monkeypatch.setenv("RWE_INSIGHTS_SCOPE", "nonsense")
+    assert ai.scope() == "all"
+
+
+def test_run_cycle_stamps_the_recipe_hash():
+    """What partitions the comparable set: records made different ways are not comparable."""
+    st = FakeStore([_row(1)])
+    ai.run_cycle(st, provider=FakeProvider(good_payload()), limit=1)
+    _aid, ok, kw = st.finished[0]
+    assert ok and kw["recipe_hash"] and len(kw["recipe_hash"]) == 16
+
+
+def test_recipe_hash_changes_with_model_and_prompt(monkeypatch):
+    p = FakeProvider(good_payload())
+    monkeypatch.setenv("RWE_INSIGHTS_MODEL", "model-a")
+    a = ai.recipe_hash(p)
+    monkeypatch.setenv("RWE_INSIGHTS_MODEL", "model-b")
+    assert ai.recipe_hash(p) != a
+
+
+# ------------------------------------------------------------------ #
+# The real store: facets persistence and cluster-first ordering (design §9.2)
+# ------------------------------------------------------------------ #
+
+def test_facets_and_parity_fields_survive_the_round_trip(seeded_store):
+    st = seeded_store
+    st.enqueue_insights(min_chars=100)
+    row = st.claim_insights_batch(1, now=0.0)[0]
+    payload = ai.parse_and_validate(facet_payload(), ai.article_text(FACET_ARTICLE))
+    st.finish_insights(row["article_id"], ok=True, payload=payload, model="fake:m",
+                       recipe_hash="abc123")
+    served = st.get_insights([row["article_id"]])[row["article_id"]]
+    assert served["facets"]["format"] == "news_report"
+    assert [v["role"] for v in served["facets"]["voices"]] == ["affected_person", "corporate"]
+    assert served["inputChars"] == payload["inputChars"]
+    assert served["recipeHash"] == "abc123"
+
+
+def test_a_legacy_row_without_facets_reads_as_null_not_as_an_empty_extraction(seeded_store):
+    """The comparable set treats a member without facets as NOT comparable. An empty object would
+    read as 'extracted, found nothing', which is a different and much more dangerous claim."""
+    st = seeded_store
+    st.enqueue_insights(min_chars=100)
+    row = st.claim_insights_batch(1, now=0.0)[0]
+    st.finish_insights(row["article_id"], ok=True, payload=json.loads(good_payload()),
+                       model="fake:m")
+    served = st.get_insights([row["article_id"]])[row["article_id"]]
+    assert served["facets"] is None and served["recipeHash"] is None
+
+
+@pytest.fixture()
+def clustered_store(tmp_path):
+    """Three stories of different sizes, with the story map the product itself writes."""
+    import store as store_mod
+    st = store_mod.Store(f"sqlite:///{tmp_path}/clustered.db")
+    desc = "A real description with plenty of grounding text for the generator. " * 6
+    members = {}
+    for story, size in (("big", 6), ("small", 2), ("mid", 4)):
+        for i in range(size):
+            url = f"https://{story}{i}.example.com/a"
+            st.upsert_feed_article(
+                canonical_url=url, url=url, publisher=f"{story} outlet {i}",
+                source_publisher=None, title=f"{story} headline {i} about one event",
+                description=desc, body=None, published_at="2026-08-01T00:00:00Z",
+                source_feed="f",
+                scored={"article_id": url, "outlet": f"{story}{i}", "category": "Politics",
+                        "lean": 0.0, "political": True, "title": f"{story}{i}"})
+            members[url] = story
+    # one orphan article that belongs to no story at all
+    st.upsert_feed_article(
+        canonical_url="https://orphan.example.com/a", url="https://orphan.example.com/a",
+        publisher="Orphan", source_publisher=None, title="Orphan headline about nothing",
+        description=desc, body=None, published_at="2026-08-01T00:00:00Z", source_feed="f",
+        scored={"article_id": "o", "outlet": "Orphan", "category": "Politics", "lean": 0.0,
+                "political": True, "title": "Orphan"})
+    st.replace_story_members(members)
+    return st
+
+
+def _story_of_queue(st, n):
+    """The stories the first ``n`` claimed rows belong to, in claim order.
+
+    The story name is the host label minus its trailing index — matched, not stripped, because
+    ``str.rstrip`` removes a character SET and quietly turned "small" into "s"."""
+    import re
+    return [re.match(r"https://([a-z]+)\d*\.", r["article_id"]).group(1)
+            for r in st.claim_insights_batch(n, now=0.0)]
+
+
+def test_enqueue_is_cluster_first_biggest_cluster_leading(clustered_store):
+    """Six generations spread over six clusters produce zero comparisons; six that complete one
+    cluster produce six. The ordering is the whole return on the budget."""
+    st = clustered_store
+    assert st.enqueue_insights(min_chars=100, limit=4, need=3) == 4
+    got = _story_of_queue(st, 4)
+    assert set(got) == {"big"}          # the budget went entirely into one cluster
+
+
+def test_clustered_scope_excludes_articles_in_no_story(clustered_store):
+    st = clustered_store
+    st.enqueue_insights(min_chars=100, scope="clustered", need=3)
+    claimed = {r["article_id"] for r in st.claim_insights_batch(50, now=0.0)}
+    assert "https://orphan.example.com/a" not in claimed
+    assert len(claimed) == 12           # 6 + 2 + 4, the orphan left out
+
+
+def test_default_scope_still_enqueues_unclustered_articles(clustered_store):
+    st = clustered_store
+    st.enqueue_insights(min_chars=100, need=3)
+    claimed = {r["article_id"] for r in st.claim_insights_batch(50, now=0.0)}
+    assert "https://orphan.example.com/a" in claimed
+
+
+def test_the_cluster_closest_to_a_comparable_set_wins_over_the_biggest(clustered_store):
+    """The deficit rule, isolated. A SMALL cluster two members short of rendering a card is worth
+    more than a BIG one that is six short, because only the first turns the next two generations
+    into a comparison. Size alone would order these the other way round."""
+    import store as store_mod
+    st = clustered_store
+    # "mid" (4 members) already carries 2 artifacts → deficit 1.
+    # "big" (6 members) carries none → deficit 3, despite being the larger cluster.
+    with st._Session() as s:
+        for i in range(2):
+            url = f"https://mid{i}.example.com/a"
+            row = s.execute(select(store_mod.FeedArticle)
+                            .where(store_mod.FeedArticle.canonical_url == url)).scalar_one()
+            s.add(store_mod.ArticleInsight(
+                article_id=url, status="ok",
+                content_hash=store_mod._insights_hash(row.title, row.description)))
+        s.commit()
+
+    assert st.enqueue_insights(min_chars=100, limit=2, need=3) == 2
+    assert _story_of_queue(st, 2) == ["mid", "mid"]
+
+
+def test_the_wire_carries_reader_content_only_not_the_comparison_inputs(analyze_client):
+    """facets/inputChars/recipeHash exist for the Coverage Comparison tiers, which run on the
+    story-build seam. No client reads them, and shipping them would put a kilobyte of internals
+    on every analyze response."""
+    client, st = analyze_client
+    url = "https://seeded0.example.com/story/0"
+    st.enqueue_insights(min_chars=40)
+    payload = ai.parse_and_validate(facet_payload(), ai.article_text(FACET_ARTICLE))
+    st.finish_insights(url, ok=True, payload=payload, model="fake:m", recipe_hash="abc123")
+    served = client.post("/api/analyze", json={"url": url}).json()["insights"]
+    assert set(served) == {"summary", "bias", "model", "generatedAt"}
+    # …while the store still hands the full record to server-side consumers
+    assert st.get_insights([url])[url]["facets"]["format"] == "news_report"

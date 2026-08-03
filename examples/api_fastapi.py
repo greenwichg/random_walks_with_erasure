@@ -1554,6 +1554,12 @@ class AnalysisModel(BaseModel):
     notes: list[str] = []
 
 
+#: What the wire carries of a stored insight. The record ALSO holds the Coverage
+#: Comparison inputs (facets, inputChars, recipeHash); those are consumed on the
+#: story-build seam and stay server-side — no client reads them.
+_INSIGHTS_WIRE_KEYS = ("summary", "bias", "model", "generatedAt")
+
+
 class ReadInput(BaseModel):
     url: str
     title: str | None = None
@@ -2661,7 +2667,12 @@ def analyze_article(request: Request, req: AnalyzeRequest) -> dict:
         if canon:
             hit = _require_store().get_insights([canon]).get(canon)
             if hit is not None:
-                analysis = {**analysis, "insights": hit}
+                # Project to the READER-FACING subset. The stored record also carries the
+                # comparison inputs (facets, inputChars, recipeHash), which exist for the
+                # Coverage Comparison tiers that run on the story-build seam — no client reads
+                # them, and shipping them would put a kilobyte of internals on every analyze
+                # response for nothing.
+                analysis = {**analysis, "insights": {k: hit.get(k) for k in _INSIGHTS_WIRE_KEYS}}
                 obs_metrics.incr("insights_served_total")
     except Exception:
         pass

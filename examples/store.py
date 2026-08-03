@@ -818,6 +818,15 @@ class ArticleInsight(Base):
     bias: Mapped[Optional[str]] = mapped_column(Text, default=None)           # JSON (BIAS_KEYS)
     model: Mapped[Optional[str]] = mapped_column(String(128), default=None)   # provider:model
     content_hash: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+    # Coverage Comparison (docs/COVERAGE_COMPARISON_REVISED_DESIGN.md §3) — the COMPARISON
+    # surface, additive and nullable so every legacy row stays readable. ``facets`` is the
+    # closed-vocabulary record the tiers count over; ``input_chars`` is what the model actually
+    # saw (the input-parity rule, §4 cond. 3); ``recipe_hash`` is hash(prompt, provider, model)
+    # and is what PARTITIONS the comparable set — records made different ways are not comparable,
+    # because comparing them would measure the models rather than the outlets.
+    facets: Mapped[Optional[str]] = mapped_column(Text, default=None)         # JSON
+    input_chars: Mapped[Optional[int]] = mapped_column(default=None)
+    recipe_hash: Mapped[Optional[str]] = mapped_column(String(32), default=None, index=True)
     attempts: Mapped[int] = mapped_column(default=0)
     next_attempt_at: Mapped[float] = mapped_column(default=0.0)               # epoch seconds
     error: Mapped[Optional[str]] = mapped_column(Text, default=None)
@@ -1977,11 +1986,44 @@ class Store:
     # ``get_insights`` (a batched, status='ok' read) — it can never generate.
     # ------------------------------------------------------------------ #
 
-    def enqueue_insights(self, *, min_chars: int = 0, limit: int = 500) -> int:
+    def _story_of(self, session) -> dict:
+        """canonical_url -> story_id, from the served story map.
+
+        ``story_member.url`` is the coverage member's PUBLISHER url while insights are keyed by
+        CANONICAL url, so the two are canonicalized here rather than joined in SQL. Joining the
+        raw columns resolves ~8% of members — the defect that invalidated the first coverage audit
+        — and this is the one join that has to be right for cluster-first ordering to order
+        anything at all."""
+        try:
+            import ingest
+        except Exception:
+            return {}
+        out: dict = {}
+        for url, sid in session.execute(select(StoryMember.url, StoryMember.story_id)).all():
+            try:
+                out[ingest.canonical_url(str(url))] = sid
+            except Exception:
+                continue
+        return out
+
+    def enqueue_insights(self, *, min_chars: int = 0, limit: int = 500,
+                         scope: str = "all", need: int = 0) -> int:
         """Insert ``pending`` rows for eligible catalog articles that have none — idempotent
         (the canonical URL is the primary key, so a re-polled article never enqueues twice).
         The content-hash rule rides the same scan: an ``ok`` row whose article text has since
-        changed resets to ``pending`` (attempts cleared) so it regenerates. Bounded per call."""
+        changed resets to ``pending`` (attempts cleared) so it regenerates. Bounded per call.
+
+        **Ordering is cluster-first** (Coverage Comparison design §9.2). A comparison needs
+        several members of the SAME cluster, so the ordering is what decides whether the budget
+        buys anything:
+
+            six generations spread over six clusters produce ZERO comparisons;
+            six that complete one six-member cluster produce SIX.
+
+        Clusters closest to crossing ``need`` come first, then the largest clusters, then
+        everything else; ``scope="clustered"`` restricts the queue to articles that are in a story
+        at all. ``need=0`` (the default) leaves every cluster with zero deficit, which degrades to
+        largest-cluster-first — never to arbitrary order."""
         added = 0
         with self._Session() as s:
             rows = s.execute(
@@ -1990,7 +2032,30 @@ class Store:
                        ArticleInsight.status)
                 .outerjoin(ArticleInsight,
                            ArticleInsight.article_id == FeedArticle.canonical_url)).all()
-            for canon, title, desc, iid, ihash, istatus in rows:
+            story_of = self._story_of(s)
+            # Per-story: how many catalog members it has, and how many already carry an artifact.
+            size: dict = {}
+            have: dict = {}
+            for canon, _t, _d, _iid, _ih, istatus in rows:
+                sid = story_of.get(canon)
+                if sid is None:
+                    continue
+                size[sid] = size.get(sid, 0) + 1
+                if istatus == "ok":
+                    have[sid] = have.get(sid, 0) + 1
+
+            def priority(row):
+                canon, _t, _d, _iid, _ih, _st = row
+                sid = story_of.get(canon)
+                if sid is None:
+                    return (2, 0, 0, canon)          # unclustered: last, but still deterministic
+                deficit = max(0, int(need) - have.get(sid, 0))
+                # 0 = still short of a comparable set (the only work that buys a card today);
+                # 1 = already satisfied, so more members only deepen an existing comparison.
+                return (0 if deficit else 1, deficit, -size.get(sid, 0), canon)
+
+            candidates = [r for r in rows if scope != "clustered" or story_of.get(r[0]) is not None]
+            for canon, title, desc, iid, ihash, istatus in sorted(candidates, key=priority):
                 if len(title or "") + len(desc or "") < min_chars:
                     continue
                 h = _insights_hash(title, desc)
@@ -2025,6 +2090,7 @@ class Store:
 
     def finish_insights(self, article_id: str, *, ok: bool, payload: "dict | None" = None,
                         model: "str | None" = None, content_hash: "str | None" = None,
+                        recipe_hash: "str | None" = None,
                         error: "str | None" = None, backoff_base_s: float = 600.0,
                         max_attempts: int = 3, now: "float | None" = None) -> None:
         """Record one generation outcome. Success stores the validated payload verbatim;
@@ -2038,6 +2104,13 @@ class Store:
                 row.status, row.error = "ok", None
                 row.summary = (payload or {}).get("summary")
                 row.bias = json.dumps((payload or {}).get("bias") or {})
+                # Facets ride the same validated payload. Stored as JSON text like ``bias``, and
+                # only when present, so a provider or contract that produced none leaves NULL
+                # rather than an empty object a consumer might mistake for a real extraction.
+                facets = (payload or {}).get("facets")
+                row.facets = json.dumps(facets) if facets else None
+                row.input_chars = (payload or {}).get("inputChars")
+                row.recipe_hash = recipe_hash
                 row.model, row.generated_at = model, _utcnow()
                 if content_hash:
                     row.content_hash = content_hash
@@ -2067,9 +2140,16 @@ class Store:
                     bias = json.loads(r.bias) if r.bias else None
                 except ValueError:
                     bias = None
+                try:
+                    facets = json.loads(r.facets) if r.facets else None
+                except ValueError:
+                    facets = None
                 out[r.article_id] = {
                     "summary": r.summary, "bias": bias, "model": r.model,
                     "generatedAt": r.generated_at.isoformat() if r.generated_at else None,
+                    # The comparison surface. Nullable on every legacy row, and the comparable
+                    # set treats a member without facets as not comparable rather than guessing.
+                    "facets": facets, "inputChars": r.input_chars, "recipeHash": r.recipe_hash,
                 }
         return out
 

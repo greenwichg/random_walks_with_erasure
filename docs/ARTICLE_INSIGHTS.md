@@ -42,7 +42,7 @@ web          ──▶ analyzer panel renders "AI summary" + "How this article f
 | piece | file | contract |
 |---|---|---|
 | store table | `examples/store.py` | `article_insights`: `article_id` (canonical URL, PK), `status` (`pending/ok/failed`), `summary` TEXT, `bias` JSON, `model`, `attempts` INT, `next_attempt_at`, `generated_at`, `content_hash`. Accessors: `enqueue_insights(urls)` (idempotent), `claim_insights_batch(n, now)`, `finish_insights(id, ok, payload/err)`, `get_insights(urls)` (batched, ok-only) |
-| provider port | `examples/insights_provider.py` (new) | `AIInsightsProvider` — the one interface the worker depends on: `complete(system, user, model, max_tokens) -> str` plus `name`/`default_model`/`build()`. `from_env()` selects the implementation by `RWE_INSIGHTS_PROVIDER` (default `anthropic`); a provider that cannot run (missing key/SDK, unimplemented name) resolves to `None` = dormant. Adding a vendor = one class + one registry row; worker/storage/API/UI never name an SDK |
+| provider port | `examples/insights_provider.py` (new) | `AIInsightsProvider` — the one interface the worker depends on: `complete(system, user, model, max_tokens, temperature=None) -> str` plus `name`/`default_model`/`build()`. `from_env()` selects the implementation by `RWE_INSIGHTS_PROVIDER` (default `anthropic`); a provider that cannot run (missing key/SDK, unimplemented name) resolves to `None` = dormant. Adding a vendor = one class + one registry row; worker/storage/API/UI never name an SDK |
 | generator | `examples/article_insights.py` (new) | `generate(article, provider) -> dict` — builds the grounded prompt, calls `provider.complete(...)`, validates/parses the structured JSON, enforces the 2–4 sentence bound and the no-label rule (rejects outputs containing left/right labels); pure & injectable (tests pass a fake provider). Policy lives HERE, identically for every provider |
 | worker hook | poller post-cycle seam (`api_server` / feed poller) | `run_insights_cycle(store, limit)` — enqueue new + process batch; identical seam and failure isolation as push delivery: an exception never breaks ingestion |
 | API | `api_fastapi.py` | article serializers attach `insights` (nullable) from one batched `get_insights` call per response — additive, no schema break |
@@ -63,7 +63,14 @@ web          ──▶ analyzer panel renders "AI summary" + "How this article f
   switches.
 - One completion call per article, structured JSON output
   (`{"summary": str, "bias": {"framing": str, "tone": str, "loadedLanguage": [str],
-  "omissions": str, "viewpoint": str}}`), `max_tokens` ≈ 700, temperature 0.2.
+  "omissions": str, "viewpoint": str}, "facets": {…}}`), `max_tokens` = 1000,
+  temperature 0 (`RWE_INSIGHTS_TEMPERATURE`; the port carries it, which it previously did
+  not — this line documented an intent the code could not express).
+  **`facets`** is the Coverage Comparison surface — closed vocabularies
+  (`format`/`frames`/`depth`/`voices`/`centeredVoice`/`quantities`), every item carrying a
+  span verified verbatim against the article text, dropped if it is not. Contract and
+  rationale: `docs/COVERAGE_COMPARISON_REVISED_DESIGN.md` §3. The model still reads exactly
+  ONE article; all comparison is deterministic code over stored records.
 - The prompt passes ONLY the article's own text (title + description + body excerpt, capped
   ~6k chars) and forbids outside knowledge — grounding by construction; the validator rejects
   summaries longer than 4 sentences and any bias text that reduces to a left/right verdict.
