@@ -20,7 +20,7 @@ import coverage_comparison as cc   # noqa: E402
 
 
 def member(pub, headline, *, url=None, bucket="center", published="2026-08-02T09:00:00Z",
-           register=0.9, lang=None):
+           register="reporting", lang=None):
     m = {"publisher": pub, "headline": headline, "url": url or f"https://{pub}.example/x",
          "leanBucket": bucket, "lean": 0.0, "register": register, "emotion": None,
          "publishedAt": published}
@@ -48,7 +48,7 @@ CLUSTER = [
            published="2026-08-02T11:00:00Z"),
 ]
 TARGET = {"publisher": "Harbour Gazette", "url": "https://Harbour Gazette.example/x",
-          "leanBucket": "center", "register": 0.9}
+          "leanBucket": "center", "register": "reporting"}
 
 
 # ------------------------------------------------------------------ #
@@ -120,6 +120,42 @@ def test_a_missing_event_location_is_reported_as_not_comparable_never_as_omissio
     assert geo and geo[0]["key"] == "event_countries_unknown"
     assert geo[0]["support"] == 0                              # nothing is asserted against it
     assert "no extracted event location" in geo[0]["label"]
+
+
+# ------------------------------------------------------------------ #
+# The shape the PRODUCT actually carries (regression: a wrong assumption here shipped a
+# ValueError to production, and the analyzer's catch-all made the failure silent — the card
+# simply never rendered on any clustered article whose members carry a register signal)
+# ------------------------------------------------------------------ #
+
+@pytest.mark.parametrize("value, expected", [
+    ("reporting", "reporting"), ("opinion", "opinion"), ("mixed", "mixed"),   # the product enum
+    (0.9, "reporting"), (0.2, "opinion"), (0.5, "mixed"),                     # raw P(reporting)
+    (None, None), ("nonsense", None), (float("nan"), None),                   # no signal
+])
+def test_register_is_read_through_the_products_own_bucketing(value, expected):
+    assert cc._register_of(value) is expected or cc._register_of(value) == expected
+
+
+def test_a_string_register_never_raises_and_still_compares():
+    """The exact production shape: story coverage carries the ENUM, not a float."""
+    enum_cluster = [member(m["publisher"], m["headline"], url=m["url"], bucket=m["leanBucket"],
+                           published=m["publishedAt"], register="reporting") for m in CLUSTER]
+    out = cc.compare(TARGET, story(enum_cluster))
+    assert out["available"] is True
+
+
+def test_an_opinion_piece_among_reporting_is_placed_as_context():
+    others = [member(f"Outlet {i}", f"Council approves the plan number {i}",
+                     url=f"https://o{i}.example/x", register="reporting",
+                     published=f"2026-08-02T{9 + i:02d}:00:00Z") for i in range(3)]
+    mine = member("Comment Desk", "Why the council was right to approve the plan",
+                  url="https://comment.example/x", register="opinion",
+                  published="2026-08-02T08:00:00Z")
+    out = cc.compare({"publisher": "Comment Desk", "url": mine["url"], "leanBucket": "center",
+                      "register": "opinion"}, story([mine] + others))
+    reg = [f for f in out["reportedElsewhere"] if f["kind"] == "register"]
+    assert reg and reg[0]["key"] == "mostly_reporting" and reg[0]["support"] == 3
 
 
 # ------------------------------------------------------------------ #

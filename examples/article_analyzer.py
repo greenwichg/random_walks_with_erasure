@@ -215,5 +215,14 @@ def analyze(store_, url: str, metadata: Optional[dict] = None) -> dict:
                  "register": m.get("register")},
                 matched["story"], target_countries=countries, member=m)
         except Exception:
-            report["coverageComparison"] = None      # never fail an analysis over a comparison
+            # Never fail an analysis over a comparison — but never fail SILENTLY either. The
+            # first production article hit a shape assumption in this module, and because the
+            # catch-all swallowed it the card simply never rendered anywhere, with nothing to
+            # see. A counter makes a systematic failure visible in OBS1 instead of invisible.
+            report["coverageComparison"] = None
+            try:
+                import obs_metrics
+                obs_metrics.incr("coverage_comparison_error_total")
+            except Exception:
+                pass
     return _json_safe(report)

@@ -104,6 +104,26 @@ def _pub_key(name: "str | None", ident: "dict | None" = None) -> str:
     return (ident or {}).get(raw) or raw.lower()
 
 
+def _register_of(*candidates) -> "str | None":
+    """The first usable register signal, as the product's own enum.
+
+    Delegates to ``store._register_bucket`` — the single bucketing every surface shares — so this
+    module cannot invent its own thresholds or assume a representation. Members carry the enum;
+    raw scored rows carry a numeric P(reporting); both resolve here, anything else is ``None``
+    (no signal, never a default)."""
+    for c in candidates:
+        if c is None:
+            continue
+        try:
+            import store as store_mod
+            r = store_mod._register_bucket(c)
+        except Exception:
+            r = c if isinstance(c, str) and c in ("reporting", "opinion", "mixed") else None
+        if r:
+            return r
+    return None
+
+
 def _is_template_cluster(members: list) -> bool:
     rx = _template_rx()
     if not members:
@@ -230,17 +250,20 @@ def compare(article: dict, story: dict, *, target_countries=None,
             countries=story_countries, confidence_note="not comparable"))
 
     # --- Register / emotion mix -------------------------------------------------------------
-    my_register = (me or {}).get("register") if (me or {}).get("register") is not None \
-        else article.get("register")
-    reg_vals = [m.get("register") for m in others if m.get("register") is not None]
-    if my_register is not None and len(reg_vals) >= 2:
-        # "Reporting" vs "opinion" on the product's own P(reporting) axis, at its own midpoint.
-        reporting = [v for v in reg_vals if float(v) >= 0.5]
-        if float(my_register) < 0.5 and len(reporting) >= 2:
+    # Register is the product's ENUM ("reporting" | "opinion" | "mixed"), bucketed by the ONE
+    # implementation every surface uses (store._register_bucket, which also owns the >=0.6 / <=0.4
+    # thresholds). It accepts either the enum or a raw numeric P(reporting), so this works whatever
+    # the member carries — and never assumes a shape again.
+    my_register = _register_of((me or {}).get("register"), article.get("register"))
+    reg_vals = [r for r in (_register_of(m.get("register")) for m in others) if r]
+    if my_register and len(reg_vals) >= 2:
+        reporting = [r for r in reg_vals if r == "reporting"]
+        opinion = [r for r in reg_vals if r == "opinion"]
+        if my_register == "opinion" and len(reporting) >= 2:
             elsewhere.append(_finding(
                 "register", "mostly_reporting", len(reporting), len(reg_vals), others, ident=ident,
                 label="outlets covering this in a reporting register"))
-        if float(my_register) >= 0.5 and len(reporting) <= len(reg_vals) // 3:
+        if my_register == "reporting" and len(opinion) >= 2 and len(reporting) <= len(reg_vals) // 3:
             unique.append(_finding(
                 "register", "reporting_among_opinion", 1, total_pubs, [me] if me else [], ident=ident,
                 label="one of the few reporting-register pieces in this coverage"))

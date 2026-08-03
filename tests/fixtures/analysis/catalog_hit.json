@@ -35,7 +35,50 @@
     "topic": "Politics",
     "url": "https://apnews.com/story/an-cluster-1"
   },
-  "coverageComparison": null,
+  "coverageComparison": {
+    "algoVersion": 1,
+    "articles": 3,
+    "available": true,
+    "clusterTrust": "ok",
+    "missingViewpoints": [],
+    "outlets": 3,
+    "reportedElsewhere": [
+      {
+        "confidence": "high",
+        "coverageShare": 0.667,
+        "evidence": [
+          {
+            "headline": "senate budget vote reaches bipartisan deal",
+            "publisher": "The Guardian",
+            "url": "https://theguardian.com/story/an-cluster-0"
+          },
+          {
+            "headline": "bipartisan budget deal clears senate vote",
+            "publisher": "Reuters",
+            "url": "https://reuters.com/story/an-cluster-2"
+          }
+        ],
+        "key": "other_outlets",
+        "kind": "outlets",
+        "label": "other outlets covering this story",
+        "of": 3,
+        "support": 2
+      }
+    ],
+    "storyId": "st_247465da46f57b23",
+    "textClaims": false,
+    "textParity": null,
+    "tier": "L0",
+    "timing": {
+      "firstBy": "The Guardian",
+      "hoursAfterFirst": 0.0,
+      "isFirstReport": false,
+      "of": 3,
+      "position": 1,
+      "tiedAtFirst": true
+    },
+    "uniqueHere": []
+  },
   "explanation": null,
   "input": {
     "canonicalUrl": "https://apnews.com/story/an-cluster-1",
