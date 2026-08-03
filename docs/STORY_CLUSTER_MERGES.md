@@ -314,7 +314,55 @@ cd /opt/ih && sudo docker exec -i deploy-api-1 \
 
 Adopt by setting `RWE_CLUSTER_LINK_QUORUM=<largest ADOPT value>` in `deploy/.env` and restarting
 the engine; re-run the forensic print from §5 afterwards — the expected output is "no current
-story carries that headline" once the Jana articles form their own story. The template blobs
-that survive at the adopted value are a *different, pre-existing* defect (intra-template,
-single-outlet — the obituary blob is the extreme case) best addressed separately, e.g. by an
-articles-per-publisher gate; deliberately out of scope here.
+story carries that headline" once the Jana articles form their own story.
+
+### Titration results (2026-08-03) — and a corrected expectation
+
+Both runs were made. The prediction that a lower quorum leaves the template blobs intact was
+**wrong**: the blobs are themselves sparse chains (a daily WWE column matches yesterday's daily
+WWE column, not the whole month), so they split at every tested value. That puts a floor under
+the dropped share which titration cannot go below, and the CLI's 5% bar is unreachable while the
+blobs exist:
+
+| | production | quorum 0.3 | quorum 0.2 | quorum 0.15 |
+|---|---:|---:|---:|---:|
+| stories | 1,687 | 1,870 | 1,812 | 1,778 |
+| largest cluster | 204 | 58 | 66 | 71 |
+| clusters split | — | 208 | 166 | 138 |
+| dropped share (CLI verdict) | — | 9.3% REJECT | 6.6% REJECT | 6.0% REJECT |
+| …from the four a/p ≥ 5 template blobs | — | 299 | 255 (49%) | 244 (52%) |
+| **dropped share excluding those blobs** | — | ~5.6% | **3.4%** | **2.9%** |
+| blindspot claims (same rows) | 214 | 231 | 228 | 222 |
+| independent signal (bad / scored, mean) | 4/96, 0.922 | 5/75, 0.919 | **4/87, 0.932** | 6/94, 0.923 |
+| Jana story splits out correctly | — | ✓ | ✓ | ✓ |
+
+Two findings decide between the values:
+
+* **0.2 dominates 0.15 on the independent signal.** At 0.2 the bad-cluster count stays flat
+  (4 → 4) and mean coherence *improves* (0.922 → 0.932); at 0.15 the bad count **rises** 4 → 6 —
+  under-splitting leaves partially-welded clusters the geo signal then catches. The audit's own
+  rule ("the COUNT is the rule that bites") picks 0.2, for +0.6% drop (52 articles).
+* **The genuine-coverage cost at 0.2 is small and legible.** Excluding the four content-mill
+  blobs (WWE a/p 12.8, obituaries 166 articles from *two* publishers a/p 83.0, the sports-betting
+  blob a/p 5.7, earnings transcripts a/p 15.3 — "coverage" that is one outlet repeating a format),
+  the drop is 3.4%, under the 5% bar. The visible trade: long sagas fragment into beats — the
+  Fauci cluster (125 articles) becomes 14 pieces, correctly expelling the unrelated St. Paul
+  police-chief story (15 articles) but also separating hearing/diary/contempt beats a reader
+  might prefer as one story.
+
+### The decision (product owner's call — the computed bars do not settle it)
+
+6.6% sits in the in-code judgment band (adopt ≤ 5%, reject > 10%, `story_service.py:483`); the
+CLI's stricter 5% default prints REJECT. Options, ranked:
+
+* **A (recommended): adopt `RWE_CLUSTER_LINK_QUORUM=0.2` now** as a documented judgment-band
+  decision: largest cluster 204 → 66, +125 stories, +14 blindspot claims, independent signal
+  improves, the weld class is fixed — at the cost above, half of it template-blob deflation.
+* **B (bar-purist): first build an articles-per-publisher admission gate** so content-mill blobs
+  never form (the obituary "story" is a production defect *today*), then re-titrate — the ex-blob
+  numbers say quorum 0.2 would then land a clean computed ADOPT. New code, a separate measured
+  change, delays the weld fix.
+* **C: status quo** — the Jana-class welds and the 204-article blob remain.
+
+A then B is compatible: the gate is worth building regardless, and adopting 0.2 first fixes the
+user-visible defect this report exists for.
