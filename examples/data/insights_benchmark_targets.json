@@ -30,7 +30,8 @@
         "input_per_mtok": 0.0,
         "output_per_mtok": 0.0
       },
-      "notes": "local, no egress"
+      "notes": "local, no egress DISABLED: local inference rejected for this deployment — see docs/COVERAGE_COMPARISON_IMPLEMENTATION.md.",
+      "enabled": false
     },
     {
       "name": "ollama/qwen2.5:0.5b",
@@ -44,7 +45,8 @@
         "input_per_mtok": 0.0,
         "output_per_mtok": 0.0
       },
-      "notes": "local, smallest useful size"
+      "notes": "local, smallest useful size DISABLED: local inference rejected for this deployment — see docs/COVERAGE_COMPARISON_IMPLEMENTATION.md.",
+      "enabled": false
     },
     {
       "name": "anthropic/claude-opus-4-8",
@@ -65,7 +67,8 @@
         "input_per_mtok": 0.0,
         "output_per_mtok": 0.0
       },
-      "notes": "Local. The realistic floor for the facets schema: 1b/0.5b models routinely ignore a long closed-vocabulary contract, which reads as a low pass rate rather than as a fact about the design."
+      "notes": "Local. The realistic floor for the facets schema: 1b/0.5b models routinely ignore a long closed-vocabulary contract, which reads as a low pass rate rather than as a fact about the design. DISABLED: local inference rejected for this deployment — see docs/COVERAGE_COMPARISON_IMPLEMENTATION.md.",
+      "enabled": false
     },
     {
       "name": "ollama/qwen2.5:3b",
@@ -75,7 +78,18 @@
         "input_per_mtok": 0.0,
         "output_per_mtok": 0.0
       },
-      "notes": "Local. Second 3b-class opinion — two models at the same size is how a cross-recipe agreement number gets a denominator."
+      "notes": "Local. Second 3b-class opinion — two models at the same size is how a cross-recipe agreement number gets a denominator. DISABLED: local inference rejected for this deployment — see docs/COVERAGE_COMPARISON_IMPLEMENTATION.md.",
+      "enabled": false
+    },
+    {
+      "name": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "model": "claude-haiku-4-5",
+      "pricing": {
+        "input_per_mtok": 1.0,
+        "output_per_mtok": 5.0
+      },
+      "notes": "Hosted, cheapest tier. Extraction into a closed schema is a task small hosted models do well, and at ~$0.006/article it is the candidate production recipe if kappa clears the bar. Prices are operator-maintained — verify before quoting a run."
     }
   ]
 }
