@@ -342,6 +342,12 @@ services:
       RWE_INSIGHTS_BATCH: ${RWE_INSIGHTS_BATCH:-6}
       RWE_INSIGHTS_MIN_CHARS: ${RWE_INSIGHTS_MIN_CHARS:-200}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # provider=ollama: a local model, no key and no egress. The endpoint is Ollama's own
+      # conventional variable — and note 127.0.0.1 inside this container is the CONTAINER, not
+      # the host. A host-run Ollama needs the host's LAN IP, or `extra_hosts:` with
+      # `host.docker.internal:host-gateway` added to this service. Empty = provider dormant.
+      OLLAMA_HOST: ${OLLAMA_HOST:-}
+      RWE_INSIGHTS_OLLAMA_TIMEOUT: ${RWE_INSIGHTS_OLLAMA_TIMEOUT:-}
       # Breaking-story notifications (Phase A). Detection runs on the POLLER's thread, inside THIS
       # service — `story_events.detect_breaking_stories` hangs off the same post-cycle seam as the
       # story-cache warm (feed_service.poll_once / sources.MultiSourcePoller._post_cycle), never off a
