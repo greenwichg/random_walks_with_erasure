@@ -28,8 +28,16 @@ import statistics
 from collections import Counter
 
 import coverage_comparison as cc
+import ingest                       # canonical_url — coverage carries the PUBLISHER url
 import story_service
 import store as store_mod
+
+
+def _canon(m: dict) -> str:
+    """The catalog key for a coverage member. ``m['url']`` is the publisher's own URL; the
+    catalog (and the event-location side table) are keyed by the CANONICAL url, exactly as
+    ``article_analyzer._story_block`` resolves it."""
+    return ingest.canonical_url(str(m.get("id") or m.get("url") or ""))
 
 
 def _bodies(store_, urls: "set[str]") -> dict:
@@ -72,7 +80,11 @@ def main(argv=None) -> int:
             for m in s.get("coverage") or []:
                 art = {"publisher": m.get("publisher"), "url": m.get("url"),
                        "leanBucket": m.get("leanBucket"), "register": m.get("register")}
-                out = cc.compare(art, s, target_countries=[], member=m)
+                try:
+                    countries = st.article_event_countries(_canon(m))
+                except Exception:
+                    countries = []
+                out = cc.compare(art, s, target_countries=countries, member=m)
                 if not out.get("available"):
                     reasons[out.get("reason")] += 1
                     continue
@@ -105,7 +117,7 @@ def main(argv=None) -> int:
 
     # ---- 2. Readiness for the text tiers ----------------------------------------------------
     print("\n== L1-L3 readiness (design §2: measure before building) ==")
-    urls = {m.get("url") for s in stories for m in (s.get("coverage") or []) if m.get("url")}
+    urls = {_canon(m) for s in stories for m in (s.get("coverage") or []) if m.get("url")}
     info = _bodies(st, urls)
     if not info:
         print("  no member rows resolved — cannot assess readiness")
@@ -127,10 +139,10 @@ def main(argv=None) -> int:
         if pubs < cc.min_publishers() or (s.get("clusterTrust") or "ok") == "low":
             continue
         trusted += 1
-        bodied = [m for m in mem if info.get(m["url"], {}).get("body", 0) >= 400]
+        bodied = [m for m in mem if info.get(_canon(m), {}).get("body", 0) >= 400]
         if len(bodied) >= 3:
             comparable += 1
-        langs = {info.get(m["url"], {}).get("lang") for m in mem}
+        langs = {info.get(_canon(m), {}).get("lang") for m in mem}
         langs.discard("")
         if len(langs) > 1:
             multilingual += 1
