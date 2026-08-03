@@ -1638,3 +1638,206 @@ def test_extension_read_marks_catalog_dirty(client):
     client.post("/api/me/reads", json={"reads": [_ext_read(url, "Dirty flag probe lands")]},
                 headers=hdr)                              # duplicate read, article exists
     assert ref.catalog_dirty is False                     # merge only -> no nudge
+
+
+# --------------------------------------------------------------------------- #
+# Story Continuation — GET /api/me/continuation (docs/STORY_CONTINUATION_DESIGN.md §10.2).
+#
+# These live HERE, sharing this module's single app + TestClient, deliberately. A second
+# `TestClient(api_fastapi.app)` in the same session starts a SECOND FastAPI lifespan — another
+# corpus build, poller and story-build pool — and that extra background work made timing-sensitive
+# tests elsewhere (tests/test_rec_sandbox.py) fail intermittently in the full suite while passing
+# alone. One app instance per test session.
+#
+# What has to hold at the HTTP layer:
+#   * auth        — signed-in only. v1 has no anonymous path: without read history the unread gate
+#                   cannot be evaluated, so an anonymous answer would be a guess.
+#   * dark        — the route exists and answers `null` until RWE_STORY_CONTINUATION is on, so the
+#                   client contract ships and can be exercised before the surface does.
+#   * null is ordinary — 200 with a null body, never a 404 and never an empty object. The client
+#                   treats null, failure and timeout identically: no strip.
+#   * shape       — response keys pinned against what the strip reads. This repo has shipped a
+#                   field one side writes and the other never reads (`missingViewpoints`) before.
+#   * the slider  — openness selects WHICH opposing outlet, so a moved slider must change the
+#                   answer through the HTTP layer, not just in the unit tests.
+#   * never fatal — a resolver fault is a null, not a 500. This sits on the Read-click path.
+#
+# Gates 8 (dismissed) and 9 (chain cap) are browser storage facts, covered by the web tests.
+# --------------------------------------------------------------------------- #
+_er = api_fastapi.evidence_resolver      # the SAME module objects the endpoint resolves through
+_sc = api_fastapi.story_continuation
+
+ANCHOR = "https://cnn.example.com/story/harbor-ruling"
+NEAR = "https://wsj.example.com/story/harbor-ruling"
+FAR = "https://breitbart.example.com/story/harbor-ruling"
+
+
+@pytest.fixture()
+def uid(client, request):
+    """A FRESH reader per test. ``upsert_user_by_identity`` is idempotent, so a shared account id
+    would hand every test the same user — and these tests record reads and move the openness
+    slider. Under the suite's random ordering that leak decides whether they pass."""
+    return client.post("/api/internal/users",
+                       json={"provider": "google",
+                             "providerAccountId": f"cont-{request.node.name}"}
+                       ).json()["userId"]
+
+
+def _iso(hours_ago: float) -> str:
+    return (datetime.now(timezone.utc) - timedelta(hours=hours_ago)).isoformat()
+
+
+def _member(url, publisher, lean, *, hours_ago=2.0):
+    return {"publisher": publisher, "headline": "Harbor bridge oversight ruling lands",
+            "lean": lean, "leanBucket": "left" if lean < 0 else "right", "url": url,
+            "publishedAt": _iso(hours_ago)}
+
+
+def _story():
+    """One left anchor, two opposing siblings at different distances — enough to prove the slider
+    is wired through, not merely that a payload comes back."""
+    members = [_member(ANCHOR, "CNN", -0.6, hours_ago=3.0),
+               _member(NEAR, "The Wall Street Journal", 0.6, hours_ago=2.0),
+               _member(FAR, "Breitbart", 1.2, hours_ago=1.0)]
+    return {"storyId": "s-harbor", "coverage": members, "clusterTrust": "ok",
+            "publisherCount": 3, "title": "Harbor bridge oversight ruling"}
+
+
+@pytest.fixture()
+def story_index(monkeypatch):
+    """A known story index — the endpoint's own behaviour, not the clusterer's. Kept SEPARATE from
+    the flag so the dark-by-default test can prove the flag is what silences the route: with no
+    index wired, that test would pass against an empty catalog whether the flag worked or not."""
+    story = _story()
+    index = {_er._canon(m["url"]): story for m in story["coverage"]}
+    monkeypatch.setattr(_er, "story_index", lambda *a, **k: index)
+    return story
+
+
+@pytest.fixture()
+def wired(story_index, monkeypatch):
+    """The flag ON, over that index."""
+    monkeypatch.setenv("RWE_STORY_CONTINUATION", "1")
+    return story_index
+
+
+# --------------------------------------------------------------------------- auth
+def test_requires_authentication(client):
+    r = client.get("/api/me/continuation", params={"url": ANCHOR})
+    assert r.status_code == 401 and r.json()["error"]["code"] == "unauthorized"
+
+
+def test_url_is_required(client, uid):
+    assert client.get("/api/me/continuation", headers={"X-IH-User-Id": str(uid)}).status_code == 422
+
+
+# --------------------------------------------------------------------------- the flag
+def test_dark_by_default_the_route_exists_and_says_nothing(client, uid, story_index, monkeypatch):
+    """Ships dark: 200 with null, not 404, so the client contract can be exercised before the
+    feature is turned on.
+
+    An offer IS available here — the index is wired and the flag alone is what suppresses it.
+    Flipping the flag on in the same test proves that, so this cannot pass merely because the test
+    app's catalog is empty."""
+    hdr = {"X-IH-User-Id": str(uid)}
+    monkeypatch.delenv("RWE_STORY_CONTINUATION", raising=False)
+    off = client.get("/api/me/continuation", params={"url": ANCHOR}, headers=hdr)
+    assert off.status_code == 200 and off.json() is None
+
+    monkeypatch.setenv("RWE_STORY_CONTINUATION", "1")
+    on = client.get("/api/me/continuation", params={"url": ANCHOR}, headers=hdr)
+    assert on.status_code == 200 and on.json() is not None, "the flag must be the only difference"
+
+
+def test_null_is_a_200_not_a_404(client, uid, wired):
+    """A url in no story is the ordinary answer, not an error — the client renders nothing either
+    way, and a 404 would put a red herring in every error dashboard."""
+    r = client.get("/api/me/continuation", params={"url": "https://nowhere.example.com/x"},
+                   headers={"X-IH-User-Id": str(uid)})
+    assert r.status_code == 200 and r.json() is None
+
+
+# --------------------------------------------------------------------------- the payload
+def test_shape_contract(client, uid, wired):
+    """Pins the response keys against what the strip reads. The defect class this guards is a field
+    one side writes and the other never reads — which has shipped in this repo before."""
+    body = client.get("/api/me/continuation", params={"url": ANCHOR},
+                      headers={"X-IH-User-Id": str(uid)}).json()
+    assert set(body) == {"storyId", "storyTitle", "outlets", "anchor", "sibling", "distance",
+                         "candidateCount"}
+    assert set(body["anchor"]) == {"url", "publisher", "lean", "leanBucket"}
+    assert set(body["sibling"]) == {"url", "publisher", "headline", "lean", "leanBucket",
+                                    "publishedAt"}
+    assert body["storyId"] == "s-harbor"
+    assert body["outlets"] == 3
+    assert body["candidateCount"] == 2
+
+    # Both sides are named on the same axis — the copy rule that keeps the framing symmetric
+    # (design §1.3.3) cannot be honoured if either rating is missing.
+    assert body["anchor"]["publisher"] == "CNN" and body["anchor"]["lean"] is not None
+    assert body["sibling"]["lean"] is not None and body["sibling"]["headline"]
+
+
+def test_the_openness_slider_reaches_the_resolver(client, uid, wired):
+    """Openness picks WHICH opposing outlet, never whether one is offered. Proven end to end: the
+    same reader, the same story, a different stored slider, a different sibling."""
+    hdr = {"X-IH-User-Id": str(uid)}
+
+    client.post("/api/me/settings", json={"politicalOpenness": 0}, headers=hdr)
+    nearest = client.get("/api/me/continuation", params={"url": ANCHOR}, headers=hdr).json()
+    assert nearest["sibling"]["url"] == NEAR
+
+    client.post("/api/me/settings", json={"politicalOpenness": 100}, headers=hdr)
+    furthest = client.get("/api/me/continuation", params={"url": ANCHOR}, headers=hdr).json()
+    assert furthest["sibling"]["url"] == FAR
+
+    client.post("/api/me/settings", json={"politicalOpenness": 50}, headers=hdr)   # leave it clean
+
+
+def test_a_read_sibling_retires_the_offer(client, uid, wired):
+    """Live read state, not a snapshot: recording the sibling as read removes it as a candidate."""
+    hdr = {"X-IH-User-Id": str(uid)}
+    before = client.get("/api/me/continuation", params={"url": ANCHOR}, headers=hdr).json()
+    assert before["candidateCount"] == 2
+
+    client.post("/api/me/reads", json={"reads": [{"url": before["sibling"]["url"],
+                                                  "title": "read it already"}]}, headers=hdr)
+    after = client.get("/api/me/continuation", params={"url": ANCHOR}, headers=hdr).json()
+    assert after["candidateCount"] == 1
+    assert after["sibling"]["url"] != before["sibling"]["url"]
+
+
+# --------------------------------------------------------------------------- failure modes
+def test_a_resolver_failure_is_a_null_not_a_500(client, uid, monkeypatch):
+    """This sits on the Read-click path. A fault here must cost the reader nothing."""
+    monkeypatch.setenv("RWE_STORY_CONTINUATION", "1")
+    monkeypatch.setattr(_sc, "resolve", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    r = client.get("/api/me/continuation", params={"url": ANCHOR},
+                   headers={"X-IH-User-Id": str(uid)})
+    assert r.status_code == 200 and r.json() is None
+
+
+def test_the_endpoint_never_builds_the_index_inline(client, uid, monkeypatch):
+    """A cold index must answer null, never spend ~24 s of a request thread clustering — the
+    measured outage this codebase already paid for once."""
+    monkeypatch.setenv("RWE_STORY_CONTINUATION", "1")
+    seen = {}
+
+    def _spy(store_, *, build_inline=False):
+        seen["build_inline"] = build_inline
+        return {}
+
+    monkeypatch.setattr(_er, "story_index", _spy)
+    r = client.get("/api/me/continuation", params={"url": ANCHOR},
+                   headers={"X-IH-User-Id": str(uid)})
+    assert r.status_code == 200 and r.json() is None
+    assert seen.get("build_inline") is False
+
+
+def test_the_endpoint_writes_nothing(client, uid, wired):
+    """Read-only: asking for a continuation must not create a read, a rec event, or a save."""
+    hdr = {"X-IH-User-Id": str(uid)}
+    before = len(client.get("/api/me/history", headers=hdr).json())
+    for _ in range(3):
+        client.get("/api/me/continuation", params={"url": ANCHOR}, headers=hdr)
+    assert len(client.get("/api/me/history", headers=hdr).json()) == before

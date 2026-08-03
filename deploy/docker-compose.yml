@@ -237,6 +237,17 @@ services:
       # exists because the compose environment is an allowlist — without it the flag could never
       # reach the container, and the built, tested feature was structurally undeployable.
       RWE_STORY_SLOT: ${RWE_STORY_SLOT:-0}
+      # Story Continuation (docs/STORY_CONTINUATION_DESIGN.md): the post-read "compare this story"
+      # offer — GET /api/me/continuation, read-only, no table and no worker. Default 0 = OFF, and
+      # while off the route exists and always answers `null`, so the client contract ships and can
+      # be exercised before the surface does. Same allowlist reason as RWE_STORY_SLOT above: without
+      # this line the flag could never reach the container. Measured eligible rate at 2026-08-03 is
+      # ~5-12% of reads (examples/audit_continuation.py) — bounded by cluster membership, not leans.
+      RWE_STORY_CONTINUATION: ${RWE_STORY_CONTINUATION:-0}
+      # How long after a read the offer still makes sense (hours). The design's 4 h is a stated
+      # guess; `continuation_shown.minutesSinceRead` measures the real decay curve and this knob
+      # retunes it without a rebuild.
+      RWE_CONTINUATION_MAX_AGE_H: ${RWE_CONTINUATION_MAX_AGE_H:-}
       # The build subprocess (P0-2') — ON. Story clustering is pure Python; on a thread it holds
       # the GIL against every request handler, which is the measured mechanism behind the
       # post-ingest windows (2026-08-01: /api/health 2-3 ms -> 55 ms while the 11.5 s warm ran).

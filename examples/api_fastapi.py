@@ -40,6 +40,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # import siblin
 import api_server as engine   # Backend, DatasetProfile, resolve_profile, BUILTIN_PROFILES
 import store                  # beta persistence layer (users + identities)
 import settings_service       # settings schema + normaliser (leaf); the canonical settings accessors
+import story_continuation     # the post-read "compare this story" resolver (read-only, flag-gated)
 import ingest                 # reading-event scorer + cache (Milestone C)
 import enrich                 # headline enrichment (register + emotion) behind ingest.Enricher
 import personalize            # per-user augmented Measured report / recs / coach
@@ -1099,6 +1100,38 @@ class HistoryEntryModel(BaseModel):
     completed: bool
     readSource: str | None = None     # additive: app | extension | <import> (omitted when unknown)
     openedFrom: str | None = None     # additive: the in-app surface a read came from
+
+
+# ---- Story Continuation (the post-read "compare this story" offer; docs/STORY_CONTINUATION_DESIGN.md)
+class ContinuationOutletModel(BaseModel):
+    """One side of the comparison. ``lean``/``leanBucket`` are Optional in the SHAPE but never
+    absent in a served payload — the resolver's gate 5 requires both outlets rated, and a
+    continuation with an unrated side could not state the symmetric sentence the copy rules
+    (design §1.3) require. Optional here so the contract cannot be read as promising a rating
+    the registry does not hold."""
+    url: str
+    publisher: str
+    lean: Optional[float] = None
+    leanBucket: Optional[str] = None
+
+
+class ContinuationSiblingModel(ContinuationOutletModel):
+    headline: str
+    publishedAt: str
+
+
+class ContinuationModel(BaseModel):
+    """One continuation offer. ``null`` (not 404, not an empty object) is the ordinary answer for
+    the overwhelming majority of reads — the gates are strict by design and the client renders
+    nothing. ``anchor`` travels with ``sibling`` because the copy names BOTH outlets on the same
+    axis; rating only the sibling would imply the reader's own article is neutral."""
+    storyId: str
+    storyTitle: str | None = None
+    outlets: int                       # distinct OUTLETS on the story — "20 outlets covered this"
+    anchor: ContinuationOutletModel
+    sibling: ContinuationSiblingModel
+    distance: float                    # |lean difference|, for the analytics decay curve
+    candidateCount: int                # how many opposing siblings qualified, before ranking
 
 
 # ---- Discover & Stories (FeedArticle-powered exploration; product layer) ----
@@ -2768,6 +2801,43 @@ def add_reads(request: Request, req: ReadsRequest) -> dict:
     return {"accepted": accepted, "duplicates": duplicates, "rejected": rejected,
             "totalReads": total, "threshold": engine.ESTIMATE_MIN_READS,
             "sufficient": total >= engine.ESTIMATE_MIN_READS}
+
+
+@app.get("/api/me/continuation", response_model=ContinuationModel | None, tags=["report"],
+         summary="The signed-in user's continuation offer for one article they just opened",
+         responses=_ERR_RESPONSES)
+def my_continuation(request: Request, url: str = Query(..., max_length=2048)) -> "dict | None":
+    """Story Continuation (docs/STORY_CONTINUATION_DESIGN.md): given an article the reader has just
+    opened, the one unread account of the SAME event from the opposite side of the rated spectrum —
+    or ``null``.
+
+    ``null`` is the ordinary answer and is not an error. The client prefetches this at Read-click so
+    the request overlaps the tab switch; a null, a failure, and a timeout are all the same thing to
+    it — no strip. Nothing here is written, logged per-URL, or fed back into the model.
+
+    Read-only and cheap: a dict lookup on the TTL-cached story index the recommendations path
+    already warms, a scan of that one cluster, and the reader's stored reads. It never builds the
+    index inline — a boot-window miss returns ``null`` rather than spending ~24 s of a request
+    thread on a click path.
+
+    Off by default (``RWE_STORY_CONTINUATION``): while dark the route exists and always answers
+    ``null``, so the client contract can ship and be exercised before the feature is turned on."""
+    uid = _require_real_user(request)
+    if not story_continuation.enabled():
+        return None
+    st = _require_store()
+    # The reader's own openness picks WHICH opposing outlet wins (nearest / novelty-first /
+    # furthest) — never whether one is offered. Settings are the same source the feed's blend plan
+    # reads, so the two surfaces cannot disagree about where the slider sits.
+    try:
+        openness = int(settings_service.get(st, uid).get("politicalOpenness", 50))
+    except Exception:
+        openness = 50
+    try:
+        return story_continuation.resolve(st, uid, url, openness=openness)
+    except Exception:                  # an enhancement, never a hard dependency of the read path
+        _log(logging.WARNING, "continuation_resolve_failed", url=url[:200])
+        return None
 
 
 def _attach_published_at(arts: list) -> None:
