@@ -80,6 +80,13 @@ GATES = ("anchor_aged_out", "not_clustered", "index_inconsistent", "cluster_untr
 #: read age is zero by definition.
 _AT_CLICK_TIME = ("ELIGIBLE", "stale_read")
 
+#: The route whose handler warms the story index: ``_attach_explanations`` calls
+#: ``evidence_resolver.story_index`` on every served feed. It is ``/api/recommendations`` — the
+#: per-reader ``/api/me/recommendations`` does not exist, and a probe that guesses the path spends
+#: two minutes retrying a 404 and then reports "no offers", which is a conclusion about nothing.
+#: tests/test_audit_continuation.py pins this against the app's real route table.
+WARM_PATH = "/api/recommendations"
+
 #: Buckets that are artifacts of the measurement rather than facts about the feature.
 _ARTIFACT = ("anchor_aged_out",)
 
@@ -201,15 +208,16 @@ def serve_and_probe(st, base: str, uid: int, *, warm_tries: int = 6, samples: in
 
     import time as _t
     for attempt in range(warm_tries):
-        code, _body = _http(base, "/api/me/recommendations", hdr)
+        code, _body = _http(base, WARM_PATH, hdr)
         c = metrics().get("counters", {})
         hits, miss = c.get("rec_story_index_hit_total", 0), c.get("rec_story_index_miss_total", 0)
-        print(f"        warm {attempt + 1}/{warm_tries}: recs HTTP {code}  "
+        print(f"        warm {attempt + 1}/{warm_tries}: {WARM_PATH} HTTP {code}  "
               f"index hits={hits} misses={miss}")
         if hits:
             break
-        if code in (0, 401):                     # unreachable or unauthorized — retrying won't help
-            print("        aborting the warm loop: fix connectivity/auth first")
+        if code in (0, 401, 404):     # unreachable, unauthorized, or wrong path — waiting won't fix
+            print(f"        aborting the warm loop: {WARM_PATH} answered {code}, "
+                  f"which no amount of waiting changes")
             return 2
         _t.sleep(20)
 

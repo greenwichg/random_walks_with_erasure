@@ -244,7 +244,7 @@ def test_serve_aborts_instead_of_sleeping_when_the_server_is_unreachable(st, mon
     monkeypatch.setattr(time, "sleep", lambda s: slept.append(s))   # so a regression fails fast
     uid = st.upsert_user_by_identity("google", "acct-3", email="x@example.com").id
     assert ac.serve_and_probe(st, "http://127.0.0.1:9", uid) == 2
-    assert sum(1 for p in calls if p == "/api/me/recommendations") == 1   # ONE attempt, then stop
+    assert sum(1 for p in calls if p == ac.WARM_PATH) == 1        # ONE attempt, then stop
     assert slept == [], "an unreachable server must not be waited on at all"
     assert "aborting the warm loop" in capsys.readouterr().out
 
@@ -269,7 +269,7 @@ def test_serve_counts_offers_nulls_and_errors(st, monkeypatch, capsys):
         if path == "/api/metrics":
             return 200, json.dumps({"counters": {"rec_story_index_hit_total": 3},
                                     "timers": {"rec_story_index_hit_ms": {"p50": 1.2}}})
-        if path == "/api/me/recommendations":
+        if path == ac.WARM_PATH:
             return 200, "[]"
         b = next(bodies)
         return (200, b) if b is not None else (503, "upstream")
@@ -280,3 +280,32 @@ def test_serve_counts_offers_nulls_and_errors(st, monkeypatch, capsys):
     assert "offers=1 null=1 errors=1 of 3 reads" in out
     assert "CNN" in out and "WSJ" in out                        # the payload is shown, not just counted
     assert "rec_story_index_hit_total" in out                   # metrics reported from the server
+
+
+def test_the_warm_path_is_a_route_the_app_actually_serves():
+    """Pinned against the app's REAL route table. The first production run of --serve spent six
+    retries against `/api/me/recommendations`, which does not exist, then reported "no offers" —
+    a conclusion about a 404 rather than about the feature. A guessed path is not a probe."""
+    pytest.importorskip("fastapi")
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("_api_probe", ROOT / "examples" / "api_fastapi.py")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["_api_probe"] = mod
+    spec.loader.exec_module(mod)
+    paths = {getattr(r, "path", None) for r in mod.app.routes}
+    assert ac.WARM_PATH in paths, f"{ac.WARM_PATH} is not a route; app has {sorted(p for p in paths if p and 'recommend' in p)}"
+
+
+def test_a_404_warm_aborts_rather_than_retrying(st, monkeypatch, capsys):
+    """404 joins 0 and 401 as terminal: a wrong path never becomes a right one by waiting."""
+    import time
+    calls, slept = [], []
+    monkeypatch.setattr(ac, "_http",
+                        lambda base, path, hdr, timeout=90:
+                        (calls.append(path), (200, "{}") if path == "/api/metrics" else (404, "nf"))[1])
+    monkeypatch.setattr(time, "sleep", lambda s: slept.append(s))
+    uid = st.upsert_user_by_identity("google", "acct-5", email="z@example.com").id
+    assert ac.serve_and_probe(st, "http://x", uid) == 2
+    assert sum(1 for p in calls if p == ac.WARM_PATH) == 1
+    assert slept == []
+    assert "aborting the warm loop" in capsys.readouterr().out
