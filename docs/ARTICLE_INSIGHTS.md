@@ -51,14 +51,16 @@ web          ──▶ analyzer panel renders "AI summary" + "How this article f
 
 ### LLM call
 
-- **Provider-agnostic by construction**: the worker calls the `AIInsightsProvider` port; the
-  first implementation is Claude via the official `anthropic` package (added to requirements).
-  `RWE_INSIGHTS_PROVIDER` switches vendors (`gemini` / `openai` / `grok` / `local` are reserved
-  names that report "not implemented yet" until their adapters land) and `RWE_INSIGHTS_MODEL`
-  overrides the provider's own default (Anthropic's is `claude-opus-4-8`) — a vendor or model
-  switch is env-only, no application code. Credentials stay in each vendor's conventional
-  variable (`ANTHROPIC_API_KEY` today). Stored rows stamp `"<provider>:<model>"` so every
-  cached artifact stays attributable across switches.
+- **Provider-agnostic by construction**: the worker calls the `AIInsightsProvider` port. Two
+  adapters ship: **`anthropic`** (hosted Claude via the official `anthropic` package, default)
+  and **`ollama`** (a local model over Ollama's HTTP API — no SDK, no key, no egress;
+  `docs/OLLAMA_PROVIDER_VERIFICATION.md`). `RWE_INSIGHTS_PROVIDER` switches vendors
+  (`gemini` / `openai` / `grok` / `local` remain reserved names that report "not implemented
+  yet") and `RWE_INSIGHTS_MODEL` overrides the provider's own default (`claude-opus-4-8` /
+  `llama3.1`) — a vendor or model switch is env-only, no application code. Credentials and
+  endpoints stay in each vendor's conventional variable (`ANTHROPIC_API_KEY`, `OLLAMA_HOST`).
+  Stored rows stamp `"<provider>:<model>"` so every cached artifact stays attributable across
+  switches.
 - One completion call per article, structured JSON output
   (`{"summary": str, "bias": {"framing": str, "tone": str, "loadedLanguage": [str],
   "omissions": str, "viewpoint": str}}`), `max_tokens` ≈ 700, temperature 0.2.
