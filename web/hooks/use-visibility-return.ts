@@ -40,6 +40,19 @@ export function useVisibilityReturn(
     // effect only wires the browser event to it — so the hook and its tests cannot hold two copies
     // of the same rule and drift apart.
     const gate = createDwellGate(minHiddenMs, (ms) => cb.current(ms));
+
+    // The hide has usually ALREADY happened by the time this listener attaches, and missing it
+    // meant the strip could never appear at all. The Read click fires the prefetch and then
+    // `window.open` immediately; the tab goes hidden on that same tick, while the prefetch is still
+    // in flight. Only when it resolves does the candidate arm, the card re-render, and this effect
+    // run — strictly after the `hidden` event it needed to see. The gate then treats the return as
+    // a visible-without-a-preceding-hide and correctly, uselessly, ignores it.
+    //
+    // Seeding from the CURRENT visibility state closes that race. The dwell is measured from attach
+    // rather than from the true hide, so it under-reports by the prefetch's own latency — tens of
+    // milliseconds against a 20 s threshold, and erring short is the safe direction.
+    if (document.visibilityState === "hidden") gate("hidden", Date.now());
+
     const onChange = () =>
       gate(document.visibilityState === "hidden" ? "hidden" : "visible", Date.now());
 

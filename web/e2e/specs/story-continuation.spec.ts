@@ -29,12 +29,26 @@ const DB = path.join(WEB_DIR, ".e2e-tmp", "engine.db");
 const ARMED_KEY = "hv.continue.armed";
 const STATE_KEY = "hv.continue";
 
+/** The one anchor this file seeds. Fixed rather than uid-scoped, and seeded ONCE: specs share a
+ *  single .e2e-tmp catalog that the engine's real clusterer reads, so seeding five near-identical
+ *  articles (one per test) put four needless rows into every other spec's clustering input. Test
+ *  isolation does not need them — each test gets a fresh browser context, so its dismissal and
+ *  impression state is already its own.
+ *
+ *  (This was investigated as a cause of coverage-comparison's whole-suite failure and is NOT one:
+ *  that spec fails identically with this whole file excluded, along with saved and
+ *  recommendation-feedback. All three are pre-existing.) */
+const ANCHOR_URL = "https://cbs-continuation.example.com/e2e/spectrum";
+let seeded = false;
+
 /** Seed the anchor into the real catalog so a Discover card actually carries this URL.
  *  Its wording is deliberately unlike any other spec's fixture: specs share one `.e2e-tmp/engine.db`
  *  and the engine's real clusterer decides membership, so a near-duplicate headline would silently
  *  JOIN another spec's story and change the counts it asserts on. The first draft of this file
  *  reused coverage-comparison's harbour wording and broke exactly that spec. */
 function seedAnchor(url: string): void {
+  if (seeded) return;
+  seeded = true;
   const py = `
 import sys
 sys.path.insert(0, ${JSON.stringify(path.join(REPO_ROOT, "examples"))})
@@ -101,9 +115,9 @@ async function arm(
   await page.reload({ waitUntil: "networkidle" });
 }
 
-/** A hidden→visible cycle with a controlled dwell, as returning from the publisher's tab. */
-async function returnAfter(page: import("@playwright/test").Page, hiddenMs: number): Promise<void> {
-  await page.evaluate((ms) => {
+/** Make `document.visibilityState` writable and go hidden, as `window.open` does. */
+async function goHidden(page: import("@playwright/test").Page): Promise<void> {
+  await page.evaluate(() => {
     const doc = document as Document & { __vis?: string };
     Object.defineProperty(doc, "visibilityState", {
       configurable: true,
@@ -111,7 +125,13 @@ async function returnAfter(page: import("@playwright/test").Page, hiddenMs: numb
     });
     doc.__vis = "hidden";
     document.dispatchEvent(new Event("visibilitychange"));
-    // Rewind the clock the gate reads, rather than actually waiting 20 s in the test.
+  });
+}
+
+/** Come back after `hiddenMs`, without actually waiting that long. */
+async function comeBack(page: import("@playwright/test").Page, hiddenMs: number): Promise<void> {
+  await page.evaluate((ms) => {
+    const doc = document as Document & { __vis?: string };
     const realNow = Date.now;
     Date.now = () => realNow() + (ms as number);
     doc.__vis = "visible";
@@ -120,9 +140,15 @@ async function returnAfter(page: import("@playwright/test").Page, hiddenMs: numb
   }, hiddenMs);
 }
 
+/** A full hidden→visible cycle with a controlled dwell, as returning from the publisher's tab. */
+async function returnAfter(page: import("@playwright/test").Page, hiddenMs: number): Promise<void> {
+  await goHidden(page);
+  await comeBack(page, hiddenMs);
+}
+
 test.describe("Story Continuation", () => {
-  test("appears only after a real absence, and a short one is ignored", async ({ authedPage, uid }) => {
-    const anchor = `https://cbs-${uid}.example.com/e2e/spectrum`;
+  test("appears only after a real absence, and a short one is ignored", async ({ authedPage }) => {
+    const anchor = ANCHOR_URL;
     seedAnchor(anchor);
     await authedPage.goto("/discover", { waitUntil: "networkidle" });
     // The strip is mounted per card and keyed to that card's URL, so the anchor must really be on
@@ -148,8 +174,8 @@ test.describe("Story Continuation", () => {
     await expect(authedPage.getByRole("button", { name: "Read another perspective" })).toBeVisible();
   });
 
-  test("dismissal survives a reload, permanently for that story", async ({ authedPage, uid }) => {
-    const anchor = `https://cbs-${uid}.example.com/e2e/spectrum`;
+  test("dismissal survives a reload, permanently for that story", async ({ authedPage }) => {
+    const anchor = ANCHOR_URL;
     seedAnchor(anchor);
     await authedPage.goto("/discover", { waitUntil: "networkidle" });
     await arm(authedPage, anchor);
@@ -172,8 +198,8 @@ test.describe("Story Continuation", () => {
     expect(state[OFFER.storyId]?.d).toBe(1);
   });
 
-  test("stops after two impressions without engagement", async ({ authedPage, uid }) => {
-    const anchor = `https://cbs-${uid}.example.com/e2e/spectrum`;
+  test("stops after two impressions without engagement", async ({ authedPage }) => {
+    const anchor = ANCHOR_URL;
     seedAnchor(anchor);
     await authedPage.goto("/discover", { waitUntil: "networkidle" });
 
@@ -193,12 +219,58 @@ test.describe("Story Continuation", () => {
     await expect(authedPage.getByText("Compare this story")).toBeHidden();
   });
 
-  test("a read past the freshness window is not offered", async ({ authedPage, uid }) => {
-    const anchor = `https://cbs-${uid}.example.com/e2e/spectrum`;
+  test("a read past the freshness window is not offered", async ({ authedPage }) => {
+    const anchor = ANCHOR_URL;
     seedAnchor(anchor);
     await authedPage.goto("/discover", { waitUntil: "networkidle" });
     await arm(authedPage, anchor, 5 * 60 * 60 * 1000); // 5 h ago, past the 4 h window
     await returnAfter(authedPage, 25_000);
     await expect(authedPage.getByText("Compare this story")).toBeHidden();
+  });
+
+  test("fires when the tab went hidden BEFORE the candidate armed", async ({ authedPage }) => {
+    // The real production ordering, and a bug that made the strip never appear at all. The Read
+    // click starts the prefetch and calls window.open on the SAME tick, so the tab is hidden while
+    // the request is still in flight. The candidate arms only when it resolves — strictly after the
+    // `hidden` event — so the card enables its listener having already missed it, and the return
+    // reads as a visible-without-a-preceding-hide, which the gate correctly and uselessly ignores.
+    //
+    // Driven through the real ReadArticleButton with the response DELAYED, because that ordering is
+    // the whole point: an earlier version of this test armed via sessionStorage + reload, which
+    // attaches the listener while visible and therefore passed with or without the fix.
+    const anchor = ANCHOR_URL;
+    seedAnchor(anchor);
+
+    let release: (() => void) | null = null;
+    const armed = new Promise<void>((r) => (release = r));
+    await authedPage.route("**/api/me/continuation*", async (route) => {
+      await armed;                                  // hold the prefetch until the tab is hidden
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ...OFFER, anchor: { ...OFFER.anchor, url: anchor } }),
+      });
+    });
+
+    await authedPage.goto("/discover", { waitUntil: "networkidle" });
+    const card = authedPage
+      .locator("article")
+      .filter({ hasText: "Regulator publishes the annual spectrum auction timetable" })
+      .first();
+    await expect(card).toBeVisible();
+
+    // window.open spawns a popup Playwright would otherwise wait on; close it as it appears.
+    authedPage.context().on("page", (p) => void p.close().catch(() => {}));
+    await card.getByRole("button", { name: /Read article/i }).click();
+
+    await goHidden(authedPage);                     // the tab leaves while the prefetch is in flight
+    release!();                                     // …and only NOW does the candidate arm
+    await authedPage.waitForFunction(
+      (k) => window.sessionStorage.getItem(k as string) !== null,
+      ARMED_KEY,
+    );
+
+    await comeBack(authedPage, 25_000);
+    await expect(authedPage.getByText("Compare this story")).toBeVisible();
   });
 });
