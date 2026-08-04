@@ -245,7 +245,11 @@ def serve_and_probe(st, base: str, uid: int, *, warm_tries: int = 6, samples: in
             print(f"              distance={o['distance']} candidates={o['candidateCount']} "
                   f"outlets={o['outlets']}")
             print(f"              story: {str(o['storyTitle'] or '')[:66]}")
-            print(f"              keys:  {sorted(o)}")
+            # The anchor's own headline and URL, because the reason to run this is usually "which
+            # article do I open to see the strip?" — and a story title is not something you can
+            # search Discover for. Printed from the READ row, which is what the reader clicked.
+            print(f"              open:  {str((r.get('scored') or {}).get('title') or '')[:66]}")
+            print(f"                     {a['url']}")
 
     print(f"\n        RESULT offers={offers} null={nulls} errors={errors} of {len(reads):,} reads")
     m = metrics()
