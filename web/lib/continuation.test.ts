@@ -7,6 +7,7 @@
 // never half-succeed (which would render a strip naming an empty publisher).
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { currentAnalyticsProvider, flushAnalytics, setAnalyticsProvider } from "./analytics.ts";
 import {
   ARMED_KEY,
   MAX_IMPRESSIONS,
@@ -309,4 +310,59 @@ test("prefetch arms on an offer, and stays silent on every failure", async () =>
   assert.equal(calls.length, cases.length);
   assert.ok(calls[0].startsWith("/api/me/continuation?url="), "same-origin proxy, url-encoded");
   assert.ok(calls[0].includes(encodeURIComponent("https://cbs.example.com/a")));
+});
+
+test("eligible and armed are separate events, and the gap is client-side loss", async () => {
+  // Drives the REAL prefetchContinuation, not a re-implementation of it. The gap between the two
+  // events IS the loss measurement (§7): if both fired unconditionally, a reader whose storage
+  // refused would look identical to one who was armed, and the only reason the two exist
+  // separately would be gone.
+  const g = globalThis as Record<string, unknown>;
+  const prevWindow = g.window;
+  const prevFetch = g.fetch;
+  const prevProvider = currentAnalyticsProvider();
+  const seen: string[] = [];
+  setAnalyticsProvider({ name: "test", send: (e) => void e.forEach((x) => seen.push(x.event)) });
+  flushAnalytics(); // drain anything an earlier test in this process left buffered
+  seen.length = 0;
+  g.fetch = async () => ({ ok: true, json: async () => OFFER });
+
+  const working = new Map<string, string>();
+  const refuse = () => {
+    throw new Error("SecurityError");
+  };
+  const stores: Array<[string, unknown, string[]]> = [
+    [
+      "storage works",
+      {
+        getItem: (k: string) => (working.has(k) ? working.get(k)! : null),
+        setItem: (k: string, v: string) => void working.set(k, v),
+        removeItem: (k: string) => void working.delete(k),
+      },
+      ["continuation_eligible", "continuation_armed"],
+    ],
+    [
+      "storage refuses",
+      { getItem: refuse, setItem: refuse, removeItem: refuse },
+      ["continuation_eligible"],
+    ],
+  ];
+
+  try {
+    for (const [label, store, expected] of stores) {
+      seen.length = 0;
+      working.clear();
+      g.window = { sessionStorage: store, localStorage: store };
+      prefetchContinuation("https://cbs.example.com/a");
+      await new Promise((r) => setTimeout(r, 0));
+      flushAnalytics();
+      assert.deepEqual(seen, expected, label);
+    }
+  } finally {
+    setAnalyticsProvider(prevProvider);
+    if (prevWindow === undefined) delete g.window;
+    else g.window = prevWindow;
+    if (prevFetch === undefined) delete g.fetch;
+    else g.fetch = prevFetch;
+  }
 });

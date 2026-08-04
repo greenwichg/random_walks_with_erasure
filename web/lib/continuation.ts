@@ -21,6 +21,7 @@
  * failure mode is a feature that quietly does not appear rather than a page that breaks.
  */
 import type { Continuation } from "@/types/domain";
+import { track } from "./analytics.ts";
 
 /** sessionStorage: the candidate armed by the most recent Read click, awaiting a return. */
 export const ARMED_KEY = "hv.continue.armed";
@@ -249,7 +250,23 @@ export function prefetchContinuation(anchorUrl: string): void {
   fetch(`/api/me/continuation?url=${encodeURIComponent(anchorUrl)}`, { credentials: "same-origin" })
     .then((r) => (r.ok ? r.json() : null))
     .then((offer: Continuation | null) => {
-      if (offer && offer.storyId && offer.sibling?.url) armCandidate(anchorUrl, offer);
+      if (!offer || !offer.storyId || !offer.sibling?.url) return;
+
+      // `eligible` is the ENGINE saying an offer exists — the number that sizes the audience
+      // (design §7, and §9.1's measured 9.1%). It is recorded before arming so that the gap
+      // between it and `armed` is exactly the client-side loss: storage refused, quota full,
+      // private mode. Reporting one event for both would hide that difference, which is the only
+      // reason the two exist separately.
+      track("continuation_eligible", {
+        storyId: offer.storyId,
+        anchorLean: offer.anchor.lean,
+        siblingLean: offer.sibling.lean,
+        distance: offer.distance,
+        candidateCount: offer.candidateCount,
+      });
+
+      armCandidate(anchorUrl, offer);
+      if (readArmed()) track("continuation_armed", { storyId: offer.storyId });
     })
     .catch(() => {
       /* offline, aborted, or a slow engine — the reader loses a strip and notices nothing */
