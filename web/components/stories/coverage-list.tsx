@@ -5,6 +5,7 @@ import Link from "next/link";
 import type { LeanBucket, Register, StoryCoverage } from "@/types/domain";
 import { SectionHeader } from "@/components/shared/section-header";
 import { LeanBadge, RegisterBadge } from "@/components/shared/article-badges";
+import { ContinuationStrip } from "@/components/shared/continuation-strip";
 import { ReadArticleButton } from "@/components/shared/read-article-button";
 import { SaveButton } from "@/components/shared/save-button";
 import { Button } from "@/components/ui/button";
@@ -162,6 +163,12 @@ export function CoverageList({ coverage }: { coverage: StoryCoverage[] }) {
                   )}
                 </div>
               </div>
+
+              {/* Story Continuation. This is the surface with the best odds by construction —
+                  every row here is already a cluster member, so the membership gate that rejects
+                  ~4 in 5 Discover cards passes automatically. The "all outlets" link is suppressed:
+                  it would point at this very page. */}
+              {row.url ? <ContinuationStrip anchorUrl={row.url} showAllOutlets={false} surface="story" /> : null}
             </li>
           ))}
         </ul>

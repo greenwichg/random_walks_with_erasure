@@ -43,7 +43,24 @@ const FRESHNESS_MS = 4 * 60 * 60 * 1000;
  *  4. no corrective verbs: never balance, correct, counter, or "the full picture". The offer is a
  *     comparison, and the comparison is the reader's to make.
  */
-export function ContinuationStrip({ anchorUrl }: { anchorUrl: string }) {
+export function ContinuationStrip({
+  anchorUrl,
+  showAllOutlets = true,
+  surface = "card",
+}: {
+  anchorUrl: string;
+  /** Render the "View all N outlets" link. False on the story page itself, where that link would
+   *  point at the page the reader is already reading — an offer to go where they are. The rest of
+   *  the strip still earns its place there: the coverage list is ordered by recency, not by "what
+   *  is opposite to the thing you just read", so naming one specific outlet is a real shortcut
+   *  through forty rows. */
+  showAllOutlets?: boolean;
+  /** Which surface this instance sits on, carried on `continuation_shown` (design §7). The point
+   *  of the field is comparing them: the story page's rows are cluster members by construction, so
+   *  its armed→shown ratio should differ sharply from Discover's, and one blended number would
+   *  hide that. */
+  surface?: "card" | "story";
+}) {
   const { t } = useTranslation();
   const recordRead = useRecordRead();
   const [offer, setOffer] = React.useState<Continuation | null>(null);
@@ -83,10 +100,10 @@ export function ContinuationStrip({ anchorUrl }: { anchorUrl: string }) {
         minutesSinceRead: Math.round(sinceRead / 60_000),
         impressionIndex,
         distance: armed.offer.distance,
-        surface: "card",
+        surface,
       });
     },
-    [anchorUrl],
+    [anchorUrl, surface],
   );
 
   // Only the armed card listens. Every other card passes `enabled: false` and attaches nothing.
@@ -161,6 +178,7 @@ export function ContinuationStrip({ anchorUrl }: { anchorUrl: string }) {
         >
           {t("continuation.cta")}
         </button>
+        {showAllOutlets ? (
         <Link
           href={`/stories/${encodeURIComponent(offer.storyId)}`}
           onClick={() => track("continuation_all_outlets", { storyId: offer.storyId })}
@@ -169,6 +187,7 @@ export function ContinuationStrip({ anchorUrl }: { anchorUrl: string }) {
           {t("continuation.allOutlets", { n: offer.outlets })}
           <ArrowRight className="h-3.5 w-3.5" aria-hidden />
         </Link>
+        ) : null}
       </div>
     </section>
   );

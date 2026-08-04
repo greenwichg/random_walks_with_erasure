@@ -122,8 +122,14 @@ organically than a matched cohort who did not. Guardrail: reads per session must
   "is rated right of centre" about a finishing time. `_TEMPLATE_PATTERNS` catches betting and obituary
   mills, not ordinary sports and entertainment. A topic gate is designed but deliberately not shipped
   in v1 — see the design's §9.2.
-* **Mounted on two surfaces.** Discover and Recommendations, where reading actually happens. History,
-  Saved, Search and the story Coverage list also use `ReadArticleButton` and do not yet mount the
-  strip.
+* **Mounted on three surfaces.** Discover, Recommendations, and the story page's coverage list.
+  History, Saved, Search and the analyzer also use `ReadArticleButton` and do not yet mount the
+  strip — a read from those arms a candidate that nothing renders.
+
+  The story page is the surface with the best odds by construction: every row there is already a
+  cluster member, so the membership gate that rejects ~4 in 5 Discover cards passes automatically.
+  It suppresses the "View all N outlets" link, which would point at the page the reader is on, and
+  reports `surface: "story"` on `continuation_shown` — comparing that against `card` is the point of
+  the field, since one blended armed→shown ratio would hide a large structural difference.
 * **Signed-in only.** Without read history the unread gate cannot be evaluated, and an anonymous
   answer would be a guess.

@@ -70,6 +70,40 @@ print("seeded")
   execSync("python3 -", { input: py, stdio: ["pipe", "inherit", "inherit"] });
 }
 
+/** A real two-publisher cluster, so the Stories page has a story whose coverage list carries the
+ *  anchor. Distinct wording from the Discover fixture above and from every other spec's. */
+const STORY_ANCHOR = "https://cbs-story.example.com/e2e/levee";
+let storySeeded = false;
+
+function seedStoryCluster(): void {
+  if (storySeeded) return;
+  storySeeded = true;
+  const py = `
+import sys
+sys.path.insert(0, ${JSON.stringify(path.join(REPO_ROOT, "examples"))})
+import ingest
+import store as store_mod
+
+st = store_mod.Store("sqlite:///" + ${JSON.stringify(DB)})
+desc = "The levee inspection board published its findings on Wednesday afternoon. " * 3
+members = [
+    ("CBS News", "Levee inspection board publishes its long awaited findings report",
+     ${JSON.stringify(STORY_ANCHOR)}, -1.0, "08"),
+    ("Fox News", "Levee inspection board publishes long awaited findings in report",
+     "https://fox-story.example.com/e2e/levee", 2.0, "09"),
+]
+for pub, headline, url, lean, hh in members:
+    st.upsert_feed_article(
+        canonical_url=ingest.canonical_url(url), url=url, publisher=pub, source_publisher=None,
+        title=headline, description=desc, body=None,
+        published_at=f"2026-08-03T{hh}:00:00Z", source_feed="e2e",
+        scored={"article_id": url, "outlet": pub, "category": "Politics",
+                "lean": lean, "political": True, "title": headline})
+print("seeded story cluster")
+`;
+  execSync("python3 -", { input: py, stdio: ["pipe", "inherit", "inherit"] });
+}
+
 const OFFER = {
   storyId: "s-e2e-spectrum",
   storyTitle: "Regulator publishes the spectrum auction timetable",
@@ -272,5 +306,36 @@ test.describe("Story Continuation", () => {
 
     await comeBack(authedPage, 25_000);
     await expect(authedPage.getByText("Compare this story")).toBeVisible();
+  });
+
+  test("also fires on the story page's coverage list", async ({ authedPage }) => {
+    // The surface with the best odds by construction: every row in a story's coverage list is
+    // already a cluster member, so the membership gate that rejects ~4 in 5 Discover cards passes
+    // automatically. The "all outlets" link is suppressed here — it would point at this very page.
+    seedStoryCluster();
+    await authedPage.goto("/stories", { waitUntil: "networkidle" });
+
+    // Resolve the story by ID rather than clicking it out of the list. /stories is RANKED (trusted,
+    // then publisherCount, then coverage), so a two-publisher fixture sinks as other specs seed
+    // into the shared catalog — this test passed alone and failed in the full suite for exactly
+    // that reason, which is a fact about the ranking and not about the strip.
+    const storyId = await authedPage.evaluate(async () => {
+      const res = await fetch("/api/stories?limit=200");
+      const body = (await res.json()) as { stories?: { id: string; title: string }[] };
+      return (body.stories ?? []).find((x) => (x.title ?? "").includes("Levee inspection board"))
+        ?.id ?? null;
+    });
+    expect(storyId, "the seeded pair must cluster into a story").not.toBeNull();
+
+    await authedPage.goto(`/stories/${storyId}`, { waitUntil: "networkidle" });
+    await expect(authedPage.getByText("CBS News").first()).toBeVisible();
+
+    await arm(authedPage, STORY_ANCHOR);
+    await returnAfter(authedPage, 25_000);
+
+    await expect(authedPage.getByText("Compare this story")).toBeVisible();
+    await expect(authedPage.getByRole("button", { name: "Read another perspective" })).toBeVisible();
+    // …and no self-referential link back to the page the reader is already on.
+    await expect(authedPage.getByRole("link", { name: /View all \d+ outlets/ })).toHaveCount(0);
   });
 });
