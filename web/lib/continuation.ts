@@ -123,10 +123,40 @@ function local(): Storage | null {
 }
 
 // ---------------------------------------------------------------- the armed candidate (session)
+/**
+ * In-memory listeners for "the armed candidate changed".
+ *
+ * A page can hold sixty article cards, and each one needs to know whether IT is the card the reader
+ * just opened from. Subscribing each to `visibilitychange` would put sixty DOM listeners on the
+ * document to serve at most one strip; polling sessionStorage on every render would be a synchronous
+ * read per card per keystroke. Instead the arming call — which happens once, on a click — notifies
+ * cheap in-memory subscribers, and only the card whose URL matches goes on to attach the DOM
+ * listener. Storage events are not used deliberately: they fire in OTHER tabs, never the one that
+ * wrote, which is the opposite of what is needed here.
+ */
+const armedListeners = new Set<() => void>();
+
+/** Subscribe to arming changes. Returns an unsubscribe. */
+export function subscribeArmed(fn: () => void): () => void {
+  armedListeners.add(fn);
+  return () => void armedListeners.delete(fn);
+}
+
 /** Arm the candidate prefetched at Read-click. One at a time: reading another article supersedes
  *  the previous offer rather than stacking a second (§2.2, "superseded, not stacked"). */
 export function armCandidate(anchorUrl: string, offer: Continuation, now = Date.now()): void {
   writeJSON(session(), ARMED_KEY, { anchorUrl, armedAt: now, offer } satisfies ArmedCandidate);
+  notifyArmed();
+}
+
+function notifyArmed(): void {
+  for (const fn of Array.from(armedListeners)) {
+    try {
+      fn();
+    } catch {
+      /* one bad subscriber must not stop the others */
+    }
+  }
 }
 
 /** The armed candidate, or `null`. Validates the shape rather than trusting it: this is parsed
@@ -149,6 +179,7 @@ export function clearArmed(): void {
   } catch {
     /* nothing to clear */
   }
+  notifyArmed();
 }
 
 // ---------------------------------------------------------------- dismissals + impressions (local)
@@ -201,4 +232,26 @@ export function mayShow(storyId: string, now = Date.now()): boolean {
   const e = readState(now)[storyId];
   if (!e) return true;
   return e.d !== 1 && (e.n ?? 0) < MAX_IMPRESSIONS;
+}
+
+// ---------------------------------------------------------------- the prefetch (§10.2)
+/**
+ * Ask the engine for this article's continuation and arm it. Called at Read-click, deliberately
+ * BEFORE `window.open`: the request then overlaps the tab switch, so by the time the reader is back
+ * the answer is already in sessionStorage and the strip appears without a fetch of its own.
+ *
+ * Silent on every failure. A null, a 401, a timeout and an outage are the same thing to the caller —
+ * nothing is armed, so nothing renders. Never awaited by the click handler: the reader's tab must
+ * open at once, and a comparison they have not asked for yet must never delay it.
+ */
+export function prefetchContinuation(anchorUrl: string): void {
+  if (typeof fetch === "undefined") return;
+  fetch(`/api/me/continuation?url=${encodeURIComponent(anchorUrl)}`, { credentials: "same-origin" })
+    .then((r) => (r.ok ? r.json() : null))
+    .then((offer: Continuation | null) => {
+      if (offer && offer.storyId && offer.sibling?.url) armCandidate(anchorUrl, offer);
+    })
+    .catch(() => {
+      /* offline, aborted, or a slow engine — the reader loses a strip and notices nothing */
+    });
 }

@@ -6,6 +6,7 @@ import type { Article } from "@/types/domain";
 import { useRecordRead } from "@/hooks/use-data";
 import { useTranslation } from "@/lib/i18n";
 import { track } from "@/lib/analytics";
+import { prefetchContinuation } from "@/lib/continuation";
 import { cn } from "@/lib/utils";
 
 /**
@@ -59,6 +60,10 @@ export function ReadArticleButton({
               openedFrom,
             });
             track("article_read", { source: openedFrom }); // PA1 activation event (best-effort)
+            // Story Continuation: ask for the opposing account NOW, so the request overlaps the tab
+            // switch and the answer is cached before the reader comes back. Fire-and-forget — never
+            // awaited, because the publisher's tab must open at once.
+            prefetchContinuation(href);
           }
           onOpen?.();
         }

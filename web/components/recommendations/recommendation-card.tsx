@@ -17,6 +17,7 @@ import type { FeedbackAction, Recommendation } from "@/types/domain";
 import { useTranslation } from "@/lib/i18n";
 import { presentRecommendation } from "@/lib/rec-presentation";
 import { PublisherBadge, LeanBadge } from "@/components/shared/article-badges";
+import { ContinuationStrip } from "@/components/shared/continuation-strip";
 import { ReadArticleButton } from "@/components/shared/read-article-button";
 import { SaveButton } from "@/components/shared/save-button";
 import { ArticleImage } from "@/components/shared/article-image";
@@ -278,6 +279,10 @@ export function RecommendationCard({
 
       {/* the proof behind the card (21a.2): every line is real recommender evidence */}
       <WhyDrawer rec={rec} open={why} />
+
+      {/* Story Continuation — renders nothing unless the reader opened THIS article, came back
+          after a real absence, and the engine found an opposing account (§1.4). */}
+      {article.url ? <ContinuationStrip anchorUrl={article.url} /> : null}
     </motion.article>
   );
 }

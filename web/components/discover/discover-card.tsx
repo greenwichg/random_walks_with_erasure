@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import type { Article } from "@/types/domain";
 import { PublisherBadge, LeanBadge } from "@/components/shared/article-badges";
 import { ArticleImage } from "@/components/shared/article-image";
+import { ContinuationStrip } from "@/components/shared/continuation-strip";
 import { ReadArticleButton } from "@/components/shared/read-article-button";
 import { SaveButton } from "@/components/shared/save-button";
 import { useTranslation } from "@/lib/i18n";
@@ -92,6 +93,10 @@ export function DiscoverCard({
         <ReadArticleButton article={article} openedFrom={openedFrom} />
         <SaveButton article={article} />
       </div>
+
+      {/* Story Continuation — renders nothing unless the reader opened THIS article, came back
+          after a real absence, and the engine found an opposing account (§1.4). */}
+      {article.url ? <ContinuationStrip anchorUrl={article.url} /> : null}
     </motion.article>
   );
 }

@@ -18,7 +18,9 @@ import {
   mayShow,
   readArmed,
   readState,
+  prefetchContinuation,
   recordImpression,
+  subscribeArmed,
 } from "./continuation.ts";
 
 const OFFER = {
@@ -215,4 +217,96 @@ test("every helper is safe on the server, where there is no window", () => {
   } finally {
     if (prev !== undefined) g.window = prev;
   }
+});
+
+// ---------------------------------------------------------------- arming notifications
+test("arming and clearing notify subscribers, and unsubscribe stops them", () => {
+  withStorage(() => {
+    const seen: string[] = [];
+    const off = subscribeArmed(() => seen.push(readArmed()?.anchorUrl ?? "none"));
+    armCandidate("https://a.example.com/1", OFFER);
+    clearArmed();
+    off();
+    armCandidate("https://b.example.com/2", OFFER);
+    assert.deepEqual(seen, ["https://a.example.com/1", "none"]);
+  });
+});
+
+test("one throwing subscriber does not stop the others", () => {
+  // Sixty cards subscribe. One unmounting mid-notify must not silence the card that matters.
+  withStorage(() => {
+    const seen: number[] = [];
+    const offA = subscribeArmed(() => {
+      throw new Error("boom");
+    });
+    const offB = subscribeArmed(() => seen.push(1));
+    armCandidate("https://a.example.com/1", OFFER);
+    offA();
+    offB();
+    assert.deepEqual(seen, [1]);
+  });
+});
+
+// ---------------------------------------------------------------- the prefetch (§10.2)
+test("prefetch arms on an offer, and stays silent on every failure", async () => {
+  // Storage is installed for the whole async body rather than via withStorage: the promise chain
+  // resolves AFTER a synchronous helper's teardown would have removed `window`, and the first draft
+  // of this test failed for exactly that reason rather than for anything about the code.
+  const g = globalThis as Record<string, unknown>;
+  const prevWindow = g.window;
+  const prevFetch = g.fetch;
+  const calls: string[] = [];
+
+  const cases: Array<[string, () => Promise<unknown>, boolean]> = [
+    ["an offer", async () => ({ ok: true, json: async () => OFFER }), true],
+    ["a null body", async () => ({ ok: true, json: async () => null }), false],
+    [
+      "an offer with no sibling url",
+      async () => ({ ok: true, json: async () => ({ storyId: "s" }) }),
+      false,
+    ],
+    // These two return a VALID body on purpose: the contract is that a non-2xx is never trusted,
+    // and a fake that also returned null would let a missing `r.ok` check pass unnoticed.
+    ["a 401 with a body", async () => ({ ok: false, status: 401, json: async () => OFFER }), false],
+    ["a 503 with a body", async () => ({ ok: false, status: 503, json: async () => OFFER }), false],
+    [
+      "a network throw",
+      async () => {
+        throw new Error("offline");
+      },
+      false,
+    ],
+  ];
+
+  try {
+    for (const [label, impl, shouldArm] of cases) {
+      const m = new Map<string, string>();
+      const store = {
+        getItem: (k: string) => (m.has(k) ? m.get(k)! : null),
+        setItem: (k: string, v: string) => void m.set(k, v),
+        removeItem: (k: string) => void m.delete(k),
+      };
+      g.window = { sessionStorage: store, localStorage: store };
+      g.fetch = (u: string) => {
+        calls.push(u);
+        return impl();
+      };
+      // The click handler never awaits this — the publisher's tab must open at once.
+      assert.doesNotThrow(() => prefetchContinuation("https://cbs.example.com/a"));
+      await new Promise((r) => setTimeout(r, 0));
+      // Assert on what was WRITTEN, not on readArmed(): readArmed does its own shape validation,
+      // which would mask a missing guard here and let both of these mutations pass.
+      assert.equal(m.has(ARMED_KEY), shouldArm, `wrote an armed candidate after ${label}`);
+      assert.equal(readArmed() !== null, shouldArm, `arming after ${label}`);
+    }
+  } finally {
+    if (prevWindow === undefined) delete g.window;
+    else g.window = prevWindow;
+    if (prevFetch === undefined) delete g.fetch;
+    else g.fetch = prevFetch;
+  }
+
+  assert.equal(calls.length, cases.length);
+  assert.ok(calls[0].startsWith("/api/me/continuation?url="), "same-origin proxy, url-encoded");
+  assert.ok(calls[0].includes(encodeURIComponent("https://cbs.example.com/a")));
 });
