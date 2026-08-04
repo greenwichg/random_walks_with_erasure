@@ -93,3 +93,9 @@ override.tf.json
 .terraformrc
 terraform.rc
 .deploy-stage-state
+
+# Playwright artifacts. The suite writes these under web/ (see web/.gitignore), but running
+# `npx playwright test` from the repo root instead of from web/ drops them here — which is how a
+# stray test-results/ once turned up untracked at the top level.
+/test-results/
+/playwright-report/
