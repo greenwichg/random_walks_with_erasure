@@ -333,3 +333,22 @@ def test_stale_reads_are_reported_as_testable_now(st, uid):
         sc_mod.freshness_hours = real
     assert counter["stale_read"] == 1 and not examples
     assert [u for _h, u in testable] == [ANCHOR]
+
+
+def test_suggest_lists_unread_members_that_would_fire(st, uid, capsys):
+    """The question every by-hand test has, and the one nothing else answered. Freshness passes for
+    free on an UNREAD member — there is no stored read — so ELIGIBLE here means exactly "open this
+    and the strip appears"."""
+    story = _story([_member(ANCHOR, "CNN", -0.6), _member(NEAR, "The Wall Street Journal", 0.6)])
+    idx = _index(story)
+
+    assert ac.suggest(st, idx, uid, 5) == 0
+    out = capsys.readouterr().out
+    assert ANCHOR in out and NEAR in out, "both members are unread and both would fire"
+
+    # …and an article the reader has already read is never suggested: re-reading it cannot help,
+    # because add_read is idempotent and keeps the original timestamp.
+    _read(st, uid, ANCHOR, "CNN")
+    ac.suggest(st, idx, uid, 5)
+    out = capsys.readouterr().out
+    assert ANCHOR not in out

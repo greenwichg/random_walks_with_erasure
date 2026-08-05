@@ -156,6 +156,35 @@ def _attribute(st, user_id, url: str, index: dict, now=None) -> str:
     return "ELIGIBLE"
 
 
+def suggest(st, index: dict, uid: int, limit: int) -> int:
+    """Articles this reader has NOT read that would produce a strip if they opened one now.
+
+    The question every by-hand test actually has, and the one nothing else answered. The realized
+    audit reports on reads that already happened; ``--ceiling`` ignores reader state entirely. Here
+    the freshness gate passes for free — there is no stored read yet — so ``_attribute`` returning
+    ELIGIBLE on an UNREAD member means exactly "open this and the strip appears"."""
+    read_at, _by_pub, _total = sc._reader_state(st, uid)
+    read_urls = set(read_at)
+    hits = 0
+    print(f"\nOPEN ONE OF THESE — unread, and every gate passes the moment you do "
+          f"(reader {uid}):")
+    for url, story in index.items():
+        if hits >= limit:
+            break
+        if url in read_urls:
+            continue
+        if _attribute(st, uid, url, index) != "ELIGIBLE":
+            continue
+        member = next((m for m in (story.get("coverage") or [])
+                       if er._canon(str(m.get("url") or "")) == url), {})
+        print(f"  {str(member.get('publisher') or '')} — {str(member.get('headline') or '')[:64]}")
+        print(f"    {member.get('url')}")
+        hits += 1
+    if not hits:
+        print("  none — no unread cluster member currently clears every gate.")
+    return 0
+
+
 def _reader_ids(st) -> list:
     from sqlalchemy import select
     with st.session() as s:
@@ -286,10 +315,10 @@ def _resolve_reader(st, email: "str | None", user: "int | None") -> "int | None"
 def _run(st, index: dict, anchors: list, openness: int, samples: int) -> tuple:
     """``(counter, drift, examples, testable)`` over ``[(user_id, url), …]``.
 
-    ``testable`` lists anchors in the ``stale_read`` bucket — cleared every structural gate, failed
-    only on age. Those are exactly the articles that WOULD produce a strip if read again now, which
-    is the question anyone trying the feature by hand actually has. Without them the operator is
-    told "0 offers" and left to guess which of a hundred articles to click."""
+    ``testable`` lists anchors in the ``stale_read`` bucket — cleared every structural gate and
+    failed only on age. They are a POST-MORTEM, not a to-do list: ``store.add_read`` is idempotent
+    per (user, url) and never refreshes the timestamp, so re-reading one of these leaves it exactly
+    as stale as it was. Use ``--suggest`` for articles that would actually fire."""
     counter: Counter = Counter()
     drift, examples, testable = [], [], []
     for uid, url in anchors:
@@ -330,7 +359,9 @@ def main() -> int:
                     help="probe the RUNNING server's GET /api/me/continuation instead of resolving "
                          "offline (warms the index first, then reports offers + index metrics)")
     ap.add_argument("--base", default="http://127.0.0.1:8000", help="--serve: the engine's base URL")
-    ap.add_argument("--email", default=None, help="--serve: the reader, by account email")
+    ap.add_argument("--email", default=None, help="--serve / --suggest: the reader, by email")
+    ap.add_argument("--suggest", action="store_true",
+                    help="list UNREAD articles that would produce a strip if opened now")
     args = ap.parse_args()
 
     st = store_mod.Store(args.db) if args.db else store_mod.Store()
@@ -340,6 +371,16 @@ def main() -> int:
         print(f"store          {st.engine.url}")
     except Exception:
         print(f"store          {args.db or os.environ.get('RWE_DB_URL') or '(default)'}")
+
+    if args.suggest:
+        uid = _resolve_reader(st, args.email, args.user)
+        if uid is None:
+            return 2
+        idx = er.story_index(st, build_inline=args.inline)
+        if not idx:
+            print("story index is EMPTY — pass --inline, or wait for the poller to warm it.")
+            return 2
+        return suggest(st, idx, uid, args.examples)
 
     if args.serve:
         uid = _resolve_reader(st, args.email, args.user)
@@ -426,8 +467,9 @@ def main() -> int:
               f"trustworthy:\n   {drift[:5]}")
 
     if testable:
-        print("\nREAD ONE OF THESE TO SEE THE STRIP — cleared every gate but age, so reading them\n"
-              "again makes the read fresh and the offer live:")
+        print("\nthese cleared every gate but age — the offer was real and the moment passed.\n"
+              "Re-reading them does NOT help: add_read is idempotent and keeps the original\n"
+              "timestamp, so they stay stale forever. Use --suggest for what to open now:")
         for headline, url in testable:
             print(f"  {headline[:72]}\n    {url}")
 
