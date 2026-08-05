@@ -21,6 +21,7 @@ import {
   readState,
   prefetchContinuation,
   recordImpression,
+  shouldDeferFeedRefetch,
   subscribeArmed,
 } from "./continuation.ts";
 
@@ -365,4 +366,22 @@ test("eligible and armed are separate events, and the gap is client-side loss", 
     if (prevFetch === undefined) delete g.fetch;
     else g.fetch = prevFetch;
   }
+});
+
+// ---------------------------------------------------------------- the feed-refetch hold-back
+test("the feed refetch is held back only for the anchor that is armed", () => {
+  // The root cause of "the strip never appears on Recommendations": the feed excludes articles the
+  // reader has read, so refetching right after a read drops that card — and the strip lives on it.
+  withStorage(() => {
+    assert.equal(shouldDeferFeedRefetch("https://cbs.example.com/a"), false, "nothing armed");
+
+    armCandidate("https://cbs.example.com/a", OFFER);
+    assert.equal(shouldDeferFeedRefetch("https://cbs.example.com/a"), true, "armed for this url");
+    // A read of some OTHER article must not hold the feed back — that would suppress the
+    // 2026-08-02 read-invalidation for reads that have no offer at all.
+    assert.equal(shouldDeferFeedRefetch("https://other.example.com/z"), false, "different url");
+
+    clearArmed();
+    assert.equal(shouldDeferFeedRefetch("https://cbs.example.com/a"), false, "disarmed");
+  });
 });

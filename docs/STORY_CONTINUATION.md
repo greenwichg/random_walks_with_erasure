@@ -114,6 +114,34 @@ Success is **not** click-through. The product goal is exposure to alternative pe
 measure is whether readers who take a continuation subsequently read more opposite-lean articles
 organically than a matched cohort who did not. Guardrail: reads per session must not fall.
 
+## Why it did not appear at first (2026-08-05)
+
+The strip was structurally unable to render on **Recommendations**, deterministically:
+
+1. Read click → `prefetchContinuation` → the offer arms in `sessionStorage`. Correct.
+2. `useRecordRead.onSettled` invalidates `["recommendations"]` — the deliberate 2026-08-02
+   read-invalidation, so the feed reflects the read.
+3. The refetch runs while the reader is still on the publisher's tab. The recommender excludes
+   articles the reader has read (`exclude_seen=True`), so the new feed **omits the article they
+   just opened**.
+4. That card unmounts, taking its `ContinuationStrip` with it.
+5. The reader returns to a page with **nothing mounted for their anchor**. The armed candidate stays
+   in storage — valid, fresh, and invisible.
+
+Design §2.1 gate 4 requires "the source card is currently mounted", so this was the design being
+honoured by a card the design assumed would still exist. The fix holds the feed refetch back only
+when a continuation is armed **for that exact url** (`shouldDeferFeedRefetch`), leaving the
+read-invalidation immediate for the ~95% of reads with no offer; the feed is still marked stale and
+refreshes on the reader's next navigation.
+
+Two earlier client faults, fixed before this one, had the same symptom:
+
+* the visibility listener attached AFTER `window.open` had already fired `hidden`, so the return
+  read as a visible-without-a-preceding-hide and was ignored (`useVisibilityReturn` now seeds the
+  gate from the current visibility state);
+* the strip was not mounted on the story page at all, so a read from there armed a candidate nothing
+  rendered.
+
 ## Known gaps
 
 * **Non-political stories are eligible.** Registry leans are an *outlet-level* political rating, so a

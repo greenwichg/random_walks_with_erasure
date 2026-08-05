@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSession } from "next-auth/react";
 import { queryKeys, services } from "@/services";
 import { recordRead, type RecordReadInput } from "@/lib/record-read";
+import { shouldDeferFeedRefetch } from "@/lib/continuation";
 import type {
   AnalyzeMetadata,
   FeedbackAction,
@@ -183,7 +184,7 @@ export function useRecordRead() {
       recordRead(input);
       await new Promise((resolve) => setTimeout(resolve, 700)); // let the beacon reach + persist
     },
-    onSettled: () => {
+    onSettled: (_data, _error, variables) => {
       for (const key of [queryKeys.history, queryKeys.dashboard, queryKeys.analytics, queryKeys.report]) {
         qc.invalidateQueries({ queryKey: key });
       }
@@ -192,7 +193,16 @@ export function useRecordRead() {
       // the pre-read feed until the 60 s staleTime lapsed AND the page remounted (never, if they
       // stayed on /recommendations: no focus refetch, no polling). Bare prefix, same as the
       // settings-save invalidation above: it matches every strategy variant and the explain query.
-      qc.invalidateQueries({ queryKey: ["recommendations"] });
+      // …but NOT by evicting the article the reader just opened while they are still reading it.
+      // The feed excludes seen articles, so an immediate refetch drops that card — and Story
+      // Continuation's strip lives on it, so the reader returns to a page with nothing mounted for
+      // their anchor. `refetchType: "none"` still marks the feed stale (it refreshes on their next
+      // navigation); it only declines to refetch out from under an armed continuation, which is at
+      // most one read in twenty.
+      qc.invalidateQueries({
+        queryKey: ["recommendations"],
+        ...(shouldDeferFeedRefetch(variables.url) ? { refetchType: "none" as const } : {}),
+      });
     },
   });
 }
@@ -233,7 +243,7 @@ export function useSaveArticle() {
       if (ctx?.prevSaved !== undefined) qc.setQueryData(queryKeys.saved, ctx.prevSaved);
       if (ctx?.prevProfile !== undefined) qc.setQueryData(queryKeys.profile, ctx.prevProfile);
     },
-    onSettled: () => {
+    onSettled: (_data, _error, variables) => {
       qc.invalidateQueries({ queryKey: queryKeys.saved });
       qc.invalidateQueries({ queryKey: queryKeys.profile });
     },
@@ -268,7 +278,7 @@ export function useUnsaveArticle() {
       if (ctx?.prevSaved !== undefined) qc.setQueryData(queryKeys.saved, ctx.prevSaved);
       if (ctx?.prevProfile !== undefined) qc.setQueryData(queryKeys.profile, ctx.prevProfile);
     },
-    onSettled: () => {
+    onSettled: (_data, _error, variables) => {
       qc.invalidateQueries({ queryKey: queryKeys.saved });
       qc.invalidateQueries({ queryKey: queryKeys.profile });
     },

@@ -173,6 +173,25 @@ export function readArmed(): ArmedCandidate | null {
   return c;
 }
 
+/**
+ * Whether recording a read of ``url`` should hold back the recommendations refetch.
+ *
+ * The feed excludes articles the reader has already read (``exclude_seen``), so refetching right
+ * after a read DROPS the very article they just opened — unmounting the card, and with it the
+ * ContinuationStrip that lives on it. The reader then returns to a feed where nothing is mounted
+ * for that anchor, and the armed candidate stays valid and invisible forever. That is why the strip
+ * never appeared on Recommendations.
+ *
+ * True only when a continuation is armed FOR THIS url, so the feed still refreshes immediately for
+ * the ~95% of reads with no offer — which is the behaviour the 2026-08-02 read-invalidation fix
+ * exists for. When it does hold back, the query is still marked stale and refreshes on the reader's
+ * next navigation.
+ */
+export function shouldDeferFeedRefetch(url: string): boolean {
+  const armed = readArmed();
+  return armed !== null && armed.anchorUrl === url;
+}
+
 /** Disarm — after the strip is shown, opened, or dismissed. */
 export function clearArmed(): void {
   try {
