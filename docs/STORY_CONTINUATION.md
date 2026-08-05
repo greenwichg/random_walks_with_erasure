@@ -150,9 +150,10 @@ Two earlier client faults, fixed before this one, had the same symptom:
   "is rated right of centre" about a finishing time. `_TEMPLATE_PATTERNS` catches betting and obituary
   mills, not ordinary sports and entertainment. A topic gate is designed but deliberately not shipped
   in v1 — see the design's §9.2.
-* **Mounted on three surfaces.** Discover, Recommendations, and the story page's coverage list.
-  History, Saved, Search and the analyzer also use `ReadArticleButton` and do not yet mount the
-  strip — a read from those arms a candidate that nothing renders.
+* **Mounted on three components, five surfaces.** `DiscoverCard` (Discover, **Search**, **Saved** —
+  all three render the same component), `RecommendationCard`, and the story page's coverage list.
+  History (`ArticleRow`) and the analyzer (`AnalysisResult`) also use `ReadArticleButton` and do not
+  mount the strip — a read from those two arms a candidate that nothing renders.
 
   The story page is the surface with the best odds by construction: every row there is already a
   cluster member, so the membership gate that rejects ~4 in 5 Discover cards passes automatically.
