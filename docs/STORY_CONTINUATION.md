@@ -66,11 +66,14 @@ docker exec deploy-api-1 nice -n 19 python examples/audit_continuation.py --inli
 # the LIVE endpoint for one reader: auth, flag, payload shape, index metrics
 docker exec deploy-api-1 python examples/audit_continuation.py --serve --email you@example.com
 
-# what the endpoint ANSWERED to real browsers, since the last restart
-docker exec deploy-api-1 sh -c 'curl -s -H "x-ih-auth: $RWE_INTERNAL_SECRET" \
-  localhost:8000/api/metrics' | python -c 'import json,sys; \
-  print({k: v for k, v in json.load(sys.stdin)["counters"].items() if "continuation" in k})'
+# what the endpoint ANSWERED to real browsers, since the last restart — no store, no index, instant
+docker exec deploy-api-1 python examples/audit_continuation.py --counters
 ```
+
+> The obvious shell one-liner for that last one does **not** work on this host, and both ways it
+> fails look like a broken metrics endpoint: the api image ships no `curl`, and piping `docker exec`
+> into `python` runs the second stage on the HOST, which has `python3`. `--counters` does the whole
+> thing inside the container.
 
 `continuation_result_total` has four labels and settles "does it appear?" from the server side alone:
 

@@ -352,3 +352,90 @@ def test_suggest_lists_unread_members_that_would_fire(st, uid, capsys):
     ac.suggest(st, idx, uid, 5)
     out = capsys.readouterr().out
     assert ANCHOR not in out
+
+
+# --------------------------------------------------------------------------- --counters
+def _api_module():
+    """The REAL api module, so counter NAMES are pinned against their emitter rather than against a
+    second copy of the same string. The last time this script and the app each held their own idea
+    of a shared constant, `--serve` probed a route that does not exist and reported "no offers"."""
+    pytest.importorskip("fastapi")
+    if "_api_probe" not in sys.modules:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("_api_probe",
+                                                      ROOT / "examples" / "api_fastapi.py")
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules["_api_probe"] = mod
+        spec.loader.exec_module(mod)
+    return sys.modules["_api_probe"]
+
+
+def _line(out: str, starts: str) -> str:
+    return next(ln for ln in out.splitlines() if ln.strip().startswith(starts))
+
+
+def test_counters_mode_reports_the_labels_the_endpoint_actually_WRITES(monkeypatch, capsys):
+    """The whole value of this mode is telling an offer apart from a null. If the audit read a label
+    the endpoint does not write, it would report a confident `offer 0` forever — which is exactly
+    the false negative the mode exists to prevent."""
+    import obs_metrics
+    api = _api_module()
+    api._continuation_outcome("offer")
+    api._continuation_outcome("null")
+    api._continuation_outcome("null")
+    counters = obs_metrics.snapshot()["counters"]
+    offers = counters["continuation_result_total|offer"]      # KeyError here IS the failure
+    nulls = counters["continuation_result_total|null"]
+    assert offers >= 1 and nulls >= 2
+
+    monkeypatch.setattr(ac, "_http",
+                        lambda base, path, hdr, timeout=20: (200, json.dumps({"counters": counters})))
+    assert ac.report_counters("http://x") == 0
+    out = capsys.readouterr().out
+    assert f"offer     {offers:>6,}" in out
+    assert f"null      {nulls:>6,}" in out
+    # Every label, not offer+null: obs_metrics counters are process-global, so whatever else has
+    # already exercised the endpoint in this session (`disabled`, `error`) is in the same snapshot
+    # and belongs in the total. Asserting the narrower sum passed alone and failed in the suite.
+    total = sum(v for k, v in counters.items() if k.startswith("continuation_result_total|"))
+    assert f"answered {total:,} time(s)" in out
+
+
+def test_a_cold_index_is_named_so_nulls_are_not_read_as_no_offer(monkeypatch, capsys):
+    """A cold index makes every answer a null that means "no story view", not "this reader has no
+    continuation". Reporting the two identically sends the next hour at the wrong layer."""
+    body = json.dumps({"counters": {"continuation_result_total|null": 12}})
+    monkeypatch.setattr(ac, "_http", lambda base, path, hdr, timeout=20: (200, body))
+    assert ac.report_counters("http://x") == 0
+    assert "COLD" in capsys.readouterr().out
+
+
+def test_a_warm_index_is_not_called_cold(monkeypatch, capsys):
+    body = json.dumps({"counters": {"continuation_result_total|null": 12,
+                                    "rec_story_index_hit_total": 3}})
+    monkeypatch.setattr(ac, "_http", lambda base, path, hdr, timeout=20: (200, body))
+    assert ac.report_counters("http://x") == 0
+    assert "COLD" not in capsys.readouterr().out
+
+
+def test_counters_mode_reports_an_unreachable_metrics_endpoint(monkeypatch, capsys):
+    """Silence and zero must not look alike: `offer 0` from a server that never answered is not
+    evidence about the feature."""
+    monkeypatch.setattr(ac, "_http",
+                        lambda base, path, hdr, timeout=20: (0, "URLError: connection refused"))
+    assert ac.report_counters("http://x") == 2
+    assert "connection refused" in capsys.readouterr().out
+
+
+def test_counters_mode_needs_no_store(monkeypatch, capsys):
+    """It runs before the store is opened, so it still answers when the DB is the thing that is
+    wrong — and it never pays for a story index."""
+    monkeypatch.setattr(store_mod, "Store",
+                        lambda *a, **k: pytest.fail("--counters must not open the store"))
+    monkeypatch.setattr(er, "story_index",
+                        lambda *a, **k: pytest.fail("--counters must not build an index"))
+    monkeypatch.setattr(ac, "_http",
+                        lambda base, path, hdr, timeout=20: (200, json.dumps({"counters": {}})))
+    monkeypatch.setattr(sys, "argv", ["audit_continuation.py", "--counters"])
+    assert ac.main() == 0
+    assert "nothing yet" in capsys.readouterr().out

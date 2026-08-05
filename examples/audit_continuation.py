@@ -289,6 +289,60 @@ def serve_and_probe(st, base: str, uid: int, *, warm_tries: int = 6, samples: in
     return 0 if errors == 0 else 1
 
 
+def report_counters(base: str) -> int:
+    """What the LIVE endpoint answered real browsers, since the serving process last restarted.
+
+    This is the one probe that needs no store, no index and no reader, and it is the one to run
+    after a hand test: ``continuation_result_total`` splits "the strip did not appear" into a
+    server-side failure and a browser-side one, which no other signal here can do.
+
+    It exists as a mode rather than a shell one-liner because the obvious one-liner does not work on
+    the production host: the api image has no ``curl``, and piping to ``python`` runs on the HOST,
+    which has ``python3``. Both failures look like the metrics endpoint being broken.
+    """
+    import json
+    hdr = {}
+    secret = os.environ.get("RWE_INTERNAL_SECRET")
+    if secret:
+        hdr["x-ih-auth"] = secret
+    code, body = _http(base, "/api/metrics", hdr, timeout=20)
+    if code != 200:
+        print(f"\n{base}/api/metrics answered HTTP {code}\n{body[:300]}")
+        return 2
+    try:
+        counters = (json.loads(body) or {}).get("counters", {})
+    except ValueError:
+        print(f"\n/api/metrics returned a non-JSON body: {body[:200]}")
+        return 2
+
+    print(f"\nCOUNTERS  {base}   (reset on every restart — deploy, then test, then read)")
+    print(f"          flag RWE_STORY_CONTINUATION="
+          f"{os.environ.get('RWE_STORY_CONTINUATION') or '(unset -> off)'} in THIS process")
+
+    outcomes = {k.split("|", 1)[1]: v for k, v in counters.items()
+                if k.startswith("continuation_result_total|")}
+    total = sum(outcomes.values())
+    print(f"\n          GET /api/me/continuation answered {total:,} time(s):")
+    if not total:
+        print("            nothing yet — no browser has hit the endpoint since the restart.")
+    for name, meaning in (("offer", "a payload went to the browser -> any loss left is CLIENT-side"),
+                          ("null", "resolver declined -> run --inline for the gate"),
+                          ("disabled", "RWE_STORY_CONTINUATION is not on in the container"),
+                          ("error", "resolver raised -> continuation_resolve_failed in the api log")):
+        n = int(outcomes.get(name, 0))
+        if n or name in ("offer", "null"):
+            print(f"            {name:<9} {n:>6,}   {meaning}")
+
+    # The index is the endpoint's only dependency it cannot build itself, so a cold one explains a
+    # run of nulls that has nothing to do with the reader or the gates.
+    print("\n          story index in the serving process:")
+    for k in ("rec_story_index_hit_total", "rec_story_index_miss_total"):
+        print(f"            {k:<28} {int(counters.get(k, 0)):>6,}")
+    if not counters.get("rec_story_index_hit_total"):
+        print("            COLD — every answer above is a null meaning 'no index', not 'no offer'.")
+    return 0
+
+
 def _quote(url: str) -> str:
     from urllib.parse import quote
     return quote(url, safe="")
@@ -362,7 +416,15 @@ def main() -> int:
     ap.add_argument("--email", default=None, help="--serve / --suggest: the reader, by email")
     ap.add_argument("--suggest", action="store_true",
                     help="list UNREAD articles that would produce a strip if opened now")
+    ap.add_argument("--counters", action="store_true",
+                    help="what the LIVE endpoint answered browsers since the last restart "
+                         "(offer / null / disabled / error) — no store, no index, instant")
     args = ap.parse_args()
+
+    # Before the store: this mode asks the SERVER what it answered, and a store that will not open
+    # is not a reason to withhold the one number that says which side the failure is on.
+    if args.counters:
+        return report_counters(args.base.rstrip("/"))
 
     st = store_mod.Store(args.db) if args.db else store_mod.Store()
     # Which database this process actually opened. Printed ALWAYS: a probe that reports "no such
