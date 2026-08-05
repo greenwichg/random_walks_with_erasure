@@ -338,4 +338,132 @@ test.describe("Story Continuation", () => {
     // …and no self-referential link back to the page the reader is already on.
     await expect(authedPage.getByRole("link", { name: /View all \d+ outlets/ })).toHaveCount(0);
   });
+
+  // ------------------------------------------------------------------ Recommendations (primary)
+  //
+  // Design §9.1.1: Recommendations is the PRIMARY surface. It is also the only one with a failure
+  // mode of its own, and `be0426d` fixed it without a regression test — this is that test.
+  //
+  // The feed is stubbed rather than driven off the engine, because the defect is entirely
+  // client-side and the engine's half of it is a fact this spec would only be re-stating: the
+  // recommender excludes articles the reader has read (`exclude_seen=True`), so the fetch that
+  // follows a read comes back WITHOUT the article just opened. The stub reproduces exactly that —
+  // the anchor is in the first response and absent from every later one — so a refetch during the
+  // reader's absence unmounts the card, taking its ContinuationStrip with it.
+
+  const REC_ANCHOR = "https://cbs-rec.example.com/e2e/tariff";
+  const REC_OTHER = "https://npr-rec.example.com/e2e/ferry";
+
+  function recFor(url: string, headline: string, publisher: string) {
+    return {
+      article: {
+        id: url,
+        headline,
+        publisher,
+        topic: "Politics",
+        url,
+        lean: -1,
+        leanBucket: "left",
+        publishedAt: "2026-08-03T12:00:00Z",
+        readingMinutes: 4,
+      },
+      reason: "Broadens the outlets you read.",
+      strategy: "rwe-b",
+      helpsMetric: "sourceDiversity",
+      crossCutting: true,
+    };
+  }
+
+  /** Serve a two-card feed, then a one-card feed — the engine's own post-read behaviour. Returns a
+   *  counter so the test can assert on the REFETCH, which is the thing the fix suppresses. */
+  async function stubFeed(page: import("@playwright/test").Page): Promise<{ n: number }> {
+    const calls = { n: 0 };
+    await page.route(
+      (url) => url.pathname === "/api/recommendations",
+      async (route) => {
+        calls.n += 1;
+        const feed =
+          calls.n === 1
+            ? [
+                recFor(REC_ANCHOR, "Trade panel reopens the tariff schedule for review", "CBS News"),
+                recFor(REC_OTHER, "Ferry operator publishes its winter timetable", "NPR"),
+              ]
+            : [recFor(REC_OTHER, "Ferry operator publishes its winter timetable", "NPR")];
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(feed),
+        });
+      },
+    );
+    return calls;
+  }
+
+  /** Answer the prefetch with a real offer for `anchor`, optionally after `delayMs`. */
+  async function stubContinuation(
+    page: import("@playwright/test").Page,
+    anchor: string,
+    delayMs = 0,
+  ): Promise<void> {
+    await page.route("**/api/me/continuation*", async (route) => {
+      if (delayMs) await new Promise((r) => setTimeout(r, delayMs));
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ...OFFER, anchor: { ...OFFER.anchor, url: anchor } }),
+      });
+    });
+  }
+
+  test("survives the read-invalidation on Recommendations", async ({ authedPage }) => {
+    const feed = await stubFeed(authedPage);
+    await stubContinuation(authedPage, REC_ANCHOR);
+    authedPage.context().on("page", (p) => void p.close().catch(() => {}));
+
+    await authedPage.goto("/recommendations", { waitUntil: "networkidle" });
+    const card = authedPage
+      .locator("article")
+      .filter({ hasText: "Trade panel reopens the tariff schedule" })
+      .first();
+    await expect(card).toBeVisible();
+    expect(feed.n).toBe(1);
+
+    await card.getByRole("button", { name: /Read article/i }).click();
+    await authedPage.waitForFunction(
+      (k) => window.sessionStorage.getItem(k as string) !== null,
+      ARMED_KEY,
+    );
+    await goHidden(authedPage);
+    // Past the 700 ms beacon grace in useRecordRead, so onSettled has definitely run and its
+    // invalidation has had every chance to evict the card.
+    await authedPage.waitForTimeout(1_500);
+
+    await comeBack(authedPage, 25_000);
+    expect(feed.n, "an armed continuation must not be refetched out from under").toBe(1);
+    await expect(card).toBeVisible();
+    await expect(authedPage.getByText("Compare this story")).toBeVisible();
+  });
+
+  test("a read with NO continuation still refetches the feed immediately", async ({ authedPage }) => {
+    // The other half of the fix, and the one a careless version would break: the 2026-08-02
+    // read-invalidation must stay immediate for the ~95% of reads the engine declines. Holding the
+    // feed back for every read would trade one bug for a staler feed on every read.
+    const feed = await stubFeed(authedPage);
+    await authedPage.route("**/api/me/continuation*", (route) =>
+      route.fulfill({ status: 200, contentType: "application/json", body: "null" }),
+    );
+    authedPage.context().on("page", (p) => void p.close().catch(() => {}));
+
+    await authedPage.goto("/recommendations", { waitUntil: "networkidle" });
+    const card = authedPage
+      .locator("article")
+      .filter({ hasText: "Trade panel reopens the tariff schedule" })
+      .first();
+    await expect(card).toBeVisible();
+
+    await card.getByRole("button", { name: /Read article/i }).click();
+    await expect
+      .poll(() => feed.n, { timeout: 10_000, message: "the feed must refresh after an ordinary read" })
+      .toBe(2);
+  });
 });
