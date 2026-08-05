@@ -119,8 +119,21 @@ defects in `docs/STORY_CLUSTER_MERGES.md`.
 
 ## Analytics
 
-All six events go through `lib/analytics.track`, so they land wherever the configured provider
-points.
+All six events go through `lib/analytics.track` to the default `/api/events` sink.
+
+> **They were dropped for the feature's entire life before 2026-08-05.** The sink discards any event
+> whose name is not in `product_analytics.EVENTS`, and none of the six were listed. Nothing surfaced
+> the loss: `track` is fire-and-forget, and the sink answers `200` with the drop only in its
+> `dropped` count. A client-side `track()` call is not instrumentation until the name is in that
+> allow-list, and `PROPS` must name every property or the row is stored with the measurement
+> stripped. `test_every_event_the_client_tracks_is_allow_listed` now scans the web source and fails
+> on any tracked-but-unlisted name.
+
+Read them back (internal-only, same posture as `/api/metrics`):
+
+```bash
+docker exec deploy-api-1 python examples/audit_continuation.py --events --email you@example.com
+```
 
 | event | fired by | answers |
 |---|---|---|

@@ -33,6 +33,12 @@ EVENTS: "frozenset[str]" = frozenset({
     "article_read",
     "health_report_viewed",
     "recommendations_viewed", "recommendation_opened", "recommendation_feedback",
+    # Story Continuation (docs/STORY_CONTINUATION.md §Analytics). These SHIPPED tracked and
+    # unlisted, so the sink dropped all six and the feature's entire measurement plan — armed→shown
+    # loss, the `surface` comparison behind design §9.1.1, the decay curve meant to replace the 4 h
+    # guess — recorded nothing. Client-side `track()` is not instrumentation until the name is here.
+    "continuation_eligible", "continuation_armed", "continuation_shown",
+    "continuation_opened", "continuation_dismissed", "continuation_all_outlets",
 })
 
 # Per-event allow-listed properties (scalars only; everything else is dropped). Keeping this explicit
@@ -51,6 +57,17 @@ PROPS: "dict[str, tuple[str, ...]]" = {
     "recommendations_viewed": ("count",),
     "recommendation_opened": ("strategy", "crossCutting"),
     "recommendation_feedback": ("action",),
+    # Story Continuation. `storyId` is an internal cluster id, not a reader fact; the rest are the
+    # measurements the design asks for — `surface` separates the feed from the story page (§9.1.1),
+    # `minutesSinceRead` is the decay curve behind the 4 h freshness guess, and the gap between
+    # `eligible` and `armed` is client-side storage loss. No url, no publisher, no headline.
+    "continuation_eligible": ("storyId", "anchorLean", "siblingLean", "distance", "candidateCount"),
+    "continuation_armed": ("storyId",),
+    "continuation_shown": ("storyId", "hiddenMs", "minutesSinceRead", "impressionIndex",
+                           "distance", "surface"),
+    "continuation_opened": ("storyId", "distance", "minutesSinceRead"),
+    "continuation_dismissed": ("storyId",),
+    "continuation_all_outlets": ("storyId",),
 }
 
 _MAX_STR = 200          # property string values are truncated to this

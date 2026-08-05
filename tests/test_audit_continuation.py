@@ -452,3 +452,67 @@ def test_counters_mode_needs_no_store(monkeypatch, capsys):
     monkeypatch.setattr(sys, "argv", ["audit_continuation.py", "--counters"])
     assert ac.main() == 0
     assert "nothing yet" in capsys.readouterr().out
+
+
+# --------------------------------------------------------------------------- --events
+def _event(st, uid, name, props=None):
+    # `record_analytics_events` takes snake_case (it writes the ORM row); `list_analytics_events`
+    # returns camelCase. Getting that backwards writes a row with a NULL user_id that every
+    # per-reader filter silently drops — which is what the first draft of these tests did.
+    st.record_analytics_events([{
+        "event": name, "user_id": uid, "anon_id": "a1", "session_id": "s1",
+        "props": props or {"storyId": "s-1"},
+        "client_ts": "2026-08-05T10:00:00+00:00", "server_ts": "2026-08-05T10:00:00+00:00",
+    }])
+
+
+def test_events_mode_names_the_stage_that_failed(st, uid, capsys):
+    """The reason this mode exists. --counters ends at the engine; from there on the only witnesses
+    are these events, and an armed-but-never-shown offer has a different cause from an
+    eligible-but-never-armed one."""
+    _event(st, uid, "continuation_eligible")
+    _event(st, uid, "continuation_armed")
+    assert ac.report_events(st, uid) == 0
+    out = capsys.readouterr().out
+    assert "LOST BEFORE RENDER" in out
+    assert "dwell gate" in out and "DIFFERENT page" in out and "impressions" in out
+
+
+def test_events_mode_separates_a_storage_failure_from_a_render_failure(st, uid, capsys):
+    _event(st, uid, "continuation_eligible")
+    assert ac.report_events(st, uid) == 0
+    out = capsys.readouterr().out
+    assert "LOST AT ARMING" in out
+    assert "LOST BEFORE RENDER" not in out
+
+
+def test_events_mode_reports_shown_by_surface(st, uid, capsys):
+    """`surface` is the measurement design §9.1.1 says would overturn the primary-surface choice, so
+    the probe has to actually break it out rather than report one blended number."""
+    for name in ("continuation_eligible", "continuation_armed"):
+        _event(st, uid, name)
+    _event(st, uid, "continuation_shown", {"storyId": "s-1", "surface": "card"})
+    _event(st, uid, "continuation_shown", {"storyId": "s-2", "surface": "story"})
+    assert ac.report_events(st, uid) == 0
+    out = capsys.readouterr().out
+    assert "shown by surface" in out and "card" in out and "story" in out
+    assert "LOST" not in out                     # nothing failed — say nothing
+
+
+def test_events_mode_does_not_confuse_an_old_deploy_with_a_silent_browser(st, uid, capsys):
+    """Empty is genuinely ambiguous: before the allow-list fix the sink dropped all six, so an empty
+    result from an older build says nothing at all about the client. Claiming otherwise would send
+    the next investigation at the wrong layer."""
+    assert ac.report_events(st, uid) == 0
+    out = capsys.readouterr().out
+    assert "none recorded" in out and "DROPPED by the sink's allow-list" in out
+
+
+def test_events_mode_ignores_other_readers_and_other_events(st, uid, capsys):
+    other = st.upsert_user_by_identity("dev", "someone-else").id
+    _event(st, uid, "continuation_eligible")
+    _event(st, other, "continuation_eligible")
+    _event(st, uid, "article_read", {"source": "discover"})
+    assert ac.report_events(st, uid) == 0
+    out = capsys.readouterr().out
+    assert "1 continuation event(s) for reader" in out

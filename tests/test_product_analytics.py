@@ -195,3 +195,60 @@ def test_analytics_dashboard_is_internal_only_in_production(client, monkeypatch)
     monkeypatch.setattr(api_fastapi, "_internal_secret", lambda: "s3cret")
     assert client.get("/api/analytics/funnel").status_code == 404
     assert client.get("/api/analytics/funnel", headers={"X-IH-Auth": "s3cret"}).status_code == 200
+
+
+# --------------------------------------------------------------------------- the taxonomy is a contract
+def _tracked_events() -> set:
+    """Every event name the web client actually calls ``track()`` with."""
+    import re
+    web = pathlib.Path(__file__).resolve().parent.parent / "web"
+    names = set()
+    for path in list(web.rglob("*.ts")) + list(web.rglob("*.tsx")):
+        if "node_modules" in path.parts or ".next" in path.parts:
+            continue
+        names |= set(re.findall(r'track\(\s*"([a-z_]+)"', path.read_text(encoding="utf-8")))
+    return names
+
+
+def test_every_event_the_client_tracks_is_allow_listed():
+    """The sink DROPS any event whose name is not in ``EVENTS``, silently and by design — so a
+    client-side ``track()`` call is not instrumentation until the name is here.
+
+    Story Continuation shipped all six of its events tracked and unlisted. Every one was discarded
+    for the feature's whole life, and the loss was invisible from both ends: the client's `track` is
+    fire-and-forget, and the sink answers 200 with the drop only in its `dropped` count. The
+    measurement plan the design leans on — armed→shown loss, the `surface` comparison behind §9.1.1,
+    the decay curve meant to retire the 4 h guess — recorded nothing at all.
+    """
+    tracked = _tracked_events()
+    assert tracked, "found no track() calls — the scan is broken, not the taxonomy"
+    missing = sorted(tracked - set(pa.EVENTS))
+    assert not missing, (
+        f"tracked by the client but dropped by the sink: {missing}. "
+        f"Add them to product_analytics.EVENTS (and PROPS) or stop tracking them."
+    )
+
+
+def test_every_allow_listed_event_declares_its_properties():
+    """An event in EVENTS but absent from PROPS is stored with its properties silently stripped —
+    the row survives, the measurement does not, which is the harder version of the bug above."""
+    undeclared = sorted(e for e in pa.EVENTS if e not in pa.PROPS)
+    assert not undeclared, f"in EVENTS with no PROPS entry: {undeclared}"
+
+
+def test_continuation_props_survive_sanitization():
+    """Pins the property names against what the strip sends. A renamed key is dropped by
+    `sanitize_props` without error, so `surface` or `minutesSinceRead` could go missing from every
+    row while the event count stayed healthy."""
+    shown = pa.sanitize_props("continuation_shown", {
+        "storyId": "s-1", "hiddenMs": 25_000, "minutesSinceRead": 3, "impressionIndex": 1,
+        "distance": 1.4, "surface": "card", "publisher": "CNN", "url": "https://x.example.com/a",
+    })
+    assert shown == {"storyId": "s-1", "hiddenMs": 25_000, "minutesSinceRead": 3,
+                     "impressionIndex": 1, "distance": 1.4, "surface": "card"}, shown
+
+    eligible = pa.sanitize_props("continuation_eligible", {
+        "storyId": "s-1", "anchorLean": -0.6, "siblingLean": 0.8, "distance": 1.4,
+        "candidateCount": 3,
+    })
+    assert set(eligible) == {"storyId", "anchorLean", "siblingLean", "distance", "candidateCount"}

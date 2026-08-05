@@ -351,6 +351,83 @@ def report_counters(base: str) -> int:
     return 0
 
 
+_FUNNEL = ("continuation_eligible", "continuation_armed", "continuation_shown",
+           "continuation_opened")
+
+
+def report_events(st, uid: "int | None") -> int:
+    """The CLIENT-side funnel, from the analytics events the browser sent.
+
+    ``--counters`` ends where the payload leaves the engine. Everything after that — storage,
+    mounting, the dwell gate, the dismissal and impression caps — happens in a browser nobody can
+    attach a debugger to, and these four events are the only witnesses to it:
+
+        eligible  the engine said yes            (equals `offer` in --counters)
+        armed     sessionStorage accepted it     (a gap here is quota / private mode)
+        shown     it rendered on a return        (a gap here is the dwell gate, an unmounted card,
+                                                  a previous dismissal, or the impression cap)
+        opened    the reader took it
+
+    Read-only. Reads the store directly rather than the internal HTTP route, so it works from a
+    shell without the internal secret.
+    """
+    try:
+        rows = st.list_analytics_events()
+    except Exception as exc:
+        print(f"\ncould not read analytics events: {type(exc).__name__}: {exc}")
+        return 2
+
+    rows = [r for r in rows if str(r.get("event") or "").startswith("continuation_")]
+    if uid is not None:
+        rows = [r for r in rows if r.get("userId") == uid]
+
+    print(f"\nCLIENT EVENTS  {len(rows):,} continuation event(s)"
+          f"{'' if uid is None else f' for reader {uid}'}")
+    if not rows:
+        print("  none recorded.\n"
+              "  Before 2026-08-05 these were DROPPED by the sink's allow-list, so an empty result\n"
+              "  from an older deploy says nothing about the browser. On a current build it means\n"
+              "  the events never arrived — check that /api/events is reachable from the web tier.")
+        return 0
+
+    counts: dict = {}
+    for r in rows:
+        counts[r.get("event")] = counts.get(r.get("event"), 0) + 1
+    prev = None
+    for name in _FUNNEL:
+        n = counts.get(name, 0)
+        drop = "" if prev is None or prev == 0 else f"   ({n}/{prev} of the stage above)"
+        print(f"  {name:<26} {n:>6,}{drop}")
+        prev = n
+    for name in ("continuation_dismissed", "continuation_all_outlets"):
+        print(f"  {name:<26} {counts.get(name, 0):>6,}")
+
+    # The stage that actually failed, named — the reason to run this at all.
+    if counts.get("continuation_eligible") and not counts.get("continuation_armed"):
+        print("\n  LOST AT ARMING — the offer arrived and sessionStorage refused it "
+              "(private mode, full quota, or storage disabled).")
+    elif counts.get("continuation_armed") and not counts.get("continuation_shown"):
+        print("\n  LOST BEFORE RENDER — the offer armed and never displayed. In order of "
+              "likelihood:\n"
+              "    * the return was under the 20 s dwell gate;\n"
+              "    * the reader came back to a DIFFERENT page, so no card was mounted for it;\n"
+              "    * this story was dismissed before, or has already had its 2 impressions\n"
+              "      (localStorage `hv.continue` — per story, and it outlives the session).")
+
+    # `surface` is the measurement design §9.1.1 says would overturn the primary-surface decision.
+    by_surface: dict = {}
+    for r in rows:
+        if r.get("event") != "continuation_shown":
+            continue
+        s = (r.get("props") or {}).get("surface") or "unknown"
+        by_surface[s] = by_surface.get(s, 0) + 1
+    if by_surface:
+        print("\n  shown by surface:")
+        for s, n in sorted(by_surface.items()):
+            print(f"    {s:<10} {n:>6,}")
+    return 0
+
+
 def _quote(url: str) -> str:
     from urllib.parse import quote
     return quote(url, safe="")
@@ -427,6 +504,9 @@ def main() -> int:
     ap.add_argument("--counters", action="store_true",
                     help="what the LIVE endpoint answered browsers since the last restart "
                          "(offer / null / disabled / error) — no store, no index, instant")
+    ap.add_argument("--events", action="store_true",
+                    help="the CLIENT-side funnel from stored analytics events "
+                         "(eligible -> armed -> shown -> opened) — where --counters stops")
     args = ap.parse_args()
 
     # Before the store: this mode asks the SERVER what it answered, and a store that will not open
@@ -441,6 +521,12 @@ def main() -> int:
         print(f"store          {st.engine.url}")
     except Exception:
         print(f"store          {args.db or os.environ.get('RWE_DB_URL') or '(default)'}")
+
+    if args.events:
+        # An unresolvable reader is not fatal here: the funnel over EVERY reader still names the
+        # stage that failed, and refusing to print it would withhold the answer over a detail.
+        uid = _resolve_reader(st, args.email, args.user) if (args.email or args.user) else None
+        return report_events(st, uid)
 
     if args.suggest:
         uid = _resolve_reader(st, args.email, args.user)
