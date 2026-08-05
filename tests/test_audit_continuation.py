@@ -83,7 +83,7 @@ def test_every_gate_label_is_reachable(st, uid, expected, story, eligible):
 @pytest.mark.parametrize("expected,story,eligible", _cases(), ids=[c[0] for c in _cases()])
 def test_attribution_agrees_with_the_resolver(st, uid, expected, story, eligible):
     """The audit's verdict must be the module's verdict — the whole point of the self-check."""
-    counter, drift, _ = ac._run(st, _index(story), [(uid, ANCHOR)], 50, 5)
+    counter, drift, _, _testable = ac._run(st, _index(story), [(uid, ANCHOR)], 50, 5)
     assert not drift, drift
     assert counter[expected] == 1
     assert bool(counter.get("ELIGIBLE")) is eligible
@@ -94,7 +94,7 @@ def test_a_syndicated_reprint_is_not_a_second_outlet(st, uid):
     over-report the eligible rate on exactly the clusters syndication dominates."""
     story = _story([_member(ANCHOR, "Sportskeeda", -0.6), _member(NEAR, "Sportskeeda.Com", 0.6)])
     assert ac._attribute(st, uid, ANCHOR, _index(story)) == "no_unread_other_outlet"
-    _, drift, _ = ac._run(st, _index(story), [(uid, ANCHOR)], 50, 5)
+    _, drift, _, _testable = ac._run(st, _index(story), [(uid, ANCHOR)], 50, 5)
     assert not drift
 
 
@@ -109,7 +109,7 @@ def test_the_drift_self_check_actually_fires(st, uid, monkeypatch):
     rather than print a number nobody can trust."""
     story = _story([_member(ANCHOR, "CNN", -0.6), _member(NEAR, "The Wall Street Journal", 0.6)])
     monkeypatch.setattr(ac.sc, "resolve", lambda *a, **k: None)
-    _, drift, _ = ac._run(st, _index(story), [(uid, ANCHOR)], 50, 5)
+    _, drift, _, _testable = ac._run(st, _index(story), [(uid, ANCHOR)], 50, 5)
     assert drift, "attribution said ELIGIBLE while resolve said None — that must be reported"
 
 
@@ -309,3 +309,27 @@ def test_a_404_warm_aborts_rather_than_retrying(st, monkeypatch, capsys):
     assert sum(1 for p in calls if p == ac.WARM_PATH) == 1
     assert slept == []
     assert "aborting the warm loop" in capsys.readouterr().out
+
+
+def test_stale_reads_are_reported_as_testable_now(st, uid):
+    """The operator's real question is "which article do I open?", and after a few hours every
+    stored read is stale, so the offers list is empty and answers nothing. The stale_read bucket is
+    exactly the set that WOULD produce a strip when read again."""
+    from datetime import datetime, timedelta, timezone
+    story = _story([_member(ANCHOR, "CNN", -0.6), _member(NEAR, "The Wall Street Journal", 0.6)])
+    _read(st, uid, ANCHOR, "CNN")
+
+    # fresh: it is an offer, and there is nothing to suggest re-reading
+    _c, _d, examples, testable = ac._run(st, _index(story), [(uid, ANCHOR)], 50, 5)
+    assert examples and not testable
+
+    # stale: no offer, but it IS the article to open
+    import story_continuation as sc_mod
+    real = sc_mod.freshness_hours
+    try:
+        sc_mod.freshness_hours = lambda: 0.0000001
+        counter, _d, examples, testable = ac._run(st, _index(story), [(uid, ANCHOR)], 50, 5)
+    finally:
+        sc_mod.freshness_hours = real
+    assert counter["stale_read"] == 1 and not examples
+    assert [u for _h, u in testable] == [ANCHOR]

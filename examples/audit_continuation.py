@@ -284,9 +284,14 @@ def _resolve_reader(st, email: "str | None", user: "int | None") -> "int | None"
 
 
 def _run(st, index: dict, anchors: list, openness: int, samples: int) -> tuple:
-    """``(counter, drift, examples)`` over ``[(user_id, url), …]``."""
+    """``(counter, drift, examples, testable)`` over ``[(user_id, url), …]``.
+
+    ``testable`` lists anchors in the ``stale_read`` bucket — cleared every structural gate, failed
+    only on age. Those are exactly the articles that WOULD produce a strip if read again now, which
+    is the question anyone trying the feature by hand actually has. Without them the operator is
+    told "0 offers" and left to guess which of a hundred articles to click."""
     counter: Counter = Counter()
-    drift, examples = [], []
+    drift, examples, testable = [], [], []
     for uid, url in anchors:
         why = _attribute(st, uid, url, index)
         counter[why] += 1
@@ -295,7 +300,12 @@ def _run(st, index: dict, anchors: list, openness: int, samples: int) -> tuple:
             drift.append((uid, url[-12:], why, offer is not None))
         if offer is not None and len(examples) < samples:
             examples.append((uid, offer))
-    return counter, drift, examples
+        if why == "stale_read" and len(testable) < samples:
+            story = (index or {}).get(er._canon(url)) or {}
+            member = next((m for m in (story.get("coverage") or [])
+                           if er._canon(str(m.get("url") or "")) == er._canon(url)), {})
+            testable.append((str(member.get("headline") or ""), url))
+    return counter, drift, examples, testable
 
 
 def _pct(n: int, total: int) -> str:
@@ -376,7 +386,8 @@ def main() -> int:
         print("\nno anchors to audit (no stored reads).")
         return 2
 
-    counter, drift, examples = _run(st, index, anchors, args.openness, args.examples)
+    counter, drift, examples, testable = _run(st, index, anchors, args.openness,
+                                                 args.examples)
     total = sum(counter.values())
 
     print(f"\n{label}\n" + "-" * 68)
@@ -413,6 +424,12 @@ def main() -> int:
         print(f"\n!! {len(drift)} anchor(s) where this audit and story_continuation.resolve "
               f"DISAGREE — the audit has drifted from the module and its numbers are not "
               f"trustworthy:\n   {drift[:5]}")
+
+    if testable:
+        print("\nREAD ONE OF THESE TO SEE THE STRIP — cleared every gate but age, so reading them\n"
+              "again makes the read fresh and the offer live:")
+        for headline, url in testable:
+            print(f"  {headline[:72]}\n    {url}")
 
     if examples:
         print(f"\nsample offers (openness {args.openness}):")
