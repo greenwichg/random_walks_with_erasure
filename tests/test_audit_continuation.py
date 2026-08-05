@@ -410,6 +410,19 @@ def test_a_cold_index_is_named_so_nulls_are_not_read_as_no_offer(monkeypatch, ca
     assert "COLD" in capsys.readouterr().out
 
 
+def test_a_cold_index_with_no_answers_explains_nothing_away(monkeypatch, capsys):
+    """Immediately after a restart there are no answers, so "every answer above is a null" is a
+    confident claim about an empty set. What the operator needs there is the ORDER — warm, then
+    read — because a read taken before the index exists produces a null that means nothing."""
+    body = json.dumps({"counters": {}})
+    monkeypatch.setattr(ac, "_http", lambda base, path, hdr, timeout=20: (200, body))
+    assert ac.report_counters("http://x") == 0
+    out = capsys.readouterr().out
+    assert "COLD" in out
+    assert "every answer above" not in out
+    assert "only THEN read" in out
+
+
 def test_a_warm_index_is_not_called_cold(monkeypatch, capsys):
     body = json.dumps({"counters": {"continuation_result_total|null": 12,
                                     "rec_story_index_hit_total": 3}})

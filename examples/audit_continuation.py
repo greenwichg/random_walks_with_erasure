@@ -339,7 +339,15 @@ def report_counters(base: str) -> int:
     for k in ("rec_story_index_hit_total", "rec_story_index_miss_total"):
         print(f"            {k:<28} {int(counters.get(k, 0)):>6,}")
     if not counters.get("rec_story_index_hit_total"):
-        print("            COLD — every answer above is a null meaning 'no index', not 'no offer'.")
+        if total:
+            print("            COLD — every answer above is a null meaning 'no index', not "
+                  "'no offer'.")
+        else:
+            # Nothing has been answered yet, so there are no answers to explain away. Saying it
+            # anyway would be a confident claim about an empty set, which is how a probe misleads.
+            print("            COLD — warm it by loading Recommendations, wait for hits above 0, "
+                  "and only THEN read an article. A read taken now answers null for want of an "
+                  "index.")
     return 0
 
 
