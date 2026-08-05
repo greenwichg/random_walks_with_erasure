@@ -380,6 +380,44 @@ unrated (aggregator / wire / research / forum). The backlog is a flat tail, not 
 membership is the binding constraint**, and loosening clustering admission re-opens the merge
 defects in `docs/STORY_CLUSTER_MERGES.md` — not something to trade for this feature.
 
+### 9.1.1 Surface priority — decided 2026-08-05
+
+**Recommendations is the primary surface. The story page is secondary.** The design shipped with
+five equal mounts and no stated ranking; this settles it.
+
+The story page has the higher *eligibility* — every row there is already a cluster member, so gate 1
+passes by construction where it rejects ~4 in 5 feed cards (67.8% of 118 real reads were
+`not_clustered`). That is the argument for it, and it loses.
+
+It loses because eligibility is not value. The story page **already** exposes multiple viewpoints
+through the coverage list and its lean filters; the strip's marginal contribution there is naming
+*which* single outlet opposes you, on a page where all of them are visible. It is additive on a
+feed and largely redundant next to a coverage list — and the strip already concedes this by
+suppressing its own "View all N outlets" link on that surface, because the link would point at the
+page the reader is on. Recommendations is also where the decision the strip is trying to influence
+actually happens: what to read next.
+
+**This costs nothing structurally.** `RecommendationCard` and `DiscoverCard` already mount
+`<ContinuationStrip anchorUrl={…} />` with identical defaults; the story page differs only in
+`showAllOutlets={false}` and `surface="story"`. Priority here means where verification, measurement
+and copy work go — not a change to what renders.
+
+What it does change:
+
+* **Verification order.** Confirming the strip renders on Recommendations after `be0426d` is now the
+  gating check, not a follow-up. The story page render (2026-08-05) proved the mechanism; it did not
+  prove the surface that matters.
+* **§9.2's topic gate gets more urgent, not less.** A story page is one the reader deliberately
+  opened; a feed carries whatever the recommender picked, so the sports-and-entertainment problem is
+  strictly worse on the primary surface.
+* **The overlap with the feed's own story slot becomes a live question.** `RWE_STORY_SLOT` puts a
+  cross-session "You've been following this story / compare with X" card on the same page. Same
+  goal, different timing (same-session minutes vs. next session). Whether both may fire for one
+  story is unanswered here and should be decided before either is tuned.
+* **`continuation_shown.surface` stops being a curiosity.** `card` vs `story` armed→shown is now the
+  measurement that would overturn this decision if the yield gap is larger than the redundancy
+  argument. Nothing has been measured yet.
+
 ### 9.2 V1.1 — small, high-value
 
 - **A topic gate for non-political stories.** *Measured on production, 2026-08-03, and the largest

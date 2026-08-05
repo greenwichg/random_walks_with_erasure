@@ -183,10 +183,16 @@ Two earlier client faults, fixed before this one, had the same symptom:
   same page, scrolled to the same card**. This is design §2.1 gate 4 ("the source card is currently
   mounted") and not a defect, but it is the most likely reason a hand-run test sees nothing.
 
-  The story page is the surface with the best odds by construction: every row there is already a
-  cluster member, so the membership gate that rejects ~4 in 5 Discover cards passes automatically.
-  It suppresses the "View all N outlets" link, which would point at the page the reader is on, and
-  reports `surface: "story"` on `continuation_shown` — comparing that against `card` is the point of
-  the field, since one blended armed→shown ratio would hide a large structural difference.
+  **Recommendations is the primary surface; the story page is secondary** (design §9.1.1, decided
+  2026-08-05). The story page has the better odds by construction — every row there is already a
+  cluster member, so the membership gate that rejects ~4 in 5 Discover cards passes automatically —
+  but a coverage list with lean filters already shows the reader every viewpoint, so the strip is
+  additive on a feed and largely redundant there. Priority is about where verification and copy work
+  go; both surfaces render the same component, differing only in `showAllOutlets` and `surface`.
+
+  The story page suppresses the "View all N outlets" link, which would point at the page the reader
+  is on, and reports `surface: "story"` on `continuation_shown` — comparing that against `card` is
+  the point of the field, since one blended armed→shown ratio would hide a large structural
+  difference, and it is the measurement that would overturn §9.1.1.
 * **Signed-in only.** Without read history the unread gate cannot be evaluated, and an anonymous
   answer would be a guess.
