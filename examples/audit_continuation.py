@@ -384,10 +384,13 @@ def report_events(st, uid: "int | None") -> int:
     print(f"\nCLIENT EVENTS  {len(rows):,} continuation event(s)"
           f"{'' if uid is None else f' for reader {uid}'}")
     if not rows:
-        print("  none recorded.\n"
-              "  Before 2026-08-05 these were DROPPED by the sink's allow-list, so an empty result\n"
-              "  from an older deploy says nothing about the browser. On a current build it means\n"
-              "  the events never arrived — check that /api/events is reachable from the web tier.")
+        print("  none recorded — which is the EXPECTED result unless --counters shows offer > 0.\n"
+              "  The first event fires only when a payload reaches the browser, so an engine that\n"
+              "  declined every read leaves nothing here to find. Check --counters before reading\n"
+              "  anything into this.\n"
+              "  Two other ways to be empty: an older deploy (before 2026-08-05 the sink's\n"
+              "  allow-list dropped all six, so silence says nothing about the browser), or\n"
+              "  /api/events being unreachable from the web tier.")
         return 0
 
     counts: dict = {}

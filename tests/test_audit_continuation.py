@@ -506,6 +506,10 @@ def test_events_mode_does_not_confuse_an_old_deploy_with_a_silent_browser(st, ui
     assert ac.report_events(st, uid) == 0
     out = capsys.readouterr().out
     assert "none recorded" in out and "DROPPED by the sink's allow-list" in out
+    # …and it must lead with the ORDINARY cause. Production read 0 offers and 0 events, and the
+    # first draft's wording ("the events never arrived — check /api/events") pointed at a transport
+    # failure when the honest reading was that the engine had declined every read.
+    assert "EXPECTED result unless --counters shows offer > 0" in out
 
 
 def test_events_mode_ignores_other_readers_and_other_events(st, uid, capsys):
