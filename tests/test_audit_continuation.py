@@ -505,11 +505,14 @@ def test_events_mode_does_not_confuse_an_old_deploy_with_a_silent_browser(st, ui
     the next investigation at the wrong layer."""
     assert ac.report_events(st, uid) == 0
     out = capsys.readouterr().out
-    assert "none recorded" in out and "DROPPED by the sink's allow-list" in out
-    # …and it must lead with the ORDINARY cause. Production read 0 offers and 0 events, and the
+    assert "none recorded" in out
+    assert "allow-list dropped all six" in out           # the old-deploy caveat survives
+    # …but it must LEAD with the ordinary cause. Production read 0 offers and 0 events, and the
     # first draft's wording ("the events never arrived — check /api/events") pointed at a transport
     # failure when the honest reading was that the engine had declined every read.
     assert "EXPECTED result unless --counters shows offer > 0" in out
+    lead, rest = out.split("allow-list dropped all six", 1)
+    assert "EXPECTED result" in lead, "the ordinary cause must come first, not as a footnote"
 
 
 def test_events_mode_ignores_other_readers_and_other_events(st, uid, capsys):
