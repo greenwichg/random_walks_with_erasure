@@ -523,3 +523,39 @@ def test_events_mode_ignores_other_readers_and_other_events(st, uid, capsys):
     assert ac.report_events(st, uid) == 0
     out = capsys.readouterr().out
     assert "1 continuation event(s) for reader" in out
+
+
+def test_events_mode_names_why_a_return_was_suppressed(st, uid, capsys):
+    """`capped` and `dismissed` live in localStorage and OUTLIVE the session — and they accumulated
+    while these events were being dropped, so a story can be at the cap with no record of ever
+    having been shown. Reporting the count without the reason would leave that undiagnosable."""
+    _event(st, uid, "continuation_eligible")
+    _event(st, uid, "continuation_armed")
+    _event(st, uid, "continuation_suppressed", {"storyId": "s-1", "reason": "capped"})
+    assert ac.report_events(st, uid) == 0
+    out = capsys.readouterr().out
+    assert "suppressed because" in out and "capped" in out
+
+
+def test_events_mode_reports_arming_that_happened_in_a_backgrounded_tab(st, uid, capsys):
+    """The precondition for the trigger failing silently: the card enables its visibility listener
+    while the tab is already hidden. Counting it separates "the gates rejected the return" from
+    "the return was never observed", which no other signal here can do."""
+    _event(st, uid, "continuation_eligible")
+    _event(st, uid, "continuation_armed", {"storyId": "s-1", "hidden": True})
+    assert ac.report_events(st, uid) == 0
+    out = capsys.readouterr().out
+    assert "armed while the tab was ALREADY hidden: 1 of 1" in out
+    assert "deferred" in out or "defers" in out       # the explanation, only when nothing was shown
+
+
+def test_a_hidden_arm_is_not_blamed_when_the_strip_did_render(st, uid, capsys):
+    """Arming while hidden is NORMAL — it is the common ordering, and ca7f6f1 exists to make it
+    work. Flagging it whenever it happens would manufacture a suspect out of the design."""
+    _event(st, uid, "continuation_eligible")
+    _event(st, uid, "continuation_armed", {"storyId": "s-1", "hidden": True})
+    _event(st, uid, "continuation_shown", {"storyId": "s-1", "surface": "card"})
+    assert ac.report_events(st, uid) == 0
+    out = capsys.readouterr().out
+    assert "armed while the tab was ALREADY hidden: 1 of 1" in out
+    assert "defers" not in out

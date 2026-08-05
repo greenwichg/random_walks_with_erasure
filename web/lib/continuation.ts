@@ -285,7 +285,18 @@ export function prefetchContinuation(anchorUrl: string): void {
       });
 
       armCandidate(anchorUrl, offer);
-      if (readArmed()) track("continuation_armed", { storyId: offer.storyId });
+      // `hidden` is whether the publisher's tab had ALREADY taken focus when the answer landed —
+      // the ordering the whole trigger depends on. Arming while hidden means the card enables its
+      // visibility listener in a backgrounded tab, where the browser is free to defer the effect;
+      // if that deferral runs past the reader's return, the hide is never observed and the return
+      // is correctly-but-uselessly ignored. Cheap to record, and it is the difference between "the
+      // gates rejected it" and "the trigger never fired".
+      if (readArmed()) {
+        track("continuation_armed", {
+          storyId: offer.storyId,
+          hidden: typeof document === "undefined" ? false : document.visibilityState === "hidden",
+        });
+      }
     })
     .catch(() => {
       /* offline, aborted, or a slow engine — the reader loses a strip and notices nothing */

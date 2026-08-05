@@ -402,8 +402,33 @@ def report_events(st, uid: "int | None") -> int:
         drop = "" if prev is None or prev == 0 else f"   ({n}/{prev} of the stage above)"
         print(f"  {name:<26} {n:>6,}{drop}")
         prev = n
-    for name in ("continuation_dismissed", "continuation_all_outlets"):
+    for name in ("continuation_suppressed", "continuation_dismissed", "continuation_all_outlets"):
         print(f"  {name:<26} {counts.get(name, 0):>6,}")
+
+    # WHY a qualifying return rendered nothing. `capped` and `dismissed` are localStorage state that
+    # OUTLIVES the session and accumulated while these events were being dropped, so a story can sit
+    # at the cap with no record of ever having been shown.
+    reasons: dict = {}
+    hidden_arms = 0
+    for r in rows:
+        props = r.get("props") or {}
+        if r.get("event") == "continuation_suppressed":
+            why = props.get("reason") or "unknown"
+            reasons[why] = reasons.get(why, 0) + 1
+        elif r.get("event") == "continuation_armed" and props.get("hidden"):
+            hidden_arms += 1
+    if reasons:
+        print("\n  suppressed because:")
+        for why, n in sorted(reasons.items()):
+            print(f"    {why:<10} {n:>6,}")
+
+    armed_n = counts.get("continuation_armed", 0)
+    if armed_n:
+        print(f"\n  armed while the tab was ALREADY hidden: {hidden_arms:,} of {armed_n:,}")
+        if hidden_arms and not counts.get("continuation_shown"):
+            print("    The card enables its visibility listener in a backgrounded tab. If the "
+                  "browser\n    defers that work past the reader's return, the hide is never "
+                  "observed and the\n    return is ignored — which looks exactly like this.")
 
     # The stage that actually failed, named — the reason to run this at all.
     if counts.get("continuation_eligible") and not counts.get("continuation_armed"):

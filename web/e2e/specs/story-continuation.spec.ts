@@ -104,6 +104,31 @@ print("seeded story cluster")
   execSync("python3 -", { input: py, stdio: ["pipe", "inherit", "inherit"] });
 }
 
+/**
+ * The `continuation_suppressed` reasons the ENGINE has stored for this reader.
+ *
+ * Asserted at the store rather than on the wire, for two reasons. The provider ships batches via
+ * `navigator.sendBeacon`, and Playwright exposes no body for those — `postData()` and
+ * `postDataBuffer()` both return null, which reads as "an empty batch" and is indistinguishable
+ * from the event never firing. And the store is the honest end of the contract: an event that
+ * reaches `/api/events` but is not in `product_analytics.EVENTS` is DROPPED, which is exactly how
+ * all six continuation events were lost for the feature's whole life. This asserts it survived.
+ */
+function suppressedReasons(userId: number): string[] {
+  const py = `
+import json, sys
+sys.path.insert(0, ${JSON.stringify(path.join(REPO_ROOT, "examples"))})
+import store as store_mod
+
+st = store_mod.Store("sqlite:///" + ${JSON.stringify(DB)})
+out = [ (r.get("props") or {}).get("reason")
+        for r in st.list_analytics_events()
+        if r.get("event") == "continuation_suppressed" and r.get("userId") == ${userId} ]
+print(json.dumps(out))
+`;
+  return JSON.parse(execSync("python3 -", { input: py, encoding: "utf8" }).trim());
+}
+
 const OFFER = {
   storyId: "s-e2e-spectrum",
   storyTitle: "Regulator publishes the spectrum auction timetable",
@@ -232,7 +257,7 @@ test.describe("Story Continuation", () => {
     expect(state[OFFER.storyId]?.d).toBe(1);
   });
 
-  test("stops after two impressions without engagement", async ({ authedPage }) => {
+  test("stops after two impressions without engagement", async ({ authedPage, uid }) => {
     const anchor = ANCHOR_URL;
     seedAnchor(anchor);
     await authedPage.goto("/discover", { waitUntil: "networkidle" });
@@ -248,9 +273,17 @@ test.describe("Story Continuation", () => {
 
     // On mobile a reload IS the return path, so without the cap this would come back on every page
     // view for the whole freshness window (§6.3).
+    //
+    // The capped return must also REPORT itself. A qualifying return that renders nothing is
+    // indistinguishable, from outside the browser, from a return that was never detected — and the
+    // two have different causes. Production hit exactly that ambiguity: armed 6, shown 1, and no
+    // way to tell which of the two had happened.
     await arm(authedPage, anchor);
     await returnAfter(authedPage, 25_000);
     await expect(authedPage.getByText("Compare this story")).toBeHidden();
+    await expect
+      .poll(() => suppressedReasons(uid), { timeout: 15_000, intervals: [500, 1000, 2000] })
+      .toEqual(["capped"]);
   });
 
   test("a read past the freshness window is not offered", async ({ authedPage }) => {

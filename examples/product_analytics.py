@@ -39,6 +39,7 @@ EVENTS: "frozenset[str]" = frozenset({
     # guess — recorded nothing. Client-side `track()` is not instrumentation until the name is here.
     "continuation_eligible", "continuation_armed", "continuation_shown",
     "continuation_opened", "continuation_dismissed", "continuation_all_outlets",
+    "continuation_suppressed",
 })
 
 # Per-event allow-listed properties (scalars only; everything else is dropped). Keeping this explicit
@@ -62,7 +63,10 @@ PROPS: "dict[str, tuple[str, ...]]" = {
     # `minutesSinceRead` is the decay curve behind the 4 h freshness guess, and the gap between
     # `eligible` and `armed` is client-side storage loss. No url, no publisher, no headline.
     "continuation_eligible": ("storyId", "anchorLean", "siblingLean", "distance", "candidateCount"),
-    "continuation_armed": ("storyId",),
+    "continuation_armed": ("storyId", "hidden"),
+    # A qualifying return that rendered nothing, and WHY. Without it the two ways to see no strip —
+    # the gates rejecting a return, and the return never being detected — are the same silence.
+    "continuation_suppressed": ("storyId", "reason"),
     "continuation_shown": ("storyId", "hiddenMs", "minutesSinceRead", "impressionIndex",
                            "distance", "surface"),
     "continuation_opened": ("storyId", "distance", "minutesSinceRead"),

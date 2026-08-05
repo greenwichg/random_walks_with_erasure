@@ -252,3 +252,14 @@ def test_continuation_props_survive_sanitization():
         "candidateCount": 3,
     })
     assert set(eligible) == {"storyId", "anchorLean", "siblingLean", "distance", "candidateCount"}
+
+
+def test_suppression_reason_and_hidden_flag_survive_sanitization():
+    """`reason` is the whole payload of continuation_suppressed, and `hidden` is a BOOLEAN whose
+    false value is meaningful — `_scalar` must not drop it the way it drops None."""
+    assert pa.sanitize_props("continuation_suppressed", {"storyId": "s-1", "reason": "capped"}) == {
+        "storyId": "s-1", "reason": "capped"}
+    assert pa.sanitize_props("continuation_armed", {"storyId": "s-1", "hidden": False}) == {
+        "storyId": "s-1", "hidden": False}
+    assert pa.sanitize_props("continuation_armed", {"storyId": "s-1", "hidden": True}) == {
+        "storyId": "s-1", "hidden": True}

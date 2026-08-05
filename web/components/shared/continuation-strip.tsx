@@ -9,6 +9,7 @@ import {
   dismissStory,
   mayShow,
   readArmed,
+  readState,
   recordImpression,
   subscribeArmed,
 } from "@/lib/continuation";
@@ -85,10 +86,21 @@ export function ContinuationStrip({
 
       const sinceRead = Date.now() - armed.armedAt;
       if (sinceRead > FRESHNESS_MS) {
+        // Reported, not silent. These two branches consume a qualifying return and render nothing,
+        // which from outside is indistinguishable from the return never being detected at all — and
+        // those have different causes and different fixes. A `suppressed` event says which.
+        track("continuation_suppressed", { storyId: armed.offer.storyId, reason: "stale" });
         clearArmed(); // past the moment; the feed slot covers a later session
         return;
       }
       if (!mayShow(armed.offer.storyId)) {
+        // `recordImpression` writes to localStorage whether or not the analytics event survives, so
+        // impressions accumulated while these events were being dropped by the sink. A story can
+        // therefore sit at the cap with no record of ever having been shown.
+        track("continuation_suppressed", {
+          storyId: armed.offer.storyId,
+          reason: readState()[armed.offer.storyId]?.d === 1 ? "dismissed" : "capped",
+        });
         clearArmed(); // dismissed, or already shown twice without engagement
         return;
       }
