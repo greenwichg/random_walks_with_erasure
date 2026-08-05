@@ -1841,3 +1841,44 @@ def test_the_endpoint_writes_nothing(client, uid, wired):
     for _ in range(3):
         client.get("/api/me/continuation", params={"url": ANCHOR}, headers=hdr)
     assert len(client.get("/api/me/history", headers=hdr).json()) == before
+
+
+# --------------------------------------------------------------------------- the outcome counter
+def test_offer_and_null_are_counted_apart(client, uid, wired):
+    """The request counter cannot tell an offer from a null — both are 200 — so "the endpoint is
+    being called" was read as "the strip is working" when it only meant the route was reachable.
+    This counter is the thing that splits a server-side failure from a browser-side one, so it has
+    to move DIFFERENTLY for the two outcomes, not merely exist."""
+    import obs_metrics
+    hdr = {"X-IH-User-Id": str(uid)}
+
+    def _count(outcome):
+        return int(obs_metrics.snapshot().get("counters", {})
+                   .get(f"continuation_result_total|{outcome}", 0))
+
+    offers, nulls = _count("offer"), _count("null")
+
+    assert client.get("/api/me/continuation", params={"url": ANCHOR},
+                      headers=hdr).json() is not None
+    assert (_count("offer"), _count("null")) == (offers + 1, nulls)
+
+    assert client.get("/api/me/continuation", params={"url": "https://nowhere.example.com/x"},
+                      headers=hdr).json() is None
+    assert (_count("offer"), _count("null")) == (offers + 1, nulls + 1)
+
+
+def test_a_dark_flag_is_counted_as_disabled_not_as_a_null(client, uid, story_index, monkeypatch):
+    """Otherwise a forgotten `RWE_STORY_CONTINUATION` and a genuinely ineligible reader look
+    identical in the counters, and the first question any investigation asks — is it even on? —
+    stays unanswerable from metrics."""
+    import obs_metrics
+    monkeypatch.delenv("RWE_STORY_CONTINUATION", raising=False)
+
+    def _count(outcome):
+        return int(obs_metrics.snapshot().get("counters", {})
+                   .get(f"continuation_result_total|{outcome}", 0))
+
+    disabled, nulls = _count("disabled"), _count("null")
+    assert client.get("/api/me/continuation", params={"url": ANCHOR},
+                      headers={"X-IH-User-Id": str(uid)}).json() is None
+    assert (_count("disabled"), _count("null")) == (disabled + 1, nulls)

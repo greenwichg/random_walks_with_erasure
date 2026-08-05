@@ -2803,6 +2803,25 @@ def add_reads(request: Request, req: ReadsRequest) -> dict:
             "sufficient": total >= engine.ESTIMATE_MIN_READS}
 
 
+def _continuation_outcome(outcome: str) -> None:
+    """Count what the continuation endpoint actually ANSWERED, not merely that it answered.
+
+    ``requests_total|GET /api/me/continuation|2xx`` cannot distinguish an offer from a null: "no
+    continuation" is a 200 with a ``null`` body, so a feature that never fires and a feature that
+    fires every time produce identical request counters. That ambiguity is why a clean 2xx count was
+    read as proof the strip was working when it proved only that the route was reachable.
+
+    One counter splits the two halves of any "it does not appear" report: ``offer`` > 0 means the
+    engine is producing offers and the loss is in the browser; ``offer`` == 0 with ``null`` > 0 means
+    the loss is server-side and ``audit_continuation`` says which gate. No URL, no user, no payload —
+    four labels and their counts."""
+    try:
+        import obs_metrics
+        obs_metrics.incr(f"continuation_result_total|{outcome}")
+    except Exception:                  # instrumentation must never break the read path
+        pass
+
+
 @app.get("/api/me/continuation", response_model=ContinuationModel | None, tags=["report"],
          summary="The signed-in user's continuation offer for one article they just opened",
          responses=_ERR_RESPONSES)
@@ -2824,6 +2843,7 @@ def my_continuation(request: Request, url: str = Query(..., max_length=2048)) ->
     ``null``, so the client contract can ship and be exercised before the feature is turned on."""
     uid = _require_real_user(request)
     if not story_continuation.enabled():
+        _continuation_outcome("disabled")
         return None
     st = _require_store()
     # The reader's own openness picks WHICH opposing outlet wins (nearest / novelty-first /
@@ -2834,10 +2854,13 @@ def my_continuation(request: Request, url: str = Query(..., max_length=2048)) ->
     except Exception:
         openness = 50
     try:
-        return story_continuation.resolve(st, uid, url, openness=openness)
+        offer = story_continuation.resolve(st, uid, url, openness=openness)
     except Exception:                  # an enhancement, never a hard dependency of the read path
         _log(logging.WARNING, "continuation_resolve_failed", url=url[:200])
+        _continuation_outcome("error")
         return None
+    _continuation_outcome("offer" if offer else "null")
+    return offer
 
 
 def _attach_published_at(arts: list) -> None:

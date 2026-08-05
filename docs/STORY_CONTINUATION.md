@@ -65,7 +65,25 @@ docker exec deploy-api-1 nice -n 19 python examples/audit_continuation.py --inli
 
 # the LIVE endpoint for one reader: auth, flag, payload shape, index metrics
 docker exec deploy-api-1 python examples/audit_continuation.py --serve --email you@example.com
+
+# what the endpoint ANSWERED to real browsers, since the last restart
+docker exec deploy-api-1 sh -c 'curl -s -H "x-ih-auth: $RWE_INTERNAL_SECRET" \
+  localhost:8000/api/metrics' | python -c 'import json,sys; \
+  print({k: v for k, v in json.load(sys.stdin)["counters"].items() if "continuation" in k})'
 ```
+
+`continuation_result_total` has four labels and settles "does it appear?" from the server side alone:
+
+| label | meaning | where to look next |
+|---|---|---|
+| `disabled` | `RWE_STORY_CONTINUATION` is not on in the container | `deploy/.env`, then `restart.sh api` |
+| `null` | reached the resolver, no offer | `--inline` for the gate that rejected it |
+| `offer` | a real payload went to the browser | the loss is **client-side** from here on |
+| `error` | the resolver raised | `continuation_resolve_failed` in the api logs |
+
+**`requests_total|GET /api/me/continuation|2xx` cannot answer this.** "No continuation" is a 200
+with a `null` body, so a feature that never fires and one that fires every time produce the same
+request count. A clean 2xx count proves only that the route is reachable.
 
 Notes that matter for reading the output:
 
@@ -154,6 +172,13 @@ Two earlier client faults, fixed before this one, had the same symptom:
   all three render the same component), `RecommendationCard`, and the story page's coverage list.
   History (`ArticleRow`) and the analyzer (`AnalysisResult`) also use `ReadArticleButton` and do not
   mount the strip — a read from those two arms a candidate that nothing renders.
+
+* **The strip is bound to the card, so it is bound to the page.** It renders inside the card the
+  reader clicked Read on. Returning to a *different* page — read from Search, come back and navigate
+  to Recommendations — unmounts that card, and the armed candidate stays valid and invisible exactly
+  as it did before `shouldDeferFeedRefetch`. Testing it means returning to the **same tab, on the
+  same page, scrolled to the same card**. This is design §2.1 gate 4 ("the source card is currently
+  mounted") and not a defect, but it is the most likely reason a hand-run test sees nothing.
 
   The story page is the surface with the best odds by construction: every row there is already a
   cluster member, so the membership gate that rejects ~4 in 5 Discover cards passes automatically.
