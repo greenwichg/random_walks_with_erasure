@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSession } from "next-auth/react";
 import { queryKeys, services } from "@/services";
 import { recordRead, type RecordReadInput } from "@/lib/record-read";
-import { shouldDeferFeedRefetch } from "@/lib/continuation";
+import { retireIfSiblingRead, shouldDeferFeedRefetch } from "@/lib/continuation";
 import type {
   AnalyzeMetadata,
   FeedbackAction,
@@ -185,6 +185,10 @@ export function useRecordRead() {
       await new Promise((resolve) => setTimeout(resolve, 700)); // let the beacon reach + persist
     },
     onSettled: (_data, _error, variables) => {
+      // §1.4: reading the offered sibling — from ANY surface, not just the strip's own CTA —
+      // retires the offer. Without this the strip would come back after a reload still inviting the
+      // reader to read something they have just read.
+      retireIfSiblingRead(variables.url);
       for (const key of [queryKeys.history, queryKeys.dashboard, queryKeys.analytics, queryKeys.report]) {
         qc.invalidateQueries({ queryKey: key });
       }

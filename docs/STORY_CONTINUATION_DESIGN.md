@@ -480,6 +480,23 @@ the two triggers safe to coexist.
 State written before this carries no `armedAt` and falls back to counting, so an existing cap is
 honoured rather than silently reset.
 
+### 9.1.4 §1.4's live read state, actually implemented — 2026-08-06
+
+§1.4 has always said *"sibling read in the meantime — strip disappears, derived from live read
+state, not a snapshot"*. It was never built: the armed candidate **is** a snapshot, resolved at the
+anchor's Read-click and then parked in sessionStorage, which now survives reloads and navigation by
+design. A reader who opened the offered article from Discover or Search would be shown the same
+offer again after a refresh, inviting them to read what they had just read.
+
+`retireIfSiblingRead` hangs off `useRecordRead` — the one mutation every surface shares — so it
+covers Discover, Search, Saved, the story page and the strip's own CTA without polling read state or
+refetching history. A rendered strip follows: `sync` clears a displayed offer whose candidate is
+gone, which also fixes §2.2 on the unbound instance, where reading a second article previously left
+the *previous* story's offer on screen because the mount trigger declines to run while one is shown.
+
+Cross-device and extension reads are still not seen — those never touch this tab's mutation. That is
+the residue of a snapshot design and is bounded by the 4 h window.
+
 ### 9.2 V1.1 — small, high-value
 
 - **A topic gate for non-political stories.** *Measured on production, 2026-08-03, and the largest

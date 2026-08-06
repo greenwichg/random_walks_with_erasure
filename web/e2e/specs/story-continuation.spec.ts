@@ -129,6 +129,30 @@ print(json.dumps(out))
   return JSON.parse(execSync("python3 -", { input: py, encoding: "utf8" }).trim());
 }
 
+/** Put the OFFERED article in the catalog too, so a real Discover card carries its url and the
+ *  sibling can be read through the same button every surface uses. */
+function seedSibling(url: string, headline: string): void {
+  const py = `
+import sys
+sys.path.insert(0, ${JSON.stringify(path.join(REPO_ROOT, "examples"))})
+import ingest
+import store as store_mod
+
+st = store_mod.Store("sqlite:///" + ${JSON.stringify(DB)})
+url = ${JSON.stringify(url)}
+title = ${JSON.stringify(headline)}
+st.upsert_feed_article(
+    canonical_url=ingest.canonical_url(url), url=url, publisher="Fox News",
+    source_publisher=None, title=title,
+    description="The regulator's timetable drew responses across the sector. " * 3,
+    body=None, published_at="2026-08-03T09:00:00Z", source_feed="e2e",
+    scored={"article_id": url, "outlet": "Fox News", "category": "Politics",
+            "lean": 2.0, "political": True, "title": title})
+print("seeded sibling")
+`;
+  execSync("python3 -", { input: py, stdio: ["pipe", "inherit", "inherit"] });
+}
+
 const OFFER = {
   storyId: "s-e2e-spectrum",
   storyTitle: "Regulator publishes the spectrum auction timetable",
@@ -624,5 +648,34 @@ test.describe("Story Continuation", () => {
       [STATE_KEY, OFFER.storyId] as const,
     );
     expect(n, "one offer, one impression — not one per trigger").toBe(1);
+  });
+
+  test("reading the offered sibling from elsewhere retires the strip", async ({ authedPage }) => {
+    // §1.4: "sibling read in the meantime — derived from live read state, not a snapshot". The
+    // armed candidate IS a snapshot taken at the anchor's click, and it survives reloads by design,
+    // so without this the strip comes back after a refresh still offering an article the reader has
+    // already read.
+    //
+    // Driven through the REAL Read button on the sibling's own card, because the wiring under test
+    // is `useRecordRead` — the one mutation every surface shares. A unit test on
+    // `retireIfSiblingRead` cannot tell whether anything calls it.
+    seedSibling(OFFER.sibling.url, OFFER.sibling.headline);
+    await authedPage.goto("/discover", { waitUntil: "networkidle" });
+    await arm(authedPage, ANCHOR_URL, 30_000);
+    await expect(authedPage.getByText("Compare this story")).toBeVisible();
+
+    authedPage.context().on("page", (p) => void p.close().catch(() => {}));
+    const siblingCard = authedPage
+      .locator("article")
+      .filter({ hasText: OFFER.sibling.headline })
+      .first();
+    await expect(siblingCard).toBeVisible();
+    await siblingCard.getByRole("button", { name: /Read article/i }).click();
+
+    // Gone at once, and still gone after a reload — the snapshot in sessionStorage is retired, not
+    // merely hidden in this render.
+    await expect(authedPage.getByText("Compare this story")).toBeHidden();
+    await authedPage.reload({ waitUntil: "networkidle" });
+    await expect(authedPage.getByText("Compare this story")).toBeHidden();
   });
 });

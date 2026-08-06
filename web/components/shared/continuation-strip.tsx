@@ -91,7 +91,17 @@ export function ContinuationStrip({
   // page of sixty cards costs sixty cheap in-memory subscriptions rather than sixty DOM listeners.
   const sync = React.useCallback(() => {
     const armed = readArmed();
-    setArmedFor(armed && (unbound || armed.anchorUrl === anchorUrl) ? { armedAt: armed.armedAt } : null);
+    const mine = armed && (unbound || armed.anchorUrl === anchorUrl) ? armed : null;
+    setArmedFor(mine ? { armedAt: mine.armedAt } : null);
+    // A rendered strip must FOLLOW the armed state, not outlive it. Two cases where it otherwise
+    // would: the reader opens the sibling from somewhere else (§1.4 retires the candidate, and an
+    // offer still on screen would invite them to read what they just read), and the reader reads a
+    // different article (§2.2 — superseded, not stacked; the unbound instance would keep showing
+    // the previous story's offer, since the mount trigger declines to run while one is displayed).
+    if (offerRef.current && (!mine || mine.offer.storyId !== offerRef.current.storyId)) {
+      offerRef.current = null;
+      setOffer(null);
+    }
   }, [anchorUrl, unbound]);
 
   React.useEffect(() => {

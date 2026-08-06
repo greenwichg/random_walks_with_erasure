@@ -195,6 +195,25 @@ export function shouldDeferFeedRefetch(url: string): boolean {
   return armed !== null && armed.anchorUrl === url;
 }
 
+/**
+ * Retire the armed offer if ``url`` is the sibling it was offering (§1.4, "sibling read in the
+ * meantime — derived from live read state, not a snapshot").
+ *
+ * The armed candidate IS a snapshot: it was resolved at the anchor's Read-click and then sat in
+ * sessionStorage. If the reader goes and reads that very sibling by another route — from Discover,
+ * from Search, from the story page — the offer is spent, and re-presenting it invites them to read
+ * something they have already read. Every in-app read goes through one mutation, so hooking it
+ * there covers every surface without polling read state or refetching history.
+ *
+ * Returns whether anything was retired, so a caller can tell "not mine" from "cleared".
+ */
+export function retireIfSiblingRead(url: string): boolean {
+  const armed = readArmed();
+  if (!armed || armed.offer.sibling.url !== url) return false;
+  clearArmed();
+  return true;
+}
+
 /** Disarm — after the strip is shown, opened, or dismissed. */
 export function clearArmed(): void {
   try {

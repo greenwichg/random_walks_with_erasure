@@ -21,6 +21,7 @@ import {
   readState,
   prefetchContinuation,
   recordImpression,
+  retireIfSiblingRead,
   shouldDeferFeedRefetch,
   subscribeArmed,
 } from "./continuation.ts";
@@ -429,3 +430,46 @@ test("impression state written before episodes existed still caps", () => {
     assert.equal(mayShow("s1", 2_000, 999), false);
   });
 });
+
+test("reading the offered sibling retires the offer, wherever the read happened", () => {
+  // §1.4: "sibling read in the meantime — derived from live read state, not a snapshot". The armed
+  // candidate IS a snapshot, resolved at the anchor's click; if the reader opens that sibling from
+  // Discover or Search instead of from the strip, re-presenting it invites them to read what they
+  // have just read.
+  withStorage(() => {
+    armCandidate("https://cbs.example.com/a", OFFER, 1_000);
+    assert.equal(retireIfSiblingRead(OFFER.sibling.url), true);
+    assert.equal(readArmed(), null);
+  });
+});
+
+test("reading something unrelated leaves the offer armed", () => {
+  withStorage(() => {
+    armCandidate("https://cbs.example.com/a", OFFER, 1_000);
+    assert.equal(retireIfSiblingRead("https://elsewhere.example.com/z"), false);
+    assert.equal(readArmed()?.offer.storyId, OFFER.storyId);
+  });
+});
+
+test("retiring the ANCHOR's own url does not disarm the offer", () => {
+  // The anchor read is what armed it. Matching on the anchor instead of the sibling would delete
+  // every candidate at the moment it was created — the whole feature, silently off.
+  withStorage(() => {
+    armCandidate("https://cbs.example.com/a", OFFER, 1_000);
+    assert.equal(retireIfSiblingRead("https://cbs.example.com/a"), false);
+    assert.ok(readArmed());
+  });
+});
+
+test("retiring notifies subscribers, so a rendered strip can follow", () => {
+  withStorage(() => {
+    let notified = 0;
+    const off = subscribeArmed(() => void (notified += 1));
+    armCandidate("https://cbs.example.com/a", OFFER, 1_000);
+    const before = notified;
+    retireIfSiblingRead(OFFER.sibling.url);
+    assert.ok(notified > before, "a strip already on screen must learn its offer is spent");
+    off();
+  });
+});
+
