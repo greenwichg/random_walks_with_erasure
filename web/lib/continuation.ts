@@ -80,10 +80,13 @@ export interface ArmedCandidate {
 interface StoryState {
   /** 1 when dismissed. Absent rather than `false` — the key is a third of the payload. */
   d?: 1;
-  /** Impressions shown so far. */
+  /** Impressions shown so far. Counts READ EPISODES, not renders — see {@link recordImpression}. */
   n: number;
   /** Epoch ms of the last write, for pruning. */
   t: number;
+  /** `armedAt` of the episode the latest impression was counted for, so re-rendering that same
+   *  offer after a reload or a navigation is free. Absent on state written before this existed. */
+  a?: number;
 }
 
 type State = Record<string, StoryState>;
@@ -218,7 +221,12 @@ export function readState(now = Date.now()): State {
       pruned = true;
       continue;
     }
-    kept[id] = { n: typeof v.n === "number" ? v.n : 0, t: v.t, ...(v.d === 1 ? { d: 1 } : {}) };
+    kept[id] = {
+      n: typeof v.n === "number" ? v.n : 0,
+      t: v.t,
+      ...(v.d === 1 ? { d: 1 } : {}),
+      ...(typeof v.a === "number" ? { a: v.a } : {}),
+    };
   }
   if (pruned) writeJSON(local(), STATE_KEY, kept); // prune on read, so no separate sweep is needed
   return kept;
@@ -233,10 +241,18 @@ export function dismissStory(storyId: string, now = Date.now()): void {
 }
 
 /** Record one impression and return the 1-based index just shown (for `impressionIndex`). */
-export function recordImpression(storyId: string, now = Date.now()): number {
+export function recordImpression(storyId: string, now = Date.now(), armedAt?: number): number {
   const s = readState(now);
-  const n = (s[storyId]?.n ?? 0) + 1;
-  s[storyId] = { ...(s[storyId] ?? {}), n, t: now };
+  const prev = s[storyId];
+  // The SAME offer re-rendering is not a second impression. Since the trigger includes a mount
+  // (which mobile requires — a discarded tab reloads rather than firing visibilitychange), a reader
+  // who flicks to Discover and back would otherwise spend the whole two-impression budget in
+  // seconds without having looked at the strip once, and the story would go permanently quiet.
+  // §6.3's cap is about being asked repeatedly, and being asked again is a new READ EPISODE —
+  // which `armedAt` identifies exactly.
+  if (armedAt !== undefined && prev?.a === armedAt) return prev.n ?? 1;
+  const n = (prev?.n ?? 0) + 1;
+  s[storyId] = { ...(prev ?? {}), n, t: now, ...(armedAt === undefined ? {} : { a: armedAt }) };
   writeJSON(local(), STATE_KEY, s);
   return n;
 }
@@ -248,10 +264,14 @@ export function recordImpression(storyId: string, now = Date.now()): number {
  * back on every page view for the whole freshness window. After two impressions with no engagement,
  * silence is the honest reading of the reader's answer (§6.3).
  */
-export function mayShow(storyId: string, now = Date.now()): boolean {
+export function mayShow(storyId: string, now = Date.now(), armedAt?: number): boolean {
   const e = readState(now)[storyId];
   if (!e) return true;
-  return e.d !== 1 && (e.n ?? 0) < MAX_IMPRESSIONS;
+  if (e.d === 1) return false;                 // dismissed is dismissed, whatever is armed
+  // Already counted for THIS episode: the reader is looking at an offer they were legitimately
+  // shown, and reloading the page must not retract it.
+  if (armedAt !== undefined && e.a === armedAt) return true;
+  return (e.n ?? 0) < MAX_IMPRESSIONS;
 }
 
 // ---------------------------------------------------------------- the prefetch (§10.2)

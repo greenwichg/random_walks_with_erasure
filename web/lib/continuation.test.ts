@@ -385,3 +385,47 @@ test("the feed refetch is held back only for the anchor that is armed", () => {
     assert.equal(shouldDeferFeedRefetch("https://cbs.example.com/a"), false, "disarmed");
   });
 });
+
+test("re-rendering the SAME offer is not a second impression", () => {
+  // The cap counts being ASKED, and a reload or a flick to another page and back is not being asked
+  // again — it is the same offer still standing. Since the trigger includes a mount (mobile has no
+  // visibilitychange to observe: a discarded tab reloads), counting renders would spend the whole
+  // budget on navigation and silence the story before the reader engaged with it once.
+  //
+  // Inside `withStorage`, without which there is no `window` and every write is a silent no-op —
+  // `recordImpression` then returns 1 forever and a test asserting 1 passes against nothing.
+  withStorage(() => {
+    const episode = 1_000;
+    assert.equal(recordImpression("s1", 2_000, episode), 1);
+    assert.equal(recordImpression("s1", 3_000, episode), 1);
+    assert.equal(recordImpression("s1", 4_000, episode), 1);
+    assert.equal(mayShow("s1", 5_000, episode), true);
+    // …and the count really is 1 in storage, not merely reported as 1.
+    assert.equal(readState(5_000).s1?.n, 1);
+  });
+});
+
+test("a second READ of the same story is a second impression, and the third is capped", () => {
+  withStorage(() => {
+    assert.equal(recordImpression("s1", 1_000, 100), 1);
+    assert.equal(recordImpression("s1", 2_000, 200), 2);   // read it again -> asked again
+    assert.equal(mayShow("s1", 3_000, 200), true);         // …still the episode we counted
+    assert.equal(mayShow("s1", 3_000, 300), false);        // …a THIRD read is where it goes quiet
+  });
+});
+
+test("a dismissal outranks a still-live episode", () => {
+  withStorage(() => {
+    recordImpression("s1", 1_000, 100);
+    dismissStory("s1", 1_500);
+    assert.equal(mayShow("s1", 2_000, 100), false);
+  });
+});
+
+test("impression state written before episodes existed still caps", () => {
+  // `a` is absent on rows an older build wrote; those must fall back to counting, not to "allow".
+  withStorage((seed) => {
+    seed("local", STATE_KEY, JSON.stringify({ s1: { n: MAX_IMPRESSIONS, t: 1_000 } }));
+    assert.equal(mayShow("s1", 2_000, 999), false);
+  });
+});

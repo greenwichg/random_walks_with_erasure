@@ -464,6 +464,22 @@ Unchanged: the nine gates, the copy rules in §1.3, dismissal and the impression
 and the card-bound instances on Discover / Search / Saved / the story page — which keep the compact
 in-card treatment, since there the card above already supplies the context.
 
+### 9.1.3 The impression cap counts read episodes — 2026-08-06
+
+`MAX_IMPRESSIONS` (2) was written against **returns**, which are rare. Once the trigger included a
+mount — which mobile requires, since a discarded tab reloads rather than firing `visibilitychange` —
+every navigation to a surface carrying the strip became an impression. Recommendations → Discover →
+Recommendations would spend the entire budget in seconds, and the story would go permanently quiet
+before the reader had engaged with the offer once.
+
+The cap now counts **read episodes**, keyed by the candidate's `armedAt`. Re-rendering the same
+offer after a reload or a navigation is free; being offered the story again after a *second read* is
+the second impression. That is what §6.3 was always about — being asked repeatedly — and it makes
+the two triggers safe to coexist.
+
+State written before this carries no `armedAt` and falls back to counting, so an existing cap is
+honoured rather than silently reset.
+
 ### 9.2 V1.1 — small, high-value
 
 - **A topic gate for non-political stories.** *Measured on production, 2026-08-03, and the largest

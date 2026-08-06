@@ -114,7 +114,7 @@ export function ContinuationStrip({
         clearArmed(); // past the moment; the feed slot covers a later session
         return;
       }
-      if (!mayShow(armed.offer.storyId)) {
+      if (!mayShow(armed.offer.storyId, Date.now(), armed.armedAt)) {
         // `recordImpression` writes to localStorage whether or not the analytics event survives, so
         // impressions accumulated while these events were being dropped by the sink. A story can
         // therefore sit at the cap with no record of ever having been shown.
@@ -125,7 +125,7 @@ export function ContinuationStrip({
         clearArmed(); // dismissed, or already shown twice without engagement
         return;
       }
-      const impressionIndex = recordImpression(armed.offer.storyId);
+      const impressionIndex = recordImpression(armed.offer.storyId, Date.now(), armed.armedAt);
       offerRef.current = armed.offer;
       setOffer(armed.offer);
       track("continuation_shown", {
