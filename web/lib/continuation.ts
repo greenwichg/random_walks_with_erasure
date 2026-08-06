@@ -303,6 +303,43 @@ export function mayShow(storyId: string, now = Date.now(), armedAt?: number): bo
  * nothing is armed, so nothing renders. Never awaited by the click handler: the reader's tab must
  * open at once, and a comparison they have not asked for yet must never delay it.
  */
+/**
+ * Ask the engine again whether this offer still stands, immediately before showing it.
+ *
+ * The armed candidate is a SNAPSHOT taken at the anchor's Read-click, and §1.4 asks for live read
+ * state. `retireIfSiblingRead` covers reads made in this tab; it cannot see a read from the browser
+ * extension, from a phone, or from a second tab — none of those touch this tab's mutation. Those
+ * are exactly the cases where the strip would offer an article the reader has already read.
+ *
+ * Re-resolving is the whole answer rather than a special case: the endpoint re-runs every gate
+ * against current state, so a sibling read anywhere drops out of the candidate set and the engine
+ * either names a different one or declines. It also picks up an article that has left the catalog, a
+ * cluster that has been rebuilt, and a moved openness slider.
+ *
+ * Returns the current offer, `null` when the engine now declines, or `undefined` when it could not
+ * be asked — which is NOT a decline. Offline, the reader keeps the snapshot; punishing them for a
+ * network blip would trade a rare wrong offer for a common missing one.
+ *
+ * §0.3 says not to put a round trip at the return moment. This does not: it gates only the strip's
+ * own appearance, which animates in regardless, and nothing on the page waits for it.
+ */
+export async function revalidateContinuation(
+  anchorUrl: string,
+): Promise<Continuation | null | undefined> {
+  if (typeof fetch === "undefined") return undefined;
+  try {
+    const r = await fetch(`/api/me/continuation?url=${encodeURIComponent(anchorUrl)}`, {
+      credentials: "same-origin",
+    });
+    if (!r.ok) return undefined;
+    const offer = (await r.json()) as Continuation | null;
+    if (!offer || !offer.storyId || !offer.sibling?.url) return null;
+    return offer;
+  } catch {
+    return undefined;
+  }
+}
+
 export function prefetchContinuation(anchorUrl: string): void {
   if (typeof fetch === "undefined") return;
   fetch(`/api/me/continuation?url=${encodeURIComponent(anchorUrl)}`, {

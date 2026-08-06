@@ -11,6 +11,8 @@ import {
   readArmed,
   readState,
   recordImpression,
+  armCandidate,
+  revalidateContinuation,
   subscribeArmed,
 } from "@/lib/continuation";
 import { useVisibilityReturn } from "@/hooks/use-visibility-return";
@@ -85,6 +87,11 @@ export function ContinuationStrip({
   /** Read inside `onReturn`, which must not take `offer` as a dependency: doing so would rebuild
    *  the callback on every show and re-run the mount effect below. */
   const offerRef = React.useRef<Continuation | null>(null);
+  /** Taken SYNCHRONOUSLY, because `onReturn` awaits revalidation before it records anything. The
+   *  mount trigger and the visibility trigger can both reach it, and without this both would clear
+   *  the `offerRef` guard while the other was still in flight and each would count an impression —
+   *  spending the whole cap on one read, intermittently. */
+  const busy = React.useRef(false);
   const [armedFor, setArmedFor] = React.useState<{ armedAt: number } | null>(null);
 
   // Is THIS card the one the reader just opened from? Recomputed only when arming changes, so a
@@ -110,10 +117,10 @@ export function ContinuationStrip({
   }, [sync]);
 
   const onReturn = React.useCallback(
-    (hiddenMs: number) => {
+    async (hiddenMs: number) => {
       const armed = readArmed();
       if (!armed || (!unbound && armed.anchorUrl !== anchorUrl)) return;
-      if (offerRef.current) return;   // already showing — never count a second impression for it
+      if (offerRef.current || busy.current) return;   // showing, or another trigger is mid-flight
 
       const sinceRead = Date.now() - armed.armedAt;
       if (sinceRead > FRESHNESS_MS) {
@@ -135,17 +142,41 @@ export function ContinuationStrip({
         clearArmed(); // dismissed, or already shown twice without engagement
         return;
       }
-      const impressionIndex = recordImpression(armed.offer.storyId, Date.now(), armed.armedAt);
-      offerRef.current = armed.offer;
-      setOffer(armed.offer);
-      track("continuation_shown", {
-        storyId: armed.offer.storyId,
-        hiddenMs,
-        minutesSinceRead: Math.round(sinceRead / 60_000),
-        impressionIndex,
-        distance: armed.offer.distance,
-        surface,
-      });
+      // Last check before showing: is this still true? The snapshot cannot see a read made from
+      // the extension, a phone, or another tab, and offering an article the reader has already read
+      // is the one way this feature actively wastes their time. `undefined` means the engine could
+      // not be asked — keep the snapshot rather than punish a network blip.
+      busy.current = true;
+      try {
+        const fresh = await revalidateContinuation(armed.anchorUrl);
+        if (fresh === null) {
+          track("continuation_suppressed", { storyId: armed.offer.storyId, reason: "revalidated" });
+          clearArmed();
+          return;
+        }
+        const live = fresh ?? armed.offer;
+        if (fresh && fresh.sibling.url !== armed.offer.sibling.url) {
+          // The engine named a different sibling — most often because the snapshot's was read
+          // somewhere this tab cannot see. Re-arm so a reload does not resurrect the stale one,
+          // KEEPING `armedAt`: it is the freshness clock and the impression episode key, and
+          // restarting it would silently extend the 4 h window and re-open the cap.
+          armCandidate(armed.anchorUrl, fresh, armed.armedAt);
+        }
+
+        const impressionIndex = recordImpression(live.storyId, Date.now(), armed.armedAt);
+        offerRef.current = live;
+        setOffer(live);
+        track("continuation_shown", {
+          storyId: live.storyId,
+          hiddenMs,
+          minutesSinceRead: Math.round(sinceRead / 60_000),
+          impressionIndex,
+          distance: live.distance,
+          surface,
+        });
+      } finally {
+        busy.current = false;
+      }
     },
     [anchorUrl, unbound, surface],
   );
@@ -184,10 +215,10 @@ export function ContinuationStrip({
     if (armedFor === null || offer) return;
     const waited = Date.now() - armedFor.armedAt;
     if (waited >= MIN_HIDDEN_MS) {
-      onReturn(waited);
+      void onReturn(waited);
       return;
     }
-    const id = setTimeout(() => onReturn(Date.now() - armedFor.armedAt), MIN_HIDDEN_MS - waited);
+    const id = setTimeout(() => void onReturn(Date.now() - armedFor.armedAt), MIN_HIDDEN_MS - waited);
     return () => clearTimeout(id);
   }, [armedFor, offer, onReturn]);
 

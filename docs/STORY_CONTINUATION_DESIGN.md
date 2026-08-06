@@ -494,8 +494,27 @@ refetching history. A rendered strip follows: `sync` clears a displayed offer wh
 gone, which also fixes §2.2 on the unbound instance, where reading a second article previously left
 the *previous* story's offer on screen because the mount trigger declines to run while one is shown.
 
-Cross-device and extension reads are still not seen — those never touch this tab's mutation. That is
-the residue of a snapshot design and is bounded by the 4 h window.
+**And the snapshot is re-checked against the engine immediately before showing** (2026-08-06), which
+closes the rest of it. `retireIfSiblingRead` only sees reads made in this tab; a read from the
+browser extension, a phone or a second tab does not touch its mutation. Re-resolving is the general
+answer rather than another special case — the endpoint re-runs every gate against current state, so
+a sibling read anywhere drops out of the candidate set and the engine names a different one or
+declines. It also catches an article that has left the catalog, a rebuilt cluster, and a moved
+openness slider.
+
+Three rules make it safe:
+
+* **A failed request is not a decline.** Offline, the reader keeps the snapshot. Trading a rare
+  wrong offer for a common missing one is the worse deal, and revalidation must not become a second
+  way to see nothing.
+* **A replacement re-arms with the ORIGINAL `armedAt`.** That value is both the freshness clock and
+  the impression episode key; restarting it would silently extend the 4 h window and re-open the cap.
+* **The trigger is serialized.** The mount and visibility triggers can both reach it, and since the
+  check is now awaited, an `offer`-based guard alone let both through and counted two impressions
+  for one read — intermittently, which is the worst way to find out.
+
+This does not violate §0.3's "no round trip at the return moment": nothing on the page waits for it,
+and it gates only the strip's own appearance, which animates in regardless.
 
 ### 9.2 V1.1 — small, high-value
 

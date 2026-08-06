@@ -23,7 +23,10 @@ import { createDwellGate } from "@/lib/continuation";
  * second one is the impression cap's job (`lib/continuation.mayShow`), not the trigger's.
  */
 export function useVisibilityReturn(
-  onReturn: (hiddenMs: number) => void,
+  // `void | Promise<void>`: the strip's handler revalidates the offer against the engine before
+  // showing it, so it is async. The gate never awaits — a return is a fire-and-forget signal, and
+  // nothing here has a result to wait for.
+  onReturn: (hiddenMs: number) => void | Promise<void>,
   { minHiddenMs = 20_000, enabled = true }: { minHiddenMs?: number; enabled?: boolean } = {},
 ): void {
   // Held in a ref so changing the callback identity between renders never re-subscribes — a card

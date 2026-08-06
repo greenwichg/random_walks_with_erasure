@@ -170,6 +170,32 @@ const OFFER = {
   candidateCount: 5,
 };
 
+/**
+ * Make the engine agree with a seeded `arm()`.
+ *
+ * The strip re-resolves against `/api/me/continuation` immediately before showing (§9.1.4), so
+ * seeding sessionStorage is no longer sufficient on its own: this suite's engine has no such
+ * cluster and would decline, correctly, leaving every arm-then-assert test dark for a reason
+ * unrelated to what it tests.
+ *
+ * Call it BEFORE the first navigation. Registering a route mid-session and then reloading through
+ * it kept `waitUntil: "networkidle"` from settling — which is a fact about request interception,
+ * not about the strip, and it cost an hour to find. Every route in this file is registered before
+ * its `goto` for that reason.
+ */
+async function echoContinuation(
+  page: import("@playwright/test").Page,
+  anchorUrl: string = ANCHOR_URL,
+): Promise<void> {
+  await page.route("**/api/me/continuation*", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ...OFFER, anchor: { ...OFFER.anchor, url: anchorUrl } }),
+    }),
+  );
+}
+
 /** Arm a candidate for `anchorUrl` as the Read click would, `agoMs` in the past. */
 async function arm(
   page: import("@playwright/test").Page,
@@ -195,7 +221,13 @@ async function arm(
   // the page context skips that, so without a reload the card never learns it is armed and the
   // spec would assert against a component that was never enabled. Reloading is also the real mobile
   // path the two-tier storage exists for (§6.2).
-  await page.reload({ waitUntil: "networkidle" });
+  // `load`, then a BOUNDED best-effort settle. `waitUntil: "networkidle"` deadlocked here: this
+  // file registers routes, so request interception is on, and an analytics `sendBeacon` issued as
+  // the page unloads (the suppression events do exactly that) can stay pending for the whole 30 s
+  // budget. Waiting for `load` gets hydration; the extra quiet period is a nicety, so it must not
+  // be able to fail the test. Everything after this auto-retries.
+  await page.reload({ waitUntil: "load" });
+  await page.waitForLoadState("networkidle", { timeout: 5_000 }).catch(() => {});
 }
 
 /** Make `document.visibilityState` writable and go hidden, as `window.open` does. */
@@ -233,6 +265,7 @@ test.describe("Story Continuation", () => {
   test("appears only after a real absence, and a short one is ignored", async ({ authedPage }) => {
     const anchor = ANCHOR_URL;
     seedAnchor(anchor);
+    await echoContinuation(authedPage);
     await authedPage.goto("/discover", { waitUntil: "networkidle" });
     // The strip is mounted per card and keyed to that card's URL, so the anchor must really be on
     // the page — otherwise every assertion below would pass against nothing.
@@ -260,6 +293,7 @@ test.describe("Story Continuation", () => {
   test("dismissal survives a reload, permanently for that story", async ({ authedPage }) => {
     const anchor = ANCHOR_URL;
     seedAnchor(anchor);
+    await echoContinuation(authedPage);
     await authedPage.goto("/discover", { waitUntil: "networkidle" });
     await arm(authedPage, anchor);
     await returnAfter(authedPage, 25_000);
@@ -284,6 +318,7 @@ test.describe("Story Continuation", () => {
   test("stops after two impressions without engagement", async ({ authedPage, uid }) => {
     const anchor = ANCHOR_URL;
     seedAnchor(anchor);
+    await echoContinuation(authedPage);
     await authedPage.goto("/discover", { waitUntil: "networkidle" });
 
     for (const attempt of [1, 2]) {
@@ -313,6 +348,7 @@ test.describe("Story Continuation", () => {
   test("a read past the freshness window is not offered", async ({ authedPage }) => {
     const anchor = ANCHOR_URL;
     seedAnchor(anchor);
+    await echoContinuation(authedPage);
     await authedPage.goto("/discover", { waitUntil: "networkidle" });
     await arm(authedPage, anchor, 5 * 60 * 60 * 1000); // 5 h ago, past the 4 h window
     await returnAfter(authedPage, 25_000);
@@ -370,6 +406,7 @@ test.describe("Story Continuation", () => {
     // already a cluster member, so the membership gate that rejects ~4 in 5 Discover cards passes
     // automatically. The "all outlets" link is suppressed here — it would point at this very page.
     seedStoryCluster();
+    await echoContinuation(authedPage, STORY_ANCHOR);
     await authedPage.goto("/stories", { waitUntil: "networkidle" });
 
     // Resolve the story by ID rather than clicking it out of the list. /stories is RANKED (trusted,
@@ -536,6 +573,7 @@ test.describe("Story Continuation", () => {
     seedAnchor(anchor);
     await stubFeed(authedPage);
 
+    await echoContinuation(authedPage);
     await authedPage.goto("/discover", { waitUntil: "networkidle" });
     await arm(authedPage, anchor, 30_000);        // read 30 s ago: past the 20 s dwell equivalent
 
@@ -562,6 +600,8 @@ test.describe("Story Continuation", () => {
     const anchor = ANCHOR_URL;
     seedAnchor(anchor);
     await stubFeed(authedPage);
+
+    await echoContinuation(authedPage);
 
     await authedPage.goto("/recommendations", { waitUntil: "networkidle" });
     await arm(authedPage, anchor, 2_000);         // 2 s ago
@@ -600,6 +640,8 @@ test.describe("Story Continuation", () => {
         }),
     );
 
+    await echoContinuation(authedPage);
+
     await authedPage.goto("/recommendations", { waitUntil: "networkidle" });
     await expect(authedPage.getByText("Ferry operator publishes its winter timetable")).toBeVisible();
 
@@ -622,6 +664,7 @@ test.describe("Story Continuation", () => {
     // mobile sequence verbatim: arm, reload, no goHidden/comeBack anywhere.
     const anchor = ANCHOR_URL;
     seedAnchor(anchor);
+    await echoContinuation(authedPage);
     await authedPage.goto("/discover", { waitUntil: "networkidle" });
     await arm(authedPage, anchor, 30_000);        // read 30 s ago, then the page came back fresh
 
@@ -636,6 +679,7 @@ test.describe("Story Continuation", () => {
     // and looking exactly like the bug this whole thread has been chasing.
     const anchor = ANCHOR_URL;
     seedAnchor(anchor);
+    await echoContinuation(authedPage);
     await authedPage.goto("/discover", { waitUntil: "networkidle" });
     await arm(authedPage, anchor, 30_000);
     await expect(authedPage.getByText("Compare this story")).toBeVisible();
@@ -660,6 +704,7 @@ test.describe("Story Continuation", () => {
     // is `useRecordRead` — the one mutation every surface shares. A unit test on
     // `retireIfSiblingRead` cannot tell whether anything calls it.
     seedSibling(OFFER.sibling.url, OFFER.sibling.headline);
+    await echoContinuation(authedPage);
     await authedPage.goto("/discover", { waitUntil: "networkidle" });
     await arm(authedPage, ANCHOR_URL, 30_000);
     await expect(authedPage.getByText("Compare this story")).toBeVisible();
@@ -677,5 +722,108 @@ test.describe("Story Continuation", () => {
     await expect(authedPage.getByText("Compare this story")).toBeHidden();
     await authedPage.reload({ waitUntil: "networkidle" });
     await expect(authedPage.getByText("Compare this story")).toBeHidden();
+  });
+
+  test("an offer read on ANOTHER device is replaced, not shown", async ({ authedPage }) => {
+    // The gap `retireIfSiblingRead` cannot close: a read from the browser extension, a phone, or a
+    // second tab never touches this tab's mutation, so the snapshot in sessionStorage still names a
+    // sibling the reader has already read. Re-resolving against the engine before showing is the
+    // general answer — every gate is re-run against current state.
+    //
+    // The engine standing in for "that sibling is now read" by naming a different one.
+    const anchor = ANCHOR_URL;
+    seedAnchor(anchor);
+    const replaced = {
+      ...OFFER,
+      anchor: { ...OFFER.anchor, url: anchor },
+      sibling: {
+        ...OFFER.sibling,
+        url: "https://wsj.example.com/e2e/spectrum",
+        publisher: "The Wall Street Journal",
+        headline: "Auction timetable published for bidders",
+      },
+    };
+    await authedPage.route("**/api/me/continuation*", (route) =>
+      route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(replaced) }),
+    );
+
+    await authedPage.goto("/discover", { waitUntil: "networkidle" });
+    await arm(authedPage, anchor, 30_000);   // …with the STALE sibling in storage
+
+    await expect(authedPage.getByText("Compare this story")).toBeVisible();
+    await expect(authedPage.getByText(/The Wall Street Journal is rated/)).toBeVisible();
+    await expect(authedPage.getByText(/Fox News is rated/)).toHaveCount(0);
+
+    // Re-armed, so a reload cannot resurrect the stale sibling.
+    const armedUrl = await authedPage.evaluate(
+      (k) => JSON.parse(window.sessionStorage.getItem(k as string) ?? "{}")?.offer?.sibling?.url,
+      ARMED_KEY,
+    );
+    expect(armedUrl).toBe(replaced.sibling.url);
+  });
+
+  test("an offer the engine now declines is not shown at all", async ({ authedPage }) => {
+    const anchor = ANCHOR_URL;
+    seedAnchor(anchor);
+    await authedPage.route("**/api/me/continuation*", (route) =>
+      route.fulfill({ status: 200, contentType: "application/json", body: "null" }),
+    );
+    await authedPage.goto("/discover", { waitUntil: "networkidle" });
+    await arm(authedPage, anchor, 30_000);
+    await expect(authedPage.getByText("Compare this story")).toBeHidden();
+  });
+
+  test("an unreachable engine keeps the snapshot rather than losing the offer", async ({
+    authedPage,
+  }) => {
+    // Revalidation must not become a second way to see nothing. A network blip is not a decline,
+    // and trading a rare wrong offer for a common missing one is the worse deal.
+    const anchor = ANCHOR_URL;
+    seedAnchor(anchor);
+    await authedPage.route("**/api/me/continuation*", (route) => route.abort());
+    await authedPage.goto("/discover", { waitUntil: "networkidle" });
+    await arm(authedPage, anchor, 30_000);
+    await expect(authedPage.getByText("Compare this story")).toBeVisible();
+    await expect(authedPage.getByText(/Fox News is rated right of centre/)).toBeVisible();
+  });
+
+  test("reading a second article replaces the displayed offer, never stacks on it", async ({
+    authedPage,
+  }) => {
+    // §2.2, on the unbound instance, fixed in 579d205 without a test. The mount trigger declines to
+    // run while an offer is displayed, so without `sync` clearing a superseded one the PREVIOUS
+    // story's offer sits there.
+    //
+    // Driven through a REAL Read click on a second card, NOT by writing storage and reloading — a
+    // reload remounts everything and the stale offer disappears whatever the code does. The first
+    // version of this test did exactly that and passed against the unfixed build.
+    const second = { ...OFFER, storyId: "s-e2e-second", storyTitle: "A different event entirely" };
+    await authedPage.route("**/api/me/continuation*", (route) => {
+      const url = new URL(route.request().url()).searchParams.get("url") ?? "";
+      const body = url === REC_OTHER ? second : { ...OFFER, anchor: { ...OFFER.anchor, url: ANCHOR_URL } };
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+    });
+    await stubFeed(authedPage);
+    authedPage.context().on("page", (p) => void p.close().catch(() => {}));
+
+    await authedPage.goto("/recommendations", { waitUntil: "networkidle" });
+    await arm(authedPage, ANCHOR_URL, 30_000);
+    await expect(authedPage.getByText(OFFER.storyTitle)).toBeVisible();
+
+    // Now read the other card. `armCandidate` notifies in-memory subscribers on the SAME page —
+    // no navigation, no remount — which is the path the fix lives on.
+    const other = authedPage
+      .locator("article")
+      .filter({ hasText: "Ferry operator publishes its winter timetable" })
+      .first();
+    await other.getByRole("button", { name: /Read article/i }).click();
+    await authedPage.waitForFunction(
+      (k) => JSON.parse(window.sessionStorage.getItem(k as string) ?? "{}")?.offer?.storyId === "s-e2e-second",
+      ARMED_KEY,
+    );
+
+    // The superseded offer must go at once. (The new one waits out its own 20 s, which is correct
+    // and not what this asserts.)
+    await expect(authedPage.getByText(OFFER.storyTitle)).toHaveCount(0);
   });
 });
