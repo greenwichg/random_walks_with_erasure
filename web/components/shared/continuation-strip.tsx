@@ -82,6 +82,9 @@ export function ContinuationStrip({
   const { t, timeAgo } = useTranslation();
   const recordRead = useRecordRead();
   const [offer, setOffer] = React.useState<Continuation | null>(null);
+  /** Read inside `onReturn`, which must not take `offer` as a dependency: doing so would rebuild
+   *  the callback on every show and re-run the mount effect below. */
+  const offerRef = React.useRef<Continuation | null>(null);
   const [armedFor, setArmedFor] = React.useState<{ armedAt: number } | null>(null);
 
   // Is THIS card the one the reader just opened from? Recomputed only when arming changes, so a
@@ -100,6 +103,7 @@ export function ContinuationStrip({
     (hiddenMs: number) => {
       const armed = readArmed();
       if (!armed || (!unbound && armed.anchorUrl !== anchorUrl)) return;
+      if (offerRef.current) return;   // already showing — never count a second impression for it
 
       const sinceRead = Date.now() - armed.armedAt;
       if (sinceRead > FRESHNESS_MS) {
@@ -122,6 +126,7 @@ export function ContinuationStrip({
         return;
       }
       const impressionIndex = recordImpression(armed.offer.storyId);
+      offerRef.current = armed.offer;
       setOffer(armed.offer);
       track("continuation_shown", {
         storyId: armed.offer.storyId,
@@ -137,28 +142,36 @@ export function ContinuationStrip({
 
   // Only the armed card listens. Every other card passes `enabled: false` and attaches nothing.
   // The feed instance never listens: arriving at the feed IS the return (below).
+  // Where a visibility return IS observed, it still wins — it carries a real `hiddenMs`.
   useVisibilityReturn(onReturn, {
     minHiddenMs: MIN_HIDDEN_MS,
     enabled: !unbound && armedFor !== null,
   });
 
   /**
-   * The feed instance's trigger: **time since the read**, not an observed visibility return.
+   * The second trigger: **time since the read**, evaluated on mount. Not a replacement for the
+   * visibility return — a fallback for the (common) cases where no return can be observed at all.
    *
-   * A card-bound strip can watch for the reader coming back because it was on screen when they
-   * left. The feed instance usually was not — the reader read from Discover, or a story page, or a
-   * previous feed that has since been refetched — so there is no hide for it to have observed.
-   * Waiting for one is why nothing ever appeared here.
+   *  * The feed instance was usually not mounted when the reader left, because they read from
+   *    Discover, a story page, or a feed that has since dropped the article. There is no hide for
+   *    it to have seen.
+   *  * **On mobile there may be no transition to see anywhere.** A backgrounded tab is routinely
+   *    discarded, so returning to it RELOADS the page. A fresh document starts visible and fires no
+   *    hidden→visible pair, which makes a visibility-only trigger structurally unable to fire on
+   *    the platform where `window.open` backgrounds the tab hardest. sessionStorage survives that
+   *    reload — which is exactly why §6.2 put the armed candidate there — so the offer is still
+   *    present and merely had nothing left to trigger it.
    *
-   * `armedAt` carries the same information the dwell gate was approximating: 20 s since the Read
-   * click means the reader went and did something, not that they mis-clicked. And it is strictly
-   * more robust — it needs no listener attached at the right moment in a backgrounded tab.
+   * `armedAt` carries the same fact the dwell gate approximates: 20 s since the Read click means
+   * the reader went and did something rather than mis-clicking. It survives a reload, needs no
+   * listener attached at the right moment in a backgrounded tab, and cannot double-count — the
+   * `offerRef` guard makes the two triggers idempotent.
    *
-   * The timer covers the dead window where the reader arrives before 20 s have passed; without it
-   * the offer would wait for another navigation to be re-evaluated.
+   * The timer covers the window where the reader gets back before 20 s have passed; without it the
+   * offer would sit until some later navigation re-evaluated it.
    */
   React.useEffect(() => {
-    if (!unbound || armedFor === null || offer) return;
+    if (armedFor === null || offer) return;
     const waited = Date.now() - armedFor.armedAt;
     if (waited >= MIN_HIDDEN_MS) {
       onReturn(waited);
@@ -166,7 +179,7 @@ export function ContinuationStrip({
     }
     const id = setTimeout(() => onReturn(Date.now() - armedFor.armedAt), MIN_HIDDEN_MS - waited);
     return () => clearTimeout(id);
-  }, [unbound, armedFor, offer, onReturn]);
+  }, [armedFor, offer, onReturn]);
 
   // Reported through an effect rather than from the handlers, so every path that changes what is
   // on offer — shown, dismissed, opened, superseded — reports itself exactly once.

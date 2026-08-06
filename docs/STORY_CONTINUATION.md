@@ -195,6 +195,18 @@ Two earlier client faults, fixed before this one, had the same symptom:
   card for the same story while it is up. This is the surface §9.1.1 calls primary, and card-binding
   could never serve it — the feed drops the article the reader just read.
 
+* **Mobile needs the mount trigger, not the visibility one.** `window.open` backgrounds the tab
+  hardest on a phone, and a backgrounded tab is routinely **discarded** — so returning to it reloads
+  the page. A fresh document starts visible and fires no `hidden`→`visible` pair, which leaves a
+  visibility-only trigger structurally unable to fire on that platform. Every instance therefore
+  also evaluates **time since the read** on mount (same 20 s, from `armedAt`, which sessionStorage
+  carries through the reload). The two triggers are idempotent — one offer, one impression.
+
+  The prefetch uses `keepalive: true` for the same reason: it is issued on the same tick as
+  `window.open`, and a mobile browser is free to abandon in-flight work in a backgrounded tab. An
+  abandoned prefetch arms nothing, and the signature is distinctive — `--counters` records the
+  `offer` (the engine answered) while `--events` never sees `continuation_eligible`.
+
 * **Everywhere else the strip is bound to the card, so it is bound to the page.** It renders inside the card the
   reader clicked Read on. Returning to a *different* page — read from Search, come back and navigate
   to Recommendations — unmounts that card, and the armed candidate stays valid and invisible exactly

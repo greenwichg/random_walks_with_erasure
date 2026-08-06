@@ -584,4 +584,45 @@ test.describe("Story Continuation", () => {
     // …and the engine's card for the SAME story is gone while the strip is up.
     await expect(authedPage.getByText("Ferry operator publishes its winter timetable")).toBeHidden();
   });
+
+  test("fires on a card after a RELOAD, with no visibility transition at all", async ({
+    authedPage,
+  }) => {
+    // The mobile path, and the reason this did not work on a phone. `window.open` backgrounds the
+    // tab hardest there, and a backgrounded tab is routinely DISCARDED — so coming back reloads the
+    // page. A fresh document starts visible and fires no hidden→visible pair, which leaves a
+    // visibility-only trigger structurally unable to ever fire on that platform.
+    //
+    // sessionStorage survives the reload (§6.2 chose it for exactly this), so the offer is still
+    // armed and merely had nothing left to trigger it. `arm()` already reloads, so this test is the
+    // mobile sequence verbatim: arm, reload, no goHidden/comeBack anywhere.
+    const anchor = ANCHOR_URL;
+    seedAnchor(anchor);
+    await authedPage.goto("/discover", { waitUntil: "networkidle" });
+    await arm(authedPage, anchor, 30_000);        // read 30 s ago, then the page came back fresh
+
+    await expect(authedPage.getByText("Compare this story")).toBeVisible();
+  });
+
+  test("a visibility return and a fresh mount do not both count an impression", async ({
+    authedPage,
+  }) => {
+    // Two triggers now reach the same offer. If they could both fire, one read would burn both
+    // impressions at once and the second return would be silently capped — the cap arriving early
+    // and looking exactly like the bug this whole thread has been chasing.
+    const anchor = ANCHOR_URL;
+    seedAnchor(anchor);
+    await authedPage.goto("/discover", { waitUntil: "networkidle" });
+    await arm(authedPage, anchor, 30_000);
+    await expect(authedPage.getByText("Compare this story")).toBeVisible();
+
+    await returnAfter(authedPage, 25_000);        // …and now a real visibility return as well
+    await expect(authedPage.getByText("Compare this story")).toBeVisible();
+
+    const n = await authedPage.evaluate(
+      ([k, id]) => JSON.parse(window.localStorage.getItem(k as string) ?? "{}")[id as string]?.n,
+      [STATE_KEY, OFFER.storyId] as const,
+    );
+    expect(n, "one offer, one impression — not one per trigger").toBe(1);
+  });
 });

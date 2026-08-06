@@ -266,7 +266,17 @@ export function mayShow(storyId: string, now = Date.now()): boolean {
  */
 export function prefetchContinuation(anchorUrl: string): void {
   if (typeof fetch === "undefined") return;
-  fetch(`/api/me/continuation?url=${encodeURIComponent(anchorUrl)}`, { credentials: "same-origin" })
+  fetch(`/api/me/continuation?url=${encodeURIComponent(anchorUrl)}`, {
+    credentials: "same-origin",
+    // `keepalive`, because this request is issued on the same tick as `window.open` and the tab is
+    // backgrounded before it completes. Desktop browsers let a pending fetch finish; MOBILE ones
+    // are free to suspend or abandon work in a backgrounded tab, and an abandoned prefetch arms
+    // nothing — the engine answers, the counters record an `offer`, and the browser never sees it.
+    // `keepalive` is the platform's own "finish this even though the page is going away", already
+    // used by the analytics beacon path for the same reason. The 64 KB limit it carries applies to
+    // request bodies; this is a GET.
+    keepalive: true,
+  })
     .then((r) => (r.ok ? r.json() : null))
     .then((offer: Continuation | null) => {
       if (!offer || !offer.storyId || !offer.sibling?.url) return;
