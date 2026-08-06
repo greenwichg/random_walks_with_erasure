@@ -15,6 +15,8 @@ import { useTranslation } from "@/lib/i18n";
 import { track } from "@/lib/analytics";
 import { PageContainer } from "@/components/layout/page-container";
 import { RecommendationCard } from "@/components/recommendations/recommendation-card";
+import { ContinuationStrip } from "@/components/shared/continuation-strip";
+import { presentRecommendation } from "@/lib/rec-presentation";
 import { ErrorState, EmptyState } from "@/components/shared/states";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -48,9 +50,21 @@ export default function RecommendationsPage() {
     [feedbackLog],
   );
 
+  // The story the continuation strip is currently offering, if any. Both it and the engine's
+  // story-match card are "here is another outlet on the event you just read", so showing both for
+  // ONE story is the same offer twice with different wording — and the strip is the more specific
+  // of the two (it names the opposing outlet and the reader's own side). The strip wins; the feed
+  // card for that story is withheld while it is up (design §9.1.2).
+  const [continuationStory, setContinuationStory] = React.useState<string | null>(null);
+
   const visible = (data ?? [])
     .filter((r) => (filter === "all" ? true : r.strategy === filter))
-    .filter((r) => !dismissed.has(r.article.id) && !persistedIgnored.has(r.article.id));
+    .filter((r) => !dismissed.has(r.article.id) && !persistedIgnored.has(r.article.id))
+    .filter(
+      (r) =>
+        continuationStory === null ||
+        presentRecommendation(r.explanation).storyId !== continuationStory,
+    );
 
   // PA1: the reader saw a recommendation feed — the funnel's "Recommendation Viewed" stage. Fires
   // once when the feed first loads (best-effort).
@@ -92,6 +106,18 @@ export default function RecommendationsPage() {
           ))}
         </TabsList>
       </Tabs>
+
+      {/*
+        Story Continuation, feed instance (design §9.1.2). Deliberately ABOVE the filter results and
+        outside the grid: it is not a recommendation and holds no blend-plan slot — it is the one
+        thing on this page that is about what the reader did five minutes ago, so it is neither
+        ranked against the feed nor hidden by a filter tab that happens to be selected.
+
+        Unbound (`anchorUrl` omitted): it serves whatever is armed, from wherever the read happened.
+        Binding it to a card cannot work here — the recommender excludes what has been read, so the
+        card the reader opened is gone from the very next feed.
+      */}
+      <ContinuationStrip surface="feed" onOfferChange={setContinuationStory} />
 
       {isLoading && (
         <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">

@@ -418,6 +418,39 @@ What it does change:
   measurement that would overturn this decision if the yield gap is larger than the redundancy
   argument. Nothing has been measured yet.
 
+### 9.1.2 The feed instance — decided 2026-08-06, supersedes part of §2.1
+
+**The strip is no longer only card-bound. Recommendations carries an unbound instance** that serves
+whatever is armed, wherever the read happened.
+
+§2.1 gate 4 required "the source card is currently mounted". That was written assuming the card the
+reader opened from is still there when they come back, and on Recommendations it never is:
+
+* the recommender excludes what the reader has read, so the article they just opened is absent from
+  the **next** feed by construction — `shouldDeferFeedRefetch` holds one refetch back, and the card
+  still goes on the following navigation;
+* a read from Discover, Search, Saved or a story page never had a Recommendations card to attach to
+  in the first place.
+
+So on the surface §9.1.1 named primary, the gate was unsatisfiable in the ordinary case. Three
+production sessions confirmed it: `armed` tracked `eligible` exactly, and `shown` stayed at 1 —
+every render was `surface: "story"`, never once a feed.
+
+**The trigger changes with it.** The card-bound instance watches for a visibility return, which it
+can only observe if it was mounted when the reader left. The feed instance is not, so it uses
+**time since the read** (`armedAt`, same 20 s) instead. That is the fact the dwell gate was
+approximating, it survives navigation, and it needs no listener attached at the right moment in a
+backgrounded tab — which is a second silent failure mode the card-bound path still carries.
+
+**One event, one offer.** The strip and the engine's `story_match` feed card both say "another
+outlet covered this". While the strip is up, the feed withholds its story card for that same story:
+the strip is the more specific of the two — it names the opposing outlet and states the reader's own
+side — so it wins. The slot itself is untouched for every other story, and remains the cross-session
+path for readers who return in a later session with nothing armed.
+
+Unchanged: the nine gates, the copy rules in §1.3, dismissal and the impression cap (§6.1, §6.3),
+and the card-bound instances on Discover / Search / Saved / the story page.
+
 ### 9.2 V1.1 — small, high-value
 
 - **A topic gate for non-political stories.** *Measured on production, 2026-08-03, and the largest

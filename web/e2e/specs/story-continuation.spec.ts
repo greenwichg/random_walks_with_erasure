@@ -499,4 +499,80 @@ test.describe("Story Continuation", () => {
       .poll(() => feed.n, { timeout: 10_000, message: "the feed must refresh after an ordinary read" })
       .toBe(2);
   });
+
+  // ---------------------------------------------------------------- the feed instance (§9.1.2)
+  test("appears in Recommendations after a read that happened somewhere else", async ({
+    authedPage,
+  }) => {
+    // The case that failed in production for weeks and that no card-bound instance can serve: the
+    // reader opens something on Discover, comes back, and goes to Recommendations. There has never
+    // been a Recommendations card for that article — and after the read there cannot be, because
+    // the recommender excludes what has been read. Nothing was mounted to render the offer.
+    const anchor = ANCHOR_URL;
+    seedAnchor(anchor);
+    await stubFeed(authedPage);
+
+    await authedPage.goto("/discover", { waitUntil: "networkidle" });
+    await arm(authedPage, anchor, 30_000);        // read 30 s ago: past the 20 s dwell equivalent
+
+    // Navigate to Recommendations WITHOUT any visibility transition. There is no hide for a
+    // listener to observe here, which is precisely why the card-bound trigger cannot fire.
+    await authedPage.getByRole("link", { name: "Recommendations", exact: true }).first().click();
+
+    await expect(authedPage.getByText("Compare this story")).toBeVisible();
+    await expect(authedPage.getByText(/Fox News is rated right of centre/)).toBeVisible();
+  });
+
+  test("a read younger than the dwell window is not offered yet, then is", async ({ authedPage }) => {
+    // Time since the read replaces the dwell gate on this surface, so it has to hold the same line:
+    // a reader who clicks Read and bounces straight to the feed has not been anywhere.
+    const anchor = ANCHOR_URL;
+    seedAnchor(anchor);
+    await stubFeed(authedPage);
+
+    await authedPage.goto("/recommendations", { waitUntil: "networkidle" });
+    await arm(authedPage, anchor, 2_000);         // 2 s ago
+    await expect(authedPage.getByText("Compare this story")).toBeHidden();
+
+    // …and it arrives on its own once the window passes, without another navigation.
+    await expect(authedPage.getByText("Compare this story")).toBeVisible({ timeout: 25_000 });
+  });
+
+  test("one story is not offered twice — the feed's own story card stands down", async ({
+    authedPage,
+  }) => {
+    // Both the strip and the engine's story-match card say "another outlet covered this". Showing
+    // both for ONE story is the same offer twice in different words; the strip is the more specific
+    // and wins while it is up.
+    const anchor = ANCHOR_URL;
+    seedAnchor(anchor);
+    await authedPage.route(
+      (url) => url.pathname === "/api/recommendations",
+      (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify([
+            {
+              ...recFor(REC_OTHER, "Ferry operator publishes its winter timetable", "NPR"),
+              strategy: "story",
+              explanation: {
+                type: "story_match",
+                variant: "same_event",
+                message: "Another outlet covered this.",
+                evidence: { storyId: OFFER.storyId, readPublisher: "CBS News", recPublisher: "NPR" },
+              },
+            },
+          ]),
+        }),
+    );
+
+    await authedPage.goto("/recommendations", { waitUntil: "networkidle" });
+    await expect(authedPage.getByText("Ferry operator publishes its winter timetable")).toBeVisible();
+
+    await arm(authedPage, anchor, 30_000);
+    await expect(authedPage.getByText("Compare this story")).toBeVisible();
+    // …and the engine's card for the SAME story is gone while the strip is up.
+    await expect(authedPage.getByText("Ferry operator publishes its winter timetable")).toBeHidden();
+  });
 });

@@ -189,7 +189,13 @@ Two earlier client faults, fixed before this one, had the same symptom:
   History (`ArticleRow`) and the analyzer (`AnalysisResult`) also use `ReadArticleButton` and do not
   mount the strip — a read from those two arms a candidate that nothing renders.
 
-* **The strip is bound to the card, so it is bound to the page.** It renders inside the card the
+* **Recommendations carries an UNBOUND instance** (design §9.1.2): one strip at the top of the feed,
+  serving whatever is armed no matter where the read happened, triggered by 20 s having passed since
+  the read rather than by an observed visibility return. It withholds the engine's `story_match`
+  card for the same story while it is up. This is the surface §9.1.1 calls primary, and card-binding
+  could never serve it — the feed drops the article the reader just read.
+
+* **Everywhere else the strip is bound to the card, so it is bound to the page.** It renders inside the card the
   reader clicked Read on. Returning to a *different* page — read from Search, come back and navigate
   to Recommendations — unmounts that card, and the armed candidate stays valid and invisible exactly
   as it did before `shouldDeferFeedRefetch`. Testing it means returning to the **same tab, on the

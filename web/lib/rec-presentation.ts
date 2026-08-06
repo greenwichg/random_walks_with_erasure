@@ -54,12 +54,17 @@ export interface RecPresentation {
   ctaKey: string | null;
   /** Deep link to the proving Story page, when the explanation is story-backed. */
   storyHref: string | null;
+  /** The cluster this card is about, when it is a story card. Exposed alongside `storyHref` so a
+   *  caller can COMPARE it (the feed suppresses its story card when the continuation strip is
+   *  already offering the same story) without parsing an id back out of a URL. */
+  storyId: string | null;
   /** The two-publisher comparison block payload (story_match only). */
   comparison: StoryComparison | null;
 }
 
 const NONE: RecPresentation = {
-  reader: null, contribution: null, claimKey: null, ctaKey: null, storyHref: null, comparison: null,
+  reader: null, contribution: null, claimKey: null, ctaKey: null, storyHref: null, storyId: null,
+  comparison: null,
 };
 
 /** Semantic part key → catalog template key. Literal strings on purpose (check:i18n scans them). */
@@ -126,6 +131,7 @@ export function presentRecommendation(
         : "rec.claim.story_match.same_event",
       ctaKey: variant === "follow_up" ? "rec.cta.update" : "rec.cta.compare",
       storyHref: storyId ? `/stories/${encodeURIComponent(storyId)}` : null,
+      storyId,
       comparison: {
         variant,
         readPublisher: String(ev.readPublisher ?? ""),
@@ -145,5 +151,6 @@ export function presentRecommendation(
     : exp.type === "new_publisher" ? "rec.cta.explore"
     : null;
 
-  return { reader, contribution, claimKey: null, ctaKey, storyHref: null, comparison: null };
+  return { reader, contribution, claimKey: null, ctaKey, storyHref: null, storyId: null,
+           comparison: null };
 }

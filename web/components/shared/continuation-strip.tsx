@@ -48,8 +48,19 @@ export function ContinuationStrip({
   anchorUrl,
   showAllOutlets = true,
   surface = "card",
+  onOfferChange,
 }: {
-  anchorUrl: string;
+  /**
+   * The article this instance is bound to, when it sits on a card.
+   *
+   * **Omit it for the feed instance** (`surface: "feed"`), which is not attached to any card and
+   * matches whatever is armed. That instance exists because the card-bound rule cannot serve the
+   * feed: the recommender excludes what you have read, so the card you read from is gone from the
+   * next feed by construction, and a read that happened on Discover or a story page never had a
+   * Recommendations card to attach to in the first place. Binding to a card is right where a card
+   * exists and wrong as the only way to offer a comparison (design §9.1.2).
+   */
+  anchorUrl?: string;
   /** Render the "View all N outlets" link. False on the story page itself, where that link would
    *  point at the page the reader is already reading — an offer to go where they are. The rest of
    *  the strip still earns its place there: the coverage list is ordered by recency, not by "what
@@ -60,8 +71,13 @@ export function ContinuationStrip({
    *  of the field is comparing them: the story page's rows are cluster members by construction, so
    *  its armed→shown ratio should differ sharply from Discover's, and one blended number would
    *  hide that. */
-  surface?: "card" | "story";
+  surface?: "card" | "story" | "feed";
+  /** Called with the story currently on offer, or `null` when nothing is showing. The feed uses it
+   *  to withhold its own story-match card for that story — one event, one comparison. */
+  onOfferChange?: (storyId: string | null) => void;
 }) {
+  /** Unbound: this instance serves whatever is armed, rather than one card's article. */
+  const unbound = anchorUrl === undefined;
   const { t } = useTranslation();
   const recordRead = useRecordRead();
   const [offer, setOffer] = React.useState<Continuation | null>(null);
@@ -71,8 +87,8 @@ export function ContinuationStrip({
   // page of sixty cards costs sixty cheap in-memory subscriptions rather than sixty DOM listeners.
   const sync = React.useCallback(() => {
     const armed = readArmed();
-    setArmedFor(armed && armed.anchorUrl === anchorUrl ? { armedAt: armed.armedAt } : null);
-  }, [anchorUrl]);
+    setArmedFor(armed && (unbound || armed.anchorUrl === anchorUrl) ? { armedAt: armed.armedAt } : null);
+  }, [anchorUrl, unbound]);
 
   React.useEffect(() => {
     sync();
@@ -82,7 +98,7 @@ export function ContinuationStrip({
   const onReturn = React.useCallback(
     (hiddenMs: number) => {
       const armed = readArmed();
-      if (!armed || armed.anchorUrl !== anchorUrl) return;
+      if (!armed || (!unbound && armed.anchorUrl !== anchorUrl)) return;
 
       const sinceRead = Date.now() - armed.armedAt;
       if (sinceRead > FRESHNESS_MS) {
@@ -115,11 +131,49 @@ export function ContinuationStrip({
         surface,
       });
     },
-    [anchorUrl, surface],
+    [anchorUrl, unbound, surface],
   );
 
   // Only the armed card listens. Every other card passes `enabled: false` and attaches nothing.
-  useVisibilityReturn(onReturn, { minHiddenMs: MIN_HIDDEN_MS, enabled: armedFor !== null });
+  // The feed instance never listens: arriving at the feed IS the return (below).
+  useVisibilityReturn(onReturn, {
+    minHiddenMs: MIN_HIDDEN_MS,
+    enabled: !unbound && armedFor !== null,
+  });
+
+  /**
+   * The feed instance's trigger: **time since the read**, not an observed visibility return.
+   *
+   * A card-bound strip can watch for the reader coming back because it was on screen when they
+   * left. The feed instance usually was not — the reader read from Discover, or a story page, or a
+   * previous feed that has since been refetched — so there is no hide for it to have observed.
+   * Waiting for one is why nothing ever appeared here.
+   *
+   * `armedAt` carries the same information the dwell gate was approximating: 20 s since the Read
+   * click means the reader went and did something, not that they mis-clicked. And it is strictly
+   * more robust — it needs no listener attached at the right moment in a backgrounded tab.
+   *
+   * The timer covers the dead window where the reader arrives before 20 s have passed; without it
+   * the offer would wait for another navigation to be re-evaluated.
+   */
+  React.useEffect(() => {
+    if (!unbound || armedFor === null || offer) return;
+    const waited = Date.now() - armedFor.armedAt;
+    if (waited >= MIN_HIDDEN_MS) {
+      onReturn(waited);
+      return;
+    }
+    const id = setTimeout(() => onReturn(Date.now() - armedFor.armedAt), MIN_HIDDEN_MS - waited);
+    return () => clearTimeout(id);
+  }, [unbound, armedFor, offer, onReturn]);
+
+  // Reported through an effect rather than from the handlers, so every path that changes what is
+  // on offer — shown, dismissed, opened, superseded — reports itself exactly once.
+  const notify = React.useRef(onOfferChange);
+  notify.current = onOfferChange;
+  React.useEffect(() => {
+    notify.current?.(offer ? offer.storyId : null);
+  }, [offer]);
 
   if (!offer) return null;
 
@@ -155,7 +209,9 @@ export function ContinuationStrip({
     <section
       // motion-safe:animate-in keeps the entrance for readers who want it and skips it for
       // prefers-reduced-motion, which Tailwind's motion-safe variant already encodes.
-      className="mt-3 rounded-lg border border-primary/20 bg-primary/5 p-3 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-top-1"
+      className={`rounded-lg border border-primary/20 bg-primary/5 p-3 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-top-1 ${
+        unbound ? "mb-4" : "mt-3"
+      }`}
       aria-label={t("continuation.title")}
     >
       <div className="flex items-start justify-between gap-2">
@@ -172,6 +228,12 @@ export function ContinuationStrip({
           <X className="h-4 w-4" aria-hidden />
         </button>
       </div>
+
+      {unbound && offer.storyTitle ? (
+        // The card-bound instance sits under the headline it refers to; this one has no such
+        // context, so the story it is about has to be stated or the offer is about nothing.
+        <p className="mt-1 text-sm font-medium">{offer.storyTitle}</p>
+      ) : null}
 
       <p className="mt-1.5 text-sm text-muted-foreground">
         {t("continuation.body", {
