@@ -448,8 +448,21 @@ the strip is the more specific of the two — it names the opposing outlet and s
 side — so it wins. The slot itself is untouched for every other story, and remains the cross-session
 path for readers who return in a later session with nothing armed.
 
+**It wears the card's chrome, and carries the card's information.** Same radius, border, surface and
+padding as `DiscoverCard`, with the accent kept only on the border — distinguishable from the grid
+without reading as a banner injected around the page. More importantly it now shows what a card
+shows before a reader commits: the sibling's **own headline** (the first version showed the offered
+article's headline nowhere at all), its publisher as the same linked chip every card uses rather
+than a name buried mid-sentence, its lean badge, and its age. The §1.3 sentence stays underneath —
+naming both outlets on one axis is a copy rule, not a decoration.
+
+It stays **out of the ranked grid** deliberately. Placing it in the grid would assert it was ranked
+there, and it would inherit the filter tabs — selecting "Bridging" would hide a time-sensitive offer
+that has nothing to do with the filter.
+
 Unchanged: the nine gates, the copy rules in §1.3, dismissal and the impression cap (§6.1, §6.3),
-and the card-bound instances on Discover / Search / Saved / the story page.
+and the card-bound instances on Discover / Search / Saved / the story page — which keep the compact
+in-card treatment, since there the card above already supplies the context.
 
 ### 9.2 V1.1 — small, high-value
 

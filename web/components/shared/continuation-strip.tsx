@@ -17,6 +17,7 @@ import { useVisibilityReturn } from "@/hooks/use-visibility-return";
 import { useRecordRead } from "@/hooks/use-data";
 import { track } from "@/lib/analytics";
 import { useTranslation } from "@/lib/i18n";
+import { LeanBadge, PublisherBadge } from "@/components/shared/article-badges";
 
 /** Design §2.1: the hidden duration that separates "went and read something" from "looked away". */
 const MIN_HIDDEN_MS = 20_000;
@@ -78,7 +79,7 @@ export function ContinuationStrip({
 }) {
   /** Unbound: this instance serves whatever is armed, rather than one card's article. */
   const unbound = anchorUrl === undefined;
-  const { t } = useTranslation();
+  const { t, timeAgo } = useTranslation();
   const recordRead = useRecordRead();
   const [offer, setOffer] = React.useState<Continuation | null>(null);
   const [armedFor, setArmedFor] = React.useState<{ armedAt: number } | null>(null);
@@ -209,9 +210,16 @@ export function ContinuationStrip({
     <section
       // motion-safe:animate-in keeps the entrance for readers who want it and skips it for
       // prefers-reduced-motion, which Tailwind's motion-safe variant already encodes.
-      className={`rounded-lg border border-primary/20 bg-primary/5 p-3 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-top-1 ${
-        unbound ? "mb-4" : "mt-3"
-      }`}
+      //
+      // The feed instance wears the CARD's chrome — same radius, border, surface and padding as
+      // DiscoverCard — with the accent kept only on the border. It is not a recommendation and does
+      // not sit in the ranked grid (design §9.1.2), but looking like a system banner made it read as
+      // something injected around the page rather than part of it. Distinguishable, not foreign.
+      className={
+        unbound
+          ? "mb-5 rounded-lg border border-primary/40 bg-card p-5 shadow-soft motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-top-1"
+          : "mt-3 rounded-lg border border-primary/20 bg-primary/5 p-3 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-top-1"
+      }
       aria-label={t("continuation.title")}
     >
       <div className="flex items-start justify-between gap-2">
@@ -229,13 +237,39 @@ export function ContinuationStrip({
         </button>
       </div>
 
-      {unbound && offer.storyTitle ? (
-        // The card-bound instance sits under the headline it refers to; this one has no such
-        // context, so the story it is about has to be stated or the offer is about nothing.
-        <p className="mt-1 text-sm font-medium">{offer.storyTitle}</p>
+      {unbound ? (
+        // Everything a card gives a reader before they commit: who wrote it, where they sit, when,
+        // and the actual headline. The strip previously named the outlet only inside a sentence
+        // ("India Today is rated right of centre"), which is weaker information scent than the
+        // publisher chip every card on the page carries — and it never showed the headline of the
+        // article it was offering at all.
+        <div className="mt-2 max-w-2xl">
+          {offer.storyTitle ? (
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              {offer.storyTitle}
+            </p>
+          ) : null}
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+            <PublisherBadge name={offer.sibling.publisher} lean={offer.sibling.lean} />
+            {timeAgo(offer.sibling.publishedAt) ? (
+              <>
+                <span className="text-xs text-muted-foreground">·</span>
+                <span className="text-xs text-muted-foreground">
+                  {timeAgo(offer.sibling.publishedAt)}
+                </span>
+              </>
+            ) : null}
+          </div>
+          <h4 className="mt-1.5 text-[1.05rem] font-semibold leading-snug tracking-tight">
+            {offer.sibling.headline}
+          </h4>
+          <div className="mt-2">
+            <LeanBadge lean={offer.sibling.lean} bucket={offer.sibling.leanBucket} />
+          </div>
+        </div>
       ) : null}
 
-      <p className="mt-1.5 text-sm text-muted-foreground">
+      <p className={`text-sm text-muted-foreground ${unbound ? "mt-3 max-w-2xl" : "mt-1.5"}`}>
         {t("continuation.body", {
           outlets: offer.outlets,
           publisher: offer.sibling.publisher,

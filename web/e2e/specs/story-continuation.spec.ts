@@ -521,6 +521,15 @@ test.describe("Story Continuation", () => {
 
     await expect(authedPage.getByText("Compare this story")).toBeVisible();
     await expect(authedPage.getByText(/Fox News is rated right of centre/)).toBeVisible();
+
+    // The feed instance carries what a CARD carries, because it sits among cards and a reader
+    // deciding whether to click needs the same evidence: the sibling's own headline (which the
+    // strip did not show at all at first), its publisher as a linked chip rather than a name buried
+    // in a sentence, and its lean as a badge.
+    await expect(
+      authedPage.getByRole("heading", { name: "Regulator sets out the auction timetable" }),
+    ).toBeVisible();
+    await expect(authedPage.getByRole("link", { name: "Fox News" })).toBeVisible();
   });
 
   test("a read younger than the dwell window is not offered yet, then is", async ({ authedPage }) => {
