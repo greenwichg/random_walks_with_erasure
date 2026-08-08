@@ -285,8 +285,23 @@ GlobeNewswire,,globenewswire.com|Globe Newswire,,,,,wire
 # it. Counter-evidence is already on file: MLive is the representative publisher of a real
 # 21-article / 18-publisher story ("2 deaths linked to parasite outbreak in Michigan") in the
 # 2026-08-08 audit. Curating them needs per-source article evidence, not this row's reasoning.
+# Measured on the live catalog 2026-08-08 (34,402-article window): 671 obituary articles, 1.95% of
+# the feed. These rows reach the 172 that arrive under a feed identity. The other 499 arrive with
+# the NEWSPAPER as their publisher string and an obits.* URL — `is_wire` resolves the publisher, not
+# the URL, so no registry row can reach them. That is an ingest-labelling gap, recorded here so the
+# next reader does not mistake these rows for a complete fix.
+#   publisher=obits.oregonlive.com          65   reached
+#   publisher=obits.lehighvalleylive.com    60   reached
+#   publisher=obituaries.albanyherald.com   41   reached
+#   publisher=obituaries.paloaltoonline.com  6   reached
+#   publisher="The Oregonian",   url=obits.*      376   NOT reached
+#   publisher="The Express-Times", url=obits.*    123   NOT reached
 OregonLive Obituaries,,obits.oregonlive.com|Obits.Oregonlive,US,,,,wire
 Lehigh Valley Live Obituaries,,obits.lehighvalleylive.com|Obits.Lehighvalleylive,US,,,,wire
+# No parent masthead for these two — albanyherald.com and paloaltoonline.com carry no registry row,
+# so unlike the pair above these are purely additive and cannot move anything off a rated outlet.
+Albany Herald Obituaries,,obituaries.albanyherald.com,US,,,,wire
+Palo Alto Online Obituaries,,obituaries.paloaltoonline.com,US,,,,wire
 # An identity-only row -- identity and country curated, lean honestly blank -- held an outlet whose
 # brand word is carried by more than one domain, so a bare name could not be placed without guessing
 # which. BOTH of its members, ESPN and The Motley Fool, have since had ratings sourced and moved to

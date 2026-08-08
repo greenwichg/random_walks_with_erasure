@@ -286,8 +286,16 @@ def test_syndicated_obituary_feeds_are_marked_wire(reg):
     for form in ["https://obits.oregonlive.com/us/obituaries/oregonian/name/jane-doe",
                  "obits.oregonlive.com", "Obits.Oregonlive",
                  "https://obits.lehighvalleylive.com/us/obituaries/lehighvalley/name/j-doe",
-                 "obits.lehighvalleylive.com", "Obits.Lehighvalleylive"]:
+                 "obits.lehighvalleylive.com", "Obits.Lehighvalleylive",
+                 "obituaries.albanyherald.com", "obituaries.paloaltoonline.com"]:
         assert reg.is_wire(form), form
+
+
+def test_the_obituary_rows_do_not_reach_a_name_that_merely_contains_obit(reg):
+    """`diariobitcoin.com` — diari-OBIT-coin — surfaced as a false positive when the live catalog
+    was queried with a `%obit%` LIKE. These rows are exact aliases, not a substring rule, so it
+    cannot happen here; this pins that the day someone is tempted by a pattern."""
+    assert not reg.is_wire("diariobitcoin.com")
 
 
 def test_curating_an_obituary_subdomain_leaves_its_newspaper_untouched(reg):
