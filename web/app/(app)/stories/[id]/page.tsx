@@ -16,6 +16,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { FreshnessBadge } from "@/components/stories/freshness-badge";
 import { StoryIntelligencePanel } from "@/components/stories/story-intelligence-panel";
 import { CoverageList } from "@/components/stories/coverage-list";
+import { FramingComparison } from "@/components/stories/framing-comparison";
 import { StoryCoveragePanel } from "@/components/stories/story-coverage-panel";
 import { StoryListItem } from "@/components/home/story-list-item";
 import { RecommendationPanel } from "@/components/home/recommendation-panel";
@@ -229,6 +230,10 @@ export default function StoryDetailPage() {
               </div>
             </div>
           </article>
+
+          {/* Same event, side by side — the juxtaposition the filterable list below can never show.
+              Renders nothing unless at least two rated sides actually wrote (lib/framing.ts). */}
+          <FramingComparison coverage={story.coverage} />
 
           {/* How is it covered — every article, filterable by the facets the data really has. */}
           <CoverageList coverage={story.coverage} />
