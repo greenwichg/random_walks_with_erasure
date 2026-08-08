@@ -217,24 +217,32 @@ def explain(backend, corpus, rec, u: int, strategy: Optional[str] = None,
     # ``slice_js`` records which ranked items occupy each strategy's slots — the honest meaning
     # of "inSlice" now that admission/ordering can skip over or reorder raw ranks.
     plan = ((strategy, SINGLE_K),) if strategy in STRATEGIES else engine.blend_plan_for(params)
-    chosen, seen_cols, dedup_dropped = [], set(), 0
     slice_js: dict = {s: set() for s in STRATEGIES}
+    j_of_col: dict = {}
+    # Over-fetch exactly as the serving path does, then hand the slices to the SAME selector —
+    # the publisher cap and the first-seen dedup live in engine.Backend._select_diverse, so the
+    # observer cannot drift from the feed it is explaining.
+    cols_by_strategy = []
     for s, kk in plan:
-        admitted, j_of_col = [], {}
+        admitted = []
         for j in per[s]["ranking"]:
             col = rec.id2col.get(str(rec.rec_ids[j]))
             if col is None or not engine.Backend._slice_admits(mind, s, col):
                 continue
             admitted.append(col)
             j_of_col.setdefault(col, int(j))
-        for col in engine.Backend._slice_select(mind, s, admitted, kk, user_side):
-            j = j_of_col[col]
-            slice_js[s].add(j)               # an admitted slot, even if dedup then drops it
-            if col in seen_cols:
-                dedup_dropped += 1
-                continue
-            seen_cols.add(col)
-            chosen.append((col, j, s))
+        slice_cols = engine.Backend._slice_select(mind, s, admitted,
+                                                  kk * engine.REC_OVERFETCH, user_side)
+        cols_by_strategy.append((s, slice_cols))
+    outlets = np.asarray(mind.outlets)
+    picks = engine.Backend._select_diverse(cols_by_strategy, plan, lambda c: str(outlets[c]))
+    chosen = [(col, j_of_col[col], s) for col, s in picks]
+    chosen_cols = {col for col, _ in picks}
+    for s, slice_cols in cols_by_strategy:
+        for col in slice_cols:               # an admitted slot, even if selection then drops it
+            slice_js[s].add(j_of_col[col])
+    seen_cols = chosen_cols
+    dedup_dropped = sum(len(c) for _, c in cols_by_strategy) - len(chosen)
 
     item_deg = np.asarray(fg.item_degrees, dtype=float)
 

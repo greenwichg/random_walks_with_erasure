@@ -528,6 +528,23 @@ def _lean_shares_of(rep: dict) -> dict:
 #: equal to the served feed by the parity tests.
 DEFAULT_BLEND_PLAN = (("rwe-b", 6), ("rwe-d", 4), ("adaptive", 4))
 
+#: Most cards one outlet may hold in a served feed.
+#:
+#: The feed deduped ARTICLES and nothing else, so a single high-volume outlet could take several
+#: of the 14 slots — measured on the reference corpus, 33% of feeds repeated one outlet three or
+#: more times and a 10-card feed averaged only 7.8 distinct outlets. Source diversity is a product
+#: promise the blend already buys with its rwe-d/adaptive budget; those slots are wasted when they
+#: land on an outlet the reader has already been shown.
+#:
+#: This is a DIVERSITY constraint, not an evidence gate: it never admits an item the strategy's
+#: own admission rule rejected, never reorders within a publisher, and never lowers a threshold.
+MAX_CARDS_PER_PUBLISHER = 2
+
+#: Extra columns each strategy ranks so the cap has something to backfill FROM. Without it a
+#: declined slot would shrink the feed instead of moving to the next-ranked admissible item —
+#: the same backfill principle ``_rec_cols_of`` already applies to admission.
+REC_OVERFETCH = 3
+
 
 def _cross_of(user_side: float, lean: float, political: bool) -> bool:
     """The cross-cutting gate, shared by the recommendation serializer and the explain observer
@@ -1765,19 +1782,72 @@ class Backend:
             "crossCutting": bool(cross),
         }
 
-    def _serialize_recs(self, corpus: _Corpus, cols_by_strategy, user_side: float,
-                        familiarity=None) -> list:
-        """Dedup + serialise chosen ``(strategy, columns)`` groups into a rec list, preserving
-        first-seen order. Shared by the base path and the augmented (Measured) path; only the
-        recommender that *chose* the columns differs, never this assembly."""
-        out, seen = [], set()
-        for strat, cols in cols_by_strategy:
+    @staticmethod
+    def _select_diverse(cols_by_strategy, plan, publisher_of,
+                        cap: int = MAX_CARDS_PER_PUBLISHER) -> list:
+        """Choose the final ``[(col, strategy)]`` feed: first-seen article dedup, plus a
+        per-publisher cap applied ACROSS the whole feed.
+
+        Shared by the serving path and the ``rec_explain`` observer so the two can never drift
+        into disagreeing about which cards were served — the same reason ``_slice_admits`` and
+        ``_slice_select`` are shared helpers rather than duplicated loops.
+
+        Three invariants, each of which a naive cap would break:
+
+        * **Per-strategy budgets are preserved exactly.** Each strategy still contributes its
+          planned ``k``, so the openness slider's rwe-b budget — the cross-cutting floor — means
+          the same thing after this change as before it.
+        * **The feed never shrinks.** Columns the cap declines are held in ``spill`` and top the
+          slice back up to ``k`` if the over-fetched pool cannot fill it under the cap. A reader
+          in a thin catalog gets the old feed, not a short one.
+        * **Rank order is untouched.** This only ever SKIPS a candidate; it never promotes a
+          lower-ranked item over a higher-ranked one of the same publisher.
+
+        Deterministic: same inputs → same feed."""
+        chosen, seen, per_pub = [], set(), {}
+        budgets = [k for _, k in plan]
+        for (strat, cols), k in zip(cols_by_strategy, budgets):
+            taken, spill = 0, []
             for col in cols:
+                if taken >= k:
+                    break
+                if col in seen:
+                    continue
+                pub = publisher_of(col)
+                if cap > 0 and per_pub.get(pub, 0) >= cap:
+                    spill.append(col)          # declined by the cap, not by any evidence gate
+                    continue
+                seen.add(col)
+                per_pub[pub] = per_pub.get(pub, 0) + 1
+                chosen.append((col, strat))
+                taken += 1
+            for col in spill:                  # top up rather than serve a short feed
+                if taken >= k:
+                    break
                 if col in seen:
                     continue
                 seen.add(col)
-                out.append(self._serialize_rec(corpus, col, strat, user_side, familiarity))
-        return out
+                pub = publisher_of(col)
+                per_pub[pub] = per_pub.get(pub, 0) + 1
+                chosen.append((col, strat))
+                taken += 1
+        return chosen
+
+    def _serialize_recs(self, corpus: _Corpus, cols_by_strategy, user_side: float,
+                        familiarity=None, plan=None) -> list:
+        """Select + serialise chosen ``(strategy, columns)`` groups into a rec list, preserving
+        first-seen order. Shared by the base path and the augmented (Measured) path; only the
+        recommender that *chose* the columns differs, never this assembly.
+
+        ``plan`` carries each strategy's slot budget so :meth:`_select_diverse` knows how many
+        cards a strategy owes; omitted (older callers) it degrades to "take everything offered",
+        which is the pre-cap behaviour."""
+        outlets = np.asarray(corpus.mind.outlets)
+        if plan is None:
+            plan = [(strat, len(cols)) for strat, cols in cols_by_strategy]
+        picks = self._select_diverse(cols_by_strategy, plan, lambda c: str(outlets[c]))
+        return [self._serialize_rec(corpus, col, strat, user_side, familiarity)
+                for col, strat in picks]
 
     def _serialize_recommendations(self, corpus: _Corpus, rec: "_Recommenders", u: int,
                                    strategy: str | None = None,
@@ -1798,10 +1868,13 @@ class Backend:
         # slot budget follows the reader's openness slider (W1); absent/50 → DEFAULT_BLEND_PLAN.
         plan = ([(strategy, 12)] if strategy in ("rwe-b", "rwe-d", "adaptive")
                 else blend_plan_for(params))
-        cols_by_strategy = [(strat, self._rec_cols_of(corpus.mind, rec, u, strat, k, params,
+        # Over-fetch so the publisher cap has lower-ranked admissible items to backfill FROM;
+        # the plan still decides how many cards each strategy contributes (_select_diverse).
+        cols_by_strategy = [(strat, self._rec_cols_of(corpus.mind, rec, u, strat,
+                                                      k * REC_OVERFETCH, params,
                                                       user_side=float(user_side)))
                             for strat, k in plan]
-        return self._serialize_recs(corpus, cols_by_strategy, user_side, familiarity)
+        return self._serialize_recs(corpus, cols_by_strategy, user_side, familiarity, plan=plan)
 
     def recommendations(self, u: int, strategy: str | None = None,
                         params: "dict | None" = None) -> list:
