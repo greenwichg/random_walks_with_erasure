@@ -264,7 +264,13 @@ Ticker Report,,tickerreport.com|Tickerreport.Com,,,,,wire
 # a name the identity rule could not place because prnewswire is carried by more than one domain.
 # The rows settle the identity AND keep press releases out of stories.
 PR Newswire,,prnewswire.com|prnewswire.co.uk|Pr Newswire,,,,,wire
-GlobeNewswire,,globenewswire.com|Globe Newswire,,,,,wire
+# `Globenewswire_fr` is the French feed's provider KEY, not a domain — 33 articles in the
+# 2026-08-08 window arrive under it, every one on a www.globenewswire.com URL, so the URL
+# predicate already keeps them out of stories (measured: 191/191 across both name forms, 0 in
+# stories). What the alias settles is IDENTITY: the coverage audits stop listing an untracked
+# 33-article outlet, and an article ingested under the label is scored with this canonical name
+# instead of the raw string.
+GlobeNewswire,,globenewswire.com|Globe Newswire|Globenewswire_fr,,,,,wire
 # Syndicated obituary feeds — the `obits.` subdomains of the Legacy.com white-label network.
 # Same category as the rows above and found the same way, by docs/CONTENT_MILL_STORY_EVALUATION.md:
 # the template class is 41 stories / 398 articles (5.3% of covered), it is source-concentrated, and
@@ -302,6 +308,21 @@ Lehigh Valley Live Obituaries,,obits.lehighvalleylive.com|Obits.Lehighvalleylive
 # so unlike the pair above these are purely additive and cannot move anything off a rated outlet.
 Albany Herald Obituaries,,obituaries.albanyherald.com,US,,,,wire
 Palo Alto Online Obituaries,,obituaries.paloaltoonline.com,US,,,,wire
+#
+# Sportskeeda — measured, and the verdict is KEEP, so there is deliberately NO row. The block
+# above says curating a real newsroom needs per-source article evidence; collected 2026-08-08
+# (34,281-article window): 1,174 articles (3.42%, forms `sportskeeda.com` + `Sportskeeda`), of
+# which 730 are singletons (62%), 335 sit in 93 all-Sportskeeda groups the min_publishers gate
+# already discards (28.5%), and 109 reach 63 real stories (9.3%) — one or two articles each, in
+# stories of up to 22 publishers, zero of them trust-low. Exact-duplicate titles: 9 articles in
+# 4 groups (0.8%), all daily game-answer/schedule posts. Exclusion was built and measured before
+# deciding: -134 covered articles (31 of them OTHER outlets', orphaned when 2-publisher stories
+# fall below admission), -28 stories, -2 blindspot claims, largest cluster / coherence / build
+# time unchanged. The gates already quarantine the template tail; a row here would buy nothing
+# and cost real coverage. Lean stays unset — an aggregated factuality score exists and no bias
+# rating anywhere (L2.2: factuality is not lean). Revisit only on new per-source evidence, e.g.
+# mill-share regressing toward the 66% window in docs/CONTENT_MILL_STORY_EVALUATION.md.
+#
 # An identity-only row -- identity and country curated, lean honestly blank -- held an outlet whose
 # brand word is carried by more than one domain, so a bare name could not be placed without guessing
 # which. BOTH of its members, ESPN and The Motley Fool, have since had ratings sourced and moved to

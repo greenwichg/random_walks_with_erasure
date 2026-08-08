@@ -276,6 +276,16 @@ def test_press_release_wires_are_marked(reg):
         assert reg.is_wire(form), form
 
 
+def test_the_french_globenewswire_feed_label_is_the_same_wire(reg):
+    """`Globenewswire_fr` is the French feed's provider KEY, not a domain — 33 articles in the
+    2026-08-08 window arrived under it, every one on a www.globenewswire.com URL, so `is_wire_url`
+    already kept them out of stories (measured: 191/191 across both name forms, 0 in stories).
+    The alias settles IDENTITY: the coverage audits stop listing an untracked 33-article outlet,
+    and an ingest under the label scores as the canonical wire instead of the raw string."""
+    assert reg.resolve("Globenewswire_fr").canonical == "GlobeNewswire"
+    assert reg.is_wire("Globenewswire_fr")
+
+
 def test_syndicated_obituary_feeds_are_marked_wire(reg):
     """The obituary half of the template class (docs/CONTENT_MILL_STORY_EVALUATION.md: 41 stories /
     398 articles, 5.3% of covered), curated at the source instead of by a per-cluster threshold —
