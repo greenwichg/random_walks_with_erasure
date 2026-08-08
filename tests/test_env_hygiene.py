@@ -89,3 +89,50 @@ def test_production_pins_journald_so_audit_lines_survive_deploys():
             f"the {svc} service must keep the journald logging driver: json-file logs die with the "
             f"container on every deploy, which erased the beta_access_denied audit trail the "
             f"2026-08-02 access investigation needed")
+
+
+def test_compose_defaults_the_verified_link_quorum():
+    """The adopted clustering linkage must be the DEFAULT, not an env-file override.
+
+    `RWE_CLUSTER_LINK_QUORUM=0.2` was adopted and twice verified against the live catalog
+    (docs/STORY_CLUSTER_QUORUM_VERIFICATION.md) — largest cluster 196 -> 67, loose members -88%,
+    chain depth >= 5 -93%. Through that whole sequence the compose default stayed at 0, so the
+    verified configuration existed only in `deploy/.env`: a lost or regenerated env file silently
+    reverts production to the single-linkage chaining that merged a US-Iran war, a mass shooting,
+    tariffs and a funeral into one 336-article "story".
+
+    Pinned here rather than in the clustering tests on purpose. `clustering.DEFAULT_LINK_QUORUM`
+    and `story_service.link_quorum()` are LIBRARY defaults and stay 0.0 — the research package has
+    callers that are not this deployment. What must not drift is what the CONTAINER gets.
+    """
+    import pathlib
+    import re
+    compose = (pathlib.Path(__file__).resolve().parent.parent
+               / "deploy" / "docker-compose.yml").read_text(encoding="utf-8")
+    m = re.search(r"RWE_CLUSTER_LINK_QUORUM:\s*\$\{RWE_CLUSTER_LINK_QUORUM:-([^}]*)\}", compose)
+    assert m, "RWE_CLUSTER_LINK_QUORUM is not in the compose environment allowlist"
+    assert float(m.group(1)) == 0.2, (
+        f"compose defaults the link quorum to {m.group(1)!r}; the verified value is 0.2"
+    )
+
+
+def test_compose_keeps_idf_off():
+    """`RWE_CLUSTER_IDF` stays 0. It was briefly enabled and REVERTED on measurement: 361 of 3,431
+    covered articles (10.5%) fell out of stories entirely, and only 16% of that loss was the
+    press-release templates the weighting was meant to punish — the rest was real stories shedding
+    real coverage (Nolan Wells autopsy -12 of 58, French wildfires -9 of 75, Berlin pride -6 of 66).
+
+    Pinned because the headline numbers READ well (766 -> 777 stories, largest 194 -> 93) and invite
+    exactly that re-adoption; `story_service.use_idf()` documents why they mislead. Coverage is the
+    binding constraint on Story Continuation, Coverage Comparison and the feed's story slot, so this
+    would cost the three features that need it most.
+    """
+    import pathlib
+    import re
+    compose = (pathlib.Path(__file__).resolve().parent.parent
+               / "deploy" / "docker-compose.yml").read_text(encoding="utf-8")
+    m = re.search(r"RWE_CLUSTER_IDF:\s*\$\{RWE_CLUSTER_IDF:-([^}]*)\}", compose)
+    assert m, "RWE_CLUSTER_IDF is not in the compose environment allowlist"
+    assert m.group(1).strip() in ("", "0"), (
+        f"compose defaults IDF to {m.group(1)!r}; the measured revert says it must stay off"
+    )

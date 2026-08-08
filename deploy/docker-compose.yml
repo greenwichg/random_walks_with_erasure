@@ -295,14 +295,23 @@ services:
       RWE_STORY_COHERENCE_FLOOR: ${RWE_STORY_COHERENCE_FLOOR:-0.7}
       RWE_STORY_UNVERIFIED_SIZE: ${RWE_STORY_UNVERIFIED_SIZE:-50}
       RWE_STORY_TRUST_RANKING: ${RWE_STORY_TRUST_RANKING:-1}
-      # Cluster-aware linkage. GLOBAL (LINK_QUORUM) is off: measured on 16,921 live articles it
-      # cost 9.3% of covered articles, left the bad-cluster count at 3, and made mean coherence
-      # WORSE (0.966 -> 0.952) by shredding coherent stories. TARGETED (REPAIR_QUORUM) applies the
-      # same rule only to clusters the independent signal already condemns — 3 clusters, 1.6% of
-      # covered articles, bad clusters 3 -> 1, mean coherence 0.966 -> 0.968. Reading the 56 pieces
-      # the 336-article cluster produced settled it: a US-Iran war, a Seattle mass shooting, Canada
-      # tariffs and a senator's funeral had been merged into one "story".
-      RWE_CLUSTER_LINK_QUORUM: ${RWE_CLUSTER_LINK_QUORUM:-0}
+      # Cluster-aware linkage. GLOBAL (LINK_QUORUM) is ON at 0.2 — adopted and twice verified
+      # against the live catalog (docs/STORY_CLUSTER_QUORUM_VERIFICATION.md, ~35.8k articles):
+      # loose members -88%, chain depth >= 5 -93%, largest cluster 196 -> 67, mean coherence
+      # 0.922 -> 0.932, blindspot claims +15 — and grouping IMPROVED, because cleaner primary
+      # clusters give the description-based merge pass joinable inputs. The cost is a measured
+      # -5.5% of covered articles, about half of it template-blob deflation.
+      #
+      # An earlier note here recorded the OPPOSITE conclusion from a 16,921-article measurement
+      # (9.3% coverage cost, coherence 0.966 -> 0.952). That run is superseded: the titration and
+      # the two catalog-wide verifications that followed it measured 0.2 specifically, at twice the
+      # scale, and adopted it. The default was left at 0 through that sequence, so the verified
+      # configuration lived only in deploy/.env — one lost env file away from silently reverting to
+      # the single-linkage chaining that built the 336-article cluster. This line closes that gap.
+      #
+      # TARGETED (REPAIR_QUORUM) is complementary, not an alternative: it re-splits only clusters
+      # the independent signal already condemns, and stays on.
+      RWE_CLUSTER_LINK_QUORUM: ${RWE_CLUSTER_LINK_QUORUM:-0.2}
       RWE_STORY_REPAIR_QUORUM: ${RWE_STORY_REPAIR_QUORUM:-0.5}
       # Machine-generated market-data feeds (outlet_registry.csv kind=wire) never enter story
       # clustering. Does nothing on its own — only outlets a human marked are affected.
