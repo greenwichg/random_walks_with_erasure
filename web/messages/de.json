@@ -336,6 +336,7 @@
   "history.ih.sources": "Quellenvielfalt",
   "history.ih.balance": "Politische Balance",
   "history.ih.reporting": "Berichterstattungsanteil",
+  "history.ih.blindspotCta": "Sie lesen überwiegend {side} — blinde Flecken ansehen",
   "history.insightsTitle": "Erkenntnisse",
   "history.insight.leansLeft": "Ihre Lektüre neigt nach links",
   "history.insight.leansRight": "Ihre Lektüre neigt nach rechts",

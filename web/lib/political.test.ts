@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { leanBucket, leanLabelKey, leanToPercent } from "./political.ts";
+import { leanBucket, leanLabelKey, leanToPercent, personalBlindspotSide } from "./political.ts";
 
 test("leanLabelKey speaks AllSides' own tiers on the registry lattice", () => {
   // One UI value space (docs/LEAN_CONSISTENCY.md F1/F2): the backend serves scored registry
@@ -29,4 +29,22 @@ test("leanBucket and leanToPercent are unchanged", () => {
   assert.equal(leanToPercent(-2), 0);
   assert.equal(leanToPercent(0), 50);
   assert.equal(leanToPercent(2), 100);
+});
+
+test("personalBlindspotSide names the reader's OWN heavy side — that is the lens semantics", () => {
+  // ?blindspot=left lists stories THIN on the left: what a left-heavy diet missed.
+  assert.equal(personalBlindspotSide({ left: 0.6, center: 0.3, right: 0.1 }), "left");
+  assert.equal(personalBlindspotSide({ left: 0.1, center: 0.3, right: 0.6 }), "right");
+});
+
+test("personalBlindspotSide: near-balanced diets make no claim", () => {
+  assert.equal(personalBlindspotSide({ left: 0.4, center: 0.2, right: 0.4 }), null);
+  assert.equal(personalBlindspotSide({ left: 0.45, center: 0.2, right: 0.35 }), null); // 10pt < 15pt
+  // Center-heavy is exposure, not a skew: no lens.
+  assert.equal(personalBlindspotSide({ left: 0.1, center: 0.8, right: 0.1 }), null);
+});
+
+test("personalBlindspotSide: threshold is inclusive at exactly minSkew and tunable", () => {
+  assert.equal(personalBlindspotSide({ left: 0.5, center: 0.15, right: 0.35 }), "left"); // 15pt
+  assert.equal(personalBlindspotSide({ left: 0.5, center: 0.15, right: 0.35 }, 0.2), null);
 });

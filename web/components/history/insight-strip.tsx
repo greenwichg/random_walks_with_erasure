@@ -8,6 +8,7 @@ import { StatCard } from "@/components/dashboard/stat-card";
 import { DistributionBar } from "@/components/history/distribution-bar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { LEAN_META } from "@/lib/metrics";
+import { personalBlindspotSide } from "@/lib/political";
 import { useReport } from "@/hooks/use-data";
 import { useTranslation } from "@/lib/i18n";
 import type { HistoryInsights } from "@/lib/history-insights";
@@ -70,9 +71,22 @@ function BalanceTile({ index }: { index: number }) {
     value: vp[k],
     color: LEAN_META[k].color,
   }));
+  // The reader's PERSONAL coverage-gap lens (lib/political.ts): a measured skew toward one side
+  // links to the stories that side's outlets underreport — the ones this diet most likely missed.
+  // Near-balanced diets get no claim, exactly as the derivation returns null.
+  const blindspot = personalBlindspotSide(vp);
   return (
     <TileShell index={index}>
       <DistributionBar segments={segments} showLabels={false} />
+      {blindspot && (
+        <Link
+          href={`/stories?blindspot=${blindspot}`}
+          className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+        >
+          {t("history.ih.blindspotCta", { side: t(`filter.${blindspot}`) })}
+          <ArrowRight className="h-3.5 w-3.5" aria-hidden />
+        </Link>
+      )}
     </TileShell>
   );
 }

@@ -336,6 +336,7 @@
   "history.ih.sources": "Publisher diversity",
   "history.ih.balance": "Political balance",
   "history.ih.reporting": "Reporting ratio",
+  "history.ih.blindspotCta": "You read mostly {side} — see its blind spots",
   "history.insightsTitle": "Insights",
   "history.insight.leansLeft": "Your reading here leans left",
   "history.insight.leansRight": "Your reading here leans right",
