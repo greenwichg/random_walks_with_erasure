@@ -291,6 +291,40 @@ def test_syndicated_obituary_feeds_are_marked_wire(reg):
         assert reg.is_wire(form), form
 
 
+def test_is_wire_url_reaches_a_feed_the_publisher_name_hides(reg):
+    """The measured gap: an article ingested before its feed was curated keeps the canonical name
+    the registry gave it THEN, so 499 of 671 obituary articles are stored as `The Oregonian` /
+    `The Express-Times` with an `obits.*` URL. The publisher string is not wrong — it is just not
+    the whole identity, and the URL still carries the feed's own host."""
+    for u in ["https://obits.oregonlive.com/us/obituaries/oregonian/name/jane-doe",
+              "https://obits.lehighvalleylive.com/us/obituaries/lehighvalley/name/j-doe",
+              "https://obituaries.albanyherald.com/obituary/someone",
+              "https://obituaries.paloaltoonline.com/obituary/someone",
+              "https://www.prnewswire.com/news-releases/thing.html"]:
+        assert reg.is_wire_url(u), u
+
+
+def test_is_wire_url_never_touches_the_newsroom_it_sits_under(reg):
+    """The property that keeps this strictly narrowing. `obits.oregonlive.com` is wire and
+    `oregonlive.com` is a rated newspaper — the predicate must split them on the host, or the
+    gate deletes The Oregonian from every story in the catalog."""
+    for u in ["https://www.oregonlive.com/politics/2026/08/story.html",
+              "https://www.lehighvalleylive.com/news/2026/08/story.html",
+              "https://www.bbc.co.uk/news/123", "https://nytimes.com/2026/08/08/us/x.html"]:
+        assert not reg.is_wire_url(u), u
+
+
+def test_is_wire_url_is_inert_on_anything_that_is_not_a_url(reg):
+    """It is handed `a.get("url")` from a catalog row, so it must be incapable of misfiring on a
+    display name, an empty column or a null."""
+    for v in [None, "", "   ", "The Oregonian", "not a url"]:
+        assert not reg.is_wire_url(v), repr(v)
+    # A host-LIKE name form is the deliberate exception, not a leak: `Obits.Oregonlive` is a
+    # curated alias of the feed, so answering True is the same answer `is_wire` gives it. The
+    # predicate narrows on identity, and this string carries one.
+    assert reg.is_wire_url("Obits.Oregonlive") and reg.is_wire("Obits.Oregonlive")
+
+
 def test_the_obituary_rows_do_not_reach_a_name_that_merely_contains_obit(reg):
     """`diariobitcoin.com` — diari-OBIT-coin — surfaced as a false positive when the live catalog
     was queried with a `%obit%` LIKE. These rows are exact aliases, not a substring rule, so it
@@ -1813,6 +1847,35 @@ def test_resolution_is_memoized_per_registry_instance(reg):
     for _ in range(50):
         assert reg.resolve("bbc.com") is first          # identity: the same object, not a rebuild
     assert len(reg._resolve_cache) == 1
+
+
+def test_is_wire_url_resolves_the_host_so_one_feed_costs_one_memo_entry(reg):
+    """**Why the predicate splits the host itself instead of handing `resolve` the URL.**
+
+    `resolve` would give the same ANSWER either way — it host-splits internally — so no behavioural
+    test can tell the two apart. The difference is the memo, which is keyed on the input string: a
+    catalog holds ~34,000 distinct URLs against ~5,000 distinct hosts, so passing the URL turns a
+    memo hit into a full resolve (two `_fold` passes) on every article of the build, in a stage
+    cProfile already puts at 10% of it.
+
+    One obituary feed publishes hundreds of distinct URLs and must cost exactly one entry."""
+    reg._resolve_cache.clear()
+    for i in range(200):
+        assert reg.is_wire_url(f"https://obits.oregonlive.com/us/obituaries/name/person-{i}")
+    assert len(reg._resolve_cache) == 1, \
+        "200 URLs from one feed must collapse to one host; resolving the URL would store 200"
+
+
+def test_is_wire_url_asks_about_a_HOST_and_not_about_any_identity_string(reg):
+    """The `_looks_like_host` guard, and what it is for.
+
+    `is_wire` answers for ANY identity form — a display name resolves just as well as a domain. The
+    URL column is not an identity field though, so a display name landing in it must not be read as
+    a curation claim: the predicate's contract is "the host this was served from", and a string
+    with no host has no answer. Without the guard `_host_of("PR Newswire")` yields the bare name
+    and the name path resolves it, quietly making the two predicates synonyms."""
+    assert reg.is_wire("PR Newswire"), "the name form IS wire, asked as an identity"
+    assert not reg.is_wire_url("PR Newswire"), "but it is not a host, so the URL question has no yes"
 
 
 def test_the_memo_remembers_misses_too(reg):

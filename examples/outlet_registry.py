@@ -306,6 +306,31 @@ class OutletRegistry:
         o = self.resolve(text)
         return bool(o and o.kind == "wire")
 
+    def is_wire_url(self, url: "str | None") -> bool:
+        """Whether a URL's HOST is a machine-generated feed — the same question as :meth:`is_wire`,
+        asked of the other string the caller holds.
+
+        Needed because the two strings DISAGREE, measured on the live catalog 2026-08-08. A
+        syndicated obituary arrives with the masthead as its publisher name and the feed's own
+        subdomain in its URL: 499 of 671 obituary articles were stored as ``The Oregonian`` /
+        ``The Express-Times`` with an ``obits.*`` URL. Curating the feed reached the other 172 and
+        removed no story at all, because those 14 clusters are built entirely from the
+        masthead-labelled half. A registry row cannot fix that — the publisher string is not wrong,
+        it is just not the whole identity.
+
+        Resolves the HOST, never the URL. ``resolve`` memoizes per input string, and a catalog
+        holds ~5,000 distinct hosts against ~34,000 distinct URLs — passing the URL would defeat
+        the memo and put a full resolve (two ``_fold`` passes each) on every article in the build,
+        in a stage cProfile already puts at 10% of it.
+
+        Strictly narrowing, by construction: it can only exclude an article SERVED FROM a wire
+        host, and an article served from prnewswire.com is a press release whatever its byline
+        says. No row is reachable this way that was not already curated as a machine-generated
+        feed."""
+        if not url or not _looks_like_host(url):
+            return False
+        return self.is_wire(_host_of(url))
+
     def is_aggregator(self, text: "str | None") -> bool:
         """Whether ``text`` republishes other outlets rather than reporting.
 
@@ -373,6 +398,11 @@ def resolve(text: "str | None") -> Optional[Outlet]:
 def is_wire(text: "str | None") -> bool:
     """Convenience: :meth:`OutletRegistry.is_wire` against the default registry."""
     return default_registry().is_wire(text)
+
+
+def is_wire_url(url: "str | None") -> bool:
+    """Convenience: :meth:`OutletRegistry.is_wire_url` against the default registry."""
+    return default_registry().is_wire_url(url)
 
 
 def is_aggregator(text: "str | None") -> bool:

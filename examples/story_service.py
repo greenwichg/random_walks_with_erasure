@@ -1020,7 +1020,21 @@ def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
         # template repeated 115 times really is about one template, so geoCoherence rates it
         # perfectly coherent. Filtering by curated source identity is explicit and reversible;
         # the threshold that was proposed for the same job measured 0% precision, 0% recall.
-        arts = [a for a in arts if not outlet_registry.is_wire(a.get("publisher"))]
+        #
+        # BOTH strings are asked, because they disagree. `publisher` is the canonical registry name
+        # resolved at INGEST, so an article ingested before its feed was curated keeps the name the
+        # registry gave it then: 499 of 671 obituary articles are stored as `The Oregonian` /
+        # `The Express-Times` with an `obits.*` URL, and curating the feed removed 172 articles and
+        # zero stories because those 14 clusters are built entirely from the masthead-labelled half.
+        # The URL still carries the feed's own host, so it answers the question the stale name
+        # cannot. Strictly narrowing — see `is_wire_url`, which resolves the HOST to keep the
+        # resolve memo effective.
+        #
+        # The aggregator gate below is deliberately NOT given the same treatment: no host/name
+        # mismatch has been measured there, and this file adds gates on evidence, not symmetry.
+        arts = [a for a in arts
+                if not (outlet_registry.is_wire(a.get("publisher"))
+                        or outlet_registry.is_wire_url(a.get("url")))]
     if exclude_aggregator():
         # An aggregator's articles ARE other outlets' articles, republished with a reference link.
         # Counting one as a publisher double-counts coverage the cluster already holds, inflates

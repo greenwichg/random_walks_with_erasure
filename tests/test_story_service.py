@@ -1737,6 +1737,52 @@ def test_curated_obituary_feeds_leave_clustering_and_their_paper_does_not():
     assert "Obits.Oregonlive" not in pubs and "Obits.Lehighvalleylive" not in pubs
     # …and the mastheads are still clustering, together, on their own reporting.
     assert {"The Oregonian", "The Express-Times"} <= pubs
+
+
+def test_an_obituary_stored_under_its_masthead_is_still_kept_out_of_clustering():
+    """**The case the registry rows alone could not reach, measured in production 2026-08-08.**
+
+    `publisher` is the canonical registry name resolved at INGEST, so an article ingested before
+    its feed was curated keeps the old name for ever. 499 of 671 obituary articles are stored as
+    `The Oregonian` / `The Express-Times` with an `obits.*` URL — and curating the feeds removed
+    172 articles and ZERO of the 14 obituary stories, because those clusters are built entirely
+    from the masthead-labelled half.
+
+    So the gate asks the URL too. The second half of this test is what stops that from being a
+    catastrophe: the same masthead's real reporting, on its own domain, must still cluster."""
+    st = store_mod.Store("sqlite://")
+    # Two obituaries for DIFFERENT people, stored the way production stores them: masthead as
+    # publisher, obituary feed in the URL.
+    _add(st, "https://obits.oregonlive.com/us/obituaries/oregonian/name/a-1", "The Oregonian",
+         0.0, "Janet Peek Obituary 2026 Ellensburg funeral services", days=1)
+    _add(st, "https://obits.lehighvalleylive.com/us/obituaries/lehighvalley/name/b-2",
+         "The Express-Times", -1.0,
+         "Emil Benz Obituary 2026 Wilkes-Barre funeral services", days=1)
+    # The same two mastheads reporting a real event, on their OWN domains.
+    _add(st, "https://www.oregonlive.com/politics/p1", "The Oregonian", 0.0,
+         "Portland council approves the transit funding plan", days=1)
+    _add(st, "https://www.lehighvalleylive.com/news/p2", "The Express-Times", -1.0,
+         "Portland council approves transit funding plan after debate", days=1)
+
+    stories = ss.cluster_from_store(st)
+    assert not [s for s in stories if "Obituary" in s["title"]], \
+        "an obits.* URL is excluded even when its publisher name is a rated newspaper"
+    assert {"The Oregonian", "The Express-Times"} <= {p for s in stories for p in s["publishers"]}, \
+        "and the same mastheads still cluster on their own domains — the gate is host-scoped"
+
+
+def test_the_url_gate_is_off_when_the_wire_switch_is(monkeypatch):
+    """One switch, both halves. An operator turning the wire gate off to inspect the raw catalog
+    must not be left with a second, invisible filter still running."""
+    monkeypatch.setenv("RWE_STORY_EXCLUDE_WIRE", "0")
+    st = store_mod.Store("sqlite://")
+    _add(st, "https://obits.oregonlive.com/us/obituaries/oregonian/name/a-1", "The Oregonian",
+         0.0, "Janet Peek Obituary 2026 Ellensburg funeral services", days=1)
+    _add(st, "https://obits.lehighvalleylive.com/us/obituaries/lehighvalley/name/a-2",
+         "The Express-Times", -1.0,
+         "Janet Peek Obituary 2026 Ellensburg funeral services reported", days=1)
+    assert [s for s in ss.cluster_from_store(st) if "Obituary" in s["title"]], \
+        "with the gate off the obituaries cluster again — the URL check honours the same switch"
 def test_concurrent_cold_readers_build_once_not_once_each(monkeypatch):
     """The defect the profile exposed. `warm_cache` has always been single-flight, so the POLLER's
     eight adapter threads could not stampede each other — but the READER path had no such guard,
