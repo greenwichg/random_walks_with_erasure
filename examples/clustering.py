@@ -80,6 +80,39 @@ def title_tokens(title: str) -> frozenset:
                      if len(t) > 2 and not t.isdigit() and t not in _STOPWORDS)
 
 
+#: Description tokens admitted per article when the dek joins the clustering signal. A cap, not a
+#: preference: candidate generation walks token POSTINGS, so cost is O(Σ_t |postings(t)|²) and an
+#: uncapped 60-token dek would multiply the posting lists that already dominate the build. Twelve is
+#: the first N content words, which for a news dek is the who/what — the tail is context and
+#: attribution, which is exactly the prose that makes unrelated stories look similar.
+DESC_TOKEN_CAP = 12
+
+
+def description_tokens(description: str, cap: int = DESC_TOKEN_CAP) -> frozenset:
+    """The first ``cap`` content tokens of a dek, in order of appearance.
+
+    Same filter as :func:`title_tokens` — the stop-list, the length floor, the pure-digit drop —
+    then truncated. **Order of appearance, not rarity**: picking by IDF would need a corpus pass
+    before the corpus exists, and would reintroduce the weighting whose measured revert is recorded
+    in ``story_service.use_idf``. First-N is deterministic, needs no global state, and front-loads
+    the entities a news dek leads with.
+
+    Deduplication happens BEFORE the cap, not after: a repeated word is skipped and the scan
+    continues, so ``cap`` counts DISTINCT tokens and a dek that says "budget" three times spends
+    one of them. Repetition is not evidence, and the alternative — truncate first, dedupe into a
+    frozenset after — would silently give the most repetitive deks the smallest signals.
+    """
+    if cap <= 0:
+        return frozenset()
+    seen: list = []
+    for t in re.findall(r"[a-z0-9]+", (description or "").lower()):
+        if len(t) > 2 and not t.isdigit() and t not in _STOPWORDS and t not in seen:
+            seen.append(t)
+            if len(seen) >= cap:
+                break
+    return frozenset(seen)
+
+
 def jaccard(a: frozenset, b: frozenset) -> float:
     """|A ∩ B| / |A ∪ B|, or 0 for an empty set / no overlap."""
     if not a or not b:

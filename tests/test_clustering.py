@@ -31,6 +31,49 @@ def test_title_tokens_and_jaccard():
     assert cl.jaccard(a, frozenset()) == 0.0
 
 
+# --------------------------------------------------------------------------- #
+# description_tokens — the dek as clustering signal.
+#
+# The clusterer sees 8-12 title tokens and nothing else, so "Fed holds rates steady" and "Central
+# bank leaves borrowing costs unchanged" share ZERO tokens and can never meet min_shared however
+# the thresholds move. The dek is already on the row. These pin the cap's contract; whether the
+# signal is worth its cost is an audit question, not a unit-test one.
+# --------------------------------------------------------------------------- #
+DEK = ("The Federal Reserve left interest rates unchanged on Wednesday, citing persistent "
+       "inflation and a cooling labour market that policymakers said needed more time.")
+
+
+def test_description_tokens_applies_the_title_filter():
+    toks = cl.description_tokens(DEK, cap=50)
+    assert "federal" in toks and "reserve" in toks
+    assert "the" not in toks and "and" not in toks, "stop-words dropped, same list as titles"
+    assert "on" not in toks, "the length floor is > 2, same as titles"
+    assert all(not t.isdigit() for t in toks)
+
+
+def test_description_tokens_takes_the_first_n_in_order():
+    """Order of appearance, NOT rarity. Rarity would need a corpus pass before the corpus exists,
+    and would reintroduce the IDF weighting whose revert cost 10.5% of covered articles."""
+    toks = cl.description_tokens(DEK, cap=4)
+    assert toks == frozenset({"federal", "reserve", "left", "interest"})
+
+
+def test_description_tokens_caps_and_dedupes():
+    assert len(cl.description_tokens(DEK, cap=6)) == 6
+    assert len(cl.description_tokens(DEK, cap=500)) < 500, "a dek is shorter than any large cap"
+    # Repetition is not evidence: the cap counts DISTINCT tokens, so a word said twice buys nothing.
+    assert cl.description_tokens("Budget budget budget talks", cap=12) == frozenset(
+        {"budget", "talks"})
+
+
+def test_description_tokens_is_off_at_zero_and_safe_on_nothing():
+    """`cap=0` is the production default and must cost nothing — not "an empty-ish set", empty."""
+    assert cl.description_tokens(DEK, cap=0) == frozenset()
+    assert cl.description_tokens(DEK, cap=-1) == frozenset()
+    assert cl.description_tokens("", cap=12) == frozenset()
+    assert cl.description_tokens(None, cap=12) == frozenset()
+
+
 def test_related_items_cluster_together():
     items = _items(("Senate passes funding bill after debate", 0),
                    ("Senate passes funding bill averting shutdown", 0),

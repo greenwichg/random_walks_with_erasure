@@ -421,6 +421,18 @@ def _geo_coherence(members: list, votes: dict) -> "tuple[Optional[float], int]":
     return round(max(votes.values()) / located, 3), located
 
 
+def article_tokens(a: dict, cap: int = 0) -> frozenset:
+    """The clustering signal for one article: its headline, plus ``cap`` dek tokens when > 0.
+
+    One function so the primary build, the repair re-split and the audit cannot drift into scoring
+    different things — a repair that saw a different signal from the build that produced the
+    cluster would re-split on a disagreement rather than on a defect."""
+    toks = clustering.title_tokens(a.get("headline") or "")
+    if cap > 0:
+        toks = toks | clustering.description_tokens(a.get("description") or "", cap)
+    return toks
+
+
 def min_shared_tokens() -> int:
     """Distinctive tokens two headlines must share to be considered the same event. Tunable without
     a deploy because the right value is an empirical question about the live headline mix — see
@@ -430,6 +442,51 @@ def min_shared_tokens() -> int:
 
 def min_title_tokens() -> int:
     return _env_int("RWE_CLUSTER_MIN_TOKENS", clustering.MIN_TITLE_TOKENS)
+
+
+def desc_tokens() -> int:
+    """How many DESCRIPTION tokens join each article's clustering signal — 0 (off).
+
+    **Measured and NOT adopted. Do not turn this on globally.** It is retained as an instrument —
+    ``audit_clustering_change.py --desc-tokens 12`` is how the paraphrase/template mix gets
+    quantified on the live catalog — not as a candidate default. The evidence is in
+    ``tests/test_story_service.py::test_no_shared_token_floor_can_separate_paraphrase_from_template``.
+
+    **Why it was built.** The clusterer sees 8-12 title tokens and nothing else, so "Fed holds
+    rates steady" and "Central bank leaves borrowing costs unchanged" share ZERO tokens and can
+    never meet ``min_shared`` however the thresholds move. Roughly four in five catalog articles
+    are in no story at all; a paraphrased headline is a large part of that, and the dek is already
+    in the row (``_profile`` has used it for the merge pass since the Seattle clusters).
+
+    **Why it does not work.** The premise was that a higher floor (:func:`desc_min_shared`) buys
+    back the precision the deks cost. Measured over four realistic paraphrase pairs and four
+    realistic template pairs — same wire boilerplate, different event: election results by state,
+    earnings by ticker, scores by game, weather by county — the template pairs score STRICTLY
+    HIGHER than the paraphrase pairs on both shared-token count and Jaccard, at every cap. At
+    cap 12: paraphrases 8-10 shared / 0.35-0.48, templates 10-15 shared / 0.69-0.88. The
+    distributions are not merely overlapping, they are inverted, so *no* floor admits the
+    paraphrases without admitting the templates.
+
+    That is structural, not a fixture accident. A template pair shares its prose BY CONSTRUCTION —
+    one sentence with an entity substituted — while a paraphrase pair shares only the entities two
+    desks independently chose to lead with. Lengthening the token set therefore helps the template
+    more, monotonically. Separating them needs information bag-of-words does not carry: that *Ohio*
+    and *Iowa* are alternatives rather than variants. That is a representation change, not a
+    threshold."""
+    return _env_int("RWE_CLUSTER_DESC_TOKENS", 0)
+
+
+def desc_min_shared() -> int:
+    """Shared-token floor used INSTEAD of ``min_shared_tokens()`` when deks are in the signal — 5.
+
+    A separate constant rather than a scaled one, because the two are calibrated against different
+    distributions and coupling them hides that. Three-of-eight is a strong signal; three-of-twenty
+    is noise.
+
+    **Five is not a safe value, and neither is any other** — see :func:`desc_tokens` for the
+    measurement. It survives as the titration knob for the audit, so the paraphrase and template
+    curves can be traced against a real catalog rather than against eight constructed pairs."""
+    return _env_int("RWE_CLUSTER_DESC_MIN_SHARED", 5)
 
 
 def use_idf() -> bool:
@@ -673,7 +730,8 @@ def _admit(groups: list, arts: list, *, min_articles: int, min_publishers: int) 
 
 
 def _repair(members: list, *, quorum: float, sim: float, window_days: float, min_shared: int,
-            min_tokens: int, idf: bool, min_articles: int, min_publishers: int) -> Optional[list]:
+            min_tokens: int, idf: bool, min_articles: int, min_publishers: int,
+            desc: int = 0) -> Optional[list]:
     """Re-cluster ONE condemned cluster's members under a stricter linkage rule.
 
     Why targeted rather than global: measured on the live catalog, a global quorum splits the
@@ -688,7 +746,7 @@ def _repair(members: list, *, quorum: float, sim: float, window_days: float, min
     yields one piece (nothing was separated) or loses more than ``REPAIR_MIN_RETENTION`` of the
     articles (it destroyed the cluster rather than resolving it)."""
     pieces = _admit(
-        clustering.cluster(members, tokens=lambda a: clustering.title_tokens(a["headline"]),
+        clustering.cluster(members, tokens=lambda a: article_tokens(a, desc),
                            time=lambda a: clustering.parse_time(a["publishedAt"]),
                            sim=sim, window_days=window_days, min_shared=min_shared,
                            min_tokens=min_tokens, idf=idf, link_quorum=quorum),
@@ -943,7 +1001,8 @@ def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
                   quorum: Optional[float] = None,
                   repair: Optional[float] = None,
                   merge: Optional[float] = None,
-                  merge_gap: Optional[float] = None) -> list:
+                  merge_gap: Optional[float] = None,
+                  desc: Optional[int] = None) -> list:
     """Cluster FeedArticle rows into Story objects (the pure builder). Keeps clusters with
     ≥ ``min_articles`` from ≥ ``min_publishers`` distinct outlets; sorted biggest+freshest first,
     with independently-suspect clusters demoted (see ``_size_rank``).
@@ -986,11 +1045,16 @@ def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
         keys = publisher_identity.groups({a["publisher"] for a in arts})
         for a in arts:
             a["publisherKey"] = keys.get(a["publisher"], a["publisher"])
-    shared = min_shared_tokens() if min_shared is None else min_shared
+    cap = desc_tokens() if desc is None else desc
+    # The dek changes what "3 shared tokens" MEANS, so the floor moves with it rather than being
+    # inherited — see `desc_min_shared`. An explicit --min-shared still wins, so the audit can
+    # titrate one variable at a time.
+    default_shared = desc_min_shared() if cap > 0 else min_shared_tokens()
+    shared = default_shared if min_shared is None else min_shared
     tokens_floor = min_title_tokens() if min_tokens is None else min_tokens
     weighting = use_idf() if idf is None else idf
     groups = clustering.cluster(
-        arts, tokens=lambda a: clustering.title_tokens(a["headline"]),
+        arts, tokens=lambda a: article_tokens(a, cap),
         time=lambda a: clustering.parse_time(a["publishedAt"]), sim=sim, window_days=window_days,
         min_shared=shared, min_tokens=tokens_floor, idf=weighting,
         link_quorum=link_quorum() if quorum is None else quorum)
@@ -1000,7 +1064,7 @@ def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
         if mend > 0.0 and _build_story(members)["clusterTrust"] == TRUST_LOW:
             pieces = _repair(members, quorum=mend, sim=sim, window_days=window_days,
                              min_shared=shared, min_tokens=tokens_floor, idf=weighting,
-                             min_articles=min_articles, min_publishers=min_publishers)
+                             min_articles=min_articles, min_publishers=min_publishers, desc=cap)
             if pieces is not None:
                 admitted.extend(pieces)
                 continue

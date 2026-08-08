@@ -17,10 +17,25 @@ coverage that way, most of it not the quorum's doing. Pass ``--before-min-shared
     python examples/audit_clustering_change.py --min-shared 4        # try a candidate value
     python examples/audit_clustering_change.py --show 20             # list the biggest splits
     python examples/audit_clustering_change.py --link-quorum 0.3     # cluster-aware linkage
+    python examples/audit_clustering_change.py --desc-tokens 12      # cluster on title + dek
 
-The last one is the change this instrument now exists for. It prints a VERDICT against bars fixed
-in advance (``--max-dropped``), because the previous tightening change looked good on its headline
-numbers and cost 10.5% of covered articles — a number nobody would have accepted if asked first.
+It prints a VERDICT against bars fixed in advance (``--max-dropped``), because the previous
+tightening change looked good on its headline numbers and cost 10.5% of covered articles — a
+number nobody would have accepted if asked first.
+
+**Reading a ``--desc-tokens`` run.** This one is an INSTRUMENT, not a candidate — the shared-token
+floor it pairs with cannot separate paraphrases from wire templates, and
+``story_service.desc_tokens`` records the measurement. What the run is for is sizing the two
+populations on the real catalog: how much genuine paraphrase recall is being left on the table
+against how many template collisions it would cost. That ratio is what decides whether the real
+fix is worth building.
+
+Two consequences for reading the output. It moves in BOTH directions at once — deks add linkage,
+the raised floor removes it — so the splitting bars apply (dropped coverage is the real risk, and
+the IDF revert is why) but the story-count rule can fire for the legitimate reason that two
+paraphrase clusters became one event. And the VERDICT line is close to meaningless here: use
+``--pieces`` and read the joins, because only the titles distinguish "same event, different words"
+from "same template, different event", which is exactly the distinction the aggregates cannot make.
 """
 
 from __future__ import annotations
@@ -37,7 +52,7 @@ MAX_DROPPED = 0.05
 
 
 def build(rows: list, *, min_shared: int, min_tokens: int, idf: bool = False,
-          quorum=None, repair=None, merge=None) -> list:
+          quorum=None, repair=None, merge=None, desc=None) -> list:
     """``None`` means "whatever production is configured with" — ``build_stories`` resolves it.
 
     These defaulted to 0.0, which silently made the BEFORE side something production is not. It is
@@ -46,7 +61,7 @@ def build(rows: list, *, min_shared: int, min_tokens: int, idf: bool = False,
     *unrepaired + merge*, where the duplicate clusters the merge exists to join are still fused
     inside the mega-cluster and there is by construction nothing for it to do."""
     return story_service.build_stories(rows, min_shared=min_shared, min_tokens=min_tokens, idf=idf,
-                                       quorum=quorum, repair=repair, merge=merge)
+                                       quorum=quorum, repair=repair, merge=merge, desc=desc)
 
 
 def index_by_member(stories: list) -> dict:
@@ -146,12 +161,12 @@ def verdict(res: dict, *, max_dropped: float = MAX_DROPPED, merging: bool = Fals
 def compare(store_, *, before: tuple, after: tuple, show: int = 10,
             before_idf: bool = False, after_idf: bool = False,
             before_quorum=None, after_quorum=None,
-            after_repair=None, after_merge=None) -> dict:
+            after_repair=None, after_merge=None, after_desc=None) -> dict:
     rows = story_service._fetch(store_)
     a = build(rows, min_shared=before[0], min_tokens=before[1], idf=before_idf,
               quorum=before_quorum)
     b = build(rows, min_shared=after[0], min_tokens=after[1], idf=after_idf, quorum=after_quorum,
-              repair=after_repair, merge=after_merge)
+              repair=after_repair, merge=after_merge, desc=after_desc)
 
     a_by_id = {s["id"]: s for s in a}
     b_by_id = {s["id"]: s for s in b}
@@ -274,6 +289,13 @@ def main(argv=None) -> int:
     ap.add_argument("--merge-sim", type=float, default=None,
                     help="second-pass duplicate merge: join clusters whose description-backed "
                          "profiles reach this weighted similarity (recall, not precision)")
+    ap.add_argument("--desc-tokens", type=int, default=None,
+                    help="add the first N description tokens to each article's clustering signal "
+                         "(0 = headline only, as production is). Raises the shared-token floor to "
+                         "--desc-min-shared unless --min-shared is given")
+    ap.add_argument("--desc-min-shared", type=int, default=None,
+                    help="the floor to pair with --desc-tokens (default: configured, %d)"
+                         % story_service.desc_min_shared())
     ap.add_argument("--pieces", type=int, default=0,
                     help="print the resulting pieces for the N biggest split clusters — the read "
                          "that decides whether a split separated events or shredded a story")
@@ -284,14 +306,26 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
 
     configured = (story_service.min_shared_tokens(), story_service.min_title_tokens())
-    after = (args.min_shared if args.min_shared is not None else configured[0],
+    cap = story_service.desc_tokens() if args.desc_tokens is None else args.desc_tokens
+    # The dek changes what a shared token IS WORTH, so the floor moves with it — the same coupling
+    # `build_stories` applies. It has to be re-derived here because this parser resolves every knob
+    # to a concrete value before calling, so passing `configured[0]` would silently hand the
+    # dek-enabled side the headline floor and measure a change nobody would ship.
+    if args.min_shared is not None:
+        after_shared = args.min_shared
+    elif cap > 0:
+        after_shared = (args.desc_min_shared if args.desc_min_shared is not None
+                        else story_service.desc_min_shared())
+    else:
+        after_shared = configured[0]
+    after = (after_shared,
              args.min_tokens if args.min_tokens is not None else configured[1])
     before = (args.before_min_shared if args.before_min_shared is not None else configured[0],
               args.before_min_tokens if args.before_min_tokens is not None else configured[1])
     res = compare(store_mod.Store(args.db), before=before,
                   after=after, show=args.show, after_idf=args.idf,
                   after_quorum=args.link_quorum, after_repair=args.repair_quorum,
-                  after_merge=args.merge_sim)
+                  after_merge=args.merge_sim, after_desc=cap)
 
     def _tag(name, v):
         return f", {name} {v:g}" if v else ""
@@ -303,10 +337,12 @@ def main(argv=None) -> int:
            + _tag("repair", args.repair_quorum if args.repair_quorum is not None
                   else story_service.repair_quorum())
            + _tag("merge", args.merge_sim if args.merge_sim is not None
-                  else story_service.merge_similarity()))
+                  else story_service.merge_similarity())
+           + _tag("dek", cap))
     base_tag = (_tag("quorum", story_service.link_quorum())
                 + _tag("repair", story_service.repair_quorum())
-                + _tag("merge", story_service.merge_similarity()))
+                + _tag("merge", story_service.merge_similarity())
+                + _tag("dek", story_service.desc_tokens()))
     print(f"articles in window : {res['articles']:,}")
     print(f"before  (shared>={before[0]}, tokens>={before[1]}{base_tag}): "
           f"{res['beforeStories']:,} stories, largest {res['beforeLargest']}"

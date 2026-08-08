@@ -1021,6 +1021,178 @@ def test_diagnostics_report_trust_and_the_launch_monitors():
     assert d["largestOverP90"] > 0 and 0.0 < d["largestShareOfCovered"] <= 1.0
 
 
+# --------------------------------------------------------------------------- #
+# The dek as clustering signal — built, measured, and NOT adopted.
+#
+# The premise was sound: the clusterer sees 8-12 title tokens, so "Fed holds rates steady" and
+# "Central bank leaves borrowing costs unchanged" share ZERO tokens and can never meet min_shared
+# however the thresholds move. Four in five catalog articles are in no story at all.
+#
+# The measurement killed it. Over four realistic paraphrase pairs and four realistic TEMPLATE pairs
+# (same wire boilerplate, different event — election results by state, earnings by ticker, scores by
+# game, weather by county), template pairs score STRICTLY HIGHER than paraphrase pairs on both
+# shared-token count and Jaccard, at every cap. Not overlapping distributions — fully inverted ones.
+# So no floor separates them, which is what `desc_min_shared` was supposed to do.
+#
+# These tests pin the negative result so the idea is not re-proposed on its premise alone.
+# --------------------------------------------------------------------------- #
+#: (headline, dek) pairs about ONE event, written differently — what the dek signal is meant to join.
+PARAPHRASE_PAIRS = [
+    (("Fed holds rates steady",
+      "The Federal Reserve left its benchmark interest rate unchanged on Wednesday, citing "
+      "stubborn inflation."),
+     ("Central bank leaves borrowing costs unchanged",
+      "Policymakers at the Federal Reserve held the benchmark interest rate steady Wednesday as "
+      "inflation stayed elevated.")),
+    (("Strike ends at Detroit plant",
+      "Union members ratified a four-year contract on Friday, ending a six-week walkout at the "
+      "assembly plant in Detroit."),
+     ("Autoworkers ratify deal after six weeks",
+      "The union said its members approved a four-year contract Friday, concluding a walkout that "
+      "idled the Detroit assembly plant.")),
+    (("Quake kills dozens in western Turkey",
+      "A magnitude 6.1 earthquake struck western Turkey before dawn, killing at least 40 people "
+      "and collapsing buildings."),
+     ("At least 40 dead after tremor hits Izmir",
+      "Rescuers searched collapsed buildings in western Turkey after a magnitude 6.1 earthquake "
+      "before dawn killed dozens.")),
+    (("EU agrees migration overhaul",
+      "European Union governments reached a deal in Brussels on Thursday to overhaul the bloc's "
+      "asylum and migration rules."),
+     ("Brussels deal rewrites asylum rules",
+      "After all-night talks, European Union governments agreed Thursday to rewrite the bloc's "
+      "asylum and migration system.")),
+]
+
+#: Pairs sharing a TEMPLATE but covering different events — what the dek signal must not join.
+TEMPLATE_PAIRS = [
+    (("Trump wins Ohio",
+      "The Republican candidate took Ohio with 54 percent of the vote, election officials said "
+      "Tuesday night."),
+     ("Trump wins Iowa",
+      "The Republican candidate took Iowa with 51 percent of the vote, election officials said "
+      "Tuesday night.")),
+    (("Apple beats earnings expectations",
+      "The company reported quarterly revenue above analyst estimates, sending shares higher in "
+      "after-hours trading Thursday."),
+     ("Microsoft beats earnings expectations",
+      "The company reported quarterly revenue above analyst estimates, sending shares higher in "
+      "after-hours trading Tuesday.")),
+    (("Lakers beat Suns 112-104",
+      "The visitors pulled away in the fourth quarter Saturday night, improving to 21-14 with "
+      "their third straight road win."),
+     ("Celtics beat Magic 118-109",
+      "The visitors pulled away in the fourth quarter Saturday night, improving to 24-11 with "
+      "their fourth straight road win.")),
+    (("Storm warning issued for Norfolk",
+      "Forecasters warned of gusts up to 70 mph and coastal flooding overnight, urging residents "
+      "to avoid unnecessary travel."),
+     ("Storm warning issued for Suffolk",
+      "Forecasters warned of gusts up to 65 mph and coastal flooding overnight, urging residents "
+      "to avoid unnecessary travel.")),
+]
+
+
+def _pair_scores(pairs, cap):
+    import clustering as cl
+    out = []
+    for (h1, d1), (h2, d2) in pairs:
+        a = ss.article_tokens({"headline": h1, "description": d1}, cap)
+        b = ss.article_tokens({"headline": h2, "description": d2}, cap)
+        out.append((len(a & b), cl.jaccard(a, b)))
+    return out
+
+
+@pytest.mark.parametrize("cap", [6, 12])
+def test_no_shared_token_floor_can_separate_paraphrase_from_template(cap):
+    """**The finding that stops this change from being adopted.**
+
+    ``desc_min_shared`` exists on the theory that three-of-eight is signal and three-of-twenty is
+    noise, so a higher floor buys back the precision the deks cost. It cannot: the WORST paraphrase
+    pair scores below the BEST template pair, so any floor admitting all four paraphrases admits all
+    four templates, and any floor rejecting the templates rejects the feature's whole purpose.
+
+    The reason is structural rather than a fixture accident. A template pair shares its prose BY
+    CONSTRUCTION — it is the same sentence with one entity substituted — while a paraphrase pair
+    shares only the entities two desks independently chose to lead with. Lengthening the token set
+    therefore helps the template more than the paraphrase, monotonically. Separating these needs
+    information bag-of-words does not carry (that *Ohio* and *Iowa* are alternatives, not variants),
+    which is a different phase, not a tuned threshold."""
+    para, tmpl = _pair_scores(PARAPHRASE_PAIRS, cap), _pair_scores(TEMPLATE_PAIRS, cap)
+    assert min(s for s, _ in para) <= max(s for s, _ in tmpl), "shared-count floor cannot separate"
+    assert min(j for _, j in para) <= max(j for _, j in tmpl), "a similarity bar cannot either"
+    # Stronger, and the reason the first two assertions are not a near-miss: the orders are fully
+    # INVERTED. Every template pair outscores every paraphrase pair.
+    assert min(s for s, _ in tmpl) >= max(s for s, _ in para)
+    assert min(j for _, j in tmpl) >= max(j for _, j in para)
+
+
+def test_dek_tokens_are_off_by_default_and_the_signal_degenerates_exactly(monkeypatch):
+    """Off must mean *byte-identical to before this existed*, not "nearly". ``article_tokens`` is
+    now the single owner of the clustering signal for the build, the repair and the audit, so it has
+    to reduce to the plain ``title_tokens`` call it replaced at every one of them."""
+    import clustering as cl
+    monkeypatch.delenv("RWE_CLUSTER_DESC_TOKENS", raising=False)
+    assert ss.desc_tokens() == 0
+    for (h, d), _ in PARAPHRASE_PAIRS + TEMPLATE_PAIRS:
+        art = {"headline": h, "description": d}
+        assert ss.article_tokens(art, 0) == cl.title_tokens(h)
+        assert ss.article_tokens(art, ss.desc_tokens()) == cl.title_tokens(h)
+    monkeypatch.setenv("RWE_CLUSTER_DESC_TOKENS", "12")
+    assert ss.desc_tokens() == 12
+    monkeypatch.setenv("RWE_CLUSTER_DESC_TOKENS", "nonsense")
+    assert ss.desc_tokens() == 0, "junk falls back rather than silently reshaping the catalog"
+
+
+def test_dek_min_shared_is_tunable(monkeypatch):
+    monkeypatch.delenv("RWE_CLUSTER_DESC_MIN_SHARED", raising=False)
+    assert ss.desc_min_shared() == 5
+    monkeypatch.setenv("RWE_CLUSTER_DESC_MIN_SHARED", "8")
+    assert ss.desc_min_shared() == 8
+    monkeypatch.setenv("RWE_CLUSTER_DESC_MIN_SHARED", "")
+    assert ss.desc_min_shared() == 5
+
+
+def _pair_catalog(st, pairs):
+    for i, ((h1, d1), (h2, d2)) in enumerate(pairs):
+        _add(st, f"https://npr.org/p{i}", "NPR", -1.0, h1, desc=d1, days=0)
+        _add(st, f"https://fox.com/p{i}", "Fox News", 1.5, h2, desc=d2, days=0)
+
+
+def test_the_catalog_is_untouched_while_the_dek_signal_is_off():
+    """The production path. Same rows, same stories, same ids, same order — the change is inert."""
+    st = store_mod.Store("sqlite://")
+    _pair_catalog(st, PARAPHRASE_PAIRS + TEMPLATE_PAIRS)
+    _senate_and_wildfire(st)
+    rows = ss._fetch(st)
+    off = [(s["id"], s["title"], s["totalCoverage"]) for s in ss.build_stories(rows, desc=0)]
+    assert off == [(s["id"], s["title"], s["totalCoverage"]) for s in ss.build_stories(rows)]
+    # The baseline both directions are measured from, and it is not a clean one. On headlines alone
+    # NONE of the four paraphrase pairs forms a story (0 shared title tokens, as designed) while TWO
+    # of the four template pairs ALREADY DO — "Apple/Microsoft beats earnings expectations" and
+    # "Storm warning issued for Norfolk/Suffolk" each share 3 title tokens at Jaccard 0.60. So the
+    # template collision is a live defect today, before any dek is involved; what the dek signal
+    # does is take it from two-of-four to four-of-four while buying the paraphrases.
+    assert len(off) == 4                                   # 2 real events + 2 template false merges
+    assert not [s for s in off if "Fed" in s[1] or "Central bank" in s[1] or "Trump" in s[1]]
+
+
+def test_dek_signal_buys_paraphrase_recall_and_pays_for_it_in_template_merges():
+    """What turning it on actually does, both halves of it, on one catalog.
+
+    The recall is real — four paraphrase pairs that could never cluster now do. The cost is equally
+    real and arrives at the same threshold: four unrelated template pairs cluster too. Recorded
+    together deliberately, because the first half alone is the number that would get this shipped."""
+    st = store_mod.Store("sqlite://")
+    _pair_catalog(st, PARAPHRASE_PAIRS + TEMPLATE_PAIRS)
+    rows = ss._fetch(st)
+    on = ss.build_stories(rows, desc=12, min_shared=5)
+    joined = {s["title"] for s in on if s["totalCoverage"] == 2}
+    assert len(on) == 8, f"all eight pairs clustered, not just the four wanted: {len(on)}"
+    assert any("Fed" in t or "Central bank" in t for t in joined), "the paraphrase recall is real"
+    assert any("Trump wins" in t for t in joined), "and so is the false merge it comes with"
+
+
 def test_link_quorum_is_off_by_default_and_tunable(monkeypatch):
     monkeypatch.delenv("RWE_CLUSTER_LINK_QUORUM", raising=False)
     assert ss.link_quorum() == 0.0
