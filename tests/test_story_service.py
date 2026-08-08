@@ -1706,9 +1706,37 @@ def test_the_aggregator_gate_is_its_own_switch(monkeypatch):
     assert ss.exclude_wire() is True, "the wire gate is untouched by the aggregator switch"
 
 
-# --------------------------------------------------------------------------- #
-# Cold-build concurrency — the performance investigation, pinned as behaviour
-# --------------------------------------------------------------------------- #
+def test_curated_obituary_feeds_leave_clustering_and_their_paper_does_not():
+    """Source curation, end to end — the change the clustering audits actually recommended.
+
+    Five different deceased people cannot form one story if the feed never enters clustering. That
+    is the whole mechanism: no threshold moved, no similarity redefined, one identity fact recorded
+    about a syndication feed. Contrast every measured alternative — a/p rejected twice at 0%/0%,
+    dek tokens rejected at 34.5% dropped coverage.
+
+    The second half is the guard. `obits.oregonlive.com` used to resolve to The Oregonian, so a
+    row written one character too wide would take a rated regional newspaper out of the catalog
+    with it."""
+    st = store_mod.Store("sqlite://")
+    # Two obituaries for DIFFERENT people, from the two curated feeds — the exact shape that fused
+    # into one story under the rejected dek experiment.
+    _add(st, "https://obits.oregonlive.com/us/obituaries/oregonian/name/a-1", "Obits.Oregonlive",
+         None, "Janet Peek Obituary 2026 Ellensburg funeral services", days=1)
+    _add(st, "https://obits.lehighvalleylive.com/us/obituaries/lehighvalley/name/b-2",
+         "Obits.Lehighvalleylive", None,
+         "Emil Benz Obituary 2026 Wilkes-Barre funeral services", days=1)
+    # The newspapers' own reporting, on one real event.
+    _add(st, "https://www.oregonlive.com/politics/p1", "The Oregonian", 0.0,
+         "Portland council approves the transit funding plan", days=1)
+    _add(st, "https://www.lehighvalleylive.com/news/p2", "The Express-Times", -1.0,
+         "Portland council approves transit funding plan after debate", days=1)
+
+    stories = ss.cluster_from_store(st)
+    pubs = {p for s in stories for p in s["publishers"]}
+    assert not [s for s in stories if "Obituary" in s["title"]], "no obituary reaches a story"
+    assert "Obits.Oregonlive" not in pubs and "Obits.Lehighvalleylive" not in pubs
+    # …and the mastheads are still clustering, together, on their own reporting.
+    assert {"The Oregonian", "The Express-Times"} <= pubs
 def test_concurrent_cold_readers_build_once_not_once_each(monkeypatch):
     """The defect the profile exposed. `warm_cache` has always been single-flight, so the POLLER's
     eight adapter threads could not stampede each other — but the READER path had no such guard,

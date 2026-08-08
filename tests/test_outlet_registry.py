@@ -276,6 +276,57 @@ def test_press_release_wires_are_marked(reg):
         assert reg.is_wire(form), form
 
 
+def test_syndicated_obituary_feeds_are_marked_wire(reg):
+    """The obituary half of the template class (docs/CONTENT_MILL_STORY_EVALUATION.md: 41 stories /
+    398 articles, 5.3% of covered), curated at the source instead of by a per-cluster threshold —
+    a/p was measured against the whole catalog and rejected twice at 0% precision / 0% recall.
+
+    Reachable by URL, by bare domain, and by the title-cased name form the feed path supplies,
+    because the catalog carries all three."""
+    for form in ["https://obits.oregonlive.com/us/obituaries/oregonian/name/jane-doe",
+                 "obits.oregonlive.com", "Obits.Oregonlive",
+                 "https://obits.lehighvalleylive.com/us/obituaries/lehighvalley/name/j-doe",
+                 "obits.lehighvalleylive.com", "Obits.Lehighvalleylive"]:
+        assert reg.is_wire(form), form
+
+
+def test_curating_an_obituary_subdomain_leaves_its_newspaper_untouched(reg):
+    """**The property that makes the row safe, and the one a careless edit would break.**
+
+    Resolution matches by registrable-domain SUFFIX and is subdomain-tolerant, so before these rows
+    `obits.oregonlive.com` resolved to The Oregonian — which is precisely why the evaluation
+    measured that masthead at 90% "mill share". A newspaper was being credited with its
+    syndication partner's obituary feed.
+
+    The fix has to be surgical: the longer alias must win over the shorter suffix, moving ONLY the
+    obituaries. Both papers keep their identity, their sourced lean and their clustering. Widening
+    either row to the bare domain would silently delete a rated regional newspaper from every
+    story in the catalog, and nothing else in the suite would notice."""
+    oregonian = reg.resolve("https://www.oregonlive.com/politics/2026/08/story.html")
+    assert oregonian.canonical == "The Oregonian" and oregonian.lean == 0.0
+    assert not reg.is_wire("oregonlive.com") and not reg.is_wire("The Oregonian")
+
+    express = reg.resolve("https://www.lehighvalleylive.com/news/2026/08/story.html")
+    assert express.canonical == "The Express-Times" and express.lean == -1.0
+    assert not reg.is_wire("lehighvalleylive.com") and not reg.is_wire("The Express-Times")
+
+    # And the obituaries really did move off those mastheads, rather than merely gaining a flag.
+    assert reg.resolve("obits.oregonlive.com").canonical == "OregonLive Obituaries"
+    assert reg.resolve("obits.lehighvalleylive.com").canonical == "Lehigh Valley Live Obituaries"
+
+
+def test_only_the_measured_obituary_feeds_are_curated(reg):
+    """The eight other sources the evaluation lists are REAL NEWSROOMS whose ingested feed was
+    template-heavy in one window. `kind=wire` is an identity claim about the source, and a
+    one-window share is not evidence for it — MLive is the representative publisher of a real
+    21-article / 18-publisher story in the 2026-08-08 audit. They stay uncurated until per-source
+    article evidence exists; this test fails if someone adds them on the strength of the share
+    alone."""
+    for form in ["Mlive", "mlive.com", "Wkyc", "wkyc.com", "Daytondailynews",
+                 "Springfieldnewssun", "Nwfdailynews", "Sportskeeda", "Seeking Alpha"]:
+        assert not reg.is_wire(form), form
+
+
 def test_contested_brand_words_are_settled_by_curation(reg):
     """ESPN and The Motley Fool each run more than one national domain, so a bare name could not be
     placed without guessing which. A curated row settles WHO the outlet is — identity first, and a
@@ -813,14 +864,22 @@ def test_the_production_measured_ratings(reg):
         assert reg.lean(host) == lean, host
 
 
-def test_the_obituary_and_regional_subdomains_reach_their_paper(reg):
+def test_editorial_subdomains_reach_their_paper(reg):
     """The audit found these as separate high-volume names — `obits.lehighvalleylive.com` at 76
     articles and `news.detik.com` at 28. Subdomain resolution means one row covers the masthead's
     whole surface, which is why the volume ranking and the registry disagree on how many outlets
-    there are."""
-    assert reg.resolve("Obits.Lehighvalleylive.Com").canonical == "The Express-Times"
+    there are.
+
+    **The obituary halves of this test were REVERSED on 2026-08-08, deliberately.** Folding
+    `obits.*` into the masthead is right for identity coverage — it is what stopped 76 articles
+    counting as an unknown outlet — and wrong for what the masthead then appears to publish:
+    docs/CONTENT_MILL_STORY_EVALUATION.md measured The Oregonian at 90% "mill share" precisely
+    because a newspaper was being credited with its syndication partner's obituary feed. The
+    obituaries now carry their own `kind=wire` rows. Editorial subdomains like `news.detik.com`
+    are unaffected — they really are the masthead."""
     assert reg.resolve("News.Detik.Com").canonical == "Detik"
-    assert reg.resolve("Obits.Oregonlive.Com").canonical == "The Oregonian"
+    assert reg.resolve("Obits.Lehighvalleylive.Com").canonical == "Lehigh Valley Live Obituaries"
+    assert reg.resolve("Obits.Oregonlive.Com").canonical == "OregonLive Obituaries"
 
 
 def test_sportschau_reaches_ard_but_tagesschau_is_not_claimed(reg):

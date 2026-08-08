@@ -141,10 +141,28 @@ def test_a_syndication_network_collapses_across_its_subdomains():
 
 
 def test_a_section_subdomain_joins_its_parent():
-    g = api.identity_groups(["Obits.Oregonlive.Com", "Oregonlive.Com"])
-    assert g["Obits.Oregonlive.Com"] == g["Oregonlive.Com"]
+    """An EDITORIAL section is the same newsroom under a different host, so it must not be counted
+    as a second publisher.
+
+    The obituary subdomain used to be this test's first example and is now the counter-example
+    below: grouping is registry-driven, and `obits.*` was curated to its own `kind=wire` row on
+    2026-08-08. Detik is the same shape without that complication."""
+    g = api.identity_groups(["News.Detik.Com", "Detik.Com"])
+    assert g["News.Detik.Com"] == g["Detik.Com"]
     y = api.identity_groups(["Finance.Yahoo.Com", "Yahoo.Com", "Sg.News.Yahoo.Com"])
     assert len(set(y.values())) == 1
+
+
+def test_a_curated_syndication_feed_does_not_join_the_masthead_it_sits_under():
+    """The other half of the source-curation change, and the reason it was worth making.
+
+    A syndicated obituary feed is not the newspaper's newsroom, so folding it into the masthead
+    inflated what that masthead appeared to publish — docs/CONTENT_MILL_STORY_EVALUATION.md
+    measured The Oregonian at 90% "mill share" on exactly this. Once the feed carries its own
+    registry row the two identities separate, which is what stops the newspaper being credited
+    with it."""
+    g = api.identity_groups(["Obits.Oregonlive.Com", "Oregonlive.Com"])
+    assert g["Obits.Oregonlive.Com"] != g["Oregonlive.Com"]
 
 
 def test_case_variants_of_one_host_collapse():

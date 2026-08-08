@@ -265,6 +265,28 @@ Ticker Report,,tickerreport.com|Tickerreport.Com,,,,,wire
 # The rows settle the identity AND keep press releases out of stories.
 PR Newswire,,prnewswire.com|prnewswire.co.uk|Pr Newswire,,,,,wire
 GlobeNewswire,,globenewswire.com|Globe Newswire,,,,,wire
+# Syndicated obituary feeds — the `obits.` subdomains of the Legacy.com white-label network.
+# Same category as the rows above and found the same way, by docs/CONTENT_MILL_STORY_EVALUATION.md:
+# the template class is 41 stories / 398 articles (5.3% of covered), it is source-concentrated, and
+# a per-cluster threshold cannot see it (a/p rejected twice, at 0% precision / 0% recall).
+#
+# SCOPED TO THE SUBDOMAIN, deliberately. Resolution is subdomain-tolerant by registrable-domain
+# suffix, so before these rows `obits.oregonlive.com` resolved to The Oregonian and
+# `obits.lehighvalleylive.com` to The Express-Times — which is exactly why the evaluation measured
+# "The Oregonian, 90% mill-share": a newspaper was being credited with its syndication partner's
+# obituary feed. A more specific alias wins over the shorter suffix, so these rows move the
+# obituaries OFF those mastheads and change nothing about oregonlive.com or lehighvalleylive.com
+# themselves. Both papers keep their rows, ratings and locality untouched.
+#
+# The two named at 100% mill-share are the only ones curated here. The other eight sources the
+# evaluation lists (Mlive, Wkyc, Daytondailynews, Springfieldnewssun, Nwfdailynews, Seeking Alpha,
+# Sportskeeda) are REAL NEWSROOMS whose ingested feed happened to be template-heavy in one window
+# — `kind=wire` is an identity claim about the source, and a one-window share is not evidence for
+# it. Counter-evidence is already on file: MLive is the representative publisher of a real
+# 21-article / 18-publisher story ("2 deaths linked to parasite outbreak in Michigan") in the
+# 2026-08-08 audit. Curating them needs per-source article evidence, not this row's reasoning.
+OregonLive Obituaries,,obits.oregonlive.com|Obits.Oregonlive,US,,,,wire
+Lehigh Valley Live Obituaries,,obits.lehighvalleylive.com|Obits.Lehighvalleylive,US,,,,wire
 # An identity-only row -- identity and country curated, lean honestly blank -- held an outlet whose
 # brand word is carried by more than one domain, so a bare name could not be placed without guessing
 # which. BOTH of its members, ESPN and The Motley Fool, have since had ratings sourced and moved to
