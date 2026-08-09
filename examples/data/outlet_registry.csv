@@ -344,6 +344,29 @@ Palo Alto Online Obituaries,,obituaries.paloaltoonline.com,US,,,,wire
 # Brisbane Times is deliberately left UNRATED: MBFC has no page for it. It shares an owner with the
 # Sydney Morning Herald and The Age, both of which are rated, and inheriting from a sibling masthead
 # would be exactly the guess this file exists to refuse (L2.2). Its locality earns the row.
+#
+# RE-CHECKED 2026-08-09, and the finding is now stronger than "no MBFC page": NO rating exists at
+# ANY of the three raters this file uses. Ground News aggregates exactly AllSides + Ad Fontes +
+# MBFC, and reports Brisbane Times as bias "unknown -- does not have ratings available from Ad
+# Fontes Media, AllSides, and Media Bias/Fact Check", factuality Unknown. So one lookup answers all
+# three. (Provenance, stated because it matters: the rater domains and ground.news are all blocked
+# by the audit environment's egress proxy, so this is their published summary read at one remove,
+# not the page itself. Acceptable for a NEGATIVE result -- recording "no rating exists" cannot
+# fabricate a lean -- and NOT acceptable as grounds for writing one. If a rating ever appears,
+# verify it at the rater before filling the cell.)
+#
+# WHAT THE BLANK COSTS, measured so nobody has to guess at it: 14 blindspot unlocks
+# (audit_registry_coverage, 34,379-article window) -- stories exactly one rating short that this
+# single cell would convert. That is the LARGEST unlock count of any outlet in the file, 22% of the
+# entire achievable total on its own, and more than four times the next best. It is the highest-
+# value blank here, and it is uncollectable, which are both true at once.
+#
+# And the ceiling that context sits in, so rated-source curation is not re-opened as a "big win" on
+# intuition (it was, twice, before being measured): the ENTIRE untracked universe -- 4,140 outlet
+# identities carrying 15,102 articles, 44% of the feed -- is worth 64 unlocks in total. Sportskeeda
+# tops it at 3 and has no bias rating anywhere; the rest is a tail of ~40 outlets worth ONE claim
+# each, mostly small US locals and sports/tech verticals that raters score for factuality but not
+# bias. This is not a backlog. It is a measured limit of the public rating ecosystem.
 Variety,-1,variety.com,US,,,national
 Philadelphia Inquirer,-1,inquirer.com|philly.com,US,Pennsylvania,Philadelphia,regional
 Winnipeg Free Press,0,winnipegfreepress.com,CA,Manitoba,Winnipeg,regional
@@ -703,6 +726,10 @@ TASS,1,tass.com|tass.ru|Russian News Agency TASS,RU,,Moscow,international,,low
 #             rate an outlet from -- the same call already made for Brisbane Times. Locality earns
 #             the row: WAtoday is Nine's Perth masthead, sibling to The Age and the SMH, and
 #             inheriting THEIR ratings is the guess this file exists to refuse.
+#             Worth 4 blindspot unlocks (2026-08-09 audit). Re-checked the same day against the
+#             three-rater aggregate that settled Brisbane Times: no result surfaced for WAtoday
+#             either way, so this stays a single-rater negative -- weaker evidence than its sibling
+#             note above, and recorded as such rather than rounded up to match it.
 Fortune,1,fortune.com,US,New York,New York,national
 WAtoday,,watoday.com.au,AU,Western Australia,Perth,regional
 #
