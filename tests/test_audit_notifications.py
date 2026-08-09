@@ -142,3 +142,25 @@ def test_secrets_are_never_printed(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "super-secret-private-key" not in out and "a-public-key-value" not in out
     assert "set" in out
+
+
+def test_breaking_off_explains_an_empty_ledger_instead_of_blaming_the_poller():
+    """Push can only carry a kind with a `fanout`, and `breaking_story` is the only one — so with
+    breaking detection off an empty delivery ledger is the CORRECT state, not a fault.
+
+    Before this branch existed the ladder fell through to "check RWE_FEED_POLL", which is a healthy
+    subsystem here, while stages 1 and 2 of the same report had already named the real cause.
+    Observed misdirecting on production 2026-08-09: registration on, keys set, 2 subscriptions,
+    0 deliveries, breaking OFF."""
+    out = _verdict({"breaking": False}, {"subscriptions": 2, "deliveries": 0})
+    assert "EXPECTEDLY SILENT" in out
+    assert "RWE_BREAKING_NOTIFICATIONS" in out
+    assert "RWE_FEED_POLL" not in out, "the poller is not the suspect when there is nothing to carry"
+    assert "CONFIGURED AND SILENT" not in out
+
+
+def test_the_poller_verdict_survives_when_breaking_is_on():
+    """The new branch must not swallow the case it was inserted in front of."""
+    out = _verdict({"breaking": True}, {"subscriptions": 2, "deliveries": 0})
+    assert "CONFIGURED AND SILENT" in out and "RWE_FEED_POLL" in out
+    assert "EXPECTEDLY SILENT" not in out

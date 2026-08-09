@@ -83,10 +83,23 @@ export function useUpdateSettings() {
 }
 export const useAnalytics = () => useQuery({ queryKey: queryKeys.analytics, queryFn: services.analytics });
 
-/** N3: the signed-in reader's notifications, fetched once for the header bell (badge + panel).
- * Cached (`staleTime`) and not refetched on focus, so navigating between pages reuses the cache
- * rather than re-materialising on the engine each time. Gated to authenticated sessions — anonymous
- * / demo have none (the endpoint returns an empty list). No polling. */
+/** N3: the signed-in reader's notifications for the header bell (badge + panel).
+ *
+ * `staleTime` is what stops a navigation between pages from re-materialising on the engine: inside
+ * the minute the cache answers and no request is made. That is the whole of the original intent.
+ *
+ * `refetchOnWindowFocus: false` was ALSO set for that stated purpose, and it does not serve it —
+ * `staleTime` already covers navigation, because a focus refetch of fresh data is a no-op. What the
+ * flag actually did was make the bell permanently static: fetched once per mount, then never again
+ * for the life of the tab. Measured on production 2026-08-09: 42 notifications existed across 2
+ * readers, newest ~13h old, while a reader with the app open would still see the count they loaded
+ * with. The engine was producing the whole time; the loss was here.
+ *
+ * Refetching on focus is the smallest fix that closes it — it costs at most one request per minute
+ * per client (staleTime bounds it) and only when the reader comes back to the tab, which is exactly
+ * when a stale badge is about to be read. Still no interval polling: a background tab has nobody
+ * looking at it, and this endpoint materialises on read. Gated to authenticated sessions —
+ * anonymous / demo have none (the endpoint returns an empty list). */
 export const useNotifications = () => {
   const { status } = useSession();
   return useQuery({
@@ -94,7 +107,6 @@ export const useNotifications = () => {
     queryFn: services.notifications,
     enabled: status === "authenticated",
     staleTime: 60_000,
-    refetchOnWindowFocus: false,
   });
 };
 
