@@ -1919,3 +1919,52 @@ def test_memoized_and_uncached_resolution_agree_on_every_canonical(reg):
         assert reg.resolve(o.canonical) == reg._resolve_uncached(o.canonical), o.canonical
     for odd in ("", None, "The Star", "Morning Star", "not-real-xyz", "Fox News (Online News)"):
         assert reg.resolve(odd) == (reg._resolve_uncached(odd) if odd else None), repr(odd)
+
+
+def test_untracked_pass_2026_08_09_carries_mbfc_labels_not_composites(reg):
+    """Every lean here is MBFC's own published label mapped to -2..+2 — never Ground News'
+    average of three raters, which the file rejects because a composite hides the disagreement
+    that IS the signal (see the Fortune row and the Ground News block in the CSV)."""
+    expected = {"TechCrunch": -1.0, "Deadline": -1.0, "Bleacher Report": -1.0,
+                "Gizmodo": -2.0, "Ars Technica": 0.0, "UPI": 0.0,
+                "Fox Business": 1.0, "TMZ": 1.0}
+    for name, lean in expected.items():
+        assert reg.lean(name) == lean, name
+
+
+def test_the_new_rows_resolve_from_the_forms_the_catalog_actually_sends(reg):
+    """The feed sends bare names AND title-cased hosts for the same outlet — the audit counted
+    2-4 name forms each. Both routes must land on one identity or the outlet stays split."""
+    for form, canonical in [("techcrunch.com", "TechCrunch"), ("Techcrunch.Com", "TechCrunch"),
+                            ("deadline.com", "Deadline"), ("Deadline Hollywood", "Deadline"),
+                            ("gizmodo.com", "Gizmodo"), ("Gizmodo.com", "Gizmodo"),
+                            ("arstechnica.com", "Ars Technica"), ("tmz.com", "TMZ"),
+                            ("upi.com", "UPI"), ("United Press International", "UPI"),
+                            ("bleacherreport.com", "Bleacher Report"),
+                            ("foxbusiness.com", "Fox Business")]:
+        assert reg.resolve(form).canonical == canonical, form
+
+
+def test_fox_business_is_not_fox_news(reg):
+    """Two mastheads, two MBFC ratings (Right-Center vs Right). A bare-name or domain collision
+    would silently move one outlet's coverage onto the other's lean."""
+    assert reg.resolve("foxbusiness.com").canonical == "Fox Business"
+    assert reg.resolve("foxnews.com").canonical == "Fox News"
+    assert reg.lean("Fox Business") != reg.lean("Fox News")
+
+
+def test_pro_science_never_becomes_a_political_lean(reg):
+    """MBFC rates Science Daily PRO-SCIENCE, which is off the left/right axis. Recording that as
+    a lean would put a science-vs-pseudoscience judgement on a political scale, so it takes the
+    `research` kind and a blank lean like Nature/Frontiers/arXiv."""
+    o = reg.resolve("sciencedaily.com")
+    assert o.canonical == "Science Daily" and o.kind == "research"
+    assert math.isnan(reg.lean("Science Daily")), "pro-science is not a centre rating"
+
+
+def test_mixed_factuality_is_not_the_low_credibility_flag(reg):
+    """The flag means a rater called the source QUESTIONABLE. Fox Business and TMZ are MBFC
+    'Mixed' factual / Medium credibility — imperfect, not questionable — so flagging them would
+    silently drop their votes from blindspot claims."""
+    for n in ("Fox Business", "TMZ"):
+        assert not reg.is_low_credibility(n), n
