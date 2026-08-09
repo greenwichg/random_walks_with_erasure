@@ -229,3 +229,25 @@ def test_recording_never_raises_into_a_served_feed():
     _engine.record_feed_composition([], user_side=1.0, kind="blend")          # empty
     _engine.record_feed_composition([{"article": None}], user_side=1.0, kind="blend")
     _engine.record_feed_composition([{}], user_side=1.0, kind="blend")        # no article key
+
+
+def test_an_empty_feed_is_counted_rather_than_going_quiet():
+    """Every other counter is conditioned on a non-empty feed, so without this one a regression
+    that emptied feeds would make the instrumentation fall SILENT — which reads as less traffic,
+    not as a broken feed."""
+    before = _counters()
+    _engine.record_feed_composition([], user_side=1.0, kind="blend")
+
+    def d(key):
+        return _counters().get(key, 0) - before.get(key, 0)
+
+    assert d("feed_empty_total|blend") == 1
+    assert d("feed_served_total|blend") == 0, "an empty feed is not a served feed"
+    assert d("feed_cards_total|blend") == 0, "and it must not dilute any mean"
+
+
+def test_empty_feeds_are_attributed_to_their_plan_kind():
+    before = _counters()
+    _engine.record_feed_composition([], user_side=0.0, kind="rwe-d")
+    assert _counters().get("feed_empty_total|rwe-d", 0) - before.get("feed_empty_total|rwe-d", 0) == 1
+    assert _counters().get("feed_empty_total|blend", 0) == before.get("feed_empty_total|blend", 0)

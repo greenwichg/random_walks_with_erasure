@@ -588,12 +588,20 @@ def record_feed_composition(recs: list, *, user_side: float, kind: str) -> None:
       over everyone understates the bridge by ~2x (measured in production: 2.78 over all readers,
       6.07 over sided ones, out of a 6-card bridge slice)
     * ``feed_top_outlet``         histogram of the top outlet's card count — the cap's signature
+    * ``feed_empty_total``        feeds that came back with NOTHING
+
+    That last one is not symmetry. Every counter above is conditioned on a non-empty feed, because
+    a mean over empty feeds is meaningless — which means that without it, a regression that emptied
+    feeds would make this instrumentation go QUIET rather than show a problem, and quiet reads as
+    "less traffic" instead of "the feed broke". ``feed_served_total + feed_empty_total`` is the
+    honest request count; the ratio between them is the health signal.
 
     ``kind`` separates the blended feed from single-strategy requests, whose plan totals differ;
     mixing them would corrupt every mean. Bounded by construction (a handful of kinds x a feed's
     length) and never raises — recording is purely observational."""
     try:
         if not recs:
+            obs_metrics.incr(f"feed_empty_total|{kind}")
             return
         pubs: dict = {}
         cross = 0
