@@ -73,10 +73,18 @@ def test_everything_on_and_still_silent_points_at_the_poller():
 
 
 def test_in_app_rows_existing_moves_the_blame_to_the_browser():
-    """In-app has no flag and no worker, so rows existing means the engine did its job. The badge
-    query has no polling and no focus refetch, which is where a reader's 'nothing appeared' lives."""
+    """In-app has no flag and no worker, so rows existing means the engine did its job and a reader
+    seeing nothing lost it client-side.
+
+    This assertion used to pin the words "no polling", which described the badge ALSO having no
+    focus refetch — true until 145add1 removed that flag. A verdict that keeps describing a fixed
+    bug sends the next operator to a file that is already correct, so the test now pins the
+    still-true facts instead: focus-driven, cached, and no interval polling."""
     out = _verdict({}, {"notifications": 5})
-    assert "in-app  PRODUCING" in out and "no polling" in out.lower()
+    assert "in-app  PRODUCING" in out
+    assert "focus" in out.lower(), "the badge is focus-driven — say so"
+    assert "no interval polling" in out.lower()
+    assert "refetchonwindowfocus is off" not in out.lower(), "that flag is gone; do not claim it"
 
 
 def test_in_app_with_no_rows_sends_the_operator_to_the_per_reader_gates():

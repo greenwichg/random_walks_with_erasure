@@ -201,12 +201,23 @@ def verdict(cfg: dict, tables: dict) -> int:
     fail for different reasons and an operator chasing one should not be handed the other's."""
     print("\nVERDICT")
     if tables["notifications"]:
+        # This text described `useNotifications` setting `refetchOnWindowFocus: false`, which froze
+        # the bell for the life of a tab. That flag was removed in 145add1, so the sentence became a
+        # false statement about the client the moment the fix shipped — a diagnostic that describes a
+        # bug it no longer has sends the next operator to a file that is already correct. Rewritten
+        # to state what is still true: the query is focus-driven and cached, so a bell that looks
+        # empty is now a session/cache question rather than a missing refetch.
         print(f"   in-app  PRODUCING — {tables['notifications']:,} notification(s) exist. If the bell "
               "looks empty,\n"
-              "           the loss is in the browser, not the engine: the badge query has NO polling "
-              "and\n"
-              "           refetchOnWindowFocus is off, so a tab left open never learns about a new "
-              "one.")
+              "           the loss is in the browser, not the engine. The badge refetches when the "
+              "tab regains\n"
+              "           focus and caches for 60s (there is no interval polling), so check: the "
+              "reader is\n"
+              "           signed in (the query is gated on an authenticated session), the tab has "
+              "been\n"
+              "           refocused since the notification appeared, and the client is not serving a "
+              "stale\n"
+              "           bundle from before 145add1.")
     else:
         print("   in-app  NOTHING MATERIALISED. There is no flag on this path — it runs on every "
               "fetch of\n"
