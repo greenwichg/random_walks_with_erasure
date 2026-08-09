@@ -2081,3 +2081,28 @@ def test_no_row_was_taken_from_a_similarly_named_masthead(reg):
     """
     for absent in ("Oneida Dispatch", "oneidadispatch.com", "yoursun.com", "Columbia Gorge News"):
         assert reg.resolve(absent) is None, f"{absent} must not resolve — no rating is its own"
+
+
+def test_abp_live_covers_its_language_editions_by_registrable_domain(reg):
+    """The catalog sends `bengali.abplive.com`. That is the SAME registrable domain as the masthead
+    MBFC rates, not a sibling brand — the opposite of the Brisbane Times / O Globo case, where the
+    shared thing was an OWNER. One alias therefore covers every language edition."""
+    for form in ("abplive.com", "bengali.abplive.com", "ABP Live"):
+        assert reg.resolve(form).canonical == "ABP Live", form
+    assert reg.lean("ABP Live") == 1.0
+    assert reg.resolve("India Today").canonical == "India Today", "sibling brand stays separate"
+
+
+def test_9gag_is_forum_not_wire_and_carries_no_lean(reg):
+    """`forum` is a content-type call with peers already here (Reddit, DEV Community), not a
+    rating. Unlike `wire` it does NOT exclude from clustering, so the row only fixes identity."""
+    o = reg.resolve("9gag.com")
+    assert o.canonical == "9GAG" and o.kind == "forum"
+    assert math.isnan(reg.lean("9GAG")) and not reg.is_wire("9gag.com")
+
+
+def test_globo_group_rating_was_not_taken_for_g1(reg):
+    """This file already refused reading O Globo's lean off GLOBO the parent group. G1 is that
+    group's portal, which makes the same inference tempting and no more valid."""
+    for absent in ("g1.globo.com", "G1", "globo.com"):
+        assert reg.resolve(absent) is None, absent

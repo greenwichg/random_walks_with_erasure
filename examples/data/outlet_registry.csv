@@ -1771,3 +1771,44 @@ Aaj Tak,1,aajtak.in|aajtak.intoday.in,IN,,Noida,national
 #
 # 9to5Mac was already recorded as unrated in the lean-curation block far above; 9to5Google now
 # matches it. The 9to5 network is simply not covered.
+#
+# Fifth and final tranche, 2026-08-09. Four more searched, ONE rated — the 17% hit rate of tranche
+# 4 held. Curation against MBFC is finished; what remains is not searchable, it is unrated.
+#
+#   ABP Live   RIGHT-CENTER (3.2), factual Mostly Factual   39 articles
+#
+# The catalog sends `bengali.abplive.com`, ABP Live's Bengali-language edition. That is the SAME
+# registrable domain as the masthead MBFC rates, not a sibling brand -- domain resolution is
+# subdomain-tolerant, so the one alias covers every language edition. This is the opposite of the
+# Brisbane-Times/O-Globo case: there the shared thing was an OWNER, here it is the domain itself.
+ABP Live,1,abplive.com,IN,,Noida,national
+# 9GAG is user-generated humour/meme content, not reporting. `forum` is a content-type call with
+# direct peers already in this file (Reddit, DEV Community) -- it is not a rating, and MBFC has no
+# page for it. Unlike `wire`, `forum` is NOT excluded from clustering, so this row changes only how
+# the outlet is identified and displayed.
+9GAG,,9gag.com,HK,,Hong Kong,international,forum
+#
+# NOT REGISTERED, final list:
+#   Dinamalar (37 arts), Haberler (42 arts) : no MBFC page.
+#   G1 / globo.com (30 arts) : only a Ground News composite, and it reports the rating for GLOBO
+#     the group. This file already refused exactly that inference for O Globo -- "MBFC rates GLOBO,
+#     the parent group, not the newspaper". G1 is the group's portal, which makes the case tempting
+#     and no more valid.
+#   Newswire (1 unlock), FinancialContent (1 unlock), DVIDS (34 arts) : all three are plausibly
+#     `wire`-class distributors rather than newsrooms, but "plausibly" is not a classification.
+#     `Newswire` is a bare name that could be several services and the catalog form does not say
+#     which; DVIDS distributes US DoD public-affairs material, which has an editorial stance and so
+#     is NOT the stance-free press-release class `wire` describes. Settle these from the URL host
+#     and from what the service actually is, not from the name.
+#
+# WHERE THIS PASS ENDED, for whoever picks it up:
+#   30 outlets registered, 509 -> 539 rows, ~21 of the 64 measured unlocks collected.
+#   Hit rate by tranche: 18/22 (national brands + local news), then 2/12, then 1/4.
+#   Everything still uncollected is one of three things, and NONE of them is another search:
+#     (a) genuinely unrated by all three raters -- the majority, now listed by name above;
+#     (b) an AMBIGUOUS bare name (The Star 3 unlocks, Index, Focus, Sport, vg, Players, News,
+#         Today) needing a row per edition from a human, not a rating;
+#     (c) an ALIAS GAP or masthead-vs-domain question decidable ONLY from the URL host the catalog
+#         carries -- `Cbnc` (2 unlocks, while CNBC sits rated at -1), Spectrum Bay News 9,
+#         yoursun.com. This is the best remaining ROI in the file and it needs no rater at all.
+#   Plus one page-read: Union Leader (1 unlock), blocked on MBFC's self-contradictory summary.
