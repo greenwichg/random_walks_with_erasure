@@ -2015,3 +2015,45 @@ def test_the_shipped_registry_file_lints_clean():
     import pathlib
     csv = pathlib.Path(__file__).resolve().parent.parent / "examples" / "data" / "outlet_registry.csv"
     assert orx.lint_registry(str(csv)) == []
+
+
+def test_untracked_pass_tranche_three_local_news_labels(reg):
+    """The US local-news bucket turned out well covered by MBFC, contradicting the earlier
+    assumption that raters skip small locals — it holds for tiny weeklies, not for local TV or
+    Lee/Gray-owned dailies."""
+    expected = {"Fox59": 0.0, "Daily Post Nigeria": 0.0, "North Platte Telegraph": 0.0,
+                "Political Wire": 0.0, "WMTV": 0.0, "KSTP": 0.0,
+                "KOCO": -1.0, "Kenosha News": -1.0,
+                "Chronicle-Tribune": 1.0, "Goldsboro News-Argus": 1.0}
+    for name, lean in expected.items():
+        assert reg.lean(name) == lean, name
+
+
+def test_local_tv_resolves_from_callsign_and_from_the_feeds_label(reg):
+    """The catalog sends call signs, station domains and prose labels for the same station."""
+    for form, canonical in [("WXIN", "Fox59"), ("fox59.com", "Fox59"),
+                            ("nbc15.com", "WMTV"), ("wmtv15news.com", "WMTV"),
+                            ("Kstp Television", "KSTP"), ("kstp.com", "KSTP"),
+                            ("Koco News Channel Five", "KOCO"), ("koco.com", "KOCO"),
+                            ("Goldsboro News Argus", "Goldsboro News-Argus"),
+                            ("Marion Chronicle-Tribune", "Chronicle-Tribune")]:
+        assert reg.resolve(form).canonical == canonical, form
+
+
+def test_fox59_is_neither_fox_news_nor_fox_business(reg):
+    """Three unrelated mastheads sharing a brand word and three different MBFC ratings
+    (0 / +2 / +1). A bare-name collision would move a local station onto a network's lean."""
+    assert reg.resolve("fox59.com").canonical == "Fox59"
+    assert reg.resolve("foxnews.com").canonical == "Fox News"
+    assert reg.resolve("foxbusiness.com").canonical == "Fox Business"
+    assert reg.lean("Fox59") == 0.0 and reg.lean("Fox Business") == 1.0
+
+
+def test_the_pass_landed_rows_on_both_sides_of_the_spectrum(reg):
+    """A curation pass that only ever adds one side quietly skews every downstream balance
+    metric. Tranche 3 is the corrective: local dailies supply the right-of-centre rows the
+    tech/entertainment verticals could not."""
+    added = ["Fox59", "Daily Post Nigeria", "North Platte Telegraph", "Political Wire", "WMTV",
+             "KSTP", "KOCO", "Kenosha News", "Chronicle-Tribune", "Goldsboro News-Argus"]
+    leans = [reg.lean(n) for n in added]
+    assert any(x < 0 for x in leans) and any(x > 0 for x in leans), leans

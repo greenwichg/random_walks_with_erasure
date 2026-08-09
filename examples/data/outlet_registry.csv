@@ -1697,3 +1697,45 @@ Business Wire,,businesswire.com|Businesswire,US,California,San Francisco,,wire
 #   ORF.at (1 unlock), NL Times (62 arts) : no rating at ANY of the three (Ground News aggregate).
 #   IGN (35 arts), Decider (114 arts), Nasdaq.com (38 arts) : no MBFC page. IGN surfaces only a
 #     Ground News composite, which this file rejects.
+#
+# Third tranche, 2026-08-09 — same MBFC-label methodology and the same one-remove provenance
+# caveat. This one went back to the UNLOCK tail (the ~40 outlets worth one claim each) plus the
+# remaining high-volume names, and the US local-news bucket turned out to be far better covered by
+# MBFC than the earlier "raters do not cover small locals" assumption suggested. That assumption is
+# now corrected: it holds for the tiny weeklies, not for local TV or Lee/Gray-owned dailies.
+#
+#   Fox59 / WXIN Indianapolis      LEAST BIASED (-0.6), High    48 articles
+#   Daily Post Nigeria             LEAST BIASED, Mostly Factual 45 articles
+#   North Platte Telegraph         LEAST BIASED, High           45 articles
+#   Political Wire                 LEAST BIASED (-1.0), High     1 unlock
+#   WMTV News (NBC15 Madison)      LEAST BIASED (1.0), High      1 unlock
+#   KSTP-TV                        LEAST BIASED (-0.7), High     1 unlock
+#   KOCO News 5                    LEFT-CENTER (-2.0), High      1 unlock
+#   Kenosha News                   LEFT-CENTER (-2.7), High      1 unlock
+#   Marion Chronicle-Tribune       RIGHT-CENTER (2.8), High      1 unlock
+#   Goldsboro News-Argus           RIGHT-CENTER, High            1 unlock
+#
+# Note the spread: this tranche is the first to land rows on BOTH sides (two left-center, two
+# right-center, six least-biased). Local dailies are where the file's left/right balance actually
+# comes from -- the national-brand tranches above skewed left-of-centre because tech and
+# entertainment verticals do.
+Fox59,0,fox59.com|WXIN,US,Indiana,Indianapolis,regional
+Daily Post Nigeria,0,dailypost.ng,NG,,Lagos,national
+North Platte Telegraph,0,nptelegraph.com,US,Nebraska,North Platte,regional
+Political Wire,0,politicalwire.com,US,,,national
+WMTV,0,nbc15.com|wmtv15news.com|WMTV News,US,Wisconsin,Madison,regional
+KSTP,0,kstp.com|Kstp Television,US,Minnesota,Saint Paul,regional
+KOCO,-1,koco.com|Koco News Channel Five|KOCO News 5,US,Oklahoma,Oklahoma City,regional
+Kenosha News,-1,kenoshanews.com,US,Wisconsin,Kenosha,regional
+Chronicle-Tribune,1,chronicle-tribune.com|Marion Chronicle-Tribune,US,Indiana,Marion,regional
+Goldsboro News-Argus,1,newsargus.com|Goldsboro News Argus,US,North Carolina,Goldsboro,regional
+#
+# CHECKED AND NOT REGISTERED this tranche:
+#   Spectrum Bay News 9 (1 unlock) : MBFC has "Spectrum News - Tampa" (LEAST BIASED -0.9) AND a
+#     separate "Spectrum News Local" page, and the catalog name does not say which the feed is.
+#     The station identity is almost certainly the same, but "almost certainly" is decided from the
+#     URL HOST, not from a name -- see the alias-gap note above. Needs the host probe.
+#   Hankyoreh (54 arts) : no MBFC page. AllSides has one, but the search result returned only the
+#     generic definition of its "Left" tier, never Hankyoreh's own rating -- a side-mention is not
+#     a reading of the rating.
+#   BioBioChile (38), Cooperativa.cl (1 unlock), MacRumors (31) : no MBFC page found.
