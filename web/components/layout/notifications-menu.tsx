@@ -56,7 +56,18 @@ export function NotificationsMenu() {
   );
 
   return (
-    <DropdownMenu>
+    // `modal={false}` — Radix menus are modal by default, which engages `react-remove-scroll`:
+    // it sets `overflow:hidden` on <body> and adds a `padding-right` gutter to compensate for the
+    // scrollbar it just removed. Under a `position: sticky` header on a body-scrolled page that is
+    // a whole class of scroll/layout interaction for a panel that has no business locking the page
+    // at all — a notification list is not a modal, and a reader should be able to keep scrolling
+    // behind it. Non-modal removes the scroll lock entirely.
+    //
+    // NOT claimed as the proven cause of the reported disappearance: two attempts to reproduce that
+    // headlessly (scroll-lock shift, then again with a forced classic scrollbar) both came back
+    // with zero pixel movement, so the mechanism is still unconfirmed on Edge/Windows. This is the
+    // correct configuration for this panel regardless of what that turns out to be.
+    <DropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
         <Button
           variant="ghost"
@@ -64,7 +75,9 @@ export function NotificationsMenu() {
           className="relative text-muted-foreground"
           aria-label={t("header.notifications")}
         >
-          <Bell className="h-[1.15rem] w-[1.15rem]" />
+          {/* No size class: Button's `[&_svg]:size-4` is a descendant selector and outranks one on
+              the svg, so `h-[1.15rem]` here rendered at 16px anyway. Verified in a browser. */}
+          <Bell />
           {badge ? (
             <span
               aria-hidden
@@ -79,7 +92,15 @@ export function NotificationsMenu() {
         </Button>
       </DropdownMenuTrigger>
 
-      <DropdownMenuContent align="end" className="w-80 p-0">
+      {/* `collisionPadding` keeps the panel inside the viewport at any scroll position and any
+          width — without it a 20rem panel anchored to a right-edge trigger can sit flush against
+          (or past) the edge on a narrow phone. `w-[min(20rem,calc(100vw-1rem))]` is the same
+          guarantee for the box itself, so the panel narrows rather than overflowing. */}
+      <DropdownMenuContent
+        align="end"
+        collisionPadding={8}
+        className="w-[min(20rem,calc(100vw-1rem))] p-0"
+      >
         <DropdownMenuLabel className="px-3 py-2 text-sm font-semibold">
           {t("notifications.title")}
         </DropdownMenuLabel>
@@ -96,7 +117,16 @@ export function NotificationsMenu() {
             {t("notifications.empty")}
           </div>
         ) : (
-          <div className="max-h-96 overflow-y-auto py-1">
+          // `max-h-96` is 24rem of list on top of the header, the separator and the "show earlier"
+          // row — taller than a landscape phone (~375px) and than a short desktop window, where the
+          // bottom of the panel then sits off-screen with no way to reach it. Radix publishes the
+          // space it actually measured between the trigger and the viewport edge; capping on that
+          // (minus ~5rem of chrome) makes the list scroll instead of the panel overflowing, and the
+          // 24rem stays as the comfortable ceiling on a tall window.
+          <div
+            className="overflow-y-auto py-1"
+            style={{ maxHeight: "min(24rem, calc(var(--radix-dropdown-menu-content-available-height, 24rem) - 5rem))" }}
+          >
             {items.map((item) => {
               const pres = notificationPresentation(item.kind);
               const Icon = pres.icon;

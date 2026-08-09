@@ -61,8 +61,13 @@ export function Header() {
       {/* Mobile nav */}
       <Sheet open={mobileNav} onOpenChange={setMobileNav}>
         <SheetTrigger asChild>
+          {/* No size class on the icon: Button's base sets `[&_svg]:size-4`, a DESCENDANT selector
+              (0,1,1) that outranks a utility class on the svg itself (0,1,0). Every `h-5 w-5` and
+              `h-[1.15rem]` written on a header icon was silently rendering at 16px — verified in a
+              browser. Removing them makes the code say what actually happens, so the next person to
+              change an icon size edits the one place that governs it. Zero visual change. */}
           <Button variant="ghost" size="icon" className="lg:hidden" aria-label={t("header.openMenu")}>
-            <Menu className="h-5 w-5" />
+            <Menu />
           </Button>
         </SheetTrigger>
         <SheetContent side="left" className="safe-top w-72 p-0">
@@ -84,16 +89,21 @@ export function Header() {
       </span>
 
       <div className="ml-auto flex items-center gap-1.5">
+        {/* Not a <Button>: it is a pill with a label and a ⌘K hint, so it composes its own box.
+            That means it must ALSO restate the focus ring and the radius Button provides — it had
+            neither, so it was the one header control with no visible keyboard focus and the only
+            one at `rounded-lg` while every sibling sits at `rounded-md`. */}
         <button
           onClick={() => setSearchOpen(true)}
-          className="hidden h-9 items-center gap-2 rounded-lg border bg-background/60 px-3 text-sm text-muted-foreground transition-colors hover:bg-accent sm:flex"
+          aria-label={t("header.search")}
+          className="hidden h-9 items-center gap-2 rounded-md border bg-background/60 px-3 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background sm:flex"
         >
           <Search className="h-4 w-4" />
           <span>{t("header.search")}</span>
           <kbd className="rounded border bg-muted px-1.5 py-0.5 text-[0.65rem]">⌘K</kbd>
         </button>
         <Button variant="ghost" size="icon" className="text-muted-foreground sm:hidden" onClick={() => setSearchOpen(true)} aria-label={t("header.search")}>
-          <Search className="h-5 w-5" />
+          <Search />
         </Button>
 
         <NotificationsMenu />
@@ -102,7 +112,14 @@ export function Header() {
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <button className="touch-target ml-1 grid place-items-center rounded-full outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring">
+            {/* `ml-1` was extra spacing on top of the row's own `gap-1.5`, making this the one
+                control set further from its neighbour than they are from each other. The focus ring
+                also lacked `ring-offset-2`, which every Button in this row has — so the avatar's
+                ring sat flush against the image while the others floated 2px clear. */}
+            <button
+              aria-label={name}
+              className="touch-target grid h-9 w-9 place-items-center rounded-full outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            >
               <Avatar>
                 <AvatarImage src={image} alt={name} />
                 <AvatarFallback>{initials}</AvatarFallback>
