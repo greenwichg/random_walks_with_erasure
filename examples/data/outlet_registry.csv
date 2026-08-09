@@ -367,6 +367,33 @@ Palo Alto Online Obituaries,,obituaries.paloaltoonline.com,US,,,,wire
 # tops it at 3 and has no bias rating anywhere; the rest is a tail of ~40 outlets worth ONE claim
 # each, mostly small US locals and sports/tech verticals that raters score for factuality but not
 # bias. This is not a backlog. It is a measured limit of the public rating ecosystem.
+#
+# GROUND NEWS, evaluated as a rating source 2026-08-09 and REJECTED for leans. It aggregates
+# exactly the three raters this file uses, which makes it superb for one job and inadmissible for
+# the other:
+#
+#   USE IT FOR NEGATIVES. "No rating at any of AllSides / Ad Fontes / MBFC" is one lookup instead
+#   of three, and that is how Brisbane Times above was settled. A negative cannot fabricate a lean,
+#   so second-hand evidence is proportionate to the claim.
+#
+#   NEVER USE IT FOR A LEAN VALUE. What it publishes is the AVERAGE of the three -- measured:
+#   TechCrunch "aggregated media bias check is Center", Deadline "Lean Left ... aggregating bias
+#   scores from Ad Fontes Media, Media Bias/Fact Check, and AllSides". Averaging is precisely what
+#   this file refuses: the Fortune row three blocks down records "Ad Fontes and AllSides both say
+#   CENTRE; recorded, not averaged away", because a composite hides the disagreement that IS the
+#   signal. Every lean here is one named rater's published label mapped to -2..+2; a mean of three
+#   methodologies is a different quantity wearing the same axis. The per-rater breakdown does exist
+#   on Ground News' publisher profile pages -- if a future curator can reach one, the individual
+#   MBFC/AllSides/Ad Fontes rows on it ARE admissible, because then the source is the rater and
+#   Ground News is only the route to it.
+#
+# The cheap win that needs NO rater, recorded here so it is not confused with the above: a RATED
+# outlet arriving under an unregistered NAME FORM is an alias gap, not a rating gap, and filling it
+# collects unlocks with zero inference. Two are already fixed in this file (Daily Mail -- "21
+# articles of a rated outlet counted as unrated"; Globenewswire_fr). The registry-coverage audit's
+# untracked list is where the next ones hide: `Cbnc` (16 articles, 2 unlocks) sits there while
+# `CNBC,-1,cnbc.com` sits here. Decide such cases from the URL HOST the catalog carries, never from
+# the resemblance of the name -- that is the same guess the file refuses everywhere else.
 Variety,-1,variety.com,US,,,national
 Philadelphia Inquirer,-1,inquirer.com|philly.com,US,Pennsylvania,Philadelphia,regional
 Winnipeg Free Press,0,winnipegfreepress.com,CA,Manitoba,Winnipeg,regional
