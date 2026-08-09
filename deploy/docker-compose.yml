@@ -342,6 +342,14 @@ services:
       RWE_STORY_MERGE_SIM: ${RWE_STORY_MERGE_SIM:-0.33}
       RWE_STORY_MERGE_MAX_GAP: ${RWE_STORY_MERGE_MAX_GAP:-48}
       RWE_STORY_MERGE_MAX_SIZE: ${RWE_STORY_MERGE_MAX_SIZE:-130}
+      # Most cards one outlet may hold in a recommendation feed. The feed deduped ARTICLES and
+      # nothing else, so one high-volume outlet could take several of the 14 slots. Verified in
+      # production 2026-08-09: 56 of 59 sampled feeds sit at <= 2 cards from their top outlet,
+      # 14.00 cards per feed against a planned 14, and the bridge slice is untouched (6.07
+      # cross-cutting cards for readers who have a side, out of a 6-card rwe-b budget).
+      # `0` is the kill switch -- it restores the pre-cap selection exactly, on a restart rather
+      # than a redeploy, which is the whole reason this is an env var and not a bare constant.
+      RWE_RECS_MAX_PER_PUBLISHER: ${RWE_RECS_MAX_PER_PUBLISHER:-2}
       # A story keeps the id it was last served under (story_member table). Measured before this
       # existed: 5.1% of surviving stories changed id per DAY -- 72 of 81 because the earliest
       # member aged out of the rolling window, 9 because a backfilled article displaced it. Each

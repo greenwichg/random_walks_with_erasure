@@ -146,3 +146,86 @@ def test_cap_zero_disables_the_constraint():
     pubs = dict.fromkeys(cols, "Same")
     picks = _engine.Backend._select_diverse([("rwe-d", cols)], [("rwe-d", 3)], _pub_map(pubs), cap=0)
     assert [c for c, _ in picks] == [1, 2, 3]
+
+
+# --------------------------------------------------- cap kill switch + composition observability
+import obs_metrics as _obs  # noqa: E402
+
+
+def test_cap_is_env_tunable_with_a_working_kill_switch(monkeypatch):
+    """Every other threshold here is env-settable so it can move during an incident without a
+    rebuild; this one shipped as a bare constant, which made its documented cap=0 unreachable
+    except by redeploying."""
+    monkeypatch.delenv("RWE_RECS_MAX_PER_PUBLISHER", raising=False)
+    assert _engine.max_cards_per_publisher() == _engine.MAX_CARDS_PER_PUBLISHER
+    monkeypatch.setenv("RWE_RECS_MAX_PER_PUBLISHER", "3")
+    assert _engine.max_cards_per_publisher() == 3
+    monkeypatch.setenv("RWE_RECS_MAX_PER_PUBLISHER", "0")
+    assert _engine.max_cards_per_publisher() == 0, "0 is the kill switch, not a fallback"
+
+
+def test_bad_env_never_silently_disables_the_constraint(monkeypatch):
+    for junk in ("", "   ", "two", "-1", "3.5"):
+        monkeypatch.setenv("RWE_RECS_MAX_PER_PUBLISHER", junk)
+        assert _engine.max_cards_per_publisher() == _engine.MAX_CARDS_PER_PUBLISHER, junk
+
+
+def test_selector_reads_the_env_per_call_not_at_import(monkeypatch):
+    """A parameter default evaluated at def time would freeze the cap at import and the kill
+    switch would do nothing."""
+    cols = [1, 2, 3]
+    pubs = dict.fromkeys(cols, "Same")
+    monkeypatch.setenv("RWE_RECS_MAX_PER_PUBLISHER", "0")
+    off = _engine.Backend._select_diverse([("rwe-d", cols)], [("rwe-d", 3)], lambda c: pubs[c])
+    monkeypatch.setenv("RWE_RECS_MAX_PER_PUBLISHER", "1")
+    on = _engine.Backend._select_diverse([("rwe-d", cols)], [("rwe-d", 1)], lambda c: pubs[c])
+    assert [c for c, _ in off] == [1, 2, 3] and [c for c, _ in on] == [1]
+
+
+def _counters():
+    return _obs.snapshot()["counters"]
+
+
+def _feed(pubs, cross=()):
+    return [{"article": {"publisher": p}, "crossCutting": (i in cross)}
+            for i, p in enumerate(pubs)]
+
+
+def test_feed_composition_counters_record_what_had_to_be_reconstructed_by_hand():
+    before = _counters()
+    _engine.record_feed_composition(_feed(["A", "A", "B", "C"], cross={0, 2}),
+                                    user_side=-1.0, kind="blend")
+
+    def d(key):
+        return _counters().get(key, 0) - before.get(key, 0)
+
+    assert d("feed_served_total|blend") == 1
+    assert d("feed_cards_total|blend") == 4
+    assert d("feed_outlets_total|blend") == 3
+    assert d("feed_cross_cutting_total|blend") == 2
+    assert d("feed_sided_reader_total|blend") == 1
+    assert d("feed_top_outlet|blend|2") == 1, "the cap's signature is the top-outlet histogram"
+
+
+def test_sided_reader_is_the_honest_denominator_for_cross_cutting():
+    """A reader with no side scores zero cross-cutting whatever is served, so averaging over
+    everyone understates the bridge — measured in production, 2.78 vs 6.07 out of 6."""
+    before = _counters()
+    _engine.record_feed_composition(_feed(["A", "B"]), user_side=0.0, kind="blend")
+    after = _counters()
+    assert after.get("feed_served_total|blend", 0) - before.get("feed_served_total|blend", 0) == 1
+    assert after.get("feed_sided_reader_total|blend", 0) == before.get("feed_sided_reader_total|blend", 0)
+
+
+def test_single_strategy_feeds_are_counted_apart_from_the_blend():
+    """Their plan totals differ; pooling them would corrupt every mean."""
+    before = _counters()
+    _engine.record_feed_composition(_feed(["A"]), user_side=1.0, kind="rwe-b")
+    assert _counters().get("feed_cards_total|rwe-b", 0) - before.get("feed_cards_total|rwe-b", 0) == 1
+    assert _counters().get("feed_cards_total|blend", 0) == before.get("feed_cards_total|blend", 0)
+
+
+def test_recording_never_raises_into_a_served_feed():
+    _engine.record_feed_composition([], user_side=1.0, kind="blend")          # empty
+    _engine.record_feed_composition([{"article": None}], user_side=1.0, kind="blend")
+    _engine.record_feed_composition([{}], user_side=1.0, kind="blend")        # no article key

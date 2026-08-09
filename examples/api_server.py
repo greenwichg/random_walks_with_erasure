@@ -48,6 +48,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) 
 import numpy as np
 import health_report as hr
 import narrate_report as nr
+import obs_metrics
 from rwe.mind import MINDData
 # Re-export the settings schema + normaliser from the dependency-free ``settings_service`` leaf, so
 # this module's public surface (``api_server.DEFAULT_SETTINGS`` / ``normalize_settings`` / ...) is
@@ -538,12 +539,78 @@ DEFAULT_BLEND_PLAN = (("rwe-b", 6), ("rwe-d", 4), ("adaptive", 4))
 #:
 #: This is a DIVERSITY constraint, not an evidence gate: it never admits an item the strategy's
 #: own admission rule rejected, never reorders within a publisher, and never lowers a threshold.
+#:
+#: The DEFAULT; the effective value is :func:`max_cards_per_publisher`, which reads
+#: ``RWE_RECS_MAX_PER_PUBLISHER``. Every other tunable in this system (``RWE_STORY_MERGE_SIM``,
+#: ``RWE_CLUSTER_LINK_QUORUM``, …) is env-settable so it can be moved during an incident without a
+#: rebuild; this one shipped as a bare constant, which made its documented ``cap=0`` kill switch
+#: reachable only by redeploying. That gap is what this pair closes.
 MAX_CARDS_PER_PUBLISHER = 2
+
+
+def max_cards_per_publisher() -> int:
+    """Effective per-outlet feed cap. ``RWE_RECS_MAX_PER_PUBLISHER=0`` disables the constraint
+    entirely — the kill switch, restoring pre-0541ed9 selection with a restart rather than a
+    deploy. Junk or a negative value falls back to the default rather than silently disabling a
+    product guarantee."""
+    raw = os.environ.get("RWE_RECS_MAX_PER_PUBLISHER", "").strip()
+    if not raw:
+        return MAX_CARDS_PER_PUBLISHER
+    try:
+        v = int(raw)
+    except (TypeError, ValueError):
+        return MAX_CARDS_PER_PUBLISHER
+    return v if v >= 0 else MAX_CARDS_PER_PUBLISHER
 
 #: Extra columns each strategy ranks so the cap has something to backfill FROM. Without it a
 #: declined slot would shrink the feed instead of moving to the next-ranked admissible item —
 #: the same backfill principle ``_rec_cols_of`` already applies to admission.
 REC_OVERFETCH = 3
+
+
+def record_feed_composition(recs: list, *, user_side: float, kind: str) -> None:
+    """Record what a served feed was MADE OF, as ``/api/metrics`` counters.
+
+    Written because verifying the publisher cap in production required reconstructing, by hand and
+    after the fact, evidence the box had never recorded: the engine emitted ``requests_total`` and
+    friends but nothing about feed composition, so the deploy's whole effect was unmeasurable until
+    someone thought to sample the endpoint. The cap happened to leave an observable signature; the
+    next change to this path may not.
+
+    Counters (sums, so any mean is ``x_total / feed_served_total`` for the same ``kind``):
+
+    * ``feed_served_total``       feeds served
+    * ``feed_cards_total``        cards in them            → mean feed length vs the plan
+    * ``feed_outlets_total``      distinct publishers      → mean source spread
+    * ``feed_cross_cutting_total``cross-cutting cards
+    * ``feed_sided_reader_total`` feeds whose reader HAS a side — the honest denominator for the
+      line above, since ``_cross_of`` scores zero for a reader with no measured lean and averaging
+      over everyone understates the bridge by ~2x (measured in production: 2.78 over all readers,
+      6.07 over sided ones, out of a 6-card bridge slice)
+    * ``feed_top_outlet``         histogram of the top outlet's card count — the cap's signature
+
+    ``kind`` separates the blended feed from single-strategy requests, whose plan totals differ;
+    mixing them would corrupt every mean. Bounded by construction (a handful of kinds x a feed's
+    length) and never raises — recording is purely observational."""
+    try:
+        if not recs:
+            return
+        pubs: dict = {}
+        cross = 0
+        for r in recs:
+            p = ((r.get("article") or {}).get("publisher")) or "?"
+            pubs[p] = pubs.get(p, 0) + 1
+            if r.get("crossCutting"):
+                cross += 1
+        obs_metrics.incr(f"feed_served_total|{kind}")
+        obs_metrics.incr(f"feed_cards_total|{kind}", len(recs))
+        obs_metrics.incr(f"feed_outlets_total|{kind}", len(pubs))
+        obs_metrics.incr(f"feed_cross_cutting_total|{kind}", cross)
+        if user_side:
+            obs_metrics.incr(f"feed_sided_reader_total|{kind}")
+        obs_metrics.incr(f"feed_top_outlet|{kind}|{max(pubs.values())}")
+    except Exception:
+        pass                                   # observation must never break a served feed
 
 
 def _cross_of(user_side: float, lean: float, political: bool) -> bool:
@@ -1783,8 +1850,7 @@ class Backend:
         }
 
     @staticmethod
-    def _select_diverse(cols_by_strategy, plan, publisher_of,
-                        cap: int = MAX_CARDS_PER_PUBLISHER) -> list:
+    def _select_diverse(cols_by_strategy, plan, publisher_of, cap: "int | None" = None) -> list:
         """Choose the final ``[(col, strategy)]`` feed: first-seen article dedup, plus a
         per-publisher cap applied ACROSS the whole feed.
 
@@ -1803,7 +1869,13 @@ class Backend:
         * **Rank order is untouched.** This only ever SKIPS a candidate; it never promotes a
           lower-ranked item over a higher-ranked one of the same publisher.
 
+        ``cap`` defaults to :func:`max_cards_per_publisher` (env-tunable). Resolved HERE rather
+        than as a parameter default so the environment is read per call — a default evaluated at
+        def time would freeze the value at import and defeat the kill switch.
+
         Deterministic: same inputs → same feed."""
+        if cap is None:
+            cap = max_cards_per_publisher()
         chosen, seen, per_pub = [], set(), {}
         budgets = [k for _, k in plan]
         for (strat, cols), k in zip(cols_by_strategy, budgets):
@@ -1874,7 +1946,13 @@ class Backend:
                                                       k * REC_OVERFETCH, params,
                                                       user_side=float(user_side)))
                             for strat, k in plan]
-        return self._serialize_recs(corpus, cols_by_strategy, user_side, familiarity, plan=plan)
+        recs = self._serialize_recs(corpus, cols_by_strategy, user_side, familiarity, plan=plan)
+        # One funnel: the demo path and the signed-in Measured path (personalize.py) both land
+        # here, so every served feed is counted exactly once.
+        record_feed_composition(recs, user_side=float(user_side),
+                                kind=strategy if strategy in ("rwe-b", "rwe-d", "adaptive")
+                                else "blend")
+        return recs
 
     def recommendations(self, u: int, strategy: str | None = None,
                         params: "dict | None" = None) -> list:
