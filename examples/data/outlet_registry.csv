@@ -1650,3 +1650,50 @@ Science Daily,,sciencedaily.com,US,,,international,research
 #     News and the CBS local stations, which are DIFFERENT mastheads — inheriting from them is the
 #     sibling guess this file refuses (the Brisbane Times / O Globo call).
 #   Sportskeeda (3 unlocks, 1,164 articles) : no bias rating at any rater; see its own block above.
+#
+# Second tranche of the same 2026-08-09 pass, same MBFC-label methodology and the same one-remove
+# provenance caveat as the block above. Volume-led rather than unlock-led, because the unlock list
+# was exhausted down to outlets no rater covers -- these buy identity and publisher-page quality
+# rather than blindspot claims, except OilPrice which carries 1 unlock.
+#
+#   Northwest Florida Daily News  LEAST BIASED, factual High          69 articles
+#   Phys.org                      PRO-SCIENCE, factual High           53 articles  -> research
+#   Springfield News-Sun          LEAST BIASED, factual High          50 articles
+#   Investing.com                 LEAST BIASED (1.3), factual Mixed   86 articles
+#   Kotaku                        LEFT-CENTER (-3.4), Mostly Factual  36 articles
+#   Vice                          LEFT-CENTER, Mostly Factual         35 articles
+#   Malay Mail                    RIGHT-CENTER (3.4), Mostly Factual  31 articles
+#   OilPrice                      LEAST BIASED (1.5), factual High     1 unlock
+#
+# Investing.com is MBFC "Mixed" factual / Medium credibility for opacity of ownership, not a
+# Questionable verdict -- no low-credibility flag, same call as Fox Business and TMZ above.
+Northwest Florida Daily News,0,nwfdailynews.com,US,Florida,Fort Walton Beach,regional
+Springfield News-Sun,0,springfieldnewssun.com,US,Ohio,Springfield,regional
+Investing.com,0,investing.com,CY,,,international
+OilPrice,0,oilprice.com|OilPrice.com,US,,,international
+Kotaku,-1,kotaku.com,US,New York,New York,international
+Vice,-1,vice.com|Vice Media,US,New York,New York,international
+Malay Mail,1,malaymail.com,MY,,Kuala Lumpur,national
+# Phys.org is PRO-SCIENCE like Science Daily above -- off the left/right axis, so `research` kind
+# and a BLANK lean, never a centre rating.
+Phys.org,,phys.org,GB,,,international,research
+# Business Wire carries no MBFC page, and this row is NOT a rating: `wire` is a classification of
+# what the service DISTRIBUTES (press releases), which is a checkable fact about the business, not
+# an inference about its politics. Its two direct peers are already curated exactly this way --
+# PR Newswire and GlobeNewswire, both blank-lean `wire`, and MBFC in fact rates PR Newswire Least
+# Biased while this file still excludes it, because the exclusion is about content type. The
+# consequence is deliberate: the wire kind removes it from clustering, so its 1 unlock is forfeited
+# rather than collected. Press releases are not editorial coverage.
+Business Wire,,businesswire.com|Businesswire,US,California,San Francisco,,wire
+#
+# CHECKED AND NOT REGISTERED this tranche -- recorded so the next pass does not re-search them:
+#   Union Leader (1 unlock) : MBFC's own summary is SELF-CONTRADICTORY -- "RIGHT-CENTER (4.4)" in
+#     the rating field, "Right Biased" in the prose. Right-Center (+1) and Right (+2) are different
+#     cells, and picking one would be a coin flip. Same call the file already made against Biasly
+#     for WAtoday. Re-read the page directly to settle it; this is the most likely of all the
+#     negatives here to convert.
+#   NBC Sports (1 unlock) : no MBFC page; it rates NBC News and the NBC affiliates, different
+#     mastheads (the CBS Sports call).
+#   ORF.at (1 unlock), NL Times (62 arts) : no rating at ANY of the three (Ground News aggregate).
+#   IGN (35 arts), Decider (114 arts), Nasdaq.com (38 arts) : no MBFC page. IGN surfaces only a
+#     Ground News composite, which this file rejects.

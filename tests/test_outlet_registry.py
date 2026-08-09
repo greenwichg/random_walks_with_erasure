@@ -1968,3 +1968,50 @@ def test_mixed_factuality_is_not_the_low_credibility_flag(reg):
     silently drop their votes from blindspot claims."""
     for n in ("Fox Business", "TMZ"):
         assert not reg.is_low_credibility(n), n
+
+
+def test_untracked_pass_tranche_two_labels(reg):
+    expected = {"Northwest Florida Daily News": 0.0, "Springfield News-Sun": 0.0,
+                "Investing.com": 0.0, "OilPrice": 0.0, "Kotaku": -1.0,
+                "Vice": -1.0, "Malay Mail": 1.0}
+    for name, lean in expected.items():
+        assert reg.lean(name) == lean, name
+
+
+def test_both_pro_science_outlets_stay_off_the_political_axis(reg):
+    """Science Daily and Phys.org are both MBFC PRO-SCIENCE. Neither may take a lean — a
+    science-vs-pseudoscience verdict is not a left/right position, and 0 would read as 'centre'."""
+    for host, canonical in (("sciencedaily.com", "Science Daily"), ("phys.org", "Phys.org")):
+        o = reg.resolve(host)
+        assert o.canonical == canonical and o.kind == "research", host
+        assert math.isnan(reg.lean(canonical)), canonical
+
+
+def test_business_wire_is_classified_by_what_it_distributes_not_by_a_rating(reg):
+    """`wire` is a content-type call (press releases), not a bias inference — MBFC has no page for
+    Business Wire at all. Its peers are curated identically, and MBFC actually rates PR Newswire
+    Least Biased while this file still excludes it, which is the proof the kind is about content."""
+    assert reg.is_wire("businesswire.com") and reg.is_wire("Business Wire")
+    assert math.isnan(reg.lean("Business Wire")), "a wire row carries no lean"
+    assert reg.is_wire("prnewswire.com"), "the peer this call is modelled on"
+
+
+def test_malay_mail_does_not_collide_with_the_star_malaysia(reg):
+    """Two Malaysian mastheads with different MBFC ratings (+1 vs +2); a bare-name or domain
+    collision would move one outlet's coverage onto the other's lean."""
+    assert reg.resolve("malaymail.com").canonical == "Malay Mail"
+    assert reg.resolve("thestar.com.my").canonical == "The Star (Malaysia)"
+    assert reg.lean("Malay Mail") != reg.lean("The Star (Malaysia)")
+
+
+def test_mixed_factuality_for_opacity_is_still_not_low_credibility(reg):
+    """Investing.com is MBFC Mixed/Medium for opaque ownership — not a Questionable verdict."""
+    assert not reg.is_low_credibility("Investing.com")
+
+
+def test_the_shipped_registry_file_lints_clean():
+    """The file's own linter — duplicate canonicals, duplicate aliases (resolution would depend on
+    row order), invalid leans, invalid kinds. Run against the REAL file, not a fixture."""
+    import pathlib
+    csv = pathlib.Path(__file__).resolve().parent.parent / "examples" / "data" / "outlet_registry.csv"
+    assert orx.lint_registry(str(csv)) == []
