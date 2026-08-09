@@ -34,7 +34,9 @@ def uid(st):
 def _verdict(cfg_over=None, tables_over=None) -> str:
     cfg = {"breaking": True, "registration": True, "delivery": True,
            "vapid_public": True, "vapid_private": True, "vapid_subject": True}
-    tables = {"notifications": 1, "subscriptions": 1, "deliveries": 1}
+    # "events": 1 by default — the poller-blame verdict is only correct when an event EXISTS and
+    # still produced no delivery. Without this the harness could not tell the two cases apart.
+    tables = {"notifications": 1, "subscriptions": 1, "deliveries": 1, "events": 1}
     cfg.update(cfg_over or {})
     tables.update(tables_over or {})
     buf = io.StringIO()
@@ -160,7 +162,7 @@ def test_breaking_off_explains_an_empty_ledger_instead_of_blaming_the_poller():
     subsystem here, while stages 1 and 2 of the same report had already named the real cause.
     Observed misdirecting on production 2026-08-09: registration on, keys set, 2 subscriptions,
     0 deliveries, breaking OFF."""
-    out = _verdict({"breaking": False}, {"subscriptions": 2, "deliveries": 0})
+    out = _verdict({"breaking": False}, {"subscriptions": 2, "deliveries": 0, "events": 0})
     assert "EXPECTEDLY SILENT" in out
     assert "RWE_BREAKING_NOTIFICATIONS" in out
     assert "RWE_FEED_POLL" not in out, "the poller is not the suspect when there is nothing to carry"
@@ -169,6 +171,17 @@ def test_breaking_off_explains_an_empty_ledger_instead_of_blaming_the_poller():
 
 def test_the_poller_verdict_survives_when_breaking_is_on():
     """The new branch must not swallow the case it was inserted in front of."""
-    out = _verdict({"breaking": True}, {"subscriptions": 2, "deliveries": 0})
+    out = _verdict({"breaking": True}, {"subscriptions": 2, "deliveries": 0, "events": 3})
     assert "CONFIGURED AND SILENT" in out and "RWE_FEED_POLL" in out
     assert "EXPECTEDLY SILENT" not in out
+
+
+def test_breaking_on_but_no_event_yet_is_still_not_the_pollers_fault():
+    """The case the first version of this branch missed. Keying on the SWITCH rather than on the
+    event count meant that enabling breaking detection flipped the verdict straight back to "check
+    RWE_FEED_POLL" while stage 2 still read zero — the same misdirection, one step later. Observed
+    on production 2026-08-09 the minute the switch went on."""
+    out = _verdict({"breaking": True}, {"subscriptions": 2, "deliveries": 0, "events": 0})
+    assert "EXPECTEDLY SILENT" in out
+    assert "no story has broken yet" in out
+    assert "RWE_FEED_POLL" not in out, "no event means nothing to carry, whatever the switch says"

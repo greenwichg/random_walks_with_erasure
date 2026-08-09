@@ -246,20 +246,24 @@ def verdict(cfg: dict, tables: dict) -> int:
         print(f"   push    STOPS AT SENDING — subscriptions exist but {', '.join(missing)} "
               "missing.\n"
               "           `push_delivery._sender()` returns None and the fan-out is a no-op.")
-    elif not tables["deliveries"] and not cfg["breaking"]:
-        # This branch must come BEFORE the poller one below. Push can only ever deliver a kind with
-        # a `fanout` (push_delivery._due_for_reader filters to those), and `breaking_story` is the
-        # only one — so with breaking detection off there is nothing for the fan-out to carry and an
-        # empty ledger is the CORRECT state, not a fault. Without this case the ladder fell through
-        # to "check the poller", which sent the operator to a healthy subsystem while stages 1 and 2
-        # above already named the cause. Observed doing exactly that on production 2026-08-09.
-        print("   push    EXPECTEDLY SILENT — subscriptions and keys are fine, but the only "
-              "push-capable\n"
-              "           kind is breaking_story and RWE_BREAKING_NOTIFICATIONS is off, so the "
-              "fan-out has\n"
-              "           nothing to carry. Zero deliveries is CORRECT here. Turn on stage 1 "
-              "before\n"
-              "           suspecting the poller.")
+    elif not tables["deliveries"] and not tables.get("events"):
+        # Keyed on the EVENT COUNT, not on the switch. The first version of this branch tested
+        # `not cfg["breaking"]`, which is a proxy: turning the switch on does not conjure an event,
+        # so the moment breaking was enabled on production the ladder fell straight back through to
+        # "check the poller" with stage 2 still reading zero — the same misdirection, one step
+        # later. Push can only carry a kind with a `fanout` (push_delivery._due_for_reader filters
+        # to those) and `breaking_story` is the only one, so NO EVENTS is always exactly NO
+        # DELIVERIES, whatever the switch says. The switch only explains WHY there are none.
+        why = ("RWE_BREAKING_NOTIFICATIONS is off, so no event will ever be recorded"
+               if not cfg["breaking"] else
+               "detection is on but no story has broken yet — events are written on the poller's "
+               "cycle")
+        print("   push    EXPECTEDLY SILENT — subscriptions and keys are fine, but there are no "
+              "events to\n"
+              f"           carry: {why}.\n"
+              "           The only push-capable kind is breaking_story, so zero deliveries is "
+              "CORRECT\n"
+              "           here. Wait for a live event before suspecting the poller.")
     elif not tables["deliveries"]:
         print("   push    CONFIGURED AND SILENT — everything is on and no delivery row exists. The "
               "fan-out\n"
