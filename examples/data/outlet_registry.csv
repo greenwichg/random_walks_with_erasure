@@ -1739,3 +1739,35 @@ Goldsboro News-Argus,1,newsargus.com|Goldsboro News Argus,US,North Carolina,Gold
 #     generic definition of its "Left" tier, never Hankyoreh's own rating -- a side-mention is not
 #     a reading of the rating.
 #   BioBioChile (38), Cooperativa.cl (1 unlock), MacRumors (31) : no MBFC page found.
+#
+# Fourth tranche, 2026-08-09 — and the point of DIMINISHING RETURNS, recorded because the number
+# matters more than the two rows. Twelve outlets searched, TWO rated. The first three tranches ran
+# at 18 of 22; this one at 2 of 12. The remaining tail is genuinely uncovered, not merely unsearched
+# — a later curator should read this before spending an afternoon on it.
+#
+#   Henderson Daily Dispatch   RIGHT-CENTER (2.8), factual High   1 unlock
+#   Aaj Tak                    RIGHT-CENTER (3.6), factual Mixed  36 articles
+Daily Dispatch,1,hendersondispatch.com|Hendersondispatch|Henderson Daily Dispatch,US,North Carolina,Henderson,regional
+Aaj Tak,1,aajtak.in|aajtak.intoday.in,IN,,Noida,national
+#
+# NOT REGISTERED, with the reason, so none of these is searched a third time:
+#
+#   NO MBFC PAGE AT ALL — Columbia Gorge News (1 unlock), KPC News (1 unlock), PerthNow (32 arts),
+#     Android Authority (41), Eurogamer (33), ETtoday (41), Yahoo Japan (42), MacRumors (31),
+#     BioBioChile (38), Cooperativa.cl (1 unlock), Hankyoreh (54), NL Times (62), Decider (114),
+#     Nasdaq.com (38), IGN (35), 9to5Google (54). The last two surface ONLY a Ground News
+#     composite ("Center"), which this file rejects — an aggregate is not a rater's label.
+#
+#   RATED, BUT NOT THIS MASTHEAD — the trap that produced most of this tranche's misses:
+#     Oneida Dispatch (1 unlock)     : MBFC has Utica Observer-Dispatch (a different paper in the
+#                                      same county) and an "Oneida Times" rated LOW CREDIBILITY.
+#                                      Neither is the Oneida Dispatch. Taking either would be the
+#                                      CBS-Sports-from-CBS-News error.
+#     Yoursun.com (1 unlock)         : MBFC rates the "Port Charlotte Sun" (LEAST BIASED, High),
+#                                      but yoursun.com is the Sun Coast group site carrying several
+#                                      mastheads (Charlotte, North Port, Englewood, Venice). The
+#                                      domain is not that one paper. Needs the host/masthead split.
+#     Spectrum Bay News 9 (1 unlock) : see the tranche-3 note.
+#
+# 9to5Mac was already recorded as unrated in the lean-curation block far above; 9to5Google now
+# matches it. The 9to5 network is simply not covered.

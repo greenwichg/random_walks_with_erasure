@@ -2057,3 +2057,27 @@ def test_the_pass_landed_rows_on_both_sides_of_the_spectrum(reg):
              "KSTP", "KOCO", "Kenosha News", "Chronicle-Tribune", "Goldsboro News-Argus"]
     leans = [reg.lean(n) for n in added]
     assert any(x < 0 for x in leans) and any(x > 0 for x in leans), leans
+
+
+def test_untracked_pass_tranche_four_labels(reg):
+    assert reg.lean("Daily Dispatch") == 1.0
+    assert reg.lean("Aaj Tak") == 1.0
+    for form in ("hendersondispatch.com", "Hendersondispatch", "Henderson Daily Dispatch"):
+        assert reg.resolve(form).canonical == "Daily Dispatch", form
+
+
+def test_aaj_tak_is_not_india_today(reg):
+    """Same owner (TV Today Network / India Today Group), different mastheads and different MBFC
+    pages — the sibling inheritance this file refuses everywhere (Brisbane Times, O Globo)."""
+    assert reg.resolve("aajtak.in").canonical == "Aaj Tak"
+    assert reg.resolve("India Today").canonical == "India Today"
+
+
+def test_no_row_was_taken_from_a_similarly_named_masthead(reg):
+    """The tranche-4 misses were all near-miss identities. These MUST stay unresolved rather than
+    inherit a rating from the paper MBFC actually rates:
+      Oneida Dispatch  vs Utica Observer-Dispatch / "Oneida Times" (Low Credibility)
+      yoursun.com      vs the Port Charlotte Sun (one masthead on a multi-masthead group domain)
+    """
+    for absent in ("Oneida Dispatch", "oneidadispatch.com", "yoursun.com", "Columbia Gorge News"):
+        assert reg.resolve(absent) is None, f"{absent} must not resolve — no rating is its own"
