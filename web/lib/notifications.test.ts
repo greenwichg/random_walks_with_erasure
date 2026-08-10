@@ -87,6 +87,19 @@ test("an unknown kind has no destination even with a story-shaped payload", () =
   assert.equal(notificationHref("some_future_kind", { storyId: "s-42" }), null);
 });
 
+test("the two report kinds land on their own period pages, not on the generic report", () => {
+  // Both used to resolve to "/report", which is the CURRENT full health report: it is neither
+  // weekly nor monthly, it is what the sidebar already links to, and it made the two kinds
+  // indistinguishable the moment a reader followed them.
+  assert.equal(notificationHref("weekly_report"), "/report/weekly");
+  assert.equal(notificationHref("monthly_deep_dive"), "/report/monthly");
+  assert.notEqual(
+    notificationHref("weekly_report"),
+    notificationHref("monthly_deep_dive"),
+    "two different announcements must not share one destination",
+  );
+});
+
 // ---------------------------------------------------------------------------------------------
 // "Recommendations waiting" states that recommendations exist — never how many.
 // ---------------------------------------------------------------------------------------------

@@ -44,6 +44,11 @@ export function Header() {
 
   const { t } = useTranslation();
   const current = NAV_FLAT.find((n) => (n.href === "/" ? pathname === "/" : pathname.startsWith(n.href)));
+  // The two report notifications land on period pages that live UNDER /report, so the nav lookup
+  // above matches the "Health Report" item by prefix and labels them with it — a reader who clicked
+  // "Weekly report ready" would land on a page headed "Weekly report" under a bar reading "Health
+  // Report". Same situation as a publisher profile: a real destination that is not a nav item.
+  const reportPeriod = /^\/report\/(weekly|monthly)$/.exec(pathname)?.[1];
 
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -85,7 +90,9 @@ export function Header() {
       <span className="hidden text-lg font-semibold tracking-tight sm:block">
         {pathname.startsWith("/publishers")
           ? t("publishers.header")
-          : t(current?.labelKey ?? "nav.dashboard")}
+          : reportPeriod
+            ? t(`report.period.${reportPeriod}.title`)
+            : t(current?.labelKey ?? "nav.dashboard")}
       </span>
 
       <div className="ml-auto flex items-center gap-1.5">

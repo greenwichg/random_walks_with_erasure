@@ -39,9 +39,14 @@ SOFT_LIMIT_BYTES = 1024
 
 #: Where a kind sends a reader when the worker does not know the kind. Server-computed, so a payload
 #: is always tappable; a worker that knows better ignores it.
+#:
+#: MIRRORS the `href` column of `web/lib/notification-kinds.ts`, and `tests/test_push_delivery.py`
+#: reads that file to check it. Only the deep link was pinned before, so these static hrefs could
+#: drift silently — and they nearly did when the two report kinds moved off "/report" onto their own
+#: period pages, which would have left a push landing on the generic report the inbox no longer uses.
 _STATIC_HREFS = {
-    "weekly_report": "/report",
-    "monthly_deep_dive": "/report",
+    "weekly_report": "/report/weekly",
+    "monthly_deep_dive": "/report/monthly",
     "recommendations_waiting": "/recommendations",
     "weekly_digest": "/",
     "streak_reminder": "/",

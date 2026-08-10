@@ -10,6 +10,7 @@ The contracts pinned here are `docs/BROWSER_PUSH_ARCHITECTURE.md` §5 (the paylo
 """
 
 import json
+import re
 import pathlib
 import sys
 import threading
@@ -76,7 +77,10 @@ def test_href_falls_back_to_the_kinds_page_then_the_root():
     assert push_payload.href_for("breaking_story", {}) == "/stories"
     assert push_payload.href_for("breaking_story", {"storyId": "   "}) == "/stories"
     assert push_payload.href_for("breaking_story", {"storyId": 42}) == "/stories"
-    assert push_payload.href_for("weekly_report", None) == "/report"
+    # A kind with no deep link falls back to ITS OWN page — which for the two report kinds is now
+    # their period page rather than the generic "/report" both used to share.
+    assert push_payload.href_for("weekly_report", None) == "/report/weekly"
+    assert push_payload.href_for("monthly_deep_dive", None) == "/report/monthly"
     assert push_payload.href_for("a_kind_from_the_future", {"storyId": "x"}) == "/"
 
 
@@ -156,6 +160,24 @@ def test_the_engines_deep_link_matches_the_web_metadata_table():
     source = (ROOT / "web" / "lib" / "notification-kinds.ts").read_text(encoding="utf-8")
     assert 'deepLinkField: "storyId"' in source
     assert '"/stories/"' in source or "/stories/${" in source
+
+
+def test_every_static_href_matches_the_web_metadata_table():
+    """The same drift risk one column over, and until now unpinned: only the DEEP link was compared,
+    so `_STATIC_HREFS` could disagree with the inbox indefinitely and a push would land somewhere
+    the reader could not have reached by clicking the same notification in the app.
+
+    It came within one commit of happening — the two report kinds moved off the generic "/report"
+    onto their own period pages, and nothing here would have noticed the engine still pointing at
+    the old one. Parsed out of the web table rather than restated, so either side moving alone
+    fails."""
+    source = (ROOT / "web" / "lib" / "notification-kinds.ts").read_text(encoding="utf-8")
+    # kind: { … href: "…" } — the table is a flat object literal, one block per kind.
+    web = dict(re.findall(r'^\s{2}(\w+):\s*\{.*?^\s{4}href:\s*"([^"]+)"',
+                          source, re.DOTALL | re.MULTILINE))
+    assert web, "could not parse any href out of the web table — the shape changed"
+    assert web == push_payload._STATIC_HREFS, (
+        f"engine vs web href drift:\n  engine={push_payload._STATIC_HREFS}\n  web={web}")
 
 
 # --------------------------------------------------------------------------------------------- #

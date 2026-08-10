@@ -40,6 +40,7 @@ const DYNAMIC_PREFIXES = [
   "freshness.",            // t(`freshness.${band}`) — freshness badge
   "local.scope.",          // t(`local.scope.${scope}`) — publisher scope pill (Local News v1)
   "publishers.about.source.", // t(`publishers.about.source.${source}`) — per-field provenance label
+  "report.period.",        // t(`report.period.${period}.title|subtitle|suffix`) — components/report/period-analytics.tsx
 ];
 
 /**

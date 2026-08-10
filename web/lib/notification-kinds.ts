@@ -33,17 +33,21 @@ export interface NotificationKindMeta {
 }
 
 export const NOTIFICATION_KINDS: Record<string, NotificationKindMeta> = {
+  // Both of these used to point at "/report" — the CURRENT full health report, which is neither
+  // weekly nor monthly and is the same page the sidebar already offers. Clicking either
+  // notification therefore landed the reader somewhere generic that said nothing about the period
+  // it had just announced, and the two kinds were indistinguishable once you followed them.
   weekly_report: {
     titleKey: "notifications.weekly_report.title",
     bodyKey: "notifications.weekly_report.body",
-    href: "/report",
+    href: "/report/weekly",
     deepLinkField: null,
     deepLinkPath: null,
   },
   monthly_deep_dive: {
     titleKey: "notifications.monthly_deep_dive.title",
     bodyKey: "notifications.monthly_deep_dive.body",
-    href: "/report",
+    href: "/report/monthly",
     deepLinkField: null,
     deepLinkPath: null,
   },
