@@ -15,6 +15,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "examples"))
 
 import audit_factuality_coverage as afc   # noqa: E402
+import outlet_registry                    # noqa: E402
 import story_service                      # noqa: E402
 import store as store_mod                 # noqa: E402
 
@@ -58,13 +59,23 @@ def test_articles_are_weighted_not_outlets(st):
 def test_the_two_kinds_of_blank_are_reported_apart(st):
     """A registered outlet missing only a verdict is one rater lookup. An unregistered name needs
     identity curation FIRST and may not even be one outlet. Reporting them as one backlog is how a
-    worklist becomes an estimate nobody can act on."""
-    _seed(st, [("BBC News", 5), ("Totally Unknown Local Herald", 5)])
+    worklist becomes an estimate nobody can act on.
+
+    The registered half is CHOSEN FROM THE REGISTRY rather than named. It used to be BBC News,
+    which made the test quietly depend on the BBC being unrated — so a tranche that rated the BBC
+    failed it for doing exactly the right thing. What is durable is that the two blanks are told
+    apart, so the fixture picks whatever outlet still has the first kind of blank."""
+    # Neither column: the probe reports whichever one carries a verdict, so an outlet with a
+    # legacy `credibility` is not blank as far as this report is concerned.
+    unrated = next(o for o in outlet_registry.default_registry().outlets()
+                   if not o.factuality and not o.credibility)
+    _seed(st, [(unrated.canonical, 5), ("Totally Unknown Local Herald", 5)])
     res = _analyse(st)
     by = {o["label"]: o for o in res["outlets"]}
-    assert by["BBC News"]["registered"] is True
+    assert by[unrated.canonical]["registered"] is True, "a registry row means identity is settled"
     assert by["Totally Unknown Local Herald"]["registered"] is False
-    assert all(o["factuality"] is None for o in res["outlets"]), "neither carries a verdict"
+    assert by[unrated.canonical]["factuality"] is None, "…but the verdict is still outstanding"
+    assert by["Totally Unknown Local Herald"]["factuality"] is None
 
 
 def test_already_sourced_verdicts_are_found_and_not_double_counted(tmp_path):

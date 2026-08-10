@@ -62,6 +62,25 @@
 # lookups were performed for this batch and none could have been — the rater domains are blocked
 # from the environment that wrote it. Levels as recorded: 26 high, 14 mixed, 1 very_high.
 #
+#
+# PROVENANCE OF THIS BATCH: 23 rows, retrieved from MBFC on 2026-08-10 by reading each outlet's
+# profile page directly. Unlike the batch above, these were fresh lookups, so the discipline that
+# matters is how a page was proved to be the right one. Two independent claims were required: the
+# page's `Source:` field had to carry the outlet's domain, AND the outlet's masthead had to appear
+# in the page title. Either alone is insufficient, and the highest-volume row in the batch is why.
+# Asking only whether the domain appeared on the page matched the CALIFORNIA POST's profile, which
+# cites nypost.com. Tightening that to the `Source:` field matched it AGAIN — the California Post
+# is a New York Post regional edition genuinely published at nypost.com/ca/, so the host is
+# nypost.com either way and no URL rule can separate them. Only the masthead can. Both earlier
+# passes recorded MIXED against New York Post off the wrong page; the value happened to be right
+# and the provenance was not, which is the kind of error a spot check finds and an aggregate hides.
+#
+# Ratings are stored as MBFC's own six-point label. MBFC also prints a numeric score beside it
+# (Reuters 0.0, AP 0.8, Fox News 7.6 — lower is more factual); that score is NOT stored, since
+# nothing reads it yet and a column no one consumes is a claim no one checks.
+#
+# Levels as recorded: 8 high, 8 mostly_factual, 4 mixed, 2 low, 1 very_high.
+#
 canonical,lean,aliases,country,region,city,scope,kind,credibility,factuality,factuality_source
 # --- left (-2) ---
 Mother Jones,-2,motherjones.com,US,,,national
@@ -73,16 +92,16 @@ Salon,-2,salon.com,US,,,national
 AlterNet,-2,alternet.org,US,,,national
 Democracy Now,-2,democracynow.org,US,,,national
 # --- lean left (-1) ---
-New York Times,-1,nytimes.com|NYT|The New York Times,US,New York,New York,national
+New York Times,-1,nytimes.com|NYT|The New York Times,US,New York,New York,national,,,high,mbfc
 Washington Post,-1,washingtonpost.com|WaPo|The Washington Post,US,District of Columbia,Washington,national
 CNN,-1,cnn.com,US,,,national
 MSNBC,-1,msnbc.com,US,,,national
-NPR,-1,npr.org,US,,,national
-The Guardian,-1,theguardian.com|Guardian,GB,,London,international
+NPR,-1,npr.org,US,,,national,,,high,mbfc
+The Guardian,-1,theguardian.com|Guardian,GB,,London,international,,,high,mbfc
 Politico,-1,politico.com,US,,,national
-NBC News,-1,nbcnews.com|NBC,US,,,national
+NBC News,-1,nbcnews.com|NBC,US,,,national,,,high,mbfc
 ABC News,-1,abcnews.go.com|abcnews.com|ABC,US,,,national
-CBS News,-1,cbsnews.com|CBS,US,,,national
+CBS News,-1,cbsnews.com|CBS,US,,,national,,,mostly_factual,mbfc
 Vox,-1,vox.com,US,,,national
 HuffPost,-1,huffpost.com|huffingtonpost.com|Huffington Post,US,,,national
 The Atlantic,-1,theatlantic.com|Atlantic,US,,,national
@@ -90,16 +109,16 @@ Time,-1,time.com,US,,,national
 Slate,-1,slate.com,US,,,national
 Bloomberg,-1,bloomberg.com,US,,,national
 Business Insider,-1,businessinsider.com|insider.com,US,,,national
-CNBC,-1,cnbc.com,US,,,national
-Al Jazeera,-1,aljazeera.com|Al Jazeera English,QA,,Doha,international
+CNBC,-1,cnbc.com,US,,,national,,,mostly_factual,mbfc
+Al Jazeera,-1,aljazeera.com|Al Jazeera English,QA,,Doha,international,,,mixed,mbfc
 Los Angeles Times,-1,latimes.com|LA Times,US,California,Los Angeles,regional
 # --- center (0) ---
-Reuters,0,reuters.com,GB,,London,international
-Associated Press,0,apnews.com|AP|ap.org,US,New York,New York,international
-BBC,0,bbc.com|bbc.co.uk|BBC News,GB,,London,international
-The Hill,0,thehill.com,US,,,national
+Reuters,0,reuters.com,GB,,London,international,,,very_high,mbfc
+Associated Press,0,apnews.com|AP|ap.org,US,New York,New York,international,,,high,mbfc
+BBC,0,bbc.com|bbc.co.uk|BBC News,GB,,London,international,,,mostly_factual,mbfc
+The Hill,0,thehill.com,US,,,national,,,mostly_factual,mbfc
 Axios,0,axios.com,US,,,national
-USA Today,0,usatoday.com|USA TODAY,US,,,national
+USA Today,0,usatoday.com|USA TODAY,US,,,national,,,mostly_factual,mbfc
 Christian Science Monitor,0,csmonitor.com,US,,,national
 Forbes,0,forbes.com,US,,,national
 NewsNation,0,newsnationnow.com,US,,,national
@@ -112,15 +131,15 @@ Reason,1,reason.com,US,,,national
 National Review,1,nationalreview.com,US,,,national
 The Epoch Times,1,theepochtimes.com|Epoch Times,US,,,national
 # --- right (2) ---
-Fox News,2,foxnews.com,US,,,national
+Fox News,2,foxnews.com,US,,,national,,,low,mbfc
 Breitbart,2,breitbart.com,US,,,national
 Daily Wire,2,dailywire.com|The Daily Wire,US,,,national
-New York Post,2,nypost.com|NY Post,US,New York,New York,regional
+New York Post,2,nypost.com|NY Post,US,New York,New York,regional,,,mixed,mbfc
 The Daily Caller,2,dailycaller.com|Daily Caller,US,,,national
 Newsmax,2,newsmax.com,US,,,national
 OANN,2,oann.com|OAN|One America News,US,,,national
 The Federalist,2,thefederalist.com|Federalist,US,,,national
-Washington Times,2,washingtontimes.com,US,,,national
+Washington Times,2,washingtontimes.com,US,,,national,,,mixed,mbfc
 Townhall,2,townhall.com,US,,,national
 The Blaze,2,theblaze.com|Blaze|TheBlaze,US,,,national
 # ---------------------------------------------------------------------------------------------
@@ -212,11 +231,11 @@ NOS,1,nos.nl,NL,,,national
 Kyiv Independent,0,kyivindependent.com,UA,,,national
 Kyiv Post,-1,kyivpost.com,UA,,,national
 Sky News,-1,news.sky.com,GB,,,national
-The Independent,-1,independent.co.uk,GB,,,national
+The Independent,-1,independent.co.uk,GB,,,national,,,mixed,mbfc
 The Telegraph,0,telegraph.co.uk,GB,,,national
 Financial Times,0,ft.com,GB,,,international
 The Times,0,thetimes.co.uk|thetimes.com,GB,,,national
-Daily Mail,1,dailymail.co.uk|dailymail.com,GB,,,national
+Daily Mail,1,dailymail.co.uk|dailymail.com,GB,,,national,,,low,mbfc
 The Economist,-1,economist.com,GB,,,international
 Mirror,-1,mirror.co.uk,GB,,,national,,medium,mixed,mbfc
 CBC News,-1,cbc.ca|CBC,CA,,,national
@@ -224,7 +243,7 @@ The Globe and Mail,0,theglobeandmail.com,CA,,,national
 CTV News,0,ctvnews.ca|CTV,CA,,,national
 Toronto Star,0,thestar.com,CA,,,national
 ABC Australia,-1,abc.net.au,AU,,,national
-Sydney Morning Herald,-1,smh.com.au,AU,,,national
+Sydney Morning Herald,-1,smh.com.au,AU,,,national,,,high,mbfc
 The Age,-1,theage.com.au,AU,,,national
 News.com.au,1,news.com.au,AU,,,national
 New Zealand Herald,0,nzherald.co.nz,NZ,,,national,,,high,mbfc
@@ -245,9 +264,9 @@ The Straits Times,1,straitstimes.com,SG,,,national
 Channel NewsAsia,0,channelnewsasia.com,SG,,,international
 Bangkok Post,1,bangkokpost.com,TH,,,national
 The Jakarta Post,-1,thejakartapost.com,ID,,,national
-Philippine Daily Inquirer,-1,inquirer.net,PH,,,national
+Philippine Daily Inquirer,-1,inquirer.net,PH,,,national,,,mostly_factual,mbfc
 Rappler,-1,rappler.com,PH,,,national
-The Jerusalem Post,0,jpost.com,IL,,,national
+The Jerusalem Post,0,jpost.com,IL,,,national,,,mostly_factual,mbfc
 Haaretz,-1,haaretz.com|haaretz.co.il,IL,,,national
 The Times of Israel,0,timesofisrael.com,IL,,,national
 Al Arabiya,1,alarabiya.net,AE,,,international
@@ -815,15 +834,15 @@ KING 5,0,king5.com,US,Washington,Seattle,regional
 The Republican (MassLive),0,masslive.com|MassLive,US,Massachusetts,Springfield,regional
 KOMO News,1,komonews.com,US,Washington,Seattle,regional,,high
 Manila Bulletin,-1,mb.com.ph,PH,,Manila,national,,medium
-The Korea Times,-1,koreatimes.co.kr,KR,,Seoul,national
+The Korea Times,-1,koreatimes.co.kr,KR,,Seoul,national,,,mostly_factual,mbfc
 BuzzFeed News,-1,buzzfeed.com|buzzfeednews.com|BuzzFeed,US,New York,New York,national
 AOL,-1,aol.com|aol.co.uk,US,New York,New York,national
-Seeking Alpha,1,seekingalpha.com,US,,,national
+Seeking Alpha,1,seekingalpha.com,US,,,national,,,high,mbfc
 TheStreet,1,thestreet.com,US,New York,New York,national
 BreakingNews.ie,-1,breakingnews.ie,IE,,Cork,national
 Detik,0,detik.com,ID,,Jakarta,national
 Athens Banner-Herald,-1,onlineathens.com,US,Georgia,Athens,local
-The Express-Times,-1,lehighvalleylive.com,US,Pennsylvania,Easton,regional
+The Express-Times,-1,lehighvalleylive.com,US,Pennsylvania,Easton,regional,,,high,mbfc
 Inland Valley Daily Bulletin,0,dailybulletin.com,US,California,Ontario,regional
 ARD,0,ard.de|sportschau.de|Sportschau ARD|Sportschau,DE,,Munich,national
 # RATED, LEAN WITHHELD -- MBFC rates News18 Right-Center and classes it QUESTIONABLE with LOW

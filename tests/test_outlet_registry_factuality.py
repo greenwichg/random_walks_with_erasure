@@ -78,7 +78,15 @@ def test_the_backfill_changed_no_credibility_value():
 
 
 def test_every_written_verdict_carries_its_source():
+    """The invariant, not the inventory.
+
+    This asserted `len(outs) == 41` and failed the moment a second tranche was recorded — not
+    because anything broke, but because the batch grew, which is the one thing a curation file is
+    supposed to do. A count is a snapshot of how much of the backlog happened to be outstanding on
+    the day it was written; the rule is that no verdict may be unattributed, and that holds at any
+    size. The credibility test above still pins an exact number, and correctly so: that column is
+    read by the clustering vote-gate, so a change in it IS the event worth failing on."""
     outs = [o for o in reg.default_registry().outlets() if o.factuality]
-    assert len(outs) == 41, f"expected the 41-row batch, got {len(outs)}"
+    assert outs, "the registry carries no factuality verdicts at all"
     assert all(o.factuality_source == "mbfc" for o in outs)
     assert all(o.factuality in reg.FACTUALITY for o in outs)
