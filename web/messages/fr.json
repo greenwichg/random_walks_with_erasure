@@ -567,6 +567,7 @@
   "searchCmd.hint": "Tapez pour chercher chez tous les éditeurs du catalogue en direct.",
   "searchCmd.noMatches": "Aucun résultat pour « {q} ».",
   "searchCmd.seeAll": "Voir les {n} résultats pour « {q} »",
+  "searchCmd.close": "Annuler",
   "header.openMenu": "Ouvrir le menu",
   "header.search": "Rechercher",
   "header.notifications": "Notifications",

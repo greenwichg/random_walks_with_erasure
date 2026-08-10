@@ -567,6 +567,7 @@
   "searchCmd.hint": "Type to search every publisher in the live catalog.",
   "searchCmd.noMatches": "No matches for “{q}”.",
   "searchCmd.seeAll": "See all {n} results for “{q}”",
+  "searchCmd.close": "Cancel",
   "header.openMenu": "Open menu",
   "header.search": "Search",
   "header.notifications": "Notifications",

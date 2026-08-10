@@ -567,6 +567,7 @@
   "searchCmd.hint": "Tippen Sie, um alle Verlage im Live-Katalog zu durchsuchen.",
   "searchCmd.noMatches": "Keine Treffer für „{q}“.",
   "searchCmd.seeAll": "Alle {n} Ergebnisse für „{q}“ anzeigen",
+  "searchCmd.close": "Abbrechen",
   "header.openMenu": "Menü öffnen",
   "header.search": "Suchen",
   "header.notifications": "Benachrichtigungen",

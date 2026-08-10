@@ -567,6 +567,7 @@
   "searchCmd.hint": "Escribe para buscar en todos los medios del catálogo en vivo.",
   "searchCmd.noMatches": "Sin coincidencias para “{q}”.",
   "searchCmd.seeAll": "Ver los {n} resultados de “{q}”",
+  "searchCmd.close": "Cancelar",
   "header.openMenu": "Abrir menú",
   "header.search": "Buscar",
   "header.notifications": "Notificaciones",

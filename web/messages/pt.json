@@ -567,6 +567,7 @@
   "searchCmd.hint": "Digite para pesquisar todos os veículos no catálogo ao vivo.",
   "searchCmd.noMatches": "Nenhum resultado para “{q}”.",
   "searchCmd.seeAll": "Ver todos os {n} resultados para “{q}”",
+  "searchCmd.close": "Cancelar",
   "header.openMenu": "Abrir menu",
   "header.search": "Buscar",
   "header.notifications": "Notificações",
