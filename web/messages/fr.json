@@ -495,7 +495,7 @@
   "settings.notif.recs": "Nouvelles recommandations",
   "settings.notif.recsDesc": "Quand de nouvelles lectures transversales sont prêtes pour vous.",
   "settings.notif.digest": "Résumé hebdomadaire",
-  "settings.notif.digestDesc": "Un court e-mail récapitulant votre semaine.",
+  "settings.notif.digestDesc": "Un récapitulatif de votre semaine de lecture, dans vos notifications.",
   "settings.notif.streak": "Rappels de série",
   "settings.notif.streakDesc": "Un rappel avant que votre série de lecture ne s'interrompe.",
   "settings.notif.blindSpot": "Alertes d'angles morts",

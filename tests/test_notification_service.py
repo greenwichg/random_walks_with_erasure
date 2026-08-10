@@ -609,3 +609,37 @@ def test_inactive_event_kinds_follows_the_channel_gate(monkeypatch):
 
     assert "synthetic_category_state" not in ns.inactive_event_kinds(ctx, "in_app"), "on, so live"
     assert "synthetic_category_state" in ns.inactive_event_kinds(ctx, "push"), "off, so resolved"
+
+
+# --------------------------------------------------------------------------------------------- #
+# The settings copy may not promise a channel the platform does not have.
+# --------------------------------------------------------------------------------------------- #
+def test_no_notification_setting_promises_a_channel_that_does_not_exist():
+    """`settings.notif.digestDesc` read "A short email rounding up your week." in all five catalogs.
+
+    No email channel exists, and none ever has: `CHANNEL_SETTING_KEYS` is `{in_app, push}`, there is
+    no `Channel` implementation besides `InAppChannel` and the push sender, no provider or SMTP
+    dependency in the tree, no mail credentials in deploy, and no scheduler other than the opt-in
+    DB-backup one. So the toggle was honest about WHETHER it fires — the gate and the dedupe work,
+    and the reader does get "Your week in review" in the app — and dishonest about WHERE, promising
+    a delivery the system cannot make. Reported by a reader who turned it on and waited.
+
+    Keyed on the live channel registry rather than on a hardcoded verdict: the day an email channel
+    is actually built and registered, this stops objecting on its own instead of having to be
+    remembered and deleted."""
+    import re
+    channels = set(ns.CHANNEL_SETTING_KEYS)
+    if {"email", "mail"} & channels:
+        pytest.skip(f"an email channel exists now ({sorted(channels)}) — the copy may promise it")
+
+    # e-mail / email / correo cover the five shipped catalogs.
+    promises_mail = re.compile(r"\be-?mails?\b|\bcorreos?\b", re.IGNORECASE)
+    offenders = []
+    for lang in ("en", "es", "fr", "de", "pt"):
+        cat = json.loads((ROOT / "web" / "messages" / f"{lang}.json").read_text(encoding="utf-8"))
+        for key, value in cat.items():
+            if key.startswith("settings.notif.") and promises_mail.search(value):
+                offenders.append(f"{lang}:{key} = {value!r}")
+    assert not offenders, (
+        "notification settings copy promises email, but the delivery boundary has no email "
+        f"channel (only {sorted(channels)}):\n  " + "\n  ".join(offenders))

@@ -495,7 +495,7 @@
   "settings.notif.recs": "New recommendations",
   "settings.notif.recsDesc": "When fresh cross-cutting reads are ready for you.",
   "settings.notif.digest": "Weekly digest",
-  "settings.notif.digestDesc": "A short email rounding up your week.",
+  "settings.notif.digestDesc": "A round-up of your reading week, in your notifications.",
   "settings.notif.streak": "Streak reminders",
   "settings.notif.streakDesc": "A nudge before your reading streak lapses.",
   "settings.notif.blindSpot": "Blind-spot alerts",
