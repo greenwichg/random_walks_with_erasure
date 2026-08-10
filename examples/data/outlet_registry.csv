@@ -35,7 +35,34 @@
 #               absence of a lean never centres one (L2.2). Only ~30 rows have a verdict recorded
 #               because only those were seen stated; the column is sparse ON PURPOSE rather than
 #               filled in by impression.
-canonical,lean,aliases,country,region,city,scope,kind,credibility
+#
+# FACTUALITY (columns 10-11), added 2026-08-10. The RATER'S OWN verdict on the RATER'S OWN scale —
+# very_high | high | mostly_factual | mixed | low | very_low — plus factuality_source, which is
+# MANDATORY whenever factuality is set and enforced by lint_registry (`factuality_without_source`).
+# An unattributed rating cannot be told apart from a guess, which is the same rule the lean column
+# has always been held to (L2.2).
+#
+# WHY A SECOND COLUMN rather than reusing `credibility`. The two are not the same fact at different
+# spellings. `credibility` is a 3-level summary and it is what the CLUSTERING vote-gate reads
+# (`is_low_credibility` -> a `low` outlet's lean is recorded but not voted). `factuality` is six
+# levels because MBFC publishes six, and collapsing them loses a distinction the rating exists to
+# make. This file now carries five rows that prove it, all reading credibility=medium against a
+# published verdict of MIXED: The Sun (UK), Daily Express, Mirror, The Australian, Ahram Online.
+# "Mostly Factual" is a mild reservation and "Mixed" is a serious one; one word for both is a claim
+# the rater did not make.
+#
+# NOTHING READS `factuality` YET, deliberately. It is carried on the Outlet dataclass and validated
+# by the linter, and that is all: no clustering behaviour, no API field, no UI. Deriving
+# `credibility` from it would move clusters, so it belongs to its own commit with its own
+# before/after measurement — not to a data backfill.
+#
+# PROVENANCE OF THIS BATCH: 41 rows, every one of them a verdict a curator had ALREADY read at MBFC
+# while sourcing the lean on the same page, and recorded in this file's comments (see the tranche
+# blocks below, each carrying its own retrieval date) without ever entering it in a column. No new
+# lookups were performed for this batch and none could have been — the rater domains are blocked
+# from the environment that wrote it. Levels as recorded: 26 high, 14 mixed, 1 very_high.
+#
+canonical,lean,aliases,country,region,city,scope,kind,credibility,factuality,factuality_source
 # --- left (-2) ---
 Mother Jones,-2,motherjones.com,US,,,national
 The Nation,-2,thenation.com,US,,,national
@@ -163,11 +190,11 @@ The Blaze,2,theblaze.com|Blaze|TheBlaze,US,,,national
 #   Vanguard (Nigeria): Lean Left (-1; MBFC LL)
 #   Yonhap News Agency: Lean Right (+1; MBFC LR)
 Deutsche Welle,0,dw.com,DE,,,international
-Der Spiegel,-1,spiegel.de,DE,,,national
-Die Zeit,-1,zeit.de,DE,,,national
+Der Spiegel,-1,spiegel.de,DE,,,national,,,high,mbfc
+Die Zeit,-1,zeit.de,DE,,,national,,,high,mbfc
 Frankfurter Allgemeine Zeitung,1,faz.net,DE,,,national
-Süddeutsche Zeitung,-1,sueddeutsche.de,DE,,,national
-France 24,0,france24.com,FR,,,international
+Süddeutsche Zeitung,-1,sueddeutsche.de,DE,,,national,,,high,mbfc
+France 24,0,france24.com,FR,,,international,,,high,mbfc
 Le Monde,-1,lemonde.fr,FR,,,national
 Le Figaro,1,lefigaro.fr,FR,,,national
 Radio France Internationale,0,rfi.fr|RFI,FR,,,international
@@ -191,7 +218,7 @@ Financial Times,0,ft.com,GB,,,international
 The Times,0,thetimes.co.uk|thetimes.com,GB,,,national
 Daily Mail,1,dailymail.co.uk|dailymail.com,GB,,,national
 The Economist,-1,economist.com,GB,,,international
-Mirror,-1,mirror.co.uk,GB,,,national,,medium
+Mirror,-1,mirror.co.uk,GB,,,national,,medium,mixed,mbfc
 CBC News,-1,cbc.ca|CBC,CA,,,national
 The Globe and Mail,0,theglobeandmail.com,CA,,,national
 CTV News,0,ctvnews.ca|CTV,CA,,,national
@@ -200,7 +227,7 @@ ABC Australia,-1,abc.net.au,AU,,,national
 Sydney Morning Herald,-1,smh.com.au,AU,,,national
 The Age,-1,theage.com.au,AU,,,national
 News.com.au,1,news.com.au,AU,,,national
-New Zealand Herald,0,nzherald.co.nz,NZ,,,national
+New Zealand Herald,0,nzherald.co.nz,NZ,,,national,,,high,mbfc
 Stuff,-1,stuff.co.nz,NZ,,,national
 The Times of India,1,timesofindia.indiatimes.com,IN,,,national
 The Hindu,-1,thehindu.com,IN,,,national
@@ -209,8 +236,8 @@ NDTV,1,ndtv.com,IN,,,national
 The Indian Express,-1,indianexpress.com,IN,,,national
 Dawn,-1,dawn.com,PK,,,national
 The Japan Times,0,japantimes.co.jp,JP,,,national
-NHK,1,nhk.or.jp,JP,,,national
-Nikkei Asia,1,asia.nikkei.com|nikkei.com|Nikkei|Nikkei Asian Review,JP,,,international
+NHK,1,nhk.or.jp,JP,,,national,,,high,mbfc
+Nikkei Asia,1,asia.nikkei.com|nikkei.com|Nikkei|Nikkei Asian Review,JP,,,international,,,high,mbfc
 The Korea Herald,1,koreaherald.com,KR,,,national
 Yonhap News Agency,1,yna.co.kr,KR,,,national
 South China Morning Post,0,scmp.com|SCMP,HK,,,national
@@ -230,19 +257,19 @@ Daily Sabah,2,dailysabah.com|sabah.com.tr|Sabah,TR,,,national
 Hurriyet Daily News,2,hurriyetdailynews.com|Hurriyet,TR,,,national
 Daily Nation,-1,nation.africa|nation.co.ke,KE,,,national
 The East African,,theeastafrican.co.ke,KE,,,international
-The Punch,-1,punchng.com,NG,,,national
+The Punch,-1,punchng.com,NG,,,national,,,mixed,mbfc
 Vanguard (Nigeria),-1,vanguardngr.com,NG,,,national
 Nigerian Tribune,,tribuneonlineng.com,NG,,,national
 Premium Times,-1,premiumtimesng.com,NG,,,national
 News24,0,news24.com,ZA,,,national
-Mail & Guardian,-2,mg.co.za,ZA,,,national
+Mail & Guardian,-2,mg.co.za,ZA,,,national,,,mixed,mbfc
 Daily Maverick,0,dailymaverick.co.za,ZA,,,national
-Ahram Online,1,english.ahram.org.eg,EG,,,national,,medium
+Ahram Online,1,english.ahram.org.eg,EG,,,national,,medium,mixed,mbfc
 Morocco World News,1,moroccoworldnews.com,MA,,,national
 Folha de S.Paulo,,folha.uol.com.br,BR,,,national
 O Globo,,oglobo.globo.com,BR,,,national
-Clarín,1,clarin.com,AR,,,national
-La Nación,1,lanacion.com.ar,AR,,,national
+Clarín,1,clarin.com,AR,,,national,,,high,mbfc
+La Nación,1,lanacion.com.ar,AR,,,national,,,high,mbfc
 El Universal,-2,eluniversal.com.mx,MX,,,national
 Milenio,,milenio.com,MX,,,national
 # Machine-generated market-data feeds (kind=wire, column 8). Not news outlets: they publish
@@ -394,12 +421,12 @@ Palo Alto Online Obituaries,,obituaries.paloaltoonline.com,US,,,,wire
 # untracked list is where the next ones hide: `Cbnc` (16 articles, 2 unlocks) sits there while
 # `CNBC,-1,cnbc.com` sits here. Decide such cases from the URL HOST the catalog carries, never from
 # the resemblance of the name -- that is the same guess the file refuses everywhere else.
-Variety,-1,variety.com,US,,,national
-Philadelphia Inquirer,-1,inquirer.com|philly.com,US,Pennsylvania,Philadelphia,regional
-Winnipeg Free Press,0,winnipegfreepress.com,CA,Manitoba,Winnipeg,regional
-The Manila Times,1,manilatimes.net,PH,,,national
-The West Australian,1,thewest.com.au,AU,Western Australia,Perth,regional
-The Star (Malaysia),2,thestar.com.my,MY,,,national
+Variety,-1,variety.com,US,,,national,,,high,mbfc
+Philadelphia Inquirer,-1,inquirer.com|philly.com,US,Pennsylvania,Philadelphia,regional,,,high,mbfc
+Winnipeg Free Press,0,winnipegfreepress.com,CA,Manitoba,Winnipeg,regional,,,high,mbfc
+The Manila Times,1,manilatimes.net,PH,,,national,,,mixed,mbfc
+The West Australian,1,thewest.com.au,AU,Western Australia,Perth,regional,,,high,mbfc
+The Star (Malaysia),2,thestar.com.my,MY,,,national,,,mixed,mbfc
 Brisbane Times,,brisbanetimes.com.au,AU,Queensland,Brisbane,regional
 #
 # Second curation pass, driven by the unlock worklist rather than by publisher volume: the audit
@@ -429,10 +456,10 @@ Brisbane Times,,brisbanetimes.com.au,AU,Queensland,Brisbane,regional
 # from a sibling masthead, an owner, or a country prior would put ~1,000 fabricated claims into the
 # product, which is the single thing this file exists to prevent. An outlet with no rating anywhere
 # stays unrated for as long as that is true.
-ESPN,-1,espn.com|espn.ph|espndeportes.espn.com,US,,,international
-Page Six,1,pagesix.com,US,New York,New York,national
-Ynetnews,-1,ynetnews.com,IL,,,national
-The News International,1,thenews.com.pk,PK,,,national
+ESPN,-1,espn.com|espn.ph|espndeportes.espn.com,US,,,international,,,high,mbfc
+Page Six,1,pagesix.com,US,New York,New York,national,,,mixed,mbfc
+Ynetnews,-1,ynetnews.com,IL,,,national,,,high,mbfc
+The News International,1,thenews.com.pk,PK,,,national,,,mixed,mbfc
 London Evening Standard,1,standard.co.uk|Evening Standard,GB,,London,regional
 #
 # Third curation pass -- scope: every row in this file that carried NO lean, plus the remainder of
@@ -485,9 +512,9 @@ London Evening Standard,1,standard.co.uk|Evening Standard,GB,,London,regional
 #                      not lean, and substituting one for the other would be a fabrication.
 #   Sky Sports       : no MBFC page. Sky News UK is rated Least Biased -- a different masthead.
 #   WGAU (Athens GA) : no MBFC page. MBFC rates WUGA, the NPR station in the same city -- not this one.
-The Motley Fool,-1,fool.com|fool.co.uk|Fool,US,,,international
-Yahoo News,-1,yahoo.com|news.yahoo.com|Yahoo|Yahoo Entertainment,US,,,national
-WDIV ClickOnDetroit,0,clickondetroit.com|WDIV,US,Michigan,Detroit,local
+The Motley Fool,-1,fool.com|fool.co.uk|Fool,US,,,international,,,high,mbfc
+Yahoo News,-1,yahoo.com|news.yahoo.com|Yahoo|Yahoo Entertainment,US,,,national,,,high,mbfc
+WDIV ClickOnDetroit,0,clickondetroit.com|WDIV,US,Michigan,Detroit,local,,,high,mbfc
 #
 # Fourth pass -- COVERAGE, not repair. The three passes above filled blanks in rows that already
 # existed. This one adds outlets with no row at all: large mastheads that a global feed carries and
@@ -512,19 +539,19 @@ WDIV ClickOnDetroit,0,clickondetroit.com|WDIV,US,Michigan,Detroit,local
 #   Anadolu Agency     : RIGHT        (MBFC R, factual MIXED -- state-subsidised, pro-government;
 #                        AllSides says Center)
 Newsweek,1,newsweek.com,US,,,national
-The Sun (UK),2,thesun.co.uk,GB,,London,national,,medium
-The Australian,1,theaustralian.com.au,AU,,,national,,medium
-National Post,1,nationalpost.com,CA,,,national
-Global News,-1,globalnews.ca,CA,,,national
-India Today,1,indiatoday.in,IN,,,national
-AFP,-1,afp.com|Agence France-Presse,FR,,Paris,international
-Rolling Stone,-2,rollingstone.com,US,,,national
-Metro (UK),-1,metro.co.uk,GB,,London,national
-Daily Express,2,express.co.uk,GB,,London,national,,medium
-RNZ,0,rnz.co.nz|Radio New Zealand,NZ,,,national
-The Oregonian,0,oregonlive.com|OregonLive,US,Oregon,Portland,regional
-Barron's,1,barrons.com,US,,,national
-Anadolu Agency,2,aa.com.tr|Anadolu,TR,,Ankara,international
+The Sun (UK),2,thesun.co.uk,GB,,London,national,,medium,mixed,mbfc
+The Australian,1,theaustralian.com.au,AU,,,national,,medium,mixed,mbfc
+National Post,1,nationalpost.com,CA,,,national,,,high,mbfc
+Global News,-1,globalnews.ca,CA,,,national,,,high,mbfc
+India Today,1,indiatoday.in,IN,,,national,,,mixed,mbfc
+AFP,-1,afp.com|Agence France-Presse,FR,,Paris,international,,,high,mbfc
+Rolling Stone,-2,rollingstone.com,US,,,national,,,high,mbfc
+Metro (UK),-1,metro.co.uk,GB,,London,national,,,mixed,mbfc
+Daily Express,2,express.co.uk,GB,,London,national,,medium,mixed,mbfc
+RNZ,0,rnz.co.nz|Radio New Zealand,NZ,,,national,,,high,mbfc
+The Oregonian,0,oregonlive.com|OregonLive,US,Oregon,Portland,regional,,,high,mbfc
+Barron's,1,barrons.com,US,,,national,,,high,mbfc
+Anadolu Agency,2,aa.com.tr|Anadolu,TR,,Ankara,international,,,mixed,mbfc
 #
 # RATED BY MBFC, LEAN DELIBERATELY WITHHELD -- the one new rule this pass adds.
 #
@@ -757,7 +784,7 @@ TASS,1,tass.com|tass.ru|Russian News Agency TASS,RU,,Moscow,international,,low
 #             three-rater aggregate that settled Brisbane Times: no result surfaced for WAtoday
 #             either way, so this stays a single-rater negative -- weaker evidence than its sibling
 #             note above, and recorded as such rather than rounded up to match it.
-Fortune,1,fortune.com,US,New York,New York,national
+Fortune,1,fortune.com,US,New York,New York,national,,,high,mbfc
 WAtoday,,watoday.com.au,AU,Western Australia,Perth,regional
 #
 # Ninth pass -- driven entirely by the LIVE production audit (audit_registry_coverage.py), not by a
@@ -846,7 +873,7 @@ iHeartRadio,,iheart.com|iHeart,US,,,national
 #   Frontiers: MBFC PRO-SCIENCE, Mostly Factual, HIGH credibility (MBFC advises caution -- open
 #              access, so not everything is peer reviewed)
 Google News,,news.google.com|Google News,US,,,international,aggregator
-Nature,,nature.com,GB,,London,international,research
+Nature,,nature.com,GB,,London,international,research,,very_high,mbfc
 Frontiers,,frontiersin.org,CH,,Lausanne,international,research
 arXiv,,arxiv.org,US,New York,Ithaca,international,research
 Reddit,,reddit.com,US,,,international,forum

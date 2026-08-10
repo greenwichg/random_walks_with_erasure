@@ -73,8 +73,12 @@ def sourced_but_unwritten(path: "str | None" = None) -> dict:
 
     body = [ln for ln in raw.splitlines() if not ln.lstrip().startswith("#")]
     rows = {r["canonical"]: r for r in csv.DictReader(body) if (r.get("canonical") or "").strip()}
+    # Keyed on `factuality`, the column these verdicts are WRITTEN to. It used to read
+    # `credibility`, which was right only while `factuality` did not exist: once Phase 2 started
+    # filling the new column this would have gone on reporting every written row as still "free",
+    # and the probe would have shown no progress for work that had already been done.
     return {name: verdict for name, verdict in noted.items()
-            if name in rows and not (rows[name].get("credibility") or "").strip()}
+            if name in rows and not (rows[name].get("factuality") or "").strip()}
 
 
 def analyse(rows: list, *, free: dict, stories: "list | None" = None) -> dict:
@@ -101,7 +105,12 @@ def analyse(rows: list, *, free: dict, stories: "list | None" = None) -> dict:
     for key, g in groups.items():
         o = g["outlet"]
         label = max(g["forms"].items(), key=lambda kv: (kv[1], kv[0]))[0]
-        cred = (getattr(o, "credibility", None) or "").strip().lower() if o else ""
+        # EITHER column answers "do we have a factuality verdict for this outlet". `factuality`
+        # is the rater's own six-level verdict (the one Phase 2 writes); `credibility` is the
+        # older three-level summary that predates it and still carries 70 rows. Counting only one
+        # would understate coverage during the migration, in whichever direction.
+        fact = (getattr(o, "factuality", None) or "").strip().lower() if o else ""
+        cred = (fact or ((getattr(o, "credibility", None) or "").strip().lower() if o else ""))
         canonical = o.canonical if o else None
         out.append({
             "identity": key,
@@ -109,6 +118,8 @@ def analyse(rows: list, *, free: dict, stories: "list | None" = None) -> dict:
             "canonical": canonical,
             "articles": g["articles"],
             "factuality": cred or None,
+            "verdictColumn": ("factuality" if fact else
+                              ("credibility" if cred else None)),
             # Distinguishes the two kinds of blank, which are different work:
             #   registered   — a row exists, only the verdict is missing (a lookup).
             #   unregistered — no row at all (identity curation first, then a lookup).
@@ -121,6 +132,11 @@ def analyse(rows: list, *, free: dict, stories: "list | None" = None) -> dict:
     rated = [r for r in out if r["factuality"]]
     unrated = [r for r in out if not r["factuality"]]
     free_hits = [r for r in unrated if r["freeVerdict"]]
+
+    by_column: dict = {}
+    for r in out:
+        if r["verdictColumn"]:
+            by_column[r["verdictColumn"]] = by_column.get(r["verdictColumn"], 0) + r["articles"]
 
     by_value: dict = {}
     for r in rated:
@@ -144,7 +160,7 @@ def analyse(rows: list, *, free: dict, stories: "list | None" = None) -> dict:
         "freeOutletsInWindow": len(free_hits),
         "freeArticles": sum(r["articles"] for r in free_hits),
         "freeTotalInFile": len(free),
-        "byValue": by_value,
+        "byValue": by_value, "byColumn": by_column,
         "outlets": out,
     }
     if stories is not None:
@@ -213,6 +229,11 @@ def main(argv=None) -> int:
         print(f"  stories with >=1 unrated publisher : {res['storiesWithAnUnratedPublisher']:,}"
               f" of {res['stories']:,}"
               f"  ({_pct(res['storiesWithAnUnratedPublisher'], res['stories'])})")
+
+    if res.get("byColumn"):
+        print("\n  which column the verdict came from, by article volume:")
+        for col, n in sorted(res["byColumn"].items(), key=lambda kv: -kv[1]):
+            print(f"    {col:<16} {n:>7} articles")
 
     if res["byValue"]:
         print("\n  verdicts present, by article volume:")

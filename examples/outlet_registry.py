@@ -44,6 +44,26 @@ _NONALNUM = re.compile(r"[^a-z0-9]+")
 #: never centres one (L2.2).
 CREDIBILITY = ("high", "medium", "low")
 
+#: Legal values for the ``factuality`` column — **the rater's own scale, not ours**.
+#:
+#: Deliberately six levels, and deliberately NOT the three of :data:`CREDIBILITY`. MBFC publishes
+#: Very High / High / Mostly Factual / Mixed / Low / Very Low, and collapsing that into
+#: high|medium|low destroys the distinction the rating exists to make: "Mostly Factual" is a mild
+#: reservation and "Mixed" is a serious one, and a reader shown the same word for both has been
+#: told something false. Storing the verdict as published also means a future display surface can
+#: name the rater and its label rather than paraphrasing a paraphrase.
+#:
+#: The two columns are INDEPENDENT in this phase. ``credibility`` remains what the clustering
+#: vote-gate reads (``is_low_credibility``); ``factuality`` is carried and read by nothing. Deriving
+#: one from the other is a clustering change and belongs to its own commit with its own before/after.
+FACTUALITY = ("very_high", "high", "mostly_factual", "mixed", "low", "very_low")
+
+#: Who published a factuality verdict. Required whenever ``factuality`` is set — an unattributed
+#: rating is indistinguishable from a guess, and this file's whole discipline (L2.2) is that a
+#: rating is either sourced or absent. Kept as a small closed set so a typo is a lint error rather
+#: than a new "source" nobody can trace.
+FACTUALITY_SOURCES = ("mbfc",)
+
 #: Legal values for the ``kind`` column. Blank = an ordinary news outlet, which is the vast
 #: majority. Everything named here is a source that is NOT a newsroom covering a story, and each
 #: name records a different reason a lean would be the wrong question:
@@ -89,6 +109,12 @@ class Outlet:
     scope: "str | None" = None      # international | national | regional | local | hyperlocal
     kind: "str | None" = None       # None = a news outlet | "wire" = machine-generated feed
     credibility: "str | None" = None    # high | medium | low — see CREDIBILITY / :func:`is_low_credibility`
+    # The RATER'S OWN factuality verdict, on the rater's own scale — see FACTUALITY below. Carried
+    # only: nothing reads it yet. `credibility` remains the coarse 3-level field the clustering
+    # vote-gate uses, and the two are deliberately not derived from each other in this phase, so
+    # writing factuality cannot move a single cluster.
+    factuality: "str | None" = None
+    factuality_source: "str | None" = None   # who said so — mandatory whenever `factuality` is set
 
 
 def _fold(text: str) -> str:
@@ -219,11 +245,14 @@ class OutletRegistry:
                 raw_lean = row[1].strip()
                 lean = float(raw_lean) if raw_lean else float("nan")
                 cred = _opt(row, 8)
+                fact = _opt(row, 9)
                 outlets.append(Outlet(canonical=canonical, lean=lean,
                                       country=_opt(row, 3), region=_opt(row, 4),
                                       city=_opt(row, 5), scope=_opt(row, 6),
                                       kind=_opt(row, 7),
-                                      credibility=cred.lower() if cred else None))
+                                      credibility=cred.lower() if cred else None,
+                                      factuality=fact.lower() if fact else None,
+                                      factuality_source=_opt(row, 10)))
                 aliases[canonical] = canonical      # the name itself resolves
                 if len(row) >= 3 and row[2].strip():
                     for alias in row[2].split("|"):
@@ -484,6 +513,29 @@ def lint_registry(path: "str | None" = None) -> List[dict]:
             issues.append({"severity": "warning", "code": "unrated_low_credibility", "line": lineno,
                            "message": f"line {lineno} ({canonical}): credibility 'low' with no lean — "
                                       "the point of 'low' is to let the lean be recorded WITH the caveat"})
+        fact = cells[9].strip().lower() if len(cells) > 9 else ""
+        fact_src = cells[10].strip().lower() if len(cells) > 10 else ""
+        if fact and fact not in FACTUALITY:
+            issues.append({"severity": "error", "code": "invalid_factuality", "line": lineno,
+                           "message": f"line {lineno} ({canonical}): factuality {fact!r} is not one of "
+                                      f"{'/'.join(FACTUALITY)} (blank = unrated)"})
+        # PROVENANCE IS MANDATORY. An unattributed rating is indistinguishable from a guess, and
+        # this file's whole discipline is that a rating is either sourced or absent (L2.2). The
+        # check runs whether or not the verdict itself parsed, so a row cannot lose its attribution
+        # by also having a typo'd level.
+        if fact and not fact_src:
+            issues.append({"severity": "error", "code": "factuality_without_source", "line": lineno,
+                           "message": f"line {lineno} ({canonical}): factuality {fact!r} with no "
+                                      "factuality_source — an unattributed rating cannot be told "
+                                      "apart from a guess"})
+        if fact_src and fact_src not in FACTUALITY_SOURCES:
+            issues.append({"severity": "error", "code": "invalid_factuality_source", "line": lineno,
+                           "message": f"line {lineno} ({canonical}): factuality_source {fact_src!r} "
+                                      f"is not one of {'/'.join(FACTUALITY_SOURCES)}"})
+        if fact_src and not fact:
+            issues.append({"severity": "warning", "code": "source_without_factuality", "line": lineno,
+                           "message": f"line {lineno} ({canonical}): factuality_source {fact_src!r} "
+                                      "with no factuality — a half-finished edit"})
         if canonical in seen_canonical:
             issues.append({"severity": "error", "code": "duplicate_canonical", "line": lineno,
                            "message": f"line {lineno}: canonical {canonical!r} already defined at "

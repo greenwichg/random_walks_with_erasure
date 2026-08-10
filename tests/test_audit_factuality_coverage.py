@@ -67,20 +67,38 @@ def test_the_two_kinds_of_blank_are_reported_apart(st):
     assert all(o["factuality"] is None for o in res["outlets"]), "neither carries a verdict"
 
 
-def test_already_sourced_verdicts_are_found_and_not_double_counted(st):
+def test_already_sourced_verdicts_are_found_and_not_double_counted(tmp_path):
     """The 'free' set is what a curator already read at the rater and left in a comment. It must be
-    parsed from the file rather than restated, and it must EXCLUDE anything already in the column —
-    a verdict that is already there is done work, not achievable work."""
-    free = afc.sourced_but_unwritten()
-    assert free, "the registry comments carry sourced verdicts"
-    assert "Der Spiegel" in free and free["Der Spiegel"] == "high"
-    # Boston Globe already HAS a credibility value, so it is not free work.
-    assert "Boston Globe" not in free
+    parsed from the file rather than restated, and it must EXCLUDE anything already written — a
+    verdict in the column is done work, not achievable work.
 
-    _seed(st, [("Der Spiegel", 7), ("Boston Globe", 3)])
-    res = _analyse(st)
-    assert res["freeOutletsInWindow"] == 1 and res["freeArticles"] == 7
-    assert res["ratedArticles"] == 3, "the already-rated one counts as rated, not as free"
+    Driven off a FIXTURE registry, not the shipped one. An earlier version asserted that a specific
+    outlet was still unwritten, which made it a test of how much of the backlog happened to be
+    outstanding: Phase 2 wrote those verdicts and the test failed for being right. What is durable
+    is the RULE, so that is what is pinned."""
+    fixture = tmp_path / "reg.csv"
+    fixture.write_text(
+        "# notes recorded during a rating tranche:\n"
+        "#   Written Outlet   : Left-Center (MBFC LC, factual High)\n"
+        "#   Pending Outlet   : Right-Center (MBFC RC, factual MIXED)\n"
+        "#   Absent Outlet    : Left (MBFC L, factual High)\n"
+        "canonical,lean,aliases,country,region,city,scope,kind,credibility,factuality,factuality_source\n"
+        "Written Outlet,-1,written.example,,,,,,,high,mbfc\n"
+        "Pending Outlet,1,pending.example,,,,,,,,\n",
+        encoding="utf-8")
+
+    free = afc.sourced_but_unwritten(str(fixture))
+    assert free == {"Pending Outlet": "mixed"}, (
+        "only the row that EXISTS and is still blank is free work — a written one is done, "
+        f"and one with no row cannot be filled in: {free}")
+
+
+def test_the_shipped_registry_has_no_unwritten_verdicts_left(st):
+    """Phase 2's completion condition, kept as a live check: every verdict recorded in a comment has
+    been written into the column. A new rating tranche that records verdicts and forgets to enter
+    them will show up here as a non-empty set."""
+    assert afc.sourced_but_unwritten() == {}, (
+        "verdicts are sitting in the registry's comments unwritten — run the Phase 2 backfill")
 
 
 def test_identity_grouping_collapses_name_forms(st):
