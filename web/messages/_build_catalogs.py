@@ -1678,12 +1678,17 @@ M = {
     "notifications.recommendations_waiting.title": (
         "Recommendations waiting", "Recomendaciones en espera", "Recommandations en attente",
         "Empfehlungen warten", "Recomendações à espera"),
+    # DELIBERATELY UNQUANTIFIED. The number behind this used to be interpolated here, and it was a
+    # count of cards surfaced-and-not-clicked, which reads as a backlog when shown to a reader (one
+    # saw "3,023 recommendations are waiting for you"). The feed is regenerated and re-ranked per
+    # request, so no such queue exists to work through. The copy now reports that something new is
+    # there without inventing a quantity for it — no {count} in any language.
     "notifications.recommendations_waiting.body": (
-        "{count} recommendations are waiting for you.",
-        "{count} recomendaciones te están esperando.",
-        "{count} recommandations vous attendent.",
-        "{count} Empfehlungen warten auf Sie.",
-        "{count} recomendações estão à sua espera."),
+        "You have new recommendations to explore.",
+        "Tienes nuevas recomendaciones para explorar.",
+        "De nouvelles recommandations vous attendent.",
+        "Neue Empfehlungen warten auf Sie.",
+        "Tem novas recomendações para explorar."),
     "notifications.weekly_digest.title": ("Your week in review", "Tu semana en resumen",
                                           "Votre semaine en revue", "Ihre Woche im Rückblick",
                                           "Sua semana em resumo"),

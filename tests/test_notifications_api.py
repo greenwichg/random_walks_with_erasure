@@ -80,7 +80,10 @@ def test_recommendations_waiting_appears_with_unopened_recs(client):
     api_fastapi.state.store.record_recommendations_shown(uid, [("art-1", False), ("art-2", True)])
     data = client.get("/api/me/notifications", headers=hdr).json()
     waiting = [d for d in data if d["kind"] == "recommendations_waiting"]
-    assert len(waiting) == 1 and waiting[0]["payload"]["count"] == 2
+    assert len(waiting) == 1
+    # The API must not hand the client a number to render: unopened recs are cards surfaced and not
+    # clicked, which is not a backlog anyone can work through — the feed is rebuilt per request.
+    assert waiting[0]["payload"] == {}
 
 
 def test_unseen_only_and_limit(client):

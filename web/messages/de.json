@@ -569,7 +569,7 @@
   "notifications.monthly_deep_dive.title": "Monatliche Analyse bereit",
   "notifications.monthly_deep_dive.body": "Ihre monatliche Analyse ist bereit — {overall}/100.",
   "notifications.recommendations_waiting.title": "Empfehlungen warten",
-  "notifications.recommendations_waiting.body": "{count} Empfehlungen warten auf Sie.",
+  "notifications.recommendations_waiting.body": "Neue Empfehlungen warten auf Sie.",
   "notifications.weekly_digest.title": "Ihre Woche im Rückblick",
   "notifications.weekly_digest.body": "{reads} Artikel diese Woche · {streakDays}-Tage-Serie.",
   "notifications.streak_reminder.title": "Serie in Gefahr",

@@ -66,7 +66,11 @@ class ReportInputs:
 @dataclasses.dataclass(frozen=True)
 class RecommendationInputs:
     """Facts about recommendations the engine has ALREADY produced (never re-ranked here).
-    ``unopened_count`` is how many recs the reader was surfaced but has not opened yet."""
+    ``unopened_count`` is how many recs the reader was surfaced but has not opened yet.
+
+    A TRIGGER, not a display fact — see the ``recommendations_waiting`` kind. It measures what the
+    reader scrolled past rather than what is available to them, so it answers "is there something
+    unopened" honestly and "how many are waiting" not at all."""
     unopened_count: int = 0
 
 
@@ -343,7 +347,16 @@ NOTIFICATION_KINDS = (
         title_key="notifications.recommendations_waiting.title",
         predicate=lambda c: c.recommendations.unopened_count > 0,
         dedupe_key=lambda c: f"recommendations_waiting:{c.now:%Y-%m-%d}",
-        payload=lambda c: {"count": c.recommendations.unopened_count}),
+        # EMPTY payload on purpose — the count is a TRIGGER, never a display fact. It counts recs
+        # that were SURFACED and not clicked (RecEvent.opened_at IS NULL), so it tracks how much the
+        # reader has scrolled past, not how much is queued up for them: a feed of 14 cards adds ~14
+        # to it every visit whether or not anything new exists. Rendered as "{count} recommendations
+        # are waiting for you" it read as a backlog — production showed a reader 3,023 — and there is
+        # no such backlog to clear: the feed is regenerated per request and ranked fresh, so those
+        # cards are not sitting anywhere waiting to be collected. The predicate still reads the
+        # count, because "has the reader left anything unopened" is a fair reason to nudge; only the
+        # NUMBER is withheld, and the copy now says there is something new without quantifying it.
+        payload=lambda c: {}),
     NotificationKind(
         kind="weekly_digest", setting_path="notifications.weeklyDigest", mode="cadence",
         title_key="notifications.weekly_digest.title",

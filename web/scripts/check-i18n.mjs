@@ -7,6 +7,7 @@
  *   2. No empty values — no key maps to "" / whitespace in any language.
  *   3. Placeholder parity — a key's `{name}` interpolation tokens are identical across languages
  *      (so a translation can't silently drop a `{publisher}` a component depends on).
+ *   3b. No-placeholder keys — copy that must never interpolate a quantity (see NO_PLACEHOLDERS).
  *   4. Explanation coverage — every resolver (type, variant) from explanationKey() has a template.
  *   5. No unused keys  — every catalog key is referenced in source (literally, or under a
  *      documented dynamic-key prefix built via template literals).
@@ -144,6 +145,32 @@ for (const key of enKeys) {
     const extra = [...set].filter((x) => !base.has(x));
     if (missing.length || extra.length)
       fail(`placeholder mismatch for "${key}" (${lang}): en{${[...base].join(",")}} vs ${lang}{${[...set].join(",")}}`);
+  }
+}
+
+// ---- 3b. keys that must never interpolate a quantity ----
+// Placeholder PARITY (above) only makes the five languages agree with each other — it would happily
+// pass a `{count}` added to all five at once. These keys are copy where a number was measured and
+// found to be untrue, so the rule is absolute rather than relative: no interpolation, any language.
+//
+// notifications.recommendations_waiting.body carried `{count}` from the reader's unopened-rec
+// tally, which counts cards SURFACED and not clicked rather than anything queued. Production showed
+// a reader "3,023 recommendations are waiting for you" about a feed that is rebuilt and re-ranked on
+// every request — there was no backlog of 3,023, or of any size. Restoring a placeholder here means
+// restoring that claim, so the build stops it.
+const NO_PLACEHOLDERS = ["notifications.recommendations_waiting.body"];
+for (const key of NO_PLACEHOLDERS) {
+  if (!enKeys.has(key)) {
+    fail(`"${key}" is on the no-placeholder list but is missing from the catalogs`);
+    continue;
+  }
+  for (const lang of LANGS) {
+    const v = cats[lang]?.[key];
+    if (v === undefined) continue; // already reported by parity
+    const found = placeholders(v);
+    if (found.size)
+      fail(`"${key}" (${lang}) must not interpolate — found {${[...found].join("}, {")}}. This copy `
+         + `states that recommendations exist; it must not claim how many.`);
   }
 }
 

@@ -1,6 +1,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { notificationPresentation, notificationHref, badgeLabel } from "./notifications.ts";
+import { interpolate } from "./i18n-core.ts";
+
+const MSG = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "messages");
+const LANGS = ["en", "es", "fr", "de", "pt"] as const;
+const catalog = (lang: string): Record<string, string> =>
+  JSON.parse(fs.readFileSync(path.join(MSG, `${lang}.json`), "utf8"));
 
 const KNOWN = [
   "weekly_report",
@@ -76,6 +85,27 @@ test("every other kind ignores the payload and keeps its static destination", ()
 
 test("an unknown kind has no destination even with a story-shaped payload", () => {
   assert.equal(notificationHref("some_future_kind", { storyId: "s-42" }), null);
+});
+
+// ---------------------------------------------------------------------------------------------
+// "Recommendations waiting" states that recommendations exist — never how many.
+// ---------------------------------------------------------------------------------------------
+
+test("the recommendations_waiting row never renders a quantity, in any language", () => {
+  // The row is rendered as `t(bodyKey, item.payload)`, and the payload is STORED JSON that outlives
+  // the shape which wrote it: every notification already in the database was materialised with
+  // `{"count": N}` (production had one reader at 3,023 — a tally of cards scrolled past, not a
+  // queue). Those rows are not migrated, so the guarantee has to hold when that payload is fed to
+  // the new copy: `interpolate` only substitutes placeholders the TEMPLATE declares, and the
+  // template declares none, so the legacy count has nowhere to land.
+  const { bodyKey } = notificationPresentation("recommendations_waiting");
+  assert.ok(bodyKey, "the row still has a body");
+  for (const lang of LANGS) {
+    const rendered = interpolate(catalog(lang)[bodyKey!], { count: 3023 });
+    assert.ok(rendered.trim().length > 0, `${lang}: body is present`);
+    assert.doesNotMatch(rendered, /\d/, `${lang}: no number survives into the copy — got "${rendered}"`);
+    assert.doesNotMatch(rendered, /[{}]/, `${lang}: no unfilled placeholder — got "${rendered}"`);
+  }
 });
 
 test("badgeLabel caps: 0 hidden, 1-9 numeric, >9 -> 9+", () => {

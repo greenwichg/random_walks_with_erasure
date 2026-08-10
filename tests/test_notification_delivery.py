@@ -152,13 +152,16 @@ def test_recommendations_waiting_fires_on_unopened_recs():
     nd.materialize_notifications(st, uid)
     assert nd.build_context(st, uid).recommendations.unopened_count == 0
     assert "recommendations_waiting" not in _kinds(st, uid)
-    # surface two recs (unopened) -> the kind now fires, with a truthful count
+    # surface two recs (unopened) -> the kind now fires
     st.record_recommendations_shown(uid, [("a1", False), ("a2", True)])
     assert nd.build_context(st, uid).recommendations.unopened_count == 2
     assert nd.materialize_notifications(st, uid) >= 1
     waiting = next(x for x in st.list_notifications(uid, limit=100)
                    if x["kind"] == "recommendations_waiting")
-    assert waiting["payload"]["count"] == 2
+    # The count TRIGGERS the alert (asserted on the context above) and is deliberately NOT carried
+    # into the payload: it counts cards scrolled past, not a queue, and rendering it told a reader
+    # "3,023 recommendations are waiting for you" about a feed that is rebuilt on every request.
+    assert waiting["payload"] == {}, "the payload must not re-introduce a countable backlog"
     # opening them drops the unopened count back to 0 (self-quiescing)
     st.record_recommendation_open(uid, "a1")
     st.record_recommendation_open(uid, "a2")
@@ -231,8 +234,7 @@ def _surface_recs(st, uid, n, days_ago=0, tag="a"):
 
 def test_recommendations_waiting_does_not_accumulate_daily():
     """The bug this fixes: an event-mode alert minted one row PER DAY the condition held, so an
-    inactive reader's badge grew forever and permanently read '9+'. Now at most ONE is outstanding,
-    with a payload that tracks the current count."""
+    inactive reader's badge grew forever and permanently read '9+'. Now at most ONE is outstanding."""
     st, uid = _store_user(); _all_on(st, uid)
     base = datetime.now(timezone.utc)
     for day in range(10):                                  # ten days of a live feed, never opened
@@ -241,7 +243,10 @@ def test_recommendations_waiting_does_not_accumulate_daily():
         nd.materialize_notifications(st, uid, now=base + timedelta(days=day))
     waiting = _unseen(st, uid, "recommendations_waiting")
     assert len(waiting) == 1                               # NOT 10 — one outstanding alert
-    assert waiting[0]["payload"]["count"] == 8             # windowed to the live feed, not all 10
+    # The trigger stays windowed to the live feed (8 of the 10 days, not all 10). Asserted on the
+    # context because the payload no longer carries the number — see the kind's comment.
+    assert nd.build_context(st, uid, now=base + timedelta(days=9)) \
+             .recommendations.unopened_count == 8
 
 
 def test_alert_auto_resolves_when_its_condition_clears():
@@ -272,7 +277,10 @@ def test_waiting_count_is_windowed_to_the_live_feed():
     _surface_recs(st, uid, 2, days_ago=1)                  # fresh, unopened
     nd.materialize_notifications(st, uid)
     waiting = _unseen(st, uid, "recommendations_waiting")
-    assert len(waiting) == 1 and waiting[0]["payload"]["count"] == 2   # 2, not 7
+    assert len(waiting) == 1
+    # 2, not 7 — the five ancient cards are outside the window. On the context, not the payload:
+    # the alert no longer states a number, but the number still decides whether it fires.
+    assert nd.build_context(st, uid).recommendations.unopened_count == 2
 
 
 def test_notification_history_is_bounded_and_never_prunes_unseen():

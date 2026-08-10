@@ -569,7 +569,7 @@
   "notifications.monthly_deep_dive.title": "Monthly deep dive ready",
   "notifications.monthly_deep_dive.body": "Your monthly deep dive is ready — {overall}/100.",
   "notifications.recommendations_waiting.title": "Recommendations waiting",
-  "notifications.recommendations_waiting.body": "{count} recommendations are waiting for you.",
+  "notifications.recommendations_waiting.body": "You have new recommendations to explore.",
   "notifications.weekly_digest.title": "Your week in review",
   "notifications.weekly_digest.body": "{reads} reads this week · {streakDays}-day streak.",
   "notifications.streak_reminder.title": "Streak at risk",
