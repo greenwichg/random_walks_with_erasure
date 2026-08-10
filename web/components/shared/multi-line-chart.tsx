@@ -2,6 +2,7 @@
 
 import dynamic from "next/dynamic";
 import * as React from "react";
+import { ChartEmpty } from "./states";
 import type { MultiLineChart as Impl } from "./multi-line-chart-impl";
 
 /**
@@ -26,6 +27,11 @@ const Lazy = dynamic(() => import("./multi-line-chart-impl").then((m) => m.Multi
 });
 
 export function MultiLineChart(props: React.ComponentProps<typeof Impl>) {
+  // Nothing to plot is its own answer, and a different one from "still loading". Recharts draws an
+  // empty grid for an empty series, which reads as a broken card rather than a quiet one — visible
+  // on the period report pages, where a window can legitimately contain no reads. Returning before
+  // <Lazy> also means a card with no data never fetches the ~100 kB Recharts chunk at all.
+  if (!props.data?.length) return <ChartEmpty height={props.height ?? 220} />;
   return (
     <div style={{ minHeight: props.height ?? 220 }}>
       <Lazy {...props} />

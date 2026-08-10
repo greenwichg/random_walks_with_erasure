@@ -161,6 +161,7 @@
   "explanation.coverage_breadth.topic": "Élargit votre couverture de {topic} au-delà de votre mélange habituel.",
   "explanation.coverage_breadth.generic": "Élargit votre couverture au-delà de votre mélange habituel.",
   "states.empty.title": "Rien pour l'instant",
+  "states.chartEmpty": "Pas encore de données",
   "states.error.title": "Une erreur est survenue",
   "states.error.body": "Impossible de charger ceci. Veuillez réessayer.",
   "time.justNow": "à l'instant",

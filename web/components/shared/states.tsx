@@ -35,6 +35,27 @@ export function EmptyState({
   );
 }
 
+/**
+ * In-card placeholder for a chart with nothing to plot.
+ *
+ * Deliberately quieter than `EmptyState`: this sits INSIDE a `SectionCard` that already carries the
+ * title and the explanatory tooltip, so a second bordered panel with its own icon and heading would
+ * be a box inside a box saying the same thing twice. It reserves the chart's own height for the
+ * same reason the chart wrappers do — a placeholder that collapses would make a grid of cards jump
+ * as data arrives.
+ */
+export function ChartEmpty({ height, className }: { height?: number; className?: string }) {
+  const { t } = useTranslation();
+  return (
+    <div
+      className={cn("flex items-center justify-center text-sm text-muted-foreground", className)}
+      style={{ minHeight: height }}
+    >
+      {t("states.chartEmpty")}
+    </div>
+  );
+}
+
 /** Reusable error state with a retry action. */
 export function ErrorState({
   message,

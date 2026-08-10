@@ -47,6 +47,23 @@ for (const { kind, path, titleKey } of CASES) {
   });
 }
 
+test("a card with nothing to plot says so; a card with data still draws", async ({ authedPage }) => {
+  // The fixture mints a fresh engine user, so this account has a seeded report snapshot and ZERO
+  // reads — which is exactly the mixed state worth pinning: some series in the window, others
+  // empty. Recharts draws an empty grid for an empty series, and a card headed "Reading volume"
+  // over blank space reads as broken rather than as quiet.
+  await authedPage.goto("/report/weekly");
+  const card = (title: string) =>
+    authedPage.locator(".rounded-lg.border").filter({
+      has: authedPage.getByRole("heading", { level: 3, name: title, exact: true }),
+    }).last();
+
+  await expect(card("Reading volume")).toContainText("No data yet");
+  // The guard must key on THIS card's data, not on the page having any gap in it — a blanket
+  // empty state would swallow the charts that do have something to show.
+  await expect(card("Health improvement")).not.toContainText("No data yet");
+});
+
 test("the two destinations are different pages", async ({ authedPage }) => {
   // The failure being fixed was not "the link is broken" but "both links go to the same place",
   // which every per-route assertion above would still pass if they were merged again.

@@ -161,6 +161,7 @@
   "explanation.coverage_breadth.topic": "Amplía tu cobertura de {topic} más allá de tu mezcla habitual.",
   "explanation.coverage_breadth.generic": "Amplía tu cobertura más allá de tu mezcla habitual.",
   "states.empty.title": "Aún no hay nada",
+  "states.chartEmpty": "Aún no hay datos",
   "states.error.title": "Algo salió mal",
   "states.error.body": "No pudimos cargar esto. Inténtalo de nuevo.",
   "time.justNow": "ahora mismo",

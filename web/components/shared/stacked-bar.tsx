@@ -2,6 +2,7 @@
 
 import dynamic from "next/dynamic";
 import * as React from "react";
+import { ChartEmpty } from "./states";
 import type { StackedBar as Impl } from "./stacked-bar-impl";
 
 // The chart module also owned this shared type. Re-exported from the same path it always lived at,
@@ -30,6 +31,11 @@ const Lazy = dynamic(() => import("./stacked-bar-impl").then((m) => m.StackedBar
 });
 
 export function StackedBar(props: React.ComponentProps<typeof Impl>) {
+  // Nothing to plot is its own answer, and a different one from "still loading". Recharts draws an
+  // empty grid for an empty series, which reads as a broken card rather than a quiet one — visible
+  // on the period report pages, where a window can legitimately contain no reads. Returning before
+  // <Lazy> also means a card with no data never fetches the ~100 kB Recharts chunk at all.
+  if (!props.data?.length) return <ChartEmpty height={props.height ?? 220} />;
   return (
     <div style={{ minHeight: props.height ?? 220 }}>
       <Lazy {...props} />

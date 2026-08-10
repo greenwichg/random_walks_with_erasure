@@ -161,6 +161,7 @@
   "explanation.coverage_breadth.topic": "Erweitert Ihre {topic}-Abdeckung über Ihre übliche Mischung hinaus.",
   "explanation.coverage_breadth.generic": "Erweitert Ihre Abdeckung über Ihre übliche Mischung hinaus.",
   "states.empty.title": "Noch nichts hier",
+  "states.chartEmpty": "Noch keine Daten",
   "states.error.title": "Etwas ist schiefgelaufen",
   "states.error.body": "Wir konnten dies nicht laden. Bitte erneut versuchen.",
   "time.justNow": "gerade eben",

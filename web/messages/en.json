@@ -161,6 +161,7 @@
   "explanation.coverage_breadth.topic": "Broadens your {topic} coverage beyond your usual mix.",
   "explanation.coverage_breadth.generic": "Broadens your coverage beyond your usual mix.",
   "states.empty.title": "Nothing here yet",
+  "states.chartEmpty": "No data yet",
   "states.error.title": "Something went wrong",
   "states.error.body": "We couldn't load this. Please try again.",
   "time.justNow": "just now",

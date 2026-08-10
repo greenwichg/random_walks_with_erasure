@@ -2,6 +2,7 @@
 
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
+import { ChartEmpty } from "./states";
 
 export interface BarItem {
   label: string;
@@ -13,6 +14,10 @@ export interface BarItem {
 
 /** A ranked horizontal bar list — used for topic + source distributions. */
 export function BarList({ items, className }: { items: BarItem[]; className?: string }) {
+  // An empty list rendered as an empty <div>: the card kept its title and tooltip above a blank
+  // space, which reads as a card that failed rather than one with nothing to rank yet. No height
+  // is reserved — unlike a chart this has no intrinsic size to hold open.
+  if (!items.length) return <ChartEmpty className={className} />;
   const max = Math.max(...items.map((i) => i.value), 0.0001);
   return (
     <div className={cn("space-y-3", className)}>
