@@ -148,3 +148,51 @@ def test_the_registry_summary_counts_either_column(st):
     assert res["registryFactualityColumn"] > 0, "Phase 2 wrote verdicts into the new column"
     assert res["registryWithFactuality"] > res["registryCredibilityOnly"], (
         "the total must exceed the legacy-only subset, or the new column is not being counted")
+
+
+# --------------------------------------------------------------------------------------------- #
+# The emitted worklist — what the NEXT tranche of rater lookups should be.
+# --------------------------------------------------------------------------------------------- #
+def test_the_worklist_is_ranked_by_article_volume_not_registry_order(st):
+    """The reason this is emitted from the probe rather than read off the registry.
+
+    The file holds hundreds of rows carrying a lean and no verdict, but most publish nothing into
+    the window, so working it in file order spends rater requests on outlets that buy no coverage.
+    Only the feed knows which blanks are expensive, and the sheet has to arrive in that order."""
+    _seed(st, [("Deutsche Welle", 10), ("The Times of India", 40)])
+    sheet = afc.worksheet_rows(_analyse(st)["outlets"])
+    vols = [r["articles_in_window"] for r in sheet]
+    assert vols == sorted(vols, reverse=True), f"not volume-ranked: {sheet}"
+    assert sheet[0]["canonical"] == "The Times of India"
+
+
+def test_an_unregistered_name_never_enters_the_worklist_however_loud(st):
+    """Volume is the ranking, not the entry condition. A name with no row cannot be looked up —
+    there is nothing to write a verdict against, and it may not even be one outlet — so the
+    highest-volume unknown in the feed must still be absent."""
+    _seed(st, [("Totally Unknown Local Herald", 999), ("Deutsche Welle", 1)])
+    sheet = afc.worksheet_rows(_analyse(st)["outlets"])
+    assert [r["canonical"] for r in sheet] == ["Deutsche Welle"]
+
+
+def test_an_outlet_that_already_has_a_verdict_is_not_re_looked_up(st):
+    """The worklist is remaining work. Re-emitting a written row would spend a rater request to
+    learn something the file already records."""
+    _seed(st, [("Reuters", 50), ("Deutsche Welle", 1)])
+    sheet = afc.worksheet_rows(_analyse(st)["outlets"])
+    assert "Reuters" not in [r["canonical"] for r in sheet], "Reuters was written in Phase 3"
+
+
+def test_every_emitted_row_is_ready_for_the_fetcher(st):
+    """The sheet is fed straight to the MBFC fetcher and written back to the registry afterwards,
+    so each row needs a domain to search on and the line number to write back to. A row missing
+    either is a manual task wearing an automated row's clothes."""
+    _seed(st, [("Deutsche Welle", 5), ("The Times of India", 3)])
+    sheet = afc.worksheet_rows(_analyse(st)["outlets"])
+    assert sheet
+    for r in sheet:
+        assert r["primary_domain"] and "." in r["primary_domain"], r
+        assert r["registry_line"] > 0, r
+        assert r["mbfc_search_url"].endswith(r["primary_domain"]), r
+        assert r["factuality_TO_FILL"] == "", "a worklist row carries no verdict yet"
+        assert r["factuality_source"] == "mbfc"

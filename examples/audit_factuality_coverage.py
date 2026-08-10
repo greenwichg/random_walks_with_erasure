@@ -207,6 +207,60 @@ def _table(rows: list, top: int) -> str:
     return "\n".join(out)
 
 
+def _registry_index(path: str | None = None) -> dict:
+    """canonical -> (line number, first domain in the alias cell).
+
+    Read from the FILE rather than the loaded registry because the worksheet wants both facts and
+    the `Outlet` dataclass carries neither: aliases are consumed into lookup indexes, and the line
+    number only exists on disk. The line number is what lets a filled sheet be written back to the
+    exact row it came from."""
+    p = pathlib.Path(path or (pathlib.Path(__file__).resolve().parent / "data" /
+                              "outlet_registry.csv"))
+    lines = p.read_text(encoding="utf-8").split("\n")
+    start = next((i for i, l in enumerate(lines) if l.startswith("canonical,")), -1)
+    index = {}
+    for n, line in enumerate(lines[start + 1:], start=start + 2):
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        row = next(csv.reader([line]))
+        if not row or not row[0].strip():
+            continue
+        domain = next((a.strip().lower() for a in (row[2] if len(row) > 2 else "").split("|")
+                       if "." in a and " " not in a.strip() and not a.strip().startswith("http")),
+                      "")
+        index[row[0]] = (n, domain)
+    return index
+
+
+def worksheet_rows(outlets: list, registry_path: str | None = None) -> list:
+    """The next tranche, ranked by ARTICLE VOLUME, in the columns the MBFC fetcher reads.
+
+    Emitting this from the probe rather than from the registry is the whole point. The registry
+    holds hundreds of rows that carry a lean and no verdict, but most of them publish nothing into
+    the window, so working the registry in file order spends rater requests on outlets that buy no
+    coverage at all. Only the feed knows which blanks are expensive.
+
+    Restricted to rows that already exist and already carry a lean: an outlet with no row needs
+    identity curation before a verdict means anything, and one with no lean has no rater page to
+    read, because the lean is what proves the page exists."""
+    index = _registry_index(registry_path)
+    out = []
+    for r in sorted(outlets, key=lambda r: -r["articles"]):
+        if r["factuality"] or not r["registered"] or not r["hasLean"]:
+            continue
+        line, domain = index.get(r["canonical"] or "", (0, ""))
+        if not domain:
+            continue
+        out.append({
+            "canonical": r["canonical"], "registry_line": line, "primary_domain": domain,
+            "mbfc_search_url": f"https://mediabiasfactcheck.com/?s={domain}",
+            "articles_in_window": r["articles"], "volume_source": "measured",
+            "current_lean": "", "factuality_TO_FILL": "", "factuality_source": "mbfc",
+            "notes_TO_FILL": "",
+        })
+    return out
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--db", default=None)
@@ -214,12 +268,29 @@ def main(argv=None) -> int:
     ap.add_argument("--stories", action="store_true",
                     help="also build stories (slower) to report story-level gaps")
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--emit-worklist", metavar="PATH", default=None,
+                    help="write the volume-ranked next tranche as a fetcher-ready CSV")
+    ap.add_argument("--emit-limit", type=int, default=0,
+                    help="cap the emitted tranche (0 = all); the tail is long and cheap to skip")
     args = ap.parse_args(argv)
 
     store_ = store_mod.Store(args.db)
     rows = story_service._fetch(store_)
     stories = story_service.build_stories(rows) if args.stories else None
     res = analyse(rows, free=sourced_but_unwritten(), stories=stories)
+
+    if args.emit_worklist:
+        sheet = worksheet_rows(res["outlets"])
+        if args.emit_limit:
+            sheet = sheet[:args.emit_limit]
+        dest = pathlib.Path(args.emit_worklist)
+        with dest.open("w", encoding="utf-8", newline="") as fh:
+            w = csv.DictWriter(fh, fieldnames=list(sheet[0]) if sheet else ["canonical"])
+            w.writeheader()
+            w.writerows(sheet)
+        covered = sum(r["articles_in_window"] for r in sheet)
+        print(f"worklist: {len(sheet):,} outlets, {covered:,} articles "
+              f"({_pct(covered, res['articles'])} of the window) -> {dest}")
 
     if args.json:
         print(json.dumps(res, indent=2, sort_keys=True))
