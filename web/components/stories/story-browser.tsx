@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import type { LucideIcon } from "lucide-react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { useStories, useDiscover } from "@/hooks/use-data";
 import { services, queryKeys } from "@/services";
@@ -58,12 +59,59 @@ export function StoryBrowser({
   emptyDescription: string;
 }) {
   const { t, formatCompact } = useTranslation();
-  const [topic, setTopic] = React.useState("all");
-  const [publisher, setPublisher] = React.useState(initialPublisher ?? "all");
-  const [lean, setLean] = React.useState("all");
-  const [country, setCountry] = React.useState(initialCountry?.toUpperCase() ?? "all");
-  const [blindspot, setBlindspot] = React.useState(initialBlindspot ?? "all");
-  const [sort, setSort] = React.useState(defaultSort);
+
+  // THE FILTERS LIVE IN THE URL, not in component state.
+  //
+  // They used to be six `useState`s, which meant a selection existed only for as long as this
+  // component stayed mounted. Opening a story unmounts it; coming back mounts a fresh one, and
+  // every filter is its initial value again. Three of them (country / publisher / blindspot) were
+  // already read FROM the URL as deep-link entry points, but nothing ever wrote back — so even
+  // those reset the moment the reader changed them by hand rather than arriving via a link.
+  //
+  // The URL is the state the browser already restores on Back, so putting them there is the fix
+  // and the smallest one: no store, no context, no session storage. It also makes a filtered view
+  // shareable and bookmarkable, which the three deep links imply was the intent all along.
+  const params = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+
+  // A prop is the fallback when its param is absent, so the existing deep links and `defaultSort`
+  // behave exactly as before and a bare /stories still loads defaults.
+  const rawCountry = params.get("country") ?? initialCountry;
+  const topic = params.get("topic") ?? "all";
+  const publisher = params.get("publisher") ?? initialPublisher ?? "all";
+  const lean = params.get("lean") ?? "all";
+  // Only uppercase a real code: "all".toUpperCase() is "ALL", which `asFilter` would send to the
+  // engine as a country named ALL instead of meaning "no country filter".
+  const country = rawCountry ? rawCountry.toUpperCase() : "all";
+  const blindspot = params.get("blindspot") ?? initialBlindspot ?? "all";
+  const sort = params.get("sort") ?? defaultSort;
+
+  const setParam = React.useCallback(
+    (key: string, value: string, whenDefault: string) => {
+      const next = new URLSearchParams(params.toString());
+      // A default is the ABSENCE of the param, so flipping a filter back to "all" leaves a clean
+      // URL rather than /stories?topic=all&lean=all&…
+      if (value === whenDefault) next.delete(key);
+      else next.set(key, value);
+      const qs = next.toString();
+      // `replace`, not `push`: each filter change edits the entry the reader is standing on. With
+      // `push`, Back would have to walk them one at a time through every tweak they made before it
+      // finally left the page — which is a worse bug than the one being fixed here.
+      // `scroll: false` keeps the list where it is instead of jumping to the top on every change.
+      router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+    },
+    [params, pathname, router],
+  );
+
+  const setTopic = React.useCallback((v: string) => setParam("topic", v, "all"), [setParam]);
+  const setPublisher = React.useCallback((v: string) => setParam("publisher", v, "all"), [setParam]);
+  const setLean = React.useCallback((v: string) => setParam("lean", v, "all"), [setParam]);
+  const setCountry = React.useCallback((v: string) => setParam("country", v, "all"), [setParam]);
+  const setBlindspot = React.useCallback((v: string) => setParam("blindspot", v, "all"), [setParam]);
+  const setSort = React.useCallback(
+    (v: string) => setParam("sort", v, defaultSort), [setParam, defaultSort]);
+
   const [offset, setOffset] = React.useState(0);
 
   React.useEffect(() => {
