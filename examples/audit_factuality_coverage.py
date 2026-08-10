@@ -42,6 +42,7 @@ import json
 import math
 import pathlib
 import re
+import sys
 
 import outlet_registry
 import publisher_identity
@@ -283,14 +284,27 @@ def main(argv=None) -> int:
         sheet = worksheet_rows(res["outlets"])
         if args.emit_limit:
             sheet = sheet[:args.emit_limit]
-        dest = pathlib.Path(args.emit_worklist)
-        with dest.open("w", encoding="utf-8", newline="") as fh:
-            w = csv.DictWriter(fh, fieldnames=list(sheet[0]) if sheet else ["canonical"])
+        fields = list(sheet[0]) if sheet else ["canonical"]
+        covered = sum(r["articles_in_window"] for r in sheet)
+        summary = (f"worklist: {len(sheet):,} outlets, {covered:,} articles "
+                   f"({_pct(covered, res['articles'])} of the window)")
+
+        # "-" writes the sheet to stdout. This probe's natural home is inside the deployed
+        # container, where a file has to be copied back out before it is any use; a pasteable
+        # stream is the difference between one command and three.
+        if args.emit_worklist == "-":
+            print(f"--- BEGIN WORKLIST CSV ({summary}) ---")
+            w = csv.DictWriter(sys.stdout, fieldnames=fields, lineterminator="\n")
             w.writeheader()
             w.writerows(sheet)
-        covered = sum(r["articles_in_window"] for r in sheet)
-        print(f"worklist: {len(sheet):,} outlets, {covered:,} articles "
-              f"({_pct(covered, res['articles'])} of the window) -> {dest}")
+            print("--- END WORKLIST CSV ---")
+        else:
+            dest = pathlib.Path(args.emit_worklist)
+            with dest.open("w", encoding="utf-8", newline="") as fh:
+                w = csv.DictWriter(fh, fieldnames=fields)
+                w.writeheader()
+                w.writerows(sheet)
+            print(f"{summary} -> {dest}")
 
     if args.json:
         print(json.dumps(res, indent=2, sort_keys=True))

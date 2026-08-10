@@ -5,6 +5,8 @@ that it writes nothing, that it counts per outlet IDENTITY rather than per name 
 sibling registry audit exists to avoid), and that it separates the two blanks that mean different
 work: a row that only needs a rater lookup, and a name with no row at all.
 """
+import csv
+import io
 import pathlib
 import sys
 from datetime import datetime, timedelta, timezone
@@ -196,3 +198,36 @@ def test_every_emitted_row_is_ready_for_the_fetcher(st):
         assert r["mbfc_search_url"].endswith(r["primary_domain"]), r
         assert r["factuality_TO_FILL"] == "", "a worklist row carries no verdict yet"
         assert r["factuality_source"] == "mbfc"
+
+
+def test_the_worklist_can_be_streamed_to_stdout(tmp_path, capsys):
+    """`-` means stdout. The probe's natural home is inside the deployed container, where a file
+    has to be copied back out before it is any use — one command beats three. Driven through
+    `main` because the delimiters are the contract: the CSV is printed among a human-readable
+    report, so it has to be separable from it without guessing where it starts."""
+    url = f"sqlite:///{tmp_path / 'cli.db'}"
+    _seed(store_mod.Store(url), [("Deutsche Welle", 4)])
+
+    assert afc.main(["--db", url, "--emit-worklist", "-"]) == 0
+    out = capsys.readouterr().out
+    assert "--- BEGIN WORKLIST CSV" in out and "--- END WORKLIST CSV ---" in out
+
+    body = out.split("--- BEGIN WORKLIST CSV")[1].split("---", 1)[1]
+    body = body.split("--- END WORKLIST CSV ---")[0].strip()
+    rows = list(csv.DictReader(io.StringIO(body)))
+    assert [r["canonical"] for r in rows] == ["Deutsche Welle"]
+    assert rows[0]["articles_in_window"] == "4"
+    assert rows[0]["factuality_TO_FILL"] == "", "a worklist row carries no verdict yet"
+
+
+def test_the_worklist_writes_nothing_to_the_database(st):
+    """It is emitted from a production read. Same guarantee as the rest of the probe."""
+    from sqlalchemy import func, select
+    _seed(st, [("Deutsche Welle", 5)])
+
+    def count():
+        with st.session() as s:
+            return int(s.scalar(select(func.count()).select_from(store_mod.FeedArticle)) or 0)
+    before = count()
+    afc.worksheet_rows(_analyse(st)["outlets"])
+    assert count() == before
