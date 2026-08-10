@@ -123,3 +123,17 @@ def test_the_probe_writes_nothing(st):
     before = counts()
     _analyse(st)
     assert counts() == before
+
+
+def test_the_registry_summary_counts_either_column(st):
+    """It counted `credibility` alone, so after the Phase 2 backfill the same report said the FILE
+    was untouched (70 rows) while the FEED line showed the 41 new verdicts working. A report that
+    contradicts itself is worse than one that is merely incomplete — an operator cannot tell which
+    half to believe."""
+    _seed(st, [("BBC News", 1)])
+    res = _analyse(st)
+    assert res["registryWithFactuality"] == (
+        res["registryFactualityColumn"] + res["registryCredibilityOnly"]), "the split must add up"
+    assert res["registryFactualityColumn"] > 0, "Phase 2 wrote verdicts into the new column"
+    assert res["registryWithFactuality"] > res["registryCredibilityOnly"], (
+        "the total must exceed the legacy-only subset, or the new column is not being counted")

@@ -14,7 +14,8 @@ exists in the shape it does.
 
 Three totals travel together because they are easy to confuse and the differences are the point:
 
-* **registry** — a property of the FILE. How many curated rows carry a ``credibility`` value.
+* **registry** — a property of the FILE. How many curated rows carry a verdict in EITHER column
+  (``factuality``, the rater's own six levels, or the older three-level ``credibility``).
 * **window** — a property of the FEED. What share of articles come from an outlet that has one.
 * **free** — already sourced, not yet written. During the lean tranches the rater's factuality
   verdict was read off the same MBFC page and recorded in the registry's own comments, but never
@@ -61,8 +62,8 @@ def sourced_but_unwritten(path: "str | None" = None) -> dict:
     """Outlets whose factuality a curator already read at the rater and left in a comment.
 
     Parsed from the registry file rather than restated here, so the number cannot drift from the
-    evidence. Only rows that EXIST and whose ``credibility`` cell is still blank are returned —
-    a verdict already in the column is not free work, it is done work."""
+    evidence. Only rows that EXIST and whose ``factuality`` cell is still blank are returned —
+    a verdict already written is not free work, it is done work."""
     p = pathlib.Path(path or outlet_registry._DATA)
     raw = p.read_text(encoding="utf-8")
     noted = {}
@@ -147,8 +148,21 @@ def analyse(rows: list, *, free: dict, stories: "list | None" = None) -> dict:
     registry = outlet_registry.default_registry().outlets()
     res = {
         "registryRows": len(registry),
-        "registryWithFactuality": sum(1 for o in registry
-                                      if (getattr(o, "credibility", None) or "").strip()),
+        # EITHER column, matching how the window side counts a verdict. This read `credibility`
+        # alone, which was right only until `factuality` existed: after the Phase 2 backfill the
+        # registry line reported 70/12.9% while the feed line correctly showed the 41 new rows
+        # working, so the same report contradicted itself — the file looked untouched next to a
+        # feed that had plainly moved. The split below keeps the migration state visible.
+        "registryWithFactuality": sum(
+            1 for o in registry
+            if (getattr(o, "factuality", None) or "").strip()
+            or (getattr(o, "credibility", None) or "").strip()),
+        "registryFactualityColumn": sum(1 for o in registry
+                                        if (getattr(o, "factuality", None) or "").strip()),
+        "registryCredibilityOnly": sum(
+            1 for o in registry
+            if (getattr(o, "credibility", None) or "").strip()
+            and not (getattr(o, "factuality", None) or "").strip()),
         "registryWithLean": sum(1 for o in registry if not math.isnan(o.lean)),
         "names": len(names),
         "identities": len(groups),
@@ -213,8 +227,12 @@ def main(argv=None) -> int:
 
     print("FACTUALITY COVERAGE — read-only\n")
     print(f"REGISTRY (the file) : {res['registryRows']:,} rows")
-    print(f"  with a factuality : {res['registryWithFactuality']:,}"
+    print(f"  with a verdict    : {res['registryWithFactuality']:,}"
           f"  ({_pct(res['registryWithFactuality'], res['registryRows'])})")
+    print(f"    factuality col  : {res['registryFactualityColumn']:,}"
+          f"   (the rater's own six levels)")
+    print(f"    credibility only: {res['registryCredibilityOnly']:,}"
+          f"   (legacy 3-level, no factuality written yet)")
     print(f"  with a lean       : {res['registryWithLean']:,}"
           f"  ({_pct(res['registryWithLean'], res['registryRows'])})   <- for contrast\n")
 
