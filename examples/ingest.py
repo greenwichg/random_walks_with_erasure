@@ -32,6 +32,8 @@ exactly as the engine already handles missing data.
 from __future__ import annotations
 
 import dataclasses
+import functools
+import os
 import re
 from dataclasses import asdict, dataclass, replace
 from typing import Optional, Protocol
@@ -383,6 +385,88 @@ def has_host(url: str) -> bool:
     reject pasted junk before it becomes a reading event."""
     host = urlsplit(url).netloc
     return bool(host) and "." in host and " " not in host
+
+
+# --------------------------------------------------------------------------- #
+# Catalog block list — outlets configured never to enter the catalog at all.
+# --------------------------------------------------------------------------- #
+#: The setting, comma-separated. `RWE_CATALOG_BLOCKED_OUTLETS` is the house-convention name (every
+#: other switch in this codebase is `RWE_`-prefixed, and an unprefixed name is easier to collide
+#: with in a shared container environment); the bare `CATALOG_BLOCKED_OUTLETS` is accepted as an
+#: alias so either spelling works.
+_BLOCKED_ENV_KEYS = ("RWE_CATALOG_BLOCKED_OUTLETS", "CATALOG_BLOCKED_OUTLETS")
+
+
+def _blocked_setting() -> str:
+    for key in _BLOCKED_ENV_KEYS:
+        value = (os.environ.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+@functools.lru_cache(maxsize=8)
+def _blocked_index(setting: str) -> tuple:
+    """Parse one setting string into ``(canonical names, hosts)``.
+
+    Each entry is resolved through the REGISTRY first, so a blocked outlet is blocked by IDENTITY —
+    every alias, every corpus variant, every domain the registry knows for it — rather than by the
+    one string somebody happened to type. Blocking "bbc.co.uk" therefore also blocks an article
+    that arrives labelled "BBC News", which blocking on raw name strings could never do.
+
+    An entry the registry does not know falls back to a DOMAIN, which is the case that matters
+    most in practice: the outlets worth keeping out are usually the ones nobody has curated a row
+    for. An entry that is neither (an unregistered bare name — no dot, no row) matches nothing;
+    `blocked_catalog_index` exists so that is discoverable rather than silent.
+
+    Keyed on the setting string, so a test or an operator changing the env re-parses instead of
+    being served a memo of the old value."""
+    canonicals, hosts = set(), set()
+    for entry in setting.split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        outlet = default_registry().resolve(entry)
+        if outlet is not None:
+            canonicals.add(outlet.canonical)
+        elif "." in entry:                      # unknown to the registry -> treat it as a domain
+            host = _domain_of(entry)
+            if host:
+                hosts.add(host)
+    return frozenset(canonicals), frozenset(hosts)
+
+
+def blocked_catalog_index() -> tuple:
+    """What the current setting was understood to mean: ``(canonical names, hosts)``.
+
+    Exposed so an operator can confirm an entry was actually understood. A misspelling, or an
+    unregistered outlet named rather than domained, silently matches nothing — and a block list
+    that quietly does nothing is the worst way to find that out."""
+    return _blocked_index(_blocked_setting())
+
+
+def is_blocked_from_catalog(outlet_hint: "str | None", url: str) -> bool:
+    """Whether this article's outlet is configured out of the catalog.
+
+    Resolved from ``hint or url`` — the SAME input :meth:`Scorer._resolve_outlet` uses — so the
+    block decision and the identity that would have been stored can never disagree.
+
+    An empty setting returns False before doing any work, so a deployment that sets nothing behaves
+    exactly as it did before this existed."""
+    setting = _blocked_setting()
+    if not setting:
+        return False
+    canonicals, hosts = _blocked_index(setting)
+    if canonicals:
+        outlet = default_registry().resolve(outlet_hint or url)
+        if outlet is not None and outlet.canonical in canonicals:
+            return True
+    if hosts:
+        # Subdomain-tolerant, matching how the registry itself resolves domain forms: blocking
+        # `example.com` blocks `news.example.com`, and never `notexample.com`.
+        host = _domain_of(url)
+        return any(host == h or host.endswith("." + h) for h in hosts)
+    return False
 
 
 def _domain_of(url: str) -> str:

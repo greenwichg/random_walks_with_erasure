@@ -325,10 +325,15 @@ def ingest_entries(entries, source_publisher, source_feed, scorer, store_, *,
     breakdown; ``newest`` / ``oldest`` publication dates). Quality metrics are collected only — they
     never drop an article, and outlet resolution / scoring is unchanged.
 
+    ``blocked`` is the one counter that DOES drop articles: outlets configured out of the catalog
+    entirely via ``RWE_CATALOG_BLOCKED_OUTLETS`` (see ``ingest.is_blocked_from_catalog``). It is
+    reported rather than silent so an operator can see a block list working — or see it matching
+    nothing, which is what a typo looks like.
+
     ``source_type`` / ``source_provider`` are the batch-level attribution a non-RSS adapter passes; a
     per-entry value on the :class:`FeedEntry` (set by the adapter during normalization) overrides them.
     RSS callers pass neither and their entries carry no per-entry values, so behaviour is unchanged."""
-    stats = {"entries": 0, "new": 0, "duplicates": 0, "skipped": 0,
+    stats = {"entries": 0, "new": 0, "duplicates": 0, "skipped": 0, "blocked": 0,
              "missing_metadata": 0, "unknown_outlet": 0, "unknown_outlets": {},
              "newest": None, "oldest": None}
     for e in entries:
@@ -347,6 +352,13 @@ def ingest_entries(entries, source_publisher, source_feed, scorer, store_, *,
             continue
         raw = ingest.RawRead(url=url, title=e.title or "", description=e.description or "",
                              outlet=e.publisher_hint or "", category=e.category or "")
+        # Configured-out outlets stop HERE — before scoring, so a blocked article costs no
+        # enrichment and leaves no scored-cache row either, and before the upsert, so nothing of it
+        # reaches the catalog. Every producer (RSS, the source adapters, the browser extension)
+        # funnels through this function, so one check covers them all. Empty setting -> no-op.
+        if ingest.is_blocked_from_catalog(raw.outlet, url):
+            stats["blocked"] += 1
+            continue
         scored = ingest.score_with_cache(raw, scorer, store_)      # same scorer + shared cache as reads
         _lean = scored.lean                                        # NaN when the registry doesn't know the outlet
         if _lean is None or not math.isfinite(_lean):              # observational: the article still ingests

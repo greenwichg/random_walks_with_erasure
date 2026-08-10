@@ -31,6 +31,15 @@ services:
       # The background poller resolves its feeds from RWE_RSS_FEEDS — the SAME list the `ingest` service
       # uses. WITHOUT this (and the matching mount below) the poller loads ZERO feeds and silently no-ops,
       # so the catalog only ever refreshes at `up` time. Keep this pair in sync with the ingest service.
+      # Outlets configured OUT of the catalog entirely (comma-separated). Empty by default, and
+      # empty means the filter is a no-op — nothing is skipped unless this is set. Each entry is
+      # resolved through the outlet registry FIRST, so a value blocks the outlet's IDENTITY (every
+      # alias and every domain the registry knows for it); an entry the registry does not know is
+      # treated as a domain and matched subdomain-tolerantly. Applied in `rss_ingest.ingest_entries`,
+      # which every producer funnels through, so this covers RSS, every source adapter and the
+      # browser extension at once. Keep this in sync with the `ingest` service below.
+      #   RWE_CATALOG_BLOCKED_OUTLETS=contentfarm.example,Some Registered Outlet
+      RWE_CATALOG_BLOCKED_OUTLETS: ${RWE_CATALOG_BLOCKED_OUTLETS:-}
       RWE_RSS_FEEDS: /app/feeds/rss_feeds.txt
       # Cheap corpus change-detection (P1-1) — ON. When the catalog fingerprint is unchanged since
       # the last candidate build, the refresh check skips its full-catalog load (measured 4,495 ms
@@ -481,6 +490,9 @@ services:
       dockerfile: deploy/Dockerfile.api
     environment:
       RWE_RSS_FEEDS: /app/feeds/rss_feeds.txt
+      # The same block list the api poller uses — the seeding run must not import what the poller
+      # would refuse. See the comment on the api service.
+      RWE_CATALOG_BLOCKED_OUTLETS: ${RWE_CATALOG_BLOCKED_OUTLETS:-}
       RWE_LOG_LEVEL: INFO
     volumes:
       - ih-data:/app/data                                    # the SAME durable store the engine reads
