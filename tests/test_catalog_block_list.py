@@ -134,3 +134,84 @@ def test_an_entry_that_is_neither_a_row_nor_a_domain_is_visibly_understood_as_no
     canonicals, hosts = ingest.blocked_catalog_index()
     assert not canonicals and not hosts
     assert not ingest.is_blocked_from_catalog("Some Blog Nobody Curated", "https://someblog.example/a")
+
+
+# --------------------------------------------------------------------------------------------- #
+# Two-sided resolution — the masthead-labelled URL, and the collateral damage it must not cause.
+# --------------------------------------------------------------------------------------------- #
+def test_a_masthead_labelled_obituary_url_is_blocked(st, monkeypatch):
+    """The gap the one-sided check left open, and the reason this is worth changing at all.
+
+    Measured on the live catalog 2026-08-08: of 671 obituary articles only 172 arrive under the
+    obituary feed's own identity; the other 499 arrive with the parent NEWSPAPER as their publisher
+    string and an obits.* URL. Resolving `hint or url` sees "The Oregonian", an allowed masthead,
+    and lets them straight in."""
+    monkeypatch.setenv("RWE_CATALOG_BLOCKED_OUTLETS", "obits.oregonlive.com")
+    ingest._blocked_index.cache_clear()
+
+    assert ingest.is_blocked_from_catalog(
+        "The Oregonian", "https://obits.oregonlive.com/us/obituaries/oregonlive/name-x")
+
+
+def test_the_masthead_itself_is_never_collateral(st, monkeypatch):
+    """The whole risk of looking at the URL as well. A real Oregonian news article must survive:
+    its URL resolves to The Oregonian, which is not in the blocked set. The blocked identity is the
+    obituary SUBDOMAIN, which carries its own registry row and therefore wins resolution before the
+    suffix walk reaches the parent domain."""
+    monkeypatch.setenv("RWE_CATALOG_BLOCKED_OUTLETS", "obits.oregonlive.com")
+    ingest._blocked_index.cache_clear()
+
+    for hint, url in [("The Oregonian", "https://www.oregonlive.com/news/2026/08/story.html"),
+                      ("", "https://www.oregonlive.com/politics/2026/08/other.html"),
+                      ("The Oregonian", "https://oregonlive.com/sports/x.html")]:
+        assert not ingest.is_blocked_from_catalog(hint, url), f"over-blocked {hint!r} {url}"
+
+    stats = _ingest(st,
+                    _entry("https://obits.oregonlive.com/us/obituaries/x", "The Oregonian"),
+                    _entry("https://www.oregonlive.com/news/2026/08/real-story", "The Oregonian"))
+    assert stats["blocked"] == 1 and stats["new"] == 1, "the obituary went, the news article stayed"
+
+
+def test_an_unrelated_outlet_is_not_blocked_by_either_side(st, monkeypatch):
+    """Neither the hint nor the URL resolves into the blocked set, so neither side may fire."""
+    monkeypatch.setenv("RWE_CATALOG_BLOCKED_OUTLETS", "obits.oregonlive.com")
+    ingest._blocked_index.cache_clear()
+    assert not ingest.is_blocked_from_catalog("Reuters", "https://www.reuters.com/world/x")
+    assert not ingest.is_blocked_from_catalog("", "https://www.bbc.co.uk/news/y")
+
+
+def test_two_sided_still_no_ops_when_unset(st, monkeypatch):
+    """The second side must not become a way for an unconfigured deployment to start dropping
+    articles — the empty-setting short circuit is checked before anything is resolved."""
+    for key in ingest._BLOCKED_ENV_KEYS:
+        monkeypatch.delenv(key, raising=False)
+    ingest._blocked_index.cache_clear()
+    assert not ingest.is_blocked_from_catalog(
+        "The Oregonian", "https://obits.oregonlive.com/us/obituaries/x")
+
+
+# --------------------------------------------------------------------------------------------- #
+# Observability — the count has to survive every aggregate between here and an operator.
+# --------------------------------------------------------------------------------------------- #
+def test_the_blocked_count_survives_the_aggregates(monkeypatch):
+    """`ingest_entries` counted it and `sources._agg` dropped the key, so on the poller path —
+    every production ingest — the number was invisible and a working block list looked exactly
+    like a typo'd one. Pinned at each hop rather than end-to-end, because each hop enumerates its
+    keys by hand and any one of them can silently swallow it again."""
+    import sources
+    agg = sources._agg("RSS", "rss", {"entries": 9, "new": 4, "duplicates": 2, "skipped": 0,
+                                      "blocked": 3}, None, 1.0, None, key="k")
+    assert agg["blocked"] == 3, "sources._agg carries it"
+
+    # rss_ingest.ingest_all's aggregate declares it and sums it.
+    assert "blocked" in rss_ingest.ingest_all([], object(), object())
+
+
+def test_the_run_summary_reports_blocking_only_when_it_happened():
+    """A "blocked 0" line on every run of every deployment that configures nothing is noise; its
+    absence is the honest report."""
+    base = {"feeds": 1, "ok": 1, "failed": 0, "entries": 5, "new": 5,
+            "duplicates": 0, "skipped": 0, "unknown_outlet": 0, "errors": []}
+    assert "blocked" not in rss_ingest._format_run_summary(base, 0, 5, 1.0)
+    out = rss_ingest._format_run_summary({**base, "blocked": 7}, 0, 5, 1.0)
+    assert "blocked (configured out)" in out and "7" in out

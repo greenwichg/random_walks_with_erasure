@@ -408,7 +408,7 @@ def ingest_all(feeds, scorer, store_, fetch: Callable[[str], bytes] = fetch_feed
     with its per-feed result + wall-clock latency — the seam feed-health monitoring records from. It is
     observational: an exception in ``on_feed`` is swallowed so it can never break polling."""
     agg = {"feeds": 0, "ok": 0, "failed": 0, "entries": 0, "new": 0, "duplicates": 0,
-           "skipped": 0, "unknown_outlet": 0, "errors": []}
+           "skipped": 0, "blocked": 0, "unknown_outlet": 0, "errors": []}
     for name, url in feeds:
         agg["feeds"] += 1
         t0 = time.perf_counter()
@@ -420,7 +420,7 @@ def ingest_all(feeds, scorer, store_, fetch: Callable[[str], bytes] = fetch_feed
         latency_ms = (time.perf_counter() - t0) * 1000.0
         if error is None:
             agg["ok"] += 1
-            for k in ("entries", "new", "duplicates", "skipped", "unknown_outlet"):
+            for k in ("entries", "new", "duplicates", "skipped", "blocked", "unknown_outlet"):
                 agg[k] += result.get(k, 0)
         else:
             agg["failed"] += 1
@@ -444,11 +444,17 @@ def _format_run_summary(agg: dict, before: int, after: int, seconds: float) -> s
     or reinterpreted. Kept pure (data in, string out) so the format is trivially testable
     without touching the store or the network."""
     unknown = agg.get("unknown_outlet", 0)
+    # `blocked` is shown only when non-zero: a line reading 0 on every run for the deployments that
+    # configure no block list is noise, while its ABSENCE is itself the honest report.
+    blocked = agg.get("blocked", 0)
     rows = [("new articles", agg["new"]),
             ("existing (duplicate)", agg["duplicates"]),
             ("skipped", agg["skipped"]),
             ("unknown outlets", unknown)]
-    w = max(len(str(v)) for v in (agg["new"], agg["duplicates"], agg["skipped"], unknown, before, after))
+    if blocked:
+        rows.append(("blocked (configured out)", blocked))
+    w = max(len(str(v)) for v in (agg["new"], agg["duplicates"], agg["skipped"], unknown,
+                                  blocked, before, after))
     lines = [f"RSS ingest: {agg['feeds']} feed(s) in {seconds:.1f}s  "
              f"({agg['ok']} ok, {agg['failed']} failed)"]
     lines += [f"  {label:<24}{value:>{w}}" for label, value in rows]

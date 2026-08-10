@@ -328,6 +328,11 @@ def _agg(provider, source_type, stats, batch, latency_ms, error, *, key) -> dict
             "ok": 0 if error else 1, "failed": 1 if error else 0,
             "entries": s.get("entries", 0), "new": s.get("new", 0),
             "duplicates": s.get("duplicates", 0), "skipped": s.get("skipped", 0),
+            # Articles refused by RWE_CATALOG_BLOCKED_OUTLETS. Carried through because it was
+            # DROPPED here — `ingest_entries` counted it and this aggregate quietly discarded the
+            # key, so on the poller path (every production ingest) the count was unobservable and
+            # an operator had no way to tell a working block list from a typo'd one.
+            "blocked": s.get("blocked", 0),
             "rawCount": (batch.raw_count if batch else 0), "latencyMs": round(latency_ms, 1),
             "errors": ([{"feed": key, "error": f"{type(error).__name__}: {error}"}] if error else [])}
 
@@ -399,8 +404,8 @@ class RSSAdapter(SourceAdapter):
             latency_ms = (time.perf_counter() - t0) * 1000.0
             if error is None:
                 agg["ok"] += 1
-                for k in ("entries", "new", "duplicates", "skipped"):
-                    agg[k] += result[k]
+                for k in ("entries", "new", "duplicates", "skipped", "blocked"):
+                    agg[k] += result.get(k, 0)
             else:
                 agg["failed"] += 1
                 agg["errors"].append({"feed": url, "error": f"{type(error).__name__}: {error}"})

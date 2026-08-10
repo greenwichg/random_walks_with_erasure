@@ -448,8 +448,18 @@ def blocked_catalog_index() -> tuple:
 def is_blocked_from_catalog(outlet_hint: "str | None", url: str) -> bool:
     """Whether this article's outlet is configured out of the catalog.
 
-    Resolved from ``hint or url`` — the SAME input :meth:`Scorer._resolve_outlet` uses — so the
-    block decision and the identity that would have been stored can never disagree.
+    TWO-SIDED: the hint and the URL are each resolved, and EITHER landing on a blocked identity is
+    enough. ``hint or url`` — resolving the hint and never looking at the URL — was not enough, and
+    the registry has the measurement on file (live catalog, 2026-08-08): of 671 obituary articles,
+    only 172 arrive under the obituary feed's own identity. The other 499 arrive with the parent
+    NEWSPAPER as their publisher string and an ``obits.*`` URL, so the hint resolves to an allowed
+    masthead and the article walks straight in. ``story_service`` has always tested this class
+    two-sided (``is_wire(publisher) or is_wire_url(url)``); this brings the block list in line.
+
+    Checking the URL too cannot over-block a real masthead article: that article's URL resolves to
+    the masthead as well (``www.oregonlive.com`` -> ``The Oregonian``), which is not in the blocked
+    set. Only a URL that itself resolves to a BLOCKED identity blocks — which is precisely the
+    obituary subdomain, because it carries its own registry row.
 
     An empty setting returns False before doing any work, so a deployment that sets nothing behaves
     exactly as it did before this existed."""
@@ -458,9 +468,12 @@ def is_blocked_from_catalog(outlet_hint: "str | None", url: str) -> bool:
         return False
     canonicals, hosts = _blocked_index(setting)
     if canonicals:
-        outlet = default_registry().resolve(outlet_hint or url)
-        if outlet is not None and outlet.canonical in canonicals:
-            return True
+        for text in (outlet_hint, url):
+            if not text:
+                continue
+            outlet = default_registry().resolve(text)
+            if outlet is not None and outlet.canonical in canonicals:
+                return True
     if hosts:
         # Subdomain-tolerant, matching how the registry itself resolves domain forms: blocking
         # `example.com` blocks `news.example.com`, and never `notexample.com`.
