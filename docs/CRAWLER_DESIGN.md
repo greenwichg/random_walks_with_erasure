@@ -227,11 +227,41 @@ is not a content licence. Confirm that ingesting headline + URL + timestamp as w
 RSS is materially the same act when the URL came from a sitemap — I believe it is, since we store
 identical fields either way, but that is a judgement to confirm rather than assume.
 
-**3. Shadow mode.** Run `plan` on a schedule against the real sites, writing nothing. Measure:
-what fraction of discovered URLs are already in the catalog (the honest measure of marginal value),
-request volume per cycle, and how often each rung is reached. If the crawler mostly rediscovers
-what RSS already gave us, **stop here** — that is a real possible answer and the cheapest place to
-learn it.
+**3. Shadow mode.** Run `plan` against the real sites, writing nothing:
+
+```bash
+python examples/crawler.py plan --db "$RWE_DB_URL" --json > shadow-$(date +%F).json
+python examples/crawler.py plan --db "$RWE_DB_URL"            # human-readable table
+```
+
+```
+publisher            rung        cand  known    new   new%  fetches
+NPR                  sitemap      412    381     31     8%  2
+BBC                  rss           60     58      2     3%  1
+TOTAL                              472    439     33     7%  3
+```
+
+`cand` counts unique on-domain URLs that pass `article_pattern`; `known` is what the catalog
+already holds; `new%` is the marginal value. **`--db` is required for the measurement to mean
+anything** — without it every URL is reported as new, a 100% marginal value derived from an absent
+comparison, so the CLI prints a warning banner rather than a confident number.
+
+The denominator is counted **before** `max_urls` truncates. Measuring after the cap would report
+100% new whenever the cap binds — the ratio would look best exactly when the crawler is drowning in
+already-held URLs.
+
+A publisher yielding zero candidates prints which gate closed (robots refusal, pattern matching
+nothing, everything off-domain), because a bare `0` is undiagnosable without re-running against the
+publisher — the thing this framework exists not to do casually.
+
+**If `new%` is low, stop here.** A crawler that rediscovers what RSS already delivered is cost
+without benefit, and this is the cheapest possible place to learn it. That is a real possible
+answer, not a failure of the exercise.
+
+Store access: `plan` performs one `SELECT` per publisher (`existing_feed_urls`) and no writes.
+Constructing `Store` runs the same idempotent `create_all` + `_ensure_*_columns` schema check the
+API server runs at every boot — no-ops on an already-migrated database, but not literally
+read-only. Point it at a replica or a restored snapshot if you want that guarantee absolutely.
 
 **4. Promote `sources._request`** to a public shared helper. The crawler reuses it today through a
 private name, which is a deliberate seam left visible rather than hidden — it keeps this POC from

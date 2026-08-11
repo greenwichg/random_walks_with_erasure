@@ -394,6 +394,119 @@ def test_plan_is_read_only_and_never_reaches_the_catalog():
 
 
 # --------------------------------------------------------------------------- #
+# Shadow mode — the existing-vs-new measurement that decides whether this ships
+# --------------------------------------------------------------------------- #
+def _seed(st, *urls):
+    for u in urls:
+        st.upsert_feed_article(
+            canonical_url=ingest.canonical_url(u), url=u, publisher="NPR",
+            source_publisher="NPR", title="t", description="", body=None,
+            published_at="2026-08-11T09:15:00+00:00", source_feed="f",
+            scored={"article_id": ingest.canonical_url(u), "outlet": "NPR", "lean": 0.0})
+
+
+def _plan(store_=None, cfg=None, routes=None):
+    routes = routes or {"https://www.npr.org/s.xml": _fx("news_sitemap.xml")}
+    return crawler.plan([cfg or _cfg()], robots=_policy(ALLOW), limiter=_no_wait(),
+                        fetch=_fetcher(routes), store_=store_)
+
+
+def test_shadow_splits_candidates_into_already_held_and_genuinely_new():
+    """The fixture yields 2 on-domain article URLs; seeding one makes the split 1/1."""
+    st = store_mod.Store("sqlite://")
+    _seed(st, "https://www.npr.org/2026/08/11/1234567/senate-budget-vote")
+    row = _plan(st)[0]
+    assert row["candidates"] == 2
+    assert row["already_in_catalog"] == 1
+    assert row["genuinelyNew"] == 1
+    assert row["marginalValue"] == 0.5
+
+
+def test_a_catalog_that_already_holds_everything_reports_zero_marginal_value():
+    """The answer that should stop the rollout. It has to be reachable and unambiguous — a crawler
+    that rediscovers what RSS already delivered is cost without benefit."""
+    st = store_mod.Store("sqlite://")
+    _seed(st, "https://www.npr.org/2026/08/11/1234567/senate-budget-vote",
+          "https://www.npr.org/2026/08/11/7654321/climate-report-released")
+    row = _plan(st)[0]
+    assert row["already_in_catalog"] == 2 and row["genuinelyNew"] == 0
+    assert row["marginalValue"] == 0.0
+
+
+def test_the_cap_does_not_flatter_the_marginal_value_ratio():
+    """`max_urls` truncates what we would INGEST, not what we discovered. Measuring the ratio after
+    the cap would report 100% new whenever the cap binds — the number would look best exactly when
+    the crawler is drowning in already-held URLs."""
+    st = store_mod.Store("sqlite://")
+    _seed(st, "https://www.npr.org/2026/08/11/1234567/senate-budget-vote")
+    row = _plan(st, _cfg(max_urls=1))[0]
+    assert row["candidates"] == 2, "the denominator is pre-cap"
+    assert row["marginalValue"] == 0.5
+
+
+def test_without_a_store_every_url_counts_as_new_which_is_why_the_cli_warns():
+    """Not a bug — there is nothing to compare against. It is dangerous only if reported as if it
+    were a measurement, so the CLI says so and this pins the behaviour it warns about."""
+    row = _plan(None)[0]
+    assert row["already_in_catalog"] == 0 and row["marginalValue"] == 1.0
+
+
+def test_a_publisher_that_discovered_nothing_reports_none_not_zero():
+    """"We found nothing to compare" and "we found things and none were new" are different
+    answers. Reporting the first as 0.0 would blame the crawler's value for a broken config."""
+    row = _plan(None, _cfg(article_pattern=r"/never-matches/"))[0]
+    assert row["candidates"] == 0 and row["marginalValue"] is None
+
+
+def test_shadow_summary_aggregates_across_publishers_without_averaging_averages():
+    """Totals are computed from the raw counts, not by averaging per-publisher ratios — otherwise a
+    publisher with 3 candidates would weigh as much as one with 300."""
+    rows = [{"publisher": "A", "candidates": 100, "already_in_catalog": 90, "genuinelyNew": 10,
+             "marginalValue": 0.1, "rung_used": "rss", "fetched": 1, "error": None},
+            {"publisher": "B", "candidates": 4, "already_in_catalog": 0, "genuinelyNew": 4,
+             "marginalValue": 1.0, "rung_used": "sitemap", "fetched": 2, "error": None}]
+    t = crawler.shadow_summary(rows)["totals"]
+    assert t["candidates"] == 104 and t["genuinelyNew"] == 14
+    assert t["marginalValue"] == round(14 / 104, 3) == 0.135
+    assert t["marginalValue"] < 0.55, "a naive mean of 0.1 and 1.0 would report 55%"
+
+
+def test_shadow_summary_carries_skipped_publishers_through_rather_than_dropping_them():
+    out = crawler.shadow_summary([{"publisher": "Off", "skipped": "disabled"}])
+    assert out["publishers"][0]["skipped"] == "disabled"
+    assert out["totals"]["candidates"] == 0 and out["totals"]["marginalValue"] is None
+
+
+def test_an_empty_publisher_says_which_gate_closed():
+    """`0 candidates` with no reason is undiagnosable without re-running against the publisher —
+    the one thing this framework exists to avoid doing casually."""
+    cfg = _cfg(article_pattern=r"/never-matches/")
+    note = crawler.shadow_summary(_plan(None, cfg))["publishers"][0]["note"]
+    assert "article_pattern" in note and "ingest nothing" in note
+
+
+def test_a_robots_refusal_is_named_as_the_reason_not_left_blank():
+    rows = crawler.plan([_cfg()],
+                        robots=_policy({"https://www.npr.org/robots.txt": _fx("robots_deny.txt")}),
+                        limiter=_no_wait(),
+                        fetch=_fetcher({"https://www.npr.org/s.xml": _fx("news_sitemap.xml")}))
+    note = crawler.shadow_summary(rows)["publishers"][0]["note"]
+    assert "robots refused" in note
+
+
+def test_a_healthy_publisher_carries_no_note():
+    assert crawler.shadow_summary(_plan(None))["publishers"][0]["note"] is None
+
+
+def test_shadow_planning_still_writes_nothing_to_the_catalog():
+    st = store_mod.Store("sqlite://")
+    _seed(st, "https://www.npr.org/2026/08/11/1234567/senate-budget-vote")
+    before = st.count_feed_articles()
+    _plan(st)
+    assert st.count_feed_articles() == before == 1
+
+
+# --------------------------------------------------------------------------- #
 # Configuration
 # --------------------------------------------------------------------------- #
 def test_the_shipped_config_is_clean():

@@ -480,6 +480,11 @@ class CrawlReport:
     off_domain: int = 0
     pattern_rejected: int = 0
     duplicate_in_cycle: int = 0
+    #: Unique on-domain article URLs this cycle — the denominator of the shadow-mode question
+    #: "what fraction of what we would crawl is genuinely new?". Counted BEFORE the catalog check
+    #: and before ``max_urls`` truncates, because a cap applied to the numerator would flatter the
+    #: ratio: cap at 10, find 10 new ones out of 500 candidates, and report 100% marginal value.
+    candidates: int = 0
     already_in_catalog: int = 0
     robots_blocked: int = 0
     accepted: int = 0
@@ -608,6 +613,7 @@ class PublisherCrawler:
                 continue
             seen.add(canon)
             staged.append((canon, e))
+        report.candidates += len(staged)
         if staged and self.store is not None:
             # One batched read, not one per URL. Skipping what the catalog already holds is the
             # single biggest politeness win available: a publisher's sitemap is mostly articles we
@@ -693,10 +699,69 @@ def plan(configs, *, robots=None, limiter=None, fetch=None, store_=None) -> "lis
         crawler = PublisherCrawler(c, robots=robots, limiter=limiter, fetch=fetch, store_=store_)
         entries, report = crawler.crawl()
         row = report.as_dict()
+        row["genuinelyNew"] = max(report.candidates - report.already_in_catalog, 0)
+        row["marginalValue"] = (round(row["genuinelyNew"] / report.candidates, 3)
+                                if report.candidates else None)
         row["sample"] = [{"url": e.url, "title": e.title, "publishedAt": e.published_at}
                          for e in entries[:5]]
         out.append(row)
     return out
+
+
+def _why_empty(r: dict) -> str:
+    """Which gate closed, for a publisher that yielded no candidates.
+
+    A shadow run reporting ``0 candidates`` with no reason is undiagnosable without re-running it
+    against the publisher — the one thing this framework exists to avoid doing casually. The gates
+    are named in the order they fire, so the first non-zero counter is the one that mattered.
+    """
+    if r.get("error"):
+        return f"error: {r['error']}"
+    if r.get("robots_blocked"):
+        return f"robots refused {r['robots_blocked']} fetch(es): {r.get('robots_reason') or 'disallowed'}"
+    if not r.get("fetched"):
+        return "no discovery document was fetched"
+    if not r.get("discovered"):
+        return "discovery documents fetched but parsed to 0 entries — wrong URL or wrong kind"
+    if r.get("off_domain") and not r.get("pattern_rejected"):
+        return f"all {r['off_domain']} discovered URLs were off-domain — check `domains`"
+    if r.get("pattern_rejected"):
+        return (f"all {r['pattern_rejected']} on-domain URLs failed `article_pattern` "
+                f"— the crawler would ingest nothing")
+    return "no candidates survived filtering"
+
+
+def shadow_summary(rows) -> dict:
+    """Aggregate the shadow question: of what we would crawl, how much is genuinely new?
+
+    ``marginalValue`` is ``genuinelyNew / candidates``. It is the number that decides whether this
+    framework ships at all — if the crawler mostly rediscovers what RSS already delivered, a low
+    ratio here is the cheapest possible place to learn it, and stopping is the correct outcome
+    rather than a failure.
+
+    ``None`` rather than ``0.0`` when a publisher yielded no candidates: "we found nothing to
+    compare" and "we found things and none were new" are different answers, and averaging the first
+    into the second as a zero would understate the crawler's value on the strength of a broken
+    config.
+    """
+    per = []
+    tot_c = tot_new = 0
+    for r in rows:
+        if "candidates" not in r:                     # a disabled publisher was skipped
+            per.append({"publisher": r.get("publisher"), "skipped": r.get("skipped")})
+            continue
+        c, new = r["candidates"], r["genuinelyNew"]
+        tot_c += c
+        tot_new += new
+        per.append({"publisher": r["publisher"], "candidates": c,
+                    "alreadyInCatalog": r["already_in_catalog"], "genuinelyNew": new,
+                    "marginalValue": r["marginalValue"], "rungUsed": r.get("rung_used"),
+                    "fetches": r.get("fetched", 0), "error": r.get("error"),
+                    "note": _why_empty(r) if c == 0 else None})
+    return {"publishers": per, "totals": {
+        "candidates": tot_c, "alreadyInCatalog": tot_c - tot_new, "genuinelyNew": tot_new,
+        "marginalValue": round(tot_new / tot_c, 3) if tot_c else None,
+        "fetches": sum(r.get("fetched", 0) for r in rows if "candidates" in r)}}
 
 
 # --------------------------------------------------------------------------- #
@@ -715,6 +780,10 @@ def main(argv=None) -> int:
     ap.add_argument("--publisher", help="limit to one configured publisher")
     ap.add_argument("--config", help="path to crawler_publishers.json")
     ap.add_argument("--json", action="store_true", help="machine-readable output")
+    ap.add_argument("--db", default=None,
+                    help="database URL for the catalog comparison (default: RWE_DB_URL). Used by "
+                         "`plan` for a read-only existing-vs-new measurement; without it every "
+                         "discovered URL is reported as new.")
     args = ap.parse_args(argv)
 
     configs = _select(load_config(args.config), args.publisher)
@@ -751,11 +820,36 @@ def main(argv=None) -> int:
                         f"{r['url']}  {r['reason']}" for r in rows))
         return 0
 
-    rows = plan(configs)
-    print(json.dumps(rows, indent=2) if args.json else
-          "\n".join(f"{r.get('publisher'):<20} rung={r.get('rung_used')} "
-                    f"accepted={r.get('accepted')} discovered={r.get('discovered')} "
-                    f"known={r.get('already_in_catalog')} err={r.get('error')}" for r in rows))
+    # Shadow mode's whole question is "how much of this is genuinely new?", which cannot be
+    # answered without the catalog. Running without --db silently reports every URL as new — a
+    # 100% marginal value that would argue for a rollout on no evidence — so say so loudly rather
+    # than emitting a confident number derived from an absent comparison.
+    store_ = None
+    if args.db or os.environ.get("RWE_DB_URL"):
+        import store as store_mod
+        store_ = store_mod.Store(args.db)
+    rows = plan(configs, store_=store_)
+    summary = shadow_summary(rows)
+    if args.json:
+        print(json.dumps({"summary": summary, "publishers": rows}, indent=2))
+        return 0
+    if store_ is None:
+        print("!! no --db and no RWE_DB_URL: every URL is reported as new. The existing-vs-new\n"
+              "!! measurement is meaningless without the catalog to compare against.\n")
+    print(f"{'publisher':<20} {'rung':<9} {'cand':>6} {'known':>6} {'new':>6} {'new%':>6}  fetches")
+    for p in summary["publishers"]:
+        if "candidates" not in p:
+            print(f"{p['publisher']:<20} skipped ({p.get('skipped')})")
+            continue
+        mv = "-" if p["marginalValue"] is None else f"{p['marginalValue']:.0%}"
+        print(f"{p['publisher']:<20} {str(p['rungUsed']):<9} {p['candidates']:>6} "
+              f"{p['alreadyInCatalog']:>6} {p['genuinelyNew']:>6} {mv:>6}  {p['fetches']}")
+        if p.get("note"):
+            print(f"{'':<20} -> {p['note']}")
+    t = summary["totals"]
+    tmv = "-" if t["marginalValue"] is None else f"{t['marginalValue']:.0%}"
+    print(f"{'TOTAL':<20} {'':<9} {t['candidates']:>6} {t['alreadyInCatalog']:>6} "
+          f"{t['genuinelyNew']:>6} {tmv:>6}  {t['fetches']}")
     return 0
 
 
