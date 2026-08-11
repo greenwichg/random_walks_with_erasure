@@ -316,7 +316,69 @@ def test_a_profile_during_a_stale_window_serves_without_an_inline_build(monkeypa
 # --------------------------------------------------------------------------- #
 # Factuality — a third party's verdict, shown only with its provenance.
 # --------------------------------------------------------------------------- #
-def test_a_rated_outlet_carries_the_verdict_with_full_provenance():
+@pytest.fixture
+def factuality_published(monkeypatch):
+    """Publish factuality for tests about the verdict's SHAPE.
+
+    Publication is off by default, so without this every test below would assert the gate's
+    off-state while appearing to test the module — the quietest way for a suite to stop covering
+    the thing it is named after. The gate itself is covered separately.
+    """
+    monkeypatch.setenv("RWE_PUBLIC_FACTUALITY", "1")
+
+
+def test_factuality_is_not_published_unless_an_operator_says_so():
+    """These verdicts are a third party's commercial product and we hold no licence. Publication is
+    an explicit operator decision, never a consequence of the data existing in the registry — so
+    the default is off and a deployment that says nothing shows nothing."""
+    st = store_mod.Store("sqlite://")
+    _npr_catalog(st)
+    p = ps.get_publisher(st, "NPR")
+    assert "factuality" not in p, "a rated outlet still publishes nothing while the gate is closed"
+    assert "factualityPublished" not in p
+
+
+def test_the_gate_keeps_the_verdict_off_the_wire_entirely_not_just_out_of_the_ui():
+    """Hiding it client-side would still ship the rater's data to anyone reading the payload. The
+    gate is at the serializer so a disabled deployment transmits no verdict at all."""
+    st = store_mod.Store("sqlite://")
+    _npr_catalog(st)
+    reg = outlet_registry.resolve("NPR")
+    blob = repr(ps.get_publisher(st, "NPR"))
+    assert reg.factuality and reg.factuality not in blob
+    assert "mbfc" not in blob.lower()
+
+
+def test_publishing_is_switched_on_by_the_env_flag(factuality_published):
+    st = store_mod.Store("sqlite://")
+    _npr_catalog(st)
+    p = ps.get_publisher(st, "NPR")
+    assert p["factualityPublished"] is True and p["factuality"]["source"] == "mbfc"
+
+
+def test_the_published_flag_says_the_deployment_publishes_not_that_the_outlet_is_rated(
+        factuality_published):
+    """The distinction the flag exists for. An unrated outlet must still report that publication is
+    ON, so the client can render an honest "not rated" instead of being unable to tell that case
+    apart from a switched-off feature."""
+    st = store_mod.Store("sqlite://")
+    unrated = next(o for o in outlet_registry.default_registry().outlets() if not o.factuality)
+    _add(st, "https://x.example/1", unrated.canonical)
+    p = ps.get_publisher(st, unrated.canonical)
+    assert p["factualityPublished"] is True and "factuality" not in p
+
+
+def test_curation_and_provenance_keep_working_while_publication_is_off():
+    """Switching publication off must not degrade the registry itself — the verdicts, their dates
+    and the lint rules stay exactly as they were, so turning it back on needs no re-curation."""
+    reg = outlet_registry.default_registry()
+    rated = [o for o in reg.outlets() if o.factuality]
+    assert len(rated) > 100
+    assert all(o.factuality_asof and o.factuality_source for o in rated)
+    assert outlet_registry.lint_registry() == []
+
+
+def test_a_rated_outlet_carries_the_verdict_with_full_provenance(factuality_published):
     """The whole point of the nested shape. A bare level would read as OUR assessment of a named
     news organisation, and would still read that way a year after the rater revised it. Value,
     who, when and where-to-check travel together or the module is not worth shipping."""
@@ -332,7 +394,7 @@ def test_a_rated_outlet_carries_the_verdict_with_full_provenance():
     assert "npr.org" in f["ratingUrl"], "the link resolves to THIS outlet, not the rater's home"
 
 
-def test_the_level_is_the_raters_six_and_not_the_credibility_three():
+def test_the_level_is_the_raters_six_and_not_the_credibility_three(factuality_published):
     """`credibility` is a different column on a different scale feeding the clustering vote-gate.
     Surfacing one must never quietly surface or paraphrase the other."""
     st = store_mod.Store("sqlite://")
@@ -342,7 +404,7 @@ def test_the_level_is_the_raters_six_and_not_the_credibility_three():
     assert "credibility" not in p, "the vote-gate's input is not a display field"
 
 
-def test_an_outlet_with_no_verdict_omits_the_module_entirely():
+def test_an_outlet_with_no_verdict_omits_the_module_entirely(factuality_published):
     """Unknown is ABSENCE, exactly as it is for lean — never a middle level, and never a null-
     valued object that a client could render as a rating of 'nothing'."""
     st = store_mod.Store("sqlite://")
@@ -352,7 +414,7 @@ def test_an_outlet_with_no_verdict_omits_the_module_entirely():
     assert p is not None and "factuality" not in p
 
 
-def test_an_outlet_with_no_registry_row_omits_the_module():
+def test_an_outlet_with_no_registry_row_omits_the_module(factuality_published):
     """No row means no curated fact of any kind. The profile still renders — it just cannot claim
     a verdict for an outlet nobody has rated."""
     st = store_mod.Store("sqlite://")

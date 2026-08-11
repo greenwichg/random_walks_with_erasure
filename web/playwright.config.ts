@@ -50,6 +50,12 @@ export default defineConfig({
         RWE_ENV: "dev",
         RWE_RATELIMIT_ENABLED: "0",
         RWE_LOG_LEVEL: "WARNING",
+        // Factuality publication is OFF in production (unlicensed third-party ratings), but the
+        // interesting UI — the verdict with its attribution, and the explicit "not rated" for an
+        // unrated outlet — only exists when it is on. So the suite runs it ON and covers the
+        // switched-OFF case by intercepting the profile response, which tests the client's own
+        // behaviour rather than re-testing the engine gate the Python suite already pins.
+        RWE_PUBLIC_FACTUALITY: "1",
       },
       url: `${WEB_URL.replace(String(WEB_PORT), String(ENGINE_PORT)).replace("localhost", "127.0.0.1")}/api/health`,
       timeout: 120_000,

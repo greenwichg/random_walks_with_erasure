@@ -27,6 +27,7 @@ Read-only and additive: no ranking, no recommender, no protected module is touch
 from __future__ import annotations
 
 import math
+import os
 from datetime import datetime
 from typing import Optional
 
@@ -36,6 +37,18 @@ import media                    # publisher logo selection (curated -> enriched 
 import outlet_registry
 import publisher_metadata       # curated/counted/wikipedia/wikimedia merge + per-field provenance
 from pagination import OffsetPagination
+
+#: Publish third-party factuality verdicts to clients. Default OFF: the ratings are MBFC's
+#: commercial product, we hold no licence to redistribute them, and "the data is in the registry"
+#: is not the same decision as "show it to the public". Curation, provenance and linting all keep
+#: working while this is off — only publication stops.
+_PUBLIC_FACTUALITY_ENV = "RWE_PUBLIC_FACTUALITY"
+_TRUE = {"1", "true", "yes", "on"}
+
+
+def _factuality_published() -> bool:
+    return (os.environ.get(_PUBLIC_FACTUALITY_ENV) or "").strip().lower() in _TRUE
+
 
 # A tone split over fewer rows than this is noise presented as a fact — the module is omitted
 # until the signal exists (the same "empty beats wrong" rule as the country pickers).
@@ -204,13 +217,25 @@ def get_publisher(store_, name: str, *, recent_limit: int = RECENT_LIMIT) -> Opt
         # row without one is the normal case at current coverage, and `exclude_none` drops it so
         # the client's "unknown" branch is the same shape as an outlet with no registry row at
         # all. Same rule as lean: unknown is absence, never a middle value.
-        if outlet.factuality:
-            profile["factuality"] = {
-                "value": outlet.factuality,
-                "source": outlet.factuality_source,
-                "asOf": outlet.factuality_asof,
-                "ratingUrl": outlet_registry.default_registry().rating_url(outlet),
-            }
+        #
+        # The whole block is gated on `RWE_PUBLIC_FACTUALITY`. These verdicts are a third party's
+        # commercial product and we display them under no licence, so publication is a decision an
+        # operator makes explicitly rather than a consequence of the data existing in the registry.
+        # The gate is HERE, at the serializer, so a disabled deployment puts no rater's verdict on
+        # the wire at all — not in the payload a client could read, not in a cache, not in a log.
+        if _factuality_published():
+            # Says "this deployment publishes factuality", NOT "this outlet has a verdict". Without
+            # it the client cannot tell an unrated outlet from a switched-off feature, and would
+            # render "Not rated" over 123 outlets we hold verdicts for — a label that lies, which
+            # docs/SIGNAL_INTEGRITY.md forbids. With it, absence keeps its one honest meaning.
+            profile["factualityPublished"] = True
+            if outlet.factuality:
+                profile["factuality"] = {
+                    "value": outlet.factuality,
+                    "source": outlet.factuality_source,
+                    "asOf": outlet.factuality_asof,
+                    "ratingUrl": outlet_registry.default_registry().rating_url(outlet),
+                }
     if stats:
         if stats["registers"] and stats["registers"]["n"] >= MIN_SIGNAL:
             profile["registers"] = stats["registers"]

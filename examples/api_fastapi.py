@@ -1524,6 +1524,12 @@ class PublisherProfileModel(BaseModel):
     # vote-gate's input on a different scale, and showing both would invite a reader to reconcile
     # two numbers that were never meant to agree.
     factuality: Optional[PublisherFactualityModel] = None
+    # Whether THIS DEPLOYMENT publishes factuality at all (`RWE_PUBLIC_FACTUALITY`), as distinct
+    # from whether THIS OUTLET has a verdict. The client needs both: without this flag an absent
+    # `factuality` is ambiguous between "nobody rated them" and "the operator switched publication
+    # off", and rendering "Not rated" for the second case would state something false about 123
+    # outlets we hold verdicts for.
+    factualityPublished: Optional[bool] = None
     site: Optional[str] = None
     articles: PublisherArticlesModel
     topics: list[LabelCountModel] = []

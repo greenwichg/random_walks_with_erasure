@@ -76,4 +76,49 @@ test.describe("Publisher Intelligence", () => {
     await expect(page.getByText("Publisher not found")).toBeVisible();
     await expect(page.getByText(/Factuality: /)).toHaveCount(0);
   });
+
+  /**
+   * The kill switch. `RWE_PUBLIC_FACTUALITY` is OFF in production because the verdicts are a third
+   * party's commercial product we hold no licence to redistribute, so a disabled engine sends no
+   * `factualityPublished` and no verdict. These two tests drive that from the client side, where
+   * the distinction the flag exists for actually has to hold.
+   */
+  test("with publication switched off the badge is absent — not a 'not rated' claim", async ({
+    authedPage,
+  }) => {
+    // The failure this guards is specific and easy to ship by accident: strip the verdict but keep
+    // rendering the badge, and 123 outlets we DO hold verdicts for start asserting "not rated" —
+    // a label that lies about the publisher rather than describing our configuration.
+    const page = authedPage;
+    await page.route("**/api/publishers/**", async (route) => {
+      const res = await route.fetch();
+      const body = await res.json();
+      delete body.factualityPublished;
+      delete body.factuality;
+      await route.fulfill({ response: res, body: JSON.stringify(body) });
+    });
+    await page.goto("/publishers/NPR");
+    await expect(page.getByRole("heading", { name: "NPR", exact: true })).toBeVisible();
+    await expect(page.getByText(/^Factuality: /)).toHaveCount(0);
+    await expect(page.getByText("Factuality not rated", { exact: true })).toHaveCount(0);
+    // The rest of the profile is untouched — the switch removes one module, not the page.
+    await expect(page.getByText("United States").first()).toBeVisible();
+  });
+
+  test("publication on, but this outlet unrated, still says 'not rated'", async ({ authedPage }) => {
+    // The other half of the same distinction: `factualityPublished` without a verdict is a real
+    // state and must keep stating absence, so switching the feature off is the ONLY thing that
+    // removes the badge.
+    const page = authedPage;
+    await page.route("**/api/publishers/**", async (route) => {
+      const res = await route.fetch();
+      const body = await res.json();
+      body.factualityPublished = true;
+      delete body.factuality;
+      await route.fulfill({ response: res, body: JSON.stringify(body) });
+    });
+    await page.goto("/publishers/NPR");
+    await expect(page.getByText("Factuality not rated", { exact: true })).toBeVisible();
+    await expect(page.getByText(/^Factuality: /)).toHaveCount(0);
+  });
 });

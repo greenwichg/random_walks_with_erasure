@@ -121,6 +121,12 @@ services:
       BETA_ALLOWLIST_FILE: ${BETA_ALLOWLIST_FILE:-}
       BETA_ALLOWLIST: ${BETA_ALLOWLIST:-}
       BETA_ACCESS_ENABLED: ${BETA_ACCESS_ENABLED:-1}
+      # Publish third-party factuality verdicts on publisher profiles. Default OFF: the ratings are
+      # MBFC's commercial product and we hold no licence to redistribute them, so publication is an
+      # explicit decision rather than a side effect of the registry carrying the data. Curation,
+      # provenance and linting keep working while this is off — only the wire output stops. Set to
+      # 1 in deploy/.env once a licence is in place.
+      RWE_PUBLIC_FACTUALITY: ${RWE_PUBLIC_FACTUALITY:-0}
       # Coach v2 (M6): the MEASURED reader's coach routes through the intent-routed pipeline
       # (trigger ladder / weekly recap / grounded replies). Engine-side only; the demo path stays
       # v1 regardless. Default 0 = OFF (byte-identical to v1, pinned by test_coach_v1_contract.py),

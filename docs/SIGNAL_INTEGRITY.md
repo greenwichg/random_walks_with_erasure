@@ -24,6 +24,30 @@ dominant emotions only over reads that carry one.
 serves is enriched, so practical exposure is low, and the recommendation surface is not changed
 outside the evaluation framework.
 
+## Third-party factuality verdicts — publication is a separate decision from curation
+
+`outlet_registry.csv` carries `factuality` / `factuality_source` / `factuality_asof` for 123
+outlets, all MBFC. **Holding a verdict and publishing it are different decisions**, and the split
+is enforced in code: `publisher_service` gates the whole block on `RWE_PUBLIC_FACTUALITY`
+(**default OFF**). These ratings are a third party's commercial product and we hold no licence to
+redistribute them, so publication is an explicit operator act rather than a consequence of the
+data existing.
+
+The gate is at the **serializer**, not in the UI. A client-side hide would still ship the rater's
+data to anyone reading the payload; gating where the profile is built means a disabled deployment
+transmits no verdict at all — not in a response, not in a cache, not in a log. There is a test that
+greps the whole serialized profile for the verdict string.
+
+The profile also carries `factualityPublished`, which says **this deployment publishes factuality**
+— not **this outlet is rated**. Without it the two absences are indistinguishable, and the badge
+would render "Not rated" over 123 outlets we hold verdicts for: a label that lies, which is the one
+thing this document exists to prevent. With it, absence keeps its single honest meaning, and a
+genuinely unrated outlet still gets its explicit "not rated".
+
+Curation, provenance and linting keep working while publication is off, so re-enabling needs no
+re-curation. `credibility` is a different column on a different scale (the clustering vote-gate's
+input) and is never exposed either way.
+
 ## Locality-without-lean registry rows
 
 `outlet_registry.csv` accepts a BLANK lean: the outlet resolves (canonical name, domain aliases,

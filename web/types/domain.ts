@@ -160,6 +160,11 @@ export interface PublisherProfile {
     asOf: string;
     ratingUrl: string;
   };
+  /** Whether this deployment publishes factuality at all, as distinct from whether THIS outlet has
+   *  a verdict. Absent when the operator has factuality publication switched off, in which case the
+   *  badge is not rendered — showing "Not rated" would be a claim about the outlet rather than
+   *  about our configuration, and false for every outlet we do hold a verdict for. */
+  factualityPublished?: boolean;
   /** Majority article host as a URL — the publisher's own site, counted not curated. */
   site?: string;
   articles: { total: number; firstSeen?: string; lastSeen?: string; perDay?: number };

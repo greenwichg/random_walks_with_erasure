@@ -130,10 +130,14 @@ function Profile({ profile: p }: { profile: PublisherProfile }) {
               ) : (
                 <Badge variant="secondary">{t("publishers.notRated")}</Badge>
               )}
-              {/* The rater's factuality verdict, attributed inline. Rendered unconditionally so
-                  the unknown case is STATED rather than being an absent row that reads as "fine"
-                  — the same reason the lean shows an explicit "Not rated". */}
-              <FactualityBadge factuality={p.factuality} />
+              {/* The rater's factuality verdict, attributed inline. Rendered whenever this
+                  deployment publishes factuality at all — and then unconditionally, so an outlet
+                  with no verdict STATES "not rated" rather than leaving an absent row that reads
+                  as "fine", the same reason the lean shows an explicit "Not rated".
+                  When publication is switched off the badge is absent entirely: "Not rated" would
+                  be a claim about the outlet, and it would be false for every outlet we hold a
+                  verdict for but are not licensed to show. */}
+              {p.factualityPublished && <FactualityBadge factuality={p.factuality} />}
               {p.registry?.country && <CountryBadge code={p.registry.country} className="text-sm" />}
               {p.registry?.scope && (
                 <Badge variant="outline">{t(`local.scope.${p.registry.scope}`)}</Badge>
