@@ -27,6 +27,7 @@ the Qbias preprocessor, and onboarding. **Not wired into anything yet.**
 from __future__ import annotations
 
 import csv
+import datetime
 import math
 import os
 import re
@@ -63,6 +64,19 @@ FACTUALITY = ("very_high", "high", "mostly_factual", "mixed", "low", "very_low")
 #: rating is either sourced or absent. Kept as a small closed set so a typo is a lint error rather
 #: than a new "source" nobody can trace.
 FACTUALITY_SOURCES = ("mbfc",)
+
+#: ``factuality_asof`` — the ISO date the verdict was READ at the rater. Required whenever
+#: ``factuality`` is set, for the same reason the source is: a third party's rating is a claim
+#: about a named news organisation AT A MOMENT, and raters revise. MBFC prints its own revision
+#: line on each profile (the New York Post's reads "Updated (M. Huitsing 09/26/2025)"), and this
+#: file has no refresh mechanism — so a verdict with no date cannot be told apart from one that is
+#: still current, and displaying it under the rater's name would put words in their mouth.
+#:
+#: Recorded per ROW rather than per file because tranches are refreshed piecemeal: the batch here
+#: already spans 2026-07-28 to 2026-08-11, and a single file-level date would be wrong for most of
+#: it. Where a tranche is known only to a range, the EARLIER date is recorded — that can understate
+#: freshness but never overstates it, and only one of those two errors misleads a reader.
+_ASOF_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 #: Legal values for the ``kind`` column. Blank = an ordinary news outlet, which is the vast
 #: majority. Everything named here is a source that is NOT a newsroom covering a story, and each
@@ -115,6 +129,7 @@ class Outlet:
     # writing factuality cannot move a single cluster.
     factuality: "str | None" = None
     factuality_source: "str | None" = None   # who said so — mandatory whenever `factuality` is set
+    factuality_asof: "str | None" = None     # WHEN it was read (ISO date) — also mandatory
 
 
 def _fold(text: str) -> str:
@@ -252,7 +267,8 @@ class OutletRegistry:
                                       kind=_opt(row, 7),
                                       credibility=cred.lower() if cred else None,
                                       factuality=fact.lower() if fact else None,
-                                      factuality_source=_opt(row, 10)))
+                                      factuality_source=_opt(row, 10),
+                                      factuality_asof=_opt(row, 11)))
                 aliases[canonical] = canonical      # the name itself resolves
                 if len(row) >= 3 and row[2].strip():
                     for alias in row[2].split("|"):
@@ -535,6 +551,39 @@ def lint_registry(path: "str | None" = None) -> List[dict]:
         if fact_src and not fact:
             issues.append({"severity": "warning", "code": "source_without_factuality", "line": lineno,
                            "message": f"line {lineno} ({canonical}): factuality_source {fact_src!r} "
+                                      "with no factuality — a half-finished edit"})
+        # WHEN is as mandatory as WHO, and for the same reason. A rater revises; this file has no
+        # refresh mechanism; so an undated verdict shown under the rater's name asserts that they
+        # still say it. Checked independently of the level and the source so a row cannot lose its
+        # date by also having some other defect.
+        fact_asof = cells[11].strip() if len(cells) > 11 else ""
+        if fact and not fact_asof:
+            issues.append({"severity": "error", "code": "factuality_without_asof", "line": lineno,
+                           "message": f"line {lineno} ({canonical}): factuality {fact!r} with no "
+                                      "factuality_asof — an undated rating cannot be told apart "
+                                      "from a current one"})
+        if fact_asof:
+            bad = not _ASOF_RE.match(fact_asof)
+            if not bad:
+                try:
+                    when = datetime.date(*(int(p) for p in fact_asof.split("-")))
+                except ValueError:
+                    bad = True
+                else:
+                    # A retrieval date in the future is always a typo, and it is the one error that
+                    # makes a stale verdict look permanently fresh.
+                    if when > datetime.date.today():
+                        issues.append({"severity": "error", "code": "factuality_asof_in_future",
+                                       "line": lineno,
+                                       "message": f"line {lineno} ({canonical}): factuality_asof "
+                                                  f"{fact_asof!r} is in the future"})
+            if bad:
+                issues.append({"severity": "error", "code": "invalid_factuality_asof", "line": lineno,
+                               "message": f"line {lineno} ({canonical}): factuality_asof "
+                                          f"{fact_asof!r} is not an ISO date (YYYY-MM-DD)"})
+        if fact_asof and not fact:
+            issues.append({"severity": "warning", "code": "asof_without_factuality", "line": lineno,
+                           "message": f"line {lineno} ({canonical}): factuality_asof {fact_asof!r} "
                                       "with no factuality — a half-finished edit"})
         if canonical in seen_canonical:
             issues.append({"severity": "error", "code": "duplicate_canonical", "line": lineno,
