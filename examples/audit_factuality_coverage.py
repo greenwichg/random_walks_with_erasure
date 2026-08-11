@@ -209,12 +209,18 @@ def _table(rows: list, top: int) -> str:
 
 
 def _registry_index(path: str | None = None) -> dict:
-    """canonical -> (line number, first domain in the alias cell).
+    """canonical -> (line number, every domain in the alias cell).
 
     Read from the FILE rather than the loaded registry because the worksheet wants both facts and
     the `Outlet` dataclass carries neither: aliases are consumed into lookup indexes, and the line
     number only exists on disk. The line number is what lets a filled sheet be written back to the
-    exact row it came from."""
+    exact row it came from.
+
+    ALL the domains, not just the first. A rater lists whichever one it considers the outlet's
+    home, and that is not always ours: BuzzFeed News is curated `buzzfeed.com|buzzfeednews.com`
+    and MBFC sources it to the second, so a sheet carrying only the first made the lookup reject
+    its own correct page. The alias cell is the curated claim that these are one outlet, so the
+    whole cell is what identifies it."""
     p = pathlib.Path(path or (pathlib.Path(__file__).resolve().parent / "data" /
                               "outlet_registry.csv"))
     lines = p.read_text(encoding="utf-8").split("\n")
@@ -226,10 +232,9 @@ def _registry_index(path: str | None = None) -> dict:
         row = next(csv.reader([line]))
         if not row or not row[0].strip():
             continue
-        domain = next((a.strip().lower() for a in (row[2] if len(row) > 2 else "").split("|")
-                       if "." in a and " " not in a.strip() and not a.strip().startswith("http")),
-                      "")
-        index[row[0]] = (n, domain)
+        domains = [a.strip().lower() for a in (row[2] if len(row) > 2 else "").split("|")
+                   if "." in a and " " not in a.strip() and not a.strip().startswith("http")]
+        index[row[0]] = (n, domains)
     return index
 
 
@@ -249,12 +254,15 @@ def worksheet_rows(outlets: list, registry_path: str | None = None) -> list:
     for r in sorted(outlets, key=lambda r: -r["articles"]):
         if r["factuality"] or not r["registered"] or not r["hasLean"]:
             continue
-        line, domain = index.get(r["canonical"] or "", (0, ""))
-        if not domain:
+        line, domains = index.get(r["canonical"] or "", (0, []))
+        if not domains:
             continue
         out.append({
-            "canonical": r["canonical"], "registry_line": line, "primary_domain": domain,
-            "mbfc_search_url": f"https://mediabiasfactcheck.com/?s={domain}",
+            "canonical": r["canonical"], "registry_line": line,
+            # Pipe-separated, matching the registry's own alias syntax: the lookup accepts a page
+            # whose Source: names ANY of them. The search only needs one, so it uses the first.
+            "primary_domain": "|".join(domains),
+            "mbfc_search_url": f"https://mediabiasfactcheck.com/?s={domains[0]}",
             "articles_in_window": r["articles"], "volume_source": "measured",
             "current_lean": "", "factuality_TO_FILL": "", "factuality_source": "mbfc",
             "notes_TO_FILL": "",

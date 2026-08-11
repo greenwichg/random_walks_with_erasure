@@ -194,6 +194,8 @@ def test_every_emitted_row_is_ready_for_the_fetcher(st):
     assert sheet
     for r in sheet:
         assert r["primary_domain"] and "." in r["primary_domain"], r
+        # The search needs one domain; the GATE needs them all, so the first must lead.
+        assert r["mbfc_search_url"].endswith(r["primary_domain"].split("|")[0]), r
         assert r["registry_line"] > 0, r
         assert r["mbfc_search_url"].endswith(r["primary_domain"]), r
         assert r["factuality_TO_FILL"] == "", "a worklist row carries no verdict yet"
@@ -231,3 +233,17 @@ def test_the_worklist_writes_nothing_to_the_database(st):
     before = count()
     afc.worksheet_rows(_analyse(st)["outlets"])
     assert count() == before
+
+
+def test_every_alias_domain_reaches_the_worksheet(st):
+    """A rater lists whichever domain it treats as the outlet's home, and that is not always the
+    one we list first. BuzzFeed News is curated `buzzfeed.com|buzzfeednews.com`; MBFC sources it to
+    the second, so a sheet carrying only the first made the lookup reject its own correct page —
+    four outlets in one tranche failed this way. The alias cell is the curated claim that these
+    are one outlet, so the whole cell travels."""
+    _seed(st, [("BuzzFeed News", 9)])
+    sheet = afc.worksheet_rows(_analyse(st)["outlets"])
+    row = next(r for r in sheet if r["canonical"] == "BuzzFeed News")
+    assert "|" in row["primary_domain"], f"only one domain survived: {row['primary_domain']}"
+    assert set(row["primary_domain"].split("|")) >= {"buzzfeed.com", "buzzfeednews.com"}
+    assert row["mbfc_search_url"].endswith("buzzfeed.com"), "the query uses the first domain"
