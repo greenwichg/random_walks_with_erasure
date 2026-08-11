@@ -192,6 +192,25 @@ def get_publisher(store_, name: str, *, recent_limit: int = RECENT_LIMIT) -> Opt
         # Curated locality facts — present only for registry outlets; None fields drop on the wire.
         profile["registry"] = {"country": outlet.country, "region": outlet.region,
                                "city": outlet.city, "scope": outlet.scope}
+        # The RATER'S factuality verdict, with its provenance attached rather than implied.
+        #
+        # A nested object, not a bare string, because every part of it is load-bearing: the value
+        # is a third party's claim, `source` is who made it, `asOf` is when it was read, and
+        # `ratingUrl` is where a reader checks it now. Shipping the value alone would make the
+        # product appear to be the one asserting it, and would let the UI hardcode a rater name
+        # that the data does not carry.
+        #
+        # Absent (not null-valued, not a placeholder) when the outlet has no verdict — a registry
+        # row without one is the normal case at current coverage, and `exclude_none` drops it so
+        # the client's "unknown" branch is the same shape as an outlet with no registry row at
+        # all. Same rule as lean: unknown is absence, never a middle value.
+        if outlet.factuality:
+            profile["factuality"] = {
+                "value": outlet.factuality,
+                "source": outlet.factuality_source,
+                "asOf": outlet.factuality_asof,
+                "ratingUrl": outlet_registry.default_registry().rating_url(outlet),
+            }
     if stats:
         if stats["registers"] and stats["registers"]["n"] >= MIN_SIGNAL:
             profile["registers"] = stats["registers"]

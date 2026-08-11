@@ -78,6 +78,23 @@ FACTUALITY_SOURCES = ("mbfc",)
 #: freshness but never overstates it, and only one of those two errors misleads a reader.
 _ASOF_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
+#: Where a reader can check a factuality verdict at its source, keyed by ``factuality_source``.
+#:
+#: A SEARCH on the rater's own site, keyed on the outlet's curated domain — deliberately not a
+#: stored deep link to the rating page. Three reasons, in order of weight:
+#:   * A stored URL rots. MBFC re-slugs profiles freely (``usa-today-2``, ``fox-news-bias``,
+#:     ``wxin-fox59-indianapolis-bias``), and a rotted deep link either 404s or, worse, lands on
+#:     some other outlet's page while still carrying our outlet's name.
+#:   * A search always resolves to whatever the rater publishes TODAY, which is exactly what a
+#:     "check this yourself" link is for — and the more useful answer when our stored verdict is
+#:     older than theirs.
+#:   * We do not have page URLs for every row: they exist for the tranches fetched in 2026-08 and
+#:     never for the earlier rows, whose verdicts were read while sourcing the lean. A column that
+#:     is two-thirds populated is a worse contract than one derived uniformly.
+#: Keyed off the same closed set as :data:`FACTUALITY_SOURCES` so a new source cannot be recorded
+#: without someone deciding where its ratings can be read.
+FACTUALITY_SOURCE_SEARCH = {"mbfc": "https://mediabiasfactcheck.com/?s={domain}"}
+
 #: Legal values for the ``kind`` column. Blank = an ordinary news outlet, which is the vast
 #: majority. Everything named here is a source that is NOT a newsroom covering a story, and each
 #: name records a different reason a lean would be the wrong question:
@@ -327,6 +344,31 @@ class OutletRegistry:
         """The canonical outlet name for ``text``, or ``None``."""
         o = self.resolve(text)
         return o.canonical if o else None
+
+    def domains(self, canonical: str) -> List[str]:
+        """The curated domains for one canonical outlet, shortest first.
+
+        Read back out of the domain index rather than kept on :class:`Outlet`, so the aliases the
+        registry actually resolves on and the domains a caller can show are the same list by
+        construction — a second copy could disagree with the index after an edit.
+
+        Shortest first because the registrable domain is what identifies the masthead:
+        ``bbc.com`` before ``bbc.co.uk``, and a rating search wants the former."""
+        return sorted((d for d, c in self._by_domain.items() if c == canonical), key=lambda d: (len(d), d))
+
+    def rating_url(self, outlet: "Outlet | None") -> "str | None":
+        """Where to read ``outlet``'s factuality verdict at the rater that issued it.
+
+        ``None`` unless the outlet actually carries a verdict AND its source is one we know how to
+        link — never a bare link to the rater's home page, which would imply a rating exists for
+        an outlet that has none."""
+        if outlet is None or not outlet.factuality or not outlet.factuality_source:
+            return None
+        template = FACTUALITY_SOURCE_SEARCH.get(outlet.factuality_source)
+        if not template:
+            return None
+        doms = self.domains(outlet.canonical)
+        return template.format(domain=doms[0]) if doms else None
 
     def lean(self, text: "str | None") -> float:
         """The AllSides lean for ``text``, or ``NaN`` if unknown OR the row is locality-only

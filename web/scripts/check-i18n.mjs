@@ -41,6 +41,8 @@ const DYNAMIC_PREFIXES = [
   "local.scope.",          // t(`local.scope.${scope}`) — publisher scope pill (Local News v1)
   "publishers.about.source.", // t(`publishers.about.source.${source}`) — per-field provenance label
   "report.period.",        // t(`report.period.${period}.title|subtitle|suffix`) — components/report/period-analytics.tsx
+  "publishers.factuality.level.",  // t(`publishers.factuality.level.${value}`) — components/shared/factuality-badge.tsx
+  "publishers.factuality.source.", // t(`publishers.factuality.source.${source}`) — same component
 ];
 
 /**

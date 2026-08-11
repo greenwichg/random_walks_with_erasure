@@ -311,3 +311,71 @@ def test_a_profile_during_a_stale_window_serves_without_an_inline_build(monkeypa
     assert prof and prof["coCoverage"]["sharedStories"] == 3   # the previous build's answer, served
     assert calls["n"] == 0, "the stale window was paid inline instead of served stale"
     assert len(spawned) == 1, "no background refresh was requested"
+
+
+# --------------------------------------------------------------------------- #
+# Factuality — a third party's verdict, shown only with its provenance.
+# --------------------------------------------------------------------------- #
+def test_a_rated_outlet_carries_the_verdict_with_full_provenance():
+    """The whole point of the nested shape. A bare level would read as OUR assessment of a named
+    news organisation, and would still read that way a year after the rater revised it. Value,
+    who, when and where-to-check travel together or the module is not worth shipping."""
+    st = store_mod.Store("sqlite://")
+    _npr_catalog(st)
+    reg = outlet_registry.resolve("NPR")
+    f = ps.get_publisher(st, "NPR")["factuality"]
+
+    assert f["value"] == reg.factuality, "the rater's own label, never paraphrased"
+    assert f["source"] == reg.factuality_source == "mbfc"
+    assert f["asOf"] == reg.factuality_asof, "when it was read, straight off the registry row"
+    assert f["ratingUrl"].startswith("https://mediabiasfactcheck.com/"), f["ratingUrl"]
+    assert "npr.org" in f["ratingUrl"], "the link resolves to THIS outlet, not the rater's home"
+
+
+def test_the_level_is_the_raters_six_and_not_the_credibility_three():
+    """`credibility` is a different column on a different scale feeding the clustering vote-gate.
+    Surfacing one must never quietly surface or paraphrase the other."""
+    st = store_mod.Store("sqlite://")
+    _npr_catalog(st)
+    p = ps.get_publisher(st, "NPR")
+    assert p["factuality"]["value"] in outlet_registry.FACTUALITY
+    assert "credibility" not in p, "the vote-gate's input is not a display field"
+
+
+def test_an_outlet_with_no_verdict_omits_the_module_entirely():
+    """Unknown is ABSENCE, exactly as it is for lean — never a middle level, and never a null-
+    valued object that a client could render as a rating of 'nothing'."""
+    st = store_mod.Store("sqlite://")
+    unrated = next(o for o in outlet_registry.default_registry().outlets() if not o.factuality)
+    _add(st, "https://x.example/1", unrated.canonical)
+    p = ps.get_publisher(st, unrated.canonical)
+    assert p is not None and "factuality" not in p
+
+
+def test_an_outlet_with_no_registry_row_omits_the_module():
+    """No row means no curated fact of any kind. The profile still renders — it just cannot claim
+    a verdict for an outlet nobody has rated."""
+    st = store_mod.Store("sqlite://")
+    _add(st, "https://unknown.example/1", "Totally Unknown Local Herald")
+    p = ps.get_publisher(st, "Totally Unknown Local Herald")
+    assert p is not None and p["rated"] is False
+    assert "factuality" not in p
+
+
+def test_the_rating_link_is_never_a_bare_link_to_the_rater():
+    """A link to the rater's front page beside an outlet's name implies a rating exists for it.
+    The builder returns nothing rather than something that misleads."""
+    reg = outlet_registry.default_registry()
+    unrated = next(o for o in reg.outlets() if not o.factuality)
+    assert reg.rating_url(unrated) is None
+    assert reg.rating_url(None) is None
+
+
+def test_the_rating_link_uses_the_curated_domain_not_the_observed_host():
+    """`site` is the majority host COUNTED from the catalog and can be a subdomain — obituary and
+    section feeds arrive under their own hosts. A rating is about the masthead, so the link is
+    built from the registry's curated domain instead."""
+    reg = outlet_registry.default_registry()
+    bbc = reg.resolve("BBC")
+    assert reg.domains(bbc.canonical)[0] == "bbc.com", "shortest curated domain leads"
+    assert reg.rating_url(bbc).endswith("bbc.com")

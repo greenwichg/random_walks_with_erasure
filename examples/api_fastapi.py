@@ -1488,6 +1488,21 @@ class CoCoverageModel(BaseModel):
     publishers: list[CoPublisherModel]
 
 
+class PublisherFactualityModel(BaseModel):
+    """A third party's factuality verdict, and everything needed to attribute it.
+
+    Every field is required because each one carries part of the honesty: `value` is the rater's
+    own label on the rater's own scale (never paraphrased into our vocabulary), `source` is who
+    said it, `asOf` is when it was read — raters revise and this registry has no refresh
+    mechanism, so an undated verdict shown under a rater's name claims they still say it — and
+    `ratingUrl` is where a reader can check the current one. A verdict that cannot supply all four
+    is not shown at all."""
+    value: str          # FACTUALITY: very_high | high | mostly_factual | mixed | low | very_low
+    source: str         # FACTUALITY_SOURCES
+    asOf: str           # ISO date the verdict was read
+    ratingUrl: str      # the rater's own page/search for this outlet
+
+
 class PublisherProfileModel(BaseModel):
     """The Publisher Intelligence profile: curated registry facts + counted catalog facts.
     ``rated=false`` means the registry doesn't rate this outlet — lean/leanBucket are null
@@ -1498,6 +1513,13 @@ class PublisherProfileModel(BaseModel):
     lean: Optional[float] = None
     leanBucket: Optional[str] = None
     registry: Optional[PublisherRegistryModel] = None
+    # The rater's factuality verdict, carried with its provenance. Absent — not null, not a
+    # placeholder level — when no verdict exists, which is the normal case: the registry rates a
+    # minority of the outlets in the catalog, and an absent module is the same "unknown" the null
+    # lean already speaks. `credibility` is deliberately NOT exposed here: it is the clustering
+    # vote-gate's input on a different scale, and showing both would invite a reader to reconcile
+    # two numbers that were never meant to agree.
+    factuality: Optional[PublisherFactualityModel] = None
     site: Optional[str] = None
     articles: PublisherArticlesModel
     topics: list[LabelCountModel] = []

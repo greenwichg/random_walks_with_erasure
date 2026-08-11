@@ -148,6 +148,18 @@ export interface PublisherProfile {
   leanBucket?: LeanBucket | null;
   /** Curated registry locality — absent when the outlet isn't in the registry. */
   registry?: { country?: string; region?: string; city?: string; scope?: string };
+  /** A rater's factuality verdict, with the provenance needed to attribute it. ABSENT — never
+   *  null, never a middle level — when no verdict exists, which is the normal case: the registry
+   *  rates a minority of catalog outlets, and absence is the same "unknown" the null lean speaks.
+   *  `value` is the rater's own label, never paraphrased into our vocabulary; `asOf` is when it
+   *  was read, because raters revise and an undated verdict shown under their name claims they
+   *  still say it. */
+  factuality?: {
+    value: "very_high" | "high" | "mostly_factual" | "mixed" | "low" | "very_low";
+    source: string;
+    asOf: string;
+    ratingUrl: string;
+  };
   /** Majority article host as a URL — the publisher's own site, counted not curated. */
   site?: string;
   articles: { total: number; firstSeen?: string; lastSeen?: string; perDay?: number };

@@ -37,4 +37,43 @@ test.describe("Publisher Intelligence", () => {
     // The curated half of the profile is unaffected by enrichment being absent.
     await expect(page.getByText("United States").first()).toBeVisible();
   });
+  /**
+   * Factuality — a third party's verdict, and the two ways showing one can lie.
+   *
+   * Shown bare it reads as OUR assessment of a named news organisation; shown undated it claims
+   * the rater still says it. So the assertions here are about the ATTRIBUTION travelling with the
+   * value, not merely about the value appearing.
+   */
+  test("a rated outlet shows the verdict with its rater and the date it was read", async ({ authedPage }) => {
+    const page = authedPage;
+    await page.goto("/publishers/NPR");
+    await expect(page.getByRole("heading", { name: "NPR", exact: true })).toBeVisible();
+
+    await expect(page.getByText("Factuality: High", { exact: true })).toBeVisible();
+    // The rater is named on the page, not implied — and the retrieval date sits beside it.
+    const credit = page.getByRole("link", { name: /Media Bias\/Fact Check/ });
+    await expect(credit).toBeVisible();
+    await expect(credit).toHaveAttribute("href", /mediabiasfactcheck\.com/);
+    // The link resolves to THIS outlet at the rater, never the rater's front page.
+    await expect(credit).toHaveAttribute("href", /npr\.org/);
+    await expect(credit).toHaveAttribute("rel", /noopener/);
+  });
+
+  test("an outlet with no verdict says so, rather than showing nothing", async ({ authedPage }) => {
+    // Absence rendered as absence. A missing row would read as "fine" to someone scanning the
+    // page, which is the failure the explicit "Not rated" treatment exists to prevent — the same
+    // rule the political lean already follows (L2.2).
+    const page = authedPage;
+    await page.goto("/publishers/Le%20Monde");
+    await expect(page.getByRole("heading", { name: "Le Monde", exact: true })).toBeVisible();
+    await expect(page.getByText("Factuality not rated", { exact: true })).toBeVisible();
+    await expect(page.getByText(/^Factuality: /)).toHaveCount(0);
+  });
+
+  test("an unregistered publisher claims no verdict at all", async ({ authedPage }) => {
+    const page = authedPage;
+    await page.goto("/publishers/Completely%20Unknown%20Gazette");
+    await expect(page.getByText("Publisher not found")).toBeVisible();
+    await expect(page.getByText(/Factuality: /)).toHaveCount(0);
+  });
 });

@@ -14,6 +14,7 @@ import { BarList, type BarItem } from "@/components/shared/bar-list";
 import { ArticleRow } from "@/components/shared/article-row";
 import { CountryBadge } from "@/components/shared/country-badge";
 import { LeanBadge } from "@/components/shared/article-badges";
+import { FactualityBadge } from "@/components/shared/factuality-badge";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState, ErrorState } from "@/components/shared/states";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -132,6 +133,10 @@ function Profile({ profile: p }: { profile: PublisherProfile }) {
               ) : (
                 <Badge variant="secondary">{t("publishers.notRated")}</Badge>
               )}
+              {/* The rater's factuality verdict, attributed inline. Rendered unconditionally so
+                  the unknown case is STATED rather than being an absent row that reads as "fine"
+                  — the same reason the lean shows an explicit "Not rated". */}
+              <FactualityBadge factuality={p.factuality} />
               {p.registry?.country && <CountryBadge code={p.registry.country} className="text-sm" />}
               {p.registry?.scope && (
                 <Badge variant="outline">{t(`local.scope.${p.registry.scope}`)}</Badge>
