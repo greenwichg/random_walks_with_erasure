@@ -198,10 +198,28 @@ publishers" is where crawler projects go wrong.
 
 ## Recommended order
 
-**1. Verify the ground truth before writing more code.** From an environment with egress: fetch
-each publisher's `robots.txt` and confirm (a) whether we are allowed at all, (b) the real
-`Crawl-delay`, (c) that the configured sitemap URLs exist. Then read each newsroom's ToS. Cheap,
-and it can kill or reshape everything after it — a publisher that disallows us is removed from the
+**1. Verify the ground truth before writing more code.** `examples/verify_crawler_config.py` does
+this and is the gate for everything below:
+
+```bash
+python examples/verify_crawler_config.py            # exit 0 only if every publisher verified
+python examples/verify_crawler_config.py --json > crawl-verification.json
+```
+
+Per publisher it checks robots.txt (reachable, a real policy, allows our UA, states which
+`Crawl-delay`), each configured discovery URL (exists, parses, yields entries), the
+`article_pattern` **against URLs actually discovered**, and locates ToS clauses containing
+automated-access language for a human to read. It reuses the crawler's own policy and parsers, so a
+green report means *that code* works against the real site. It never fetches an article, never
+touches the store, and obeys the same robots gate it is testing.
+
+Two of its checks exist for failures that are otherwise invisible: a pattern matching **0%** of
+discovered URLs makes the crawler ingest nothing while every gate reports healthy, and robots.txt
+declaring `Sitemap:` URLs we are not using usually means our configured path was a guess.
+
+**Run it from an environment with real outbound access.** It cannot tell you anything from a
+sandbox whose egress proxy refuses the hosts — which is exactly what happened when this POC was
+built (see "What this POC has not proven"). A publisher that disallows us is removed from the
 config, not worked around.
 
 **2. Legal position.** Same question the MBFC work raised, different asset. robots.txt permission
