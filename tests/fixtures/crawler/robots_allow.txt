@@ -1,0 +1,5 @@
+User-agent: *
+Disallow: /search
+Disallow: /account
+Crawl-delay: 4
+Allow: /

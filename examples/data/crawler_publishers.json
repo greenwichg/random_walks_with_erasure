@@ -1,0 +1,91 @@
+{
+  "_comment": [
+    "Publisher crawl configuration — data, not code. Adding a publisher is an edit here.",
+    "",
+    "`publisher` MUST be the outlet registry's canonical name: it becomes FeedEntry.publisher_hint,",
+    "which is how the article resolves to a lean. A name the registry does not know ingests with no",
+    "lean at all, so `crawler.py lint` treats it as an error rather than letting it through.",
+    "",
+    "`sources` is an ORDERED ladder. The crawl stops at the first rung that yields articles, so RSS",
+    "costs one request for a healthy publisher and the lower rungs only run on the days it is empty.",
+    "Section pages sit last because they carry no publication date.",
+    "",
+    "`article_pattern` is applied to EVERY rung. It is the difference between ingesting articles and",
+    "ingesting a newsroom's tag pages, author pages, and shop.",
+    "",
+    "These five are the POC set: three large publishers with different discovery shapes (BBC, NPR,",
+    "The Guardian), one wire (AP, whose public RSS is thin — the case the sitemap rung exists for),",
+    "and one small non-profit newsroom (Texas Tribune) to check the framework is not tuned only for",
+    "publishers with big infrastructure.",
+    "",
+    "NOT VERIFIED AGAINST LIVE SITES. Every URL and pattern below is from public convention and",
+    "must be confirmed against each publisher's robots.txt and actual markup before any live run —",
+    "see docs/CRAWLER_DESIGN.md, 'What this POC has not proven'."
+  ],
+  "publishers": [
+    {
+      "publisher": "BBC",
+      "domains": ["bbc.co.uk", "bbc.com"],
+      "discovery_domains": ["bbci.co.uk"],
+      "sources": [
+        {"kind": "rss", "url": "https://feeds.bbci.co.uk/news/rss.xml"},
+        {"kind": "sitemap", "url": "https://www.bbc.co.uk/sitemaps/https-index-uk-news.xml"},
+        {"kind": "section", "url": "https://www.bbc.co.uk/news"}
+      ],
+      "article_pattern": "/news/[a-z-]*-?\\d{6,}",
+      "max_urls": 60,
+      "min_interval": 2.0,
+      "enabled": true
+    },
+    {
+      "publisher": "NPR",
+      "domains": ["npr.org"],
+      "sources": [
+        {"kind": "rss", "url": "https://feeds.npr.org/1001/rss.xml"},
+        {"kind": "sitemap", "url": "https://www.npr.org/sitemaps/news-sitemap.xml"},
+        {"kind": "section", "url": "https://www.npr.org/sections/news/"}
+      ],
+      "article_pattern": "/\\d{4}/\\d{2}/\\d{2}/",
+      "max_urls": 60,
+      "min_interval": 2.0,
+      "enabled": true
+    },
+    {
+      "publisher": "The Guardian",
+      "domains": ["theguardian.com"],
+      "sources": [
+        {"kind": "rss", "url": "https://www.theguardian.com/world/rss"},
+        {"kind": "sitemap", "url": "https://www.theguardian.com/sitemaps/news.xml"},
+        {"kind": "section", "url": "https://www.theguardian.com/world"}
+      ],
+      "article_pattern": "/\\d{4}/[a-z]{3}/\\d{2}/",
+      "max_urls": 60,
+      "min_interval": 2.0,
+      "enabled": true
+    },
+    {
+      "publisher": "Associated Press",
+      "domains": ["apnews.com"],
+      "sources": [
+        {"kind": "sitemap", "url": "https://apnews.com/news-sitemap-content.xml"},
+        {"kind": "section", "url": "https://apnews.com/hub/world-news"}
+      ],
+      "article_pattern": "/article/[a-z0-9-]+",
+      "max_urls": 40,
+      "min_interval": 3.0,
+      "enabled": true
+    },
+    {
+      "publisher": "Texas Tribune",
+      "domains": ["texastribune.org"],
+      "sources": [
+        {"kind": "rss", "url": "https://feeds.texastribune.org/feeds/main/"},
+        {"kind": "section", "url": "https://www.texastribune.org/"}
+      ],
+      "article_pattern": "/\\d{4}/\\d{2}/\\d{2}/",
+      "max_urls": 30,
+      "min_interval": 3.0,
+      "enabled": true
+    }
+  ]
+}
