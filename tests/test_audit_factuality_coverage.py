@@ -7,6 +7,7 @@ work: a row that only needs a rater lookup, and a name with no row at all.
 """
 import csv
 import io
+import math
 import pathlib
 import sys
 from datetime import datetime, timedelta, timezone
@@ -45,6 +46,31 @@ def st(tmp_path):
 
 def _analyse(st):
     return afc.analyse(story_service._fetch(st), free=afc.sourced_but_unwritten())
+
+
+def _unrated(count=1, min_domains=1):
+    """Outlets that still need a lookup, CHOSEN FROM THE REGISTRY rather than named.
+
+    Naming one couples the test to which tranche happened to run last. These tests were written
+    against Deutsche Welle and BuzzFeed News; the next two tranches rated both, and the tests
+    failed for the data being improved. That is the third time this pattern has cost a false
+    failure in this file, so the selection is derived now.
+
+    "Unrated" has to mean what the CODE means by it: the probe counts EITHER column as a verdict,
+    so an outlet carrying only a legacy `credibility` is not work and never reaches the worklist.
+    Selecting on `factuality` alone picked Aftonbladet and expected a row that correctly never
+    came."""
+    index = afc._registry_index()
+    picked = []
+    for o in outlet_registry.default_registry().outlets():
+        if o.factuality or o.credibility or math.isnan(o.lean):
+            continue
+        _, domains = index.get(o.canonical, (0, []))
+        if len(domains) >= min_domains:
+            picked.append(o.canonical)
+        if len(picked) == count:
+            return picked
+    raise AssertionError(f"registry has no {count} unrated outlet(s) with >={min_domains} domains")
 
 
 def test_articles_are_weighted_not_outlets(st):
@@ -161,35 +187,40 @@ def test_the_worklist_is_ranked_by_article_volume_not_registry_order(st):
     The file holds hundreds of rows carrying a lean and no verdict, but most publish nothing into
     the window, so working it in file order spends rater requests on outlets that buy no coverage.
     Only the feed knows which blanks are expensive, and the sheet has to arrive in that order."""
-    _seed(st, [("Deutsche Welle", 10), ("The Times of India", 40)])
+    quiet, loud = _unrated(2)
+    _seed(st, [(quiet, 10), (loud, 40)])
     sheet = afc.worksheet_rows(_analyse(st)["outlets"])
     vols = [r["articles_in_window"] for r in sheet]
     assert vols == sorted(vols, reverse=True), f"not volume-ranked: {sheet}"
-    assert sheet[0]["canonical"] == "The Times of India"
+    assert sheet[0]["canonical"] == loud
 
 
 def test_an_unregistered_name_never_enters_the_worklist_however_loud(st):
     """Volume is the ranking, not the entry condition. A name with no row cannot be looked up —
     there is nothing to write a verdict against, and it may not even be one outlet — so the
     highest-volume unknown in the feed must still be absent."""
-    _seed(st, [("Totally Unknown Local Herald", 999), ("Deutsche Welle", 1)])
+    known, = _unrated(1)
+    _seed(st, [("Totally Unknown Local Herald", 999), (known, 1)])
     sheet = afc.worksheet_rows(_analyse(st)["outlets"])
-    assert [r["canonical"] for r in sheet] == ["Deutsche Welle"]
+    assert [r["canonical"] for r in sheet] == [known]
 
 
 def test_an_outlet_that_already_has_a_verdict_is_not_re_looked_up(st):
     """The worklist is remaining work. Re-emitting a written row would spend a rater request to
     learn something the file already records."""
-    _seed(st, [("Reuters", 50), ("Deutsche Welle", 1)])
+    known, = _unrated(1)
+    _seed(st, [("Reuters", 50), (known, 1)])
     sheet = afc.worksheet_rows(_analyse(st)["outlets"])
-    assert "Reuters" not in [r["canonical"] for r in sheet], "Reuters was written in Phase 3"
+    assert "Reuters" not in [r["canonical"] for r in sheet], "Reuters already carries a verdict"
+    assert known in [r["canonical"] for r in sheet], "…while the unrated one is still work"
 
 
 def test_every_emitted_row_is_ready_for_the_fetcher(st):
     """The sheet is fed straight to the MBFC fetcher and written back to the registry afterwards,
     so each row needs a domain to search on and the line number to write back to. A row missing
     either is a manual task wearing an automated row's clothes."""
-    _seed(st, [("Deutsche Welle", 5), ("The Times of India", 3)])
+    a, b = _unrated(2)
+    _seed(st, [(a, 5), (b, 3)])
     sheet = afc.worksheet_rows(_analyse(st)["outlets"])
     assert sheet
     for r in sheet:
@@ -207,8 +238,9 @@ def test_the_worklist_can_be_streamed_to_stdout(tmp_path, capsys):
     has to be copied back out before it is any use — one command beats three. Driven through
     `main` because the delimiters are the contract: the CSV is printed among a human-readable
     report, so it has to be separable from it without guessing where it starts."""
+    known, = _unrated(1)
     url = f"sqlite:///{tmp_path / 'cli.db'}"
-    _seed(store_mod.Store(url), [("Deutsche Welle", 4)])
+    _seed(store_mod.Store(url), [(known, 4)])
 
     assert afc.main(["--db", url, "--emit-worklist", "-"]) == 0
     out = capsys.readouterr().out
@@ -217,7 +249,7 @@ def test_the_worklist_can_be_streamed_to_stdout(tmp_path, capsys):
     body = out.split("--- BEGIN WORKLIST CSV")[1].split("---", 1)[1]
     body = body.split("--- END WORKLIST CSV ---")[0].strip()
     rows = list(csv.DictReader(io.StringIO(body)))
-    assert [r["canonical"] for r in rows] == ["Deutsche Welle"]
+    assert [r["canonical"] for r in rows] == [known]
     assert rows[0]["articles_in_window"] == "4"
     assert rows[0]["factuality_TO_FILL"] == "", "a worklist row carries no verdict yet"
 
@@ -225,7 +257,7 @@ def test_the_worklist_can_be_streamed_to_stdout(tmp_path, capsys):
 def test_the_worklist_writes_nothing_to_the_database(st):
     """It is emitted from a production read. Same guarantee as the rest of the probe."""
     from sqlalchemy import func, select
-    _seed(st, [("Deutsche Welle", 5)])
+    _seed(st, [(_unrated(1)[0], 5)])
 
     def count():
         with st.session() as s:
@@ -241,9 +273,10 @@ def test_every_alias_domain_reaches_the_worksheet(st):
     the second, so a sheet carrying only the first made the lookup reject its own correct page —
     four outlets in one tranche failed this way. The alias cell is the curated claim that these
     are one outlet, so the whole cell travels."""
-    _seed(st, [("BuzzFeed News", 9)])
+    multi, = _unrated(1, min_domains=2)
+    _seed(st, [(multi, 9)])
     sheet = afc.worksheet_rows(_analyse(st)["outlets"])
-    row = next(r for r in sheet if r["canonical"] == "BuzzFeed News")
+    row = next(r for r in sheet if r["canonical"] == multi)
     assert "|" in row["primary_domain"], f"only one domain survived: {row['primary_domain']}"
-    assert set(row["primary_domain"].split("|")) >= {"buzzfeed.com", "buzzfeednews.com"}
-    assert row["mbfc_search_url"].endswith("buzzfeed.com"), "the query uses the first domain"
+    first = row["primary_domain"].split("|")[0]
+    assert row["mbfc_search_url"].endswith(first), "the query uses the first domain"

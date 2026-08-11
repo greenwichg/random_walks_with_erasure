@@ -81,6 +81,21 @@
 #
 # Levels as recorded: 8 high, 8 mostly_factual, 4 mixed, 2 low, 1 very_high.
 #
+#
+# PROVENANCE, TRANCHE 3: 19 rows, retrieved from MBFC on 2026-08-11, same two-part gate as the
+# batch above — the page's `Source:` had to name one of the row's own alias domains AND the
+# masthead had to appear in the title. This tranche is what proved the alias half necessary: MBFC
+# files outlets under whichever domain it considers home, and four earlier lookups were rejected
+# because the sheet carried only the first alias. It also shows why the title half cannot be
+# dropped, since MBFC's slug often bears no resemblance to ours — Fox59 is filed under
+# `wxin-fox59-indianapolis-bias`, RTE under `rte-radio-television-ireland`, Deutsche Welle under
+# `dw-news`, and all three were accepted on evidence rather than on the URL looking right.
+#
+# Channel NewsAsia is deliberately absent: its search returned generic listings on every attempt
+# and no page ever claimed channelnewsasia.com. An empty cell is the honest record of that.
+#
+# Levels as recorded: 9 high, 5 mostly_factual, 5 mixed.
+#
 canonical,lean,aliases,country,region,city,scope,kind,credibility,factuality,factuality_source
 # --- left (-2) ---
 Mother Jones,-2,motherjones.com,US,,,national
@@ -208,7 +223,7 @@ The Blaze,2,theblaze.com|Blaze|TheBlaze,US,,,national
 #   The Times of India: Lean Right (+1; MBFC LR)
 #   Vanguard (Nigeria): Lean Left (-1; MBFC LL)
 #   Yonhap News Agency: Lean Right (+1; MBFC LR)
-Deutsche Welle,0,dw.com,DE,,,international
+Deutsche Welle,0,dw.com,DE,,,international,,,high,mbfc
 Der Spiegel,-1,spiegel.de,DE,,,national,,,high,mbfc
 Die Zeit,-1,zeit.de,DE,,,national,,,high,mbfc
 Frankfurter Allgemeine Zeitung,1,faz.net,DE,,,national
@@ -225,7 +240,7 @@ Corriere della Sera,0,corriere.it,IT,,,national
 ANSA,0,ansa.it,IT,,,national
 Politico Europe,-1,politico.eu|Politico EU,BE,,,international
 The Irish Times,-1,irishtimes.com,IE,,,national
-RTE,0,rte.ie|RTE News|RTÉ,IE,,Dublin,national
+RTE,0,rte.ie|RTE News|RTÉ,IE,,Dublin,national,,,high,mbfc
 Swissinfo,-1,swissinfo.ch,CH,,,international
 NOS,1,nos.nl,NL,,,national
 Kyiv Independent,0,kyivindependent.com,UA,,,national
@@ -260,7 +275,7 @@ Nikkei Asia,1,asia.nikkei.com|nikkei.com|Nikkei|Nikkei Asian Review,JP,,,interna
 The Korea Herald,1,koreaherald.com,KR,,,national
 Yonhap News Agency,1,yna.co.kr,KR,,,national
 South China Morning Post,0,scmp.com|SCMP,HK,,,national
-The Straits Times,1,straitstimes.com,SG,,,national
+The Straits Times,1,straitstimes.com,SG,,,national,,,mostly_factual,mbfc
 Channel NewsAsia,0,channelnewsasia.com,SG,,,international
 Bangkok Post,1,bangkokpost.com,TH,,,national
 The Jakarta Post,-1,thejakartapost.com,ID,,,national
@@ -279,7 +294,7 @@ The East African,,theeastafrican.co.ke,KE,,,international
 The Punch,-1,punchng.com,NG,,,national,,,mixed,mbfc
 Vanguard (Nigeria),-1,vanguardngr.com,NG,,,national
 Nigerian Tribune,,tribuneonlineng.com,NG,,,national
-Premium Times,-1,premiumtimesng.com,NG,,,national
+Premium Times,-1,premiumtimesng.com,NG,,,national,,,mostly_factual,mbfc
 News24,0,news24.com,ZA,,,national
 Mail & Guardian,-2,mg.co.za,ZA,,,national,,,mixed,mbfc
 Daily Maverick,0,dailymaverick.co.za,ZA,,,national
@@ -479,7 +494,7 @@ ESPN,-1,espn.com|espn.ph|espndeportes.espn.com,US,,,international,,,high,mbfc
 Page Six,1,pagesix.com,US,New York,New York,national,,,mixed,mbfc
 Ynetnews,-1,ynetnews.com,IL,,,national,,,high,mbfc
 The News International,1,thenews.com.pk,PK,,,national,,,mixed,mbfc
-London Evening Standard,1,standard.co.uk|Evening Standard,GB,,London,regional
+London Evening Standard,1,standard.co.uk|Evening Standard,GB,,London,regional,,,mostly_factual,mbfc
 #
 # Third curation pass -- scope: every row in this file that carried NO lean, plus the remainder of
 # the production unlock worklist. Twenty rows had identity and locality curated but the lean left
@@ -698,7 +713,7 @@ Toronto Sun,2,torontosun.com,CA,Ontario,Toronto,regional
 SBS News,-1,sbs.com.au|SBS,AU,,,national
 The New Daily,-1,thenewdaily.com.au,AU,,,national
 Crikey,-2,crikey.com.au,AU,,,national
-7NEWS,1,7news.com.au,AU,,,national
+7NEWS,1,7news.com.au,AU,,,national,,,mixed,mbfc
 9News,1,9news.com.au|nine.com.au,AU,,,national
 Australian Financial Review,1,afr.com|AFR,AU,,,national
 Scroll.in,-1,scroll.in,IN,,,national
@@ -750,13 +765,13 @@ GB News,2,gbnews.com,GB,,London,national,,low
 # CHECKED AND NOT RATED ANYWHERE, so no row: Pagina/12 (AR), El Tiempo and El Espectador (CO),
 # Estadao and UOL (BR), Belfast Telegraph (GB). MBFC has no page for any of them.
 The New Yorker,-2,newyorker.com,US,New York,New York,national
-Daily Beast,-2,thedailybeast.com|The Daily Beast,US,,,national
+Daily Beast,-2,thedailybeast.com|The Daily Beast,US,,,national,,,mixed,mbfc
 People,-2,people.com|People Magazine,US,,,national
 Raw Story,-2,rawstory.com,US,,,national
 Common Dreams,-2,commondreams.org,US,,,national
 ProPublica,-1,propublica.org,US,,,national
 PBS NewsHour,-1,pbs.org|PBS,US,,,national
-The Hollywood Reporter,-1,hollywoodreporter.com|THR,US,California,Los Angeles,national
+The Hollywood Reporter,-1,hollywoodreporter.com|THR,US,California,Los Angeles,national,,,high,mbfc
 Voice of America,0,voanews.com|VOA,US,,,international
 Semafor,0,semafor.com,US,,,national
 The Marshall Project,0,themarshallproject.org,US,,,national
@@ -779,7 +794,7 @@ Bild,1,bild.de,DE,,Berlin,national,,medium
 Le Parisien,1,leparisien.fr,FR,,Paris,national
 Dagens Nyheter,1,dn.se,SE,,Stockholm,national
 De Telegraaf,2,telegraaf.nl,NL,,Amsterdam,national
-Infobae,-1,infobae.com,AR,,Buenos Aires,international
+Infobae,-1,infobae.com,AR,,Buenos Aires,international,,,high,mbfc
 Reforma,1,reforma.com,MX,,Mexico City,national
 El Financiero,1,elfinanciero.com.mx,MX,,Mexico City,national
 # Two more under the Questionable rule. MBFC rates both Right-Center and classes both QUESTIONABLE
@@ -838,7 +853,7 @@ The Korea Times,-1,koreatimes.co.kr,KR,,Seoul,national,,,mostly_factual,mbfc
 BuzzFeed News,-1,buzzfeed.com|buzzfeednews.com|BuzzFeed,US,New York,New York,national
 AOL,-1,aol.com|aol.co.uk,US,New York,New York,national
 Seeking Alpha,1,seekingalpha.com,US,,,national,,,high,mbfc
-TheStreet,1,thestreet.com,US,New York,New York,national
+TheStreet,1,thestreet.com,US,New York,New York,national,,,high,mbfc
 BreakingNews.ie,-1,breakingnews.ie,IE,,Cork,national
 Detik,0,detik.com,ID,,Jakarta,national
 Athens Banner-Herald,-1,onlineathens.com,US,Georgia,Athens,local
@@ -1079,7 +1094,7 @@ Louisville Courier-Journal,-1,courier-journal.com,US,Kentucky,Louisville,regiona
 Raleigh News & Observer,-1,newsobserver.com,US,North Carolina,Raleigh,regional
 The State (South Carolina),-1,thestate.com,US,South Carolina,Columbia,regional
 Star-Ledger,-1,nj.com,US,New Jersey,Newark,regional
-Buffalo News,0,buffalonews.com,US,New York,Buffalo,regional
+Buffalo News,0,buffalonews.com,US,New York,Buffalo,regional,,,high,mbfc
 Texas Tribune,-1,texastribune.org,US,Texas,Austin,regional
 #
 # Fifteenth pass -- INDIA, asked for directly. The registry already held 12 Indian outlets and they
@@ -1178,7 +1193,7 @@ ThisDay,1,thisdaylive.com,NG,,Lagos,national,,high
 La Jornada,-2,jornada.com.mx,MX,,Mexico City,national
 +972 Magazine,-1,972mag.com,IL,,Tel Aviv,international
 The New Arab,-1,newarab.com|alaraby.co.uk,GB,,London,international
-Taipei Times,-1,taipeitimes.com,TW,,Taipei,national
+Taipei Times,-1,taipeitimes.com,TW,,Taipei,national,,,mostly_factual,mbfc
 Focus Taiwan,-1,focustaiwan.tw|cna.com.tw|Central News Agency,TW,,Taipei,international,,high
 Daily Monitor,-1,monitor.co.ug,UG,,Kampala,national
 #
@@ -1680,11 +1695,11 @@ TalkTV,2,talk.tv|talktv.co.uk|Talk TV,GB,,London,national,,medium
 TechCrunch,-1,techcrunch.com,US,California,San Francisco,international
 Deadline,-1,deadline.com|Deadline Hollywood,US,California,Los Angeles,national
 Bleacher Report,-1,bleacherreport.com,US,New York,New York,national
-Gizmodo,-2,gizmodo.com,US,New York,New York,international
-Ars Technica,0,arstechnica.com,US,New York,New York,international
+Gizmodo,-2,gizmodo.com,US,New York,New York,international,,,high,mbfc
+Ars Technica,0,arstechnica.com,US,New York,New York,international,,,high,mbfc
 UPI,0,upi.com|United Press International,US,Florida,Boca Raton,international
-Fox Business,1,foxbusiness.com|Fox Business Network,US,New York,New York,national
-TMZ,1,tmz.com,US,California,Los Angeles,national
+Fox Business,1,foxbusiness.com|Fox Business Network,US,New York,New York,national,,,mixed,mbfc
+TMZ,1,tmz.com,US,California,Los Angeles,national,,,mixed,mbfc
 # Science Daily is rated PRO-SCIENCE, which is off the left/right axis entirely — so it takes the
 # `research` kind and a BLANK lean, exactly like Nature/Frontiers/arXiv above. Recording its MBFC
 # rating as a lean would put a science-vs-pseudoscience judgement on a political scale. Its 1
@@ -1717,7 +1732,7 @@ Northwest Florida Daily News,0,nwfdailynews.com,US,Florida,Fort Walton Beach,reg
 Springfield News-Sun,0,springfieldnewssun.com,US,Ohio,Springfield,regional
 Investing.com,0,investing.com,CY,,,international
 OilPrice,0,oilprice.com|OilPrice.com,US,,,international
-Kotaku,-1,kotaku.com,US,New York,New York,international
+Kotaku,-1,kotaku.com,US,New York,New York,international,,,mostly_factual,mbfc
 Vice,-1,vice.com|Vice Media,US,New York,New York,international
 Malay Mail,1,malaymail.com,MY,,Kuala Lumpur,national
 # Phys.org is PRO-SCIENCE like Science Daily above -- off the left/right axis, so `research` kind
@@ -1765,7 +1780,7 @@ Business Wire,,businesswire.com|Businesswire,US,California,San Francisco,,wire
 # right-center, six least-biased). Local dailies are where the file's left/right balance actually
 # comes from -- the national-brand tranches above skewed left-of-centre because tech and
 # entertainment verticals do.
-Fox59,0,fox59.com|WXIN,US,Indiana,Indianapolis,regional
+Fox59,0,fox59.com|WXIN,US,Indiana,Indianapolis,regional,,,high,mbfc
 Daily Post Nigeria,0,dailypost.ng,NG,,Lagos,national
 North Platte Telegraph,0,nptelegraph.com,US,Nebraska,North Platte,regional
 Political Wire,0,politicalwire.com,US,,,national
@@ -1794,7 +1809,7 @@ Goldsboro News-Argus,1,newsargus.com|Goldsboro News Argus,US,North Carolina,Gold
 #   Henderson Daily Dispatch   RIGHT-CENTER (2.8), factual High   1 unlock
 #   Aaj Tak                    RIGHT-CENTER (3.6), factual Mixed  36 articles
 Daily Dispatch,1,hendersondispatch.com|Hendersondispatch|Henderson Daily Dispatch,US,North Carolina,Henderson,regional
-Aaj Tak,1,aajtak.in|aajtak.intoday.in,IN,,Noida,national
+Aaj Tak,1,aajtak.in|aajtak.intoday.in,IN,,Noida,national,,,mixed,mbfc
 #
 # NOT REGISTERED, with the reason, so none of these is searched a third time:
 #
