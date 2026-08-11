@@ -14,6 +14,7 @@ import { BarList, type BarItem } from "@/components/shared/bar-list";
 import { ArticleRow } from "@/components/shared/article-row";
 import { CountryBadge } from "@/components/shared/country-badge";
 import { LeanBadge } from "@/components/shared/article-badges";
+import { PublisherLogo } from "@/components/shared/publisher-logo";
 import { FactualityBadge } from "@/components/shared/factuality-badge";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState, ErrorState } from "@/components/shared/states";
@@ -76,7 +77,6 @@ export default function PublisherPage() {
 
 function Profile({ profile: p }: { profile: PublisherProfile }) {
   const { t, lang, formatCompact, formatDate } = useTranslation();
-  const [logoOk, setLogoOk] = React.useState(true);
   const total = p.articles.total;
   const day = (iso: string) => formatDate(iso, { dateStyle: "medium" });
   const enc = encodeURIComponent(p.name);
@@ -110,21 +110,18 @@ function Profile({ profile: p }: { profile: PublisherProfile }) {
     <>
       <header className="mb-6">
         <div className="flex items-start gap-4">
-          {p.publisherLogo && logoOk ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={p.publisherLogo}
-              alt=""
-              width={48}
-              height={48}
-              onError={() => setLogoOk(false)}
-              className="h-12 w-12 rounded-lg border bg-card object-contain p-1.5"
+          {/* 48px box with p-1.5 leaves 36px of content — the size that decides how many real
+              pixels the mark needs, and the box where a 16px favicon was upscaling 4.5x. */}
+          <div className="flex h-12 w-12 items-center justify-center rounded-lg border bg-card p-1.5">
+            <PublisherLogo
+              logo={p.publisherLogo}
+              fallbacks={p.publisherLogoFallbacks}
+              sizePx={36}
+              loading="eager"
+              className="h-full w-full"
+              glyphClassName="h-6 w-6 text-muted-foreground"
             />
-          ) : (
-            <div className="flex h-12 w-12 items-center justify-center rounded-lg border bg-card">
-              <Building2 className="h-6 w-6 text-muted-foreground" />
-            </div>
-          )}
+          </div>
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="text-2xl font-semibold tracking-tight">{p.name}</h1>

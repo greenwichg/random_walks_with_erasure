@@ -131,10 +131,12 @@ def test_a_failed_lookup_does_replace_a_previous_failure():
 # --------------------------------------------------------------------------- #
 # Logo precedence.
 # --------------------------------------------------------------------------- #
-def test_logo_precedence_is_curated_then_enriched_then_favicon():
+def test_logo_precedence_is_curated_then_enriched_then_site_icon():
     enriched = ("https://commons.wikimedia.org/logo.svg", "wikimedia")
-    favicon = media.pick_best_logo("Example Post", "https://examplepost.com")
-    assert favicon["publisherLogoSource"] == "favicon"
+    site_icon = media.pick_best_logo("Example Post", "https://examplepost.com")
+    assert site_icon["publisherLogoSource"] == "site-icon"
+    # The 16px favicon is still offered, but last — never the first thing shown.
+    assert site_icon["publisherLogoFallbacks"][-1].endswith("/favicon.ico")
 
     with_wiki = media.pick_best_logo("Example Post", "https://examplepost.com", enriched=enriched)
     assert with_wiki["publisherLogo"] == enriched[0]
@@ -155,7 +157,7 @@ def test_a_non_http_enriched_logo_is_refused_and_falls_through():
     never reaches an img src."""
     out = media.pick_best_logo("Example Post", "https://examplepost.com",
                                enriched=("/relative/logo.png", "wikimedia"))
-    assert out["publisherLogoSource"] == "favicon"
+    assert out["publisherLogoSource"] == "site-icon"
 
 
 def test_logo_from_cache_ignores_unusable_rows():
@@ -184,7 +186,7 @@ def test_profile_renders_without_any_enrichment():
     profile = ps.get_publisher(st, "Example Post")
     assert profile is not None and profile["articles"]["total"] == 1
     assert profile.get("about", {}).get("status") is None      # nothing looked up yet
-    assert profile["publisherLogoSource"] == "favicon"         # still has a logo
+    assert profile["publisherLogoSource"] == "site-icon"         # still has a logo
 
 
 def test_profile_exposes_enriched_facts_with_provenance():
@@ -207,7 +209,7 @@ def test_a_recorded_miss_leaves_the_page_intact():
     st.upsert_publisher_metadata("Example Post", status="no_match")
     profile = ps.get_publisher(st, "Example Post")
     assert profile["about"]["status"] == "no_match"
-    assert profile["publisherLogoSource"] == "favicon"         # falls back, never blank
+    assert profile["publisherLogoSource"] == "site-icon"         # falls back, never blank
     assert profile["articles"]["total"] == 1
 
 

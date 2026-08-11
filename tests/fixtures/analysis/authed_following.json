@@ -27,9 +27,13 @@
     "publishedAt": "2026-07-18T12:00:00+00:00",
     "publisher": "The Guardian",
     "publisherLean": -1.0,
-    "publisherLogo": "https://theguardian.com/favicon.ico",
+    "publisherLogo": "https://theguardian.com/apple-touch-icon.png",
     "publisherLogoDark": null,
-    "publisherLogoSource": "favicon",
+    "publisherLogoFallbacks": [
+      "https://theguardian.com/apple-touch-icon-precomposed.png",
+      "https://theguardian.com/favicon.ico"
+    ],
+    "publisherLogoSource": "site-icon",
     "readingMinutes": 2,
     "register": "reporting",
     "topic": "Politics",
@@ -188,9 +192,13 @@
         "publishedAt": "2026-07-18T12:00:00+00:00",
         "publisher": "Reuters",
         "publisherLean": 0.0,
-        "publisherLogo": "https://reuters.com/favicon.ico",
+        "publisherLogo": "https://reuters.com/apple-touch-icon.png",
         "publisherLogoDark": null,
-        "publisherLogoSource": "favicon",
+        "publisherLogoFallbacks": [
+          "https://reuters.com/apple-touch-icon-precomposed.png",
+          "https://reuters.com/favicon.ico"
+        ],
+        "publisherLogoSource": "site-icon",
         "readingMinutes": 2,
         "register": "reporting",
         "topic": "Politics",

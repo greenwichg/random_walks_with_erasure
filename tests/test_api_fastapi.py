@@ -1395,19 +1395,19 @@ def test_media_serialization_and_rec_enrichment(client):
         # Search (and Discover) carry image + width + publisher logo via feed_article_to_article.
         res = client.get("/api/search", params={"query": "Imaged", "limit": 5}).json()["results"][0]
         assert res["image"] == "https://mediafox.example/hero.jpg" and res["imageWidth"] == 1200
-        assert res["publisherLogo"] == "https://mediafox.example/favicon.ico"
+        assert res["publisherLogo"] == "https://mediafox.example/apple-touch-icon.png"
 
         # Recommendation enrichment: a rec whose URL matches the FeedArticle gains the image + logo.
         recs = [{"article": {"id": u, "url": u, "publisher": "MediaFox"}, "crossCutting": False}]
         api_fastapi._enrich_rec_media(recs)
         assert recs[0]["article"]["image"] == "https://mediafox.example/hero.jpg"
-        assert recs[0]["article"]["publisherLogo"] == "https://mediafox.example/favicon.ico"
+        assert recs[0]["article"]["publisherLogo"] == "https://mediafox.example/apple-touch-icon.png"
 
         # A rec with no matching catalog article stays image-less (graceful) but still gets a logo.
         recs2 = [{"article": {"id": "Q1", "url": "https://other.example/z", "publisher": "Other"}, "crossCutting": False}]
         api_fastapi._enrich_rec_media(recs2)
         assert "image" not in recs2[0]["article"]
-        assert recs2[0]["article"]["publisherLogo"] == "https://other.example/favicon.ico"
+        assert recs2[0]["article"]["publisherLogo"] == "https://other.example/apple-touch-icon.png"
     finally:
         st.delete_feed_articles([u])
 

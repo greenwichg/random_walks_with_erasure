@@ -1054,6 +1054,10 @@ class ArticleModel(BaseModel):
     publisherLogo: Optional[str] = None
     publisherLogoDark: Optional[str] = None
     publisherLogoSource: Optional[str] = None
+    # Ordered alternates to try when the one above fails to load. A Commons file can be renamed and
+    # an Apple touch icon is a convention, not a guarantee — without the chain a single 404 drops
+    # the outlet to a generic glyph even though it publishes a perfectly good icon one step down.
+    publisherLogoFallbacks: Optional[list[str]] = None
 
 
 class ExplanationPartModel(BaseModel):
@@ -1534,6 +1538,10 @@ class PublisherProfileModel(BaseModel):
     publisherLogo: Optional[str] = None
     publisherLogoDark: Optional[str] = None
     publisherLogoSource: Optional[str] = None
+    # Ordered alternates to try when the one above fails to load. A Commons file can be renamed and
+    # an Apple touch icon is a convention, not a guarantee — without the chain a single 404 drops
+    # the outlet to a generic glyph even though it publishes a perfectly good icon one step down.
+    publisherLogoFallbacks: Optional[list[str]] = None
 
 
 class EstimateRequest(BaseModel):

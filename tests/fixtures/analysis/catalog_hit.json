@@ -27,9 +27,13 @@
     "publishedAt": "2026-07-18T12:00:00+00:00",
     "publisher": "AP",
     "publisherLean": 0.0,
-    "publisherLogo": "https://apnews.com/favicon.ico",
+    "publisherLogo": "https://apnews.com/apple-touch-icon.png",
     "publisherLogoDark": null,
-    "publisherLogoSource": "favicon",
+    "publisherLogoFallbacks": [
+      "https://apnews.com/apple-touch-icon-precomposed.png",
+      "https://apnews.com/favicon.ico"
+    ],
+    "publisherLogoSource": "site-icon",
     "readingMinutes": 2,
     "register": "reporting",
     "topic": "Politics",

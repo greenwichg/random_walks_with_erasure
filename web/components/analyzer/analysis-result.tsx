@@ -372,7 +372,7 @@ function NextArticleBlock({
       </div>
       <p className="text-sm font-medium leading-snug">{a.headline}</p>
       <div className="flex flex-wrap items-center gap-2">
-        <PublisherBadge name={a.publisher} lean={a.publisherLean} logo={a.publisherLogo} />
+        <PublisherBadge name={a.publisher} lean={a.publisherLean} logo={a.publisherLogo} logoFallbacks={a.publisherLogoFallbacks} />
         {typeof a.lean === "number" ? <LeanBadge lean={a.lean} bucket={a.leanBucket} /> : null}
       </div>
       {next.explanation ? <ExplanationLines explanation={next.explanation} compact /> : null}

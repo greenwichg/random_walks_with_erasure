@@ -124,19 +124,37 @@ def _host(url) -> str:
         return ""
 
 
+#: Site-root icon paths, LARGEST FIRST. `favicon.ico` is a 16-32px browser chrome icon; blown up
+#: to a 48px avatar box on a 2x display it is a 4.5x upscale, which is the blurry mark the
+#: publisher profile used to show for every outlet enrichment had not reached. The Apple touch
+#: icons are conventionally 180x180 and are the highest-resolution asset a site reliably exposes at
+#: a predictable path — no HTML parsing, no third-party icon service, still the publisher's own
+#: asset. Each is only a CANDIDATE: any of them may 404, so the client walks the list.
+_ICON_PATHS = ("apple-touch-icon.png", "apple-touch-icon-precomposed.png", "favicon.ico")
+
+
+def _host_icons(host: str) -> list:
+    return [f"https://{host}/{p}" for p in _ICON_PATHS]
+
+
 def pick_best_logo(publisher, url=None, *, enriched=None) -> dict:
-    """A publisher logo, best source first:
+    """A publisher logo, best source first, plus the ordered alternates to try if it fails.
 
     1. a **curated** override (with an optional dark-mode variant), keyed by canonical name;
     2. an **enriched** logo from Wikimedia Commons / Wikipedia, passed in as ``(url, source)`` by
        the caller that owns the metadata cache — this module stays free of store and network;
-    3. the publisher's own **favicon**, derived from the article URL's domain (privacy-preserving:
-       the publisher's own asset, no third party, no download).
+    3. the publisher's own **site icons**, derived from the article URL's domain
+       (privacy-preserving: the publisher's own asset, no third party, no download).
 
-    Enrichment sits ABOVE the favicon rather than below it because a favicon is a 16px browser icon
-    that frequently 404s, while a Commons logo file is the outlet's actual mark — the favicon is a
-    last resort, not a preference. It stays BELOW curation because a hand-picked logo is a decision
-    somebody made on purpose. All-null when nothing is known."""
+    Enrichment sits ABOVE the site icons rather than below because a Commons logo file is the
+    outlet's actual mark at usable resolution, while a site icon is browser chrome. It stays BELOW
+    curation because a hand-picked logo is a decision somebody made on purpose.
+
+    ``publisherLogoFallbacks`` is what makes the tiers survive contact with reality: an enriched
+    URL can 404 (a Commons file gets renamed), and an Apple touch icon is a convention rather than
+    a guarantee. Returning one URL meant a single 404 dropped the outlet straight to a generic
+    building glyph; returning the chain lets the client degrade one step at a time and only reach
+    the glyph when the publisher genuinely exposes nothing. All-null when nothing is known."""
     name = (publisher or "").strip()
     canon = None
     if outlet_registry is not None:
@@ -144,17 +162,22 @@ def pick_best_logo(publisher, url=None, *, enriched=None) -> dict:
             canon = outlet_registry.canonical(name)
         except Exception:
             canon = None
+    host = _host(url)
+    icons = _host_icons(host) if host else []
+
     curated = _CURATED_LOGOS.get((canon or name).lower())
     if curated:
         return {"publisherLogo": curated.get("logo"), "publisherLogoDark": curated.get("logoDark"),
-                "publisherLogoSource": "registry"}
+                "publisherLogoSource": "registry", "publisherLogoFallbacks": icons or None}
     if enriched:
         logo, source = enriched
         if _abs(logo):
             return {"publisherLogo": logo, "publisherLogoDark": None,
-                    "publisherLogoSource": source}
-    host = _host(url)
-    if host:
-        return {"publisherLogo": f"https://{host}/favicon.ico", "publisherLogoDark": None,
-                "publisherLogoSource": "favicon"}
-    return {"publisherLogo": None, "publisherLogoDark": None, "publisherLogoSource": None}
+                    "publisherLogoSource": source, "publisherLogoFallbacks": icons or None}
+    if icons:
+        # The highest-resolution site icon leads; the 16px favicon is the last thing tried, never
+        # the first thing shown.
+        return {"publisherLogo": icons[0], "publisherLogoDark": None,
+                "publisherLogoSource": "site-icon", "publisherLogoFallbacks": icons[1:] or None}
+    return {"publisherLogo": None, "publisherLogoDark": None, "publisherLogoSource": None,
+            "publisherLogoFallbacks": None}

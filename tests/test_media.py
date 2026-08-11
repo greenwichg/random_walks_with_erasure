@@ -59,10 +59,49 @@ def test_pick_story_hero_priority():
     assert media.pick_story_hero([{"image": None}, {"image": None}]) is None
 
 
-def test_pick_best_logo_favicon_from_domain():
+def test_pick_best_logo_leads_with_the_highest_resolution_site_icon():
+    """`favicon.ico` is a 16-32px browser-chrome icon. Leading with it meant the publisher profile
+    upscaled it 4.5x into a 36px box — a blurry mark on every outlet enrichment had not reached.
+    The Apple touch icon is conventionally 180x180 at a predictable path, so it leads and the
+    favicon becomes the last resort it always should have been."""
     logo = media.pick_best_logo("Fox News", "https://www.foxnews.com/politics/x")
-    assert logo["publisherLogo"] == "https://www.foxnews.com/favicon.ico" and logo["publisherLogoSource"] == "favicon"
+    assert logo["publisherLogo"] == "https://www.foxnews.com/apple-touch-icon.png"
+    assert logo["publisherLogoSource"] == "site-icon"
+    assert logo["publisherLogoFallbacks"][-1] == "https://www.foxnews.com/favicon.ico", (
+        "the favicon is still offered — it is a fallback now, not the first thing shown")
     assert media.pick_best_logo("Unknown", None)["publisherLogo"] is None
+
+
+def test_the_fallback_chain_is_ordered_largest_first_and_never_empty_handed():
+    """An Apple touch icon is a convention, not a guarantee. Every candidate can 404, so the
+    client needs the whole chain — one URL meant a single miss dropped the outlet to a generic
+    glyph even when it published a perfectly usable icon one step down."""
+    chain = media.pick_best_logo("X", "https://ex.example/a")
+    urls = [chain["publisherLogo"], *chain["publisherLogoFallbacks"]]
+    assert urls == ["https://ex.example/apple-touch-icon.png",
+                    "https://ex.example/apple-touch-icon-precomposed.png",
+                    "https://ex.example/favicon.ico"]
+    assert len(set(urls)) == len(urls), "a duplicate would be a wasted request on the way down"
+
+
+def test_an_enriched_logo_still_wins_but_keeps_the_site_icons_beneath_it():
+    """A Commons file is the outlet's actual mark at usable resolution, so it leads. It can also
+    be renamed, and before the chain existed that 404 fell straight past every icon the publisher
+    hosts to the glyph."""
+    got = media.pick_best_logo("Fox News", "https://www.foxnews.com/x",
+                               enriched=("https://commons.example/Fox.svg", "wikimedia"))
+    assert got["publisherLogo"] == "https://commons.example/Fox.svg"
+    assert got["publisherLogoSource"] == "wikimedia"
+    assert got["publisherLogoFallbacks"][0] == "https://www.foxnews.com/apple-touch-icon.png"
+
+
+def test_a_publisher_with_no_url_offers_nothing_rather_than_a_guess():
+    """No host means no icon path can be constructed. An empty chain is the honest answer; the
+    client renders the glyph, which is what "we have no mark for this outlet" looks like."""
+    got = media.pick_best_logo("Nowhere Gazette", None)
+    assert got["publisherLogo"] is None and got["publisherLogoFallbacks"] is None, (
+        "absent, not an empty list — an empty list is a value the response model would emit on "
+        "every article, inventing a field the service never produced")
 
 
 # --------------------------------------------------------------------------- #
@@ -117,7 +156,8 @@ def test_media_stored_and_serialised_with_logo():
     assert row["image"] == "https://foxnews.com/i.jpg" and row["imageWidth"] == 1000
     a = discover.feed_article_to_article(st.list_feed_articles(limit=1)[0])
     assert a["image"] == "https://foxnews.com/i.jpg" and a["imageWidth"] == 1000
-    assert a["publisherLogo"] == "https://foxnews.com/favicon.ico"
+    assert a["publisherLogo"] == "https://foxnews.com/apple-touch-icon.png"
+    assert "https://foxnews.com/favicon.ico" in a["publisherLogoFallbacks"]
 
 
 def test_media_survives_repoll_and_backfills():

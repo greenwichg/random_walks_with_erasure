@@ -177,6 +177,10 @@ export interface PublisherProfile {
   coCoverage?: { sharedStories: number; publishers: { publisher: string; stories: number }[] };
   recent: Article[];
   publisherLogo?: string;
+  /** Ordered alternates to try when the logo above fails to load or resolves too small for its
+   *  box. A Commons file can be renamed and an Apple touch icon is a convention, not a guarantee,
+   *  so one URL meant a single 404 dropped the outlet to a generic glyph. */
+  publisherLogoFallbacks?: string[];
   publisherLogoDark?: string;
   /** Where the logo came from: "registry" (curated), "wikimedia"/"wikipedia" (enriched), or
    *  "favicon" (the publisher's own domain asset). */
@@ -445,6 +449,10 @@ export interface Article {
   imageSource?: string;
   imageAttribution?: string;
   publisherLogo?: string;
+  /** Ordered alternates to try when the logo above fails to load or resolves too small for its
+   *  box. A Commons file can be renamed and an Apple touch icon is a convention, not a guarantee,
+   *  so one URL meant a single 404 dropped the outlet to a generic glyph. */
+  publisherLogoFallbacks?: string[];
   publisherLogoDark?: string;
   publisherLogoSource?: string;
 }

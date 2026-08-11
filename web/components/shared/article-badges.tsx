@@ -2,8 +2,9 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { FileText, MessageSquareQuote, Gauge, Building2 } from "lucide-react";
+import { FileText, MessageSquareQuote, Gauge } from "lucide-react";
 import type { Article, EmotionShare, Lean, LeanBucket, Register } from "@/types/domain";
+import { PublisherLogo } from "@/components/shared/publisher-logo";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { EMOTION_META } from "@/lib/metrics";
@@ -42,27 +43,21 @@ export function LeanBadge({
  *  No dot when the house lean is unknown (unrated outlet — L2.2): absence, never a guessed hue.
  *  The name links to the Publisher Intelligence profile — every publisher mention in the app is
  *  a doorway to its counted profile, not a dead label. */
-export function PublisherBadge({ name, lean, logo }: { name: string; lean?: Lean | null; logo?: string }) {
+export function PublisherBadge({
+  name, lean, logo, logoFallbacks,
+}: { name: string; lean?: Lean | null; logo?: string; logoFallbacks?: string[] }) {
   const bucket = lean == null ? null : leanBucket(lean);
   const color = bucket ? `hsl(var(--${bucket}))` : "hsl(var(--muted-foreground))";
-  const [logoOk, setLogoOk] = React.useState(true);
-  React.useEffect(() => setLogoOk(true), [logo]);
   return (
     <span className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-      {logo && logoOk ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={logo}
-          alt=""
-          width={14}
-          height={14}
-          loading="lazy"
-          onError={() => setLogoOk(false)}
-          className="h-3.5 w-3.5 rounded-sm object-contain"
-        />
-      ) : (
-        <Building2 className="h-3.5 w-3.5" />
-      )}
+      {/* 14px: a favicon is genuinely adequate here, which is why the too-small rule is
+          box-relative rather than a blanket ban on small icons. */}
+      <PublisherLogo
+        logo={logo}
+        fallbacks={logoFallbacks}
+        sizePx={14}
+        className="h-3.5 w-3.5 rounded-sm"
+      />
       <Link
         href={`/publishers/${encodeURIComponent(name)}`}
         onClick={(e) => e.stopPropagation()}

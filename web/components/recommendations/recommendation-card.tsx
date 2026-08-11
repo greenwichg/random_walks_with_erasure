@@ -103,7 +103,7 @@ export function RecommendationCard({
       {/* headline + publisher + topic */}
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <PublisherBadge name={article.publisher} lean={article.publisherLean} logo={article.publisherLogo} />
+          <PublisherBadge name={article.publisher} lean={article.publisherLean} logo={article.publisherLogo} logoFallbacks={article.publisherLogoFallbacks} />
           {article.topic && (
             <>
               <span className="text-xs text-muted-foreground">·</span>

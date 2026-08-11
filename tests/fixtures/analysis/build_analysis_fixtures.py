@@ -16,6 +16,7 @@ an intentional contract change::
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import sys
 
@@ -147,6 +148,14 @@ def build_authed_from_fresh_store() -> "dict[str, dict]":
 
 
 def main() -> None:
+    # The seed is pinned to a fixed calendar date, but clustering draws candidates from a ROLLING
+    # window (``story_service.scan_days``, default 6 days). Under pytest ``tests/conftest.py`` opens
+    # that window for the whole session; run standalone it stays at the default, the seed ages out,
+    # and every case silently regenerates with `story.matched: false` and a null coverageComparison
+    # — goldens that look plausible, commit cleanly, and delete the contract this file exists to
+    # anchor. The window belongs to the regeneration, so set it here rather than trusting whoever
+    # runs the documented command to remember an env var.
+    os.environ.setdefault("RWE_STORIES_SCAN_DAYS", "36500")
     cases = build_from_fresh_store()
     assert set(cases) == set(CASES)
     authed = build_authed_from_fresh_store()

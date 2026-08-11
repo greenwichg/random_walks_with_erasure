@@ -45,7 +45,7 @@ export function DiscoverCard({
       <ArticleImage src={article.image} alt={article.headline} priority={priority} className="mb-3" />
 
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <PublisherBadge name={article.publisher} lean={article.publisherLean} logo={article.publisherLogo} />
+        <PublisherBadge name={article.publisher} lean={article.publisherLean} logo={article.publisherLogo} logoFallbacks={article.publisherLogoFallbacks} />
         {article.topic && (
           <>
             <span className="text-xs text-muted-foreground">·</span>
