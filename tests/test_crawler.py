@@ -12,6 +12,7 @@ page as an article, or re-fetching what the catalog already holds.
 
 import json
 import pathlib
+import re
 import sys
 
 import pytest
@@ -526,6 +527,55 @@ def test_the_poc_covers_at_least_three_publishers_with_more_than_one_discovery_s
     configs = crawler.load_config()
     assert len(configs) >= 3
     assert len({tuple(s.kind for s in c.sources) for c in configs}) > 1
+
+
+#: URL shapes observed on the LIVE sites by verify_crawler_config.py (2026-08-15). These are real
+#: evidence, not invented examples, and they exist because BBC's configured pattern matched 3% of
+#: what BBC actually publishes — the crawler's quietest failure mode, since every gate reports
+#: healthy while it ingests nothing.
+_LIVE_URL_SHAPES = {
+    "BBC": (
+        # accept: the current scheme, and the legacy numeric one that is still live
+        ["https://www.bbc.co.uk/news/articles/c9982znvyk4o?at_medium=RSS&at_campaign=rss",
+         "https://www.bbc.co.uk/news/articles/cr59jg1ypd3o",
+         "https://www.bbc.co.uk/news/world-europe-12345678"],
+        # reject: section indexes and chrome the section page links to
+        ["https://www.bbc.co.uk/news", "https://www.bbc.co.uk/news/world",
+         "https://www.bbc.co.uk/sport", "https://www.bbc.co.uk/news/articles/"],
+    ),
+    "Associated Press": (
+        ["https://apnews.com/article/senate-budget-vote-a1b2c3"],
+        ["https://apnews.com/newsletter/morning-wire/august-14-2026",
+         "https://apnews.com/photo-gallery/ugliest-dog-contest-photos-e5110fb3781f",
+         "https://apnews.com/hub/world-news"],
+    ),
+    "The Guardian": (
+        ["https://www.theguardian.com/world/2026/aug/15/some-headline-here"],
+        ["https://www.theguardian.com/world#maincontent",
+         "https://www.theguardian.com/email-newsletters",
+         "https://profile.theguardian.com/signin?INTCMP=x"],
+    ),
+}
+
+
+@pytest.mark.parametrize("publisher", sorted(_LIVE_URL_SHAPES))
+def test_the_shipped_pattern_matches_what_the_publisher_actually_publishes(publisher):
+    cfg = next(c for c in crawler.load_config() if c.publisher == publisher)
+    accept, reject = _LIVE_URL_SHAPES[publisher]
+    for url in accept:
+        assert cfg.pattern.search(url), f"{publisher}: should accept {url}"
+    for url in reject:
+        assert not cfg.pattern.search(url), f"{publisher}: should reject {url}"
+
+
+def test_bbc_accepts_the_current_article_scheme_not_only_the_legacy_one():
+    """The specific regression. `/news/[a-z-]*-?\\d{6,}` assumed `/news/world-europe-12345678`;
+    BBC now publishes `/news/articles/c9982znvyk4o`, which contains no run of digits at all — so
+    the old pattern rejected 97% of the newsroom while every gate reported healthy."""
+    cfg = next(c for c in crawler.load_config() if c.publisher == "BBC")
+    assert cfg.pattern.search("https://www.bbc.co.uk/news/articles/c9982znvyk4o")
+    assert not re.search(r"/news/[a-z-]*-?\d{6,}", "https://www.bbc.co.uk/news/articles/c9982znvyk4o"), (
+        "the old pattern really did miss this — the test is not asserting a tautology")
 
 
 def test_a_typo_in_the_config_is_rejected_rather_than_silently_defaulted(tmp_path):

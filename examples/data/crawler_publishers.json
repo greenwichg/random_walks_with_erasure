@@ -18,9 +18,19 @@
     "and one small non-profit newsroom (Texas Tribune) to check the framework is not tuned only for",
     "publishers with big infrastructure.",
     "",
-    "NOT VERIFIED AGAINST LIVE SITES. Every URL and pattern below is from public convention and",
-    "must be confirmed against each publisher's robots.txt and actual markup before any live run —",
-    "see docs/CRAWLER_DESIGN.md, 'What this POC has not proven'."
+    "Verified against the live sites on 2026-08-15 with verify_crawler_config.py: BBC, The Guardian,",
+    "Associated Press and Texas Tribune all allow our user-agent; NPR's robots.txt timed out and is",
+    "therefore refused by the fail-closed gate (unconfirmed — retry before concluding anything).",
+    "",
+    "BBC's article_pattern was WRONG on the first live run — 3% match. It assumed the legacy",
+    "/news/world-europe-12345678 form, but BBC now publishes /news/articles/<id> (e.g.",
+    "/news/articles/c9982znvyk4o). Both forms are live, so the pattern accepts both. A pattern that",
+    "matches almost nothing is the crawler's quietest failure: every gate reports healthy and it",
+    "ingests nothing forever, which is why verify_crawler_config.py treats a 0% match as a blocker.",
+    "",
+    "Texas Tribune's RSS emits feeds.texastribune.org/link/... redirect wrappers rather than article",
+    "URLs, so that rung yields nothing and the ladder falls through to the section page. Left in",
+    "place: it costs one request and starts working the day they fix the feed."
   ],
   "publishers": [
     {
@@ -32,7 +42,7 @@
         {"kind": "sitemap", "url": "https://www.bbc.co.uk/sitemaps/https-index-uk-news.xml"},
         {"kind": "section", "url": "https://www.bbc.co.uk/news"}
       ],
-      "article_pattern": "/news/[a-z-]*-?\\d{6,}",
+      "article_pattern": "/news/(articles/[a-z0-9]{8,}|[a-z-]+-\\d{6,})",
       "max_urls": 60,
       "min_interval": 2.0,
       "enabled": true
