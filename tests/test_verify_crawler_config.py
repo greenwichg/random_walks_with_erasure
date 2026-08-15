@@ -259,8 +259,14 @@ def test_verify_touches_no_store_or_ingest_symbols():
 
 
 def test_the_shipped_config_can_be_verified_at_all():
-    """Every enabled publisher must at least be loadable and lint-clean; the live answers come from
-    running this against the real sites."""
+    """Every enabled publisher must be loadable and lint-clean; the live answers come from running
+    this against the real sites.
+
+    Deliberately no count assertion. Pinning `len(configs) == 5` made adding a publisher fail a
+    test about verifiability, which says nothing about whether the config is verifiable — the
+    failure carries no information beyond "the number changed".
+    """
     configs = [c for c in crawler.load_config() if c.enabled]
-    assert len(configs) == 5
+    assert configs, "an empty config would make every other check here vacuous"
     assert crawler.lint_config(configs) == []
+    assert all(c.sources and c.article_pattern and c.domains for c in configs)

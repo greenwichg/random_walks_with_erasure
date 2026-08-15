@@ -555,6 +555,16 @@ _LIVE_URL_SHAPES = {
          "https://www.theguardian.com/email-newsletters",
          "https://profile.theguardian.com/signin?INTCMP=x"],
     ),
+    # HuffPost is UNVERIFIED against the live site — these shapes are convention, not observation,
+    # so this case pins intent rather than evidence. It still earns its place: it fails loudly if
+    # someone later widens the pattern into section or author pages.
+    "HuffPost": (
+        ["https://www.huffpost.com/entry/some-story-slug_n_1234abcd",
+         "https://www.huffingtonpost.com/entry/legacy-story-slug_n_9876"],
+        ["https://www.huffpost.com/news", "https://www.huffpost.com/entry/",
+         "https://www.huffpost.com/section/politics",
+         "https://www.huffpost.com/author/jane-doe"],
+    ),
 }
 
 

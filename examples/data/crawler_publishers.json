@@ -30,7 +30,13 @@
     "",
     "Texas Tribune's RSS emits feeds.texastribune.org/link/... redirect wrappers rather than article",
     "URLs, so that rung yields nothing and the ladder falls through to the section page. Left in",
-    "place: it costs one request and starts working the day they fix the feed."
+    "place: it costs one request and starts working the day they fix the feed.",
+    "",
+    "HuffPost was ADDED 2026-08-15 and is NOT YET VERIFIED against the live site. Its three URLs and",
+    "its article_pattern are public convention, exactly the state BBC was in when its pattern turned",
+    "out to match 3% of the newsroom. Run this before reading anything into its numbers:",
+    "  verify_crawler_config.py --publisher HuffPost      (WITHOUT --skip-tos — ToS posture matters)",
+    "Nothing here is wired into a poller: every publisher in this file is plan-mode only."
   ],
   "publishers": [
     {
@@ -83,6 +89,19 @@
       "article_pattern": "/article/[a-z0-9-]+",
       "max_urls": 40,
       "min_interval": 3.0,
+      "enabled": true
+    },
+    {
+      "publisher": "HuffPost",
+      "domains": ["huffpost.com", "huffingtonpost.com"],
+      "sources": [
+        {"kind": "rss", "url": "https://www.huffpost.com/section/front-page/feed"},
+        {"kind": "sitemap", "url": "https://www.huffpost.com/sitemaps/sitemap-google-news.xml"},
+        {"kind": "section", "url": "https://www.huffpost.com/news"}
+      ],
+      "article_pattern": "/entry/[a-z0-9][a-z0-9-]{7,}",
+      "max_urls": 60,
+      "min_interval": 2.0,
       "enabled": true
     },
     {
