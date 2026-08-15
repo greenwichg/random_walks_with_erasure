@@ -1,0 +1,154 @@
+{
+  "_comment": [
+    "EXPERIMENT SET — 18 publishers not covered by our RSS/API feeds, spanning regions and",
+    "viewpoints. This file is NOT the shipped config (crawler_publishers.json) and nothing loads it",
+    "unless you pass --config. It exists so the experiment can run without changing what a deploy",
+    "would ship.",
+    "",
+    "PURPOSE: the first six publishers were almost entirely Anglo-American, and three of the four",
+    "with real volume (AP, BBC, HuffPost) block ClaudeBot and anthropic-ai by name. That may be an",
+    "industry norm or it may be an Anglo-American one. This set is the test — Europe, Asia, the",
+    "Middle East, Africa, Latin America and Oceania, with leans from -1 to +1.",
+    "",
+    "ROUND 1 IS DELIBERATELY SECTION-ONLY. Guessing 18 sitemap URLs would repeat the HuffPost",
+    "mistake at scale (2 of 3 guesses wrong). robots.txt DECLARES a publisher's sitemaps, and the",
+    "verifier reports them whatever we configure — so run the verifier first, read the declared",
+    "sitemap URLs out of its output, and fill them in for round 2. A section URL is the one thing",
+    "safe to guess: it is the homepage or a top-level news index.",
+    "",
+    "THE ARTICLE PATTERNS ARE GUESSES from public URL convention and have never been tested against",
+    "these sites. The verifier grades them: 0% is a blocker, >98% means it is not filtering, and the",
+    "healthy band so far has been 23-83%. Expect several to be wrong.",
+    "",
+    "Every publisher resolves to an outlet-registry canonical name, so discovered URLs would carry",
+    "the right identity and lean. Nothing here is wired into a poller; plan mode only."
+  ],
+  "publishers": [
+    {
+      "publisher": "Le Monde",
+      "domains": ["lemonde.fr"],
+      "sources": [{"kind": "section", "url": "https://www.lemonde.fr/international/"}],
+      "article_pattern": "/article/\\d{4}/\\d{2}/\\d{2}/",
+      "max_urls": 40, "min_interval": 3.0, "enabled": true
+    },
+    {
+      "publisher": "Frankfurter Allgemeine Zeitung",
+      "domains": ["faz.net"],
+      "sources": [{"kind": "section", "url": "https://www.faz.net/aktuell/politik/"}],
+      "article_pattern": "-\\d{6,}\\.html",
+      "max_urls": 40, "min_interval": 3.0, "enabled": true
+    },
+    {
+      "publisher": "El País",
+      "domains": ["elpais.com"],
+      "sources": [{"kind": "section", "url": "https://elpais.com/internacional/"}],
+      "article_pattern": "/\\d{4}-\\d{2}-\\d{2}/",
+      "max_urls": 40, "min_interval": 3.0, "enabled": true
+    },
+    {
+      "publisher": "Corriere della Sera",
+      "domains": ["corriere.it"],
+      "sources": [{"kind": "section", "url": "https://www.corriere.it/esteri/"}],
+      "article_pattern": "/\\d{2}_[a-z]+_\\d{2}/",
+      "max_urls": 40, "min_interval": 3.0, "enabled": true
+    },
+    {
+      "publisher": "NZZ",
+      "domains": ["nzz.ch"],
+      "sources": [{"kind": "section", "url": "https://www.nzz.ch/international"}],
+      "article_pattern": "-ld\\.\\d{5,}",
+      "max_urls": 40, "min_interval": 3.0, "enabled": true
+    },
+    {
+      "publisher": "Financial Times",
+      "domains": ["ft.com"],
+      "sources": [{"kind": "section", "url": "https://www.ft.com/world"}],
+      "article_pattern": "/content/[0-9a-f]{8}-[0-9a-f-]{10,}",
+      "max_urls": 40, "min_interval": 3.0, "enabled": true
+    },
+    {
+      "publisher": "Kyiv Independent",
+      "domains": ["kyivindependent.com"],
+      "sources": [{"kind": "section", "url": "https://kyivindependent.com/"}],
+      "article_pattern": "/[a-z0-9][a-z0-9-]{20,}",
+      "max_urls": 40, "min_interval": 3.0, "enabled": true
+    },
+    {
+      "publisher": "The Japan Times",
+      "domains": ["japantimes.co.jp"],
+      "sources": [{"kind": "section", "url": "https://www.japantimes.co.jp/news/"}],
+      "article_pattern": "/\\d{4}/\\d{2}/\\d{2}/",
+      "max_urls": 40, "min_interval": 3.0, "enabled": true
+    },
+    {
+      "publisher": "South China Morning Post",
+      "domains": ["scmp.com"],
+      "sources": [{"kind": "section", "url": "https://www.scmp.com/news"}],
+      "article_pattern": "/article/\\d{6,}",
+      "max_urls": 40, "min_interval": 3.0, "enabled": true
+    },
+    {
+      "publisher": "The Straits Times",
+      "domains": ["straitstimes.com"],
+      "sources": [{"kind": "section", "url": "https://www.straitstimes.com/world"}],
+      "article_pattern": "/[a-z-]+/[a-z0-9][a-z0-9-]{20,}",
+      "max_urls": 40, "min_interval": 3.0, "enabled": true
+    },
+    {
+      "publisher": "Dawn",
+      "domains": ["dawn.com"],
+      "sources": [{"kind": "section", "url": "https://www.dawn.com/"}],
+      "article_pattern": "/news/\\d{6,}",
+      "max_urls": 40, "min_interval": 3.0, "enabled": true
+    },
+    {
+      "publisher": "Al Jazeera",
+      "domains": ["aljazeera.com"],
+      "sources": [{"kind": "section", "url": "https://www.aljazeera.com/news/"}],
+      "article_pattern": "/\\d{4}/\\d{1,2}/\\d{1,2}/",
+      "max_urls": 40, "min_interval": 3.0, "enabled": true
+    },
+    {
+      "publisher": "The Times of Israel",
+      "domains": ["timesofisrael.com"],
+      "sources": [{"kind": "section", "url": "https://www.timesofisrael.com/"}],
+      "article_pattern": "/[a-z0-9][a-z0-9-]{20,}/",
+      "max_urls": 40, "min_interval": 3.0, "enabled": true
+    },
+    {
+      "publisher": "Daily Maverick",
+      "domains": ["dailymaverick.co.za"],
+      "sources": [{"kind": "section", "url": "https://www.dailymaverick.co.za/"}],
+      "article_pattern": "/article/\\d{4}-\\d{2}-\\d{2}-",
+      "max_urls": 40, "min_interval": 3.0, "enabled": true
+    },
+    {
+      "publisher": "Premium Times",
+      "domains": ["premiumtimesng.com"],
+      "sources": [{"kind": "section", "url": "https://www.premiumtimesng.com/"}],
+      "article_pattern": "/\\d{6,}-[a-z0-9-]+\\.html",
+      "max_urls": 40, "min_interval": 3.0, "enabled": true
+    },
+    {
+      "publisher": "Clarín",
+      "domains": ["clarin.com"],
+      "sources": [{"kind": "section", "url": "https://www.clarin.com/"}],
+      "article_pattern": "/[a-z0-9][a-z0-9-]{15,}_0_[A-Za-z0-9]+\\.html",
+      "max_urls": 40, "min_interval": 3.0, "enabled": true
+    },
+    {
+      "publisher": "CBC News",
+      "domains": ["cbc.ca"],
+      "sources": [{"kind": "section", "url": "https://www.cbc.ca/news"}],
+      "article_pattern": "-1\\.\\d{6,}",
+      "max_urls": 40, "min_interval": 3.0, "enabled": true
+    },
+    {
+      "publisher": "ABC Australia",
+      "domains": ["abc.net.au"],
+      "sources": [{"kind": "section", "url": "https://www.abc.net.au/news"}],
+      "article_pattern": "/news/\\d{4}-\\d{2}-\\d{2}/",
+      "max_urls": 40, "min_interval": 3.0, "enabled": true
+    }
+  ]
+}

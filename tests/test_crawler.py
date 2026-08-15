@@ -588,6 +588,40 @@ def test_bbc_accepts_the_current_article_scheme_not_only_the_legacy_one():
         "the old pattern really did miss this — the test is not asserting a tautology")
 
 
+def test_the_experiment_config_is_loadable_and_lint_clean():
+    """The expanded shadow set (`crawler_publishers_experiment.json`) is not shipped config —
+    nothing loads it without --config — but it is committed, so a broken entry would sit there
+    silently until someone ran the experiment and lost an hour to it.
+
+    It is checked for the same things as the real config, and NOT for a publisher count: pinning
+    the number would fail on the next addition while telling you nothing about validity.
+    """
+    path = ROOT / "examples" / "data" / "crawler_publishers_experiment.json"
+    configs = crawler.load_config(str(path))
+    assert configs and crawler.lint_config(configs) == []
+
+
+def test_every_experiment_publisher_is_outside_our_configured_rss_feeds():
+    """The experiment's premise is publishers we do NOT already cover. An outlet already arriving
+    by RSS would report a low marginal value that says something about our feed list rather than
+    about the crawler, which is the confound this whole exercise exists to avoid."""
+    import outlet_registry
+    reg = outlet_registry.default_registry()
+    feeds = (ROOT / "deploy" / "rss_feeds.example.txt").read_text(encoding="utf-8")
+    covered = set()
+    for line in feeds.splitlines():
+        line = line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        name = line.split("|", 1)[0] if "|" in line else line
+        canon = reg.canonical(name.strip())
+        if canon:
+            covered.add(canon)
+    path = ROOT / "examples" / "data" / "crawler_publishers_experiment.json"
+    overlap = {c.publisher for c in crawler.load_config(str(path))} & covered
+    assert not overlap, f"already covered by RSS: {sorted(overlap)}"
+
+
 def test_a_typo_in_the_config_is_rejected_rather_than_silently_defaulted(tmp_path):
     """`max_url` taking the default of `max_urls` is how a crawler ends up looking healthy while
     doing the wrong thing."""
