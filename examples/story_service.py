@@ -528,14 +528,22 @@ def use_idf() -> bool:
 
 
 def link_quorum() -> float:
-    """Cluster-aware linkage strength — OFF (0.0 = single linkage), the measured production
-    baseline. Set ``RWE_CLUSTER_LINK_QUORUM=0.3`` to require 30% of cross-pairs to agree.
+    """Cluster-aware linkage strength — **0.2 in production**, adopted 2026-08-03
+    (``docs/STORY_CLUSTER_MERGES.md``; the deploy compose defaults it, so a lost env-file line no
+    longer reverts it). ``RWE_CLUSTER_LINK_QUORUM`` overrides; UNSET falls back to
+    ``clustering.DEFAULT_LINK_QUORUM`` = 0.0 = single linkage — which is what a container gets
+    when it carries none of the deploy's environment. That divergence is not hypothetical: a
+    backup-profile container (no ``environment:`` block) ran the audit on 2026-08-16 and its
+    single-linkage numbers wore the "[PRODUCTION BASELINE]" tag until the missing quorum/repair/
+    merge tags gave them away. ``audit_clustering_change.py`` now warns on that state. (An earlier
+    revision of this docstring called 0.0 "the measured production baseline" — already stale when
+    it helped misdirect that run.)
 
-    Deliberately shipped disabled. It targets the one clustering failure we have direct production
-    evidence for — the mega-cluster that grew 194 → 208 → 318 while the corpus grew 23%, whose
-    geoCoherence is 0.62 with members located across twelve countries — but the last change that
-    tightened matching on equally sound reasoning (``use_idf``) cost 10.5% of covered articles and
-    was reverted. The bar was set before that measurement and it applies here unchanged:
+    It targets single-linkage CHAINING, the one clustering failure with direct production
+    evidence: the mega-cluster grew 194 → 208 → 318 while the corpus grew 23%, geoCoherence 0.62,
+    members located across twelve countries. The last change that tightened matching on equally
+    sound reasoning (``use_idf``) cost 10.5% of covered articles and was reverted; the bar was set
+    before that measurement and applies to every candidate unchanged:
 
         adopt   : largest cluster well down, droppedOut ≤ 5% of covered articles, no story-count fall
         reject  : droppedOut > 10%, or total story count falls (the min_publishers cliff — splitting
@@ -543,8 +551,22 @@ def link_quorum() -> float:
                   BOTH of which are then dropped, so oversplitting deletes stories rather than
                   merely shrinking them)
 
-    Measure a candidate with ``examples/audit_clustering_change.py --link-quorum 0.3`` before
-    enabling it anywhere."""
+    Re-baselined 2026-08-16 (X0) against 28,437 live articles with the full production stack
+    (quorum 0.2, repair 0.5, merge 0.33): 1,541 stories, largest cluster 64, 6,260 covered,
+    4/73 independently bad at mean 0.924. The same-day counterfactual — the catalog re-clustered
+    on the library fallbacks (single linkage, no repair, no merge; the wire/aggregator exclusions
+    fail closed and were identical; 28,464 articles at its run) — regrew the blob to **787
+    articles**, a Colombian
+    earthquake, the Congo Ebola outbreak and a Zimbabwe ferry capsizing under one White House
+    staffing headline. The setting is load-bearing, not vestigial. And the knob is spent upward:
+    0.3 shaved the largest cluster 64 → 62 for 3.0% of covered articles dropped and a bad-cluster
+    count rising 4 → 5 (fails the "well down" prong); 0.4 dropped 5.6% — over the bar — and
+    shrank the scored set 73 → 58. Both measured, neither adopted. If the blob returns, the next
+    lever is what the linkage graph is made of, not this threshold.
+
+    Measure any candidate with ``examples/audit_clustering_change.py --link-quorum <q>`` — from a
+    container that carries the deploy environment (``dc run --rm -T api …``), or the baseline it
+    prints is fiction."""
     v = os.environ.get("RWE_CLUSTER_LINK_QUORUM", "").strip()
     try:
         q = float(v)
@@ -579,7 +601,8 @@ def stable_ids() -> bool:
 
 
 def merge_similarity() -> float:
-    """Second-pass duplicate merge — OFF. Set ``RWE_STORY_MERGE_SIM=0.33`` to enable.
+    """Second-pass duplicate merge — **0.33 in production** (deploy compose default;
+    ``RWE_STORY_MERGE_SIM`` overrides, and UNSET falls back to 0.0 = off).
 
     Targets the one defect axis nothing shipped so far touches: RECALL. Measured on the live
     catalog, 22 duplicated events across 45 stories hold 172 articles (4.3% of covered), and the
@@ -587,8 +610,10 @@ def merge_similarity() -> float:
     and "…gunfire erupts near Seattle" share ONE token against a floor of three. No linkage rule
     reaches that; only richer text does.
 
-    Shipped disabled because a merge pass is precisely the operation that built the mega-cluster.
-    The guards are in ``_merge_duplicates``; the bar for turning it on is measured, not argued:
+    First shipped disabled, because a merge pass is precisely the operation that built the
+    mega-cluster; the 2026-08-16 re-baseline shows it living inside its bars in production
+    (largest cluster 64 against the ~120 ceiling, 4/73 bad). The guards are in
+    ``_merge_duplicates``; the bar it must hold is measured, not argued:
 
         adopt   : largest cluster stays under ~120, mean actionable coherence does not fall,
                   bad-cluster count does not rise, and the merged pairs read correctly by hand
@@ -652,7 +677,9 @@ def exclude_wire() -> bool:
 
 
 def repair_quorum() -> float:
-    """TARGETED cluster-aware linkage — OFF. Set ``RWE_STORY_REPAIR_QUORUM=0.3`` to enable.
+    """TARGETED cluster-aware linkage — **0.5 in production** (deploy compose default;
+    ``RWE_STORY_REPAIR_QUORUM`` overrides, and UNSET falls back to 0.0 = off, so an environment
+    without the deploy's variables silently loses the repair pass).
 
     Applies the quorum rule only to clusters ``_cluster_trust`` has already condemned, instead of
     to the whole catalog. Measured on the live catalog (16,857 articles), a GLOBAL quorum is the
@@ -670,7 +697,7 @@ def repair_quorum() -> float:
     So this variant restricts the stricter rule to where that signal already objects. On the same
     catalog that is 3 clusters holding 380 articles (9.1% of covered), which bounds the worst case:
     every other story is byte-identical to production. Measure with
-    ``audit_clustering_change.py --repair-quorum 0.3`` before enabling it."""
+    ``audit_clustering_change.py --repair-quorum <q>`` before changing it anywhere."""
     v = os.environ.get("RWE_STORY_REPAIR_QUORUM", "").strip()
     try:
         q = float(v)

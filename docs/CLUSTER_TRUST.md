@@ -365,6 +365,19 @@ earliest-published member and the chain keeps absorbing earlier bridging article
 anchored to that same member, so **the mega-cluster's id churns as it grows** and links to it go
 stale. That is a second, previously unrecorded cost of the defect.
 
+**Resolved (2026-08-03), re-measured (2026-08-16).** The linkage work this section promoted
+shipped as `RWE_CLUSTER_LINK_QUORUM=0.2` with `RWE_STORY_REPAIR_QUORUM=0.5` and
+`RWE_STORY_MERGE_SIM=0.33` (adoption record: `docs/STORY_CLUSTER_MERGES.md`). The X0 re-baseline
+against 28,437 live articles measured the largest cluster at **64 of 6,260 covered — a 1.0%
+share**, far under both triggers. The monitors stay armed, because the defect is suppressed by
+configuration rather than gone: the same-day counterfactual — the catalog re-clustered WITHOUT
+the deploy's clustering environment (single linkage, no repair, no merge; 28,464 articles at its
+run) — regrew the blob to **787 articles (11.7% of covered)**, holding a Colombian earthquake, the Congo Ebola
+outbreak and a Zimbabwe ferry capsizing under one White House staffing headline. Tightening the
+quorum further buys nothing: 0.3 shaved the largest cluster 64 → 62 while dropping 3.0% of
+covered articles and raising the bad-cluster count 4 → 5; 0.4 dropped 5.6% (over the 5% bar) and
+shrank the scored set 73 → 58. Both measured, neither adopted.
+
 ## Configuration
 
 | variable | default | effect |
@@ -372,8 +385,8 @@ stale. That is a second, previously unrecorded cost of the defect.
 | `RWE_STORY_COHERENCE_FLOOR` | `0.7` | geoCoherence below which a cluster is `low` (needs 4+ located members) |
 | `RWE_STORY_UNVERIFIED_SIZE` | `50` | size above which having no score is notable |
 | `RWE_STORY_TRUST_RANKING` | on | `0` restores pure size ordering |
-| `RWE_CLUSTER_LINK_QUORUM` | `0.0` | GLOBAL cross-pair fraction required to merge (`0` = single linkage) — measured and rejected |
-| `RWE_STORY_REPAIR_QUORUM` | `0.0` | TARGETED: same rule, condemned clusters only |
+| `RWE_CLUSTER_LINK_QUORUM` | `0.2` (deploy) | GLOBAL cross-pair fraction required to merge (`0` = single linkage). An earlier revision of this row said "measured and rejected" — that predates the 2026-08-03 adoption (`docs/STORY_CLUSTER_MERGES.md`). The library fallback when the variable is UNSET is still `0.0`, so a container without the deploy env silently reverts to single linkage |
+| `RWE_STORY_REPAIR_QUORUM` | `0.5` (deploy) | TARGETED: same rule, condemned clusters only. Library fallback when unset: `0.0` |
 
 ## Caveats, stated rather than buried
 
