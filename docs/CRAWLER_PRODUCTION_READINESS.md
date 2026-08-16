@@ -105,6 +105,49 @@ concentrated in Q1 and Q2 — a blanket "no automated access" or "no commercial 
 the content itself. Q4 is the cheapest path to certainty for any publisher whose terms are
 ambiguous.
 
+## 4a. Classification rubric
+
+Turn the five answers into exactly one verdict per publisher. Record the clause you relied on —
+a verdict without a quotation is not reviewable by the next person.
+
+| Verdict | When | Consequence |
+|---|---|---|
+| **DO NOT CRAWL** | ToS prohibits automated access or crawling (Q1 = yes), **or** prohibits commercial use of content/metadata (Q2 = yes), **or** the publisher has already refused us technically (403, robots block) | Remove from config. Add to the excluded list with the reason, which is pinned by a test. Do not seek permission unless the business decides to — a published prohibition is an answer. |
+| **NEEDS PERMISSION** | Terms are silent, ambiguous, or arguably restrictive; **or** no ToS exists at all; **or** a licensing/syndication contact exists (Q4) and terms don't clearly permit | Do not crawl. Write to the contact describing the §1 narrowing. Reclassify on their reply. |
+| **ALLOW** | Terms are readable and clearly permit automated access to public pages **and** do not restrict the §1 use, **and** our attribution satisfies Q3 | Eligible for the staged rollout. Still behind `RWE_CRAWL_ENABLED`, still one publisher at a time. |
+
+Three rules for applying it:
+
+- **Silence is NEEDS PERMISSION, never ALLOW.** An absent prohibition is not a grant. This is the
+  same fail-closed reading the robots gate takes, and the reason the crawler skips a publisher whose
+  robots.txt it cannot read.
+- **A technical refusal outranks a textual permission.** A 403 is the enforcing mechanism speaking;
+  a permissive ToS is the advisory one. That is why The Times of Israel is already excluded despite
+  robots.txt allowing us.
+- **Robots-layer PASS is not an input to this table.** All seven already passed it. It establishes
+  only that we are technically permitted to fetch, which is a different question from whether we are
+  permitted to use what we fetch.
+
+### Current state of the review
+
+| Publisher | Robots layer (verified) | ToS layer | Verdict |
+|---|---|---|---|
+| Kyiv Independent | PASS — readable, allows us, no AI-bot block | **not read** | **pending** |
+| SCMP | PASS — plus `Crawl-delay: 10s`, honoured | **not read** | **pending** |
+| The Straits Times | PASS — plus `Crawl-delay: 10s`, honoured | **not read** | **pending** |
+| Dawn | PASS | **not read** | **pending** |
+| Daily Maverick | PASS | **not read** | **pending** |
+| Premium Times | PASS | **not read** | **pending** |
+| Clarín | PASS | **not read** | **pending** |
+
+No publisher has been classified. The robots column is measured evidence from live runs; the ToS
+column is empty because nobody has opened the documents yet.
+
+**A guessed verdict is worse than an empty one here.** A wrong DO NOT CRAWL costs a publisher we
+could have used. A wrong ALLOW authorises crawling someone who forbade it, in a product that
+displays their name — and it would be recorded as a completed review, so nobody would look again.
+That asymmetry is why this table stays blank until the documents are read.
+
 ## 5. SCMP — works, but wasteful
 
 SCMP declares **no news sitemap**. `robots.txt` names `/sitemap/sitemap.xml` and
@@ -132,6 +175,32 @@ Three options, in order of preference:
 
 **Recommendation: option 1, bundled with the permission request.** Do not ship SCMP on option 3
 without at least having asked.
+
+### Does it need optimising before production? Yes — and the deciding measurement does not exist yet
+
+The cost is real and bounded: 6 fetches (the full per-publisher budget), ~20,000 sitemap entries
+transferred and parsed, 3.5% kept, and ~60 seconds of mandated waiting per cycle from honouring
+their 10s `Crawl-delay` six times. SCMP is the only publisher where the budget binds completely.
+
+Two candidate optimisations, and **neither can be chosen on the evidence we have**:
+
+- **Cut `max_fetches` for SCMP.** If most of the 690 recent URLs come from the first one or two
+  children, dropping to 2 removes 4 fetches and ~13,000 parsed entries at no cost.
+- **Early-exit once a child yields nothing recent.** Children are sorted newest-first by `<lastmod>`,
+  so in principle once one falls entirely outside the window the rest are older. **This reasoning is
+  not safe as stated**: `lastmod` is when the sitemap *file* changed, not the age of its newest
+  article, so a regenerated archive can carry a recent `lastmod` over old contents. Sorted order is
+  a good heuristic for which child to try first; it is not proof of monotonic content age.
+
+Both turn on the same missing number: **recent yield per child**. The report aggregates across
+children, so we cannot currently tell whether SCMP's 690 are concentrated in one child or spread
+across all six. Instrumenting per-child yield is a small change to `CrawlReport`, and it is the
+prerequisite for choosing between the two.
+
+**Sequence:** ask SCMP about a news sitemap first (§5 option 1) — a positive answer makes both
+optimisations moot, and the question is already going in the permission letter. Instrument per-child
+yield only if the answer is no. Do not tune `max_fetches` by guesswork; a blind cut could drop the
+child that carries most of the recent articles and would look like the publisher going quiet.
 
 ## 6. The Japan Times — out of scope
 
