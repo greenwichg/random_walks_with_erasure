@@ -1,0 +1,111 @@
+{
+  "_comment": [
+    "ROUND 2 — the eight publishers from the experiment set that (a) publish no AI-crawler",
+    "restriction in robots.txt and (b) actually answered us. Not shipped config; nothing loads this",
+    "without --config.",
+    "",
+    "DROPPED from round 1, and why:",
+    "  Le Monde, FAZ, El Pais, Corriere, NZZ, FT, Al Jazeera, ABC Australia — block ClaudeBot and",
+    "      anthropic-ai by name. Technically our user-agent is not on their lists; we are not going",
+    "      to route around a published position on a technicality.",
+    "  The Times of Israel — allows us in robots.txt, then answers 403. A refusal in the mechanism",
+    "      that actually enforces outranks a permission in the one that does not.",
+    "  CBC News — robots.txt timed out twice. The gate fails closed, so it is out until it can be",
+    "      read; datacenter-IP blocking is the likely cause (NPR fails identically).",
+    "",
+    "EVERY SITEMAP URL BELOW WAS HARVESTED FROM THE PUBLISHER'S OWN robots.txt in round 1 — none is",
+    "a guess. That was the point of running round 1 section-only: guessing eighteen sitemap paths",
+    "would have produced a table of 404s that said nothing about the publishers.",
+    "",
+    "The sitemap rung leads and section is the fallback, because a section index states no",
+    "publication date. Round 1 returned 810 candidates with ZERO dated, so every one of them would",
+    "have ingested as missing metadata with no position in Latest and nothing for clustering to",
+    "order by. `dated` is now measured per publisher; that is the number this round exists to move.",
+    "",
+    "The Japan Times declares no sitemap in robots.txt, so it stays section-only and is expected to",
+    "report 0% dated — the control case for exactly the problem above.",
+    "",
+    "min_interval states the publisher's OWN Crawl-delay where they publish one: SCMP and The",
+    "Straits Times both ask for 10s. The crawler already honoured max(configured, declared) at",
+    "runtime, so this changes no behaviour — it stops the config from understating what we owe them."
+  ],
+  "publishers": [
+    {
+      "publisher": "Kyiv Independent",
+      "domains": ["kyivindependent.com"],
+      "sources": [
+        {"kind": "sitemap", "url": "https://kyivindependent.com/news-sitemap.xml"},
+        {"kind": "section", "url": "https://kyivindependent.com/"}
+      ],
+      "article_pattern": "/[a-z0-9][a-z0-9-]{20,}",
+      "max_urls": 200, "min_interval": 3.0, "enabled": true
+    },
+    {
+      "publisher": "The Japan Times",
+      "domains": ["japantimes.co.jp"],
+      "sources": [{"kind": "section", "url": "https://www.japantimes.co.jp/news/"}],
+      "article_pattern": "/\\d{4}/\\d{2}/\\d{2}/",
+      "max_urls": 200, "min_interval": 3.0, "enabled": true
+    },
+    {
+      "publisher": "South China Morning Post",
+      "domains": ["scmp.com"],
+      "sources": [
+        {"kind": "sitemap", "url": "https://www.scmp.com/sitemap/sitemap.xml"},
+        {"kind": "section", "url": "https://www.scmp.com/news"}
+      ],
+      "article_pattern": "/article/\\d{6,}",
+      "max_urls": 200, "min_interval": 10.0, "enabled": true
+    },
+    {
+      "publisher": "The Straits Times",
+      "domains": ["straitstimes.com"],
+      "sources": [
+        {"kind": "sitemap", "url": "https://www.straitstimes.com/googlenews.xml"},
+        {"kind": "section", "url": "https://www.straitstimes.com/world"}
+      ],
+      "article_pattern": "/[a-z-]+/[a-z0-9][a-z0-9-]{20,}",
+      "max_urls": 200, "min_interval": 10.0, "enabled": true
+    },
+    {
+      "publisher": "Dawn",
+      "domains": ["dawn.com"],
+      "sources": [
+        {"kind": "sitemap", "url": "https://www.dawn.com/feeds/sitemap"},
+        {"kind": "section", "url": "https://www.dawn.com/"}
+      ],
+      "article_pattern": "/news/\\d{6,}",
+      "max_urls": 200, "min_interval": 3.0, "enabled": true
+    },
+    {
+      "publisher": "Daily Maverick",
+      "domains": ["dailymaverick.co.za"],
+      "sources": [
+        {"kind": "sitemap", "url": "https://www.dailymaverick.co.za/sitemap_index.xml"},
+        {"kind": "section", "url": "https://www.dailymaverick.co.za/"}
+      ],
+      "article_pattern": "/article/\\d{4}-\\d{2}-\\d{2}-",
+      "max_urls": 200, "min_interval": 3.0, "enabled": true
+    },
+    {
+      "publisher": "Premium Times",
+      "domains": ["premiumtimesng.com"],
+      "sources": [
+        {"kind": "sitemap", "url": "https://www.premiumtimesng.com/sitemap_index.xml"},
+        {"kind": "section", "url": "https://www.premiumtimesng.com/"}
+      ],
+      "article_pattern": "/\\d{6,}-[a-z0-9-]+\\.html",
+      "max_urls": 200, "min_interval": 3.0, "enabled": true
+    },
+    {
+      "publisher": "Clarín",
+      "domains": ["clarin.com"],
+      "sources": [
+        {"kind": "sitemap", "url": "https://www.clarin.com/sitemaps/sitemap_google_news.xml"},
+        {"kind": "section", "url": "https://www.clarin.com/"}
+      ],
+      "article_pattern": "/[a-z0-9][a-z0-9-]{15,}_0_[A-Za-z0-9]+\\.html",
+      "max_urls": 200, "min_interval": 3.0, "enabled": true
+    }
+  ]
+}

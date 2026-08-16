@@ -485,6 +485,15 @@ class CrawlReport:
     #: and before ``max_urls`` truncates, because a cap applied to the numerator would flatter the
     #: ratio: cap at 10, find 10 new ones out of 500 candidates, and report 100% marginal value.
     candidates: int = 0
+    #: How many of those candidates carry a publication date. Counted on the SAME set as
+    #: ``candidates`` so the two are directly comparable.
+    #:
+    #: This is a quality measure, not a volume one, and it decides whether a rung is worth using.
+    #: A section page states no date, so an article discovered there ingests with ``published_at``
+    #: of None: `ingest_entries` counts it as missing metadata, it has no position in Latest, and
+    #: clustering has nothing to order it by. A news sitemap carries the publisher's own timestamp.
+    #: Two rungs can therefore return the same number of articles and not be worth the same.
+    dated: int = 0
     already_in_catalog: int = 0
     robots_blocked: int = 0
     accepted: int = 0
@@ -614,6 +623,7 @@ class PublisherCrawler:
             seen.add(canon)
             staged.append((canon, e))
         report.candidates += len(staged)
+        report.dated += sum(1 for _c, e in staged if (e.published_at or "").strip())
         if staged and self.store is not None:
             # One batched read, not one per URL. Skipping what the catalog already holds is the
             # single biggest politeness win available: a publisher's sitemap is mostly articles we
@@ -745,7 +755,7 @@ def shadow_summary(rows) -> dict:
     config.
     """
     per = []
-    tot_c = tot_new = 0
+    tot_c = tot_new = tot_dated = 0
     for r in rows:
         if "candidates" not in r:                     # a disabled publisher was skipped
             per.append({"publisher": r.get("publisher"), "skipped": r.get("skipped")})
@@ -753,13 +763,17 @@ def shadow_summary(rows) -> dict:
         c, new = r["candidates"], r["genuinelyNew"]
         tot_c += c
         tot_new += new
-        per.append({"publisher": r["publisher"], "candidates": c,
+        tot_dated += r.get("dated", 0)
+        per.append({"publisher": r["publisher"], "candidates": c, "dated": r.get("dated", 0),
+                    "datedShare": (round(r.get("dated", 0) / c, 3) if c else None),
                     "alreadyInCatalog": r["already_in_catalog"], "genuinelyNew": new,
                     "marginalValue": r["marginalValue"], "rungUsed": r.get("rung_used"),
                     "fetches": r.get("fetched", 0), "error": r.get("error"),
                     "note": _why_empty(r) if c == 0 else None})
     return {"publishers": per, "totals": {
-        "candidates": tot_c, "alreadyInCatalog": tot_c - tot_new, "genuinelyNew": tot_new,
+        "candidates": tot_c, "dated": tot_dated,
+        "datedShare": round(tot_dated / tot_c, 3) if tot_c else None,
+        "alreadyInCatalog": tot_c - tot_new, "genuinelyNew": tot_new,
         "marginalValue": round(tot_new / tot_c, 3) if tot_c else None,
         "fetches": sum(r.get("fetched", 0) for r in rows if "candidates" in r)}}
 
@@ -836,20 +850,24 @@ def main(argv=None) -> int:
     if store_ is None:
         print("!! no --db and no RWE_DB_URL: every URL is reported as new. The existing-vs-new\n"
               "!! measurement is meaningless without the catalog to compare against.\n")
-    print(f"{'publisher':<20} {'rung':<9} {'cand':>6} {'known':>6} {'new':>6} {'new%':>6}  fetches")
+    print(f"{'publisher':<20} {'rung':<9} {'cand':>6} {'dated':>6} {'dated%':>7} "
+          f"{'known':>6} {'new':>6} {'new%':>6}  fetches")
     for p in summary["publishers"]:
         if "candidates" not in p:
             print(f"{p['publisher']:<20} skipped ({p.get('skipped')})")
             continue
         mv = "-" if p["marginalValue"] is None else f"{p['marginalValue']:.0%}"
+        ds = "-" if p["datedShare"] is None else f"{p['datedShare']:.0%}"
         print(f"{p['publisher']:<20} {str(p['rungUsed']):<9} {p['candidates']:>6} "
-              f"{p['alreadyInCatalog']:>6} {p['genuinelyNew']:>6} {mv:>6}  {p['fetches']}")
+              f"{p['dated']:>6} {ds:>7} {p['alreadyInCatalog']:>6} {p['genuinelyNew']:>6} "
+              f"{mv:>6}  {p['fetches']}")
         if p.get("note"):
             print(f"{'':<20} -> {p['note']}")
     t = summary["totals"]
     tmv = "-" if t["marginalValue"] is None else f"{t['marginalValue']:.0%}"
-    print(f"{'TOTAL':<20} {'':<9} {t['candidates']:>6} {t['alreadyInCatalog']:>6} "
-          f"{t['genuinelyNew']:>6} {tmv:>6}  {t['fetches']}")
+    tds = "-" if t["datedShare"] is None else f"{t['datedShare']:.0%}"
+    print(f"{'TOTAL':<20} {'':<9} {t['candidates']:>6} {t['dated']:>6} {tds:>7} "
+          f"{t['alreadyInCatalog']:>6} {t['genuinelyNew']:>6} {tmv:>6}  {t['fetches']}")
     return 0
 
 

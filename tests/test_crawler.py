@@ -478,6 +478,46 @@ def test_shadow_summary_carries_skipped_publishers_through_rather_than_dropping_
     assert out["totals"]["candidates"] == 0 and out["totals"]["marginalValue"] is None
 
 
+def test_dated_counts_candidates_carrying_a_publication_date():
+    """The sitemap fixture states a date for both accepted articles."""
+    row = _plan(None)[0]
+    assert row["candidates"] == 2 and row["dated"] == 2
+
+
+def test_a_section_page_yields_candidates_with_no_dates_at_all():
+    """The measurement that makes `dated` worth having. A section index states no publication date,
+    so everything it yields ingests with `published_at` of None — missing metadata, no position in
+    Latest, nothing for clustering to order by. Two rungs can return the same COUNT of articles and
+    be worth very different amounts, and `candidates` alone cannot tell them apart."""
+    cfg = _cfg(sources=(crawler.DiscoverySource("section", "https://www.npr.org/sections/news/"),))
+    row = _plan(None, cfg, {"https://www.npr.org/sections/news/": _fx("section.html")})[0]
+    assert row["candidates"] == 2 and row["dated"] == 0
+    assert crawler.shadow_summary([row])["publishers"][0]["datedShare"] == 0.0
+
+
+def test_dated_is_a_subset_of_candidates_on_the_same_set():
+    """Counted at the same point as `candidates` — before the catalog check and before max_urls
+    truncates — so the two are directly comparable rather than two different denominators."""
+    st = store_mod.Store("sqlite://")
+    _seed(st, "https://www.npr.org/2026/08/11/1234567/senate-budget-vote")
+    row = _plan(st, _cfg(max_urls=1))[0]
+    assert row["dated"] <= row["candidates"] == 2
+    assert row["dated"] == 2, "a known article still counts toward dated — same set as candidates"
+
+
+def test_shadow_summary_reports_the_dated_share_per_publisher_and_in_total():
+    rows = [{"publisher": "A", "candidates": 100, "dated": 100, "already_in_catalog": 0,
+             "genuinelyNew": 100, "marginalValue": 1.0, "rung_used": "sitemap", "fetched": 1,
+             "error": None},
+            {"publisher": "B", "candidates": 100, "dated": 0, "already_in_catalog": 0,
+             "genuinelyNew": 100, "marginalValue": 1.0, "rung_used": "section", "fetched": 1,
+             "error": None}]
+    out = crawler.shadow_summary(rows)
+    assert [p["datedShare"] for p in out["publishers"]] == [1.0, 0.0]
+    assert out["totals"]["dated"] == 100 and out["totals"]["datedShare"] == 0.5, (
+        "two publishers with identical volume are NOT worth the same, and the total says so")
+
+
 def test_an_empty_publisher_says_which_gate_closed():
     """`0 candidates` with no reason is undiagnosable without re-running against the publisher —
     the one thing this framework exists to avoid doing casually."""
@@ -588,20 +628,24 @@ def test_bbc_accepts_the_current_article_scheme_not_only_the_legacy_one():
         "the old pattern really did miss this — the test is not asserting a tautology")
 
 
-def test_the_experiment_config_is_loadable_and_lint_clean():
-    """The expanded shadow set (`crawler_publishers_experiment.json`) is not shipped config —
-    nothing loads it without --config — but it is committed, so a broken entry would sit there
-    silently until someone ran the experiment and lost an hour to it.
+_SHADOW_CONFIGS = ("crawler_publishers_experiment.json", "crawler_publishers_round2.json")
 
-    It is checked for the same things as the real config, and NOT for a publisher count: pinning
-    the number would fail on the next addition while telling you nothing about validity.
+
+@pytest.mark.parametrize("name", _SHADOW_CONFIGS)
+def test_a_shadow_config_is_loadable_and_lint_clean(name):
+    """The shadow sets are not shipped config — nothing loads them without --config — but they are
+    committed, so a broken entry would sit there silently until someone ran the experiment and lost
+    an hour to it.
+
+    Checked for the same things as the real config, and NOT for a publisher count: pinning the
+    number would fail on the next addition while telling you nothing about validity.
     """
-    path = ROOT / "examples" / "data" / "crawler_publishers_experiment.json"
-    configs = crawler.load_config(str(path))
+    configs = crawler.load_config(str(ROOT / "examples" / "data" / name))
     assert configs and crawler.lint_config(configs) == []
 
 
-def test_every_experiment_publisher_is_outside_our_configured_rss_feeds():
+@pytest.mark.parametrize("name", _SHADOW_CONFIGS)
+def test_every_shadow_publisher_is_outside_our_configured_rss_feeds(name):
     """The experiment's premise is publishers we do NOT already cover. An outlet already arriving
     by RSS would report a low marginal value that says something about our feed list rather than
     about the crawler, which is the confound this whole exercise exists to avoid."""
@@ -613,13 +657,52 @@ def test_every_experiment_publisher_is_outside_our_configured_rss_feeds():
         line = line.split("#", 1)[0].strip()
         if not line:
             continue
-        name = line.split("|", 1)[0] if "|" in line else line
-        canon = reg.canonical(name.strip())
+        pub = line.split("|", 1)[0] if "|" in line else line
+        canon = reg.canonical(pub.strip())
         if canon:
             covered.add(canon)
-    path = ROOT / "examples" / "data" / "crawler_publishers_experiment.json"
-    overlap = {c.publisher for c in crawler.load_config(str(path))} & covered
+    overlap = {c.publisher for c in crawler.load_config(str(ROOT / "examples" / "data" / name))} & covered
     assert not overlap, f"already covered by RSS: {sorted(overlap)}"
+
+
+#: Publishers dropped from round 2 after the live round-1 verification, and the reason each was
+#: dropped. These are decisions, not data — so they are pinned here rather than left in a comment
+#: where re-adding one would look like an ordinary config edit.
+_ROUND2_EXCLUDED = {
+    "Le Monde": "blocks ClaudeBot + anthropic-ai",
+    "Frankfurter Allgemeine Zeitung": "blocks ClaudeBot + anthropic-ai",
+    "El País": "blocks ClaudeBot",
+    "Corriere della Sera": "blocks ClaudeBot + anthropic-ai",
+    "NZZ": "blocks ClaudeBot + anthropic-ai",
+    "Financial Times": "blocks ClaudeBot + anthropic-ai, and answers 403",
+    "Al Jazeera": "blocks ClaudeBot + anthropic-ai",
+    "ABC Australia": "blocks ClaudeBot + anthropic-ai",
+    "The Times of Israel": "allows in robots.txt then answers 403 — the enforcing mechanism said no",
+    "CBC News": "robots.txt unreadable (timeout); the gate fails closed",
+}
+
+
+def test_round_two_excludes_every_publisher_that_said_no():
+    """The editorial core of round 2. Each of these either published a position on AI crawlers or
+    refused us at the HTTP layer, and none of them is on our user-agent block list by name — which
+    is exactly why the exclusion has to be recorded somewhere that fails loudly. A future edit that
+    re-adds one should have to delete a line that states the reason."""
+    path = ROOT / "examples" / "data" / "crawler_publishers_round2.json"
+    present = {c.publisher for c in crawler.load_config(str(path))}
+    readded = present & set(_ROUND2_EXCLUDED)
+    assert not readded, "re-added despite saying no: " + ", ".join(
+        f"{p} ({_ROUND2_EXCLUDED[p]})" for p in sorted(readded))
+
+
+def test_round_two_leads_with_a_sitemap_wherever_the_publisher_declares_one():
+    """The whole point of round 2: round 1 returned 810 candidates with ZERO dates because every
+    rung used was a section page. A publisher with a sitemap must try it FIRST, or the dated share
+    stays at nothing."""
+    path = ROOT / "examples" / "data" / "crawler_publishers_round2.json"
+    for c in crawler.load_config(str(path)):
+        kinds = [s.kind for s in c.sources]
+        if "sitemap" in kinds:
+            assert kinds[0] == "sitemap", f"{c.publisher}: section would win and yield no dates"
 
 
 def test_a_typo_in_the_config_is_rejected_rather_than_silently_defaulted(tmp_path):
