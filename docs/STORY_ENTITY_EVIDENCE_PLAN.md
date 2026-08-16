@@ -461,6 +461,28 @@ git worktree remove /tmp/x5-code
 * Phase 1 (the rule + audit runs) is designed FROM this output and gated on its own go-ahead —
   the rule is not written yet, deliberately.
 
+### Phase 0 first run (2026-08-16): backfill GOOD, instrument measured its own join
+
+The backfill was clean — 192/192 windows, 146,364 entity records, 1,793 catalog articles,
+13,286 rows, locations/images untouched. Two findings and one defect:
+
+* **6.2% overall coverage is the EXPECTED value, not a shortfall**: a 48h backfill covers ~1/3
+  of the 6-day window, and 1/3 × 18.7% ≈ 6.2% — per covered span, entity coverage matches
+  located coverage, as it must (same records, same matcher). The instrument now prints coverage
+  by article age so the arithmetic is visible. A 6-day backfill (`--hours 144`, 577 downloads)
+  is the lever if Phase 1 wants full-window reach.
+* **The df table shows extraction noise beyond ubiquity**: `instagram` (127) / `facebook` /
+  `reuters` / `associated press` as "organizations" are share-chrome and bylines; `los angeles`
+  as a "person". The rare-floor absorbs them numerically, but any Phase-1 rule must treat
+  high-df names as non-evidence — which the floor already encodes.
+* **The defect**: story coverage entries carry the DISPLAY url, the instrument's index was
+  keyed by canonical, so most members never joined — 150 within pairs from ~1,500 stories,
+  zero both-covered, while the df table itself proved the data existed ("luigi mangione"
+  df 30 against a Mangione story showing none). Fixed (join through both url forms), and pair
+  formation is now CONDITIONAL on entity coverage — the rule-design question is "given both
+  sides carry entities, do they discriminate?", and coverage has its own line. Both lessons
+  are pinned by tests. The separability rerun is the outstanding measurement.
+
 ### Ground truth — selection procedures, not fixed IDs (the catalog moves daily)
 
 * **Must-sever set** (false-merge labels): re-run the X0 counterfactual (`fallbacks, --pieces`)

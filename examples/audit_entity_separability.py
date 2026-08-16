@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from datetime import datetime, timezone
 from itertools import combinations
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -97,6 +98,7 @@ def main(argv=None) -> int:
         p, o = _entity_sets(ents.get(r.get("canonicalUrl")))
         persons[idx], orgs[idx] = p, o
     covered = [i for i in range(len(rows)) if persons[i] or orgs[i]]
+    covered_set = frozenset(covered)
     located = sum(1 for r in rows if r.get("eventCountries"))
 
     print(f"window articles     : {len(rows):,}")
@@ -105,6 +107,24 @@ def main(argv=None) -> int:
     with_p = sum(1 for i in covered if persons[i])
     with_o = sum(1 for i in covered if orgs[i])
     print(f"  with persons      : {with_p:,}   with orgs: {with_o:,}")
+    # Coverage BY AGE, because a bounded backfill covers a bounded span: the first production run
+    # read 6.2% overall as a shortfall when it was ~1/3 of the window at the located rate — a 48h
+    # backfill of a 6-day window CANNOT exceed ~1/3 of located coverage, and the per-bucket lines
+    # make that arithmetic visible instead of leaving it to the reader.
+    now = datetime.now(timezone.utc)
+    buckets = [("0-24h", 0.0, 24.0), ("24-48h", 24.0, 48.0), (">48h", 48.0, float("inf"))]
+    for label, lo, hi in buckets:
+        idxs = []
+        for i, r in enumerate(rows):
+            t = clustering.parse_time(r.get("publishedAt") or "")
+            if t is None:
+                continue
+            age = (now - t).total_seconds() / 3600.0
+            if lo <= age < hi:
+                idxs.append(i)
+        cov = sum(1 for i in idxs if i in covered_set)
+        print(f"  {label:<7} articles : {len(idxs):>7,}   entity-covered {cov:,} "
+              f"({cov / max(1, len(idxs)):.1%})")
     if not covered:
         print("nothing to measure — run gdelt_entity_backfill.py first")
         return 0
@@ -126,19 +146,33 @@ def main(argv=None) -> int:
 
     # Separability. Within-story pairs come from the PRODUCTION build (presumed same-event);
     # confusable pairs share >= MIN_SHARED_TOKENS content tokens across DIFFERENT stories.
+    #
+    # Two lessons from the first production run are load-bearing here:
+    # * Story coverage entries carry the DISPLAY url; rows are keyed by canonical. Joining on
+    #   canonical alone silently dropped most members (150 pairs from ~1,500 stories) and the
+    #   "measurement" measured the join, not the entities. Both keys index the same row now.
+    # * Pairs are formed over ENTITY-COVERED members only. This is a CONDITIONAL measurement —
+    #   "given both sides carry entities, do they discriminate?" — which is the question the
+    #   rule design needs; forming pairs over uncovered members at 6% coverage just buried the
+    #   answer under both-covered ≈ 0. Coverage itself is reported separately above.
     stories = story_service.build_stories(rows)
-    url_to_idx = {r.get("canonicalUrl"): i for i, r in enumerate(rows)}
+    url_to_idx: dict = {}
+    for i, r in enumerate(rows):
+        for key in (r.get("canonicalUrl"), r.get("url")):
+            if key and key not in url_to_idx:
+                url_to_idx[key] = i
     within = []
     story_of: dict = {}
     for sid, s in enumerate(stories):
-        member_idx = sorted(url_to_idx[c["url"]] for c in s["coverage"] if c["url"] in url_to_idx)
-        for i in member_idx:
+        member_idx = sorted({url_to_idx[c["url"]] for c in s["coverage"] if c["url"] in url_to_idx})
+        cov_idx = [i for i in member_idx if i in covered_set]
+        for i in cov_idx:
             story_of[i] = sid
-        within.extend(list(combinations(member_idx, 2))[:args.pair_cap])
+        within.extend(list(combinations(cov_idx, 2))[:args.pair_cap])
 
     toks = [clustering.title_tokens(r.get("title") or "") for r in rows]
     postings: dict = {}
-    for i in story_of:                       # covered articles only — the confusable universe
+    for i in story_of:                       # entity-covered story members — the confusable universe
         for t in toks[i]:
             postings.setdefault(t, []).append(i)
     confusable, seen = [], set()
@@ -160,15 +194,18 @@ def main(argv=None) -> int:
     print("(the gap between those two lines IS the separability measurement)")
 
     # Exhibits: the biggest stories' top names, so the numbers stay attached to real events.
-    print("\ntop stories, top names (member count in parentheses):")
+    print("\ntop stories, top names (member count in parentheses; covered members in brackets):")
     for s in stories[:10]:
-        member_idx = [url_to_idx[c["url"]] for c in s["coverage"] if c["url"] in url_to_idx]
+        member_idx = sorted({url_to_idx[c["url"]] for c in s["coverage"] if c["url"] in url_to_idx})
         names: dict = {}
+        cov = 0
         for i in member_idx:
+            if i in covered_set:
+                cov += 1
             for name in persons[i] | orgs[i]:
                 names[name] = names.get(name, 0) + 1
         top = ", ".join(f"{n}({c})" for n, c in sorted(names.items(), key=lambda kv: -kv[1])[:5])
-        print(f"  {s['totalCoverage']:>4} arts  {s['title'][:44]:<44}  {top or '-'}")
+        print(f"  {s['totalCoverage']:>4} arts [{cov:>3} cov]  {s['title'][:40]:<40}  {top or '-'}")
     return 0
 
 
