@@ -2836,3 +2836,99 @@ def test_serving_path_supplies_entities_when_adopted(monkeypatch):
         "the serving path joined the lexically-unreachable pair on its own"
     monkeypatch.delenv("RWE_STORY_ENTITY_MERGE", raising=False)
     assert len(ss.cluster_from_store(st)) == 2, "off: lexical build, no entity query"
+
+
+# --------------------------------------------------------------------------- #
+# Story-hero guard (RWE_STORY_HERO_GUARD) — ranked hero + cross-story reuse rejection.
+# Measured 2026-08-16 on the production catalog (docs/STORY_HERO_IMAGES.md); presentation only.
+# --------------------------------------------------------------------------- #
+def _add_with_image(st, cu, pub, title, *, image=None, w=None, h=None, days=0.0, lean=0.0):
+    st.upsert_feed_article(
+        canonical_url=cu, url=cu, publisher=pub, source_publisher=pub, title=title,
+        description="context", body=None,
+        published_at=(NOW - timedelta(days=days)).isoformat(), source_feed="feed://x",
+        scored={"article_id": cu, "outlet": pub, "category": "Politics", "lean": lean,
+                "title": title},
+        image=image, image_width=w, image_height=h,
+        image_source="media:content" if image else None)
+
+
+def _four_stories_one_banner(st, *, families=4):
+    """`families` lexically-disjoint two-publisher stories whose every member carries the SAME
+    house asset (under differing cache-buster queries — identity, not string equality), plus one
+    member of the first story with a real photo."""
+    banner = "https://cdn.example/promo/site-banner.png"
+    titles = [
+        ("Volcano erupts near Reykjavik spewing ash", "Volcano erupts near Reykjavik airport shut"),
+        ("Panda cub born at Madrid zoo delights", "Panda cub born at Madrid zoo thrives"),
+        ("Cyclone lashes Queensland coast evacuations", "Cyclone lashes Queensland coast flooding"),
+        ("Referee strike halts Serie A weekend", "Referee strike halts Serie A matches"),
+    ][:families]
+    for i, (t1, t2) in enumerate(titles):
+        _add_with_image(st, f"https://one.example/{i}", "Outlet One", t1,
+                        image=f"{banner}?cb={i}a", days=1.0 + i / 100.0)
+        _add_with_image(st, f"https://two.example/{i}", "Outlet Two", t2,
+                        image=f"{banner}?cb={i}b", days=0.5 + i / 100.0)
+    _add_with_image(st, "https://three.example/0", "Outlet Three",
+                    "Volcano erupts near Reykjavik ash cloud",
+                    image="https://three.example/2026/08/eruption-scene.jpg",
+                    w=1600, h=900, days=0.25)
+    return banner
+
+
+def test_hero_guard_off_is_the_legacy_representative_hero():
+    """Code default OFF: an environment without the deploy's variables ships the old behaviour —
+    the earliest filer's asset fronts the card even when a later member has a real photo."""
+    st = store_mod.Store("sqlite://")
+    _four_stories_one_banner(st, families=1)
+    (story,) = ss.build_stories(ss._fetch(st))
+    assert story["image"].startswith("https://cdn.example/promo/site-banner.png"), \
+        "legacy: representative-first, no judgement — the pre-guard contract, byte-identical"
+
+
+def test_hero_guard_rejects_an_asset_fronting_four_stories(monkeypatch):
+    """The reuse tier: one image on > HERO_MAX_CLUSTER_REUSE distinct clusters in the same build
+    is publisher furniture by definition (measured: sr_placeholder.png fronted 20 stories). The
+    story with a real photo re-heroes to it; the rest fall back to NO hero — the imageless card's
+    coverage figure is a designed state, and no hero is more honest than a banner."""
+    st = store_mod.Store("sqlite://")
+    _four_stories_one_banner(st, families=4)
+    rows = ss._fetch(st)
+    off = ss.build_stories(rows)
+    monkeypatch.setenv("RWE_STORY_HERO_GUARD", "1")
+    on = ss.build_stories(rows)
+    assert len(off) == len(on) == 4
+    assert [(s["id"], s["totalCoverage"], s["title"]) for s in on] \
+        == [(s["id"], s["totalCoverage"], s["title"]) for s in off], \
+        "presentation only: membership, ids and order must be untouched by the guard"
+    heroes = {s["title"]: s["image"] for s in on}
+    volcano = next(t for t in heroes if "Volcano" in t)
+    assert heroes.pop(volcano) == "https://three.example/2026/08/eruption-scene.jpg"
+    assert set(heroes.values()) == {None}, \
+        "every banner-only story shows the coverage figure, not the reused asset"
+    assert all(s["image"] for s in off), "and OFF still serves the banner everywhere (control)"
+
+
+def test_hero_guard_keeps_an_asset_at_exactly_three_stories(monkeypatch):
+    """The threshold's other half — the receipt that set it: at exactly 3 stories the production
+    table held The Hill's real AP file art, legitimately shared across a related family. df=3
+    must survive, or the guard rejects real photography."""
+    st = store_mod.Store("sqlite://")
+    banner = _four_stories_one_banner(st, families=3)
+    monkeypatch.setenv("RWE_STORY_HERO_GUARD", "1")
+    stories = ss.build_stories(ss._fetch(st))
+    assert len(stories) == 3
+    shared = [s for s in stories if (s["image"] or "").startswith(banner)]
+    assert len(shared) == 2, \
+        "3 clusters <= threshold: the shared asset still heroes the stories without a better member"
+
+
+def test_hero_guard_reader_is_honest_about_junk(monkeypatch):
+    monkeypatch.delenv("RWE_STORY_HERO_GUARD", raising=False)
+    assert ss.hero_guard() is False, "UNSET is off — library fallback changes nothing"
+    monkeypatch.setenv("RWE_STORY_HERO_GUARD", "1")
+    assert ss.hero_guard() is True
+    monkeypatch.setenv("RWE_STORY_HERO_GUARD", "definitely")
+    assert ss.hero_guard() is False, "junk falls back to off, never to a guess"
+    monkeypatch.setenv("RWE_STORY_HERO_GUARD", "0")
+    assert ss.hero_guard() is False

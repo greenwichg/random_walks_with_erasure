@@ -269,8 +269,14 @@ def _mode_topic(members: list) -> str:
     return sorted(counts, key=lambda t: (-counts[t], t))[0] if counts else "General"
 
 
-def _build_story(members: list) -> dict:
-    """Build one Story object from a cluster of Article dicts. Coverage only — no opinion metrics."""
+def _build_story(members: list, *, hero_ranked: bool = False,
+                 hero_rejected: "Optional[frozenset]" = None) -> dict:
+    """Build one Story object from a cluster of Article dicts. Coverage only — no opinion metrics.
+
+    ``hero_ranked``/``hero_rejected`` (the hero guard, :func:`hero_guard`) affect ONLY the hero
+    image fields; every other field is computed identically. ``hero_rejected`` is the per-build
+    set of cross-story-reused image identities — a property of the whole build, so only
+    ``build_stories`` can supply it; the trust-probe call site passes neither and is unaffected."""
     times = [clustering.parse_time(m["publishedAt"]) for m in members]
     times = [t for t in times if t is not None]
     earliest = min(times).isoformat() if times else ""
@@ -281,9 +287,12 @@ def _build_story(members: list) -> dict:
     dist = _distribution(members)
     publishers = _display_publishers(members)
     total = len(members)
-    # Optional hero image (additive; centralised in media.py): representative → best → most recent →
-    # None. This is the only media touch here — the clustering/filter/sort/pagination logic is unchanged.
-    hero = media.pick_story_hero(members, representative=rep) or {}
+    # Optional hero image (additive; centralised in media.py). Legacy: representative → best →
+    # most recent → None. Under the hero guard the members compete on evidence instead, and a
+    # branding/reused asset yields None — the imageless card's coverage figure is the designed
+    # fallback. Still the only media touch here — clustering/filter/sort/pagination unchanged.
+    hero = media.pick_story_hero(members, representative=rep, ranked=hero_ranked,
+                                 rejected=hero_rejected) or {}
     timeline = []
     if earliest:
         timeline.append({"date": earliest, "label": "First report"})
@@ -655,6 +664,22 @@ def entity_merge_min() -> int:
     except (TypeError, ValueError):
         return 0
     return n if n >= 0 else 0
+
+
+def hero_guard() -> bool:
+    """Ranked story-hero selection + cross-story reuse rejection — **on in production** (adopted
+    2026-08-16; ``deploy/docker-compose.yml`` defaults ``RWE_STORY_HERO_GUARD=1``; measurement
+    record in ``docs/STORY_HERO_IMAGES.md``). UNSET falls back to off — the legacy
+    representative-first hero — so an environment without the deploy's variables changes nothing,
+    the same library-vs-deploy divergence every clustering knob documents. Junk values fall back
+    to off, never to a guess.
+
+    Presentation only: the flag cannot move an article between stories or change a story's
+    membership, id, rank, or any trust signal — it only changes WHICH member's image fronts the
+    card, and whether a branding asset is allowed to (it is not: the imageless card renders the
+    coverage-distribution figure instead, a designed state)."""
+    v = os.environ.get("RWE_STORY_HERO_GUARD", "").strip().lower()
+    return v in {"1", "true", "yes", "on"}
 
 
 #: Platform/share-chrome names GDELT extracts from page furniture rather than the story. The
@@ -1511,7 +1536,26 @@ def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
             admitted, entities=entities, min_names=em,
             max_gap_hours=merge_max_gap_hours() if merge_gap is None else merge_gap,
             max_size=merge_max_size(), stats=veto_stats)
-    stories = [_build_story(m) for m in admitted]
+    # Story-hero guard (docs/STORY_HERO_IMAGES.md) — presentation only, resolved AFTER membership
+    # is final because the reuse index is a property of the whole build: an image fronting more
+    # than HERO_MAX_CLUSTER_REUSE distinct clusters is by definition about none of them. Measured
+    # 2026-08-16: every such asset was a placeholder/logo/og-fallback, and the first real photo
+    # (The Hill's AP file art, legitimately shared across a story family) sits at exactly 3
+    # stories — which the threshold keeps. Env-resolved here (not a parameter) because nothing
+    # needs to titrate it: it cannot change membership, and audit_story_hero.py measures it by
+    # comparing heroes, not builds.
+    hero_ranked = hero_guard()
+    hero_rejected = None
+    if hero_ranked:
+        reuse: dict = {}
+        for mems in admitted:
+            for key in {media.image_identity(m.get("image")) for m in mems}:
+                if key:
+                    reuse[key] = reuse.get(key, 0) + 1
+        hero_rejected = frozenset(k for k, n in reuse.items()
+                                  if n > media.HERO_MAX_CLUSTER_REUSE)
+    stories = [_build_story(m, hero_ranked=hero_ranked, hero_rejected=hero_rejected)
+               for m in admitted]
     trust_aware = trust_ranking()
     stories.sort(key=lambda s: _size_rank(s, trust_aware=trust_aware), reverse=True)
     return stories

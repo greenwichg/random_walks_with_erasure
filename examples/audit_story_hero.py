@@ -27,8 +27,12 @@ Three questions, in the order the fix depends on them:
    branding hero is a fix, not a regression — but the SIZE of that population is a product fact
    and belongs in the decision.
 
-The ranking below is the audit's CANDIDATE, not a shipped rule: it exists so the impact columns
-mean something. Nothing here changes clustering, media selection, or any stored row.
+The candidate ranking IS the shipped rule (``media.hero_rank`` / ``media.pick_story_hero(...,
+ranked=True)``, adopted 2026-08-16 behind ``RWE_STORY_HERO_GUARD`` — docs/STORY_HERO_IMAGES.md):
+the impact section literally executes the production selector at each threshold, so the
+instrument cannot drift from what ships. With the guard ON in the measured environment, the
+shipped-threshold row (marked) should therefore read ~0 changes — that IS the post-deploy
+verification. Nothing here changes clustering, media selection, or any stored row.
 
 **Story members are resolved through a URL index, not through ``story["coverage"]``.** A coverage
 entry carries publisher/headline/lean/url and NO media fields (``story_service._coverage``), and
@@ -42,7 +46,6 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from urllib.parse import urlsplit, urlunsplit
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -51,46 +54,12 @@ import story_service         # noqa: E402
 import store as store_mod    # noqa: E402
 
 
-def norm_image(url) -> str:
-    """An image URL's IDENTITY for reuse counting: scheme+host lower-cased, path kept, query and
-    fragment dropped. Query strings on a house asset are usually cache-busters or per-article
-    resize parameters, so keeping them would let one placeholder wear a thousand identities and
-    defeat the whole measurement. Path is kept case-sensitive — some CDNs sign it."""
-    s = media._abs(url)
-    if not s:
-        return ""
-    try:
-        p = urlsplit(s)
-    except ValueError:
-        return ""
-    return urlunsplit((p.scheme.lower(), p.netloc.lower(), p.path, "", ""))
-
-
-def _photo_shape(w, h) -> "tuple[bool, int]":
-    """``(looks like a photo, area)`` from declared dimensions. A logo/avatar is small and
-    square-ish; a story photo is large and landscape. Returns ``(False, 0)`` when dimensions are
-    absent, which is the COMMON case — only ``media:`` tags carry them — so this can only ever
-    demote, never reject."""
-    iw, ih = media._int(w), media._int(h)
-    if not iw or not ih:
-        return False, 0
-    area = iw * ih
-    aspect = iw / ih if ih else 0.0
-    return (area >= 90_000 and aspect >= 1.2), area
-
-
-def candidate_rank(member: dict, *, is_rep: bool, rejected: bool) -> tuple:
-    """The audit's candidate hero ranking (L1), highest first. Deterministic, metadata-only.
-
-    Order of evidence: not a known-reused asset → photo-shaped dimensions → area → the ingestion
-    source's existing media priority (``store.SOURCE_PRIORITY`` already ranks RSS media above
-    adapter payloads and GDELT's ``og:image`` last — the hero selector simply never consulted it)
-    → the representative → recency. The representative survives as a TIEBREAK, which is all it
-    was ever entitled to be."""
-    photo, area = _photo_shape(member.get("imageWidth"), member.get("imageHeight"))
-    src = store_mod.normalize_image_source(member.get("imageSource"))
-    return (not rejected, photo, area, store_mod.SOURCE_PRIORITY.get(src, 0),
-            is_rep, member.get("publishedAt") or "")
+# The identity/rank/selection helpers are IMPORTED from media, not redefined: `norm_image` and
+# the candidate rank started life here, and shipping them moved them to `media.image_identity` /
+# `media.hero_rank` / `media.pick_story_hero(ranked=True)`. A local copy would let the instrument
+# and the product quietly diverge — the exact failure mode the reuse threshold was measured to
+# prevent in images.
+norm_image = media.image_identity
 
 
 def main(argv=None) -> int:
@@ -145,6 +114,9 @@ def main(argv=None) -> int:
 
     with_image_rows = sum(1 for r in rows if media._abs(r.get("image")))
     heroed = [s for s in stories if s.get("image")]
+    guard = story_service.hero_guard()
+    print(f"hero guard           : {'ON — the heroes below are ranked-mode' if guard else 'off — legacy representative-first heroes'} "
+          f"(RWE_STORY_HERO_GUARD)")
     print(f"window articles      : {len(rows):,}  (with an image: {with_image_rows:,}, "
           f"{with_image_rows / max(1, len(rows)):.1%})")
     print(f"stories              : {len(stories):,}  (with a hero: {len(heroed):,}, "
@@ -191,11 +163,16 @@ def main(argv=None) -> int:
             print(f"{'':>20}  publishers: {pubs}")
 
     # ---- 3. IMPACT ----------------------------------------------------------------------------
+    # Each row RUNS the shipped selector (media.pick_story_hero(ranked=True) — reuse reject +
+    # suspect tier + evidence rank) with that row's reject set, against whatever heroes the
+    # measured environment currently serves. The marked row is the production threshold; with the
+    # guard ON it should read ~0, and that reading is the post-deploy verification.
+    shipped_t = media.HERO_MAX_CLUSTER_REUSE + 1
     print(f"\n-- 3. impact by reuse threshold (reject an image on >= T distinct stories) --")
     print(f"{'T':>3} {'urls rejected':>14} {'heroes rejected':>16} {'hero changes':>13} "
           f"{'-> no hero':>11}")
     for t in (2, 3, 4, 6, 10, 20):
-        rejected_keys = {k for k, sids in story_ids.items() if len(sids) >= t}
+        rejected_keys = frozenset(k for k, sids in story_ids.items() if len(sids) >= t)
         hero_rejected = sum(1 for sid, k in hero_key_of.items() if k in rejected_keys)
         changed = lost = 0
         for st_ in stories:
@@ -204,20 +181,17 @@ def main(argv=None) -> int:
                 continue
             rep = min(members, key=lambda m: (m.get("publishedAt") or "~",
                                               m.get("canonicalUrl") or m.get("url") or ""))
-            cands = [m for m in members if media._abs(m.get("image"))]
-            if not cands:
-                continue
-            pick = max(cands, key=lambda m: candidate_rank(
-                m, is_rep=m is rep, rejected=norm_image(m.get("image")) in rejected_keys))
-            new_hero = (media._abs(pick.get("image"))
-                        if norm_image(pick.get("image")) not in rejected_keys else "")
+            new_hero = (media.pick_story_hero(members, representative=rep, ranked=True,
+                                              rejected=rejected_keys) or {}).get("image") or ""
             old_hero = media._abs(st_.get("image"))
             if not new_hero and old_hero:
                 lost += 1
             elif new_hero and new_hero != old_hero:
                 changed += 1
+        mark = f"  <- shipped (HERO_MAX_CLUSTER_REUSE={media.HERO_MAX_CLUSTER_REUSE})" \
+            if t == shipped_t else ""
         print(f"{t:>3} {len(rejected_keys):>14,} {hero_rejected:>16,} {changed:>13,} "
-              f"{lost:>11,}")
+              f"{lost:>11,}{mark}")
 
     # ---- named exhibits: the stories whose hero is a reused asset today ------------------------
     worst = [k for k in ranked if len(story_ids.get(k, ())) >= 2][:args.examples]

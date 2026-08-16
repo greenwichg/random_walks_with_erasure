@@ -105,6 +105,98 @@ def test_a_publisher_with_no_url_offers_nothing_rather_than_a_guess():
 
 
 # --------------------------------------------------------------------------- #
+# media.pick_story_hero RANKED mode (RWE_STORY_HERO_GUARD) — docs/STORY_HERO_IMAGES.md.
+# The legacy tests above are untouched on purpose: ranked=False must stay byte-identical.
+# --------------------------------------------------------------------------- #
+def test_image_identity_strips_query_and_lowercases_host_but_keeps_path_case():
+    assert (media.image_identity("HTTPS://CDN.Example.com/Signed/Path.jpg?w=600#f")
+            == "https://cdn.example.com/Signed/Path.jpg")
+    # cache-busters must not let one placeholder wear a thousand identities
+    assert (media.image_identity("https://x.example/ph.png?cb=1")
+            == media.image_identity("https://x.example/ph.png?cb=2"))
+    assert media.image_identity("/relative.jpg") == "" and media.image_identity(None) == ""
+
+
+def test_hero_suspect_matches_the_measured_furniture_and_only_the_path():
+    """Every token is receipted from the 2026-08-16 production reuse table (or _ICON_PATHS);
+    the HOST is never token-matched, so a CDN with 'logo' in its name cannot condemn every
+    photo it serves."""
+    assert media.hero_suspect("https://media.spokesman.com/graphics/2020/08/sr_placeholder.png")
+    assert media.hero_suspect(
+        "https://www.taipeitimes.com/assets/images/TaipeiTimesLogo-1200X1200px_new.jpg")
+    assert media.hero_suspect(
+        "https://www.winnipegfreepress.com/wp-content/uploads/sites/2/2022/11/fb-og-image.png")
+    assert media.hero_suspect("https://cdn.thestar.com.my/Themes/img/newTsol_logo_socmedia.png")
+    assert media.hero_suspect("https://x.example/apple-touch-icon.png")
+    assert media.hero_suspect("https://x.example/news/photo.jpg", 1200, 1200), \
+        "exact-square declared dimensions are the social-logo shape"
+    assert not media.hero_suspect("https://x.example/2026/08/scene.jpg", 1600, 900)
+    assert not media.hero_suspect("https://logocdn.example/2026/08/scene.jpg")
+
+
+def test_ranked_hero_a_real_photo_beats_the_fastest_filers_branding():
+    """The defect the guard exists for: the earliest filer's house graphic used to win
+    unconditionally because the representative was an override, not evidence."""
+    rep = {"image": "https://wire.example/assets/site_logo.png",
+           "publishedAt": "2026-08-01T00:00:00+00:00"}
+    photo = {"image": "https://news.example/2026/08/scene.jpg",
+             "publishedAt": "2026-08-01T05:00:00+00:00"}
+    # legacy: the representative's logo wins (unchanged behaviour, pinned above)
+    assert media.pick_story_hero([rep, photo], representative=rep)["image"] == rep["image"]
+    # ranked: the suspect tier demotes the logo below the clean photo
+    got = media.pick_story_hero([rep, photo], representative=rep, ranked=True)
+    assert got["image"] == "https://news.example/2026/08/scene.jpg"
+
+
+def test_ranked_hero_rejects_a_cross_story_reused_asset_by_identity():
+    """`rejected` carries image IDENTITIES, so a resize query-string cannot smuggle a rejected
+    placeholder back in."""
+    reused = {"image": "https://cdn.example/promo/site-banner.png?resize=600",
+              "publishedAt": "2026-08-01T00:00:00+00:00"}
+    other = {"image": "https://news.example/real.jpg", "publishedAt": "2026-07-31T00:00:00+00:00"}
+    rej = frozenset({media.image_identity("https://cdn.example/promo/site-banner.png")})
+    got = media.pick_story_hero([reused, other], representative=reused, ranked=True, rejected=rej)
+    assert got["image"] == "https://news.example/real.jpg"
+
+
+def test_ranked_hero_returns_none_when_every_candidate_is_branding():
+    """All-suspect (or all-rejected) means NO hero: the imageless card renders the coverage
+    figure, a designed state — no hero is more honest than a masthead pretending to be news."""
+    a = {"image": "https://x.example/img/masthead.png", "publishedAt": "2026-08-01T00:00:00+00:00"}
+    b = {"image": "https://y.example/social.jpg", "imageWidth": 1200, "imageHeight": 1200,
+         "publishedAt": "2026-08-02T00:00:00+00:00"}
+    assert media.pick_story_hero([a, b], representative=a, ranked=True) is None
+    rej = frozenset({media.image_identity("https://z.example/shared.jpg")})
+    only = {"image": "https://z.example/shared.jpg", "publishedAt": "2026-08-01T00:00:00+00:00"}
+    assert media.pick_story_hero([only], representative=only, ranked=True, rejected=rej) is None
+
+
+def test_ranked_hero_representative_is_a_tiebreak_not_an_override():
+    rep = {"image": "https://a.example/one.jpg", "publishedAt": "2026-08-01T00:00:00+00:00"}
+    dims = {"image": "https://b.example/two.jpg", "imageWidth": 1600, "imageHeight": 900,
+            "publishedAt": "2026-07-30T00:00:00+00:00"}
+    # photo-shaped dimensions beat the representative...
+    assert media.pick_story_hero([rep, dims], representative=rep, ranked=True)["image"] \
+        == "https://b.example/two.jpg"
+    # ...but between otherwise-equal candidates the representative still wins (determinism)
+    peer = {"image": "https://c.example/three.jpg", "publishedAt": "2026-08-01T00:00:00+00:00"}
+    assert media.pick_story_hero([peer, rep], representative=rep, ranked=True)["image"] \
+        == "https://a.example/one.jpg"
+
+
+def test_ranked_hero_consults_the_ingestion_sources_media_priority():
+    """`store.SOURCE_PRIORITY` already ranks RSS media above GDELT's og:image — the og tier is
+    exactly where site-wide fallback graphics arrive — and the ranked hero finally consults it."""
+    og = {"image": "https://a.example/fallback.jpg", "imageSource": "gdelt",
+          "publishedAt": "2026-08-02T00:00:00+00:00"}
+    rss = {"image": "https://b.example/scene.jpg", "imageSource": "media:content",
+           "publishedAt": "2026-08-01T00:00:00+00:00"}
+    got = media.pick_story_hero([og, rss], representative=og, ranked=True)
+    assert got["image"] == "https://b.example/scene.jpg", \
+        "rss(100) outranks gdelt(60) even though the og arrival is newer and the representative"
+
+
+# --------------------------------------------------------------------------- #
 # RSS/Atom media extraction (parse only — never downloads)
 # --------------------------------------------------------------------------- #
 def test_rss_media_extraction_selects_best_and_rejects_audio():

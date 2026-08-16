@@ -340,6 +340,15 @@ services:
       # lexical profile reaches) at zero dropped articles, largest 71. Requires article_entities
       # (the GKG entity cycle below keeps it current). 0 is the kill switch.
       RWE_STORY_ENTITY_MERGE: ${RWE_STORY_ENTITY_MERGE:-2}
+      # Story-hero guard (adopted 2026-08-16, docs/STORY_HERO_IMAGES.md): the hero is ranked on
+      # evidence instead of copied from the earliest filer, and an image fronting > 3 distinct
+      # stories in one build — or one shaped like branding (logo/placeholder/og-image path
+      # tokens, exact-square dimensions) — never heroes a card; the imageless card renders its
+      # coverage figure instead. Measured on the production catalog before adoption: every
+      # asset on >= 4 stories was publisher furniture (sr_placeholder.png fronted 20 stories),
+      # ~292 heroes improved, 11 of 1,331 stories fell back to the figure card. Presentation
+      # only — cannot change membership, ids, rank, or trust. 0 is the kill switch.
+      RWE_STORY_HERO_GUARD: ${RWE_STORY_HERO_GUARD:-1}
       # Machine-generated market-data feeds (outlet_registry.csv kind=wire) never enter story
       # clustering. Does nothing on its own — only outlets a human marked are affected.
       RWE_STORY_EXCLUDE_WIRE: ${RWE_STORY_EXCLUDE_WIRE:-1}

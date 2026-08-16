@@ -5,7 +5,9 @@ the recommendation enrichment — reuses these four functions, so image/logo sel
 
     pick_best_image(candidates)          choose the best image among a feed item's media tags (ingest)
     pick_article_media(row)              the media dict for a stored FeedArticle row (serialization)
-    pick_story_hero(articles, rep=…)     the optional hero image for a Story (representative → best → recent)
+    pick_story_hero(articles, rep=…)     the optional hero image for a Story (legacy: representative →
+                                         best → recent; ranked=True: evidence-ranked with branding/reuse
+                                         rejection — docs/STORY_HERO_IMAGES.md)
     pick_best_logo(publisher, url=…)     a publisher logo URL (its own favicon, or a curated override)
 
 It NEVER downloads an image, fetches Open Graph, or calls an AI — it only chooses among the metadata RSS
@@ -16,12 +18,20 @@ the caller falls back to the existing text-only layout. Image URLs stay canonica
 from __future__ import annotations
 
 from typing import Optional
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit, urlunsplit
 
 try:
     import outlet_registry            # reuse publisher identity for the curated-logo key (no duplication)
 except Exception:                     # pragma: no cover - registry is optional
     outlet_registry = None
+
+try:
+    import store as _store            # SOURCE_PRIORITY + normalize_image_source only — pure contract
+                                      # lookups, no database or network touch. The ranked hero consults
+                                      # the ingestion source's existing media precedence, the same
+                                      # ordering the dedup merge already trusts (store.upsert_feed_article).
+except Exception:                     # pragma: no cover - store is optional (stdlib-only contexts)
+    _store = None
 
 # Richness of each media tag, used only to break ties between equally-sized images.
 _SOURCE_RANK = {"media:content": 3, "media:thumbnail": 2, "enclosure": 1, "atom:link": 1}
@@ -104,16 +114,137 @@ def _hero_of(a: dict) -> dict:
             "imageSource": a.get("imageSource") or None, "imageAttribution": a.get("imageAttribution") or None}
 
 
-def pick_story_hero(articles, *, representative: Optional[dict] = None) -> Optional[dict]:
-    """The optional hero image for a Story, by priority: the representative article's image →
-    highest-quality (largest area) → most recent → ``None``. Never fabricates."""
+# --------------------------------------------------------------------------- #
+# Ranked story hero (RWE_STORY_HERO_GUARD) — measured 2026-08-16 on the production catalog by
+# examples/audit_story_hero.py; record + receipts in docs/STORY_HERO_IMAGES.md.
+# --------------------------------------------------------------------------- #
+
+#: Reject a hero candidate whose image fronts MORE THAN this many distinct stories in the same
+#: build — an image on many stories is by definition about none of them. The threshold is
+#: measured, not guessed (production reuse table, 2026-08-16): every asset on >= 4 stories was
+#: publisher furniture (``sr_placeholder.png`` on 20 stories across 14 publishers, an og-image
+#: fallback on 10, social-media logos on 12 and 4), while the FIRST real photograph — The Hill's
+#: AP file art legitimately reused across a related family — appears at exactly 3 stories, which
+#: this value keeps. At this cut 25 branding heroes died and only 11 of 1,331 stories fell back
+#: to the imageless card.
+HERO_MAX_CLUSTER_REUSE = 3
+
+#: URL-path tokens that mark an image as publisher furniture rather than story art. Each token is
+#: receipted from the measured reuse table or this module's own conventions, never invented:
+#: ``logo`` (TaipeiTimesLogo-1200X1200px, logo_1200x1200.png, logo_dgabc_facebook.jpg),
+#: ``placeholder`` (sr_placeholder.png), ``og-image``/``og_image``/``ogimage`` (fb-og-image.png
+#: and the og-fallback convention it instances), ``socmedia`` (newTsol_logo_socmedia.png),
+#: ``masthead`` (the reported Spokesman-Review symptom's genre), ``favicon``/``apple-touch``
+#: (this module's own ``_ICON_PATHS``). Deliberately conservative: a suspect verdict only demotes
+#: in ranking — it costs a story its hero only when NO clean candidate exists, and that story's
+#: card renders the coverage figure, a designed state.
+_HERO_SUSPECT_TOKENS = ("logo", "placeholder", "og-image", "og_image", "ogimage",
+                        "socmedia", "masthead", "favicon", "apple-touch")
+
+#: Photo-shaped declared dimensions: a story photograph is large and landscape; a logo/avatar is
+#: small and square-ish. Only ``media:`` tags carry dimensions, so shape can promote but its
+#: absence never rejects.
+_PHOTO_MIN_AREA = 90_000
+_PHOTO_MIN_ASPECT = 1.2
+
+
+def image_identity(url) -> str:
+    """An image URL's IDENTITY for cross-story reuse counting: scheme+host lower-cased, path kept,
+    query and fragment dropped. Query strings on a house asset are usually cache-busters or
+    per-article resize parameters, so keeping them would let one placeholder wear a thousand
+    identities and defeat the measurement. Path stays case-sensitive — some CDNs sign it."""
+    s = _abs(url)
+    if not s:
+        return ""
+    try:
+        p = urlsplit(s)
+    except ValueError:
+        return ""
+    return urlunsplit((p.scheme.lower(), p.netloc.lower(), p.path, "", ""))
+
+
+def _photo_like(w, h) -> "tuple[bool, int]":
+    """``(looks like a photo, area)`` from declared dimensions; ``(False, 0)`` when absent."""
+    iw, ih = _int(w), _int(h)
+    if not iw or not ih:
+        return False, 0
+    return (iw * ih >= _PHOTO_MIN_AREA and iw / ih >= _PHOTO_MIN_ASPECT), iw * ih
+
+
+def hero_suspect(url, width=None, height=None) -> bool:
+    """Whether an image looks like publisher branding rather than story art, from metadata alone:
+    a furniture token in the URL path, or exactly-square declared dimensions (the 1200x1200
+    social-logo shape — ``TaipeiTimesLogo-1200X1200px``, ``logo_1200x1200.png``). Never downloads,
+    never inspects pixels."""
+    s = _abs(url)
+    if s:
+        try:
+            path = urlsplit(s).path.lower()
+        except ValueError:
+            path = ""
+        if any(tok in path for tok in _HERO_SUSPECT_TOKENS):
+            return True
+    iw, ih = _int(width), _int(height)
+    return bool(iw and ih and iw == ih)
+
+
+def _source_priority(image_source) -> int:
+    """Media precedence of the ingestion source that supplied the image (``store.SOURCE_PRIORITY``
+    through ``store.normalize_image_source``); 0 when store is unavailable or the tag is unknown.
+    RSS media tags outrank adapter payloads outrank GDELT's ``og:image`` — the og:image tier is
+    exactly where site-wide fallback graphics arrive, so the ordering the dedup merge already
+    trusts is evidence here too."""
+    if _store is None:                # pragma: no cover - store import guarded above
+        return 0
+    return _store.SOURCE_PRIORITY.get(_store.normalize_image_source(image_source), 0)
+
+
+def hero_rank(article, *, is_rep: bool = False, rejected=None) -> tuple:
+    """The ranked-hero ordering for one candidate, highest first. Deterministic, metadata-only.
+    Shared with ``examples/audit_story_hero.py`` so the instrument can never drift from the
+    shipped rule.
+
+    Order of evidence: not a known cross-story-reused asset → not branding-shaped
+    (:func:`hero_suspect`) → photo-shaped dimensions → area → the ingestion source's media
+    priority → the representative → recency. The representative survives as a TIEBREAK, which is
+    all it was ever entitled to be — its unconditional override is the defect this replaces."""
+    rej = rejected or ()
+    photo, area = _photo_like(article.get("imageWidth"), article.get("imageHeight"))
+    return (image_identity(article.get("image")) not in rej,
+            not hero_suspect(article.get("image"), article.get("imageWidth"),
+                             article.get("imageHeight")),
+            photo, area, _source_priority(article.get("imageSource")),
+            bool(is_rep), article.get("publishedAt") or "")
+
+
+def pick_story_hero(articles, *, representative: Optional[dict] = None,
+                    ranked: bool = False, rejected=None) -> Optional[dict]:
+    """The optional hero image for a Story. Never fabricates.
+
+    Legacy (``ranked=False`` — byte-identical to the pre-guard behaviour), by priority: the
+    representative article's image → highest-quality (largest area) → most recent → ``None``.
+
+    Ranked (the ``RWE_STORY_HERO_GUARD`` path): every member with an image competes under
+    :func:`hero_rank`; ``rejected`` is the caller's per-build set of cross-story-reused image
+    identities (:func:`image_identity`). If the BEST candidate is still a rejected or suspect
+    asset, the answer is ``None`` — the imageless card renders the coverage-distribution figure,
+    a designed state, and no hero is more honest than a masthead pretending to be news
+    (docs/SIGNAL_INTEGRITY.md, applied to images)."""
     with_image = [a for a in (articles or []) if _abs(a.get("image"))]
     if not with_image:
         return None
-    if representative is not None and _abs(representative.get("image")):
-        return _hero_of(representative)
-    best = max(with_image, key=lambda a: (_area(a.get("imageWidth"), a.get("imageHeight")),
-                                          a.get("publishedAt") or ""))
+    if not ranked:
+        if representative is not None and _abs(representative.get("image")):
+            return _hero_of(representative)
+        best = max(with_image, key=lambda a: (_area(a.get("imageWidth"), a.get("imageHeight")),
+                                              a.get("publishedAt") or ""))
+        return _hero_of(best)
+    best = max(with_image,
+               key=lambda a: hero_rank(a, is_rep=a is representative, rejected=rejected))
+    not_reused, not_suspect = hero_rank(best, is_rep=best is representative,
+                                        rejected=rejected)[:2]
+    if not (not_reused and not_suspect):
+        return None
     return _hero_of(best)
 
 
