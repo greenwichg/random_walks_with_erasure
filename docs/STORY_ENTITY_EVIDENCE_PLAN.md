@@ -673,6 +673,38 @@ pair shares. No new constants; enforced at candidate time and inside the complet
 check; `entityMergeUnanchored` counts the refusals. Run 3 is the same command and the same
 bars, hand-read clause included.
 
+## X5b conclusion (2026-08-16, run 3): the full bar is met — adoption is the product call
+
+Run 3 under v3: 66 candidates, 44 joins, **zero dropped, largest 71 — and the largest is the
+Mangione family**, a true story. Bad clusters flat at 4/73 and the mean coherence ROSE
+(0.924 → 0.927); the geo veto fired once; nothing was size-capped. The hand-read of the
+twelve exhibits: **ten clean** — Mangione ×4, Farage ×3, USS Lincoln, the Colombia family,
+Wisconsin, the eagle pair, Arday, the new Gilman release pair, and Minnesota now CORRECTLY
+joins the two Senate-race stories while run 2's Senate+governor mistake is gone, as are the
+Leavitt/visa blob and the Fauci join. **Two borderline riders remain**, both 2-article pieces
+legitimately anchored on a shared top actor: the Medicaid rider on the vaccines story (both
+chiefly about the HHS secretary) and a multi-state takeaways piece on the South Carolina
+primary. That residual class — *distinct events chiefly about the same actor* — is real,
+small (≲6 articles of 6,351 covered, <0.1%), and structurally beyond entity evidence: any rule
+tight enough to refuse it also refuses the eagle and Gilman pairs. Three rule iterations, each
+removing one measured failure class with one structural principle and no tuned thresholds:
+ubiquity is story-df (v2), evidence must anchor what a story is about (v3).
+
+**Recommendation: X5b is ADOPTABLE as measured.** What adoption requires (a product call,
+none of it done):
+
+1. `RWE_STORY_ENTITY_MERGE=2` in deploy config, plus wiring the serving path to supply
+   entities — `_fetch`/`cluster_from_store` annotating via `entities_for_urls` when the flag
+   is on (one batched query per build, ~7k rows today).
+2. `RWE_GDELT_ENTITIES=1` so the steady-state enricher keeps the entity table current
+   (the backfill covered the window once; without the cycle flag the data ages out with it).
+3. The blindspot-claims delta (181 → 167) is consolidation, not loss — merged families pool
+   their leans — but it deserves one glance at which claims disappeared before shipping.
+
+Until then everything remains dormant twice over, production untouched, `link_quorum`
+untouched — the X4 verdict (V-growth-2 adoptable-with-caveats) and this one are independent
+decisions that compose: the geo veto guards the entity merge either way.
+
 ### Ground truth — selection procedures, not fixed IDs (the catalog moves daily)
 
 * **Must-sever set** (false-merge labels): re-run the X0 counterfactual (`fallbacks, --pieces`)

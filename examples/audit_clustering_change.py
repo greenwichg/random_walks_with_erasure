@@ -448,6 +448,7 @@ def main(argv=None) -> int:
         if args.entity_merge:
             print(f"entity-merge       : candidates {vs.get('entityMergeCandidates', 0):,}, "
                   f"joined {vs.get('entityMergeJoined', 0):,}, "
+                  f"unanchored {vs.get('entityMergeUnanchored', 0):,}, "
                   f"geo-vetoed {vs.get('entityMergeGeoVetoed', 0):,}, "
                   f"coherence-vetoed {vs.get('entityMergeCoherenceVetoed', 0):,}, "
                   f"size-capped {vs.get('entityMergeSizeCapped', 0):,}, "
