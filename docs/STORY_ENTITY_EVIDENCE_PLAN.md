@@ -236,6 +236,46 @@ LOG=/tmp/x4_phase1_$(date -u +%Y%m%dT%H%M%SZ).log
 git worktree remove /tmp/x4-code
 ```
 
+### Phase 1 results (2026-08-16, production catalog, 28,418 articles)
+
+| | A: baseline | B: fallbacks+pair | C: prod+growth | D: prod+pair |
+|---|---|---|---|---|
+| stories | 1,555 | 1,336 → 1,343 | 1,555 → **1,559** | 1,555 → **1,553** |
+| largest | 64 | 790 → **564** | 64 → 64 | 64 → 64 |
+| dropped / newly | 0 / 0 | 28 (0.4%) / 0 | **27 (0.4%) / 26** | 23 (0.4%) / 3 |
+| bad clusters | 4/74 (.925) | 8/69 → 5/71 (.912) | 4/74 → **1/69 (.978)** | 4/74 → 2/69 (.95) |
+| veto telemetry | none (correct) | 20,303 pairs, 1,551 both-located, **161 vetoed** | 8,620 merges, 2,326 gated, **1,107 vetoed** | 53,790 pairs, 4,063 both-located, 448 vetoed |
+| wall | 23.2s | 16.9s | 22.6s | 37.2s |
+| verdict | self-check PASS | mechanism shown | **all aggregate bars PASS** | **REJECT** (story count fell) |
+
+* **Run A** proved the mounted code byte-identical on the box: before == after, no tag, no
+  telemetry.
+* **Run B** answered the mechanism question with a precision the aggregates undersell: 161
+  pairwise vetoes pulled the **entire 206-article Colombia earthquake out of the Iran-war
+  blob** — plus the NJ-victim, Colombia/Golan and Netanyahu-AI clusters — for 9 articles
+  dropped, and the eclipse/sports blob shed Perseid + eclipse-glasses pieces. But the blob
+  floor is **564, not ~64**: the remaining chain is located-compatible or bridged by unlocated
+  members, so the veto is a scalpel that composes with the quorum, NOT a replacement for it.
+  The quorum stays load-bearing.
+* **Run C is the candidate and passed every aggregate bar**: coverage 0.4% (bar 1%) and nearly
+  net-zero (27 out, 26 in), story count UP, largest unchanged (Leavitt intact — absent from the
+  split table, as are the eagle and Lala tripwires), cost within noise, and the Phase-0 live bad
+  cluster (eclipse, 0.333) severed into 5 pieces. Bad-cluster count fell 4 → 1 — with the
+  stated caveat that this metric shares the veto's data; the count argument (a veto cannot
+  manufacture located members, so condemned shapes simply no longer form) is why it still
+  carries weight, but confirmation belongs to the hand-read below, not the score.
+* **Run D is rejected on the pre-registered bar**: the story count fell — pair mode dissolves
+  legitimate multi-country stories exactly as predicted (§3): Europe-wide heat records (3/3,
+  gone), eclipse-across-Europe pieces, Eurovision. The two-country hazard is real and growth
+  mode is the shape that avoids it. Pair mode is closed.
+
+**C is NOT yet adopted.** The must-keep clause requires reading C's split pieces by hand before
+any verdict: the split table contains presumptively-legitimate two-country stories — the
+Ukrainian strike on the oil depot (22/16, coherence 0.75 → 2 pieces), the Colombia quake
+family (23/16, 0.778 → 3), the Iran-war umbrella (62/25, 0.733 → 2), Ronaldo's wedding
+(16/13 → 2) — and whether those pieces are separate events or one event shredded is exactly
+what no aggregate can say. That read is the remaining gate.
+
 ### Ground truth — selection procedures, not fixed IDs (the catalog moves daily)
 
 * **Must-sever set** (false-merge labels): re-run the X0 counterfactual (`fallbacks, --pieces`)
