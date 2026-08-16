@@ -651,6 +651,28 @@ Farage's 5) story consensuses are excluded from the shared count, computed from 
 own consensuses: no external state, deterministic, self-calibrating. Run 2 is the same audit
 command; the same bars apply unchanged.
 
+### X5b run 2 (2026-08-16): automated ADOPT — and the hand-read clause said not yet
+
+Rule v2 collapsed the candidates 608 → 95 (size-cap fires 312 → 0), zero dropped, bad count
+flat, largest 77 ≤ 120, and the automated VERDICT read ADOPT. But the full pre-registered bar
+includes *"the merged pairs read correctly by hand"* (`merge_similarity()`'s adopt clause),
+and the twelve exhibits split **7 clean / 5 dubious**. Clean: Mangione ×4, Farage ×5, the
+quake family, USS Lincoln, the eagle pair, Wisconsin, Arday. Dubious, one precise class:
+**thematically adjacent but distinct events sharing mid-df political names under the df-6
+floor** — Leavitt's resignation + the visa purge (77/41, the new largest), the vaccines order
++ Fauci's Senate appearance + a Medicaid decision, the Minnesota Senate primary + the
+GOVERNOR race, a Wisconsin-takeaways piece on the South Carolina story.
+
+**Rule v3 — mutual anchoring** (implemented, tested): the structure separating the two
+populations is visible in the exhibits themselves. In every true family the shared names
+include each side's TOP consensus entity (`mangione` #1 on all four sides, `jackie` on both);
+in every dubious join the shared names are peripheral on at least one side — `karoline
+leavitt`, the resignation story's top, appears nowhere in the visa story. A join must now be
+anchored by BOTH tops (ties kept): what each story is chiefly ABOUT must be part of what the
+pair shares. No new constants; enforced at candidate time and inside the complete-linkage
+check; `entityMergeUnanchored` counts the refusals. Run 3 is the same command and the same
+bars, hand-read clause included.
+
 ### Ground truth — selection procedures, not fixed IDs (the catalog moves daily)
 
 * **Must-sever set** (false-merge labels): re-run the X0 counterfactual (`fallbacks, --pieces`)

@@ -2777,3 +2777,42 @@ def test_ubiquitous_names_cannot_propose_merges():
     merged = ss.build_stories(rows, entity_merge=2, entities=ents)
     joined = [s for s in merged if s["totalCoverage"] == 4]
     assert len(joined) == 1, "two names in exactly two consensuses still carry the join"
+
+
+def test_unanchored_joins_are_refused():
+    """Rule v3, from run 2's hand-read: Leavitt's resignation joined the visa purge on two
+    PERIPHERAL shared names while each story's top entity appeared nowhere in the other. A join
+    must be anchored by BOTH tops; peripheral overlap alone proposes nothing."""
+    st = store_mod.Store("sqlite://")
+    ents = {}
+    # Story A: top entity "karoline leavitt" (3 votes), peripheral {marco rubio, state department}.
+    for k, pub in enumerate(["A", "B", "C"]):
+        cu = f"https://{pub.lower()}.example.com/resign"
+        _add(st, cu, f"{pub} Out", 0.0, "Press secretary resignation shakes the briefing room")
+        ents[cu] = {"person": ["karoline leavitt"] + (["marco rubio"] if k < 2 else []),
+                    "org": ["state department"] if k < 2 else []}
+    # Story B: top entity "visa program" side — shares rubio + state department, never leavitt.
+    for k, pub in enumerate(["D", "E", "F"]):
+        cu = f"https://{pub.lower()}.example.com/visas"
+        _add(st, cu, f"{pub} Out", 0.0, "Visa revocations accelerate under sweeping directive")
+        ents[cu] = {"person": ["marco rubio"] if k < 2 else [],
+                    "org": ["visa fraud unit"] + (["state department"] if k < 2 else [])}
+    rows = ss._fetch(st)
+    assert len(ss.build_stories(rows)) == 2
+    stats: dict = {}
+    merged = ss.build_stories(rows, entity_merge=2, entities=ents, veto_stats=stats)
+    assert len(merged) == 2, "two peripheral shared names must not join two different events"
+    assert stats.get("entityMergeUnanchored", 0) >= 1
+    assert stats.get("entityMergeCandidates", 0) == 0
+
+    # The anchored counterpart still joins: the same two stories, but the shared names ARE the
+    # tops on both sides (the Mangione shape).
+    ents2 = {}
+    for pub in ["a", "b", "c"]:
+        ents2[f"https://{pub}.example.com/resign"] = \
+            {"person": ["shared top person"], "org": ["shared top org"]}
+    for pub in ["d", "e", "f"]:
+        ents2[f"https://{pub}.example.com/visas"] = \
+            {"person": ["shared top person"], "org": ["shared top org"]}
+    merged = ss.build_stories(rows, entity_merge=2, entities=ents2)
+    assert len(merged) == 1 and merged[0]["totalCoverage"] == 6

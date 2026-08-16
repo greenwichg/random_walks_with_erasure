@@ -1273,7 +1273,21 @@ def _merge_by_entities(groups: list, *, entities: dict, min_names: int,
         if stats is not None:
             stats[key] = stats.get(key, 0) + by
 
-    cons = [_story_entity_consensus(g, entities) for g in groups]
+    def profile(members: list) -> dict:
+        """name -> member votes, the counted form of ``_story_entity_consensus`` (same
+        corroboration floor) — kept because rule v3 needs to know which name is a story's TOP,
+        not merely which names are corroborated."""
+        votes: dict = {}
+        for m in members:
+            ents = entities.get(m.get("id") or m.get("url")) or {}
+            seen = {name for kind in ("person", "org") for name in ents.get(kind, ())
+                    if name and not entity_noise(name)}
+            for name in seen:
+                votes[name] = votes.get(name, 0) + 1
+        return {n: c for n, c in votes.items() if c >= 2}
+
+    profiles = [profile(g) for g in groups]
+    cons = [frozenset(p) for p in profiles]
     postings: dict = {}
     for i, names in enumerate(cons):
         for name in names:
@@ -1293,6 +1307,23 @@ def _merge_by_entities(groups: list, *, entities: dict, min_names: int,
                                if len(sids) <= ENTITY_MERGE_MAX_STORY_DF)
     bump("entityMergeUbiquitous", by=len(postings) - len(discriminative))
     cons = [c & discriminative for c in cons]
+    # Rule v3 — MUTUAL ANCHORING, from run 2's hand-read (2026-08-16). The automated bars passed
+    # and the exhibits split 7 clean / 5 dubious, with one structure separating them exactly: in
+    # every true family the shared names include each side's TOP consensus entity ("mangione" is
+    # #1 on all four sides, "jackie" on both), while in every dubious join the shared names are
+    # peripheral on at least one side — Leavitt's resignation joined the visa purge on
+    # {rubio, state department}-class names, and "karoline leavitt", the resignation story's
+    # top, appears nowhere in the visa story. So a join must be anchored by BOTH tops (ties
+    # kept): what each story is chiefly ABOUT must be part of what the pair shares.
+    tops = []
+    for i in range(n):
+        kept = {name: profiles[i][name] for name in cons[i]}
+        peak = max(kept.values()) if kept else 0
+        tops.append(frozenset(name for name, c in kept.items() if c == peak))
+
+    def anchored(a: int, b: int, shared: frozenset) -> bool:
+        return bool(tops[a] & shared) and bool(tops[b] & shared)
+
     pairs = []
     for i in range(n):
         counts: dict = {}
@@ -1300,10 +1331,15 @@ def _merge_by_entities(groups: list, *, entities: dict, min_names: int,
             for j in postings[name]:
                 if j > i:
                     counts[j] = counts.get(j, 0) + 1
-        for j, shared in sorted(counts.items()):
-            if shared >= min_names:
-                pairs.append((shared, i, j))
-                bump("entityMergeCandidates")
+        for j, shared_n in sorted(counts.items()):
+            if shared_n < min_names:
+                continue
+            shared = cons[i] & cons[j]
+            if not anchored(i, j, shared):
+                bump("entityMergeUnanchored")
+                continue
+            pairs.append((shared_n, i, j))
+            bump("entityMergeCandidates")
     if not pairs:
         return groups
 
@@ -1318,8 +1354,10 @@ def _merge_by_entities(groups: list, *, entities: dict, min_names: int,
         if _gap_hours(groups[i], groups[j]) > max_gap_hours:
             bump("entityMergeGapBlocked")
             continue
-        if not all(len(cons[a] & cons[b]) >= min_names for a in gi for b in gj):
-            continue                                  # complete linkage, never a chain
+        if not all(len(cons[a] & cons[b]) >= min_names
+                   and anchored(a, b, cons[a] & cons[b])
+                   for a in gi for b in gj):
+            continue                                  # complete linkage AND anchoring, never a chain
         side_a = [m for x in gi for m in groups[x]]
         side_b = [m for x in gj for m in groups[x]]
         ca, ta = _located_consensus(side_a)
