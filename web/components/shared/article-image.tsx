@@ -23,12 +23,18 @@ export function ArticleImage({
   className,
   aspect = "aspect-[16/9]",
   priority = false,
+  onHidden,
 }: {
   src?: string | null;
   alt: string;
   className?: string;
   aspect?: string;
   priority?: boolean;
+  /** Fired when a load ERROR hides the image (never for an absent src — the caller already knows
+   *  absence). Story surfaces use it to swap in the coverage plate instead of leaving the void
+   *  the reserved slot becomes: the engine never downloads images, so a dead or
+   *  hotlink-protected hero URL is only discoverable here, in the reader's browser. */
+  onHidden?: () => void;
 }) {
   const [failed, setFailed] = React.useState(false);
   React.useEffect(() => setFailed(false), [src]); // re-try when the source changes
@@ -47,7 +53,10 @@ export function ArticleImage({
         loading={priority ? "eager" : "lazy"}
         decoding="async"
         {...priorityAttrs}
-        onError={() => setFailed(true)}
+        onError={() => {
+          setFailed(true);
+          onHidden?.();
+        }}
         className="h-full w-full object-cover"
       />
     </div>

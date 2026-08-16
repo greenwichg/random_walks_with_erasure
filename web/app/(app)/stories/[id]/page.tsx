@@ -23,6 +23,7 @@ import { StoryListItem } from "@/components/home/story-list-item";
 import { RecommendationPanel } from "@/components/home/recommendation-panel";
 import { PublisherSpotlight } from "@/components/home/publisher-spotlight";
 import { LEAN_META } from "@/lib/metrics";
+import { track, urlHost } from "@/lib/analytics";
 import { useTranslation } from "@/lib/i18n";
 import { activeLang, formatDate } from "@/lib/i18n-core";
 
@@ -59,6 +60,12 @@ export default function StoryDetailPage() {
     { enabled: !!story?.topic },
   );
   const recommendations = useRecommendations();
+  // A hero that errors mid-load hands the slot to the coverage masthead, exactly like absence —
+  // but counted separately (story_hero_error), because the engine never downloads images and a
+  // dead or hotlink-protected URL is only observable here. Reset if a refetch changes the URL.
+  const [heroFailed, setHeroFailed] = React.useState(false);
+  const heroSrc = story?.image;
+  React.useEffect(() => setHeroFailed(false), [heroSrc]);
 
   // Wait for the topic query to settle before composing, or the top-6 fill — which usually lands
   // first now — would paint an unprioritised list and visibly reshuffle when the topic results
@@ -172,16 +179,21 @@ export default function StoryDetailPage() {
           {/* What happened — the hero, with the cluster's real summary as the standfirst. An
               imageless story opens with the COVERAGE MASTHEAD instead (coverage-plate.tsx):
               before it, the hero simply self-hid and the page started abruptly at the topic
-              label — the one no-image surface that had no designed state at all. (A hero URL
-              that 404s still self-hides; absence and failure stay distinct on purpose.) */}
+              label — the one no-image surface that had no designed state at all. A hero URL
+              that FAILS to load ends in the same masthead, tracked as story_hero_error so the
+              failing hosts are measurable rather than guessed. */}
           <article className="overflow-hidden rounded-lg border bg-card shadow-soft">
-            {story.image ? (
+            {story.image && !heroFailed ? (
               <ArticleImage
                 src={story.image}
                 alt={story.title}
                 priority
                 aspect="aspect-[21/9]"
                 className="w-full rounded-none border-0"
+                onHidden={() => {
+                  setHeroFailed(true);
+                  track("story_hero_error", { host: urlHost(story.image), surface: "detail" });
+                }}
               />
             ) : (
               <CoveragePlate story={story} masthead />

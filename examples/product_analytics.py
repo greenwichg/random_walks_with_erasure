@@ -40,6 +40,11 @@ EVENTS: "frozenset[str]" = frozenset({
     "continuation_eligible", "continuation_armed", "continuation_shown",
     "continuation_opened", "continuation_dismissed", "continuation_all_outlets",
     "continuation_suppressed",
+    # A story hero URL that failed to LOAD in the reader's browser (404, hotlink protection…).
+    # The engine selects heroes from metadata and never downloads an image, so this is the only
+    # place a dead URL is observable at all; the count and the failing hosts are what decide
+    # whether loading behaviour (e.g. referrer policy) is worth changing — measured, not guessed.
+    "story_hero_error",
 })
 
 # Per-event allow-listed properties (scalars only; everything else is dropped). Keeping this explicit
@@ -72,6 +77,10 @@ PROPS: "dict[str, tuple[str, ...]]" = {
     "continuation_opened": ("storyId", "distance", "minutesSinceRead"),
     "continuation_dismissed": ("storyId",),
     "continuation_all_outlets": ("storyId",),
+    # `host` is the image CDN's hostname only — never the full URL (paths can carry per-article
+    # identifiers); `surface` separates the card grid from the story page, the two places the
+    # coverage plate takes over when a hero fails.
+    "story_hero_error": ("host", "surface"),
 }
 
 _MAX_STR = 200          # property string values are truncated to this

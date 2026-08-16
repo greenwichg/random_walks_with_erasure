@@ -1,9 +1,11 @@
 "use client";
 
+import * as React from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { Newspaper, ArrowRight, EyeOff } from "lucide-react";
 import type { Story } from "@/types/domain";
+import { track, urlHost } from "@/lib/analytics";
 import { useTranslation } from "@/lib/i18n";
 import { SpectrumBar } from "@/components/shared/spectrum-bar";
 import { ArticleImage } from "@/components/shared/article-image";
@@ -22,7 +24,14 @@ import { cn } from "@/lib/utils";
  * AND, on gap stories, the thin-side chip; each fact is said once.) */
 export function StoryCard({ story, index = 0, priority = false }: { story: Story; index?: number; priority?: boolean }) {
   const { t, formatCompact, timeAgo } = useTranslation();
-  const hasImage = Boolean(story.image);
+  // A hero URL that fails to LOAD is a third state the engine cannot see (it never downloads
+  // images, so a dead or hotlink-protected URL is only observable here): the reserved slot used
+  // to become a silent void with the spectrum strip still attached beneath it. Failure hands the
+  // slot to the plate and the strip/chip logic follows, so a dead hero and an absent hero end in
+  // the same designed card. Reset when a refetch changes the URL.
+  const [heroFailed, setHeroFailed] = React.useState(false);
+  React.useEffect(() => setHeroFailed(false), [story.image]);
+  const showImage = Boolean(story.image) && !heroFailed;
   // The entrance animation exists for the cards a reader can SEE arrive. Below the first grid rows
   // it plays offscreen — pure main-thread cost with no visible effect (R3: a framer wrapper per
   // card was a measurable share of the 24-card grid's 1.4 s of 4x-CPU long tasks). Static cards
@@ -42,8 +51,17 @@ export function StoryCard({ story, index = 0, priority = false }: { story: Story
         href={`/stories/${story.id}`}
         className="group flex h-full flex-col rounded-lg border bg-card p-5 shadow-soft transition-all hover:-translate-y-0.5 hover:shadow-card"
       >
-        {hasImage ? (
-          <ArticleImage src={story.image} alt={story.title} priority={priority} className="mb-3" />
+        {showImage ? (
+          <ArticleImage
+            src={story.image}
+            alt={story.title}
+            priority={priority}
+            className="mb-3"
+            onHidden={() => {
+              setHeroFailed(true);
+              track("story_hero_error", { host: urlHost(story.image), surface: "card" });
+            }}
+          />
         ) : (
           <CoveragePlate story={story} />
         )}
@@ -72,7 +90,7 @@ export function StoryCard({ story, index = 0, priority = false }: { story: Story
 
         <div className="flex-1" />
 
-        {hasImage && (
+        {showImage && (
           <div className="mt-4">
             <SpectrumBar distribution={story.distribution} height={8} showLegend={false} />
           </div>
@@ -82,7 +100,7 @@ export function StoryCard({ story, index = 0, priority = false }: { story: Story
           {/* On imageless gap stories the plate already STATES the thin side (with its rated
               share) — repeating it here as a chip would say the same thing twice, so those
               cards show the update time like any other. */}
-          {story.blindspotSide && hasImage ? (
+          {story.blindspotSide && showImage ? (
             <span
               className="inline-flex items-center gap-1 font-medium"
               style={{ color: LEAN_META[story.blindspotSide].color }}

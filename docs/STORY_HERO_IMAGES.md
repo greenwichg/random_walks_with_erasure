@@ -116,7 +116,13 @@ documents). Compose defaults it ON. Junk values fall back to off, never to a gue
   in a follow-up: the COVERAGE PLATE (`web/components/stories/coverage-plate.tsx`) replaced the
   bare coverage figure on cards, added a blindspot variant, and gave the story page a 21:9
   coverage masthead where the hero previously self-hid with no designed state. Same principle,
-  better composition — every mark is still a counted fact of the story.
+  better composition — every mark is still a counted fact of the story. The plate is also the
+  **load-failure** fallback: a hero URL that 404s or blocks hotlinking is invisible to the engine
+  (heroes are selected from metadata; nothing ever downloads an image), so the reader's browser
+  is the only place it can be caught — `ArticleImage` hands the slot to the plate on error and
+  emits a `story_hero_error` beacon (`host`, `surface`; allow-listed in
+  `examples/product_analytics.py`), so the failure rate and the failing CDNs are measured before
+  anyone tunes loading behaviour (e.g. referrer policy) on a guess.
 - **Clustering.** Nothing here touches membership; the audit pins ids/order equality under the
   flag.
 

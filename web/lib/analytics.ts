@@ -151,6 +151,16 @@ function bindFlushListeners(): void {
   });
 }
 
+/** Hostname of a URL for failure telemetry — never the full URL (paths can carry per-article
+ *  identifiers, and the server-side allowlist documents `host` as the stored field). */
+export function urlHost(u?: string | null): string {
+  try {
+    return u ? new URL(u).hostname : "";
+  } catch {
+    return "";
+  }
+}
+
 /**
  * Record a product event. Buffered and flushed automatically; a no-op on the server and never throws.
  * `props` are further allow-listed + truncated server-side, so only documented, pseudonymous fields
