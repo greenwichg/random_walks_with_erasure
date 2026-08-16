@@ -2635,3 +2635,103 @@ def test_dup_merge_pass_respects_the_veto():
     joined = ss._merge_duplicates([list(g) for g in groups], min_sim=0.0001, max_gap_hours=1e9,
                                   max_size=99)
     assert len(joined) == 1, "without the veto the same pair joins — the gate is the difference"
+
+
+# --------------------------------------------------------------------------- #
+# X5b entity-corroborated merge recall (docs/STORY_ENTITY_EVIDENCE_PLAN.md) — dormant twice
+# over (env default 0 AND the entity mapping must be injected). These pin the rule the phase-0
+# measurements designed: two shared corroborated non-noise names propose, one does not (the
+# USGS lesson), the X4 geo-consensus veto outranks entities (the Colombia+Indonesia
+# protection), complete linkage prevents chains, and the default path is byte-identical.
+# --------------------------------------------------------------------------- #
+def _ents_for(st_rows_urls, mapping):
+    """Entity mapping keyed the way member dicts are (id = canonical url)."""
+    return {u: v for u, v in mapping.items()}
+
+
+def _seattle(st):
+    """The measured recall case: lexically unreachable (ONE shared token), entity-identical."""
+    for pub in ["A", "B"]:
+        _add(st, f"https://{pub.lower()}.example.com/shooting", pub, 0.0,
+             "Mass shooting reported downtown at Seattle Center venue")
+    for pub in ["C", "D"]:
+        _add(st, f"https://{pub.lower()}.example.com/gunfire", pub, 0.0,
+             "Gunfire erupts near busy plaza as police respond quickly")
+
+
+def test_entity_merge_joins_the_lexically_unreachable_pair():
+    st = store_mod.Store("sqlite://")
+    _seattle(st)
+    ents = {}
+    for pub in ["a", "b", "c", "d"]:
+        ents[f"https://{pub}.example.com/" + ("shooting" if pub in "ab" else "gunfire")] = \
+            {"person": ["jane suspect"], "org": ["seattle center"]}
+    rows = ss._fetch(st)
+    plain = ss.build_stories(rows)
+    assert len(plain) == 2, "lexically these never merge at any threshold"
+    merged = ss.build_stories(rows, entity_merge=2, entities=ents)
+    assert len(merged) == 1 and merged[0]["totalCoverage"] == 4, \
+        "two corroborated shared names join what no lexical profile can reach"
+
+
+def test_one_shared_name_proposes_nothing():
+    """The USGS lesson: a single shared corroborated name can be a type-level responder agency,
+    so it must not even generate a candidate."""
+    st = store_mod.Store("sqlite://")
+    _seattle(st)
+    ents = {}
+    for pub in ["a", "b", "c", "d"]:
+        key = f"https://{pub}.example.com/" + ("shooting" if pub in "ab" else "gunfire")
+        ents[key] = {"org": ["u s geological"],
+                     "person": [f"local person {pub in 'ab' and 'x' or 'y'}"]}
+    rows = ss._fetch(st)
+    stats: dict = {}
+    merged = ss.build_stories(rows, entity_merge=2, entities=ents, veto_stats=stats)
+    assert len(merged) == 2
+    assert stats.get("entityMergeCandidates", 0) == 0, "one shared name is not a candidate"
+
+
+def test_geo_consensus_outranks_entities():
+    """The Colombia+Indonesia protection: identical corroborated entities, disjoint corroborated
+    located consensuses — the join is refused whatever the entities say."""
+    st = store_mod.Store("sqlite://")
+    _seattle(st)
+    for pub in ["a", "b"]:
+        _locate(st, f"https://{pub}.example.com/shooting", "CO")
+    for pub in ["c", "d"]:
+        _locate(st, f"https://{pub}.example.com/gunfire", "ID")
+    ents = {}
+    for pub in ["a", "b", "c", "d"]:
+        key = f"https://{pub}.example.com/" + ("shooting" if pub in "ab" else "gunfire")
+        ents[key] = {"person": ["shared name one"], "org": ["shared org two"]}
+    rows = ss._fetch(st)
+    stats: dict = {}
+    merged = ss.build_stories(rows, entity_merge=2, entities=ents, veto_stats=stats)
+    assert len(merged) == 2, "geography outranks entities"
+    assert stats.get("entityMergeGeoVetoed", 0) >= 1
+
+
+def test_entity_consensus_requires_corroboration_and_filters_noise():
+    members = [{"id": "u1"}, {"id": "u2"}, {"id": "u3"}]
+    ents = {"u1": {"person": ["jane doe"], "org": ["reuters", "acme corp"]},
+            "u2": {"person": ["jane doe"], "org": ["reuters", "acme corp"]},
+            "u3": {"person": ["someone else"], "org": []}}
+    cons = ss._story_entity_consensus(members, ents)
+    assert cons == frozenset({"jane doe", "acme corp"}), \
+        "reuters is identity-noise however many members carry it; singletons are not consensus"
+
+
+def test_entity_merge_default_is_byte_identical(monkeypatch):
+    monkeypatch.delenv("RWE_STORY_ENTITY_MERGE", raising=False)
+    st = store_mod.Store("sqlite://")
+    _seattle(st)
+    rows = ss._fetch(st)
+    a = ss.build_stories(rows)
+    b = ss.build_stories(rows, entity_merge=0, entities={"x": {"person": ["y"]}})
+    c = ss.build_stories(rows, entity_merge=2, entities=None)   # env off + no data: both gates
+    assert [s["id"] for s in a] == [s["id"] for s in b] == [s["id"] for s in c]
+    assert ss.entity_merge_min() == 0
+    monkeypatch.setenv("RWE_STORY_ENTITY_MERGE", "garbage")
+    assert ss.entity_merge_min() == 0, "junk falls back to off, never to a guess"
+    monkeypatch.setenv("RWE_STORY_ENTITY_MERGE", "2")
+    assert ss.entity_merge_min() == 2

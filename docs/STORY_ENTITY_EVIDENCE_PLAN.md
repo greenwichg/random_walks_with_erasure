@@ -582,6 +582,53 @@ exactly the "richer text" its docstring says the Seattle case needs.
 
 Nothing was implemented beyond the instrument; production untouched; `link_quorum` untouched.
 
+## X5b — entity-corroborated merge recall (the pivot the data chose)
+
+**Status: BUILT (2026-08-16), dormant twice over** — `RWE_STORY_ENTITY_MERGE` defaults to 0 AND
+the pass requires the caller to inject the entity mapping (`_fetch` never queries it, so a
+production build costs nothing whatever the env says). The audit injects it only under
+`--entity-merge N`.
+
+### The rule, designed from the phase-0 measurements
+
+Two stories join when their **corroborated entity consensuses share ≥ 2 non-noise names**
+(`_story_entity_consensus`: one vote per member per name, ≥ 2 votes to count — the 93.1%
+member-agreement receipt; `entity_noise`: identity-filtered, with the USGS residual named at
+the definition). Two names because one can be a type-level responder agency. Every guard the
+lexical merge pass taught us applies, plus X4's:
+
+* complete linkage over constituent stories (never a chain);
+* **the X4 geo-consensus veto, unconditional**: disjoint corroborated located consensuses
+  refuse the join whatever the entities say — the Colombia↔Indonesia protection;
+* the coherence guard (the independent signal keeps its veto over an entity decision);
+* the size cap (`merge_max_size`) and gap window (`merge_max_gap_hours`), same constants.
+
+The measured target population: the Farage/Clacton family (3 shared names), Mangione's court
+stories (2–3), the Seattle-shaped pairs `_merge_duplicates`' own docstring names as lexically
+unreachable, and the cross-language duplicates. Telemetry counts candidates / joined /
+geo-vetoed / coherence-vetoed / size-capped / gap-blocked.
+
+### The run (merge-direction bars apply — the audit computes them)
+
+```bash
+cd /opt/ih && source deploy/ops/_compose.sh
+git fetch origin claude/sleepy-gates-oecof1
+git worktree remove --force /tmp/x5-code 2>/dev/null; \
+git worktree add --detach /tmp/x5-code origin/claude/sleepy-gates-oecof1
+dc run --rm -T -v /tmp/x5-code/examples:/app/examples:ro api \
+   python examples/audit_clustering_change.py --entity-merge 2 --show 10 --pieces 12 \
+   2>&1 | tee /tmp/x5b_$(date -u +%Y%m%dT%H%M%SZ).log
+git worktree remove /tmp/x5-code
+```
+
+Pre-registered reading (the merge bars, `verdict(merging=True)`, computed by the audit):
+**adopt** requires zero dropped coverage (a merge that loses articles has a bug), largest
+cluster ≤ 120, bad-cluster count not rising, mean coherence within the denominator tolerance —
+plus the hand-read: the `mergedFrom` exhibits must be the named recall families (Farage,
+Mangione, cross-language pairs), and the Colombia↔Indonesia pair must appear in
+`geo-vetoed`/absent, never in `joined`. **Reject** on any of those failing. Story count
+falling is the POINT of a merge and does not count against it.
+
 ### Ground truth — selection procedures, not fixed IDs (the catalog moves daily)
 
 * **Must-sever set** (false-merge labels): re-run the X0 counterfactual (`fallbacks, --pieces`)

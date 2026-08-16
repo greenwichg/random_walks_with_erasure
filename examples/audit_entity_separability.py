@@ -34,31 +34,12 @@ from itertools import combinations
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import clustering            # noqa: E402
-import location              # noqa: E402
-import outlet_registry       # noqa: E402
 import story_service         # noqa: E402
 import store as store_mod    # noqa: E402
 
-#: Platform/share-chrome names GDELT extracts from page furniture rather than the story. The
-#: 2026-08-16 production df table is the receipt: instagram 127, facebook 63, youtube 32 — in a
-#: catalog where the single most-covered actual story's entities reach df 30. Instrument-side
-#: only, and REPORTED when applied, because a platform name can be a genuine subject (a Meta
-#: story) — the trade is visible in the filtered-names print, not hidden.
-_PLATFORM_CHROME = frozenset({"instagram", "facebook", "youtube", "twitter", "tiktok",
-                              "whatsapp", "telegram", "linkedin", "reddit", "pinterest"})
-
-
-def _is_noise(name: str) -> bool:
-    """Names that are ABOUT the page or the press, not the event — identified by IDENTITY, not
-    frequency. A df floor punishes exactly the biggest events' entities (luigi mangione reached
-    df 30 because the story was big); an outlet-registry resolve catches bylines and media
-    names (reuters, associated press, cnn) whatever their df, and a country normalization
-    catches geography extracted as entities ("united states" as an organization)."""
-    if name in _PLATFORM_CHROME:
-        return True
-    if location.normalize_country(name):
-        return True
-    return outlet_registry.resolve(name) is not None
+# One noise definition, shared with the X5b merge pass so instrument and rule cannot drift —
+# the receipts (df table, the USGS residual) live at story_service.entity_noise.
+_is_noise = story_service.entity_noise
 
 
 def _entity_sets(ents: dict, *, noise_filter: bool = True,

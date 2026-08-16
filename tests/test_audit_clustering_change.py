@@ -383,3 +383,46 @@ def test_no_flag_no_telemetry(tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert rc == 0 and "geo-veto telemetry" not in out, \
         "a None passthrough is production and must not imply the veto was measured"
+
+
+def test_entity_merge_threads_to_the_after_side_only(tmp_path, monkeypatch, capsys):
+    """X5b: --entity-merge N fetches entities, applies the pass to AFTER only, prints its
+    telemetry, and is judged by the MERGE bars (a falling story count is the point)."""
+    monkeypatch.setenv("RWE_CLUSTER_LINK_QUORUM", "0")
+    st = _store(tmp_path, "em.db")
+    # Two lexically-unreachable stories (one shared token), entity-identical.
+    for pub in ("A", "B"):
+        _feed(st, f"https://{pub.lower()}.example.com/shooting", pub,
+              "Mass shooting reported downtown at Seattle Center venue")
+    for pub in ("C", "D"):
+        _feed(st, f"https://{pub.lower()}.example.com/gunfire", pub,
+              "Gunfire erupts near busy plaza as police respond quickly")
+    for pub in ("a", "b"):
+        st.replace_article_entities(f"https://{pub}.example.com/shooting",
+                                    {"person": ["jane suspect"], "org": ["seattle center"]})
+    for pub in ("c", "d"):
+        st.replace_article_entities(f"https://{pub}.example.com/gunfire",
+                                    {"person": ["jane suspect"], "org": ["seattle center"]})
+
+    rc = acc.main(["--db", f"sqlite:///{tmp_path / 'em.db'}", "--entity-merge", "2"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    after = next(l for l in out.splitlines() if l.startswith("after"))
+    before = next(l for l in out.splitlines() if l.startswith("before"))
+    assert "entity-merge 2" in after and "entity-merge" not in before
+    assert "clusters merged    : 1" in out
+    assert "entity-merge       : candidates 1, joined 1" in out
+    assert "VERDICT: ADOPT" in out, "a merge that loses nothing passes the merge bars"
+
+
+def test_no_entity_flag_fetches_nothing(tmp_path, monkeypatch):
+    """The entity mapping is queried ONLY when the X5b pass is under test."""
+    monkeypatch.setenv("RWE_CLUSTER_LINK_QUORUM", "0")
+    st = _store(tmp_path, "noem.db")
+    _feed(st, "https://a.example.com/x", "A", "Landmark ruling reshapes the harbor bridge project")
+    calls = []
+    orig = store_mod.Store.entities_for_urls
+    monkeypatch.setattr(store_mod.Store, "entities_for_urls",
+                        lambda self, urls: calls.append(1) or orig(self, urls))
+    acc.compare(st, before=(3, 3), after=(3, 3), show=1)
+    assert not calls, "an audit run that is not asking the entity question must not pay for it"

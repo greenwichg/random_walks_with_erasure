@@ -78,7 +78,8 @@ def deploy_env_present() -> bool:
 
 
 def build(rows: list, *, min_shared: int, min_tokens: int, idf: bool = False,
-          quorum=None, repair=None, merge=None, desc=None, veto=None, veto_stats=None) -> list:
+          quorum=None, repair=None, merge=None, desc=None, veto=None, veto_stats=None,
+          entity_merge=None, entities=None) -> list:
     """``None`` means "whatever production is configured with" — ``build_stories`` resolves it.
 
     These defaulted to 0.0, which silently made the BEFORE side something production is not. It is
@@ -88,7 +89,8 @@ def build(rows: list, *, min_shared: int, min_tokens: int, idf: bool = False,
     inside the mega-cluster and there is by construction nothing for it to do."""
     return story_service.build_stories(rows, min_shared=min_shared, min_tokens=min_tokens, idf=idf,
                                        quorum=quorum, repair=repair, merge=merge, desc=desc,
-                                       veto=veto, veto_stats=veto_stats)
+                                       veto=veto, veto_stats=veto_stats,
+                                       entity_merge=entity_merge, entities=entities)
 
 
 def index_by_member(stories: list) -> dict:
@@ -189,16 +191,21 @@ def compare(store_, *, before: tuple, after: tuple, show: int = 10,
             before_idf: bool = False, after_idf: bool = False,
             before_quorum=None, after_quorum=None,
             after_repair=None, after_merge=None, after_desc=None,
-            after_veto=None) -> dict:
+            after_veto=None, after_entity_merge=None) -> dict:
     rows = story_service._fetch(store_)
     a = build(rows, min_shared=before[0], min_tokens=before[1], idf=before_idf,
               quorum=before_quorum)
-    # Telemetry only when the veto is explicitly under test — a None passthrough must stay
-    # byte-identical to production, counting included.
-    veto_stats = {} if after_veto else None
+    # Telemetry only when a veto/pass is explicitly under test — a None passthrough must stay
+    # byte-identical to production, counting included. The entity mapping is fetched ONLY when
+    # the X5b pass is under test: production builds never pay the query, and neither does an
+    # audit run that is not asking the entity question.
+    veto_stats = {} if (after_veto or after_entity_merge) else None
+    entities = (store_.entities_for_urls([r.get("canonicalUrl") for r in rows])
+                if after_entity_merge else None)
     b = build(rows, min_shared=after[0], min_tokens=after[1], idf=after_idf, quorum=after_quorum,
               repair=after_repair, merge=after_merge, desc=after_desc,
-              veto=after_veto, veto_stats=veto_stats)
+              veto=after_veto, veto_stats=veto_stats,
+              entity_merge=after_entity_merge, entities=entities)
 
     a_by_id = {s["id"]: s for s in a}
     b_by_id = {s["id"]: s for s in b}
@@ -335,6 +342,13 @@ def main(argv=None) -> int:
                          "lexically-matching pair whose event-country sets are both present and "
                          "disjoint; 'growth' gates only cluster merges past MIN_CHAINABLE, on "
                          "located-consensus disagreement. Fail-open on missing data")
+    ap.add_argument("--entity-merge", type=int, default=None, metavar="N",
+                    help="X5b entity-corroborated merge recall on the AFTER side: join stories "
+                         "sharing >= N corroborated non-noise consensus names (2 is the designed "
+                         "minimum — one name can be a responder agency). Complete linkage, the "
+                         "X4 geo-consensus veto, the coherence guard, size cap and gap window "
+                         "all apply. Requires backfilled article_entities; a MERGE-direction "
+                         "change, judged by the merge bars")
     ap.add_argument("--pieces", type=int, default=0,
                     help="print the resulting pieces for the N biggest split clusters — the read "
                          "that decides whether a split separated events or shredded a story")
@@ -364,7 +378,8 @@ def main(argv=None) -> int:
     res = compare(store_mod.Store(args.db), before=before,
                   after=after, show=args.show, after_idf=args.idf,
                   after_quorum=args.link_quorum, after_repair=args.repair_quorum,
-                  after_merge=args.merge_sim, after_desc=cap, after_veto=args.geo_veto)
+                  after_merge=args.merge_sim, after_desc=cap, after_veto=args.geo_veto,
+                  after_entity_merge=args.entity_merge)
 
     def _tag(name, v):
         return f", {name} {v:g}" if v else ""
@@ -379,7 +394,8 @@ def main(argv=None) -> int:
                   else story_service.merge_similarity())
            + _tag("dek", cap)
            + (f", veto {args.geo_veto or story_service.geo_veto()}"
-              if (args.geo_veto or story_service.geo_veto()) else ""))
+              if (args.geo_veto or story_service.geo_veto()) else "")
+           + (f", entity-merge {args.entity_merge}" if args.entity_merge else ""))
     base_tag = (_tag("quorum", story_service.link_quorum())
                 + _tag("repair", story_service.repair_quorum())
                 + _tag("merge", story_service.merge_similarity())
@@ -429,6 +445,17 @@ def main(argv=None) -> int:
               f"merges checked {vs.get('mergeChecked', 0):,} "
               f"(gated {vs.get('mergeGated', 0):,}, vetoed {vs.get('mergeVetoed', 0):,}); "
               f"dup-merge vetoed {vs.get('dupMergeVetoed', 0):,}")
+        if args.entity_merge:
+            print(f"entity-merge       : candidates {vs.get('entityMergeCandidates', 0):,}, "
+                  f"joined {vs.get('entityMergeJoined', 0):,}, "
+                  f"geo-vetoed {vs.get('entityMergeGeoVetoed', 0):,}, "
+                  f"coherence-vetoed {vs.get('entityMergeCoherenceVetoed', 0):,}, "
+                  f"size-capped {vs.get('entityMergeSizeCapped', 0):,}, "
+                  f"gap-blocked {vs.get('entityMergeGapBlocked', 0):,}")
+            if not vs.get("entityMergeCandidates"):
+                print("                     NOTE: zero candidates — no two stories share the "
+                      "minimum corroborated names, or article_entities is empty (run "
+                      "gdelt_entity_backfill.py first)")
         if args.geo_veto and not any(vs.values()):
             print("                     NOTE: the veto was never consulted — either nothing "
                   "lexically matched or no event locations exist in this catalog")
@@ -453,7 +480,8 @@ def main(argv=None) -> int:
         for pc in grp["pieces"][:args.piece_limit]:
             print(f"    {pc['articles']:>5} {pc['publishers']:>5}  {pc['title'][:64]}")
 
-    v = verdict(res, max_dropped=args.max_dropped, merging=bool(args.merge_sim))
+    v = verdict(res, max_dropped=args.max_dropped,
+                merging=bool(args.merge_sim or args.entity_merge))
     print(f"\nVERDICT: {'ADOPT' if v['adopt'] else 'REJECT'} "
           f"(dropped {v['droppedShare']:.1%} of covered articles)")
     for f in v["fails"]:

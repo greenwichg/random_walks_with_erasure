@@ -30,6 +30,7 @@ from typing import Optional
 
 import clustering                 # the deterministic union-find Jaccard primitive (algorithm only)
 import discover                   # feed_article_to_article — the shared Article serializer (Read flow)
+import location                   # normalize_country — the entity noise filter's geo test (X5b)
 import media                      # centralised hero-image selection (additive; no clustering change)
 import obs_metrics                # OBS1 counters (stdlib-only leaf) — stale serves land in /api/metrics
 import outlet_registry            # curated source identity — supplies the wire/news distinction
@@ -632,6 +633,51 @@ def geo_veto() -> str:
     return v if v in _GEO_VETO_MODES else ""
 
 
+def entity_merge_min() -> int:
+    """X5b entity-corroborated merge recall — **OFF** (0), and not a production setting: no
+    deploy configuration sets ``RWE_STORY_ENTITY_MERGE``, and the pass additionally requires the
+    caller to inject the entity mapping (the audit does; ``_fetch`` deliberately does not query
+    it, so production builds cost nothing). The value is the MINIMUM shared corroborated
+    non-noise consensus names two stories need before a join is even proposed — 2 by design:
+    one shared name can be a type-level responder agency (the USGS receipt at
+    :func:`entity_noise`), two independent corroborated names is the measured signature of the
+    same event family (Farage/Clacton shared 3, Mangione's court stories 2-3;
+    docs/STORY_ENTITY_EVIDENCE_PLAN.md, X5 phase 0)."""
+    v = os.environ.get("RWE_STORY_ENTITY_MERGE", "").strip()
+    try:
+        n = int(v)
+    except (TypeError, ValueError):
+        return 0
+    return n if n >= 0 else 0
+
+
+#: Platform/share-chrome names GDELT extracts from page furniture rather than the story. The
+#: 2026-08-16 production df table is the receipt: instagram 127, facebook 63, youtube 32 in a
+#: catalog where the single most-covered story's entities reached df 30. One definition, shared
+#: by the X5 separability instrument and the X5b merge pass, so the noise contract cannot drift.
+ENTITY_NOISE_PLATFORMS = frozenset({"instagram", "facebook", "youtube", "twitter", "tiktok",
+                                    "whatsapp", "telegram", "linkedin", "reddit", "pinterest"})
+
+
+def entity_noise(name: str) -> bool:
+    """Names that are ABOUT the page or the press, not the event — identified by IDENTITY, not
+    frequency. A df floor punishes exactly the biggest events' entities ("luigi mangione"
+    reached df 30 because the story was big); an outlet-registry resolve catches bylines and
+    media names (reuters, associated press, cnn) whatever their df, and a country normalization
+    catches geography extracted as entities ("united states" as an organization, df 638).
+
+    KNOWN residual, named so it is not rediscovered: type-level responder agencies. The two
+    Colombia-quake stories' consensuses intersect in nothing but "u s geological" — USGS attends
+    every earthquake — and the X5b minimum of TWO shared names is what keeps that class from
+    proposing merges, because curating every agency is a slope this filter refuses to start
+    down."""
+    if name in ENTITY_NOISE_PLATFORMS:
+        return True
+    if location.normalize_country(name):
+        return True
+    return outlet_registry.resolve(name) is not None
+
+
 def _located_consensus(members: list) -> "tuple[frozenset, int]":
     """``(top-vote countries, winning vote count)`` over MEMBER DICTS — the dup-merge pass's
     counterpart of the index-based closure in ``_geo_closures``, same vote semantics (one vote
@@ -1168,6 +1214,118 @@ def _merge_duplicates(groups: list, *, min_sim: float, max_gap_hours: float, max
     return out
 
 
+def _story_entity_consensus(members: list, entities: dict) -> frozenset:
+    """A story's corroborated entity consensus: non-noise names carried by >= 2 members, one
+    vote per member per name. The same corroboration discipline as ``GEO_MIN_CONSENSUS`` — one
+    member's testimony is a sample of one — and the X5 phase-0 receipt for why it is safe:
+    93.1% of covered members share their own story's consensus."""
+    votes: dict = {}
+    for m in members:
+        ents = entities.get(m.get("id") or m.get("url")) or {}
+        seen = {name for kind in ("person", "org") for name in ents.get(kind, ())
+                if name and not entity_noise(name)}
+        for name in seen:
+            votes[name] = votes.get(name, 0) + 1
+    return frozenset(n for n, c in votes.items() if c >= 2)
+
+
+def _merge_by_entities(groups: list, *, entities: dict, min_names: int,
+                       max_gap_hours: float, max_size: int,
+                       stats: Optional[dict] = None) -> list:
+    """Join stories that are the same event according to corroborated ENTITY consensus (X5b).
+
+    The recall population this exists for is measured, not assumed: 65% of confusable story
+    pairs share corroborated names because they ARE the same family (Farage/Clacton x3,
+    Mangione's court stories, the cross-language Air Force One pair) — the duplicate problem
+    ``_merge_duplicates`` targets, reached through evidence its lexical profiles cannot see
+    ("Mass shooting reported at Seattle Center" vs "gunfire erupts near Seattle" share ONE
+    token; they share every entity).
+
+    A merge pass is precisely the operation that built the mega-cluster, so this one carries
+    every guard the lexical pass taught us, plus X4's:
+
+    * **>= ``min_names`` shared corroborated names to PROPOSE** — one shared name can be a
+      type-level responder agency (the USGS receipt), so a single name proposes nothing.
+    * **Complete linkage** over constituent stories: a group joins only when EVERY pair of
+      original stories inside it clears ``min_names`` — never a chain.
+    * **X4's geo-consensus veto**, unconditional here: disjoint corroborated located
+      consensuses refuse the join (the Colombia↔Indonesia protection), whatever the entities
+      say.
+    * **The coherence guard**: a merged cluster whose actionable geoCoherence falls below the
+      floor is refused — the independent signal keeps its veto over an entity decision exactly
+      as it holds one over a text decision.
+    * **The size cap and the gap window**, same constants as the lexical pass.
+
+    Best-first (most shared names, ties by index) and deterministic. Returns new member lists."""
+    n = len(groups)
+    if n < 2 or min_names <= 0 or not entities:
+        return groups
+
+    def bump(key: str) -> None:
+        if stats is not None:
+            stats[key] = stats.get(key, 0) + 1
+
+    cons = [_story_entity_consensus(g, entities) for g in groups]
+    postings: dict = {}
+    for i, names in enumerate(cons):
+        for name in names:
+            postings.setdefault(name, []).append(i)
+    pairs = []
+    for i in range(n):
+        counts: dict = {}
+        for name in cons[i]:
+            for j in postings[name]:
+                if j > i:
+                    counts[j] = counts.get(j, 0) + 1
+        for j, shared in sorted(counts.items()):
+            if shared >= min_names:
+                pairs.append((shared, i, j))
+                bump("entityMergeCandidates")
+    if not pairs:
+        return groups
+
+    member_of = {i: (i,) for i in range(n)}
+    for shared, i, j in sorted(pairs, key=lambda t: (-t[0], t[1], t[2])):
+        gi, gj = member_of[i], member_of[j]
+        if gi == gj:
+            continue
+        if sum(len(groups[x]) for x in gi + gj) > max_size:
+            bump("entityMergeSizeCapped")
+            continue
+        if _gap_hours(groups[i], groups[j]) > max_gap_hours:
+            bump("entityMergeGapBlocked")
+            continue
+        if not all(len(cons[a] & cons[b]) >= min_names for a in gi for b in gj):
+            continue                                  # complete linkage, never a chain
+        side_a = [m for x in gi for m in groups[x]]
+        side_b = [m for x in gj for m in groups[x]]
+        ca, ta = _located_consensus(side_a)
+        cb, tb = _located_consensus(side_b)
+        if (ca and cb and not (ca & cb)
+                and (ta >= GEO_MIN_CONSENSUS or tb >= GEO_MIN_CONSENSUS)):
+            bump("entityMergeGeoVetoed")
+            continue                                  # X4's rule: geography outranks entities
+        merged_members = side_a + side_b
+        coherence, located = _geo_coherence(merged_members, _country_votes(merged_members))
+        if (coherence is not None and located >= MIN_LOCATED_FOR_TRUST
+                and coherence < coherence_floor()):
+            bump("entityMergeCoherenceVetoed")
+            continue                                  # the independent signal keeps its veto
+        combined = tuple(sorted(gi + gj))
+        for x in combined:
+            member_of[x] = combined
+        bump("entityMergeJoined")
+
+    out, done = [], set()
+    for i in range(n):
+        key = member_of[i]
+        if key in done:
+            continue
+        done.add(key)
+        out.append([m for x in key for m in groups[x]])
+    return out
+
+
 def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
                   sim: float = clustering.DEFAULT_SIM,
                   window_days: float = clustering.DEFAULT_WINDOW_DAYS,
@@ -1180,7 +1338,9 @@ def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
                   merge_gap: Optional[float] = None,
                   desc: Optional[int] = None,
                   veto: Optional[str] = None,
-                  veto_stats: Optional[dict] = None) -> list:
+                  veto_stats: Optional[dict] = None,
+                  entity_merge: Optional[int] = None,
+                  entities: Optional[dict] = None) -> list:
     """Cluster FeedArticle rows into Story objects (the pure builder). Keeps clusters with
     ≥ ``min_articles`` from ≥ ``min_publishers`` distinct outlets; sorted biggest+freshest first,
     with independently-suspect clusters demoted (see ``_size_rank``).
@@ -1275,6 +1435,15 @@ def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
             admitted, min_sim=join,
             max_gap_hours=merge_max_gap_hours() if merge_gap is None else merge_gap,
             max_size=merge_max_size(), veto=veto_mode, veto_stats=veto_stats)
+    # X5b entity-corroborated merge recall — dormant twice over: the env default is 0 AND the
+    # entity mapping must be injected by the caller (the audit does; _fetch never queries it,
+    # so a production build costs nothing whatever the env says).
+    em = entity_merge_min() if entity_merge is None else max(0, entity_merge)
+    if em > 0 and entities:
+        admitted = _merge_by_entities(
+            admitted, entities=entities, min_names=em,
+            max_gap_hours=merge_max_gap_hours() if merge_gap is None else merge_gap,
+            max_size=merge_max_size(), stats=veto_stats)
     stories = [_build_story(m) for m in admitted]
     trust_aware = trust_ranking()
     stories.sort(key=lambda s: _size_rank(s, trust_aware=trust_aware), reverse=True)
