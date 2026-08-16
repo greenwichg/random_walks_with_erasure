@@ -355,6 +355,49 @@ The diagnostic is a read-only print of `eventCountries` for the members of the s
 and the changed splits; its output decides between "adopt as a bounded incremental win" and
 "the corroboration rule needs a tie-handling amendment".
 
+## X4 conclusion (2026-08-16, diagnostic complete)
+
+The member-level located print (312 articles) resolved every open case, and the answer is a
+**data ceiling, not a rule defect** — in two distinct forms:
+
+* **Coverage ceiling.** The Indonesia-quake stories that fused with Colombia are built from
+  UNLOCATED members (the ID-located Indonesia articles sit in other clusters), and the Samsung
+  articles are unlocated too. The veto cannot sever what GDELT did not locate; 18.7% article
+  coverage is the reach.
+* **Granularity ceiling.** The two court cases are both US events — the consensuses overlap and
+  the veto CORRECTLY declines. Country-level evidence cannot separate two same-country events
+  (courts, the two companies' earnings). Run C's severances there were accidents of the cruder
+  rule, not wins corroboration lost.
+* **The residual sharp edge.** The Assad (16+4) and Zuckerberg-yacht (11+3) splits fired
+  through single MISLOCATED members — `IN` on a Syria trial, `PF` on an Alaska incident —
+  meeting a corroborated opposite consensus. Bounded (small pieces, zero dropped), visible, and
+  the symmetric fix was already measured to be worse (the absorption hole).
+
+**What V-growth-2 measurably delivers at that ceiling** (run E, production config): bad
+clusters 4 → 2, largest cluster unchanged with every named tripwire intact, 0.3% coverage cost
+at net −2 articles, deterministic, ~zero compute — and in the counterfactual regime (run B
+shape) the same evidence removes hundreds of articles of cross-country chaining from a
+regrowing blob for single-digit drops. As insurance against the monitors' regrowth scenario it
+is cheap and real.
+
+**Recommendations, in order:**
+
+1. **Adoption of V-growth-2 is a product call, not a measurement call**, and the measurements
+   are now complete: +2 fewer independently-bad clusters and mega-cluster insurance, against
+   two small mislocation-driven duplicate splits per catalog. If adopted: set
+   `RWE_CLUSTER_GEO_VETO=growth` in deploy config (one env row + restart; the code ships
+   dormant either way). This plan makes no production change.
+2. **The real unlock is rung 2** — `V1PERSONS` / `V1ORGANIZATIONS` / `V1THEMES` from the SAME
+   GKG file the enricher already downloads every 15 minutes. Person/org evidence dissolves both
+   ceilings at once: it separates two US court cases (zero shared persons between Harvard and
+   the Minnesota case) and reaches articles GDELT located but we only stored countries for.
+   That is a new experiment (schema + parser + the same audit discipline), gated on its own
+   go-ahead.
+3. The X0 lesson generalizes and closes the loop on the SimClusters comparison: every
+   remaining failure is now attributable to what the evidence IS (coverage, granularity,
+   mislocation) rather than how the threshold is tuned — which is exactly where a
+   representation-level experiment was supposed to land.
+
 ### Ground truth — selection procedures, not fixed IDs (the catalog moves daily)
 
 * **Must-sever set** (false-merge labels): re-run the X0 counterfactual (`fallbacks, --pieces`)
