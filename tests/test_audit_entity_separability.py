@@ -95,3 +95,31 @@ def test_media_platform_and_country_names_are_not_evidence(tmp_path, capsys):
     out = capsys.readouterr().out
     assert rc == 0 and "org 100.0%" in out, \
         "the escape hatch reproduces the raw first-run view for comparison"
+
+
+def test_consensus_level_separability_is_measured(tmp_path, capsys):
+    """The X4-shaped question: pairwise overlap understates the signal (same-story articles
+    quote different people), so the instrument must also measure story-consensus agreement and
+    confusable-story disjointness. Two 3-member stories with confusable titles and disjoint
+    corroborated consensuses: member agreement 100%, story pair DISJOINT."""
+    st = store_mod.Store(f"sqlite:///{tmp_path / 'cons.db'}")
+    for i, pub in enumerate(["A", "B", "C"]):
+        url = f"https://{pub.lower()}.example.com/harvard"
+        _feed(st, url, pub, "Judge dismisses antisemitism lawsuit against Harvard University")
+        st.replace_article_entities(er._canon(url), {"org": ["harvard university"],
+                                                     "person": [f"lawyer {i}"]})
+    for i, pub in enumerate(["D", "E", "F"]):
+        url = f"https://{pub.lower()}.example.com/minnesota"
+        _feed(st, url, pub,
+              "Judge dismisses lawsuit over Minnesota transgender student sports policy rules")
+        st.replace_article_entities(er._canon(url), {"org": ["state of minnesota"],
+                                                     "person": [f"official {i}"]})
+
+    rc = aes.main(["--db", f"sqlite:///{tmp_path / 'cons.db'}", "--ubiquity", "0.9"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "consensus stories   : 2" in out
+    assert "(100.0%)  [false-split proxy" in out, "every member shares its story's consensus"
+    assert "consensus-DISJOINT 1 (100.0%)" in out, \
+        "the two court cases share no corroborated name — the gate would fire"
+    assert "DISJOINT" in out and "Harvard" in out

@@ -509,6 +509,30 @@ Next round on the box, one command each: deepen the backfill to the full window
 (`--hours 144`, 577 downloads — the one-time cost of full reach) and rerun the instrument
 with the noise filter. The go/no-go is then read as originally registered, on clean numbers.
 
+### Phase 0 third run (2026-08-16, full window, denoised): coverage PASSES, pairs are the
+### wrong altitude
+
+Backfill: 576/576 windows, 7,408 articles, 53,697 rows, locations untouched. **Coverage
+25.6%, above the located 18.7% and uniform across age buckets — the coverage bar clears.**
+The noise filter removed 42 names / 2,771 occurrences (united states 638, instagram 473,
+reuters 326 — the receipt matched the prediction).
+
+Pairwise separability on ~7× the pairs: person 67.2% vs 51.6%, org 41.0% vs 29.9%, any 78.6%
+vs 60.9%, rare 77.5% vs 58.4%. Moderate gaps — and decisively, **21.4% of TRUE same-story
+pairs share no entity at all**, so any pairwise entity veto would sever a fifth of legitimate
+edges. Pair mode is dead for entities, as it was for countries (run D).
+
+But the exhibits show the signal concentrating exactly where X4's did: at CLUSTER level. The
+Leavitt story's covered members corroborate `white house` ×32 and `karoline leavitt` ×31; the
+Mangione story `mangione` ×18 / `thompson` ×17. Same-story articles quote different people —
+pairwise overlap is structurally patchy — while the aggregate is overwhelming. The instrument
+now measures the consensus altitude directly (a story's consensus = names with ≥2 member
+votes, the `GEO_MIN_CONSENSUS` discipline): **member agreement** (covered members sharing
+their own story's consensus — the false-split proxy, want HIGH) and **confusable-story
+disjointness** (confusable story pairs whose consensuses share nothing — the true-fire proxy,
+want HIGH), plus named exhibits for the top confusable story pairs. The consensus rerun is
+the measurement the go/no-go is read from.
+
 ### Ground truth — selection procedures, not fixed IDs (the catalog moves daily)
 
 * **Must-sever set** (false-merge labels): re-run the X0 counterfactual (`fallbacks, --pieces`)

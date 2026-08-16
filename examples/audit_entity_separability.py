@@ -230,7 +230,65 @@ def main(argv=None) -> int:
 
     print(f"\nwithin-story pairs  : {_fmt(pair_stats(within, persons, orgs, rare))}")
     print(f"confusable pairs    : {_fmt(pair_stats(confusable[:args.confusable_cap], persons, orgs, rare))}")
-    print("(the gap between those two lines IS the separability measurement)")
+    print("(the gap between those two lines IS the pairwise separability measurement)")
+
+    # ----------------------------------------------------------------------- #
+    # CONSENSUS-level separability — the X4-shaped question, and the one the eventual rule
+    # actually asks. The 144h run showed why pairs understate the signal: two same-story
+    # articles quote different people (21% of true pairs share NO entity), but the story's
+    # aggregate is strongly corroborated (Leavitt: white house x32, leavitt x31 over 32
+    # covered members). A growth-style rule compares cluster consensus to cluster consensus,
+    # so that is what gets measured: a story's consensus = names >= 2 member votes (the
+    # GEO_MIN_CONSENSUS discipline), and the two decisive rates are
+    #   * member agreement — covered members sharing >= 1 of their OWN story's consensus
+    #     (high = a consensus gate rarely wrongs a true member: the false-split proxy), and
+    #   * confusable-story disjointness — confusable story pairs whose consensuses share
+    #     nothing (high = the gate fires exactly on the borderline different-event pairs:
+    #     the true-fire proxy).
+    # ----------------------------------------------------------------------- #
+    members_by_story: dict = {}
+    for i, sid in story_of.items():
+        members_by_story.setdefault(sid, []).append(i)
+    consensus: dict = {}
+    agree_num = agree_den = 0
+    for sid, idxs in sorted(members_by_story.items()):
+        if len(idxs) < 3:
+            continue                        # a consensus of two members is one shared article
+        votes: dict = {}
+        for i in idxs:
+            for name in persons[i] | orgs[i]:
+                votes[name] = votes.get(name, 0) + 1
+        cons = frozenset(n for n, c in votes.items() if c >= 2)
+        if not cons:
+            continue
+        consensus[sid] = cons
+        for i in idxs:
+            agree_den += 1
+            if (persons[i] | orgs[i]) & cons:
+                agree_num += 1
+
+    story_pairs: dict = {}
+    for i, j in confusable[:args.confusable_cap]:
+        key = (story_of[i], story_of[j])
+        if key[0] in consensus and key[1] in consensus:
+            story_pairs[key] = story_pairs.get(key, 0) + 1
+    disjoint = {k: (consensus[k[0]] & consensus[k[1]]) for k in story_pairs}
+    n_dis = sum(1 for ov in disjoint.values() if not ov)
+
+    print(f"\nconsensus stories   : {len(consensus):,} (>=3 covered members, "
+          f"consensus = names with >=2 member votes)")
+    print(f"member agreement    : {agree_num:,}/{agree_den:,} covered members share their own "
+          f"story's consensus ({agree_num / max(1, agree_den):.1%})  [false-split proxy: want HIGH]")
+    print(f"confusable stories  : {len(story_pairs):,} story pairs, consensus-DISJOINT {n_dis:,} "
+          f"({n_dis / max(1, len(story_pairs)):.1%})  [true-fire proxy: want HIGH]")
+    print("top confusable story pairs (by linking article pairs):")
+    sid_title = {sid: stories[sid]["title"] for sid in consensus}
+    for (sa, sb), n in sorted(story_pairs.items(), key=lambda kv: -kv[1])[:10]:
+        ov = disjoint[(sa, sb)]
+        verdict = "DISJOINT" if not ov else "overlap: " + ", ".join(sorted(ov)[:3])
+        print(f"  {n:>3} links  [{verdict}]")
+        print(f"            {sid_title[sa][:56]}")
+        print(f"            {sid_title[sb][:56]}")
 
     # Exhibits: the biggest stories' top names, so the numbers stay attached to real events.
     print("\ntop stories, top names (member count in parentheses; covered members in brackets):")
