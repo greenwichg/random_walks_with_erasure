@@ -483,6 +483,32 @@ The backfill was clean — 192/192 windows, 146,364 entity records, 1,793 catalo
   sides carry entities, do they discriminate?", and coverage has its own line. Both lessons
   are pinned by tests. The separability rerun is the outstanding measurement.
 
+### Phase 0 second run (2026-08-16): measured — and two instrument parameters indicted
+
+With the join fixed: within-story 379 pairs at shared person **67.0%** / org **53.0%** / any
+**85.0%** / rare 84.7%; confusable 187 pairs at **62.0% / 27.3% / 72.2% / 72.2%**. Read raw,
+that gap is NOT "well above" — a no-go — **except the output indicts its own parameters**:
+
+* The ubiquity floor (df ≥ 88, i.e. 5% of a 6.2%-covered catalog) marked exactly THREE names
+  ubiquitous, so `reuters` (86), `white house` (73), `facebook` (63) and `associated press`
+  (38) all counted as *rare shared evidence* — two unrelated wire stories sharing a byline
+  scored as a rare-entity match, inflating the confusable line.
+* A df floor is the wrong tool anyway: `luigi mangione` reached df 30 BECAUSE the story is
+  big. The noise is identifiable by IDENTITY — outlet-registry resolves (bylines, media
+  names), platform chrome, country names extracted as entities — and the instrument now
+  filters by identity, reports exactly what it removed, and keeps `--no-noise-filter` as the
+  raw view. Pinned by tests.
+* One clean positive: per-span entity coverage is **24.3–29.9%**, ABOVE the 18.7% located rate
+  — a full-window backfill clears the coverage bar with room.
+* The org column already separates ~2× (53.0% vs 27.3%) even under the noise. Persons barely
+  (67% vs 62%) — confusable pairs are related-but-distinct events by construction, and the
+  same actors legitimately span sub-events. Whatever Phase 1 becomes, it leans on
+  organizations, not persons.
+
+Next round on the box, one command each: deepen the backfill to the full window
+(`--hours 144`, 577 downloads — the one-time cost of full reach) and rerun the instrument
+with the noise filter. The go/no-go is then read as originally registered, on clean numbers.
+
 ### Ground truth — selection procedures, not fixed IDs (the catalog moves daily)
 
 * **Must-sever set** (false-merge labels): re-run the X0 counterfactual (`fallbacks, --pieces`)

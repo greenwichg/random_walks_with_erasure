@@ -34,14 +34,44 @@ from itertools import combinations
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import clustering            # noqa: E402
+import location              # noqa: E402
+import outlet_registry       # noqa: E402
 import story_service         # noqa: E402
 import store as store_mod    # noqa: E402
 
+#: Platform/share-chrome names GDELT extracts from page furniture rather than the story. The
+#: 2026-08-16 production df table is the receipt: instagram 127, facebook 63, youtube 32 — in a
+#: catalog where the single most-covered actual story's entities reach df 30. Instrument-side
+#: only, and REPORTED when applied, because a platform name can be a genuine subject (a Meta
+#: story) — the trade is visible in the filtered-names print, not hidden.
+_PLATFORM_CHROME = frozenset({"instagram", "facebook", "youtube", "twitter", "tiktok",
+                              "whatsapp", "telegram", "linkedin", "reddit", "pinterest"})
 
-def _entity_sets(ents: dict) -> "tuple[frozenset, frozenset]":
-    persons = frozenset((ents or {}).get("person", ()))
-    orgs = frozenset((ents or {}).get("org", ()))
-    return persons, orgs
+
+def _is_noise(name: str) -> bool:
+    """Names that are ABOUT the page or the press, not the event — identified by IDENTITY, not
+    frequency. A df floor punishes exactly the biggest events' entities (luigi mangione reached
+    df 30 because the story was big); an outlet-registry resolve catches bylines and media
+    names (reuters, associated press, cnn) whatever their df, and a country normalization
+    catches geography extracted as entities ("united states" as an organization)."""
+    if name in _PLATFORM_CHROME:
+        return True
+    if location.normalize_country(name):
+        return True
+    return outlet_registry.resolve(name) is not None
+
+
+def _entity_sets(ents: dict, *, noise_filter: bool = True,
+                 filtered: "dict | None" = None) -> "tuple[frozenset, frozenset]":
+    persons, orgs = [], []
+    for kind, sink in (("person", persons), ("org", orgs)):
+        for name in (ents or {}).get(kind, ()):
+            if noise_filter and _is_noise(name):
+                if filtered is not None:
+                    filtered[name] = filtered.get(name, 0) + 1
+                continue
+            sink.append(name)
+    return frozenset(persons), frozenset(orgs)
 
 
 def pair_stats(pairs, persons, orgs, rare) -> dict:
@@ -88,15 +118,24 @@ def main(argv=None) -> int:
     ap.add_argument("--ubiquity", type=float, default=0.05,
                     help="a name in more than this share of entity-covered articles is ubiquitous")
     ap.add_argument("--top", type=int, default=20, help="df table size")
+    ap.add_argument("--no-noise-filter", action="store_true",
+                    help="keep media/platform/country names as evidence (the raw first-run view)")
     args = ap.parse_args(argv)
 
     st = store_mod.Store(args.db)
     rows = story_service._fetch(st)
     ents = st.entities_for_urls([r.get("canonicalUrl") for r in rows])
     persons, orgs = {}, {}
+    filtered: dict = {}
     for idx, r in enumerate(rows):
-        p, o = _entity_sets(ents.get(r.get("canonicalUrl")))
+        p, o = _entity_sets(ents.get(r.get("canonicalUrl")),
+                            noise_filter=not args.no_noise_filter, filtered=filtered)
         persons[idx], orgs[idx] = p, o
+    if filtered:
+        top_noise = ", ".join(f"{n}({c})" for n, c in
+                              sorted(filtered.items(), key=lambda kv: -kv[1])[:8])
+        print(f"noise filtered      : {len(filtered):,} names / {sum(filtered.values()):,} "
+              f"occurrences (media, platform chrome, country names) — top: {top_noise}")
     covered = [i for i in range(len(rows)) if persons[i] or orgs[i]]
     covered_set = frozenset(covered)
     located = sum(1 for r in rows if r.get("eventCountries"))

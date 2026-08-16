@@ -66,3 +66,32 @@ def test_uncovered_members_do_not_dilute_the_pairs(tmp_path, capsys):
     out = capsys.readouterr().out
     assert rc == 0
     assert "1 pairs, 1 both-covered" in out
+
+
+def test_media_platform_and_country_names_are_not_evidence(tmp_path, capsys):
+    """The 2026-08-16 run's df table: reuters(86), instagram(127) and 'united states'(132)
+    counted as RARE shared evidence under the df floor, inflating the confusable overlap. Noise
+    is identity, not frequency — a registry outlet, platform chrome or a country name never
+    reaches the pair stats, and the filter reports what it removed."""
+    st = store_mod.Store(f"sqlite:///{tmp_path / 'noise.db'}")
+    title = "Landmark ruling reshapes the harbor bridge project"
+    for i, pub in enumerate(["A", "B"]):
+        url = f"https://{pub.lower()}.example.com/harbor"
+        _feed(st, url, pub, title)
+        st.replace_article_entities(er._canon(url), {
+            "person": ["jane doe"],
+            "org": ["reuters", "instagram", "united states", f"acme corp {i}"]})
+
+    rc = aes.main(["--db", f"sqlite:///{tmp_path / 'noise.db'}", "--ubiquity", "0.9"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "noise filtered" in out and "reuters(2)" in out
+    assert "org 0.0%" in out, \
+        "with the noise gone, only the distinct acme corps remain and they do not overlap"
+    assert "shared person 100.0%" in out
+
+    rc = aes.main(["--db", f"sqlite:///{tmp_path / 'noise.db'}", "--ubiquity", "0.9",
+                   "--no-noise-filter"])
+    out = capsys.readouterr().out
+    assert rc == 0 and "org 100.0%" in out, \
+        "the escape hatch reproduces the raw first-run view for comparison"
