@@ -265,3 +265,71 @@ def test_claim_counts_are_compared_on_identical_rows():
     res = acc.compare(st, before=(3, 3), after=(3, 3), show=5)
     assert "beforeClaims" in res and "afterClaims" in res
     assert res["beforeClaims"] == res["afterClaims"], "an unchanged build cannot move claims"
+
+
+# --------------------------------------------------------------------------- #
+# The baseline label — "[PRODUCTION BASELINE]" is a claim about the ENVIRONMENT, not just about
+# before == configured. Every environment is self-consistent with its own defaults, so the old
+# label certified any container as production: a backup-profile container (no `environment:`
+# block, hence none of the deploy's clustering variables) ran the audit on 2026-08-16 and its
+# single-linkage numbers — a 787-article mega-cluster — stood as the production baseline until
+# the missing quorum/repair/merge tags gave them away.
+# --------------------------------------------------------------------------- #
+def _clear_deploy_env(monkeypatch):
+    for k in acc._DEPLOY_CLUSTER_ENV:
+        monkeypatch.delenv(k, raising=False)
+
+
+def _seeded(tmp_path, name):
+    st = _store(tmp_path, name)
+    for i, pub in enumerate(["Outlet A", "Outlet B", "Outlet C"]):
+        _feed(st, f"https://{i}.example.com/harbor", pub,
+              "Landmark ruling reshapes the harbor bridge project")
+    return f"sqlite:///{tmp_path / name}"
+
+
+def test_an_environment_without_the_deploy_vars_cannot_claim_production(
+        tmp_path, monkeypatch, capsys):
+    """All eight variables absent → the run is the library fallbacks, and the output must say so
+    loudly instead of certifying itself as production."""
+    _clear_deploy_env(monkeypatch)
+    rc = acc.main(["--db", _seeded(tmp_path, "envless.db")])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "WARNING" in out and "deploy" in out
+    assert "[LIBRARY FALLBACKS — no deploy env]" in out
+    assert "[PRODUCTION BASELINE]" not in out
+
+
+def test_one_deploy_var_is_evidence_enough_for_the_label(tmp_path, monkeypatch, capsys):
+    """Compose sets every variable in the tuple, so even one present proves the env plumbing ran —
+    and an operator's deliberate single override must not be shouted down as unconfigured."""
+    _clear_deploy_env(monkeypatch)
+    monkeypatch.setenv("RWE_CLUSTER_LINK_QUORUM", "0.2")
+    rc = acc.main(["--db", _seeded(tmp_path, "envfull.db")])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "WARNING" not in out
+    assert "[PRODUCTION BASELINE]" in out
+
+
+def test_presence_is_the_test_not_truthiness(monkeypatch):
+    """A set-but-EMPTY variable is still evidence of the deploy env — compose writes `KEY=` for
+    unset-valued vars (RWE_STORIES_SERVE_STALE does exactly this), and "" is falsy, so a
+    truthiness check would treat an injected-but-empty environment as absent and re-open the
+    trap."""
+    _clear_deploy_env(monkeypatch)
+    assert acc.deploy_env_present() is False
+    monkeypatch.setenv("RWE_CLUSTER_IDF", "")
+    assert acc.deploy_env_present() is True
+
+
+def test_an_override_is_still_not_production_whatever_the_env(tmp_path, monkeypatch, capsys):
+    """--before-min-shared moves the baseline off the configured values, and that axis keeps its
+    own label: a configured environment with a synthetic BEFORE side is [not production]."""
+    monkeypatch.setenv("RWE_CLUSTER_LINK_QUORUM", "0.2")
+    rc = acc.main(["--db", _seeded(tmp_path, "override.db"), "--before-min-shared", "1"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "[not production]" in out
+    assert "[PRODUCTION BASELINE]" not in out

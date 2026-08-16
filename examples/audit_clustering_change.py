@@ -41,6 +41,7 @@ from "same template, different event", which is exactly the distinction the aggr
 from __future__ import annotations
 
 import argparse
+import os
 
 import clustering
 import story_service
@@ -49,6 +50,31 @@ import store as store_mod
 #: Reject above this share of covered articles falling out of stories entirely. Set from the IDF
 #: experiment, which measured 10.5% and was reverted.
 MAX_DROPPED = 0.05
+
+#: The engine's compose service defines every one of these with a default
+#: (deploy/docker-compose.yml), so a container that carries the deploy environment ALWAYS has
+#: them set. A container where NONE is present is running the library fallbacks — single linkage,
+#: no repair pass, no duplicate merge — which stopped being production on 2026-08-03. The
+#: distinction earned this guard: a backup-profile container (no ``environment:`` block) ran this
+#: audit on 2026-08-16, reported a 787-article mega-cluster under a "[PRODUCTION BASELINE]" tag,
+#: and the number stood as the production baseline until the missing quorum/repair/merge tags gave
+#: it away. ``RWE_STORIES_SCAN_DAYS`` is deliberately absent from the list — the test suite sets
+#: it, and a fixture window override is not evidence of the deploy env.
+_DEPLOY_CLUSTER_ENV = (
+    "RWE_CLUSTER_LINK_QUORUM", "RWE_STORY_REPAIR_QUORUM", "RWE_STORY_MERGE_SIM",
+    "RWE_CLUSTER_MIN_SHARED", "RWE_CLUSTER_MIN_TOKENS", "RWE_CLUSTER_IDF",
+    "RWE_STORY_EXCLUDE_WIRE", "RWE_STORY_EXCLUDE_AGGREGATOR",
+)
+
+
+def deploy_env_present() -> bool:
+    """Whether this environment shows any sign of the deploy's clustering configuration.
+
+    PRESENCE is the test, not truthiness: compose gives each variable in the tuple a concrete
+    default, so even one set — whatever its value, including empty — is evidence the env plumbing
+    ran. All eight absent means the baseline about to be printed is the library fallbacks, and
+    the output must not call that production."""
+    return any(os.environ.get(k) is not None for k in _DEPLOY_CLUSTER_ENV)
 
 
 def build(rows: list, *, min_shared: int, min_tokens: int, idf: bool = False,
@@ -343,10 +369,26 @@ def main(argv=None) -> int:
                 + _tag("repair", story_service.repair_quorum())
                 + _tag("merge", story_service.merge_similarity())
                 + _tag("dek", story_service.desc_tokens()))
+    # "[PRODUCTION BASELINE]" is a claim about the ENVIRONMENT, not just about before == configured.
+    # Every environment is self-consistent with its own defaults, so without this check the label
+    # certifies any container as production — which is exactly how a backup-profile container's
+    # single-linkage numbers got taken as the production baseline (2026-08-16).
+    if not deploy_env_present():
+        base_label = "   [LIBRARY FALLBACKS — no deploy env]"
+        print("WARNING: none of the deploy's clustering variables are set in this environment\n"
+              f"         ({', '.join(_DEPLOY_CLUSTER_ENV[:3])}, …).\n"
+              "         The baseline below is the LIBRARY FALLBACKS — single linkage, no repair\n"
+              "         pass, no duplicate merge — which production has not run since 2026-08-03.\n"
+              "         For production numbers, run from a container that carries the api\n"
+              "         service's environment:\n"
+              "           cd /opt/ih && source deploy/ops/_compose.sh\n"
+              "           dc run --rm -T api python examples/audit_clustering_change.py …\n")
+    else:
+        base_label = "   [PRODUCTION BASELINE]"
     print(f"articles in window : {res['articles']:,}")
     print(f"before  (shared>={before[0]}, tokens>={before[1]}{base_tag}): "
           f"{res['beforeStories']:,} stories, largest {res['beforeLargest']}"
-          f"{'   [PRODUCTION BASELINE]' if before == configured else '   [not production]'}")
+          f"{base_label if before == configured else '   [not production]'}")
     print(f"after   (shared>={after[0]}, tokens>={after[1]}{tag}): "
           f"{res['afterStories']:,} stories, largest {res['afterLargest']}")
     print(f"clusters split     : {res['splitCount']:,}")
