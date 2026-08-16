@@ -2449,3 +2449,123 @@ def test_cache_disabled_keeps_the_inline_build_for_everyone(monkeypatch):
     monkeypatch.setattr(ss, "_spawn_refresh", lambda store_, logical: spawned.append(logical))
     assert len(ss.default_story_view(st)) == 2
     assert spawned == []
+
+
+# --------------------------------------------------------------------------- #
+# X4 geo-veto (docs/STORY_ENTITY_EVIDENCE_PLAN.md) — entity evidence at edge time. OFF by
+# default and NOT a production setting; these tests pin the semantics the audit measures:
+# fail-open on missing data, pair mode severs located disagreement, growth mode spares
+# formation and two-country events, and the default path stays byte-identical.
+# --------------------------------------------------------------------------- #
+def _quake(st, n_us=2, n_co=2, located=True):
+    """Same headline everywhere — lexically ONE cluster — with the located split carrying the
+    only evidence that it is two events. Reuses `_locate` (defined above, ISO codes)."""
+    title = "Massive earthquake strikes the region overnight rescue"
+    for i in range(n_us):
+        cu = f"https://us{i}.example.com/quake"
+        _add(st, cu, f"US Outlet {i}", 0.0, title)
+        if located:
+            _locate(st, cu, "US")
+    for i in range(n_co):
+        cu = f"https://co{i}.example.com/quake"
+        _add(st, cu, f"CO Outlet {i}", 0.0, title)
+        if located:
+            _locate(st, cu, "CO")
+
+
+def test_geo_veto_env_parsing(monkeypatch):
+    for raw, want in [("", ""), ("pair", "pair"), (" GROWTH ", "growth"), ("garbage", ""),
+                      ("1", ""), ("off", "")]:
+        monkeypatch.setenv("RWE_CLUSTER_GEO_VETO", raw)
+        assert ss.geo_veto() == want, f"{raw!r} must resolve to {want!r}, never a guess"
+    monkeypatch.delenv("RWE_CLUSTER_GEO_VETO", raising=False)
+    assert ss.geo_veto() == ""
+
+
+def test_pair_veto_severs_located_disagreement():
+    st = store_mod.Store("sqlite://")
+    _quake(st)
+    rows = ss._fetch(st)
+    assert len(ss.build_stories(rows)) == 1, "lexically this is one cluster"
+    split = ss.build_stories(rows, veto="pair")
+    assert len(split) == 2, "both-located disjoint pairs are severed"
+    assert sorted(s["totalCoverage"] for s in split) == [2, 2]
+
+
+def test_pair_veto_fails_open_on_unlocated_pairs():
+    """Absence of evidence is never disagreement — and that has a known consequence, stated
+    rather than hidden: an UNLOCATED bridge still chains located disagreement together. The
+    aggregate cost of that limitation is exactly what audit runs C/D measure."""
+    st = store_mod.Store("sqlite://")
+    _quake(st, located=False)
+    assert len(ss.build_stories(ss._fetch(st), veto="pair")) == 1
+
+    st2 = store_mod.Store("sqlite://")
+    _quake(st2, n_us=1, n_co=1)                        # one located each side...
+    title = "Massive earthquake strikes the region overnight rescue"
+    _add(st2, "https://bridge.example.com/quake", "Bridge Outlet", 0.0, title)   # ...unlocated
+    stories = ss.build_stories(ss._fetch(st2), veto="pair")
+    assert len(stories) == 1 and stories[0]["totalCoverage"] == 3, \
+        "US–CO edge vetoed, but both chain through the unlocated bridge — the documented limit"
+
+
+def test_growth_veto_spares_formation():
+    st = store_mod.Store("sqlite://")
+    _quake(st, n_us=1, n_co=1)
+    stories = ss.build_stories(ss._fetch(st), veto="growth")
+    assert len(stories) == 1 and stories[0]["totalCoverage"] == 2, \
+        "two singletons always form — the veto constrains growth, never formation"
+
+
+def test_growth_veto_gates_growth_on_consensus_disagreement():
+    st = store_mod.Store("sqlite://")
+    _quake(st, n_us=3, n_co=1)
+    stories = ss.build_stories(ss._fetch(st), veto="growth")
+    assert len(stories) == 1 and stories[0]["totalCoverage"] == 3, \
+        "the US cluster reaches MIN_CHAINABLE and then refuses the CO-located member"
+    assert len(ss.build_stories(ss._fetch(st))) == 1
+    assert ss.build_stories(ss._fetch(st))[0]["totalCoverage"] == 4, "off: one 4-article story"
+
+
+def test_growth_veto_admits_overlapping_consensus():
+    """The two-country guard: a member located in BOTH countries of a genuine cross-border event
+    overlaps the cluster consensus and is admitted — the _geo_coherence mechanism at edge time."""
+    st = store_mod.Store("sqlite://")
+    title = "Grand prix chaos as race stewards review the crash"
+    for i in range(3):
+        cu = f"https://hu{i}.example.com/gp"
+        _add(st, cu, f"HU Outlet {i}", 0.0, title)
+        _locate(st, cu, "HU")
+    cu = "https://both.example.com/gp"
+    _add(st, cu, "Cross Outlet", 0.0, title)
+    _locate(st, cu, "HU", "GB")
+    stories = ss.build_stories(ss._fetch(st), veto="growth")
+    assert len(stories) == 1 and stories[0]["totalCoverage"] == 4, \
+        "{HU,GB} overlaps consensus {HU} — a real two-country member is not a disagreement"
+
+
+def test_veto_off_and_default_are_byte_identical(monkeypatch):
+    monkeypatch.delenv("RWE_CLUSTER_GEO_VETO", raising=False)
+    st = store_mod.Store("sqlite://")
+    _quake(st)
+    rows = ss._fetch(st)
+    a = ss.build_stories(rows)
+    b = ss.build_stories(rows, veto="")
+    c = ss.build_stories(rows, veto="nonsense")        # junk narrows to off, never to a guess
+    assert [s["id"] for s in a] == [s["id"] for s in b] == [s["id"] for s in c]
+    assert [len(s["coverage"]) for s in a] == [len(s["coverage"]) for s in b]
+
+
+def test_veto_stats_count_the_decisions():
+    st = store_mod.Store("sqlite://")
+    _quake(st)
+    stats: dict = {}
+    ss.build_stories(ss._fetch(st), veto="pair", veto_stats=stats)
+    assert stats.get("pairChecked", 0) >= stats.get("pairBothLocated", 0) >= stats.get("pairVetoed", 0)
+    assert stats.get("pairVetoed", 0) >= 1, "the US-CO edges were vetoed and must be counted"
+    ss.build_stories(ss._fetch(st), veto="pair")       # stats=None: no counting, no error
+
+
+def test_geo_closures_off_is_none_none():
+    assert ss._geo_closures([], "") == (None, None)
+    assert ss._geo_closures([{"eventCountries": ["US"]}], "") == (None, None)

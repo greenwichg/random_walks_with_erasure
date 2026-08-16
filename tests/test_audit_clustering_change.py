@@ -333,3 +333,53 @@ def test_an_override_is_still_not_production_whatever_the_env(tmp_path, monkeypa
     assert rc == 0
     assert "[not production]" in out
     assert "[PRODUCTION BASELINE]" not in out
+
+
+# --------------------------------------------------------------------------- #
+# X4 --geo-veto (docs/STORY_ENTITY_EVIDENCE_PLAN.md) — the AFTER-side flag and its telemetry.
+# The veto semantics are pinned in test_story_service; here: threading (None = production, which
+# is off), the after-only application, and that the telemetry the adoption decision reads is
+# actually printed.
+# --------------------------------------------------------------------------- #
+import location as loc_mod   # noqa: E402
+
+
+def test_veto_threads_as_none_meaning_production(monkeypatch):
+    """Same contract as quorum/repair/merge: an unflagged run must hand build_stories None, so
+    the baseline resolves to whatever production is configured with."""
+    seen = {}
+    monkeypatch.setattr(acc.story_service, "build_stories",
+                        lambda rows, **kw: seen.setdefault(len(seen), kw) or [])
+    acc.build([], min_shared=3, min_tokens=3)
+    assert seen[0]["veto"] is None and seen[0]["veto_stats"] is None
+
+
+def test_geo_veto_applies_to_the_after_side_and_prints_telemetry(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("RWE_CLUSTER_LINK_QUORUM", "0")   # env present -> no fallback warning
+    st = _store(tmp_path, "veto.db")
+    title = "Massive earthquake strikes the region overnight rescue"
+    for i, (pub, country) in enumerate([("US One", "US"), ("US Two", "US"),
+                                        ("CO One", "CO"), ("CO Two", "CO")]):
+        url = f"https://{i}.example.com/quake"
+        _feed(st, url, pub, title)
+        st.replace_article_event_locations(
+            er._canon(url), [loc_mod.EventLocation(country=country, source="test")])
+
+    rc = acc.main(["--db", f"sqlite:///{tmp_path / 'veto.db'}", "--geo-veto", "pair"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    before = next(l for l in out.splitlines() if l.startswith("before"))
+    after = next(l for l in out.splitlines() if l.startswith("after"))
+    assert "veto pair" in after and "veto" not in before, "the veto is an AFTER-side change"
+    assert "geo-veto telemetry" in out and "vetoed" in out
+    assert "clusters split     : 1" in out, "one lexical cluster severed into US and CO events"
+
+
+def test_no_flag_no_telemetry(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("RWE_CLUSTER_LINK_QUORUM", "0")
+    st = _store(tmp_path, "quiet.db")
+    _feed(st, "https://a.example.com/x", "A", "Landmark ruling reshapes the harbor bridge project")
+    rc = acc.main(["--db", f"sqlite:///{tmp_path / 'quiet.db'}"])
+    out = capsys.readouterr().out
+    assert rc == 0 and "geo-veto telemetry" not in out, \
+        "a None passthrough is production and must not imply the veto was measured"

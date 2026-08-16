@@ -196,6 +196,34 @@ unconfigured container. The variables stay present, so the audit's environment g
 treats it as a deliberate operator override; the printed tags (no quorum/repair/merge on the
 before line) are the record that run B measured the fallback regime on purpose.
 
+**Phase 1 harness: BUILT (2026-08-16).** `--geo-veto {pair,growth}` threads through
+`build_stories` → `clustering.cluster(evidence=…, merge_ok=…)` exactly as `--link-quorum` does
+(None = production = off; every default byte-identical, pinned by tests in all three suites).
+The audit prints a `geo-veto telemetry` line — pairs checked / both located / vetoed, merges
+checked / gated / vetoed — and tags the AFTER side `veto pair|growth`. Determinism is pinned by
+the unit tests (same input → same clusters; the closures are pure functions of stored data), not
+by consecutive box runs, which ingestion drift makes non-identical by construction. The four
+runs, ready to paste (wall times include ~seconds of container start, identical on every side):
+
+```bash
+cd /opt/ih && source deploy/ops/_compose.sh
+LOG=/tmp/x4_phase1_$(date -u +%Y%m%dT%H%M%SZ).log
+{
+  echo "===== run A: production baseline (self-check; expect before == after) ====="
+  time dc run --rm -T api python examples/audit_clustering_change.py --show 5
+  echo "===== run B: library fallbacks + veto pair (mechanism test vs the 787 blob) ====="
+  time dc run --rm -T -e RWE_CLUSTER_LINK_QUORUM=0 -e RWE_STORY_REPAIR_QUORUM=0 \
+      -e RWE_STORY_MERGE_SIM=0 api \
+      python examples/audit_clustering_change.py --geo-veto pair --show 10 --pieces 5
+  echo "===== run C: production + veto growth (adoption candidate, 1% bar) ====="
+  time dc run --rm -T api python examples/audit_clustering_change.py \
+      --geo-veto growth --show 10 --max-dropped 0.01
+  echo "===== run D: production + veto pair (titration bracket, 1% bar) ====="
+  time dc run --rm -T api python examples/audit_clustering_change.py \
+      --geo-veto pair --show 10 --max-dropped 0.01
+} 2>&1 | tee "$LOG"
+```
+
 ### Ground truth — selection procedures, not fixed IDs (the catalog moves daily)
 
 * **Must-sever set** (false-merge labels): re-run the X0 counterfactual (`fallbacks, --pieces`)

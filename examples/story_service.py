@@ -575,6 +575,92 @@ def link_quorum() -> float:
     return q if 0.0 <= q <= 1.0 else clustering.DEFAULT_LINK_QUORUM
 
 
+_GEO_VETO_MODES = ("pair", "growth")
+
+
+def geo_veto() -> str:
+    """X4 entity-evidence veto — **OFF** ("" = lexical edges unchanged), and NOT a production
+    setting: no deploy configuration sets ``RWE_CLUSTER_GEO_VETO``, and it exists so the audit can
+    measure the candidate (``docs/STORY_ENTITY_EVIDENCE_PLAN.md``) with the same threading
+    discipline every other knob got. Junk values fall back to off, never to a guess.
+
+    The evidence is ``eventCountries`` — already batched onto every clustering row by ``_fetch``
+    and carried through ``discover.feed_article_to_article``, consumed until now only AFTER
+    clusters form (geoCoherence, trust, blindspot withholding, repair targeting). The veto asks
+    whether the same fact can arrive at EDGE time. It is **fail-open**: it fires only on positive
+    disagreement — both sides located, country sets disjoint — so an unlocated pair is
+    byte-identical to production and a GKG outage silently disables it rather than clustering.
+    Being a veto, it can only remove edges: it cannot create a false merge, and its entire risk
+    budget is false splits (the axis the audit's split tables and must-keep set measure).
+
+    * ``pair``: the veto joins the pairwise gate — admission, quorum cross-pair scoring and the
+      repair re-cluster all consult it, because they share ``pair_ok`` by construction.
+    * ``growth``: pairs form freely; only merges where either side is already ≥ ``MIN_CHAINABLE``
+      are gated, on located-CONSENSUS disjointness. This is the two-country-event guard: a
+      genuine HU/GB story's seed pair forms ungated, and by the time the cluster is big enough to
+      gate, its members carry both countries (the ``_geo_coherence`` mechanism) — mirroring
+      ``_quorum_ok``'s "two singletons always pass"."""
+    v = os.environ.get("RWE_CLUSTER_GEO_VETO", "").strip().lower()
+    return v if v in _GEO_VETO_MODES else ""
+
+
+def _geo_closures(arts: list, mode: str, stats: Optional[dict] = None) -> tuple:
+    """``(evidence, merge_ok)`` for :func:`clustering.cluster` — ``(None, None)`` when off, so the
+    clusterer's fast path survives byte-identical.
+
+    Country sets are precomputed over EXACTLY the list handed to ``cluster``, because both
+    callables receive indices into it — a repair pass must build its own closures over its own
+    sublist, and does. ``stats`` (when given) is incremented in place; that is the audit's
+    telemetry, and passing ``None`` (every non-audit caller) skips the counting entirely."""
+    if not mode:
+        return None, None
+    countries = [frozenset(_member_countries(a)) for a in arts]
+
+    def bump(key: str) -> None:
+        if stats is not None:
+            stats[key] = stats.get(key, 0) + 1
+
+    if mode == "pair":
+        def evidence(x: int, y: int) -> bool:
+            cx, cy = countries[x], countries[y]
+            bump("pairChecked")
+            if not cx or not cy:
+                return True                     # fail-open: absence is never disagreement
+            bump("pairBothLocated")
+            if cx & cy:
+                return True
+            bump("pairVetoed")
+            return False
+        return evidence, None
+
+    def consensus(idxs: list) -> frozenset:
+        """Top-vote countries among located members — ``_geo_coherence``'s logic, not the union.
+        A union only widens as a false merge grows, so the more wrong a cluster the less a
+        union-based test could say; the mode country stays put while the tail accumulates."""
+        votes: dict = {}
+        for i in idxs:
+            for c in countries[i]:
+                votes[c] = votes.get(c, 0) + 1
+        if not votes:
+            return frozenset()
+        top = max(votes.values())
+        return frozenset(c for c, v in votes.items() if v == top)
+
+    def merge_ok(a: list, b: list) -> bool:
+        bump("mergeChecked")
+        if len(a) < MIN_CHAINABLE and len(b) < MIN_CHAINABLE:
+            return True                         # formation and small joins are never gated
+        ca, cb = consensus(a), consensus(b)
+        if not ca or not cb:
+            return True                         # fail-open
+        bump("mergeGated")
+        if ca & cb:
+            return True
+        bump("mergeVetoed")
+        return False
+    return None, merge_ok
+
+
 def publisher_identity_enabled() -> bool:
     """Whether publisher counts collapse the name forms of one outlet. ON —
     ``RWE_STORY_PUBLISHER_IDENTITY=0`` counts raw strings again.
@@ -758,7 +844,7 @@ def _admit(groups: list, arts: list, *, min_articles: int, min_publishers: int) 
 
 def _repair(members: list, *, quorum: float, sim: float, window_days: float, min_shared: int,
             min_tokens: int, idf: bool, min_articles: int, min_publishers: int,
-            desc: int = 0) -> Optional[list]:
+            desc: int = 0, veto: str = "", veto_stats: Optional[dict] = None) -> Optional[list]:
     """Re-cluster ONE condemned cluster's members under a stricter linkage rule.
 
     Why targeted rather than global: measured on the live catalog, a global quorum splits the
@@ -772,11 +858,15 @@ def _repair(members: list, *, quorum: float, sim: float, window_days: float, min
     Returns the replacement stories, or ``None`` to keep the original whole — when the split
     yields one piece (nothing was separated) or loses more than ``REPAIR_MIN_RETENTION`` of the
     articles (it destroyed the cluster rather than resolving it)."""
+    # Closures are rebuilt over THIS member list — the veto callables receive indices, and the
+    # indices of a condemned cluster's sublist are not the indices of the whole build.
+    r_evidence, r_merge_ok = _geo_closures(members, veto, veto_stats)
     pieces = _admit(
         clustering.cluster(members, tokens=lambda a: article_tokens(a, desc),
                            time=lambda a: clustering.parse_time(a["publishedAt"]),
                            sim=sim, window_days=window_days, min_shared=min_shared,
-                           min_tokens=min_tokens, idf=idf, link_quorum=quorum),
+                           min_tokens=min_tokens, idf=idf, link_quorum=quorum,
+                           evidence=r_evidence, merge_ok=r_merge_ok),
         members, min_articles=min_articles, min_publishers=min_publishers)
     if len(pieces) < 2:
         return None
@@ -1029,7 +1119,9 @@ def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
                   repair: Optional[float] = None,
                   merge: Optional[float] = None,
                   merge_gap: Optional[float] = None,
-                  desc: Optional[int] = None) -> list:
+                  desc: Optional[int] = None,
+                  veto: Optional[str] = None,
+                  veto_stats: Optional[dict] = None) -> list:
     """Cluster FeedArticle rows into Story objects (the pure builder). Keeps clusters with
     ≥ ``min_articles`` from ≥ ``min_publishers`` distinct outlets; sorted biggest+freshest first,
     with independently-suspect clusters demoted (see ``_size_rank``).
@@ -1094,18 +1186,25 @@ def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
     shared = default_shared if min_shared is None else min_shared
     tokens_floor = min_title_tokens() if min_tokens is None else min_tokens
     weighting = use_idf() if idf is None else idf
+    # X4 entity-evidence veto (docs/STORY_ENTITY_EVIDENCE_PLAN.md) — resolves like every other
+    # knob: None = whatever production is configured with, which today is off. The closures are
+    # built over the post-exclusion `arts`, the exact list the clusterer indexes into.
+    veto_mode = geo_veto() if veto is None else (veto if veto in _GEO_VETO_MODES else "")
+    g_evidence, g_merge_ok = _geo_closures(arts, veto_mode, veto_stats)
     groups = clustering.cluster(
         arts, tokens=lambda a: article_tokens(a, cap),
         time=lambda a: clustering.parse_time(a["publishedAt"]), sim=sim, window_days=window_days,
         min_shared=shared, min_tokens=tokens_floor, idf=weighting,
-        link_quorum=link_quorum() if quorum is None else quorum)
+        link_quorum=link_quorum() if quorum is None else quorum,
+        evidence=g_evidence, merge_ok=g_merge_ok)
     mend = repair_quorum() if repair is None else repair
     admitted = []
     for members in _admit(groups, arts, min_articles=min_articles, min_publishers=min_publishers):
         if mend > 0.0 and _build_story(members)["clusterTrust"] == TRUST_LOW:
             pieces = _repair(members, quorum=mend, sim=sim, window_days=window_days,
                              min_shared=shared, min_tokens=tokens_floor, idf=weighting,
-                             min_articles=min_articles, min_publishers=min_publishers, desc=cap)
+                             min_articles=min_articles, min_publishers=min_publishers, desc=cap,
+                             veto=veto_mode, veto_stats=veto_stats)
             if pieces is not None:
                 admitted.extend(pieces)
                 continue

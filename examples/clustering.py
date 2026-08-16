@@ -229,7 +229,9 @@ def cluster(items: Sequence, *, tokens: Callable[[object], frozenset],
             min_shared: int = MIN_SHARED_TOKENS,
             min_tokens: int = MIN_TITLE_TOKENS,
             idf: bool = False,
-            link_quorum: float = DEFAULT_LINK_QUORUM) -> "list[list[int]]":
+            link_quorum: float = DEFAULT_LINK_QUORUM,
+            evidence: Optional[Callable[[int, int], bool]] = None,
+            merge_ok: Optional[Callable[[list, list], bool]] = None) -> "list[list[int]]":
     """Group item **indices** into clusters. ``tokens(item) → frozenset`` and
     ``time(item) → datetime | None`` are the accessors. Two items join the same cluster when their
     token Jaccard ≥ ``sim`` **and** their times are within ``window_days``. Returns a list of clusters,
@@ -258,6 +260,22 @@ def cluster(items: Sequence, *, tokens: Callable[[object], frozenset],
     against. Merges are therefore consumed **best-first** (highest similarity, ties by index), so the
     ordering is a defensible one rather than an artefact of item order, and the result stays
     deterministic. It is still a greedy result, not a global optimum.
+
+    ``evidence`` and ``merge_ok`` admit NON-LEXICAL edge evidence (X4,
+    docs/STORY_ENTITY_EVIDENCE_PLAN.md) without this module learning what the evidence is — both
+    receive item indices and answer yes/no, and this layer stays free of Story/country knowledge:
+
+    * ``evidence(x, y) -> bool`` is ANDed into the pairwise gate — candidate admission, quorum
+      cross-pair scoring and any caller-side re-cluster all consult the SAME predicate, so the
+      evidence cannot gate one and not another. It can only remove edges, never add one.
+    * ``merge_ok(a_members, b_members) -> bool`` is a CLUSTER-level gate consulted before every
+      union (member index lists, cheapest test first — before any quorum scoring). Setting it
+      forces the bookkeeping path even at ``link_quorum 0.0``, because a gate needs memberships;
+      that path consumes merges best-first, so the result is deterministic for the same reason
+      the quorum's is.
+
+    Both default to ``None``, and ``None`` is byte-identical to the previous behaviour — the same
+    opt-in discipline as ``idf`` and ``link_quorum``.
     """
     n = len(items)
     toks = [tokens(it) for it in items]
@@ -281,7 +299,8 @@ def cluster(items: Sequence, *, tokens: Callable[[object], frozenset],
         if len(tx) < floor or len(ty) < floor or len(tx & ty) < min_shared:
             return False
         return (weighted_jaccard(tx, ty, weights) >= sim
-                and within_window(times[x], times[y], window_days))
+                and within_window(times[x], times[y], window_days)
+                and (evidence is None or evidence(x, y)))
 
     def candidates():
         """Yield ``(i, j, score)`` for every pair passing the pairwise gate, ``i < j``."""
@@ -313,11 +332,12 @@ def cluster(items: Sequence, *, tokens: Callable[[object], frozenset],
                 if overlap < min_shared or len(toks[j]) < floor:
                     continue
                 score = weighted_jaccard(ti, toks[j], weights)
-                if score >= sim and within_window(times[i], times[j], window_days):
+                if (score >= sim and within_window(times[i], times[j], window_days)
+                        and (evidence is None or evidence(i, j))):
                     yield i, j, score
 
     dsu = DSU(n)
-    if link_quorum <= 0.0:
+    if link_quorum <= 0.0 and merge_ok is None:
         # Single linkage — union on sight. Kept as its own path so the default cannot drift: no
         # sort, no membership bookkeeping, byte-identical grouping to the measured baseline.
         for i, j, _ in candidates():
@@ -328,7 +348,12 @@ def cluster(items: Sequence, *, tokens: Callable[[object], frozenset],
             ra, rb = dsu.find(i), dsu.find(j)
             if ra == rb:
                 continue                                # already together via a stronger merge
-            if not _quorum_ok(members[ra], members[rb], pair_ok=pair_ok, quorum=link_quorum):
+            # Cheapest gate first: merge_ok is one aggregate test over data the caller already
+            # holds, the quorum is up to LINK_SAMPLE² weighted Jaccards.
+            if merge_ok is not None and not merge_ok(members[ra], members[rb]):
+                continue
+            if link_quorum > 0.0 and not _quorum_ok(members[ra], members[rb], pair_ok=pair_ok,
+                                                    quorum=link_quorum):
                 continue
             dsu.union(i, j)
             root, other = (ra, rb) if ra < rb else (rb, ra)   # DSU keeps the lower index as root

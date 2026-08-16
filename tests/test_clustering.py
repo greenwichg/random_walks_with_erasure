@@ -477,3 +477,66 @@ def test_counting_shared_tokens_is_order_preserving():
         if tail:
             fast.update(tail)
     assert list(manual.items()) == list(fast.items())
+
+
+# --------------------------------------------------------------------------- #
+# Non-lexical edge evidence (X4, docs/STORY_ENTITY_EVIDENCE_PLAN.md). This layer receives opaque
+# yes/no callables and must not know what the evidence IS — the country semantics live in
+# story_service and are tested there. What is pinned here: None is byte-identical, a permissive
+# callable changes nothing (including through the forced bookkeeping path), evidence reaches BOTH
+# admission and quorum cross-pair scoring through the one shared predicate, and merge_ok gates
+# unions with the real member lists.
+# --------------------------------------------------------------------------- #
+def test_permissive_evidence_and_merge_ok_change_nothing():
+    """The gates at their weakest must reproduce the ungated result exactly — merge_ok forces the
+    bookkeeping path even at quorum 0, and that path must group identically to the fast path."""
+    items = _items(("harbour bridge closed after tanker crash", 0),
+                   ("harbour bridge closed tanker crash downtown", 0),
+                   ("tanker crash downtown fuel spill review", 0),
+                   ("city budget passes after long debate", 1))
+    plain = _groups(items)
+    gated = _groups(items, evidence=lambda x, y: True, merge_ok=lambda a, b: True)
+    assert plain == gated
+
+
+def test_evidence_vetoes_a_pair_that_lexically_matches():
+    items = _items(("senate passes the funding bill", 0),
+                   ("senate passes the funding bill", 0))
+    assert _groups(items) == [[0, 1]]
+    assert _groups(items, evidence=lambda x, y: False) == [[0], [1]]
+
+
+def test_evidence_is_consulted_by_quorum_cross_pairs():
+    """One predicate for admission AND quorum support, so evidence cannot gate one and not the
+    other. (0,2) is lexically fine but evidence-blocked: at quorum 0.9 the {0,1}+{2} merge needs
+    both cross-pairs and only (1,2) survives, so the merge is refused."""
+    items = _items(("harbour bridge tanker crash inquiry", 0),
+                   ("harbour bridge tanker crash inquiry", 0),
+                   ("harbour bridge tanker crash inquiry latest", 0))
+    blocked = lambda x, y: {x, y} != {0, 2}   # noqa: E731 — veto exactly the (0,2) pair
+    assert _groups(items, link_quorum=0.9) == [[0, 1, 2]]
+    assert _groups(items, link_quorum=0.9, evidence=blocked) == [[0, 1], [2]]
+
+
+def test_merge_ok_gates_growth_and_receives_member_lists():
+    seen = []
+
+    def gate(a, b):
+        seen.append((list(a), list(b)))
+        return len(a) < 2 and len(b) < 2      # allow formation, refuse growth past a pair
+
+    items = _items(("senate passes the funding bill", 0),
+                   ("senate passes the funding bill", 0),
+                   ("senate passes the funding bill today", 0))
+    assert _groups(items, merge_ok=gate) == [[0, 1], [2]]
+    assert all(a == sorted(a) and b == sorted(b) for a, b in seen), \
+        "gates reason over member lists, which the bookkeeping keeps sorted"
+    assert ([0, 1], [2]) in seen or ([2], [0, 1]) in seen, "the refused growth attempt was seen"
+
+
+def test_merge_ok_is_deterministic_across_runs():
+    items = _items(("harbour bridge closed after tanker crash", 0),
+                   ("harbour bridge closed tanker crash downtown", 0),
+                   ("tanker crash downtown fuel spill review", 0))
+    gate = lambda a, b: len(a) + len(b) <= 2   # noqa: E731
+    assert _groups(items, merge_ok=gate) == _groups(items, merge_ok=gate)

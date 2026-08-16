@@ -78,7 +78,7 @@ def deploy_env_present() -> bool:
 
 
 def build(rows: list, *, min_shared: int, min_tokens: int, idf: bool = False,
-          quorum=None, repair=None, merge=None, desc=None) -> list:
+          quorum=None, repair=None, merge=None, desc=None, veto=None, veto_stats=None) -> list:
     """``None`` means "whatever production is configured with" — ``build_stories`` resolves it.
 
     These defaulted to 0.0, which silently made the BEFORE side something production is not. It is
@@ -87,7 +87,8 @@ def build(rows: list, *, min_shared: int, min_tokens: int, idf: bool = False,
     *unrepaired + merge*, where the duplicate clusters the merge exists to join are still fused
     inside the mega-cluster and there is by construction nothing for it to do."""
     return story_service.build_stories(rows, min_shared=min_shared, min_tokens=min_tokens, idf=idf,
-                                       quorum=quorum, repair=repair, merge=merge, desc=desc)
+                                       quorum=quorum, repair=repair, merge=merge, desc=desc,
+                                       veto=veto, veto_stats=veto_stats)
 
 
 def index_by_member(stories: list) -> dict:
@@ -187,12 +188,17 @@ def verdict(res: dict, *, max_dropped: float = MAX_DROPPED, merging: bool = Fals
 def compare(store_, *, before: tuple, after: tuple, show: int = 10,
             before_idf: bool = False, after_idf: bool = False,
             before_quorum=None, after_quorum=None,
-            after_repair=None, after_merge=None, after_desc=None) -> dict:
+            after_repair=None, after_merge=None, after_desc=None,
+            after_veto=None) -> dict:
     rows = story_service._fetch(store_)
     a = build(rows, min_shared=before[0], min_tokens=before[1], idf=before_idf,
               quorum=before_quorum)
+    # Telemetry only when the veto is explicitly under test — a None passthrough must stay
+    # byte-identical to production, counting included.
+    veto_stats = {} if after_veto else None
     b = build(rows, min_shared=after[0], min_tokens=after[1], idf=after_idf, quorum=after_quorum,
-              repair=after_repair, merge=after_merge, desc=after_desc)
+              repair=after_repair, merge=after_merge, desc=after_desc,
+              veto=after_veto, veto_stats=veto_stats)
 
     a_by_id = {s["id"]: s for s in a}
     b_by_id = {s["id"]: s for s in b}
@@ -232,6 +238,7 @@ def compare(store_, *, before: tuple, after: tuple, show: int = 10,
 
     return {
         "articles": len(rows),
+        "vetoStats": veto_stats,
         "beforeStories": len(a),
         "afterStories": len(b),
         "beforeLargest": max((s["totalCoverage"] for s in a), default=0),
@@ -322,6 +329,12 @@ def main(argv=None) -> int:
     ap.add_argument("--desc-min-shared", type=int, default=None,
                     help="the floor to pair with --desc-tokens (default: configured, %d)"
                          % story_service.desc_min_shared())
+    ap.add_argument("--geo-veto", choices=story_service._GEO_VETO_MODES, default=None,
+                    help="X4 entity-evidence veto on the AFTER side "
+                         "(docs/STORY_ENTITY_EVIDENCE_PLAN.md): 'pair' vetoes every "
+                         "lexically-matching pair whose event-country sets are both present and "
+                         "disjoint; 'growth' gates only cluster merges past MIN_CHAINABLE, on "
+                         "located-consensus disagreement. Fail-open on missing data")
     ap.add_argument("--pieces", type=int, default=0,
                     help="print the resulting pieces for the N biggest split clusters — the read "
                          "that decides whether a split separated events or shredded a story")
@@ -351,7 +364,7 @@ def main(argv=None) -> int:
     res = compare(store_mod.Store(args.db), before=before,
                   after=after, show=args.show, after_idf=args.idf,
                   after_quorum=args.link_quorum, after_repair=args.repair_quorum,
-                  after_merge=args.merge_sim, after_desc=cap)
+                  after_merge=args.merge_sim, after_desc=cap, after_veto=args.geo_veto)
 
     def _tag(name, v):
         return f", {name} {v:g}" if v else ""
@@ -364,11 +377,14 @@ def main(argv=None) -> int:
                   else story_service.repair_quorum())
            + _tag("merge", args.merge_sim if args.merge_sim is not None
                   else story_service.merge_similarity())
-           + _tag("dek", cap))
+           + _tag("dek", cap)
+           + (f", veto {args.geo_veto or story_service.geo_veto()}"
+              if (args.geo_veto or story_service.geo_veto()) else ""))
     base_tag = (_tag("quorum", story_service.link_quorum())
                 + _tag("repair", story_service.repair_quorum())
                 + _tag("merge", story_service.merge_similarity())
-                + _tag("dek", story_service.desc_tokens()))
+                + _tag("dek", story_service.desc_tokens())
+                + (f", veto {story_service.geo_veto()}" if story_service.geo_veto() else ""))
     # "[PRODUCTION BASELINE]" is a claim about the ENVIRONMENT, not just about before == configured.
     # Every environment is self-consistent with its own defaults, so without this check the label
     # certifies any container as production — which is exactly how a backup-profile container's
@@ -402,6 +418,19 @@ def main(argv=None) -> int:
     bc, ac = res["beforeCoherence"], res["afterCoherence"]
     print(f"independent signal : {bc['bad']}/{bc['scored']} bad (mean {bc['mean']}) -> "
           f"{ac['bad']}/{ac['scored']} bad (mean {ac['mean']})")
+    if res["vetoStats"] is not None:
+        vs = res["vetoStats"]
+        # `pairChecked` counts LEXICALLY-VIABLE pairs (the veto is consulted after the token
+        # gates), so vetoed/bothLocated is the veto's real bite on edges that would otherwise
+        # exist. Admission and quorum share one predicate by design, so they are one counter.
+        print(f"geo-veto telemetry : pairs checked {vs.get('pairChecked', 0):,} "
+              f"(both located {vs.get('pairBothLocated', 0):,}, "
+              f"vetoed {vs.get('pairVetoed', 0):,}); "
+              f"merges checked {vs.get('mergeChecked', 0):,} "
+              f"(gated {vs.get('mergeGated', 0):,}, vetoed {vs.get('mergeVetoed', 0):,})")
+        if args.geo_veto and not any(vs.values()):
+            print("                     NOTE: the veto was never consulted — either nothing "
+                  "lexically matched or no event locations exist in this catalog")
 
     for grp in res["mergedFrom"][:args.pieces]:
         print(f"\n=== merged into: {grp['title'][:66]}")
