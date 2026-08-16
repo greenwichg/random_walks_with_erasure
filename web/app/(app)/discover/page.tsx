@@ -4,13 +4,11 @@ import * as React from "react";
 import { Compass } from "lucide-react";
 import { useDiscover } from "@/hooks/use-data";
 import { useTranslation } from "@/lib/i18n";
-import type { Article } from "@/types/domain";
 import { PageContainer } from "@/components/layout/page-container";
 import { CountryBadge } from "@/components/shared/country-badge";
-import { DiscoverLeadCard } from "@/components/discover/discover-lead-card";
-import { DiscoverRow } from "@/components/discover/discover-row";
+import { DiscoverCard } from "@/components/discover/discover-card";
 import { FilterSelect, type FilterOption } from "@/components/shared/filter-select";
-import { composeRiver, sliceRiver, type MarkLabel } from "@/lib/discover-order";
+import { interleavePublishers } from "@/lib/discover-order";
 import { EmptyState, ErrorState } from "@/components/shared/states";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -27,13 +25,6 @@ const LEAN_OPTIONS: FilterOption[] = [
 const opt = (values: string[]): FilterOption[] => values.map((v) => ({ value: v, label: v }));
 const asFilter = (v: string) => (v === "all" ? undefined : v);
 const PAGE = 24;
-// Landmark copy — literal keys so check-i18n's used-key scan sees every one.
-const MARK_KEY: Record<MarkLabel, string> = {
-  pastHour: "discover.mark.pastHour",
-  earlierToday: "discover.mark.earlierToday",
-  yesterday: "discover.mark.yesterday",
-  earlier: "discover.mark.earlier",
-};
 // /api/discover returns a flat, size-capped list (no offset); fetch the cap once and page on the
 // client. The live catalog sits well within this, and it never exceeds what the endpoint would serve.
 const FETCH = 200;
@@ -80,62 +71,16 @@ export default function DiscoverPage() {
 
   const articles = data?.articles ?? [];
   const total = articles.length;
+  // Publisher interleave (kept through the layout revert, 2026-08-16): one outlet's feed poll
+  // lands as a burst, and recency-only order rendered it verbatim — measured, one publisher on
+  // 6 of 12 visible cards. A permutation of the full fetched list, computed once per fetch, so
+  // Load More reveals more of a FIXED order and cards the reader has seen never move.
+  const ordered = React.useMemo(() => interleavePublishers(articles), [articles]);
+  const shown = ordered.slice(0, visible);
   const hasMore = visible < total;
 
-  // Front-page tier selection (Direction 1: "front page, then river"). Deterministic and cheap:
-  // the LEAD is the newest article with a USABLE image among the first six (a front page leads
-  // with its strongest fresh visual when one exists), else simply the newest; the two SUPPORTS
-  // are the next articles from DIFFERENT publishers — one outlet's feed poll lands as a burst,
-  // and recency-only ordering was putting the same masthead three times above the fold. When
-  // diversity is impossible (a publisher filter is active), next-in-order fills.
-  //
-  // The river is COMPOSED (lib/discover-order.ts, the approved River Rhythm spec): bucketed
-  // under time landmarks from stored publishedAt, publisher-interleaved within each bucket (the
-  // measured burst fix), with a featured BEAT every 9th slot taking the next imaged article
-  // within a 6-slot look-ahead — never across a landmark boundary. A permutation of the full
-  // fetched list, computed once per fetch, so Load More reveals more of a FIXED order and rows
-  // the reader has seen never move.
-  const { lead, supports, composed } = React.useMemo(() => {
-    if (articles.length === 0)
-      return { lead: null as Article | null, supports: [] as Article[],
-               composed: [] as ReturnType<typeof composeRiver<Article>> };
-    const usable = (a: Article) => Boolean(a.image) && !a.imageSuspect;
-    const inFirstSix = articles.slice(0, 6).findIndex(usable);
-    const leadIdx = inFirstSix >= 0 ? inFirstSix : 0;
-    const leadArt = articles[leadIdx];
-    if (!leadArt)
-      return { lead: null, supports: [] as Article[],
-               composed: [] as ReturnType<typeof composeRiver<Article>> }; // unreachable; typed indexing
-    const rest = articles.filter((_, i) => i !== leadIdx);
-    const picks: Article[] = [];
-    for (const a of rest) {
-      if (picks.length === 2) break;
-      if (a.publisher !== leadArt.publisher && !picks.some((s) => s.publisher === a.publisher)) picks.push(a);
-    }
-    for (const a of rest) {
-      if (picks.length === 2) break;
-      if (!picks.includes(a)) picks.push(a);
-    }
-    const chosen = new Set([leadArt.id, ...picks.map((a) => a.id)]);
-    return {
-      lead: leadArt,
-      supports: picks,
-      composed: composeRiver(articles.filter((a) => !chosen.has(a.id)),
-                             { now: new Date(), beatable: usable }),
-    };
-  }, [articles]);
-  // Same reveal budget as before: `visible` counts front-page slots + river ARTICLE slots
-  // together (landmarks are headers, not content — they ride along free).
-  const riverShown = sliceRiver(composed, Math.max(0, visible - (lead ? 1 + supports.length : 0)));
-
   return (
-    // max-w-[88rem]: +10% over the shared max-w-7xl, Discover only — measured (headless width
-    // experiment, 2026-08-16): river cards 602→666px eliminates clamp-truncation on long
-    // headlines (the UFC-record sample lost its ellipsis) and improves break points, with zero
-    // wrap regressions; gutters, breakpoints, and mobile (padding-bound) are untouched. The
-    // thumb scales w-28→w-32 in DiscoverRow so the image share holds (~19%) — widening with a
-    // fixed thumb made rows FEEL more compressed, not less (18.6%→16.8%).
-    <PageContainer className="max-w-[88rem]">
+    <PageContainer>
       <div className="mb-6">
         <h1 className="text-2xl font-semibold tracking-tight">{t("discover.title")}</h1>
         <p className="mt-1 max-w-xl text-sm text-muted-foreground">{t("discover.subtitle")}</p>
@@ -156,19 +101,10 @@ export default function DiscoverPage() {
       </div>
 
       {isLoading && (
-        <div>
-          <div className="grid gap-5 lg:grid-cols-3">
-            <Skeleton className="h-96 rounded-lg lg:col-span-2" />
-            <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-1">
-              <Skeleton className="h-44 rounded-lg" />
-              <Skeleton className="h-44 rounded-lg" />
-            </div>
-          </div>
-          <div className="mt-5 grid gap-3 md:grid-cols-2">
-            {Array.from({ length: 6 }).map((_, i) => (
-              <Skeleton key={i} className="h-24 rounded-lg" />
-            ))}
-          </div>
+        <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <Skeleton key={i} className="h-56 rounded-lg" />
+          ))}
         </div>
       )}
       {isError && <ErrorState onRetry={() => refetch()} />}
@@ -182,49 +118,19 @@ export default function DiscoverPage() {
         />
       )}
 
-      {/* Front page, then river (Direction 1, adopted 2026-08-16 — supersedes the masonry, whose
-          height-blind round-robin traded the in-card void for a full card of column-end drift
-          once adaptive cards made heights bimodal). The page's one job is discover-and-open: a
-          lead tier makes the editorial claim, and the dense rows below serve the scan at 3-4x
-          the old card density. The card/row itself is the Read affordance (whole-surface click,
-          same recorded flow), Save is a quiet icon, and lean is said once as the pill. The old
-          card component lives on in Search's masonry, unchanged. */}
-      {lead && (
-        <div className="grid gap-5 lg:grid-cols-3">
-          <div className="lg:col-span-2">
-            <DiscoverLeadCard article={lead} size="lead" priority />
-          </div>
-          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-1">
-            {supports.map((a, i) => (
-              <DiscoverLeadCard key={a.id} article={a} size="support" priority={i === 0} index={i + 1} />
-            ))}
-          </div>
-        </div>
-      )}
-      {riverShown.length > 0 && (
-        <div className="mt-5 grid gap-3 md:grid-cols-2">
-          {riverShown.map((item, i) =>
-            item.kind === "mark" ? (
-              <div
-                key={`mark-${item.label}-${i}`}
-                data-testid="river-mark"
-                className="col-span-full mt-3 flex items-center gap-2.5 first:mt-0"
-              >
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                  {t(MARK_KEY[item.label])}
-                </span>
-                <span aria-hidden className="h-px flex-1 bg-border" />
-              </div>
-            ) : item.kind === "beat" ? (
-              <div key={item.article.id} className="col-span-full">
-                <DiscoverRow article={item.article} beat />
-              </div>
-            ) : (
-              <DiscoverRow key={item.article.id} article={item.article} />
-            ),
-          )}
-        </div>
-      )}
+      {/* Uniform-height grid — the original layout, RESTORED by product decision (2026-08-16)
+          after the front-page/river and rhythm experiments: grid rows stretch every card in a row
+          to the same height and the card's internal flex slack absorbs the difference. What
+          survived the revert because it is layout-independent: the imageSuspect/branding guard
+          and text-first fallback (in DiscoverCard), display-title hygiene (engine), publisher
+          interleave (above), the visible lean-pill tint (Badge variants), lean-said-once
+          (leanDot={false} here), and the shared read/save flows. (Search/Saved keep
+          MasonryColumns.) */}
+      <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
+        {shown.map((article, i) => (
+          <DiscoverCard key={article.id} article={article} index={i % PAGE} priority={i < 2} leanDot={false} />
+        ))}
+      </div>
 
       {hasMore && (
         <div className="mt-4 flex justify-center">

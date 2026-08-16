@@ -21,11 +21,16 @@ export function DiscoverCard({
   index = 0,
   openedFrom = "discover",
   priority = false,
+  leanDot = true,
 }: {
   article: Article;
   index?: number;
   openedFrom?: string;
   priority?: boolean;
+  /** Whether PublisherBadge shows the house-lean dot. Discover passes false — on this pipeline
+   *  the article's lean IS the outlet's lean, and dot + pill stated one fact twice (the
+   *  lean-said-once fix, kept through the 2026-08-16 layout revert). Search keeps the default. */
+  leanDot?: boolean;
 }) {
   const { timeAgo } = useTranslation();
   // Three ways an image doesn't lead this card, one text-first outcome: absent, engine-flagged
@@ -61,7 +66,7 @@ export function DiscoverCard({
       )}
 
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <PublisherBadge name={article.publisher} lean={article.publisherLean} logo={article.publisherLogo} logoFallbacks={article.publisherLogoFallbacks} />
+        <PublisherBadge name={article.publisher} lean={leanDot ? article.publisherLean : null} logo={article.publisherLogo} logoFallbacks={article.publisherLogoFallbacks} />
         {article.topic && (
           <>
             <span className="text-xs text-muted-foreground">·</span>

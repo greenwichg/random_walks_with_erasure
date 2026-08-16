@@ -139,15 +139,14 @@ guard:
   its thresholds were never measured — a separate, measured step if the suspect tier proves
   insufficient. `audit_story_hero.py` §2b measures the flagged share on production data.
 - **Web**: article surfaces render text-first when the image is absent, engine-flagged, or fails
-  to load (`onHidden`) — one state, three causes. Discover's layout went through two steps the
-  same day: uniform rows → `MasonryColumns` (killed the in-card void, but height-blind
-  round-robin left a full card of column-end drift once card heights turned bimodal) →
-  **"front page, then river"** (the shipped design): a lead card + two publisher-diverse
-  supports, then dense scan rows at 3–4× card density. The card/row itself is the Read
-  affordance (`useReadArticleAction` — the button's exact recorded flow, extracted), Save is a
-  quiet icon, and lean is stated once as a bordered pill (`Badge` lean variants gained a visible
-  tint + hairline; the house-lean dot is not passed on Discover). `DiscoverCard` + masonry live
-  on in Search, unchanged.
+  to load (`onHidden`) — one state, three causes. Discover's LAYOUT went through a same-day arc —
+  uniform grid → masonry → "front page, then river" → river rhythm (landmarks/beats) — and was
+  then **reverted to the original uniform card grid by product decision (2026-08-16)**. What
+  survived the revert, because it is layout-independent: this guard and its text-first fallback,
+  the display-title hygiene, the publisher interleave (now ordering the card grid), the visible
+  lean-pill tint (`Badge` lean variants), lean-said-once on Discover (`DiscoverCard leanDot`),
+  and the shared read/save flows (`useReadArticleAction`, compact-capable `SaveButton`).
+  `DiscoverCard` + masonry remain on Search, unchanged throughout.
 
 ## Residual risks (named, bounded)
 
