@@ -203,25 +203,37 @@ The audit prints a `geo-veto telemetry` line — pairs checked / both located / 
 checked / gated / vetoed — and tags the AFTER side `veto pair|growth`. Determinism is pinned by
 the unit tests (same input → same clusters; the closures are pure functions of stored data), not
 by consecutive box runs, which ingestion drift makes non-identical by construction. The four
-runs, ready to paste (wall times include ~seconds of container start, identical on every side):
+runs, ready to paste (wall times include ~seconds of container start, identical on every side).
+
+**The deployed image predates this harness** — running `--geo-veto` from the image alone would
+fail exactly the way the crawler verifier once did. The runs therefore bind-mount the branch's
+`examples/` read-only from a THROWAWAY worktree: the deployed image, the running containers and
+the `/opt/ih` tree are all untouched (the 2026-08-16 431-commit checkout incident is why the
+tree is never switched for this). The branch's `examples/` is behaviour-identical to the
+deployed one for every default path — that is pinned by the suites, and run A double-checks it
+on the box (before == after, no veto tag, no telemetry line).
 
 ```bash
 cd /opt/ih && source deploy/ops/_compose.sh
+git fetch origin claude/sleepy-gates-oecof1
+git worktree add --detach /tmp/x4-code origin/claude/sleepy-gates-oecof1
+V="-v /tmp/x4-code/examples:/app/examples:ro"
 LOG=/tmp/x4_phase1_$(date -u +%Y%m%dT%H%M%SZ).log
 {
   echo "===== run A: production baseline (self-check; expect before == after) ====="
-  time dc run --rm -T api python examples/audit_clustering_change.py --show 5
+  time dc run --rm -T $V api python examples/audit_clustering_change.py --show 5
   echo "===== run B: library fallbacks + veto pair (mechanism test vs the 787 blob) ====="
-  time dc run --rm -T -e RWE_CLUSTER_LINK_QUORUM=0 -e RWE_STORY_REPAIR_QUORUM=0 \
+  time dc run --rm -T $V -e RWE_CLUSTER_LINK_QUORUM=0 -e RWE_STORY_REPAIR_QUORUM=0 \
       -e RWE_STORY_MERGE_SIM=0 api \
       python examples/audit_clustering_change.py --geo-veto pair --show 10 --pieces 5
   echo "===== run C: production + veto growth (adoption candidate, 1% bar) ====="
-  time dc run --rm -T api python examples/audit_clustering_change.py \
+  time dc run --rm -T $V api python examples/audit_clustering_change.py \
       --geo-veto growth --show 10 --max-dropped 0.01
   echo "===== run D: production + veto pair (titration bracket, 1% bar) ====="
-  time dc run --rm -T api python examples/audit_clustering_change.py \
+  time dc run --rm -T $V api python examples/audit_clustering_change.py \
       --geo-veto pair --show 10 --max-dropped 0.01
 } 2>&1 | tee "$LOG"
+git worktree remove /tmp/x4-code
 ```
 
 ### Ground truth — selection procedures, not fixed IDs (the catalog moves daily)
