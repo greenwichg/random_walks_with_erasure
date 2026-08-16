@@ -5,6 +5,7 @@ import {
   requiredPixels,
   isTooLowRes,
   nextCandidate,
+  hostIconCandidates,
 } from "./publisher-logo.ts";
 
 describe("logoCandidates", () => {
@@ -124,5 +125,32 @@ describe("nextCandidate", () => {
 
   it("handles an empty list", () => {
     assert.equal(nextCandidate([], null), null);
+  });
+});
+
+describe("hostIconCandidates", () => {
+  it("derives the engine's three icon paths from an article URL, largest first", () => {
+    // Mirrors media._ICON_PATHS order: the 180x180 Apple touch icon leads, the 16-32px
+    // favicon.ico is the last resort — the same rule the engine's pick_best_logo ships.
+    assert.deepEqual(hostIconCandidates("https://www.foxnews.com/politics/x?utm=1"), [
+      "https://www.foxnews.com/apple-touch-icon.png",
+      "https://www.foxnews.com/apple-touch-icon-precomposed.png",
+      "https://www.foxnews.com/favicon.ico",
+    ]);
+  });
+
+  it("yields nothing for junk, relative, or absent URLs — never a guessed host", () => {
+    assert.deepEqual(hostIconCandidates("not a url"), []);
+    assert.deepEqual(hostIconCandidates("/relative/path"), []);
+    assert.deepEqual(hostIconCandidates(""), []);
+    assert.deepEqual(hostIconCandidates(null), []);
+    assert.deepEqual(hostIconCandidates(undefined), []);
+  });
+
+  it("keeps the host exactly as the article states it (no www-stripping guesses)", () => {
+    assert.equal(
+      hostIconCandidates("https://apnews.com/article/1")[0],
+      "https://apnews.com/apple-touch-icon.png",
+    );
   });
 });

@@ -28,6 +28,7 @@ export function PublisherLogo({
   className,
   glyphClassName,
   loading = "lazy",
+  fallbackNode,
 }: {
   logo?: string | null;
   fallbacks?: string[] | null;
@@ -35,6 +36,9 @@ export function PublisherLogo({
   className?: string;
   glyphClassName?: string;
   loading?: "lazy" | "eager";
+  /** What exhaustion renders instead of the default building glyph — the coverage plate's chips
+   *  show a monogram, which carries more identity at 20px than an anonymous glyph. */
+  fallbackNode?: React.ReactNode;
 }) {
   const candidates = React.useMemo(() => logoCandidates(logo, fallbacks), [logo, fallbacks]);
   const [current, setCurrent] = React.useState<string | null>(() => candidates[0] ?? null);
@@ -49,6 +53,7 @@ export function PublisherLogo({
   );
 
   if (!current) {
+    if (fallbackNode !== undefined) return <>{fallbackNode}</>;
     return <Building2 className={cn(glyphClassName ?? className)} aria-hidden="true" />;
   }
 

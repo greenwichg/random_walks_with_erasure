@@ -111,8 +111,12 @@ documents). Compose defaults it ON. Junk values fall back to off, never to a gue
   That map is the dedup **merge contract** (`upsert_feed_article` precedence), so widening it
   changes which image survives a multi-source merge — a separate change with its own
   measurement, not a rider on this one. Under the guard, `unknown` simply ranks at priority 0.
-- **The web tier.** `ArticleImage` self-hiding and the figure-card fallback already handle
-  `image: null`; no frontend change was needed or made.
+- **The web tier** was untouched by the guard itself (`ArticleImage` self-hiding and the
+  figure-card fallback already handled `image: null`). The no-image state was then *redesigned*
+  in a follow-up: the COVERAGE PLATE (`web/components/stories/coverage-plate.tsx`) replaced the
+  bare coverage figure on cards, added a blindspot variant, and gave the story page a 21:9
+  coverage masthead where the hero previously self-hid with no designed state. Same principle,
+  better composition — every mark is still a counted fact of the story.
 - **Clustering.** Nothing here touches membership; the audit pins ids/order equality under the
   flag.
 

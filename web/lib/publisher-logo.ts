@@ -57,6 +57,27 @@ export function isTooLowRes(naturalWidth: number, cssPx: number, dpr = 1, url?: 
 }
 
 /**
+ * Site-icon candidates derived from an article URL's host, largest first — the same three paths,
+ * in the same order, as the engine's `media._ICON_PATHS` (apple-touch icons are conventionally
+ * 180x180 at a predictable path; `favicon.ico` is 16-32px browser chrome and always last). Used
+ * by surfaces that have an article URL but no engine-supplied logo chain (the coverage plate's
+ * publisher chips render from story coverage entries, which carry url + publisher only).
+ * Junk or relative URLs yield [] — the caller shows its fallback, never a guessed host.
+ */
+export function hostIconCandidates(articleUrl?: string | null): string[] {
+  let host = "";
+  try {
+    host = articleUrl ? new URL(articleUrl).hostname : "";
+  } catch {
+    return [];
+  }
+  if (!host) return [];
+  return ["apple-touch-icon.png", "apple-touch-icon-precomposed.png", "favicon.ico"].map(
+    (p) => `https://${host}/${p}`,
+  );
+}
+
+/**
  * The next candidate after one fails or proves too small, or null when the list is exhausted.
  *
  * Exhaustion is a real outcome, not a failure to handle: a publisher that exposes no usable icon

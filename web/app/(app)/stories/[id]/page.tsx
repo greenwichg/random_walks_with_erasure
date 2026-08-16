@@ -14,6 +14,7 @@ import { ShareButton } from "@/components/shared/share-button";
 import { EmptyState, ErrorState } from "@/components/shared/states";
 import { Skeleton } from "@/components/ui/skeleton";
 import { FreshnessBadge } from "@/components/stories/freshness-badge";
+import { CoveragePlate } from "@/components/stories/coverage-plate";
 import { StoryIntelligencePanel } from "@/components/stories/story-intelligence-panel";
 import { CoverageList } from "@/components/stories/coverage-list";
 import { FramingComparison } from "@/components/stories/framing-comparison";
@@ -168,15 +169,23 @@ export default function StoryDetailPage() {
           </>
         }
       >
-          {/* What happened — the hero, with the cluster's real summary as the standfirst. */}
+          {/* What happened — the hero, with the cluster's real summary as the standfirst. An
+              imageless story opens with the COVERAGE MASTHEAD instead (coverage-plate.tsx):
+              before it, the hero simply self-hid and the page started abruptly at the topic
+              label — the one no-image surface that had no designed state at all. (A hero URL
+              that 404s still self-hides; absence and failure stay distinct on purpose.) */}
           <article className="overflow-hidden rounded-lg border bg-card shadow-soft">
-            <ArticleImage
-              src={story.image}
-              alt={story.title}
-              priority
-              aspect="aspect-[21/9]"
-              className="w-full rounded-none border-0"
-            />
+            {story.image ? (
+              <ArticleImage
+                src={story.image}
+                alt={story.title}
+                priority
+                aspect="aspect-[21/9]"
+                className="w-full rounded-none border-0"
+              />
+            ) : (
+              <CoveragePlate story={story} masthead />
+            )}
             <div className="p-5">
               <div className="mb-2 flex flex-wrap items-center gap-2">
                 <span className="text-[0.7rem] font-semibold uppercase tracking-wider text-muted-foreground">

@@ -8,16 +8,18 @@ import { useTranslation } from "@/lib/i18n";
 import { SpectrumBar } from "@/components/shared/spectrum-bar";
 import { ArticleImage } from "@/components/shared/article-image";
 import { FreshnessBadge } from "@/components/stories/freshness-badge";
+import { CoveragePlate } from "@/components/stories/coverage-plate";
 import { LEAN_META } from "@/lib/metrics";
 import { cn } from "@/lib/utils";
 
 /** A clustered-story preview card — one event, coverage across the spectrum.
  *
- * Imageless stories render the COVERAGE FIGURE in the image slot: the story's own left/center/
- * right distribution drawn large. Same slot, same aspect, so imaged and imageless cards share
- * one skeleton and grid rows never leave a void — and the visual is a counted fact unique to
- * each story, never a stock illustration or category artwork. (The figure replaces the small
- * spectrum strip; showing both would say the same thing twice.) */
+ * Imageless stories render the COVERAGE PLATE in the image slot (coverage-plate.tsx): kicker,
+ * publisher chips, the publisher-count credential and the labeled distribution band, composed as
+ * a designed object. Same slot, same aspect, so imaged and imageless cards share one skeleton
+ * and grid rows never leave a void — and every mark is a counted fact unique to each story,
+ * never a stock illustration or category artwork. (The plate replaces the small spectrum strip
+ * AND, on gap stories, the thin-side chip; each fact is said once.) */
 export function StoryCard({ story, index = 0, priority = false }: { story: Story; index?: number; priority?: boolean }) {
   const { t, formatCompact, timeAgo } = useTranslation();
   const hasImage = Boolean(story.image);
@@ -43,7 +45,7 @@ export function StoryCard({ story, index = 0, priority = false }: { story: Story
         {hasImage ? (
           <ArticleImage src={story.image} alt={story.title} priority={priority} className="mb-3" />
         ) : (
-          <CoverageFigure story={story} />
+          <CoveragePlate story={story} />
         )}
 
         <div className="mb-2 flex items-center justify-between gap-2">
@@ -77,7 +79,10 @@ export function StoryCard({ story, index = 0, priority = false }: { story: Story
         )}
 
         <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
-          {story.blindspotSide ? (
+          {/* On imageless gap stories the plate already STATES the thin side (with its rated
+              share) — repeating it here as a chip would say the same thing twice, so those
+              cards show the update time like any other. */}
+          {story.blindspotSide && hasImage ? (
             <span
               className="inline-flex items-center gap-1 font-medium"
               style={{ color: LEAN_META[story.blindspotSide].color }}
@@ -98,42 +103,3 @@ export function StoryCard({ story, index = 0, priority = false }: { story: Story
   );
 }
 
-/** The story's own coverage, drawn large in the hero slot: one column per side, height ∝ share,
- *  in the diverging lean palette — a per-story figure from counted facts (the same numbers the
- *  small spectrum strip shows on imaged cards). A 0% side keeps a stub column + label, so the
- *  triptych always reads left-to-right and a missing side is VISIBLY missing. */
-function CoverageFigure({ story }: { story: Story }) {
-  const { t } = useTranslation();
-  const sides = ["left", "center", "right"] as const;
-  // On imageless cards this figure IS the card's distribution display, so announce it: one
-  // label carrying the three percentages (the visual columns are then decorative detail).
-  const label = sides
-    .map((s) => `${t(`filter.${s}`)} ${Math.round((story.distribution?.[s] ?? 0) * 100)}%`)
-    .join(" · ");
-  return (
-    <div
-      role="img"
-      aria-label={label}
-      className="mb-3 flex aspect-[16/9] items-end justify-center gap-8 overflow-hidden rounded-lg bg-muted/40 px-6 pb-4 pt-6"
-    >
-      {sides.map((side) => {
-        const share = Math.max(0, Math.min(1, story.distribution?.[side] ?? 0));
-        const pct = Math.round(share * 100);
-        return (
-          <div key={side} className="flex h-full w-14 min-w-0 flex-col items-center justify-end gap-1">
-            <span className="text-xs font-medium tabular-nums text-muted-foreground">{pct}%</span>
-            <div
-              className="w-full rounded-t"
-              style={{
-                height: `${Math.max(share * 72, 2.5)}%`,
-                backgroundColor: LEAN_META[side].color,
-                opacity: share > 0 ? 0.8 : 0.25,
-              }}
-            />
-            <span className="text-[0.7rem] text-muted-foreground">{t(`filter.${side}`)}</span>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
