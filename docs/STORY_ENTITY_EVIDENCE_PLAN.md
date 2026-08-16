@@ -135,6 +135,8 @@ The veto's reach is bounded by located coverage, and that number must be measure
 cd /opt/ih && source deploy/ops/_compose.sh
 dc run --rm -T api python - <<'PY'
 # X4 phase 0 -- located coverage of the clustering window (read-only)
+import sys
+sys.path.insert(0, "examples")   # stdin scripts get no script-dir path entry; WORKDIR is /app
 from collections import Counter
 import store, story_service
 rows = story_service._fetch(store.Store())
