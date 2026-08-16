@@ -281,3 +281,125 @@ def test_sharing_image_backfills_missing_thumbnails_only():
     assert st.backfill_article_image("https://bare.example/story", "https://cdn.example/again.jpg") is False
     assert st.backfill_article_image("https://has.example/story", "https://cdn.example/x.jpg") is False
     assert st.backfill_article_image("https://missing.example/x", "https://cdn.example/x.jpg") is False
+
+
+# --------------------------------------------------------------------------- #
+# X5 rung 2 — entities from the SAME GKG file (docs/STORY_ENTITY_EVIDENCE_PLAN.md).
+# Contract under test: the location/image path stays byte-identical (its record shape is pinned
+# above), entity persistence is opt-in and off by default, the backfill CLI writes ONLY the
+# entities table, and normalization happens once at parse so identity needs no re-normalizing.
+# --------------------------------------------------------------------------- #
+import gdelt_entity_backfill     # noqa: E402
+
+
+def _erow(url, persons="", orgs="", collection="1"):
+    cols = [""] * 27
+    cols[gdelt_gkg._COL_COLLECTION] = collection
+    cols[gdelt_gkg._COL_DOCUMENT] = url
+    cols[gdelt_gkg._COL_V1PERSONS] = persons
+    cols[gdelt_gkg._COL_V1ORGS] = orgs
+    return "\t".join(cols)
+
+
+def test_split_entities_normalizes_dedupes_and_caps():
+    assert gdelt_gkg._split_entities("Barack Obama;  JOHN  Kerry ;barack obama;xi") == \
+        ["barack obama", "john kerry"]           # normalized, deduped, len>=3 floor drops "xi"
+    assert gdelt_gkg._split_entities("") == []
+    many = ";".join(f"person {i}" for i in range(50))
+    assert len(gdelt_gkg._split_entities(many)) == gdelt_gkg.ENTITY_CAP
+    # Dedup BEFORE the cap: a repetitive record must not get a smaller signal.
+    repeats = ";".join(["Same Name"] * 40 + [f"other {i}" for i in range(30)])
+    assert len(gdelt_gkg._split_entities(repeats)) == gdelt_gkg.ENTITY_CAP
+
+
+def test_parse_gkg_entity_lines_applies_the_web_discipline():
+    text = "\n".join([
+        _erow("https://a.example/x", persons="Jane Doe;Ali Khan", orgs="Acme Corp"),
+        _erow("https://cite.example/x", persons="Jane Doe", collection="2"),   # citation: skip
+        _erow("notaurl", persons="Jane Doe"),                                  # no URL: skip
+        _erow("https://none.example/x"),                                       # no names: skip
+        "short\trow",
+    ])
+    parsed = gdelt_gkg.parse_gkg_entity_lines(text.splitlines())
+    assert len(parsed) == 1
+    url, ents = parsed[0]
+    assert url == "https://a.example/x"
+    assert ents == {"person": ["jane doe", "ali khan"], "org": ["acme corp"]}
+
+
+def test_entity_persistence_is_opt_in_and_off_by_default(monkeypatch):
+    st = store_mod.Store("sqlite://")
+    _upsert(st, "https://a.example/x")
+    text = _erow("https://a.example/x", persons="Jane Doe") + "\n" + \
+        _row("https://a.example/x", "1#France#FR##48#2#FR")
+    gkg_url = "http://data.gdeltproject.org/gdeltv2/x.gkg.csv.zip"
+    payloads = {gdelt_gkg.LASTUPDATE_URL: f"1 a {gkg_url}".encode(), gkg_url: _zip_bytes(text)}
+
+    monkeypatch.delenv("RWE_GDELT_ENTITIES", raising=False)
+    stats = gdelt_gkg.enrich_from_latest(st, fetch_bytes=lambda u: payloads[u], windows=1)
+    assert "entities" not in stats and st.count_article_entities() == 0, \
+        "the default cycle must not even report the counter — off means off"
+
+    monkeypatch.setenv("RWE_GDELT_ENTITIES", "1")
+    stats = gdelt_gkg.enrich_from_latest(st, fetch_bytes=lambda u: payloads[u], windows=1)
+    assert stats["entities"] == 1 and stats["located"] >= 0
+    assert st.entities_for_urls(["https://a.example/x"]) == \
+        {"https://a.example/x": {"person": ["jane doe"]}}
+
+
+def test_replace_article_entities_is_per_source_idempotent():
+    st = store_mod.Store("sqlite://")
+    assert st.replace_article_entities("https://a.example/x",
+                                       {"person": ["jane doe"], "org": ["acme corp"]}) == 2
+    assert st.replace_article_entities("https://a.example/x", {"person": ["ali khan"]}) == 1
+    got = st.entities_for_urls(["https://a.example/x"])["https://a.example/x"]
+    assert got == {"person": ["ali khan"]}, "same source replaces, never accumulates"
+    st.replace_article_entities("https://a.example/x", {"org": ["other org"]}, source="manual")
+    got = st.entities_for_urls(["https://a.example/x"])["https://a.example/x"]
+    assert got == {"person": ["ali khan"], "org": ["other org"]}, \
+        "a different source replaces only ITS OWN rows — gdelt-gkg's survive alongside"
+    assert st.replace_article_entities("https://a.example/x", {}) == 0
+    got = st.entities_for_urls(["https://a.example/x"])["https://a.example/x"]
+    assert got == {"person": ["ali khan"], "org": ["other org"]}, \
+        "empty input is a no-op, never a delete — a nameless record must not erase an earlier one"
+
+
+def test_backfill_writes_entities_and_nothing_else(monkeypatch):
+    """The production-data neutrality pin: locations and images stay byte-identical however rich
+    the GKG windows are."""
+    st = store_mod.Store("sqlite://")
+    _upsert(st, "https://a.example/x")
+    _upsert(st, "https://b.example/x")
+    text = "\n".join([
+        _erow("https://a.example/x", persons="Jane Doe", orgs="Acme Corp"),
+        _row("https://a.example/x", "1#France#FR##48#2#FR", image="https://cdn.example/i.jpg"),
+        _erow("https://unknown.example/x", persons="Nobody Here"),   # not in catalog: no write
+    ])
+    gkg_url = "http://data.gdeltproject.org/gdeltv2/20260726120000.gkg.csv.zip"
+    payloads = {gdelt_gkg.LASTUPDATE_URL: f"1 a {gkg_url}".encode(), gkg_url: _zip_bytes(text)}
+
+    stats = gdelt_entity_backfill.backfill(st, fetch_bytes=lambda u: payloads.get(u, b""),
+                                           windows=1)
+    assert stats["articlesWritten"] == 1 and stats["rowsWritten"] == 2
+    assert st.count_article_entities() == 2
+    assert st.count_event_locations() == 0, "the backfill must NEVER write locations"
+    rows = {r["canonicalUrl"]: r for r in st.search_feed_articles()[0]}
+    assert rows["https://a.example/x"]["image"] is None, "images untouched by design"
+
+
+def test_backfill_counts_gaps_instead_of_dying(monkeypatch):
+    st = store_mod.Store("sqlite://")
+    _upsert(st, "https://a.example/x")
+    good = "http://data.gdeltproject.org/gdeltv2/20260726120000.gkg.csv.zip"
+    text = _erow("https://a.example/x", persons="Jane Doe")
+
+    def fetch(url):
+        if url == gdelt_gkg.LASTUPDATE_URL:
+            return f"1 a {good}".encode()
+        if url == good:
+            return _zip_bytes(text)
+        raise OSError("gap")                     # every older window is missing
+
+    stats = gdelt_entity_backfill.backfill(st, fetch_bytes=fetch, windows=3)
+    assert stats["windows"] == 1 and stats["windowErrors"] == 2
+    assert stats["articlesWritten"] == 1

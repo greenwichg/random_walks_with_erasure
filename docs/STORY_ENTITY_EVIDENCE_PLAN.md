@@ -398,6 +398,69 @@ is cheap and real.
    mislocation) rather than how the threshold is tuned — which is exactly where a
    representation-level experiment was supposed to land.
 
+## X5 — rung 2: persons and organizations from the same GKG file
+
+**Status: Phase 0 BUILT (2026-08-16), dormant everywhere.** Approved as its own experiment
+after X4's conclusion. Same discipline: measure first, design the rule from the measurement,
+pre-register bars before any rule run.
+
+### What shipped (all inert by default)
+
+* `store.ArticleEntity` — a side table with the `ArticleEventLocation` contract
+  (provider-extracted, provenance per row, never inferred by us). **Nothing in the serving path
+  reads it.** Auto-created like every other table; no migration.
+* `gdelt_gkg.parse_gkg_entity_lines` — a SEPARATE streaming pass over the same downloaded zip
+  (V1PERSONS col 11, V1ORGANIZATIONS col 13; normalized lower-case, deduped before a 24-name
+  cap), so the location/image record shape and every consumer of it stay byte-identical.
+* Steady-state opt-in: `RWE_GDELT_ENTITIES=1` makes the existing enricher cycle also persist
+  entities (one extra decompression, zero extra HTTP). Default off; set by no deploy config.
+* `examples/gdelt_entity_backfill.py` — the one-shot history backfill for the current window,
+  with **production-data neutrality as a tested contract**: it writes ONLY `article_entities`;
+  a location backfill would move geoCoherence/trust/blindspots mid-experiment and is refused by
+  design. Request-rate honesty in the docstring: `--hours 48` is 193 sequential downloads
+  (~1–2 GB), a one-time burst, not the sustained misconfiguration that once rate-limited the
+  DOC adapter.
+* `examples/audit_entity_separability.py` — the rule-design instrument. Read-only and
+  deterministic. Measures coverage, the ubiquity (df) table, and THE number: shared-entity
+  rates among within-story pairs versus confusable cross-story pairs (different stories whose
+  titles share ≥ MIN_SHARED_TOKENS). The suspected failure is written down before the data:
+  ubiquitous names ("donald trump" appears in both court cases), so the instrument reports a
+  `rare` column under a df floor alongside raw overlap. The constructed smoke already shows the
+  expected signature — org overlap separating while a ubiquitous person does not — but a
+  constructed example is a hypothesis, not a measurement.
+
+### Phase 0 on the box
+
+```bash
+cd /opt/ih && source deploy/ops/_compose.sh
+git fetch origin claude/sleepy-gates-oecof1
+git worktree remove --force /tmp/x5-code 2>/dev/null; \
+git worktree add --detach /tmp/x5-code origin/claude/sleepy-gates-oecof1
+V="-v /tmp/x5-code/examples:/app/examples:ro"
+
+# 1. Backfill entities for the last 48h of GKG history (~15-30 min, one-time burst).
+dc run --rm -T $V api python examples/gdelt_entity_backfill.py --hours 48 \
+   2>&1 | tee /tmp/x5_backfill_$(date -u +%Y%m%dT%H%M%SZ).log
+
+# 2. The separability measurement.
+dc run --rm -T $V api python examples/audit_entity_separability.py \
+   2>&1 | tee /tmp/x5_separability_$(date -u +%Y%m%dT%H%M%SZ).log
+
+git worktree remove /tmp/x5-code
+```
+
+### Go/no-go, fixed before the numbers
+
+* **Coverage**: entity-covered share of the window materially above the located 18.7% (the
+  whole point of rung 2 is more reach). Backfill depth caps coverage at ~48h of the 6-day
+  window — read the number against that, not against 100%.
+* **Separability**: the within-story shared-any (or shared-rare) rate must sit WELL above the
+  confusable rate — a gap wide enough that a fail-open corroborated rule (the X4 shape) has
+  room to act. If the two lines are close, or only ubiquitous names carry the overlap, rung 2
+  stops here and that is the finding.
+* Phase 1 (the rule + audit runs) is designed FROM this output and gated on its own go-ahead —
+  the rule is not written yet, deliberately.
+
 ### Ground truth — selection procedures, not fixed IDs (the catalog moves daily)
 
 * **Must-sever set** (false-merge labels): re-run the X0 counterfactual (`fallbacks, --pieces`)

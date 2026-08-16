@@ -705,6 +705,25 @@ class ArticleEventLocation(Base):
     source: Mapped[str] = mapped_column(String(32), default="provider")
 
 
+class ArticleEntity(Base):
+    """Named entities GDELT's GKG extraction found in a catalog article (X5, rung 2 of
+    docs/STORY_ENTITY_EVIDENCE_PLAN.md) — 0..n rows per article, provider-extracted with the
+    same contract as :class:`ArticleEventLocation`: never inferred from article text by us,
+    provenance on every row, enrichment only. **Nothing in the serving path reads this table**
+    (2026-08-16): it is populated only by explicit opt-in (``RWE_GDELT_ENTITIES``, default off)
+    or the one-shot ``gdelt_entity_backfill`` CLI, and consumed only by the X5 measurement
+    instruments. Names are stored normalized (lower-cased, whitespace-collapsed) so identity
+    comparisons need no re-normalization."""
+
+    __tablename__ = "article_entities"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    canonical_url: Mapped[str] = mapped_column(String(2048), index=True)   # FeedArticle dedup key
+    kind: Mapped[str] = mapped_column(String(16), index=True)              # "person" | "org"
+    name: Mapped[str] = mapped_column(String(255))
+    source: Mapped[str] = mapped_column(String(32), default="gdelt-gkg")
+
+
 class FeedHealth(Base):
     """Per-feed polling health + quality — **observational only**. Written each poll cycle by the
     poller; never removes articles, never modifies :class:`FeedArticle`, and never influences corpus
@@ -1412,6 +1431,48 @@ class Store:
                 s.add(ArticleEventLocation(canonical_url=canonical_url, country=l.country,
                                            region=l.region, city=l.city, lat=l.lat, lon=l.lon,
                                            source=l.source))
+
+    def replace_article_entities(self, canonical_url: str, entities: dict, *,
+                                 source: str = "gdelt-gkg") -> int:
+        """Persist an article's named entities — ``{"person": [names], "org": [names]}`` —
+        idempotent PER SOURCE like :meth:`replace_article_event_locations`: incoming rows replace
+        this article's rows from the same source only. Names are stored as given (the enricher
+        normalizes); empty input is a no-op rather than a delete, so a GKG record that carries no
+        entities never erases an earlier one that did. Returns rows written."""
+        rows = [(kind, name) for kind in ("person", "org")
+                for name in (entities or {}).get(kind, ()) if name]
+        if not canonical_url or not rows:
+            return 0
+        with self.session() as s:
+            s.execute(delete(ArticleEntity).where(
+                ArticleEntity.canonical_url == canonical_url,
+                ArticleEntity.source == source))
+            for kind, name in rows:
+                s.add(ArticleEntity(canonical_url=canonical_url, kind=kind,
+                                    name=name[:255], source=source))
+        return len(rows)
+
+    def entities_for_urls(self, canonical_urls) -> dict:
+        """``{canonical_url: {"person": sorted names, "org": sorted names}}`` — the batched
+        lookup the X5 instruments use, shaped like :meth:`event_countries_for_urls`. URLs
+        without entity rows are absent."""
+        urls = [u for u in dict.fromkeys(canonical_urls) if u]
+        if not urls:
+            return {}
+        out: dict = {}
+        with self.session() as s:
+            for i in range(0, len(urls), 500):
+                rows = s.execute(select(ArticleEntity.canonical_url, ArticleEntity.kind,
+                                        ArticleEntity.name).distinct()
+                                 .where(ArticleEntity.canonical_url.in_(urls[i:i + 500]))).all()
+                for u, kind, name in rows:
+                    out.setdefault(u, {}).setdefault(kind, []).append(name)
+        return {u: {k: sorted(v) for k, v in kinds.items()} for u, kinds in out.items()}
+
+    def count_article_entities(self) -> int:
+        """Total entity rows — the backfill's before/after fact and the coverage probe's input."""
+        with self.session() as s:
+            return int(s.scalar(select(func.count()).select_from(ArticleEntity)) or 0)
 
     def backfill_article_image(self, canonical_url: str, image_url: str, *,
                               source: str = "gdelt-gkg") -> bool:

@@ -47,7 +47,15 @@ LASTUPDATE_URL = "http://data.gdeltproject.org/gdeltv2/lastupdate.txt"
 _COL_COLLECTION = 2        # V2SOURCECOLLECTIONIDENTIFIER — 1 = WEB (URL DocumentIdentifier)
 _COL_DOCUMENT = 4          # V2DOCUMENTIDENTIFIER — the article URL for WEB records
 _COL_V1LOCATIONS = 9       # V1LOCATIONS — Type#FullName#FIPS#ADM1#Lat#Long#FeatureID; ';'-joined
+_COL_V1PERSONS = 11        # V1PERSONS — ';'-joined person names (X5, rung 2)
+_COL_V1ORGS = 13           # V1ORGANIZATIONS — ';'-joined organization names (X5, rung 2)
 _COL_SHARING_IMAGE = 18    # V2.1SHARINGIMAGE — the article's social/OG image URL GDELT extracted
+
+#: Names kept per article per kind. A bound, not a preference: V1 lists are usually short, and
+#: an outlier record listing hundreds of names is exactly the kind of page (a roster, a listing)
+#: whose names are NOT what the article is about. First-N in order of appearance, like
+#: ``clustering.description_tokens`` — deterministic, no corpus state.
+ENTITY_CAP = 24
 
 
 def parse_lastupdate(manifest: str) -> Optional[str]:
@@ -123,6 +131,53 @@ def parse_gkg_lines(lines) -> list:
     return out
 
 
+def _split_entities(field: str, cap: int = ENTITY_CAP) -> list:
+    """One V1PERSONS / V1ORGANIZATIONS field -> normalized distinct names, order preserved.
+
+    Lower-cased and whitespace-collapsed so identity comparisons need no re-normalization
+    downstream; names shorter than three characters are dropped as parse noise. Dedup happens
+    BEFORE the cap, same argument as ``description_tokens``: repetition is not evidence, and a
+    repetitive record must not get a smaller signal."""
+    seen: list = []
+    for raw in (field or "").split(";"):
+        name = " ".join(raw.strip().lower().split())
+        if len(name) >= 3 and name not in seen:
+            seen.append(name)
+            if len(seen) >= cap:
+                break
+    return seen
+
+
+def parse_gkg_entity_lines(lines) -> list:
+    """GKG CSV lines -> ``[(document_url, {"person": [...], "org": [...]}), …]`` for WEB records
+    carrying at least one name (X5, rung 2). A SEPARATE streaming pass rather than a change to
+    :func:`parse_gkg_lines`, so the location/image path — and every consumer of its record shape
+    — stays byte-identical; the zip member is simply opened twice when both are wanted. Same
+    URL and collection discipline as the main parser."""
+    out = []
+    for line in lines or ():
+        cols = line.rstrip("\r\n").split("\t")
+        if len(cols) <= _COL_V1ORGS:
+            continue
+        if cols[_COL_COLLECTION].strip() != "1":
+            continue
+        url = cols[_COL_DOCUMENT].strip()
+        if not url.lower().startswith(("http://", "https://")):
+            continue
+        persons = _split_entities(cols[_COL_V1PERSONS])
+        orgs = _split_entities(cols[_COL_V1ORGS])
+        if persons or orgs:
+            out.append((url, {"person": persons, "org": orgs}))
+    return out
+
+
+def entities_enabled() -> bool:
+    """Whether the steady-state enrichment cycle ALSO persists entities — OFF
+    (``RWE_GDELT_ENTITIES=1`` to enable; no deploy configuration sets it, X5 is an experiment).
+    Off costs nothing: the entity pass over the zip member is skipped entirely."""
+    return (os.environ.get("RWE_GDELT_ENTITIES", "") or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _candidates(url: str) -> list:
     """Canonical catalog keys a GKG URL may match: the shared ``ingest.canonical_url`` form plus
     its scheme-flipped twin (GKG sometimes records http where we ingested https, or vice
@@ -183,6 +238,8 @@ def enrich_from_latest(store_, *, fetch_bytes: Callable[[str], bytes],
                 and store_.count_feed_articles() > 0):
             windows, backfill = _backfill_windows(), True
     by_canonical: dict = {}
+    ents_by_canonical: dict = {}
+    want_entities = entities_enabled()
     processed = errors = records_total = 0
     for gkg_url in window_urls(latest, windows):
         try:
@@ -197,6 +254,14 @@ def enrich_from_latest(store_, *, fetch_bytes: Callable[[str], bytes],
                 with z.open(name) as member:
                     records = parse_gkg_lines(
                         io.TextIOWrapper(member, encoding="utf-8", errors="replace"))
+                ent_records = []
+                if want_entities:
+                    # Second streaming pass over the SAME downloaded blob (X5 opt-in) — one
+                    # extra decompression, zero extra HTTP, and the location/image record shape
+                    # above stays byte-identical for its consumers.
+                    with z.open(name) as member:
+                        ent_records = parse_gkg_entity_lines(
+                            io.TextIOWrapper(member, encoding="utf-8", errors="replace"))
         except Exception:                       # one missing/corrupt window never fails the cycle
             errors += 1
             continue
@@ -205,6 +270,9 @@ def enrich_from_latest(store_, *, fetch_bytes: Callable[[str], bytes],
         for url, places, image in records:     # newest window first → setdefault keeps it
             for cand in _candidates(url):
                 by_canonical.setdefault(cand, (places, image))
+        for url, ents in ent_records:
+            for cand in _candidates(url):
+                ents_by_canonical.setdefault(cand, ents)
 
     known = store_.existing_feed_urls(list(by_canonical))
     located = images = 0
@@ -222,6 +290,13 @@ def enrich_from_latest(store_, *, fetch_bytes: Callable[[str], bytes],
             images += 1
     out = {"windows": processed, "windowErrors": errors, "records": records_total,
            "matched": len(known), "located": located, "images": images}
+    if want_entities:
+        ent_known = store_.existing_feed_urls(list(ents_by_canonical))
+        entity_articles = 0
+        for canonical in sorted(ent_known):
+            if store_.replace_article_entities(canonical, ents_by_canonical[canonical]):
+                entity_articles += 1
+        out["entities"] = entity_articles
     if backfill:
         out["backfill"] = True          # visible in health/CLI: this was the cold-start deep cycle
     return out
