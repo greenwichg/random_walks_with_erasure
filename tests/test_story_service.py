@@ -2932,3 +2932,148 @@ def test_hero_guard_reader_is_honest_about_junk(monkeypatch):
     assert ss.hero_guard() is False, "junk falls back to off, never to a guess"
     monkeypatch.setenv("RWE_STORY_HERO_GUARD", "0")
     assert ss.hero_guard() is False
+
+
+# --------------------------------------------------------------------------- #
+# Story summary selection (pick_story_summary) — adopted 2026-08-16 against the
+# audit_story_summary production baseline (26.2% GN digests, echo 31.5%, 212 url-leaks).
+# Fixtures below are ABBREVIATED PRODUCTION EXHIBITS from that baseline run.
+# --------------------------------------------------------------------------- #
+def _sm(pub, headline, desc, *, stype=None, at="2026-08-16T10:00:00+00:00"):
+    return {"publisher": pub, "headline": headline, "description": desc, "sourceType": stype,
+            "publishedAt": at, "id": f"https://{pub.lower().replace(' ', '')}.example/a"}
+
+
+GN_DIGEST = ("A judge expands a block on U.S. Postal Service work on Trump's mail-in voting "
+             "order NPR\nJudge again bars Trump administration from implementing order that "
+             "sought to limit mail voting The Guardian")
+
+
+def test_summary_gn_digest_rejected_by_provider_evidence():
+    """The mail-in-voting exhibit: the earliest filer is a Google News digest. Provider evidence
+    alone must reject it — the related outlets are mostly NOT cluster members (measured: the
+    member-name backstop caught 13 of the ~399-story class)."""
+    rep = _sm("NPR", "Judge expands block on Postal Service election work", GN_DIGEST,
+              stype="googlenews", at="2026-08-16T08:00:00+00:00")
+    dek = _sm("The Guardian", "Judge bars mail voting order",
+              "A federal judge widened an injunction against the administration's order on Friday.")
+    got = ss.pick_story_summary([rep, dek], rep)
+    assert got == "A federal judge widened an injunction against the administration's order on Friday."
+    assert "NPR" not in got and "\n" not in got
+
+
+def test_summary_structural_digest_rejected_without_provider_tag():
+    """The same digest arriving WITHOUT the googlenews tag: >=2 newline-separated headline rows
+    (rows end in an outlet name, not sentence punctuation) is the structural signature."""
+    rep = _sm("NPR", "Judge expands block", GN_DIGEST, stype="rss",
+              at="2026-08-16T08:00:00+00:00")
+    dek = _sm("The Guardian", "Judge bars order",
+              "A federal judge widened an injunction against the order on Friday.")
+    assert ss.pick_story_summary([rep, dek], rep).startswith("A federal judge widened")
+
+
+def test_summary_member_name_backstop_still_fires():
+    """A single-line description naming two OTHER cluster members (no newlines, no provider
+    tag) — the registered backstop tier."""
+    rep = _sm("KWTX", "Helicopter crash near Fort Cavazos",
+              "Two dead after crash, CBS News and Fox News report from the scene",
+              at="2026-08-16T08:00:00+00:00")
+    others = [_sm("CBS News", "Two dead in crash", "Officials confirmed two fatalities at the site."),
+              _sm("Fox News", "Crash kills two", "The cause of the crash remains under investigation.")]
+    got = ss.pick_story_summary([rep, *others], rep)
+    assert got == "Officials confirmed two fatalities at the site."
+
+
+def test_summary_standfirst_kept_and_clamped_to_two_sentences():
+    """The Guardian 740-char exhibit: a real multi-paragraph dek has ONE unpunctuated
+    headline-ish line, so the structural test must keep it — then the clamp takes at most two
+    sentences, single-line, <=320 chars, on a word boundary."""
+    body = ("There's no evidence that vaccines cause autism, or that we should separate MMR "
+            "shots. This order is dangerous\n\n" + "The president's order rests on feeling, "
+            "not evidence, and pediatricians warned it will cost lives. " * 6)
+    rep = _sm("The Guardian", "Trump's vaccine order is about feelings, not facts", body,
+              at="2026-08-16T08:00:00+00:00")
+    got = ss.pick_story_summary([rep], rep)
+    assert got and "\n" not in got and len(got) <= 321
+    assert got.startswith("There's no evidence that vaccines cause autism")
+
+
+def test_summary_echo_rejected_against_story_and_own_headline():
+    """The WaPo exhibit — the dek IS the headline plus a masthead. Rejected as echo; a sole
+    candidate rejected means the counted fallback serves (the designed empty state)."""
+    rep = _sm("The Washington Post", "Contradicting public statements, Trump took secret flight from Turkey",
+              "Contradicting public statements, Trump took secret flight from Turkey The Washington Post",
+              at="2026-08-16T08:00:00+00:00")
+    assert ss.pick_story_summary([rep], rep) == ""
+    # own-headline echo on a NON-representative member is judged the same way
+    other = _sm("Big Island Now", "Big Island could see severe weather starting Friday",
+                "Big Island could see severe weather starting Friday, forecasters said early today.")
+    rep2 = _sm("KHON", "Storm nears the islands", "", at="2026-08-16T07:00:00+00:00")
+    assert ss.pick_story_summary([rep2, other], rep2) == ""
+
+
+def test_summary_url_junk_rejected():
+    rep = _sm("ABC News", "Darline Graham faces primary battle",
+              "Darline Graham faces battle reuters.com officials met late on Friday.",
+              at="2026-08-16T08:00:00+00:00")
+    assert ss.pick_story_summary([rep], rep) == ""
+
+
+def test_summary_masthead_suffix_stripped_from_winner():
+    rep = _sm("Buffalo News", "Sabres sign veteran goalie",
+              "The Sabres signed a veteran goaltender to a one-year deal on Saturday - Buffalo News",
+              at="2026-08-16T08:00:00+00:00")
+    got = ss.pick_story_summary([rep], rep)
+    assert got == "The Sabres signed a veteran goaltender to a one-year deal on Saturday"
+
+
+def test_summary_ranking_sentence_beats_fragment_rep_breaks_ties():
+    frag = _sm("Alpha", "Quake shakes the province", "Rescue teams en route",
+               at="2026-08-16T07:00:00+00:00")                       # fragment: short, no punct
+    full = _sm("Beta", "Dozens hurt in quake",
+               "Rescue teams reached the hardest-hit district early on Sunday, officials said.")
+    assert ss.pick_story_summary([frag, full], frag).startswith("Rescue teams reached")
+    a = _sm("Alpha", "Quake shakes the province",
+            "The tremor damaged more than a thousand homes across the province, officials said.",
+            at="2026-08-16T07:00:00+00:00")
+    b = _sm("Beta", "Dozens hurt in quake",
+            "Rescue crews say the damage spans a wide area and repairs will take many months.")
+    assert ss.pick_story_summary([a, b], a).startswith("The tremor damaged"), \
+        "equal-quality deks: the representative is the tiebreak"
+
+
+def test_summary_build_level_wiring_fallback_and_id_stability():
+    """End-to-end through the store: a GN-digest representative loses to a clean member dek
+    (sourceType passthrough proven); a GN-only-dek story serves the counted fallback; ids
+    anchor on the representative URL and never move with summaries; two builds are identical."""
+    st = store_mod.Store("sqlite://")
+    def put(cu, pub, title, desc, days, stype=None):
+        st.upsert_feed_article(canonical_url=cu, url=cu, publisher=pub, source_publisher=pub,
+                               title=title, description=desc, body=None,
+                               published_at=(NOW - timedelta(days=days)).isoformat(),
+                               source_feed="feed://x", source_type=stype,
+                               scored={"article_id": cu, "outlet": pub, "category": "Politics",
+                                       "lean": 0.0, "title": title})
+    put("https://gn.example/a", "Wire Desk", "Volcano erupts near Reykjavik spewing ash",
+        "Volcano erupts near Reykjavik spewing ash RUV\nAsh cloud grounds flights Iceland Monitor",
+        1.0, "googlenews")
+    put("https://gaz.example/a", "Reykjavik Gazette", "Volcano erupts near Reykjavik airport shut",
+        "Aviation authorities shut the airport as the eruption intensified overnight.", 0.5)
+    put("https://gn2.example/a", "Agency Desk", "Panda cub born at Madrid zoo delights",
+        "Panda cub born at Madrid zoo delights Zoo Daily\nCub thrives keepers say Madrid Herald",
+        1.0, "googlenews")
+    put("https://zoo.example/a", "Zoo Daily", "Panda cub born at Madrid zoo thrives", "", 0.5)
+
+    stories = ss.build_stories(ss._fetch(st))
+    assert len(stories) == 2
+    volcano = next(s for s in stories if "Volcano" in s["title"])
+    panda = next(s for s in stories if "Panda" in s["title"])
+    assert volcano["summary"] == \
+        "Aviation authorities shut the airport as the eruption intensified overnight."
+    assert panda["summary"] == "2 publishers covering politics.", \
+        "a story whose only dek is a digest serves the counted fallback"
+    import hashlib as _h
+    assert volcano["id"] == "st_" + _h.sha1(b"https://gn.example/a").hexdigest()[:16], \
+        "the id still anchors on the representative — summaries can never move ids"
+    assert [s["summary"] for s in ss.build_stories(ss._fetch(st))] == \
+        [s["summary"] for s in stories], "deterministic"

@@ -1000,7 +1000,14 @@ class GoogleNewsAdapter(SourceAdapter):
             if src_name and title.endswith(f" - {src_name}"):
                 title = title[: -(len(src_name) + 3)].rstrip()
             entries.append(rss_ingest.FeedEntry(
-                url=link, title=title, description=item.findtext("description") or "",
+                url=link, title=title,
+                # A Google News <description> is a related-coverage DIGEST — an <ol> of
+                # "headline + outlet" rows, never this article's own dek. Flattened by
+                # clean_html it served as 26.2% of story summaries (2026-08-16 baseline).
+                # Stored blank: the field is display-only (clustering's description tokens are
+                # 0, measured-and-not-adopted), and pick_story_summary rejects the stored
+                # backlog by provider/structure the same way.
+                description="",
                 published_at=rss_ingest._to_iso(item.findtext("pubDate") or ""),
                 source_type="googlenews", source_provider="GoogleNews",
                 category=category, language=loc["hl"].split("-")[0], country=loc["gl"],

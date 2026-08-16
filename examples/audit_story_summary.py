@@ -32,6 +32,11 @@ bar is set against reality rather than hope.
 **Story members are resolved through a URL index under BOTH url forms** (coverage carries
 display urls and no media/source fields; rows are keyed canonically). That join has now cost
 this repo multiple instruments — see audit_story_hero.py — and is inherited here deliberately.
+
+Post-adoption note: provenance/fallback attribute the WINNER of the shipped rule
+(story_service._pick_summary replayed on the same serialized articles); the registered
+criteria still judge the served summary text, so baseline and post-fix runs compare
+one-to-one.
 """
 
 from __future__ import annotations
@@ -43,35 +48,16 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import discover              # noqa: E402
 import story_service         # noqa: E402
 import store as store_mod    # noqa: E402
 
-_URL_RE = re.compile(r"\b[a-z0-9-]+\.(?:com|org|net|gov|edu|co\.[a-z]{2}|co|io|us|uk)\b",
-                     re.IGNORECASE)
-
-
-def _pub_patterns(publishers) -> dict:
-    """Word-boundary regex per publisher name (len >= 4 — short names convict innocent words)."""
-    out = {}
-    for p in publishers:
-        name = (p or "").strip()
-        if len(name) >= 4:
-            out[name] = re.compile(r"(?<!\w)" + re.escape(name) + r"(?!\w)", re.IGNORECASE)
-    return out
-
-
-def digest_hits(summary: str, other_pubs) -> list:
-    """OTHER member publishers named inside the summary — >= 2 is the digest signature."""
-    return [name for name, pat in _pub_patterns(other_pubs).items() if pat.search(summary)]
-
-
-def echo_share(title: str, summary: str) -> float:
-    """Share of the title's tokens (len >= 3) present in the summary's first 160 chars."""
-    toks = {t for t in re.findall(r"[a-z0-9']+", (title or "").lower()) if len(t) >= 3}
-    if len(toks) < 4:
-        return 0.0
-    head = set(re.findall(r"[a-z0-9']+", (summary or "")[:160].lower()))
-    return sum(1 for t in toks if t in head) / len(toks)
+# The detectors are the ONE shared implementation in story_service — the instrument measures
+# with the exact functions the shipped rule judges with, so the two can never drift. (They
+# moved there when pick_story_summary was adopted; the registered metrics are unchanged.)
+_URL_RE = story_service._SUMMARY_URL_RE
+digest_hits = story_service.summary_digest_hits
+echo_share = story_service.summary_echo_share
 
 
 def main(argv=None) -> int:
@@ -122,21 +108,24 @@ def main(argv=None) -> int:
         pool_hist[0 if with_desc == 0 else 1 if with_desc == 1 else
                   "2-4" if with_desc <= 4 else "5+"] += 1
 
-        # the representative, recomputed exactly as _build_story picks it
-        rep = min(members, key=lambda m: (m.get("publishedAt") or "~",
-                                          m.get("canonicalUrl") or m.get("url") or "")) \
-            if members else None
-        rep_desc = (rep.get("description") or "").strip() if rep else ""
-        if not rep_desc:
+        # Replay the SERVED selection (story_service._pick_summary — the same rows, the same
+        # article serialization, the same rule) to attribute the winner. Before the rule
+        # shipped this instrument recomputed the representative instead; the registered
+        # metrics below are unchanged either way — they judge the served summary text.
+        arts = [discover.feed_article_to_article(m) for m in members]
+        rep = min(arts, key=lambda a: (a.get("publishedAt") or "~", a.get("id") or "")) \
+            if arts else None
+        picked, winner = story_service._pick_summary(arts, rep) if arts else ("", None)
+        if not picked:
             fallback += 1
             src_hist["<fallback>"] = src_hist.get("<fallback>", 0) + 1
             continue   # the counted fallback is clean by construction; criteria below judge deks
 
-        src = (rep.get("sourceType") or "unknown") if rep else "unknown"
+        src = (winner.get("sourceType") or "unknown") if winner else "unknown"
         src_hist[src] = src_hist.get(src, 0) + 1
 
-        pubs = {m.get("publisher") for m in members if m.get("publisher")}
-        others = pubs - {rep.get("publisher")} if rep else pubs
+        pubs = {a.get("publisher") for a in arts if a.get("publisher")}
+        others = pubs - {winner.get("publisher")} if winner else pubs
         hits = digest_hits(summary, others)
         if len(hits) >= 2:
             digest.append((hits, s))

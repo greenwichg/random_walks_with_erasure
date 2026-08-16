@@ -774,6 +774,8 @@ def test_googlenews_normalizes_with_source_tags(monkeypatch):
     e = batch.entries[0]
     assert e.publisher_hint == "bbc.com"                    # <source url=> host names the REAL outlet
     assert e.title == "Ceasefire talks resume"              # " - BBC News" suffix stripped
+    assert e.description == "", ("a GN <description> is a related-coverage digest, never this "
+                                 "article's dek — stored blank (2026-08-16 summary baseline)")
     assert e.published_at is not None and e.published_at.startswith("2026-07-26T05:00")
     assert e.category == "World" and e.language == "en" and e.country == "US"
     assert batch.entries[1].publisher_hint is None          # no source tag -> honestly unknown

@@ -110,6 +110,11 @@ def feed_article_to_article(row: dict) -> dict:
         "description": row.get("description") or "",
         "publishedAt": row.get("publishedAt") or row.get("fetchedAt") or "",
         "readingMinutes": _reading_minutes(row),
+        # Internal provenance passthrough — NOT in ArticleModel, so pydantic drops it on the
+        # wire. The story-summary selection needs provider evidence at build time (a googlenews
+        # description is a coverage digest by construction: 26.2% of served summaries in the
+        # 2026-08-16 baseline). Never used by clustering.
+        "sourceType": row.get("sourceType"),
         # Location Intelligence Phase 0 — canonical publisher-level location (None omitted on the
         # wire via response_model_exclude_none; never fabricated).
         "country": row.get("country"),

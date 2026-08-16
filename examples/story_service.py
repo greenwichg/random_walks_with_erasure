@@ -22,6 +22,7 @@ from __future__ import annotations
 import hashlib
 import multiprocessing
 import os
+import re
 import threading
 import weakref
 import time as _time
@@ -269,6 +270,141 @@ def _mode_topic(members: list) -> str:
     return sorted(counts, key=lambda t: (-counts[t], t))[0] if counts else "General"
 
 
+# --------------------------------------------------------------------------- #
+# Story summary selection — adopted 2026-08-16 against the audit_story_summary baseline
+# (27,891 articles / 1,522 stories: 26.2% of served summaries were Google News coverage
+# DIGESTS, echo-rate 31.5%, 212 bare-domain leaks, fallback 5.5%). The served summary used to
+# be the representative's description VERBATIM — the earliest filer's text, whatever it was.
+# Extractive only: every summary is a sentence some member actually wrote, or the counted
+# fallback. Display-layer only: descriptions do not feed clustering (desc_tokens()=0,
+# measured-and-not-adopted), and _story_id anchors on the representative's URL, so ids never
+# move when summaries do.
+# --------------------------------------------------------------------------- #
+
+_SUMMARY_MAX = 320            # clamp ceiling (chars) — p90 was 446 with digests in the tail
+_SUMMARY_MIN_GOOD = 60        # below this a dek is a fragment; ranked down, not rejected
+_SUMMARY_URL_RE = re.compile(
+    r"\b[a-z0-9-]+\.(?:com|org|net|gov|edu|co\.[a-z]{2}|co|io|us|uk)\b", re.IGNORECASE)
+_SUMMARY_SENT_RE = re.compile(r"(?<=[.!?…])\s+")
+_SUMMARY_END_PUNCT = (".", "!", "?", "…", '"', "”", "'")
+
+
+def summary_publisher_patterns(publishers) -> dict:
+    """Word-boundary regex per publisher name (len >= 4 — a substring match on "Time" would
+    convict the word "sometimes"). Shared with audit_story_summary so the instrument and the
+    rule can never drift."""
+    out = {}
+    for p in publishers:
+        name = (p or "").strip()
+        if len(name) >= 4:
+            out[name] = re.compile(r"(?<!\w)" + re.escape(name) + r"(?!\w)", re.IGNORECASE)
+    return out
+
+
+def summary_digest_hits(text: str, other_pubs) -> list:
+    """OTHER cluster publishers named inside a description — >= 2 is digest evidence. The
+    BACKSTOP tier only: measured on production it catches 13 of the ~399-story Google News
+    class, because GN's related-coverage outlets are mostly NOT cluster members."""
+    return [name for name, pat in summary_publisher_patterns(other_pubs).items()
+            if pat.search(text)]
+
+
+def summary_echo_share(title: str, text: str) -> float:
+    """Share of the title's tokens (len >= 3, needing >= 4 of them) present in the text's first
+    160 chars — the dek that merely restates the headline. Shared with the audit."""
+    toks = {t for t in re.findall(r"[a-z0-9']+", (title or "").lower()) if len(t) >= 3}
+    if len(toks) < 4:
+        return 0.0
+    head = set(re.findall(r"[a-z0-9']+", (text or "")[:160].lower()))
+    return sum(1 for t in toks if t in head) / len(toks)
+
+
+def _headline_rows(text: str) -> int:
+    """Lines shaped like digest rows: headline-length, ending WITHOUT sentence punctuation
+    (they end in an outlet name). The Guardian standfirst exhibit has one such line; every
+    digest exhibit has two or more — hence the >= 2 threshold at the caller."""
+    n = 0
+    for ln in text.splitlines():
+        t = ln.strip()
+        if 15 <= len(t) <= 160 and not t.endswith(_SUMMARY_END_PUNCT):
+            n += 1
+    return n
+
+
+def _digest_shaped(desc: str, source_type, other_pubs) -> bool:
+    """Whether a description is a coverage DIGEST rather than a dek — evidence in measured
+    order of reliability: provider (a googlenews description is a digest BY CONSTRUCTION —
+    399 of 1,522 served summaries in the baseline), structure (>= 2 newline-separated
+    headline rows — clean_html turned the <ol> into line breaks), member-names (the
+    registered backstop; see summary_digest_hits for why it is last)."""
+    if (source_type or "") == "googlenews":
+        return True
+    if _headline_rows(desc) >= 2:
+        return True
+    return len(summary_digest_hits(desc, other_pubs)) >= 2
+
+
+def _clamp_sentences(text: str, limit: int = _SUMMARY_MAX) -> str:
+    """1-2 sentences, <= limit chars, single line. Truncation lands on a word boundary with an
+    ellipsis — presentation, never invented words."""
+    flat = " ".join(text.split())
+    parts = _SUMMARY_SENT_RE.split(flat)
+    out = parts[0] if parts else flat
+    if len(parts) > 1 and len(out) + 1 + len(parts[1]) <= limit:
+        out = f"{out} {parts[1]}"
+    if len(out) > limit:
+        out = out[:limit].rsplit(" ", 1)[0].rstrip(",;:") + "…"
+    return out
+
+
+def _pick_summary(members: list, representative) -> "tuple[str, Optional[dict]]":
+    """The best member-written description for a story, or ``""`` when none survives — the
+    caller's counted fallback ("N publishers covering X.") is the designed empty state, the
+    same honesty rule the coverage plate follows for images.
+
+    Reject tiers (each receipted from the production baseline): digest-shaped
+    (:func:`_digest_shaped`), bare-domain junk, and headline-echo against BOTH the story title
+    and the member's own headline (>= 80% token overlap). Survivors rank on: sentence-shaped →
+    not a fragment (>= 60 chars) → the representative as a TIEBREAK → earliest-published →
+    canonical URL (a total order; the same rows always pick the same summary). The winner is
+    masthead-suffix-stripped (discover._display_title) and sentence-clamped."""
+    pubs = {m.get("publisher") for m in members if m.get("publisher")}
+    story_title = (representative or {}).get("headline") or ""
+    cands: list = []
+    for m in members:
+        desc = (m.get("description") or "").strip()
+        if not desc:
+            continue
+        if _digest_shaped(desc, m.get("sourceType"), pubs - {m.get("publisher")}):
+            continue
+        if _SUMMARY_URL_RE.search(desc):
+            continue
+        if summary_echo_share(story_title, desc) >= 0.8:
+            continue
+        if summary_echo_share(m.get("headline") or "", desc) >= 0.8:
+            continue
+        flat = " ".join(desc.split())
+        cands.append((
+            (not flat.endswith(_SUMMARY_END_PUNCT),          # sentence-shaped first
+             len(flat) < _SUMMARY_MIN_GOOD,                  # fragments after real deks
+             m is not representative,                        # the rep as a tiebreak, not a veto
+             m.get("publishedAt") or "~",
+             m.get("id") or m.get("url") or ""),
+            m, desc))
+    if not cands:
+        return "", None
+    cands.sort(key=lambda c: c[0])
+    _, winner, desc = cands[0]
+    flat = discover._display_title(" ".join(desc.split()), winner.get("publisher") or "")
+    return _clamp_sentences(flat), winner
+
+
+def pick_story_summary(members: list, representative) -> str:
+    """The serving wrapper over :func:`_pick_summary` — audit_story_summary uses the underscore
+    form to attribute the WINNER's ingestion source; production only needs the text."""
+    return _pick_summary(members, representative)[0]
+
+
 def _build_story(members: list, *, hero_ranked: bool = False,
                  hero_rejected: "Optional[frozenset]" = None) -> dict:
     """Build one Story object from a cluster of Article dicts. Coverage only — no opinion metrics.
@@ -314,9 +450,13 @@ def _build_story(members: list, *, hero_ranked: bool = False,
     return {
         "id": _story_id(members),
         "title": rep["headline"],
-        # Fallback summary handles an EMPTY topic (uncategorized stays "" by design) — the
-        # naive interpolation shipped "18 publishers covering ." with an orphaned period.
-        "summary": rep["description"] or (
+        # Ranked member-dek selection (pick_story_summary) instead of the representative's
+        # description verbatim — the baseline measured the old rule serving Google News
+        # coverage digests as 26.2% of all summaries. Extractive only; the counted fallback
+        # below is unchanged and still handles an EMPTY topic (uncategorized stays "" by
+        # design — the naive interpolation once shipped "18 publishers covering ." with an
+        # orphaned period).
+        "summary": pick_story_summary(members, rep) or (
             f"{len(publishers)} publishers covering {rep['topic'].lower()}." if rep["topic"]
             else f"{len(publishers)} publishers covering this story."),
         # Hero image contract (nullable) — selected from the cluster's articles' RSS media.
