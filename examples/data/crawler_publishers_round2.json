@@ -27,7 +27,18 @@
     "",
     "min_interval states the publisher's OWN Crawl-delay where they publish one: SCMP and The",
     "Straits Times both ask for 10s. The crawler already honoured max(configured, declared) at",
-    "runtime, so this changes no behaviour — it stops the config from understating what we owe them."
+    "runtime, so this changes no behaviour — it stops the config from understating what we owe them.",
+    "",
+    "max_age_days is 7 everywhere. The first round-2 run returned 28,044 candidates, 26,141 of them",
+    "from three publishers whose robots.txt declares no NEWS sitemap — so we were reading their full",
+    "archives (SCMP alone: 19,962 URLs spanning years). Story clustering only reaches back 6 days",
+    "(story_service.scan_days), so an older article ingests, occupies a row, and can never appear in",
+    "a story. Seven days is the outer bound of usefulness rather than a target; a tighter limit",
+    "would leave more clustering life, and the run will show how much falls inside it.",
+    "",
+    "An UNDATED article is excluded while a limit is set — fail closed, as with robots. The Japan",
+    "Times is section-only and therefore expected to report ZERO candidates now: its rung states no",
+    "dates, so nothing can be shown to be recent. That is the rule working, not a regression."
   ],
   "publishers": [
     {
@@ -38,14 +49,14 @@
         {"kind": "section", "url": "https://kyivindependent.com/"}
       ],
       "article_pattern": "/[a-z0-9][a-z0-9-]{20,}",
-      "max_urls": 200, "min_interval": 3.0, "enabled": true
+      "max_age_days": 7, "max_urls": 200, "min_interval": 3.0, "enabled": true
     },
     {
       "publisher": "The Japan Times",
       "domains": ["japantimes.co.jp"],
       "sources": [{"kind": "section", "url": "https://www.japantimes.co.jp/news/"}],
       "article_pattern": "/\\d{4}/\\d{2}/\\d{2}/",
-      "max_urls": 200, "min_interval": 3.0, "enabled": true
+      "max_age_days": 7, "max_urls": 200, "min_interval": 3.0, "enabled": true
     },
     {
       "publisher": "South China Morning Post",
@@ -55,7 +66,7 @@
         {"kind": "section", "url": "https://www.scmp.com/news"}
       ],
       "article_pattern": "/article/\\d{6,}",
-      "max_urls": 200, "min_interval": 10.0, "enabled": true
+      "max_age_days": 7, "max_urls": 200, "min_interval": 10.0, "enabled": true
     },
     {
       "publisher": "The Straits Times",
@@ -65,7 +76,7 @@
         {"kind": "section", "url": "https://www.straitstimes.com/world"}
       ],
       "article_pattern": "/[a-z-]+/[a-z0-9][a-z0-9-]{20,}",
-      "max_urls": 200, "min_interval": 10.0, "enabled": true
+      "max_age_days": 7, "max_urls": 200, "min_interval": 10.0, "enabled": true
     },
     {
       "publisher": "Dawn",
@@ -75,7 +86,7 @@
         {"kind": "section", "url": "https://www.dawn.com/"}
       ],
       "article_pattern": "/news/\\d{6,}",
-      "max_urls": 200, "min_interval": 3.0, "enabled": true
+      "max_age_days": 7, "max_urls": 200, "min_interval": 3.0, "enabled": true
     },
     {
       "publisher": "Daily Maverick",
@@ -85,7 +96,7 @@
         {"kind": "section", "url": "https://www.dailymaverick.co.za/"}
       ],
       "article_pattern": "/article/\\d{4}-\\d{2}-\\d{2}-",
-      "max_urls": 200, "min_interval": 3.0, "enabled": true
+      "max_age_days": 7, "max_urls": 200, "min_interval": 3.0, "enabled": true
     },
     {
       "publisher": "Premium Times",
@@ -95,7 +106,7 @@
         {"kind": "section", "url": "https://www.premiumtimesng.com/"}
       ],
       "article_pattern": "/\\d{6,}-[a-z0-9-]+\\.html",
-      "max_urls": 200, "min_interval": 3.0, "enabled": true
+      "max_age_days": 7, "max_urls": 200, "min_interval": 3.0, "enabled": true
     },
     {
       "publisher": "Clarín",
@@ -105,7 +116,7 @@
         {"kind": "section", "url": "https://www.clarin.com/"}
       ],
       "article_pattern": "/[a-z0-9][a-z0-9-]{15,}_0_[A-Za-z0-9]+\\.html",
-      "max_urls": 200, "min_interval": 3.0, "enabled": true
+      "max_age_days": 7, "max_urls": 200, "min_interval": 3.0, "enabled": true
     }
   ]
 }

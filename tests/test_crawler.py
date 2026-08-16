@@ -14,6 +14,7 @@ import json
 import pathlib
 import re
 import sys
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -516,6 +517,121 @@ def test_shadow_summary_reports_the_dated_share_per_publisher_and_in_total():
     assert [p["datedShare"] for p in out["publishers"]] == [1.0, 0.0]
     assert out["totals"]["dated"] == 100 and out["totals"]["datedShare"] == 0.5, (
         "two publishers with identical volume are NOT worth the same, and the total says so")
+
+
+# --------------------------------------------------------------------------- #
+# max_age_days — an article older than the clustering window can never become product
+# --------------------------------------------------------------------------- #
+_NOW = datetime(2026, 8, 20, 12, 0, tzinfo=timezone.utc)
+
+
+def _aged_sitemap(*dates) -> str:
+    """A sitemap whose entries carry the given `published_at` values (None = no date at all)."""
+    urls = []
+    for i, d in enumerate(dates):
+        news = (f"<news:news><news:publication_date>{d}</news:publication_date>"
+                f"<news:title>T{i}</news:title></news:news>") if d else ""
+        urls.append(f"<url><loc>https://www.npr.org/2026/08/20/{i}00000/story-{i}</loc>{news}</url>")
+    return ("<urlset xmlns='http://www.sitemaps.org/schemas/sitemap/0.9' "
+            "xmlns:news='http://www.google.com/schemas/sitemap-news/0.9'>"
+            + "".join(urls) + "</urlset>")
+
+
+def _aged_plan(body, *, max_age_days):
+    cfg = _cfg(max_age_days=max_age_days)
+    c = crawler.PublisherCrawler(
+        cfg, robots=_policy(ALLOW), limiter=_no_wait(),
+        fetch=_fetcher({"https://www.npr.org/s.xml": body}), now=lambda: _NOW)
+    return c.crawl()
+
+
+def test_a_recent_article_passes_the_age_filter():
+    _entries, r = _aged_plan(_aged_sitemap("2026-08-19T09:00:00Z"), max_age_days=7)
+    assert r.candidates == 1 and r.too_old == 0 and r.undated == 0
+
+
+def test_an_article_older_than_the_limit_is_excluded_and_counted():
+    """The case that motivated this: SCMP's declared sitemap returned 19,962 URLs spanning years,
+    and story clustering only reaches back 6 days — so an old article ingests, takes a row, and can
+    never appear in a story."""
+    _entries, r = _aged_plan(_aged_sitemap("2026-01-05T09:00:00Z"), max_age_days=7)
+    assert r.candidates == 0 and r.too_old == 1 and r.undated == 0
+
+
+def test_an_undated_article_is_excluded_when_an_age_limit_is_set():
+    """Fail closed, the same reading the robots gate takes. An operator who set an age limit asked
+    for recent articles, and "we cannot tell how old this is" does not answer that. Without this,
+    pointing a limited publisher at a section page would silently readmit the whole undated archive
+    the limit exists to keep out."""
+    _entries, r = _aged_plan(_aged_sitemap(None), max_age_days=7)
+    assert r.candidates == 0 and r.undated == 1 and r.too_old == 0
+
+
+def test_an_undated_article_passes_when_no_age_limit_is_set():
+    """Absence of a limit means the operator did not ask about age, so nothing is judged on it —
+    the rule must not leak into publishers that never opted into it."""
+    _entries, r = _aged_plan(_aged_sitemap(None), max_age_days=0)
+    assert r.candidates == 1 and r.undated == 0 and r.too_old == 0
+
+
+def test_old_and_undated_are_counted_separately_because_they_mean_opposite_things():
+    """A pile of `too_old` says the sitemap is an archive; a pile of `undated` says the rung is a
+    section page. Collapsing them would hide which fix is needed."""
+    body = _aged_sitemap("2026-08-19T09:00:00Z", "2026-01-05T09:00:00Z", None, None)
+    _entries, r = _aged_plan(body, max_age_days=7)
+    assert (r.candidates, r.too_old, r.undated) == (1, 1, 2)
+
+
+def test_an_unparseable_date_is_treated_as_undated_not_as_recent():
+    """A date we cannot read is not evidence of recency, so it takes the undated path rather than
+    being waved through."""
+    _entries, r = _aged_plan(_aged_sitemap("not-a-date"), max_age_days=7)
+    assert r.candidates == 0 and r.undated == 1
+
+
+def test_the_boundary_is_inclusive_of_exactly_the_limit():
+    just_inside = (_NOW - timedelta(days=7) + timedelta(minutes=1)).isoformat()
+    just_outside = (_NOW - timedelta(days=7) - timedelta(minutes=1)).isoformat()
+    _e, inside = _aged_plan(_aged_sitemap(just_inside), max_age_days=7)
+    _e, outside = _aged_plan(_aged_sitemap(just_outside), max_age_days=7)
+    assert inside.candidates == 1 and outside.too_old == 1
+
+
+def test_age_drops_keep_the_report_accounting_for_every_discovered_url():
+    body = _aged_sitemap("2026-08-19T09:00:00Z", "2026-01-05T09:00:00Z", None)
+    _entries, r = _aged_plan(body, max_age_days=7)
+    assert (r.accepted + r.off_domain + r.pattern_rejected + r.duplicate_in_cycle
+            + r.already_in_catalog + r.capped + r.too_old + r.undated) == r.discovered
+
+
+def test_the_summary_reports_age_drops_per_publisher_and_in_total():
+    body = _aged_sitemap("2026-08-19T09:00:00Z", "2026-01-05T09:00:00Z", None)
+    cfg = _cfg(max_age_days=7)
+    rows = crawler.plan([cfg], robots=_policy(ALLOW), limiter=_no_wait(),
+                        fetch=_fetcher({"https://www.npr.org/s.xml": body}))
+    out = crawler.shadow_summary(rows)
+    p = out["publishers"][0]
+    # three entries: one recent, one older than the limit, one with no date at all
+    assert (p["candidates"], p["tooOld"], p["undated"], p["filteredByAge"]) == (1, 1, 1, 2)
+    assert out["totals"]["filteredByAge"] == 2 and out["totals"]["tooOld"] == 1
+
+
+def test_an_archive_sitemap_is_named_as_the_reason_a_publisher_went_empty():
+    body = _aged_sitemap("2020-01-05T09:00:00Z", "2019-01-05T09:00:00Z")
+    cfg = _cfg(max_age_days=7)
+    rows = crawler.plan([cfg], robots=_policy(ALLOW), limiter=_no_wait(),
+                        fetch=_fetcher({"https://www.npr.org/s.xml": body}))
+    note = crawler.shadow_summary(rows)["publishers"][0]["note"]
+    assert "older than" in note and "archive sitemap" in note
+
+
+def test_a_section_page_under_an_age_limit_says_to_use_a_news_sitemap():
+    cfg = _cfg(sources=(crawler.DiscoverySource("section", "https://www.npr.org/sections/news/"),),
+               max_age_days=7)
+    rows = crawler.plan([cfg], robots=_policy(ALLOW), limiter=_no_wait(),
+                        fetch=_fetcher({"https://www.npr.org/sections/news/": _fx("section.html")}))
+    note = crawler.shadow_summary(rows)["publishers"][0]["note"]
+    assert "no publication date" in note and "news sitemap" in note
 
 
 def test_an_empty_publisher_says_which_gate_closed():

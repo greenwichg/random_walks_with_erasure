@@ -58,6 +58,7 @@ import urllib.request
 import urllib.robotparser
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
 from typing import Callable, Optional
 
@@ -114,6 +115,16 @@ class PublisherCrawlConfig:
     discovery_domains: tuple = ()        # extra hosts allowed to SERVE discovery documents
     sources: tuple = ()                  # the ordered ladder
     article_pattern: str = ""            # regex every accepted article URL must match
+    #: Drop articles published longer ago than this. ``0`` disables the rule entirely, matching the
+    #: ``RWE_RETENTION_MAX_AGE_DAYS`` convention.
+    #:
+    #: This exists because a publisher's *archive* sitemap and its *news* sitemap are the same file
+    #: format and only the contents tell them apart — SCMP's declared sitemap returned 19,962 URLs
+    #: spanning years. Story clustering draws from a rolling window (``story_service.scan_days``,
+    #: 6 days by default), so an article older than that ingests, occupies a row, and can never
+    #: appear in a story. `max_urls` bounds the volume but caps arbitrarily rather than by age; this
+    #: bounds it by the only thing that decides whether an article can still become product.
+    max_age_days: int = 0
     max_urls: int = 60                   # per cycle, after dedup
     min_interval: float = DEFAULT_MIN_INTERVAL
     max_fetches: int = DEFAULT_MAX_FETCHES
@@ -457,6 +468,22 @@ def discover_section(body: str, base: str = "") -> "list[rss_ingest.FeedEntry]":
 _DISCOVERY = {"rss": discover_rss, "sitemap": discover_sitemap, "section": discover_section}
 
 
+def _published_utc(value) -> Optional[datetime]:
+    """An entry's ``published_at`` as an aware UTC datetime, or ``None`` when it cannot be read.
+
+    Unreadable and absent collapse to the same answer deliberately: the age rule cannot act on a
+    date it does not have, and a value it fails to parse is not evidence of recency.
+    """
+    s = (value or "").strip()
+    if not s:
+        return None
+    try:
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
 def _iso_or_none(value) -> Optional[str]:
     """A sitemap timestamp as the pipeline's ISO-UTC form, or ``None``. Reuses the feed parser's
     own date handling so a crawled date and a feed date are the same kind of value."""
@@ -494,6 +521,12 @@ class CrawlReport:
     #: clustering has nothing to order it by. A news sitemap carries the publisher's own timestamp.
     #: Two rungs can therefore return the same number of articles and not be worth the same.
     dated: int = 0
+    #: Dropped by ``max_age_days``: had a readable date, published before the cutoff.
+    too_old: int = 0
+    #: Dropped by ``max_age_days`` for having NO usable date. Separate from ``too_old`` because the
+    #: two mean opposite things about the configuration: a pile of `too_old` says the sitemap is an
+    #: archive, a pile of `undated` says the rung is a section page and the fix is a different URL.
+    undated: int = 0
     already_in_catalog: int = 0
     robots_blocked: int = 0
     accepted: int = 0
@@ -520,12 +553,13 @@ class PublisherCrawler:
     def __init__(self, config: PublisherCrawlConfig, *, robots: "RobotsPolicy | None" = None,
                  limiter: "RateLimiter | None" = None,
                  fetch: "Callable[[str], str] | None" = None,
-                 store_=None):
+                 store_=None, now: "Callable[[], datetime] | None" = None):
         self.config = config
         self.robots = robots if robots is not None else RobotsPolicy()
         self.limiter = limiter if limiter is not None else RateLimiter(config.min_interval)
         self._fetch = fetch or _fetch_text
         self.store = store_
+        self._now = now or (lambda: datetime.now(timezone.utc))
 
     def _get(self, url: str, report: CrawlReport) -> Optional[str]:
         """One gated fetch: robots, then rate limit, then the request."""
@@ -603,6 +637,8 @@ class PublisherCrawler:
         without re-running it.
         """
         pattern = self.config.pattern
+        max_age = self.config.max_age_days
+        cutoff = self._now() - timedelta(days=max_age) if max_age > 0 else None
         staged: "list[tuple[str, rss_ingest.FeedEntry]]" = []
         for e in entries:
             url = ingest.normalize_url(e.url)
@@ -616,6 +652,19 @@ class PublisherCrawler:
             if pattern is not None and not pattern.search(url):
                 report.pattern_rejected += 1
                 continue
+            if cutoff is not None:
+                published = _published_utc(e.published_at)
+                if published is None:
+                    # Undated is EXCLUDED, not waved through. An operator who set an age limit
+                    # asked for recent articles, and "we cannot tell how old this is" is not an
+                    # answer to that — the same fail-closed reading the robots gate takes. Without
+                    # it, pointing a limited publisher at a section page would silently readmit
+                    # the entire undated archive the limit exists to keep out.
+                    report.undated += 1
+                    continue
+                if published < cutoff:
+                    report.too_old += 1
+                    continue
             canon = ingest.canonical_url(url)
             if canon in seen:
                 report.duplicate_in_cycle += 1
@@ -735,6 +784,12 @@ def _why_empty(r: dict) -> str:
         return "discovery documents fetched but parsed to 0 entries — wrong URL or wrong kind"
     if r.get("off_domain") and not r.get("pattern_rejected"):
         return f"all {r['off_domain']} discovered URLs were off-domain — check `domains`"
+    if r.get("undated") and not r.get("too_old"):
+        return (f"all {r['undated']} URLs had no publication date and `max_age_days` is set — this "
+                f"rung is almost certainly a section page; point it at a news sitemap")
+    if r.get("too_old"):
+        return (f"{r['too_old']} URLs were older than `max_age_days` — likely an archive sitemap "
+                f"rather than a news one")
     if r.get("pattern_rejected"):
         return (f"all {r['pattern_rejected']} on-domain URLs failed `article_pattern` "
                 f"— the crawler would ingest nothing")
@@ -755,7 +810,7 @@ def shadow_summary(rows) -> dict:
     config.
     """
     per = []
-    tot_c = tot_new = tot_dated = 0
+    tot_c = tot_new = tot_dated = tot_old = tot_undated = 0
     for r in rows:
         if "candidates" not in r:                     # a disabled publisher was skipped
             per.append({"publisher": r.get("publisher"), "skipped": r.get("skipped")})
@@ -764,14 +819,19 @@ def shadow_summary(rows) -> dict:
         tot_c += c
         tot_new += new
         tot_dated += r.get("dated", 0)
+        tot_old += r.get("too_old", 0)
+        tot_undated += r.get("undated", 0)
         per.append({"publisher": r["publisher"], "candidates": c, "dated": r.get("dated", 0),
                     "datedShare": (round(r.get("dated", 0) / c, 3) if c else None),
+                    "tooOld": r.get("too_old", 0), "undated": r.get("undated", 0),
+                    "filteredByAge": r.get("too_old", 0) + r.get("undated", 0),
                     "alreadyInCatalog": r["already_in_catalog"], "genuinelyNew": new,
                     "marginalValue": r["marginalValue"], "rungUsed": r.get("rung_used"),
                     "fetches": r.get("fetched", 0), "error": r.get("error"),
                     "note": _why_empty(r) if c == 0 else None})
     return {"publishers": per, "totals": {
-        "candidates": tot_c, "dated": tot_dated,
+        "candidates": tot_c, "dated": tot_dated, "tooOld": tot_old, "undated": tot_undated,
+        "filteredByAge": tot_old + tot_undated,
         "datedShare": round(tot_dated / tot_c, 3) if tot_c else None,
         "alreadyInCatalog": tot_c - tot_new, "genuinelyNew": tot_new,
         "marginalValue": round(tot_new / tot_c, 3) if tot_c else None,
@@ -851,7 +911,7 @@ def main(argv=None) -> int:
         print("!! no --db and no RWE_DB_URL: every URL is reported as new. The existing-vs-new\n"
               "!! measurement is meaningless without the catalog to compare against.\n")
     print(f"{'publisher':<20} {'rung':<9} {'cand':>6} {'dated':>6} {'dated%':>7} "
-          f"{'known':>6} {'new':>6} {'new%':>6}  fetches")
+          f"{'filtered':>9} {'known':>6} {'new':>6} {'new%':>6}  fetches")
     for p in summary["publishers"]:
         if "candidates" not in p:
             print(f"{p['publisher']:<20} skipped ({p.get('skipped')})")
@@ -859,15 +919,16 @@ def main(argv=None) -> int:
         mv = "-" if p["marginalValue"] is None else f"{p['marginalValue']:.0%}"
         ds = "-" if p["datedShare"] is None else f"{p['datedShare']:.0%}"
         print(f"{p['publisher']:<20} {str(p['rungUsed']):<9} {p['candidates']:>6} "
-              f"{p['dated']:>6} {ds:>7} {p['alreadyInCatalog']:>6} {p['genuinelyNew']:>6} "
-              f"{mv:>6}  {p['fetches']}")
+              f"{p['dated']:>6} {ds:>7} {p['filteredByAge']:>9} {p['alreadyInCatalog']:>6} "
+              f"{p['genuinelyNew']:>6} {mv:>6}  {p['fetches']}")
         if p.get("note"):
             print(f"{'':<20} -> {p['note']}")
     t = summary["totals"]
     tmv = "-" if t["marginalValue"] is None else f"{t['marginalValue']:.0%}"
     tds = "-" if t["datedShare"] is None else f"{t['datedShare']:.0%}"
     print(f"{'TOTAL':<20} {'':<9} {t['candidates']:>6} {t['dated']:>6} {tds:>7} "
-          f"{t['alreadyInCatalog']:>6} {t['genuinelyNew']:>6} {tmv:>6}  {t['fetches']}")
+          f"{t['filteredByAge']:>9} {t['alreadyInCatalog']:>6} {t['genuinelyNew']:>6} "
+          f"{tmv:>6}  {t['fetches']}")
     return 0
 
 
