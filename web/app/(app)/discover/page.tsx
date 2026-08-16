@@ -105,7 +105,13 @@ export default function DiscoverPage() {
   }, [shown]);
 
   return (
-    <PageContainer>
+    // max-w-[88rem]: +10% over the shared max-w-7xl, Discover only — measured (headless width
+    // experiment, 2026-08-16): river cards 602→666px eliminates clamp-truncation on long
+    // headlines (the UFC-record sample lost its ellipsis) and improves break points, with zero
+    // wrap regressions; gutters, breakpoints, and mobile (padding-bound) are untouched. The
+    // thumb scales w-28→w-32 in DiscoverRow so the image share holds (~19%) — widening with a
+    // fixed thumb made rows FEEL more compressed, not less (18.6%→16.8%).
+    <PageContainer className="max-w-[88rem]">
       <div className="mb-6">
         <h1 className="text-2xl font-semibold tracking-tight">{t("discover.title")}</h1>
         <p className="mt-1 max-w-xl text-sm text-muted-foreground">{t("discover.subtitle")}</p>

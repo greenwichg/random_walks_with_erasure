@@ -94,7 +94,7 @@ export function DiscoverRow({ article }: { article: Article }) {
             src={article.image}
             alt=""
             aspect="aspect-[16/10]"
-            className="w-24 rounded-md sm:w-28"
+            className="w-24 rounded-md sm:w-32"
             onHidden={() => setImgFailed(true)}
           />
         )}
