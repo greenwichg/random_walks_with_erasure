@@ -533,6 +533,55 @@ disjointness** (confusable story pairs whose consensuses share nothing — the t
 want HIGH), plus named exhibits for the top confusable story pairs. The consensus rerun is
 the measurement the go/no-go is read from.
 
+## X5 Phase 0 conclusion (2026-08-16, consensus run)
+
+**Against the registered gates: member agreement PASSES, disjointness FAILS.**
+
+* **Member agreement 93.1%** (951/1,021 covered members share their own story's consensus) —
+  above the "well above 90%" bar. With 74.5% of articles uncovered and failing open, worst-case
+  member-level exposure of a consensus gate is ~1.8% of all members. Cluster-level entity
+  consensus is SAFE to gate on.
+* **Confusable-story disjointness 35.0%** (71 of 203) — not a clear majority. By the
+  pre-registered reading, rung 2 does not auto-proceed.
+
+**What the exhibits force us to admit about that 35%.** The confusable denominator conflates
+two populations the ground truth cannot separate automatically:
+
+* The OVERLAPPING pairs are dominantly **same event families that production keeps apart** —
+  Farage/Clacton ×3 (sharing harborne/cottrell/burnham), Mangione's court stories ×2, the
+  Cambridge scandal, the Trump jet-switch pair. For every one of those, NOT firing is the
+  CORRECT behaviour — these are the duplicate-recall problem, not false merges.
+* The DISJOINT pairs read as genuinely distinct events — led by the single most-linked
+  confusable pair in the catalog (73 links): the UAE/ADNOC vessel attack vs the Iran-war live
+  blog. Where the gate would fire, it fires right.
+* One new noise class surfaced with a receipt: **type-level responder agencies**. The two
+  Colombia-quake stories share only `u s geological` — and USGS attends every earthquake, so a
+  Colombia↔Indonesia cross would share it too. The X4-unreachable quake pair is ALSO
+  entity-unreachable through agency overlap unless agencies become a curated identity class.
+  The slope from "filter reuters" to "filter every agency" is real and steep.
+
+**So the honest verdict**: as a false-merge veto, entity consensus fires precisely but rarely,
+and the 35% understates precision because the denominator is heavily contaminated with
+legitimate duplicates. Meanwhile the measurement's strongest, cleanest signal is the opposite
+polarity: **65% of confusable story pairs share corroborated names because they ARE the same
+family** — which is the recall problem `_merge_duplicates` exists for, with entity overlap as
+exactly the "richer text" its docstring says the Seattle case needs.
+
+**Options, in order of what the evidence supports (the choice is a product call):**
+
+1. **Pivot the polarity (X5b)**: entity-consensus overlap as MERGE corroboration — a recall
+   experiment against `_merge_duplicates`' measured 4.3%-of-covered duplicate population, with
+   its own bars (the existing merge bars apply: largest ≤ ~120, coherence guard, complete
+   linkage). This is what the data measured strongest.
+2. **Bounded disambiguation**: hand-label the top ~25 confusable story pairs (the instrument
+   prints them) as same-family vs distinct, turning the contaminated 35% into a real
+   precision/recall estimate for the veto before any rule is written.
+3. **Stop at the finding**: the entity data, backfill and instrument remain (all dormant), the
+   veto question closes as measured-and-narrow, and the X4 V-growth-2 adoption decision stands
+   on its own.
+
+Nothing was implemented beyond the instrument; production untouched; `link_quorum` untouched.
+
 ### Ground truth — selection procedures, not fixed IDs (the catalog moves daily)
 
 * **Must-sever set** (false-merge labels): re-run the X0 counterfactual (`fallbacks, --pieces`)
