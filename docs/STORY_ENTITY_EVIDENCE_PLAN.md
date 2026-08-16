@@ -159,6 +159,19 @@ Go/no-go: if located share of the window is below ~10%, or the largest stories c
 located members, the veto has nothing to act on and the experiment stops here — rung 2 (GKG
 persons/orgs) becomes the prerequisite instead.
 
+**Phase 0 result (2026-08-16, production): GO.** 28,433 window articles, **5,304 event-located
+(18.7%)** — comfortably above the bar. 708 located articles are multi-country (13.3% of
+located), which sizes the two-country hazard V-growth exists for. Top event countries: US 2,608,
+GB 858, AU 356, IL 161, CA 159. The evidence concentrates exactly where blobs live: **every one
+of the 20 largest stories carries located members** (2–25), at shares well above the catalog's
+18.7% — the Leavitt must-keep story is 25/64 located at coherence 1.0 (the veto would see 25
+members agreeing on US), Clacton 13/22, Colombia earthquake 9/23 at 0.778. One live finding
+rode along: the current catalog's *"Total solar eclipse Aug. 12"* story (26 articles) scores
+**coherence 0.333 on 6 located members** — a bad cluster in production today and a concrete
+target run C must fix; it joins the must-sever evidence. The thinnest of the top 20 (Powerball,
+2/22 located) shows the fail-open case: the veto would simply not fire there, leaving the
+lexical decision untouched.
+
 ### Phase 1 — the offline harness (audit-only code; serving path untouched)
 
 Extend `examples/audit_clustering_change.py` — the instrument every clustering decision here has
