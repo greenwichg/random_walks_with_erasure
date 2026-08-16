@@ -19,9 +19,14 @@ import { cn } from "@/lib/utils";
 export function SaveButton({
   article,
   className,
+  compact = false,
 }: {
   article: SavableArticle;
   className?: string;
+  /** Icon-only variant for surfaces where the card itself is the primary affordance (Discover's
+   *  front-page tier + river): the labeled pill repeated on every card outweighed the content it
+   *  sat under. Same state machine, same titles — the label moves into `aria-label`. */
+  compact?: boolean;
 }) {
   const { t } = useTranslation();
   const { data: saved } = useSaved();
@@ -30,25 +35,36 @@ export function SaveButton({
 
   const isSaved = (saved ?? []).some((s) => s.articleId === article.id);
   const pending = save.isPending || unsave.isPending;
+  const title = isSaved ? t("save.removeTitle") : t("save.saveTitle");
 
   return (
     <button
       type="button"
       aria-pressed={isSaved}
+      aria-label={compact ? title : undefined}
       disabled={pending || !article.id}
-      title={isSaved ? t("save.removeTitle") : t("save.saveTitle")}
-      onClick={() => (isSaved ? unsave.mutate(article.id) : save.mutate(article))}
+      title={title}
+      onClick={(e) => {
+        // The compact variant lives inside clickable cards/rows — saving must never ALSO open.
+        e.stopPropagation();
+        (isSaved ? unsave.mutate(article.id) : save.mutate(article));
+      }}
       className={cn(
-        "inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg px-3 text-xs font-medium transition-colors",
+        "inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg text-xs font-medium transition-colors",
+        compact ? "h-8 w-8 justify-center" : "h-8 px-3",
         isSaved
-          ? "bg-primary/15 text-primary hover:bg-primary/20"
-          : "bg-muted text-muted-foreground hover:bg-muted/70 hover:text-foreground",
+          ? compact
+            ? "text-primary hover:bg-primary/10"
+            : "bg-primary/15 text-primary hover:bg-primary/20"
+          : compact
+            ? "text-muted-foreground hover:bg-muted hover:text-foreground"
+            : "bg-muted text-muted-foreground hover:bg-muted/70 hover:text-foreground",
         pending && "opacity-70",
         className,
       )}
     >
       {isSaved ? <BookmarkCheck className="h-3.5 w-3.5" /> : <Bookmark className="h-3.5 w-3.5" />}
-      {isSaved ? t("save.saved") : t("save.save")}
+      {!compact && (isSaved ? t("save.saved") : t("save.save"))}
     </button>
   );
 }

@@ -13,9 +13,13 @@ const badgeVariants = cva(
         positive: "border-transparent bg-positive/12 text-positive",
         caution: "border-transparent bg-caution/15 text-caution",
         negative: "border-transparent bg-negative/12 text-negative",
-        left: "border-transparent bg-left/12 text-left",
-        center: "border-transparent bg-center/12 text-center",
-        right: "border-transparent bg-right/12 text-right",
+        // Lean pills carry a visible tint AND a colored hairline: at /12 with no border the pill
+        // ground vanished on the dark card and "Lean left" read as a bare blue hyperlink — a
+        // misleading affordance on a political signal. The border is what keeps the pill legible
+        // as a pill on both themes without pushing the fill loud.
+        left: "border-left/30 bg-left/15 text-left",
+        center: "border-center/30 bg-center/15 text-center",
+        right: "border-right/30 bg-right/15 text-right",
       },
     },
     defaultVariants: { variant: "default" },

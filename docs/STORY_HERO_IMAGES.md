@@ -138,13 +138,16 @@ guard:
   The reuse tier is *not* ported: article-level image-df needs a window index at serve time and
   its thresholds were never measured — a separate, measured step if the suspect tier proves
   insufficient. `audit_story_hero.py` §2b measures the flagged share on production data.
-- **Web**: Discover and Recommendation cards render text-first when the image is absent,
-  engine-flagged, or fails to load (`onHidden`) — one state, three causes. Discover's grid moved
-  from uniform-height rows to `MasonryColumns` (the Search/Saved component, same card, proven
-  combination): with legitimately height-varying cards, uniform rows poured the difference into
-  a void between a short card's description and its footer; masonry lets every card keep its
-  natural height. Round-robin distribution keeps reading order row-major and appending
-  batch-seam-free.
+- **Web**: article surfaces render text-first when the image is absent, engine-flagged, or fails
+  to load (`onHidden`) — one state, three causes. Discover's layout went through two steps the
+  same day: uniform rows → `MasonryColumns` (killed the in-card void, but height-blind
+  round-robin left a full card of column-end drift once card heights turned bimodal) →
+  **"front page, then river"** (the shipped design): a lead card + two publisher-diverse
+  supports, then dense scan rows at 3–4× card density. The card/row itself is the Read
+  affordance (`useReadArticleAction` — the button's exact recorded flow, extracted), Save is a
+  quiet icon, and lean is stated once as a bordered pill (`Badge` lean variants gained a visible
+  tint + hairline; the house-lean dot is not passed on Discover). `DiscoverCard` + masonry live
+  on in Search, unchanged.
 
 ## Residual risks (named, bounded)
 

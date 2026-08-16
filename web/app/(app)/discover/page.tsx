@@ -4,11 +4,12 @@ import * as React from "react";
 import { Compass } from "lucide-react";
 import { useDiscover } from "@/hooks/use-data";
 import { useTranslation } from "@/lib/i18n";
+import type { Article } from "@/types/domain";
 import { PageContainer } from "@/components/layout/page-container";
 import { CountryBadge } from "@/components/shared/country-badge";
-import { DiscoverCard } from "@/components/discover/discover-card";
+import { DiscoverLeadCard } from "@/components/discover/discover-lead-card";
+import { DiscoverRow } from "@/components/discover/discover-row";
 import { FilterSelect, type FilterOption } from "@/components/shared/filter-select";
-import { MasonryColumns } from "@/components/shared/masonry-columns";
 import { EmptyState, ErrorState } from "@/components/shared/states";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -74,6 +75,35 @@ export default function DiscoverPage() {
   const shown = articles.slice(0, visible);
   const hasMore = visible < total;
 
+  // Front-page tier selection (Direction 1: "front page, then river"). Deterministic and cheap:
+  // the LEAD is the newest article with a USABLE image among the first six (a front page leads
+  // with its strongest fresh visual when one exists), else simply the newest; the two SUPPORTS
+  // are the next articles from DIFFERENT publishers — one outlet's feed poll lands as a burst,
+  // and recency-only ordering was putting the same masthead three times above the fold. When
+  // diversity is impossible (a publisher filter is active), next-in-order fills. Everything not
+  // picked flows into the river in its original order — diversity reorders nothing, it only
+  // chooses what leads.
+  const { lead, supports, river } = React.useMemo(() => {
+    if (shown.length === 0) return { lead: null as Article | null, supports: [] as Article[], river: [] as Article[] };
+    const usable = (a: Article) => Boolean(a.image) && !a.imageSuspect;
+    const inFirstSix = shown.slice(0, 6).findIndex(usable);
+    const leadIdx = inFirstSix >= 0 ? inFirstSix : 0;
+    const leadArt = shown[leadIdx];
+    if (!leadArt) return { lead: null, supports: [], river: [] }; // unreachable; typed indexing
+    const rest = shown.filter((_, i) => i !== leadIdx);
+    const picks: Article[] = [];
+    for (const a of rest) {
+      if (picks.length === 2) break;
+      if (a.publisher !== leadArt.publisher && !picks.some((s) => s.publisher === a.publisher)) picks.push(a);
+    }
+    for (const a of rest) {
+      if (picks.length === 2) break;
+      if (!picks.includes(a)) picks.push(a);
+    }
+    const chosen = new Set([leadArt.id, ...picks.map((a) => a.id)]);
+    return { lead: leadArt, supports: picks, river: shown.filter((a) => !chosen.has(a.id)) };
+  }, [shown]);
+
   return (
     <PageContainer>
       <div className="mb-6">
@@ -96,10 +126,19 @@ export default function DiscoverPage() {
       </div>
 
       {isLoading && (
-        <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <Skeleton key={i} className="h-56 rounded-lg" />
-          ))}
+        <div>
+          <div className="grid gap-5 lg:grid-cols-3">
+            <Skeleton className="h-96 rounded-lg lg:col-span-2" />
+            <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-1">
+              <Skeleton className="h-44 rounded-lg" />
+              <Skeleton className="h-44 rounded-lg" />
+            </div>
+          </div>
+          <div className="mt-5 grid gap-3 md:grid-cols-2">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <Skeleton key={i} className="h-24 rounded-lg" />
+            ))}
+          </div>
         </div>
       )}
       {isError && <ErrorState onRetry={() => refetch()} />}
@@ -113,20 +152,32 @@ export default function DiscoverPage() {
         />
       )}
 
-      {/* MasonryColumns (adopted 2026-08-16, reversing the earlier uniform-grid choice): with
-          imageSuspect + the text-first card, imaged and text cards legitimately differ in height,
-          and uniform rows poured all of that difference into a void between a short card's
-          description and its footer. Discover is a browse feed, not a comparison surface — cards
-          keep their natural height, and Search already runs this exact card inside these exact
-          columns. Round-robin distribution keeps reading order row-major and Load More only
-          appends to column ends, so existing cards never move. */}
-      <MasonryColumns
-        items={shown}
-        itemKey={(a) => a.id}
-        render={(article, i) => (
-          <DiscoverCard article={article} index={i % PAGE} priority={i < 2} />
-        )}
-      />
+      {/* Front page, then river (Direction 1, adopted 2026-08-16 — supersedes the masonry, whose
+          height-blind round-robin traded the in-card void for a full card of column-end drift
+          once adaptive cards made heights bimodal). The page's one job is discover-and-open: a
+          lead tier makes the editorial claim, and the dense rows below serve the scan at 3-4x
+          the old card density. The card/row itself is the Read affordance (whole-surface click,
+          same recorded flow), Save is a quiet icon, and lean is said once as the pill. The old
+          card component lives on in Search's masonry, unchanged. */}
+      {lead && (
+        <div className="grid gap-5 lg:grid-cols-3">
+          <div className="lg:col-span-2">
+            <DiscoverLeadCard article={lead} size="lead" priority />
+          </div>
+          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-1">
+            {supports.map((a, i) => (
+              <DiscoverLeadCard key={a.id} article={a} size="support" priority={i === 0} index={i + 1} />
+            ))}
+          </div>
+        </div>
+      )}
+      {river.length > 0 && (
+        <div className="mt-5 grid gap-3 md:grid-cols-2">
+          {river.map((a) => (
+            <DiscoverRow key={a.id} article={a} />
+          ))}
+        </div>
+      )}
 
       {hasMore && (
         <div className="mt-4 flex justify-center">

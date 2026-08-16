@@ -9,15 +9,58 @@ import { track } from "@/lib/analytics";
 import { prefetchContinuation } from "@/lib/continuation";
 import { cn } from "@/lib/utils";
 
+type ReadableArticle = Pick<Article, "url"> & Partial<Pick<Article, "id" | "headline" | "description">>;
+
+/**
+ * The Read ACTION, extracted so a whole card or row can be the affordance without duplicating the
+ * flow (Discover's front-page tier + river open on surface click; the button below stays for every
+ * other caller). One owner for the sequence — record the in-app read FIRST (canonical
+ * `/api/me/reads` pipeline), tag `openedFrom`, fire the activation event, prefetch the Story
+ * Continuation answer so it overlaps the tab switch — because a flow copied into a second
+ * component is a flow the two copies quietly disagree on.
+ *
+ * `record` never navigates (for real `<a>` clicks, where the browser owns navigation);
+ * `open` records then opens the canonical URL. Both are idempotent per mount — a double click
+ * cannot double-record. Only absolute http(s) URLs are ever navigated to.
+ */
+export function useReadArticleAction(
+  article: ReadableArticle,
+  openedFrom?: string,
+  onOpen?: () => void,
+) {
+  const [opened, setOpened] = React.useState(false);
+  const recordRead = useRecordRead();
+  const href = article.url && /^https?:\/\//i.test(article.url) ? article.url : null;
+
+  const record = React.useCallback(() => {
+    if (opened) return;
+    setOpened(true);
+    if (href) {
+      recordRead.mutate({
+        url: href,
+        title: article.headline,
+        description: article.description,
+        openedFrom,
+      });
+      track("article_read", { source: openedFrom }); // PA1 activation event (best-effort)
+      prefetchContinuation(href);
+    }
+    onOpen?.();
+    // recordRead is a stable mutation handle; article fields are read at call time.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [opened, href, openedFrom, onOpen, article.headline, article.description]);
+
+  const open = React.useCallback(() => {
+    record();
+    if (href) window.open(href, "_blank", "noopener,noreferrer");
+  }, [record, href]);
+
+  return { opened, href, actionable: Boolean(href || onOpen), record, open };
+}
+
 /**
  * The single "Read article" control, shared by Recommendations, Discover, Search, Stories, and Saved
- * so the Read flow behaves identically everywhere.
- *
- * It records the read into the canonical `/api/me/reads` pipeline FIRST — this is **in-app read
- * tracking, the primary reading source**; the browser extension is now only an optional enhancement
- * for reads that happen OUTSIDE the app — tags it with `openedFrom`, then opens the **canonical
- * publisher URL** in a new tab so Dashboard / History / Analytics / Health update naturally. When a
- * caller passes `onOpen` (recommendations), that reception signal (RecEvent) is also recorded.
+ * so the Read flow behaves identically everywhere — a thin shell over {@link useReadArticleAction}.
  *
  * It opens the URL ONLY when it is an absolute http(s) URL. A relative/malformed value is never
  * navigated to. With no usable URL the control still records `onOpen` (if given), or is disabled.
@@ -29,7 +72,7 @@ export function ReadArticleButton({
   label,
   className,
 }: {
-  article: Pick<Article, "url"> & Partial<Pick<Article, "id" | "headline" | "description">>;
+  article: ReadableArticle;
   openedFrom?: string;
   onOpen?: () => void;
   /** Context-aware CTA label (Commit 22, recommendations); defaults to the shared "Read article". */
@@ -37,10 +80,7 @@ export function ReadArticleButton({
   className?: string;
 }) {
   const { t } = useTranslation();
-  const [opened, setOpened] = React.useState(false);
-  const recordRead = useRecordRead();
-  const href = article.url && /^https?:\/\//i.test(article.url) ? article.url : null;
-  const actionable = Boolean(href || onOpen);
+  const { opened, href, actionable, open } = useReadArticleAction(article, openedFrom, onOpen);
 
   return (
     <button
@@ -48,27 +88,7 @@ export function ReadArticleButton({
       disabled={!actionable}
       aria-pressed={opened}
       title={href ? t("read.openTitle") : onOpen ? t("read.recordTitle") : t("read.noLinkTitle")}
-      onClick={() => {
-        if (!opened) {
-          setOpened(true);
-          // Record the in-app read FIRST (canonical pipeline), then the optional rec reception.
-          if (href) {
-            recordRead.mutate({
-              url: href,
-              title: article.headline,
-              description: article.description,
-              openedFrom,
-            });
-            track("article_read", { source: openedFrom }); // PA1 activation event (best-effort)
-            // Story Continuation: ask for the opposing account NOW, so the request overlaps the tab
-            // switch and the answer is cached before the reader comes back. Fire-and-forget — never
-            // awaited, because the publisher's tab must open at once.
-            prefetchContinuation(href);
-          }
-          onOpen?.();
-        }
-        if (href) window.open(href, "_blank", "noopener,noreferrer");
-      }}
+      onClick={open}
       className={cn(
         "inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg px-3 text-xs font-medium transition-colors",
         opened
