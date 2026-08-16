@@ -348,3 +348,42 @@ def test_serializer_marks_branding_images_suspect_but_still_ships_them():
     bare = discover.feed_article_to_article(base)
     assert bare["image"] is None and bare["imageSuspect"] is False, \
         "no image, no suspicion — the card never consults it"
+
+
+def test_display_title_hygiene_and_wire_slug_gate_are_discover_only():
+    """The Buffalo-News-class junk measured on the live river (2026-08-16): masthead suffixes
+    come off DISPLAY titles, and a title that is nothing but a wire routing slug skips the
+    Discover list. Both are display-surface judgements: the serializer's headline — which feeds
+    the clusterer's tokenizer — must stay byte-identical, or a display fix silently changes
+    production clustering."""
+    # unit: the receipts from the screenshot
+    assert discover._display_title("USA-TRUMP/ - Buffalo News", "Buffalo News") == "USA-TRUMP/"
+    assert discover._wire_slug("USA-TRUMP/") and discover._wire_slug("BASKETBALL-NBA/")
+    # a real headline with the masthead suffix keeps its content, loses the branding
+    assert discover._display_title("WNBA 2012: Sky vs Sun AUG 26 - Buffalo News", "Buffalo News") \
+        == "WNBA 2012: Sky vs Sun AUG 26"
+    assert not discover._wire_slug("WNBA 2012: Sky vs Sun AUG 26")
+    # the suffix only strips when it names the row's OWN publisher; and never to empty
+    assert discover._display_title("Deal reached - Buffalo News", "CNN") == "Deal reached - Buffalo News"
+    assert discover._display_title(" - Buffalo News", "Buffalo News") == "- Buffalo News"
+    # a bare all-caps word is not a slug; slugs need a hyphen or trailing slash
+    assert not discover._wire_slug("GOP") and not discover._wire_slug("BREAKING: WWE news")
+
+    # integration: list_discover drops slug rows and cleans suffixes; the raw serializer does not
+    st = store.Store("sqlite://")
+    rows = [("https://b.example/slug", "USA-TRUMP/ - Buffalo News"),
+            ("https://b.example/real", "Sabres sign veteran goalie - Buffalo News"),
+            ("https://n.example/plain", "Senate passes the funding bill")]
+    for cu, title in rows:
+        st.upsert_feed_article(canonical_url=cu, url=cu, publisher="Buffalo News",
+                               source_publisher="Buffalo News", title=title, description="d",
+                               body=None, published_at="2026-08-16T10:00:00+00:00",
+                               source_feed="f", scored={"article_id": cu, "lean": 0.0})
+    arts = discover.list_discover(st, limit=10)["articles"]
+    heads = {a["headline"] for a in arts}
+    assert "Sabres sign veteran goalie" in heads, "suffix stripped on the browse surface"
+    assert "Senate passes the funding bill" in heads
+    assert len(arts) == 2, "the slug row is skipped on Discover only"
+    raw = {discover.feed_article_to_article(r)["headline"] for r in st.list_feed_articles(limit=10)}
+    assert "USA-TRUMP/ - Buffalo News" in raw and "Sabres sign veteran goalie - Buffalo News" in raw, \
+        "the serializer (clustering's input) is byte-identical — hygiene never leaks upstream"

@@ -10,6 +10,7 @@ import { CountryBadge } from "@/components/shared/country-badge";
 import { DiscoverLeadCard } from "@/components/discover/discover-lead-card";
 import { DiscoverRow } from "@/components/discover/discover-row";
 import { FilterSelect, type FilterOption } from "@/components/shared/filter-select";
+import { interleavePublishers } from "@/lib/discover-order";
 import { EmptyState, ErrorState } from "@/components/shared/states";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -72,7 +73,6 @@ export default function DiscoverPage() {
 
   const articles = data?.articles ?? [];
   const total = articles.length;
-  const shown = articles.slice(0, visible);
   const hasMore = visible < total;
 
   // Front-page tier selection (Direction 1: "front page, then river"). Deterministic and cheap:
@@ -80,17 +80,21 @@ export default function DiscoverPage() {
   // with its strongest fresh visual when one exists), else simply the newest; the two SUPPORTS
   // are the next articles from DIFFERENT publishers — one outlet's feed poll lands as a burst,
   // and recency-only ordering was putting the same masthead three times above the fold. When
-  // diversity is impossible (a publisher filter is active), next-in-order fills. Everything not
-  // picked flows into the river in its original order — diversity reorders nothing, it only
-  // chooses what leads.
+  // diversity is impossible (a publisher filter is active), next-in-order fills.
+  //
+  // The river is publisher-INTERLEAVED (lib/discover-order.ts): the same burst problem below the
+  // fold — measured, one outlet filing 6 of 12 visible rows — spread by the weakest rule that
+  // fixes it (no two adjacent rows from one publisher while any alternative is pending). A
+  // permutation of the full fetched list, computed once per fetch, so Load More reveals more of
+  // a FIXED order and rows the reader has seen never move.
   const { lead, supports, river } = React.useMemo(() => {
-    if (shown.length === 0) return { lead: null as Article | null, supports: [] as Article[], river: [] as Article[] };
+    if (articles.length === 0) return { lead: null as Article | null, supports: [] as Article[], river: [] as Article[] };
     const usable = (a: Article) => Boolean(a.image) && !a.imageSuspect;
-    const inFirstSix = shown.slice(0, 6).findIndex(usable);
+    const inFirstSix = articles.slice(0, 6).findIndex(usable);
     const leadIdx = inFirstSix >= 0 ? inFirstSix : 0;
-    const leadArt = shown[leadIdx];
+    const leadArt = articles[leadIdx];
     if (!leadArt) return { lead: null, supports: [], river: [] }; // unreachable; typed indexing
-    const rest = shown.filter((_, i) => i !== leadIdx);
+    const rest = articles.filter((_, i) => i !== leadIdx);
     const picks: Article[] = [];
     for (const a of rest) {
       if (picks.length === 2) break;
@@ -101,8 +105,14 @@ export default function DiscoverPage() {
       if (!picks.includes(a)) picks.push(a);
     }
     const chosen = new Set([leadArt.id, ...picks.map((a) => a.id)]);
-    return { lead: leadArt, supports: picks, river: shown.filter((a) => !chosen.has(a.id)) };
-  }, [shown]);
+    return {
+      lead: leadArt,
+      supports: picks,
+      river: interleavePublishers(articles.filter((a) => !chosen.has(a.id))),
+    };
+  }, [articles]);
+  // Same reveal budget as before: `visible` counts front-page slots + river rows together.
+  const riverShown = river.slice(0, Math.max(0, visible - (lead ? 1 + supports.length : 0)));
 
   return (
     // max-w-[88rem]: +10% over the shared max-w-7xl, Discover only — measured (headless width
@@ -177,9 +187,9 @@ export default function DiscoverPage() {
           </div>
         </div>
       )}
-      {river.length > 0 && (
+      {riverShown.length > 0 && (
         <div className="mt-5 grid gap-3 md:grid-cols-2">
-          {river.map((a) => (
+          {riverShown.map((a) => (
             <DiscoverRow key={a.id} article={a} />
           ))}
         </div>

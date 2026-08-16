@@ -14,6 +14,7 @@ publisher URL, so the existing "record opened → open the real article" Read fl
 from __future__ import annotations
 
 import math
+import re
 from typing import Optional
 
 import api_server as engine   # reuse the serializer helpers _prettify / _lean_bucket (no algorithm)
@@ -137,6 +138,36 @@ def feed_article_to_article(row: dict) -> dict:
 _LEANS = {"left", "center", "right"}
 
 
+def _display_title(title: str, publisher: str) -> str:
+    """Strip a trailing masthead suffix (" - Buffalo News", " | Outlet") from a DISPLAY title —
+    only when the suffix names the row's own publisher, and never down to an empty string.
+
+    Deliberately NOT applied in :func:`feed_article_to_article`: the serializer feeds the
+    clusterer's tokenizer, and removing the masthead tokens there would silently change
+    production clustering (those tokens currently inflate similarity between one outlet's
+    articles — a real defect, but one that must go through the clustering audit harness, not
+    ride in on a display fix)."""
+    t = (title or "").strip()
+    if not t or not publisher:
+        return t
+    stripped = re.sub(r"\s*[-–—|]\s*" + re.escape(publisher.strip()) + r"\s*$", "", t,
+                      flags=re.IGNORECASE).strip()
+    return stripped or t
+
+
+def _wire_slug(title: str) -> bool:
+    """Whether a display title is a raw wire ROUTING SLUG rather than a headline — the shape
+    measured on the live river (2026-08-16): ``USA-TRUMP/``, ``BASKETBALL-NBA/`` — all-caps
+    tokens joined by hyphens/slashes, optionally slash-terminated, no lowercase anywhere. Such a
+    string carries zero headline information, so Discover (a browse surface) skips the row; the
+    article itself stays in the catalog, in Search, and available to clustering — this is a
+    display-surface judgement, not a data one. A single bare word ("GOP") is never a slug."""
+    t = (title or "").strip()
+    if not t or not re.fullmatch(r"[A-Z0-9]+(?:[-/][A-Z0-9]+)*/?", t):
+        return False
+    return "-" in t or t.endswith("/")
+
+
 def list_discover(store_, *, topic: Optional[str] = None, publisher: Optional[str] = None,
                   lean: Optional[str] = None, country: Optional[str] = None,
                   limit: int = 60, max_scan: int = 2000) -> dict:
@@ -167,6 +198,19 @@ def list_discover(store_, *, topic: Optional[str] = None, publisher: Optional[st
         sort="newest",
         pagination=OffsetPagination.from_params(limit, 0), include_provisional=False)
     articles = [feed_article_to_article(r) for r in rows]
+    # Display-title hygiene, THIS surface only (see _display_title/_wire_slug): masthead
+    # suffixes come off, and rows whose entire title is a wire routing slug are skipped —
+    # Discover exists to show headlines, and "USA-TRUMP/" is not one. Search/Stories/clustering
+    # see the raw stored titles unchanged.
+    cleaned = []
+    for a in articles:
+        t = _display_title(a["headline"], a["publisher"])
+        if _wire_slug(t):
+            continue
+        if t != a["headline"]:
+            a = {**a, "headline": t}
+        cleaned.append(a)
+    articles = cleaned
     facets = store_.feed_article_facets(include_provisional=False)
     topics = sorted({engine._prettify(t) for t in facets["topics"] if t})
     publishers = sorted({engine._prettify(p) for p in facets["publishers"] if p})
