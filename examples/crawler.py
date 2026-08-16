@@ -537,8 +537,19 @@ class CrawlReport:
     capped: int = 0
     waited_seconds: float = 0.0
     latency_ms: float = 0.0
+    #: Every fetch/parse failure this cycle. A publisher can survive several of these and still
+    #: return articles, so they are diagnostics rather than an outcome.
+    fetch_errors: int = 0
+    errors: list = field(default_factory=list)
+    #: The headline reason this publisher produced NOTHING. Set only when the cycle ends empty, so
+    #: a run that recovered on a later rung does not report an error it survived.
     error: Optional[str] = None
     robots_reason: str = ""
+
+    def note_error(self, detail: str) -> None:
+        self.fetch_errors += 1
+        if len(self.errors) < 5:          # enough to diagnose, bounded so a broken index can't flood
+            self.errors.append(detail)
 
     def as_dict(self) -> dict:
         d = dict(self.__dict__)
@@ -588,19 +599,27 @@ class PublisherCrawler:
         report = CrawlReport(publisher=self.config.publisher)
         accepted: "list[rss_ingest.FeedEntry]" = []
         seen: "set[str]" = set()
-        try:
-            for src in self.config.sources:
-                if report.fetched >= self.config.max_fetches:
-                    break
-                report.rungs_tried.append(src.kind)
+        for src in self.config.sources:
+            if report.fetched >= self.config.max_fetches:
+                break
+            report.rungs_tried.append(src.kind)
+            try:
                 entries = self._run_rung(src, report)
-                kept = self._filter(entries, seen, report)
-                if kept:
-                    report.rung_used = src.kind
-                    accepted = kept
-                    break
-        except Exception as e:
-            report.error = f"{type(e).__name__}: {e}"
+            except Exception as e:
+                # A rung that fails is a rung that failed — not a publisher that failed. The ladder
+                # exists precisely so a broken sitemap falls through to the section page, and an
+                # abort here threw that away: Daily Maverick lost a whole cycle to one 404 on one
+                # index child, section fallback and all. `sources.py` already treats one adapter's
+                # outage as isolated from the others; this is the same rule one level down.
+                report.note_error(f"{src.kind} {src.url}: {type(e).__name__}: {e}")
+                continue
+            kept = self._filter(entries, seen, report)
+            if kept:
+                report.rung_used = src.kind
+                accepted = kept
+                break
+        if not accepted and report.errors:
+            report.error = report.errors[0]
         if len(accepted) > self.config.max_urls:
             report.capped = len(accepted) - self.config.max_urls
             accepted = accepted[:self.config.max_urls]
@@ -636,7 +655,14 @@ class PublisherCrawler:
         for child in children:
             if report.fetched >= self.config.max_fetches:
                 break
-            body = self._get(child.url, report)
+            # A stale entry in an index — a sitemap that has been removed but not delisted — is
+            # ordinary, and it must cost that child rather than its siblings. Daily Maverick's
+            # index carries one; before this, it cost the entire publisher.
+            try:
+                body = self._get(child.url, report)
+            except Exception as e:
+                report.note_error(f"sitemap child {child.url}: {type(e).__name__}: {e}")
+                continue
             if body is None:
                 continue
             grand = discover_sitemap(body, child.url)
@@ -842,7 +868,8 @@ def shadow_summary(rows) -> dict:
                     "filteredByAge": r.get("too_old", 0) + r.get("undated", 0),
                     "alreadyInCatalog": r["already_in_catalog"], "genuinelyNew": new,
                     "marginalValue": r["marginalValue"], "rungUsed": r.get("rung_used"),
-                    "fetches": r.get("fetched", 0), "error": r.get("error"),
+                    "fetches": r.get("fetched", 0), "fetchErrors": r.get("fetch_errors", 0),
+                    "errors": r.get("errors", []), "error": r.get("error"),
                     "note": _why_empty(r) if c == 0 else None})
     return {"publishers": per, "totals": {
         "candidates": tot_c, "dated": tot_dated, "tooOld": tot_old, "undated": tot_undated,

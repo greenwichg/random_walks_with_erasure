@@ -14,6 +14,7 @@ import json
 import pathlib
 import re
 import sys
+import urllib.error
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -362,6 +363,44 @@ def test_a_rung_that_is_refused_by_robots_is_skipped_and_counted_not_crawled_any
         fetch=_fetcher({"https://www.npr.org/s.xml": _fx("news_sitemap.xml")}))
     entries, report = c.crawl()
     assert entries == [] and report.robots_blocked == 1 and report.fetched == 0
+
+
+def test_one_dead_index_child_costs_that_child_not_its_siblings():
+    """Daily Maverick's index carries a stale entry — a sitemap delisted but not removed. Before
+    this, that single 404 aborted the whole publisher and threw away every sibling's articles."""
+    routes = {"https://www.npr.org/s.xml": _index_of("2026-08-19", "2026-08-18"),
+              "https://www.npr.org/s0.xml": urllib.error.HTTPError(
+                  "https://www.npr.org/s0.xml", 404, "Not Found", {}, None),
+              "https://www.npr.org/s1.xml": _fx("news_sitemap.xml")}
+    entries, report = _crawl(routes, _cfg(max_fetches=4))
+    assert len(entries) == 2, "the surviving sibling still produced articles"
+    assert report.fetch_errors == 1 and "404" in report.errors[0]
+    assert report.error is None, "a cycle that recovered must not report a failure it survived"
+
+
+def test_a_broken_rung_falls_through_to_the_next_one():
+    """The ladder exists so a broken sitemap drops to the section page. Aborting the publisher on
+    the first failure discarded exactly the fallback the design promises."""
+    cfg = _cfg(sources=(crawler.DiscoverySource("sitemap", "https://www.npr.org/dead.xml"),
+                        crawler.DiscoverySource("section", "https://www.npr.org/sections/news/")))
+    routes = {"https://www.npr.org/sections/news/": _fx("section.html")}
+    entries, report = _crawl(routes, cfg)
+    assert report.rungs_tried == ["sitemap", "section"] and report.rung_used == "section"
+    assert entries and report.fetch_errors == 1 and report.error is None
+
+
+def test_when_every_rung_fails_the_publisher_reports_the_first_reason():
+    cfg = _cfg(sources=(crawler.DiscoverySource("sitemap", "https://www.npr.org/dead.xml"),
+                        crawler.DiscoverySource("section", "https://www.npr.org/gone/")))
+    entries, report = _crawl({}, cfg)
+    assert entries == [] and report.fetch_errors == 2
+    assert report.error and "dead.xml" in report.error
+
+
+def test_the_error_list_is_bounded_so_a_broken_index_cannot_flood_the_report():
+    children = _index_of(*[f"2026-08-{d:02d}" for d in range(1, 20)])
+    entries, report = _crawl({"https://www.npr.org/s.xml": children}, _cfg(max_fetches=12))
+    assert entries == [] and report.fetch_errors == 11 and len(report.errors) == 5
 
 
 def test_a_failing_rung_records_the_error_instead_of_raising():
