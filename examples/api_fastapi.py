@@ -1051,6 +1051,10 @@ class ArticleModel(BaseModel):
     imageMimeType: Optional[str] = None
     imageSource: Optional[str] = None
     imageAttribution: Optional[str] = None
+    # Branding verdict on the article's own image (media.hero_suspect — the story-hero guard's
+    # suspect tier, serialized so article surfaces can prefer text-first over furniture). Data,
+    # not enforcement: the URL still ships beside it.
+    imageSuspect: Optional[bool] = None
     publisherLogo: Optional[str] = None
     publisherLogoDark: Optional[str] = None
     publisherLogoSource: Optional[str] = None

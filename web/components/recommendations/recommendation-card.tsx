@@ -98,7 +98,11 @@ export function RecommendationCard({
         </button>
       </div>
 
-      <ArticleImage src={article.image} alt={article.headline} className="mb-3" />
+      {/* Furniture never fronts a card (imageSuspect — the story-hero suspect tier as data);
+          this denser card simply reflows text-first, no reserved slot to void. */}
+      {!article.imageSuspect && (
+        <ArticleImage src={article.image} alt={article.headline} className="mb-3" />
+      )}
 
       {/* headline + publisher + topic */}
       <div className="min-w-0 flex-1">

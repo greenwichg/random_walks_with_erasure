@@ -325,3 +325,26 @@ def test_discover_country_filter_respects_limit_and_order():
     assert page[0]["id"] == "https://bbc.com/a3"                         # 12:00 beats the 10:00 pair
     full = discover.list_discover(st, country="US", limit=50)["articles"]
     assert [a["id"] for a in full][0] == "https://bbc.com/a3" and len(full) == 3
+
+
+def test_serializer_marks_branding_images_suspect_but_still_ships_them():
+    """`imageSuspect` is data, not enforcement (docs/STORY_HERO_IMAGES.md §Article surfaces): the
+    same metadata-only test the story-hero guard uses, serialized so article surfaces can go
+    text-first instead of fronting publisher furniture. The URL always ships beside the verdict —
+    which surfaces demote it is the client's presentation decision."""
+    base = {"canonicalUrl": "https://n.example/a", "url": "https://n.example/a",
+            "publisher": "P", "title": "t", "publishedAt": "2026-07-05T10:00:00+00:00",
+            "scored": {}}
+    logo = discover.feed_article_to_article(
+        {**base, "image": "https://cdn.thestar.com.my/Themes/img/newTsol_logo_socmedia.png"})
+    assert logo["imageSuspect"] is True and logo["image"], "verdict beside the data, not instead"
+    square = discover.feed_article_to_article(
+        {**base, "image": "https://n.example/social.jpg", "imageWidth": 1200, "imageHeight": 1200})
+    assert square["imageSuspect"] is True, "exact-square declared dims are the social-logo shape"
+    photo = discover.feed_article_to_article(
+        {**base, "image": "https://n.example/2026/08/scene.jpg", "imageWidth": 1600,
+         "imageHeight": 900})
+    assert photo["imageSuspect"] is False
+    bare = discover.feed_article_to_article(base)
+    assert bare["image"] is None and bare["imageSuspect"] is False, \
+        "no image, no suspicion — the card never consults it"

@@ -8,6 +8,7 @@ import { PageContainer } from "@/components/layout/page-container";
 import { CountryBadge } from "@/components/shared/country-badge";
 import { DiscoverCard } from "@/components/discover/discover-card";
 import { FilterSelect, type FilterOption } from "@/components/shared/filter-select";
+import { MasonryColumns } from "@/components/shared/masonry-columns";
 import { EmptyState, ErrorState } from "@/components/shared/states";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -112,14 +113,20 @@ export default function DiscoverPage() {
         />
       )}
 
-      {/* Uniform-height grid, deliberately not masonry: grid rows stretch every card in a row to
-          the same height and the card's internal flex slack absorbs the difference — simple,
-          consistent rows over packed columns. (Search/Saved keep MasonryColumns.) */}
-      <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
-        {shown.map((article, i) => (
-          <DiscoverCard key={article.id} article={article} index={i % PAGE} priority={i < 2} />
-        ))}
-      </div>
+      {/* MasonryColumns (adopted 2026-08-16, reversing the earlier uniform-grid choice): with
+          imageSuspect + the text-first card, imaged and text cards legitimately differ in height,
+          and uniform rows poured all of that difference into a void between a short card's
+          description and its footer. Discover is a browse feed, not a comparison surface — cards
+          keep their natural height, and Search already runs this exact card inside these exact
+          columns. Round-robin distribution keeps reading order row-major and Load More only
+          appends to column ends, so existing cards never move. */}
+      <MasonryColumns
+        items={shown}
+        itemKey={(a) => a.id}
+        render={(article, i) => (
+          <DiscoverCard article={article} index={i % PAGE} priority={i < 2} />
+        )}
+      />
 
       {hasMore && (
         <div className="mt-4 flex justify-center">

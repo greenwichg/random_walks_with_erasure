@@ -120,6 +120,14 @@ def feed_article_to_article(row: dict) -> dict:
     # Additive media + publisher logo (centralised in media.py; all-null when the feed carried no image).
     art.update(media.pick_article_media(row))
     art.update(media.pick_best_logo(art["publisher"], url))
+    # Article-surface branding verdict (docs/STORY_HERO_IMAGES.md §Article surfaces): the same
+    # metadata-only suspect test the story-hero guard ships (URL furniture tokens + exact-square
+    # dimensions), serialized as a FIELD rather than enforced — the image is real data either way,
+    # and which surfaces demote it is a presentation decision the client owns. False when there is
+    # no image at all, so the wire drops it (`response_model_exclude_none` doesn't apply to False,
+    # but a card without an image never consults it).
+    art["imageSuspect"] = bool(art.get("image")) and media.hero_suspect(
+        art.get("image"), art.get("imageWidth"), art.get("imageHeight"))
     return art
 
 

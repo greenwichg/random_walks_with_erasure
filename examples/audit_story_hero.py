@@ -162,6 +162,25 @@ def main(argv=None) -> int:
             pubs = ", ".join(sorted(art_pubs[key])[:3])
             print(f"{'':>20}  publishers: {pubs}")
 
+    # ---- 2b. ARTICLE SURFACES -----------------------------------------------------------------
+    # Discover/Search/Saved/Recommendations serve each row's image RAW — the story-hero guard
+    # never touches them. `imageSuspect` (feed_article_to_article) carries the suspect tier to
+    # those surfaces as data; this section is its production measurement: how many article images
+    # the verdict flags, and which assets those are. Post-deploy, the flagged share is the share
+    # of Discover cards that will render text-first instead of fronting furniture.
+    sus_rows = [r for r in rows if media._abs(r.get("image")) and media.hero_suspect(
+        r.get("image"), r.get("imageWidth"), r.get("imageHeight"))]
+    print(f"\n-- 2b. article-surface suspects (imageSuspect on raw article images) --")
+    print(f"  with an image: {with_image_rows:,}; suspect: {len(sus_rows):,} "
+          f"({len(sus_rows) / max(1, with_image_rows):.1%})")
+    sus_ids: dict = {}
+    for r in sus_rows:
+        k = norm_image(r.get("image"))
+        if k:
+            sus_ids[k] = sus_ids.get(k, 0) + 1
+    for k in sorted(sus_ids, key=lambda k: -sus_ids[k])[:8]:
+        print(f"  {sus_ids[k]:>5} arts  {k[:96]}")
+
     # ---- 3. IMPACT ----------------------------------------------------------------------------
     # Each row RUNS the shipped selector (media.pick_story_hero(ranked=True) — reuse reject +
     # suspect tier + evidence rank) with that row's reject set, against whatever heroes the

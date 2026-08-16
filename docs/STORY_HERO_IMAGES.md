@@ -126,6 +126,26 @@ documents). Compose defaults it ON. Junk values fall back to off, never to a gue
 - **Clustering.** Nothing here touches membership; the audit pins ids/order equality under the
   flag.
 
+## Article surfaces (Discover / Search / Saved / Recommendations) — adopted 2026-08-16
+
+Story heroes are guarded; article cards served each row's image **raw**, so the same furniture
+could still front a Discover card. Closed with two changes, deliberately smaller than the hero
+guard:
+
+- **`imageSuspect`** (`discover.feed_article_to_article` → `ArticleModel`): the suspect tier
+  (`media.hero_suspect` — receipted URL tokens + exact-square dims) serialized as a **field**,
+  not enforced — the URL ships beside the verdict, and which surfaces demote it is presentation.
+  The reuse tier is *not* ported: article-level image-df needs a window index at serve time and
+  its thresholds were never measured — a separate, measured step if the suspect tier proves
+  insufficient. `audit_story_hero.py` §2b measures the flagged share on production data.
+- **Web**: Discover and Recommendation cards render text-first when the image is absent,
+  engine-flagged, or fails to load (`onHidden`) — one state, three causes. Discover's grid moved
+  from uniform-height rows to `MasonryColumns` (the Search/Saved component, same card, proven
+  combination): with legitimately height-varying cards, uniform rows poured the difference into
+  a void between a short card's description and its footer; masonry lets every card keep its
+  natural height. Round-robin distribution keeps reading order row-major and appending
+  batch-seam-free.
+
 ## Residual risks (named, bounded)
 
 - BBC's `live/` 240px graphics sit at df 3–4: the df-4 one is rejected, the df-3 one may still

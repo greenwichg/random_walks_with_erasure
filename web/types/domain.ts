@@ -449,6 +449,10 @@ export interface Article {
   // Media + publisher logo (Commit 9; RSS/Atom media only). Absent → the card falls back to text-only.
   image?: string;
   imageWidth?: number;
+  /** Branding verdict on the article's own image (engine `media.hero_suspect` — the story-hero
+   *  guard's suspect tier, served as data). True means "publisher furniture, prefer text-first";
+   *  the URL still ships beside it, so which surfaces demote it is presentation, not data loss. */
+  imageSuspect?: boolean;
   imageHeight?: number;
   imageMimeType?: string;
   imageSource?: string;

@@ -1,5 +1,6 @@
 "use client";
 
+import * as React from "react";
 import { motion } from "framer-motion";
 import type { Article } from "@/types/domain";
 import { PublisherBadge, LeanBadge } from "@/components/shared/article-badges";
@@ -27,7 +28,14 @@ export function DiscoverCard({
   priority?: boolean;
 }) {
   const { timeAgo } = useTranslation();
-  const hasImage = Boolean(article.image);
+  // Three ways an image doesn't lead this card, one text-first outcome: absent, engine-flagged
+  // branding (`imageSuspect` — furniture never fronts a card, the story-hero rule applied to
+  // article surfaces), or failed to load in THIS browser (only observable here; the engine never
+  // downloads images). The senior-type treatment below keys on the same state, so a demoted
+  // image also hands its space to content.
+  const [imgFailed, setImgFailed] = React.useState(false);
+  React.useEffect(() => setImgFailed(false), [article.image]);
+  const hasImage = Boolean(article.image) && !article.imageSuspect && !imgFailed;
   return (
     <motion.article
       layout
@@ -42,7 +50,15 @@ export function DiscoverCard({
       transition={{ delay: Math.min(index * 0.04, 0.4), duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
       className="flex flex-col rounded-lg border bg-card p-5 shadow-soft transition-shadow hover:shadow-card"
     >
-      <ArticleImage src={article.image} alt={article.headline} priority={priority} className="mb-3" />
+      {hasImage && (
+        <ArticleImage
+          src={article.image}
+          alt={article.headline}
+          priority={priority}
+          className="mb-3"
+          onHidden={() => setImgFailed(true)}
+        />
+      )}
 
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <PublisherBadge name={article.publisher} lean={article.publisherLean} logo={article.publisherLogo} logoFallbacks={article.publisherLogoFallbacks} />
