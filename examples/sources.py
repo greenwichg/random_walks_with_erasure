@@ -36,6 +36,7 @@ import json
 import logging
 import os
 import random
+import re
 import threading
 import time
 import urllib.error
@@ -420,6 +421,32 @@ class RSSAdapter(SourceAdapter):
 # --------------------------------------------------------------------------- #
 # KeyedJSONAdapter — the hardened chassis every keyed JSON news API rides.
 # --------------------------------------------------------------------------- #
+#: URL shapes that identify NON-ARTICLE pages a news API sometimes ships as "articles". Each
+#: pattern is receipted from production (2026-08-16, Currents delivering Buffalo News): the
+#: provider sent 11 BLOX-CMS photo asset pages (``/image_<uuid>.html`` — captions as titles,
+#: batch-stamped dates, one an archive shot from 2012 "published" today) and a car-dealer
+#: inventory page (``autos.buffalonews.com/inventory?model=cx-50``) in one window. The CMS names
+#: the content type in the URL, so this is identification, not a title heuristic — the
+#: caption-vs-headline judgement the slug gate deliberately refuses stays refused. BLOX/townnews
+#: runs hundreds of US local papers, so the gate lives on the shared chassis, not in the
+#: Currents adapter.
+# BLOX CMS image asset page: /image_{uuid}.html (exact UUID shape, any host).
+_BLOX_IMAGE_PAGE = re.compile(
+    r"/image_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.html$", re.IGNORECASE)
+# BLOX classifieds: a dealer-inventory browse page on an autos. subdomain.
+_AUTOS_INVENTORY = re.compile(r"^https?://autos\.[^/]+/inventory(?:[/?#]|$)", re.IGNORECASE)
+
+
+def non_article_url(url) -> bool:
+    """Whether a provider item's URL identifies a non-article page. Judged on the URL the
+    publisher's own CMS wrote — never on title or description."""
+    s = str(url or "")
+    if not s:
+        return False
+    path = s.split("?", 1)[0].split("#", 1)[0]
+    return bool(_BLOX_IMAGE_PAGE.search(path) or _AUTOS_INVENTORY.match(s))
+
+
 class KeyedJSONAdapter(SourceAdapter):
     """The shared chassis for keyed JSON news APIs (NewsAPI, Guardian, NewsData, GNews,
     MediaStack, Currents, …): env-prefixed configuration, enable-gating on flag+key with a
@@ -566,7 +593,15 @@ class KeyedJSONAdapter(SourceAdapter):
         combo = self._last_combo if self._last_combo is not None else self._combos()[0]
         arts = self._articles(raw or {})
         entries = [e for e in (self._entry(a, combo) for a in arts) if e is not None]
-        return SourceBatch(self.provider, self.source_type, _now_iso(), entries, raw_count=len(arts))
+        # Non-article pages (photo assets, classifieds — see non_article_url) never enter the
+        # catalog: once stored they are articles to every downstream surface, and no title
+        # hygiene can undo that. Chassis-wide because the URL shapes are CMS properties, not
+        # provider properties. Logged so a provider that turns into a photo firehose is visible.
+        kept = [e for e in entries if not non_article_url(e.url)]
+        if len(kept) != len(entries):
+            _default_log(logging.INFO, f"{self.source_type}_non_article_dropped",
+                         n=len(entries) - len(kept))
+        return SourceBatch(self.provider, self.source_type, _now_iso(), kept, raw_count=len(arts))
 
 
 # --------------------------------------------------------------------------- #

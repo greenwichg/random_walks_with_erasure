@@ -1198,3 +1198,45 @@ def test_post_cycle_attributes_its_time_to_a_named_step():
     assert calls, "the on_cycle hook must still run"
     assert post[0]["refreshMs"] >= 30.0, \
         f"refreshMs must measure the hook, got {post[0]['refreshMs']}"
+
+
+# --------------------------------------------------------------------------- #
+# Non-article URL gate (chassis-wide). Receipts: 2026-08-16, Currents shipping Buffalo News —
+# 11 BLOX photo asset pages (captions as titles, batch-stamped dates, one 2012 archive shot
+# "published" today) and a dealer-inventory page, in one window.
+# --------------------------------------------------------------------------- #
+def test_non_article_url_matches_the_measured_receipts_and_nothing_broader():
+    # the production receipts
+    assert sources.non_article_url(
+        "https://buffalonews.com/image_575110e1-c62d-461a-b0bf-3187841ac252.html")
+    assert sources.non_article_url(
+        "https://buffalonews.com/image_04cd84cd-f90e-506c-9c3e-c93c9e3f07d4.html")
+    assert sources.non_article_url("https://autos.buffalonews.com/inventory?model=cx-50")
+    assert sources.non_article_url("https://autos.buffalonews.com/inventory")
+    # real articles on the SAME host and CMS stay — the gate reads the content type the CMS
+    # wrote into the URL, nothing looser
+    assert not sources.non_article_url(
+        "https://buffalonews.com/news/local/article_893479d5-a5a7-4a93-b406-6841ed294eb4.html")
+    assert not sources.non_article_url("https://example.com/news/image-rights-ruling.html")
+    assert not sources.non_article_url("https://example.com/autos/inventory-shortage-hits-dealers")
+    assert not sources.non_article_url("")
+    assert not sources.non_article_url(None)
+
+
+def test_chassis_drops_non_article_pages_before_they_become_articles():
+    """Once stored, a photo asset page is an article to every downstream surface — the gate must
+    fire at normalize, chassis-wide, so all six keyed providers share it."""
+    payload = {"status": "ok", "news": [
+        {"id": "p1", "title": "USA-TRUMP/ - Buffalo News", "description": "caption",
+         "url": "https://buffalonews.com/image_5952d73c-0785-5fd0-95f6-2b44c2eff8ed.html",
+         "language": "en", "category": ["general"], "published": "2026-08-16 14:25:00 +0000"},
+        {"id": "p2", "title": "Cx-50 Cars for sale in Buffalo, NY", "description": "d",
+         "url": "https://autos.buffalonews.com/inventory?model=cx-50",
+         "language": "en", "category": ["general"], "published": "2026-08-16 14:25:00 +0000"},
+        {"id": "p3", "title": "Diocese legal work shared", "description": "d",
+         "url": "https://buffalonews.com/news/local/article_893479d5.html",
+         "language": "en", "category": ["general"], "published": "2026-08-16 14:25:00 +0000"},
+    ]}
+    batch = sources.CurrentsAdapter(fetch=lambda url: payload).normalize(payload)
+    assert batch.raw_count == 3, "raw_count still reports what the provider SENT"
+    assert [e.url for e in batch.entries] == ["https://buffalonews.com/news/local/article_893479d5.html"]
