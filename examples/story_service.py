@@ -1214,6 +1214,14 @@ def _merge_duplicates(groups: list, *, min_sim: float, max_gap_hours: float, max
     return out
 
 
+#: A name present in MORE story consensuses than this cannot help propose an entity merge.
+#: Six, because the floor must clear the largest GENUINE duplicate family ever measured
+#: (Farage/Clacton, 5 stories, X5b run 1) while sitting far under the ubiquitous political
+#: names that rebuilt a 130-article blob in the same run ("donald trump" spans dozens of
+#: consensuses — see the rule-v2 comment in ``_merge_by_entities``).
+ENTITY_MERGE_MAX_STORY_DF = 6
+
+
 def _story_entity_consensus(members: list, entities: dict) -> frozenset:
     """A story's corroborated entity consensus: non-noise names carried by >= 2 members, one
     vote per member per name. The same corroboration discipline as ``GEO_MIN_CONSENSUS`` — one
@@ -1261,15 +1269,30 @@ def _merge_by_entities(groups: list, *, entities: dict, min_names: int,
     if n < 2 or min_names <= 0 or not entities:
         return groups
 
-    def bump(key: str) -> None:
+    def bump(key: str, by: int = 1) -> None:
         if stats is not None:
-            stats[key] = stats.get(key, 0) + 1
+            stats[key] = stats.get(key, 0) + by
 
     cons = [_story_entity_consensus(g, entities) for g in groups]
     postings: dict = {}
     for i, names in enumerate(cons):
         for name in names:
             postings.setdefault(name, []).append(i)
+    # UBIQUITY at the altitude that matters (rule v2 — the first production run's receipt). A
+    # name's ability to propose a join is its ability to DISCRIMINATE between stories, and that
+    # is its STORY-consensus df, not its article df: "luigi mangione" sits in ~4 consensuses and
+    # every one is genuinely him (join them); "donald trump" sits in dozens of consensuses that
+    # are dozens of different events. Run 1 (2026-08-16) rebuilt a 130-article blob from ELEVEN
+    # stories through {donald trump, white house}-class pairs — complete linkage held, because
+    # every pair really does share those names. This is the USGS lesson generalized: type-level
+    # attendance is not evidence, and the political equivalent of a responder agency is the
+    # president. The floor sits just above the largest GENUINE duplicate family that run
+    # measured (Farage/Clacton, 5 stories), computed from THIS build's own consensuses — no
+    # external state, deterministic, self-calibrating as the catalog grows.
+    discriminative = frozenset(name for name, sids in postings.items()
+                               if len(sids) <= ENTITY_MERGE_MAX_STORY_DF)
+    bump("entityMergeUbiquitous", by=len(postings) - len(discriminative))
+    cons = [c & discriminative for c in cons]
     pairs = []
     for i in range(n):
         counts: dict = {}

@@ -629,6 +629,28 @@ Mangione, cross-language pairs), and the Colombia↔Indonesia pair must appear i
 `geo-vetoed`/absent, never in `joined`. **Reject** on any of those failing. Story count
 falling is the POINT of a merge and does not count against it.
 
+### X5b run 1 (2026-08-16): REJECT at largest 130 — and every named target delivered
+
+The bars did their job. Zero dropped, coherence-veto never needed, and the recall list reads
+exactly as designed: Mangione's four court stories joined (71/31), the Farage/Clacton family
+of five (64/36), the Colombia quake family **with no Indonesia in it and the geo veto firing
+23 times**, USS Lincoln's arc, the eagle pair. 608 candidates, 73 joins, 312 size-capped.
+
+And the blob rebuilt through ubiquitous political entities: *"Trump to Supreme Court: Make
+Me"* fused ELEVEN unrelated stories (vaccines, Mamdani's tax, Hormuz, the Tate brothers) into
+130/52, with two more Trump-chains at 129/55 and 73/37. Complete linkage held — every pair
+really does share `{donald trump, white house}`. It is the `MIN_SHARED_TOKENS` lesson at
+entity altitude ("Trump wins Ohio"/"Trump wins Iowa" with names for tokens), and the USGS
+finding generalized: the political equivalent of a responder agency is the president.
+
+**Rule v2** (implemented, tested): a name's power to propose is its power to DISCRIMINATE,
+which is its **story-consensus df** — `luigi mangione` sits in ~4 consensuses, all genuinely
+him; `donald trump` in dozens that are dozens of events. Names in more than
+`ENTITY_MERGE_MAX_STORY_DF` (6 — just above the largest genuine family run 1 measured,
+Farage's 5) story consensuses are excluded from the shared count, computed from the build's
+own consensuses: no external state, deterministic, self-calibrating. Run 2 is the same audit
+command; the same bars apply unchanged.
+
 ### Ground truth — selection procedures, not fixed IDs (the catalog moves daily)
 
 * **Must-sever set** (false-merge labels): re-run the X0 counterfactual (`fallbacks, --pieces`)

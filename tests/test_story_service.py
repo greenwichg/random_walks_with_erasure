@@ -2735,3 +2735,45 @@ def test_entity_merge_default_is_byte_identical(monkeypatch):
     assert ss.entity_merge_min() == 0, "junk falls back to off, never to a guess"
     monkeypatch.setenv("RWE_STORY_ENTITY_MERGE", "2")
     assert ss.entity_merge_min() == 2
+
+
+def test_ubiquitous_names_cannot_propose_merges():
+    """Rule v2, from run 1's 130-article receipt: a name in more story consensuses than
+    ENTITY_MERGE_MAX_STORY_DF is type-level attendance (the political USGS), and joins proposed
+    through such names rebuilt the blob through complete linkage — every pair really did share
+    {donald trump, white house}. Eight distinct stories all sharing the same two big names must
+    produce ZERO candidates; a pair sharing two names that live in only their two consensuses
+    still joins."""
+    st = store_mod.Store("sqlite://")
+    ents = {}
+    # Eight token-disjoint 2-publisher stories, all "sharing" the same two ubiquitous names.
+    themes = ["harbor bridge inquiry", "ferry terminal review", "museum funding vote",
+              "stadium roof collapse", "airport runway closure", "hospital merger ruling",
+              "library archive flood", "railway signal failure"]
+    for k, theme in enumerate(themes):
+        for pub in ("A", "B"):
+            cu = f"https://{pub.lower()}{k}.example.com/s{k}"
+            _add(st, cu, f"{pub} Outlet {k}", 0.0, f"{theme} update{k} report{k}")
+            ents[cu] = {"person": ["big name"], "org": ["big office"]}
+    rows = ss._fetch(st)
+    assert len(ss.build_stories(rows)) == 8
+    stats: dict = {}
+    merged = ss.build_stories(rows, entity_merge=2, entities=ents, veto_stats=stats)
+    assert len(merged) == 8, "type-level names must not join eight different events"
+    assert stats.get("entityMergeCandidates", 0) == 0
+    assert stats.get("entityMergeUbiquitous", 0) == 2, "both big names were excluded"
+
+    # The discriminative pair still joins: names living in exactly two consensuses.
+    for pub in ("C", "D"):
+        cu = f"https://{pub.lower()}x.example.com/dup"
+        _add(st, cu, f"{pub} Dup", 0.0, "Completely different wording about the same incident")
+    for pub in ("E", "F"):
+        cu = f"https://{pub.lower()}y.example.com/dup2"
+        _add(st, cu, f"{pub} Dup", 0.0, "Another phrasing entirely for that very same incident")
+    for cu in ("https://cx.example.com/dup", "https://dx.example.com/dup",
+               "https://ey.example.com/dup2", "https://fy.example.com/dup2"):
+        ents[cu] = {"person": ["jane specific"], "org": ["specific org"]}
+    rows = ss._fetch(st)
+    merged = ss.build_stories(rows, entity_merge=2, entities=ents)
+    joined = [s for s in merged if s["totalCoverage"] == 4]
+    assert len(joined) == 1, "two names in exactly two consensuses still carry the join"
