@@ -468,6 +468,10 @@ def discover_section(body: str, base: str = "") -> "list[rss_ingest.FeedEntry]":
 _DISCOVERY = {"rss": discover_rss, "sitemap": discover_sitemap, "section": discover_section}
 
 
+#: Sort sentinel for an entry with no readable date — orders after every real timestamp.
+_UNDATED_SORTS_LAST = datetime(1, 1, 1, tzinfo=timezone.utc)
+
+
 def _published_utc(value) -> Optional[datetime]:
     """An entry's ``published_at`` as an aware UTC datetime, or ``None`` when it cannot be read.
 
@@ -617,6 +621,17 @@ class PublisherCrawler:
         children = [e for e in entries if e.source_type == "sitemap-index"]
         if not children:
             return entries
+        # NEWEST CHILD FIRST. A sitemap index names more sitemaps and is conventionally ordered
+        # oldest-first, so taking them in document order spends the whole fetch budget on the
+        # deepest archive and never reaches this week. Daily Maverick and Premium Times both
+        # returned 100% `too_old` for exactly this reason — a defect here, not an archive-only
+        # publisher.
+        #
+        # The ordering key costs nothing to obtain: an index entry carries `<lastmod>`, which
+        # `discover_sitemap` already reads into `published_at`. Children a publisher leaves undated
+        # sort last — they are not evidence of recency, the same reading the age filter takes.
+        children.sort(key=lambda e: _published_utc(e.published_at) or _UNDATED_SORTS_LAST,
+                      reverse=True)
         out = []
         for child in children:
             if report.fetched >= self.config.max_fetches:

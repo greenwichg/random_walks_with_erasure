@@ -302,6 +302,46 @@ def test_a_sitemap_index_is_followed_exactly_one_level_down():
     assert report.fetched == 2 and len(entries) == 2
 
 
+def _index_of(*children) -> str:
+    """A sitemap index whose children carry the given `lastmod` values, in document order."""
+    items = "".join(
+        f"<sitemap><loc>https://www.npr.org/s{i}.xml</loc>"
+        + (f"<lastmod>{d}</lastmod>" if d else "") + "</sitemap>"
+        for i, d in enumerate(children))
+    return ("<sitemapindex xmlns='http://www.sitemaps.org/schemas/sitemap/0.9'>"
+            + items + "</sitemapindex>")
+
+
+def test_a_sitemap_index_is_descended_newest_child_first():
+    """The defect this fixes: sitemap indexes are conventionally ordered OLDEST-first, so taking
+    them in document order spent the entire fetch budget on the deepest archive and never reached
+    this week. Daily Maverick and Premium Times both returned 100% `too_old` because of this — a
+    bug on our side, not archive-only publishers."""
+    routes = {"https://www.npr.org/s.xml": _index_of("2019-01-01", "2020-01-01", "2026-08-19"),
+              "https://www.npr.org/s2.xml": _fx("news_sitemap.xml")}   # the NEWEST child
+    entries, report = _crawl(routes, _cfg(max_fetches=2))
+    assert report.fetched == 2, "index + one child"
+    assert len(entries) == 2, "the newest child was the one fetched"
+
+
+def test_an_undated_index_child_sorts_after_every_dated_one():
+    """A child the publisher left undated is not evidence of recency, so it goes last — the same
+    reading the age filter takes."""
+    routes = {"https://www.npr.org/s.xml": _index_of(None, "2026-08-19"),
+              "https://www.npr.org/s1.xml": _fx("news_sitemap.xml")}   # dated child
+    entries, report = _crawl(routes, _cfg(max_fetches=2))
+    assert report.fetched == 2 and len(entries) == 2
+
+
+def test_an_index_whose_children_are_all_undated_still_descends():
+    """No dates means no ordering signal, and the rung must still work rather than refuse."""
+    routes = {"https://www.npr.org/s.xml": _index_of(None, None),
+              "https://www.npr.org/s0.xml": _fx("news_sitemap.xml"),
+              "https://www.npr.org/s1.xml": _fx("news_sitemap.xml")}
+    entries, report = _crawl(routes, _cfg(max_fetches=3))
+    assert report.fetched == 3 and len(entries) == 2, "same two articles, deduped across children"
+
+
 def test_the_fetch_budget_bounds_a_pathological_sitemap_index():
     """A sitemap index pointing at hundreds of children must not turn one cycle into hundreds of
     requests. The budget is the number an operator can state in advance."""
