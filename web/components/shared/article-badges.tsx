@@ -44,12 +44,16 @@ export function LeanBadge({
  *  The name links to the Publisher Intelligence profile — every publisher mention in the app is
  *  a doorway to its counted profile, not a dead label. */
 export function PublisherBadge({
-  name, lean, logo, logoFallbacks,
-}: { name: string; lean?: Lean | null; logo?: string; logoFallbacks?: string[] }) {
+  name, lean, logo, logoFallbacks, emphasis = false,
+}: { name: string; lean?: Lean | null; logo?: string; logoFallbacks?: string[];
+     /** Anchor the publisher in foreground ink (Discover's river rows) — the most
+      *  identity-bearing token on a dense row shouldn't dissolve into the metadata gray. */
+     emphasis?: boolean }) {
   const bucket = lean == null ? null : leanBucket(lean);
   const color = bucket ? `hsl(var(--${bucket}))` : "hsl(var(--muted-foreground))";
   return (
-    <span className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+    <span className={cn("inline-flex items-center gap-1.5 text-xs font-medium",
+                        emphasis ? "text-foreground" : "text-muted-foreground")}>
       {/* 14px: a favicon is genuinely adequate here, which is why the too-small rule is
           box-relative rather than a blanket ban on small icons. */}
       <PublisherLogo

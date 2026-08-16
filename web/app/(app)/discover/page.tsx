@@ -10,7 +10,7 @@ import { CountryBadge } from "@/components/shared/country-badge";
 import { DiscoverLeadCard } from "@/components/discover/discover-lead-card";
 import { DiscoverRow } from "@/components/discover/discover-row";
 import { FilterSelect, type FilterOption } from "@/components/shared/filter-select";
-import { interleavePublishers } from "@/lib/discover-order";
+import { composeRiver, sliceRiver, type MarkLabel } from "@/lib/discover-order";
 import { EmptyState, ErrorState } from "@/components/shared/states";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -27,6 +27,13 @@ const LEAN_OPTIONS: FilterOption[] = [
 const opt = (values: string[]): FilterOption[] => values.map((v) => ({ value: v, label: v }));
 const asFilter = (v: string) => (v === "all" ? undefined : v);
 const PAGE = 24;
+// Landmark copy — literal keys so check-i18n's used-key scan sees every one.
+const MARK_KEY: Record<MarkLabel, string> = {
+  pastHour: "discover.mark.pastHour",
+  earlierToday: "discover.mark.earlierToday",
+  yesterday: "discover.mark.yesterday",
+  earlier: "discover.mark.earlier",
+};
 // /api/discover returns a flat, size-capped list (no offset); fetch the cap once and page on the
 // client. The live catalog sits well within this, and it never exceeds what the endpoint would serve.
 const FETCH = 200;
@@ -82,18 +89,23 @@ export default function DiscoverPage() {
   // and recency-only ordering was putting the same masthead three times above the fold. When
   // diversity is impossible (a publisher filter is active), next-in-order fills.
   //
-  // The river is publisher-INTERLEAVED (lib/discover-order.ts): the same burst problem below the
-  // fold — measured, one outlet filing 6 of 12 visible rows — spread by the weakest rule that
-  // fixes it (no two adjacent rows from one publisher while any alternative is pending). A
-  // permutation of the full fetched list, computed once per fetch, so Load More reveals more of
-  // a FIXED order and rows the reader has seen never move.
-  const { lead, supports, river } = React.useMemo(() => {
-    if (articles.length === 0) return { lead: null as Article | null, supports: [] as Article[], river: [] as Article[] };
+  // The river is COMPOSED (lib/discover-order.ts, the approved River Rhythm spec): bucketed
+  // under time landmarks from stored publishedAt, publisher-interleaved within each bucket (the
+  // measured burst fix), with a featured BEAT every 9th slot taking the next imaged article
+  // within a 6-slot look-ahead — never across a landmark boundary. A permutation of the full
+  // fetched list, computed once per fetch, so Load More reveals more of a FIXED order and rows
+  // the reader has seen never move.
+  const { lead, supports, composed } = React.useMemo(() => {
+    if (articles.length === 0)
+      return { lead: null as Article | null, supports: [] as Article[],
+               composed: [] as ReturnType<typeof composeRiver<Article>> };
     const usable = (a: Article) => Boolean(a.image) && !a.imageSuspect;
     const inFirstSix = articles.slice(0, 6).findIndex(usable);
     const leadIdx = inFirstSix >= 0 ? inFirstSix : 0;
     const leadArt = articles[leadIdx];
-    if (!leadArt) return { lead: null, supports: [], river: [] }; // unreachable; typed indexing
+    if (!leadArt)
+      return { lead: null, supports: [] as Article[],
+               composed: [] as ReturnType<typeof composeRiver<Article>> }; // unreachable; typed indexing
     const rest = articles.filter((_, i) => i !== leadIdx);
     const picks: Article[] = [];
     for (const a of rest) {
@@ -108,11 +120,13 @@ export default function DiscoverPage() {
     return {
       lead: leadArt,
       supports: picks,
-      river: interleavePublishers(articles.filter((a) => !chosen.has(a.id))),
+      composed: composeRiver(articles.filter((a) => !chosen.has(a.id)),
+                             { now: new Date(), beatable: usable }),
     };
   }, [articles]);
-  // Same reveal budget as before: `visible` counts front-page slots + river rows together.
-  const riverShown = river.slice(0, Math.max(0, visible - (lead ? 1 + supports.length : 0)));
+  // Same reveal budget as before: `visible` counts front-page slots + river ARTICLE slots
+  // together (landmarks are headers, not content — they ride along free).
+  const riverShown = sliceRiver(composed, Math.max(0, visible - (lead ? 1 + supports.length : 0)));
 
   return (
     // max-w-[88rem]: +10% over the shared max-w-7xl, Discover only — measured (headless width
@@ -189,9 +203,26 @@ export default function DiscoverPage() {
       )}
       {riverShown.length > 0 && (
         <div className="mt-5 grid gap-3 md:grid-cols-2">
-          {riverShown.map((a) => (
-            <DiscoverRow key={a.id} article={a} />
-          ))}
+          {riverShown.map((item, i) =>
+            item.kind === "mark" ? (
+              <div
+                key={`mark-${item.label}-${i}`}
+                data-testid="river-mark"
+                className="col-span-full mt-3 flex items-center gap-2.5 first:mt-0"
+              >
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  {t(MARK_KEY[item.label])}
+                </span>
+                <span aria-hidden className="h-px flex-1 bg-border" />
+              </div>
+            ) : item.kind === "beat" ? (
+              <div key={item.article.id} className="col-span-full">
+                <DiscoverRow article={item.article} beat />
+              </div>
+            ) : (
+              <DiscoverRow key={item.article.id} article={item.article} />
+            ),
+          )}
         </div>
       )}
 
