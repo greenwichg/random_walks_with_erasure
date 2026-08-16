@@ -2514,17 +2514,54 @@ def test_growth_veto_spares_formation():
     _quake(st, n_us=1, n_co=1)
     stories = ss.build_stories(ss._fetch(st), veto="growth")
     assert len(stories) == 1 and stories[0]["totalCoverage"] == 2, \
-        "two singletons always form — the veto constrains growth, never formation"
+        "two singletons always form — a singleton cannot carry two located members, so the " \
+        "evidence floor leaves formation ungated with no size rule at all"
 
 
-def test_growth_veto_gates_growth_on_consensus_disagreement():
+def test_growth_veto_fires_on_one_sided_corroboration():
+    """The V-growth-2 rule: disjoint consensuses plus EITHER side's winning vote corroborated.
+    3 US-located vs 2 CO-located: both corroborated, vetoed. 3 US-located vs ONE CO-located: the
+    corroborated receiver rejects the thinly-located dissenter too — a false merge is the
+    catastrophic direction, a rejected dissenter is one article and the 1% coverage bar measures
+    the aggregate."""
     st = store_mod.Store("sqlite://")
-    _quake(st, n_us=3, n_co=1)
+    _quake(st, n_us=3, n_co=2)
     stories = ss.build_stories(ss._fetch(st), veto="growth")
+    assert len(stories) == 2 and sorted(s["totalCoverage"] for s in stories) == [2, 3]
+    assert len(ss.build_stories(ss._fetch(st))) == 1, "off: one 5-article story"
+
+    st2 = store_mod.Store("sqlite://")
+    _quake(st2, n_us=3, n_co=1)
+    stories = ss.build_stories(ss._fetch(st2), veto="growth")
     assert len(stories) == 1 and stories[0]["totalCoverage"] == 3, \
-        "the US cluster reaches MIN_CHAINABLE and then refuses the CO-located member"
-    assert len(ss.build_stories(ss._fetch(st))) == 1
-    assert ss.build_stories(ss._fetch(st))[0]["totalCoverage"] == 4, "off: one 4-article story"
+        "the corroborated side (3 US votes) refuses the located disagreeing singleton"
+
+
+def test_two_samples_of_one_never_veto_each_other():
+    """The Ronaldo protection: a story whose located testimony is one member per side must not be
+    split by it. Eight same-title articles, ONE located US, ONE located CO, six unlocated — no
+    winning vote ever reaches GEO_MIN_CONSENSUS, so every merge fails open and the story holds."""
+    st = store_mod.Store("sqlite://")
+    title = "Massive earthquake strikes the region overnight rescue"
+    _add(st, "https://us0.example.com/quake", "US Outlet", 0.0, title)
+    _locate(st, "https://us0.example.com/quake", "US")
+    _add(st, "https://co0.example.com/quake", "CO Outlet", 0.0, title)
+    _locate(st, "https://co0.example.com/quake", "CO")
+    for i in range(6):
+        _add(st, f"https://n{i}.example.com/quake", f"Neutral {i}", 0.0, title)
+    stories = ss.build_stories(ss._fetch(st), veto="growth")
+    assert len(stories) == 1 and stories[0]["totalCoverage"] == 8
+
+
+def test_growth_veto_blocks_the_seed_fusion_hole():
+    """The run-C Colombia+Indonesia receipt: under the old size exemption two 2-member seeds of
+    DIFFERENT events fused ungated on template vocabulary, and the poisoned {CO, ID} tie then
+    overlapped everything. With the evidence floor a 2v2 merge carrying 2+2 located disagreement
+    is gated and refused."""
+    st = store_mod.Store("sqlite://")
+    _quake(st, n_us=2, n_co=2)
+    stories = ss.build_stories(ss._fetch(st), veto="growth")
+    assert len(stories) == 2 and sorted(s["totalCoverage"] for s in stories) == [2, 2]
 
 
 def test_growth_veto_admits_overlapping_consensus():
@@ -2569,3 +2606,32 @@ def test_veto_stats_count_the_decisions():
 def test_geo_closures_off_is_none_none():
     assert ss._geo_closures([], "") == (None, None)
     assert ss._geo_closures([{"eventCountries": ["US"]}], "") == (None, None)
+
+
+def test_located_consensus_over_member_dicts():
+    """The dup-merge pass's counterpart of the closure consensus — same vote semantics."""
+    mk = lambda *cs: {"eventCountries": list(cs)}   # noqa: E731
+    assert ss._located_consensus([]) == (frozenset(), 0)
+    assert ss._located_consensus([mk(), mk()]) == (frozenset(), 0)
+    assert ss._located_consensus([mk("US"), mk("US"), mk("CO")]) == (frozenset({"US"}), 2)
+    assert ss._located_consensus([mk("US"), mk("CO")]) == (frozenset({"US", "CO"}), 1), \
+        "a tie keeps both, and its winning vote is 1 — uncorroborated, so it cannot veto"
+
+
+def test_dup_merge_pass_respects_the_veto():
+    """The 3-pooled-located crack: one corroborated side (2 located) plus one sample of one is 3
+    pooled — under MIN_LOCATED_FOR_TRUST, where the coherence guard is silent — and the
+    profile-similar pair the veto severed must not be quietly rejoined there."""
+    h = "Powerful magnitude earthquake strikes coastal region tsunami warning issued"
+    groups = [
+        [{"eventCountries": ["US"], "publisher": "A", "headline": h},
+         {"eventCountries": ["US"], "publisher": "B", "headline": h}],
+        [{"eventCountries": ["CO"], "publisher": "C", "headline": h},
+         {"eventCountries": [], "publisher": "D", "headline": h}],
+    ]
+    kept = ss._merge_duplicates([list(g) for g in groups], min_sim=0.0001, max_gap_hours=1e9,
+                                max_size=99, veto="growth")
+    assert len(kept) == 2, "corroborated US vs located CO: the join is refused"
+    joined = ss._merge_duplicates([list(g) for g in groups], min_sim=0.0001, max_gap_hours=1e9,
+                                  max_size=99)
+    assert len(joined) == 1, "without the veto the same pair joins — the gate is the difference"

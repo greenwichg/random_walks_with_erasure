@@ -577,6 +577,28 @@ def link_quorum() -> float:
 
 _GEO_VETO_MODES = ("pair", "growth")
 
+#: Votes the WINNING country of a cluster side's located consensus needs before that side's
+#: testimony may veto a merge (V-growth-2). The veto fires iff the two consensuses are disjoint
+#: and EITHER side clears this bar — corroboration on one side is enough to reject a
+#: thinly-located joiner, because a false merge is the catastrophic direction while a rejected
+#: true dissenter is bounded (a single article, and the 1% coverage bar measures the aggregate).
+#:
+#: Three measured failures shaped this rule, each one edit older than the last:
+#:
+#: * Run C's SIZE-based gate (either side ≥ MIN_CHAINABLE members) let a side whose consensus
+#:   rested on ONE located member veto — a sample of one, the ``MIN_LOCATED_FOR_TRUST`` defect
+#:   in miniature — and split Ronaldo's wedding into two stories that the duplicate-merge pass
+#:   then could not rejoin. Under this rule two uncorroborated samples never veto each other.
+#: * The same gate's "both sides small" exemption let two 2-member seeds of DIFFERENT
+#:   earthquakes (Colombia, Indonesia) fuse ungated on template vocabulary, and the poisoned
+#:   {CO, ID} tie-consensus then overlapped everything. Under this rule the US pair's
+#:   corroborated consensus (2 votes) rejects the disagreeing seed.
+#: * The first V-growth-2 draft — a symmetric ≥2-located floor per side — never survived to the
+#:   box: its own unit test showed a SINGLETON always fails a per-side floor, so clusters absorb
+#:   located-disagreeing singletons one at a time and single linkage is rebuilt by absorption.
+#:   Corroboration is asymmetric on purpose.
+GEO_MIN_CONSENSUS = 2
+
 
 def geo_veto() -> str:
     """X4 entity-evidence veto — **OFF** ("" = lexical edges unchanged), and NOT a production
@@ -594,14 +616,34 @@ def geo_veto() -> str:
     budget is false splits (the axis the audit's split tables and must-keep set measure).
 
     * ``pair``: the veto joins the pairwise gate — admission, quorum cross-pair scoring and the
-      repair re-cluster all consult it, because they share ``pair_ok`` by construction.
-    * ``growth``: pairs form freely; only merges where either side is already ≥ ``MIN_CHAINABLE``
-      are gated, on located-CONSENSUS disjointness. This is the two-country-event guard: a
-      genuine HU/GB story's seed pair forms ungated, and by the time the cluster is big enough to
-      gate, its members carry both countries (the ``_geo_coherence`` mechanism) — mirroring
-      ``_quorum_ok``'s "two singletons always pass"."""
+      repair re-cluster all consult it, because they share ``pair_ok`` by construction. Measured
+      2026-08-16 (run D) and REJECTED: it dissolves legitimate multi-country stories and the
+      story count falls.
+    * ``growth`` (V-growth-2): a merge is vetoed iff the two sides' located consensuses are
+      disjoint AND either side's winning vote is corroborated (``GEO_MIN_CONSENSUS`` — the three
+      measured failures the rule is built from are documented there). No size rule: formation
+      pairs are two samples of one and fail open by construction. The two-country-event guard is
+      the consensus overlap: a member located in both countries of a genuine cross-border story
+      overlaps either side's consensus (the ``_geo_coherence`` mechanism) and is admitted. The
+      same rule gates the duplicate-merge pass, because one-sided corroboration can leave the
+      pooled located set at 3 — under ``MIN_LOCATED_FOR_TRUST``, where that pass's coherence
+      guard is silent and would otherwise rejoin what the veto severed."""
     v = os.environ.get("RWE_CLUSTER_GEO_VETO", "").strip().lower()
     return v if v in _GEO_VETO_MODES else ""
+
+
+def _located_consensus(members: list) -> "tuple[frozenset, int]":
+    """``(top-vote countries, winning vote count)`` over MEMBER DICTS — the dup-merge pass's
+    counterpart of the index-based closure in ``_geo_closures``, same vote semantics (one vote
+    per located member per country, ties kept)."""
+    votes: dict = {}
+    for m in members:
+        for c in _member_countries(m):
+            votes[c] = votes.get(c, 0) + 1
+    if not votes:
+        return frozenset(), 0
+    top = max(votes.values())
+    return frozenset(c for c, v in votes.items() if v == top), top
 
 
 def _geo_closures(arts: list, mode: str, stats: Optional[dict] = None) -> tuple:
@@ -633,26 +675,29 @@ def _geo_closures(arts: list, mode: str, stats: Optional[dict] = None) -> tuple:
             return False
         return evidence, None
 
-    def consensus(idxs: list) -> frozenset:
-        """Top-vote countries among located members — ``_geo_coherence``'s logic, not the union.
-        A union only widens as a false merge grows, so the more wrong a cluster the less a
+    def consensus(idxs: list) -> "tuple[frozenset, int]":
+        """``(top-vote countries, winning vote count)`` — ``_geo_coherence``'s logic, not the
+        union. A union only widens as a false merge grows, so the more wrong a cluster the less a
         union-based test could say; the mode country stays put while the tail accumulates."""
         votes: dict = {}
         for i in idxs:
             for c in countries[i]:
                 votes[c] = votes.get(c, 0) + 1
         if not votes:
-            return frozenset()
+            return frozenset(), 0
         top = max(votes.values())
-        return frozenset(c for c, v in votes.items() if v == top)
+        return frozenset(c for c, v in votes.items() if v == top), top
 
     def merge_ok(a: list, b: list) -> bool:
+        """V-growth-2: veto iff the located consensuses are disjoint and EITHER side's winning
+        vote is corroborated — see ``GEO_MIN_CONSENSUS`` for the three measured failures this
+        rule is built from. No size rule at all: formation pairs are two uncorroborated samples
+        and fail open by construction."""
         bump("mergeChecked")
-        if len(a) < MIN_CHAINABLE and len(b) < MIN_CHAINABLE:
-            return True                         # formation and small joins are never gated
-        ca, cb = consensus(a), consensus(b)
-        if not ca or not cb:
-            return True                         # fail-open
+        ca, ta = consensus(a)
+        cb, tb = consensus(b)
+        if not ca or not cb or (ta < GEO_MIN_CONSENSUS and tb < GEO_MIN_CONSENSUS):
+            return True                 # fail-open: no testimony, or nothing but samples of one
         bump("mergeGated")
         if ca & cb:
             return True
@@ -999,7 +1044,8 @@ def _gap_hours(a: list, b: list) -> float:
     return abs(delta.total_seconds()) / 3600.0
 
 
-def _merge_duplicates(groups: list, *, min_sim: float, max_gap_hours: float, max_size: int) -> list:
+def _merge_duplicates(groups: list, *, min_sim: float, max_gap_hours: float, max_size: int,
+                      veto: str = "", veto_stats: Optional[dict] = None) -> list:
     """Join clusters that are the same event described in different words.
 
     The recall failure the repair exposed: "Mass shooting reported at Seattle Center" and "…gunfire
@@ -1095,6 +1141,19 @@ def _merge_duplicates(groups: list, *, min_sim: float, max_gap_hours: float, max
         if (coherence is not None and located >= MIN_LOCATED_FOR_TRUST
                 and coherence < coherence_floor()):
             continue                                  # the independent signal vetoes the merge
+        if veto:
+            # X4: the same corroborated-disagreement rule the growth veto applies at build time.
+            # Needed HERE because one-sided corroboration can leave the pooled located set at 3 —
+            # under MIN_LOCATED_FOR_TRUST, where the coherence guard above is silent — and a
+            # profile-similar pair the veto severed (two same-vocabulary earthquakes) would be
+            # quietly rejoined through that crack.
+            ca, ta = _located_consensus([m for x in gi for m in groups[x]])
+            cb, tb = _located_consensus([m for x in gj for m in groups[x]])
+            if (ca and cb and not (ca & cb)
+                    and (ta >= GEO_MIN_CONSENSUS or tb >= GEO_MIN_CONSENSUS)):
+                if veto_stats is not None:
+                    veto_stats["dupMergeVetoed"] = veto_stats.get("dupMergeVetoed", 0) + 1
+                continue
         combined = tuple(sorted(gi + gj))
         for x in combined:
             member_of[x] = combined
@@ -1215,7 +1274,7 @@ def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
         admitted = _merge_duplicates(
             admitted, min_sim=join,
             max_gap_hours=merge_max_gap_hours() if merge_gap is None else merge_gap,
-            max_size=merge_max_size())
+            max_size=merge_max_size(), veto=veto_mode, veto_stats=veto_stats)
     stories = [_build_story(m) for m in admitted]
     trust_aware = trust_ranking()
     stories.sort(key=lambda s: _size_rank(s, trust_aware=trust_aware), reverse=True)

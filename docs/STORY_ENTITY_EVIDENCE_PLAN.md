@@ -276,6 +276,61 @@ family (23/16, 0.778 → 3), the Iran-war umbrella (62/25, 0.733 → 2), Ronaldo
 (16/13 → 2) — and whether those pieces are separate events or one event shredded is exactly
 what no aggregate can say. That read is the remaining gate.
 
+### The run-C hand-read (2026-08-16) — and V-growth-2
+
+The pieces run (`--pieces 12`) settled it in both directions at once.
+
+**True splits — production false merges, fixed by the veto:** the story served today as
+*"Colombia earthquake: Death toll rises to over 100"* is actually THREE disasters on three
+continents (Baguio landslide PH 13/8 + Colombia quake 13/9 + Congo Ebola 10/8) fused on
+"death toll rises" phrasing; the eclipse story contained the Samsung One UI update (9/9 out);
+*"Judge sides with Trump"* was two different court cases (11/8 + 6/5); *"Hers Health results"*
+was two different companies' earnings (8/8 + 6/6). The veto also CONSOLIDATED real duplicates:
+the Colombia quake family 4 stories → 2, Matisse, Kidman, and the cross-language Air Force One
+decoy story (Norwegian + English coverage joined).
+
+**False split:** Ronaldo's wedding, 16 → 9+7 — one event, two stories, and the same location
+disagreement blocks the dup-merge pass's rejoin (its coherence guard refuses), so the duplicate
+persists.
+
+**New false merge:** *"At least 30 dead as major earthquake hits Colombia (VIDEOS)"* at 31/21
+absorbed THREE Indonesia-quake stories. Mechanism identified: the `MIN_CHAINABLE` size
+exemption — two 2-member seeds of different earthquakes fuse UNGATED on template vocabulary
+("magnitude 7.7 earthquake strikes"), and the fused cluster's {CO, ID} tie-consensus then
+overlaps both sides of every later check. Poisoned consensus, absorbs freely.
+
+**V-growth-2** replaces the size rule with a corroboration rule — *veto iff the located
+consensuses are disjoint and EITHER side's winning vote count ≥ `GEO_MIN_CONSENSUS` (2)* —
+built from three measured failures (each recorded at the constant): the Ronaldo split shows a
+sample of one must not testify against a sample of one; the Colombia+Indonesia fusion shows
+small merges need gating when the evidence is real; and the first draft (a symmetric ≥2-located
+floor) never reached the box because its own unit test showed a singleton always fails a
+per-side floor, so clusters absorb located-disagreeing singletons one at a time — single
+linkage rebuilt by absorption. Corroboration is asymmetric on purpose: a corroborated receiver
+may reject a thinly-located dissenter (bounded damage, measured by the 1% bar), while two
+samples of one never veto each other. The same rule now gates `_merge_duplicates`, because
+one-sided corroboration can leave the pooled located set at 3 — under `MIN_LOCATED_FOR_TRUST`,
+where that pass's coherence guard is silent and would otherwise quietly rejoin what the veto
+severed. Run E (below) re-measures C's configuration under V-growth-2.
+
+```bash
+cd /opt/ih && source deploy/ops/_compose.sh
+git fetch origin claude/sleepy-gates-oecof1
+git worktree remove --force /tmp/x4-code 2>/dev/null; \
+git worktree add --detach /tmp/x4-code origin/claude/sleepy-gates-oecof1
+dc run --rm -T -v /tmp/x4-code/examples:/app/examples:ro api \
+   python examples/audit_clustering_change.py \
+   --geo-veto growth --show 20 --pieces 12 --piece-limit 12 --max-dropped 0.01 \
+   2>&1 | tee /tmp/x4_runE_$(date -u +%Y%m%dT%H%M%SZ).log
+git worktree remove /tmp/x4-code
+```
+
+Run E's hand-read checks, fixed before the run: the Colombia+Indonesia merge must be GONE from
+the merged table; Ronaldo must appear at most once in the split table's re-partitions (ideally
+not at all); the death-toll trio, courts, earnings and eclipse/Samsung severances must SURVIVE;
+and the aggregates must hold their run-C levels (≤ 1% dropped, story count not falling, largest
+≤ baseline, bad count not above 4).
+
 ### Ground truth — selection procedures, not fixed IDs (the catalog moves daily)
 
 * **Must-sever set** (false-merge labels): re-run the X0 counterfactual (`fallbacks, --pieces`)
