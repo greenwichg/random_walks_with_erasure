@@ -85,6 +85,11 @@ services:
       # automatic via BACKFILL_WINDOWS; never copy that value here.
       RWE_GDELT_GKG_WINDOWS: ${RWE_GDELT_GKG_WINDOWS:-4}
       RWE_GDELT_GKG_BACKFILL_WINDOWS: ${RWE_GDELT_GKG_BACKFILL_WINDOWS:-96}
+      # X5b (adopted 2026-08-16): the same enrichment cycle ALSO persists V1PERSONS/V1ORGS from
+      # the file it already downloads (one extra decompression, zero extra HTTP). The entity-merge
+      # pass reads article_entities every build, so this keeps the table current — without it the
+      # recall silently ages out with the one-shot backfill. Kill switch: RWE_GDELT_ENTITIES=0.
+      RWE_GDELT_ENTITIES: ${RWE_GDELT_ENTITIES:-1}
       # --- Publisher metadata enrichment (Wikipedia + Wikidata) ---------------------------------
       # Fills the logo / description / founded / HQ / parent gaps the curated registry leaves, so
       # the Publisher page renders complete profiles. Curated data is NEVER overwritten — enrichment
@@ -322,6 +327,19 @@ services:
       # the independent signal already condemns, and stays on.
       RWE_CLUSTER_LINK_QUORUM: ${RWE_CLUSTER_LINK_QUORUM:-0.2}
       RWE_STORY_REPAIR_QUORUM: ${RWE_STORY_REPAIR_QUORUM:-0.5}
+      # X4 V-growth-2 (adopted 2026-08-16, docs/STORY_ENTITY_EVIDENCE_PLAN.md): a cluster merge
+      # is vetoed when the located consensuses disagree and either side's winning vote is
+      # corroborated. Measured: bad clusters 4 -> 2, 0.3% coverage at net -2 articles, and the
+      # counterfactual without the stack regrew a 787-article blob. Empty string is the kill
+      # switch. Defaulted HERE for the same reason as the quorum above: the verified
+      # configuration must not live one lost env-file line away from silently reverting.
+      RWE_CLUSTER_GEO_VETO: ${RWE_CLUSTER_GEO_VETO:-growth}
+      # X5b entity-corroborated merge recall (adopted 2026-08-16, same doc): stories sharing >= 2
+      # corroborated non-noise consensus names, mutually anchored by both tops, join — measured
+      # 44 duplicate-family consolidations (Mangione x4, Farage, the cross-phrasing pairs no
+      # lexical profile reaches) at zero dropped articles, largest 71. Requires article_entities
+      # (the GKG entity cycle below keeps it current). 0 is the kill switch.
+      RWE_STORY_ENTITY_MERGE: ${RWE_STORY_ENTITY_MERGE:-2}
       # Machine-generated market-data feeds (outlet_registry.csv kind=wire) never enter story
       # clustering. Does nothing on its own — only outlets a human marked are affected.
       RWE_STORY_EXCLUDE_WIRE: ${RWE_STORY_EXCLUDE_WIRE:-1}

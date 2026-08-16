@@ -705,6 +705,66 @@ Until then everything remains dormant twice over, production untouched, `link_qu
 untouched — the X4 verdict (V-growth-2 adoptable-with-caveats) and this one are independent
 decisions that compose: the geo veto guards the entity merge either way.
 
+## Adopted (2026-08-16): X4 V-growth-2 + X5b together
+
+Both experiments' measured configurations are now the deploy defaults
+(`deploy/docker-compose.yml`, api service — defaulted in compose for the same reason the
+quorum is: the verified configuration must not live one lost env-file line away from silently
+reverting):
+
+* `RWE_CLUSTER_GEO_VETO: growth` — kill switch: empty string.
+* `RWE_STORY_ENTITY_MERGE: 2` — kill switch: `0`. Every serving call site fetches the entity
+  mapping through `_entities_for` when this is on (one batched query per build); an
+  environment without backfilled `article_entities` degrades to the lexical build.
+* `RWE_GDELT_ENTITIES: 1` — the enrichment cycle keeps `article_entities` current from the
+  file it already downloads; without it the recall ages out with the one-shot backfill.
+
+The audit understands the new baseline: a flagless run's BEFORE side now runs the adopted
+passes with their data (the tag reads `…, veto growth, entity-merge 2`), and both variables
+joined the environment guard's presence tuple.
+
+### Deploy + verification runbook (the box)
+
+Deploy this commit through the normal flow (`deploy/ops/update.sh` — the compose change means
+containers must be recreated, which the flow does). Then, in order:
+
+```bash
+cd /opt/ih && source deploy/ops/_compose.sh
+
+# 1. The environment is what the measurement was
+dc exec -T api env | grep -E 'RWE_CLUSTER_GEO_VETO|RWE_STORY_ENTITY_MERGE|RWE_GDELT_ENTITIES'
+
+# 2. The flagless audit is a no-op diff proving the running config IS the measured one:
+#    before reads "…, veto growth, entity-merge 2   [PRODUCTION BASELINE]", before == after,
+#    0 split / 0 merged / 0 dropped.
+dc run --rm -T api python examples/audit_clustering_change.py --show 5
+
+# 3. The blindspot-claims glance (adoption item 3): which claims consolidate under the merge.
+dc run --rm -T api python - <<'PY'
+import sys
+sys.path.insert(0, "examples")
+import store, story_service as ss
+st = store.Store()
+rows = ss._fetch(st)
+ents = ss._entities_for(st, rows)
+a = ss.build_stories(rows, entity_merge=0)
+b = ss.build_stories(rows, entities=ents)          # entity_merge=None resolves the deploy env
+ca = {s["title"]: s["blindspotSide"] for s in a if s.get("blindspotSide")}
+cb = {s["title"]: s["blindspotSide"] for s in b if s.get("blindspotSide")}
+print(f"claims without entity merge: {len(ca)}   with: {len(cb)}")
+for t in sorted(set(ca) - set(cb)):
+    print(f"  consolidated: [{ca[t]}] {t[:72]}")
+PY
+
+# 4. The next enrichment cycle reports the entities counter, and the table keeps growing.
+dc logs --tail 50 api | grep -i gkg || true
+```
+
+The served Stories page follows on its next background refresh (serve-stale design). Rollback
+is two env rows in `deploy/.env` (`RWE_CLUSTER_GEO_VETO=` and `RWE_STORY_ENTITY_MERGE=0`) plus
+a restart — the code paths go quiet, no data needs undoing, and `article_entities` keeps
+accumulating harmlessly either way.
+
 ### Ground truth — selection procedures, not fixed IDs (the catalog moves daily)
 
 * **Must-sever set** (false-merge labels): re-run the X0 counterfactual (`fallbacks, --pieces`)

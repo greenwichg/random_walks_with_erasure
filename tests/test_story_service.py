@@ -2816,3 +2816,23 @@ def test_unanchored_joins_are_refused():
             {"person": ["shared top person"], "org": ["shared top org"]}
     merged = ss.build_stories(rows, entity_merge=2, entities=ents2)
     assert len(merged) == 1 and merged[0]["totalCoverage"] == 6
+
+
+def test_serving_path_supplies_entities_when_adopted(monkeypatch):
+    """The adoption wiring: every serving call site fetches the entity mapping through
+    _entities_for when the env is on — cluster_from_store here as the representative — and an
+    environment without the flag pays no query and builds lexically."""
+    monkeypatch.setenv("RWE_STORY_ENTITY_MERGE", "2")
+    st = store_mod.Store("sqlite://")
+    _seattle(st)
+    for pub in ("a", "b"):
+        st.replace_article_entities(f"https://{pub}.example.com/shooting",
+                                    {"person": ["jane suspect"], "org": ["seattle center"]})
+    for pub in ("c", "d"):
+        st.replace_article_entities(f"https://{pub}.example.com/gunfire",
+                                    {"person": ["jane suspect"], "org": ["seattle center"]})
+    stories = ss.cluster_from_store(st)
+    assert len(stories) == 1 and stories[0]["totalCoverage"] == 4, \
+        "the serving path joined the lexically-unreachable pair on its own"
+    monkeypatch.delenv("RWE_STORY_ENTITY_MERGE", raising=False)
+    assert len(ss.cluster_from_store(st)) == 2, "off: lexical build, no entity query"

@@ -172,9 +172,12 @@ def parse_gkg_entity_lines(lines) -> list:
 
 
 def entities_enabled() -> bool:
-    """Whether the steady-state enrichment cycle ALSO persists entities — OFF
-    (``RWE_GDELT_ENTITIES=1`` to enable; no deploy configuration sets it, X5 is an experiment).
-    Off costs nothing: the entity pass over the zip member is skipped entirely."""
+    """Whether the steady-state enrichment cycle ALSO persists entities — **ON in production**
+    (X5b adoption, 2026-08-16: the merge pass consumes ``article_entities`` every build, so the
+    table must stay current or the recall silently ages out with the backfill;
+    ``deploy/docker-compose.yml`` defaults ``RWE_GDELT_ENTITIES=1``, and ``0`` is the kill
+    switch). UNSET falls back to off, where the entity pass over the zip member is skipped
+    entirely and costs nothing."""
     return (os.environ.get("RWE_GDELT_ENTITIES", "") or "").strip().lower() in {"1", "true", "yes", "on"}
 
 

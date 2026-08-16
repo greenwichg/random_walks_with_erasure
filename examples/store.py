@@ -709,11 +709,11 @@ class ArticleEntity(Base):
     """Named entities GDELT's GKG extraction found in a catalog article (X5, rung 2 of
     docs/STORY_ENTITY_EVIDENCE_PLAN.md) — 0..n rows per article, provider-extracted with the
     same contract as :class:`ArticleEventLocation`: never inferred from article text by us,
-    provenance on every row, enrichment only. **Nothing in the serving path reads this table**
-    (2026-08-16): it is populated only by explicit opt-in (``RWE_GDELT_ENTITIES``, default off)
-    or the one-shot ``gdelt_entity_backfill`` CLI, and consumed only by the X5 measurement
-    instruments. Names are stored normalized (lower-cased, whitespace-collapsed) so identity
-    comparisons need no re-normalization."""
+    provenance on every row, enrichment only. Read by the story builder's X5b entity-merge pass
+    when ``RWE_STORY_ENTITY_MERGE > 0`` (adopted 2026-08-16 — one batched query per build);
+    populated by the steady-state enricher (``RWE_GDELT_ENTITIES``, deploy default on) and the
+    one-shot ``gdelt_entity_backfill`` CLI. Names are stored normalized (lower-cased,
+    whitespace-collapsed) so identity comparisons need no re-normalization."""
 
     __tablename__ = "article_entities"
 

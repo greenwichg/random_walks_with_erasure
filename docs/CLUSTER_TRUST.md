@@ -387,6 +387,8 @@ shrank the scored set 73 → 58. Both measured, neither adopted.
 | `RWE_STORY_TRUST_RANKING` | on | `0` restores pure size ordering |
 | `RWE_CLUSTER_LINK_QUORUM` | `0.2` (deploy) | GLOBAL cross-pair fraction required to merge (`0` = single linkage). An earlier revision of this row said "measured and rejected" — that predates the 2026-08-03 adoption (`docs/STORY_CLUSTER_MERGES.md`). The library fallback when the variable is UNSET is still `0.0`, so a container without the deploy env silently reverts to single linkage |
 | `RWE_STORY_REPAIR_QUORUM` | `0.5` (deploy) | TARGETED: same rule, condemned clusters only. Library fallback when unset: `0.0` |
+| `RWE_CLUSTER_GEO_VETO` | `growth` (deploy) | X4 V-growth-2, adopted 2026-08-16: a cluster merge is vetoed when the located consensuses disagree and either side's winning vote is corroborated (`docs/STORY_ENTITY_EVIDENCE_PLAN.md`). Library fallback: off |
+| `RWE_STORY_ENTITY_MERGE` | `2` (deploy) | X5b, adopted 2026-08-16: duplicate-family merges on ≥ 2 shared corroborated non-noise entity names, mutually anchored by both tops. Library fallback: `0` |
 
 ## Caveats, stated rather than buried
 

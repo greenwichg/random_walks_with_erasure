@@ -64,6 +64,7 @@ _DEPLOY_CLUSTER_ENV = (
     "RWE_CLUSTER_LINK_QUORUM", "RWE_STORY_REPAIR_QUORUM", "RWE_STORY_MERGE_SIM",
     "RWE_CLUSTER_MIN_SHARED", "RWE_CLUSTER_MIN_TOKENS", "RWE_CLUSTER_IDF",
     "RWE_STORY_EXCLUDE_WIRE", "RWE_STORY_EXCLUDE_AGGREGATOR",
+    "RWE_CLUSTER_GEO_VETO", "RWE_STORY_ENTITY_MERGE",     # X4 + X5b, adopted 2026-08-16
 )
 
 
@@ -193,15 +194,20 @@ def compare(store_, *, before: tuple, after: tuple, show: int = 10,
             after_repair=None, after_merge=None, after_desc=None,
             after_veto=None, after_entity_merge=None) -> dict:
     rows = story_service._fetch(store_)
-    a = build(rows, min_shared=before[0], min_tokens=before[1], idf=before_idf,
-              quorum=before_quorum)
-    # Telemetry only when a veto/pass is explicitly under test — a None passthrough must stay
-    # byte-identical to production, counting included. The entity mapping is fetched ONLY when
-    # the X5b pass is under test: production builds never pay the query, and neither does an
-    # audit run that is not asking the entity question.
-    veto_stats = {} if (after_veto or after_entity_merge) else None
+    # The entity mapping is fetched when EITHER a flag asks for the X5b pass OR production is
+    # configured with it (adopted 2026-08-16) — and it is handed to BOTH sides, because the
+    # BEFORE side's whole contract is "whatever production is configured with": resolving
+    # entity_merge_min() to 2 while silently withholding the data it needs would make the
+    # baseline something production is not, the exact defect this docstring's history keeps
+    # re-finding one knob at a time.
+    need_entities = bool(after_entity_merge) or story_service.entity_merge_min() > 0
     entities = (store_.entities_for_urls([r.get("canonicalUrl") for r in rows])
-                if after_entity_merge else None)
+                if need_entities else None)
+    a = build(rows, min_shared=before[0], min_tokens=before[1], idf=before_idf,
+              quorum=before_quorum, entities=entities)
+    # Telemetry only when a veto/pass is explicitly under test — a None passthrough must stay
+    # byte-identical to production, counting included.
+    veto_stats = {} if (after_veto or after_entity_merge) else None
     b = build(rows, min_shared=after[0], min_tokens=after[1], idf=after_idf, quorum=after_quorum,
               repair=after_repair, merge=after_merge, desc=after_desc,
               veto=after_veto, veto_stats=veto_stats,
@@ -395,12 +401,15 @@ def main(argv=None) -> int:
            + _tag("dek", cap)
            + (f", veto {args.geo_veto or story_service.geo_veto()}"
               if (args.geo_veto or story_service.geo_veto()) else "")
-           + (f", entity-merge {args.entity_merge}" if args.entity_merge else ""))
+           + (f", entity-merge {args.entity_merge or story_service.entity_merge_min()}"
+              if (args.entity_merge or story_service.entity_merge_min()) else ""))
     base_tag = (_tag("quorum", story_service.link_quorum())
                 + _tag("repair", story_service.repair_quorum())
                 + _tag("merge", story_service.merge_similarity())
                 + _tag("dek", story_service.desc_tokens())
-                + (f", veto {story_service.geo_veto()}" if story_service.geo_veto() else ""))
+                + (f", veto {story_service.geo_veto()}" if story_service.geo_veto() else "")
+                + (f", entity-merge {story_service.entity_merge_min()}"
+                   if story_service.entity_merge_min() else ""))
     # "[PRODUCTION BASELINE]" is a claim about the ENVIRONMENT, not just about before == configured.
     # Every environment is self-consistent with its own defaults, so without this check the label
     # certifies any container as production — which is exactly how a backup-profile container's

@@ -602,10 +602,13 @@ GEO_MIN_CONSENSUS = 2
 
 
 def geo_veto() -> str:
-    """X4 entity-evidence veto — **OFF** ("" = lexical edges unchanged), and NOT a production
-    setting: no deploy configuration sets ``RWE_CLUSTER_GEO_VETO``, and it exists so the audit can
-    measure the candidate (``docs/STORY_ENTITY_EVIDENCE_PLAN.md``) with the same threading
-    discipline every other knob got. Junk values fall back to off, never to a guess.
+    """X4 entity-evidence veto — **``growth`` in production** (adopted 2026-08-16 with X5b;
+    ``deploy/docker-compose.yml`` defaults it, measurement record in
+    ``docs/STORY_ENTITY_EVIDENCE_PLAN.md``: runs C/E — bad clusters 4 → 2, 0.3% coverage at
+    net −2 articles, Ronaldo-safe under corroboration). ``RWE_CLUSTER_GEO_VETO`` overrides;
+    UNSET falls back to "" = off, so an environment without the deploy's variables loses the
+    veto — the same library-vs-deploy divergence ``link_quorum`` documents, guarded by the same
+    audit environment check. Junk values fall back to off, never to a guess.
 
     The evidence is ``eventCountries`` — already batched onto every clustering row by ``_fetch``
     and carried through ``discover.feed_article_to_article``, consumed until now only AFTER
@@ -634,15 +637,18 @@ def geo_veto() -> str:
 
 
 def entity_merge_min() -> int:
-    """X5b entity-corroborated merge recall — **OFF** (0), and not a production setting: no
-    deploy configuration sets ``RWE_STORY_ENTITY_MERGE``, and the pass additionally requires the
-    caller to inject the entity mapping (the audit does; ``_fetch`` deliberately does not query
-    it, so production builds cost nothing). The value is the MINIMUM shared corroborated
-    non-noise consensus names two stories need before a join is even proposed — 2 by design:
-    one shared name can be a type-level responder agency (the USGS receipt at
-    :func:`entity_noise`), two independent corroborated names is the measured signature of the
-    same event family (Farage/Clacton shared 3, Mangione's court stories 2-3;
-    docs/STORY_ENTITY_EVIDENCE_PLAN.md, X5 phase 0)."""
+    """X5b entity-corroborated merge recall — **2 in production** (adopted 2026-08-16;
+    ``deploy/docker-compose.yml`` defaults it; run-3 record in
+    ``docs/STORY_ENTITY_EVIDENCE_PLAN.md``: 44 joins, zero dropped, largest 71 = the Mangione
+    family, ten of twelve exhibits clean with the two residual riders named). UNSET falls back
+    to 0 = off, and the pass ALSO requires the entity mapping — every serving call site fetches
+    it through ``_entities_for`` when this is > 0, so an environment without the deploy's
+    variables (or without backfilled ``article_entities``) degrades to the lexical build rather
+    than erroring. The value is the MINIMUM shared corroborated non-noise consensus names two
+    stories need before a join is even proposed — 2 by design: one shared name can be a
+    type-level responder agency (the USGS receipt at :func:`entity_noise`), two independent
+    corroborated names is the measured signature of the same event family (Farage/Clacton
+    shared 3, Mangione's court stories 2-3)."""
     v = os.environ.get("RWE_STORY_ENTITY_MERGE", "").strip()
     try:
         n = int(v)
@@ -1672,6 +1678,16 @@ def _subprocess_eligible(store_) -> bool:
     return url.startswith("sqlite:///") and ":memory:" not in url
 
 
+def _entities_for(store_, rows: list) -> "dict | None":
+    """The X5b entity mapping for a build — fetched ONLY when the pass is enabled (adopted
+    2026-08-16), one batched side-table query per build, ``None`` (free) when the env is off.
+    Every serving-path call site goes through here so none can silently diverge from what the
+    audit measured."""
+    if entity_merge_min() <= 0:
+        return None
+    return store_.entities_for_urls([r.get("canonicalUrl") for r in rows])
+
+
 def _subprocess_build(db_url: str, topic, date_from, date_to, max_scan,
                       min_articles: int, min_publishers: int) -> list:
     """The child's whole job: open the database, fetch the slice, cluster it, return plain dicts.
@@ -1682,9 +1698,9 @@ def _subprocess_build(db_url: str, topic, date_from, date_to, max_scan,
     import store as _store_mod
     st = _store_mod.Store(db_url)
     try:
-        return build_stories(_fetch(st, topic=topic, date_from=date_from, date_to=date_to,
-                                    max_scan=max_scan),
-                             min_articles=min_articles, min_publishers=min_publishers)
+        rows = _fetch(st, topic=topic, date_from=date_from, date_to=date_to, max_scan=max_scan)
+        return build_stories(rows, min_articles=min_articles, min_publishers=min_publishers,
+                             entities=_entities_for(st, rows))
     finally:
         try:
             st.engine.dispose()
@@ -2131,9 +2147,11 @@ def _cached_build(store_, *, topic, date_from, date_to, max_scan, min_articles, 
                                        max_scan=max_scan, min_articles=min_articles,
                                        min_publishers=min_publishers)
         if stories is None:
-            stories = build_stories(_fetch(store_, topic=topic, date_from=date_from,
-                                           date_to=date_to, max_scan=max_scan),
-                                    min_articles=min_articles, min_publishers=min_publishers)
+            rows = _fetch(store_, topic=topic, date_from=date_from,
+                          date_to=date_to, max_scan=max_scan)
+            stories = build_stories(rows, min_articles=min_articles,
+                                    min_publishers=min_publishers,
+                                    entities=_entities_for(store_, rows))
         # Identity is applied HERE — in the parent, never the child — and not inside build_stories,
         # which stays a pure function of its rows. Only the unfiltered build WRITES identity: a
         # topic- or date-filtered view sees a subset of each cluster, so letting it write the map
@@ -2301,7 +2319,9 @@ def default_story_view(store_, *, build_inline: bool = False) -> list:
         obs_metrics.incr("story_default_view_inline_build_total")
         _t = _time.perf_counter()
         try:
-            return build_stories(_fetch(store_), min_articles=2, min_publishers=2)
+            rows = _fetch(store_)
+            return build_stories(rows, min_articles=2, min_publishers=2,
+                                 entities=_entities_for(store_, rows))
         finally:
             obs_metrics.observe("story_default_view_inline_build_ms",
                                 (_time.perf_counter() - _t) * 1000.0)
@@ -2353,8 +2373,10 @@ def cluster_from_store(store_, *, min_articles: int = 2, min_publishers: int = 2
     question and belongs on :func:`default_story_view`; three request-path callers sat here anyway
     and one of them took every publisher page down when the catalog outgrew the web deadline.
     Operator diagnostics and parameterised audits are what this function is for."""
-    return build_stories(_fetch(store_, max_scan=max_scan), min_articles=min_articles,
-                         min_publishers=min_publishers, sim=sim, window_days=window_days)
+    rows = _fetch(store_, max_scan=max_scan)
+    return build_stories(rows, min_articles=min_articles,
+                         min_publishers=min_publishers, sim=sim, window_days=window_days,
+                         entities=_entities_for(store_, rows))
 
 
 def list_stories(store_, *, topic=None, publisher=None, lean=None, country=None, blindspot=None,

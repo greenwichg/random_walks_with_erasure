@@ -426,3 +426,31 @@ def test_no_entity_flag_fetches_nothing(tmp_path, monkeypatch):
                         lambda self, urls: calls.append(1) or orig(self, urls))
     acc.compare(st, before=(3, 3), after=(3, 3), show=1)
     assert not calls, "an audit run that is not asking the entity question must not pay for it"
+
+
+def test_adopted_entity_merge_is_part_of_the_baseline(tmp_path, monkeypatch, capsys):
+    """Production carries RWE_STORY_ENTITY_MERGE=2 (adopted 2026-08-16), so a flagless audit's
+    BEFORE side must run the pass WITH its data — resolving the env while silently withholding
+    the entity mapping would make the baseline something production is not, the same defect
+    this file's history keeps re-finding one knob at a time."""
+    monkeypatch.setenv("RWE_CLUSTER_LINK_QUORUM", "0")
+    monkeypatch.setenv("RWE_STORY_ENTITY_MERGE", "2")
+    st = _store(tmp_path, "adopted.db")
+    for pub in ("A", "B"):
+        _feed(st, f"https://{pub.lower()}.example.com/shooting", pub,
+              "Mass shooting reported downtown at Seattle Center venue")
+    for pub in ("C", "D"):
+        _feed(st, f"https://{pub.lower()}.example.com/gunfire", pub,
+              "Gunfire erupts near busy plaza as police respond quickly")
+    for pub in ("a", "b", "c", "d"):
+        url = f"https://{pub}.example.com/" + ("shooting" if pub in "ab" else "gunfire")
+        st.replace_article_entities(url, {"person": ["jane suspect"], "org": ["seattle center"]})
+
+    rc = acc.main(["--db", f"sqlite:///{tmp_path / 'adopted.db'}"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    before = next(l for l in out.splitlines() if l.startswith("before"))
+    assert "entity-merge 2" in before and "[PRODUCTION BASELINE]" in before
+    assert "clusters split     : 0" in out and "clusters merged    : 0" in out, \
+        "before and after both ran the adopted pass — a flagless run is a no-op diff"
+    assert "1 stories" in before, "the pass joined the pair on BOTH sides"
