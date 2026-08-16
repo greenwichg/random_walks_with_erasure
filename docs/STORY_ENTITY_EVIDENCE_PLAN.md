@@ -331,6 +331,30 @@ not at all); the death-toll trio, courts, earnings and eclipse/Samsung severance
 and the aggregates must hold their run-C levels (≤ 1% dropped, story count not falling, largest
 ≤ baseline, bad count not above 4).
 
+**Run E result (2026-08-16): mixed — the aggregates are the best yet and the headline check
+FAILED.** 1,563 → 1,565 stories, largest 64, dropped 16 (0.3%) against 14 newly covered, bad
+clusters 4/74 → 2/71 at mean 0.964, 780 merge vetoes. Ronaldo is intact (the corroboration rule
+did its job) and the Ebola severance survived. But the **Colombia+Indonesia merged story is
+still in the merged table, unchanged at 31/21**, and three run-C true severances did not
+survive corroboration's permissiveness: the two court cases, the two companies' earnings and
+the eclipse/Samsung split are fused again, while two new one-event-in-two-pieces candidates
+appeared (the Assad trial 16+4, the Zuckerberg yacht 11+3).
+
+The CO+ID survival has exactly two possible explanations with OPPOSITE conclusions, and the
+next step is the measurement that separates them rather than a fourth rule revision:
+
+* the Indonesia articles are **unlocated** (ID is absent from Phase 0's top-10) — then no
+  location rule can ever sever this pair, the veto's reach is bounded by GKG's 18.7%
+  article coverage, and the ceiling is DATA, not design;
+* they are located **one member per sub-story** — then the 1v1 seed fusion fails open (that IS
+  the Ronaldo protection), the fused {CO, ID} tie overlaps the corroborated {CO} side, and the
+  poisoning path survives corroboration: a genuine design tension, because the same rule that
+  protects Ronaldo admits the tie.
+
+The diagnostic is a read-only print of `eventCountries` for the members of the survived merge
+and the changed splits; its output decides between "adopt as a bounded incremental win" and
+"the corroboration rule needs a tie-handling amendment".
+
 ### Ground truth — selection procedures, not fixed IDs (the catalog moves daily)
 
 * **Must-sever set** (false-merge labels): re-run the X0 counterfactual (`fallbacks, --pieces`)

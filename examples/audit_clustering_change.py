@@ -427,7 +427,8 @@ def main(argv=None) -> int:
               f"(both located {vs.get('pairBothLocated', 0):,}, "
               f"vetoed {vs.get('pairVetoed', 0):,}); "
               f"merges checked {vs.get('mergeChecked', 0):,} "
-              f"(gated {vs.get('mergeGated', 0):,}, vetoed {vs.get('mergeVetoed', 0):,})")
+              f"(gated {vs.get('mergeGated', 0):,}, vetoed {vs.get('mergeVetoed', 0):,}); "
+              f"dup-merge vetoed {vs.get('dupMergeVetoed', 0):,}")
         if args.geo_veto and not any(vs.values()):
             print("                     NOTE: the veto was never consulted — either nothing "
                   "lexically matched or no event locations exist in this catalog")
