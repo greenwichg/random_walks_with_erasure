@@ -127,9 +127,14 @@ def main(argv=None) -> int:
     found = {label: _find(arts, terms) for label, terms in SIGS.items()}
     have_all = all(found.values())
     if have_all:
-        u = {label: found[label]["id"] for label in found}
-        base_story = {label: a_member.get(u[label]) for label in found}
-        cand_story = {label: b_member.get(u[label]) for label in found}
+        # BOTH url forms, or the check convicts the rule of the instrument's join bug: coverage
+        # rows carry the DISPLAY url while the serialized id is the canonical — the trap every
+        # instrument in this repo has now paid for at least once (first run of this audit
+        # included: the pair was clustered, and this lookup, canonical-only, printed None).
+        def member_story(mapping, art):
+            return mapping.get(art["id"]) or mapping.get(art.get("url"))
+        base_story = {label: member_story(a_member, found[label]) for label in found}
+        cand_story = {label: member_story(b_member, found[label]) for label in found}
         welded = len({s for s in base_story.values() if s}) == 1 and all(base_story.values())
         pair_ok = (cand_story["xmen-radio"] is not None
                    and cand_story["xmen-radio"] == cand_story["xmen-forbes"])
