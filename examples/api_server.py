@@ -777,6 +777,28 @@ _INTEREST_TOPICS = {
 }
 _INTEREST_NEUTRAL = 5     # the slider midpoint — contributes no key; the feed stays byte-identical
 
+# The slider → rank-multiplier curve, piecewise-linear through three anchors (slider 1 / 5 / 10),
+# the same tunable-anchor pattern as _OPENNESS_BRIDGE_BUDGET / _STRENGTH_BETA. Retuned 2026-08-17
+# against production measurements: the original curve (multiplier = w/5, so max = 2x) was verified
+# mechanically correct but too gentle to matter for a topic-concentrated reader — the live probe
+# put that reader's nearest unserved Sports items at raw ranks 404–1,075, and a 2x boost reaches
+# only ~2x the serving cutoff. Max weight is now an 8x boost: it reaches items ranked within ~8x
+# of the cutoff (the near-to-mid walk neighborhood, top ~3% of a 1,500-node ranking) while a
+# rank-400 item still never overrides the model's head — a stronger nudge, still never a hard
+# flip, and never an admission or exclusion. The demote side (0.2 at slider 1, a 5x rank penalty)
+# was verified effective in the same probe and is byte-identical to the original curve, as is the
+# neutral identity at 5.
+_INTEREST_ANCHORS = (0.2, 1.0, 8.0)   # slider 1 / 5 / 10 → rank divisor (boost above 1, demote below)
+
+
+def _interest_multiplier(w: float) -> float:
+    """Slider weight (1–10) → the rank divisor of :data:`_INTEREST_ANCHORS`, linear on each side
+    of the neutral 5. Clamped defensively: params are also a direct-call surface (tests, the rec
+    sandbox), and a junk weight must degrade to a bounded nudge, never a zero/negative divisor."""
+    w = max(1.0, min(10.0, float(w)))
+    lo, mid, hi = _INTEREST_ANCHORS
+    return lo + (mid - lo) * (w - 1.0) / 4.0 if w <= 5.0 else mid + (hi - mid) * (w - 5.0) / 5.0
+
 
 def _piecewise(v: float, lo: float, mid: float, hi: float) -> float:
     """Linear 0→``lo``, 50→``mid``, 100→``hi`` (callers pass an already-clamped 0–100 value)."""
@@ -1800,12 +1822,13 @@ class Backend:
         ``params["interests"]`` maps lower-cased catalog topics to slider weights 1–10 (the
         neutral 5 never ships a key — :func:`rec_params_from_settings` drops it). An item at
         0-based pool position ``i`` whose topic carries weight ``w`` re-sorts on the key
-        ``(i + 1) * 5 / w``: weight 10 halves its effective rank, weight 1 quintuples it — a
-        nudge on the ORDER of the pool, never an admission or exclusion, so every item stays
-        reachable and the slice budgets / publisher cap downstream mean what they always meant.
-        Unweighted topics (and "" uncategorized) keep their exact key, and the sort is stable,
-        so the no-weights case — and every same-topic pair — preserves model order exactly:
-        the identity claim is by construction, not by tolerance.
+        ``(i + 1) / _interest_multiplier(w)`` (:data:`_INTEREST_ANCHORS`: weight 10 divides the
+        effective rank by 8, weight 1 multiplies it by 5) — a nudge on the ORDER of the pool,
+        never an admission or exclusion, so every item stays reachable and the slice budgets /
+        publisher cap downstream mean what they always meant. Unweighted topics (and ""
+        uncategorized) keep their exact key, and the sort is stable, so the no-weights case —
+        and every same-topic pair — preserves model order exactly: the identity claim is by
+        construction, not by tolerance.
 
         Runs BEFORE :meth:`_slice_select`, so the rwe-b cross-cutting-first partition (Commit
         R1.5) and the W1 bridge budget keep their guarantees over the nudged order. Shared by
@@ -1818,7 +1841,7 @@ class Backend:
         keys = []
         for i, col in enumerate(cols):
             w = weights.get(str(cats[col]).strip().lower())
-            keys.append((i + 1) * (float(_INTEREST_NEUTRAL) / float(w)) if w else float(i + 1))
+            keys.append((i + 1) / _interest_multiplier(w) if w else float(i + 1))
         order = sorted(range(len(cols)), key=lambda i: (keys[i], i))
         return [cols[i] for i in order]
 

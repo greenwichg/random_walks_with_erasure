@@ -1059,6 +1059,20 @@ def test_rec_params_interest_mapping():
     assert "politics" not in {t for ts in api_server._INTEREST_TOPICS.values() for t in ts}
 
 
+def test_interest_multiplier_anchors():
+    """The retuned curve (2026-08-17, measured): demote side and neutral are byte-identical to
+    the original w/5 scaling; only the boost side strengthens, to 8x at the max — and junk
+    weights clamp to the slider range rather than producing a zero/negative divisor."""
+    m = api_server._interest_multiplier
+    assert m(5) == 1.0                                    # neutral identity, unchanged
+    for w in (1, 2, 3, 4):                                # demote side == the original w/5
+        assert m(w) == pytest.approx(w / 5.0)
+    assert m(10) == 8.0                                   # the retuned max boost (was 2.0)
+    assert m(7) == pytest.approx(3.8)                     # linear between the anchors
+    assert m(6) < m(7) < m(8) < m(9) < m(10)              # monotone
+    assert m(-3) == m(1) and m(99) == m(10)               # clamped, never <= 0
+
+
 def test_interest_rerank_is_a_stable_bounded_nudge():
     """The re-ranker: identity without weights (the same list object — provably no-op), a boost
     pulls a topic up and a demotion pushes it down WITHOUT dropping anything, same-topic model
@@ -1070,7 +1084,7 @@ def test_interest_rerank_is_a_stable_bounded_nudge():
     assert R(M, cols, None) is cols                       # no params -> the very same object
     assert R(M, cols, {"beta": 0.3}) is cols              # params without interests -> same
     boosted = R(M, cols, {"interests": {"health": 10}})
-    assert boosted == [0, 1, 4, 2, 3]                     # health halves its rank; nothing lost
+    assert boosted == [4, 0, 1, 2, 3]                     # 8x boost: health leads; nothing lost
     demoted = R(M, cols, {"interests": {"sports": 1}})
     assert demoted == [1, 3, 0, 4, 2]                     # sports quintuple their rank keys
     assert sorted(boosted) == sorted(demoted) == cols     # a nudge, never an exclusion
