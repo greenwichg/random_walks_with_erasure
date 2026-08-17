@@ -3077,3 +3077,97 @@ def test_summary_build_level_wiring_fallback_and_id_stability():
         "the id still anchors on the representative — summaries can never move ids"
     assert [s["summary"] for s in ss.build_stories(ss._fetch(st))] == \
         [s["summary"] for s in stories], "deterministic"
+
+
+# --------------------------------------------------------------------------- #
+# Sole-template-evidence gate (Phase B; RWE_CLUSTER_TEMPLATE_GATE, off by default)
+# --------------------------------------------------------------------------- #
+def _template_weld(st):
+    """The production-confirmed anchor exhibit (2026-08-17): five announcement-template
+    headlines welded into one story by edges whose shared tokens are all template vocabulary,
+    plus a genuine two-publisher control story that must never be touched."""
+    _add(st, "https://e.example/1", "Radio Pacific Inc", 0.0,
+         "'X-Men' cast, release date revealed at D23", category="Entertainment", days=1)
+    _add(st, "https://e.example/2", "Forbes", 0.0,
+         "Here Are The MCU X-Men Cast Members Revealed At D23 - Forbes",
+         category="Entertainment", days=1)
+    _add(st, "https://e.example/3", "Techgenyz.Com", 0.0,
+         "DJI Osmo 360 II Release Date and Specs: Everything We Know So Far",
+         category="Entertainment", days=2)
+    _add(st, "https://e.example/4", "Womansworld.Com", 0.0,
+         "The Paper Season 2 Cast , Release Date and Trailer Revealed",
+         category="Entertainment", days=3)
+    _add(st, "https://e.example/5", "News18", 0.0,
+         "Mirzapur The Movie: Trailer, Cast, Release Date And Everything You Must Know",
+         category="Entertainment", days=4)
+    _add(st, "https://q.example/1", "AP News", 0.0,
+         "Earthquake strikes central Colombia injuring dozens", days=0)
+    _add(st, "https://q.example/2", "BBC News", 0.0,
+         "Earthquake strikes central Colombia injuring dozens of residents", days=0)
+
+
+def test_template_gate_off_is_byte_identical_and_keeps_the_weld():
+    """OFF (the default) is provably the pre-gate behaviour: template=None and template=False
+    build identical stories, and the anchor weld still forms — pinning the CURRENT defect so
+    the gate's effect is measured against it, never assumed."""
+    import json
+    st = store_mod.Store("sqlite://")
+    _template_weld(st)
+    rows = ss._fetch(st)
+    off = ss.build_stories(rows)
+    explicit = ss.build_stories(rows, template=False)
+    assert json.dumps(off, sort_keys=True) == json.dumps(explicit, sort_keys=True)
+    assert any(s["totalCoverage"] == 5 for s in off)          # the weld is present without the gate
+
+
+def test_template_gate_resolves_the_anchor_exhibit():
+    """ON: the weld resolves exactly as Phase A's fragmentation predicted — the X-Men pair
+    survives as a story, the three unrelated articles detach below admission, the control
+    story is untouched, the veto is counted, and the build is deterministic."""
+    import json
+    st = store_mod.Store("sqlite://")
+    _template_weld(st)
+    rows = ss._fetch(st)
+    stats = {}
+    on = ss.build_stories(rows, template=True, veto_stats=stats)
+    assert json.dumps(on, sort_keys=True) == \
+        json.dumps(ss.build_stories(rows, template=True), sort_keys=True)   # deterministic
+    assert sorted(s["totalCoverage"] for s in on) == [2, 2]   # X-Men pair + control; weld gone
+    covered = {c["url"] for s in on for c in s["coverage"]}
+    assert {"https://e.example/1", "https://e.example/2"} <= covered        # pair stays clustered
+    assert not ({"https://e.example/3", "https://e.example/4",
+                 "https://e.example/5"} & covered)             # the three detach
+    assert stats.get("templateEdgeVetoed", 0) >= 3            # the three false edges, counted
+
+
+def test_template_gate_env_resolution(monkeypatch):
+    """Env flag semantics: unset/junk = off (never a guess), '1' = on, and the env build is
+    byte-identical to the explicit-parameter build."""
+    import json
+    monkeypatch.delenv("RWE_CLUSTER_TEMPLATE_GATE", raising=False)
+    assert ss.template_gate() is False
+    monkeypatch.setenv("RWE_CLUSTER_TEMPLATE_GATE", "loud")
+    assert ss.template_gate() is False
+    monkeypatch.setenv("RWE_CLUSTER_TEMPLATE_GATE", "1")
+    assert ss.template_gate() is True
+    st = store_mod.Store("sqlite://")
+    _template_weld(st)
+    rows = ss._fetch(st)
+    via_env = ss.build_stories(rows)
+    monkeypatch.delenv("RWE_CLUSTER_TEMPLATE_GATE")
+    via_param = ss.build_stories(rows, template=True)
+    assert json.dumps(via_env, sort_keys=True) == json.dumps(via_param, sort_keys=True)
+
+
+def test_template_closure_requires_a_distinctive_shared_token():
+    """The closure itself: a pair sharing only template tokens fails; one distinctive shared
+    token passes; and the veto counter increments only on the failure path."""
+    arts = [{"headline": "The Paper Season 2 Cast , Release Date and Trailer Revealed"},
+            {"headline": "Mirzapur The Movie: Trailer, Cast, Release Date And Everything You Must Know"},
+            {"headline": "'X-Men' cast, release date revealed at D23"},
+            {"headline": "Here Are The MCU X-Men Cast Members Revealed At D23 - Forbes"}]
+    stats = {}
+    ok = ss._template_closure(arts, 0, stats)
+    assert ok(0, 1) is False                                  # sole-template -> vetoed
+    assert ok(2, 3) is True                                   # shares {men, d23} -> passes
+    assert stats == {"templateEdgeVetoed": 1}

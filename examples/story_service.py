@@ -725,6 +725,58 @@ def link_quorum() -> float:
     return q if 0.0 <= q <= 1.0 else clustering.DEFAULT_LINK_QUORUM
 
 
+#: The announcement-template lexicon (Phase A registration, 2026-08-17 — the twelve tokens,
+#: verbatim; ``audit_template_edges.py`` measures this exact set). Tokens that name the SHAPE of
+#: a reveal headline rather than its subject. They keep counting toward Jaccard — recall inside
+#: real stories is untouched — but under the template gate they cannot be the ENTIRE case for an
+#: edge. The production-confirmed anchor exhibit: "'X-Men' cast, release date revealed at D23"
+#: welded to The Paper / Mirzapur / DJI Osmo over shared sets drawn wholly from this vocabulary
+#: (j up to 0.444, zero distinctive tokens), while the genuine X-Men pair also shared
+#: {men, d23} and survives the rule. Phase A census over 26,565 live articles: exactly 3 edges
+#: of 19,001 rest solely on this set — all three are that exhibit's false edges.
+TEMPLATE_TOKENS = frozenset(("cast", "date", "episode", "everything", "know", "premiere",
+                             "release", "revealed", "season", "specs", "teaser", "trailer"))
+
+
+def template_gate() -> bool:
+    """The sole-template-evidence rule — **OFF by default** (Phase B: measured, not yet
+    adopted; ``RWE_CLUSTER_TEMPLATE_GATE=1`` enables without a deploy). When on, a pairwise
+    edge must share at least one token OUTSIDE :data:`TEMPLATE_TOKENS` — the same
+    "distinctive evidence" concept ``MIN_SHARED_TOKENS`` was designed around, enforced at the
+    edge level through the ``evidence`` hook, so admission, quorum cross-pair scoring and the
+    repair re-cluster all consult one rule. Junk values fall back to off, never to a guess."""
+    v = os.environ.get("RWE_CLUSTER_TEMPLATE_GATE", "").strip().lower()
+    return v in {"1", "true", "yes", "on"}
+
+
+def _template_closure(arts: list, cap: int, stats: Optional[dict] = None):
+    """``evidence(x, y)`` for the template gate: True iff the pair shares >= 1 non-template
+    token. Token sets are the build's own (:func:`article_tokens` at the build's dek cap), so
+    the gate judges exactly the signal that admitted the pair. Pure and deterministic."""
+    toks = [article_tokens(a, cap) for a in arts]
+
+    def ok(x: int, y: int) -> bool:
+        if (toks[x] & toks[y]) - TEMPLATE_TOKENS:
+            return True
+        if stats is not None:
+            stats["templateEdgeVetoed"] = stats.get("templateEdgeVetoed", 0) + 1
+        return False
+    return ok
+
+
+def _and_evidence(*fns):
+    """AND-compose optional ``evidence`` closures (None entries drop; empty -> None)."""
+    live = [f for f in fns if f is not None]
+    if not live:
+        return None
+    if len(live) == 1:
+        return live[0]
+
+    def ok(x: int, y: int) -> bool:
+        return all(f(x, y) for f in live)
+    return ok
+
+
 _GEO_VETO_MODES = ("pair", "growth")
 
 #: Votes the WINNING country of a cluster side's located consensus needs before that side's
@@ -1106,7 +1158,8 @@ def _admit(groups: list, arts: list, *, min_articles: int, min_publishers: int) 
 
 def _repair(members: list, *, quorum: float, sim: float, window_days: float, min_shared: int,
             min_tokens: int, idf: bool, min_articles: int, min_publishers: int,
-            desc: int = 0, veto: str = "", veto_stats: Optional[dict] = None) -> Optional[list]:
+            desc: int = 0, veto: str = "", veto_stats: Optional[dict] = None,
+            template: bool = False) -> Optional[list]:
     """Re-cluster ONE condemned cluster's members under a stricter linkage rule.
 
     Why targeted rather than global: measured on the live catalog, a global quorum splits the
@@ -1121,8 +1174,12 @@ def _repair(members: list, *, quorum: float, sim: float, window_days: float, min
     yields one piece (nothing was separated) or loses more than ``REPAIR_MIN_RETENTION`` of the
     articles (it destroyed the cluster rather than resolving it)."""
     # Closures are rebuilt over THIS member list — the veto callables receive indices, and the
-    # indices of a condemned cluster's sublist are not the indices of the whole build.
+    # indices of a condemned cluster's sublist are not the indices of the whole build. The
+    # template gate composes here exactly as in the primary build (one rule, or the repair
+    # re-splits on a disagreement rather than a defect — the article_tokens discipline).
     r_evidence, r_merge_ok = _geo_closures(members, veto, veto_stats)
+    if template:
+        r_evidence = _and_evidence(_template_closure(members, desc, veto_stats), r_evidence)
     pieces = _admit(
         clustering.cluster(members, tokens=lambda a: article_tokens(a, desc),
                            time=lambda a: clustering.parse_time(a["publishedAt"]),
@@ -1572,7 +1629,8 @@ def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
                   veto: Optional[str] = None,
                   veto_stats: Optional[dict] = None,
                   entity_merge: Optional[int] = None,
-                  entities: Optional[dict] = None) -> list:
+                  entities: Optional[dict] = None,
+                  template: Optional[bool] = None) -> list:
     """Cluster FeedArticle rows into Story objects (the pure builder). Keeps clusters with
     ≥ ``min_articles`` from ≥ ``min_publishers`` distinct outlets; sorted biggest+freshest first,
     with independently-suspect clusters demoted (see ``_size_rank``).
@@ -1642,6 +1700,12 @@ def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
     # built over the post-exclusion `arts`, the exact list the clusterer indexes into.
     veto_mode = geo_veto() if veto is None else (veto if veto in _GEO_VETO_MODES else "")
     g_evidence, g_merge_ok = _geo_closures(arts, veto_mode, veto_stats)
+    # The sole-template-evidence rule (Phase B; template_gate) — an edge must share >= 1
+    # non-template token. Composed through the SAME evidence hook as the geo veto, so admission,
+    # quorum scoring and repair consult one rule; None/off is byte-identical by construction.
+    t_gate = template_gate() if template is None else bool(template)
+    if t_gate:
+        g_evidence = _and_evidence(_template_closure(arts, cap, veto_stats), g_evidence)
     groups = clustering.cluster(
         arts, tokens=lambda a: article_tokens(a, cap),
         time=lambda a: clustering.parse_time(a["publishedAt"]), sim=sim, window_days=window_days,
@@ -1655,7 +1719,7 @@ def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
             pieces = _repair(members, quorum=mend, sim=sim, window_days=window_days,
                              min_shared=shared, min_tokens=tokens_floor, idf=weighting,
                              min_articles=min_articles, min_publishers=min_publishers, desc=cap,
-                             veto=veto_mode, veto_stats=veto_stats)
+                             veto=veto_mode, veto_stats=veto_stats, template=t_gate)
             if pieces is not None:
                 admitted.extend(pieces)
                 continue
