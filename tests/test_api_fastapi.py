@@ -1896,3 +1896,115 @@ def test_a_dark_flag_is_counted_as_disabled_not_as_a_null(client, uid, story_ind
     assert client.get("/api/me/continuation", params={"url": ANCHOR},
                       headers={"X-IH-User-Id": str(uid)}).json() is None
     assert (_count("disabled"), _count("null")) == (disabled + 1, nulls)
+
+
+# --------------------------------------------------------------------------- #
+# Interest Intensity — end-to-end regression: persistence AND ranking impact (1 < 5 < 10).
+# --------------------------------------------------------------------------- #
+def test_interest_intensity_persists_and_moves_the_feed_end_to_end(tmp_path, monkeypatch):
+    """The full production path, one interest at a time: POST /api/me/settings persists the
+    slider; GET /api/recommendations re-reads it and the feed's exposure of that topic is
+    MONOTONE in the slider — weight 1 <= default 5 <= weight 10, strictly overall — while a
+    round-trip back to 5 restores the exact baseline feed (zero residue on unrelated topics or
+    the political axis). Run for TWO interests so the behaviour is provably not hard-coded to
+    one topic.
+
+    Needs its own app instance: the module fixture's synthetic corpus carries `topic_N`
+    categories, which the slider keys deliberately do NOT map to (a slider must name a real
+    catalog topic) — so this boots a feed-backed corpus whose articles carry the real taxonomy
+    (Politics/Sports/Technology/Business), exactly like production."""
+    import store as store_mod
+
+    db = f"sqlite:///{tmp_path}/interest.db"
+    st = store_mod.Store(db)
+    outlets = [("The Guardian", -1.5), ("NPR", -1.0), ("Associated Press", 0.0), ("Fox News", 1.6)]
+    cats = ["Politics", "Sports", "Technology", "Business"]
+    for pub, lean in outlets:
+        dom = pub.lower().replace(" ", "")
+        for cat in cats:
+            for k in range(3):
+                u = f"https://{dom}.example.com/{cat.lower()}/{k}"
+                st.upsert_feed_article(
+                    canonical_url=u, url=u, publisher=pub, source_publisher=pub,
+                    title=f"{pub} {cat} item {k}", description="d", body=None,
+                    published_at="2026-08-10T00:00:00+00:00", source_feed="seed",
+                    source_type="rss",
+                    scored={"article_id": u, "outlet": pub, "category": cat, "lean": lean,
+                            "political": cat == "Politics", "title": f"{pub} {cat} {k}"})
+
+    monkeypatch.setenv("RWE_DB_URL", db)
+    monkeypatch.setenv("RWE_RECS_SOURCE", "feed")
+    monkeypatch.setenv("RWE_FEED_MIN_ARTICLES", "5")
+    monkeypatch.setenv("RWE_CORPUS_MIN_ARTICLES", "5")
+    monkeypatch.setenv("RWE_N_USERS", "80")
+    monkeypatch.setenv("RWE_MAX_ITEMS", "200")
+    monkeypatch.delenv("RWE_INTERNAL_SECRET", raising=False)
+
+    m = _load("api_fastapi_interest", ROOT / "examples" / "api_fastapi.py")
+    with TestClient(m.app) as client:
+        uid = client.post("/api/internal/users",
+                          json={"provider": "google", "providerAccountId": "interest-e2e"}
+                          ).json()["userId"]
+        h = {"X-IH-User-Id": str(uid)}
+        # Cross the measured threshold on POLITICS reads, leaving the interest topics' depth
+        # untouched for the recommender to draw from.
+        arts = client.get("/api/discover?limit=60").json()["articles"]
+        pol = [a for a in arts if a["topic"] == "Politics"][:5]
+        assert len(pol) == 5
+        client.post("/api/me/reads",
+                    json={"reads": [{"url": a["url"], "title": a["headline"]} for a in pol]},
+                    headers=h)
+
+        def feed():
+            recs = client.get("/api/recommendations", headers=h).json()
+            assert recs, "a measured reader must have a feed"
+            return recs
+
+        def exposure(recs, topic):
+            """Rank-weighted exposure: strictly grows when topic cards move up OR more appear."""
+            return sum(1.0 / (i + 1) for i, r in enumerate(recs)
+                       if r["article"]["topic"] == topic)
+
+        def set_interest(key, value):
+            saved = client.post("/api/me/settings", json={"interests": {key: value}},
+                                headers=h).json()
+            assert saved["interests"][key] == value               # persisted (the write's echo)
+            again = client.get("/api/me/settings", headers=h).json()
+            assert again["interests"][key] == value               # persisted (a fresh read)
+            assert again["politicalOpenness"] == 50               # the political axis never moves
+            return again
+
+        # step 1 — baseline at the default 5 (server default; nothing stored yet)
+        assert client.get("/api/me/settings", headers=h).json()["interests"]["sports"] == 5
+        base = feed()
+
+        for topic, key in (("Sports", "sports"), ("Technology", "technology")):
+            base_ids = [r["article"]["id"] for r in base]
+
+            # steps 2-3 — low value: persisted, and the topic's exposure never rises
+            set_interest(key, 1)
+            lo = feed()
+            # step 4 — high value: persisted, and the topic's exposure never falls
+            set_interest(key, 10)
+            hi = feed()
+
+            # step 5 — monotone chain 1 <= 5 <= 10, strict across the extremes
+            e_lo, e_base, e_hi = (exposure(lo, topic), exposure(base, topic),
+                                  exposure(hi, topic))
+            assert e_lo <= e_base <= e_hi, (topic, e_lo, e_base, e_hi)
+            assert e_lo < e_hi, f"{topic}: the slider does not move the feed"
+            n_lo = sum(1 for r in lo if r["article"]["topic"] == topic)
+            n_hi = sum(1 for r in hi if r["article"]["topic"] == topic)
+            assert n_lo <= n_hi                                   # count direction agrees
+
+            # unrelated topics: an untouched topic's own cards keep their relative order
+            # (the stable-sort invariant — reordering is confined to the weighted topic)
+            for other in ("Business", "Politics"):
+                lo_o = [r["article"]["id"] for r in lo if r["article"]["topic"] == other]
+                hi_o = [r["article"]["id"] for r in hi if r["article"]["topic"] == other]
+                common = [i for i in lo_o if i in hi_o]
+                assert [i for i in lo_o if i in common] == [i for i in hi_o if i in common], other
+
+            # back to neutral -> the EXACT baseline feed (zero residue anywhere)
+            set_interest(key, 5)
+            assert [r["article"]["id"] for r in feed()] == base_ids, topic
