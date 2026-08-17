@@ -340,6 +340,16 @@ services:
       # lexical profile reaches) at zero dropped articles, largest 71. Requires article_entities
       # (the GKG entity cycle below keeps it current). 0 is the kill switch.
       RWE_STORY_ENTITY_MERGE: ${RWE_STORY_ENTITY_MERGE:-2}
+      # Sole-template-evidence gate (adopted 2026-08-17, docs/STORY_TEMPLATE_GATE.md): a pairwise
+      # edge must share >= 1 token outside the announcement-template lexicon — the entertainment
+      # template chain's fix ("X-Men cast/release-date" welded to The Paper/Mirzapur/DJI over
+      # {cast, date, release, revealed/trailer/...}, zero distinctive tokens). Phase B on the
+      # live catalog: all ten pre-registered bars passed — the weld resolves into the genuine
+      # pair + three detachments, 3 of 5,989 covered articles dropped (0.05%), bad clusters /
+      # story count / largest / build time all flat, byte-deterministic. Defaulted HERE like the
+      # quorum/veto knobs above: the verified configuration must not live one lost env-file
+      # line away from silently reverting. 0 is the kill switch.
+      RWE_CLUSTER_TEMPLATE_GATE: ${RWE_CLUSTER_TEMPLATE_GATE:-1}
       # Story-hero guard (adopted 2026-08-16, docs/STORY_HERO_IMAGES.md): the hero is ranked on
       # evidence instead of copied from the earliest filer, and an image fronting > 3 distinct
       # stories in one build — or one shaped like branding (logo/placeholder/og-image path
