@@ -63,9 +63,53 @@ PRICE_IN, PRICE_OUT = 5.00, 25.00          # $ per 1M tokens
 TOK_IN, TOK_OUT = 700, 150                 # per pair question (prompt + 2x headline/dek; JSON out)
 
 
+#: V1 exhibit signatures — (label-hint, side-A title terms, side-B title terms, draft label,
+#: rubric rule). Terms of length <= 3 match on word boundaries. Draft labels come from the
+#: RATIFIED rubric table (docs/EVENT_IDENTITY_RUBRIC.md) and are clearly marked drafts in the
+#: emitted sheet; absent exhibits are skipped, never fabricated.
+V1_EXHIBITS = (
+    ("xmen-pair", ("x-men", "cast", "d23"), ("mcu", "x-men", "cast"), "same_event", "5"),
+    ("xmen-paper", ("x-men", "cast", "d23"), ("paper", "season", "cast"), "different_event", "5"),
+    ("paper-mirzapur", ("paper", "season", "cast"), ("mirzapur", "movie"), "different_event", "5"),
+    ("dji-mirzapur", ("dji", "osmo"), ("mirzapur", "movie"), "different_event", "5"),
+    ("batwara-vishwanath", ("batwara", "collection", "day 2"),
+     ("vishwanath", "collection", "day 2"), "different_event", "5,6"),
+    ("vishwanath-jana", ("vishwanath", "trails"), ("jana nayagan", "day 21"),
+     "different_event", "1"),
+    ("batwara-days", ("batwara", "day 3"), ("batwara", "day 2"), "same_event", "2"),
+    ("remains", ("human remains", "palomar"), ("human remains", "scarborough"),
+     "different_event", "7"),
+    ("shootings", ("shooting", "lexington"), ("shooting", "portland"), "different_event", "7"),
+    ("hayden-family", ("hayden", "panettiere", "dead"),
+     ("hayden", "panettiere", "life", "photos"), "same_event", "4-family"),
+    ("tennis-previews", ("preview", "head-to-head", "odds"),
+     ("preview", "head-to-head", "odds"), "different_event", "3b,5"),
+    ("uk-alert-family", ("alert", "domestic abuse"), ("alert", "burnham"),
+     "same_event", "4-family,5"),
+)
+
+
+def _sig_match(title: str, terms) -> bool:
+    import re as _re
+    t = (title or "").lower()
+    for term in terms:
+        if len(term) <= 3:
+            if not _re.search(r"(?<![a-z0-9])" + _re.escape(term) + r"(?![a-z0-9])", t):
+                return False
+        elif term not in t:
+            return False
+    return True
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--db", default=None)
+    ap.add_argument("--emit-pairs", default=None, metavar="PATH",
+                    help="also write the V1 golden-pairs labeling sheet (JSONL) here; a "
+                         "companion PATH.keys file maps pair_id -> urls so the sheet itself "
+                         "stays publisher-blind per the rubric protocol")
+    ap.add_argument("--per-class", type=int, default=80,
+                    help="band pairs sampled per class for the sheet (index-spread)")
     args = ap.parse_args(argv)
 
     tags = {"quorum": story_service.link_quorum(), "repair": story_service.repair_quorum(),
@@ -117,7 +161,7 @@ def main(argv=None) -> int:
     for i, t in enumerate(toks):
         for tok in t:
             postings.setdefault(tok, []).append(i)
-    c1, c1_rel, samples1 = 0, Counter(), []
+    c1_pairs, c1_rel = [], Counter()
     total_edges = 0
     for i in range(len(arts)):
         ti = toks[i]
@@ -145,13 +189,11 @@ def main(argv=None) -> int:
                        or not (distinctive & leads[i]) or not (distinctive & leads[j]))
             if not flagged:
                 continue
-            c1 += 1
             si, sj = story_of.get(i), story_of.get(j)
             rel = ("intra-story" if si is not None and si == sj
                    else "cross-story" if si is not None and sj is not None else "unstoried")
             c1_rel[rel] += 1
-            if len(samples1) < SHOW * 3:
-                samples1.append((i, j, sorted(inter)[:6], rel))
+            c1_pairs.append((i, j, sorted(inter)[:6], rel))
 
     # -- class 2: near-threshold duplicate-merge proposals ---------------------------------- #
     all_members = [[arts[m] for m in mem] for mem in story_members]
@@ -166,7 +208,7 @@ def main(argv=None) -> int:
     msim = story_service.merge_similarity()
     gap_max = story_service.merge_max_gap_hours()
     bound = 1.0 + MERGE_BAND_LO
-    c2, samples2 = 0, []
+    c2_pairs = []
     for i in range(len(profiles)):
         seen: set = set()
         for t in profiles[i]:
@@ -187,9 +229,7 @@ def main(argv=None) -> int:
             s = (w / den) if den else 0.0
             if MERGE_BAND_LO <= s < msim and \
                     story_service._gap_hours(all_members[i], all_members[j]) <= gap_max:
-                c2 += 1
-                if len(samples2) < SHOW:
-                    samples2.append((i, j, s))
+                c2_pairs.append((i, j, s))
 
     # -- class 3: the X5b single-name band --------------------------------------------------- #
     def eprofile(ms_):
@@ -209,7 +249,7 @@ def main(argv=None) -> int:
     disc = frozenset(n for n, sids in ent_postings.items()
                      if len(sids) <= story_service.ENTITY_MERGE_MAX_STORY_DF)
     cons = [frozenset(p) & disc for p in eprofiles]
-    c3, samples3 = 0, []
+    c3_pairs = []
     seen_pairs: set = set()
     for n in sorted(disc):
         sids = ent_postings[n]
@@ -221,9 +261,7 @@ def main(argv=None) -> int:
                 seen_pairs.add((i, j))
                 if len(cons[i] & cons[j]) == 1 and \
                         story_service._gap_hours(all_members[i], all_members[j]) <= gap_max:
-                    c3 += 1
-                    if len(samples3) < SHOW:
-                        samples3.append((i, j, sorted(cons[i] & cons[j])))
+                    c3_pairs.append((i, j, sorted(cons[i] & cons[j])))
 
     # -- class 4: entity-anchored, lexically-invisible article pairs (capped floor) ---------- #
     art_names: list = []
@@ -235,8 +273,7 @@ def main(argv=None) -> int:
     for i, names in enumerate(art_names):
         for n in names:
             name_postings.setdefault(n, []).append(i)
-    c4, capped, seen4 = 0, False, set()
-    samples4: list = []
+    c4_pairs, capped, seen4 = [], False, set()
     for n, plist in sorted(name_postings.items()):
         if len(plist) > CLASS4_NAME_DF_CAP:
             continue
@@ -257,15 +294,14 @@ def main(argv=None) -> int:
                 if clustering.jaccard(toks[i], toks[j]) < CLASS4_JACCARD_MAX and \
                         clustering.within_window(times[i], times[j],
                                                  clustering.DEFAULT_WINDOW_DAYS):
-                    c4 += 1
-                    if len(samples4) < SHOW:
-                        samples4.append((i, j, sorted(art_names[i] & art_names[j])[:3]))
+                    c4_pairs.append((i, j, sorted(art_names[i] & art_names[j])[:3]))
             if capped:
                 break
         if capped:
             break
 
     # -- report ------------------------------------------------------------------------------ #
+    c1, c2, c3, c4 = len(c1_pairs), len(c2_pairs), len(c3_pairs), len(c4_pairs)
     print(f"\n-- band composition (window totals; the verdict store makes steady state "
           f"NEW pairs only) --")
     print(f"  1. router-flagged edges          : {c1:,} of {total_edges:,} edges "
@@ -294,20 +330,122 @@ def main(argv=None) -> int:
         for it in items[:SHOW]:
             fmt(it)
 
-    show("class 1 (router-flagged edges)", samples1, lambda t: (
+    show("class 1 (router-flagged edges)", c1_pairs, lambda t: (
         print(f"  [{t[3]}] shared~{t[2]}"),
         print(f"    A: {(arts[t[0]].get('headline') or '')[:72]}"),
         print(f"    B: {(arts[t[1]].get('headline') or '')[:72]}")))
-    show("class 2 (near-threshold merges)", samples2, lambda t: (
+    show("class 2 (near-threshold merges)", c2_pairs, lambda t: (
         print(f"  [sim {t[2]:.3f}] '{baseline[t[0]]['title'][:48]}'"),
         print(f"            vs '{baseline[t[1]]['title'][:48]}'")))
-    show("class 3 (single shared name)", samples3, lambda t: (
+    show("class 3 (single shared name)", c3_pairs, lambda t: (
         print(f"  [{t[2]}] '{baseline[t[0]]['title'][:48]}'"),
         print(f"            vs '{baseline[t[1]]['title'][:48]}'")))
-    show("class 4 (entity-anchored, low lexical)", samples4, lambda t: (
+    show("class 4 (entity-anchored, low lexical)", c4_pairs, lambda t: (
         print(f"  [{t[2]}]"),
         print(f"    A: {(arts[t[0]].get('headline') or '')[:72]}"),
         print(f"    B: {(arts[t[1]].get('headline') or '')[:72]}")))
+
+    # -- V1 golden-pairs sheet (opt-in; the same enumeration, so the sampling frame can never
+    # drift from the measurement) --------------------------------------------------------------- #
+    if args.emit_pairs:
+        import hashlib
+        import json
+
+        def side(i: int) -> dict:
+            """Exactly the verifier's inputs — publisher deliberately absent (rubric protocol)."""
+            a = arts[i]
+            e = ents.get(a.get("id") or a.get("url")) or {}
+            names = sorted({n for kind in ("person", "org") for n in e.get(kind, ())
+                            if n and not story_service.entity_noise(n)})
+            return {"headline": a.get("headline") or "",
+                    "dek": " ".join((a.get("description") or "").split())[:400],
+                    "publishedAt": a.get("publishedAt") or "",
+                    "entities": names[:8],
+                    "countries": sorted(story_service._member_countries(a))}
+
+        def rep_of(si: int) -> int:
+            mem = story_members[si]
+            return min(mem, key=lambda m: (arts[m].get("publishedAt") or "~",
+                                           arts[m].get("id") or ""))
+
+        def spread(lst, n):
+            if len(lst) <= n:
+                return list(lst)
+            stride = len(lst) // n
+            return list(lst[::stride][:n])
+
+        rows_out, keys_out, seen_ids = [], [], set()
+
+        def emit(i: int, j: int, klass: str, draft: str = "", rule: str = ""):
+            ua, ub = sorted((arts[i].get("id") or arts[i].get("url") or "",
+                             arts[j].get("id") or arts[j].get("url") or ""))
+            pid = "p_" + hashlib.sha1(f"{ua}\x00{ub}".encode()).hexdigest()[:16]
+            if pid in seen_ids:
+                return
+            seen_ids.add(pid)
+            rows_out.append({"pair_id": pid, "class": klass, "a": side(i), "b": side(j),
+                             "draft_label": draft, "draft_rule": rule, "label": "",
+                             "rubric_version": "v1", "notes": ""})
+            keys_out.append({"pair_id": pid, "url_a": ua, "url_b": ub})
+
+        # exhibits first (draft-labeled from the RATIFIED rubric; absent ones skipped)
+        n_ex = 0
+        for label, ta, tb, draft, rule in V1_EXHIBITS:
+            ia = next((k for k, a in enumerate(arts) if _sig_match(a.get("headline"), ta)), None)
+            jb = next((k for k, a in enumerate(arts)
+                       if _sig_match(a.get("headline"), tb) and k != ia), None)
+            if ia is not None and jb is not None:
+                emit(ia, jb, f"exhibit:{label}", draft, rule)
+                n_ex += 1
+
+        pc = max(1, args.per_class)
+        for i, j, _sh, _rel in spread(sorted(c1_pairs), pc):
+            emit(i, j, "router_edge")
+        for si, sj, _s in spread(sorted(c2_pairs), pc):
+            emit(rep_of(si), rep_of(sj), "near_merge")
+        for si, sj, _n in spread(sorted(c3_pairs), pc):
+            emit(rep_of(si), rep_of(sj), "single_name")
+        for i, j, _n in spread(sorted(c4_pairs), pc):
+            emit(i, j, "entity_anchor")
+
+        # controls: intra-story pairs OUTSIDE the band (presumed same_event) ...
+        banded = {(min(i, j), max(i, j)) for i, j, _s, _r in c1_pairs} | \
+                 {(min(i, j), max(i, j)) for i, j, _n in c4_pairs}
+        controls = []
+        for mem in story_members:
+            capm = mem[:6]
+            for x in range(len(capm)):
+                for y in range(x + 1, len(capm)):
+                    p = (capm[x], capm[y])
+                    if p not in banded:
+                        controls.append(p)
+        for i, j in spread(controls, max(1, (3 * pc) // 4)):
+            emit(i, j, "intra_control")
+        # ... and deterministic far negatives (different stories, zero token overlap)
+        negs, step = [], max(1, len(arts) // 200)
+        for i in range(0, len(arts), step):
+            j = (i + 7919) % len(arts)
+            a, b = min(i, j), max(i, j)
+            if a == b:
+                continue
+            if story_of.get(a) is not None and story_of.get(a) == story_of.get(b):
+                continue
+            if not (toks[a] & toks[b]):
+                negs.append((a, b))
+        for i, j in spread(negs, pc // 2):
+            emit(i, j, "random_negative")
+
+        with open(args.emit_pairs, "w", encoding="utf-8") as f:
+            for r in rows_out:
+                f.write(json.dumps(r, ensure_ascii=False) + "\n")
+        with open(args.emit_pairs + ".keys", "w", encoding="utf-8") as f:
+            for r in keys_out:
+                f.write(json.dumps(r) + "\n")
+        by_class = Counter(r["class"].split(":")[0] for r in rows_out)
+        print(f"\n-- V1 sheet emitted: {args.emit_pairs} --")
+        print(f"  {len(rows_out):,} pairs ({n_ex} exhibits matched of {len(V1_EXHIBITS)}); "
+              f"by class: {dict(by_class)}")
+        print(f"  keys sidecar (urls; keep away from the labeler): {args.emit_pairs}.keys")
     return 0
 
 

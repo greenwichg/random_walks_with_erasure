@@ -1,10 +1,9 @@
 # Event-identity rubric — the labeling spec for the same-event verifier (V1)
 
-**Status: draft v1, 2026-08-17 — the ground-truth definition the V1 golden-pairs benchmark is
-labeled against and the verifier prompt encodes.** Rubric changes bump `prompt_version`, which
+**Status: v1 RATIFIED 2026-08-17 — the ground-truth definition the V1 golden-pairs benchmark
+is labeled against and the verifier prompt encodes.** Both editorial calls (the family rule and
+the eclipse pair) were ratified as drafted. Rubric changes bump `prompt_version`, which
 re-keys the verdict store; labels and verdicts always carry the version they were made under.
-The product-semantics calls below (marked ⚖) are editorial decisions, not model decisions —
-ratify or edit them before labeling begins.
 
 ## The question
 
@@ -39,7 +38,7 @@ verifier's `uncertain` is fail-closed (the deterministic baseline stands), so an
 4. **Same person/organization does not mean same event.** Mangione's arraignment and a Mangione
    sighting; Trump's rally and Trump's court filing; one company's earnings and its layoffs.
    The who slot matching while the what/when slots differ → `different_event`.
-   ⚖ **Family rule (ratify):** an event and coverage published *in direct reaction to it* —
+   ⚖ **Family rule (RATIFIED 2026-08-17):** an event and coverage published *in direct reaction to it* —
    obituaries, retrospectives, photo galleries, "what we know" explainers about that specific
    occurrence — belong to the SAME story (the Hayden Panettiere death + "life in photos"
    retrospective; consistent with X5b's adopted joining of the Mangione court family).
@@ -80,8 +79,10 @@ stratified across the five requirement classes.
 | Toronto ↔ Palomar human remains | different_event | 7 |
 | Lexington ↔ Portland shootings | different_event | 7 |
 | Garmin CIRQA (JA ↔ EN) | uncertain → different_event (band vs ring; decide from text) | 5, 4 |
-| UK eclipse timing ↔ Netherlands eclipse videos | ⚖ same_event (one eclipse, reactive angles) | 4-family |
+| UK eclipse timing ↔ Netherlands eclipse videos | same_event (ratified: one eclipse, reactive angles) | 4-family |
 | Seattle Center shooting paraphrase pair | same_event | 5 |
-| Hayden death ↔ "life in photos" retrospective | ⚖ same_event | 4-family |
+| Hayden death ↔ "life in photos" retrospective | same_event (ratified) | 4-family |
 | Zhu Rongji death ↔ legacy ↔ flags half-mast | same_event | 4-family |
 | Ronaldo wedding pairs | same_event | 2 |
+| Cincinnati Open betting previews (different matches) — found live by V0 | different_event | 3b, 5 |
+| UK emergency-alert family (domestic-abuse risk ↔ Haigh sign-off ↔ Burnham BBQ/999) — found live by V0 | same_event | 4-family, 5 |
