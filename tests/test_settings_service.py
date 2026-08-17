@@ -104,6 +104,44 @@ def test_normalize_settings_does_not_mutate_defaults():
     assert ss.DEFAULT_SETTINGS == snapshot
 
 
+# --------------------------------------------------------------------------- #
+# Interest Intensity — the eight per-interest sliders (1–10; 5 = neutral).
+# --------------------------------------------------------------------------- #
+def test_interest_defaults_are_all_neutral():
+    m = ss.normalize_settings(None)
+    assert m["interests"] == {k: ss.INTEREST_DEFAULT for k in ss.INTEREST_KEYS}
+    assert len(ss.INTEREST_KEYS) == 8                     # the eight-slider contract
+
+
+def test_interest_patch_merges_per_leaf_not_per_group():
+    """A patch of one slider leaves the other seven exactly as stored — the same per-leaf rule
+    the notification category matrix follows, and what makes two devices safe to edit at once."""
+    m = ss.normalize_settings({"interests": {"sports": 9}}, {"interests": {"science": 2}})
+    assert m["interests"]["sports"] == 9                  # stored survives the patch
+    assert m["interests"]["science"] == 2                 # patch applies
+    assert m["interests"]["business"] == ss.INTEREST_DEFAULT   # untouched default survives
+
+
+def test_interest_values_clamp_and_junk_falls_to_neutral():
+    m = ss.normalize_settings({"interests": {"sports": 99, "science": -3, "health": "loud",
+                                             "python": 10}})
+    assert m["interests"]["sports"] == ss.INTEREST_MAX    # clamped high
+    assert m["interests"]["science"] == ss.INTEREST_MIN   # clamped low
+    assert m["interests"]["health"] == ss.INTEREST_DEFAULT   # junk -> neutral, never an extreme
+    assert "python" not in m["interests"]                 # unknown interest dropped
+    # a malformed group (not a dict) falls back to the all-neutral defaults
+    assert ss.normalize_settings({"interests": "loud"})["interests"] == \
+        {k: ss.INTEREST_DEFAULT for k in ss.INTEREST_KEYS}
+
+
+def test_a_legacy_blob_without_interests_gains_neutral_defaults():
+    """A stored blob from before the group existed normalizes to all-5 — the value that maps to
+    no recommender parameter at all — so no legacy reader's feed moves. No migration."""
+    m = ss.normalize_settings({"theme": "dark", "politicalOpenness": 80})
+    assert m["interests"] == {k: ss.INTEREST_DEFAULT for k in ss.INTEREST_KEYS}
+    assert m["politicalOpenness"] == 80                   # the political control is untouched
+
+
 def test_legacy_privacy_keys_normalize_away_safely():
     """S1.2 backward-compat: the removed ``privacy`` group (shareAnonymizedMetrics /
     personalizedAds) is handled like any unknown key — a stored blob OR a patch carrying it

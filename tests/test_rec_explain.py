@@ -68,6 +68,22 @@ def test_explain_matches_the_served_feed_under_slider_params(backend, user, para
         assert exp["trace"]["strategies"]["rwe-d"]["paramsUsed"]["beta"] == pytest.approx(params["beta"])
 
 
+def test_explain_matches_the_served_feed_under_interest_weights(backend, user):
+    """Interest Intensity parity: the observer replicates the SAME per-topic nudge the serving
+    path applies (Backend._interest_rerank, shared), so the explained feed is the served feed
+    under interest weights too — including combined with a model slider."""
+    cats = sorted({str(c).strip().lower()
+                   for c in np.asarray(backend.base_corpus.mind.categories) if str(c).strip()})
+    weights = {cats[0]: 10, cats[-1]: 1}
+    for params in ({"interests": weights}, {"beta": 0.3, "interests": weights}):
+        served = backend.recommendations(user, None, params)
+        exp = backend.explain_recommendations(user, None, params)
+        assert [r["articleId"] for r in exp["recommendations"]] == \
+            [r["article"]["id"] for r in served]
+        assert [r["chosenBy"] for r in exp["recommendations"]] == \
+            [r["strategy"] for r in served]
+
+
 # --------------------------------------------------------------------------- evidence
 def test_cross_cutting_parity_and_derivation(backend, user):
     served = {r["article"]["id"]: r for r in backend.recommendations(user)}

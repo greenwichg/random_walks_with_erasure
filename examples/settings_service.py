@@ -14,10 +14,11 @@ The store-backed convenience helpers (:func:`get`, :func:`update`, :func:`readin
 :func:`theme`, :func:`language`) take the engine's ``store`` **by argument** — exactly like
 ``corpus_validation.evaluate(store)`` — so this module never imports :mod:`store` and stays a leaf.
 
-What deliberately lives **elsewhere**: the mapping of the two recommendation sliders
-(``politicalOpenness`` / ``recommendationStrength``) to per-request RWE-B/RWE-D hyperparameters is
-``api_server.rec_params_from_settings`` — that is the only settings code that depends on recommender
-vocabulary, so keeping it out of this leaf keeps the leaf free of RWE concepts.
+What deliberately lives **elsewhere**: the mapping of the recommendation preferences
+(``politicalOpenness`` / ``recommendationStrength`` / the ``interests`` sliders) to per-request
+recommender parameters is ``api_server.rec_params_from_settings`` — that is the only settings code
+that depends on recommender vocabulary, so keeping it out of this leaf keeps the leaf free of RWE
+concepts.
 """
 
 from __future__ import annotations
@@ -26,11 +27,27 @@ from __future__ import annotations
 # --------------------------------------------------------------------------- #
 # Schema — defaults + allowlists. This is the contract every client sees.
 # --------------------------------------------------------------------------- #
+#: Interest Intensity — the eight per-interest sliders, 1–10 with 5 = neutral. The keys are the
+#: eight NON-political interest areas of the closed product taxonomy (``ingest.TAXONOMY``);
+#: ``artsCulture`` is one slider spanning the taxonomy's adjacent Arts + Culture topics. Politics
+#: deliberately has NO intensity slider: the feed's political composition is the
+#: ``politicalOpenness`` control's contract (the rwe-b slice admits political items only, W1), and
+#: an interest knob on the same axis would fight it. Opinion is a register lens, not a subject;
+#: the two geographic desks (World / U.S.) belong to the Places settings. The slider→topic mapping
+#: is recommender vocabulary and lives in ``api_server._INTEREST_TOPICS`` — the same split this
+#: module already makes for the two recommendation sliders.
+INTEREST_KEYS = ("business", "technology", "science", "health", "climate",
+                 "sports", "entertainment", "artsCulture")
+INTEREST_MIN, INTEREST_MAX, INTEREST_DEFAULT = 1, 10, 5
+
 DEFAULT_SETTINGS = {
     "theme": "system",
     "language": "en",
     "politicalOpenness": 50,          # 50 = the stack's default RWE-B epsilon (0.9)
     "recommendationStrength": 50,     # 50 = the stack's default RWE-D beta (0.5)
+    # Interest Intensity (see INTEREST_KEYS above): 5 everywhere = the untouched feed, byte for
+    # byte — the same "an unmoved slider changes nothing" rule the two sliders above follow.
+    "interests": {k: INTEREST_DEFAULT for k in INTEREST_KEYS},
     "readingGoalMinutes": 20,
     "weeklyReport": True,
     "monthlyReport": False,
@@ -128,6 +145,19 @@ def _merge_notifications(layers) -> dict:
     return merged
 
 
+def _merge_interests(layers) -> dict:
+    """The ``interests`` map — per-LEAF layering exactly like the notification matrix, so a patch
+    of one interest ("sports": 9) leaves the other seven alone. Built only from the default keys,
+    so an unknown interest is dropped like any other unknown key; every value is clamped to the
+    1–10 scale with junk falling back to the neutral 5 (never to an extreme). A stored blob from
+    before the group existed simply gains the all-neutral defaults — no migration."""
+    defaults = DEFAULT_SETTINGS["interests"]
+    subs = [layer["interests"] for layer in layers
+            if isinstance(layer, dict) and isinstance(layer.get("interests"), dict)]
+    return {k: _clamp_int(_layered(k, subs, dv), INTEREST_MIN, INTEREST_MAX, dv)
+            for k, dv in defaults.items()}
+
+
 def normalize_settings(stored: "dict | None", patch: "dict | None" = None) -> dict:
     """A complete, type-safe preferences object = server defaults, overlaid with the user's stored
     preferences, overlaid with an optional incoming ``patch``. Unknown keys are dropped and every
@@ -144,6 +174,7 @@ def normalize_settings(stored: "dict | None", patch: "dict | None" = None) -> di
             str(_layered("language", layers, "en")).strip().lower()),
         "politicalOpenness": _clamp_int(_layered("politicalOpenness", layers, 50), 0, 100, 50),
         "recommendationStrength": _clamp_int(_layered("recommendationStrength", layers, 50), 0, 100, 50),
+        "interests": _merge_interests(layers),
         "readingGoalMinutes": _clamp_int(_layered("readingGoalMinutes", layers, 20), 0, 600, 20),
         "weeklyReport": bool(_layered("weeklyReport", layers, True)),
         "monthlyReport": bool(_layered("monthlyReport", layers, False)),

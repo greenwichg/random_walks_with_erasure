@@ -948,11 +948,30 @@ export interface NotificationChannelPrefs {
   push: boolean;
 }
 
+/**
+ * Interest Intensity — the eight per-interest sliders (1–10; 5 = neutral). Keys are the engine's
+ * `settings_service.INTEREST_KEYS`: the eight non-political interest areas of the closed topic
+ * taxonomy (`artsCulture` spans the adjacent Arts + Culture topics). Weights nudge the ORDER of
+ * the recommendation feed per topic (`api_server.Backend._interest_rerank`); they never filter,
+ * and the political controls are a separate axis they cannot touch.
+ */
+export interface InterestIntensity {
+  business: number;
+  technology: number;
+  science: number;
+  health: number;
+  climate: number;
+  sports: number;
+  entertainment: number;
+  artsCulture: number;
+}
+
 export interface Settings {
   theme: "light" | "dark" | "system";
   language: string;
   politicalOpenness: number; // 0–100 → per-request RWE-B epsilon (50 = engine default 0.9)
   recommendationStrength: number; // 0–100 → per-request RWE-D beta (50 = engine default 0.5)
+  interests: InterestIntensity; // per-topic feed nudge (all 5 = the untouched feed)
   readingGoalMinutes: number; // drives the dashboard's today-vs-goal progress
   weeklyReport: boolean;
   monthlyReport: boolean;

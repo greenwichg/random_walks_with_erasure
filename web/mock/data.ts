@@ -510,6 +510,18 @@ export const SETTINGS: Settings = {
   language: "en",
   politicalOpenness: 50,
   recommendationStrength: 50,
+  // Interest Intensity — 5 everywhere = neutral (the engine's INTEREST_DEFAULT); mirrors
+  // settings_service.DEFAULT_SETTINGS like every other value in this blob.
+  interests: {
+    business: 5,
+    technology: 5,
+    science: 5,
+    health: 5,
+    climate: 5,
+    sports: 5,
+    entertainment: 5,
+    artsCulture: 5,
+  },
   readingGoalMinutes: 20,
   weeklyReport: true,
   monthlyReport: false,

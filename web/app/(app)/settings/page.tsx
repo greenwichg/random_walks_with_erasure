@@ -20,6 +20,14 @@ import {
   AlertCircle,
   Zap,
   BellRing,
+  Briefcase,
+  Cpu,
+  FlaskConical,
+  HeartPulse,
+  Leaf,
+  Trophy,
+  Clapperboard,
+  Palette,
 } from "lucide-react";
 import type { Settings, NotificationChannelPrefs } from "@/types/domain";
 import { useQuery } from "@tanstack/react-query";
@@ -63,6 +71,31 @@ function strengthLabelKey(v: number) {
   if (v < 80) return "settings.strength.assertive";
   return "settings.strength.bold";
 }
+
+/** Interest Intensity — the eight per-interest sliders (engine `settings_service.INTEREST_KEYS`),
+ *  each naming a real catalog topic (`artsCulture` spans Arts + Culture). Politics is deliberately
+ *  not here: the political dimension is the Political openness control's own axis, above. */
+const INTEREST_DEFAULT = 5;
+const INTERESTS = [
+  { key: "business", icon: Briefcase, labelKey: "settings.interest.business" },
+  { key: "technology", icon: Cpu, labelKey: "settings.interest.technology" },
+  { key: "science", icon: FlaskConical, labelKey: "settings.interest.science" },
+  { key: "health", icon: HeartPulse, labelKey: "settings.interest.health" },
+  { key: "climate", icon: Leaf, labelKey: "settings.interest.climate" },
+  { key: "sports", icon: Trophy, labelKey: "settings.interest.sports" },
+  { key: "entertainment", icon: Clapperboard, labelKey: "settings.interest.entertainment" },
+  { key: "artsCulture", icon: Palette, labelKey: "settings.interest.artsCulture" },
+] as const;
+const DEFAULT_INTERESTS: Settings["interests"] = {
+  business: INTEREST_DEFAULT,
+  technology: INTEREST_DEFAULT,
+  science: INTEREST_DEFAULT,
+  health: INTEREST_DEFAULT,
+  climate: INTEREST_DEFAULT,
+  sports: INTEREST_DEFAULT,
+  entertainment: INTEREST_DEFAULT,
+  artsCulture: INTEREST_DEFAULT,
+};
 
 export default function SettingsPage() {
   const { data, isLoading, isError, refetch } = useSettings();
@@ -134,6 +167,19 @@ export default function SettingsPage() {
   }
   function setNotif<K extends keyof Settings["notifications"]>(key: K, value: boolean) {
     setDraft((d) => (d ? { ...d, notifications: { ...d.notifications, [key]: value } } : d));
+    setSaved(false);
+  }
+  /** One interest slider. Copies only the changed leaf (like setCategory), so the save PATCH
+   *  carries exactly the sliders the reader moved — never a restatement of the other seven. */
+  function setInterest(key: keyof Settings["interests"], value: number) {
+    setDraft((d) => (d ? { ...d, interests: { ...d.interests, [key]: value } } : d));
+    setSaved(false);
+  }
+  /** Reset to Defaults for the Interest Intensity section only: every slider back to the neutral
+   *  5. Stages a draft like any other edit — the floating Save bar persists it — and touches
+   *  nothing outside the section (the political controls keep their own values). */
+  function resetInterests() {
+    setDraft((d) => (d ? { ...d, interests: { ...DEFAULT_INTERESTS } } : d));
     setSaved(false);
   }
   /** One leaf of the category x channel matrix. Copies only the path being changed, so the diff
@@ -276,6 +322,37 @@ export default function SettingsPage() {
                 step={5}
                 valueLabel={t("settings.perDay", { n: draft.readingGoalMinutes })}
               />
+            </div>
+          </SectionCard>
+
+          {/* Interest Intensity — eight per-topic sliders over the recommendation feed's order.
+              A separate card from the political controls above, which it never touches. */}
+          <SectionCard
+            title={t("settings.interests")}
+            info={t("settings.interestsInfo")}
+            action={
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={resetInterests}
+                disabled={INTERESTS.every((it) => draft.interests[it.key] === INTEREST_DEFAULT)}
+                className="text-muted-foreground"
+              >
+                <RotateCcw className="h-3.5 w-3.5" /> {t("settings.interestsReset")}
+              </Button>
+            }
+          >
+            <p className="mb-5 text-xs text-muted-foreground">{t("settings.interestsHint")}</p>
+            <div className="grid grid-cols-1 gap-x-10 gap-y-5 sm:grid-cols-2">
+              {INTERESTS.map((it) => (
+                <InterestSliderRow
+                  key={it.key}
+                  icon={it.icon}
+                  label={t(it.labelKey)}
+                  value={draft.interests[it.key]}
+                  onChange={(v) => setInterest(it.key, v)}
+                />
+              ))}
             </div>
           </SectionCard>
 
@@ -589,6 +666,43 @@ function ToggleRow({
         </div>
       </div>
       <Switch checked={checked} onCheckedChange={onChange} aria-label={title} />
+    </div>
+  );
+}
+
+/** One Interest Intensity row (reference layout: icon · topic · slider · value). Compact — the
+ *  eight rows read as one grid, so no per-row description; the section hint carries the scale. */
+function InterestSliderRow({
+  icon: Icon,
+  label,
+  value,
+  onChange,
+}: {
+  icon: React.ElementType;
+  label: string;
+  value: number;
+  onChange: (v: number) => void;
+}) {
+  return (
+    <div className="flex items-center gap-3">
+      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground">
+        <Icon className="h-4 w-4" />
+      </span>
+      <p className="w-32 min-w-0 flex-none truncate text-sm font-medium" title={label}>
+        {label}
+      </p>
+      <Slider
+        value={[value]}
+        min={1}
+        max={10}
+        step={1}
+        onValueChange={([v]) => onChange(v ?? INTEREST_DEFAULT)}
+        aria-label={label}
+        className="min-w-0 flex-1"
+      />
+      <span className="w-6 shrink-0 text-right text-sm font-medium tabular-nums text-primary">
+        {value}
+      </span>
     </div>
   );
 }

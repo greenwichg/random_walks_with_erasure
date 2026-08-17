@@ -211,9 +211,11 @@ def explain(backend, corpus, rec, u: int, strategy: Optional[str] = None,
 
     # --- replicate the serving selection (plan → admission → slice order → first-seen dedup) --
     # Mirrors Backend._rec_cols_of exactly: walk the full ranking, keep the columns the strategy's
-    # slice admits (Commit R1: rwe-b admits political items only), order the slice via the SAME
-    # Backend._slice_select (Commit R1.5: rwe-b serves cross-cutting items first), then dedup
-    # first-seen across strategies — the shared helpers keep the parity guarantee byte-exact.
+    # slice admits (Commit R1: rwe-b admits political items only), apply the SAME Interest
+    # Intensity nudge over the admitted pool (Backend._interest_rerank — identity without
+    # weights), order the slice via the SAME Backend._slice_select (Commit R1.5: rwe-b serves
+    # cross-cutting items first), then dedup first-seen across strategies — the shared helpers
+    # keep the parity guarantee byte-exact.
     # ``slice_js`` records which ranked items occupy each strategy's slots — the honest meaning
     # of "inSlice" now that admission/ordering can skip over or reorder raw ranks.
     plan = ((strategy, SINGLE_K),) if strategy in STRATEGIES else engine.blend_plan_for(params)
@@ -231,6 +233,7 @@ def explain(backend, corpus, rec, u: int, strategy: Optional[str] = None,
                 continue
             admitted.append(col)
             j_of_col.setdefault(col, int(j))
+        admitted = engine.Backend._interest_rerank(mind, admitted, params)
         slice_cols = engine.Backend._slice_select(mind, s, admitted,
                                                   kk * engine.REC_OVERFETCH, user_side)
         cols_by_strategy.append((s, slice_cols))

@@ -10,6 +10,16 @@ function base(): Settings {
     language: "en",
     politicalOpenness: 50,
     recommendationStrength: 50,
+    interests: {
+      business: 5,
+      technology: 5,
+      science: 5,
+      health: 5,
+      climate: 5,
+      sports: 5,
+      entertainment: 5,
+      artsCulture: 5,
+    },
     readingGoalMinutes: 20,
     weeklyReport: true,
     monthlyReport: false,
@@ -45,6 +55,18 @@ test("a nested object change → only the changed sub-field (not the whole group
   const draft = base();
   draft.notifications = { ...draft.notifications, blindSpotAlerts: true };
   assert.deepEqual(diffSettings(base(), draft), { notifications: { blindSpotAlerts: true } });
+});
+
+test("one moved interest slider → exactly that leaf, never the other seven", () => {
+  const draft = base();
+  draft.interests = { ...draft.interests, sports: 9 };
+  assert.deepEqual(diffSettings(base(), draft), { interests: { sports: 9 } });
+});
+
+test("interests reset-to-defaults from an all-default base → empty diff (nothing to save)", () => {
+  const draft = base();
+  draft.interests = { ...draft.interests }; // a rebuilt identical group is not a change
+  assert.deepEqual(diffSettings(base(), draft), {});
 });
 
 test("multiple nested changes → each changed sub-field, unchanged ones omitted", () => {

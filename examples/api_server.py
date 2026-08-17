@@ -762,6 +762,21 @@ def _handle_from(name: str, email: str) -> str:
 _OPENNESS_BRIDGE_BUDGET = (4, 6, 8)       # slider 0 / 50 / 100 → RWE-B slots (DEFAULT_BLEND_PLAN total = 14)
 _STRENGTH_BETA = (0.30, 0.50, 0.80)       # slider 0 / 50 / 100 → RWE-D beta (popularity suppression)
 
+# Interest Intensity → a per-topic RANK NUDGE inside each strategy's admitted candidate pool
+# (:meth:`Backend._interest_rerank`). The eight slider keys are settings vocabulary
+# (``settings_service.INTEREST_KEYS``); THIS map is where they become recommender vocabulary — the
+# lower-cased catalog topics of the closed taxonomy (``ingest.TAXONOMY``) each slider weights. One
+# slider ("artsCulture") spans the taxonomy's adjacent Arts + Culture topics. Politics is
+# deliberately absent: the feed's political composition is the openness slider's contract (the
+# rwe-b slice admits political items only, W1), and an interest knob on the same axis would fight
+# it; Opinion is a register lens; the World / U.S. desks are geography (Places settings).
+_INTEREST_TOPICS = {
+    "business": ("business",), "technology": ("technology",), "science": ("science",),
+    "health": ("health",), "climate": ("climate",), "sports": ("sports",),
+    "entertainment": ("entertainment",), "artsCulture": ("arts", "culture"),
+}
+_INTEREST_NEUTRAL = 5     # the slider midpoint — contributes no key; the feed stays byte-identical
+
 
 def _piecewise(v: float, lo: float, mid: float, hi: float) -> float:
     """Linear 0→``lo``, 50→``mid``, 100→``hi`` (callers pass an already-clamped 0–100 value)."""
@@ -772,18 +787,25 @@ def _piecewise(v: float, lo: float, mid: float, hi: float) -> float:
 def rec_params_from_settings(settings: "dict | None") -> "dict | None":
     """Per-request recommender parameters from a reader's stored preferences, or ``None``.
 
-    Two sliders contribute — Political openness → the RWE-B **bridge-slot budget** (carried as the
-    ``openness`` key, consumed by :func:`blend_plan_for`; W1) and Recommendation strength → RWE-D
-    ``beta`` (how strongly popular items are suppressed). Only a *moved* slider contributes a key,
-    and ``None`` means "use the shared default stack" — so demo, anonymous, and untouched-slider
-    requests are provably identical to the pre-slider behaviour. The algorithms themselves are
-    untouched; openness reshapes only the blend's slot allocation, beta only a constructor arg."""
+    Three preferences contribute — Political openness → the RWE-B **bridge-slot budget** (carried
+    as the ``openness`` key, consumed by :func:`blend_plan_for`; W1), Recommendation strength →
+    RWE-D ``beta`` (how strongly popular items are suppressed), and the Interest Intensity sliders
+    → ``interests``, a lower-cased topic → weight map (via :data:`_INTEREST_TOPICS`) consumed by
+    :meth:`Backend._interest_rerank`. Only a *moved* slider contributes a key, and ``None`` means
+    "use the shared default stack" — so demo, anonymous, and untouched-slider requests are provably
+    identical to the pre-slider behaviour. The algorithms themselves are untouched; openness
+    reshapes only the blend's slot allocation, beta only a constructor arg, and interests only the
+    order of each strategy's already-admitted candidate pool."""
     s = normalize_settings(settings)
     params = {}
     if s["politicalOpenness"] != 50:
         params["openness"] = int(s["politicalOpenness"])     # W1: drives the RWE-B bridge budget
     if s["recommendationStrength"] != 50:
         params["beta"] = _piecewise(s["recommendationStrength"], *_STRENGTH_BETA)
+    interests = {topic: int(w) for key, w in s["interests"].items()
+                 if int(w) != _INTEREST_NEUTRAL for topic in _INTEREST_TOPICS.get(key, ())}
+    if interests:
+        params["interests"] = interests
     return params or None
 
 
@@ -1772,16 +1794,47 @@ class Backend:
         return (cross + same)[:k]
 
     @staticmethod
+    def _interest_rerank(mind, cols: list, params: "dict | None") -> list:
+        """Stable per-topic rank nudge over an ADMITTED candidate list (Interest Intensity).
+
+        ``params["interests"]`` maps lower-cased catalog topics to slider weights 1–10 (the
+        neutral 5 never ships a key — :func:`rec_params_from_settings` drops it). An item at
+        0-based pool position ``i`` whose topic carries weight ``w`` re-sorts on the key
+        ``(i + 1) * 5 / w``: weight 10 halves its effective rank, weight 1 quintuples it — a
+        nudge on the ORDER of the pool, never an admission or exclusion, so every item stays
+        reachable and the slice budgets / publisher cap downstream mean what they always meant.
+        Unweighted topics (and "" uncategorized) keep their exact key, and the sort is stable,
+        so the no-weights case — and every same-topic pair — preserves model order exactly:
+        the identity claim is by construction, not by tolerance.
+
+        Runs BEFORE :meth:`_slice_select`, so the rwe-b cross-cutting-first partition (Commit
+        R1.5) and the W1 bridge budget keep their guarantees over the nudged order. Shared by
+        the serving path and the explain observer — the 21a parity rule: one implementation,
+        or drift."""
+        weights = (params or {}).get("interests")
+        if not weights or not cols:
+            return cols
+        cats = np.asarray(mind.categories)
+        keys = []
+        for i, col in enumerate(cols):
+            w = weights.get(str(cats[col]).strip().lower())
+            keys.append((i + 1) * (float(_INTEREST_NEUTRAL) / float(w)) if w else float(i + 1))
+        order = sorted(range(len(cols)), key=lambda i: (keys[i], i))
+        return [cols[i] for i in order]
+
+    @staticmethod
     def _rec_cols_of(mind, rec: "_Recommenders", u: int, strategy: str, k: int = 12,
                      params: "dict | None" = None, user_side: float = 0.0) -> list:
         """Top-k *admitted* item columns (in ``mind`` space) recommender ``strategy`` surfaces for
         row ``u``, so we can serialise full articles. Ranks the full list, keeps the columns that
         pass :meth:`_slice_admits` (rwe-b: political only) — so a filtered slot is backfilled by
-        the next-ranked admissible item instead of shrinking the slice — and orders the slice via
-        :meth:`_slice_select` (rwe-b: cross-cutting first, Commit R1.5; needs ``user_side``).
-        Corpus-parametric so a real user's augmented recommender selects columns exactly as the
-        base one does; ``params`` (slider-mapped hyperparameters) swaps in a per-request model via
-        :meth:`_model_for`. Returns [] on any failure (caller falls back)."""
+        the next-ranked admissible item instead of shrinking the slice — applies the reader's
+        Interest Intensity nudge over the admitted pool (:meth:`_interest_rerank`; identity
+        without weights), and orders the slice via :meth:`_slice_select` (rwe-b: cross-cutting
+        first, Commit R1.5; needs ``user_side``). Corpus-parametric so a real user's augmented
+        recommender selects columns exactly as the base one does; ``params`` (slider-mapped
+        hyperparameters) swaps in a per-request model via :meth:`_model_for`. Returns [] on any
+        failure (caller falls back)."""
         try:
             uid = np.asarray(mind.dataset.user_ids)[u]
             rows = np.flatnonzero(np.asarray(rec.rec_dataset.user_ids) == uid)
@@ -1789,8 +1842,10 @@ class Backend:
                 return []
             model = Backend._model_for(rec, strategy, params)
             ranked = model.recommend(np.array([rows[0]]), top_k=int(len(rec.rec_ids)))[0]
-            # cross-first selection partitions the WHOLE admitted list; plain slices stop at k
-            need_all = strategy == "rwe-b" and bool(user_side)
+            # cross-first selection and the interest nudge both reorder the WHOLE admitted list;
+            # plain slices stop at k
+            need_all = ((strategy == "rwe-b" and bool(user_side))
+                        or bool((params or {}).get("interests")))
             admitted = []
             for j in ranked:
                 if int(j) < 0:
@@ -1800,6 +1855,7 @@ class Backend:
                     admitted.append(col)
                     if not need_all and len(admitted) >= k:
                         break
+            admitted = Backend._interest_rerank(mind, admitted, params)
             return Backend._slice_select(mind, strategy, admitted, k, user_side)
         except Exception:
             return []

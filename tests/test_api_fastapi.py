@@ -795,17 +795,31 @@ def test_settings_persist_and_merge(client):
     full_keys = {"theme", "language", "politicalOpenness", "recommendationStrength",
                  "readingGoalMinutes", "weeklyReport", "monthlyReport", "notifications",
                  # Location Intelligence 1.5 — edition + followed places joined the contract.
-                 "edition", "locations"}
+                 "edition", "locations",
+                 # Interest Intensity — the eight per-interest sliders.
+                 "interests"}
 
     d = client.get("/api/me/settings", headers=hdr).json()
     # S1.2: `privacy` is gone from the contract — the response carries exactly the surviving keys.
     assert set(d) == full_keys and d["theme"] == "system" and d["politicalOpenness"] == 50  # defaults
+    assert set(d["interests"]) == {"business", "technology", "science", "health", "climate",
+                                   "sports", "entertainment", "artsCulture"}
+    assert all(v == 5 for v in d["interests"].values())                      # neutral defaults
 
     saved = client.post("/api/me/settings",
                         json={"theme": "dark", "notifications": {"streakReminders": True}},
                         headers=hdr).json()
     assert saved["theme"] == "dark" and saved["notifications"]["streakReminders"] is True
     assert saved["notifications"]["recommendations"] is True                 # untouched default kept
+
+    # Interest Intensity round-trip: one slider PATCHes as one leaf, merges over the stored
+    # group, persists, and the political control is untouched throughout.
+    si = client.post("/api/me/settings", json={"interests": {"sports": 9}}, headers=hdr).json()
+    assert si["interests"]["sports"] == 9 and si["interests"]["science"] == 5
+    si2 = client.post("/api/me/settings", json={"interests": {"science": 2}}, headers=hdr).json()
+    assert si2["interests"]["sports"] == 9 and si2["interests"]["science"] == 2   # per-leaf merge
+    assert si2["politicalOpenness"] == 50                                    # separate axis, untouched
+    assert client.get("/api/me/settings", headers=hdr).json()["interests"]["sports"] == 9
 
     again = client.get("/api/me/settings", headers=hdr).json()
     assert again["theme"] == "dark" and again["notifications"]["streakReminders"] is True  # persisted

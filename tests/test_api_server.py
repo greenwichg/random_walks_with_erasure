@@ -1041,6 +1041,66 @@ def test_rec_params_mapper_anchors_and_clamps():
     assert budgets == [4, 5, 6, 7, 8]
 
 
+def test_rec_params_interest_mapping():
+    """Interest Intensity: all-neutral contributes nothing (None); a moved slider ships its
+    lower-cased catalog topic(s) — artsCulture fans out to both Arts and Culture — and junk
+    values clamp through normalize_settings before mapping, like every other preference."""
+    import settings_service as ss
+    f = api_server.rec_params_from_settings
+    assert f({"interests": {k: 5 for k in ss.INTEREST_KEYS}}) is None      # neutral -> None
+    assert f({"interests": {"sports": 10, "artsCulture": 2}}) == \
+        {"interests": {"sports": 10, "arts": 2, "culture": 2}}
+    p = f({"recommendationStrength": 0, "interests": {"business": 7}})
+    assert p == {"beta": 0.30, "interests": {"business": 7}}               # composes with sliders
+    assert f({"interests": {"sports": 99}}) == {"interests": {"sports": 10}}   # clamped first
+    # every slider key maps to at least one catalog topic — no dead knob can ship
+    assert all(api_server._INTEREST_TOPICS.get(k) for k in ss.INTEREST_KEYS)
+    # and Politics deliberately has no interest slider (the openness control's own axis)
+    assert "politics" not in {t for ts in api_server._INTEREST_TOPICS.values() for t in ts}
+
+
+def test_interest_rerank_is_a_stable_bounded_nudge():
+    """The re-ranker: identity without weights (the same list object — provably no-op), a boost
+    pulls a topic up and a demotion pushes it down WITHOUT dropping anything, same-topic model
+    order is never reordered, and the result is deterministic."""
+    class M:
+        categories = np.asarray(["Sports", "Business", "Sports", "", "Health"], dtype=object)
+    R = api_server.Backend._interest_rerank
+    cols = [0, 1, 2, 3, 4]
+    assert R(M, cols, None) is cols                       # no params -> the very same object
+    assert R(M, cols, {"beta": 0.3}) is cols              # params without interests -> same
+    boosted = R(M, cols, {"interests": {"health": 10}})
+    assert boosted == [0, 1, 4, 2, 3]                     # health halves its rank; nothing lost
+    demoted = R(M, cols, {"interests": {"sports": 1}})
+    assert demoted == [1, 3, 0, 4, 2]                     # sports quintuple their rank keys
+    assert sorted(boosted) == sorted(demoted) == cols     # a nudge, never an exclusion
+    assert boosted.index(0) < boosted.index(2)            # within-topic model order intact
+    assert R(M, cols, {"interests": {"sports": 1}}) == demoted   # deterministic
+
+
+def test_interest_intensity_reshapes_the_served_feed(backend, user):
+    """Feed-level impact proof, the same shape as the openness test: params without interests
+    serve the exact default feed; the two weight extremes on the corpus's commonest topic serve
+    different feeds, with the boost never yielding fewer topic cards than the demotion; and the
+    whole path is deterministic."""
+    from collections import Counter
+    base = _rec_ids(backend, user, None, None)
+    cats = [str(c).strip().lower() for c in np.asarray(backend.mind.categories)]
+    top = Counter(c for c in cats if c).most_common(1)[0][0]
+    label = api_server._prettify(top)
+    hi = backend.recommendations(user, None, {"interests": {top: 10}})
+    lo = backend.recommendations(user, None, {"interests": {top: 1}})
+    hi_ids = [r["article"]["id"] for r in hi]
+    lo_ids = [r["article"]["id"] for r in lo]
+    assert hi_ids != lo_ids                               # the extremes serve different feeds
+    n_hi = sum(1 for r in hi if r["article"]["topic"] == label)
+    n_lo = sum(1 for r in lo if r["article"]["topic"] == label)
+    assert n_hi >= n_lo                                   # direction: boost >= demote, always
+    assert [r["article"]["id"]
+            for r in backend.recommendations(user, None, {"interests": {top: 10}})] == hi_ids
+    assert _rec_ids(backend, user, None, None) == base    # the default stack stays untouched
+
+
 def test_blend_plan_for_openness_budget():
     """W1: openness moves the RWE-B bridge budget; slider-50 / absent is byte-identical to the
     historical DEFAULT_BLEND_PLAN; the total slot count and strategy order are preserved."""

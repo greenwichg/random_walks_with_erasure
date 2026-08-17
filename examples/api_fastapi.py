@@ -856,11 +856,28 @@ class FollowedLocationModel(BaseModel):
     level: str        # country | region | city
 
 
+class InterestPrefsModel(BaseModel):
+    """Interest Intensity — the eight per-interest sliders (1–10; 5 = neutral). Declared
+    explicitly, like the notification matrix, so the contract is visible in the OpenAPI schema
+    and an unknown interest cannot enter through the API; the keys are
+    ``settings_service.INTEREST_KEYS`` and the slider→catalog-topic mapping is
+    ``api_server._INTEREST_TOPICS``."""
+    business: int
+    technology: int
+    science: int
+    health: int
+    climate: int
+    sports: int
+    entertainment: int
+    artsCulture: int
+
+
 class SettingsModel(BaseModel):
     theme: str
     language: str
     politicalOpenness: int
     recommendationStrength: int
+    interests: InterestPrefsModel
     readingGoalMinutes: int
     weeklyReport: bool
     monthlyReport: bool
@@ -895,6 +912,19 @@ class NotificationPrefsUpdate(BaseModel):
     categories: NotificationCategoriesUpdate | None = None
 
 
+class InterestPrefsUpdate(BaseModel):
+    """A partial Interest Intensity patch — any subset of the eight sliders; `exclude_none=True`
+    on the dump keeps an untouched slider out of the merge entirely (per-leaf, like categories)."""
+    business: int | None = None
+    technology: int | None = None
+    science: int | None = None
+    health: int | None = None
+    climate: int | None = None
+    sports: int | None = None
+    entertainment: int | None = None
+    artsCulture: int | None = None
+
+
 # A legacy client that still sends a `privacy` object is not an error: it's an undeclared field,
 # ignored by Pydantic's default `extra="ignore"`, so the merge simply never sees it (see S1.2).
 class SettingsUpdateModel(BaseModel):
@@ -902,6 +932,7 @@ class SettingsUpdateModel(BaseModel):
     language: str | None = None
     politicalOpenness: int | None = None
     recommendationStrength: int | None = None
+    interests: InterestPrefsUpdate | None = None
     readingGoalMinutes: int | None = None
     weeklyReport: bool | None = None
     monthlyReport: bool | None = None
