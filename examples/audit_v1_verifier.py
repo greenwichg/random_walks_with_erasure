@@ -31,8 +31,10 @@ that is what the stability metric measures.
 
 A run whose store carries api-error records beyond a trace (2% of pairs) is declared VOID —
 it measured transport availability, not the model, and no bar is scored as tested (the first
-live run recorded 372/390 exactly this way). Resume re-judges api-error records and
-error-flagged sidecar entries while keeping every real verdict, so re-running the same
+live run recorded 372/390 exactly this way: 369 rate-limit 429s at free-tier pacing). Five
+CONSECUTIVE api-error records trip a circuit breaker that aborts the pass (exit 1) instead of
+retrying for hours against a dead transport. Either way resume re-judges api-error records
+and error-flagged sidecar entries while keeping every real verdict, so re-running the same
 command after the transport problem is fixed heals the store in place.
 
 Requires GEMINI_API_KEY in the environment (the stack's existing convention). Cost at
@@ -241,6 +243,26 @@ def main(argv=None, adapter=None) -> int:
             store[v["pair_id"]] = v
     out_f = open(args.out, "a", encoding="utf-8")
 
+    breaker = {"consec": 0, "tripped": False}
+
+    def _transport(is_err: bool) -> bool:
+        """Five consecutive api-error records trip the breaker: a dead transport earns an
+        abort and a resume, not hours of futile retry churn (the first live run's shape)."""
+        breaker["consec"] = breaker["consec"] + 1 if is_err else 0
+        breaker["tripped"] = breaker["tripped"] or breaker["consec"] >= 5
+        return breaker["tripped"]
+
+    def _abort_transport() -> int:
+        judged = sum(1 for r in rows if r["pair_id"] in store)
+        errs = sum(1 for r in rows
+                   if r["pair_id"] in store and store[r["pair_id"]].get("api_error"))
+        print(f"\nTRANSPORT CIRCUIT BREAKER — five consecutive api-error records; aborting "
+              f"instead of retrying against a dead transport.")
+        print(f"  store keeps {judged - errs} real verdicts; {errs} api-error records and "
+              f"{len(rows) - judged} unjudged pairs re-judge on the next run of the same "
+              f"command. No bar was tested.")
+        return 1
+
     t0 = time.perf_counter()
     for r in rows:
         prior = store.get(r["pair_id"])
@@ -256,7 +278,11 @@ def main(argv=None, adapter=None) -> int:
         store[r["pair_id"]] = rec
         out_f.write(json.dumps(rec, ensure_ascii=False) + "\n")
         out_f.flush()
+        if _transport(rec["api_error"]):
+            break
     elapsed = time.perf_counter() - t0
+    if breaker["tripped"]:
+        return _abort_transport()
 
     # stability replays + symmetry, on the sorted head samples
     sample = rows[: args.stability_sample]
@@ -271,6 +297,8 @@ def main(argv=None, adapter=None) -> int:
             replays.setdefault(v["pair_id"], []).append(v["verdict"])
     with open(replay_path, "a", encoding="utf-8") as rf:
         for r in sample:
+            if breaker["tripped"]:
+                break
             have = replays.get(r["pair_id"], [])
             while len(have) < args.replays - 1:      # the store verdict is replay #1
                 v = adapter.verdict(r["a"], r["b"])
@@ -283,6 +311,10 @@ def main(argv=None, adapter=None) -> int:
                     rep_errs += 1
                 rf.write(json.dumps(entry) + "\n")
                 have.append(verdict)
+                if _transport(bool(v.get("_api_error"))):
+                    break
+            if breaker["tripped"]:
+                break
             base = store[r["pair_id"]]["verdict"]
             if all(h == base for h in have):
                 stable += 1
@@ -300,6 +332,8 @@ def main(argv=None, adapter=None) -> int:
             syms[v["pair_id"]] = v["verdict"]
     with open(sym_path, "a", encoding="utf-8") as sf:
         for r in sym_sample:
+            if breaker["tripped"]:
+                break
             if r["pair_id"] not in syms:
                 v = adapter.verdict(r["b"], r["a"])
                 qa = quote_ok(v.get("quoted_span_a"), r["b"])
@@ -310,8 +344,12 @@ def main(argv=None, adapter=None) -> int:
                     entry["api_error"] = True
                     sym_errs += 1
                 sf.write(json.dumps(entry) + "\n")
+                if _transport(bool(v.get("_api_error"))):
+                    break
             if syms[r["pair_id"]] == store[r["pair_id"]]["verdict"]:
                 sym_ok += 1
+    if breaker["tripped"]:
+        return _abort_transport()
 
     # -- scoring (provenance-aware) ---------------------------------------------------------- #
     from collections import Counter

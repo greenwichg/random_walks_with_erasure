@@ -236,18 +236,34 @@ def test_adapter_honors_the_servers_retry_delay(monkeypatch):
     assert ad.calls == 1 and ad.tokens_in == 10
 
 
+_API_ERROR = {"verdict": "uncertain", "quoted_span_a": "", "quoted_span_b": "",
+              "reason": "api-error after retries: HTTP 429: quota", "_api_error": True}
+
+
+class FlakyAdapter(FakeAdapter):
+    """Errors on a chosen set of pairs; answers truth elsewhere."""
+
+    def __init__(self, decide, err_keys):
+        super().__init__(decide)
+        self.err_keys = err_keys
+
+    def verdict(self, a, b):
+        if frozenset((a["headline"], b["headline"])) in self.err_keys:
+            return dict(_API_ERROR)
+        return super().verdict(a, b)
+
+
 def test_void_run_then_resume_heals_the_store(tmp_path, capsys):
     rows, truth = _sheet()
     pairs = _write(tmp_path, rows)
     out = tmp_path / "verdicts.jsonl"
     argv = ["--pairs", str(pairs), "--out", str(out)] + ARGS_SMALL
 
-    class ErrorAdapter(FakeAdapter):
-        def verdict(self, a, b):
-            return {"verdict": "uncertain", "quoted_span_a": "", "quoted_span_b": "",
-                    "reason": "api-error after retries: HTTP 429: quota", "_api_error": True}
-
-    assert v1.main(argv, adapter=ErrorAdapter(None)) == 0
+    # intermittent transport failure (never five consecutive): p_01, p_03, p_05 error —
+    # 3/6 records is beyond the 2% trace, so the run completes but is declared VOID
+    err_keys = {frozenset((rows[i]["a"]["headline"], rows[i]["b"]["headline"]))
+                for i in (0, 2, 4)}
+    assert v1.main(argv, adapter=FlakyAdapter(_decider(truth), err_keys)) == 0
     text = capsys.readouterr().out
     assert "VOID" in text and "SCREENING PASS" not in text and "FAIL —" not in text
 
@@ -257,10 +273,35 @@ def test_void_run_then_resume_heals_the_store(tmp_path, capsys):
     assert v1.main(argv, adapter=ad) == 0
     text = capsys.readouterr().out
     assert "SCREENING PASS" in text and "VOID" not in text
-    assert ad.calls == 12         # 6 pairs + 2x2 replays + 2 swaps, all re-judged
+    assert ad.calls == 6          # 3 re-judged pairs + p_01's 2 replays + p_01's swap
     final = {}
     for l in out.read_text().splitlines():
         rec = json.loads(l)
         final[rec["pair_id"]] = rec        # append-only store: the last record wins
     assert len(final) == 6
     assert all(not rec["api_error"] for rec in final.values())
+
+
+def test_circuit_breaker_aborts_a_dead_transport(tmp_path, capsys):
+    rows, truth = _sheet()
+    pairs = _write(tmp_path, rows)
+    out = tmp_path / "verdicts.jsonl"
+    argv = ["--pairs", str(pairs), "--out", str(out)] + ARGS_SMALL
+
+    class DeadAdapter(FakeAdapter):
+        def verdict(self, a, b):
+            return dict(_API_ERROR)
+
+    # five consecutive api-error records abort the pass — no churn through the rest
+    assert v1.main(argv, adapter=DeadAdapter(None)) == 1
+    text = capsys.readouterr().out
+    assert "CIRCUIT BREAKER" in text and "-- verdict --" not in text
+    assert len(out.read_text().splitlines()) == 5
+
+    # the same command heals: errored records re-judge, the sixth pair gets judged,
+    # replays and swaps run fresh
+    ad = FakeAdapter(_decider(truth))
+    assert v1.main(argv, adapter=ad) == 0
+    text = capsys.readouterr().out
+    assert "SCREENING PASS" in text
+    assert ad.calls == 12         # 5 re-judged + 1 fresh + 2x2 replays + 2 swaps
