@@ -29,6 +29,12 @@ Fail-closed everywhere: API errors after bounded retries record verdict "uncerta
 source "api-error"; malformed JSON likewise. Temperature 0 is NOT assumed to be determinism —
 that is what the stability metric measures.
 
+A run whose store carries api-error records beyond a trace (2% of pairs) is declared VOID —
+it measured transport availability, not the model, and no bar is scored as tested (the first
+live run recorded 372/390 exactly this way). Resume re-judges api-error records and
+error-flagged sidecar entries while keeping every real verdict, so re-running the same
+command after the transport problem is fixed heals the store in place.
+
 Requires GEMINI_API_KEY in the environment (the stack's existing convention). Cost at
 gemini-2.5-flash pricing is cents for the full run; actual token usage is totalled from the
 API's own usageMetadata and printed.
@@ -42,6 +48,7 @@ import os
 import re
 import sys
 import time
+import urllib.error
 import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -104,9 +111,22 @@ def make_prompt(a: dict, b: dict) -> str:
             f"Do A and B report the same news event?")
 
 
+_RETRY_DELAY = re.compile(r'"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"')
+
+
 class GeminiAdapter:
     """The model adapter. The harness depends only on ``name`` and ``verdict(a, b)`` — a
-    different model slots in by implementing the same two members."""
+    different model slots in by implementing the same two members.
+
+    Transport discipline (learned from the first live run, which recorded 372/390 pairs as
+    fail-closed transport errors): HTTP errors are read for their status and body; 4xx other
+    than 429 fails fast (retrying a rejected request cannot succeed); 429/5xx honors the
+    server's RetryInfo retryDelay when present, else exponential backoff capped at 60s,
+    across six attempts. ``sleep`` paces between calls — free-tier gemini-2.5-flash allows
+    10 requests/min, so pass --sleep 6.5 there; paid tiers can run the default. Thinking is
+    disabled (thinkingBudget 0): the verdict must come from the rubric applied to the text,
+    and an invisible thinking budget consuming maxOutputTokens is a malformed-response
+    failure shape."""
 
     name = MODEL
 
@@ -122,29 +142,46 @@ class GeminiAdapter:
             "systemInstruction": {"parts": [{"text": SYSTEM}]},
             "contents": [{"role": "user", "parts": [{"text": make_prompt(a, b)}]}],
             "generationConfig": {"temperature": 0, "responseMimeType": "application/json",
-                                 "responseSchema": SCHEMA, "maxOutputTokens": 1024},
+                                 "responseSchema": SCHEMA, "maxOutputTokens": 2048,
+                                 "thinkingConfig": {"thinkingBudget": 0}},
         }).encode()
         url = ENDPOINT.format(model=MODEL, key=self.key)
         last = None
-        for attempt in range(3):
+        for attempt in range(6):
             try:
                 req = urllib.request.Request(url, data=body,
                                              headers={"Content-Type": "application/json"})
                 with urllib.request.urlopen(req, timeout=90) as r:
                     payload = json.loads(r.read().decode())
-                usage = payload.get("usageMetadata") or {}
-                self.tokens_in += int(usage.get("promptTokenCount") or 0)
-                self.tokens_out += int(usage.get("candidatesTokenCount") or 0)
-                self.calls += 1
+            except urllib.error.HTTPError as e:
+                try:
+                    detail = e.read().decode(errors="replace")
+                except Exception:                     # noqa: BLE001 — body may be unreadable
+                    detail = ""
+                last = f"HTTP {e.code}: {(detail or str(e.reason))[:300]}"
+                if e.code == 429 or e.code >= 500:
+                    m = _RETRY_DELAY.search(detail)
+                    time.sleep(float(m.group(1)) if m else min(60.0, 5.0 * (2 ** attempt)))
+                    continue
+                break                                  # 400/401/403/404: fail fast, fail closed
+            except Exception as e:                    # noqa: BLE001 — network/timeout shapes
+                last = f"{type(e).__name__}: {e}"
+                time.sleep(min(30.0, 2.0 * (2 ** attempt)))
+                continue
+            usage = payload.get("usageMetadata") or {}
+            self.tokens_in += int(usage.get("promptTokenCount") or 0)
+            self.tokens_out += int(usage.get("candidatesTokenCount") or 0)
+            self.calls += 1
+            try:
                 text = payload["candidates"][0]["content"]["parts"][0]["text"]
                 out = json.loads(text)
                 if out.get("verdict") not in ("same_event", "different_event", "uncertain"):
                     raise ValueError("bad verdict enum")
-                time.sleep(self.sleep)
-                return out
-            except Exception as e:                    # noqa: BLE001 — bounded retry, then fail closed
-                last = f"{type(e).__name__}: {e}"
-                time.sleep(2.0 * (attempt + 1))
+            except Exception as e:                    # noqa: BLE001 — malformed body
+                last = f"malformed response: {type(e).__name__}: {e}"
+                continue
+            time.sleep(self.sleep)
+            return out
         return {"verdict": "uncertain", "quoted_span_a": "", "quoted_span_b": "",
                 "reason": f"api-error after retries: {last}", "_api_error": True}
 
@@ -172,6 +209,9 @@ def main(argv=None, adapter=None) -> int:
     ap.add_argument("--replays", type=int, default=5)
     ap.add_argument("--symmetry-sample", type=int, default=50)
     ap.add_argument("--limit", type=int, default=0, help="debug: judge only the first N pairs")
+    ap.add_argument("--sleep", type=float, default=0.35,
+                    help="pace between calls (seconds); free-tier gemini-2.5-flash allows "
+                         "10 requests/min — use 6.5 there")
     args = ap.parse_args(argv)
 
     rows = [json.loads(l) for l in open(args.pairs, encoding="utf-8")]
@@ -188,7 +228,7 @@ def main(argv=None, adapter=None) -> int:
         if not key:
             print("GEMINI_API_KEY is not set — refusing to run.")
             return 1
-        adapter = GeminiAdapter(key)
+        adapter = GeminiAdapter(key, sleep=args.sleep)
     print(f"MODEL UNDER TEST     : {adapter.name}")
     print(f"  This benchmark measures {adapter.name} — NOT Claude Opus.")
     print(f"pairs                : {len(rows)}  (store: {args.out}; judged pairs are skipped)")
@@ -203,8 +243,9 @@ def main(argv=None, adapter=None) -> int:
 
     t0 = time.perf_counter()
     for r in rows:
-        if r["pair_id"] in store:
-            continue
+        prior = store.get(r["pair_id"])
+        if prior is not None and not prior.get("api_error"):
+            continue                                   # real verdicts are kept; errors re-judge
         v = adapter.verdict(r["a"], r["b"])
         rec = {"pair_id": r["pair_id"], "model": adapter.name, "raw": v}
         qa, qb = quote_ok(v.get("quoted_span_a"), r["a"]), quote_ok(v.get("quoted_span_b"), r["b"])
@@ -219,12 +260,14 @@ def main(argv=None, adapter=None) -> int:
 
     # stability replays + symmetry, on the sorted head samples
     sample = rows[: args.stability_sample]
-    stable = flips = 0
+    stable = flips = rep_errs = sym_errs = 0
     replay_path = args.out + ".replays"
     replays: dict = {}
     if os.path.exists(replay_path):
         for l in open(replay_path, encoding="utf-8"):
             v = json.loads(l)
+            if v.get("api_error"):
+                continue                               # transport absences re-run, never score
             replays.setdefault(v["pair_id"], []).append(v["verdict"])
     with open(replay_path, "a", encoding="utf-8") as rf:
         for r in sample:
@@ -234,7 +277,11 @@ def main(argv=None, adapter=None) -> int:
                 qa = quote_ok(v.get("quoted_span_a"), r["a"])
                 qb = quote_ok(v.get("quoted_span_b"), r["b"])
                 verdict = v["verdict"] if (qa and qb) else "uncertain"
-                rf.write(json.dumps({"pair_id": r["pair_id"], "verdict": verdict}) + "\n")
+                entry = {"pair_id": r["pair_id"], "verdict": verdict}
+                if v.get("_api_error"):
+                    entry["api_error"] = True
+                    rep_errs += 1
+                rf.write(json.dumps(entry) + "\n")
                 have.append(verdict)
             base = store[r["pair_id"]]["verdict"]
             if all(h == base for h in have):
@@ -248,6 +295,8 @@ def main(argv=None, adapter=None) -> int:
     if os.path.exists(sym_path):
         for l in open(sym_path, encoding="utf-8"):
             v = json.loads(l)
+            if v.get("api_error"):
+                continue                               # transport absences re-run, never score
             syms[v["pair_id"]] = v["verdict"]
     with open(sym_path, "a", encoding="utf-8") as sf:
         for r in sym_sample:
@@ -256,8 +305,11 @@ def main(argv=None, adapter=None) -> int:
                 qa = quote_ok(v.get("quoted_span_a"), r["b"])
                 qb = quote_ok(v.get("quoted_span_b"), r["a"])
                 syms[r["pair_id"]] = v["verdict"] if (qa and qb) else "uncertain"
-                sf.write(json.dumps({"pair_id": r["pair_id"],
-                                     "verdict": syms[r["pair_id"]]}) + "\n")
+                entry = {"pair_id": r["pair_id"], "verdict": syms[r["pair_id"]]}
+                if v.get("_api_error"):
+                    entry["api_error"] = True
+                    sym_errs += 1
+                sf.write(json.dumps(entry) + "\n")
             if syms[r["pair_id"]] == store[r["pair_id"]]["verdict"]:
                 sym_ok += 1
 
@@ -288,9 +340,11 @@ def main(argv=None, adapter=None) -> int:
               f"fail-closed, {n - quotes_ok - demoted_n - api_errors} uncertain with "
               f"unverified spans")
     print(f"  stability      : {stable}/{stable + flips} "
-          f"({stable / max(1, stable + flips):.1%})   bar >= 98%")
+          f"({stable / max(1, stable + flips):.1%})   bar >= 98%"
+          + (f"   (replay api errors: {rep_errs})" if rep_errs else ""))
     print(f"  symmetry       : {sym_ok}/{len(sym_sample)} "
-          f"({sym_ok / max(1, len(sym_sample)):.1%})   bar >= 99%")
+          f"({sym_ok / max(1, len(sym_sample)):.1%})   bar >= 99%"
+          + (f"   (swap api errors: {sym_errs})" if sym_errs else ""))
     print(f"  usage          : {adapter.calls} calls, {adapter.tokens_in:,} in / "
           f"{adapter.tokens_out:,} out tokens, {elapsed:.0f}s judging pass")
 
@@ -346,6 +400,11 @@ def main(argv=None, adapter=None) -> int:
     if kill:
         print(f"  KILL — {adapter.name} produced same_event on a labeled-different exhibit; "
               f"the verifier design fails its gate on this model.")
+    elif api_errors > max(2, int(0.02 * n)):
+        print(f"  VOID — {api_errors}/{n} store records are api-error fail-closed: this run "
+              f"measured transport availability, not {adapter.name}, and no bar was tested. "
+              f"Diagnose the recorded reasons, fix the transport (pacing/quota), and re-run — "
+              f"resume re-judges api-error records and keeps every real verdict.")
     elif v1a_ok:
         print(f"  SCREENING PASS for {adapter.name} — all measurable V1-prime bars met. This "
               f"licenses continuing the design, NOT production wiring: the registered 1%/3% "

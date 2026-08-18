@@ -190,3 +190,77 @@ def test_gemini_adapter_fails_closed_without_network(monkeypatch):
     monkeypatch.setattr("urllib.request.urlopen", boom)
     out = v1.GeminiAdapter("test-key").verdict(_side("A"), _side("B"))
     assert out["verdict"] == "uncertain" and out.get("_api_error")
+
+
+def test_adapter_fails_fast_on_a_rejected_request(monkeypatch):
+    import io
+    import urllib.error
+    monkeypatch.setattr(v1.time, "sleep", lambda s: None)
+    calls = {"n": 0}
+
+    def reject(*a, **k):
+        calls["n"] += 1
+        raise urllib.error.HTTPError(
+            "u", 400, "Bad Request", None, io.BytesIO(b'{"error": {"message": "bad key"}}'))
+
+    monkeypatch.setattr("urllib.request.urlopen", reject)
+    out = v1.GeminiAdapter("k").verdict(_side("A"), _side("B"))
+    assert out["verdict"] == "uncertain" and out.get("_api_error")
+    assert "HTTP 400" in out["reason"]
+    assert calls["n"] == 1        # retrying a rejected request cannot succeed
+
+
+def test_adapter_honors_the_servers_retry_delay(monkeypatch):
+    import io
+    import urllib.error
+    slept = []
+    monkeypatch.setattr(v1.time, "sleep", lambda s: slept.append(s))
+    answer = {"verdict": "same_event", "quoted_span_a": "A", "quoted_span_b": "B",
+              "reason": "r"}
+    payload = {"usageMetadata": {"promptTokenCount": 10, "candidatesTokenCount": 5},
+               "candidates": [{"content": {"parts": [{"text": json.dumps(answer)}]}}]}
+    state = {"n": 0}
+
+    def flaky(*a, **k):
+        state["n"] += 1
+        if state["n"] == 1:
+            body = b'{"error": {"details": [{"retryDelay": "7s"}]}}'
+            raise urllib.error.HTTPError("u", 429, "rate limited", None, io.BytesIO(body))
+        return io.BytesIO(json.dumps(payload).encode())
+
+    monkeypatch.setattr("urllib.request.urlopen", flaky)
+    ad = v1.GeminiAdapter("k")
+    out = ad.verdict(_side("A"), _side("B"))
+    assert out["verdict"] == "same_event"
+    assert 7.0 in slept           # the server's stated delay, not the exponential fallback
+    assert ad.calls == 1 and ad.tokens_in == 10
+
+
+def test_void_run_then_resume_heals_the_store(tmp_path, capsys):
+    rows, truth = _sheet()
+    pairs = _write(tmp_path, rows)
+    out = tmp_path / "verdicts.jsonl"
+    argv = ["--pairs", str(pairs), "--out", str(out)] + ARGS_SMALL
+
+    class ErrorAdapter(FakeAdapter):
+        def verdict(self, a, b):
+            return {"verdict": "uncertain", "quoted_span_a": "", "quoted_span_b": "",
+                    "reason": "api-error after retries: HTTP 429: quota", "_api_error": True}
+
+    assert v1.main(argv, adapter=ErrorAdapter(None)) == 0
+    text = capsys.readouterr().out
+    assert "VOID" in text and "SCREENING PASS" not in text and "FAIL —" not in text
+
+    # the healing run: every api-error record — store, replays, swaps — is re-judged;
+    # nothing real is lost, and the verdict recovers from the same command
+    ad = FakeAdapter(_decider(truth))
+    assert v1.main(argv, adapter=ad) == 0
+    text = capsys.readouterr().out
+    assert "SCREENING PASS" in text and "VOID" not in text
+    assert ad.calls == 12         # 6 pairs + 2x2 replays + 2 swaps, all re-judged
+    final = {}
+    for l in out.read_text().splitlines():
+        rec = json.loads(l)
+        final[rec["pair_id"]] = rec        # append-only store: the last record wins
+    assert len(final) == 6
+    assert all(not rec["api_error"] for rec in final.values())
