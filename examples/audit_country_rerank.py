@@ -169,10 +169,12 @@ def main(argv=None) -> int:
         print(f"  {'TOTAL':>8}  " + "  ".join(
             f"{sum(1 for r in rows[: args.limit] if feed_source.article_countries(r, src)):>10}"
             for src in sources))
-        print(f"\n  A 14-card feed needs far more than 14 eligible articles: the reader's own "
-              f"reads are excluded, each strategy admits only part of the pool (rwe-b: political "
-              f"items only), and the publisher cap limits how many cards one outlet may supply. "
-              f"Treat a supply under ~200 as 'this country cannot fill a feed on its own'.")
+        print(f"\n  Supply bounds what a country CAN fill, but predicts it poorly — measured "
+              f"2026-08-19 on a 14-card personalized feed under content matching: MY with 113 "
+              f"eligible articles filled 6 slots, IN with 374 filled 11, GB with 1,148 filled 9. "
+              f"A ~200 'cannot fill a feed' rule of thumb was stated here earlier and the numbers "
+              f"refuted it: the reader's own ranking dominates, so read this table as an upper "
+              f"bound and the served diff (section 3b) as the answer.")
 
     probes = [c.strip().upper() for c in args.countries.split(",") if c.strip()]
     if not probes:
