@@ -693,12 +693,32 @@ def _reading_streak(read_ats) -> int:
     return streak
 
 
+def _utc_marked(ts) -> "str | None":
+    """Put back the UTC marker SQLite drops.
+
+    ``created_at`` is written by ``store._utcnow()`` — an AWARE UTC datetime — but the column is a
+    plain ``DateTime``, so SQLite returns it naive and ``.isoformat()`` writes no offset at all:
+    ``2026-08-19T15:01:14.807509``. ECMAScript reads a bare date-time as LOCAL, so every browser
+    consumer silently shifted these stamps by the reader's own UTC offset — which is how Reading
+    History's "Preferred time" came to report the server's clock instead of the reader's.
+
+    This states what the value already is; it never converts. Applied ONLY to ``created_at``, whose
+    zone is known — a client-supplied ``observedAt`` is left exactly as sent, since a naive one
+    would be the client's local time and stamping it UTC would invent an hour."""
+    if not isinstance(ts, str) or len(ts) < 11 or ts[10] not in "T ":
+        return ts                                   # not a date-time (or absent): unchanged
+    tail = ts[10:]
+    if ts.endswith(("Z", "z")) or "+" in tail or "-" in tail:
+        return ts                                   # already states its offset
+    return ts + "Z"
+
+
 def _read_at(row) -> "str | None":
     """A stored-read row's effective timestamp: the reader's observed time, else the scored read's
     own timestamp, else the row's insert time. One definition shared by the history and analytics
     serialisers so day-bucketing never diverges."""
     sc = row.get("scored") or {}
-    return row.get("observedAt") or sc.get("read_at") or row.get("createdAt")
+    return row.get("observedAt") or sc.get("read_at") or _utc_marked(row.get("createdAt"))
 
 
 def _day(ts) -> "str | None":

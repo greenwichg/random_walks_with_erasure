@@ -546,6 +546,51 @@ def test_recommenders_built_once(backend):
 
 
 # --------------------------------------------------------------------------- #
+# readAt — the timestamp every client buckets by, and the UTC marker SQLite drops
+# --------------------------------------------------------------------------- #
+def test_read_at_marks_the_naive_created_at_as_utc():
+    """``created_at`` is written by an AWARE UTC datetime, but the column is a plain ``DateTime``,
+    so SQLite returns it naive and ``.isoformat()`` emits no offset. ECMAScript reads a bare
+    date-time as LOCAL, which silently shifted every in-app read by the reader's own UTC offset —
+    Reading History's "Preferred time" reported the server's clock instead of the reader's."""
+    row = {"createdAt": "2026-08-19T15:01:14.807509"}
+    assert api_server._read_at(row) == "2026-08-19T15:01:14.807509Z"
+
+
+@pytest.mark.parametrize("ts", [
+    "2026-08-19T15:01:14.807Z",
+    "2026-08-19T15:01:14+05:30",
+    "2026-08-19T15:01:14-05:00",
+    "2026-08-19T15:01:14+00:00",
+])
+def test_read_at_leaves_a_stamp_that_states_its_offset_alone(ts):
+    assert api_server._read_at({"createdAt": ts}) == ts
+
+
+def test_read_at_never_stamps_a_client_supplied_observed_at():
+    """A naive ``observedAt`` would be the CLIENT's local time, so marking it UTC would invent an
+    hour. Only ``created_at``, whose zone the engine knows, is marked."""
+    assert api_server._read_at({"observedAt": "2026-08-19T15:01:14",
+                                "createdAt": "2026-08-19T15:01:20"}) == "2026-08-19T15:01:14"
+    # …and a properly zoned observedAt still wins over created_at.
+    assert api_server._read_at({"observedAt": "2026-08-19T13:45:22Z",
+                                "createdAt": "2026-08-19T15:01:14"}) == "2026-08-19T13:45:22Z"
+
+
+def test_read_at_preserves_the_day_prefix_every_python_consumer_uses():
+    """``_day`` and ``_reading_streak`` both slice ``[:10]``; marking the string must not move it."""
+    marked = api_server._read_at({"createdAt": "2026-08-19T15:01:14.807509"})
+    assert marked[:10] == "2026-08-19"
+    assert api_server._day(marked) == "2026-08-19"
+
+
+def test_read_at_passes_through_non_timestamps():
+    assert api_server._read_at({}) is None
+    assert api_server._read_at({"createdAt": None}) is None
+    assert api_server._read_at({"createdAt": "2026-08-19"}) == "2026-08-19"   # date-only, untouched
+
+
+# --------------------------------------------------------------------------- #
 # reading history — serialised from stored reads via the SHARED article payload
 # --------------------------------------------------------------------------- #
 def test_serialize_history_shape_and_degradation(backend):

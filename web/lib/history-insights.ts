@@ -64,12 +64,52 @@ export interface HistoryInsights {
   concentration: Concentration;
 }
 
+/** An ISO string that states its offset: `…Z`, `…+05:30`, `…-0500`. */
+const ZONED = /(?:[Zz]|[+-]\d{2}:?\d{2})$/;
+/** A date-TIME (as opposed to a bare `YYYY-MM-DD`, which ECMAScript already reads as UTC). */
+const DATE_TIME = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/;
+
+/**
+ * Parse a stored read timestamp. **Every `readAt` in this module goes through here.**
+ *
+ * The engine serves two shapes. A client-supplied `observedAt` carries its offset (the extension
+ * sends `toISOString()`). But the web app never sends one, so those reads fall back to the row's
+ * own `created_at` — which IS UTC (`store._utcnow()`), except that SQLite's plain `DateTime`
+ * column drops the tzinfo on the round trip and `.isoformat()` then writes no marker at all:
+ * `2026-08-19T15:01:14.807509`.
+ *
+ * ECMAScript reads a bare date-time as LOCAL. So the browser was shifting every in-app read by
+ * the reader's own UTC offset, and the Preferred-time card reported the SERVER's clock: a 15:01
+ * UTC read showed "afternoon" to a Delhi reader whose evening it was, and to a New York reader
+ * whose morning it was. Silent, because "Afternoons" is a plausible-looking answer.
+ *
+ * A bare stamp is therefore read as UTC, which is what it is.
+ */
+export function parseReadAt(iso: string): Date {
+  return new Date(withExplicitZone(iso));
+}
+
+/**
+ * The string half of `parseReadAt`, split out so the guarantee is testable WITHOUT a clock.
+ *
+ * This bug is invisible on a UTC machine — `new Date(bare)` and `new Date(bare + "Z")` agree
+ * there — which is how it got past a UTC CI in the first place. A test that asserts Date maths
+ * can only catch it on a developer who happens to sit in another zone. A test that asserts this
+ * string catches it everywhere.
+ */
+export function withExplicitZone(iso: string): string {
+  if (typeof iso === "string" && DATE_TIME.test(iso) && !ZONED.test(iso)) {
+    return `${iso.replace(" ", "T")}Z`;
+  }
+  return iso;
+}
+
 /**
  * Stable local-day key (YYYY-MM-DD) for a timestamp — the shared identifier that syncs the Calendar
  * selection to the Timeline grouping (both bucket reads by local day). Pure; no imports.
  */
 export function dayKey(iso: string): string {
-  const d = new Date(iso);
+  const d = parseReadAt(iso);
   const p = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
@@ -186,7 +226,7 @@ export const SESSION_GAP_MINUTES = 45;
  * order; returns newest session first, reads newest-first within each. Pure.
  */
 export function sessionize(entries: HistoryEntry[], gapMinutes = SESSION_GAP_MINUTES): ReadingSession[] {
-  const sorted = [...entries].sort((a, b) => new Date(b.readAt).getTime() - new Date(a.readAt).getTime());
+  const sorted = [...entries].sort((a, b) => parseReadAt(b.readAt).getTime() - parseReadAt(a.readAt).getTime());
   const out: ReadingSession[] = [];
   let cur: HistoryEntry[] = [];
   const flush = () => {
@@ -197,7 +237,7 @@ export function sessionize(entries: HistoryEntry[], gapMinutes = SESSION_GAP_MIN
       cur = [e];
       continue;
     }
-    const gapMs = new Date(cur[cur.length - 1]!.readAt).getTime() - new Date(e.readAt).getTime();
+    const gapMs = parseReadAt(cur[cur.length - 1]!.readAt).getTime() - parseReadAt(e.readAt).getTime();
     if (gapMs > gapMinutes * 60000) {
       flush();
       cur = [e];
@@ -229,7 +269,7 @@ export function timeBucket(hour: number): TimeBucket {
  * mutating the process clock.
  */
 export function localHour(iso: string, timeZone?: string): number {
-  const d = new Date(iso);
+  const d = parseReadAt(iso);
   if (!timeZone) return d.getHours();
   const hour = new Intl.DateTimeFormat("en-US", { hour: "numeric", hour12: false, timeZone }).format(d);
   return Number(hour) % 24; // some ICU builds render midnight as "24"
@@ -266,7 +306,7 @@ export function preferredTimeBucket(
   const counts = new Map<TimeBucket, number>();
   let inWindow = 0;
   for (const e of entries) {
-    const at = new Date(e.readAt).getTime();
+    const at = parseReadAt(e.readAt).getTime();
     if (!Number.isFinite(at) || at < cutoff || at > now) continue; // future stamps are not habits
     inWindow += 1;
     const bkt = timeBucket(localHour(e.readAt, timeZone));
@@ -302,7 +342,7 @@ export interface ReadingPattern {
  */
 export function readingPattern(entries: HistoryEntry[], now: number = Date.now()): ReadingPattern {
   const weekAgo = now - 7 * 24 * 60 * 60 * 1000;
-  const articlesThisWeek = entries.filter((e) => new Date(e.readAt).getTime() >= weekAgo).length;
+  const articlesThisWeek = entries.filter((e) => parseReadAt(e.readAt).getTime() >= weekAgo).length;
 
   const byDay = new Map<string, HistoryEntry[]>();
   for (const e of entries) {

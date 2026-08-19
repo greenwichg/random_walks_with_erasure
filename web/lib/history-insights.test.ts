@@ -5,6 +5,8 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 import {
   summarizeHistory,
@@ -18,6 +20,8 @@ import {
   readingPattern,
   preferredTimeBucket,
   localHour,
+  parseReadAt,
+  withExplicitZone,
 } from "./history-insights.ts";
 
 type Art = { topic: string; publisher: string; lean: number | null; register: string; readingMinutes: number;
@@ -270,4 +274,102 @@ test("readingPattern exposes the windowed preferred time", () => {
   ];
   assert.equal(readingPattern(entries, NOW).preferredTime, "evening");
   assert.equal(readingPattern(entries, NOW).total, 36);   // volume facts stay over the whole set
+});
+
+// --------------------------------------------------------------------------- //
+// The shape the engine ACTUALLY serves.
+//
+// Every fixture above carries a `Z`. Production mostly does not: only the browser extension sends
+// an `observedAt`, so an in-app read falls back to the row's `created_at`, which SQLite hands back
+// naive — `2026-08-19T15:01:14.807509`, no offset. ECMAScript reads that as LOCAL, so the card was
+// bucketing by the SERVER's clock: one 15:01 UTC read read as "afternoon" for everyone, when it was
+// evening in Delhi and morning in New York.
+//
+// These assertions are deliberately about the STRING, not about Date maths. On a UTC machine
+// `new Date(bare)` and `new Date(bare + "Z")` agree, so a clock-based test passes on a UTC CI
+// whether or not the bug is present — which is precisely how it shipped.
+// --------------------------------------------------------------------------- //
+
+test("a bare engine timestamp is marked UTC, because that is what it is", () => {
+  assert.equal(withExplicitZone("2026-08-19T15:01:14.807509"), "2026-08-19T15:01:14.807509Z");
+  assert.equal(withExplicitZone("2026-08-19T15:01:14"), "2026-08-19T15:01:14Z");
+  assert.equal(withExplicitZone("2026-08-19 15:01:14"), "2026-08-19T15:01:14Z"); // space separator
+});
+
+test("a timestamp that already states its offset is left alone", () => {
+  for (const iso of [
+    "2026-08-19T15:01:14.807Z",
+    "2026-08-19T15:01:14+05:30",
+    "2026-08-19T15:01:14-05:00",
+    "2026-08-19T15:01:14-0500",
+    "2026-08-19T15:01:14+00:00",
+  ]) {
+    assert.equal(withExplicitZone(iso), iso, `${iso} must not be rewritten`);
+  }
+});
+
+test("a date-only key is not a date-time and is not touched", () => {
+  // ECMAScript already reads a bare YYYY-MM-DD as UTC; appending Z here would be a no-op at best
+  // and a parse error at worst.
+  assert.equal(withExplicitZone("2026-08-19"), "2026-08-19");
+  assert.equal(withExplicitZone(""), "");
+});
+
+test("the bare and marked forms of one instant parse identically", () => {
+  const bare = "2026-08-19T15:01:14.807509";
+  assert.equal(parseReadAt(bare).getTime(), Date.parse(bare.slice(0, 23) + "Z"));
+  assert.equal(parseReadAt(bare).toISOString(), "2026-08-19T15:01:14.807Z");
+});
+
+test("the served shape buckets by the READER's clock, not the server's", () => {
+  // The regression, end to end: six in-app reads at 15:01 UTC, exactly as the engine serves them.
+  const served = Array.from({ length: 6 }, () => at("2026-07-15T15:01:14.807509"));
+  assert.equal(preferredTimeBucket(served, { now: NOW, timeZone: "Asia/Kolkata" }), "evening");   // 20:31
+  assert.equal(preferredTimeBucket(served, { now: NOW, timeZone: "America/New_York" }), "morning"); // 11:01
+  assert.equal(preferredTimeBucket(served, { now: NOW, timeZone: "UTC" }), "afternoon");
+  // Before the fix all three said "afternoon" — the server's bucket, wearing the reader's name.
+});
+
+test("the rolling window and the week count read the served shape too", () => {
+  // `at < cutoff` and `>= weekAgo` parse the same strings; a misparse shifts a read by the offset
+  // and can push it out of a window it belongs in.
+  const bare = (n: number, hms: string) =>
+    `${new Date(NOW - n * 86400000).toISOString().slice(0, 10)}T${hms}`;
+  const entries = Array.from({ length: 6 }, (_, i) => at(bare(i + 1, "23:30:00.123456")));
+  assert.equal(preferredTimeBucket(entries, { now: NOW, timeZone: "UTC" }), "night");
+  assert.equal(readingPattern(entries, NOW).articlesThisWeek, 6);
+});
+
+test("dayKey agrees with the bucket about which instant a bare stamp names", () => {
+  // Calendar and Timeline group by dayKey; the preferred-time card buckets by localHour. Both go
+  // through the same parse, so they can never disagree about the same read.
+  const bare = "2026-08-19T15:01:14.807509";
+  assert.equal(dayKey(bare), dayKey("2026-08-19T15:01:14.807509Z"));
+});
+
+test("the DEVICE-zone path — the one production uses — buckets in the reader's zone", () => {
+  // `readingPattern` calls `preferredTimeBucket` with no `timeZone`, so the real code path is
+  // `Date#getHours()` against the browser's own zone. Every other test here passes an explicit
+  // IANA zone, which exercises the Intl path instead and leaves the production one uncovered.
+  // V8 caches the zone, so it cannot be switched inside this process — a child that starts with
+  // TZ already set is the only honest way to stand where the reader stands.
+  const mod = fileURLToPath(new URL("./history-insights.ts", import.meta.url));
+  const script = `
+    import { preferredTimeBucket } from ${JSON.stringify(mod)};
+    const served = Array.from({ length: 6 }, () => ({ readAt: "2026-07-15T15:01:14.807509" }));
+    process.stdout.write(String(preferredTimeBucket(served, { now: Date.parse("2026-07-27T12:00:00Z") })));
+  `;
+  for (const [tz, expected] of [
+    ["Asia/Kolkata", "evening"],       // 20:31 local
+    ["America/New_York", "morning"],   // 11:01 local
+    ["Europe/Berlin", "evening"],      // 17:01 local
+    ["UTC", "afternoon"],
+  ] as const) {
+    const r = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
+      env: { ...process.env, TZ: tz },
+      encoding: "utf-8",
+    });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stdout, expected, `a reader in ${tz} must be told ${expected}`);
+  }
 });
