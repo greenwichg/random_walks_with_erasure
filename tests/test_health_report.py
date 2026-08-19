@@ -317,3 +317,62 @@ def test_blind_spot_gaps_are_capped():
     q_c = np.full(6, 0.2)
     assert len(hr.blind_spot_gaps(cat_u, p_c, q_c)) == 2
     assert len(hr.blind_spot_gaps(cat_u, p_c, q_c, k=4)) == 4
+
+
+# --------------------------------------------------------------------------- #
+# Score stability — the score must not move while the reading does not
+# --------------------------------------------------------------------------- #
+def _fixed_reads():
+    """One reader's unchanging history."""
+    import augmented_corpus as ac
+    return [ac.ScoredRead(article_id=f"https://ex.com/a{i}", outlet=o, category=c, lean=l,
+                          political=(c == "Politics"))
+            for i, (o, c, l) in enumerate([
+                ("CNN", "Politics", -1.0), ("Fox News", "Politics", 1.0),
+                ("Reuters", "Business", 0.0), ("BBC", "World", -0.2),
+                ("AP", "Science", 0.0), ("NPR", "Health", -0.6),
+                ("WSJ", "Business", 0.5), ("Guardian", "Climate", -0.9),
+                ("Politico", "Politics", -0.3), ("Axios", "Technology", 0.1),
+            ] * 3)]
+
+
+def _overall_for(catalog_items: int) -> int:
+    """The reader's overall score when ranked inside a corpus of this catalog size. Mirrors the
+    production path: corpus_refresh builds `DatasetProfile.synthetic(qbias_csv=<fresh export>)`
+    on every cycle and hot-swaps it, so the catalog behind this number grows continuously."""
+    import importlib.util
+    import augmented_corpus as ac
+    spec = importlib.util.spec_from_file_location("api_server", ROOT / "examples" / "api_server.py")
+    engine = importlib.util.module_from_spec(spec)
+    import sys
+    sys.modules["api_server"] = engine
+    spec.loader.exec_module(engine)
+    b = engine.Backend(engine.DatasetProfile.synthetic(n_users=200, max_items=catalog_items, seed=0))
+    res = ac.augment(ac.bundle_from_backend(b), _fixed_reads())
+    pop = hr.compute(res.bundle.mind, register=res.bundle.register,
+                     emotion=res.bundle.emotion, confidence=res.bundle.confidence)
+    return hr.user_report(pop, res.bundle.mind, res.reader_row)["overall"]
+
+
+import pytest  # noqa: E402
+
+
+@pytest.mark.xfail(strict=True, reason=(
+    "KNOWN DEFECT, awaiting a product decision on what the score is ranked against. Every metric "
+    "is a percentile rank inside the corpus population, and corpus_refresh regenerates that "
+    "population from the LIVE catalog on every cycle — so a reader who reads nothing still moves. "
+    "Measured drift on identical reads: overall 89/88/87/89 across catalog sizes 500/520/560/600; "
+    "Source Diversity swings 6 points, Viewpoint Balance 4, Topic Diversity 2. The fix is to rank "
+    "against a FROZEN reference distribution rather than whatever the catalog looks like today; "
+    "remove this marker when it lands."))
+def test_score_is_stable_while_the_reading_history_is_unchanged():
+    """THE contract: identical reads must yield an identical score, whatever the catalog is doing.
+
+    A reader opens the app twice without reading anything in between. The number they are shown
+    describes THEIR reading, so it must not have moved — and if it does move, the "+2 this month"
+    beside it attributes a catalog refresh to the reader, which is a claim about them that is not
+    true."""
+    scores = [_overall_for(n) for n in (500, 520, 560, 600)]
+    assert len(set(scores)) == 1, (
+        f"the same reading history scored {scores} against four catalog sizes — "
+        f"the score moved without the reader doing anything")
