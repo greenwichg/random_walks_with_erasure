@@ -350,6 +350,14 @@ services:
       # quorum/veto knobs above: the verified configuration must not live one lost env-file
       # line away from silently reverting. 0 is the kill switch.
       RWE_CLUSTER_TEMPLATE_GATE: ${RWE_CLUSTER_TEMPLATE_GATE:-1}
+      # How a selected For You country orders the feed. `first` (default) puts every article
+      # from that country ahead of the rest — the "show me India news" reading — and `boost`
+      # reverts to the gentler 8x rank nudge this feature first shipped with. Neither removes
+      # anything: `first` PARTITIONS the pool, so once the country's articles run out the
+      # normal feed backfills the remaining slots and a low-supply country (India is 2.6% of
+      # the catalog) can never produce a short feed. Listed here, not only in code, because a
+      # lost env-file must not silently change how strongly a reader's country is honoured.
+      RWE_REC_COUNTRY_MODE: ${RWE_REC_COUNTRY_MODE:-first}
       # Story-hero guard (adopted 2026-08-16, docs/STORY_HERO_IMAGES.md): the hero is ranked on
       # evidence instead of copied from the earliest filer, and an image fronting > 3 distinct
       # stories in one build — or one shaped like branding (logo/placeholder/og-image path

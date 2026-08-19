@@ -1163,7 +1163,10 @@ def test_country_boost_is_overridable_for_measurement_but_never_by_a_reader():
         categories = np.asarray(["Sports", "Business"], dtype=object)
     R = api_server.Backend._preference_rerank
     by_col = {1: "IN"}
-    assert R(M, [0, 1], {"country": "IN", "countryBoost": 20.0}, by_col) == [1, 0]
+    # countryMode is pinned: under the shipped "first" default this assertion would pass
+    # without the boost ever being consulted, and the test would quietly stop testing anything.
+    assert R(M, [0, 1], {"country": "IN", "countryBoost": 20.0, "countryMode": "boost"},
+             by_col) == [1, 0]
 
     # the reader surface cannot produce it, at any stored value
     for stored in ({"recommendationCountry": "IN"},
@@ -1191,6 +1194,56 @@ def test_preference_rerank_applies_and_composes_the_country_nudge():
     assert both[0] == 4 and both.index(4) < both.index(1)
     # and neither preference silently undoes the other: the IN-only item still beats the rest
     assert both.index(1) < both.index(0)
+
+
+def test_country_first_partitions_without_removing_anything():
+    """The shipped mode: every country item sorts ahead of every non-country one, however far
+    down it ranked — and nothing is dropped, so the rest of the pool backfills behind it. That
+    partition IS the backfill: a low-supply country can never yield a short feed."""
+    class M:
+        categories = np.asarray(["A", "B", "C", "D", "E", "F"], dtype=object)
+    R = api_server.Backend._preference_rerank
+    cols = [0, 1, 2, 3, 4, 5]
+    by_col = {5: "IN", 2: "IN", 0: "US"}          # the IN items rank LAST and mid-pool
+
+    out = R(M, cols, {"country": "IN"}, by_col)   # default mode == "first"
+    assert out[:2] == [2, 5]                      # both IN items lead, in model order
+    assert sorted(out) == cols                    # nothing removed — the backfill guarantee
+    assert out[2:] == [0, 1, 3, 4]                # the remainder keeps its exact model order
+
+    # an 8x boost could NOT have lifted the last-ranked item past the head; the partition does
+    boosted = R(M, cols, {"country": "IN", "countryMode": "boost"}, by_col)
+    assert boosted.index(5) > 0
+
+
+def test_country_first_still_lets_interests_order_within_the_country_group():
+    """The reason the partition is a separate sort key rather than an infinite multiplier: an
+    infinite boost drives every country item's key to zero and throws away the reader's interest
+    ordering exactly where they asked for it most."""
+    class M:
+        categories = np.asarray(["Sports", "Health", "Sports", "Health"], dtype=object)
+    R = api_server.Backend._preference_rerank
+    cols = [0, 1, 2, 3]
+    by_col = {0: "IN", 2: "IN", 3: "IN"}          # col 1 is not IN
+
+    out = R(M, cols, {"country": "IN", "interests": {"health": 10}}, by_col)
+    assert out[-1] == 1                           # the non-IN item is last, whatever its topic
+    assert out.index(3) < out.index(0)            # within IN, the boosted Health item leads
+    assert sorted(out) == cols
+
+
+def test_country_mode_env_switch_falls_back_honestly(monkeypatch):
+    """`first` ships; `boost` is the kill switch; junk falls back to the default rather than to
+    a guess."""
+    monkeypatch.delenv("RWE_REC_COUNTRY_MODE", raising=False)
+    assert api_server.country_mode() == "first"
+    monkeypatch.setenv("RWE_REC_COUNTRY_MODE", "boost")
+    assert api_server.country_mode() == "boost"
+    monkeypatch.setenv("RWE_REC_COUNTRY_MODE", "  FIRST ")
+    assert api_server.country_mode() == "first"
+    for junk in ("", "strict", "1", "off"):
+        monkeypatch.setenv("RWE_REC_COUNTRY_MODE", junk)
+        assert api_server.country_mode() == "first"
 
 
 def test_country_preference_reshapes_the_served_feed(backend, user):

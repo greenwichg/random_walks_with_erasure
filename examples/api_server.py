@@ -809,6 +809,25 @@ def _interest_multiplier(w: float) -> float:
 #: anchors were measured to need.
 _COUNTRY_BOOST = 8.0
 
+#: How a selected country orders the pool. ``first`` (the shipped default) sorts every
+#: country-matching item ahead of every non-matching one — "show me India news" — while
+#: ``boost`` applies :data:`_COUNTRY_BOOST` as a rank divisor, the gentler nudge this feature
+#: shipped with first. Env-gated so the stronger behaviour has a kill switch that needs no
+#: deploy, the same discipline as RWE_CLUSTER_TEMPLATE_GATE.
+#:
+#: Neither mode EXCLUDES anything: ``first`` partitions the admitted pool, it does not filter it,
+#: so once the country's items run out the rest of the feed backfills the remaining slots
+#: automatically. That is what keeps a low-supply country (India is 2.6% of the catalog) from
+#: silently serving a four-card feed, and it is why this is a partition rather than a filter.
+_COUNTRY_MODES = ("first", "boost")
+
+
+def country_mode() -> str:
+    """The active country ordering mode; anything unrecognised falls back to the default, never
+    to a guess."""
+    v = os.environ.get("RWE_REC_COUNTRY_MODE", "").strip().lower()
+    return v if v in _COUNTRY_MODES else "first"
+
 
 def _country_multiplier(item_country: str, want: "str | None", boost: "float | None" = None) -> float:
     """Rank divisor for one item under a country preference: the boost on a match, 1.0 otherwise.
@@ -1919,6 +1938,8 @@ class Backend:
             return cols
         cats = np.asarray(mind.categories)
         by_col = country_by_col or {}
+        mode = (params or {}).get("countryMode") or country_mode()
+        strict = bool(want_country) and mode == "first"
         keys = []
         for i, col in enumerate(cols):
             mult = 1.0
@@ -1926,10 +1947,16 @@ class Backend:
                 w = weights.get(str(cats[col]).strip().lower())
                 if w:
                     mult *= _interest_multiplier(w)
-            if want_country:
+            hit = bool(want_country) and by_col.get(int(col), "") == want_country
+            if want_country and not strict:
                 mult *= _country_multiplier(by_col.get(int(col), ""), want_country,
                                             (params or {}).get("countryBoost"))
-            keys.append((i + 1) / mult if mult != 1.0 else float(i + 1))
+            # In ``first`` the country is a PARTITION rank, kept out of the multiplier so the
+            # interest nudge still orders items WITHIN each group — collapsing both into one
+            # divisor (an "infinite boost") would drive every country item's key to zero and
+            # throw the reader's interest ordering away exactly where they asked for it most.
+            group = 0 if (strict and hit) else 1
+            keys.append((group, (i + 1) / mult if mult != 1.0 else float(i + 1)))
         order = sorted(range(len(cols)), key=lambda i: (keys[i], i))
         return [cols[i] for i in order]
 

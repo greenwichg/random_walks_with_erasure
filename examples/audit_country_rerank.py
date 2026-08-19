@@ -102,6 +102,10 @@ def main(argv=None) -> int:
     ap.add_argument("--list-users", action="store_true",
                     help="list engine users with their read counts, then exit")
     ap.add_argument("--limit", type=int, default=100000)
+    ap.add_argument("--modes", default="",
+                    help="compare country ordering modes head to head, e.g. boost,first — "
+                         "reports country cards AND whether Bridging keeps serving cross-cutting "
+                         "articles, which is what a country-dominated feed puts at risk")
     ap.add_argument("--boost-sweep", default="",
                     help="comma-separated country-boost anchors to measure (e.g. 8,12,16,20). "
                          "Reports the country gain AND the interest dilution at each, so the "
@@ -194,13 +198,13 @@ def main(argv=None) -> int:
                   f"threshold, so they are served the demo path, not a personalized feed. "
                   f"Nothing reader-specific to measure yet.")
             return 1
-        serve = lambda p: [r["article"] for r in
-                           pers.recommendations(args.engine_user, None, p)]
+        serve_full = lambda p: pers.recommendations(args.engine_user, None, p)
         who = f"engine user {args.engine_user} (personalized)"
     else:
         u = args.user or be.demo_user
-        serve = lambda p: [r["article"] for r in be.recommendations(u, None, p)]
+        serve_full = lambda p: be.recommendations(u, None, p)
         who = f"corpus row {u}"
+    serve = lambda p: [r["article"] for r in serve_full(p)]
 
     if not getattr(be, "country_by_id", None):
         print(f"\n-- 3. served diff -- the Backend has NO country map attached: the catalog CSV "
@@ -237,6 +241,36 @@ def main(argv=None) -> int:
                   f"they are excluded upstream (already-read, admission, publisher cap).")
     print(f"\n  Global re-check: {'identical' if [a['id'] for a in base] == base_ids else 'DRIFTED'}"
           f" — an unmoved control must serve the unmoved feed.")
+
+    # -- 3b. mode comparison ----------------------------------------------------------------- #
+    modes = [m.strip().lower() for m in args.modes.split(",") if m.strip()]
+    if modes:
+        def bridge_stats(recs):
+            """Bridging is the slice whose whole job is opposing perspectives. A country-dominated
+            feed can starve it, and that — not a short feed — is what `first` actually risks."""
+            br = [r for r in recs if r.get("strategy") == "rwe-b"]
+            return len(br), sum(1 for r in br if r.get("crossCutting"))
+
+        print(f"\n-- 3b. ordering modes ({who}) --")
+        print(f"  {'mode':>8}  {'country cards':>13}  {'slots moved':>11}  "
+              f"{'bridging':>9}  {'cross-cutting':>13}")
+        for want in probes:
+            base_full = serve_full(None)
+            b_n, b_x = bridge_stats(base_full)
+            print(f"  {want}:")
+            print(f"  {'global':>8}  {n_country_in(base, want, country_of):>13}  {'0':>11}  "
+                  f"{b_n:>9}  {b_x:>13}")
+            for m in modes:
+                recs = serve_full({"country": want, "countryMode": m})
+                arts = [r["article"] for r in recs]
+                n_br, n_x = bridge_stats(recs)
+                moved = sum(1 for x, y in zip(base_ids, [a["id"] for a in arts]) if x != y)
+                warn = "   <-- BRIDGING EMPTY" if n_br and not n_x else ""
+                print(f"  {m:>8}  {n_country_in(arts, want, country_of):>13}  {moved:>11}  "
+                      f"{n_br:>9}  {n_x:>13}{warn}")
+        print(f"  A cross-cutting count that falls to zero means the country preference has "
+              f"starved the slice that exists to show opposing perspectives — the one real cost "
+              f"of `first`, and the reason it is env-reversible.")
 
     # -- 4. the boost sweep ----------------------------------------------------------------- #
     anchors = [float(x) for x in args.boost_sweep.replace(" ", "").split(",") if x]
