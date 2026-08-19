@@ -118,16 +118,17 @@ plan is unchanged (`{rwe-b: 6, rwe-d: 4, adaptive: 4}`), and **100% of backfill 
 1/1) also appear in the reader's Global feed** — the backfill is their ordinary recommendations,
 not the bottom of the ranking.
 
-**Where the matched cards land** (post-deploy, engine user 1, `--backfill-check`): Discovery and
-For You saturate; Bridging barely contributes.
+**Where the matched cards land** (engine user 1, `--backfill-check`, two probes a day apart):
 
 | country | rwe-b | rwe-d | adaptive | total matched |
 |---|---|---|---|---|
-| IN | 1/6 | 4/4 | 4/4 | 9 of 14 |
-| MY | 0/6 | 4/4 | 3/4 | 7 of 14 |
+| IN | 1/6 → 2/6 | 4/4 → 4/4 | 4/4 → 4/4 | 9 → 10 of 14 |
+| MY | 0/6 → 2/6 | 4/4 → 4/4 | 3/4 → 1/4 | 7 → 7 of 14 |
 
-That shape — not the per-country counts, which drift with the catalog — is the durable result, and
-it is the next section's first limit.
+**RWE-D saturated in every probe; RWE-B never exceeded 2 of its 6.** That asymmetry is the durable
+result and the next section's first limit. The individual cells are not: Malaysia's RWE-B went 0→2
+and its For You slice 3→1 between two runs of the same probe on the same reader, so any single
+cell read as structure is a sample read as a law.
 
 **Non-interference audit** (`audit_country_interaction.py`, IN+business and GB+technology):
 selecting a country changes exactly one stored field; `rec_params_from_settings` **adds** `country`
@@ -139,15 +140,16 @@ returns the baseline feed **byte for byte**.
 
 ## Known limits
 
-* **Bridging's admission rule caps the match rate near 8–9 of 14, and that is the design working.**
+* **Bridging's admission rule caps the match rate near 8–10 of 14, and that is the design working.**
   RWE-B's six slots admit *political* items only (`_slice_admits`) and order cross-cutting first
-  (`_slice_select`), so a country card has to clear that admission before it can appear there —
-  India managed 1 of 6, Malaysia 0 of 6, while Discovery and For You saturated. The practical
-  ceiling is therefore the 8 non-Bridging slots plus whatever of the country's coverage happens to
-  be political *and* opposite the reader's lean. Lifting it means letting a country preference
-  empty the one slice that exists to show opposing perspectives — the trade the whole
-  non-interference audit was run to prevent. The partition does reach RWE-B (India's 1/6 proves
-  it); what is scarce is the intersection.
+  (`_slice_select`), so a country card has to clear that admission before it can appear there. Over
+  four probes it never contributed more than 2 of its 6, while RWE-D saturated every time. The
+  practical ceiling is therefore the 8 non-Bridging slots plus whatever of the country's coverage
+  happens to be political *and* opposite the reader's lean. Lifting it means letting a country
+  preference empty the one slice that exists to show opposing perspectives — the trade the whole
+  non-interference audit was run to prevent. The partition does reach RWE-B (it contributed 1 and 2
+  in different runs); what is scarce is the intersection, and it is scarce for large countries too
+  — India, with 382 content articles, hit the same 2-of-6 wall as Malaysia's 114.
 * **Small countries cannot fill a feed.** Malaysia (113 content articles) served 6 of 14, Turkey
   4 of 14. The rest is labelled backfill. Catalog supply, not a ranking defect.
 * **Publisher diversity narrows in proportion to match rate** — India at 13/14 matched dropped to
@@ -189,6 +191,12 @@ returns the baseline feed **byte for byte**.
   cards down by strategy showed India taking 1 of RWE-B's 6, which proves the partition reaches
   the slice and the scarcity is inside its admitted pool. The hypothesis was stated, measured, and
   discarded rather than reasoned about.
+* **One probe is a sample, and this feed's samples move a lot.** The very next run of the same
+  probe on the same reader turned Malaysia's RWE-B from 0/6 into 2/6 and its For You slice from
+  3/4 into 1/4 — the per-slice table had been written into this document as a finding one run
+  earlier. Between-run drift of that size means a single cell can never carry a structural claim
+  here; only what repeats across probes (RWE-D saturating, RWE-B never passing 2) can. The same
+  trap as the GB publisher-cap over-read, one level down.
 * **Judge the contract, not the total.** Both audit instruments first compared the feed's *overall*
   cross-cutting count and flagged "DIVERSITY LOST" on a healthy run: only RWE-B owes opposing
   perspectives, and a cross-cutting card that happens to land in another slice is incidental and
