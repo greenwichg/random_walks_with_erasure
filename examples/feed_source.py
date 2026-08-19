@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import csv
 import math
+import re
 import os
 import sys
 from pathlib import Path
@@ -77,6 +78,90 @@ def _bias_label(lean, center: float = 0.5) -> str:
     if v >= center:
         return "lean right"
     return "center"
+
+
+def _name_index():
+    """ISO code -> the set of names that denote it, from location's ICU-backed tables. Built once."""
+    global _NAME_INDEX
+    try:
+        return _NAME_INDEX
+    except NameError:
+        pass
+    import location
+    idx: dict = {}
+    for name, iso in location._COUNTRY_NAMES.items():
+        n = str(name).strip().lower()
+        if len(n) >= 4:               # "usa"/"uk" are handled by the explicit aliases below
+            idx.setdefault(n, str(iso).upper())
+    for alias, iso in (("us", "US"), ("u.s.", "US"), ("usa", "US"), ("uk", "GB"), ("u.k.", "GB"),
+                       ("uae", "AE"), ("eu", None)):
+        if iso:
+            idx.setdefault(alias, iso)
+    _NAME_INDEX = idx
+    return idx
+
+
+_WORDS = re.compile(r"[^a-z0-9.]+")
+
+
+def mentioned_countries(text: str) -> frozenset:
+    """Countries NAMED in a piece of text, as ISO codes.
+
+    N-gram lookup against the country-name index rather than 250 substring scans, so it stays
+    cheap over a whole catalog. Matching is on word boundaries by construction (the text is
+    tokenized first), so "Indianapolis" cannot match "India".
+
+    KNOWN LIMITS, stated because they decide how far this signal can be trusted:
+      * No demonyms — "Indian markets" does not match IN. Adding them is a bigger table and its
+        own false-positive surface ("Chinese takeaway").
+      * Short country names that are also ordinary words or place names elsewhere (Chad, Georgia,
+        Jordan, Turkey, Guinea) WILL over-match. Whether that matters is measurable, not
+        guessable — audit_country_rerank reports the per-country counts so the damage is visible.
+      * A MENTION is not a subject: "unlike India, China…" names India while reporting on China.
+        That is the comparative-mention failure this repo already documented at story level
+        (docs/EVENT_IDENTITY_RUBRIC.md rule 1), reappearing here.
+    """
+    idx = _name_index()
+    toks = [t for t in _WORDS.split((text or "").lower()) if t]
+    out = set()
+    for i, t in enumerate(toks):
+        for k in (1, 2, 3):
+            if i + k > len(toks):
+                break
+            iso = idx.get(" ".join(toks[i:i + k]))
+            if iso:
+                out.add(iso)
+    return frozenset(out)
+
+
+def article_countries(a: dict, source: str = "union") -> frozenset:
+    """The countries an article belongs to, as a SET — an article about India and Pakistan is in
+    both, which a single label cannot express.
+
+    ``source`` selects what counts as belonging:
+      event      where the reported event happened (``eventCountries``) — content, and the
+                 strictest reading of "an article about this country".
+      mention    the country is NAMED in the headline or dek — content, broader, noisier.
+      content    event | mention: content-level only, never the publisher's home.
+      publisher  the outlet's home country — provenance, NOT what the article is about.
+      union      content | publisher (the widest, and what shipped first).
+    """
+    ev = frozenset(str(c).strip().upper() for c in (a.get("eventCountries") or ())
+                   if len(str(c).strip()) == 2 and str(c).strip().isalpha())
+    if source == "event":
+        return ev
+    scored = a.get("scored") or {}
+    pub = str(a.get("country") or scored.get("country") or "").strip().upper()
+    pub = frozenset({pub}) if len(pub) == 2 and pub.isalpha() else frozenset()
+    if source == "publisher":
+        return pub
+    men = mentioned_countries(f"{a.get('title') or scored.get('title') or ''} "
+                              f"{a.get('description') or ''}")
+    if source == "mention":
+        return men
+    if source == "content":
+        return ev | men
+    return ev | men | pub
 
 
 def article_country(a: dict) -> str:

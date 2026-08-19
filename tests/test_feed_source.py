@@ -341,3 +341,30 @@ def test_load_country_map_mirrors_the_url_map_indexing(tmp_path):
         w.writerow(["t", "P", "center", "Sports", "https://a.example/x", "0"])
     assert feed_source.load_country_map(str(legacy)) == {}
     assert feed_source.load_country_map(str(tmp_path / "missing.csv")) == {}
+
+
+def test_mentioned_countries_matches_names_not_substrings():
+    """Content-level country detection, with its limits pinned rather than assumed."""
+    m = feed_source.mentioned_countries
+    assert m("India and Pakistan resume trade talks") == frozenset({"IN", "PK"})
+    assert m("Indianapolis 500 results") == frozenset()      # word boundary, not substring
+    assert m("UK and US sign a deal") == frozenset({"GB", "US"})
+    assert m("") == frozenset() and m(None) == frozenset()
+    # the demonym gap is real and load-bearing for how far this signal can be trusted
+    assert m("Indian markets rally") == frozenset()
+
+
+def test_article_countries_separates_content_from_provenance():
+    """`content` is what the article is ABOUT; `publisher` is where the outlet lives. The two are
+    different questions and the union of them is a third — a country selector that conflates them
+    tells the reader something untrue."""
+    a = {"eventCountries": ["IN"], "title": "Floods hit Nepal border districts",
+         "description": "", "country": "US"}
+    f = feed_source.article_countries
+    assert f(a, "event") == frozenset({"IN"})
+    assert f(a, "publisher") == frozenset({"US"})
+    assert "NP" in f(a, "mention") and "US" not in f(a, "mention")
+    assert f(a, "content") == frozenset({"IN", "NP"})        # never the publisher
+    assert f(a, "union") == frozenset({"IN", "NP", "US"})
+    # a set, not a label: an article about two countries belongs to both
+    assert len(f({"eventCountries": ["IN", "PK"]}, "event")) == 2

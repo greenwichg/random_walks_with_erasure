@@ -102,6 +102,10 @@ def main(argv=None) -> int:
     ap.add_argument("--list-users", action="store_true",
                     help="list engine users with their read counts, then exit")
     ap.add_argument("--limit", type=int, default=100000)
+    ap.add_argument("--sources", default="",
+                    help="compare what COUNTS as belonging to a country: "
+                         "event,mention,content,publisher,union. `content` is event|mention — "
+                         "what the article is ABOUT, never the outlet's home.")
     ap.add_argument("--modes", default="",
                     help="compare country ordering modes head to head, e.g. boost,first — "
                          "reports country cards AND whether Bridging keeps serving cross-cutting "
@@ -146,6 +150,29 @@ def main(argv=None) -> int:
     print(f"\n-- 2. per-country supply (top 12) --")
     for c, k in cov["per_country"].most_common(12):
         print(f"  {c}  {k:>5} articles ({k / n:.1%})")
+
+    # -- 2b. what counts as belonging ------------------------------------------------------- #
+    sources = [x.strip().lower() for x in args.sources.split(",") if x.strip()]
+    if sources:
+        per: dict = {src: Counter() for src in sources}
+        for r in rows[: args.limit]:
+            for src in sources:
+                for c in feed_source.article_countries(r, src):
+                    per[src][c] += 1
+        want_list = [c.strip().upper() for c in args.countries.split(",") if c.strip()]
+        if not want_list:
+            want_list = [c for c, _ in per[sources[0]].most_common(8)]
+        print(f"\n-- 2b. supply by definition ({cov['n']} articles) --")
+        print(f"  {'country':>8}  " + "  ".join(f"{src:>10}" for src in sources))
+        for c in want_list:
+            print(f"  {c:>8}  " + "  ".join(f"{per[src].get(c, 0):>10}" for src in sources))
+        print(f"  {'TOTAL':>8}  " + "  ".join(
+            f"{sum(1 for r in rows[: args.limit] if feed_source.article_countries(r, src)):>10}"
+            for src in sources))
+        print(f"\n  A 14-card feed needs far more than 14 eligible articles: the reader's own "
+              f"reads are excluded, each strategy admits only part of the pool (rwe-b: political "
+              f"items only), and the publisher cap limits how many cards one outlet may supply. "
+              f"Treat a supply under ~200 as 'this country cannot fill a feed on its own'.")
 
     probes = [c.strip().upper() for c in args.countries.split(",") if c.strip()]
     if not probes:
