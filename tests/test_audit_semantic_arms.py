@@ -62,7 +62,9 @@ class StubArm:
             raise OSError(self.fail)
         return self
 
-    def scores(self, rows):
+    def scores(self, rows, governor=None, batch=8):
+        for i in range(0, len(rows), batch):        # the governor sees a decision point per batch
+            (governor or sa.NullGovernor()).guard()
         return [self.table.get(r["pair_id"], self.default) for r in rows]
 
 
@@ -161,6 +163,50 @@ def test_llm_column_reports_pending_when_the_store_is_void(tmp_path, capsys):
     text = capsys.readouterr().out
     assert rc == 0
     assert "the LLM store is VOID" in text and "PENDING, not zero" in text
+
+
+def test_governor_aborts_the_arm_and_discards_partial_work(tmp_path, capsys):
+    class TrippedGovernor(sa.NullGovernor):
+        def __init__(self):
+            self.calls = 0
+
+        def guard(self):
+            self.calls += 1
+            if self.calls > 2:                     # trip partway through the batches
+                raise sa.ResourceAbort("host memory fell to 1.10 GB available (floor 1.50)")
+
+        def report(self):
+            return "tripped"
+
+    res = sa.run_arm(StubArm("stub/clean", _separable()), _sheet(), str(tmp_path),
+                     TrippedGovernor())
+    text = capsys.readouterr().out
+    assert res["aborted"] is True and res["available"] is False
+    assert "ABORTED MID-RUN" in text and "1.10 GB" in text
+    assert "Partial work is discarded rather than reported as a result" in text
+    assert "S1" not in text                        # no bars are reported from an aborted arm
+    assert not list(tmp_path.glob("scores_*.jsonl"))
+
+
+def test_governor_thresholds_fire_on_each_resource(tmp_path):
+    g = sa.Governor(str(tmp_path), min_avail_gb=0.0, min_disk_gb=0.0, max_load_ratio=99.0)
+    assert g.sample() is None                      # a healthy host trips nothing
+    g.guard()                                      # and guard() is a no-op
+    assert sa.Governor(str(tmp_path), min_avail_gb=10 ** 6).sample().startswith("host memory")
+    assert sa.Governor(str(tmp_path), min_disk_gb=10 ** 6).sample().startswith("free disk")
+    assert sa.Governor(str(tmp_path), max_load_ratio=0.0).sample().startswith("host load")
+
+
+def test_lexical_arm_needs_no_dependencies_and_ranks_by_shared_idf():
+    rows = _sheet()
+    arm = sa.LexicalArm().load()
+    scores = arm.scores(rows)
+    assert len(scores) == len(rows)
+    by_id = {r["pair_id"]: s for r, s in zip(rows, scores)}
+    # near-dup fixtures share most tokens; the no-affinity fixtures share none
+    assert by_id["p_nd0"] > by_id["p_na0"]
+    assert all(0.0 <= s <= 1.0000001 for s in scores)
+    assert arm.n_texts > 0
 
 
 def test_probe_is_labeled_synthetic_and_kept_out_of_the_benchmark(tmp_path, capsys):

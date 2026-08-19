@@ -61,10 +61,20 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import platform
+import shutil
 import sys
+import threading
 import time
+
+# Pin the math libraries to ONE thread BEFORE torch is imported anywhere — torch otherwise
+# sizes its pools to every core on the box and would contend with the serving API. This must
+# precede the import, so it lives here rather than in main().
+for _v in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS",
+           "NUMEXPR_NUM_THREADS", "TOKENIZERS_PARALLELISM"):
+    os.environ.setdefault(_v, "1" if _v != "TOKENIZERS_PARALLELISM" else "false")
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -111,6 +121,110 @@ PROBE = (
 )
 
 
+class ResourceAbort(RuntimeError):
+    """Raised when a host safety threshold is approached. The experiment stops; the box wins."""
+
+
+class Governor:
+    """Continuous host monitoring with automatic abort.
+
+    Samples the HOST's load, available memory and free disk on a background thread, and is
+    consulted between every batch. Any breach stops the experiment immediately — partial
+    results are kept and reported as partial. Thresholds are constructor arguments so the run
+    command states them explicitly rather than burying them.
+
+    Note the figures are the host's even when this runs inside a container (/proc/loadavg and
+    /proc/meminfo are not namespaced), which is exactly right: the thing being protected is the
+    production host, not this process."""
+
+    def __init__(self, disk_path: str, min_avail_gb=1.5, min_disk_gb=3.0, max_load_ratio=1.5,
+                 interval=2.0):
+        self.disk_path = disk_path
+        self.min_avail_gb = min_avail_gb
+        self.min_disk_gb = min_disk_gb
+        self.max_load = max_load_ratio * (os.cpu_count() or 1)
+        self.interval = interval
+        self.reason = None
+        self.peak_load = 0.0
+        self.min_seen_avail = float("inf")
+        self.min_seen_disk = float("inf")
+        self._stop = threading.Event()
+        self._thread = None
+
+    def sample(self):
+        avail = disk = 0.0
+        try:
+            with open("/proc/meminfo", encoding="utf-8") as f:
+                for line in f:
+                    if line.startswith("MemAvailable:"):
+                        avail = int(line.split()[1]) / (1024 * 1024)
+                        break
+        except Exception:                               # noqa: BLE001 — non-Linux host
+            avail = float("inf")
+        try:
+            disk = shutil.disk_usage(self.disk_path).free / (1024 ** 3)
+        except Exception:                               # noqa: BLE001
+            disk = float("inf")
+        try:
+            load = os.getloadavg()[0]
+        except Exception:                               # noqa: BLE001
+            load = 0.0
+        self.peak_load = max(self.peak_load, load)
+        self.min_seen_avail = min(self.min_seen_avail, avail)
+        self.min_seen_disk = min(self.min_seen_disk, disk)
+        if avail < self.min_avail_gb:
+            return (f"host memory fell to {avail:.2f} GB available "
+                    f"(floor {self.min_avail_gb:.2f} GB)")
+        if disk < self.min_disk_gb:
+            return f"free disk fell to {disk:.2f} GB (floor {self.min_disk_gb:.2f} GB)"
+        if load > self.max_load:
+            return f"host load rose to {load:.2f} (ceiling {self.max_load:.2f})"
+        return None
+
+    def _run(self):
+        while not self._stop.wait(self.interval):
+            r = self.sample()
+            if r and self.reason is None:
+                self.reason = r
+
+    def start(self):
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+        return self
+
+    def stop(self):
+        self._stop.set()
+
+    def guard(self):
+        """Called between batches — the only place the experiment can be stopped cleanly."""
+        r = self.reason or self.sample()
+        if r:
+            self.reason = r
+            raise ResourceAbort(r)
+
+    def report(self) -> str:
+        return (f"peak host load {self.peak_load:.2f} (ceiling {self.max_load:.2f}); "
+                f"lowest available memory {self.min_seen_avail:.2f} GB "
+                f"(floor {self.min_avail_gb:.2f}); lowest free disk "
+                f"{self.min_seen_disk:.2f} GB (floor {self.min_disk_gb:.2f})")
+
+
+class NullGovernor:
+    """No-op governor for tests and for the lexical arm, whose cost is a rounding error."""
+
+    def guard(self):
+        pass
+
+    def start(self):
+        return self
+
+    def stop(self):
+        pass
+
+    def report(self):
+        return "not monitored (negligible workload)"
+
+
 def text_of(side: dict) -> str:
     """The semantic arms see the headline and dek — the same words the LLM is shown, minus the
     structured time/entity lines an embedding cannot use. That asymmetry is itself a result:
@@ -150,8 +264,9 @@ class BiEncoderArm:
         self.model = SentenceTransformer(self.name, cache_folder=self.cache_dir)
         return self
 
-    def scores(self, rows) -> list:
+    def scores(self, rows, governor=None, batch=8) -> list:
         import numpy as np
+        gov = governor or NullGovernor()
         texts, index = [], {}
         for r in rows:
             for side in (r["a"], r["b"]):
@@ -161,8 +276,14 @@ class BiEncoderArm:
                     texts.append(t)
         self.n_texts = len(texts)
         t0 = time.perf_counter()
-        vecs = self.model.encode(texts, batch_size=32, convert_to_numpy=True,
-                                 normalize_embeddings=True, show_progress_bar=False)
+        chunks = []
+        for i in range(0, len(texts), batch):           # small batches: the governor gets a
+            gov.guard()                                 # decision point every few hundred ms
+            chunks.append(self.model.encode(texts[i:i + batch], batch_size=batch,
+                                            convert_to_numpy=True,
+                                            normalize_embeddings=True,
+                                            show_progress_bar=False))
+        vecs = np.vstack(chunks) if chunks else np.zeros((0, 1))
         self.encode_seconds = time.perf_counter() - t0
         t0 = time.perf_counter()
         out = [float(np.dot(vecs[index[text_of(r["a"])]], vecs[index[text_of(r["b"])]]))
@@ -191,10 +312,15 @@ class CrossEncoderArm:
         self.model = CrossEncoder(self.name, cache_folder=self.cache_dir)
         return self
 
-    def scores(self, rows) -> list:
+    def scores(self, rows, governor=None, batch=8) -> list:
+        gov = governor or NullGovernor()
         pairs = [(text_of(r["a"]), text_of(r["b"])) for r in rows]
         t0 = time.perf_counter()
-        raw = self.model.predict(pairs, batch_size=16, show_progress_bar=False)
+        raw = []
+        for i in range(0, len(pairs), batch):
+            gov.guard()
+            raw.extend(self.model.predict(pairs[i:i + batch], batch_size=batch,
+                                          show_progress_bar=False))
         self.pair_seconds = time.perf_counter() - t0
         out = []
         for v in raw:
@@ -205,6 +331,58 @@ class CrossEncoderArm:
                 out.append(exp[-1] / sum(exp))     # entailment-ish channel, last label
             except TypeError:
                 out.append(float(v))
+        return out
+
+
+class LexicalArm:
+    """The similarity-class control: IDF-weighted cosine over the tokens the clusterer already
+    computes. Zero new dependencies, no downloads, milliseconds of one core — it runs on any
+    box, whatever the preflight says.
+
+    Its purpose is to test the HYPOTHESIS's core claim directly. If a lexical similarity and an
+    embedding similarity are both smoothed views of the same word-overlap signal, then the
+    lexical arm's exhibit table should already show the predicted false merges on the template,
+    series and comparative pairs. Confirming that costs nothing and predicts the expensive
+    arms; failing to confirm it would falsify the hypothesis before a single weight is
+    downloaded."""
+
+    has_spans = False
+    kind = "lexical-control"
+    name = "lexical/idf-cosine (no dependencies)"
+
+    def __init__(self):
+        self.encode_seconds = 0.0
+        self.pair_seconds = 0.0
+        self.n_texts = 0
+
+    def load(self):
+        return self
+
+    def scores(self, rows, governor=None, batch=8) -> list:
+        import clustering
+        docs, index = [], {}
+        for r in rows:
+            for side in (r["a"], r["b"]):
+                t = text_of(side)
+                if t not in index:
+                    index[t] = len(docs)
+                    docs.append(clustering.title_tokens(t))
+        self.n_texts = len(docs)
+        df: dict = {}
+        for d in docs:
+            for tok in d:
+                df[tok] = df.get(tok, 0) + 1
+        n = max(1, len(docs))
+        idf = {t: math.log(n / c) + 1.0 for t, c in df.items()}
+        t0 = time.perf_counter()
+        out = []
+        for r in rows:
+            da, db = docs[index[text_of(r["a"])]], docs[index[text_of(r["b"])]]
+            num = sum(idf[t] ** 2 for t in (da & db))
+            na = math.sqrt(sum(idf[t] ** 2 for t in da))
+            nb = math.sqrt(sum(idf[t] ** 2 for t in db))
+            out.append(num / (na * nb) if na and nb else 0.0)
+        self.pair_seconds = time.perf_counter() - t0
         return out
 
 
@@ -263,18 +441,29 @@ def widest_band(rows, scores, max_err=0.01, min_vol=0.30):
     return best
 
 
-def run_arm(arm, rows, out_dir, llm_store=None) -> dict:
+def run_arm(arm, rows, out_dir, governor=None) -> dict:
+    gov = governor or NullGovernor()
     print(f"\n{'=' * 78}\nARM: {arm.name}   ({arm.kind})\n{'=' * 78}")
     try:
+        gov.guard()
         t0 = time.perf_counter()
         arm.load()
         load_s = time.perf_counter() - t0
+    except ResourceAbort as e:
+        print(f"  ABORTED BEFORE LOADING — {e}")
+        return {"name": arm.name, "available": False, "aborted": True}
     except Exception as e:                          # noqa: BLE001 — report, never substitute
         print(f"  CHECKPOINT UNAVAILABLE — {type(e).__name__}: {str(e)[:200]}")
         print(f"  This arm is NOT measured. No substitute checkpoint was used.")
         return {"name": arm.name, "available": False}
 
-    scores = arm.scores(rows)
+    try:
+        scores = arm.scores(rows, gov)
+    except ResourceAbort as e:
+        print(f"  ABORTED MID-RUN — {e}")
+        print(f"  The experiment stopped to protect the host; this arm is NOT measured. "
+              f"Partial work is discarded rather than reported as a result.")
+        return {"name": arm.name, "available": False, "aborted": True}
     thr = calibrate(rows, scores)
     print(f"  loaded in {load_s:.1f}s; frozen threshold {thr:.4f} "
           f"(calibrated on rule tiers only, exhibits excluded)")
@@ -354,12 +543,13 @@ def run_arm(arm, rows, out_dir, llm_store=None) -> dict:
         cpu_day = per_pair_ms * daily / 1000
     print(f"  at the measured band rate ({daily} pairs/day): {cpu_day:.1f} CPU-seconds/day "
           f"— against the LLM arm's measured $3.27/day")
+    print(f"  host during this arm: {gov.report()}")
     return {"name": arm.name, "available": True, "threshold": thr, "scores": scores,
             "store": store, "s1": n_fm, "s2": n_ok, "s3": n_s3, "s4": band, "s5": n_s5,
             "ms_pair": per_pair_ms, "rss": rss}
 
 
-def run_probe(arm) -> None:
+def run_probe(arm, governor=None) -> None:
     print(f"\n-- SUPPLEMENTARY probe: CONSTRUCTED pairs, NOT production text, NOT benchmark "
           f"evidence --")
     print(f"   (the cross-language exhibit aged out of the sheet; this tests the mechanism "
@@ -368,7 +558,7 @@ def run_probe(arm) -> None:
              "a": {"headline": ha, "dek": ""}, "b": {"headline": hb, "dek": ""},
              "label": lab, "label_source": "synthetic-probe"}
             for i, (k, lab, ha, hb) in enumerate(PROBE)]
-    scores = arm.scores(rows)
+    scores = arm.scores(rows, governor or NullGovernor())
     for r, s in zip(rows, scores):
         print(f"  {s:+.4f}  {r['class'][6:]:<28} truth={r['label']}"
               f"{'   [cross-script]' if cross_script(r['a'], r['b']) else ''}")
@@ -384,6 +574,16 @@ def main(argv=None, arms=None) -> int:
     ap.add_argument("--probe", action="store_true", help="run the synthetic probe set")
     ap.add_argument("--full-report", action="store_true",
                     help="also run the shared V1a-V1d scoring for each arm")
+    ap.add_argument("--arms", default="lexical",
+                    help="lexical | bi | cross | all. Defaults to the zero-dependency lexical "
+                         "control, which is safe on any host; the model arms require the "
+                         "preflight to have returned GO.")
+    ap.add_argument("--min-avail-gb", type=float, default=1.5,
+                    help="abort if host available memory falls below this")
+    ap.add_argument("--min-disk-gb", type=float, default=3.0,
+                    help="abort if free disk falls below this")
+    ap.add_argument("--max-load-ratio", type=float, default=1.5,
+                    help="abort if 1-min load exceeds this multiple of the cpu count")
     args = ap.parse_args(argv)
 
     rows = [json.loads(l) for l in open(args.pairs, encoding="utf-8")]
@@ -407,21 +607,51 @@ def main(argv=None, arms=None) -> int:
           f"{'measurable' if n_cross >= 5 else 'NOT measurable on this sheet'}")
 
     if arms is None:
-        arms = ([BiEncoderArm(m, args.cache_dir) for m in BI_MODELS]
-                + [CrossEncoderArm(m, args.cache_dir) for m in CROSS_MODELS])
+        arms = []
+        if args.arms in ("lexical", "all"):
+            arms.append(LexicalArm())
+        if args.arms in ("bi", "all"):
+            arms += [BiEncoderArm(m, args.cache_dir) for m in BI_MODELS]
+        if args.arms in ("cross", "all"):
+            arms += [CrossEncoderArm(m, args.cache_dir) for m in CROSS_MODELS]
+        if not arms:
+            print(f"--arms {args.arms!r} selected nothing; choose lexical | bi | cross | all.")
+            return 1
+
+    needs_gov = any(getattr(a, "kind", "") != "lexical-control" for a in arms)
+    gov = (Governor(args.out_dir, min_avail_gb=args.min_avail_gb,
+                    min_disk_gb=args.min_disk_gb,
+                    max_load_ratio=args.max_load_ratio).start()
+           if needs_gov else NullGovernor())
+    if needs_gov:
+        print(f"GOVERNOR            : abort if available memory < {args.min_avail_gb} GB, "
+              f"free disk < {args.min_disk_gb} GB, or 1-min load > "
+              f"{args.max_load_ratio} x cpus; checked between every batch of 8")
 
     results = []
-    for arm in arms:
-        res = run_arm(arm, rows, args.out_dir)
-        results.append(res)
-        if res.get("available") and args.full_report:
-            n = len(rows)
-            score_run(rows, res["store"], model_name=arm.name, has_spans=False,
-                      stable=n, flips=0, sym_ok=n, sym_n=n,
-                      usage=f"deterministic in eval mode — stability and symmetry are "
-                            f"100% by construction, not a quality result")
-        if res.get("available") and args.probe:
-            run_probe(arm)
+    try:
+        for arm in arms:
+            res = run_arm(arm, rows, args.out_dir, gov)
+            results.append(res)
+            if res.get("aborted"):
+                print(f"\nHOST PROTECTION STOPPED THE EXPERIMENT — remaining arms are skipped. "
+                      f"Clean up with the documented teardown; the box's health outranks the "
+                      f"measurement.")
+                break
+            if res.get("available") and args.full_report:
+                n = len(rows)
+                score_run(rows, res["store"], model_name=arm.name, has_spans=False,
+                          stable=n, flips=0, sym_ok=n, sym_n=n,
+                          usage=f"deterministic in eval mode — stability and symmetry are "
+                                f"100% by construction, not a quality result")
+            if res.get("available") and args.probe:
+                try:
+                    run_probe(arm, gov)
+                except ResourceAbort as e:
+                    print(f"  probe aborted to protect the host — {e}")
+                    break
+    finally:
+        gov.stop()
 
     # -- arm 3: the LLM column, read from its store, never re-run here --------------------- #
     print(f"\n{'=' * 78}\nARM 3: the LLM verifier (quality reference)\n{'=' * 78}")
