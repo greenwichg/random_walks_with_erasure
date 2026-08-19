@@ -14,6 +14,7 @@ import {
 } from "@/hooks/use-data";
 import { useTranslation } from "@/lib/i18n";
 import { countryName } from "@/lib/countries";
+import { partitionByCountryMatch } from "@/lib/country-partition";
 import { track } from "@/lib/analytics";
 import { PageContainer } from "@/components/layout/page-container";
 import { RecommendationCard } from "@/components/recommendations/recommendation-card";
@@ -68,13 +69,19 @@ export default function RecommendationsPage() {
         presentRecommendation(r.explanation).storyId !== continuationStory,
     );
 
-  // The first card the engine did NOT match to the reader's country, or -1 when no country is
-  // selected (Global responses carry no `countryMatch` at all, so nothing is claimed either way).
   const { data: settings } = useSettings();
   const selectedCountry = settings?.recommendationCountry ?? null;
-  const firstBackfill = visible.some((r) => r.countryMatch !== undefined)
-    ? visible.findIndex((r) => r.countryMatch === false)
-    : -1;
+  // The engine partitions country-matched items PER STRATEGY, because the blend allocates slots
+  // per strategy (Bridging, then Discovery, then For You) and orders each group country-first
+  // inside its own budget. The served list is therefore matched-first WITHIN each group, never
+  // globally — so a single "coverage ends here" boundary drawn over the raw order lands inside
+  // the first group and strands the later groups' country cards below it, which is exactly what
+  // it did. Partition the whole visible list here, stably, so every country card sits above the
+  // boundary and both parts keep their blend order.
+  const { ordered, firstBackfill } = React.useMemo(
+    () => partitionByCountryMatch(visible),
+    [visible],
+  );
 
   // PA1: the reader saw a recommendation feed — the funnel's "Recommendation Viewed" stage. Fires
   // once when the feed first loads (best-effort).
@@ -174,7 +181,7 @@ export default function RecommendationsPage() {
 
       <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
         <AnimatePresence mode="popLayout">
-          {visible.map((rec, i) => (
+          {ordered.map((rec, i) => (
             <React.Fragment key={rec.article.id}>
               {/* Where the selected country's coverage ran out. The engine partitions the feed
                   (country-matched first, then ordinary recommendations backfilling the slots the
