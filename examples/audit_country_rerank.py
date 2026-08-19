@@ -354,12 +354,26 @@ def main(argv=None) -> int:
             # supply alone would not land on the same number twice. Per-strategy counts settle
             # it by measurement; the totals cannot.
             by_slice = Counter(r.get("strategy") for r in matched)
-            bits, starved = [], []
+            bits, starved, full = [], [], []
             for s, tot in plan_now.most_common():
                 got = by_slice.get(s, 0)
                 bits.append(f"{s} {got}/{tot}")
                 if tot and not got:
                     starved.append(s)
+                elif tot and got >= tot:
+                    full.append(s)
+            # A slice at zero while the OTHERS saturate localises the ceiling to that slice's
+            # admitted pool — rwe-b admits only political articles that cross the reader's lean,
+            # so a country card must clear that before it can appear there. Without the
+            # saturated-elsewhere condition this reads as "the partition never reached the
+            # slice", which a run showing 1/6 disproves; say only what the counts support.
+            note = ""
+            if starved and full:
+                note = (f"   <-- {','.join(starved)} contributed none while {','.join(full)} "
+                        f"filled: the ceiling is inside that slice's admitted pool, not overall "
+                        f"supply")
+            elif starved:
+                note = f"   <-- {','.join(starved)} contributed none"
             # Backfill should be the reader's ORDINARY recommendations, not scraped from the
             # bottom of the ranking. Overlap with the Global feed is the evidence for that.
             overlap = sum(1 for r in fill if r["article"]["id"] in base_ids_set)
@@ -372,8 +386,7 @@ def main(argv=None) -> int:
                   f"{'   <-- DIVERSITY LOST' if cross_b < b_cross_b else ''}"
                   f";  all slices {cross} (global {b_cross})"
                   f"{'  — incidental, outside the contract' if cross < b_cross else ''}")
-            print(f"    matched where : {', '.join(bits)}"
-                  f"{'   <-- ' + ','.join(starved) + ' contributed NO country cards; the ceiling is that slice, not supply' if starved else ''}")
+            print(f"    matched where : {', '.join(bits)}{note}")
             print(f"    publishers    : {len(pubs)} distinct (global {len(base_pubs)})")
             print(f"    backfill also in the Global feed: {overlap}/{len(fill)}"
                   f"{'   <-- backfill is NOT the normal feed; investigate' if fill and overlap == 0 else ''}")

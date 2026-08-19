@@ -104,15 +104,30 @@ backfill unlabelled would let a country with a hundred articles look as though i
 
 | country | Global | selected | Bridging | cross-cutting |
 |---|---|---|---|---|
-| IN | 1 | 11–13 | 6 | 6 |
+| IN | 0–1 | 8–13 | 6 | 6 |
 | GB | 0 | 9 | 6 | 6 |
-| MY | 0 | 6 | 6 | 6 |
+| MY | 0–1 | 6–8 | 6 | 6 |
 | TR | 0 | 4 | 6 | 6 |
+
+The `selected` counts are ranges because the catalog moves under the instrument — the same probe
+on the same reader gave India 13, then 8, then 9 across a day of ingest. **Read the invariants, not
+the counts**: Bridging holds 6 with 6 cross-cutting in every row, and Global always restores.
 
 **Backfill quality** — for every country probed: the feed is never short (14 cards), the blend
 plan is unchanged (`{rwe-b: 6, rwe-d: 4, adaptive: 4}`), and **100% of backfill cards (8/8, 10/10,
 1/1) also appear in the reader's Global feed** — the backfill is their ordinary recommendations,
 not the bottom of the ranking.
+
+**Where the matched cards land** (post-deploy, engine user 1, `--backfill-check`): Discovery and
+For You saturate; Bridging barely contributes.
+
+| country | rwe-b | rwe-d | adaptive | total matched |
+|---|---|---|---|---|
+| IN | 1/6 | 4/4 | 4/4 | 9 of 14 |
+| MY | 0/6 | 4/4 | 3/4 | 7 of 14 |
+
+That shape — not the per-country counts, which drift with the catalog — is the durable result, and
+it is the next section's first limit.
 
 **Non-interference audit** (`audit_country_interaction.py`, IN+business and GB+technology):
 selecting a country changes exactly one stored field; `rec_params_from_settings` **adds** `country`
@@ -124,6 +139,15 @@ returns the baseline feed **byte for byte**.
 
 ## Known limits
 
+* **Bridging's admission rule caps the match rate near 8–9 of 14, and that is the design working.**
+  RWE-B's six slots admit *political* items only (`_slice_admits`) and order cross-cutting first
+  (`_slice_select`), so a country card has to clear that admission before it can appear there —
+  India managed 1 of 6, Malaysia 0 of 6, while Discovery and For You saturated. The practical
+  ceiling is therefore the 8 non-Bridging slots plus whatever of the country's coverage happens to
+  be political *and* opposite the reader's lean. Lifting it means letting a country preference
+  empty the one slice that exists to show opposing perspectives — the trade the whole
+  non-interference audit was run to prevent. The partition does reach RWE-B (India's 1/6 proves
+  it); what is scarce is the intersection.
 * **Small countries cannot fill a feed.** Malaysia (113 content articles) served 6 of 14, Turkey
   4 of 14. The rest is labelled backfill. Catalog supply, not a ranking defect.
 * **Publisher diversity narrows in proportion to match rate** — India at 13/14 matched dropped to
@@ -152,6 +176,19 @@ returns the baseline feed **byte for byte**.
   boundary drawn over the raw order landed inside the first group and stranded later groups'
   country cards below it. The display partitions the whole list before drawing the boundary
   (`web/lib/country-partition.ts`, tested on exactly that interleave).
+* **An instrument that reports supply under the WRONG definition converts an honest limit into a
+  phantom bug.** Sections 1–2 counted per-country supply with the legacy publisher-inclusive
+  resolver while the feed matched on `content`, printing "MY 512 articles" for a country with ~113
+  — next to a feed that backfilled half its slots, that reads as a ranking defect. Both sections
+  now count under `country_source()` and name it in the heading. The stale companion NOTE ("the
+  feed prioritizes outlets based in the country more than coverage ABOUT it") had been false since
+  the default became `content`, and now fires only for `publisher`/`union`.
+* **Totals cannot localise a ceiling; per-slice counts can.** Two countries with very different
+  supply both returned exactly 8 matched + 6 backfill, the backfill equal to the RWE-B budget —
+  the shape of a partition that misses a slice. It was the wrong reading: breaking the matched
+  cards down by strategy showed India taking 1 of RWE-B's 6, which proves the partition reaches
+  the slice and the scarcity is inside its admitted pool. The hypothesis was stated, measured, and
+  discarded rather than reasoned about.
 * **Judge the contract, not the total.** Both audit instruments first compared the feed's *overall*
   cross-cutting count and flagged "DIVERSITY LOST" on a healthy run: only RWE-B owes opposing
   perspectives, and a cross-cutting card that happens to land in another slice is incidental and
