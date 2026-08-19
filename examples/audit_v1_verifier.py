@@ -351,7 +351,22 @@ def main(argv=None, adapter=None) -> int:
     if breaker["tripped"]:
         return _abort_transport()
 
-    # -- scoring (provenance-aware) ---------------------------------------------------------- #
+    return score_run(rows, store, model_name=adapter.name, stable=stable, flips=flips,
+                     sym_ok=sym_ok, sym_n=len(sym_sample), rep_errs=rep_errs,
+                     sym_errs=sym_errs,
+                     usage=f"{adapter.calls} calls, {adapter.tokens_in:,} in / "
+                           f"{adapter.tokens_out:,} out tokens, {elapsed:.0f}s judging pass")
+
+
+def score_run(rows, store, *, model_name, has_spans=True, stable=0, flips=0, sym_ok=0,
+              sym_n=0, rep_errs=0, sym_errs=0, usage="") -> int:
+    """The V1-prime scoring, shared by every arm.
+
+    One implementation, or two arms drift apart and the comparison stops being
+    apples-to-apples (the ``article_tokens`` discipline, applied to measurement). Arms whose
+    model emits no quoted spans (a similarity score, not a reasoned verdict) pass
+    ``has_spans=False``: the quote-check is then reported n/a rather than scored as 0%, which
+    would fail a span-less arm on a bar that cannot apply to it."""
     from collections import Counter
     verdicts = {r["pair_id"]: store[r["pair_id"]] for r in rows}
     n = len(rows)
@@ -367,24 +382,27 @@ def main(argv=None, adapter=None) -> int:
     demoted_n = sum(1 for r in rows if verdicts[r["pair_id"]].get("demoted"))
     api_errors = sum(1 for r in rows if verdicts[r["pair_id"]].get("api_error"))
 
-    print(f"\n-- V1a: label-free properties (bars pre-registered) --")
+    print(f"\n-- V1a: label-free properties (bars pre-registered) --   [model: {model_name}]")
     print(f"  uncertain-rate : {unc}/{n} ({unc / max(1, n):.1%})   bar <= 25%")
     for c in sorted(by_class_n):
         u, m = by_class_unc.get(c, 0), by_class_n[c]
         print(f"    {c:<16} {u}/{m} ({u / m:.0%})   bar <= 40%")
-    print(f"  quote-check    : {quotes_ok}/{n} ({quotes_ok / max(1, n):.1%})   bar >= 99%")
-    if quotes_ok < n:
-        print(f"    failures: {demoted_n} decided verdicts demoted, {api_errors} api-error "
-              f"fail-closed, {n - quotes_ok - demoted_n - api_errors} uncertain with "
-              f"unverified spans")
+    if has_spans:
+        print(f"  quote-check    : {quotes_ok}/{n} ({quotes_ok / max(1, n):.1%})   bar >= 99%")
+        if quotes_ok < n:
+            print(f"    failures: {demoted_n} decided verdicts demoted, {api_errors} api-error "
+                  f"fail-closed, {n - quotes_ok - demoted_n - api_errors} uncertain with "
+                  f"unverified spans")
+    else:
+        print(f"  quote-check    : n/a — this arm emits a similarity score, not quoted "
+              f"evidence (the bar cannot apply; the absence is itself a finding)")
     print(f"  stability      : {stable}/{stable + flips} "
           f"({stable / max(1, stable + flips):.1%})   bar >= 98%"
           + (f"   (replay api errors: {rep_errs})" if rep_errs else ""))
-    print(f"  symmetry       : {sym_ok}/{len(sym_sample)} "
-          f"({sym_ok / max(1, len(sym_sample)):.1%})   bar >= 99%"
+    print(f"  symmetry       : {sym_ok}/{sym_n} "
+          f"({sym_ok / max(1, sym_n):.1%})   bar >= 99%"
           + (f"   (swap api errors: {sym_errs})" if sym_errs else ""))
-    print(f"  usage          : {adapter.calls} calls, {adapter.tokens_in:,} in / "
-          f"{adapter.tokens_out:,} out tokens, {elapsed:.0f}s judging pass")
+    print(f"  usage          : {usage}")
 
     print(f"\n-- V1b: the exhibit gate (authoritative pairs; one false-same is disqualifying) --")
     kill = False
@@ -432,23 +450,23 @@ def main(argv=None, adapter=None) -> int:
     print(f"\n-- verdict --")
     v1a_ok = (unc / max(1, n) <= 0.25
               and all(by_class_unc.get(c, 0) / by_class_n[c] <= 0.40 for c in by_class_n)
-              and quotes_ok / max(1, n) >= 0.99
+              and (quotes_ok / max(1, n) >= 0.99 or not has_spans)
               and stable / max(1, stable + flips) >= 0.98
-              and sym_ok / max(1, len(sym_sample)) >= 0.99)
+              and sym_ok / max(1, sym_n) >= 0.99)
     if kill:
-        print(f"  KILL — {adapter.name} produced same_event on a labeled-different exhibit; "
+        print(f"  KILL — {model_name} produced same_event on a labeled-different exhibit; "
               f"the verifier design fails its gate on this model.")
     elif api_errors > max(2, int(0.02 * n)):
         print(f"  VOID — {api_errors}/{n} store records are api-error fail-closed: this run "
-              f"measured transport availability, not {adapter.name}, and no bar was tested. "
+              f"measured transport availability, not {model_name}, and no bar was tested. "
               f"Diagnose the recorded reasons, fix the transport (pacing/quota), and re-run — "
               f"resume re-judges api-error records and keeps every real verdict.")
     elif v1a_ok:
-        print(f"  SCREENING PASS for {adapter.name} — all measurable V1-prime bars met. This "
+        print(f"  SCREENING PASS for {model_name} — all measurable V1-prime bars met. This "
               f"licenses continuing the design, NOT production wiring: the registered 1%/3% "
               f"error bars remain unmeasurable without the human shortlist above.")
     else:
-        print(f"  FAIL — one or more V1a bars missed for {adapter.name}; see the numbers "
+        print(f"  FAIL — one or more V1a bars missed for {model_name}; see the numbers "
               f"above. Per the standing rule: report, do not tune around it.")
     return 0
 
