@@ -21,6 +21,15 @@ export interface RecordReadInput {
 
 const READS_ENDPOINT = "/api/me/reads";
 
+/** The browser's IANA zone (e.g. "Asia/Kolkata"), or undefined where Intl cannot answer. */
+function browserTimeZone(): string | undefined {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Fire a single read into the canonical pipeline. Returns true if it was dispatched. */
 export function recordRead(input: RecordReadInput): boolean {
   if (!input.url || !/^https?:\/\//i.test(input.url)) return false;
@@ -33,6 +42,12 @@ export function recordRead(input: RecordReadInput): boolean {
         readSource: "app",
         openedFrom: input.openedFrom,
         device: input.device ?? deviceHint(),
+        // The reader's IANA zone. A streak counts DAYS, and a day is local — without this the
+        // engine files a 02:00 read under the UTC day that ended two hours earlier and breaks a
+        // streak that never broke. Sent here because it needs no extra round trip and no settings
+        // screen: the engine stores it only when it changes. Undefined on a browser with no Intl
+        // (the engine then buckets by UTC, exactly as before).
+        timeZone: browserTimeZone(),
       },
     ],
   });

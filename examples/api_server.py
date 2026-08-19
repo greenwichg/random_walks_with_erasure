@@ -679,14 +679,56 @@ def _register_enum(p_reporting) -> str:
     return "mixed"
 
 
-def _reading_streak(read_ats) -> int:
-    """Consecutive UTC days ending today on which the reader recorded at least one read, from ISO
+def _zone(time_zone: "str | None"):
+    """An IANA name → tzinfo, or UTC. Never raises: an unresolvable name degrades to UTC, which is
+    the behaviour every caller had before zones existed."""
+    if not time_zone:
+        return timezone.utc
+    try:
+        from zoneinfo import ZoneInfo
+        return ZoneInfo(str(time_zone))
+    except Exception:
+        return timezone.utc
+
+
+def _local_day(ts, time_zone: "str | None" = None) -> "str | None":
+    """The ``YYYY-MM-DD`` day an instant falls on **in the reader's zone**.
+
+    A day is a local idea. Slicing ``ts[:10]`` takes the UTC day, which is a different day from the
+    reader's for part of every 24 hours — the whole evening in Asia, the small hours in the
+    Americas. A Delhi reader finishing an article at 02:00 local was filed under the UTC day that
+    had ended two hours earlier, so a genuinely unbroken week of late-night reading showed up as a
+    broken streak. With no zone this returns the UTC day, exactly as before."""
+    if not isinstance(ts, str) or len(ts) < 10:
+        return None
+    if time_zone is None:
+        return ts[:10]
+    try:
+        d = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except ValueError:
+        return ts[:10]                       # unparseable: the prefix is the best available answer
+    if d.tzinfo is None:
+        d = d.replace(tzinfo=timezone.utc)   # the engine's own naive stamps are UTC (see _utc_marked)
+    return d.astimezone(_zone(time_zone)).date().isoformat()
+
+
+def _local_days(read_ats, time_zone: "str | None" = None) -> set:
+    """The distinct reader-local days a set of ``readAt`` strings falls on."""
+    return {d for d in (_local_day(ra, time_zone) for ra in read_ats) if d}
+
+
+def _reading_streak(read_ats, time_zone: "str | None" = None) -> int:
+    """Consecutive days ending today on which the reader recorded at least one read, from ISO
     ``readAt`` strings. A break (no read today) makes it 0 — an honest current-streak count, not a
-    best-ever. Timestamps are compared by their date prefix (``YYYY-MM-DD``)."""
-    days = {ra[:10] for ra in read_ats if isinstance(ra, str) and len(ra) >= 10}
+    best-ever.
+
+    Days are the READER's days when ``time_zone`` is known, and "today" is today where they are —
+    both halves have to move together, since counting local days back from a UTC today would break
+    the streak of anyone whose local date is already tomorrow. Without a zone: UTC, as before."""
+    days = _local_days(read_ats, time_zone)
     if not days:
         return 0
-    streak, d = 0, datetime.now(timezone.utc).date()
+    streak, d = 0, datetime.now(_zone(time_zone)).date()
     while d.isoformat() in days:
         streak += 1
         d = d - timedelta(days=1)
@@ -733,10 +775,11 @@ def _overall_trend(snapshots) -> list:
             for s in snapshots if _day(s.get("createdAt"))]
 
 
-def _longest_streak(read_ats) -> int:
-    """The longest run of consecutive UTC days with at least one read, over all of a reader's reads
-    (not necessarily ending today). Deterministic; ``0`` when there are no reads."""
-    days = sorted({ra[:10] for ra in read_ats if isinstance(ra, str) and len(ra) >= 10})
+def _longest_streak(read_ats, time_zone: "str | None" = None) -> int:
+    """The longest run of consecutive days with at least one read, over all of a reader's reads (not
+    necessarily ending today), in the reader's zone when known. Deterministic; ``0`` when there are
+    no reads."""
+    days = sorted(_local_days(read_ats, time_zone))
     if not days:
         return 0
     from datetime import date
@@ -1423,7 +1466,8 @@ class Backend:
         return out
 
     def build_dashboard(self, report: dict, reads: list, snapshots: list,
-                        goal_minutes: "int | None" = None) -> dict:
+                        goal_minutes: "int | None" = None,
+                        time_zone: "str | None" = None) -> dict:
         """Compose the dashboard summary from data that already exists — **no new report
         serialisation**. ``overall`` / ``overallDelta`` / ``metrics`` are lifted verbatim from the
         Measured/Estimate/Demo ``report`` this reader would see; ``trend`` is their saved report
@@ -1468,7 +1512,7 @@ class Backend:
             "trend": trend,
             "today": today_block,
             "metrics": report.get("metrics", []),                    # the report's metrics, reused as-is
-            "streakDays": _reading_streak([e.get("readAt") for e in recent]),
+            "streakDays": _reading_streak([e.get("readAt") for e in recent], time_zone),
         }
 
     # -- analytics: visualise stored data only (no new intelligence) -------- #
@@ -1554,7 +1598,8 @@ class Backend:
         }
 
     @staticmethod
-    def build_profile(user: dict, reads: list, snapshots: list, saved_count: int = 0) -> dict:
+    def build_profile(user: dict, reads: list, snapshots: list, saved_count: int = 0,
+                      time_zone: "str | None" = None) -> dict:
         """The account profile, built entirely from persisted data — identity from the user row,
         streaks from stored reads (shared ``_reading_streak`` / ``_longest_streak``), the health
         journey from saved report snapshots (shared ``_overall_trend``), and ``savedCount`` from the
@@ -1569,8 +1614,8 @@ class Backend:
             "handle": _handle_from(name, email),
             "email": email,
             "joinedAt": user.get("createdAt") or datetime.now(timezone.utc).isoformat(),
-            "streakDays": _reading_streak(read_ats),
-            "longestStreak": _longest_streak(read_ats),
+            "streakDays": _reading_streak(read_ats, time_zone),
+            "longestStreak": _longest_streak(read_ats, time_zone),
             "scoreHistory": _overall_trend(snapshots),
             "achievements": [],          # not built yet — honest empty, not fabricated
             "savedCount": saved_count,   # the real persisted count (Saved is the single concept)

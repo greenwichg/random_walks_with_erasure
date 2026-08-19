@@ -799,7 +799,11 @@ def test_settings_persist_and_merge(client):
                  # Interest Intensity — the eight per-interest sliders.
                  "interests",
                  # For You country preference (null = Global), independent of ``edition``.
-                 "recommendationCountry"}
+                 "recommendationCountry",
+                 # The reader's auto-detected IANA zone (null until a client reports one). Not a
+                 # preference and not on any settings screen — it is here because streaks count
+                 # DAYS and a day is local.
+                 "timeZone"}
 
     d = client.get("/api/me/settings", headers=hdr).json()
     # S1.2: `privacy` is gone from the contract — the response carries exactly the surviving keys.
@@ -2110,3 +2114,50 @@ def test_interest_intensity_persists_and_moves_the_feed_end_to_end(tmp_path, mon
             # back to neutral -> the EXACT baseline feed (zero residue anywhere)
             set_interest(key, 5)
             assert [r["article"]["id"] for r in feed()] == base_ids, topic
+
+
+# --------------------------------------------------------------------------- #
+# timeZone — reported by the read pipeline, used to bucket streak DAYS
+# --------------------------------------------------------------------------- #
+def test_a_read_reports_the_readers_zone_and_the_streak_follows_it(client):
+    """The client sends its IANA zone with a read; the engine stores it and buckets streak days by
+    it. This is the only channel the engine has: notifications compute streaks offline, with no
+    request in flight to read a header from."""
+    uid = client.post("/api/internal/users",
+                      json={"provider": "google", "providerAccountId": "tz-1"}).json()["userId"]
+    hdr = {"X-IH-User-Id": str(uid)}
+    assert client.get("/api/me/settings", headers=hdr).json()["timeZone"] is None
+
+    client.post("/api/me/reads",
+                json={"reads": [{"url": "https://www.nytimes.com/2024/us/politics/tz",
+                                 "timeZone": "Asia/Kolkata"}]}, headers=hdr)
+    assert client.get("/api/me/settings", headers=hdr).json()["timeZone"] == "Asia/Kolkata"
+
+    # The profile's streak now buckets by the reader's days, not UTC's.
+    assert client.get("/api/me/profile", headers=hdr).status_code == 200
+
+
+def test_an_unresolvable_zone_is_never_persisted(client):
+    """A client can send anything. A name the tz database cannot resolve is a name no day can be
+    bucketed with, so it must not reach stored settings — the reader stays on UTC bucketing."""
+    uid = client.post("/api/internal/users",
+                      json={"provider": "google", "providerAccountId": "tz-2"}).json()["userId"]
+    hdr = {"X-IH-User-Id": str(uid)}
+    client.post("/api/me/reads",
+                json={"reads": [{"url": "https://www.nytimes.com/2024/us/politics/tz2",
+                                 "timeZone": "Mars/Olympus"}]}, headers=hdr)
+    assert client.get("/api/me/settings", headers=hdr).json()["timeZone"] is None
+
+
+def test_a_read_without_a_zone_leaves_a_known_one_alone(client):
+    """The extension does not send a zone. A read from it must not wipe the zone the web app
+    reported — absent means "no opinion", not "clear it"."""
+    uid = client.post("/api/internal/users",
+                      json={"provider": "google", "providerAccountId": "tz-3"}).json()["userId"]
+    hdr = {"X-IH-User-Id": str(uid)}
+    client.post("/api/me/reads",
+                json={"reads": [{"url": "https://www.nytimes.com/2024/us/politics/tz3",
+                                 "timeZone": "Europe/Berlin"}]}, headers=hdr)
+    client.post("/api/me/reads",
+                json={"reads": [{"url": "https://foxnews.com/politics/tz3b"}]}, headers=hdr)
+    assert client.get("/api/me/settings", headers=hdr).json()["timeZone"] == "Europe/Berlin"

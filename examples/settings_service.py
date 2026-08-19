@@ -88,6 +88,13 @@ DEFAULT_SETTINGS = {
     # (the same reasoning the notification categories above record). None = the untouched feed,
     # byte for byte: the "an unmoved control changes nothing" rule the sliders already follow.
     "recommendationCountry": None,
+    # The reader's IANA time zone, e.g. "Asia/Kolkata". AUTO-DETECTED, not a preference: the web
+    # client reports `Intl.DateTimeFormat().resolvedOptions().timeZone` when it records a read, and
+    # no settings screen exposes it. It exists because a *day* is a local idea — a Delhi reader's
+    # 02:00 read belongs to that reader's day, not to the UTC day that ended two hours earlier —
+    # and streaks are counted in days. `None` means "not reported", which buckets by UTC: exactly
+    # the old behaviour, so a client that never sends one is unaffected.
+    "timeZone": None,
     # A `privacy` group (shareAnonymizedMetrics / personalizedAds) was removed in S1.2: neither
     # field was consumed by any behavior, and one contradicted the product's privacy policy. Legacy
     # stored blobs / patches carrying those keys normalize away safely — dropped like any unknown
@@ -190,6 +197,7 @@ def normalize_settings(stored: "dict | None", patch: "dict | None" = None) -> di
         "locations": _normalize_locations(_layered("locations", layers, [])),
         "recommendationCountry": _normalize_edition(
             _layered("recommendationCountry", layers, None)),
+        "timeZone": _normalize_timezone(_layered("timeZone", layers, None)),
         # The output is built ONLY from the keys above, so any layer key outside this set — an
         # unknown field, or the removed ``privacy`` group — is simply never read (dropped).
     }
@@ -197,6 +205,30 @@ def normalize_settings(stored: "dict | None", patch: "dict | None" = None) -> di
 
 _LOCATION_LEVELS = ("country", "region", "city")
 _MAX_LOCATIONS = 10
+
+
+def _normalize_timezone(value) -> "str | None":
+    """A resolvable IANA zone name, or ``None``.
+
+    Validated by actually constructing the zone rather than by pattern: "Asia/Kolkata" and "UTC"
+    both pass, "Mars/Olympus" and "UTC+5:30" do not, and neither does a name the running system's
+    tz database has never heard of — which is the case that matters, since a name we cannot resolve
+    at read time is a name we cannot bucket a day with either. Storing only resolvable zones means
+    every consumer can assume the stored value works.
+
+    An unresolvable value degrades to ``None`` (UTC bucketing), never to an exception: a client
+    sending nonsense must not be able to break a reader's settings read."""
+    if value is None:
+        return None
+    name = str(value).strip()
+    if not name or len(name) > 64:
+        return None
+    try:
+        from zoneinfo import ZoneInfo
+        ZoneInfo(name)
+    except Exception:
+        return None
+    return name
 
 
 def _normalize_edition(value) -> "str | None":

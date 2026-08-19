@@ -1001,6 +1001,9 @@ export interface Settings {
   /** For You country preference (ISO alpha-2, null = Global). Independent of `edition`:
    *  this prioritizes recommendations, `edition` scopes Local Pulse. */
   recommendationCountry?: string | null;
+  /** The reader's IANA zone, auto-detected and reported by `lib/record-read.ts` — no settings
+   *  screen exposes it. The engine buckets streak DAYS by it; absent means UTC bucketing. */
+  timeZone?: string | null;
   locations?: FollowedLocation[];
   // NOTE: the engine's settings contract still carries a `privacy` group
   // (shareAnonymizedMetrics / personalizedAds); it is intentionally omitted from the frontend

@@ -92,16 +92,22 @@ def _blind_spot_topics(report: "dict | None") -> tuple:
                  if isinstance(s, dict) and s.get("topic"))
 
 
-def _streak_through_yesterday(read_ats, now) -> int:
-    """The run of consecutive UTC days with >= 1 read ending **yesterday** — an "active streak at
-    risk" signal that, unlike ``api_server._reading_streak`` (which ends *today* and so drops to 0 the
-    moment today has no read), survives today's silence. Same day-prefix (``YYYY-MM-DD``) comparison
-    as the streak definition, but anchored at yesterday and driven by the injected ``now`` (so it is
-    deterministic). ``_reading_streak`` is neither called nor modified."""
-    days = {ra[:10] for ra in read_ats if isinstance(ra, str) and len(ra) >= 10}
+def _streak_through_yesterday(read_ats, now, time_zone=None) -> int:
+    """The run of consecutive days with >= 1 read ending **yesterday** — an "active streak at risk"
+    signal that, unlike ``api_server._reading_streak`` (which ends *today* and so drops to 0 the
+    moment today has no read), survives today's silence. Same day bucketing as the streak
+    definition (``api_server._local_days`` — the reader's zone when known, UTC otherwise), but
+    anchored at yesterday and driven by the injected ``now`` (so it is deterministic).
+    ``_reading_streak`` is neither called nor modified.
+
+    "Yesterday" is yesterday WHERE THE READER IS: anchoring at a UTC yesterday while counting local
+    days would mis-time the one notification this signal exists to send."""
+    import api_server as engine
+    days = engine._local_days(read_ats, time_zone)
     if not days:
         return 0
-    streak, d = 0, now.date() - timedelta(days=1)              # anchor at yesterday, count backwards
+    local_now = now.astimezone(engine._zone(time_zone)) if time_zone else now
+    streak, d = 0, local_now.date() - timedelta(days=1)        # anchor at yesterday, count backwards
     while d.isoformat() in days:
         streak += 1
         d = d - timedelta(days=1)
@@ -119,7 +125,11 @@ def build_context(store, uid: int, now: "datetime | None" = None) -> "ns.Notific
 
     report = store.latest_report(uid)                          # the SAVED snapshot, never a fresh compute
     read_ats = [engine._read_at(row) for row in (store.list_reads(uid) or [])]
-    today = now.date().isoformat()
+    # Read once and reused: the same settings object the context carries also names the reader's
+    # zone, so a streak reminder is timed against THEIR midnight rather than UTC's.
+    settings = settings_service.get(store, uid)
+    tz = settings.get("timeZone")
+    today = (now.astimezone(engine._zone(tz)) if tz else now).date().isoformat()
     week_ago = now - timedelta(days=7)
 
     def _within_week(ra) -> bool:
@@ -127,14 +137,14 @@ def build_context(store, uid: int, now: "datetime | None" = None) -> "ns.Notific
         return dt is not None and dt >= week_ago
 
     reading = ns.ReadingInputs(
-        streak_days=engine._reading_streak(read_ats),          # UNCHANGED: current streak ending today
-        read_today=any(isinstance(ra, str) and ra[:10] == today for ra in read_ats),
+        streak_days=engine._reading_streak(read_ats, tz),      # current streak ending today, local
+        read_today=any(engine._local_day(ra, tz) == today for ra in read_ats),
         reads_this_week=sum(1 for ra in read_ats if _within_week(ra)),
-        streak_through_yesterday=_streak_through_yesterday(read_ats, now))
+        streak_through_yesterday=_streak_through_yesterday(read_ats, now, tz))
 
     return ns.NotificationContext(
         now=now,
-        settings=settings_service.get(store, uid),
+        settings=settings,
         delivery=ns.DeliveryState(
             delivered_keys=frozenset(store.delivered_notification_keys(uid)),
             counts_today=_counts_today(store, uid, now)),

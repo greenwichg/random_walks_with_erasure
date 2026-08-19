@@ -890,6 +890,7 @@ class SettingsModel(BaseModel):
     # For You country preference (ISO alpha-2, null = Global). Independent of ``edition``: this
     # one prioritizes recommendations, that one scopes Local Pulse.
     recommendationCountry: str | None = None
+    timeZone: str | None = None
 
 
 # Update model — every field optional so any client can PATCH a subset; the engine merges it over
@@ -945,6 +946,7 @@ class SettingsUpdateModel(BaseModel):
     edition: str | None = None
     locations: list[FollowedLocationModel] | None = None
     recommendationCountry: str | None = None
+    timeZone: str | None = None
 
 
 class NotificationModel(BaseModel):
@@ -1676,6 +1678,7 @@ class ReadInput(BaseModel):
     readSource: str | None = None     # app | extension | <future import> (additive; metadata only)
     openedFrom: str | None = None     # in-app surface: recommendations/discover/stories/search/saved
     device: str | None = None         # optional client hint
+    timeZone: str | None = None       # the reader's IANA zone at read time (see below)
     # Standard page metadata the extension collects (Commit 18) so an extension read can become a
     # first-class FeedArticle. All optional + additive; never trusted for canonicalization (the
     # engine canonicalizes the URL itself). ``language``/``author`` are accepted per the privacy
@@ -2502,7 +2505,10 @@ def dashboard(request: Request,
     # settings always normalise to a goal, so every real user gets one); anonymous/demo has none.
     goal = (settings_service.reading_goal_minutes(st, uid)
             if uid is not None else None)
-    dash = active.backend.build_dashboard(rep, reads, snaps, goal_minutes=goal)
+    # The streak counts DAYS, and a day is local: the same settings read that carries the
+    # goal carries the reader's zone (None for anonymous/demo -> UTC, as before).
+    tz = settings_service.get(st, uid).get("timeZone") if uid is not None else None
+    dash = active.backend.build_dashboard(rep, reads, snaps, goal_minutes=goal, time_zone=tz)
     if rep.get("sample"):
         dash["sample"] = True          # build_dashboard rebuilds the payload; carry the marker over
     return dash
@@ -2849,6 +2855,16 @@ def add_reads(request: Request, req: ReadsRequest) -> dict:
         raise HTTPException(status_code=413, detail=batch_error)
     scorer = _require_scorer()
     st = _require_store()
+    # Remember where the reader is, so DAY bucketing can be theirs. A streak counts days, and a day
+    # is local — the engine has no other way to learn a zone, since notifications compute streaks
+    # offline with no request in flight to read a header from. Written only when it actually
+    # changes (a settings write per read would be a write on every article opened), and only when
+    # it normalises to a resolvable zone, so a nonsense value can never land in stored settings.
+    _tz = next((i.timeZone for i in req.reads if i.timeZone), None)
+    if _tz:
+        _current = settings_service.get(st, uid).get("timeZone")
+        if settings_service._normalize_timezone(_tz) not in (None, _current):
+            settings_service.update(st, uid, {"timeZone": _tz})
     accepted = duplicates = rejected = 0
     for item in req.reads:
         url = ingest.normalize_url(item.url)
@@ -3005,7 +3021,8 @@ def my_profile(request: Request) -> dict:
     user = {"email": u.email, "displayName": u.display_name,
             "createdAt": u.created_at.isoformat() if u.created_at else None}
     return _require_backend().build_profile(user, st.list_reads(uid), st.list_report_snapshots(uid),
-                                            saved_count=st.count_saved(uid))
+                                            saved_count=st.count_saved(uid),
+                                            time_zone=settings_service.get(st, uid).get("timeZone"))
 
 
 @app.get("/api/me/settings", response_model=SettingsModel, tags=["meta"],

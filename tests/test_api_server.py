@@ -546,6 +546,84 @@ def test_recommenders_built_once(backend):
 
 
 # --------------------------------------------------------------------------- #
+# streaks — a DAY is a local idea, and streaks are counted in days
+# --------------------------------------------------------------------------- #
+def test_local_day_is_the_readers_day_not_the_utc_one():
+    """The case that motivated this: a Delhi reader finishing an article at 02:00 local. The
+    instant is 20:30 UTC on the PREVIOUS date, so UTC bucketing filed it under a day the reader had
+    already finished — breaking a streak that never broke."""
+    ts = "2026-08-19T20:30:00Z"                       # = 2026-08-20 02:00 in Kolkata
+    assert api_server._local_day(ts) == "2026-08-19"                      # no zone: UTC, as before
+    assert api_server._local_day(ts, "UTC") == "2026-08-19"
+    assert api_server._local_day(ts, "Asia/Kolkata") == "2026-08-20"      # the reader's day
+    assert api_server._local_day(ts, "America/New_York") == "2026-08-19"  # 16:30 local, same day
+
+
+def test_local_day_crosses_backwards_too():
+    """A New York reader's 21:00 local read is already tomorrow in UTC — the mirror image."""
+    ts = "2026-08-20T01:00:00Z"                       # = 2026-08-19 21:00 in New York
+    assert api_server._local_day(ts) == "2026-08-20"
+    assert api_server._local_day(ts, "America/New_York") == "2026-08-19"
+
+
+def test_local_day_respects_dst_rather_than_a_fixed_offset():
+    """Zones are not constant offsets. New York is UTC-5 in January and UTC-4 in July, so a fixed
+    offset (or a stored number of minutes) would put one of these two on the wrong day."""
+    assert api_server._local_day("2026-01-15T04:30:00Z", "America/New_York") == "2026-01-14"  # -5
+    assert api_server._local_day("2026-07-15T03:30:00Z", "America/New_York") == "2026-07-14"  # -4
+    assert api_server._local_day("2026-07-15T04:30:00Z", "America/New_York") == "2026-07-15"
+
+
+def test_local_day_handles_the_engines_own_naive_stamps():
+    """`_read_at` marks created_at with a Z, but a stored value that predates that fix, or any
+    other naive string, must still be read as UTC rather than as server-local."""
+    assert api_server._local_day("2026-08-19T20:30:00.123456", "Asia/Kolkata") == "2026-08-20"
+    assert api_server._local_day("2026-08-19T20:30:00.123456Z", "Asia/Kolkata") == "2026-08-20"
+
+
+def test_local_day_degrades_instead_of_raising():
+    assert api_server._local_day(None) is None
+    assert api_server._local_day("") is None
+    assert api_server._local_day("nonsense", "Asia/Kolkata") is None
+    # A date-only value and an unresolvable zone both fall back to the prefix, never an exception.
+    assert api_server._local_day("2026-08-19", "Asia/Kolkata") == "2026-08-19"
+    assert api_server._local_day("2026-08-19T20:30:00Z", "Mars/Olympus") == "2026-08-19"
+
+
+def test_streaks_count_the_readers_days():
+    """Four consecutive Kolkata days of late-night reading. Every instant lands on the PREVIOUS UTC
+    date, so UTC bucketing sees four days too — but shifted, which is what breaks the count against
+    a local 'today'. The run length is what a reader is shown."""
+    read_ats = [f"2026-08-{d}T20:30:00Z" for d in (16, 17, 18, 19)]   # 02:00 local on 17..20
+    assert api_server._longest_streak(read_ats, "Asia/Kolkata") == 4
+    assert api_server._longest_streak(read_ats, "UTC") == 4
+    # A gap in the reader's days is a gap, whatever UTC thinks.
+    gapped = ["2026-08-16T20:30:00Z", "2026-08-18T20:30:00Z"]
+    assert api_server._longest_streak(gapped, "Asia/Kolkata") == 1
+
+
+def test_streak_and_today_move_together():
+    """`_reading_streak` anchors at *today*, which must be today WHERE THE READER IS: counting
+    local days back from a UTC today would skip a reader whose local date is already tomorrow."""
+    from datetime import datetime, timedelta, timezone
+    from zoneinfo import ZoneInfo
+    kolkata = ZoneInfo("Asia/Kolkata")
+    now_local = datetime.now(kolkata)
+    # Reads at 01:00 local today and yesterday — both stamped on the previous UTC date.
+    read_ats = [(now_local - timedelta(days=n)).replace(hour=1, minute=0)
+                .astimezone(timezone.utc).isoformat().replace("+00:00", "Z") for n in (0, 1)]
+    assert api_server._reading_streak(read_ats, "Asia/Kolkata") == 2
+
+
+def test_streaks_without_a_zone_are_byte_identical_to_the_old_behaviour():
+    """A reader whose client never reported a zone must see exactly what they saw before."""
+    read_ats = ["2026-08-16T20:30:00Z", "2026-08-17T20:30:00Z", "2026-08-18T09:00:00Z"]
+    assert api_server._longest_streak(read_ats) == 3
+    assert api_server._longest_streak(read_ats, None) == 3
+    assert api_server._reading_streak([], None) == 0
+
+
+# --------------------------------------------------------------------------- #
 # readAt — the timestamp every client buckets by, and the UTC marker SQLite drops
 # --------------------------------------------------------------------------- #
 def test_read_at_marks_the_naive_created_at_as_utc():

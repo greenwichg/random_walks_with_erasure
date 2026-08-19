@@ -27,7 +27,12 @@ docs = ["matplotlib>=3.5", "python-pptx>=0.6", "pillow>=9.0"]
 serve = ["fastapi>=0.110", "uvicorn>=0.30", "sqlalchemy>=2.0",
          # Web Push (Phase B2). Imported lazily by examples/push_sender.py so the engine — and the
          # whole test suite — still load where its native dependency (http-ece) cannot be built.
-         "pywebpush>=1.14"]
+         "pywebpush>=1.14",
+         # `zoneinfo` reads the SYSTEM tz database, which a slim base image may not carry — and a
+         # missing one is silent: every zone lookup fails and reader-local day bucketing degrades
+         # back to UTC, which is the exact bug it exists to fix. This wheel is the documented
+         # fallback source, so the engine stops depending on what the base image happens to ship.
+         "tzdata>=2024.1"]
 
 [tool.setuptools.packages.find]
 include = ["rwe*"]

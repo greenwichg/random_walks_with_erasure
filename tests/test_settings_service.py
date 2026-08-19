@@ -41,8 +41,14 @@ def test_settings_service_is_a_stdlib_only_leaf():
                 tops.add(f"<relative level {node.level}>")
             elif node.module:
                 tops.add(node.module.split(".")[0])
-    # The module imports only ``from __future__ import annotations``; nothing else is allowed.
-    assert tops <= {"__future__"}, f"settings_service must stay a stdlib-only leaf; found: {sorted(tops)}"
+    # ``__future__`` plus ``zoneinfo`` — the stdlib tz database, imported lazily inside
+    # ``_normalize_timezone`` so the schema can REJECT a zone name it cannot resolve rather than
+    # storing a plausible-looking one that no day can be bucketed with. It is stdlib and imports
+    # nothing from this repo, so the property this test protects — no cycle, no third-party
+    # dependency — is intact. Nothing else is allowed; a `store` or `api_server` import here would
+    # still be the cycle the module exists to avoid.
+    assert tops <= {"__future__", "zoneinfo"}, \
+        f"settings_service must stay a stdlib-only leaf; found: {sorted(tops)}"
 
 
 # --------------------------------------------------------------------------- #
@@ -354,3 +360,45 @@ def test_recommendation_country_patches_and_resets():
     assert n({"recommendationCountry": "FR"}, {"recommendationCountry": None})[
         "recommendationCountry"] is None
     assert n({"recommendationCountry": "FR"}, {})["recommendationCountry"] == "FR"  # untouched
+
+
+# --------------------------------------------------------------------------- #
+# timeZone — auto-detected, not a preference; validated by resolving it
+# --------------------------------------------------------------------------- #
+def test_time_zone_defaults_to_none_so_bucketing_stays_utc():
+    """A client that never reports one must be unaffected: None means UTC day bucketing, which is
+    what every reader had before zones existed."""
+    assert ss.DEFAULT_SETTINGS["timeZone"] is None
+    assert ss.normalize_settings(None)["timeZone"] is None
+
+
+def test_time_zone_accepts_a_resolvable_iana_name():
+    for name in ("Asia/Kolkata", "America/New_York", "Europe/Berlin", "UTC"):
+        assert ss.normalize_settings(None, {"timeZone": name})["timeZone"] == name
+
+
+def test_time_zone_rejects_anything_it_cannot_resolve():
+    """Validated by CONSTRUCTING the zone, not by pattern — a name that looks plausible but the tz
+    database has never heard of is a name no day can be bucketed with, so it must not be stored."""
+    for bad in ("Mars/Olympus", "UTC+5:30", "IST", "", "   ", "Asia/Kolkata; DROP TABLE", 42, [],
+                "A" * 200):
+        assert ss.normalize_settings(None, {"timeZone": bad})["timeZone"] is None
+
+
+def test_time_zone_survives_a_round_trip_and_can_be_cleared():
+    stored = ss.normalize_settings(None, {"timeZone": "Asia/Kolkata"})
+    assert ss.normalize_settings(stored)["timeZone"] == "Asia/Kolkata"
+    # Re-reporting the same zone is idempotent; an unresolvable one degrades rather than persisting.
+    assert ss.normalize_settings(stored, {"timeZone": "Mars/Olympus"})["timeZone"] is None
+
+
+def test_time_zone_does_not_disturb_the_other_preferences():
+    """It is stored beside the reader's real preferences but is not one; changing it must leave
+    every other field exactly where it was."""
+    base = ss.normalize_settings(None, {"politicalOpenness": 80,
+                                                      "recommendationCountry": "IN"})
+    after = ss.normalize_settings(base, {"timeZone": "Asia/Kolkata"})
+    assert after["politicalOpenness"] == 80
+    assert after["recommendationCountry"] == "IN"
+    assert {k: v for k, v in after.items() if k != "timeZone"} == \
+           {k: v for k, v in base.items() if k != "timeZone"}
