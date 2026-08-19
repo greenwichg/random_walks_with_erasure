@@ -131,6 +131,24 @@ export default function SettingsPage() {
         .slice(0, 12),
     [countries.data],
   );
+  // Every country picker on this page reads one query. While it is in flight the old code
+  // rendered `(countries.data ?? [])` — an empty chip row indistinguishable from "this platform
+  // knows no countries", which is exactly how a slow list reads as a broken one. Measured on
+  // production the call took 6.3s to reach the browser, so that window is not theoretical.
+  const countriesPending = countries.isLoading || countries.isFetching;
+  const countryListState = (n: number) =>
+    countriesPending && n === 0 ? (
+      <div className="flex flex-wrap gap-1.5" aria-live="polite" aria-busy="true">
+        {[64, 88, 72, 80, 68].map((w, i) => (
+          <Skeleton key={i} className="h-[30px] rounded-full" style={{ width: w }} />
+        ))}
+      </div>
+    ) : n === 0 ? (
+      <p className="text-xs text-muted-foreground">
+        {countries.isError ? t("settings.countriesUnavailable") : t("settings.countriesEmpty")}
+      </p>
+    ) : null;
+
   const [saved, setSaved] = React.useState(false);
 
   // The minimal PATCH the Save button would send: only the fields the reader changed vs their base,
@@ -359,6 +377,7 @@ export default function SettingsPage() {
             }
           >
             <p className="mb-3 text-xs text-muted-foreground">{t("settings.recCountryHint")}</p>
+            {countryListState(recCountryOptions.length)}
             <div className="flex flex-wrap gap-1.5">
               <button
                 type="button"
@@ -435,6 +454,7 @@ export default function SettingsPage() {
               <div>
                 <p className="mb-1 text-sm font-medium">{t("settings.edition")}</p>
                 <p className="mb-2 text-xs text-muted-foreground">{t("settings.editionDesc")}</p>
+                {countryListState((countries.data ?? []).length)}
                 <div className="flex flex-wrap gap-1.5">
                   <button
                     type="button"

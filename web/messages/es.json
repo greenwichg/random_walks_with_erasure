@@ -488,6 +488,8 @@
   "settings.strength.balanced": "Equilibrado",
   "settings.strength.assertive": "Firme",
   "settings.strength.bold": "Audaz",
+  "settings.countriesEmpty": "Aún no hay países disponibles.",
+  "settings.countriesUnavailable": "No se pudieron cargar los países. Recarga para reintentar.",
   "settings.recCountry": "País",
   "settings.recCountryInfo": "Prioriza las recomendaciones vinculadas al país que elijas: cobertura localizada allí o medios con sede allí. Reordena tu feed: no se oculta nada y tus otros controles de Para ti siguen funcionando igual.",
   "settings.recCountryHint": "La mayor parte del catálogo se asocia por la sede del medio; una parte menor, por el lugar de los hechos. Global mantiene tu feed exactamente como está hoy.",

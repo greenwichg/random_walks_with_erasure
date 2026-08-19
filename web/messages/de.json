@@ -488,6 +488,8 @@
   "settings.strength.balanced": "Ausgewogen",
   "settings.strength.assertive": "Bestimmt",
   "settings.strength.bold": "Kühn",
+  "settings.countriesEmpty": "Noch keine Länder verfügbar.",
+  "settings.countriesUnavailable": "Länder konnten nicht geladen werden. Neu laden, um es erneut zu versuchen.",
   "settings.recCountry": "Land",
   "settings.recCountryInfo": "Priorisiert Empfehlungen mit Bezug zum gewählten Land – dort verortete Berichterstattung oder dort ansässige Medien. Dein Feed wird neu sortiert: nichts wird ausgeblendet, und deine anderen Für-dich-Regler wirken unverändert.",
   "settings.recCountryHint": "Der Großteil des Katalogs wird über den Sitz des Mediums zugeordnet, ein kleinerer Teil über den Ort des Geschehens. Global lässt deinen Feed genau so, wie er heute ist.",
