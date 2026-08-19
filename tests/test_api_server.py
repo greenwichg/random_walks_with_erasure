@@ -1141,11 +1141,16 @@ def test_country_multiplier_lifts_matches_and_never_sinks_the_rest():
     known country is untouched too — the coverage-artefact guard. Preference is expressed as
     "lift the matches", never "sink the rest"."""
     m = api_server._country_multiplier
-    assert m("IN", "IN") == api_server._COUNTRY_BOOST
-    assert m("US", "IN") == 1.0
-    assert m("", "IN") == 1.0            # unlocated: neutral, never demoted
-    assert m("IN", None) == 1.0          # Global: no preference, no effect
-    assert m("", None) == 1.0
+    IN, US = frozenset({"IN"}), frozenset({"US"})
+    assert m(IN, "IN") == api_server._COUNTRY_BOOST
+    assert m(US, "IN") == 1.0
+    assert m(frozenset(), "IN") == 1.0   # unlocated: neutral, never demoted
+    assert m(IN, None) == 1.0            # Global: no preference, no effect
+    assert m(frozenset(), None) == 1.0
+    # membership, not equality: an article about India AND Pakistan belongs to both
+    both = frozenset({"IN", "PK"})
+    assert m(both, "IN") == m(both, "PK") == api_server._COUNTRY_BOOST
+    assert m(both, "US") == 1.0
 
 
 def test_country_boost_is_overridable_for_measurement_but_never_by_a_reader():
@@ -1153,16 +1158,17 @@ def test_country_boost_is_overridable_for_measurement_but_never_by_a_reader():
     be chosen from measurements. No reader can set it — rec_params_from_settings never emits the
     key, whatever is stored."""
     m = api_server._country_multiplier
-    assert m("IN", "IN") == api_server._COUNTRY_BOOST          # default = the shipped anchor
-    assert m("IN", "IN", 20.0) == 20.0
-    assert m("US", "IN", 20.0) == 1.0                          # still only lifts matches
-    assert m("", "IN", 20.0) == 1.0                            # unlocated still neutral
-    assert m("IN", "IN", 0) == 1.0                             # junk degrades to no-op, never 0
+    IN, US = frozenset({"IN"}), frozenset({"US"})
+    assert m(IN, "IN") == api_server._COUNTRY_BOOST             # default = the shipped anchor
+    assert m(IN, "IN", 20.0) == 20.0
+    assert m(US, "IN", 20.0) == 1.0                             # still only lifts matches
+    assert m(frozenset(), "IN", 20.0) == 1.0                    # unlocated still neutral
+    assert m(IN, "IN", 0) == 1.0                                # junk degrades to no-op, never 0
 
     class M:
         categories = np.asarray(["Sports", "Business"], dtype=object)
     R = api_server.Backend._preference_rerank
-    by_col = {1: "IN"}
+    by_col = {1: frozenset({"IN"})}
     # countryMode is pinned: under the shipped "first" default this assertion would pass
     # without the boost ever being consulted, and the test would quietly stop testing anything.
     assert R(M, [0, 1], {"country": "IN", "countryBoost": 20.0, "countryMode": "boost"},
@@ -1181,7 +1187,8 @@ def test_preference_rerank_applies_and_composes_the_country_nudge():
         categories = np.asarray(["Sports", "Business", "Sports", "", "Health"], dtype=object)
     R = api_server.Backend._preference_rerank
     cols = [0, 1, 2, 3, 4]
-    by_col = {1: "IN", 4: "IN", 0: "US"}          # cols 2 and 3 have no known country
+    by_col = {1: frozenset({"IN"}), 4: frozenset({"IN"}), 0: frozenset({"US"})}
+    # cols 2 and 3 have no known country
 
     assert R(M, cols, {"country": "IN"}, None) == cols       # no map -> provably inert
     assert R(M, cols, None, by_col) is cols                  # no params -> the very same object
@@ -1204,7 +1211,8 @@ def test_country_first_partitions_without_removing_anything():
         categories = np.asarray(["A", "B", "C", "D", "E", "F"], dtype=object)
     R = api_server.Backend._preference_rerank
     cols = [0, 1, 2, 3, 4, 5]
-    by_col = {5: "IN", 2: "IN", 0: "US"}          # the IN items rank LAST and mid-pool
+    by_col = {5: frozenset({"IN"}), 2: frozenset({"IN"}), 0: frozenset({"US"})}
+    # the IN items rank LAST and mid-pool
 
     out = R(M, cols, {"country": "IN"}, by_col)   # default mode == "first"
     assert out[:2] == [2, 5]                      # both IN items lead, in model order
@@ -1224,7 +1232,8 @@ def test_country_first_still_lets_interests_order_within_the_country_group():
         categories = np.asarray(["Sports", "Health", "Sports", "Health"], dtype=object)
     R = api_server.Backend._preference_rerank
     cols = [0, 1, 2, 3]
-    by_col = {0: "IN", 2: "IN", 3: "IN"}          # col 1 is not IN
+    by_col = {0: frozenset({"IN"}), 2: frozenset({"IN"}), 3: frozenset({"IN"})}
+    # col 1 is not IN
 
     out = R(M, cols, {"country": "IN", "interests": {"health": 10}}, by_col)
     assert out[-1] == 1                           # the non-IN item is last, whatever its topic
@@ -1253,7 +1262,7 @@ def test_country_preference_reshapes_the_served_feed(backend, user):
     ids = [str(i) for i in np.asarray(backend.mind.dataset.item_ids)]
     # every third catalog item is "from" IN; the rest are US. A synthetic map, but the real one
     # is the same shape (feed_source.load_country_map) and reaches the same code path.
-    cmap = {iid: ("IN" if k % 3 == 0 else "US") for k, iid in enumerate(ids)}
+    cmap = {iid: frozenset({"IN"} if k % 3 == 0 else {"US"}) for k, iid in enumerate(ids)}
     backend.attach_country_resolver(cmap)
     try:
         base = _rec_ids(backend, user, None, None)
@@ -1262,8 +1271,8 @@ def test_country_preference_reshapes_the_served_feed(backend, user):
         served_in = backend.recommendations(user, None, {"country": "IN"})
         in_ids = [r["article"]["id"] for r in served_in]
         assert in_ids != base                                    # the feed actually moved
-        share = sum(1 for i in in_ids if cmap.get(i) == "IN") / len(in_ids)
-        base_share = sum(1 for i in base if cmap.get(i) == "IN") / len(base)
+        share = sum(1 for i in in_ids if "IN" in cmap.get(i, ())) / len(in_ids)
+        base_share = sum(1 for i in base if "IN" in cmap.get(i, ())) / len(base)
         assert share > base_share                                # and moved in the right direction
 
         # Global (no key) is byte-identical to the untouched feed, and the path is deterministic

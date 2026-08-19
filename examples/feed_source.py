@@ -187,6 +187,18 @@ def article_country(a: dict) -> str:
     return s if len(s) == 2 and s.isalpha() else ""
 
 
+def country_source() -> str:
+    """What counts as an article belonging to a country, for the For You country preference.
+
+    ``content`` (the default) is subject-level — where the event happened, or the country named in
+    the headline/dek — and NEVER the outlet's home. Publisher home was the first shipped rule and
+    is provenance, not subject: it called a Delhi outlet's article about Washington "India news",
+    which is 59.8% of the catalog's labels against event geography's 17.6% (measured 2026-08-19).
+    ``union`` restores the old, wider behaviour without a deploy."""
+    v = os.environ.get("RWE_REC_COUNTRY_SOURCE", "").strip().lower()
+    return v if v in ("content", "event", "mention", "publisher", "union") else "content"
+
+
 def _qbias_record(a: dict, center: float) -> list:
     """One qbias-format CSV row from a FeedArticle-shaped dict. The single definition of the row
     shape, shared by both exporters below so the CSV format (and the row order the ``Q{i}`` -> URL
@@ -205,7 +217,9 @@ def _qbias_record(a: dict, center: float) -> list:
         scored.get("category") or "",
         a.get("url") or a.get("canonicalUrl") or "",
         "" if political is None else ("1" if political else "0"),
-        article_country(a),
+        # Pipe-separated: an article about India AND Pakistan belongs to both, and a single label
+        # would silently drop one of them.
+        "|".join(sorted(article_countries(a, country_source()))),
     ]
 
 
@@ -318,7 +332,7 @@ def load_url_map(csv_path: str) -> dict:
 
 
 def load_country_map(csv_path: str) -> dict:
-    """The corpus item-id -> ISO country map implied by the exported catalog.
+    """The corpus item-id -> ISO country SET implied by the exported catalog.
 
     The exact mirror of :func:`load_url_map`, and for the same reason: the i-th CSV *data* row is
     labelled ``Q{i}``, so mapping each data-row index to that row's ``country`` reproduces the ids
@@ -330,9 +344,12 @@ def load_country_map(csv_path: str) -> dict:
     try:
         with open(csv_path, newline="", encoding="utf-8") as f:
             for i, row in enumerate(csv.DictReader(f)):
-                c = (row.get("country") or "").strip().upper()
-                if len(c) == 2 and c.isalpha():
-                    out[f"Q{i}"] = c
+                codes = frozenset(
+                    c for c in (x.strip().upper()
+                                for x in (row.get("country") or "").split("|"))
+                    if len(c) == 2 and c.isalpha())
+                if codes:
+                    out[f"Q{i}"] = codes
     except OSError:
         pass
     return out

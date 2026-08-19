@@ -76,7 +76,7 @@ def n_country_in(arts, want: str, country_of: dict) -> int:
     """Raw count of served cards matching `want` — the series to read, since the share's
     denominator (cards with a KNOWN country) varies run to run and can make an unchanged count
     look like a decline."""
-    return sum(1 for a in arts if country_of.get(str(a["id"])) == want)
+    return sum(1 for a in arts if want in country_of.get(str(a["id"]), ()))
 
 
 def in_share_str(arts, want: str, country_of: dict) -> str:
@@ -85,7 +85,7 @@ def in_share_str(arts, want: str, country_of: dict) -> str:
     known = [a for a in arts if country_of.get(str(a["id"]))]
     if not known:
         return "n/a (0 known)"
-    hit = sum(1 for a in known if country_of[str(a["id"])] == want)
+    hit = sum(1 for a in known if want in country_of[str(a["id"])])
     return f"{hit / len(known):.0%} ({hit}/{len(known)})"
 
 
@@ -240,13 +240,14 @@ def main(argv=None) -> int:
 
     base = serve(None)
     base_ids = [a["id"] for a in base]
-    country_of = {str(k): v for k, v in be.country_by_id.items()}
+    country_of = {str(k): frozenset(v) if not isinstance(v, str) else frozenset({v})
+                  for k, v in be.country_by_id.items()}
 
     def share(arts, want):
         known = [a for a in arts if country_of.get(str(a["id"]))]
         if not known:
             return 0.0, 0
-        hit = sum(1 for a in known if country_of[str(a["id"])] == want)
+        hit = sum(1 for a in known if want in country_of[str(a["id"])])
         return hit / len(known), len(known)
 
     print(f"\n-- 3. served diff ({who}; {len(base)} cards) --")

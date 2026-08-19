@@ -330,8 +330,13 @@ def test_load_country_map_mirrors_the_url_map_indexing(tmp_path):
         w.writerow(["t1", "P", "center", "Sports", "https://a.example/1", "0", ""])
         w.writerow(["t2", "P", "center", "Sports", "https://a.example/2", "0", "gb"])
         w.writerow(["t3", "P", "center", "Sports", "https://a.example/3", "0", "XYZ"])
+        w.writerow(["t4", "P", "center", "Sports", "https://a.example/4", "0", "IN|pk|1|"])
     m = feed_source.load_country_map(str(p))
-    assert m == {"Q0": "IN", "Q2": "GB"}                  # normalized up; blanks/junk absent
+    assert m["Q0"] == frozenset({"IN"}) and m["Q2"] == frozenset({"GB"})   # normalized up
+    assert "Q1" not in m and "Q3" not in m                  # blank and non-ISO rows carry nothing
+    # pipe-separated and upper-cased; entries that are not two letters are dropped.
+    # (Shape is the whole contract here — the WRITER decides which codes are real.)
+    assert m.get("Q4") == frozenset({"IN", "PK"})
     assert set(m) <= set(feed_source.load_url_map(str(p)))  # same id space as the URL map
 
     legacy = tmp_path / "legacy.csv"

@@ -829,7 +829,7 @@ def country_mode() -> str:
     return v if v in _COUNTRY_MODES else "first"
 
 
-def _country_multiplier(item_country: str, want: "str | None", boost: "float | None" = None) -> float:
+def _country_multiplier(item_country, want: "str | None", boost: "float | None" = None) -> float:
     """Rank divisor for one item under a country preference: the boost on a match, 1.0 otherwise.
 
     An item with NO known country is neutral (1.0), never demoted. That is the load-bearing
@@ -845,7 +845,7 @@ def _country_multiplier(item_country: str, want: "str | None", boost: "float | N
     module constant."""
     if not want or not item_country:
         return 1.0
-    if item_country != want:
+    if want not in item_country:          # a SET: an article can belong to several countries
         return 1.0
     b = _COUNTRY_BOOST if boost is None else float(boost)
     return b if b > 0 else 1.0
@@ -1269,8 +1269,8 @@ class Backend:
         hit = cache.get(key)
         if hit is None:
             ids = np.asarray(mind.dataset.item_ids)
-            hit = {i: c for i, c in ((i, self.country_by_id.get(str(iid), ""))
-                                     for i, iid in enumerate(ids)) if c}
+            hit = {i: cs for i, cs in ((i, self.country_by_id.get(str(iid)))
+                                       for i, iid in enumerate(ids)) if cs}
             cache[key] = hit
         return hit
 
@@ -1947,9 +1947,9 @@ class Backend:
                 w = weights.get(str(cats[col]).strip().lower())
                 if w:
                     mult *= _interest_multiplier(w)
-            hit = bool(want_country) and by_col.get(int(col), "") == want_country
+            hit = bool(want_country) and want_country in by_col.get(int(col), ())
             if want_country and not strict:
-                mult *= _country_multiplier(by_col.get(int(col), ""), want_country,
+                mult *= _country_multiplier(by_col.get(int(col), ()), want_country,
                                             (params or {}).get("countryBoost"))
             # In ``first`` the country is a PARTITION rank, kept out of the multiplier so the
             # interest nudge still orders items WITHIN each group — collapsing both into one

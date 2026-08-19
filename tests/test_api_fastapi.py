@@ -1925,13 +1925,19 @@ def test_recommendation_country_persists_and_moves_the_feed_end_to_end(tmp_path,
         for cat in cats:
             for k in range(4):
                 u = f"https://{dom}.example.com/{cat.lower()}/{k}"
+                # The country lives in the article's TEXT, not in its publisher field: matching is
+                # content-level (feed_source.country_source() == "content"), so a fixture that only
+                # set the outlet's home country would carry no country at all — which is exactly
+                # what changed in production when publisher matching was dropped.
+                place = "India" if k % 2 == 0 else "United States"
+                title = f"{pub} reports on {cat} in {place}, item {k}"
                 st.upsert_feed_article(
                     canonical_url=u, url=u, publisher=pub, source_publisher=pub,
-                    title=f"{pub} {cat} item {k}", description="d", body=None,
+                    title=title, description="d", body=None,
                     published_at="2026-08-10T00:00:00+00:00", source_feed="seed",
-                    source_type="rss", country=("IN" if k % 2 == 0 else "US"),
+                    source_type="rss",
                     scored={"article_id": u, "outlet": pub, "category": cat, "lean": lean,
-                            "political": cat == "Politics", "title": f"{pub} {cat} {k}"})
+                            "political": cat == "Politics", "title": title})
 
     monkeypatch.setenv("RWE_DB_URL", db)
     monkeypatch.setenv("RWE_RECS_SOURCE", "feed")

@@ -358,6 +358,13 @@ services:
       # the catalog) can never produce a short feed. Listed here, not only in code, because a
       # lost env-file must not silently change how strongly a reader's country is honoured.
       RWE_REC_COUNTRY_MODE: ${RWE_REC_COUNTRY_MODE:-first}
+      # What makes an article belong to a country. `content` (default) is SUBJECT level: where
+      # the event happened, or the country named in the headline/dek — never the outlet's home.
+      # Publisher home was the first shipped rule and is provenance, not subject: it called a
+      # Delhi outlet's article about Washington "India news". Measured 2026-08-19 on 27,038
+      # articles: publisher home labels 59.8%, event geography 17.6%, content (event|mention)
+      # 33.4%. `union` restores the old wider rule; `event` is the strictest.
+      RWE_REC_COUNTRY_SOURCE: ${RWE_REC_COUNTRY_SOURCE:-content}
       # Story-hero guard (adopted 2026-08-16, docs/STORY_HERO_IMAGES.md): the hero is ranked on
       # evidence instead of copied from the earliest filer, and an image fronting > 3 distinct
       # stories in one build — or one shaped like branding (logo/placeholder/og-image path
