@@ -42,6 +42,7 @@ import { ExtensionConnect } from "@/components/settings/extension-connect";
 import { PushToggle } from "@/components/settings/push-toggle";
 import { usePushConfig } from "@/hooks/use-push";
 import { CountryBadge } from "@/components/shared/country-badge";
+import { countryName } from "@/lib/countries";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
@@ -55,6 +56,13 @@ const LANGUAGES = [
   { value: "de", label: "Deutsch" },
   { value: "pt", label: "Português" },
 ];
+
+/** Lower-case and strip diacritics for search matching. Without the fold, typing "tur" misses
+ *  Türkiye — ICU's current name — and the same applies to Côte d'Ivoire, São Tomé and Åland.
+ *  A reader searching a country list types the letters on their keyboard, not the accents. */
+function fold(s: string): string {
+  return s.trim().toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "");
+}
 
 /** Catalog key for the political-openness slider (maps to per-request RWE-B epsilon; 50 = default). */
 function opennessLabelKey(v: number) {
@@ -102,7 +110,7 @@ export default function SettingsPage() {
   const updateSettings = useUpdateSettings();
   const persistTheme = useUpdateSettings(); // theme's own write-through — separate from the Save button
   const { theme, setTheme } = useTheme();
-  const { t } = useTranslation();
+  const { t, lang } = useTranslation();
   // Deployment-level only: does this install offer push at all? Deliberately NOT `usePush`, which
   // registers the worker and reads this browser's subscription — side effects a preference row has
   // no business triggering, and answers to a question it is not asking.
@@ -123,14 +131,28 @@ export default function SettingsPage() {
   // by located coverage and drops the empties: measured 2026-08-19, the live catalog's supply runs
   // US 35% / GB 8% / AU 2.7% / IN 2.7% and a long tail, so an alphabetical slice would have offered
   // countries where selecting them does nothing at all.
-  const recCountryOptions = React.useMemo(
+  const [allCountries, setAllCountries] = React.useState(false);
+  const [countryQuery, setCountryQuery] = React.useState("");
+  const recCountryRanked = React.useMemo(
     () =>
-      [...(countries.data ?? [])]
-        .filter((c) => c.articles > 0)
-        .sort((a, b) => b.articles - a.articles || a.country.localeCompare(b.country))
-        .slice(0, 12),
+      [...(countries.data ?? [])].sort(
+        (a, b) => b.articles - a.articles || a.country.localeCompare(b.country),
+      ),
     [countries.data],
   );
+  const recCountryOptions = React.useMemo(() => {
+    // Collapsed: the twelve with the most located coverage — the ones most likely to fill a feed.
+    // Expanded: everything the platform knows, INCLUDING countries whose located count is zero.
+    // That is deliberate. The count here is event-located only, while the feature now matches on
+    // content (event OR the country named in the text, demonyms included), so a country can have
+    // real supply and a zero here. Hiding it would offer less than the feed can actually serve.
+    if (!allCountries) return recCountryRanked.filter((c) => c.articles > 0).slice(0, 12);
+    const q = fold(countryQuery);
+    if (!q) return recCountryRanked;
+    return recCountryRanked.filter(
+      (c) => fold(c.country).includes(q) || fold(countryName(c.country, lang)).includes(q),
+    );
+  }, [recCountryRanked, allCountries, countryQuery, lang]);
   // Every country picker on this page reads one query. While it is in flight the old code
   // rendered `(countries.data ?? [])` — an empty chip row indistinguishable from "this platform
   // knows no countries", which is exactly how a slow list reads as a broken one. Measured on
@@ -414,6 +436,38 @@ export default function SettingsPage() {
                 </button>
               ))}
             </div>
+            {recCountryRanked.length > 12 && (
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-muted-foreground"
+                  onClick={() => {
+                    setAllCountries((v) => !v);
+                    setCountryQuery("");
+                  }}
+                >
+                  {allCountries
+                    ? t("settings.recCountryShowLess")
+                    : t("settings.recCountryShowAll", { n: recCountryRanked.length })}
+                </Button>
+                {allCountries && (
+                  <input
+                    type="search"
+                    value={countryQuery}
+                    onChange={(e) => setCountryQuery(e.target.value)}
+                    placeholder={t("settings.recCountrySearch")}
+                    aria-label={t("settings.recCountrySearch")}
+                    className="h-8 min-w-48 flex-1 rounded-md border bg-background px-3 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  />
+                )}
+              </div>
+            )}
+            {allCountries && countryQuery && recCountryOptions.length === 0 && (
+              <p className="mt-2 text-xs text-muted-foreground">
+                {t("settings.recCountryNoMatch", { q: countryQuery })}
+              </p>
+            )}
           </SectionCard>
 
           {/* Interest Intensity — eight per-topic sliders over the recommendation feed's order.
