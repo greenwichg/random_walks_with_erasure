@@ -800,6 +800,29 @@ def _interest_multiplier(w: float) -> float:
     return lo + (mid - lo) * (w - 1.0) / 4.0 if w <= 5.0 else mid + (hi - mid) * (w - 5.0) / 5.0
 
 
+#: The For You country preference's rank divisor. One boost, not a curve: the preference is
+#: binary (this article is from the chosen country, or it is not), so there is no slider to
+#: interpolate. 8.0 matches the Interest Intensity maximum deliberately — the two nudges MULTIPLY
+#: into one sort key, and a country boost that dwarfed the interest scale would make the eight
+#: sliders decorative the moment a country was picked. At 8x a country item ranked within ~8x of
+#: the serving cutoff reaches the served slice, which is the same reach the retuned interest
+#: anchors were measured to need.
+_COUNTRY_BOOST = 8.0
+
+
+def _country_multiplier(item_country: str, want: "str | None") -> float:
+    """Rank divisor for one item under a country preference: the boost on a match, 1.0 otherwise.
+
+    An item with NO known country is neutral (1.0), never demoted. That is the load-bearing
+    choice: event geography resolves for a minority of the catalog, so demoting unlocated items
+    would not prioritize the reader's country — it would bury everything the geocoder happened to
+    miss, which is a coverage artefact rather than a preference. Preference expressed as "lift the
+    matches", never "sink the rest"."""
+    if not want or not item_country:
+        return 1.0
+    return _COUNTRY_BOOST if item_country == want else 1.0
+
+
 def _piecewise(v: float, lo: float, mid: float, hi: float) -> float:
     """Linear 0→``lo``, 50→``mid``, 100→``hi`` (callers pass an already-clamped 0–100 value)."""
     v = float(v)
@@ -828,6 +851,8 @@ def rec_params_from_settings(settings: "dict | None") -> "dict | None":
                  if int(w) != _INTEREST_NEUTRAL for topic in _INTEREST_TOPICS.get(key, ())}
     if interests:
         params["interests"] = interests
+    if s["recommendationCountry"]:
+        params["country"] = s["recommendationCountry"]       # None (Global) contributes no key
     return params or None
 
 
@@ -991,6 +1016,10 @@ class Backend:
         # corpus item-id -> canonical publisher URL, attached by the serving layer when the catalog is
         # sourced from the live RSS feed (empty otherwise → no URL is emitted, unchanged behaviour).
         self.url_by_id: dict = {}
+        # corpus item-id -> ISO country, from the same catalog CSV as url_by_id (empty until a
+        # live feed catalog is attached → the country nudge is simply never consulted).
+        self.country_by_id: dict = {}
+        self._country_col_cache: dict = {}
 
         if profile.kind == "npz":
             if not profile.npz:
@@ -1184,6 +1213,38 @@ class Backend:
         vals = {l: max(0.0, float(emotion.get(l, 0.0) or 0.0)) for l in labels}
         s = sum(vals.values()) or 1.0
         return {l: vals[l] / s for l in labels}
+
+    def attach_country_resolver(self, mapping: dict) -> None:
+        """Attach a corpus item-id -> ISO country map (``feed_source.load_country_map``), the input
+        to the For You country preference's rank nudge. Additive and inert on its own: with no
+        reader asking for a country, ``params`` carries no ``country`` key and the nudge is never
+        consulted. Attached beside the URL resolver, from the same catalog CSV and the same row
+        indexing, so the two maps cannot disagree about which article a column is."""
+        self.country_by_id = dict(mapping or {})
+        self._country_col_cache = {}
+
+    def _country_by_col(self, mind) -> dict:
+        """Column index -> ISO country for one corpus, memoized per ``mind``.
+
+        Built from the item ids rather than stored alongside them because the augmented corpus a
+        real reader gets is constructed per request (``personalize.py``): its novel columns are
+        that reader's own reads, keyed by URL rather than ``Q{i}``, and they simply resolve to no
+        country — neutral in the nudge, never demoted. Memoizing on ``id(mind)`` keeps a hot
+        request from rebuilding the map for a corpus it already saw; the cache clears whenever a
+        new catalog is attached, which is the only moment the mapping can change."""
+        if not getattr(self, "country_by_id", None):
+            return {}
+        cache = getattr(self, "_country_col_cache", None)
+        if cache is None:
+            cache = self._country_col_cache = {}
+        key = id(mind)
+        hit = cache.get(key)
+        if hit is None:
+            ids = np.asarray(mind.dataset.item_ids)
+            hit = {i: c for i, c in ((i, self.country_by_id.get(str(iid), ""))
+                                     for i, iid in enumerate(ids)) if c}
+            cache[key] = hit
+        return hit
 
     def attach_url_resolver(self, mapping: dict) -> None:
         """Attach a corpus item-id -> canonical publisher URL map (from the live RSS feed source), so
@@ -1816,38 +1877,56 @@ class Backend:
         return (cross + same)[:k]
 
     @staticmethod
-    def _interest_rerank(mind, cols: list, params: "dict | None") -> list:
-        """Stable per-topic rank nudge over an ADMITTED candidate list (Interest Intensity).
+    def _preference_rerank(mind, cols: list, params: "dict | None",
+                           country_by_col: "dict | None" = None) -> list:
+        """Stable rank nudge over an ADMITTED candidate list — Interest Intensity and the For You
+        country preference, applied as ONE sort.
 
         ``params["interests"]`` maps lower-cased catalog topics to slider weights 1–10 (the
-        neutral 5 never ships a key — :func:`rec_params_from_settings` drops it). An item at
-        0-based pool position ``i`` whose topic carries weight ``w`` re-sorts on the key
-        ``(i + 1) / _interest_multiplier(w)`` (:data:`_INTEREST_ANCHORS`: weight 10 divides the
-        effective rank by 8, weight 1 multiplies it by 5) — a nudge on the ORDER of the pool,
-        never an admission or exclusion, so every item stays reachable and the slice budgets /
-        publisher cap downstream mean what they always meant. Unweighted topics (and ""
-        uncategorized) keep their exact key, and the sort is stable, so the no-weights case —
-        and every same-topic pair — preserves model order exactly: the identity claim is by
-        construction, not by tolerance.
+        neutral 5 never ships a key — :func:`rec_params_from_settings` drops it).
+        ``params["country"]`` is an ISO alpha-2 code (Global ships no key). An item at 0-based
+        pool position ``i`` re-sorts on ``(i + 1) / (interest_mult * country_mult)``
+        (:data:`_INTEREST_ANCHORS`: weight 10 divides the effective rank by 8, weight 1
+        multiplies it by 5; :data:`_COUNTRY_BOOST`: a country match divides by 8).
+
+        The two preferences MULTIPLY into a single key rather than running as two sorts, so they
+        compose the way a reader would expect — a high-interest item from the chosen country
+        outranks either signal alone (up to 64x), and neither preference silently undoes the
+        other, which is exactly what a second stable sort over the first's output would do.
+
+        It is a nudge on the ORDER of the pool, never an admission or exclusion, so every item
+        stays reachable and the slice budgets / publisher cap downstream mean what they always
+        meant. Items the nudge does not name — unweighted topics, "" uncategorized, and articles
+        with no known country — keep their exact key, and the sort is stable, so the no-preference
+        case preserves model order exactly: the identity claim is by construction, not tolerance.
 
         Runs BEFORE :meth:`_slice_select`, so the rwe-b cross-cutting-first partition (Commit
         R1.5) and the W1 bridge budget keep their guarantees over the nudged order. Shared by
         the serving path and the explain observer — the 21a parity rule: one implementation,
         or drift."""
         weights = (params or {}).get("interests")
-        if not weights or not cols:
+        want_country = (params or {}).get("country")
+        if (not weights and not want_country) or not cols:
             return cols
         cats = np.asarray(mind.categories)
+        by_col = country_by_col or {}
         keys = []
         for i, col in enumerate(cols):
-            w = weights.get(str(cats[col]).strip().lower())
-            keys.append((i + 1) / _interest_multiplier(w) if w else float(i + 1))
+            mult = 1.0
+            if weights:
+                w = weights.get(str(cats[col]).strip().lower())
+                if w:
+                    mult *= _interest_multiplier(w)
+            if want_country:
+                mult *= _country_multiplier(by_col.get(int(col), ""), want_country)
+            keys.append((i + 1) / mult if mult != 1.0 else float(i + 1))
         order = sorted(range(len(cols)), key=lambda i: (keys[i], i))
         return [cols[i] for i in order]
 
     @staticmethod
     def _rec_cols_of(mind, rec: "_Recommenders", u: int, strategy: str, k: int = 12,
-                     params: "dict | None" = None, user_side: float = 0.0) -> list:
+                     params: "dict | None" = None, user_side: float = 0.0,
+                     country_by_col: "dict | None" = None) -> list:
         """Top-k *admitted* item columns (in ``mind`` space) recommender ``strategy`` surfaces for
         row ``u``, so we can serialise full articles. Ranks the full list, keeps the columns that
         pass :meth:`_slice_admits` (rwe-b: political only) — so a filtered slot is backfilled by
@@ -1868,7 +1947,8 @@ class Backend:
             # cross-first selection and the interest nudge both reorder the WHOLE admitted list;
             # plain slices stop at k
             need_all = ((strategy == "rwe-b" and bool(user_side))
-                        or bool((params or {}).get("interests")))
+                        or bool((params or {}).get("interests"))
+                        or bool((params or {}).get("country")))
             admitted = []
             for j in ranked:
                 if int(j) < 0:
@@ -1878,7 +1958,7 @@ class Backend:
                     admitted.append(col)
                     if not need_all and len(admitted) >= k:
                         break
-            admitted = Backend._interest_rerank(mind, admitted, params)
+            admitted = Backend._preference_rerank(mind, admitted, params, country_by_col)
             return Backend._slice_select(mind, strategy, admitted, k, user_side)
         except Exception:
             return []
@@ -2029,9 +2109,11 @@ class Backend:
                 else blend_plan_for(params))
         # Over-fetch so the publisher cap has lower-ranked admissible items to backfill FROM;
         # the plan still decides how many cards each strategy contributes (_select_diverse).
+        by_col = self._country_by_col(corpus.mind) if (params or {}).get("country") else None
         cols_by_strategy = [(strat, self._rec_cols_of(corpus.mind, rec, u, strat,
                                                       k * REC_OVERFETCH, params,
-                                                      user_side=float(user_side)))
+                                                      user_side=float(user_side),
+                                                      country_by_col=by_col))
                             for strat, k in plan]
         recs = self._serialize_recs(corpus, cols_by_strategy, user_side, familiarity, plan=plan)
         # One funnel: the demo path and the signed-in Measured path (personalize.py) both land

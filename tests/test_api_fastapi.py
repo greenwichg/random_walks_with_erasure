@@ -797,7 +797,9 @@ def test_settings_persist_and_merge(client):
                  # Location Intelligence 1.5 — edition + followed places joined the contract.
                  "edition", "locations",
                  # Interest Intensity — the eight per-interest sliders.
-                 "interests"}
+                 "interests",
+                 # For You country preference (null = Global), independent of ``edition``.
+                 "recommendationCountry"}
 
     d = client.get("/api/me/settings", headers=hdr).json()
     # S1.2: `privacy` is gone from the contract — the response carries exactly the surviving keys.
@@ -1901,6 +1903,100 @@ def test_a_dark_flag_is_counted_as_disabled_not_as_a_null(client, uid, story_ind
 # --------------------------------------------------------------------------- #
 # Interest Intensity — end-to-end regression: persistence AND ranking impact (1 < 5 < 10).
 # --------------------------------------------------------------------------- #
+def test_recommendation_country_persists_and_moves_the_feed_end_to_end(tmp_path, monkeypatch):
+    """The full production path for the For You country: POST /api/me/settings persists it, the
+    catalog export carries each article's country, and GET /api/recommendations serves MORE of the
+    selected country than Global does — the request's actual bar, that the selection reaches the
+    served recommendations rather than only the stored value. Resetting to Global (null) restores
+    the exact baseline feed, and the political axis and interest sliders never move.
+
+    Boots its own feed-backed corpus for the same reason the interest test does: the module
+    fixture's synthetic corpus has no country metadata at all."""
+    import store as store_mod
+
+    db = f"sqlite:///{tmp_path}/country.db"
+    st = store_mod.Store(db)
+    outlets = [("The Guardian", -1.5), ("NPR", -1.0), ("Associated Press", 0.0), ("Fox News", 1.6)]
+    cats = ["Politics", "Sports", "Technology", "Business"]
+    # Two countries, interleaved across every outlet and topic, so a country preference cannot be
+    # satisfied by accident through an outlet or topic correlation.
+    for pub, lean in outlets:
+        dom = pub.lower().replace(" ", "")
+        for cat in cats:
+            for k in range(4):
+                u = f"https://{dom}.example.com/{cat.lower()}/{k}"
+                st.upsert_feed_article(
+                    canonical_url=u, url=u, publisher=pub, source_publisher=pub,
+                    title=f"{pub} {cat} item {k}", description="d", body=None,
+                    published_at="2026-08-10T00:00:00+00:00", source_feed="seed",
+                    source_type="rss", country=("IN" if k % 2 == 0 else "US"),
+                    scored={"article_id": u, "outlet": pub, "category": cat, "lean": lean,
+                            "political": cat == "Politics", "title": f"{pub} {cat} {k}"})
+
+    monkeypatch.setenv("RWE_DB_URL", db)
+    monkeypatch.setenv("RWE_RECS_SOURCE", "feed")
+    monkeypatch.setenv("RWE_FEED_MIN_ARTICLES", "5")
+    monkeypatch.setenv("RWE_CORPUS_MIN_ARTICLES", "5")
+    monkeypatch.setenv("RWE_N_USERS", "80")
+    monkeypatch.setenv("RWE_MAX_ITEMS", "200")
+    monkeypatch.delenv("RWE_INTERNAL_SECRET", raising=False)
+
+    m = _load("api_fastapi_country", ROOT / "examples" / "api_fastapi.py")
+    with TestClient(m.app) as client:
+        be = m.app.active.backend if getattr(m.app, "active", None) else None
+        if be is not None:
+            assert be.country_by_id, "the catalog export must carry country for the nudge to exist"
+
+        uid = client.post("/api/internal/users",
+                          json={"provider": "google", "providerAccountId": "country-e2e"}
+                          ).json()["userId"]
+        h = {"X-IH-User-Id": str(uid)}
+        arts = client.get("/api/discover?limit=60").json()["articles"]
+        pol = [a for a in arts if a["topic"] == "Politics"][:5]
+        assert len(pol) == 5
+        client.post("/api/me/reads",
+                    json={"reads": [{"url": a["url"], "title": a["headline"]} for a in pol]},
+                    headers=h)
+
+        country_of = {a["url"]: ("IN" if int(a["url"].rsplit("/", 1)[1]) % 2 == 0 else "US")
+                      for a in arts}
+
+        def feed():
+            recs = client.get("/api/recommendations", headers=h).json()
+            assert recs, "a measured reader must have a feed"
+            return recs
+
+        def in_share(recs):
+            urls = [r["article"].get("url") for r in recs]
+            known = [u for u in urls if u in country_of]
+            assert known, "the served feed must join back to the seeded catalog"
+            return sum(1 for u in known if country_of[u] == "IN") / len(known)
+
+        # step 1 — Global is the default, and the baseline feed
+        assert client.get("/api/me/settings", headers=h).json()["recommendationCountry"] is None
+        base = feed()
+        base_ids = [r["article"]["id"] for r in base]
+
+        # step 2 — select IN: persisted on the write's echo AND on a fresh read
+        saved = client.post("/api/me/settings", json={"recommendationCountry": "in"},
+                            headers=h).json()
+        assert saved["recommendationCountry"] == "IN"                # normalized upper
+        again = client.get("/api/me/settings", headers=h).json()
+        assert again["recommendationCountry"] == "IN"
+        assert again["politicalOpenness"] == 50                      # political axis untouched
+        assert again["interests"]["sports"] == 5                     # interest sliders untouched
+        assert again["edition"] is None                              # independent of Local Pulse
+
+        # step 3 — the SERVED feed carries more of the selected country
+        picked = feed()
+        assert in_share(picked) > in_share(base), "the country preference must move the feed"
+
+        # step 4 — reset to Global restores the exact baseline feed, byte for byte
+        assert client.post("/api/me/settings", json={"recommendationCountry": None},
+                           headers=h).json()["recommendationCountry"] is None
+        assert [r["article"]["id"] for r in feed()] == base_ids
+
+
 def test_interest_intensity_persists_and_moves_the_feed_end_to_end(tmp_path, monkeypatch):
     """The full production path, one interest at a time: POST /api/me/settings persists the
     slider; GET /api/recommendations re-reads it and the feed's exposure of that topic is

@@ -32,7 +32,7 @@ DEFAULT_MIN_ARTICLES = 50
 # real publisher URL from the same CSV by row order. ``political`` (Commit R1) carries the scored
 # article-level flag ("1"/"0"; "" = unknown → the loader derives from tags+url) so the corpus mask
 # is real per-article classification, never assumed.
-_COLUMNS = ["title", "source", "bias_rating", "tags", "url", "political"]
+_COLUMNS = ["title", "source", "bias_rating", "tags", "url", "political", "country"]
 
 
 def enabled() -> bool:
@@ -79,10 +79,37 @@ def _bias_label(lean, center: float = 0.5) -> str:
     return "center"
 
 
+def article_country(a: dict) -> str:
+    """The country an article counts as being "from", upper-cased ISO alpha-2, or "" when unknown.
+
+    Event geography first (``eventCountries`` — where the thing actually happened, the same signal
+    Discover's and Stories' country facets use), publisher home second. The fallback is deliberate
+    and load-bearing: event geography resolves for a minority of articles (the X6 audit measured
+    ~18% located), so an event-only rule would make a reader's country preference inert on most of
+    the catalog. The union is the honest reading of "news from India" — an incident in India, or
+    an Indian outlet's reporting — and the two sources are counted separately by
+    ``examples/audit_country_rerank.py`` so the split is visible rather than assumed.
+
+    A multi-country event resolves to its first listed country: this returns the single label the
+    rank nudge keys on, never a claim that the event happened in exactly one place.
+    """
+    for c in (a.get("eventCountries") or ()):
+        s = str(c).strip().upper()
+        if len(s) == 2 and s.isalpha():
+            return s
+    scored = a.get("scored") or {}
+    s = str(a.get("country") or scored.get("country") or "").strip().upper()
+    return s if len(s) == 2 and s.isalpha() else ""
+
+
 def _qbias_record(a: dict, center: float) -> list:
-    """One qbias-format CSV row ``[title, source, bias_rating, tags, url]`` from a FeedArticle-shaped
-    dict. The single definition of the row shape, shared by both exporters below so the CSV format
-    (and the row order the ``Q{i}`` -> URL map depends on) lives in exactly one place."""
+    """One qbias-format CSV row from a FeedArticle-shaped dict. The single definition of the row
+    shape, shared by both exporters below so the CSV format (and the row order the ``Q{i}`` -> URL
+    map depends on) lives in exactly one place.
+
+    ``country`` is an APPENDED column: ``catalog_from_qbias`` reads columns by name, so a trailing
+    field is inert for the recommender and the protected simulator, exactly as the map it feeds is
+    (see :func:`load_country_map`)."""
     scored = a.get("scored") or {}
     outlet = a.get("publisher") or scored.get("outlet") or ""
     political = scored.get("political")
@@ -93,6 +120,7 @@ def _qbias_record(a: dict, center: float) -> list:
         scored.get("category") or "",
         a.get("url") or a.get("canonicalUrl") or "",
         "" if political is None else ("1" if political else "0"),
+        article_country(a),
     ]
 
 
@@ -199,6 +227,27 @@ def load_url_map(csv_path: str) -> dict:
                 url = (row.get("url") or "").strip()
                 if url:
                     out[f"Q{i}"] = url
+    except OSError:
+        pass
+    return out
+
+
+def load_country_map(csv_path: str) -> dict:
+    """The corpus item-id -> ISO country map implied by the exported catalog.
+
+    The exact mirror of :func:`load_url_map`, and for the same reason: the i-th CSV *data* row is
+    labelled ``Q{i}``, so mapping each data-row index to that row's ``country`` reproduces the ids
+    the recommender emits. Rows without a country simply have no entry — the rank nudge treats a
+    missing country as neutral, never as a mismatch, so unlocated articles keep their model order
+    exactly. Older catalogs written before the column existed yield an empty map, which disables
+    the nudge rather than mis-ranking on absent data."""
+    out: dict = {}
+    try:
+        with open(csv_path, newline="", encoding="utf-8") as f:
+            for i, row in enumerate(csv.DictReader(f)):
+                c = (row.get("country") or "").strip().upper()
+                if len(c) == 2 and c.isalpha():
+                    out[f"Q{i}"] = c
     except OSError:
         pass
     return out

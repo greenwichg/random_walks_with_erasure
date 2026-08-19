@@ -63,9 +63,13 @@ class FakeBackend:
         self.eligible = [0, 1, 2, 3, 4]
         self.demo_user = 0
         self.url_by_id: dict = {}
+        self.country_by_id: dict = {}
 
     def attach_url_resolver(self, mapping):
         self.url_by_id = dict(mapping or {})
+
+    def attach_country_resolver(self, mapping):
+        self.country_by_id = dict(mapping or {})
 
     def recommendations(self, u, strategy=None):
         # non-empty; first item id echoes a real corpus id so a URL resolves through url_by_id

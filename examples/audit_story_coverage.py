@@ -125,6 +125,7 @@ def serve_and_diagnose(st, user_id: int) -> dict:
     be = engine.Backend(engine.resolve_profile(ns))
     if feed_csv:
         be.attach_url_resolver(feed_source.load_url_map(feed_csv))
+        be.attach_country_resolver(feed_source.load_country_map(feed_csv))
     pers = personalize.Personalizer(be, st, persist=False)
     out = {"feedCorpus": bool(feed_csv), "measured": pers.has_measured(user_id),
            "storySlotEnabled": personalize.story_slot_enabled()}

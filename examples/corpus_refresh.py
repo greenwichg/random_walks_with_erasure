@@ -250,6 +250,14 @@ class RefreshManager:
             t0 = time.perf_counter()
             be = engine.Backend(profile, provider=self.provider)
             be.attach_url_resolver(feed_source.load_url_map(csv_path))   # resolver rebuilt WITH the backend
+            # The country map is an ENRICHMENT, unlike the URL map above (which `_sanity_check`
+            # requires — an empty one rejects the build). Losing it costs the For You country
+            # preference its input and nothing else, so it must never be the reason a corpus
+            # refresh fails and the catalog goes stale. Fail-soft, and say so in the log.
+            try:
+                be.attach_country_resolver(feed_source.load_country_map(csv_path))
+            except Exception as e:                       # noqa: BLE001 — enrichment, never fatal
+                self._log(logging.WARNING, "country_map_unavailable", error=repr(e))
             self.last_build_ms = round((time.perf_counter() - t0) * 1000.0, 2)
         except Exception as e:
             return None, result, f"backend_build_failed:{type(e).__name__}"

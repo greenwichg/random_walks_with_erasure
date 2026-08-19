@@ -281,6 +281,8 @@ async def lifespan(app: FastAPI):
         # Map the corpus item ids (Q{i}) back to their FeedArticle publisher URLs, so recommendations
         # carry the real openable URL (the Honest URL Pass-through). Additive; no algorithm change.
         be.attach_url_resolver(feed_source.load_url_map(feed_csv))
+        # Same CSV, same row indexing → the For You country preference's input.
+        be.attach_country_resolver(feed_source.load_country_map(feed_csv))
     # The personalization layer: builds a real user's Measured report / recs / coach from an
     # augmented corpus once they've stored enough reads (cached per user + reading version).
     personalizer = personalize.Personalizer(be, st)
@@ -885,6 +887,9 @@ class SettingsModel(BaseModel):
     # Location Intelligence Phase 1 — prepared contract, no UI yet.
     edition: str | None = None
     locations: list[FollowedLocationModel] = []
+    # For You country preference (ISO alpha-2, null = Global). Independent of ``edition``: this
+    # one prioritizes recommendations, that one scopes Local Pulse.
+    recommendationCountry: str | None = None
 
 
 # Update model — every field optional so any client can PATCH a subset; the engine merges it over
@@ -939,6 +944,7 @@ class SettingsUpdateModel(BaseModel):
     notifications: NotificationPrefsUpdate | None = None
     edition: str | None = None
     locations: list[FollowedLocationModel] | None = None
+    recommendationCountry: str | None = None
 
 
 class NotificationModel(BaseModel):
@@ -3021,7 +3027,19 @@ def update_my_settings(request: Request, req: SettingsUpdateModel) -> dict:
     report."""
     uid = _require_real_user(request)
     st = _require_store()
-    updated = settings_service.update(st, uid, req.model_dump(exclude_none=True))
+    patch = req.model_dump(exclude_none=True)
+    # ``exclude_none`` cannot tell "field omitted" from "field sent as null", so it drops both —
+    # which means a nullable preference can be SET but never CLEARED. For the country preference
+    # null is the whole Global state, so the explicitly-sent nulls are re-admitted here, keyed off
+    # ``exclude_unset`` (which does distinguish the two). Scoped to the fields whose contract
+    # defines null as a value rather than an absence: flipping the whole endpoint to
+    # ``exclude_unset`` would change what an explicit null means for every other field at once,
+    # which is its own decision and wants its own measurement.
+    explicitly_sent = req.model_dump(exclude_unset=True)
+    for key in ("recommendationCountry",):
+        if key in explicitly_sent and explicitly_sent[key] is None:
+            patch[key] = None
+    updated = settings_service.update(st, uid, patch)
     # Re-mirror the per-category push flags onto the reader's registered devices. The mirror is a
     # query accelerator for fan-out (store.PushSubscription), and this is the one place preferences
     # change — so syncing here is what keeps it from drifting from the authority it accelerates.

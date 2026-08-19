@@ -10,6 +10,7 @@ function base(): Settings {
     language: "en",
     politicalOpenness: 50,
     recommendationStrength: 50,
+    recommendationCountry: null,
     interests: {
       business: 5,
       technology: 5,
@@ -174,4 +175,21 @@ test("a flat sibling and a deep leaf combine without disturbing each other", () 
   assert.deepEqual(diffSettings(base(), draft), {
     notifications: { weeklyDigest: false, categories: { product: { inApp: false } } },
   });
+});
+
+test("resetting the For You country to Global → an explicit null, never an omitted key", () => {
+  // The reset path end to end: the PATCH must carry `null`, or the stored country survives the
+  // reset (examples/api_fastapi.py re-admits explicitly-sent nulls for exactly this field).
+  const b = { ...base(), recommendationCountry: "IN" };
+  const patch = diffSettings(b, { ...b, recommendationCountry: null });
+  assert.ok("recommendationCountry" in patch);
+  assert.equal(patch.recommendationCountry, null);
+  assert.equal(hasChanges(patch), true);
+});
+
+test("selecting a For You country → exactly that field; an unchanged Global → nothing", () => {
+  const b = base();
+  assert.deepEqual(diffSettings(b, { ...b, recommendationCountry: "JP" }),
+                   { recommendationCountry: "JP" });
+  assert.deepEqual(diffSettings(b, { ...b, recommendationCountry: null }), {});
 });

@@ -1053,6 +1053,12 @@ def test_rec_params_interest_mapping():
     p = f({"recommendationStrength": 0, "interests": {"business": 7}})
     assert p == {"beta": 0.30, "interests": {"business": 7}}               # composes with sliders
     assert f({"interests": {"sports": 99}}) == {"interests": {"sports": 10}}   # clamped first
+    # For You country: Global (None/absent/junk) contributes no key; a valid code normalizes up
+    assert f({"recommendationCountry": None}) is None
+    assert f({"recommendationCountry": "zz9"}) is None
+    assert f({"recommendationCountry": "in"}) == {"country": "IN"}
+    assert f({"recommendationCountry": "IN", "interests": {"sports": 10}}) == \
+        {"country": "IN", "interests": {"sports": 10}}
     # every slider key maps to at least one catalog topic — no dead knob can ship
     assert all(api_server._INTEREST_TOPICS.get(k) for k in ss.INTEREST_KEYS)
     # and Politics deliberately has no interest slider (the openness control's own axis)
@@ -1073,13 +1079,13 @@ def test_interest_multiplier_anchors():
     assert m(-3) == m(1) and m(99) == m(10)               # clamped, never <= 0
 
 
-def test_interest_rerank_is_a_stable_bounded_nudge():
+def test_preference_rerank_is_a_stable_bounded_nudge():
     """The re-ranker: identity without weights (the same list object — provably no-op), a boost
     pulls a topic up and a demotion pushes it down WITHOUT dropping anything, same-topic model
     order is never reordered, and the result is deterministic."""
     class M:
         categories = np.asarray(["Sports", "Business", "Sports", "", "Health"], dtype=object)
-    R = api_server.Backend._interest_rerank
+    R = api_server.Backend._preference_rerank
     cols = [0, 1, 2, 3, 4]
     assert R(M, cols, None) is cols                       # no params -> the very same object
     assert R(M, cols, {"beta": 0.3}) is cols              # params without interests -> same
@@ -1113,6 +1119,91 @@ def test_interest_intensity_reshapes_the_served_feed(backend, user):
     assert [r["article"]["id"]
             for r in backend.recommendations(user, None, {"interests": {top: 10}})] == hi_ids
     assert _rec_ids(backend, user, None, None) == base    # the default stack stays untouched
+
+
+def test_article_country_prefers_event_geography_then_publisher_home():
+    """The country an article counts as being "from". Event geography wins when present (the
+    signal Discover's country facets use); publisher home fills the gap, which is what keeps the
+    preference from being inert on the ~80% of the catalog no geocoder located. Junk is "" —
+    never a guess."""
+    import feed_source
+    f = feed_source.article_country
+    assert f({"eventCountries": ["in"], "country": "US"}) == "IN"   # event beats publisher
+    assert f({"country": "gb"}) == "GB"                             # publisher fills the gap
+    assert f({"scored": {"country": "JP"}}) == "JP"
+    assert f({"eventCountries": ["XYZ", "fr"]}) == "FR"             # skips a malformed code
+    assert f({"eventCountries": [], "country": "1"}) == ""
+    assert f({}) == ""
+
+
+def test_country_multiplier_lifts_matches_and_never_sinks_the_rest():
+    """The binary preference: a match is boosted, a mismatch is untouched, and an article with NO
+    known country is untouched too — the coverage-artefact guard. Preference is expressed as
+    "lift the matches", never "sink the rest"."""
+    m = api_server._country_multiplier
+    assert m("IN", "IN") == api_server._COUNTRY_BOOST
+    assert m("US", "IN") == 1.0
+    assert m("", "IN") == 1.0            # unlocated: neutral, never demoted
+    assert m("IN", None) == 1.0          # Global: no preference, no effect
+    assert m("", None) == 1.0
+
+
+def test_preference_rerank_applies_and_composes_the_country_nudge():
+    """Country alone lifts its matches; country and interest MULTIPLY into one key, so an item
+    carrying both outranks either signal alone; and unlocated items keep model order."""
+    class M:
+        categories = np.asarray(["Sports", "Business", "Sports", "", "Health"], dtype=object)
+    R = api_server.Backend._preference_rerank
+    cols = [0, 1, 2, 3, 4]
+    by_col = {1: "IN", 4: "IN", 0: "US"}          # cols 2 and 3 have no known country
+
+    assert R(M, cols, {"country": "IN"}, None) == cols       # no map -> provably inert
+    assert R(M, cols, None, by_col) is cols                  # no params -> the very same object
+    lifted = R(M, cols, {"country": "IN"}, by_col)
+    assert lifted == [1, 4, 0, 2, 3]                         # both IN items lead, in model order
+    assert sorted(lifted) == cols                            # a nudge, never an exclusion
+
+    # composition: col 4 is Health AND IN (8 * 8 = 64x), col 1 is IN only (8x), col 0 Health-less
+    both = R(M, cols, {"country": "IN", "interests": {"health": 10}}, by_col)
+    assert both[0] == 4 and both.index(4) < both.index(1)
+    # and neither preference silently undoes the other: the IN-only item still beats the rest
+    assert both.index(1) < both.index(0)
+
+
+def test_country_preference_reshapes_the_served_feed(backend, user):
+    """Feed-level impact proof — the request's actual bar: the country preference must move the
+    SERVED recommendations, not just the stored value. Global serves the exact default feed; a
+    selected country serves more of that country; and the whole path is deterministic."""
+    ids = [str(i) for i in np.asarray(backend.mind.dataset.item_ids)]
+    # every third catalog item is "from" IN; the rest are US. A synthetic map, but the real one
+    # is the same shape (feed_source.load_country_map) and reaches the same code path.
+    cmap = {iid: ("IN" if k % 3 == 0 else "US") for k, iid in enumerate(ids)}
+    backend.attach_country_resolver(cmap)
+    try:
+        base = _rec_ids(backend, user, None, None)
+        assert _rec_ids(backend, user, None, {"beta": 0.5}) != [] # sanity: the stack serves
+
+        served_in = backend.recommendations(user, None, {"country": "IN"})
+        in_ids = [r["article"]["id"] for r in served_in]
+        assert in_ids != base                                    # the feed actually moved
+        share = sum(1 for i in in_ids if cmap.get(i) == "IN") / len(in_ids)
+        base_share = sum(1 for i in base if cmap.get(i) == "IN") / len(base)
+        assert share > base_share                                # and moved in the right direction
+
+        # Global (no key) is byte-identical to the untouched feed, and the path is deterministic
+        assert _rec_ids(backend, user, None, None) == base
+        assert [r["article"]["id"]
+                for r in backend.recommendations(user, None, {"country": "IN"})] == in_ids
+    finally:
+        backend.attach_country_resolver({})                      # leave the module fixture clean
+
+
+def test_country_preference_is_inert_without_a_catalog_country_map(backend, user):
+    """Fail-honest: with no country data attached (the static corpus, or a catalog written before
+    the column existed), asking for a country must serve the default feed rather than an
+    arbitrarily reshuffled one."""
+    backend.attach_country_resolver({})
+    assert _rec_ids(backend, user, None, {"country": "IN"}) == _rec_ids(backend, user, None, None)
 
 
 def test_blend_plan_for_openness_budget():

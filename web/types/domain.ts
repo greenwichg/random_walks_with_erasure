@@ -995,6 +995,9 @@ export interface Settings {
   };
   /** Location Intelligence Phase 1.5 — edition + followed places (Settings > Places). */
   edition?: string | null;
+  /** For You country preference (ISO alpha-2, null = Global). Independent of `edition`:
+   *  this prioritizes recommendations, `edition` scopes Local Pulse. */
+  recommendationCountry?: string | null;
   locations?: FollowedLocation[];
   // NOTE: the engine's settings contract still carries a `privacy` group
   // (shareAnonymizedMetrics / personalizedAds); it is intentionally omitted from the frontend

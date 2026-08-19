@@ -84,7 +84,10 @@ def test_export_catalog_csv_format(tmp_path):
 
     rows = list(_csv.DictReader(open(path, encoding="utf-8")))
     # qbias-format + the Commit R1 political column (the scored article-level flag)
-    assert set(rows[0].keys()) == {"title", "source", "bias_rating", "tags", "url", "political"}
+    assert set(rows[0].keys()) == {"title", "source", "bias_rating", "tags", "url", "political",
+                                   # appended for the For You country preference; the corpus
+                                   # builder reads columns by name, so a trailing field is inert
+                                   "country"}
     by = {r["source"]: r for r in rows}
     assert by["Fox News"]["bias_rating"] == "right"          # 1.6 -> past the 1.5 lattice midpoint
     assert by["New York Times"]["bias_rating"] == "lean left"  # -1.4 -> the grade now survives
@@ -312,3 +315,29 @@ def test_graded_positions_give_the_bridge_geometry_something_to_grade(tmp_path):
     q2 = np.asarray(unbounded._compute(np.array([0])))[0]
     assert q2[i_pole] < q2[i_lean] < 0.9, \
         "unbounded: both are bridges and the farther one is preferred (lower erasure)"
+
+
+def test_load_country_map_mirrors_the_url_map_indexing(tmp_path):
+    """The Q{i} row rule, and the fail-honest cases: rows with no country simply have no entry
+    (neutral in the nudge, never a mismatch), and a catalog written before the column existed
+    yields an empty map — which disables the preference rather than mis-ranking on absent data."""
+    import csv as _csv
+    p = tmp_path / "cat.csv"
+    with open(p, "w", newline="", encoding="utf-8") as f:
+        w = _csv.writer(f)
+        w.writerow(feed_source._COLUMNS)
+        w.writerow(["t0", "P", "center", "Sports", "https://a.example/0", "0", "IN"])
+        w.writerow(["t1", "P", "center", "Sports", "https://a.example/1", "0", ""])
+        w.writerow(["t2", "P", "center", "Sports", "https://a.example/2", "0", "gb"])
+        w.writerow(["t3", "P", "center", "Sports", "https://a.example/3", "0", "XYZ"])
+    m = feed_source.load_country_map(str(p))
+    assert m == {"Q0": "IN", "Q2": "GB"}                  # normalized up; blanks/junk absent
+    assert set(m) <= set(feed_source.load_url_map(str(p)))  # same id space as the URL map
+
+    legacy = tmp_path / "legacy.csv"
+    with open(legacy, "w", newline="", encoding="utf-8") as f:
+        w = _csv.writer(f)
+        w.writerow(["title", "source", "bias_rating", "tags", "url", "political"])
+        w.writerow(["t", "P", "center", "Sports", "https://a.example/x", "0"])
+    assert feed_source.load_country_map(str(legacy)) == {}
+    assert feed_source.load_country_map(str(tmp_path / "missing.csv")) == {}

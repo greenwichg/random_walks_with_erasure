@@ -81,6 +81,13 @@ DEFAULT_SETTINGS = {
     # container never needs redesign.
     "edition": None,
     "locations": [],
+    # For You country preference (ISO 3166-1 alpha-2, or None = Global). DELIBERATELY separate
+    # from ``edition`` above: ``edition`` is the reader's place scope for Local Pulse, and
+    # repointing it at the recommender would silently re-rank the feed of every reader who has
+    # ever set an edition — a behaviour change for existing readers, which is its own decision
+    # (the same reasoning the notification categories above record). None = the untouched feed,
+    # byte for byte: the "an unmoved control changes nothing" rule the sliders already follow.
+    "recommendationCountry": None,
     # A `privacy` group (shareAnonymizedMetrics / personalizedAds) was removed in S1.2: neither
     # field was consumed by any behavior, and one contradicted the product's privacy policy. Legacy
     # stored blobs / patches carrying those keys normalize away safely — dropped like any unknown
@@ -181,6 +188,8 @@ def normalize_settings(stored: "dict | None", patch: "dict | None" = None) -> di
         "notifications": _merge_notifications(layers),
         "edition": _normalize_edition(_layered("edition", layers, None)),
         "locations": _normalize_locations(_layered("locations", layers, [])),
+        "recommendationCountry": _normalize_edition(
+            _layered("recommendationCountry", layers, None)),
         # The output is built ONLY from the keys above, so any layer key outside this set — an
         # unknown field, or the removed ``privacy`` group — is simply never read (dropped).
     }
@@ -191,7 +200,11 @@ _MAX_LOCATIONS = 10
 
 
 def _normalize_edition(value) -> "str | None":
-    """ISO 3166-1 alpha-2 (upper) or None — anything else falls back to None (global)."""
+    """ISO 3166-1 alpha-2 (upper) or None — anything else falls back to None (global).
+
+    Shared by ``edition`` and ``recommendationCountry``: two independent preferences that happen
+    to carry the same kind of value, so they normalize through one function rather than two that
+    could drift on what counts as a valid code."""
     s = str(value).strip().upper() if value is not None else ""
     return s if len(s) == 2 and s.isalpha() else None
 

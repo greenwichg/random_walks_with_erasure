@@ -325,6 +325,64 @@ export default function SettingsPage() {
             </div>
           </SectionCard>
 
+          {/* For You country — prioritizes recommendations from one country. Its own card, and
+              deliberately NOT the Places > Edition control below: that one scopes Local Pulse, and
+              pointing it at the recommender would re-rank the feed of every reader who ever set an
+              edition. Global (null) is the untouched feed, byte for byte. */}
+          <SectionCard
+            title={t("settings.recCountry")}
+            info={t("settings.recCountryInfo")}
+            action={
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => set("recommendationCountry", null)}
+                disabled={(draft.recommendationCountry ?? null) == null}
+                className="text-muted-foreground"
+              >
+                <RotateCcw className="h-3.5 w-3.5" /> {t("settings.recCountryReset")}
+              </Button>
+            }
+          >
+            <p className="mb-3 text-xs text-muted-foreground">{t("settings.recCountryHint")}</p>
+            <div className="flex flex-wrap gap-1.5">
+              <button
+                type="button"
+                aria-pressed={(draft.recommendationCountry ?? null) == null}
+                onClick={() => set("recommendationCountry", null)}
+                className={cn(
+                  "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                  (draft.recommendationCountry ?? null) == null
+                    ? "border-primary/40 bg-primary/10 text-primary"
+                    : "text-muted-foreground hover:bg-accent",
+                )}
+              >
+                {t("settings.recCountryGlobal")}
+              </button>
+              {(countries.data ?? []).slice(0, 12).map((c) => (
+                <button
+                  key={c.country}
+                  type="button"
+                  aria-pressed={draft.recommendationCountry === c.country}
+                  onClick={() =>
+                    set(
+                      "recommendationCountry",
+                      draft.recommendationCountry === c.country ? null : c.country,
+                    )
+                  }
+                  className={cn(
+                    "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                    draft.recommendationCountry === c.country
+                      ? "border-primary/40 bg-primary/10 text-primary"
+                      : "text-muted-foreground hover:bg-accent",
+                  )}
+                >
+                  <CountryBadge code={c.country} />
+                </button>
+              ))}
+            </div>
+          </SectionCard>
+
           {/* Interest Intensity — eight per-topic sliders over the recommendation feed's order.
               A separate card from the political controls above, which it never touches. */}
           <SectionCard

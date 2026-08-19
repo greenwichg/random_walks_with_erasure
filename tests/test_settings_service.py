@@ -325,3 +325,32 @@ def test_merge_bool_group_skips_nested_subgroups():
     defaults = {"flat": True, "nested": {"inApp": True}}
     out = ss._merge_bool_group(defaults, [{"g": {"flat": False}}], "g")
     assert out == {"flat": False}, "the nested sub-group must be skipped, not coerced to True"
+
+
+def test_recommendation_country_normalizes_and_stays_independent_of_edition():
+    """The For You country: ISO alpha-2 upper, anything else -> None (Global). It must NOT be
+    coupled to ``edition`` — repointing that at the recommender would silently re-rank the feed
+    of every reader who ever set a Local Pulse edition."""
+    n = ss.normalize_settings
+    assert n({})["recommendationCountry"] is None                 # default = Global
+    assert n({"recommendationCountry": "in"})["recommendationCountry"] == "IN"
+    for junk in ("", "IND", "1N", None, 7, {"a": 1}):
+        assert n({"recommendationCountry": junk})["recommendationCountry"] is None
+
+    # independence, both directions
+    s = n({"edition": "GB"})
+    assert s["edition"] == "GB" and s["recommendationCountry"] is None
+    s = n({"recommendationCountry": "JP"})
+    assert s["recommendationCountry"] == "JP" and s["edition"] is None
+    s = n({"edition": "GB", "recommendationCountry": "JP"})
+    assert (s["edition"], s["recommendationCountry"]) == ("GB", "JP")
+
+
+def test_recommendation_country_patches_and_resets():
+    """Persistence semantics: a patch sets it, and patching null resets to Global."""
+    n = ss.normalize_settings
+    assert n({"recommendationCountry": "FR"}, {"recommendationCountry": "DE"})[
+        "recommendationCountry"] == "DE"
+    assert n({"recommendationCountry": "FR"}, {"recommendationCountry": None})[
+        "recommendationCountry"] is None
+    assert n({"recommendationCountry": "FR"}, {})["recommendationCountry"] == "FR"  # untouched

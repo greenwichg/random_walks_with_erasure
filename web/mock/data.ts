@@ -522,6 +522,8 @@ export const SETTINGS: Settings = {
     entertainment: 5,
     artsCulture: 5,
   },
+  // For You country — null = Global, the engine's default (settings_service.DEFAULT_SETTINGS).
+  recommendationCountry: null,
   readingGoalMinutes: 20,
   weeklyReport: true,
   monthlyReport: false,
