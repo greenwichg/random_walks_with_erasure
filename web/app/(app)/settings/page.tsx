@@ -117,6 +117,20 @@ export default function SettingsPage() {
   // Places the platform actually knows (located catalog ∪ registry) — the pickers below never
   // offer a place with nothing behind it.
   const countries = useQuery({ queryKey: queryKeys.placeCountries, queryFn: services.placeCountries });
+  // `/api/places/countries` returns the union of located-catalog and REGISTRY countries, sorted
+  // alphabetically, with registry-only rows carrying zero articles — so taking the first 12 offers
+  // whatever sorts first, not what the feed can actually serve. The For You picker therefore ranks
+  // by located coverage and drops the empties: measured 2026-08-19, the live catalog's supply runs
+  // US 35% / GB 8% / AU 2.7% / IN 2.7% and a long tail, so an alphabetical slice would have offered
+  // countries where selecting them does nothing at all.
+  const recCountryOptions = React.useMemo(
+    () =>
+      [...(countries.data ?? [])]
+        .filter((c) => c.articles > 0)
+        .sort((a, b) => b.articles - a.articles || a.country.localeCompare(b.country))
+        .slice(0, 12),
+    [countries.data],
+  );
   const [saved, setSaved] = React.useState(false);
 
   // The minimal PATCH the Save button would send: only the fields the reader changed vs their base,
@@ -359,7 +373,7 @@ export default function SettingsPage() {
               >
                 {t("settings.recCountryGlobal")}
               </button>
-              {(countries.data ?? []).slice(0, 12).map((c) => (
+              {recCountryOptions.map((c) => (
                 <button
                   key={c.country}
                   type="button"
