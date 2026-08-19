@@ -76,8 +76,20 @@ export default function CoachPage() {
 
   return (
     <div className="mx-auto flex h-[calc(100vh-4rem)] w-full max-w-3xl flex-col px-4 sm:px-6">
-      {/* transcript */}
-      <div ref={scrollRef} className="flex-1 space-y-6 overflow-y-auto py-6">
+      {/* transcript
+          The scrollbar is hidden (the same idiom as the trending rail), not the scrolling: wheel,
+          touch and keyboard all still work. Hiding it does remove the affordance that says "there
+          is more above", so the keyboard route has to be explicit rather than left to the browser
+          — `tabIndex` makes the region focusable in Safari and older Chrome, which do not focus a
+          scrollable div on their own, and `role="log"` gives it a name and announces new replies.
+          Drop one and you have a pane a keyboard user cannot reach and cannot see the state of. */}
+      <div
+        ref={scrollRef}
+        tabIndex={0}
+        role="log"
+        aria-label={t("coach.title")}
+        className="flex-1 space-y-6 overflow-y-auto py-6 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      >
         <div className="mb-2 flex flex-col items-center gap-2 text-center">
           <div className="grid h-11 w-11 place-items-center rounded-2xl bg-primary text-primary-foreground shadow-glow">
             <Sparkles className="h-5 w-5" />
