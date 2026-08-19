@@ -106,6 +106,18 @@ def _prettify(label: str) -> str:
     return s.replace("_", " ").strip().title() if ("_" in s or s.islower()) else s
 
 
+def _is_named(label) -> bool:
+    """Whether a category label can be shown to a reader.
+
+    ``ingest.classify_topic`` returns ``""`` for an article it cannot classify — deliberately, since
+    a guessed topic is worse than an admitted unknown. That is a fine value to COUNT (those reads
+    are real), but not one to NAME, and a blind spot is a recommendation built out of a name: the
+    note interpolates it, so an unnamed category produced " is 31% of what's available, but barely
+    shows up in your reading." — a sentence with a hole where its subject belongs, telling the
+    reader to go read more of nothing."""
+    return bool(str(label or "").strip())
+
+
 # Human labels for the improvable metrics, for evidence prose (frontend still owns localisation).
 _METRIC_LABEL = dict(_METRIC_KEYS)
 
@@ -1709,6 +1721,8 @@ class Backend:
 
         blind = []
         for cat, user_share, cat_share in (rep.get("blind_spots") or []):
+            if not _is_named(cat):
+                continue                       # unclassified: counted elsewhere, never named here
             gap = float((cat_share - user_share) / cat_share) if cat_share else 0.0
             blind.append({"topic": _prettify(cat), "gap": max(0.0, min(1.0, gap)),
                           "note": f"{_prettify(cat)} is {round(cat_share*100)}% of what's available, "
@@ -1884,7 +1898,7 @@ class Backend:
 
         q_c = self.pop["catalog_cat_share"]
         gaps = sorted(((cat_u[i], float(topic_share[i]), float(q_c[i])) for i in range(n_cat)
-                       if q_c[i] > 0.02 and topic_share[i] < 0.5 * q_c[i]),
+                       if q_c[i] > 0.02 and topic_share[i] < 0.5 * q_c[i] and _is_named(cat_u[i])),
                       key=lambda t: -(t[2] - t[1]))
         blind = [{"topic": _prettify(c), "gap": max(0.0, min(1.0, (qc - us) / qc if qc else 0.0)),
                   "note": f"{_prettify(c)} is {round(qc * 100)}% of what's available, but light in "

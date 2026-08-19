@@ -8,14 +8,20 @@ import { METRICS } from "@/lib/metrics";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { isLabelled } from "@/lib/bar-items";
 
 /** Blind spots — under-consumed topics/sides. */
 import { useTranslation } from "@/lib/i18n";
 
 export function BlindSpots({ items }: { items: BlindSpot[] }) {
+  // A blind spot that cannot name its topic is not actionable, and its engine-composed note reads
+  // " is 31% of what's available…" — a sentence missing its subject. The engine drops these now;
+  // this is the second line, and it also protects the `key={b.topic}` below, where two unnamed
+  // entries would be one React key.
+  const named = items.filter((b) => isLabelled(b.topic));
   return (
     <div className="space-y-3">
-      {items.map((b, i) => (
+      {named.map((b, i) => (
         <motion.div
           key={b.topic}
           initial={{ opacity: 0, x: -6 }}

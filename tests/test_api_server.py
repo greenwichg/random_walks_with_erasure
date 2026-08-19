@@ -1561,3 +1561,57 @@ def test_an_unresolvable_zone_is_reported_once_not_silently():
         logger.removeHandler(handler)
     warned = [r for r in records if "time_zone_unresolvable" in r.getMessage()]
     assert len(warned) == 1, "warn once per distinct name — never per read, never not at all"
+
+
+# --------------------------------------------------------------------------- #
+# blind spots — a recommendation has to be able to name its subject
+# --------------------------------------------------------------------------- #
+def test_is_named_rejects_only_what_cannot_be_shown():
+    assert api_server._is_named("Business") is True
+    assert api_server._is_named("U.S.") is True
+    assert api_server._is_named("0") is True            # a real label that is falsy as a string
+    for blank in ("", " ", "   ", "\t", None):
+        assert api_server._is_named(blank) is False, f"{blank!r} must not be shown as a category"
+
+
+def test_measured_blind_spots_drop_the_unclassified_bucket(backend):
+    """`classify_topic` returns "" for an article it could not classify. Naming it produces
+    " is 31% of what's available, but barely shows up in your reading." — a sentence with a hole
+    where its subject goes, recommending the reader go read more of nothing."""
+    spots = [("", 0.01, 0.31), ("Business", 0.02, 0.12), ("  ", 0.0, 0.20)]
+    kept = [c for c, _u, _a in spots if api_server._is_named(c)]
+    assert kept == ["Business"], "only a nameable category may become a blind spot"
+    # …and the note the serialiser would build for the dropped one is the broken sentence itself.
+    broken = f"{api_server._prettify('')} is 31% of what's available, but barely shows up in your reading."
+    assert broken.startswith(" is "), "this is the string the reader saw; it must never be built"
+
+
+def test_serialized_blind_spots_drop_an_unnamed_category(backend, monkeypatch):
+    """Drives the REAL serialiser: spike the engine's own report with an unclassified blind spot
+    and confirm it never reaches the payload. Asserting the predicate alone would pass even if the
+    serialiser ignored it."""
+    import health_report as hr
+    real = hr.user_report
+
+    def spiked(pop, mind, u):
+        rep = dict(real(pop, mind, u))
+        rep["blind_spots"] = [("", 0.01, 0.31), ("Business", 0.02, 0.12), ("   ", 0.0, 0.2)]
+        return rep
+
+    monkeypatch.setattr(hr, "user_report", spiked)
+    out = backend.report(0)
+    topics = [b["topic"] for b in out["blindSpots"]]
+    assert topics == ["Business"], f"an unnamed blind spot reached the payload: {topics!r}"
+    for b in out["blindSpots"]:
+        assert b["note"].startswith(b["topic"]), \
+            f"the note must lead with its subject, got {b['note']!r}"
+
+
+def test_every_served_blind_spot_names_itself(backend):
+    """Whatever path produced them, no blind spot may reach a client without a topic — the note is
+    built by interpolating that topic, so a blank one ships a broken sentence."""
+    for report in (backend.report(0), backend.report(1), backend.report(2)):
+        for b in report.get("blindSpots") or []:
+            assert api_server._is_named(b.get("topic")), f"unnamed blind spot: {b!r}"
+            assert b["note"].strip().startswith(b["topic"]), \
+                f"note must lead with its subject, got {b['note']!r}"

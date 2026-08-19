@@ -74,3 +74,14 @@ test("the report filters BEFORE it slices, so a blank never costs a real categor
   assert.ok(filterAt > 0 && sliceAt > 0, "the topic list must still filter and slice");
   assert.ok(filterAt < sliceAt, "filter must come before slice");
 });
+
+test("BlindSpots drops an entry that cannot name its topic", () => {
+  // The engine no longer emits these, but the widget keys by `b.topic` — two unnamed entries would
+  // be one React key — and its note is engine-composed prose that leads with the topic, so a blank
+  // one renders " is 31% of what's available…". Second line of defence, and the reason for it.
+  const src = read("components", "report", "report-widgets.tsx");
+  assert.match(src, /isLabelled\(b\.topic\)/, "BlindSpots must filter unnamed entries");
+  const filterAt = src.indexOf("isLabelled(b.topic)");
+  const mapAt = src.indexOf(".map((b, i) =>");
+  assert.ok(filterAt > 0 && filterAt < mapAt, "the filter must run before the rows are built");
+});
