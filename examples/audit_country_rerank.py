@@ -369,11 +369,10 @@ def main(argv=None) -> int:
             # slice", which a run showing 1/6 disproves; say only what the counts support.
             note = ""
             if starved and full:
-                note = (f"   <-- {','.join(starved)} contributed none while {','.join(full)} "
-                        f"filled: the ceiling is inside that slice's admitted pool, not overall "
-                        f"supply")
+                note = (f"   <-- {','.join(starved)} took none while {','.join(full)} filled: "
+                        f"read that slice's admission rule before blaming supply")
             elif starved:
-                note = f"   <-- {','.join(starved)} contributed none"
+                note = f"   <-- {','.join(starved)} took none"
             # Backfill should be the reader's ORDINARY recommendations, not scraped from the
             # bottom of the ranking. Overlap with the Global feed is the evidence for that.
             overlap = sum(1 for r in fill if r["article"]["id"] in base_ids_set)
