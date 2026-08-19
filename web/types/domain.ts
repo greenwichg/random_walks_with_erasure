@@ -499,6 +499,9 @@ export interface Recommendation {
   helpsMetric: MetricKey;
   /** Whether it bridges the reader across the centre. */
   crossCutting: boolean;
+  /** True when the card matched the selected For You country; false when it is backfill —
+   *  an ordinary recommendation filling a slot the country could not. Absent under Global. */
+  countryMatch?: boolean;
   explanation?: RecommendationExplanation;
 }
 

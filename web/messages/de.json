@@ -75,6 +75,8 @@
   "report.diet.fair": "Eine vernünftige Lektüre, mit klarem Spielraum zum Erweitern und Ausgleichen.",
   "report.diet.needsWork": "Ihre Lektüre ist derzeit ziemlich einseitig – ein paar Änderungen würden viel helfen.",
   "saved.empty.cta": "Artikel durchsuchen",
+  "rec.backfill.after": "Die Berichterstattung zu {country} endet hier – der Rest sind deine üblichen Empfehlungen",
+  "rec.backfill.generic": "Die Länderberichterstattung endet hier – der Rest sind deine üblichen Empfehlungen",
   "rec.empty.cta": "Zu Entdecken",
   "rec.firstRun.title": "Empfehlungen beginnen mit Ihrer Lektüre",
   "rec.firstRun.body": "Jede Empfehlung erklärt, warum sie hier steht – dafür muss sie wissen, was Sie bereits gelesen haben. Öffnen Sie einige Artikel, dann füllt sich diese Seite.",

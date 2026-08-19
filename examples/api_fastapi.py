@@ -1134,6 +1134,10 @@ class RecommendationModel(BaseModel):
     strategy: str
     helpsMetric: str
     crossCutting: bool
+    # True when this card matched the reader's selected For You country; False when it is
+    # BACKFILL — an ordinary recommendation filling a slot the country could not. Absent
+    # entirely when no country is selected, so the Global response is unchanged.
+    countryMatch: bool | None = None
     explanation: ExplanationModel | None = None
 
 

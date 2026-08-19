@@ -2153,6 +2153,17 @@ class Backend:
                                                       country_by_col=by_col))
                             for strat, k in plan]
         recs = self._serialize_recs(corpus, cols_by_strategy, user_side, familiarity, plan=plan)
+        # Mark which cards actually matched the reader's country. A country with thin coverage
+        # cannot fill the feed, and the remaining slots are BACKFILL — ordinary recommendations,
+        # not country coverage. Serving them unlabelled would quietly overstate the catalog: the
+        # reader asked for one country and would be shown a feed that looks entirely like it.
+        # Present only when a country is selected, so every other response is byte-identical.
+        want_country = (params or {}).get("country")
+        if want_country and by_col:
+            id_of = np.asarray(corpus.mind.dataset.item_ids)
+            matched = {str(id_of[c]) for c, cs in by_col.items() if want_country in cs}
+            for r in recs:
+                r["countryMatch"] = str((r.get("article") or {}).get("id")) in matched
         # One funnel: the demo path and the signed-in Measured path (personalize.py) both land
         # here, so every served feed is counted exactly once.
         record_feed_composition(recs, user_side=float(user_side),

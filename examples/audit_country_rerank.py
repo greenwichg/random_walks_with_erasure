@@ -106,6 +106,10 @@ def main(argv=None) -> int:
                     help="compare what COUNTS as belonging to a country: "
                          "event,mention,content,publisher,union. `content` is event|mention — "
                          "what the article is ABOUT, never the outlet's home.")
+    ap.add_argument("--backfill-check", action="store_true",
+                    help="for a thin country: verify the feed is not short, the Bridging "
+                         "allocation is preserved, backfill comes from the normal ranking, and "
+                         "every card is labelled matched-vs-backfill")
     ap.add_argument("--modes", default="",
                     help="compare country ordering modes head to head, e.g. boost,first — "
                          "reports country cards AND whether Bridging keeps serving cross-cutting "
@@ -301,6 +305,43 @@ def main(argv=None) -> int:
         print(f"  A cross-cutting count that falls to zero means the country preference has "
               f"starved the slice that exists to show opposing perspectives — the one real cost "
               f"of `first`, and the reason it is env-reversible.")
+
+    # -- 3c. backfill quality --------------------------------------------------------------- #
+    if args.backfill_check:
+        base_full = serve_full(None)
+        base_pubs = {(r["article"].get("publisher") or "") for r in base_full}
+        base_ids_set = {r["article"]["id"] for r in base_full}
+        b_plan = Counter(r.get("strategy") for r in base_full)
+        b_cross = sum(1 for r in base_full if r.get("crossCutting"))
+        print(f"\n-- 3c. backfill quality ({who}) --")
+        print(f"  Global baseline: {len(base_full)} cards, {len(base_pubs)} publishers, "
+              f"plan {dict(b_plan)}, cross-cutting {b_cross}")
+        for want in probes:
+            recs = serve_full({"country": want})
+            arts = [r["article"] for r in recs]
+            matched = [r for r in recs if r.get("countryMatch")]
+            fill = [r for r in recs if not r.get("countryMatch")]
+            pubs = {(a.get("publisher") or "") for a in arts}
+            plan_now = Counter(r.get("strategy") for r in recs)
+            cross = sum(1 for r in recs if r.get("crossCutting"))
+            # Backfill should be the reader's ORDINARY recommendations, not scraped from the
+            # bottom of the ranking. Overlap with the Global feed is the evidence for that.
+            overlap = sum(1 for r in fill if r["article"]["id"] in base_ids_set)
+            short = len(recs) < len(base_full)
+            print(f"\n  {want}: {len(recs)} cards = {len(matched)} matched + {len(fill)} backfill"
+                  f"{'   <-- SHORT FEED' if short else ''}")
+            print(f"    plan          : {dict(plan_now)}"
+                  f"{'   <-- BRIDGING ALLOCATION CHANGED' if plan_now.get('rwe-b') != b_plan.get('rwe-b') else '   (bridging held)'}")
+            print(f"    cross-cutting : {cross} (global {b_cross})"
+                  f"{'   <-- DIVERSITY LOST' if cross < b_cross else ''}")
+            print(f"    publishers    : {len(pubs)} distinct (global {len(base_pubs)})")
+            print(f"    backfill also in the Global feed: {overlap}/{len(fill)}"
+                  f"{'   <-- backfill is NOT the normal feed; investigate' if fill and overlap == 0 else ''}")
+            print(f"    every card labelled: "
+                  f"{all('countryMatch' in r for r in recs)}")
+        print(f"\n  Three things must hold for a thin country: the feed is NOT short, the "
+              f"bridging allocation is unchanged, and every card says whether it matched — an "
+              f"unlabelled backfill lets a country with 100 articles look like it filled a feed.")
 
     # -- 4. the boost sweep ----------------------------------------------------------------- #
     anchors = [float(x) for x in args.boost_sweep.replace(" ", "").split(",") if x]

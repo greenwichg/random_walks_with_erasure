@@ -10,8 +10,10 @@ import {
   useFeedback,
   useOpenRecommendation,
   useRecommendationFeedback,
+  useSettings,
 } from "@/hooks/use-data";
 import { useTranslation } from "@/lib/i18n";
+import { countryName } from "@/lib/countries";
 import { track } from "@/lib/analytics";
 import { PageContainer } from "@/components/layout/page-container";
 import { RecommendationCard } from "@/components/recommendations/recommendation-card";
@@ -34,7 +36,7 @@ const FILTERS: { value: Filter; icon: React.ElementType }[] = [
 
 export default function RecommendationsPage() {
   const { data, isLoading, isError, refetch } = useRecommendations();
-  const { t } = useTranslation();
+  const { t, lang } = useTranslation();
   const feedback = useFeedback();
   const openRec = useOpenRecommendation();
   const [filter, setFilter] = React.useState<Filter>("all");
@@ -65,6 +67,14 @@ export default function RecommendationsPage() {
         continuationStory === null ||
         presentRecommendation(r.explanation).storyId !== continuationStory,
     );
+
+  // The first card the engine did NOT match to the reader's country, or -1 when no country is
+  // selected (Global responses carry no `countryMatch` at all, so nothing is claimed either way).
+  const { data: settings } = useSettings();
+  const selectedCountry = settings?.recommendationCountry ?? null;
+  const firstBackfill = visible.some((r) => r.countryMatch !== undefined)
+    ? visible.findIndex((r) => r.countryMatch === false)
+    : -1;
 
   // PA1: the reader saw a recommendation feed — the funnel's "Recommendation Viewed" stage. Fires
   // once when the feed first loads (best-effort).
@@ -165,14 +175,31 @@ export default function RecommendationsPage() {
       <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
         <AnimatePresence mode="popLayout">
           {visible.map((rec, i) => (
-            <RecommendationCard
-              key={rec.article.id}
-              rec={rec}
-              index={i}
-              onAction={(action) => handleAction(rec.article.id, action)}
-              onOpen={() => handleOpen(rec)}
-              onDismiss={() => setDismissed((prev) => new Set(prev).add(rec.article.id))}
-            />
+            <React.Fragment key={rec.article.id}>
+              {/* Where the selected country's coverage ran out. The engine partitions the feed
+                  (country-matched first, then ordinary recommendations backfilling the slots the
+                  country could not fill), so this boundary is a fact about the catalog, not a
+                  layout choice — and leaving it unmarked would let a country with a hundred
+                  articles look as though it filled the whole feed. */}
+              {i === firstBackfill && (
+                <div className="col-span-full flex items-center gap-3 pt-2" role="separator">
+                  <span className="h-px flex-1 bg-border" />
+                  <span className="text-xs text-muted-foreground">
+                    {selectedCountry
+                      ? t("rec.backfill.after", { country: countryName(selectedCountry, lang) })
+                      : t("rec.backfill.generic")}
+                  </span>
+                  <span className="h-px flex-1 bg-border" />
+                </div>
+              )}
+              <RecommendationCard
+                rec={rec}
+                index={i}
+                onAction={(action) => handleAction(rec.article.id, action)}
+                onOpen={() => handleOpen(rec)}
+                onDismiss={() => setDismissed((prev) => new Set(prev).add(rec.article.id))}
+              />
+            </React.Fragment>
           ))}
         </AnimatePresence>
       </div>

@@ -75,6 +75,8 @@
   "report.diet.fair": "Uma dieta razoável, com espaço claro para ampliar e equilibrar.",
   "report.diet.needsWork": "Sua leitura está bastante restrita agora — algumas mudanças ajudariam muito.",
   "saved.empty.cta": "Explorar artigos",
+  "rec.backfill.after": "A cobertura de {country} termina aqui — o resto são as suas recomendações habituais",
+  "rec.backfill.generic": "A cobertura do país termina aqui — o resto são as suas recomendações habituais",
   "rec.empty.cta": "Ir para Descobrir",
   "rec.firstRun.title": "As recomendações começam com a sua leitura",
   "rec.firstRun.body": "Cada recomendação explica por que está aqui, por isso precisa de saber o que já leu. Abra alguns artigos e esta página preenche-se.",

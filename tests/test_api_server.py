@@ -1283,6 +1283,34 @@ def test_country_preference_reshapes_the_served_feed(backend, user):
         backend.attach_country_resolver({})                      # leave the module fixture clean
 
 
+def test_backfill_is_labelled_so_a_thin_country_cannot_look_full(backend, user):
+    """A country with thin coverage cannot fill the feed, and the slots it cannot fill are
+    ordinary recommendations. Every card says which it is, so the UI can tell the reader — an
+    unlabelled backfill would quietly overstate how much of that country the catalog holds.
+
+    The flag is ABSENT under Global: no country asked, no claim made."""
+    ids = [str(i) for i in np.asarray(backend.mind.dataset.item_ids)]
+    # a deliberately THIN country: 3 articles out of the whole catalog
+    cmap = {iid: frozenset({"XK"}) for iid in ids[:3]}
+    backend.attach_country_resolver(cmap)
+    try:
+        served = backend.recommendations(user, None, {"country": "XK"})
+        assert served, "a thin country must still yield a feed, not an empty one"
+        assert all("countryMatch" in r for r in served)
+        matched = [r for r in served if r["countryMatch"]]
+        backfill = [r for r in served if not r["countryMatch"]]
+        assert backfill, "3 articles cannot fill the feed — the rest must be backfill"
+        assert all(str(r["article"]["id"]) in cmap for r in matched)
+        assert all(str(r["article"]["id"]) not in cmap for r in backfill)
+        # the feed is still full: backfill tops it up rather than serving a short feed
+        assert len(served) == len(backend.recommendations(user, None, None))
+
+        # Global makes no country claim at all
+        assert all("countryMatch" not in r for r in backend.recommendations(user, None, None))
+    finally:
+        backend.attach_country_resolver({})
+
+
 def test_country_preference_is_inert_without_a_catalog_country_map(backend, user):
     """Fail-honest: with no country data attached (the static corpus, or a catalog written before
     the column existed), asking for a country must serve the default feed rather than an

@@ -75,6 +75,8 @@
   "report.diet.fair": "A reasonable diet, with clear room to broaden and balance it.",
   "report.diet.needsWork": "Your reading is fairly narrow right now — a few changes would help a lot.",
   "saved.empty.cta": "Browse articles",
+  "rec.backfill.after": "{country} coverage ends here — the rest are your usual recommendations",
+  "rec.backfill.generic": "Country coverage ends here — the rest are your usual recommendations",
   "rec.empty.cta": "Browse Discover",
   "rec.firstRun.title": "Recommendations start with your reading",
   "rec.firstRun.body": "Each recommendation explains why it is here — which means it needs to know what you already read. Open a few articles and this fills in.",
