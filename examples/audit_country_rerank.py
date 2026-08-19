@@ -31,6 +31,13 @@ worker, so there is no running Backend to borrow; it has to be built, and that i
 opt-in rather than default:
 
     dc exec -T api python examples/audit_country_rerank.py --serve-diff --countries IN,GB,US
+
+To measure what ONE REAL READER is served, find their id and probe the personalized feed — the
+augmented corpus they actually get, not the base corpus's demo row (`--user` is a corpus row
+index, which is a different thing and belongs to nobody):
+
+    dc exec -T api python examples/audit_country_rerank.py --list-users
+    dc exec -T api python examples/audit_country_rerank.py --serve-diff --engine-user 3 --countries IN
 """
 
 from __future__ import annotations
@@ -68,7 +75,14 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--countries", default="",
                     help="comma-separated ISO codes to probe (default: the catalog's top 3)")
-    ap.add_argument("--user", type=int, default=0, help="engine user row to probe (default: demo)")
+    ap.add_argument("--user", type=int, default=0,
+                    help="CORPUS ROW to probe (default: demo). Not an account id — see "
+                         "--engine-user, which is what a real reader has.")
+    ap.add_argument("--engine-user", type=int, default=0,
+                    help="a REAL reader's engine user id: probes the personalized feed they are "
+                         "actually served (augmented corpus), not the base corpus's demo reader")
+    ap.add_argument("--list-users", action="store_true",
+                    help="list engine users with their read counts, then exit")
     ap.add_argument("--limit", type=int, default=100000)
     ap.add_argument("--serve-diff", action="store_true",
                     help="also build a Backend from the live catalog and diff the served feed "
@@ -76,6 +90,21 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
 
     st = store_mod.Store(None)
+
+    if args.list_users:
+        from store import User
+        from sqlalchemy import select
+        with st.session() as sess:
+            users = sess.execute(
+                select(User.id, User.email, User.display_name).order_by(User.id)).all()
+        print(f"-- engine users ({len(users)}) --")
+        for uid, email, name in users:
+            print(f"  --engine-user {uid:<5} reads={st.count_reads(uid):<5} "
+                  f"{email or name or '(no profile)'}")
+        print("\n  A reader below the measured-reads threshold is served the demo path, so their "
+              "feed is not personalized and probing it measures the demo reader.")
+        return 0
+
     rows = story_service._fetch(st)
     cov = coverage(rows[: args.limit])
     n = max(1, cov["n"])
@@ -132,13 +161,31 @@ def main(argv=None) -> int:
     be.attach_url_resolver(feed_source.load_url_map(feed_csv))
     be.attach_country_resolver(feed_source.load_country_map(feed_csv))
 
-    u = args.user or be.demo_user
+    if args.engine_user:
+        # The feed a REAL reader is served comes from their augmented corpus (personalize.py),
+        # not the base corpus's demo row — probing `be.recommendations` for them would measure a
+        # simulated reader and call it theirs.
+        import personalize
+        pers = personalize.Personalizer(be, st, persist=False)
+        if not pers.has_measured(args.engine_user):
+            print(f"\n-- 3. served diff -- user {args.engine_user} is below the measured-reads "
+                  f"threshold, so they are served the demo path, not a personalized feed. "
+                  f"Nothing reader-specific to measure yet.")
+            return 1
+        serve = lambda p: [r["article"] for r in
+                           pers.recommendations(args.engine_user, None, p)]
+        who = f"engine user {args.engine_user} (personalized)"
+    else:
+        u = args.user or be.demo_user
+        serve = lambda p: [r["article"] for r in be.recommendations(u, None, p)]
+        who = f"corpus row {u}"
+
     if not getattr(be, "country_by_id", None):
         print(f"\n-- 3. served diff -- the Backend has NO country map attached: the catalog CSV "
               f"predates the country column, so the nudge is inert. Rebuild the corpus.")
         return 1
 
-    base = [r["article"] for r in be.recommendations(u, None, None)]
+    base = serve(None)
     base_ids = [a["id"] for a in base]
     country_of = {str(k): v for k, v in be.country_by_id.items()}
 
@@ -149,9 +196,9 @@ def main(argv=None) -> int:
         hit = sum(1 for a in known if country_of[str(a["id"])] == want)
         return hit / len(known), len(known)
 
-    print(f"\n-- 3. served diff (user {u}; {len(base)} cards) --")
+    print(f"\n-- 3. served diff ({who}; {len(base)} cards) --")
     for want in probes:
-        picked = [r["article"] for r in be.recommendations(u, None, {"country": want})]
+        picked = serve({"country": want})
         ids = [a["id"] for a in picked]
         s_base, k_base = share(base, want)
         s_pick, k_pick = share(picked, want)
