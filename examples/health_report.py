@@ -291,6 +291,7 @@ def compute(mind: MINDData, min_clicks: int = 5, min_political: int = 3,
 
     # Selective exposure (cross-cutting click-through), if impressions were passed.
     selective_pct = None
+    sel = None
     if selective is not None:
         sel = np.asarray(selective, dtype=float).copy()
         sel[~enough] = np.nan
@@ -304,7 +305,7 @@ def compute(mind: MINDData, min_clicks: int = 5, min_political: int = 3,
         viewpoint_pct=percentiles(cross), echo_pct=percentiles(-echo),  # less echo = higher
         reporting=reporting, reporting_pct=reporting_pct,
         balance=balance, balance_pct=balance_pct, attn=attn, emo_labels=emo_labels,
-        selective_pct=selective_pct,
+        sel=sel, selective_pct=selective_pct,
         UC=UC, UO=UO, cat_u=cat_u, out_u=out_u,
         catalog_cat_share=shares(np.bincount(_onehot(cats)[0].indices, minlength=n_cat)),
         top_n=top_n,
@@ -393,8 +394,94 @@ def blind_spot_gaps(cat_u, p_c, q_c, *, k: int = 2, floor: float = 0.02,
     return sorted(named, key=lambda x: -(x[2] - x[1]))[:k]
 
 
-def user_report(pop: dict, mind: MINDData, u: int) -> dict:
-    """Assemble the detailed report dict for one user."""
+#: The seven scored metrics, each as (report label, the `pop` key holding the RAW per-user value,
+#: whether higher is healthier). Echo Chamber is the one inversion: less echo scores higher.
+_SCORED_METRICS = (
+    ("Topic Diversity",    "topic",     True),
+    ("Source Diversity",   "eff_src",   True),
+    ("Reporting Ratio",    "reporting", True),
+    ("Emotional Balance",  "balance",   True),
+    ("Echo Chamber Score", "echo",      False),
+    ("Viewpoint Balance",  "cross",     True),
+    ("Open-Mindedness",    "sel",       True),
+)
+
+
+def _ranking_values(pop: dict, key: str):
+    """A metric's per-user values on a CATALOG-INDEPENDENT scale, ready to rank.
+
+    Only Topic Diversity needs the conversion, and it is the reason a naive frozen reference is
+    wrong rather than merely different. `topic` is Shannon entropy divided by ``ln(n_categories)``
+    — a denominator that belongs to the corpus, not to the reader. The base corpus and a reader's
+    augmented corpus carry different category counts, so the same reading yields a different
+    `topic`, and ranking one against the other silently compared two scales (measured: a reader at
+    the 95th percentile scored 58 against a reference captured moments earlier).
+
+    Multiplying the denominator back out leaves the entropy itself, which depends only on how the
+    reader spread their own reading. That is both comparable across corpora and immune to the
+    catalog growing — the property the whole frozen reference exists to provide."""
+    arr = pop.get(key)
+    if arr is None:
+        return None
+    v = np.asarray(arr, dtype=float)
+    if key == "topic":
+        cats = pop.get("cat_u")
+        n_cat = 0 if cats is None else len(cats)   # `cats or ()` raises: cat_u is a numpy array
+        if n_cat > 1:
+            v = v * np.log(n_cat)
+    return v
+
+
+def freeze_reference(pop: dict) -> dict:
+    """Capture the population's raw metric distributions as a REFERENCE COHORT.
+
+    Why this exists: every score in the report is a percentile rank, and the corpus that supplies
+    the ranked population is rebuilt from the live catalog on every refresh cycle
+    (``corpus_refresh``). Ranking against whatever the catalog looks like today means a reader who
+    reads nothing still moves — measured at up to 6 points on one metric and 2 on the overall,
+    with the UI attributing the change to them ("+2 this month").
+
+    A frozen reference separates the two: the catalog keeps moving (it must — it is what we
+    recommend from), while "the typical reader you are compared against" stays put until someone
+    deliberately re-versions it. Captured from the current corpus, so freezing costs no visible
+    jump: today's scores stay today's scores and simply stop drifting.
+
+    Returns ``{metric_key: sorted list of finite values}``; JSON-serialisable on purpose, so the
+    reference is a plain artifact that can be read, diffed and versioned by hand."""
+    ref = {}
+    for _label, key, higher_better in _SCORED_METRICS:
+        v = _ranking_values(pop, key)
+        if v is None:
+            continue
+        v = v[np.isfinite(v)]
+        if v.size:
+            ref[key] = sorted(float(x) for x in (v if higher_better else -v))
+    return ref
+
+
+def percentile_in(value: float, reference) -> "float | None":
+    """Where ``value`` falls within a frozen reference distribution, 0-100.
+
+    Matches :func:`percentiles`' convention — the fraction of the reference strictly below, plus
+    half the ties, so an exactly median value scores 50 either way and freezing does not shift a
+    reader who is already at the median."""
+    if value is None or not np.isfinite(value):
+        return None
+    ref = np.asarray(reference, dtype=float)
+    if ref.size == 0:
+        return None
+    below = float((ref < value).sum())
+    ties = float((ref == value).sum())
+    return (below + 0.5 * ties) / ref.size * 100.0
+
+
+def user_report(pop: dict, mind: MINDData, u: int, reference: "dict | None" = None) -> dict:
+    """Assemble the detailed report dict for one user.
+
+    ``reference`` is a frozen reference cohort from :func:`freeze_reference`. With one, each score
+    is the reader's RAW value ranked inside that fixed distribution, so the number moves only when
+    their own reading does. Without one the behaviour is unchanged — ranked against whoever
+    happens to be in today's corpus, which is what made the score drift on its own."""
     UC, UO, cat_u, out_u = pop["UC"], pop["UO"], pop["cat_u"], pop["out_u"]
     p_c = shares(UC[u])
     s_o = shares(UO[u])
@@ -409,13 +496,28 @@ def user_report(pop: dict, mind: MINDData, u: int) -> dict:
         a = pop.get(arr)
         return None if a is None or not np.isfinite(a[u]) else round(float(a[u]))
 
-    scores = {"Topic Diversity": _sc("topic_pct"),
-              "Source Diversity": _sc("source_pct"),
-              "Reporting Ratio": _sc("reporting_pct"),
-              "Emotional Balance": _sc("balance_pct"),
-              "Echo Chamber Score": _sc("echo_pct"),
-              "Viewpoint Balance": _sc("viewpoint_pct"),
-              "Open-Mindedness": _sc("selective_pct")}
+    def _vs_reference(raw_key, higher_better):
+        """The reader's own value, on the reference's scale, ranked in the frozen cohort."""
+        a = _ranking_values(pop, raw_key)
+        if a is None:
+            return None
+        v = float(a[u])
+        if not np.isfinite(v):
+            return None
+        pct = percentile_in(v if higher_better else -v, reference.get(raw_key, ()))
+        return None if pct is None else round(pct)
+
+    if reference:
+        scores = {label: _vs_reference(key, higher)
+                  for label, key, higher in _SCORED_METRICS}
+    else:
+        scores = {"Topic Diversity": _sc("topic_pct"),
+                  "Source Diversity": _sc("source_pct"),
+                  "Reporting Ratio": _sc("reporting_pct"),
+                  "Emotional Balance": _sc("balance_pct"),
+                  "Echo Chamber Score": _sc("echo_pct"),
+                  "Viewpoint Balance": _sc("viewpoint_pct"),
+                  "Open-Mindedness": _sc("selective_pct")}
     have = [v for v in scores.values() if v is not None]
     overall = round(float(np.mean(have))) if have else None
 

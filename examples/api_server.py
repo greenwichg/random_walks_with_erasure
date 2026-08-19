@@ -47,6 +47,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # sibling examp
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root
 import numpy as np
 import health_report as hr
+import score_reference
 import narrate_report as nr
 import obs_metrics
 from rwe.mind import MINDData
@@ -1291,6 +1292,21 @@ class Backend:
                              models=models, id2col=id2col, rec_ids=rec_ids, exposure=exposure)
 
     # -- reader selection -------------------------------------------------- #
+    @property
+    def score_reference(self) -> "dict | None":
+        """The frozen reference cohort every served score is ranked against.
+
+        Captured from THIS corpus the first time (so switching it on costs no visible jump) and
+        then reused from disk by every later build — including the ones `corpus_refresh` swaps in,
+        which is exactly what stops the score drifting when the catalog grows. `None` means no
+        reference is available (disabled, or unwritable and uncapturable), which falls back to the
+        old population-relative behaviour rather than failing the report."""
+        cached = getattr(self, "_score_reference", None)
+        if cached is None:
+            cached = score_reference.load_or_capture(lambda: hr.freeze_reference(self.pop)) or {}
+            self._score_reference = cached
+        return cached or None
+
     def _pick_demo_user(self) -> int:
         """A 'fair, improvable' reader (overall nearest ~58) so the report shows the full
         range of states — some healthy, some amber, real blind spots, meaningful bridging."""
@@ -1671,7 +1687,7 @@ class Backend:
         real-user / `personalize` path supplies it; the demo path leaves it ``None``). Each envelope
         is attached onto its metric card additively — a metric with no measurement is unchanged, and
         the coverage of an *unavailable* metric still surfaces (it explains the empty state)."""
-        rep = hr.user_report(corpus.pop, corpus.mind, u)
+        rep = hr.user_report(corpus.pop, corpus.mind, u, reference=self.score_reference)
         scores = rep.get("scores", {}) or {}
         n_clicks = rep.get("n_clicks") or 0
         measurements = measurements or {}
@@ -2304,7 +2320,7 @@ class Backend:
     def _facts_of(self, corpus: _Corpus, u: int):
         """(report dict, narrate facts) for reader ``u`` of a corpus — corpus-parametric so the
         coach grounds on a real user's augmented corpus exactly as on the base corpus."""
-        rep = hr.user_report(corpus.pop, corpus.mind, u)
+        rep = hr.user_report(corpus.pop, corpus.mind, u, reference=self.score_reference)
         return rep, nr.report_facts(rep, self.domain)
 
     def _citations(self, rep: dict) -> list:

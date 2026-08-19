@@ -1593,8 +1593,8 @@ def test_serialized_blind_spots_drop_an_unnamed_category(backend, monkeypatch):
     import health_report as hr
     real = hr.user_report
 
-    def spiked(pop, mind, u):
-        rep = dict(real(pop, mind, u))
+    def spiked(pop, mind, u, **kw):          # `reference=` is passed by the serialiser
+        rep = dict(real(pop, mind, u, **kw))
         rep["blind_spots"] = [("", 0.01, 0.31), ("Business", 0.02, 0.12), ("   ", 0.0, 0.2)]
         return rep
 

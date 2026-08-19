@@ -190,11 +190,15 @@ def test_failed_tool_is_admitted_never_filled(stack, monkeypatch):
 
 
 def test_grounding_gate_replaces_ungrounded_numbers(stack, monkeypatch):
+    # The sentinel is deliberately OUTSIDE the 0-100 score range. It used to be 99, which the
+    # engine can legitimately produce for a metric — and did, once the frozen scoring reference
+    # landed — so the gate correctly read it as grounded and the test failed for the right
+    # behaviour. A sentinel that no real score can equal tests the gate instead of the corpus.
     doctored = dataclasses_replace_template("EXPLAIN.metrics",
-                                            "Your score is 99 out of 100. {report_scores_line}")
+                                            "Your score is 4242 out of 100. {report_scores_line}")
     monkeypatch.setitem(cs.INTENTS, "EXPLAIN.metrics", doctored)
     out = _turn(stack, "what do all these metrics mean?")
-    assert "99" not in out["content"]                   # the fabricated number never ships
+    assert "4242" not in out["content"]                 # the fabricated number never ships
     assert out["content"].startswith("Here's what I can measure right now:")
 
 

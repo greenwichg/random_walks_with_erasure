@@ -336,43 +336,59 @@ def _fixed_reads():
             ] * 3)]
 
 
-def _overall_for(catalog_items: int) -> int:
+def _overall_for(catalog_items: int, reference=None) -> int:
     """The reader's overall score when ranked inside a corpus of this catalog size. Mirrors the
     production path: corpus_refresh builds `DatasetProfile.synthetic(qbias_csv=<fresh export>)`
     on every cycle and hot-swaps it, so the catalog behind this number grows continuously."""
     import importlib.util
+    import sys
     import augmented_corpus as ac
     spec = importlib.util.spec_from_file_location("api_server", ROOT / "examples" / "api_server.py")
     engine = importlib.util.module_from_spec(spec)
-    import sys
     sys.modules["api_server"] = engine
     spec.loader.exec_module(engine)
     b = engine.Backend(engine.DatasetProfile.synthetic(n_users=200, max_items=catalog_items, seed=0))
+    ref = b.score_reference if reference == "frozen" else None
     res = ac.augment(ac.bundle_from_backend(b), _fixed_reads())
     pop = hr.compute(res.bundle.mind, register=res.bundle.register,
                      emotion=res.bundle.emotion, confidence=res.bundle.confidence)
-    return hr.user_report(pop, res.bundle.mind, res.reader_row)["overall"]
+    return hr.user_report(pop, res.bundle.mind, res.reader_row, reference=ref)["overall"]
 
 
-import pytest  # noqa: E402
-
-
-@pytest.mark.xfail(strict=True, reason=(
-    "KNOWN DEFECT, awaiting a product decision on what the score is ranked against. Every metric "
-    "is a percentile rank inside the corpus population, and corpus_refresh regenerates that "
-    "population from the LIVE catalog on every cycle — so a reader who reads nothing still moves. "
-    "Measured drift on identical reads: overall 89/88/87/89 across catalog sizes 500/520/560/600; "
-    "Source Diversity swings 6 points, Viewpoint Balance 4, Topic Diversity 2. The fix is to rank "
-    "against a FROZEN reference distribution rather than whatever the catalog looks like today; "
-    "remove this marker when it lands."))
-def test_score_is_stable_while_the_reading_history_is_unchanged():
+def test_score_is_stable_while_the_reading_history_is_unchanged(tmp_path, monkeypatch):
     """THE contract: identical reads must yield an identical score, whatever the catalog is doing.
 
     A reader opens the app twice without reading anything in between. The number they are shown
     describes THEIR reading, so it must not have moved — and if it does move, the "+2 this month"
     beside it attributes a catalog refresh to the reader, which is a claim about them that is not
-    true."""
-    scores = [_overall_for(n) for n in (500, 520, 560, 600)]
+    true.
+
+    The first Backend captures the reference; the rest load the same file, exactly as production
+    does across `corpus_refresh` swaps."""
+    monkeypatch.setenv("RWE_SCORE_REFERENCE", str(tmp_path / "score_reference.json"))
+    scores = [_overall_for(n, reference="frozen") for n in (500, 520, 560, 600)]
     assert len(set(scores)) == 1, (
         f"the same reading history scored {scores} against four catalog sizes — "
         f"the score moved without the reader doing anything")
+
+
+def test_without_a_reference_the_score_still_drifts(tmp_path, monkeypatch):
+    """The defect this fixes, kept as a live measurement rather than a memory: ranked inside
+    whatever corpus is current, the same reading history scores differently as the catalog grows.
+    If this ever stops drifting, the frozen reference is no longer doing the work and the test
+    above has stopped proving anything."""
+    monkeypatch.setenv("RWE_SCORE_REFERENCE_DISABLE", "1")
+    scores = [_overall_for(n) for n in (500, 520, 560, 600)]
+    assert len(set(scores)) > 1, f"expected the unfixed path to drift, got {scores}"
+
+
+def test_freezing_barely_moves_the_level_it_only_stops_the_drift(tmp_path, monkeypatch):
+    """Switching this on must not re-baseline a number every reader has already seen. The
+    reference is captured from the corpus that is live at the time, so the only difference is the
+    percentile convention at the extremes (`percentiles` maps the maximum to exactly 100; ranking
+    inside a fixed cohort cannot). One point, not a reset."""
+    monkeypatch.setenv("RWE_SCORE_REFERENCE", str(tmp_path / "score_reference.json"))
+    frozen = _overall_for(500, reference="frozen")
+    monkeypatch.setenv("RWE_SCORE_REFERENCE_DISABLE", "1")
+    live = _overall_for(500)
+    assert abs(frozen - live) <= 2, f"freezing moved the score {live} -> {frozen}"
