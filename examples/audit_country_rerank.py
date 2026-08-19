@@ -55,21 +55,30 @@ import story_service              # noqa: E402
 import store as store_mod         # noqa: E402
 
 
-def coverage(rows) -> dict:
-    """Country coverage over catalog rows, split by which signal produced the label."""
+def coverage(rows, source: str) -> dict:
+    """Country coverage over catalog rows.
+
+    Two different things, deliberately kept apart, because reporting one under the other's name
+    misled a production verification: `ev`/`pub`/`located` are the PROVENANCE of the legacy
+    single-label resolver (does any label exist, and did it come from the event or the outlet),
+    while `matched` and `per_country` count what the feed ACTUALLY matches on — `source`, whose
+    default is `content`. Under `content` a Delhi outlet's article about Washington is not India
+    supply, so the two counts differ by thousands of articles and only one of them predicts what
+    a reader is served."""
     n = len(rows)
-    ev = pub = 0
+    ev = pub = matched = 0
     per_country: Counter = Counter()
     for r in rows:
         has_event = any(str(c).strip() for c in (r.get("eventCountries") or ()))
-        c = feed_source.article_country(r)
-        if c:
-            per_country[c] += 1
-            if has_event:
-                ev += 1
-            else:
-                pub += 1
-    return {"n": n, "event": ev, "publisher": pub, "located": ev + pub, "per_country": per_country}
+        if feed_source.article_country(r):
+            ev, pub = (ev + 1, pub) if has_event else (ev, pub + 1)
+        cs = feed_source.article_countries(r, source)
+        if cs:
+            matched += 1
+            for c in cs:
+                per_country[c] += 1
+    return {"n": n, "event": ev, "publisher": pub, "located": ev + pub,
+            "matched": matched, "per_country": per_country}
 
 
 def n_country_in(arts, want: str, country_of: dict) -> int:
@@ -140,20 +149,27 @@ def main(argv=None) -> int:
         return 0
 
     rows = story_service._fetch(st)
-    cov = coverage(rows[: args.limit])
+    active = feed_source.country_source()
+    cov = coverage(rows[: args.limit], active)
     n = max(1, cov["n"])
     print(f"-- 1. catalog coverage ({cov['n']} articles) --")
-    print(f"  located            : {cov['located']} ({cov['located'] / n:.1%})")
+    print(f"  MATCHING SOURCE    : {active}  (RWE_REC_COUNTRY_SOURCE)")
+    print(f"  matched by it      : {cov['matched']} ({cov['matched'] / n:.1%})"
+          f"  <-- the supply the feed can actually draw on")
+    print(f"  any label at all   : {cov['located']} ({cov['located'] / n:.1%})   [legacy resolver]")
     print(f"    via event geography: {cov['event']} ({cov['event'] / n:.1%})")
     print(f"    via publisher home : {cov['publisher']} ({cov['publisher'] / n:.1%})")
-    if cov["located"] and cov["event"] / max(1, cov["located"]) < 0.25:
-        print(f"  NOTE: the country label is mostly PUBLISHER-derived. The feed prioritizes "
-              f"outlets based in the country more than coverage ABOUT it — accurate to what the "
-              f"data supports, but say it that way in the UI copy.")
+    if active in ("publisher", "union"):
+        print(f"  NOTE: `{active}` counts the OUTLET's home country, so a Delhi paper's article "
+              f"about Washington reads as India news. That is provenance, not subject — say it "
+              f"that way in the UI copy, or set RWE_REC_COUNTRY_SOURCE=content.")
 
-    print(f"\n-- 2. per-country supply (top 12) --")
+    print(f"\n-- 2. per-country supply under `{active}` (top 12) --")
     for c, k in cov["per_country"].most_common(12):
         print(f"  {c}  {k:>5} articles ({k / n:.1%})")
+    print(f"  Counted under the ACTIVE matching source, not the legacy label: reporting the "
+          f"publisher-inclusive count here makes a thin country look well supplied and turns an "
+          f"honest backfill into an apparent ranking bug.")
 
     # -- 2b. what counts as belonging ------------------------------------------------------- #
     sources = [x.strip().lower() for x in args.sources.split(",") if x.strip()]
@@ -332,6 +348,18 @@ def main(argv=None) -> int:
             # conflates the two and cries wolf; this instrument did exactly that until the
             # interaction audit split them (2026-08-19).
             cross_b = sum(1 for r in recs if r.get("strategy") == "rwe-b" and r.get("crossCutting"))
+            # WHERE the matched cards land. Two countries with very different supply both
+            # returning exactly 8 matched + 6 backfill, with the backfill equal to the rwe-b
+            # budget, is the shape of a partition that reaches some slices and not others —
+            # supply alone would not land on the same number twice. Per-strategy counts settle
+            # it by measurement; the totals cannot.
+            by_slice = Counter(r.get("strategy") for r in matched)
+            bits, starved = [], []
+            for s, tot in plan_now.most_common():
+                got = by_slice.get(s, 0)
+                bits.append(f"{s} {got}/{tot}")
+                if tot and not got:
+                    starved.append(s)
             # Backfill should be the reader's ORDINARY recommendations, not scraped from the
             # bottom of the ranking. Overlap with the Global feed is the evidence for that.
             overlap = sum(1 for r in fill if r["article"]["id"] in base_ids_set)
@@ -344,6 +372,8 @@ def main(argv=None) -> int:
                   f"{'   <-- DIVERSITY LOST' if cross_b < b_cross_b else ''}"
                   f";  all slices {cross} (global {b_cross})"
                   f"{'  — incidental, outside the contract' if cross < b_cross else ''}")
+            print(f"    matched where : {', '.join(bits)}"
+                  f"{'   <-- ' + ','.join(starved) + ' contributed NO country cards; the ceiling is that slice, not supply' if starved else ''}")
             print(f"    publishers    : {len(pubs)} distinct (global {len(base_pubs)})")
             print(f"    backfill also in the Global feed: {overlap}/{len(fill)}"
                   f"{'   <-- backfill is NOT the normal feed; investigate' if fill and overlap == 0 else ''}")
