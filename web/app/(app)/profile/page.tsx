@@ -116,7 +116,7 @@ export default function ProfilePage() {
             </div>
           }
         >
-          <TrendChart data={data.scoreHistory} height={240} domain={[0, 100]} />
+          <TrendChart data={data.scoreHistory} height={240} />
         </SectionCard>
 
         {/* Streak */}

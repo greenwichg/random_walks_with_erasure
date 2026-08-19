@@ -4,6 +4,7 @@ import { Line, LineChart, Tooltip, XAxis, YAxis } from "recharts";
 import { useMeasure } from "@/hooks/use-measure";
 import { useTranslation } from "@/lib/i18n";
 import type { BarSeries } from "@/components/shared/stacked-bar";
+import { exactFormat, seriesMax, tickCapacity, tickLabels, yAxis } from "@/lib/chart-axis";
 
 /**
  * A themed multi-series line chart for share-over-time data (the Emotional Tone card).
@@ -35,16 +36,13 @@ export function MultiLineChart({
     typeof d === "string" && d.includes("-")
       ? formatDate(d, { month: "short", day: "numeric" })
       : String(d ?? "");
-  // Same-day report snapshots share a date — label only the first of each run so the axis
-  // never repeats itself ("Jul 12" x4). Blank ticks keep their slot; interval={0} keeps the
-  // tick index aligned with the row index.
-  const tickLabels = data.map((row, i) =>
-    i > 0 && fmt(row[xKey]) === fmt(data[i - 1]?.[xKey]) ? "" : fmt(row[xKey]),
-  );
-  // MB1 Phase 4: on a narrow (phone) width, thin the axis to ~6 labels so daily points don't
-  // collide into an unreadable smear; on wider screens keep every tick (interval 0). The
-  // tickFormatter keys off the real data index, so same-day de-duplication above still applies.
-  const tickInterval = width > 0 && width < 520 ? Math.max(1, Math.ceil(data.length / 6)) - 1 : 0;
+  // Same-day report snapshots share a date. `tickLabels` marks each run of equal dates once, at
+  // its midpoint, and thins runs to what the measured width can hold — the de-duplication this
+  // chart used to do inline, now shared with TrendChart and StackedBar so all three agree.
+  const labels = tickLabels(data.map((row) => row[xKey]), fmt, tickCapacity(width));
+  const kind = percent ? "percent" : "count";
+  const axis = yAxis(kind, seriesMax(data, series.map((s) => s.key)));
+  const exact = exactFormat(kind);
 
   return (
     <div className="space-y-2.5">
@@ -58,20 +56,22 @@ export function MultiLineChart({
         >
           <XAxis
             dataKey={xKey}
-            interval={tickInterval}
-            tickFormatter={(_: string, i: number) => tickLabels[i] ?? ""}
+            interval={0}
+            tickFormatter={(_: string, i: number) => labels[i] ?? ""}
             tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
             tickLine={false}
             axisLine={false}
           />
           <YAxis
-            domain={percent ? [0, 1] : ["auto", "auto"]}
-            ticks={percent ? [0, 0.25, 0.5, 0.75, 1] : undefined}
+            // `["auto","auto"]` used to float the non-percent case off zero, which draws small
+            // differences as large ones. Both cases are now zero-anchored with round ticks.
+            domain={axis.domain}
+            ticks={axis.ticks}
             tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
             tickLine={false}
             axisLine={false}
             width={42}
-            tickFormatter={(v: number) => (percent ? `${Math.round(v * 100)}%` : `${v}`)}
+            tickFormatter={axis.format}
           />
           <Tooltip
             cursor={{ stroke: "hsl(var(--border))", strokeWidth: 1 }}
@@ -83,7 +83,7 @@ export function MultiLineChart({
               boxShadow: "0 8px 24px -12px rgb(0 0 0 / 0.2)",
               fontSize: 12,
             }}
-            formatter={(v: number, name: string) => [percent ? `${Math.round(v * 100)}%` : v, name]}
+            formatter={(v: number, name: string) => [exact(v), name]}
             labelFormatter={(d) =>
               typeof d === "string" && d.includes("-")
                 ? formatDate(d, { month: "long", day: "numeric" })

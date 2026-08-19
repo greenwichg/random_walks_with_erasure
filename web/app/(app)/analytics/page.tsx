@@ -47,9 +47,9 @@ export default function AnalyticsPage() {
 
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
           <SectionCard title={t("analytics.healthImprovement")} info={t("analytics.healthImprovementInfo")} className="lg:col-span-2">
-            {/* Overall Information Health is a normalized 0–100 score: pin the axis to [0,100] so the
-                trend reads on the same fixed scale as the diversity metrics below — never auto-scaled. */}
-            <TrendChart data={data.healthImprovement} height={240} domain={[0, 100]} />
+            {/* Every score card here shares one fixed 0–100 axis, owned by TrendChart itself (see
+                lib/chart-axis.ts) — so the four read on the same scale and none can be auto-scaled. */}
+            <TrendChart data={data.healthImprovement} height={240} />
           </SectionCard>
 
           <SectionCard title={t("analytics.readingVolume")} info={t("analytics.readingVolumeInfo")}>
@@ -62,15 +62,15 @@ export default function AnalyticsPage() {
           </SectionCard>
 
           <SectionCard title={t("analytics.topicDiversity")} info={t("analytics.topicDiversityInfo")}>
-            <TrendChart data={data.topicDiversity} height={220} color="hsl(var(--primary))" domain={[0, 100]} />
+            <TrendChart data={data.topicDiversity} height={220} color="hsl(var(--primary))" />
           </SectionCard>
 
           <SectionCard title={t("analytics.politicalDiversity")} info={t("analytics.politicalDiversityInfo")}>
-            <TrendChart data={data.politicalDiversity} height={220} color="hsl(var(--center))" domain={[0, 100]} />
+            <TrendChart data={data.politicalDiversity} height={220} color="hsl(var(--center))" />
           </SectionCard>
 
           <SectionCard title={t("analytics.publisherDiversity")} info={t("analytics.publisherDiversityInfo")}>
-            <TrendChart data={data.publisherDiversity} height={220} color="hsl(var(--left))" domain={[0, 100]} />
+            <TrendChart data={data.publisherDiversity} height={220} color="hsl(var(--left))" />
           </SectionCard>
 
           <SectionCard title={t("analytics.emotionalTone")} info={t("analytics.emotionalToneInfo")}>

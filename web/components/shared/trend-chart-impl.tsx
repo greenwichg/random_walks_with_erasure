@@ -4,6 +4,7 @@ import { Area, AreaChart, Tooltip, XAxis, YAxis } from "recharts";
 import type { TrendPoint } from "@/types/domain";
 import { useTranslation } from "@/lib/i18n";
 import { useMeasure } from "@/hooks/use-measure";
+import { tickCapacity, tickLabels, yAxis } from "@/lib/chart-axis";
 
 /**
  * A themed area chart for the overall-score trend + analytics.
@@ -19,18 +20,25 @@ export function TrendChart({
   height = 220,
   color = "hsl(var(--primary))",
   showAxis = true,
-  domain,
 }: {
   data: TrendPoint[];
   dataKey?: string;
   height?: number;
   color?: string;
   showAxis?: boolean;
-  domain?: [number, number];
 }) {
   const { formatDate } = useTranslation();
   const { ref, width } = useMeasure<HTMLDivElement>();
   const gradientId = `grad-${dataKey}`;
+  // Every TrendChart in this app plots a 0–100 score (Information Health, its metrics, the score
+  // history), so the score axis is the default rather than something each caller must remember —
+  // the old default auto-scaled to the data's own extent and drew a 4-point wobble as a mountain.
+  const axis = yAxis("score");
+  const fmt = (d: unknown) =>
+    typeof d === "string" ? formatDate(d, { month: "short", day: "numeric" }) : String(d ?? "");
+  // Score points are one per SAVED REPORT, dated by day: several reports in one afternoon share a
+  // date. Label each run of equal dates once, at its midpoint, instead of repeating it per point.
+  const labels = tickLabels(data.map((d) => d.date), fmt, tickCapacity(width));
 
   return (
     // MB1: `min-w-0 overflow-hidden` lets this wrapper shrink below the seeded SVG width inside a
@@ -52,16 +60,18 @@ export function TrendChart({
         {showAxis && (
           <XAxis
             dataKey="date"
-            tickFormatter={(d: string) => formatDate(d, { month: "short", day: "numeric" })}
+            interval={0}
+            tickFormatter={(_: string, i: number) => labels[i] ?? ""}
             tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
             tickLine={false}
             axisLine={false}
-            minTickGap={40}
           />
         )}
         {showAxis && (
           <YAxis
-            domain={domain ?? ["dataMin - 6", "dataMax + 6"]}
+            domain={axis.domain}
+            ticks={axis.ticks}
+            tickFormatter={axis.format}
             tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
             tickLine={false}
             axisLine={false}

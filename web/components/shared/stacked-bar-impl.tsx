@@ -3,6 +3,7 @@
 import { Bar, BarChart, Tooltip, XAxis, YAxis } from "recharts";
 import { useMeasure } from "@/hooks/use-measure";
 import { useTranslation } from "@/lib/i18n";
+import { exactFormat, seriesMax, tickCapacity, tickLabels, yAxis } from "@/lib/chart-axis";
 
 export interface BarSeries {
   key: string;
@@ -32,6 +33,19 @@ export function StackedBar({
 }) {
   const { formatDate } = useTranslation();
   const { ref, width } = useMeasure<HTMLDivElement>();
+  // A percentage chart is fixed to 0–100%; a count chart is zero-anchored (a bar read against a
+  // non-zero baseline misstates every ratio it draws) and topped at a round multiple of a round
+  // step, rather than at whatever the tallest bar happens to be.
+  const kind = percent ? "percent" : "count";
+  const axis = percent
+    ? yAxis("percent")
+    : yAxis("count", seriesMax(data, series.map((s) => s.key), stacked));
+  const exact = exactFormat(kind);
+  const fmt = (d: unknown) =>
+    typeof d === "string" && d.includes("-")
+      ? formatDate(d, { month: "short", day: "numeric" })
+      : String(d ?? "");
+  const labels = tickLabels(data.map((row) => row[xKey]), fmt, tickCapacity(width));
 
   return (
     <div className={showLegend ? "space-y-2.5" : undefined}>
@@ -40,26 +54,20 @@ export function StackedBar({
       <BarChart width={width} height={height} data={data} margin={{ top: 8, right: 12, left: 0, bottom: 0 }} barCategoryGap={stacked ? "18%" : "26%"}>
         <XAxis
           dataKey={xKey}
-          tickFormatter={(d: string) =>
-            typeof d === "string" && d.includes("-")
-              ? formatDate(d, { month: "short", day: "numeric" })
-              : d
-          }
+          interval={0}
+          tickFormatter={(_: string, i: number) => labels[i] ?? ""}
           tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
           tickLine={false}
           axisLine={false}
-          minTickGap={24}
         />
         <YAxis
-          // A percentage chart is fixed to 0–100% (matching MultiLineChart's percent axis); a count
-          // chart keeps recharts' dynamic 0..max scaling. Never auto-scale a percentage axis.
-          domain={percent ? [0, 1] : undefined}
-          ticks={percent ? [0, 0.25, 0.5, 0.75, 1] : undefined}
+          domain={axis.domain}
+          ticks={axis.ticks}
           tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
           tickLine={false}
           axisLine={false}
           width={42}
-          tickFormatter={(v: number) => (percent ? `${Math.round(v * 100)}%` : `${v}`)}
+          tickFormatter={axis.format}
         />
         <Tooltip
           cursor={{ fill: "hsl(var(--muted) / 0.5)" }}
@@ -70,7 +78,7 @@ export function StackedBar({
             color: "hsl(var(--popover-foreground))",
             fontSize: 12,
           }}
-          formatter={(v: number, name: string) => [percent ? `${Math.round(v * 100)}%` : v, name]}
+          formatter={(v: number, name: string) => [exact(v), name]}
           labelFormatter={(d) =>
             typeof d === "string" && d.includes("-")
               ? formatDate(d, { month: "long", day: "numeric" })

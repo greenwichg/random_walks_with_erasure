@@ -137,7 +137,7 @@ export function PeriodAnalytics({ period }: { period: ReportPeriod }) {
             >
               {/* Pinned to [0,100] for the same reason /analytics pins it: Information Health is a
                   normalized score and must never be auto-scaled into looking dramatic. */}
-              <TrendChart data={health} height={240} domain={[0, 100]} />
+              <TrendChart data={health} height={240} />
             </SectionCard>
           </div>
 
@@ -152,15 +152,15 @@ export function PeriodAnalytics({ period }: { period: ReportPeriod }) {
             </SectionCard>
 
             <SectionCard title={t("analytics.topicDiversity")} info={t("analytics.topicDiversityInfo")}>
-              <TrendChart data={topic} height={220} color="hsl(var(--primary))" domain={[0, 100]} />
+              <TrendChart data={topic} height={220} color="hsl(var(--primary))" />
             </SectionCard>
 
             <SectionCard title={t("analytics.politicalDiversity")} info={t("analytics.politicalDiversityInfo")}>
-              <TrendChart data={political} height={220} color="hsl(var(--center))" domain={[0, 100]} />
+              <TrendChart data={political} height={220} color="hsl(var(--center))" />
             </SectionCard>
 
             <SectionCard title={t("analytics.publisherDiversity")} info={t("analytics.publisherDiversityInfo")}>
-              <TrendChart data={publisher} height={220} color="hsl(var(--left))" domain={[0, 100]} />
+              <TrendChart data={publisher} height={220} color="hsl(var(--left))" />
             </SectionCard>
 
             <SectionCard
