@@ -152,6 +152,13 @@ returns the baseline feed **byte for byte**.
   boundary drawn over the raw order landed inside the first group and stranded later groups'
   country cards below it. The display partitions the whole list before drawing the boundary
   (`web/lib/country-partition.ts`, tested on exactly that interleave).
+* **Judge the contract, not the total.** Both audit instruments first compared the feed's *overall*
+  cross-cutting count and flagged "DIVERSITY LOST" on a healthy run: only RWE-B owes opposing
+  perspectives, and a cross-cutting card that happens to land in another slice is incidental and
+  free to be replaced — reordering those slices is what a country preference is *for*. The same
+  conflation had to be fixed twice (`3c099ce`, then `68ae021` after it fired on the post-deploy
+  run). Judging the slice that owns the contract is also the **sharper** bar: a real fall inside
+  Bridging can no longer be masked by an incidental gain elsewhere.
 * **`dc exec` starts a NEW process** and shares no memory with the uvicorn worker, so an
   instrument cannot borrow the serving Backend; it must build one. And `--user` is a corpus row
   index — probing a real reader needs `--engine-user` through `personalize.Personalizer`.
@@ -184,5 +191,6 @@ dc exec -T api python examples/audit_country_interaction.py \
 ```
 
 Expected: content coverage ≈ 35% of the catalog; a selected country leads the feed and backfills
-the remainder; the blend plan stays `{rwe-b: 6, rwe-d: 4, adaptive: 4}` with 6 cross-cutting cards;
+the remainder; the blend plan stays `{rwe-b: 6, rwe-d: 4, adaptive: 4}` with **6 cross-cutting
+cards inside Bridging** (the all-slices total may move by one — incidental, outside the contract);
 and Global restores the baseline feed byte for byte.
