@@ -266,3 +266,54 @@ def test_enrichment_populates_reporting_and_attention(tmp_path):
     assert rep["attention"] is not None and abs(sum(rep["attention"].values()) - 1.0) < 1e-6
     html = hr.render_html([rep])
     assert "Attention profile" in html and "experimental" in html
+
+
+# --------------------------------------------------------------------------- #
+# blind spots — filtered before the cut, so an unnamed category costs nothing
+# --------------------------------------------------------------------------- #
+def test_blind_spot_gaps_rank_by_widest_gap():
+    cat_u = ["Business", "Science", "Sports"]
+    p_c = np.array([0.02, 0.00, 0.01])      # what the reader reads
+    q_c = np.array([0.12, 0.31, 0.05])      # what the catalog carries
+    got = hr.blind_spot_gaps(cat_u, p_c, q_c)
+    assert [c for c, _p, _q in got] == ["Science", "Business"]   # 0.31 gap before 0.10
+
+
+def test_blind_spot_gaps_exclude_the_unclassified_bucket():
+    """`classify_topic` returns "" for an article it cannot classify. A blind spot is a
+    recommendation and the served note interpolates the name, so an unnamed one renders
+    " is 31% of what's available, but barely shows up in your reading."."""
+    cat_u = ["", "Business"]
+    p_c = np.array([0.01, 0.02])
+    q_c = np.array([0.31, 0.12])
+    assert [c for c, _p, _q in hr.blind_spot_gaps(cat_u, p_c, q_c)] == ["Business"]
+    # whitespace and None are blank too — both render as a nameless row
+    assert hr.blind_spot_gaps(["   ", None], np.array([0.0, 0.0]), np.array([0.31, 0.31])) == []
+
+
+def test_an_unnamed_category_does_not_spend_one_of_the_two_slots():
+    """THE regression. The cap used to be applied first (`gaps[:2]`) and the unnamed category
+    filtered downstream, so the reader was shown ONE blind spot while a real second one waited
+    outside the cut — visibly, on a card that had room for two."""
+    cat_u = ["", "Science", "Business"]
+    p_c = np.array([0.01, 0.00, 0.02])
+    q_c = np.array([0.31, 0.20, 0.12])       # unnamed has the widest gap, so it sorts first
+    got = [c for c, _p, _q in hr.blind_spot_gaps(cat_u, p_c, q_c)]
+    assert got == ["Science", "Business"], "both slots must go to nameable categories"
+    assert len(got) == 2, "filtering after the cut would have returned only one"
+
+
+def test_blind_spot_gaps_respect_the_catalog_floor_and_the_under_read_rule():
+    cat_u = ["Rare", "WellRead"]
+    # 'Rare' is under the catalog floor; 'WellRead' the reader reads plenty of.
+    p_c = np.array([0.0, 0.30])
+    q_c = np.array([0.01, 0.31])
+    assert hr.blind_spot_gaps(cat_u, p_c, q_c) == []
+
+
+def test_blind_spot_gaps_are_capped():
+    cat_u = [f"Topic{i}" for i in range(6)]
+    p_c = np.zeros(6)
+    q_c = np.full(6, 0.2)
+    assert len(hr.blind_spot_gaps(cat_u, p_c, q_c)) == 2
+    assert len(hr.blind_spot_gaps(cat_u, p_c, q_c, k=4)) == 4

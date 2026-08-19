@@ -370,6 +370,29 @@ def format_population(summary: dict) -> str:
     return "\n".join(L)
 
 
+def blind_spot_gaps(cat_u, p_c, q_c, *, k: int = 2, floor: float = 0.02,
+                    under: float = 0.5) -> list:
+    """The reader's biggest under-read categories: ``[(category, user_share, catalog_share)]``,
+    widest gap first, at most ``k``.
+
+    A category qualifies when the catalog carries a real amount of it (``> floor``) and the reader
+    reads less than ``under`` of that share.
+
+    **Unnamed categories are excluded, and excluded BEFORE the cut.** ``ingest.classify_topic``
+    returns ``""`` for an article it cannot classify — deliberately, since a guessed topic is worse
+    than an admitted unknown — but a blind spot is a *recommendation*, and "you barely read ''"
+    cannot be acted on. The served note is built by interpolating the name, so an unnamed one
+    rendered " is 31% of what's available, but barely shows up in your reading.": a sentence with a
+    hole where its subject belongs.
+
+    The ordering of the two steps is the whole point. Cutting to ``k`` first and filtering after
+    lets an unnamed category spend one of the slots, and the reader is shown one blind spot fewer
+    with no indication why — which is exactly what happened when this was fixed downstream only."""
+    named = ((cat_u[i], p_c[i], q_c[i]) for i in range(len(cat_u))
+             if str(cat_u[i] or "").strip() and q_c[i] > floor and p_c[i] < under * q_c[i])
+    return sorted(named, key=lambda x: -(x[2] - x[1]))[:k]
+
+
 def user_report(pop: dict, mind: MINDData, u: int) -> dict:
     """Assemble the detailed report dict for one user."""
     UC, UO, cat_u, out_u = pop["UC"], pop["UO"], pop["cat_u"], pop["out_u"]
@@ -379,9 +402,7 @@ def user_report(pop: dict, mind: MINDData, u: int) -> dict:
 
     top_cats = sorted(((cat_u[i], p_c[i]) for i in np.argsort(-p_c)[:3] if p_c[i] > 0),
                       key=lambda x: -x[1])
-    gaps = sorted(((cat_u[i], p_c[i], q_c[i]) for i in range(len(cat_u))
-                   if q_c[i] > 0.02 and p_c[i] < 0.5 * q_c[i]),
-                  key=lambda x: -(x[2] - x[1]))
+    gaps = blind_spot_gaps(cat_u, p_c, q_c)
     top_pubs = [(out_u[i], s_o[i]) for i in np.argsort(-s_o)[:pop["top_n"]] if s_o[i] > 0]
 
     def _sc(arr):
@@ -415,7 +436,7 @@ def user_report(pop: dict, mind: MINDData, u: int) -> dict:
         user=int(u), n_clicks=int(pop["n_clicks"][u]), n_political=int(pop["n_pol"][u]),
         scores=scores, overall=overall, attention=attention,
         political_share=political_share,
-        top_categories=top_cats, blind_spots=gaps[:2], top_publishers=top_pubs,
+        top_categories=top_cats, blind_spots=gaps, top_publishers=top_pubs,
         top_n_share=float(pop["topn"][u]) if np.isfinite(pop["topn"][u]) else None,
         effective_sources=float(pop["eff_src"][u]) if np.isfinite(pop["eff_src"][u]) else None,
         distinct_outlets=int((UO[u] > 0).sum()),
