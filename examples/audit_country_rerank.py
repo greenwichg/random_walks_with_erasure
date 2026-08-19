@@ -313,9 +313,11 @@ def main(argv=None) -> int:
         base_ids_set = {r["article"]["id"] for r in base_full}
         b_plan = Counter(r.get("strategy") for r in base_full)
         b_cross = sum(1 for r in base_full if r.get("crossCutting"))
+        b_cross_b = sum(1 for r in base_full
+                        if r.get("strategy") == "rwe-b" and r.get("crossCutting"))
         print(f"\n-- 3c. backfill quality ({who}) --")
         print(f"  Global baseline: {len(base_full)} cards, {len(base_pubs)} publishers, "
-              f"plan {dict(b_plan)}, cross-cutting {b_cross}")
+              f"plan {dict(b_plan)}, cross-cutting {b_cross_b} in bridging / {b_cross} overall")
         for want in probes:
             recs = serve_full({"country": want})
             arts = [r["article"] for r in recs]
@@ -324,6 +326,12 @@ def main(argv=None) -> int:
             pubs = {(a.get("publisher") or "") for a in arts}
             plan_now = Counter(r.get("strategy") for r in recs)
             cross = sum(1 for r in recs if r.get("crossCutting"))
+            # rwe-b is the slice whose CONTRACT is opposing perspectives. A card in another slice
+            # that happens to be cross-cutting is incidental and free to change — reordering the
+            # non-bridging slices is the whole point of a country preference. Judging the total
+            # conflates the two and cries wolf; this instrument did exactly that until the
+            # interaction audit split them (2026-08-19).
+            cross_b = sum(1 for r in recs if r.get("strategy") == "rwe-b" and r.get("crossCutting"))
             # Backfill should be the reader's ORDINARY recommendations, not scraped from the
             # bottom of the ranking. Overlap with the Global feed is the evidence for that.
             overlap = sum(1 for r in fill if r["article"]["id"] in base_ids_set)
@@ -332,8 +340,10 @@ def main(argv=None) -> int:
                   f"{'   <-- SHORT FEED' if short else ''}")
             print(f"    plan          : {dict(plan_now)}"
                   f"{'   <-- BRIDGING ALLOCATION CHANGED' if plan_now.get('rwe-b') != b_plan.get('rwe-b') else '   (bridging held)'}")
-            print(f"    cross-cutting : {cross} (global {b_cross})"
-                  f"{'   <-- DIVERSITY LOST' if cross < b_cross else ''}")
+            print(f"    cross-cutting : bridging {cross_b} (global {b_cross_b})"
+                  f"{'   <-- DIVERSITY LOST' if cross_b < b_cross_b else ''}"
+                  f";  all slices {cross} (global {b_cross})"
+                  f"{'  — incidental, outside the contract' if cross < b_cross else ''}")
             print(f"    publishers    : {len(pubs)} distinct (global {len(base_pubs)})")
             print(f"    backfill also in the Global feed: {overlap}/{len(fill)}"
                   f"{'   <-- backfill is NOT the normal feed; investigate' if fill and overlap == 0 else ''}")
