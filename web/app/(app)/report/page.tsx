@@ -24,6 +24,7 @@ import { Badge } from "@/components/ui/badge";
 import { resolveBand, LEAN_META } from "@/lib/metrics";
 import { useTranslation } from "@/lib/i18n";
 import { leanBucket } from "@/lib/political";
+import { isLabelled } from "@/lib/bar-items";
 
 export default function ReportPage() {
   const { data: report, isLoading, isError, refetch } = useReport();
@@ -39,8 +40,13 @@ export default function ReportPage() {
   // (a signed-in reader below the read threshold) never renders "NaN%".
   const confidence = report && report.mode === "measured" ? report.axisConfidence : null;
 
+  // Filtered BEFORE the slice: an uncategorized slice (`classify_topic` returns "" and the UI
+  // hides it) would otherwise spend one of the eight slots and push a real category off the list.
   const topicItems: BarItem[] =
-    report?.topics.slice(0, 8).map((tp) => ({ label: tp.topic, value: tp.share, count: tp.count })) ?? [];
+    report?.topics
+      .filter((tp) => isLabelled(tp.topic))
+      .slice(0, 8)
+      .map((tp) => ({ label: tp.topic, value: tp.share, count: tp.count })) ?? [];
 
   const sourceItems: BarItem[] =
     report?.sources.map((s) => {

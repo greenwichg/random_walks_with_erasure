@@ -3,6 +3,7 @@
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { ChartEmpty } from "./states";
+import { labelledItems } from "@/lib/bar-items";
 
 export interface BarItem {
   label: string;
@@ -13,7 +14,11 @@ export interface BarItem {
 }
 
 /** A ranked horizontal bar list — used for topic + source distributions. */
-export function BarList({ items, className }: { items: BarItem[]; className?: string }) {
+export function BarList({ items: given, className }: { items: BarItem[]; className?: string }) {
+  // A row must say what it is. An unlabelled one draws a bar and a percentage against no subject,
+  // which reads as a broken card — and, since the key below is the label, two of them collide.
+  // Enforced here rather than at each call site so every list that ever renders is covered.
+  const items = labelledItems(given);
   // An empty list rendered as an empty <div>: the card kept its title and tooltip above a blank
   // space, which reads as a card that failed rather than one with nothing to rank yet. No height
   // is reserved — unlike a chart this has no intrinsic size to hold open.
