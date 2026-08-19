@@ -1148,6 +1148,29 @@ def test_country_multiplier_lifts_matches_and_never_sinks_the_rest():
     assert m("", None) == 1.0
 
 
+def test_country_boost_is_overridable_for_measurement_but_never_by_a_reader():
+    """The sweep hook: `countryBoost` overrides the shipped anchor for one call, so the anchor can
+    be chosen from measurements. No reader can set it — rec_params_from_settings never emits the
+    key, whatever is stored."""
+    m = api_server._country_multiplier
+    assert m("IN", "IN") == api_server._COUNTRY_BOOST          # default = the shipped anchor
+    assert m("IN", "IN", 20.0) == 20.0
+    assert m("US", "IN", 20.0) == 1.0                          # still only lifts matches
+    assert m("", "IN", 20.0) == 1.0                            # unlocated still neutral
+    assert m("IN", "IN", 0) == 1.0                             # junk degrades to no-op, never 0
+
+    class M:
+        categories = np.asarray(["Sports", "Business"], dtype=object)
+    R = api_server.Backend._preference_rerank
+    by_col = {1: "IN"}
+    assert R(M, [0, 1], {"country": "IN", "countryBoost": 20.0}, by_col) == [1, 0]
+
+    # the reader surface cannot produce it, at any stored value
+    for stored in ({"recommendationCountry": "IN"},
+                   {"recommendationCountry": "IN", "interests": {"sports": 10}}):
+        assert "countryBoost" not in (api_server.rec_params_from_settings(stored) or {})
+
+
 def test_preference_rerank_applies_and_composes_the_country_nudge():
     """Country alone lifts its matches; country and interest MULTIPLY into one key, so an item
     carrying both outranks either signal alone; and unlocated items keep model order."""

@@ -49,6 +49,7 @@ from collections import Counter
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import numpy as np               # noqa: E402
 import feed_source                # noqa: E402
 import story_service              # noqa: E402
 import store as store_mod         # noqa: E402
@@ -71,6 +72,16 @@ def coverage(rows) -> dict:
     return {"n": n, "event": ev, "publisher": pub, "located": ev + pub, "per_country": per_country}
 
 
+def in_share_str(arts, want: str, country_of: dict) -> str:
+    """Share of the CARDS WHOSE COUNTRY IS KNOWN that match `want`, plus the raw card count —
+    the denominator is stated because an unlocated card is not evidence either way."""
+    known = [a for a in arts if country_of.get(str(a["id"]))]
+    if not known:
+        return "n/a (0 known)"
+    hit = sum(1 for a in known if country_of[str(a["id"])] == want)
+    return f"{hit / len(known):.0%} ({hit}/{len(known)})"
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--countries", default="",
@@ -84,6 +95,10 @@ def main(argv=None) -> int:
     ap.add_argument("--list-users", action="store_true",
                     help="list engine users with their read counts, then exit")
     ap.add_argument("--limit", type=int, default=100000)
+    ap.add_argument("--boost-sweep", default="",
+                    help="comma-separated country-boost anchors to measure (e.g. 8,12,16,20). "
+                         "Reports the country gain AND the interest dilution at each, so the "
+                         "anchor is chosen from numbers the way the Interest curve was retuned.")
     ap.add_argument("--serve-diff", action="store_true",
                     help="also build a Backend from the live catalog and diff the served feed "
                          "with/without each country (costs one corpus build)")
@@ -211,10 +226,50 @@ def main(argv=None) -> int:
               f"changed; catalog supply {supply}  [{verdict}]")
         if supply and s_pick <= s_base:
             print(f"    the catalog HAS {want} articles and the feed did not shift toward them — "
-                  f"either they rank far outside the {api_server._COUNTRY_BOOST:g}x reach, or "
+                  f"either they rank far outside the {engine._COUNTRY_BOOST:g}x reach, or "
                   f"they are excluded upstream (already-read, admission, publisher cap).")
     print(f"\n  Global re-check: {'identical' if [a['id'] for a in base] == base_ids else 'DRIFTED'}"
           f" — an unmoved control must serve the unmoved feed.")
+
+    # -- 4. the boost sweep ----------------------------------------------------------------- #
+    anchors = [float(x) for x in args.boost_sweep.replace(" ", "").split(",") if x]
+    if not anchors:
+        return 0
+
+    want = probes[0]
+    # The dilution arm needs a topic with real supply, so it uses the catalog's commonest one at
+    # slider 10 — the strongest interest a reader can express. Measuring the country boost alone
+    # would show only the benefit; the cost is that both preferences multiply into ONE sort key,
+    # so every increment of country boost buys country cards partly at the interest's expense.
+    cats = [str(c).strip().lower() for c in np.asarray(be.mind.categories)]
+    topic = Counter(c for c in cats if c).most_common(1)[0][0]
+    # The served payload carries the PRETTIFIED label ("technology" -> "Technology", and
+    # "arts_culture" -> "Arts Culture"), so match on that rather than on the raw category —
+    # lower-casing the served value back would silently miss every underscored taxonomy label.
+    label = engine._prettify(topic)
+    n_topic_in = lambda arts: sum(1 for a in arts if a.get("topic") == label)
+    interest_only = serve({"interests": {topic: 10}})
+    ref_topic = n_topic_in(interest_only)
+
+    print(f"\n-- 4. boost sweep for {want} (interest arm: '{label}' at slider 10) --")
+    print(f"  {'boost':>7}  {'country share':>13}  {'slots moved':>11}  "
+          f"{'topic cards':>11}  {'vs interest-only':>16}")
+    print(f"  {'—':>7}  {in_share_str(base, want, country_of):>13}  {'0':>11}  "
+          f"{ref_topic:>11}  {'(reference)':>16}")
+    for b in anchors:
+        both = serve({"country": want, "countryBoost": b, "interests": {topic: 10}})
+        only = serve({"country": want, "countryBoost": b})
+        moved = sum(1 for x, y in zip(base_ids, [a["id"] for a in only]) if x != y)
+        n_topic = n_topic_in(both)
+        delta = n_topic - ref_topic
+        print(f"  {b:>6.0f}x  {in_share_str(only, want, country_of):>13}  {moved:>11}  "
+              f"{n_topic:>11}  {delta:>+16d}")
+    print(f"\n  Read the last column as the cost: how many '{label}' cards a reader with that "
+          f"slider at 10 loses once the country boost competes with it. A boost that buys country "
+          f"cards by emptying the interest arm has made the eight sliders decorative.")
+    print(f"  The shipped anchor is {engine._COUNTRY_BOOST:g}x; changing it means editing "
+          f"_COUNTRY_BOOST, not passing countryBoost — that key is measurement-only and no reader "
+          f"can set it.")
     return 0
 
 

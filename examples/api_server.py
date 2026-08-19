@@ -810,17 +810,26 @@ def _interest_multiplier(w: float) -> float:
 _COUNTRY_BOOST = 8.0
 
 
-def _country_multiplier(item_country: str, want: "str | None") -> float:
+def _country_multiplier(item_country: str, want: "str | None", boost: "float | None" = None) -> float:
     """Rank divisor for one item under a country preference: the boost on a match, 1.0 otherwise.
 
     An item with NO known country is neutral (1.0), never demoted. That is the load-bearing
     choice: event geography resolves for a minority of the catalog, so demoting unlocated items
     would not prioritize the reader's country — it would bury everything the geocoder happened to
     miss, which is a coverage artefact rather than a preference. Preference expressed as "lift the
-    matches", never "sink the rest"."""
+    matches", never "sink the rest".
+
+    ``boost`` overrides :data:`_COUNTRY_BOOST` for one call. It exists so the anchor can be SWEPT
+    and chosen from measurements (``examples/audit_country_rerank.py --boost-sweep``) the way the
+    Interest Intensity curve was retuned, rather than argued about. No reader can set it:
+    :func:`rec_params_from_settings` never emits the key, so the serving path always uses the
+    module constant."""
     if not want or not item_country:
         return 1.0
-    return _COUNTRY_BOOST if item_country == want else 1.0
+    if item_country != want:
+        return 1.0
+    b = _COUNTRY_BOOST if boost is None else float(boost)
+    return b if b > 0 else 1.0
 
 
 def _piecewise(v: float, lo: float, mid: float, hi: float) -> float:
@@ -1918,7 +1927,8 @@ class Backend:
                 if w:
                     mult *= _interest_multiplier(w)
             if want_country:
-                mult *= _country_multiplier(by_col.get(int(col), ""), want_country)
+                mult *= _country_multiplier(by_col.get(int(col), ""), want_country,
+                                            (params or {}).get("countryBoost"))
             keys.append((i + 1) / mult if mult != 1.0 else float(i + 1))
         order = sorted(range(len(cols)), key=lambda i: (keys[i], i))
         return [cols[i] for i in order]
