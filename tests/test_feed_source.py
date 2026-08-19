@@ -355,8 +355,7 @@ def test_mentioned_countries_matches_names_not_substrings():
     assert m("Indianapolis 500 results") == frozenset()      # word boundary, not substring
     assert m("UK and US sign a deal") == frozenset({"GB", "US"})
     assert m("") == frozenset() and m(None) == frozenset()
-    # the demonym gap is real and load-bearing for how far this signal can be trusted
-    assert m("Indian markets rally") == frozenset()
+    assert m("Indian markets rally") == frozenset({"IN"})    # demonyms count
 
 
 def test_article_countries_separates_content_from_provenance():
@@ -373,3 +372,27 @@ def test_article_countries_separates_content_from_provenance():
     assert f(a, "union") == frozenset({"IN", "NP", "US"})
     # a set, not a label: an article about two countries belongs to both
     assert len(f({"eventCountries": ["IN", "PK"]}, "event")) == 2
+
+
+def test_demonyms_match_but_not_inside_known_non_country_phrases():
+    """Demonyms carry real supply ("Indian markets" is India news), and each guard below is a
+    phrase where the demonym does NOT denote its country. The table is curated, never derived by
+    suffix rule — "Turkey"->"Turkish" and "Netherlands"->"Dutch" share no rule, and a guessed
+    demonym is a silent mis-label."""
+    m = feed_source.mentioned_countries
+    assert m("British PM faces confidence vote") == frozenset({"GB"})
+    assert m("Turkish lira hits record low") == frozenset({"TR"})
+    assert m("Polish parliament passes the bill") == frozenset({"PL"})
+    assert m("South Korean chipmakers gain") == frozenset({"KR"})     # the compound disambiguates
+    assert m("North Korean missile test") == frozenset({"KP"})
+
+    for blocked in ("African American voters shift", "nail polish sales climb",
+                    "French fries price war", "Indian Ocean shipping lanes",
+                    "German shepherd rescued from lake", "Dutch oven recipes",
+                    "Turkish delight exports"):
+        assert m(blocked) == frozenset(), blocked
+
+    # bare "Korean" and "English" are deliberately absent: one cannot choose between KR and KP,
+    # the other reads as the language far more often than the country
+    assert m("Korean drama series") == frozenset()
+    assert m("English language exams") == frozenset()

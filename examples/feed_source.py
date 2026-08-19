@@ -101,6 +101,44 @@ def _name_index():
     return idx
 
 
+#: Demonyms -> ISO. Curated, never derived by suffix rules: "Turkey"->"Turkish" and
+#: "Netherlands"->"Dutch" have no common rule, and a guessed demonym is a silent mis-label.
+#: Deliberately ABSENT: "english" (the language reading dominates, and England/Britain/UK/British
+#: already cover GB), "korean" (bare, it does not choose between KR and KP — the compounds below
+#: do), "georgian" and "jordanian"-style names whose non-country reading is at least as common.
+_DEMONYMS = {
+    "american": "US", "british": "GB", "scottish": "GB", "welsh": "GB", "irish": "IE",
+    "canadian": "CA", "australian": "AU", "indian": "IN", "pakistani": "PK",
+    "bangladeshi": "BD", "sri lankan": "LK", "nepali": "NP", "nepalese": "NP",
+    "chinese": "CN", "japanese": "JP", "south korean": "KR", "north korean": "KP",
+    "taiwanese": "TW", "thai": "TH", "vietnamese": "VN", "filipino": "PH", "indonesian": "ID",
+    "malaysian": "MY", "singaporean": "SG", "russian": "RU", "ukrainian": "UA",
+    "german": "DE", "french": "FR", "spanish": "ES", "portuguese": "PT", "italian": "IT",
+    "dutch": "NL", "belgian": "BE", "swiss": "CH", "austrian": "AT", "swedish": "SE",
+    "norwegian": "NO", "danish": "DK", "finnish": "FI", "greek": "GR", "turkish": "TR",
+    "israeli": "IL", "palestinian": "PS", "saudi": "SA", "emirati": "AE", "egyptian": "EG",
+    "iranian": "IR", "iraqi": "IQ", "syrian": "SY", "lebanese": "LB", "qatari": "QA",
+    "nigerian": "NG", "kenyan": "KE", "ethiopian": "ET", "ghanaian": "GH",
+    "south african": "ZA", "moroccan": "MA", "algerian": "DZ", "tunisian": "TN",
+    "brazilian": "BR", "argentine": "AR", "argentinian": "AR", "chilean": "CL",
+    "colombian": "CO", "peruvian": "PE", "venezuelan": "VE", "mexican": "MX", "cuban": "CU",
+    "polish": "PL", "czech": "CZ", "hungarian": "HU", "romanian": "RO",
+}
+
+#: Phrases in which a demonym does NOT denote its country. The known-counterexample discipline
+#: this repo already applies to lexicons: each entry earned its place by being a real phrase,
+#: and the list is checked as a bigram around the match rather than by fuzzy scoring.
+_DEMONYM_BLOCK = frozenset((
+    "african american", "latin american", "native american", "south american",
+    "north american", "central american", "american airlines", "american express",
+    "american idol", "american football", "pan american",
+    "nail polish", "shoe polish", "polish off", "polish up",
+    "french fries", "french toast", "french open", "french door", "french bulldog",
+    "dutch oven", "going dutch", "danish pastry", "chinese takeaway",
+    "indian ocean", "russian roulette", "turkish delight", "greek yogurt",
+    "swiss cheese", "swiss army", "spanish flu", "german shepherd",
+))
+
 _WORDS = re.compile(r"[^a-z0-9.]+")
 
 
@@ -112,8 +150,9 @@ def mentioned_countries(text: str) -> frozenset:
     tokenized first), so "Indianapolis" cannot match "India".
 
     KNOWN LIMITS, stated because they decide how far this signal can be trusted:
-      * No demonyms — "Indian markets" does not match IN. Adding them is a bigger table and its
-        own false-positive surface ("Chinese takeaway").
+      * Demonyms ARE matched from a curated table ("Indian" -> IN), never derived by suffix
+        rule, and suppressed inside known non-country phrases (_DEMONYM_BLOCK). Bare "Korean"
+        and "English" are deliberately absent — see _DEMONYMS.
       * Short country names that are also ordinary words or place names elsewhere (Chad, Georgia,
         Jordan, Turkey, Guinea) WILL over-match. Whether that matters is measurable, not
         guessable — audit_country_rerank reports the per-country counts so the damage is visible.
@@ -128,9 +167,18 @@ def mentioned_countries(text: str) -> frozenset:
         for k in (1, 2, 3):
             if i + k > len(toks):
                 break
-            iso = idx.get(" ".join(toks[i:i + k]))
+            gram = " ".join(toks[i:i + k])
+            iso = idx.get(gram)
             if iso:
                 out.add(iso)
+            dem = _DEMONYMS.get(gram)
+            if dem:
+                # A demonym only counts when neither the phrase it starts nor the one it ends is a
+                # known non-country reading ("African American", "nail polish", "French fries").
+                before = " ".join(toks[i - 1:i + k]) if i else ""
+                after = " ".join(toks[i:i + k + 1])
+                if before not in _DEMONYM_BLOCK and after not in _DEMONYM_BLOCK:
+                    out.add(dem)
     return frozenset(out)
 
 
