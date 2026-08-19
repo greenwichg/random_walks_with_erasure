@@ -72,6 +72,13 @@ def coverage(rows) -> dict:
     return {"n": n, "event": ev, "publisher": pub, "located": ev + pub, "per_country": per_country}
 
 
+def n_country_in(arts, want: str, country_of: dict) -> int:
+    """Raw count of served cards matching `want` — the series to read, since the share's
+    denominator (cards with a KNOWN country) varies run to run and can make an unchanged count
+    look like a decline."""
+    return sum(1 for a in arts if country_of.get(str(a["id"])) == want)
+
+
 def in_share_str(arts, want: str, country_of: dict) -> str:
     """Share of the CARDS WHOSE COUNTRY IS KNOWN that match `want`, plus the raw card count —
     the denominator is stated because an unlocated card is not evidence either way."""
@@ -236,7 +243,6 @@ def main(argv=None) -> int:
     if not anchors:
         return 0
 
-    want = probes[0]
     # The dilution arm needs a topic with real supply, so it uses the catalog's commonest one at
     # slider 10 — the strongest interest a reader can express. Measuring the country boost alone
     # would show only the benefit; the cost is that both preferences multiply into ONE sort key,
@@ -251,19 +257,23 @@ def main(argv=None) -> int:
     interest_only = serve({"interests": {topic: 10}})
     ref_topic = n_topic_in(interest_only)
 
-    print(f"\n-- 4. boost sweep for {want} (interest arm: '{label}' at slider 10) --")
-    print(f"  {'boost':>7}  {'country share':>13}  {'slots moved':>11}  "
-          f"{'topic cards':>11}  {'vs interest-only':>16}")
-    print(f"  {'—':>7}  {in_share_str(base, want, country_of):>13}  {'0':>11}  "
-          f"{ref_topic:>11}  {'(reference)':>16}")
-    for b in anchors:
-        both = serve({"country": want, "countryBoost": b, "interests": {topic: 10}})
-        only = serve({"country": want, "countryBoost": b})
-        moved = sum(1 for x, y in zip(base_ids, [a["id"] for a in only]) if x != y)
-        n_topic = n_topic_in(both)
-        delta = n_topic - ref_topic
-        print(f"  {b:>6.0f}x  {in_share_str(only, want, country_of):>13}  {moved:>11}  "
-              f"{n_topic:>11}  {delta:>+16d}")
+    for want in probes:
+        print(f"\n-- 4. boost sweep for {want} (interest arm: '{label}' at slider 10) --")
+        print(f"  {'boost':>7}  {'country cards':>13}  {'share':>12}  {'slots moved':>11}  "
+              f"{'topic cards':>11}  {'vs interest-only':>16}")
+        print(f"  {'—':>7}  {n_country_in(base, want, country_of):>13}  "
+              f"{in_share_str(base, want, country_of):>12}  {'0':>11}  "
+              f"{ref_topic:>11}  {'(reference)':>16}")
+        for b in anchors:
+            both = serve({"country": want, "countryBoost": b, "interests": {topic: 10}})
+            only = serve({"country": want, "countryBoost": b})
+            moved = sum(1 for x, y in zip(base_ids, [a["id"] for a in only]) if x != y)
+            n_topic = n_topic_in(both)
+            print(f"  {b:>6.0f}x  {n_country_in(only, want, country_of):>13}  "
+                  f"{in_share_str(only, want, country_of):>12}  {moved:>11}  "
+                  f"{n_topic:>11}  {n_topic - ref_topic:>+16d}")
+        print(f"  (card COUNT is the honest series: the share's denominator is the cards whose "
+              f"country is known, which itself moves between runs.)")
     print(f"\n  Read the last column as the cost: how many '{label}' cards a reader with that "
           f"slider at 10 loses once the country boost competes with it. A boost that buys country "
           f"cards by emptying the interest arm has made the eight sliders decorative.")
