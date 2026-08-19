@@ -491,7 +491,7 @@
   "settings.countriesEmpty": "No countries available yet.",
   "settings.countriesUnavailable": "Couldn't load countries. Reload to try again.",
   "settings.recCountry": "Country",
-  "settings.recCountryInfo": "Prioritizes recommendations tied to the country you pick — coverage located there, or outlets based there. It reorders your feed: nothing is hidden, and your other For You controls keep working exactly as before.",
+  "settings.recCountryInfo": "Puts news from the country you pick at the top of your feed — coverage located there, or outlets based there. Nothing is hidden: once that country's articles run out, the rest of your feed follows. Your other For You controls keep working exactly as before.",
   "settings.recCountryHint": "Most of the catalog is matched by where an outlet is based; a smaller share by where the story happened. Global keeps your feed exactly as it is today.",
   "settings.recCountryGlobal": "Global",
   "settings.recCountryReset": "Reset",

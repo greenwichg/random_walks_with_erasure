@@ -491,7 +491,7 @@
   "settings.countriesEmpty": "Ainda não há países disponíveis.",
   "settings.countriesUnavailable": "Não foi possível carregar os países. Recarregue para tentar novamente.",
   "settings.recCountry": "País",
-  "settings.recCountryInfo": "Prioriza recomendações ligadas ao país escolhido: cobertura localizada aí ou meios sediados aí. Reordena o seu feed: nada é ocultado e os seus outros controlos Para si continuam a funcionar igual.",
+  "settings.recCountryInfo": "Coloca as notícias do país escolhido no topo do seu feed: cobertura localizada aí ou meios sediados aí. Nada é ocultado: quando os artigos desse país acabam, segue-se o resto do seu feed. Os seus outros controlos Para si continuam a funcionar igual.",
   "settings.recCountryHint": "A maior parte do catálogo é associada pela sede do meio; uma parte menor pelo local dos acontecimentos. Global mantém o seu feed exatamente como está hoje.",
   "settings.recCountryGlobal": "Global",
   "settings.recCountryReset": "Repor",
