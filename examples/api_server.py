@@ -679,15 +679,34 @@ def _register_enum(p_reporting) -> str:
     return "mixed"
 
 
+#: Zone names already reported as unresolvable — warned about once each, not once per read.
+_ZONE_MISSES: set = set()
+
+
 def _zone(time_zone: "str | None"):
     """An IANA name → tzinfo, or UTC. Never raises: an unresolvable name degrades to UTC, which is
-    the behaviour every caller had before zones existed."""
+    the behaviour every caller had before zones existed.
+
+    The degradation is LOUD. A name is only ever stored because it resolved on the machine that
+    stored it, so an unresolvable one here means the tz database changed underneath the data —
+    typically a rebuild whose base image dropped the backward-compatibility links. Browsers really
+    do report those: Chrome on many systems says ``Asia/Calcutta``, not ``Asia/Kolkata``. Silently
+    falling back to UTC would revert exactly the readers this feature exists for, and would look
+    like nothing at all; observed once per distinct name, it is one grep away."""
     if not time_zone:
         return timezone.utc
+    name = str(time_zone)
     try:
         from zoneinfo import ZoneInfo
-        return ZoneInfo(str(time_zone))
+        return ZoneInfo(name)
     except Exception:
+        if name not in _ZONE_MISSES:
+            _ZONE_MISSES.add(name)
+            import logging
+            logging.getLogger(__name__).warning(
+                json.dumps({"event": "time_zone_unresolvable", "timeZone": name,
+                            "effect": "day bucketing for this reader fell back to UTC",
+                            "likelyCause": "the tz database lacks this name — install tzdata"}))
         return timezone.utc
 
 

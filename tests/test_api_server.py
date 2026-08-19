@@ -1523,3 +1523,41 @@ def test_slider_params_do_not_mutate_the_shared_stack(backend, user):
     assert _rec_ids(backend, user, "rwe-b", None) == before
     assert float(backend.rec.models["rwe-b"].epsilon) == 0.9       # cached hyperparams untouched
     assert float(backend.rec.models["rwe-d"].beta) == 0.5
+
+
+def test_legacy_zone_aliases_resolve_and_agree_with_their_canonical_name():
+    """Browsers report BACKWARD-COMPAT names — Chrome says "Asia/Calcutta", and that is what a real
+    reader's stored zone turned out to be. Those names live in the tz database's `backward` links,
+    which a thin system tzdb may omit: the name then fails to resolve and day bucketing silently
+    reverts to UTC for exactly the readers this feature is for. This fails on a runner whose tz
+    database is incomplete, which is the point — the `test` extra pins `tzdata` so it never is."""
+    pairs = [("Asia/Calcutta", "Asia/Kolkata"),
+             ("Asia/Saigon", "Asia/Ho_Chi_Minh"),
+             ("Asia/Katmandu", "Asia/Kathmandu"),
+             ("America/Buenos_Aires", "America/Argentina/Buenos_Aires")]
+    for ts in ("2026-01-15T18:31:00Z", "2026-07-15T18:31:00Z", "2026-08-19T20:30:00Z"):
+        for legacy, canonical in pairs:
+            assert api_server._local_day(ts, legacy) == api_server._local_day(ts, canonical), \
+                f"{legacy} must bucket identically to {canonical}"
+            # …and neither may fall through to the UTC prefix, which is what an unresolvable
+            # name does — a silent revert that looks exactly like success.
+            assert api_server._local_day(ts, legacy) is not None
+
+
+def test_an_unresolvable_zone_is_reported_once_not_silently():
+    """A stored name only exists because it resolved somewhere. If it stops resolving, the tz
+    database moved under the data — that must be greppable, not invisible."""
+    import logging
+    api_server._ZONE_MISSES.discard("Mars/Olympus")
+    logger = logging.getLogger("api_server")
+    records = []
+    handler = logging.Handler()
+    handler.emit = records.append
+    logger.addHandler(handler)
+    try:
+        assert api_server._local_day("2026-08-19T20:30:00Z", "Mars/Olympus") == "2026-08-19"  # UTC
+        assert api_server._local_day("2026-08-19T20:30:00Z", "Mars/Olympus") == "2026-08-19"
+    finally:
+        logger.removeHandler(handler)
+    warned = [r for r in records if "time_zone_unresolvable" in r.getMessage()]
+    assert len(warned) == 1, "warn once per distinct name — never per read, never not at all"
