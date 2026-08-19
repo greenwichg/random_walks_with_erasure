@@ -64,18 +64,14 @@ export function OnboardingHero() {
       {/* Rows on a phone, centred columns from `sm` up. Three stacked centre-aligned blocks read
           as three separate announcements and pushed the actual CTA a screen and a half down; as
           rows they scan in one pass and the card stays reachable. */}
-      {/* `sm:[text-align:center]`, not `sm:text-center`. In THIS design system `left`, `center` and
-          `right` are theme COLOURS (the political lean scale, tailwind.config.ts), so Tailwind
-          emits `.text-left` / `.text-center` / `.text-right` as text-COLOUR utilities that shadow
-          its own alignment classes of the same name. Written the obvious way, these headings came
-          out lean-blue on a phone and lean-grey on a desktop — measured, not guessed:
-          `.text-left { color: hsl(var(--left)) }` was the matching rule. Alignment here is set as
-          a raw property so it cannot collide, and the colour is stated explicitly. */}
+      {/* Plain `sm:text-center` is safe again: the lean colours were renamed `lean-*`, so the
+          alignment utilities no longer collide with theme colour names (tailwind.config.ts). This
+          used to be `sm:[text-align:center]` to dodge that shadowing. */}
       <ul className="grid max-w-xl gap-5 sm:grid-cols-3 sm:gap-6">
         {features.map(({ Icon, title, body }) => (
           <li
             key={title}
-            className="flex items-start gap-3 sm:block sm:[text-align:center]"
+            className="flex items-start gap-3 sm:block sm:text-center"
           >
             <span className="grid h-11 w-11 flex-none place-items-center rounded-2xl border border-primary/20 bg-primary/10 text-primary sm:mx-auto">
               <Icon className="h-5 w-5" aria-hidden />

@@ -54,9 +54,18 @@ const config: Config = {
           foreground: "hsl(var(--popover-foreground))",
         },
         // Political spectrum + metric semantics (stable across themes).
-        left: "hsl(var(--left))",
-        center: "hsl(var(--center))",
-        right: "hsl(var(--right))",
+        //
+        // Named `lean-*`, NOT `left`/`center`/`right`: Tailwind derives utility names from these
+        // keys, and `left`/`center`/`right` collide head-on with its own built-in utilities.
+        // Measured in the generated CSS, the loser differed per property — `.text-left` resolved
+        // to `color` (so 60 alignment usages across the app silently painted lean hues and never
+        // aligned), while `.bg-left` resolved to `background-position` (so the report's metric
+        // bars silently lost their fill). Both classes of bug are impossible under a prefixed
+        // name. The CSS variables stay `--left`/`--center`/`--right`: they are read directly by
+        // lib/metrics.ts, the charts, and coverage-plate's dynamic `hsl(var(--${token}))`.
+        "lean-left": "hsl(var(--left))",
+        "lean-center": "hsl(var(--center))",
+        "lean-right": "hsl(var(--right))",
         positive: "hsl(var(--positive))",
         caution: "hsl(var(--caution))",
         negative: "hsl(var(--negative))",

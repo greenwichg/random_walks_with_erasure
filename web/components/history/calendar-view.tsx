@@ -124,13 +124,7 @@ export function CalendarView({
               aria-label={label}
               title={label}
               className={cn(
-                // `[text-align:left]`, never `text-left`: in this design system `left` is a theme
-                // COLOUR (the political-lean scale), so Tailwind emits `.text-left` as a
-                // text-colour utility that shadows its own alignment class. Written the obvious
-                // way these cells came out lean-blue on the pale shades — measured at 3.3:1
-                // against the level-1 background, under the 4.5:1 floor. Same trap, and the same
-                // fix, as components/onboarding/onboarding-hero.tsx.
-                "flex aspect-square min-h-12 flex-col items-start rounded-md p-2 outline-none transition-all [text-align:left]",
+                "flex aspect-square min-h-12 flex-col items-start rounded-md p-2 text-left outline-none transition-all",
                 shades[cell.level],
                 inks[cell.level],
                 cell.isToday && "ring-1 ring-inset ring-primary/70",

@@ -3,8 +3,8 @@
 /**
  * A compact horizontal share bar with an optional dotted legend — shared by the Information Health
  * strip's Political Balance tile and the Daily Summary's political/emotional exposure. Colors are
- * passed as CSS colors (inline styles) because several hue tokens collide with Tailwind utilities
- * (e.g. `bg-center` is a background-position). Segments with a zero value are omitted.
+ * passed as CSS colors (inline styles) because a segment's hue comes from data, not from a fixed
+ * class the bundler could see. Segments with a zero value are omitted.
  */
 export interface Segment {
   key: string;

@@ -22,9 +22,9 @@ export function StatCard({
 }) {
   const bg: Record<string, string> = {
     primary: "bg-primary/10 text-primary",
-    left: "bg-left/12 text-left",
-    center: "bg-center/12 text-center",
-    right: "bg-right/12 text-right",
+    left: "bg-lean-left/12 text-lean-left",
+    center: "bg-lean-center/12 text-lean-center",
+    right: "bg-lean-right/12 text-lean-right",
     positive: "bg-positive/12 text-positive",
     caution: "bg-caution/15 text-caution",
   };

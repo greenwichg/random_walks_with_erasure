@@ -73,7 +73,7 @@ export default function ProfilePage() {
     <PageContainer>
       {/* Hero */}
       <Card className="mb-6 overflow-hidden">
-        <div className="h-28 bg-gradient-to-r from-primary/25 via-center/20 to-right/20" />
+        <div className="h-28 bg-gradient-to-r from-primary/25 via-lean-center/20 to-lean-right/20" />
         <CardContent className="pt-0">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
             <div className="flex items-end gap-4">
@@ -194,7 +194,7 @@ function QuickStat({
     primary: "bg-primary/10 text-primary",
     positive: "bg-positive/12 text-positive",
     caution: "bg-caution/12 text-caution",
-    left: "bg-left/12 text-left",
+    left: "bg-lean-left/12 text-lean-left",
   };
   return (
     <div className="flex items-center gap-3 rounded-lg border bg-card/60 p-3">

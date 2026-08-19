@@ -250,7 +250,10 @@ export function RecommendationCard({
         <ActionButton
           label={t("rec.readLater")}
           active={readLater}
-          activeClass="text-left"
+          // Preserves this button's existing active colour exactly (`text-left` resolved to the
+          // lean-left hue under the old token names). Worth a design look: a Read-later toggle
+          // wearing the political-left hue is almost certainly not what was intended.
+          activeClass="text-lean-left"
           icon={Clock}
           onClick={() => {
             setReadLater((v) => !v);

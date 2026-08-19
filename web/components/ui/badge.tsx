@@ -17,9 +17,9 @@ const badgeVariants = cva(
         // ground vanished on the dark card and "Lean left" read as a bare blue hyperlink — a
         // misleading affordance on a political signal. The border is what keeps the pill legible
         // as a pill on both themes without pushing the fill loud.
-        left: "border-left/30 bg-left/15 text-left",
-        center: "border-center/30 bg-center/15 text-center",
-        right: "border-right/30 bg-right/15 text-right",
+        left: "border-lean-left/30 bg-lean-left/15 text-lean-left",
+        center: "border-lean-center/30 bg-lean-center/15 text-lean-center",
+        right: "border-lean-right/30 bg-lean-right/15 text-lean-right",
       },
     },
     defaultVariants: { variant: "default" },
