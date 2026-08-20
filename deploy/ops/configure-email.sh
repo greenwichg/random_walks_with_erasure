@@ -82,6 +82,12 @@ fi
 PASSWORD="${RWE_SMTP_PASSWORD_INPUT:-}"
 if [ -z "$PASSWORD" ]; then
   if [ -t 0 ]; then
+    # DISCARD TYPE-AHEAD FIRST. A hidden prompt swallows whatever is already sitting in the
+    # terminal's input buffer, invisibly. Paste a three-line block — the command, then a restart,
+    # then a check — and line 2 silently becomes the "password": the config is written, the script
+    # reports success, and the only clue is a character count nobody has a reference for. Observed
+    # exactly that, with `bash deploy/ops/restart.sh api` stored as an SES credential.
+    while read -r -t 0 2>/dev/null; do read -r _ 2>/dev/null || break; done
     printf 'App password for %s (input hidden; paste and press Enter): ' "$USER_" >&2
     read -rs PASSWORD; echo >&2
   else
@@ -95,6 +101,17 @@ PASSWORD="$(printf '%s' "$PASSWORD" | tr -d '[:space:]')"
 if [ -z "$PASSWORD" ]; then
   echo "empty password — nothing written" >&2; exit 2
 fi
+# Second net, because a flush cannot catch input that arrives mid-prompt. No credential this script
+# accepts can contain these: a Gmail app password is 16 lowercase letters, and an SES SMTP password
+# is base64 (A-Za-z0-9+/=), which has no "." and no spaces. A shell command has both.
+case "$PASSWORD" in
+  *.sh*|bash*|sudo*|cd/*|*deploy/ops*)
+    echo "REFUSING: that does not look like a password — it looks like a shell command:" >&2
+    echo "    ${PASSWORD:0:24}…" >&2
+    echo "  A pasted multi-line block feeds its later lines into this prompt as type-ahead." >&2
+    echo "  Run the command on its own, and type or paste ONLY the password at the prompt." >&2
+    exit 2 ;;
+esac
 if [ "$HOST" = "smtp.gmail.com" ] && [ "${#PASSWORD}" -ne 16 ]; then
   echo "NOTE: a Gmail app password is 16 characters; got ${#PASSWORD}. If authentication fails," >&2
   echo "      that length is the first thing to check (your Google password is not an app password)." >&2
