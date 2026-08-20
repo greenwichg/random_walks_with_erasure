@@ -100,6 +100,30 @@ for i in "${!FILES[@]}"; do
   fi
 done
 
+# ---- orphaned SQLite journals -------------------------------------------------------------- #
+# Opening a backup AS A DATABASE (the legacy `status --db sqlite:///<backup>` path in
+# backup-offhost.sh, or an operator inspecting one by hand) creates `<name>.db-wal` and
+# `<name>.db-shm` beside it. A clean close removes them; an abrupt exit does not — and on
+# 2026-08-19 a pair survived, was shipped to S3 by the directory sync, and will sit there forever
+# because nothing globs them: the tiered pass above matches only '*.db' and '*.db.gz'.
+#
+# Only a journal whose base .db is GONE is deleted. If the .db is still there the backup is
+# uncompressed and something may legitimately have it open; removing a live -wal under a reader is
+# how a database gets corrupted, and no cleanup is worth that.
+orphans=0; orphan_bytes=0
+for j in "$DIR"/*.db-wal "$DIR"/*.db-shm; do
+  [ -e "$j" ] || continue                                   # unmatched glob stays literal
+  base="${j%-wal}"; base="${base%-shm}"
+  [ -e "$base" ] && continue                                # the database is there: leave it alone
+  orphan_bytes=$(( orphan_bytes + $(stat -c %s "$j" 2>/dev/null || echo 0) ))
+  orphans=$((orphans + 1))
+  if [ -n "$DRY" ]; then
+    keep_list="$keep_list  would DELETE orphaned journal $(basename "$j")"$'\n'
+  else
+    rm -f "$j"
+  fi
+done
 printf '%s' "$keep_list"
+[ "$orphans" -gt 0 ] && echo "prune-backups: $orphans orphaned SQLite journal(s), $(( orphan_bytes / 1024 )) KB${DRY:+ (dry run — nothing deleted)}"
 echo "prune-backups: policy hourly=$H daily=$D weekly=$W monthly=$M"
 echo "prune-backups: $total backup(s) -> kept $kept, deleted $deleted, freed $(( freed / 1024 / 1024 )) MB${DRY:+ (dry run — nothing deleted)}"
