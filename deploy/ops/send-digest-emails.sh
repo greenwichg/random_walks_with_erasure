@@ -25,6 +25,20 @@ set -uo pipefail
 source "$(dirname "$0")/_compose.sh"
 need_env
 
+# THE CRON-USER TRAP, and it must be checked FIRST. This runs as `ubuntu` from /etc/cron.d while
+# deploy/.env is written by root (configure-email.sh, bootstrap). If the mode does not let the cron
+# user read it, every `env_val` returns empty — so the switch below reads as "not enabled" and this
+# exits 0 with "nothing to do", hourly, forever. A silent success is the worst possible shape for
+# this failure: the weekly digest simply never arrives and the log looks healthy.
+if [ ! -r "$ENV_FILE" ]; then
+  echo "send-digest-emails: cannot READ ${ENV_FILE} as $(id -un) — every setting reads as empty," >&2
+  echo "  so this would otherwise report 'nothing to do' and exit 0 forever. Fix with:" >&2
+  echo "    sudo chgrp ubuntu ${ENV_FILE} && sudo chmod 640 ${ENV_FILE}" >&2
+  echo "  640 keeps it unreadable to everyone else — it holds NEXTAUTH_SECRET and the SMTP" >&2
+  echo "  password. Verify exactly as cron will run it:  sudo -u ubuntu ${0}" >&2
+  exit 1
+fi
+
 if [ "$(env_val RWE_EMAIL_ENABLED)" != "1" ]; then
   echo "send-digest-emails: RWE_EMAIL_ENABLED is not 1 — nothing to do."
   exit 0
@@ -34,6 +48,13 @@ fi
 # one process owns the SQLite write lock, and a worker that opens its own connection alongside the
 # server is how a busy-timeout becomes a 500 for a reader mid-request.
 secret="$(env_val RWE_INTERNAL_SECRET)"
+if [ -z "$secret" ] && grep -qE '^RWE_INTERNAL_SECRET=' "$ENV_FILE" 2>/dev/null; then
+  echo "send-digest-emails: RWE_INTERNAL_SECRET is present in ${ENV_FILE} but read back empty." >&2
+  echo "  Without it the internal route answers 401 and no digest is mailed." >&2
+  echo "  Inspect with: grep -n '^RWE_INTERNAL_SECRET=' ${ENV_FILE}" >&2
+  exit 1
+fi
+
 
 if out="$(dc exec -T -e IH_AUTH="$secret" api python examples/email_run.py)"; then
   echo "send-digest-emails: $out"
