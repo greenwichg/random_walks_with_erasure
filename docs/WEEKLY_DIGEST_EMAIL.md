@@ -172,9 +172,20 @@ cd /opt/ih
 sudo bash deploy/ops/update.sh claude/sleepy-gates-oecof1
 ```
 
-Verify from inside the container — the AWS override unpublishes port 8000, so a `curl` on the host
-connects to nothing and prints nothing at all, which reads as an empty response rather than as no
-listener:
+Then check it, before believing anything:
+
+```bash
+bash deploy/ops/check-email.sh
+```
+
+That reports every variable as the **api container** sees it (the password as a length, never a
+value), dials the relay through the same code path a real send uses, and hangs up without sending.
+It exits non-zero when the deployment could not send to anyone. A failure names the thing to
+change rather than the error it got — a `535` says "use a 16-character App Password", an
+unreachable host says "check egress on that port" — because each of those lives in a different
+place and an operator reading an SMTP code should not have to know which.
+
+The older, narrower check is still there if you want just the two booleans:
 
 ```bash
 source deploy/ops/_compose.sh

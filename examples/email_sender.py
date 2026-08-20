@@ -48,6 +48,14 @@ log = logging.getLogger(__name__)
 _PERMANENT = frozenset({550, 551, 552, 553, 554})
 
 
+class _NoTlsOffered(smtplib.SMTPException):
+    """The relay advertises no STARTTLS, so we hang up instead of downgrading to plaintext.
+
+    A distinct type rather than a reuse of ``SMTPNotSupportedError``: ``login`` raises that same
+    class when the server has no AUTH extension, and the two want opposite handling — one is a
+    refusal to proceed, the other is an ordinary credential problem to retry."""
+
+
 @dataclass(frozen=True)
 class SendResult:
     """What one send attempt did. Mirrors ``push_sender.SendResult`` so the two delivery workers
@@ -158,28 +166,61 @@ class SmtpSender:
         #: 465 is implicit TLS (SMTPS); everything else negotiates STARTTLS after connecting.
         self.implicit_tls = (self.port == 465) if use_tls is None else bool(use_tls)
 
+    def _dial(self) -> smtplib.SMTP:
+        """Connect, secure the channel, authenticate — everything a send does except the sending.
+
+        Shared with :meth:`verify` deliberately. A preflight that dialled differently from a real
+        send would prove nothing about whether a real send works, which is worse than no preflight:
+        it is a green light with no wiring behind it."""
+        ctx = ssl.create_default_context()
+        client = (smtplib.SMTP_SSL(self.host, self.port, timeout=self.timeout, context=ctx)
+                  if self.implicit_tls
+                  else smtplib.SMTP(self.host, self.port, timeout=self.timeout))
+        try:
+            if not self.implicit_tls:
+                try:
+                    client.starttls(context=ctx)
+                except smtplib.SMTPNotSupportedError as exc:
+                    # A relay with no TLS at all: refuse rather than send a reader's reading history
+                    # in the clear. Its own exception type, because `login` raises the same class
+                    # when AUTH is unsupported and the two need opposite responses.
+                    log.error("email_smtp_no_tls: %s:%s offers no STARTTLS", self.host, self.port)
+                    raise _NoTlsOffered(str(exc)) from exc
+            if self.user:
+                client.login(self.user, self.password)
+        except BaseException:
+            try:
+                client.close()
+            except Exception:                          # noqa: BLE001 — already failing; don't mask it
+                pass
+            raise
+        return client
+
     def send(self, msg: EmailMessage) -> SendResult:
         """Deliver one message. Never raises — a delivery worker must not die on one bad address."""
         try:
-            ctx = ssl.create_default_context()
-            if self.implicit_tls:
-                client = smtplib.SMTP_SSL(self.host, self.port, timeout=self.timeout, context=ctx)
-            else:
-                client = smtplib.SMTP(self.host, self.port, timeout=self.timeout)
-            with client:
-                if not self.implicit_tls:
-                    try:
-                        client.starttls(context=ctx)
-                    except smtplib.SMTPNotSupportedError:
-                        # A relay with no TLS at all: refuse rather than send a reader's reading
-                        # history in the clear. Permanent for this configuration, not the address.
-                        log.error("email_smtp_no_tls: %s:%s offers no STARTTLS", self.host, self.port)
-                        return SendResult("no-tls", detail="relay offers no TLS")
-                if self.user:
-                    client.login(self.user, self.password)
+            with self._dial() as client:
                 client.send_message(msg)
             return SendResult("sent", code=250)
+        except _NoTlsOffered:
+            return SendResult("no-tls", detail="relay offers no TLS")
         except BaseException as exc:                  # noqa: BLE001 — classified, never propagated
+            return classify_exception(exc)
+
+    def verify(self) -> SendResult:
+        """Prove the relay will have us, **without sending anything**.
+
+        The point is to separate "my configuration is wrong" from "that message or that recipient
+        was rejected", because from outside they look identical: a run reports nothing sent either
+        way. This dials and hangs up, so a green answer means the next real send can only fail on
+        the message or the address."""
+        try:
+            with self._dial() as client:
+                client.noop()
+            return SendResult("sent", code=250, detail="relay accepted the connection and login")
+        except _NoTlsOffered:
+            return SendResult("no-tls", detail="relay offers no TLS")
+        except BaseException as exc:                  # noqa: BLE001 — a check must not raise either
             return classify_exception(exc)
 
 

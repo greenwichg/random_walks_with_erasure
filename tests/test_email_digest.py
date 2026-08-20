@@ -737,3 +737,74 @@ def test_the_allowlist_filters_before_the_wire(st, monkeypatch):
     assert stats.skipped["not-in-allowlist"] == 1
     assert stats.skipped.get("no-tls", 0) == 0, "it should not have got as far as the transport"
     assert relay.received == []
+
+
+# --------------------------------------------------------------------------- #
+# Preflight — the operator's "is my configuration wrong, or has nobody opted in?"
+# --------------------------------------------------------------------------- #
+def test_the_preflight_dials_the_same_way_a_send_does(st, monkeypatch):
+    """`verify` shares `_dial` with `send`, and that sharing is the whole value.
+
+    A preflight that connected differently from a real send would be a green light with no wiring
+    behind it — the most expensive kind of check, because it is trusted. Asserted against a relay
+    with no STARTTLS: the check must refuse for the same reason, and with the same status, that a
+    send refuses."""
+    relay = _Relay(advertise_tls=False).start_and_wait()
+    monkeypatch.setenv("RWE_SMTP_HOST", "127.0.0.1")
+    monkeypatch.setenv("RWE_SMTP_PORT", str(relay.port))
+    monkeypatch.setenv("RWE_EMAIL_FROM", "Hidden View <beta@example.test>")
+    sender = email_sender.sender_from_env()
+
+    checked = sender.verify()
+    sent = sender.send(email_sender.build_message(to="r@example.com", subject="s", text="t",
+                                                  html="<p>h</p>", sender=sender.sender))
+    assert checked.status == sent.status == "no-tls"
+    assert relay.received == [], "the preflight must not put a message on the wire"
+
+
+def test_the_preflight_never_puts_a_message_on_the_wire(monkeypatch):
+    """A check is not a send, and against a healthy relay that distinction stops being obvious.
+
+    Driven through a spy on `_dial` rather than a live TLS relay: the TLS policy is unconditional
+    by design, so a plaintext local server can only ever exercise the refusal path, and giving the
+    suite a certificate the client is told to trust would mean putting a seam into exactly the code
+    that must not have one."""
+    dialled, sent = [], []
+
+    class _Client:
+        def __enter__(self): return self
+        def __exit__(self, *exc): return False
+        def noop(self): return (250, b"OK")
+        def send_message(self, msg): sent.append(msg)
+
+    sender = email_sender.SmtpSender(host="relay.example.test", port=587, sender="a@b.test")
+    monkeypatch.setattr(type(sender), "_dial", lambda self: dialled.append(1) or _Client())
+
+    assert sender.verify().ok
+    assert dialled == [1], "verify must actually dial — the same way a send does"
+    assert sent == [], "verify must not hand the relay a message"
+
+    sender.send(email_sender.build_message(to="r@example.com", subject="s", text="t",
+                                           html="<p>h</p>", sender=sender.sender))
+    assert len(dialled) == 2 and len(sent) == 1, "send uses the same dial, and does send"
+
+
+@pytest.mark.parametrize("status,detail,expected", [
+    ("no-tls", "relay offers no TLS", "587 for STARTTLS"),
+    ("retry", "auth failed", "App Password"),
+    ("retry", "535 5.7.8 Username and Password not accepted", "App Password"),
+    ("retry", "sender refused: 553 5.7.1 not verified", "RWE_EMAIL_FROM"),
+    ("retry", "gaierror: Name or service not known", "RWE_SMTP_HOST"),
+    ("retry", "something nobody has seen", ""),
+])
+def test_the_preflight_names_the_thing_to_change(status, detail, expected):
+    """An error string is not a diagnosis. Each of these failures has a different cause in a
+    different place — the account's 2FA settings, a DNS record, a security group — and an operator
+    reading `535` should not have to know which.
+
+    Tested as pure routing because the real failures cannot be reproduced against a local relay:
+    a wrong password needs a TLS handshake to get as far as AUTH, and that needs a certificate this
+    suite has no business trusting."""
+    import email_preflight
+    hint = email_preflight.diagnose(email_sender.SendResult(status, detail=detail))
+    assert expected in hint if expected else hint == ""
