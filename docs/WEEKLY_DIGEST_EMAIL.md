@@ -232,7 +232,15 @@ weekly digest.
 ## 7. The schedule — hourly cron, for a weekly email
 
 ```cron
-17 * * * * ubuntu /opt/ih/deploy/ops/send-digest-emails.sh >> /var/log/ih-email.log 2>&1
+17 * * * * ubuntu /opt/ih/deploy/ops/send-digest-emails.sh 2>&1 | logger -t ih-email
+```
+
+Piped to `logger` rather than redirected into `/var/log`: the job runs as `ubuntu`, `/var/log` is
+root-owned, and `>> /var/log/ih-email.log` therefore fails at the *shell redirect* — before the
+script runs, producing no output and no log entry to explain why. Read the runs with:
+
+```bash
+journalctl -t ih-email --since today
 ```
 
 Hourly is not a mistake. **The schedule is not this cron.** The weekly digest is a `cadence`

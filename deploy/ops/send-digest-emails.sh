@@ -5,7 +5,16 @@
 #
 # Install hourly (not weekly) from cron:
 #
-#   17 * * * * ubuntu /opt/ih/deploy/ops/send-digest-emails.sh >> /var/log/ih-email.log 2>&1
+#   17 * * * * ubuntu /opt/ih/deploy/ops/send-digest-emails.sh 2>&1 | logger -t ih-email
+#
+# Piped to `logger`, NOT redirected to a file in /var/log. The cron line runs as `ubuntu`, and
+# /var/log is root-owned — so `>> /var/log/ih-email.log` fails at the shell redirect, before this
+# script is even executed, and the job produces nothing at all. Nothing reports that: cron mails
+# the error to a local mailbox nobody reads. `logger` needs no file to exist and no permission to
+# create one, and it lands in the journal, which is already this deployment's log store for exactly
+# the same durability reason the compose file pins journald for the containers.
+#
+# Read it with:  journalctl -t ih-email --since today
 #
 # HOURLY, for a WEEKLY email, on purpose. The schedule is not this cron: the weekly digest is a
 # `cadence` notification deduped on the ISO week (`weekly_digest:2026-W34`), materialised by the
