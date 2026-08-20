@@ -185,6 +185,20 @@ Use **us-east-1**, the region the rest of the stack is in: SES identities, sandb
 endpoints are all per-region, so mixing regions means verifying twice and wondering why one of them
 will not send.
 
+> ### Where to run these
+>
+> **Steps 1–5: NOT on the EC2 box.** Use the AWS console, or a shell with your own admin
+> credentials. The instance role (`ih-ec2-role`) has no SES permissions and **should not be given
+> any**: it is scoped to what the running application needs, and the application never calls the SES
+> API at all — it sends over SMTP with credentials from `deploy/.env`. Granting the instance
+> `ses:CreateEmailIdentity` would let anything that compromised it verify domains and reconfigure
+> your sending identity, in exchange for saving a one-time trip to the console. Attempting them on
+> the box fails with `AccessDeniedException ... no identity-based policy allows the ses:* action`,
+> which is the role behaving correctly rather than a misconfiguration to fix.
+>
+> **Step 6 onward: on the box.** The cutover only writes SMTP credentials into `deploy/.env`; it
+> needs no AWS permissions whatsoever.
+
 ### 1. Verify the domain with Easy DKIM
 
 Console: *SES → Identities → Create identity → Domain `hidden-view.com`*, Easy DKIM, RSA_2048, and
