@@ -172,53 +172,142 @@ cause:
 
 ---
 
-## 4a. Moving to a dedicated sender (SES + `digest@hidden-view.com`)
+## 5. Moving to a dedicated sender (SES + `digest@hidden-view.com`)
 
 The order matters: **authenticate the domain first, widen the allowlist last.** A sender with no
 SPF/DKIM alignment that suddenly mails a whole user base is how a domain's reputation is spent
 before it is earned, and reputation is not quickly recovered.
 
-Everything below is AWS console and DNS work. Use the region the rest of the stack is in
-(`us-east-1`) so the SMTP endpoint is local to the instance.
+All of it is AWS and DNS work — nothing here can be done from the repository. Steps 1–5 must ALL be
+finished before the cutover in step 6 has anything to point at; running it early writes placeholder
+credentials over a working config (a five-minute recovery from the `.bak`, but an avoidable one).
+Use **us-east-1**, the region the rest of the stack is in: SES identities, sandbox status and SMTP
+endpoints are all per-region, so mixing regions means verifying twice and wondering why one of them
+will not send.
 
-**1. Verify the domain with Easy DKIM.** SES → Identities → Create identity → Domain
-`hidden-view.com`, Easy DKIM, RSA_2048, keep "Publish DNS records to Route 53" ticked if the zone
-is there. Otherwise SES gives three CNAMEs — `<token>._domainkey.hidden-view.com` → 
-`<token>.dkim.amazonses.com` — to add at your DNS provider. Verification is usually minutes but
-DNS propagation can make it hours; the identity shows *Verified* when it is done.
+### 1. Verify the domain with Easy DKIM
+
+Console: *SES → Identities → Create identity → Domain `hidden-view.com`*, Easy DKIM, RSA_2048, and
+keep "Publish DNS records to Route 53" ticked if the zone is there — that writes the three CNAMEs
+for you. Or:
+
+```bash
+aws sesv2 create-email-identity --region us-east-1 \
+  --email-identity hidden-view.com \
+  --dkim-signing-attributes NextSigningKeyLength=RSA_2048
+
+aws sesv2 get-email-identity --region us-east-1 --email-identity hidden-view.com \
+  --query 'DkimAttributes.Tokens' --output text
+```
+
+Each token becomes a CNAME `<token>._domainkey.hidden-view.com` → `<token>.dkim.amazonses.com`. On
+Route 53, in one batch (substitute your zone id — `aws route53 list-hosted-zones-by-name --dns-name
+hidden-view.com` — and the three tokens):
+
+```bash
+cat > /tmp/dkim.json <<'JSON'
+{"Changes":[
+ {"Action":"UPSERT","ResourceRecordSet":{"Name":"TOKEN1._domainkey.hidden-view.com","Type":"CNAME","TTL":300,"ResourceRecords":[{"Value":"TOKEN1.dkim.amazonses.com"}]}},
+ {"Action":"UPSERT","ResourceRecordSet":{"Name":"TOKEN2._domainkey.hidden-view.com","Type":"CNAME","TTL":300,"ResourceRecords":[{"Value":"TOKEN2.dkim.amazonses.com"}]}},
+ {"Action":"UPSERT","ResourceRecordSet":{"Name":"TOKEN3._domainkey.hidden-view.com","Type":"CNAME","TTL":300,"ResourceRecords":[{"Value":"TOKEN3.dkim.amazonses.com"}]}}
+]}
+JSON
+aws route53 change-resource-record-sets --hosted-zone-id Z0123456789ABCD --change-batch file:///tmp/dkim.json
+```
+
+Then check rather than assume, and **do not continue until it is true** — everything after this step
+fails in ways that look like other problems:
+
+```bash
+aws sesv2 get-email-identity --region us-east-1 --email-identity hidden-view.com \
+  --query '{Sending:VerifiedForSendingStatus,Dkim:DkimAttributes.Status}'
+```
+
+You want `Sending: true`, `Dkim: SUCCESS`. Usually minutes; AWS allows itself up to 72 hours.
 
 DKIM is what carries the alignment. With Easy DKIM the signature's `d=` is `hidden-view.com`, so
-DMARC passes on the DKIM leg even though the envelope sender is Amazon's.
+**DMARC passes on the DKIM leg** even though the envelope sender is Amazon's. That fact decides the
+next step.
 
-**2. Custom MAIL FROM (recommended, not required).** Identity → MAIL FROM domain →
-`mail.hidden-view.com`. Adds an MX (`10 feedback-smtp.us-east-1.amazonses.com`) and an SPF TXT
-(`v=spf1 include:amazonses.com ~all`) on that subdomain. This aligns SPF as well as DKIM, and gives
-bounces somewhere of yours to land. Set the "on MX failure" behaviour to **reject**, not to fall
-back to `amazonses.com` — a silent fallback is a silent loss of alignment.
+### 2. Custom MAIL FROM (recommended, not required)
 
-**3. DMARC.** A TXT record at `_dmarc.hidden-view.com`. Start in monitor mode:
+```bash
+aws sesv2 put-email-identity-mail-from-attributes --region us-east-1 \
+  --email-identity hidden-view.com --mail-from-domain mail.hidden-view.com \
+  --behavior-on-mx-failure USE_DEFAULT_VALUE
+```
 
-    v=DMARC1; p=none; rua=mailto:dmarc@hidden-view.com
+Two records on that subdomain:
 
-`p=none` asks for reports without affecting delivery. Move to `p=quarantine` once the reports show
-your own mail passing, which is the point of starting at `none`.
+| Name | Type | Value |
+|---|---|---|
+| `mail.hidden-view.com` | MX | `10 feedback-smtp.us-east-1.amazonses.com` |
+| `mail.hidden-view.com` | TXT | `"v=spf1 include:amazonses.com ~all"` |
 
-**4. SMTP credentials.** SES → SMTP settings → Create SMTP credentials. This makes an IAM user with
-`ses:SendRawEmail` and derives an SMTP password from its secret key. **These are not your AWS access
-keys**, and the password cannot be re-derived later — it is shown once. The endpoint is
+This aligns SPF as well as DKIM, and gives bounces somewhere of yours to land.
+
+**On MX failure, fall back — do not reject.** An earlier draft of this document said the opposite,
+on the reasoning that a silent fallback is a silent loss of alignment. That reasoning is wrong:
+Easy DKIM (step 1) already aligns `d=hidden-view.com`, and DMARC passes if **either** leg aligns.
+So a fallback costs the SPF leg while DMARC still passes, whereas `REJECT_MESSAGE` turns a DNS
+lapse on a subdomain into every digest failing to send. The lesser failure is the right default.
+
+### 3. DMARC
+
+| Name | Type | Value |
+|---|---|---|
+| `_dmarc.hidden-view.com` | TXT | `"v=DMARC1; p=none; rua=mailto:yerram.saisanath@gmail.com"` |
+
+`p=none` asks receivers to *report*, not to act. Move to `p=quarantine` once the reports show your
+own mail passing — which is the point of starting at `none`. Publishing `p=reject` on day one is how
+a misconfiguration becomes silent total failure.
+
+Point `rua` at a mailbox that **exists**. A reports address on a domain with no inbox — say
+`dmarc@hidden-view.com` before you have created it — means the reports that would tell you something
+is wrong bounce instead.
+
+### 4. SMTP credentials
+
+*SES → SMTP settings → Create SMTP credentials.* This makes an IAM user with `ses:SendRawEmail` and
+derives an SMTP password from its secret key.
+
+**These are not your AWS access keys**, and the password cannot be re-derived later — it is shown
+once. Username is an `AKIA…` id; the password is 44 characters. Endpoint
 `email-smtp.us-east-1.amazonaws.com`, port 587 (STARTTLS). Port 25 is throttled on EC2 by default;
 587 is not.
 
-**5. Leave the sandbox.** A new SES account can only mail *verified* addresses, at 200/day. SES →
-Account dashboard → Request production access. You are asked how you handle bounces and
-complaints — the honest answer is that this system suppresses hard bounces permanently and honours
-one-click unsubscribe (RFC 8058), which is what they are checking for.
+### 5. Leave the sandbox
 
-**6. Cut over.** The allowlist is deliberately NOT changed here:
+A new SES account can only mail *verified* addresses, at 200/day and one per second. In the sandbox
+the relay answers `553` at `MAIL FROM` for anyone else — which this transport reports as
+`email_sender_refused` and **retries** rather than treating as a bad address, deliberately, so a
+sandbox account cannot suppress your readers (§8).
+
+*SES → Account dashboard → Request production access.* You are asked how you handle bounces and
+complaints; the honest answer is that this system suppresses hard bounces permanently (§8) and
+honours one-click unsubscribe, RFC 8058 (§9), which is what they are checking for. Usually approved
+within a day.
+
+While you wait, verify your own address as a recipient so you can test end to end:
 
 ```bash
+aws sesv2 create-email-identity --region us-east-1 --email-identity yerram.saisanath@gmail.com
+```
+
+### 6. Cut over
+
+**Run the configure command on its own** — nothing else on the clipboard, because the prompt reads
+from the terminal and would otherwise swallow the next line:
+
+```bash
+cd /opt/ih
 sudo bash deploy/ops/configure-email.sh digest@hidden-view.com --replace \
-     --host email-smtp.us-east-1.amazonaws.com --user AKIAXXXXXXXX --name 'Hidden View'
+     --host email-smtp.us-east-1.amazonaws.com --user AKIA_YOUR_SMTP_USERNAME
+```
+
+Paste the 44-character SMTP password at the prompt. Then, separately:
+
+```bash
 bash deploy/ops/restart.sh api
 bash deploy/ops/check-email.sh
 ```
@@ -228,38 +317,45 @@ unsubscribe link already in an inbox) and `RWE_EMAIL_ALLOWLIST` (who may RECEIVE
 decision from who sends — re-deriving it would narrow the list to the sender's own mailbox, which
 belongs to no reader, and every send would skip as `not-in-allowlist`).
 
-**7. Send one to yourself, and read the headers.** In Gmail: ⋮ → Show original. You want
-`SPF: PASS`, `DKIM: PASS`, `DMARC: PASS`, and `signed-by: hidden-view.com`. A DKIM `d=amazonses.com`
-means Easy DKIM is not actually in use, and DMARC is passing on Amazon's reputation rather than
-yours.
+### 7. Send one to yourself, and read the headers
 
-**8. Only then widen:**
+This is the step that proves the four before it. In Gmail: ⋮ → **Show original**. You want
+`SPF: PASS`, `DKIM: PASS`, `DMARC: PASS`, and `signed-by: hidden-view.com`.
+
+A DKIM `d=amazonses.com` means Easy DKIM is not actually in use and DMARC is passing on Amazon's
+reputation rather than yours — which works until it doesn't, and is exactly what this migration was
+supposed to fix.
+
+### 8. Only then widen
 
 ```bash
-sudo bash deploy/ops/configure-email.sh digest@hidden-view.com --replace --allowlist '*' \
-     --host email-smtp.us-east-1.amazonaws.com --user AKIAXXXXXXXX --name 'Hidden View'
+sudo bash deploy/ops/configure-email.sh digest@hidden-view.com --replace --allowlist '*'
 ```
 
-Watch `email_status.py` and the suppression list over the first few runs. A rising suppression count
-is the signal to stop and look, not to keep sending.
+Watch `examples/email_status.py` and the suppression list over the first few runs. A rising
+suppression count is the signal to stop and look, not to keep sending.
 
----
+### If it goes wrong
 
-## 5. What only you can do
+Every run of the writer leaves a timestamped backup beside the file:
 
-Nothing below can be done from the repository. All of it is account and DNS work.
+```bash
+ls -t /opt/ih/deploy/.env.*.bak | head -3
+sudo cp /opt/ih/deploy/.env.<stamp>.bak /opt/ih/deploy/.env
+bash deploy/ops/restart.sh api && bash deploy/ops/check-email.sh
+```
 
-1. **Create SMTP credentials** with a provider. For SES that is *SMTP settings → Create SMTP
-   credentials* — note that SES SMTP credentials are **not** your AWS access keys, and the host is
-   `email-smtp.<region>.amazonaws.com`.
-2. **Verify the sender domain and publish SPF + DKIM** (and ideally DMARC) for it. Unverified mail is
-   rejected outright or filed as spam; both look identical to "the feature is broken" from inside the
-   app.
-3. **Leave the provider's sandbox.** A new SES account can only mail *verified* addresses. In the
-   sandbox the relay answers `553` at `MAIL FROM`, which the transport reports as
-   `email_sender_refused` and retries — deliberately, so a sandbox misconfiguration cannot suppress
-   your readers (§6).
-4. **Install the cron line** (§7).
+`cp` onto the existing file keeps its owner and mode. Gmail keeps working while you sort SES out;
+there is no deadline on this migration.
+
+### Two things to decide, not steps
+
+* **`digest@hidden-view.com` need not be a real mailbox to send from — but replies to it will
+  bounce.** Either make it a forwarding alias, or accept that replies are lost. The mail carries no
+  `Reply-To` today.
+* **SES suspends accounts with high bounce or complaint rates.** The app's suppression list (§8) and
+  one-click unsubscribe (§9) are what keep those down; SES also keeps its own account-level
+  suppression list, on by default — a second net rather than a duplicate.
 
 ---
 
