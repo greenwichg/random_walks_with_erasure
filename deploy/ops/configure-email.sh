@@ -23,14 +23,15 @@ set -uo pipefail
 # shellcheck source=deploy/ops/_compose.sh
 source "$(dirname "$0")/_compose.sh"
 
-ADDRESS=""; ALLOWLIST=""; HOST="smtp.gmail.com"; PORT="587"; USER_=""; NAME="Hidden View"
+ADDRESS=""; ALLOWLIST=""; ALLOWLIST_SET=0; HOST="smtp.gmail.com"; PORT="587"
+USER_=""; NAME="Hidden View"
 PUBLIC_URL=""; DRY=0; REPLACE=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run)   DRY=1 ;;
     --replace)   REPLACE=1 ;;
-    --allowlist) ALLOWLIST="${2:-}"; shift ;;
+    --allowlist) ALLOWLIST="${2:-}"; ALLOWLIST_SET=1; shift ;;
     --host)      HOST="${2:-}"; shift ;;
     --port)      PORT="${2:-}"; shift ;;
     --user)      USER_="${2:-}"; shift ;;
@@ -52,8 +53,26 @@ fi
 case "$ADDRESS" in *@*.*) ;; *) echo "not an email address: $ADDRESS" >&2; exit 2 ;; esac
 
 need_env
-[ -n "$USER_" ]      || USER_="$ADDRESS"
-[ -n "$ALLOWLIST" ]  || ALLOWLIST="$ADDRESS"
+[ -n "$USER_" ] || USER_="$ADDRESS"
+
+# WHO MAY RECEIVE IS NOT DERIVED FROM WHO IS SENDING — except on a first run, where "send from and
+# to yourself" is what a beta means and is the only sane guess.
+#
+# On a --replace it must be KEPT, for the same reason RWE_EMAIL_SECRET is kept: it is a deliberate
+# operator decision that this command is not being asked to revisit. Deriving it would make the
+# domain cutover — `configure-email.sh digest@hidden-view.com --replace` — silently narrow the
+# allowlist to the SENDER's address, which belongs to no reader at all. Every send would then skip
+# as `not-in-allowlist` and the operator would be debugging a silent nothing immediately after a
+# migration, with the allowlist the last place anyone would look.
+if [ "$ALLOWLIST_SET" -eq 0 ]; then
+  ALLOWLIST="$(env_val RWE_EMAIL_ALLOWLIST)"
+  if [ -n "$ALLOWLIST" ]; then
+    echo "keeping the existing RWE_EMAIL_ALLOWLIST (${ALLOWLIST}) — who may RECEIVE is a separate" >&2
+    echo "  decision from who sends. Pass --allowlist to change it." >&2
+  else
+    ALLOWLIST="$ADDRESS"
+  fi
+fi
 # Default the public URL to the site the web tier already knows it serves, rather than inventing
 # one: an unsubscribe link on the wrong host is a link that 404s in someone's mail client.
 [ -n "$PUBLIC_URL" ] || PUBLIC_URL="$(env_val NEXTAUTH_URL)"

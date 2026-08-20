@@ -302,3 +302,31 @@ def test_a_documented_one_liner_can_actually_import_the_engine():
         + "\n  ".join(offenders)
         + "\n\nEither add sys.path.insert(0,'examples'), set PYTHONPATH, or — better — move it into "
           "a script under examples/, which runs correctly by construction and can be tested.")
+
+
+def test_a_sender_change_does_not_silently_narrow_who_may_receive(tmp_path):
+    """The domain cutover, and the trap in it.
+
+    `configure-email.sh digest@hidden-view.com --replace` changes who SENDS. If the allowlist were
+    re-derived from the positional address it would become the sender's own mailbox — which belongs
+    to no reader — so every send would skip as `not-in-allowlist` immediately after a migration,
+    with the allowlist the last place anyone would think to look.
+
+    Kept for the same reason RWE_EMAIL_SECRET is kept: it is a deliberate operator decision, and
+    this command was not asked to revisit it. Deriving it is right only on a FIRST run, where
+    "send from and to yourself" is what a beta means."""
+    f = _seed(tmp_path)
+    run_configure(f, "beta@gmail.com")
+    assert _values(f)["RWE_EMAIL_ALLOWLIST"] == "beta@gmail.com", "first run derives it"
+
+    r = run_configure(f, "digest@hidden-view.com", "--replace",
+                      "--host", "email-smtp.us-east-1.amazonaws.com", "--user", "AKIAEXAMPLE")
+    assert r.returncode == 0, r.stderr
+    v = _values(f)
+    assert v["RWE_EMAIL_FROM"] == "Hidden View <digest@hidden-view.com>", "the sender did change"
+    assert v["RWE_SMTP_HOST"] == "email-smtp.us-east-1.amazonaws.com"
+    assert v["RWE_EMAIL_ALLOWLIST"] == "beta@gmail.com", "but who may RECEIVE did not"
+    assert "keeping the existing RWE_EMAIL_ALLOWLIST" in r.stderr, "and it says so"
+
+    widened = run_configure(f, "digest@hidden-view.com", "--replace", "--allowlist", "*")
+    assert _values(widened and f)["RWE_EMAIL_ALLOWLIST"] == "*", "explicit still wins"

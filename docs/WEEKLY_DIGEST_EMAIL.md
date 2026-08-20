@@ -172,6 +172,79 @@ cause:
 
 ---
 
+## 4a. Moving to a dedicated sender (SES + `digest@hidden-view.com`)
+
+The order matters: **authenticate the domain first, widen the allowlist last.** A sender with no
+SPF/DKIM alignment that suddenly mails a whole user base is how a domain's reputation is spent
+before it is earned, and reputation is not quickly recovered.
+
+Everything below is AWS console and DNS work. Use the region the rest of the stack is in
+(`us-east-1`) so the SMTP endpoint is local to the instance.
+
+**1. Verify the domain with Easy DKIM.** SES → Identities → Create identity → Domain
+`hidden-view.com`, Easy DKIM, RSA_2048, keep "Publish DNS records to Route 53" ticked if the zone
+is there. Otherwise SES gives three CNAMEs — `<token>._domainkey.hidden-view.com` → 
+`<token>.dkim.amazonses.com` — to add at your DNS provider. Verification is usually minutes but
+DNS propagation can make it hours; the identity shows *Verified* when it is done.
+
+DKIM is what carries the alignment. With Easy DKIM the signature's `d=` is `hidden-view.com`, so
+DMARC passes on the DKIM leg even though the envelope sender is Amazon's.
+
+**2. Custom MAIL FROM (recommended, not required).** Identity → MAIL FROM domain →
+`mail.hidden-view.com`. Adds an MX (`10 feedback-smtp.us-east-1.amazonses.com`) and an SPF TXT
+(`v=spf1 include:amazonses.com ~all`) on that subdomain. This aligns SPF as well as DKIM, and gives
+bounces somewhere of yours to land. Set the "on MX failure" behaviour to **reject**, not to fall
+back to `amazonses.com` — a silent fallback is a silent loss of alignment.
+
+**3. DMARC.** A TXT record at `_dmarc.hidden-view.com`. Start in monitor mode:
+
+    v=DMARC1; p=none; rua=mailto:dmarc@hidden-view.com
+
+`p=none` asks for reports without affecting delivery. Move to `p=quarantine` once the reports show
+your own mail passing, which is the point of starting at `none`.
+
+**4. SMTP credentials.** SES → SMTP settings → Create SMTP credentials. This makes an IAM user with
+`ses:SendRawEmail` and derives an SMTP password from its secret key. **These are not your AWS access
+keys**, and the password cannot be re-derived later — it is shown once. The endpoint is
+`email-smtp.us-east-1.amazonaws.com`, port 587 (STARTTLS). Port 25 is throttled on EC2 by default;
+587 is not.
+
+**5. Leave the sandbox.** A new SES account can only mail *verified* addresses, at 200/day. SES →
+Account dashboard → Request production access. You are asked how you handle bounces and
+complaints — the honest answer is that this system suppresses hard bounces permanently and honours
+one-click unsubscribe (RFC 8058), which is what they are checking for.
+
+**6. Cut over.** The allowlist is deliberately NOT changed here:
+
+```bash
+sudo bash deploy/ops/configure-email.sh digest@hidden-view.com --replace \
+     --host email-smtp.us-east-1.amazonaws.com --user AKIAXXXXXXXX --name 'Hidden View'
+bash deploy/ops/restart.sh api
+bash deploy/ops/check-email.sh
+```
+
+`--replace` rewrites the sender and keeps both `RWE_EMAIL_SECRET` (rotating it would break every
+unsubscribe link already in an inbox) and `RWE_EMAIL_ALLOWLIST` (who may RECEIVE is a different
+decision from who sends — re-deriving it would narrow the list to the sender's own mailbox, which
+belongs to no reader, and every send would skip as `not-in-allowlist`).
+
+**7. Send one to yourself, and read the headers.** In Gmail: ⋮ → Show original. You want
+`SPF: PASS`, `DKIM: PASS`, `DMARC: PASS`, and `signed-by: hidden-view.com`. A DKIM `d=amazonses.com`
+means Easy DKIM is not actually in use, and DMARC is passing on Amazon's reputation rather than
+yours.
+
+**8. Only then widen:**
+
+```bash
+sudo bash deploy/ops/configure-email.sh digest@hidden-view.com --replace --allowlist '*' \
+     --host email-smtp.us-east-1.amazonaws.com --user AKIAXXXXXXXX --name 'Hidden View'
+```
+
+Watch `email_status.py` and the suppression list over the first few runs. A rising suppression count
+is the signal to stop and look, not to keep sending.
+
+---
+
 ## 5. What only you can do
 
 Nothing below can be done from the repository. All of it is account and DNS work.
