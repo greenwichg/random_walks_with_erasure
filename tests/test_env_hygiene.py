@@ -253,3 +253,52 @@ def test_the_password_survives_the_env_file(tmp_path, password, stored):
         cwd=ROOT, env={"PATH": "/usr/bin:/bin", "IH_ENV_FILE": str(f)},
         capture_output=True, text=True, timeout=30)
     assert read_back.stdout == stored, "what the deploy scripts read back must be what was meant"
+
+
+# --------------------------------------------------------------------------- #
+# 4. Documented commands that do not run.
+# --------------------------------------------------------------------------- #
+ENGINE_MODULES = ("store", "settings_service", "notification_service", "email_sender",
+                  "email_consent", "email_delivery", "email_digest", "health_report",
+                  "api_fastapi", "score_reference", "db_backup")
+
+
+def _oneliners():
+    """Every `python -c` in the docs and the ops scripts, with its source location."""
+    import re
+    for path in sorted([*(ROOT / "docs").glob("*.md"), *(ROOT / "deploy" / "ops").glob("*.sh")]):
+        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if "python -c" in line or "python3 -c" in line:
+                yield path.relative_to(ROOT), n, line
+            elif re.search(r"^\s*(import|from)\s", line):
+                yield path.relative_to(ROOT), n, line       # heredoc/continuation bodies
+
+
+def test_a_documented_one_liner_can_actually_import_the_engine():
+    """`dc exec api python -c "import store, json; ..."` — published in the runbook, and it fails
+    with ModuleNotFoundError every time.
+
+    The image's WORKDIR is `/app`; the modules live in `/app/examples`. Python puts a SCRIPT's own
+    directory on sys.path, which is why `python examples/email_run.py` works — but `python -c` gets
+    the working directory instead, and `/app` has no `store.py` in it. Every long-standing helper
+    here already carries `sys.path.insert(0,'examples')`; two commands added with the email channel
+    did not, and the operator running the runbook hit exactly that.
+
+    A doc is an interface. A command in it that cannot run is a broken interface, and unlike code
+    nothing else would ever have executed it."""
+    offenders = []
+    for path, n, line in _oneliners():
+        if "-c" not in line:
+            continue
+        imports = [m for m in ENGINE_MODULES
+                   if f"import {m}" in line or f"from {m}" in line]
+        if not imports:
+            continue
+        if "sys.path" in line or "PYTHONPATH" in line:
+            continue
+        offenders.append(f"{path}:{n} imports {imports} without putting examples/ on sys.path")
+    assert not offenders, (
+        "documented one-liner(s) that would raise ModuleNotFoundError in the container:\n  "
+        + "\n  ".join(offenders)
+        + "\n\nEither add sys.path.insert(0,'examples'), set PYTHONPATH, or — better — move it into "
+          "a script under examples/, which runs correctly by construction and can be tested.")

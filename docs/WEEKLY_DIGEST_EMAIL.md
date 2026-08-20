@@ -212,15 +212,7 @@ change rather than the error it got — a `535` says "use a 16-character App Pas
 unreachable host says "check egress on that port" — because each of those lives in a different
 place and an operator reading an SMTP code should not have to know which.
 
-The older, narrower check is still there if you want just the two booleans:
-
-```bash
-source deploy/ops/_compose.sh
-dc exec -T api python -c "import email_sender, email_consent; \
-print('relay:', bool(email_sender.sender_from_env()), 'secret:', bool(email_consent.secret()))"
-```
-
-Expect `relay: True secret: True`. Then a dry pass — with the channel off for every reader, this
+Then a dry pass — with the channel off for every reader, this
 sends nothing and tells you why:
 
 ```bash
@@ -292,11 +284,17 @@ nothing clears it. `SMTPSenderRefused` is therefore always a retry, logged as
 Inspecting the list:
 
 ```bash
-# Store() with no argument resolves RWE_DB_URL, or the default file — the same database the API
-# is using. A read, so it does not contend with the server's write lock.
-dc exec -T api python -c "import store, json; \
-print(json.dumps(store.Store().list_email_suppressions(50), indent=2))"
+source deploy/ops/_compose.sh
+dc exec -T api python examples/email_status.py
 ```
+
+which also reports what is waiting to be mailed, how much of it the allowlist clears, and the
+ledger's depth — the questions that follow "why has no mail arrived" once `check-email.sh` is
+green. A SCRIPT rather than `python -c`: the image's WORKDIR is `/app` and the modules live in
+`/app/examples`, so Python only puts them on `sys.path` when it is a script's own directory. A
+documented one-liner that got this wrong is what sent an operator a `ModuleNotFoundError` instead
+of an answer; `test_a_documented_one_liner_can_actually_import_the_engine` now fails on any
+recurrence.
 
 ---
 
