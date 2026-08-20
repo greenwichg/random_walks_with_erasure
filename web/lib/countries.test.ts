@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { countryFlag, countryName, countryShortName, languageName } from "./countries.ts";
+import { countryFlag, countryName, countryShortName, languageName, sortByCountryName } from "./countries.ts";
 
 test("countryFlag: regional-indicator pair for a valid alpha-2 code, case-insensitive", () => {
   assert.equal(countryFlag("US"), "🇺🇸");
@@ -55,4 +55,42 @@ test("languageName: localized language display name with code fallback", () => {
   assert.equal(languageName("ES", "es"), "español"); // case-insensitive input
   assert.equal(languageName("zz"), "zz"); // unknown → the code itself
   assert.equal(languageName("x"), "x"); // not an ISO shape → verbatim
+});
+
+// --------------------------------------------------------------------------- //
+// Ordering — a list you scan for a known country has to be alphabetical.
+// --------------------------------------------------------------------------- //
+test("countries order by display name, not by ISO code", () => {
+  // The codes would put IL before IR; the NAMES put Iran before Israel. Sorting the code is the
+  // bug this exists to prevent — the reader is scanning names.
+  assert.deepEqual(sortByCountryName(["IL", "IR", "US", "GB", "JP"]), ["IR", "IL", "JP", "GB", "US"]);
+});
+
+test("ordering is by name even when the input arrives ranked by something else", () => {
+  // The Stories facets arrive keyed by story count; that order must not survive.
+  const byStoryCount = ["US", "GB", "IN", "CN", "AU", "FR", "JP", "ES"];
+  assert.deepEqual(
+    sortByCountryName(byStoryCount),
+    ["AU", "CN", "FR", "IN", "JP", "ES", "GB", "US"],
+  );
+});
+
+test("the input is not mutated — facets are reused across refetches", () => {
+  const codes = ["US", "AU"];
+  const out = sortByCountryName(codes);
+  assert.deepEqual(codes, ["US", "AU"], "the caller's array must be left alone");
+  assert.deepEqual(out, ["AU", "US"]);
+});
+
+test("ties break on the code, so the order is total and stable", () => {
+  // Two codes the runtime cannot name resolve to themselves; without the tiebreak their relative
+  // order would depend on the engine's sort stability.
+  const a = sortByCountryName(["ZZ", "ZY", "US"]);
+  const b = sortByCountryName(["ZY", "ZZ", "US"]);
+  assert.deepEqual(a, b);
+});
+
+test("an empty list and unknown codes degrade quietly", () => {
+  assert.deepEqual(sortByCountryName([]), []);
+  assert.deepEqual(sortByCountryName(["ZZ"]), ["ZZ"]);
 });

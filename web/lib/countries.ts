@@ -65,6 +65,25 @@ export function countryShortName(code: string, lang = "en"): string {
   return SHORT_NAMES[code.toUpperCase()] ?? countryName(code, lang);
 }
 
+/**
+ * ISO codes ordered by the DISPLAY NAME a reader is actually reading.
+ *
+ * A list you scan for a known country has to be alphabetical; ordered by story count, finding
+ * "Japan" means reading the whole thing. `localeCompare` with the active language so accented
+ * names sort where that language expects them (Å after A in English, its own letter in Swedish)
+ * rather than by code point, and the code breaks ties so the order is total and stable.
+ *
+ * "All" / "Global" is never in this list — it is a reset row the picker renders above the options,
+ * so it cannot be sorted out of first place.
+ */
+export function sortByCountryName(codes: readonly string[], lang = "en"): string[] {
+  return [...codes]
+    .map((code) => ({ code, name: countryName(code, lang) }))
+    .sort((a, b) => a.name.localeCompare(b.name, lang) || a.code.localeCompare(b.code))
+    .map(({ code }) => code);
+}
+
+
 /** The localized language name for an ISO 639-1 code ("en" → "English"); the code as fallback. */
 export function languageName(code: string, lang = "en"): string {
   if (!/^[A-Za-z]{2,3}$/.test(code)) return code;

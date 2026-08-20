@@ -12,6 +12,8 @@ import { PageContainer } from "@/components/layout/page-container";
 import { StoryCard } from "@/components/stories/story-card";
 import { FilterSelect, type FilterOption } from "@/components/shared/filter-select";
 import { CountryBadge } from "@/components/shared/country-badge";
+import { sortByCountryName } from "@/lib/countries";
+import { activeLang } from "@/lib/i18n-core";
 import { EmptyState, ErrorState } from "@/components/shared/states";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -144,11 +146,17 @@ export function StoryBrowser({
   const facetsRef = React.useRef<Record<string, number>>({});
   if (data?.countryFacets) facetsRef.current = data.countryFacets;
   const storyFacets = data?.countryFacets ?? facetsRef.current;
+  // Ordered by the DISPLAY NAME the reader is actually reading, not by story count: a list you
+  // scan for a known country has to be alphabetical, or finding "Japan" means reading all of it.
+  // `localeCompare` with the active language so accented names sort where that language expects
+  // (Å after A in English, its own letter in Swedish) rather than by code point.
+  // "All" is not in this list — FilterSelect renders its reset row above the options.
   const countryOptions = React.useMemo(
     () =>
-      Object.entries(storyFacets)
-        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-        .map(([code]) => ({ value: code, label: <CountryBadge code={code} /> })),
+      sortByCountryName(Object.keys(storyFacets), activeLang()).map((code) => ({
+        value: code,
+        label: <CountryBadge code={code} />,
+      })),
     [storyFacets],
   );
 
