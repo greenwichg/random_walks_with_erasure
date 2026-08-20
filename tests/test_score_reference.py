@@ -119,3 +119,35 @@ def test_topic_is_ranked_on_a_catalog_INDEPENDENT_scale():
     # Same reading, different corpora — the values ranked must agree.
     assert hr.freeze_reference(small)["topic"] == pytest.approx(
         hr.freeze_reference(large)["topic"], rel=1e-9)
+
+
+# --------------------------------------------------------------------------- #
+# provenance — a first-write-wins benchmark must not be capturable from the wrong corpus
+# --------------------------------------------------------------------------- #
+def test_provenance_is_recorded_with_the_capture():
+    sr.load_or_capture(lambda: {"topic": [1.0]}, provenance={"profile": "qbias", "users": 500})
+    doc = sr.load_doc()
+    assert doc["provenance"]["profile"] == "qbias"
+
+
+def test_a_reference_from_the_wrong_KIND_of_corpus_is_reported():
+    """Any process that builds a Backend can trigger the first capture — including an audit script
+    constructing a bare synthetic profile. That would freeze a benchmark from the wrong population
+    and, because capture never overwrites, every reader would be ranked against it forever."""
+    sr.save({"topic": [1.0]}, provenance={"profile": "synthetic"})
+    warn = sr.provenance_warning(sr.load_doc(), "qbias")
+    assert warn and "synthetic" in warn and "qbias" in warn
+    assert sr.path() in warn, "the warning must say which file to delete to re-capture"
+
+
+def test_a_growing_corpus_is_NOT_reported():
+    """The corpus is supposed to grow — that is the whole point of freezing the reference. Only a
+    different profile kind is a mistake; more articles is business as usual."""
+    sr.save({"topic": [1.0]}, provenance={"profile": "qbias", "items": 20000})
+    assert sr.provenance_warning(sr.load_doc(), "qbias") is None
+
+
+def test_provenance_check_is_quiet_when_it_cannot_know():
+    assert sr.provenance_warning(None, "qbias") is None
+    assert sr.provenance_warning({"provenance": {}}, "qbias") is None   # older file, no provenance
+    assert sr.provenance_warning({"provenance": {"profile": "qbias"}}, "") is None

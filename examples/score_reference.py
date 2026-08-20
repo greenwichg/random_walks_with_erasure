@@ -86,13 +86,45 @@ def load() -> "dict | None":
     return {k: v for k, v in metrics.items() if isinstance(v, list) and v}
 
 
-def save(metrics: dict, *, note: str = "") -> str:
+def load_doc() -> "dict | None":
+    """The whole stored document, provenance included — for callers that need to know WHERE a
+    reference came from, not just what is in it."""
+    p = path()
+    try:
+        with open(p, "r", encoding="utf-8") as fh:
+            return json.load(fh)
+    except Exception:                             # noqa: BLE001 — same degradation as `load`
+        return None
+
+
+def provenance_warning(doc: "dict | None", profile_name: str) -> "str | None":
+    """A reference captured from a DIFFERENT KIND of corpus than the one now serving.
+
+    Capture is first-write-wins and permanent, and any process that builds a Backend can trigger
+    it — including an audit script constructing a bare synthetic profile. That would freeze a
+    benchmark from the wrong population, and every reader would be measured against it forever
+    with nothing to show for it. The profile NAME is the right thing to compare: the corpus is
+    supposed to grow (that is the whole point), so sizes drifting is expected and silent, while
+    `synthetic` where `qbias` serves is a mistake."""
+    if not doc or not profile_name:
+        return None
+    got = str((doc.get("provenance") or {}).get("profile") or "")
+    if got and got != profile_name:
+        return (f"the frozen score reference was captured from a '{got}' corpus but a "
+                f"'{profile_name}' corpus is serving — every reader is being ranked against the "
+                f"wrong population. Re-capture: stop the api, delete {path()}, start it, and load "
+                f"a report so the serving process writes a new one.")
+    return None
+
+
+def save(metrics: dict, *, note: str = "", provenance: "dict | None" = None) -> str:
     """Write a reference atomically (temp file + rename), so a crash mid-write can never leave a
     half-written benchmark that every reader is then scored against."""
     p = path()
     doc = {"schemaVersion": SCHEMA_VERSION,
            "capturedAt": datetime.now(timezone.utc).isoformat(),
            "note": note or "captured from the live corpus",
+           "provenance": dict(provenance or {}),
            "metrics": {k: list(v) for k, v in metrics.items()}}
     os.makedirs(os.path.dirname(p) or ".", exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=os.path.dirname(p) or ".", suffix=".tmp")
@@ -111,7 +143,7 @@ def save(metrics: dict, *, note: str = "") -> str:
     return p
 
 
-def load_or_capture(freeze) -> "dict | None":
+def load_or_capture(freeze, provenance: "dict | None" = None) -> "dict | None":
     """The stored reference, capturing one from the current corpus the first time.
 
     ``freeze`` is a zero-argument callable returning ``{metric: [values]}`` — passed in rather than
@@ -133,7 +165,8 @@ def load_or_capture(freeze) -> "dict | None":
     if not metrics:
         return None
     try:
-        save(metrics, note="first capture — from the corpus live at the time")
+        save(metrics, note="first capture — from the corpus live at the time",
+             provenance=provenance)
     except Exception as exc:                      # noqa: BLE001 — a read-only volume must not 500
         log.warning(json.dumps({"event": "score_reference_unwritable", "error": str(exc),
                                 "effect": "using the captured values in memory for this process "

@@ -34,6 +34,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import logging
 import os
 import sys
 import tempfile
@@ -1303,7 +1304,20 @@ class Backend:
         old population-relative behaviour rather than failing the report."""
         cached = getattr(self, "_score_reference", None)
         if cached is None:
-            cached = score_reference.load_or_capture(lambda: hr.freeze_reference(self.pop)) or {}
+            name = getattr(self.profile, "name", "") or ""
+            cached = score_reference.load_or_capture(
+                lambda: hr.freeze_reference(self.pop),
+                provenance={"profile": name,
+                            # `arr or ()` raises on a numpy array — this is the second time that
+                            # trap has bitten in this change; count the array explicitly.
+                            "users": int(len(_n) if (_n := self.pop.get("n_clicks")) is not None else 0),
+                            "items": int(getattr(self.profile, "max_items", 0) or 0)}) or {}
+            # A reference captured from a different KIND of corpus means every reader is ranked
+            # against the wrong population, permanently — first-write-wins does not self-correct.
+            warn = score_reference.provenance_warning(score_reference.load_doc(), name)
+            if warn:
+                logging.getLogger(__name__).warning(
+                    json.dumps({"event": "score_reference_wrong_corpus", "detail": warn}))
             self._score_reference = cached
         return cached or None
 
