@@ -2,20 +2,21 @@
   "name": "information-health",
   "version": "0.1.0",
   "private": true,
-  "description": "Information Health \u2014 a reading-diet intelligence product. Frontend for the RWE recommender + Information Health Report backend.",
+  "description": "Information Health — a reading-diet intelligence product. Frontend for the RWE recommender + Information Health Report backend.",
   "scripts": {
     "dev": "next dev",
     "check:i18n": "node scripts/check-i18n.mjs",
     "build:sw": "node scripts/build-sw-data.mjs",
-    "build": "npm run check:i18n && npm run build:sw && next build",
+    "build": "npm run check:i18n && npm run build:sw && npm run build:flags && next build",
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "test": "node --test lib/env-validation.test.mjs lib/i18n-core.test.ts lib/political.test.ts lib/rec-presentation.test.ts lib/history-insights.test.ts lib/hero-copy.test.ts lib/coach-presentation.test.ts lib/notifications.test.ts lib/analysis-presentation.test.ts lib/settings-diff.test.ts lib/engine-fallback.test.ts lib/coverage.test.ts lib/framing.test.ts lib/auth-callbacks.test.ts lib/session-recovery.test.ts lib/beta-access.test.ts lib/engine-identity.test.ts lib/engine-timeout.test.ts lib/onboarding.test.ts lib/home.test.ts lib/story-timeline.test.ts lib/countries.test.ts lib/request-params.test.ts lib/discover-params.test.ts lib/discover-order.test.ts lib/push.test.ts lib/sw-render.test.ts lib/rum.test.ts lib/continuation.test.ts lib/publisher-logo.test.ts lib/visibility-return.test.ts lib/calendar-grid.test.ts lib/theme-tokens.test.ts lib/country-partition.test.ts lib/chart-axis.test.ts lib/guide-scroll.test.ts lib/bar-items.test.ts",
-    "build:e2e": "npm run build:sw && NEXT_PUBLIC_DEV_LOGIN=1 next build",
+    "build:e2e": "npm run build:sw && npm run build:flags && NEXT_PUBLIC_DEV_LOGIN=1 next build",
     "e2e": "npm run build:e2e && playwright test",
     "e2e:run": "playwright test",
-    "e2e:report": "playwright show-report .e2e-tmp/report"
+    "e2e:report": "playwright show-report .e2e-tmp/report",
+    "build:flags": "node scripts/build-flags.mjs"
   },
   "dependencies": {
     "@radix-ui/react-avatar": "^1.1.1",
@@ -34,6 +35,7 @@
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
+    "flag-icons": "^7.5.0",
     "framer-motion": "^11.11.11",
     "lucide-react": "^0.454.0",
     "next": "14.2",

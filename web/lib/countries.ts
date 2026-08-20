@@ -40,7 +40,11 @@ function isRegionCode(code: string): boolean {
 }
 
 /** The flag emoji for an ISO 3166-1 alpha-2 code ("US" → 🇺🇸), or "" when the code isn't one.
- *  Pure computation (regional-indicator symbols) — no lookup table to drift. */
+ *  Pure computation (regional-indicator symbols) — no lookup table to drift.
+ *
+ *  NOT for UI: Windows draws no flag glyphs, so this renders as the bare letters "US" there.
+ *  Use {@link countryFlagSrc} with an `<img>` (or `CountryBadge`, which does). This remains for
+ *  text-only contexts — a plain-text export, a string label — where an image is impossible. */
 export function countryFlag(code: string): string {
   if (!isRegionCode(code)) return "";
   const upper = code.toUpperCase();
@@ -49,6 +53,23 @@ export function countryFlag(code: string): string {
     0x1f1e6 + (upper.charCodeAt(1) - 65),
   );
 }
+
+/**
+ * The URL of a country's flag artwork, or "" when the code isn't a region.
+ *
+ * These are FILES, not emoji, and the difference is the whole point: a flag emoji is a pair of
+ * Unicode regional-indicator letters that the platform is expected to draw a flag for, and
+ * **Windows ships no flag glyphs**, so every Windows browser renders the two letters instead —
+ * "US United States" where macOS and Android show "🇺🇸 United States". `countryFlag` below is kept
+ * for text-only contexts (a chart label is a string and cannot hold an image), where the letters
+ * are a graceful degradation rather than a broken image.
+ *
+ * Copied into `public/flags/` at build time by scripts/build-flags.mjs.
+ */
+export function countryFlagSrc(code: string): string {
+  return isRegionCode(code) ? `/flags/${code.toLowerCase()}.svg` : "";
+}
+
 
 /** The localized country name for an ISO code ("US", "en" → "United States"); the code itself
  *  when the runtime can't resolve one. */

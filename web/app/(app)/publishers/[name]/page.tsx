@@ -6,7 +6,7 @@ import { useParams } from "next/navigation";
 import { Building2, ExternalLink, Newspaper, Search } from "lucide-react";
 import { usePublisher } from "@/hooks/use-data";
 import { useTranslation } from "@/lib/i18n";
-import { countryFlag, countryName } from "@/lib/countries";
+import { countryName } from "@/lib/countries";
 import type { PublisherAbout, PublisherProfile } from "@/types/domain";
 import { PageContainer } from "@/components/layout/page-container";
 import { SectionCard } from "@/components/shared/section-card";
@@ -87,7 +87,10 @@ function Profile({ profile: p }: { profile: PublisherProfile }) {
     count: x.count,
   }));
   const countryBars: BarItem[] = p.eventCountries.map((x) => ({
-    label: `${countryFlag(x.label)} ${countryName(x.label, lang)}`.trim(),
+    // The name alone: a BarList label is a string, so it cannot carry the flag IMAGE the
+    // chips use, and the emoji renders as bare letters on Windows — the very inconsistency
+    // CountryBadge now avoids. A ranked bar does not need a flag to be readable.
+    label: countryName(x.label, lang),
     value: total ? x.count / total : 0,
     count: x.count,
   }));

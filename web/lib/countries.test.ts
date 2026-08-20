@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { countryFlag, countryName, countryShortName, languageName, sortByCountryName } from "./countries.ts";
+import { readFileSync } from "node:fs";
+import { countryFlag, countryFlagSrc, countryName, countryShortName, languageName, sortByCountryName } from "./countries.ts";
 
 test("countryFlag: regional-indicator pair for a valid alpha-2 code, case-insensitive", () => {
   assert.equal(countryFlag("US"), "🇺🇸");
@@ -93,4 +94,38 @@ test("ties break on the code, so the order is total and stable", () => {
 test("an empty list and unknown codes degrade quietly", () => {
   assert.deepEqual(sortByCountryName([]), []);
   assert.deepEqual(sortByCountryName(["ZZ"]), ["ZZ"]);
+});
+
+// --------------------------------------------------------------------------- //
+// Flags — artwork, not emoji, because Windows has no flag glyphs.
+// --------------------------------------------------------------------------- //
+test("a flag resolves to shipped artwork, not a platform glyph", () => {
+  // The defect: `countryFlag` builds a regional-indicator PAIR and asks the platform to draw a
+  // flag for it. Windows ships none, so every Windows browser rendered the two letters and the
+  // same chip looked different on desktop and phone.
+  assert.equal(countryFlagSrc("IL"), "/flags/il.svg");
+  assert.equal(countryFlagSrc("us"), "/flags/us.svg", "case-insensitive: codes arrive upper-cased");
+});
+
+test("a non-region code yields no flag rather than a broken image", () => {
+  for (const bad of ["", "U", "USA", "1A", "  ", "zz9"]) {
+    assert.equal(countryFlagSrc(bad), "", `${JSON.stringify(bad)} must not produce a src`);
+  }
+});
+
+test("the badge renders artwork, and degrades to the name when it cannot", () => {
+  const src = readFileSync(new URL("../components/shared/country-badge.tsx", import.meta.url), "utf-8");
+  assert.match(src, /countryFlagSrc\(/, "the chip must use shipped artwork");
+  assert.doesNotMatch(src, /countryFlag\(/, "an emoji flag renders as bare letters on Windows");
+  assert.match(src, /onError=/, "a missing file must fall back to the name, not a broken-image icon");
+  assert.match(src, /alt=""/, "decorative: the country name beside it is the real text");
+});
+
+test("the flag artwork is built into public/, never committed", () => {
+  const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf-8"));
+  assert.match(pkg.scripts.build, /build:flags/, "the production build must copy the flags");
+  assert.match(pkg.scripts["build:e2e"], /build:flags/, "…and so must the e2e build");
+  assert.ok(pkg.dependencies["flag-icons"], "the artwork source is a real dependency, not vendored");
+  const ignored = readFileSync(new URL("../.gitignore", import.meta.url), "utf-8");
+  assert.match(ignored, /^\/public\/flags\/$/m, "1.9 MB of artwork does not belong in every clone");
 });
