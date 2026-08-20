@@ -132,6 +132,12 @@ def cmd_backup(args) -> int:
             continue
         try:
             shutil.copy2(src, target)
+            # `copy2` preserves the SOURCE mode, and both live sidecars are root-owned 0600 — so
+            # the copies landed unreadable to the unprivileged user that runs the off-host
+            # `aws s3 sync`, which skipped them and failed the whole sync. A sidecar must be
+            # exactly as accessible as the snapshot it belongs to: no more (it sits beside a full
+            # database dump, so this widens nothing) and no less (or it never leaves the machine).
+            os.chmod(target, os.stat(dest).st_mode & 0o777)
         except OSError as e:
             # Loud, and a non-zero exit: a backup missing its allowlist restores into a product
             # nobody can sign in to, and the scheduler must not record that as a good cycle.

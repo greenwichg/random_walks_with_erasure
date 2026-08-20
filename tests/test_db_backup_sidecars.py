@@ -166,3 +166,20 @@ def test_feed_corpus_is_deliberately_not_a_sidecar(live):
     (live / "feed_corpus.csv").write_text("x", encoding="utf-8")
     names = dict(bk.sidecar_sources(f"sqlite:///{live / 'ih_beta.db'}"))
     assert "feed_corpus.csv" not in names
+
+
+def test_sidecars_are_as_readable_as_the_snapshot_they_belong_to(live):
+    """`shutil.copy2` preserves the SOURCE mode, and both live sidecars are root-owned 0600. The
+    copies therefore landed unreadable to the unprivileged user that runs the off-host
+    `aws s3 sync`, which skipped every sidecar and failed the sync — so the files never left the
+    machine, and the hourly cron alerted. A sidecar must carry the snapshot's own mode."""
+    os.chmod(live / "allowlist.txt", 0o600)
+    os.chmod(live / "score_reference.json", 0o600)
+    r = _run("backup")
+    assert r.returncode == 0, r.stderr
+    db = next(p for p in (live / "backups").iterdir() if p.name.endswith(".db.gz"))
+    db_mode = db.stat().st_mode & 0o777
+    for name, path in bk.sidecars_of(str(db)):
+        got = os.stat(path).st_mode & 0o777
+        assert got == db_mode, f"{name} is {got:o}, snapshot is {db_mode:o}"
+        assert got & 0o044, f"{name} is {got:o} — the off-host sync user cannot read it"
