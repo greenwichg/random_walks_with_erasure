@@ -11,6 +11,7 @@ import os
 import pathlib
 import sys
 import tempfile
+import threading
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -31,6 +32,11 @@ def _env(monkeypatch):
     monkeypatch.setenv("RWE_EMAIL_SECRET", "test-secret-not-a-real-one")
     monkeypatch.setenv("RWE_PUBLIC_URL", "https://hidden-view.com")
     monkeypatch.setenv("RWE_EMAIL_ENABLED", "1")
+    # The recipient gate is OPENED here on purpose, and it is the only thing in this fixture that
+    # is not the production default: unset means nobody, so every test about delivery mechanics
+    # would otherwise assert against a worker that returned before doing anything. The gate's own
+    # behaviour — including that the default is shut — is tested explicitly below.
+    monkeypatch.setenv("RWE_EMAIL_ALLOWLIST", email_delivery.ALLOW_ALL)
 
 
 @pytest.fixture
@@ -124,6 +130,122 @@ def test_a_flat_toggle_is_not_consent_to_mail():
     assert prefs["notifications"]["weeklyDigest"] is True
     assert ns.gate_path(email_consent.DIGEST_KIND, ns.EMAIL) == "", "no path for email to inherit"
     assert email_consent.may_email_digest(prefs, "r@example.com") == "email-channel-off"
+
+
+# --------------------------------------------------------------------------- #
+# The recipient allowlist — an OPERATOR gate, with the opposite safe default to consent.
+# --------------------------------------------------------------------------- #
+def test_the_sender_can_be_swapped_without_touching_the_digest(monkeypatch):
+    """Beta sends from a personal address; later it sends from `digest@hidden-view.com`. That must
+    be a line in `.env`, not an edit here.
+
+    Two halves. The From is read at CALL time, so a restart applies a new one with no rebuild — and
+    the Message-ID domain follows it, which matters because a Message-ID whose domain disagrees
+    with the sender is a spam signal. And `email_digest` — the module that decides what the mail
+    SAYS — never learns what address it goes out from, so the swap cannot reach the copy."""
+    monkeypatch.setenv("RWE_SMTP_HOST", "smtp.example.test")
+    seen = {}
+    for addr in ("Beta <beta@example.com>", "Hidden View <digest@hidden-view.com>"):
+        monkeypatch.setenv("RWE_EMAIL_FROM", addr)
+        sender = email_sender.sender_from_env()
+        msg = email_sender.build_message(to="r@example.com", subject="s", text="t", html="<p>h</p>",
+                                         sender=sender.sender)
+        seen[addr] = (msg["From"], msg["Message-ID"].rsplit("@", 1)[-1].rstrip(">"))
+    assert seen["Beta <beta@example.com>"] == ("Beta <beta@example.com>", "example.com")
+    assert seen["Hidden View <digest@hidden-view.com>"] == (
+        "Hidden View <digest@hidden-view.com>", "hidden-view.com")
+
+    # The rendering module is address-free. Checked on the CODE, with comments and the docstring
+    # stripped: the docstring legitimately uses the word "sender" in prose, and a guard that reads
+    # prose is a guard that fails for the wrong reason.
+    import ast
+    tree = ast.parse(pathlib.Path(ROOT / "examples" / "email_digest.py").read_text(encoding="utf-8"))
+    tree.body = [n for n in tree.body
+                 if not (isinstance(n, ast.Expr) and isinstance(n.value, ast.Constant))]
+    code = ast.unparse(tree).lower()
+    for token in ("rwe_email_from", "hidden-view", "@gmail", "sender"):
+        assert token not in code, f"email_digest.py hardcodes {token!r} — the swap would reach it"
+
+
+def test_an_unset_allowlist_clears_nobody(st, monkeypatch):
+    """The one gate here that fails closed by being ABSENT rather than by being false.
+
+    Consent answers "do I want this" and belongs to the reader. The allowlist answers "is this
+    deployment cleared to write to real people yet", which is an operator's question — and during
+    a beta the answer is a short list. If unset meant "everyone", a `.env` that lost a line would
+    quietly start mailing the whole user base, which is the one mistake this feature cannot take
+    back."""
+    uid = _reader(st)
+    _digest_notification(st, uid)
+    monkeypatch.delenv("RWE_EMAIL_ALLOWLIST", raising=False)
+
+    sender = FakeSender()
+    stats = email_delivery.run_once(st, sender=sender)
+    assert sender.sent == [] and stats.skipped["allowlist-empty"] == 1
+    assert stats.considered == 0, "it should not even scan — there is nothing it could send"
+
+
+def test_only_listed_recipients_are_mailed(st, monkeypatch):
+    """Beta: the tester is mailed, everyone else is passed over however they set their toggles."""
+    tester = _reader(st, email="tester@example.com")
+    other = _reader(st, email="someone.else@example.com")
+    _digest_notification(st, tester)
+    _digest_notification(st, other)
+    monkeypatch.setenv("RWE_EMAIL_ALLOWLIST", "tester@example.com")
+
+    sender = FakeSender()
+    stats = email_delivery.run_once(st, sender=sender)
+    assert [m["To"] for m in sender.sent] == ["tester@example.com"]
+    assert stats.skipped["not-in-allowlist"] == 1
+
+
+@pytest.mark.parametrize("entry,address,cleared", [
+    ("me@example.com", "me@example.com", True),
+    ("me@example.com", "ME@Example.COM", True),          # case is not identity for a mailbox
+    ("  me@example.com , b@x.test ", "b@x.test", True),  # whitespace around list entries
+    ("me@example.com", "notme@example.com", False),
+    ("@hidden-view.com", "anyone@hidden-view.com", True),   # a whole domain, for the later move
+    ("@hidden-view.com", "anyone@hidden-view.com.evil.test", False),   # suffix, not substring
+    ("@hidden-view.com", "anyone@example.com", False),
+    ("me@example.com", "", False),
+    ("me@example.com", "not-an-address", False),
+])
+def test_allowlist_matching(entry, address, cleared, monkeypatch):
+    monkeypatch.setenv("RWE_EMAIL_ALLOWLIST", entry)
+    assert email_delivery.allowed_recipient(address, email_delivery.allowlist()) is cleared
+
+
+def test_general_delivery_takes_a_deliberate_sentinel(monkeypatch):
+    """`*` and nothing else. The empty string is what a half-edited .env produces, and it must not
+    be the value that opens the gate."""
+    monkeypatch.setenv("RWE_EMAIL_ALLOWLIST", email_delivery.ALLOW_ALL)
+    assert email_delivery.allowlist() is None
+    assert email_delivery.allowed_recipient("anyone@example.com", None) is True
+    for shut in ("", "   ", "all", "true", "1"):
+        monkeypatch.setenv("RWE_EMAIL_ALLOWLIST", shut)
+        assert email_delivery.allowlist() != None, f"{shut!r} must not mean everyone"  # noqa: E711
+
+
+def test_the_allowlist_does_not_write_off_the_backlog(st, monkeypatch):
+    """Being outside the list is our configuration, not the reader's choice — so widening it must
+    let the waiting digest go out, not find it already marked failed."""
+    uid = _reader(st, email="later@example.com")
+    _digest_notification(st, uid)
+    monkeypatch.setenv("RWE_EMAIL_ALLOWLIST", "someone@example.com")
+    assert email_delivery.run_once(st, sender=FakeSender()).skipped["not-in-allowlist"] == 1
+
+    monkeypatch.setenv("RWE_EMAIL_ALLOWLIST", "someone@example.com,later@example.com")
+    assert email_delivery.run_once(st, sender=FakeSender()).sent == 1
+
+
+def test_the_allowlist_cannot_override_consent(st, monkeypatch):
+    """The gates are ANDed, and in the direction that matters: being on the list is permission from
+    the operator, never from the reader. A tester who has not opted in is still not mailed."""
+    uid = _reader(st, email="tester@example.com", channel=False)
+    _digest_notification(st, uid)
+    monkeypatch.setenv("RWE_EMAIL_ALLOWLIST", "tester@example.com")
+    stats = email_delivery.run_once(st, sender=FakeSender())
+    assert stats.sent == 0 and stats.skipped["email-channel-off"] == 1
 
 
 def test_a_missing_or_malformed_address_is_never_mailed():
@@ -509,3 +631,109 @@ def test_the_in_app_digest_is_untouched_by_the_email_channel(st):
     after = st.list_notifications(uid)
     assert [n["id"] for n in before] == [n["id"] for n in after]
     assert all(n.get("seenAt") is None for n in after), "an email must not mark the card as seen"
+
+
+# --------------------------------------------------------------------------- #
+# Against a REAL socket. Everything above injects a fake relay, so nothing above
+# exercises smtplib itself — the layer where a malformed message, a header the
+# library rejects, or a TLS policy that does not hold would actually show up.
+# --------------------------------------------------------------------------- #
+class _Relay(threading.Thread):
+    """A minimal SMTP server on localhost. Stdlib only (asyncio streams); `smtpd` was removed in
+    3.12 and `aiosmtpd` is a dependency this suite does not need.
+
+    `advertise_tls` is the interesting knob: with it off the server offers no STARTTLS, which is
+    exactly the production relay we must refuse rather than fall back to plaintext."""
+
+    def __init__(self, advertise_tls: bool = False):
+        super().__init__(daemon=True)
+        self.advertise_tls, self.received, self.port = advertise_tls, [], None
+        self._ready = threading.Event()
+
+    def run(self):
+        import asyncio
+        relay = self
+
+        class Proto(asyncio.Protocol):
+            def connection_made(self, t):
+                self.t, self.buf, self.data, self.in_data = t, b"", [], False
+                t.write(b"220 localhost ESMTP\r\n")
+
+            def data_received(self, chunk):
+                self.buf += chunk
+                while b"\r\n" in self.buf:
+                    line, self.buf = self.buf.split(b"\r\n", 1)
+                    self._line(line)
+
+            def _line(self, line):
+                if self.in_data:
+                    if line == b".":
+                        self.in_data = False
+                        relay.received.append(b"\r\n".join(self.data).decode("utf-8", "replace"))
+                        self.t.write(b"250 OK queued\r\n")
+                    else:
+                        self.data.append(line[1:] if line.startswith(b"..") else line)
+                    return
+                cmd = line.upper()
+                if cmd.startswith((b"EHLO", b"HELO")):
+                    ext = b"250-STARTTLS\r\n" if relay.advertise_tls else b""
+                    self.t.write(b"250-localhost\r\n" + ext + b"250 HELP\r\n")
+                elif cmd.startswith(b"DATA"):
+                    self.in_data = True
+                    self.t.write(b"354 go ahead\r\n")
+                elif cmd.startswith(b"QUIT"):
+                    self.t.write(b"221 bye\r\n")
+                    self.t.close()
+                else:                                   # MAIL FROM, RCPT TO, RSET, NOOP
+                    self.t.write(b"250 OK\r\n")
+
+        async def main():
+            loop = asyncio.get_running_loop()
+            server = await loop.create_server(Proto, "127.0.0.1", 0)
+            relay.port = server.sockets[0].getsockname()[1]
+            relay._ready.set()
+            async with server:
+                await asyncio.sleep(30)
+
+        asyncio.run(main())
+
+    def start_and_wait(self):
+        self.start()
+        assert self._ready.wait(5), "relay did not start"
+        return self
+
+
+def test_a_relay_offering_no_tls_is_refused_over_a_real_socket(st, monkeypatch):
+    """The refusal that only a real SMTP conversation can prove.
+
+    A reading history is not something to put on the wire in the clear, so a relay with no STARTTLS
+    is refused rather than downgraded to plaintext. Every other test here injects a fake sender and
+    would pass whatever `SmtpSender.send` actually did with a socket."""
+    relay = _Relay(advertise_tls=False).start_and_wait()
+    monkeypatch.setenv("RWE_SMTP_HOST", "127.0.0.1")
+    monkeypatch.setenv("RWE_SMTP_PORT", str(relay.port))
+    monkeypatch.setenv("RWE_EMAIL_FROM", "Hidden View <beta@example.test>")
+
+    uid = _reader(st, email="tester@example.com")
+    _digest_notification(st, uid)
+    stats = email_delivery.run_once(st)              # no injected sender: the real SmtpSender
+    assert stats.sent == 0
+    assert stats.skipped["no-tls"] == 1, f"expected a named TLS refusal: {stats.as_dict()}"
+    assert relay.received == [], "a message reached the wire despite no TLS"
+
+
+def test_the_allowlist_filters_before_the_wire(st, monkeypatch):
+    """An address outside the list must never reach a socket at all — not be sent and discarded,
+    and not appear in a relay's logs. Proven against a server that records everything it is
+    handed."""
+    relay = _Relay(advertise_tls=False).start_and_wait()
+    monkeypatch.setenv("RWE_SMTP_HOST", "127.0.0.1")
+    monkeypatch.setenv("RWE_SMTP_PORT", str(relay.port))
+    monkeypatch.setenv("RWE_EMAIL_FROM", "Hidden View <beta@example.test>")
+    monkeypatch.setenv("RWE_EMAIL_ALLOWLIST", "tester@example.com")
+
+    _digest_notification(st, _reader(st, email="stranger@example.com"))
+    stats = email_delivery.run_once(st)
+    assert stats.skipped["not-in-allowlist"] == 1
+    assert stats.skipped.get("no-tls", 0) == 0, "it should not have got as far as the transport"
+    assert relay.received == []

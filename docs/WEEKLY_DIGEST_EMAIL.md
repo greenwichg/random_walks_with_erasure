@@ -18,7 +18,7 @@ not a change to code**. It also keeps a large dependency out of an image that de
 to gain nothing this needs.
 
 The interesting part of a mail transport is not sending. It is classifying what happened, because
-that decides whether a reader is written to again or never again — see §6.
+that decides whether a reader is written to again or never again — see §8.
 
 ---
 
@@ -35,21 +35,117 @@ Every variable is listed in `deploy/docker-compose.yml` on the `api` service. Th
 | `RWE_SMTP_USER` / `RWE_SMTP_PASSWORD` | Credentials, when the relay wants them. |
 | `RWE_EMAIL_FROM` | The From address, e.g. `Hidden View <digest@hidden-view.com>`. |
 | `RWE_EMAIL_SECRET` | Signs unsubscribe tokens. **Without it nothing is sent.** |
+| `RWE_EMAIL_ALLOWLIST` | Who may receive **at all**. Unset ⇒ nobody. `*` ⇒ everyone. |
 | `RWE_PUBLIC_URL` | Base for the report and unsubscribe links, e.g. `https://hidden-view.com`. |
 | `RWE_EMAIL_MAX_PER_RUN` | Cap per pass (default 500). |
 | `RWE_EMAIL_RETRY_MAX` | Attempts before a delivery is abandoned (default 3). |
 
-Two of these are refusals rather than settings:
+Three of these are refusals rather than settings:
 
 * **No `RWE_EMAIL_SECRET` ⇒ no mail.** A digest with a dead unsubscribe link is worse than a digest
   that never arrived: the reader's only remaining control is "report spam", which costs
   deliverability for everyone else. The worker logs `email_no_secret` and sends nothing.
 * **A relay with no TLS ⇒ no mail.** If STARTTLS is unavailable the send is skipped rather than
   transmitted in the clear; a reading history is not something to put on the wire unencrypted.
+* **No `RWE_EMAIL_ALLOWLIST` ⇒ no mail, to anyone.** This is the one gate that fails closed by
+  being *absent* rather than by being false, and the asymmetry is deliberate — see §3.
 
 ---
 
-## 3. What only you can do
+## 3. The recipient allowlist — and why unset means nobody
+
+`RWE_EMAIL_ALLOWLIST` decides who may receive at all, whatever their settings say. It is an
+**operator** gate, and it answers a different question from consent:
+
+| | Question | Whose answer | Safe default |
+|---|---|---|---|
+| Consent (`digests.email`) | *Do I want this?* | the reader's | off |
+| Allowlist | *Is this deployment cleared to write to real people yet?* | the operator's | **nobody** |
+
+The two are ANDed, and in the direction that matters: being on the allowlist is permission from the
+operator, never from the reader. A tester who has not opted in is still not mailed.
+
+Unset means nobody because the failure to avoid is a `.env` that loses a line and quietly starts
+mailing a live user base — the one mistake this feature cannot take back. Going general is
+therefore a deliberate act:
+
+```bash
+RWE_EMAIL_ALLOWLIST=you@example.com              # beta: exactly one person
+RWE_EMAIL_ALLOWLIST=you@example.com,qa@example.com   # a few
+RWE_EMAIL_ALLOWLIST=@hidden-view.com             # a whole domain
+RWE_EMAIL_ALLOWLIST='*'                          # general delivery — the only value that means it
+```
+
+Entries match case-insensitively, either as a full address or as an `@domain` suffix. Anything else
+in the variable — an empty string, `all`, `true`, `1` — clears **nobody**, so a half-edited file
+fails safe rather than open.
+
+A run with the gate shut says so in one line rather than as a pile of per-reader skips:
+
+```
+send-digest-emails: {"considered": 0, ..., "skipped": {"allowlist-empty": 1}}
+```
+
+and one that is filtering says exactly who it passed over:
+
+```
+send-digest-emails: {"considered": 13, "sent": 1, ..., "skipped": {"not-in-allowlist": 12}}
+```
+
+Being outside the list never writes a delivery off. Widen the list and the waiting digests go out
+on the next pass, as long as they are still inside the age window (§7).
+
+---
+
+## 4. Beta testing from a personal address
+
+The engine speaks SMTP, so a personal Gmail is a valid relay for testing and needs no code change —
+`RWE_EMAIL_FROM` is read at call time, and `examples/email_digest.py` (which decides what the mail
+*says*) never learns what address it goes out from. Swapping in `digest@hidden-view.com` later is
+one line in `deploy/.env` plus `deploy/ops/restart.sh api`;
+`test_the_sender_can_be_swapped_without_touching_the_digest` fails if that ever stops being true.
+
+```bash
+# deploy/.env — beta
+RWE_EMAIL_ENABLED=1
+RWE_SMTP_HOST=smtp.gmail.com
+RWE_SMTP_PORT=587
+RWE_SMTP_USER=you@gmail.com
+RWE_SMTP_PASSWORD="abcd efgh ijkl mnop"      # the 16-char app password, NOT your Google password
+RWE_EMAIL_FROM="Hidden View <you@gmail.com>"
+RWE_EMAIL_ALLOWLIST=you@gmail.com
+RWE_EMAIL_SECRET="$(openssl rand -base64 32)"   # paste the OUTPUT; .env is not a shell script
+RWE_PUBLIC_URL=https://hidden-view.com
+```
+
+**Quote any value containing a space or `#`.** `deploy/.env` is parsed, never sourced
+(`deploy/ops/_compose.sh::env_val` greps it, and Compose has its own dotenv parser), so `<` and `>`
+are safe unquoted — but an unquoted `#` is treated as the start of a comment, which would silently
+truncate a display name or an app password. One layer of surrounding quotes is stripped by both
+parsers, so quoting always round-trips.
+
+Four things about Gmail specifically, each of which fails in a way that does not look like its
+cause:
+
+1. **An App Password is required**, and it requires 2-Step Verification on the account first
+   (Google Account → Security → 2-Step Verification → App passwords). Your normal password is
+   rejected — Google removed password auth for SMTP clients. The failure is
+   `SMTPAuthenticationError`, which this worker logs as `email_smtp_auth_failed` and **retries**
+   rather than treating as a bad recipient.
+2. **`RWE_EMAIL_FROM` must be the Gmail account itself** (or an alias verified under *Settings →
+   Accounts → Send mail as*). Gmail rewrites a From it does not recognise, so a mismatch does not
+   error — it silently arrives from your Gmail address anyway, which is confusing when you are
+   trying to test the From.
+3. **Free Gmail allows roughly 500 messages a day.** Irrelevant at allowlist size, and a hard wall
+   the moment the allowlist becomes `*`.
+4. **Keep the allowlist narrow while the sender is a personal Gmail.** Product mail to third
+   parties from a personal account has no SPF/DKIM alignment for your product domain, and bulk
+   sending from a consumer account is against Gmail's policy. The allowlist is exactly the
+   mitigation; general delivery is what the dedicated domain in §5 is for.
+
+---
+
+## 5. What only you can do
 
 Nothing below can be done from the repository. All of it is account and DNS work.
 
@@ -63,11 +159,11 @@ Nothing below can be done from the repository. All of it is account and DNS work
    sandbox the relay answers `553` at `MAIL FROM`, which the transport reports as
    `email_sender_refused` and retries — deliberately, so a sandbox misconfiguration cannot suppress
    your readers (§6).
-4. **Install the cron line** (§5).
+4. **Install the cron line** (§7).
 
 ---
 
-## 4. Turning it on
+## 6. Turning it on
 
 Set the variables in `deploy/.env`, then:
 
@@ -103,7 +199,7 @@ weekly digest.
 
 ---
 
-## 5. The schedule — hourly cron, for a weekly email
+## 7. The schedule — hourly cron, for a weekly email
 
 ```cron
 17 * * * * ubuntu /opt/ih/deploy/ops/send-digest-emails.sh >> /var/log/ih-email.log 2>&1
@@ -139,7 +235,7 @@ correct: "here is your reading week" about a month nobody remembers is not a dig
 
 ---
 
-## 6. Outcomes — and the one that must not be got wrong
+## 8. Outcomes — and the one that must not be got wrong
 
 | Outcome | What the relay said | What happens |
 |---|---|---|
@@ -166,7 +262,7 @@ print(json.dumps(store.Store().list_email_suppressions(50), indent=2))"
 
 ---
 
-## 7. Consent and unsubscribe
+## 9. Consent and unsubscribe
 
 Two gates, both required, checked **at send time** rather than at materialisation — so a reader who
 unsubscribes between the digest being created and the mail going out is not mailed:
@@ -192,7 +288,7 @@ their own one-click control and the reader never has to find ours.
 
 ---
 
-## 8. Rolling it back
+## 10. Rolling it back
 
 ```bash
 # in deploy/.env
@@ -206,7 +302,7 @@ addresses bounced).
 
 ---
 
-## 9. Where the code lives
+## 11. Where the code lives
 
 | File | Job |
 |---|---|

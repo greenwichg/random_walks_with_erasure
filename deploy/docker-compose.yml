@@ -491,6 +491,11 @@ services:
       #                       rejected outright. That is DNS work, not deployment work.
       #   RWE_EMAIL_SECRET    signs unsubscribe tokens. WITHOUT IT NOTHING IS SENT — mail a reader
       #                       cannot escape is worse than mail they never got.
+      #   RWE_EMAIL_ALLOWLIST who may receive AT ALL, whatever their settings say — an operator
+      #                       gate, not a reader preference, so it fails closed the other way from
+      #                       everything else here: UNSET MEANS NOBODY. A comma-separated list of
+      #                       addresses and/or @domains during beta; `*` for general delivery,
+      #                       which is then a deliberate act rather than a lost line in .env.
       #   RWE_PUBLIC_URL      the base for the report and unsubscribe links in the mail.
       RWE_EMAIL_ENABLED: ${RWE_EMAIL_ENABLED:-0}
       RWE_SMTP_HOST: ${RWE_SMTP_HOST:-}
@@ -499,6 +504,7 @@ services:
       RWE_SMTP_PASSWORD: ${RWE_SMTP_PASSWORD:-}
       RWE_EMAIL_FROM: ${RWE_EMAIL_FROM:-}
       RWE_EMAIL_SECRET: ${RWE_EMAIL_SECRET:-}
+      RWE_EMAIL_ALLOWLIST: ${RWE_EMAIL_ALLOWLIST:-}
       RWE_PUBLIC_URL: ${RWE_PUBLIC_URL:-}
       RWE_EMAIL_MAX_PER_RUN: ${RWE_EMAIL_MAX_PER_RUN:-500}
       RWE_EMAIL_RETRY_MAX: ${RWE_EMAIL_RETRY_MAX:-}

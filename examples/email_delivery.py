@@ -17,10 +17,13 @@ cron deciding independently when a week starts, and no possibility of the two di
 * consent per reader (``email_consent.may_email_digest``), checked at send time rather than at
   materialisation, so a reader who unsubscribes between the two is not mailed;
 * a suppression list, because a hard bounce is permanent and re-sending damages deliverability;
-* an unsubscribe link, and a refusal to send at all if one cannot be minted.
+* an unsubscribe link, and a refusal to send at all if one cannot be minted;
+* a **recipient allowlist**, which is an operator gate rather than a reader preference — see
+  :func:`allowlist`.
 
     RWE_EMAIL_ENABLED=1  the switch (off ⇒ this does nothing at all)
     RWE_EMAIL_SECRET     signs unsubscribe tokens; without it nothing is sent
+    RWE_EMAIL_ALLOWLIST  who may receive at all; `*` for everyone. Unset ⇒ NOBODY
     RWE_PUBLIC_URL       the base for report / unsubscribe links
     RWE_EMAIL_MAX_PER_RUN, RWE_EMAIL_RETRY_MAX
 """
@@ -66,6 +69,41 @@ RETRY_BACKOFF = (timedelta(minutes=15), timedelta(hours=1), timedelta(hours=6))
 #: A digest older than this is not mailed at all, and should not be: "here is your reading week"
 #: about a month nobody remembers is not a digest, it is a surprise.
 MAX_AGE = timedelta(days=8)
+
+
+#: The value of ``RWE_EMAIL_ALLOWLIST`` that means "no restriction". A sentinel rather than an
+#: empty string, because the empty string is what an unset or half-edited ``.env`` produces, and
+#: that must not be the value that opens general delivery.
+ALLOW_ALL = "*"
+
+
+def allowlist() -> "frozenset[str] | None":
+    """Who this deployment may write to. ``None`` means everyone; a set means only these.
+
+    **Fail-closed, and unusually so: unset means NOBODY, not everybody.** Consent (the reader's
+    toggle) answers "do I want this"; the allowlist answers "is this deployment cleared to send to
+    real people yet", which is an operator's question and has a different safe default. During beta
+    the answer is a short list of testers, and the failure to avoid is a config file that loses a
+    line and quietly starts mailing a live user base. Going general is then an explicit act —
+    ``RWE_EMAIL_ALLOWLIST=*`` — rather than the consequence of an omission.
+
+    Entries are matched case-insensitively and may be either a full address (``me@example.com``) or
+    a domain (``@hidden-view.com``), which is what makes the eventual move to a dedicated address
+    a one-line change here too."""
+    raw = (os.environ.get("RWE_EMAIL_ALLOWLIST") or "").strip()
+    if raw == ALLOW_ALL:
+        return None
+    return frozenset(part.strip().lower() for part in raw.split(",") if part.strip())
+
+
+def allowed_recipient(address: str, allow: "frozenset[str] | None") -> bool:
+    """Whether one address is cleared to receive. An address we cannot parse is never cleared."""
+    if allow is None:
+        return True
+    addr = (address or "").strip().lower()
+    if "@" not in addr or addr.startswith("@") or addr.endswith("@"):
+        return False
+    return addr in allow or f"@{addr.rsplit('@', 1)[-1]}" in allow
 
 
 def _int_env(name: str, default: int) -> int:
@@ -154,6 +192,17 @@ def run_once(store_, *, now: "datetime | None" = None, sender=None, kind: str = 
         stats.skipped["no-unsubscribe-secret"] += 1
         return stats
 
+    allow = allowlist()
+    if allow is not None and not allow:
+        # Nothing is cleared to receive, so there is no work this pass could do. Returning here
+        # rather than scanning and skipping every reader keeps the log honest: one line saying the
+        # gate is shut, instead of "sent 0" under a pile of per-reader skips that look like a bug.
+        log.warning("email_allowlist_empty: RWE_EMAIL_ALLOWLIST is unset — no recipient is cleared. "
+                    "Set it to a comma-separated list of testers, or to %r for general delivery.",
+                    ALLOW_ALL)
+        stats.skipped["allowlist-empty"] += 1
+        return stats
+
     base = _base_url()
     cap = limit if limit is not None else _int_env("RWE_EMAIL_MAX_PER_RUN", 500)
     retry_max = _int_env("RWE_EMAIL_RETRY_MAX", len(RETRY_BACKOFF))
@@ -176,6 +225,14 @@ def run_once(store_, *, now: "datetime | None" = None, sender=None, kind: str = 
             job = resolved
         stats.considered += 1
         uid, address = job["userId"], (job.get("email") or "").strip()
+
+        # BEFORE the settings read, and before anything is claimed: an address this deployment is
+        # not cleared to write to costs no query and produces no ledger row. NOT `_abandon` — being
+        # outside the allowlist is our configuration, not a decision about the reader, so widening
+        # the list must let the backlog go out rather than find it already written off.
+        if not allowed_recipient(address, allow):
+            stats.skipped["not-in-allowlist"] += 1
+            continue
 
         try:
             prefs = settings_service.get(store_, uid)

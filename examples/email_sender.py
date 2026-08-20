@@ -53,7 +53,7 @@ class SendResult:
     """What one send attempt did. Mirrors ``push_sender.SendResult`` so the two delivery workers
     can reason about outcomes identically."""
 
-    status: str                      # "sent" | "retry" | "bounced" | "skipped"
+    status: str                      # "sent" | "retry" | "bounced" | "no-tls"
     code: "int | None" = None
     detail: str = ""
 
@@ -174,7 +174,7 @@ class SmtpSender:
                         # A relay with no TLS at all: refuse rather than send a reader's reading
                         # history in the clear. Permanent for this configuration, not the address.
                         log.error("email_smtp_no_tls: %s:%s offers no STARTTLS", self.host, self.port)
-                        return SendResult("skipped", detail="relay offers no TLS")
+                        return SendResult("no-tls", detail="relay offers no TLS")
                 if self.user:
                     client.login(self.user, self.password)
                 client.send_message(msg)
