@@ -82,8 +82,18 @@ for i in "${!FILES[@]}"; do
     kept=$((kept + 1)); keep_list="$keep_list  KEEP  [$keep] $(basename "$path")"$'\n'
   else
     sz=$(stat -c %s "$path" 2>/dev/null || echo 0)
+    # A snapshot is a SET: the database plus the sidecars db_backup.py wrote beside it
+    # (allowlist.txt, score_reference.json — durable state that is not inside the database and
+    # cannot be rebuilt from it). Deleting the database alone would leave orphans that no restore
+    # will ever reach for, growing without bound in the directory this script exists to bound.
+    stem="${path%.gz}"; stem="${stem%.db}"
+    for side in "$stem.allowlist.txt" "$stem.score_reference.json"; do
+      [ -f "$side" ] || continue
+      sz=$(( sz + $(stat -c %s "$side" 2>/dev/null || echo 0) ))
+      [ -n "$DRY" ] || rm -f "$side"
+    done
     if [ -n "$DRY" ]; then
-      keep_list="$keep_list  would DELETE $(basename "$path")"$'\n'
+      keep_list="$keep_list  would DELETE $(basename "$path") (+ sidecars)"$'\n'
     else
       rm -f "$path" && { deleted=$((deleted + 1)); freed=$((freed + sz)); }
     fi

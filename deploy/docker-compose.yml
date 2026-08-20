@@ -631,11 +631,29 @@ services:
         echo "backup-scheduler: every $${BACKUP_INTERVAL}s, keep $${BACKUP_KEEP} local"
         while true; do
           if python examples/db_backup.py backup; then
-            dest=$$(ls -1t /app/data/backups/*.db 2>/dev/null | head -1)
+            # BOTH suffixes. Backups are gzipped by default, so globbing only '*.db' matched
+            # nothing: off-host shipment never ran and this ceiling never fired — silently, for as
+            # long as compression was on. deploy/ops/prune-backups.sh already carried the fix; this
+            # loop did not.
+            dest=$$(ls -1t /app/data/backups/*.db.gz /app/data/backups/*.db 2>/dev/null | head -1)
             if [ -n "$$dest" ] && [ -n "$${BACKUP_OFFHOST_CMD:-}" ]; then
-              sh -c "$$BACKUP_OFFHOST_CMD" _ "$$dest" || echo "backup-scheduler: off-host failed (local kept)"
+              # Ship the whole SET, not just the database: allowlist.txt and score_reference.json
+              # are not inside it and cannot be rebuilt from it, so a database alone restores into
+              # a product nobody can sign in to. One call per file keeps the documented
+              # BACKUP_OFFHOST_CMD contract ($$1 = the file) unchanged.
+              stem=$${dest%.gz}; stem=$${stem%.db}
+              for f in "$$dest" "$$stem.allowlist.txt" "$$stem.score_reference.json"; do
+                [ -f "$$f" ] || continue
+                sh -c "$$BACKUP_OFFHOST_CMD" _ "$$f" || echo "backup-scheduler: off-host failed for $$f (local kept)"
+              done
             fi
-            ls -1t /app/data/backups/*.db 2>/dev/null | tail -n +$$(( $${BACKUP_KEEP} + 1 )) | xargs -r rm -f
+            # Prune a snapshot WITH its sidecars, so the ceiling cannot leave orphans behind.
+            ls -1t /app/data/backups/*.db.gz /app/data/backups/*.db 2>/dev/null \
+              | tail -n +$$(( $${BACKUP_KEEP} + 1 )) \
+              | while read -r old; do
+                  s=$${old%.gz}; s=$${s%.db}
+                  rm -f "$$old" "$$s.allowlist.txt" "$$s.score_reference.json"
+                done
           else
             echo "backup-scheduler: backup failed this cycle"
           fi

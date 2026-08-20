@@ -235,8 +235,15 @@ python examples/db_backup.py restore /path/to/ih_beta-<ts>.db
 
 ### Disaster recovery
 
+- **A snapshot is three files, not one.** `ih_beta-<ts>.db.gz` plus, sharing its stem,
+  `…​.allowlist.txt` (the beta gate's list) and `…​.score_reference.json` (the frozen scoring
+  cohort). Neither lives inside the database and neither can be rebuilt from it: restoring the
+  database alone gives you an intact product **nobody can sign in to** (the gate fails closed on an
+  empty list) whose every score has silently re-baselined. Copy the whole stem, not the `.db.gz`.
 - **Schedule** `db_backup.py backup` from cron/systemd (e.g. hourly). Backups land on the data
   volume; **copy them off-host** (object storage / another machine) so a lost volume ≠ lost data.
+  A directory-level `aws s3 sync` already carries the set; `BACKUP_OFFHOST_CMD` is invoked once per
+  file (`"$1"`), so a per-file uploader needs no change.
 - **Corruption check:** `GET /api/internal/storage` (or `db_backup.py status`) runs
   `PRAGMA quick_check`; restore from the newest good backup if it ever reports anything but `ok`.
 - **Recovery drill:** `restore` a recent backup into a scratch path and diff — practise before you
