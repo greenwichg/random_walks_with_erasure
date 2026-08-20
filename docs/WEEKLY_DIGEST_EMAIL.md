@@ -105,6 +105,33 @@ The engine speaks SMTP, so a personal Gmail is a valid relay for testing and nee
 one line in `deploy/.env` plus `deploy/ops/restart.sh api`;
 `test_the_sender_can_be_swapped_without_touching_the_digest` fails if that ever stops being true.
 
+Write the block with the script rather than by hand:
+
+```bash
+bash deploy/ops/configure-email.sh you@gmail.com          # --dry-run first, if you like
+```
+
+One address fills the whole block: it becomes the SMTP user, the From, and — by default — the only
+address cleared to receive. It prompts for the app password (never an argument, so it stays out of
+your shell history and the process list), strips Gmail's display spaces, generates
+`RWE_EMAIL_SECRET`, quotes whatever needs quoting, and backs the file up first.
+
+**It refuses to append a key that is already there.** That is not fussiness: Compose keeps only the
+LAST occurrence of a key and silently ignores every earlier one, which is exactly how
+`BETA_ALLOWLIST` lost the operator's own address and locked them out of their own beta
+(2026-08-02). A re-run of the same paste looks additive and is destructive. Use `--replace` to
+rewrite the keys in place; it preserves an existing `RWE_EMAIL_SECRET`, because rotating that would
+break every unsubscribe link already sitting in someone's inbox.
+
+For a different provider or general delivery:
+
+```bash
+bash deploy/ops/configure-email.sh digest@hidden-view.com --replace --allowlist '*' \
+     --host email-smtp.eu-west-1.amazonaws.com --user AKIAXXXX --name 'Hidden View'
+```
+
+The block it writes, for reference:
+
 ```bash
 # deploy/.env — beta
 RWE_EMAIL_ENABLED=1
