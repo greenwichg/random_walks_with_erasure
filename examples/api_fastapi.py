@@ -825,6 +825,21 @@ class NotificationCategoryModel(BaseModel):
     push: bool
 
 
+class NotificationDigestCategoryModel(NotificationCategoryModel):
+    """Digests carry a third channel: email (``examples/email_delivery.py``).
+
+    A subclass rather than a nullable ``email`` on every category, because the schema should say
+    which categories actually have an email channel. Only digests can be mailed; declaring the leaf
+    on ``breaking`` would advertise a switch that turns nothing on.
+
+    **This declaration is load-bearing, not documentation.** ``response_model`` filters output to
+    declared fields, so an undeclared leaf is stripped from every response *and* from every patch —
+    the setting becomes neither readable nor settable, and the API answers 200 while discarding it.
+    That is exactly what happened when the email channel first shipped: the toggle in Settings could
+    not be turned on, because this class did not know the field existed."""
+    email: bool
+
+
 class NotificationCategoriesModel(BaseModel):
     """Notification preferences by CATEGORY (what it is about) x CHANNEL (how it arrives).
 
@@ -832,7 +847,7 @@ class NotificationCategoriesModel(BaseModel):
     schema and an unknown category cannot enter through the API — the same reason every other group
     here is a model. ``settings_service`` drops unknown keys independently; this is the outer gate."""
     breaking: NotificationCategoryModel
-    digests: NotificationCategoryModel
+    digests: NotificationDigestCategoryModel
     recommendations: NotificationCategoryModel
     product: NotificationCategoryModel
 
@@ -902,9 +917,15 @@ class NotificationCategoryUpdate(BaseModel):
     push: bool | None = None
 
 
+class NotificationDigestCategoryUpdate(NotificationCategoryUpdate):
+    """Digests only — the inbound half of :class:`NotificationDigestCategoryModel`. Without it a
+    patch of ``{"digests": {"email": true}}`` is accepted with 200 and thrown away."""
+    email: bool | None = None
+
+
 class NotificationCategoriesUpdate(BaseModel):
     breaking: NotificationCategoryUpdate | None = None
-    digests: NotificationCategoryUpdate | None = None
+    digests: NotificationDigestCategoryUpdate | None = None
     recommendations: NotificationCategoryUpdate | None = None
     product: NotificationCategoryUpdate | None = None
 

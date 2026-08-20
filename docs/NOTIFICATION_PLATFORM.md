@@ -195,6 +195,17 @@ Exposing this took explicit work at two boundaries, both of which fail silently 
 * **The API.** FastAPI's `response_model` filters output to declared fields, so an undeclared
   preference group is stripped from every response — a preference that is neither readable nor
   settable. `NotificationPrefsModel` and `NotificationPrefsUpdate` both carry `categories`.
+
+  **This is per LEAF, not just per group, and it bit the email channel.** `digests.email` existed
+  in `DEFAULT_SETTINGS`, in `settings_service`, in the engine, and in the UI — but
+  `NotificationCategoryModel` declared only `inApp` and `push`, so the route answered `200` and
+  discarded the field in both directions. The toggle could not be switched on, and nothing
+  anywhere said why. Every test of the feature drove `settings_service` directly and saw a working
+  system; only a round trip through HTTP shows it. `digests` now has its own
+  `NotificationDigestCategoryModel` / `…Update` pair, and
+  `test_every_channel_leaf_in_the_schema_survives_the_api` derives the check from
+  `DEFAULT_SETTINGS` so the next channel is covered the day it lands rather than the day someone
+  remembers this paragraph.
 * **The web.** `Settings.notifications.categories` is declared in `types/domain.ts` and the
   Notifications card renders the in-app switch for `breaking`. Only in-app: a control for a channel
   that cannot deliver would be a promise the product doesn't keep. `diffSettings` recurses two levels

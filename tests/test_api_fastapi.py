@@ -752,20 +752,28 @@ def test_settings_expose_notification_categories_both_ways(client):
     FastAPI's `response_model` filters output to declared fields, so an undeclared group is silently
     dropped — a preference the reader can neither see nor set. This asserts the whole round trip:
     defaults are visible, one channel can be patched alone, its sibling and the other categories are
-    untouched, and it persists."""
+    untouched, and it persists.
+
+    The "untouched" claims compare against the DEFAULTS rather than a literal. A literal restates
+    the default channel set as a side effect of asserting something else, which makes it break when
+    a channel is added — and, worse, *pass* while the API is dropping one. This test did exactly
+    that: it was green for as long as `digests.email` was being stripped on the way out, and only
+    turned red once that was fixed."""
+    import settings_service
+    defaults = settings_service.DEFAULT_SETTINGS["notifications"]["categories"]
     uid = client.post("/api/internal/users",
                       json={"provider": "google", "providerAccountId": "route-cats"}).json()["userId"]
     hdr = {"X-IH-User-Id": str(uid)}
 
     cats = client.get("/api/me/settings", headers=hdr).json()["notifications"]["categories"]
     assert sorted(cats) == ["breaking", "digests", "product", "recommendations"]
-    assert cats["breaking"] == {"inApp": True, "push": False}, "in-app on, push off by default"
+    assert cats["breaking"] == defaults["breaking"], "in-app on, every other channel off"
 
     saved = client.post("/api/me/settings", headers=hdr, json={
         "notifications": {"categories": {"breaking": {"push": True}}}}).json()
     saved_cats = saved["notifications"]["categories"]
-    assert saved_cats["breaking"] == {"inApp": True, "push": True}, "sibling channel untouched"
-    assert saved_cats["digests"] == {"inApp": True, "push": False}, "other categories untouched"
+    assert saved_cats["breaking"] == {**defaults["breaking"], "push": True}, "sibling untouched"
+    assert saved_cats["digests"] == defaults["digests"], "other categories untouched"
     assert saved["notifications"]["weeklyDigest"] is True, "flat toggles untouched"
 
     again = client.get("/api/me/settings", headers=hdr).json()
@@ -2166,6 +2174,78 @@ def test_a_read_without_a_zone_leaves_a_known_one_alone(client):
 # --------------------------------------------------------------------------- #
 # Weekly digest email — the unsubscribe endpoint is deliberately unauthenticated
 # --------------------------------------------------------------------------- #
+def test_the_email_channel_toggle_survives_the_api_round_trip(client):
+    """Reported from production: the toggle would not turn on.
+
+    `response_model` filters output to declared fields, so an undeclared leaf is stripped from
+    every response AND from every patch — the route answered 200 and threw `email` away, in both
+    directions, so the switch could never move. Every other test of this feature drove
+    `settings_service` directly and saw nothing wrong; only a round trip through HTTP does.
+
+    Asserted on the PATCH's own response as well as a fresh GET, because those are two separate
+    serialisations and a leaf can be dropped from either one alone."""
+    uid = client.post("/api/internal/users",
+                      json={"provider": "google", "providerAccountId": "email-leaf"}).json()["userId"]
+    hdr = {"X-IH-User-Id": str(uid)}
+
+    assert client.get("/api/me/settings",
+                      headers=hdr).json()["notifications"]["categories"]["digests"]["email"] is False
+
+    saved = client.post("/api/me/settings", headers=hdr,
+                        json={"notifications": {"categories": {"digests": {"email": True}}}})
+    assert saved.status_code == 200
+    assert saved.json()["notifications"]["categories"]["digests"]["email"] is True, "stripped on save"
+
+    reread = client.get("/api/me/settings", headers=hdr).json()["notifications"]["categories"]
+    assert reread["digests"]["email"] is True, "stripped on read"
+    # Per-leaf, as the whole matrix is: turning email on must not disturb its siblings or its peers.
+    assert reread["digests"]["inApp"] is True and reread["digests"]["push"] is False
+    assert reread["breaking"] == {"inApp": True, "push": False}
+
+    off = client.post("/api/me/settings", headers=hdr,
+                      json={"notifications": {"categories": {"digests": {"email": False}}}})
+    assert off.json()["notifications"]["categories"]["digests"]["email"] is False, "cannot turn off"
+
+
+def test_every_channel_leaf_in_the_schema_survives_the_api(client):
+    """The general form of the bug above, so the NEXT channel cannot repeat it.
+
+    Two vocabularies have to agree: `settings_service.DEFAULT_SETTINGS` defines the matrix, and the
+    Pydantic models decide what crosses the wire. Nothing makes them agree automatically, and the
+    failure is silent in the worst way — 200, no warning, the value quietly gone. Derived from the
+    defaults rather than listed here, so a channel added to the schema is covered the day it lands
+    instead of the day someone remembers this file."""
+    import settings_service
+    defaults = settings_service.DEFAULT_SETTINGS["notifications"]["categories"]
+    uid = client.post("/api/internal/users",
+                      json={"provider": "google", "providerAccountId": "leaf-sweep"}).json()["userId"]
+    hdr = {"X-IH-User-Id": str(uid)}
+
+    served = client.get("/api/me/settings", headers=hdr).json()["notifications"]["categories"]
+    assert {c: sorted(v) for c, v in served.items()} == {c: sorted(v) for c, v in defaults.items()}, \
+        "the API's category matrix does not match the settings schema"
+
+    for category, channels in defaults.items():
+        for leaf, default in channels.items():
+            flipped = not default
+            body = {"notifications": {"categories": {category: {leaf: flipped}}}}
+            got = client.post("/api/me/settings", headers=hdr, json=body).json()
+            assert got["notifications"]["categories"][category][leaf] is flipped, \
+                f"{category}.{leaf} was accepted with 200 and discarded"
+            client.post("/api/me/settings", headers=hdr,
+                        json={"notifications": {"categories": {category: {leaf: default}}}})
+
+
+def test_only_digests_advertise_an_email_leaf(client):
+    """A leaf on a category nothing mails would be a switch that turns nothing on — the same class
+    of lie as copy promising a channel that does not exist."""
+    cats = client.get("/api/me/settings",
+                      headers={"X-IH-User-Id": "1"}).json()["notifications"]["categories"]
+    assert "email" in cats["digests"]
+    for name in ("breaking", "recommendations", "product"):
+        assert "email" not in cats[name], f"{name} advertises an email channel it does not have"
+
+
 def test_unsubscribe_needs_no_session(client, monkeypatch):
     """A reader in a mail client, on a device they never signed in on, must still be able to make
     it stop. Requiring a login is what gets mail reported as spam instead of unsubscribed."""
@@ -2174,7 +2254,10 @@ def test_unsubscribe_needs_no_session(client, monkeypatch):
     uid = client.post("/api/internal/users",
                       json={"provider": "google", "providerAccountId": "unsub-1"}).json()["userId"]
     hdr = {"X-IH-User-Id": str(uid)}
-    client.patch("/api/me/settings", json={"notifications": {"weeklyDigest": True}}, headers=hdr)
+    # POST, not PATCH: the settings route is a POST that merges. `client.patch` 405s, and this test
+    # passed anyway because weeklyDigest defaults to True — the setup was doing nothing.
+    assert client.post("/api/me/settings", json={"notifications": {"weeklyDigest": True}},
+                       headers=hdr).status_code == 200
 
     # No auth header at all.
     r = client.post("/api/unsubscribe", json={"token": email_consent.make_token(uid)})
