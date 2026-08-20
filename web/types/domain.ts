@@ -949,6 +949,9 @@ export interface FollowedLocation {
 export interface NotificationChannelPrefs {
   inApp: boolean;
   push: boolean;
+  /** Digests only, and off until the reader turns it on — a channel nobody opted into is not
+   *  consent. Absent on payloads from an engine that predates the email channel. */
+  email?: boolean;
 }
 
 /**

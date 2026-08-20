@@ -141,16 +141,20 @@ class Notification:
 @typing.runtime_checkable
 class Channel(typing.Protocol):
     """A delivery transport for a :class:`Notification`. The WHAT (Notification) is orthogonal to the
-    HOW (Channel): in-app now; email / push later implement this same protocol with provider-specific
-    rendering — no notification kind changes when a channel is added."""
+    HOW (Channel): no notification kind changes when a channel is added.
+
+    Only in-app renders *here*. Push renders in the web tier (``web/lib/sw-render.ts``, next to the
+    service worker that shows it) and email in ``examples/email_digest.py`` (which needs the
+    reader's language and absolute links — things a :class:`Notification` does not carry). A
+    transport therefore appears in :data:`CHANNEL_SETTING_KEYS`, which is about CONSENT, without
+    necessarily implementing this protocol, which is about RENDERING."""
     name: str
 
     def render(self, notification: "Notification") -> dict: ...
 
 
 class InAppChannel:
-    """The reference Channel: an in-app notification renders to its own JSON payload, verbatim.
-    (Email / push channels are deferred; they implement :class:`Channel` the same way.)"""
+    """The reference Channel: an in-app notification renders to its own JSON payload, verbatim."""
     name = "in_app"
 
     def render(self, notification: "Notification") -> dict:
@@ -158,9 +162,12 @@ class InAppChannel:
                 "payload": dict(notification.payload), "createdAt": notification.created_at}
 
 
-#: The in-app channel's identifier — the default everything here evaluates for, and the only channel
-#: that currently delivers anything.
+#: The in-app channel's identifier — the default everything here evaluates for.
 IN_APP = "in_app"
+
+#: The email channel's identifier. Delivery lives in ``examples/email_delivery.py``; what belongs
+#: here is that the channel EXISTS, so its consent leaf is a real gate rather than a missing one.
+EMAIL = "email"
 
 #: Channel identifier → the per-channel leaf under ``notifications.categories.<category>``.
 #:
@@ -168,7 +175,7 @@ IN_APP = "in_app"
 #: contract is camelCase JSON that clients already store (``inApp`` / ``push``), while a channel
 #: identifier is snake_case like :attr:`InAppChannel.name`. A channel absent from this map has no
 #: gate, and :func:`gate_path` fails CLOSED for it rather than inventing one.
-CHANNEL_SETTING_KEYS = {IN_APP: "inApp", "push": "push"}
+CHANNEL_SETTING_KEYS = {IN_APP: "inApp", "push": "push", EMAIL: "email"}
 
 
 # --------------------------------------------------------------------------- #
@@ -317,14 +324,24 @@ def gate_path(k: NotificationKind, channel: str = IN_APP) -> str:
     :data:`CHANNEL_SETTING_KEYS` rather than an edit to every kind. Three cases:
 
     * a kind with a ``category`` resolves to ``notifications.categories.<category>.<channel leaf>``;
-    * a kind without one returns its ``setting_path`` unchanged — the same gate on every channel,
-      which is what a preference that predates channels means;
+    * a kind **without** one returns its ``setting_path`` for in-app and ``""`` for every other
+      channel. A flat preference like ``notifications.weeklyDigest`` was written when in-app was the
+      only place a notification could go: it answers WHETHER, never WHERE. Reading it as consent for
+      a transport that did not exist when the reader set it is how a toggle someone ticked in 2025
+      becomes mail in their inbox. So other channels fail closed here and must carry their own
+      opt-in — for the digest that is ``notifications.categories.digests.email``, checked by
+      :func:`email_consent.may_email_digest` on top of the flat toggle.
     * an **unknown channel** returns ``""``, which :func:`_gated` reads as absent and therefore
       denies. Fail-closed: a channel nobody has written a preference for must not inherit consent
       from one the reader gave for something else.
+
+    (``push_delivery`` already worked around the old behaviour by filtering ``evaluate`` down to
+    fan-out kinds, because "a cadence kind gating the same on every channel would otherwise be
+    pushed the moment delivery was enabled, which no reader asked for". That is the same hazard,
+    fixed here at the contract instead of at one call site.)
     """
     if not k.category:
-        return k.setting_path
+        return k.setting_path if channel == IN_APP else ""
     leaf = CHANNEL_SETTING_KEYS.get(channel)
     return f"notifications.categories.{k.category}.{leaf}" if leaf else ""
 

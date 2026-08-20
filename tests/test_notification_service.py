@@ -510,15 +510,42 @@ def test_a_category_kind_resolves_a_different_gate_per_channel():
     assert ns.gate_path(k, "push") == "notifications.categories.breaking.push"
 
 
-def test_a_legacy_kind_keeps_one_gate_on_every_channel():
-    """A preference that predates channels means the same thing on all of them: there is no separate
-    "email me my weekly digest" toggle to consult, so inventing a path per channel would gate on a
-    preference the reader was never offered."""
+def test_a_legacy_kind_gates_in_app_only_and_fails_closed_elsewhere():
+    """A flat preference answers WHETHER, never WHERE — so it is consent for in-app and nothing else.
+
+    This test used to assert the opposite: `gate_path(k, "push") == k.setting_path`, one gate on
+    every channel. Its stated reason was that "there is no separate 'email me my weekly digest'
+    toggle to consult, so inventing a path per channel would gate on a preference the reader was
+    never offered" — true when it was written, and now false: that toggle exists
+    (`notifications.categories.digests.email`, default off).
+
+    With the premise gone the old behaviour is just consent laundering: a reader who ticked "weekly
+    digest" in 2025, when the app was the only place a notification could appear, would be treated
+    as having asked for mail. The empty path denies instead, and a transport that wants a legacy
+    kind must carry its own opt-in. `push_delivery` had already worked around the old contract by
+    filtering `evaluate` to fan-out kinds — same hazard, now fixed at the source."""
     for kind in ("weekly_report", "weekly_digest", "streak_reminder"):
         k = next(k for k in ns.NOTIFICATION_KINDS if k.kind == kind)
-        assert ns.gate_path(k) == k.setting_path
-        assert ns.gate_path(k, "push") == k.setting_path
-        assert ns.gate_path(k, "carrier_pigeon") == k.setting_path
+        assert ns.gate_path(k) == k.setting_path, "in-app: the channel the preference was written for"
+        assert ns.gate_path(k, ns.IN_APP) == k.setting_path
+        assert ns.gate_path(k, "push") == "", "a registered channel does not inherit in-app consent"
+        assert ns.gate_path(k, ns.EMAIL) == "", "nor does email — see email_consent.may_email_digest"
+        assert ns.gate_path(k, "carrier_pigeon") == "", "nor does one we have never heard of"
+
+
+def test_the_in_app_digest_is_untouched_by_the_email_channel():
+    """The acceptance condition for adding email: the in-app weekly digest fires exactly as before.
+
+    Registering a channel is a change to who ELSE may deliver, never to whether the inbox does."""
+    k = next(k for k in ns.NOTIFICATION_KINDS if k.kind == "weekly_digest")
+    assert ns.gate_path(k, ns.IN_APP) == "notifications.weeklyDigest"
+    on = ss.normalize_settings(None)
+    assert on["notifications"]["weeklyDigest"] is True
+    assert [n.kind for n in ns.evaluate(dataclasses.replace(_ctx(), settings=on))].count(
+        "weekly_digest") == 1
+    off = ss.normalize_settings({"notifications": {"weeklyDigest": False}})
+    assert "weekly_digest" not in [
+        n.kind for n in ns.evaluate(dataclasses.replace(_ctx(), settings=off))]
 
 
 def test_an_unknown_channel_is_fail_closed_for_a_category_kind():
@@ -570,11 +597,18 @@ def test_the_default_channel_leaves_every_shipped_kind_byte_identical():
 
 def test_inactive_event_kinds_is_channel_aware_too():
     """Resolution follows the same gate as delivery: an alert the reader turned off for a channel is
-    not actionable on that channel. No shipped event kind has a category yet, so today every channel
-    gives the same answer — the parameter exists so that stays true when one does."""
+    not actionable on that channel — so it answers per channel, not once for all of them.
+
+    Every shipped event kind is still categoryless, so under the tightened `gate_path` they are all
+    inactive on any channel but in-app. That reads oddly until you say it out loud: the reader has
+    not consented to blind-spot alerts *by mail*, so "can I act on this by mail" is correctly no.
+    The second assertion used to demand push give the same answer as in-app; it now demands the
+    opposite, which is the point of the parameter."""
     ctx = _ctx()
-    assert ns.inactive_event_kinds(ctx) == ns.inactive_event_kinds(ctx, "in_app")
-    assert ns.inactive_event_kinds(ctx) == ns.inactive_event_kinds(ctx, "push")
+    assert ns.inactive_event_kinds(ctx) == ns.inactive_event_kinds(ctx, ns.IN_APP)
+    for channel in ("push", ns.EMAIL):
+        assert set(ns.inactive_event_kinds(ctx, channel)) == set(ns.EVENT_KINDS), (
+            f"{channel}: no event kind carries a per-channel opt-in, so none is actionable there")
 
 
 def test_every_kind_declares_exactly_one_gating_shape():
@@ -626,20 +660,41 @@ def test_no_notification_setting_promises_a_channel_that_does_not_exist():
 
     Keyed on the live channel registry rather than on a hardcoded verdict: the day an email channel
     is actually built and registered, this stops objecting on its own instead of having to be
-    remembered and deleted."""
+    remembered and deleted.
+
+    That day has come — the channel is registered and `examples/email_delivery.py` sends — so the
+    guard does not stand down, it MOVES: copy may now promise email, and what is checked is that
+    the promise is backed. A skip here would retire the only test of the property the bug was
+    about, on the strength of a registry row that costs one line to add.
+
+    (`digestDesc` no longer claims email either way — it says "in your notifications", which is what
+    the in-app channel does. The email promise now lives on its own leaf, next to its own toggle.)"""
     import re
     channels = set(ns.CHANNEL_SETTING_KEYS)
-    if {"email", "mail"} & channels:
-        pytest.skip(f"an email channel exists now ({sorted(channels)}) — the copy may promise it")
 
     # e-mail / email / correo cover the five shipped catalogs.
-    promises_mail = re.compile(r"\be-?mails?\b|\bcorreos?\b", re.IGNORECASE)
-    offenders = []
+    promises_mail = re.compile(r"\be-?mails?\b|\bcorreos?\b|\bcourriels?\b", re.IGNORECASE)
+    promising_keys, offenders = set(), []
     for lang in ("en", "es", "fr", "de", "pt"):
         cat = json.loads((ROOT / "web" / "messages" / f"{lang}.json").read_text(encoding="utf-8"))
         for key, value in cat.items():
             if key.startswith("settings.notif.") and promises_mail.search(value):
-                offenders.append(f"{lang}:{key} = {value!r}")
+                promising_keys.add(key)
+                if "email" not in channels:
+                    offenders.append(f"{lang}:{key} = {value!r}")
     assert not offenders, (
         "notification settings copy promises email, but the delivery boundary has no email "
         f"channel (only {sorted(channels)}):\n  " + "\n  ".join(offenders))
+
+    # The channel exists. Now: is the promise reachable? A registered channel with no consent leaf
+    # to turn on is the same lie wearing a registry row — `gate_path` would resolve to a preference
+    # that is absent from the defaults, `_gated` would deny, and the toggle would do nothing again.
+    if promising_keys:
+        leaf = ns.CHANNEL_SETTING_KEYS["email"]
+        cats = ss.normalize_settings(None)["notifications"]["categories"]
+        wired = sorted(name for name, leaves in cats.items() if leaf in leaves)
+        assert wired, (
+            f"copy promises email ({sorted(promising_keys)}) and the channel is registered, but no "
+            f"category carries a {leaf!r} leaf — nothing the reader can switch on")
+        for name in wired:
+            assert cats[name][leaf] is False, f"{name}.{leaf} must default OFF — consent is opt-in"

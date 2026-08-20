@@ -525,6 +525,8 @@
   "settings.notif.recsDesc": "Wenn frische übergreifende Lektüre für Sie bereit ist.",
   "settings.notif.digest": "Wöchentliche Zusammenfassung",
   "settings.notif.digestDesc": "Ein Rückblick auf Ihre Lesewoche, in Ihren Benachrichtigungen.",
+  "settings.notif.digestEmail": "Auch per E-Mail senden",
+  "settings.notif.digestEmailDesc": "Ihre Wochenübersicht, direkt in Ihr Postfach. Jederzeit abbestellbar.",
   "settings.notif.streak": "Serien-Erinnerungen",
   "settings.notif.streakDesc": "Ein Hinweis, bevor Ihre Lese-Serie endet.",
   "settings.notif.blindSpot": "Blind-Fleck-Warnungen",
@@ -907,5 +909,12 @@
   "continuation.allOutlets": "Alle {n} Medien ansehen",
   "continuation.dismiss": "Diesen Vergleich ausblenden",
   "continuation.side.left": "Mitte-links",
-  "continuation.side.right": "Mitte-rechts"
+  "continuation.side.right": "Mitte-rechts",
+  "unsubscribe.done": "Sie erhalten keine wöchentlichen Zusammenfassungen per E-Mail mehr.",
+  "unsubscribe.failed": "Dieser Link hat nicht funktioniert",
+  "unsubscribe.failedBody": "Möglicherweise wurde er bereits verwendet oder die Adresse ist falsch. Sie können Zusammenfassungen in den Einstellungen deaktivieren.",
+  "unsubscribe.settings": "Einstellungen öffnen",
+  "unsubscribe.stillHere": "Ihre Wochenübersicht bleibt in der App unter Benachrichtigungen.",
+  "unsubscribe.title": "Abbestellt",
+  "unsubscribe.working": "Einen Moment…"
 }

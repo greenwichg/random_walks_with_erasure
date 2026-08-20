@@ -525,6 +525,8 @@
   "settings.notif.recsDesc": "Cuando hay nuevas lecturas transversales listas para ti.",
   "settings.notif.digest": "Resumen semanal",
   "settings.notif.digestDesc": "Un resumen de tu semana de lectura, en tus notificaciones.",
+  "settings.notif.digestEmail": "Envíamelo también por correo",
+  "settings.notif.digestEmailDesc": "Tu resumen semanal, en tu bandeja de entrada. Cancela cuando quieras.",
   "settings.notif.streak": "Recordatorios de racha",
   "settings.notif.streakDesc": "Un aviso antes de que se corte tu racha de lectura.",
   "settings.notif.blindSpot": "Alertas de puntos ciegos",
@@ -907,5 +909,12 @@
   "continuation.allOutlets": "Ver los {n} medios",
   "continuation.dismiss": "Descartar esta comparación",
   "continuation.side.left": "centroizquierda",
-  "continuation.side.right": "centroderecha"
+  "continuation.side.right": "centroderecha",
+  "unsubscribe.done": "Ya no recibirás los resúmenes semanales por correo.",
+  "unsubscribe.failed": "Ese enlace no funcionó",
+  "unsubscribe.failedBody": "Puede que ya se haya usado o que la dirección esté mal escrita. Puedes desactivar los resúmenes en Ajustes.",
+  "unsubscribe.settings": "Abrir ajustes",
+  "unsubscribe.stillHere": "Tu resumen semanal sigue en la aplicación, en notificaciones.",
+  "unsubscribe.title": "Suscripción cancelada",
+  "unsubscribe.working": "Un momento…"
 }

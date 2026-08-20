@@ -381,6 +381,28 @@
       },
       "why": "The fan-out is rate-limited per push service, and the limit is ON by default because the failure it prevents is silent: trip a push service's own limit and every send comes back 429, which the retry ladder then dutifully repeats. The variable that matters here is the one an operator reaches for during an incident \u2014 either to lower the rate because we are being throttled, or to set it to 0 because the limit has become the problem. An unlisted variable can be neither, since `environment:` is an explicit allowlist with no `env_file:` behind it. Left unset it takes the built-in default, so wiring it costs nothing and its absence costs an incident.",
       "fix": "On the `api` service (base compose, and restated in the AWS override) add `RWE_PUSH_MAX_SENDS_PER_SECOND: ${RWE_PUSH_MAX_SENDS_PER_SECOND:-}`. Leave it empty for the default (10/s per service); set a number to change it; set 0 to disable. See docs/BROWSER_PUSH_OPERATIONS.md \u00a77.2."
+    },
+    {
+      "id": "weekly-digest-email",
+      "categories": [
+        "feature-flag",
+        "required-env",
+        "secret"
+      ],
+      "when": {
+        "service": "api",
+        "env_truthy": "RWE_EMAIL_ENABLED"
+      },
+      "require": {
+        "env": [
+          "RWE_SMTP_HOST",
+          "RWE_EMAIL_FROM",
+          "RWE_EMAIL_SECRET",
+          "RWE_PUBLIC_URL"
+        ]
+      },
+      "why": "RWE_EMAIL_ENABLED=1 turns on the weekly-digest email worker, and each of these is a hard refusal rather than a default. Without RWE_SMTP_HOST or RWE_EMAIL_FROM there is no relay to speak to (sender_from_env returns None). Without RWE_EMAIL_SECRET no unsubscribe token can be minted and the worker refuses to send at all, because mail a reader cannot escape is worse than mail they never got. Without RWE_PUBLIC_URL the unsubscribe link has no base and every reader is skipped. In all four cases the flag is on, the cron runs, the logs look healthy, and not one email is ever sent.",
+      "fix": "On the `api` service keep `RWE_SMTP_HOST`, `RWE_EMAIL_FROM`, `RWE_EMAIL_SECRET` and `RWE_PUBLIC_URL` wired, and set all four in deploy/.env alongside RWE_EMAIL_ENABLED=1. See docs/WEEKLY_DIGEST_EMAIL.md \u00a72-3 \u2014 the sender domain also needs SPF/DKIM, which is DNS work, not deployment work."
     }
   ],
   "secret_name_patterns": [

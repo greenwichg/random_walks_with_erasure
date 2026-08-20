@@ -50,6 +50,14 @@ access-controlled box.
 | `RWE_VAPID_PUBLIC_KEY` | *(empty)* | The public half of the VAPID pair, base64url (87 chars, starts `B`). Served to browsers, which subscribe against it. Public by construction — it is handed to `pushManager.subscribe`. |
 | `RWE_VAPID_PRIVATE_KEY` | *(empty)* | **Secret.** The signing half (43 chars). Read by nothing in B1; wired now so the pair is generated and stored once. Must be interpolated from `deploy/.env` — a literal in a compose file fails `validate-deployment.py`. |
 | `RWE_VAPID_SUBJECT` | *(empty)* | The `mailto:` or `https:` contact push services are given with each send. B2. |
+| `RWE_EMAIL_ENABLED` | `0` (off) | `1` turns on the weekly-digest **email** channel — a second transport for the digest the inbox already delivers, not a new notification. Off is a true no-op: the worker returns immediately and the in-app card is untouched. Every reader is opted **out** by default (`notifications.categories.digests.email` = `false`), because a channel nobody opted into is not consent. **Production runs with `RWE_EMAIL_ENABLED=0`.** Setup, verification and rollback: `docs/WEEKLY_DIGEST_EMAIL.md`. |
+| `RWE_SMTP_HOST` / `RWE_SMTP_PORT` | *(empty)* / `587` | Any SMTP relay — SES (`email-smtp.<region>.amazonaws.com`), Postmark, SendGrid, a local relay. The engine speaks SMTP rather than one vendor's API so the provider is configuration, not code. 587 negotiates STARTTLS; 465 is implicit TLS. A relay offering **no** TLS is refused rather than used. |
+| `RWE_SMTP_USER` / `RWE_SMTP_PASSWORD` | *(empty)* | **Secret.** Relay credentials. For SES these are *SMTP credentials*, which are not your AWS access keys. |
+| `RWE_EMAIL_FROM` | *(empty)* | The From address, e.g. `Hidden View <digest@hidden-view.com>`. Its **domain must be verified with the provider and carry SPF + DKIM**, or mail is filed as spam or rejected — DNS work, not deployment work. A rejected sender is retried, never counted against the recipient. |
+| `RWE_EMAIL_SECRET` | *(empty)* | **Secret.** Signs unsubscribe tokens (HMAC over purpose + user id). **Without it nothing is sent at all** — mail a reader cannot escape is worse than mail they never got. |
+| `RWE_PUBLIC_URL` | *(empty)* | Base for the report and unsubscribe links inside the mail, e.g. `https://hidden-view.com`. Unset, every reader is skipped with `no-unsubscribe-url`. |
+| `RWE_EMAIL_MAX_PER_RUN` | `500` | Cap per delivery pass. Runs are hourly, so this bounds a burst rather than the week. |
+| `RWE_EMAIL_RETRY_MAX` | `3` | Attempts before a delivery is abandoned. Backoff 15 min → 1 h → 6 h. |
 
 ### Web (Next.js `web`) — validated at startup (`web/instrumentation.ts`)
 | Variable | Value | Notes |

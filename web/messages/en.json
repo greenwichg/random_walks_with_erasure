@@ -525,6 +525,8 @@
   "settings.notif.recsDesc": "When fresh cross-cutting reads are ready for you.",
   "settings.notif.digest": "Weekly digest",
   "settings.notif.digestDesc": "A round-up of your reading week, in your notifications.",
+  "settings.notif.digestEmail": "Also email it to me",
+  "settings.notif.digestEmailDesc": "Your weekly round-up, delivered to your inbox. Unsubscribe any time.",
   "settings.notif.streak": "Streak reminders",
   "settings.notif.streakDesc": "A nudge before your reading streak lapses.",
   "settings.notif.blindSpot": "Blind-spot alerts",
@@ -907,5 +909,12 @@
   "continuation.allOutlets": "View all {n} outlets",
   "continuation.dismiss": "Dismiss this comparison",
   "continuation.side.left": "left of centre",
-  "continuation.side.right": "right of centre"
+  "continuation.side.right": "right of centre",
+  "unsubscribe.done": "You won't receive weekly digest emails any more.",
+  "unsubscribe.failed": "That link didn't work",
+  "unsubscribe.failedBody": "It may have already been used, or the address was mistyped. You can turn digests off in Settings.",
+  "unsubscribe.settings": "Open settings",
+  "unsubscribe.stillHere": "Your weekly digest is still in the app, under notifications.",
+  "unsubscribe.title": "Unsubscribed",
+  "unsubscribe.working": "One moment…"
 }

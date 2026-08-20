@@ -9,6 +9,7 @@ import {
   Sun,
   Check,
   Bell,
+  Mail,
   Sparkles,
   Scale,
   Target,
@@ -221,6 +222,26 @@ export default function SettingsPage() {
   }
   function setNotif<K extends keyof Settings["notifications"]>(key: K, value: boolean) {
     setDraft((d) => (d ? { ...d, notifications: { ...d.notifications, [key]: value } } : d));
+    setSaved(false);
+  }
+  /** One CHANNEL of the digests category. Copies only the changed leaf, so the save PATCH carries
+   *  exactly the switch the reader flipped — the engine layers per-leaf, and restating the whole
+   *  matrix would overwrite a channel another client had just changed. */
+  function setDigestChannel(channel: "inApp" | "push" | "email", value: boolean) {
+    setDraft((d) =>
+      d
+        ? {
+            ...d,
+            notifications: {
+              ...d.notifications,
+              categories: {
+                ...d.notifications.categories,
+                digests: { ...d.notifications.categories?.digests, [channel]: value },
+              },
+            },
+          }
+        : d,
+    );
     setSaved(false);
   }
   /** One interest slider. Copies only the changed leaf (like setCategory), so the save PATCH
@@ -615,6 +636,22 @@ export default function SettingsPage() {
                 checked={draft.notifications.weeklyDigest}
                 onChange={(v) => setNotif("weeklyDigest", v)}
               />
+              {/* The email channel hangs off the digest and is only offered while the digest is
+                  on: "email me something you are not producing" is not a state worth having. It
+                  is a separate switch rather than a second kind, because the CATEGORY (a digest)
+                  and the CHANNEL (email) are different questions — the schema was built that way
+                  before there was anything to put in it. */}
+              {draft.notifications.weeklyDigest && (
+                <div className="pl-9">
+                  <ToggleRow
+                    icon={Mail}
+                    title={t("settings.notif.digestEmail")}
+                    description={t("settings.notif.digestEmailDesc")}
+                    checked={draft.notifications.categories?.digests?.email ?? false}
+                    onChange={(v) => setDigestChannel("email", v)}
+                  />
+                </div>
+              )}
               <ToggleRow
                 icon={Bell}
                 title={t("settings.notif.streak")}

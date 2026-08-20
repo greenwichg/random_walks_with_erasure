@@ -231,11 +231,24 @@ def test_scalar_accessors():
 CATEGORIES = ("breaking", "digests", "recommendations", "product")
 
 
-def test_category_defaults_are_in_app_on_and_push_off():
+def test_category_defaults_are_in_app_on_and_every_other_channel_off():
+    """In-app on, everything else off — stated per CHANNEL rather than as a fixed literal.
+
+    It was `== {"inApp": True, "push": False}`, which is the same claim while exactly two channels
+    exist and silently stops testing the third the day one is added. Keyed on the live channel
+    registry instead, this now says what the bar always meant — *no transport is on unless the
+    reader turned it on* — and covers `email`, and whatever comes after it, on its own."""
     cats = ss.normalize_settings(None)["notifications"]["categories"]
     assert sorted(cats) == sorted(CATEGORIES)
+    in_app = ns.CHANNEL_SETTING_KEYS[ns.IN_APP]
+    known = set(ns.CHANNEL_SETTING_KEYS.values())
     for name in CATEGORIES:
-        assert cats[name] == {"inApp": True, "push": False}, name
+        leaves = cats[name]
+        assert set(leaves) <= known, f"{name}: leaf that is not a registered channel: {leaves}"
+        assert leaves.get(in_app) is True, f"{name}: in-app must default ON"
+        for leaf, value in leaves.items():
+            if leaf != in_app:
+                assert value is False, f"{name}.{leaf} must default OFF — consent is opt-in"
 
 
 def test_a_patch_merges_per_leaf_not_per_category():
@@ -246,7 +259,10 @@ def test_a_patch_merges_per_leaf_not_per_category():
         {"notifications": {"categories": {"breaking": {"push": False}}}})
     cats = out["notifications"]["categories"]
     assert cats["breaking"] == {"inApp": False, "push": False}, "patched leaf changed, sibling kept"
-    assert cats["digests"] == {"inApp": True, "push": False}, "other categories untouched"
+    # Compared against the DEFAULTS rather than a literal: the claim is "untouched", and a literal
+    # restates the default set as a side effect, so adding a channel breaks the test for no reason.
+    assert cats["digests"] == ss.DEFAULT_SETTINGS["notifications"]["categories"]["digests"], \
+        "other categories untouched"
     assert out["notifications"]["weeklyDigest"] is True, "flat toggles untouched"
 
 

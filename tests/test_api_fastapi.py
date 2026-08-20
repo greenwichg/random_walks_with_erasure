@@ -2161,3 +2161,41 @@ def test_a_read_without_a_zone_leaves_a_known_one_alone(client):
     client.post("/api/me/reads",
                 json={"reads": [{"url": "https://foxnews.com/politics/tz3b"}]}, headers=hdr)
     assert client.get("/api/me/settings", headers=hdr).json()["timeZone"] == "Europe/Berlin"
+
+
+# --------------------------------------------------------------------------- #
+# Weekly digest email — the unsubscribe endpoint is deliberately unauthenticated
+# --------------------------------------------------------------------------- #
+def test_unsubscribe_needs_no_session(client, monkeypatch):
+    """A reader in a mail client, on a device they never signed in on, must still be able to make
+    it stop. Requiring a login is what gets mail reported as spam instead of unsubscribed."""
+    monkeypatch.setenv("RWE_EMAIL_SECRET", "test-secret")
+    import email_consent
+    uid = client.post("/api/internal/users",
+                      json={"provider": "google", "providerAccountId": "unsub-1"}).json()["userId"]
+    hdr = {"X-IH-User-Id": str(uid)}
+    client.patch("/api/me/settings", json={"notifications": {"weeklyDigest": True}}, headers=hdr)
+
+    # No auth header at all.
+    r = client.post("/api/unsubscribe", json={"token": email_consent.make_token(uid)})
+    assert r.status_code == 200 and r.json()["unsubscribed"] is True
+    assert client.get("/api/me/settings", headers=hdr).json()["notifications"]["weeklyDigest"] is False
+
+
+def test_unsubscribe_does_not_enumerate_users(client, monkeypatch):
+    """A forged token answers 200/false, not 404 — an endpoint that distinguishes "no such user"
+    from "wrong signature" is an endpoint that enumerates users."""
+    monkeypatch.setenv("RWE_EMAIL_SECRET", "test-secret")
+    for token in ("", "garbage", "999999.digest.forged"):
+        r = client.post("/api/unsubscribe", json={"token": token})
+        assert r.status_code == 200 and r.json()["unsubscribed"] is False
+
+
+def test_the_digest_email_run_is_internal_only(client, monkeypatch):
+    """It reads every reader's address; it is not a public route. Guarded the same way as every
+    other /api/internal/* route — trusted only with the shared secret once one is configured
+    (unset + dev mode is the documented zero-config local case, not a hole)."""
+    monkeypatch.setenv("RWE_INTERNAL_SECRET", "s3cret")
+    assert client.post("/api/internal/email/digest-run").status_code == 401
+    ok = client.post("/api/internal/email/digest-run", headers={"X-IH-Auth": "s3cret"})
+    assert ok.status_code == 200 and "sent" in ok.json()

@@ -158,24 +158,37 @@ never be able to raise itself.**
 ## 6. Reader controls
 
 Preferences live under `notifications.categories` in normalised settings (`settings_service`), one
-`inApp`/`push` pair per category, so the `push` half is already the shape Phase B needs:
+channel row per category. `email` is present only where something can actually be mailed, because a
+leaf is a promise that a switch does something:
 
 ```json
 "categories": {
   "breaking":        { "inApp": true, "push": false },
-  "digests":         { "inApp": true, "push": false },
+  "digests":         { "inApp": true, "push": false, "email": false },
   "recommendations": { "inApp": true, "push": false },
   "product":         { "inApp": true, "push": false }
 }
 ```
 
+Every channel but in-app defaults **off**, and that is consent rather than caution: a channel nobody
+opted into is not permission, and defaulting `email` on would have mailed every existing reader on
+deploy day.
+
 A kind names its **category**, not a path: `gate_path(kind, channel)` derives
-`notifications.categories.breaking.<inApp|push>`, so the same kind can be on for one channel and off
-for another — which is what a reader means by "notify me, but not on my phone". The six kinds that
-predate channels keep a single `setting_path` and answer the same on every channel, because there is
-no separate per-channel toggle to consult for them. Unset paths and unknown channels both **fail
-closed**: consent is per channel, and a transport nobody has written a preference for must not
-inherit consent given for a different one.
+`notifications.categories.breaking.<inApp|push|email>`, so the same kind can be on for one channel
+and off for another — which is what a reader means by "notify me, but not on my phone". Unset paths
+and unknown channels both **fail closed**: consent is per channel, and a transport nobody has written
+a preference for must not inherit consent given for a different one.
+
+The six kinds that predate channels keep a single flat `setting_path`, and that path gates **in-app
+only**. It used to answer the same on every channel, on the reasoning that there was no per-channel
+toggle to consult for them; the weekly digest email made that false, and the old behaviour was
+consent laundering — `notifications.weeklyDigest` was ticked when the app was the only place a
+notification could appear, so it answers *whether*, never *where*. Every other channel now resolves
+to `""` and denies, and a transport that wants a legacy kind carries its own opt-in
+(`notifications.categories.digests.email`, checked by `email_consent.may_email_digest` **on top of**
+the flat toggle). In-app is byte-identical before and after; `push_delivery` was already filtering
+`evaluate` down to fan-out kinds to dodge the same hazard at its call site.
 
 Exposing this took explicit work at two boundaries, both of which fail silently when missed:
 
@@ -255,7 +268,8 @@ No rebuild, no revert, no data migration.
 | Producer (A5) | `tests/test_story_events.py` — flag off, threshold, band, idempotence across cycles, both poller seams |
 | Web (A6) | `web/lib/notifications.test.ts` — deep link, fallback for a payload with no usable `storyId`, escaping, other kinds unaffected |
 | Deploy (A6) | `deploy/ops/validate-deployment.py` — the switch must stay wired on `api` in both stacks |
-| Gating | `tests/test_notification_service.py` — per-channel paths, legacy kinds unchanged on every channel, unknown channel denied, the two channels gating independently, `evaluate(ctx)` byte-identical to `evaluate(ctx, "in_app")` |
+| Gating | `tests/test_notification_service.py` — per-channel paths, legacy kinds gating in-app only and failing closed elsewhere, unknown channel denied, channels gating independently, `evaluate(ctx)` byte-identical to `evaluate(ctx, "in_app")` |
+| Email (C1) | `tests/test_email_digest.py` — consent conjunction, unsubscribe tokens, one mail per reader per week, bounce suppression, retry ladder, a rejected *sender* never suppressing a *recipient*; `web/lib/unsubscribe-public.test.ts` — the unsubscribe route stays outside the auth matcher |
 | Preference | `web/lib/settings-diff.test.ts` — a two-level change ships one leaf, an identical rebuild is not a change |
 
 Every commit was accepted against **mutation testing**, not just a green suite: the A6 resolver kills

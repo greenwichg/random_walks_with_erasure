@@ -70,7 +70,10 @@ DEFAULT_SETTINGS = {
                       # means migrating everyone's settings. Costing nothing now buys that.
                       "categories": {
                           "breaking":        {"inApp": True, "push": False},
-                          "digests":         {"inApp": True, "push": False},
+                          # `email` joins the channel row for digests only. Default OFF, and that
+                          # is consent, not caution: a channel nobody opted into is not permission,
+                          # and defaulting it on would mail every existing reader on deploy day.
+                          "digests":         {"inApp": True, "push": False, "email": False},
                           "recommendations": {"inApp": True, "push": False},
                           "product":         {"inApp": True, "push": False},
                       }},

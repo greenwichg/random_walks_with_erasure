@@ -479,6 +479,29 @@ services:
       # the wrong readers. On by default — the failure it prevents (tripping a push service's own
       # limit, turning every send into a retry) is silent and gradual. `0` switches it off.
       RWE_PUSH_MAX_SENDS_PER_SECOND: ${RWE_PUSH_MAX_SENDS_PER_SECOND:-}
+      # ── Weekly digest EMAIL (off until configured) ──────────────────────────────────────
+      #   RWE_EMAIL_ENABLED   the switch. Off ⇒ the worker does nothing and the in-app digest is
+      #                       untouched; this is the state every deployment starts in.
+      #   RWE_SMTP_*          any SMTP relay: Amazon SES (email-smtp.<region>.amazonaws.com:587
+      #                       with SES SMTP credentials), Postmark, SendGrid, a local relay. The
+      #                       engine speaks SMTP rather than one vendor's API precisely so this is
+      #                       configuration and not code.
+      #   RWE_EMAIL_FROM      the From address. Its DOMAIN must be verified with the provider and
+      #                       carry SPF + DKIM (and ideally DMARC), or mail lands in spam or is
+      #                       rejected outright. That is DNS work, not deployment work.
+      #   RWE_EMAIL_SECRET    signs unsubscribe tokens. WITHOUT IT NOTHING IS SENT — mail a reader
+      #                       cannot escape is worse than mail they never got.
+      #   RWE_PUBLIC_URL      the base for the report and unsubscribe links in the mail.
+      RWE_EMAIL_ENABLED: ${RWE_EMAIL_ENABLED:-0}
+      RWE_SMTP_HOST: ${RWE_SMTP_HOST:-}
+      RWE_SMTP_PORT: ${RWE_SMTP_PORT:-587}
+      RWE_SMTP_USER: ${RWE_SMTP_USER:-}
+      RWE_SMTP_PASSWORD: ${RWE_SMTP_PASSWORD:-}
+      RWE_EMAIL_FROM: ${RWE_EMAIL_FROM:-}
+      RWE_EMAIL_SECRET: ${RWE_EMAIL_SECRET:-}
+      RWE_PUBLIC_URL: ${RWE_PUBLIC_URL:-}
+      RWE_EMAIL_MAX_PER_RUN: ${RWE_EMAIL_MAX_PER_RUN:-500}
+      RWE_EMAIL_RETRY_MAX: ${RWE_EMAIL_RETRY_MAX:-}
       # Storage lifecycle (examples/retention_policy.py — the ONE typed policy module). 0 = keep
       # forever, uniformly; junk/negative values fall back to the default rather than deleting more.
       # User data (reads, saves, settings, accounts) has NO policy and is never pruned.

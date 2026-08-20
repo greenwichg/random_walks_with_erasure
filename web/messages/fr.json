@@ -525,6 +525,8 @@
   "settings.notif.recsDesc": "Quand de nouvelles lectures transversales sont prêtes pour vous.",
   "settings.notif.digest": "Résumé hebdomadaire",
   "settings.notif.digestDesc": "Un récapitulatif de votre semaine de lecture, dans vos notifications.",
+  "settings.notif.digestEmail": "Me l'envoyer aussi par e-mail",
+  "settings.notif.digestEmailDesc": "Votre récapitulatif hebdomadaire, dans votre boîte de réception. Désabonnement à tout moment.",
   "settings.notif.streak": "Rappels de série",
   "settings.notif.streakDesc": "Un rappel avant que votre série de lecture ne s'interrompe.",
   "settings.notif.blindSpot": "Alertes d'angles morts",
@@ -907,5 +909,12 @@
   "continuation.allOutlets": "Voir les {n} médias",
   "continuation.dismiss": "Masquer cette comparaison",
   "continuation.side.left": "centre gauche",
-  "continuation.side.right": "centre droit"
+  "continuation.side.right": "centre droit",
+  "unsubscribe.done": "Vous ne recevrez plus les résumés hebdomadaires par e-mail.",
+  "unsubscribe.failed": "Ce lien n'a pas fonctionné",
+  "unsubscribe.failedBody": "Il a peut-être déjà été utilisé, ou l'adresse est incorrecte. Vous pouvez désactiver les résumés dans les Paramètres.",
+  "unsubscribe.settings": "Ouvrir les paramètres",
+  "unsubscribe.stillHere": "Votre récapitulatif reste disponible dans l'application, dans les notifications.",
+  "unsubscribe.title": "Désabonnement effectué",
+  "unsubscribe.working": "Un instant…"
 }

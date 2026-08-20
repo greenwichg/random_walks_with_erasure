@@ -52,6 +52,7 @@ import obs_metrics             # OBS1: in-process request/latency metrics (depen
 import error_reporting         # OBS1: vendor-agnostic exception-reporting abstraction (default: logging)
 import product_analytics       # PA1: event taxonomy + funnel/metric/retention maths (pure, deterministic)
 import coach_service          # Coach v2: intent-routed, tool-using coach (RWE_COACH_V2, M4)
+import email_delivery          # the email channel's worker + unsubscribe (leaf-ish)
 import notification_delivery   # orchestration: build context -> evaluate -> record notifications (N2)
 import ratelimit              # dependency-free token-bucket rate limiter (Private Alpha hardening)
 import reqlimits              # request-body size / batch-shape limits (Private Alpha hardening)
@@ -3803,6 +3804,56 @@ def explain_recommendations_internal(
     out["explainId"] = (f"rec_{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}"
                         f"_{who}_g{active.generation}")
     return out
+
+
+class UnsubscribeRequest(BaseModel):
+    token: str
+
+
+class UnsubscribeAck(BaseModel):
+    ok: bool
+    unsubscribed: bool
+
+
+@app.post("/api/unsubscribe", response_model=UnsubscribeAck, tags=["meta"],
+          summary="Honour an unsubscribe link from an email (NO session required)",
+          responses=_ERR_RESPONSES)
+def unsubscribe_email(req: UnsubscribeRequest) -> dict:
+    """Turn off weekly digest email for the account a signed token names.
+
+    **Deliberately unauthenticated**, and that is the point: a reader in a mail client, on a device
+    they never signed in on, two years after the fact, must still be able to make it stop. Asking
+    them to log in first is what gets mail reported as spam instead of unsubscribed. The token is
+    an HMAC over (purpose, user id) — it authorises exactly one category off and nothing else, it
+    cannot be forged without the server secret, and it is compared in constant time.
+
+    Always answers 200. A bad or expired-looking token reports ``unsubscribed: false`` rather than
+    404: an endpoint that distinguishes "no such user" from "wrong signature" is an endpoint that
+    enumerates users."""
+    uid = email_delivery.unsubscribe(_require_store(), req.token)
+    return {"ok": True, "unsubscribed": uid is not None}
+
+
+class EmailRunAck(BaseModel):
+    considered: int
+    sent: int
+    retried: int
+    bounced: int
+    skipped: dict
+
+
+@app.post("/api/internal/email/digest-run", response_model=EmailRunAck, tags=["meta"],
+          summary="Run one weekly-digest email pass (internal; scheduled from cron)",
+          responses=_ERR_RESPONSES)
+def run_digest_emails(request: Request) -> dict:
+    """One delivery pass, driven by the host's scheduler rather than a thread in the API process.
+
+    Cron rather than a background thread because a weekly job that runs on a timer inside a
+    process that redeploys several times a day either fires repeatedly or not at all, depending on
+    when the restart lands. The ledger makes a repeated call harmless — every send is claimed — so
+    an at-least-once trigger is exactly the right shape for it."""
+    _require_trusted(request)
+    return email_delivery.run_once(_require_store()).as_dict()
 
 
 @app.post("/api/internal/resolve-token", response_model=ResolveTokenModel, tags=["meta"],

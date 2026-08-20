@@ -525,6 +525,8 @@
   "settings.notif.recsDesc": "Quando novas leituras transversais estão prontas para você.",
   "settings.notif.digest": "Resumo semanal",
   "settings.notif.digestDesc": "Um resumo da sua semana de leitura, nas suas notificações.",
+  "settings.notif.digestEmail": "Enviar também por e-mail",
+  "settings.notif.digestEmailDesc": "O seu resumo semanal, na sua caixa de entrada. Cancele quando quiser.",
   "settings.notif.streak": "Lembretes de sequência",
   "settings.notif.streakDesc": "Um lembrete antes de sua sequência de leitura acabar.",
   "settings.notif.blindSpot": "Alertas de pontos cegos",
@@ -907,5 +909,12 @@
   "continuation.allOutlets": "Ver os {n} veículos",
   "continuation.dismiss": "Dispensar esta comparação",
   "continuation.side.left": "centro-esquerda",
-  "continuation.side.right": "centro-direita"
+  "continuation.side.right": "centro-direita",
+  "unsubscribe.done": "Deixará de receber os resumos semanais por e-mail.",
+  "unsubscribe.failed": "Esse link não funcionou",
+  "unsubscribe.failedBody": "Pode já ter sido usado, ou o endereço está incorreto. Pode desativar os resumos nas Definições.",
+  "unsubscribe.settings": "Abrir definições",
+  "unsubscribe.stillHere": "O seu resumo semanal continua na aplicação, nas notificações.",
+  "unsubscribe.title": "Subscrição cancelada",
+  "unsubscribe.working": "Um momento…"
 }

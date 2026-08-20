@@ -578,6 +578,26 @@ class PushSubscription(Base):
     updated_at: Mapped[datetime] = mapped_column(default=_utcnow)
 
 
+class EmailSuppression(Base):
+    """An address we must not write to again, and why.
+
+    A hard bounce is not a transient failure; it is the receiving server stating that the mailbox
+    does not exist. Sending to it again is what turns one typo into a sender reputation problem —
+    and reputation is what decides whether the mail readers DO want arrives at all. So the outcome
+    is recorded against the address, permanently, and consulted before every send.
+
+    Keyed by ADDRESS rather than user id on purpose: the same mailbox can belong to more than one
+    account, and a bounce is a fact about the mailbox. A reader who fixes their address is no
+    longer suppressed, because the new address was never on this list."""
+
+    __tablename__ = "email_suppressions"
+    address: Mapped[str] = mapped_column(String(320), primary_key=True)   # RFC 5321 max
+    reason: Mapped[str] = mapped_column(String(32))                       # bounced | complained
+    detail: Mapped[str] = mapped_column(Text, default="")
+    status_code: Mapped[Optional[int]] = mapped_column(default=None)
+    created_at: Mapped[datetime] = mapped_column(default=_utcnow)
+
+
 class NotificationDelivery(Base):
     """One attempt to deliver one notification to one destination — the platform's **third** level of
     idempotency (``docs/NOTIFICATION_PLATFORM.md`` §3), and the only durable record that a send ever
@@ -2979,9 +2999,17 @@ class Store:
         The cost is the pruned device's audit trail, and it is unavoidable rather than chosen: the id
         is how the ledger names a device, so once the id is reused there is no longer anything for
         those rows to mean. Keeping them would preserve bytes at the price of the correctness they
-        were supposed to provide."""
+        were supposed to provide.
+
+        **Scoped to the push channel**, which matters now that the ledger is shared. Rowid reuse is a
+        fact about `push_subscriptions`; it says nothing about a channel that does not have
+        subscriptions at all. The email channel stores a fixed sentinel in this column
+        (`email_delivery.ACCOUNT_DESTINATION`, because the address is the account's, not a device's),
+        so an unscoped delete here is one id collision away from erasing every email delivery record
+        there is — and with it the idempotency that stops a reader being mailed twice."""
         return int(s.execute(delete(NotificationDelivery).where(
-            NotificationDelivery.subscription_id == subscription_id)).rowcount or 0)
+            NotificationDelivery.subscription_id == subscription_id,
+            NotificationDelivery.channel == "web_push")).rowcount or 0)
 
     @staticmethod
     def _evict_excess_push_subscriptions(s, user_id: int, max_devices: "int | None") -> list:
@@ -3367,6 +3395,90 @@ class Store:
                     "createdAt": row.created_at.isoformat() if row.created_at else None,
                     "lastUsedAt": None}
         return token, meta
+
+    # ---- email channel ------------------------------------------------------------------- #
+    def suppress_email(self, address: str, *, reason: str = "bounced", detail: str = "",
+                       status_code: "int | None" = None) -> bool:
+        """Record that an address must not be written to again. Idempotent — a second bounce for the
+        same mailbox is not an error, and must not raise inside a delivery worker."""
+        addr = (address or "").strip().lower()
+        if not addr:
+            return False
+        with self.session() as s:
+            row = s.get(EmailSuppression, addr)
+            if row is not None:
+                return False
+            s.add(EmailSuppression(address=addr, reason=reason, detail=(detail or "")[:500],
+                                   status_code=status_code))
+            return True
+
+    def email_suppressed(self, address: str) -> bool:
+        addr = (address or "").strip().lower()
+        if not addr:
+            return False
+        with self.session() as s:
+            return s.get(EmailSuppression, addr) is not None
+
+    def list_email_suppressions(self, limit: int = 200) -> "list[dict]":
+        with self.session() as s:
+            rows = s.scalars(select(EmailSuppression)
+                             .order_by(EmailSuppression.created_at.desc()).limit(limit)).all()
+            return [{"address": r.address, "reason": r.reason, "statusCode": r.status_code,
+                     "detail": r.detail,
+                     "createdAt": r.created_at.isoformat() if r.created_at else None} for r in rows]
+
+    def notification_job(self, notification_id: int) -> "dict | None":
+        """One notification as a sendable job — the same shape :meth:`undelivered_notifications`
+        yields, for a RETRY, which starts from a ledger row rather than from a scan.
+
+        Returns ``None`` when the notification is gone (pruned, or the account deleted): a retry
+        with nothing to send is resolved rather than looped on forever."""
+        with self.session() as s:
+            row = s.execute(
+                select(Notification, User.email)
+                .join(User, User.id == Notification.user_id)
+                .where(Notification.id == int(notification_id))).first()
+            if row is None:
+                return None
+            notif, email = row
+            try:
+                body = json.loads(notif.body)
+            except (TypeError, ValueError):
+                body = {}
+            return {"id": int(notif.id), "userId": int(notif.user_id), "kind": notif.kind,
+                    "dedupeKey": notif.dedupe_key, "email": email or "", "body": body,
+                    "createdAt": notif.created_at}
+
+    def undelivered_notifications(self, kind: str, *, channel: str, limit: int = 500,
+                                  since: "datetime | None" = None) -> "list[dict]":
+        """Notifications of ``kind`` with NO delivery row for ``channel`` — the work an email run
+        has left to do.
+
+        A LEFT JOIN rather than "list notifications, then ask about each": the digest run touches
+        every reader at once, and a per-row existence check is the query that looks fine at fifty
+        users and melts at fifty thousand. Ordered oldest-first so a run that hits its deadline has
+        spent its time on the mail that has been waiting longest."""
+        with self.session() as s:
+            q = (select(Notification, User.email)
+                 .join(User, User.id == Notification.user_id)
+                 .outerjoin(NotificationDelivery,
+                            (NotificationDelivery.notification_id == Notification.id)
+                            & (NotificationDelivery.channel == channel))
+                 .where(Notification.kind == kind, NotificationDelivery.id.is_(None))
+                 .order_by(Notification.id.asc()).limit(limit))
+            if since is not None:
+                q = q.where(Notification.recorded_at >= since)
+            out = []
+            for notif, email in s.execute(q).all():
+                try:
+                    body = json.loads(notif.body)
+                except (TypeError, ValueError):
+                    body = {}
+                out.append({"id": int(notif.id), "userId": int(notif.user_id),
+                            "kind": notif.kind, "dedupeKey": notif.dedupe_key,
+                            "email": email or "", "body": body,
+                            "createdAt": notif.created_at})
+            return out
 
     def resolve_token(self, token: str) -> "int | None":
         """The engine user id a token authorises, or ``None`` if unknown. Touches last_used_at.
