@@ -1,7 +1,8 @@
 # PWA — installability, the service worker, and how to take it back
 
-**Status:** shipped. The app is installable from Chromium-based browsers; iOS gets Add-to-Home-Screen
-instructions. `RWE_PUSH_ENABLED` is **unchanged** by any of this.
+**Status:** shipped. The app is installable from Chromium-based browsers; iOS Safari gets
+Add-to-Home-Screen instructions, and iOS **in-app** browsers get "open in Safari" instead (§6).
+`RWE_PUSH_ENABLED` is **unchanged** by any of this.
 
 The reason this document leads with rollback is that a service worker is the one thing a web deploy
 ships that **does not go away when you redeploy**. It lives in the reader's browser, survives tab
@@ -170,3 +171,38 @@ The second line is the one that matters: `/api/*` fails exactly as it would with
 - **No install prompt where the browser has no install path.** Desktop Firefox sees nothing, because
   a banner a reader cannot act on is noise. iOS Safari gets instructions; everything Chromium-based
   gets the real `beforeinstallprompt` dialog.
+
+---
+
+## 6. iOS in-app browsers
+
+A reader who opens Hidden View from a Facebook, Instagram or LinkedIn post is not in Safari. They
+are in that app's embedded **WKWebView**: WebKit, on iOS, reporting a user agent that looks close
+enough to Safari that `isIosSafari` used to answer `true` for all of them. The consequence was a
+banner reading *Share → Add to Home Screen* shown inside a share sheet that **has no Add to Home
+Screen item at all** — an instruction that cannot be carried out, which is worse than no banner.
+
+`isIosInAppBrowser` (`lib/install-prompt.ts`) separates them, and they are offered
+`pwa.install.openInSafari` — "Open in Safari to install" — instead. Two signals:
+
+1. **A named marker**: `FBAN`/`FBAV`/`FB_IAB`/`FBIOS`, `Instagram`, `LinkedInApp`, `Line/`,
+   `Twitter`, `Snapchat`, `Pinterest`, `MicroMessenger`, `WhatsApp`, `musical_ly`/
+   `BytedanceWebview`, `GSA/`. This list is best-effort — apps rename their tokens and new ones
+   appear — but it is what catches apps like **LINE**, which append their token to the
+   otherwise-unmodified Safari user agent and would otherwise slip past rule 2.
+2. **A missing `Version/` token**, which is the real backstop and catches the apps nobody
+   enumerated: genuine Mobile Safari has always sent `Version/17.0` (or whichever); a bare
+   WKWebView does not. An out-of-date marker in rule 1 therefore costs nothing for any app that
+   does not spoof the full Safari user agent.
+
+Rule 2 is why **genuine Safari cannot be misclassified**: it always carries the token. Chrome,
+Firefox, Edge and Opera on iOS are excluded from both predicates — they are real browsers that
+simply cannot install, and they stay silent as before.
+
+**What this does not reach:** `SFSafariViewController`, the other way apps open links. It is real
+Safari with a real Safari user agent, and its share sheet likewise omits Add to Home Screen — but
+nothing in the UA distinguishes it from Safari proper, so no detection of this shape can find it.
+
+The Apple-specific meta tags (`apple-mobile-web-app-capable`, `-status-bar-style`, `-title`,
+`-touch-startup-image`) are **still absent** and are tracked separately; they affect how an
+already-installed iOS app looks, not whether the install instructions can be followed.

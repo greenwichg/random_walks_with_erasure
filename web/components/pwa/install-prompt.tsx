@@ -1,11 +1,12 @@
 "use client";
 
 import * as React from "react";
-import { X, Share, Plus } from "lucide-react";
+import { X, Share, Plus, Compass } from "lucide-react";
 import { useTranslation } from "@/lib/i18n";
 import {
   installOffer,
   isIosSafari,
+  isIosInAppBrowser,
   readDismissed,
   writeDismissed,
   type InstallOffer,
@@ -29,6 +30,10 @@ interface BeforeInstallPromptEvent extends Event {
  * is to describe the Share → Add to Home Screen path, and only on iOS Safari (`isIosSafari`), never
  * in a browser that has a real button.
  *
+ * An iOS IN-APP browser (Facebook, Instagram, LinkedIn, …) is WebKit on iOS but its share sheet has
+ * no Add to Home Screen at all, so those readers are told to reopen the page in Safari instead of
+ * being sent looking for a menu item that is not there.
+ *
  * Every decision about whether to appear lives in `lib/install-prompt.ts` so it can be tested.
  */
 export function InstallPrompt() {
@@ -46,6 +51,7 @@ export function InstallPrompt() {
         installed: Boolean(standalone),
         nativePromptReady: nativeReady,
         iosSafari: isIosSafari(navigator.userAgent, navigator.maxTouchPoints),
+        iosInAppBrowser: isIosInAppBrowser(navigator.userAgent, navigator.maxTouchPoints),
         dismissedAt: readDismissed(),
         now: Date.now(),
       }),
@@ -131,6 +137,15 @@ export function InstallPrompt() {
             <span aria-hidden>→</span>
             <Plus className="h-3.5 w-3.5" aria-hidden />
             <span>{t("pwa.install.iosAdd")}</span>
+          </p>
+        )}
+        {/* No Share-menu steps here on purpose: this browser's share sheet has no Add to Home
+            Screen, so listing the steps would be sending the reader after a menu item that is not
+            there. Reopening in Safari is the only thing that works. */}
+        {offer === "ios-open-in-safari" && (
+          <p className="mt-1.5 flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
+            <Compass className="h-3.5 w-3.5 shrink-0" aria-hidden />
+            <span>{t("pwa.install.openInSafari")}</span>
           </p>
         )}
       </div>

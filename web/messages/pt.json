@@ -925,5 +925,6 @@
   "pwa.install.dismiss": "Dispensar",
   "pwa.install.iosSubtitle": "Adicione o Hidden View ao ecrã principal.",
   "pwa.install.iosShare": "Partilhar",
-  "pwa.install.iosAdd": "Adicionar ao ecrã principal"
+  "pwa.install.iosAdd": "Adicionar ao ecrã principal",
+  "pwa.install.openInSafari": "Abra no Safari para instalar"
 }
