@@ -101,7 +101,22 @@
     /* MB1 H1: guarantee zero horizontal scrolling. `clip` (not `hidden`) contains any stray
      * overflow WITHOUT establishing a scroll container, so `position: sticky` (the header) and
      * fixed/portaled overlays (dialogs, dropdowns, tooltips) keep working. Vertical scrolling is
-     * untouched. This is the safety net; the real chart/card fixes remove the overflow at source. */
+     * untouched. This is the safety net; the real chart/card fixes remove the overflow at source.
+     *
+     * IT HAS ONE NON-OBVIOUS COST, so read this before touching it. Body's overflow propagates to
+     * the viewport only when the ROOT element's overflow is `visible` in BOTH axes. This rule makes
+     * that false, so anything that sets `overflow: hidden` on <body> — every Radix modal overlay
+     * does, via `react-remove-scroll` — lands on <body> itself instead of on the viewport.
+     *
+     * Measured consequence in Chromium against the real build: opening a modal menu at scrollY 381
+     * put the page at scrollY 0, and closing it left the page at 0. The reader's scroll position is
+     * DISCARDED, not restored. That was the "click Profile while scrolled and everything
+     * disappears" bug. The fix is `modal={false}` on the header menus, not a change here — see
+     * docs/HEADER_MENU_SCROLL.md.
+     *
+     * Do NOT "fix" it by moving the rule to `body` alone: measured in Chromium, that restores the
+     * sticky behaviour but stops containing horizontal overflow (a 3000px child scrolled the page
+     * sideways by 500px), which is the exact regression MB1 H1 exists to prevent. */
     overflow-x: clip;
   }
   /* Anchor jumps glide instead of teleporting — but only for users who haven't asked for

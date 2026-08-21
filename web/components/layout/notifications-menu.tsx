@@ -56,17 +56,14 @@ export function NotificationsMenu() {
   );
 
   return (
-    // `modal={false}` — Radix menus are modal by default, which engages `react-remove-scroll`:
-    // it sets `overflow:hidden` on <body> and adds a `padding-right` gutter to compensate for the
-    // scrollbar it just removed. Under a `position: sticky` header on a body-scrolled page that is
-    // a whole class of scroll/layout interaction for a panel that has no business locking the page
-    // at all — a notification list is not a modal, and a reader should be able to keep scrolling
-    // behind it. Non-modal removes the scroll lock entirely.
+    // `modal={false}` — a notification list has no business locking the page, and the cost of the
+    // default has since been MEASURED: a modal menu throws a scrolled reader to the top of the page
+    // and never restores the position, and hides the whole header from assistive tech while open.
+    // Full rationale in header.tsx; mechanism in docs/HEADER_MENU_SCROLL.md.
     //
-    // NOT claimed as the proven cause of the reported disappearance: two attempts to reproduce that
-    // headlessly (scroll-lock shift, then again with a forced classic scrollbar) both came back
-    // with zero pixel movement, so the mechanism is still unconfirmed on Edge/Windows. This is the
-    // correct configuration for this panel regardless of what that turns out to be.
+    // (The note that used to sit here called the mechanism unconfirmed, after two headless repros
+    // measured zero movement. Those repros were sound — they simply could not show it: the trigger
+    // is `html { overflow-x: clip }` in globals.css, which a bare repro page does not have.)
     <DropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
         <Button
