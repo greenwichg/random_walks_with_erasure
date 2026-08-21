@@ -7,7 +7,6 @@ import {
   ArrowLeftRight,
   Check,
   Loader2,
-  Lock,
   Search,
   Sparkles,
 } from "lucide-react";
@@ -278,44 +277,51 @@ function Welcome({
   onSample: () => void;
 }) {
   const { t } = useTranslation();
+  // Titles only. Each row used to carry a one-line description under it, and two of the three
+  // restated a feature the hero column states beside this card ("Find your blind spots" against
+  // "Find blind spots"). Saying the same thing twice, in two vocabularies, a column apart is what
+  // made a 26rem card carry more words than the hero it sits next to.
   const values = [
-    {
-      icon: <Sparkles className="h-3.5 w-3.5" />,
-      t: t("onboarding.value1.t"),
-      d: t("onboarding.value1.d"),
-    },
-    {
-      icon: <Search className="h-3.5 w-3.5" />,
-      t: t("onboarding.value2.t"),
-      d: t("onboarding.value2.d"),
-    },
+    { icon: <Sparkles className="h-3.5 w-3.5" />, t: t("onboarding.value1.t") },
+    { icon: <Search className="h-3.5 w-3.5" />, t: t("onboarding.value2.t") },
     {
       icon: <ArrowLeftRight className="h-3.5 w-3.5" />,
       t: t("onboarding.value3.t"),
-      d: t("onboarding.value3.d"),
     },
   ];
   return (
-    <Frame>
-      <Brand />
+    // Roomier than the other steps on purpose: this is the one card a visitor meets cold, and it
+    // now has little enough in it that the space reads as composure rather than emptiness.
+    <Frame className="sm:p-8">
+      {/* No <Brand /> here. The page header renders the same mark and wordmark a couple of hundred
+          pixels above, and on desktop both were on screen at once. The later steps keep theirs —
+          they render without the header's pitch column. */}
       {/* h2, not h1: the hero column beside this card owns the page's first-level heading, and two
-          competing h1s make a worse outline for a screen reader than one extra level of depth. */}
+          competing h1s make a worse outline for a screen reader than one extra level of depth.
+          Deliberately still text-2xl against the hero's text-6xl: the card is the action, not the
+          argument, and it should read as the quieter of the two. */}
       <h2 className="text-balance text-2xl font-bold tracking-tight">
         {t("onboarding.welcome.title")}
       </h2>
-      <p className="mt-2 text-sm text-muted-foreground">
+      <p className="mt-2.5 text-sm leading-relaxed text-muted-foreground">
         {t("onboarding.welcome.subtitle")}
       </p>
-      <ul className="my-6 space-y-3">
+      {/* One line per row at the card's desktop width in all five languages — the longest string is
+          the French value3 at 42 characters, measured as still one line at 26rem. At phone width the
+          card is ~350px and that row alone wraps to two.
+
+          `items-center` rather than `items-start` because of that wrap, not despite it: measured
+          against the French strings, centring is exact (0px offset) on every single-line row and
+          puts the icon at the middle of the two-line one, while `items-start` sits 4px low on EVERY
+          row — a 28px icon box top-aligning against a 20px line box — and would need a hand-tuned
+          nudge to correct the common case in order to flatter the rare one. */}
+      <ul className="my-7 space-y-3.5">
         {values.map((v) => (
-          <li key={v.t} className="flex gap-3">
-            <span className="mt-0.5 grid h-6 w-6 flex-none place-items-center rounded-md bg-primary/10 text-primary">
+          <li key={v.t} className="flex items-center gap-3">
+            <span className="grid h-7 w-7 flex-none place-items-center rounded-lg bg-primary/10 text-primary">
               {v.icon}
             </span>
-            <span>
-              <span className="block text-sm font-medium">{v.t}</span>
-              <span className="block text-xs text-muted-foreground">{v.d}</span>
-            </span>
+            <span className="text-sm font-medium">{v.t}</span>
           </li>
         ))}
       </ul>
@@ -323,15 +329,19 @@ function Welcome({
         {t("onboarding.buildReport")}
       </Button>
       <Button
-        className="mt-2 w-full"
+        className="mt-2.5 w-full"
         size="lg"
         variant="outline"
         onClick={onSample}
       >
         {t("onboarding.sampleFirst")}
       </Button>
-      {/* Tertiary escape hatch: the anonymous, zero-commitment single-article analyzer. */}
-      <p className="mt-3 text-center text-xs text-muted-foreground">
+      {/* Tertiary escape hatch: the anonymous, zero-commitment single-article analyzer. The only
+          thing below the buttons now — the time estimate and the privacy callout that used to sit
+          here outweighed the two CTAs they followed. Privacy is not lost with them: it is stated,
+          better, on the estimate step (`onboarding.privacyNote`), which is where the account is
+          actually asked for. */}
+      <p className="mt-5 text-center text-xs text-muted-foreground">
         {t("onboarding.analyzePrompt")}{" "}
         <button
           onClick={() => window.location.assign("/analyze")}
@@ -340,24 +350,6 @@ function Welcome({
           {t("onboarding.analyzeLink")}
         </button>
       </p>
-      <p className="mt-3 text-center text-xs text-muted-foreground">
-        {t("onboarding.takesMinute")}
-      </p>
-      {/* The objection this page actually has to answer. A reader is being asked to hand over what
-          they read, which is about as personal as a browsing history — so the answer belongs on the
-          screen where the ask is made, not a click away in a policy page.
-          (Sign-in moved to the page header: it answers an arrival question, not a closing one.) */}
-      <div className="mt-4 flex items-start gap-2.5 rounded-xl border bg-muted/30 p-3">
-        <Lock className="mt-0.5 h-4 w-4 flex-none text-primary" aria-hidden />
-        <p className="text-xs leading-relaxed">
-          <span className="font-medium text-primary">
-            {t("onboarding.privacy.title")}
-          </span>{" "}
-          <span className="text-muted-foreground">
-            {t("onboarding.privacy.body")}
-          </span>
-        </p>
-      </div>
     </Frame>
   );
 }
