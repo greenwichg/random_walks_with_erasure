@@ -218,6 +218,8 @@
   "filter.topic": "Thema",
   "filter.publisher": "Verlag",
   "filter.lean": "Tendenz",
+  "filter.coveredBy": "Berichtet von",
+  "filter.coveredByHint": "Themen, über die mindestens ein Verlag dieser Seite berichtet hat — nicht die Tendenz des Themas.",
   "filter.sort": "Sortieren",
   "filter.left": "Links",
   "filter.center": "Mitte",

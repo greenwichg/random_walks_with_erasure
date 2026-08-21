@@ -75,9 +75,11 @@ test.describe("Stories filter state survives a round trip", () => {
     seedStory();
     await authedPage.goto("/stories", { waitUntil: "networkidle" });
 
-    // Two filters that are always present regardless of what the catalog holds: Lean and Sort are
-    // static option lists, so this test does not depend on facet data to exercise the mechanism.
-    await pick(authedPage, "Lean", "Left");
+    // Two filters that are always present regardless of what the catalog holds: "Covered by" and
+    // Sort are static option lists, so this test does not depend on facet data to exercise the
+    // mechanism. The control is labelled "Covered by"; its URL parameter is still `lean`, and
+    // every assertion on that parameter below is deliberately unchanged.
+    await pick(authedPage, "Covered by", "Left");
     await pick(authedPage, "Sort", "Latest");
 
     await expect(authedPage, "a UI change reaches the URL").toHaveURL(/lean=left/);
@@ -99,8 +101,8 @@ test.describe("Stories filter state survives a round trip", () => {
     // rendering FROM it, which is the thing that was broken.
     await expect(authedPage).toHaveURL(new RegExp(`${filtered.search.replace(/[?&=]/g, "\\$&")}$`));
     await expect(
-      authedPage.getByRole("button", { name: /^Lean/ }),
-      "the Lean control still shows Left",
+      authedPage.getByRole("button", { name: /^Covered by/ }),
+      "the Covered by control still shows Left",
     ).toContainText("Left");
     await expect(
       authedPage.getByRole("button", { name: /^Sort/ }),
@@ -114,7 +116,7 @@ test.describe("Stories filter state survives a round trip", () => {
     await authedPage.goto("/stories", { waitUntil: "networkidle" });
     await expect(authedPage).toHaveURL(/\/stories$/);
     // An inactive FilterSelect renders its label alone; an active one appends "· <value>".
-    await expect(authedPage.getByRole("button", { name: /^Lean/ })).not.toContainText("·");
+    await expect(authedPage.getByRole("button", { name: /^Covered by/ })).not.toContainText("·");
     // Sort is never "all" — it always has a value — so it always shows one. The contract here is
     // that the value is the DEFAULT, not that the control looks unset.
     await expect(authedPage.getByRole("button", { name: /^Sort/ })).toContainText("Top");
@@ -124,9 +126,9 @@ test.describe("Stories filter state survives a round trip", () => {
     // Otherwise Back would restore /stories?lean=all, which is a filter the engine would be asked
     // to apply as a literal value rather than read as "no filter".
     await authedPage.goto("/stories", { waitUntil: "networkidle" });
-    await pick(authedPage, "Lean", "Left");
+    await pick(authedPage, "Covered by", "Left");
     await expect(authedPage).toHaveURL(/lean=left/);
-    await pick(authedPage, "Lean", "All");
+    await pick(authedPage, "Covered by", "All");
     await expect(authedPage).not.toHaveURL(/lean=/);
   });
 

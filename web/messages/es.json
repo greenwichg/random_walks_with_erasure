@@ -218,6 +218,8 @@
   "filter.topic": "Tema",
   "filter.publisher": "Medio",
   "filter.lean": "Sesgo",
+  "filter.coveredBy": "Cubierto por",
+  "filter.coveredByHint": "Noticias que cubrió al menos un medio de este lado; no es el sesgo de la noticia.",
   "filter.sort": "Ordenar",
   "filter.left": "Izquierda",
   "filter.center": "Centro",

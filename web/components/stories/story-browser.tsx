@@ -32,7 +32,8 @@ const asFilter = (v: string) => (v === "all" ? undefined : v);
 const PAGE = 24;
 
 /**
- * The event-centric Story browsing surface — filters (topic / publisher / lean), sort, and pagination
+ * The event-centric Story browsing surface — filters (topic / publisher / covered-by), sort, and
+ * pagination
  * over the single Story Service (`/api/stories`). The Stories page renders this; Discover is the
  * article-centric surface (`DiscoverCard` over `/api/discover`). Facet values come from the catalog
  * (`/api/discover`). Opening a Story (its card) goes to the detail page, where each article opens its
@@ -194,7 +195,8 @@ export function StoryBrowser({
           options={opt(facets.data?.publishers ?? [])}
           onChange={setPublisher}
         />
-        <FilterSelect label={t("filter.lean")} value={lean} options={LEAN_OPTIONS} onChange={setLean} />
+        <FilterSelect label={t("filter.coveredBy")} description={t("filter.coveredByHint")}
+          value={lean} options={LEAN_OPTIONS} onChange={setLean} />
         {countryOptions.length > 0 && (
           <FilterSelect label={t("filter.country")} value={country} options={countryOptions} onChange={setCountry} />
         )}

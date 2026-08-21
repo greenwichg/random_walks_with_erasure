@@ -21,12 +21,13 @@ export interface FilterOption {
 /**
  * A compact single-select dropdown filter. When `resettable` (the default), an `all` reset row
  * labeled `allLabel` precedes the options — the "show everything" state for real filters
- * (topic / publisher / lean / emotion). Set `resettable={false}` for a mandatory single-choice
+ * (topic / publisher / covered-by / emotion). Set `resettable={false}` for a mandatory single-choice
  * such as Sort, which has no "all" state: rendering the reset row there both duplicates whichever
  * option shares its label and lets the caller emit an out-of-contract `all` value.
  */
 export function FilterSelect({
   label,
+  description,
   value,
   options,
   onChange,
@@ -34,6 +35,10 @@ export function FilterSelect({
   resettable = true,
 }: {
   label: string;
+  /** One line under the menu heading, for a filter whose name cannot carry its whole rule.
+   *  "Covered by" is the case it exists for: the label says which side, but not that a story
+   *  matches on ANY coverage from that side rather than on the story's own lean. */
+  description?: string;
   value: string;
   options: FilterOption[];
   onChange: (v: string) => void;
@@ -58,6 +63,13 @@ export function FilterSelect({
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="max-h-72 overflow-y-auto">
         <DropdownMenuLabel>{label}</DropdownMenuLabel>
+        {description && (
+          // `max-w` + wrapping, because this is a sentence rather than a menu row: the dropdown
+          // sizes itself to its widest child, and an unwrapped one would stretch the whole menu.
+          <p className="max-w-[16rem] whitespace-normal px-2 pb-1.5 text-xs font-normal leading-snug text-muted-foreground">
+            {description}
+          </p>
+        )}
         <DropdownMenuSeparator />
         <DropdownMenuRadioGroup value={value} onValueChange={onChange}>
           {resettable && <DropdownMenuRadioItem value="all">{allLabel}</DropdownMenuRadioItem>}

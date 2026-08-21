@@ -13,7 +13,7 @@ import { EmptyState, ErrorState } from "@/components/shared/states";
 import { Skeleton } from "@/components/ui/skeleton";
 
 // Discover is the ARTICLE-centric surface: the latest individual FeedArticles from the live catalog
-// (/api/discover), newest first, with topic/publisher/lean filters. Stories is the event-centric
+// (/api/discover), newest first, with topic/publisher/covered-by filters. Stories is the event-centric
 // surface (clustered coverage) — the two are deliberately distinct. Each card opens the real
 // publisher URL via the shared Read flow. No Story Service / clustering involved here.
 
@@ -94,7 +94,8 @@ export default function DiscoverPage() {
           options={opt(data?.publishers ?? [])}
           onChange={setPublisher}
         />
-        <FilterSelect label={t("filter.lean")} value={lean} options={LEAN_OPTIONS} onChange={setLean} />
+        <FilterSelect label={t("filter.coveredBy")} description={t("filter.coveredByHint")}
+          value={lean} options={LEAN_OPTIONS} onChange={setLean} />
         {countryOptions.length > 0 && (
           <FilterSelect label={t("filter.country")} value={country} options={countryOptions} onChange={setCountry} />
         )}

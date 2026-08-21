@@ -218,6 +218,8 @@
   "filter.topic": "Tema",
   "filter.publisher": "Veículo",
   "filter.lean": "Viés",
+  "filter.coveredBy": "Coberto por",
+  "filter.coveredByHint": "Histórias cobertas por pelo menos um veículo deste lado; não é o viés da história.",
   "filter.sort": "Ordenar",
   "filter.left": "Esquerda",
   "filter.center": "Centro",

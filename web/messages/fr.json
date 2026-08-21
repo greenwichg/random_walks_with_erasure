@@ -218,6 +218,8 @@
   "filter.topic": "Sujet",
   "filter.publisher": "Éditeur",
   "filter.lean": "Orientation",
+  "filter.coveredBy": "Couvert par",
+  "filter.coveredByHint": "Sujets traités par au moins un éditeur de ce bord ; ce n'est pas l'orientation du sujet.",
   "filter.sort": "Trier",
   "filter.left": "Gauche",
   "filter.center": "Centre",

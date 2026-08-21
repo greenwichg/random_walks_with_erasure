@@ -101,7 +101,8 @@ function SearchInner() {
           options={opt(facets.data?.publishers ?? [])}
           onChange={setPublisher}
         />
-        <FilterSelect label={t("filter.lean")} value={lean} options={LEAN_OPTIONS} onChange={setLean} />
+        <FilterSelect label={t("filter.coveredBy")} description={t("filter.coveredByHint")}
+          value={lean} options={LEAN_OPTIONS} onChange={setLean} />
         {countryOptions.length > 0 && (
           <FilterSelect label={t("filter.country")} value={country} options={countryOptions} onChange={setCountry} />
         )}

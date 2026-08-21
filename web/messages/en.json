@@ -218,6 +218,8 @@
   "filter.topic": "Topic",
   "filter.publisher": "Publisher",
   "filter.lean": "Lean",
+  "filter.coveredBy": "Covered by",
+  "filter.coveredByHint": "Stories at least one outlet on this side reported on — not the story's own lean.",
   "filter.sort": "Sort",
   "filter.left": "Left",
   "filter.center": "Center",
