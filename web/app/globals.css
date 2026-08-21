@@ -180,6 +180,49 @@
 }
 
 /*
+ * Neutralise Radix's scroll lock, which on this app destroys the reader's scroll position.
+ *
+ * Every Radix modal overlay mounts `react-remove-scroll`, which injects (unlayered, at runtime):
+ *
+ *   body[data-scroll-locked] { overflow: hidden !important; margin-right: <gap>px !important; }
+ *
+ * That is meant to be invisible: on a normal page body's overflow propagates to the viewport, the
+ * viewport scrollbar really does disappear, and `margin-right` fills the gap it left so nothing
+ * moves. Propagation requires the ROOT element's overflow to be `visible` in both axes, and
+ * `html { overflow-x: clip }` above makes that false — so the declaration lands on <body> instead,
+ * the viewport scrollbar never goes away, and the gutter compensates for nothing.
+ *
+ * The whole page therefore jumps sideways by the scrollbar width every time a menu opens. Measured
+ * A/B against the real build, injecting the 15px gutter a classic-scrollbar desktop produces:
+ *
+ *   without this rule   <main> right edge 1280 -> 1265   (-15px)   body margin-right 15px
+ *   with this rule      <main> right edge 1280 -> 1280   ( 0px )   body margin-right  0px
+ *
+ * Only on platforms with classic scrollbars — Windows and Linux, and the installed desktop PWA.
+ * Headless Chromium and macOS use overlay scrollbars and report a 0px gap, which is why this never
+ * showed up in a test until one was written to inject it.
+ *
+ * The `overflow-x: clip` rule is not the thing to change — moving it to body alone restores
+ * propagation but stops containing horizontal overflow (measured: a 3000px child scrolled the page
+ * sideways by 500px), which is the regression MB1 H1 exists to prevent. So the lock is overridden
+ * instead: `clip` where the base rule clips, `visible` vertically so <body> is never a scroll
+ * container, and no gutter.
+ *
+ * Menu semantics (focus, dismissal, `aria-hidden`) are untouched, which matters — making the menus
+ * non-modal instead was tried and measured to break the Stories filter reset.
+ * See docs/HEADER_MENU_SCROLL.md.
+ *
+ * `html body[...]` (0,1,2) outranks their `body[...]` (0,1,1); both carry `!important`, so
+ * specificity decides. It MUST stay outside `@layer`: their style is unlayered, and any unlayered
+ * rule beats a layered one no matter how specific.
+ */
+html body[data-scroll-locked] {
+  overflow-x: clip !important;
+  overflow-y: visible !important;
+  margin-right: 0 !important;
+}
+
+/*
  * MB1 mobile utilities — safe-area insets + comfortable touch targets.
  * These are plain CSS (outside @layer) so they always win over utility classes when applied.
  */

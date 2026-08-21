@@ -117,29 +117,26 @@ export function Header() {
 
         <ThemeToggle />
 
-        {/* `modal={false}`, and the cost of the default is MEASURED rather than assumed.
-            A Radix menu is modal by default, which engages `react-remove-scroll`: it sets
-            `overflow: hidden` on <body> and marks the rest of the document `aria-hidden`. Against
-            the real build, at scrollY 381:
+        {/* `modal={false}`. A Radix menu is modal by default, which engages `react-remove-scroll`
+            and marks the rest of the document `aria-hidden` — so while this menu was open the
+            header, avatar included, was not in the accessibility tree at all. That is the reported
+            "becomes inaccessible", literally: a screen reader could not reach the control whose own
+            menu was showing, and `getByRole` could not find it either.
 
-              open   -> scrollY 0, header inside aria-hidden="true"
-              closed -> scrollY 0                     the position is DISCARDED, never restored
+            Isolated by rebuilding with `modal={true}`: the aria-hidden assertion was the one that
+            failed, while the test whose only assertion is scroll preservation passed. (An earlier
+            note here claimed the page was also thrown to the top and never restored. It was not —
+            that measurement clicked an off-screen trigger, and Playwright scrolls a target into
+            view before clicking. Retracted.)
 
-            So a reader scrolled into the page who clicked the avatar was thrown back to the top and
-            could not get back, and while the menu was open the header — avatar included — was not
-            in the accessibility tree at all. That is the reported "disappears or becomes
-            inaccessible", both halves of it.
-
-            It bites here and not on a stock page because of `html { overflow-x: clip }` in
-            globals.css: body's overflow only propagates to the viewport when the root element's
-            overflow is `visible` in both axes, so the lock lands on <body> itself. The clip rule
-            earns its keep (see the note there), so the menu gives way instead.
+            A profile menu is navigation, not a modal; it should never have been trapping focus or
+            hiding the document from assistive tech.
 
             Scoped to this menu and the bell rather than defaulted in ui/dropdown-menu.tsx: making
             every dropdown non-modal was tried and MEASURED to break the Stories filter reset —
             without the modal layer the menu dismisses when the router navigation from the previous
-            pick lands, so "pick Left, then pick All" could not complete. FilterSelect therefore
-            keeps the default, and keeps this bug; see docs/HEADER_MENU_SCROLL.md. */}
+            pick lands, so "pick Left, then pick All" could not complete. The filters keep modal
+            semantics and are covered instead by the CSS override in globals.css. */}
         <DropdownMenu modal={false}>
           <DropdownMenuTrigger asChild>
             {/* `ml-1` was extra spacing on top of the row's own `gap-1.5`, making this the one

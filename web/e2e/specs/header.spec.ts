@@ -8,15 +8,20 @@ import { test, expect } from "../fixtures";
  * exactly the kind of bug that unit tests cannot see: it lives in the interaction between a sticky
  * header, a body-scrolled page, and a portalled popper.
  *
- * The mechanism was unconfirmed when this file was written — two headless attempts measured zero
- * pixel movement — and is now confirmed. Those attempts were missing `html { overflow-x: clip }`
- * from app/globals.css, without which the bug cannot appear at all. What it actually does is NOT
- * move the header: it discards the reader's scroll position (381 -> 0, still 0 after close) and
- * puts the header inside an `aria-hidden="true"` subtree. See docs/HEADER_MENU_SCROLL.md.
+ * What a modal menu actually costs here, measured — and it is NOT that the header moves, nor that
+ * the scroll position is lost (an earlier claim of mine that turned out to be Playwright's own
+ * click-time scrollIntoViewIfNeeded, see the note on the filter test below):
  *
- * The assertions still pin PROPERTIES rather than the mechanism — on screen, inside the viewport,
- * reachable, scroll position intact — because those are what a reader experiences and they survive
- * a future change of cause.
+ *   1. the header lands inside an `aria-hidden="true"` subtree, so the avatar is not in the
+ *      accessibility tree while its own menu is open — `getByRole` cannot find it;
+ *   2. the scrollbar gutter shifts the whole page sideways on classic-scrollbar platforms.
+ *
+ * Both trace to `html { overflow-x: clip }` in globals.css stopping body's overflow propagating to
+ * the viewport. See docs/HEADER_MENU_SCROLL.md.
+ *
+ * The assertions pin PROPERTIES rather than the mechanism — on screen, inside the viewport,
+ * reachable, nothing shifts — because those are what a reader experiences and they survive a future
+ * change of cause.
  */
 const BELL = /notifications/i;
 
@@ -126,26 +131,25 @@ test.describe("Header notification panel", () => {
 });
 
 /**
- * The profile menu, and the bug that made the page "disappear".
+ * The profile menu, and the bug that made it "disappear or become inaccessible".
  *
- * Scroll down, click the avatar, and the reader was thrown back to the top of the page — with the
- * scroll position discarded, not restored on close — while the entire header, avatar included, sat
- * inside an `aria-hidden="true"` subtree and vanished from the accessibility tree.
+ * The demonstrated half is the second one, and it is literal: with the menu modal, the header sits
+ * inside an `aria-hidden="true"` subtree, so the avatar leaves the accessibility tree while its own
+ * menu is open. Isolated by rebuilding with `modal={true}` and the CSS gutter fix in place — the
+ * only assertion that failed was the aria-hidden one, and the phone test (whose sole assertion is
+ * scroll preservation) PASSED.
  *
- * Measured in Chromium against the real build, before the fix:
+ * That last detail retracts an earlier claim of mine that the page jumped to the top and never came
+ * back. It did in my measurement, because the trigger I was clicking sat off-screen and Playwright
+ * scrolls a target into view before clicking it. The avatar never has that problem — it lives in
+ * the sticky header — and the scroll assertions below are kept as a genuine property, not as the
+ * discriminating one.
  *
- *   before  scrollY 381   aria-hidden false
- *   open    scrollY   0   aria-hidden TRUE
- *   closed  scrollY   0   aria-hidden false     <- never restored
- *
- * Cause: a Radix menu is modal by default, so `react-remove-scroll` sets `overflow: hidden` on
- * <body>. That is normally harmless because body's overflow propagates to the viewport — but
- * propagation requires the root element's overflow to be `visible` in both axes, and globals.css
- * sets `html { overflow-x: clip }`. Fixed with `modal={false}` on the two header menus.
- *
+ * Cause: a Radix menu is modal by default, so `react-remove-scroll` engages. Fixed with
+ * `modal={false}` on the two header menus, which are navigation and were never modal in intent.
  * NOT fixed by changing the DropdownMenu default: that was tried and measured to break the Stories
- * filter reset (stories-filter-state.spec), so FilterSelect keeps the modal default and keeps this
- * bug. Documented in docs/HEADER_MENU_SCROLL.md rather than silently left behind.
+ * filter reset (stories-filter-state.spec), so FilterSelect keeps the modal default and is covered
+ * instead by the CSS override tested below. See docs/HEADER_MENU_SCROLL.md.
  *
  * These assert the two properties a reader actually experiences — my scroll position survives, and
  * the header stays reachable — plus anchoring and reopening. Deliberately NOT the mechanism: a
@@ -269,6 +273,59 @@ test.describe("Header profile menu", () => {
       overflow: document.body.style.overflow,
     }));
     expect(stuck.locked, "a scroll lock was left on <body>").toBe(false);
+  });
+});
+
+/**
+ * The scroll lock's scrollbar gutter, and why `html body[data-scroll-locked]` exists.
+ *
+ * `react-remove-scroll` sets `overflow: hidden` on <body> and adds `margin-right: <gap>px` to fill
+ * the space the viewport scrollbar just vacated. Here the scrollbar never vacates — propagation to
+ * the viewport is off because of `html { overflow-x: clip }` — so the gutter compensates for
+ * nothing and shifts the entire page sideways by the scrollbar width whenever a modal menu opens.
+ * Every FilterSelect on Discover, History, Search and Stories is modal, so that is every filter.
+ *
+ * Headless Chromium (and macOS) use overlay scrollbars and report a 0px gap, so the shift CANNOT
+ * occur in this environment naturally — which is why it went unnoticed. This test injects the exact
+ * stylesheet the dependency emits with a 15px gap, so it exercises the override rather than the
+ * browser's scrollbar policy. Measured, with and without the rule: -15px vs 0px.
+ *
+ * It is a cascade fight against a stylesheet a dependency injects at runtime, which is exactly the
+ * kind of fix that dies silently on a version bump. Hence a test rather than a comment.
+ */
+test.describe("Modal menus and the scroll lock", () => {
+  test("the scrollbar gutter cannot shift the page sideways", async ({ authedPage }) => {
+    await authedPage.setViewportSize({ width: 1280, height: 800 });
+    await authedPage.goto("/discover");
+    await authedPage.waitForTimeout(1000);
+
+    const shift = await authedPage.evaluate(() => {
+      // Byte-for-byte what react-remove-scroll-bar emits (dist/es2015/component.js) at gap=15,
+      // appended last and unlayered, exactly as it arrives at runtime.
+      const style = document.createElement("style");
+      style.textContent =
+        "body[data-scroll-locked]{overflow:hidden !important;overscroll-behavior:contain;margin-right:15px !important;}";
+      document.head.appendChild(style);
+      const probe = document.querySelector("main") as HTMLElement;
+      const before = Math.round(probe.getBoundingClientRect().right);
+      document.body.setAttribute("data-scroll-locked", "1");
+      void document.body.offsetHeight;
+      const after = Math.round(probe.getBoundingClientRect().right);
+      const out = {
+        shift: after - before,
+        marginRight: getComputedStyle(document.body).marginRight,
+        overflow: getComputedStyle(document.body).overflow,
+      };
+      document.body.removeAttribute("data-scroll-locked");
+      style.remove();
+      return out;
+    });
+
+    expect(shift.shift, `the page moved ${shift.shift}px when the lock engaged`).toBe(0);
+    expect(shift.marginRight, "the gutter was not neutralised").toBe("0px");
+    expect(shift.overflow, "overflow:hidden won the cascade — body is a scroll container").toContain(
+      "clip",
+    );
   });
 });
 

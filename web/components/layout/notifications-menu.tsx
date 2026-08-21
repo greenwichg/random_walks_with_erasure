@@ -57,9 +57,9 @@ export function NotificationsMenu() {
 
   return (
     // `modal={false}` — a notification list has no business locking the page, and the cost of the
-    // default has since been MEASURED: a modal menu throws a scrolled reader to the top of the page
-    // and never restores the position, and hides the whole header from assistive tech while open.
-    // Full rationale in header.tsx; mechanism in docs/HEADER_MENU_SCROLL.md.
+    // default has since been MEASURED: a modal menu hides the whole header from assistive tech
+    // while it is open, and its scrollbar gutter shifts the page sideways on classic-scrollbar
+    // desktops. Full rationale in header.tsx; mechanism in docs/HEADER_MENU_SCROLL.md.
     //
     // (The note that used to sit here called the mechanism unconfirmed, after two headless repros
     // measured zero movement. Those repros were sound — they simply could not show it: the trigger

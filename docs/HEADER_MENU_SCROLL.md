@@ -1,81 +1,109 @@
-# The header menu that ate your scroll position
+# Radix modal menus, `overflow-x: clip`, and two real costs
 
-**Symptom.** Scroll down anywhere in the app, click the avatar, and the page jumps to the top. The
-scroll position is not restored when the menu closes — it is gone. While the menu is open the whole
-header, avatar included, is missing from the accessibility tree.
+**Status:** both fixed. The header menus are non-modal; the scroll lock's scrollbar gutter is
+neutralised in CSS for every modal overlay in the app.
 
-**Status.** Fixed for the profile menu and the notifications panel. **Still present for the filter
-dropdowns** on Discover, History, Search and Stories — deliberately, see §4.
+> **Correction.** An earlier version of this document, and the commit `fbf63f6` it shipped with,
+> said the bug was that a modal menu *threw the reader to the top of the page and never restored the
+> position*. **That was wrong.** The measurement behind it clicked a trigger that was off-screen, and
+> Playwright scrolls a target into view before clicking it — so the jump was the harness's, not the
+> app's. Isolated afterwards: with `modal={true}` restored, the test whose only assertion is scroll
+> preservation **passes**. What follows is what actually survives measurement.
 
 ---
 
-## 1. What actually happens
+## 1. The mechanism
 
-Measured in Chromium against the production build, at `scrollY 381`:
-
-| | `scrollY` | header inside `aria-hidden="true"` |
-|---|---|---|
-| before opening | 381 | no |
-| menu open | **0** | **yes** |
-| after closing | **0** | no |
-
-Both halves of the report — "disappears" and "becomes inaccessible" — are in that table. The first
-is the page throwing the reader back to the top; the second is literal, the control leaves the
-accessibility tree.
-
-## 2. Why
-
-A Radix `DropdownMenu` is **modal by default**. Modal engages `react-remove-scroll`, which injects:
+Every Radix modal overlay mounts `react-remove-scroll`, which injects, unlayered, at runtime:
 
 ```css
-body[data-scroll-locked] { overflow: hidden !important; padding-right: …px !important; }
+body[data-scroll-locked] {
+  overflow: hidden !important;
+  margin-right: <scrollbar-width>px !important;
+}
 ```
 
-Setting `overflow: hidden` on `<body>` is normally harmless, because **body's overflow propagates to
-the viewport** — the viewport stops scrolling and body itself is left `visible`.
+That is meant to be invisible. Normally body's overflow **propagates to the viewport**: the viewport
+stops scrolling, its scrollbar disappears, and `margin-right` fills exactly the gap the scrollbar
+left, so nothing moves.
 
-That propagation has a condition: it only happens when the **root** element's overflow is `visible`
-in *both* axes. And `app/globals.css` sets:
+Propagation only happens when the **root** element's overflow is `visible` in *both* axes. And
+`app/globals.css` has:
 
 ```css
 html { overflow-x: clip; }   /* MB1 H1 — guarantee zero horizontal scrolling */
 ```
 
-So propagation is off, the declaration lands on `<body>` itself, and the document's scroll offset is
-discarded rather than preserved.
+So propagation is off and the declaration lands on `<body>` itself. The viewport scrollbar never
+goes away — and the gutter compensates for nothing.
 
-**This is why the bug is invisible in a minimal reproduction.** Two earlier attempts to reproduce it
-headlessly measured zero movement and concluded the mechanism was unconfirmed. They were sound; a
-bare page simply has no `overflow-x: clip` on the root, and without that one declaration the failure
-cannot occur.
+## 2. Cost one: the page shifts sideways
 
-## 3. The fix
+Measured A/B against the real build, injecting the 15px gutter a classic-scrollbar desktop produces:
 
-`modal={false}` on `components/layout/header.tsx` (profile) and
-`components/layout/notifications-menu.tsx` (bell). Neither is a modal: they are navigation. Non-modal
-skips `react-remove-scroll` entirely, so nothing touches `<body>` and nothing is `aria-hidden`.
+| | `<main>` right edge | body `margin-right` |
+|---|---|---|
+| without the override | 1280 → **1265** (−15px) | 15px |
+| with the override | 1280 → **1280** (0px) | 0px |
 
-Regression tests are in `e2e/specs/header.spec.ts` — scroll position survives, header stays out of
-`aria-hidden`, menu stays anchored while scrolling, works on a phone viewport, and no scroll lock is
-left behind after close/reopen. Reverting the fix fails six of them.
+Every filter on Discover, History, Search and Stories is a modal `FilterSelect`, so this is every
+filter — the whole page jumps sideways each time one opens.
 
-## 4. What is deliberately NOT fixed
+**Only where scrollbars are classic**: Windows, Linux, and the installed desktop PWA. Headless
+Chromium and macOS use overlay scrollbars and report a 0px gap, which is why no test caught it until
+one was written to inject the gutter deliberately.
 
-`components/shared/filter-select.tsx` keeps the modal default and keeps this bug.
+**Fix:** an unlayered override in `globals.css`:
 
-Making non-modal the default in `components/ui/dropdown-menu.tsx` was the obvious global fix, and it
-was tried. It **breaks the Stories filter reset**: `stories-filter-state.spec.ts` → "resetting a
-filter cleans the parameter out of the URL" passes with `modal={true}` and fails with
-`modal={false}`, because without the modal layer the menu dismisses when the router navigation from
-the previous pick lands, so "pick Left, then pick All" cannot complete.
+```css
+html body[data-scroll-locked] {
+  overflow-x: clip !important;
+  overflow-y: visible !important;
+  margin-right: 0 !important;
+}
+```
 
-Fixing the filters therefore needs its own change — most likely controlling dismissal explicitly
-rather than flipping modality — and its own verification. It was out of scope for the reported bug
-and is recorded here rather than left as a surprise.
+`html body[…]` (0,1,2) outranks their `body[…]` (0,1,1); both carry `!important`, so specificity
+decides. It **must** stay outside `@layer` — their stylesheet is unlayered, and an unlayered rule
+beats a layered one however specific.
 
-## 5. Do not "fix" it in the CSS
+## 3. Cost two: the control leaves the accessibility tree
+
+A modal menu also marks the rest of the document `aria-hidden="true"`. For the profile menu that
+means the header — including the avatar whose menu is open — is not in the accessibility tree at
+all. `getByRole` cannot find it; nor can a screen reader.
+
+That is the demonstrated half of "disappears **or becomes inaccessible**".
+
+**Fix:** `modal={false}` on the profile menu and the notifications panel. Neither is a modal; they
+are navigation, and neither should trap focus or hide the document.
+
+## 4. Why not fix it once, in the primitive
+
+Defaulting `components/ui/dropdown-menu.tsx` to non-modal was tried. It **breaks the Stories filter
+reset**: `stories-filter-state.spec.ts` → "resetting a filter cleans the parameter out of the URL"
+passes with `modal={true}` and fails without it, deterministically, 3/3. At failure the DOM contains
+no menu at all — the second trigger click races Radix's close sequence once the modal layer is gone.
+
+So filters keep modal semantics and are covered by §2 instead. Their `aria-hidden` behaviour is left
+as-is: for a genuinely modal menu that is the intended semantic, not a defect.
+
+## 5. Do not "fix" it in the base CSS
 
 The tempting move is to drop `overflow-x: clip` from `html` and leave it on `body`, restoring
 propagation. **Measured: that stops containing horizontal overflow** — a 3000px child scrolled the
-page sideways by 500px — which is the exact regression `MB1 H1` exists to prevent. The clip rule
-stays; the menus give way.
+page sideways by 500px — which is the exact regression MB1 H1 exists to prevent. The clip rule
+stays.
+
+## 6. Tests
+
+`e2e/specs/header.spec.ts`:
+
+- **Profile menu** — header stays out of `aria-hidden`, menu on screen and anchored while the page
+  scrolls, phone viewport, no lock left behind after close/reopen. Rebuilding with `modal={true}`
+  fails three of the four.
+- **Modal menus and the scroll lock** — injects the dependency's exact stylesheet at a 15px gap and
+  asserts zero shift. Disabling the override fails it.
+
+Both guard a cascade fight against a stylesheet a dependency injects at runtime, which is the kind
+of fix that dies silently on a version bump.
