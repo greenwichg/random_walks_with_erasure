@@ -255,3 +255,117 @@ self.addEventListener("pushsubscriptionchange", (event) => {
     }),
   );
 });
+
+// --------------------------------------------------------------------------------------------- //
+// PWA shell (Commit PWA1). Everything below exists so the app is INSTALLABLE and survives a lost
+// connection. It is deliberately the smallest thing that achieves that.
+//
+// A `fetch` handler is required for `beforeinstallprompt` to fire, and it is also the most
+// dangerous code in this file: it sits in front of every request the app makes. So it declines by
+// default. The allowed set is one line — a same-origin GET navigation — and the only thing ever
+// served from cache is a static offline page. `/api/*`, cross-origin, non-GET and anything
+// carrying credentials are not merely un-cached: they never reach `respondWith`, so the browser
+// performs them exactly as it would with no worker installed.
+//
+// The policy is mirrored from `lib/sw-fetch-policy.ts` (this file is served verbatim, so it cannot
+// import). `sw-fetch-policy.test.ts` reads this source and asserts the two have not drifted.
+// --------------------------------------------------------------------------------------------- //
+const SHELL_CACHE = "ih-shell-v1";
+const OFFLINE_URL = "/offline";
+const PRECACHE = [OFFLINE_URL, "/site.webmanifest", "/icon.svg"];
+
+// THE KILL SWITCH. Set to true, deploy, and every client that picks up this worker tears down its
+// caches and unregisters itself on the next navigation — no stale worker left behind, no reader
+// stranded on a broken build. See docs/PWA_OPERATIONS.md before flipping it.
+const SELF_DESTRUCT = false;
+
+// A SECOND `install`/`activate` pair, and that is intentional rather than a duplicated one. Both
+// listeners fire, and each `waitUntil` extends the same phase, so push's `skipWaiting()` /
+// `clients.claim()` above and the shell's precache below both run. Keeping them separate means the
+// PWA block can be deleted whole — which is tier 1 of the rollback (docs/PWA_OPERATIONS.md) —
+// without touching a line push depends on.
+self.addEventListener("install", (event) => {
+  // Precache is best-effort ON PURPOSE. `install` failing means the worker never activates, which
+  // would take push down with it — and push is the older, more important tenant of this file. A
+  // missing offline page degrades to the browser's own error page, which is survivable.
+  event.waitUntil(
+    (async () => {
+      try {
+        const cache = await caches.open(SHELL_CACHE);
+        await cache.addAll(PRECACHE);
+      } catch {
+        /* offline at install, quota exceeded, a 404 on one entry — all survivable */
+      }
+    })(),
+  );
+});
+
+self.addEventListener("activate", (event) => {
+  event.waitUntil(
+    (async () => {
+      if (SELF_DESTRUCT) {
+        // Leave nothing behind: drop every cache this worker ever owned, then unregister. Clients
+        // keep the page they are on and get the plain network on their next navigation.
+        const names = await caches.keys();
+        await Promise.all(names.filter((n) => n.startsWith("ih-")).map((n) => caches.delete(n)));
+        await self.registration.unregister();
+        return;
+      }
+      // Drop superseded shell caches. `ih-prefs-v1` (the push language store) is deliberately NOT
+      // matched by this prefix — it belongs to push and must survive a shell version bump.
+      const names = await caches.keys();
+      await Promise.all(
+        names.filter((n) => n.startsWith("ih-shell-") && n !== SHELL_CACHE).map((n) => caches.delete(n)),
+      );
+    })(),
+  );
+});
+
+/** Mirrors `lib/sw-fetch-policy.ts::swShouldHandle`. Decline by default. */
+function shouldHandle(request) {
+  if (request.method !== "GET") return false;
+  let target;
+  try {
+    target = new URL(request.url);
+  } catch {
+    return false;
+  }
+  if (target.origin !== self.location.origin) return false;
+  if (target.pathname === "/api" || target.pathname.startsWith("/api/")) return false;
+  if (request.headers && request.headers.get("authorization")) return false;
+  if (!(request.mode === "navigate" || request.destination === "document")) return false;
+  return true;
+}
+
+self.addEventListener("fetch", (event) => {
+  if (SELF_DESTRUCT) return;                       // torn down: behave as if absent
+  if (!shouldHandle(event.request)) return;        // NOT respondWith — the browser handles it
+  event.respondWith(
+    (async () => {
+      try {
+        // Network first, always. A news app that served a cached page would be showing yesterday's
+        // news as today's; the cache exists for the case where there is no network at all.
+        return await fetch(event.request);
+      } catch {
+        const cached = await caches.match(OFFLINE_URL);
+        // If the shell is missing (precache failed, cache evicted) rethrow rather than invent a
+        // response: the browser's own offline page is a better answer than a blank one.
+        if (cached) return cached;
+        throw new Error("offline and no shell cached");
+      }
+    })(),
+  );
+});
+
+// Lets the page tear this worker down without a deploy — the client half of the kill switch.
+self.addEventListener("message", (event) => {
+  if (event.data === "ih-unregister") {
+    event.waitUntil(
+      (async () => {
+        const names = await caches.keys();
+        await Promise.all(names.filter((n) => n.startsWith("ih-shell-")).map((n) => caches.delete(n)));
+        await self.registration.unregister();
+      })(),
+    );
+  }
+});

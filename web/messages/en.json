@@ -918,5 +918,12 @@
   "unsubscribe.settings": "Open settings",
   "unsubscribe.stillHere": "Your weekly digest is still in the app, under notifications.",
   "unsubscribe.title": "Unsubscribed",
-  "unsubscribe.working": "One moment…"
+  "unsubscribe.working": "One moment…",
+  "pwa.install.title": "Install Hidden View",
+  "pwa.install.subtitle": "Add to your home screen for quick access.",
+  "pwa.install.action": "Install",
+  "pwa.install.dismiss": "Dismiss",
+  "pwa.install.iosSubtitle": "Add Hidden View to your home screen.",
+  "pwa.install.iosShare": "Share",
+  "pwa.install.iosAdd": "Add to Home Screen"
 }

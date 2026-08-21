@@ -9,6 +9,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { LanguageProvider } from "@/lib/i18n";
 import { AnalyticsListener } from "@/components/analytics-listener";
 import { RumListener } from "@/components/rum-listener";
+import { ServiceWorkerRegistrar } from "@/components/pwa/service-worker-registrar";
 import { ShellPrefetch } from "@/components/shell-prefetch";
 
 /**
@@ -41,6 +42,9 @@ export function Providers({ children, session }: { children: ReactNode; session?
             <TooltipProvider delayDuration={200}>
               <AnalyticsListener />
               <RumListener />
+              {/* Registers /sw.js independently of push, which is what makes the app installable:
+                  push registration is gated on RWE_PUSH_ENABLED and production runs with it off. */}
+              <ServiceWorkerRegistrar />
               <ShellPrefetch hasSession={!!session} />
               {children}
             </TooltipProvider>

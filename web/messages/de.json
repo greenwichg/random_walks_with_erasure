@@ -918,5 +918,12 @@
   "unsubscribe.settings": "Einstellungen öffnen",
   "unsubscribe.stillHere": "Ihre Wochenübersicht bleibt in der App unter Benachrichtigungen.",
   "unsubscribe.title": "Abbestellt",
-  "unsubscribe.working": "Einen Moment…"
+  "unsubscribe.working": "Einen Moment…",
+  "pwa.install.title": "Hidden View installieren",
+  "pwa.install.subtitle": "Zum Startbildschirm hinzufügen für schnellen Zugriff.",
+  "pwa.install.action": "Installieren",
+  "pwa.install.dismiss": "Schließen",
+  "pwa.install.iosSubtitle": "Hidden View zum Startbildschirm hinzufügen.",
+  "pwa.install.iosShare": "Teilen",
+  "pwa.install.iosAdd": "Zum Home-Bildschirm"
 }

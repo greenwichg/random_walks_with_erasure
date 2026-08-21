@@ -918,5 +918,12 @@
   "unsubscribe.settings": "Ouvrir les paramètres",
   "unsubscribe.stillHere": "Votre récapitulatif reste disponible dans l'application, dans les notifications.",
   "unsubscribe.title": "Désabonnement effectué",
-  "unsubscribe.working": "Un instant…"
+  "unsubscribe.working": "Un instant…",
+  "pwa.install.title": "Installer Hidden View",
+  "pwa.install.subtitle": "Ajoutez-la à votre écran d'accueil pour y accéder vite.",
+  "pwa.install.action": "Installer",
+  "pwa.install.dismiss": "Ignorer",
+  "pwa.install.iosSubtitle": "Ajoutez Hidden View à votre écran d'accueil.",
+  "pwa.install.iosShare": "Partager",
+  "pwa.install.iosAdd": "Sur l'écran d'accueil"
 }

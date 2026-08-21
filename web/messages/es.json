@@ -918,5 +918,12 @@
   "unsubscribe.settings": "Abrir ajustes",
   "unsubscribe.stillHere": "Tu resumen semanal sigue en la aplicación, en notificaciones.",
   "unsubscribe.title": "Suscripción cancelada",
-  "unsubscribe.working": "Un momento…"
+  "unsubscribe.working": "Un momento…",
+  "pwa.install.title": "Instalar Hidden View",
+  "pwa.install.subtitle": "Añádela a tu pantalla de inicio para acceder rápido.",
+  "pwa.install.action": "Instalar",
+  "pwa.install.dismiss": "Descartar",
+  "pwa.install.iosSubtitle": "Añade Hidden View a tu pantalla de inicio.",
+  "pwa.install.iosShare": "Compartir",
+  "pwa.install.iosAdd": "Añadir a inicio"
 }

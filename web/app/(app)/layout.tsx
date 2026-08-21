@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Header } from "@/components/layout/header";
+import { InstallPrompt } from "@/components/pwa/install-prompt";
 import { FooterSlot, UtilityBarSlot } from "@/components/layout/chrome-slots";
 import { PushReconciler } from "@/components/push/push-reconciler";
 import { backendGet } from "@/lib/backend";
@@ -54,6 +55,12 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       <div className="lg:pl-64">
         <Header />
         <UtilityBarSlot />
+        {/* Below the header and above the page, inside the content column so it inherits the
+            sidebar offset and the page's own max width. Renders nothing at all unless the browser
+            has offered an install path and the reader has not dismissed one recently. */}
+        <div className="px-4 pt-4 sm:px-6 lg:px-8">
+          <InstallPrompt />
+        </div>
         <main className="min-h-[calc(100vh-4rem)]">{children}</main>
         <FooterSlot />
       </div>
