@@ -26,6 +26,9 @@ source "$(dirname "$0")/_compose.sh"
 ADDRESS=""; ALLOWLIST=""; ALLOWLIST_SET=0; HOST="smtp.gmail.com"; PORT="587"
 USER_=""; NAME="Hidden View"
 PUBLIC_URL=""; DRY=0; REPLACE=0
+# Empty means "no Reply-To header at all", which is right when the From address is a real
+# mailbox. On a --replace it is KEPT unless given, for the same reason the allowlist is.
+REPLY_TO=""; REPLY_TO_SET=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -35,6 +38,7 @@ while [ $# -gt 0 ]; do
     --host)      HOST="${2:-}"; shift ;;
     --port)      PORT="${2:-}"; shift ;;
     --user)      USER_="${2:-}"; shift ;;
+    --reply-to)  REPLY_TO="${2:-}"; REPLY_TO_SET=1; shift ;;
     --name)      NAME="${2:-}"; shift ;;
     --url)       PUBLIC_URL="${2:-}"; shift ;;
     -h|--help)   sed -n '2,25p' "$0"; exit 0 ;;
@@ -117,6 +121,12 @@ if [ "$HOST" = "smtp.gmail.com" ] && [ "${#PASSWORD}" -ne 16 ]; then
   echo "      that length is the first thing to check (your Google password is not an app password)." >&2
 fi
 
+if [ "$REPLY_TO_SET" -eq 0 ]; then
+  REPLY_TO="$(env_val RWE_EMAIL_REPLY_TO)"
+  [ -z "$REPLY_TO" ] || echo "keeping the existing RWE_EMAIL_REPLY_TO (${REPLY_TO})" >&2
+fi
+case "$REPLY_TO" in "" ) ;; *@*.*) ;; *) echo "not an email address: $REPLY_TO" >&2; exit 2 ;; esac
+
 SECRET="$(env_val RWE_EMAIL_SECRET)"
 if [ -z "$SECRET" ]; then
   SECRET="$(openssl rand -base64 32 2>/dev/null)" || SECRET=""
@@ -138,7 +148,7 @@ function render() {
 }
 
 KEYS=(RWE_EMAIL_ENABLED RWE_SMTP_HOST RWE_SMTP_PORT RWE_SMTP_USER RWE_SMTP_PASSWORD
-      RWE_EMAIL_FROM RWE_EMAIL_ALLOWLIST RWE_EMAIL_SECRET RWE_PUBLIC_URL)
+      RWE_EMAIL_FROM RWE_EMAIL_REPLY_TO RWE_EMAIL_ALLOWLIST RWE_EMAIL_SECRET RWE_PUBLIC_URL)
 
 BLOCK="$(
   echo "# --- weekly digest email (deploy/ops/configure-email.sh, $(date -u +%Y-%m-%dT%H:%MZ)) ---"
@@ -148,6 +158,7 @@ BLOCK="$(
   render RWE_SMTP_USER       "$USER_"
   render RWE_SMTP_PASSWORD   "$PASSWORD"
   render RWE_EMAIL_FROM      "$NAME <$ADDRESS>"
+  render RWE_EMAIL_REPLY_TO  "$REPLY_TO"
   render RWE_EMAIL_ALLOWLIST "$ALLOWLIST"
   render RWE_EMAIL_SECRET    "$SECRET"
   render RWE_PUBLIC_URL      "$PUBLIC_URL"

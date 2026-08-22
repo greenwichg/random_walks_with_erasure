@@ -21,6 +21,7 @@ is what decides whether a reader gets another attempt or is never written to aga
     RWE_SMTP_HOST / RWE_SMTP_PORT     the relay (587 STARTTLS, 465 implicit TLS, 25 plain)
     RWE_SMTP_USER / RWE_SMTP_PASSWORD credentials, when the relay wants them
     RWE_EMAIL_FROM                    the envelope + header From ("Hidden View <digest@…>")
+    RWE_EMAIL_REPLY_TO                where a reply should go, when that is not the From address
     RWE_EMAIL_ENABLED                 the switch; off ⇒ nothing is ever sent
 """
 
@@ -226,6 +227,20 @@ class SmtpSender:
 
 def enabled() -> bool:
     return (os.environ.get("RWE_EMAIL_ENABLED") or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def reply_to() -> str:
+    """Where a reply should land, or ``""`` to let it follow ``From``.
+
+    A domain sender is not necessarily a mailbox. `digest@hidden-view.com` is verified with SES for
+    SENDING — that is a DKIM key and a DNS record, not an inbox — so a reader who hits Reply is
+    writing to an address that will bounce, or worse, silently go nowhere. This header is what makes
+    the difference between "we do not read replies" and "we look like we do and then lose them".
+
+    Empty is a legitimate answer and stays the default: when the From address IS a real mailbox, a
+    Reply-To pointing at the same place is noise, and one pointing somewhere else is a surprise.
+    """
+    return (os.environ.get("RWE_EMAIL_REPLY_TO") or "").strip()
 
 
 def sender_from_env() -> "SmtpSender | None":

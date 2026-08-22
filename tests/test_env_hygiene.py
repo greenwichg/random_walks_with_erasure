@@ -304,6 +304,41 @@ def test_a_documented_one_liner_can_actually_import_the_engine():
           "a script under examples/, which runs correctly by construction and can be tested.")
 
 
+def test_reply_to_is_written_kept_and_validated(tmp_path):
+    """The SES cutover sets a From with no mailbox behind it, so Reply-To is the only route back to
+    a human. Three properties, all of which have an obvious wrong behaviour:
+
+    it is WRITTEN when given; it is KEPT across a later --replace that does not mention it (the same
+    rule as the allowlist and the secret — a host change is not a decision about replies); and a
+    typo is REFUSED rather than written, because a malformed Reply-To is a header clients honour and
+    a reply nobody receives."""
+    f = _seed(tmp_path)
+    r = run_configure(f, "beta@gmail.com", "--reply-to", "human@example.com")
+    assert r.returncode == 0, r.stderr
+    assert _values(f)["RWE_EMAIL_REPLY_TO"] == "human@example.com"
+
+    r2 = run_configure(f, "digest@hidden-view.com", "--replace",
+                       "--host", "email-smtp.us-east-1.amazonaws.com", "--user", "AKIAEXAMPLE")
+    assert r2.returncode == 0, r2.stderr
+    v = _values(f)
+    assert v["RWE_EMAIL_FROM"] == "Hidden View <digest@hidden-view.com>", "the sender did change"
+    assert v["RWE_EMAIL_REPLY_TO"] == "human@example.com", "but where replies go did not"
+    assert "keeping the existing RWE_EMAIL_REPLY_TO" in r2.stderr, "and it says so"
+
+    r3 = run_configure(f, "digest@hidden-view.com", "--replace", "--reply-to", "not-an-address")
+    assert r3.returncode != 0, "a malformed Reply-To was accepted"
+    assert _values(f)["RWE_EMAIL_REPLY_TO"] == "human@example.com", "and nothing was overwritten"
+
+
+def test_no_reply_to_means_no_key_rather_than_an_empty_one(tmp_path):
+    """An empty `Reply-To:` header is worse than none — clients honour it and the reply vanishes.
+    A deployment that never asked for one must not acquire a blank."""
+    f = _seed(tmp_path)
+    r = run_configure(f, "beta@gmail.com")
+    assert r.returncode == 0, r.stderr
+    assert _values(f).get("RWE_EMAIL_REPLY_TO", "") == ""
+
+
 def test_a_sender_change_does_not_silently_narrow_who_may_receive(tmp_path):
     """The domain cutover, and the trap in it.
 

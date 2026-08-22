@@ -276,8 +276,13 @@ def run_once(store_, *, now: "datetime | None" = None, sender=None, kind: str = 
             # RFC 8058 one-click: the mail client shows its own unsubscribe control and the reader
             # never has to find ours. Mail that is easy to leave is mail that gets marked as spam
             # less often, which is what keeps it arriving for everyone else.
+            # `Reply-To` is dropped when unset (build_message skips empty values), so a deployment
+            # whose From IS a real mailbox is unchanged. It matters for a domain sender like
+            # `digest@hidden-view.com`, which is verified for SENDING and has no inbox behind it:
+            # without this, Reply goes to an address nobody reads.
             headers={"List-Unsubscribe": f"<{unsubscribe}>",
                      "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+                     "Reply-To": email_sender.reply_to(),
                      "Auto-Submitted": "auto-generated"})
 
         result = sender.send(msg)

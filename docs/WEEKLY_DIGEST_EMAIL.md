@@ -316,8 +316,18 @@ from the terminal and would otherwise swallow the next line:
 ```bash
 cd /opt/ih
 sudo bash deploy/ops/configure-email.sh digest@hidden-view.com --replace \
-     --host email-smtp.us-east-1.amazonaws.com --user AKIA_YOUR_SMTP_USERNAME
+     --host email-smtp.us-east-1.amazonaws.com --user AKIA_YOUR_SMTP_USERNAME \
+     --reply-to you@example.com
 ```
+
+**`--reply-to` matters here specifically.** SES verifies `hidden-view.com` for *sending* — that is a
+DKIM key and a DNS record, not a mailbox. Nothing receives at `digest@hidden-view.com`, so without
+this a reader who hits Reply is writing into a void. Point it at an address a human reads.
+
+It is written once and then KEPT across later `--replace` runs that do not mention it, on the same
+reasoning as the allowlist and the secret: changing relay host is not a decision about where replies
+go. Pass it again to change it. A malformed value is refused rather than written — an empty or
+broken `Reply-To` is a header clients honour, so the failure is silent.
 
 Paste the 44-character SMTP password at the prompt. Then, separately:
 

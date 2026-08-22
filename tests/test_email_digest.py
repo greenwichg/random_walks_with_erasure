@@ -135,6 +135,53 @@ def test_a_flat_toggle_is_not_consent_to_mail():
 # --------------------------------------------------------------------------- #
 # The recipient allowlist — an OPERATOR gate, with the opposite safe default to consent.
 # --------------------------------------------------------------------------- #
+def test_a_domain_sender_can_point_replies_somewhere_a_human_reads(monkeypatch):
+    """`digest@hidden-view.com` is verified with SES for SENDING — a DKIM key and a DNS record, not
+    an inbox. A reader who hits Reply is writing to a mailbox that does not exist.
+
+    So Reply-To is set from the environment, and the two failure modes are opposite. Set, it must
+    land in the header. UNSET, it must not appear AT ALL — an empty `Reply-To:` is worse than none,
+    because clients honour it and the reply goes nowhere with no error."""
+    monkeypatch.setenv("RWE_EMAIL_REPLY_TO", "  reader@example.com  ")   # operators paste whitespace
+    assert email_sender.reply_to() == "reader@example.com"
+
+    msg = email_sender.build_message(
+        to="r@example.com", subject="s", text="t", html="<p>h</p>",
+        sender="Hidden View <digest@hidden-view.com>",
+        headers={"Reply-To": email_sender.reply_to()})
+    assert msg["Reply-To"] == "reader@example.com"
+    assert msg["From"] == "Hidden View <digest@hidden-view.com>", "From is not touched by Reply-To"
+
+    for unset in ("", "   "):
+        monkeypatch.setenv("RWE_EMAIL_REPLY_TO", unset)
+        assert email_sender.reply_to() == ""
+        bare = email_sender.build_message(
+            to="r@example.com", subject="s", text="t", html="<p>h</p>",
+            sender="Hidden View <digest@hidden-view.com>",
+            headers={"Reply-To": email_sender.reply_to()})
+        assert "Reply-To" not in bare, "an empty Reply-To header was emitted"
+    monkeypatch.delenv("RWE_EMAIL_REPLY_TO", raising=False)
+    assert email_sender.reply_to() == "", "absent env var is the same as empty"
+
+
+def test_the_digest_send_path_carries_reply_to(monkeypatch):
+    """The header has to be wired at the CALL SITE, not merely available. This reads the delivery
+    module's own source, because the send path needs a store, a job and a relay to execute — and a
+    test that mocked all three would be asserting my mocks agree with each other."""
+    import ast
+    src = pathlib.Path(ROOT / "examples" / "email_delivery.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    calls = [n for n in ast.walk(tree)
+             if isinstance(n, ast.Call)
+             and isinstance(n.func, ast.Attribute) and n.func.attr == "build_message"]
+    assert calls, "no build_message call found in email_delivery.py"
+    for call in calls:
+        headers = next((kw.value for kw in call.keywords if kw.arg == "headers"), None)
+        assert isinstance(headers, ast.Dict), "headers is not a literal dict — check by hand"
+        keys = [k.value for k in headers.keys if isinstance(k, ast.Constant)]
+        assert "Reply-To" in keys, f"build_message call at line {call.lineno} sets no Reply-To"
+
+
 def test_the_sender_can_be_swapped_without_touching_the_digest(monkeypatch):
     """Beta sends from a personal address; later it sends from `digest@hidden-view.com`. That must
     be a line in `.env`, not an edit here.
