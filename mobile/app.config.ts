@@ -43,7 +43,23 @@ const config: ExpoConfig = {
   slug: "hidden-view",
   version: "0.1.0",
   orientation: "portrait",
-  scheme: "hiddenview",
+  /**
+   * Two schemes, and the second one is not decoration.
+   *
+   * `hiddenview` is the app's own deep-link scheme, used by expo-router.
+   *
+   * `com.hiddenview.app` is the one Google redirects to after sign-in. `expo-auth-session`'s Google
+   * provider builds its redirect URI as `${Application.applicationId}:/oauthredirect` — the package
+   * name / bundle identifier, not the app scheme — and a scheme the app has not registered is a
+   * redirect the operating system hands to nobody. The failure has no error in it: the browser opens,
+   * Google accepts the sign-in, and then nothing happens, because the redirect went to a URL no
+   * installed app claims.
+   *
+   * Expo's config plugin registers exactly the schemes listed here and infers none, which was
+   * confirmed by prebuilding and reading the generated AndroidManifest: with a single scheme it
+   * emitted `<data android:scheme="hiddenview"/>` and nothing else.
+   */
+  scheme: ["hiddenview", APP_ID],
   userInterfaceStyle: "automatic",
   newArchEnabled: true,
   ios: {
