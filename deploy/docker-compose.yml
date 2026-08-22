@@ -617,6 +617,16 @@ services:
       # NEXTAUTH_URL: https://app.example.com         # this app's canonical URL (OAuth callbacks)
       # GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}         # required in prod (only sign-in method)
       # GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      # --- native (Android / iOS) sign-in ----------------------------------------
+      # Forwarded ACTIVELY with an empty default, unlike the commented block above, and the
+      # difference is deliberate. A variable this file does not forward is invisible to the
+      # process no matter what deploy/.env says — that is exactly how RWE_EMAIL_REPLY_TO was
+      # shipped, configured, and silently absent from every message. With these lines present,
+      # setting them in deploy/.env is enough; leaving them unset means POST /api/auth/mobile
+      # answers 500 `not-configured` and mints nothing, which is the correct fail-closed state
+      # and is covered by e2e/specs/mobile-exchange.spec.ts.
+      GOOGLE_IOS_CLIENT_ID: ${GOOGLE_IOS_CLIENT_ID:-}
+      GOOGLE_ANDROID_CLIENT_ID: ${GOOGLE_ANDROID_CLIENT_ID:-}
     depends_on:
       api:
         condition: service_healthy

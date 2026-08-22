@@ -173,6 +173,20 @@ signs in through the OAuth flow and exchanges the result for a token — that ex
 design problem (today a token is minted from an already-signed-in browser at `/api/me/tokens`, which
 is fine for the extension and is not a mobile sign-up flow).
 
+## Phase 3a — three of these landed
+
+`/api/recommendations`, `/api/recommendations/explain` (both `optionalUser`) and `/api/settings`
+(GET + POST, `requireUser`) were generalised so the Expo app can read its own feed and the settings
+that carry Interest Intensity, the For You country and Political Openness. The remaining five from
+the minimum set below — `/api/dashboard`, `/api/report`, `/api/history`, `/api/analytics`,
+`/api/profile` — are unchanged and are the next tranche.
+
+`POST /api/auth/mobile` was added alongside them: the native sign-in exchange. A phone posts a Google
+ID token, the server verifies it against Google's public keys with an audience allowlist, runs the
+same `isEmailAllowed` gate the web sign-in runs, upserts the identity and mints a token. `/api/me/tokens`
+stays `SESSION_ONLY` — the phone never presents a Hidden View credential to obtain one, so a token
+still cannot extend itself.
+
 ## The minimum set before Phase 2 can begin
 
 **8 handlers across 7 route files.** These are exactly the routes where the first Expo screen is

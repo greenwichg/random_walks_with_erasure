@@ -16,11 +16,31 @@
 // genuinely must not use the shared check, the honest fix is to move it out of `/api/me/`.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 
 const WEB = join(import.meta.dirname, "..");
 const ME = join(WEB, "app", "api", "me");
+
+/**
+ * Routes outside `/api/me/` that have been generalised to the shared check, and must stay that way.
+ *
+ * The directory rule covers `/api/me/**` because everything under it is per-reader by definition.
+ * These four are not under it and are per-reader anyway — they are the Recommendations path the
+ * mobile app reads, generalised in Phase 3a. Listed by hand rather than by scanning `app/api/`,
+ * because most of what lives there SHOULD keep calling `engineAuthHeaders`: `/api/discover`,
+ * `/api/stories` and friends are pure catalog queries the engine does not personalise at all
+ * (docs/API_AUTH_MATRIX.md), and a rule that dragged them in would be wrong about most of its scope.
+ *
+ * A route joins this list when it is generalised, and the failure it prevents is a revert: someone
+ * "simplifying" `/api/recommendations` back to `engineAuthHeaders()` would make it serve the demo
+ * reader's feed to every mobile client again, with nothing failing.
+ */
+const GENERALISED = [
+  join(WEB, "app", "api", "recommendations", "route.ts"),
+  join(WEB, "app", "api", "recommendations", "explain", "route.ts"),
+  join(WEB, "app", "api", "settings", "route.ts"),
+];
 
 /** Route handlers, by the HTTP method each exports — the things that need an auth decision. */
 const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"] as const;
@@ -41,7 +61,7 @@ function routeFiles(dir: string): string[] {
   return out;
 }
 
-const ROUTES = routeFiles(ME);
+const ROUTES = [...routeFiles(ME), ...GENERALISED];
 const label = (file: string) => "/" + relative(WEB, file).split(sep).join("/");
 const code = (file: string) => stripComments(readFileSync(file, "utf8"));
 
@@ -96,19 +116,23 @@ function handlerBody(source: string, method: string): string | null {
   return source.slice(open, close === -1 ? undefined : close + 1);
 }
 
-test("there are routes under /api/me to guard (the scan itself is not silently empty)", () => {
+test("there are routes to guard (the scan itself is not silently empty)", () => {
   // Without this, a moved directory or a renamed path turns every assertion below into a loop over
   // nothing, and the guard reports success for checking zero files.
-  assert.ok(ROUTES.length >= 12, `expected the /api/me routes, found ${ROUTES.length}`);
+  assert.ok(ROUTES.length >= 15, `expected the guarded routes, found ${ROUTES.length}`);
+  for (const f of GENERALISED) {
+    assert.ok(existsSync(f), `${f} is listed as generalised but does not exist`);
+  }
 });
 
-test("every /api/me route imports the shared authentication helper", () => {
+test("every guarded route imports the shared authentication helper", () => {
   for (const file of ROUTES) {
     assert.match(
       code(file),
       /from\s+"@\/lib\/require-user"/,
       `${label(file)} does not import the shared check.\n` +
-        `  Every route under app/api/me/ must authenticate through lib/require-user.ts:\n` +
+        `  Every route under app/api/me/, and every route listed in GENERALISED, must\n` +
+        `  authenticate through lib/require-user.ts:\n` +
         `    requireUser(request, "…")  — refuse a caller with no identity (a 401 today)\n` +
         `    optionalUser(request)      — the route also serves anonymous callers\n` +
         `  Both accept the session cookie AND a bearer token, and both refuse a token that does\n` +
@@ -117,10 +141,14 @@ test("every /api/me route imports the shared authentication helper", () => {
   }
 });
 
-test("no /api/me route reaches past the helper to the session-only primitives", () => {
+test("no guarded route reaches past the helper to the session-only primitives", () => {
   // The failure this prevents is not a missing check — it is a check that looks complete and is
   // session-only, which is what every one of these routes had before Phase 1. A route built on
   // `engineAuthHeaders()` authenticates the web perfectly and is invisible to every mobile client.
+  //
+  // On `/api/recommendations` that is worse than invisible: the engine answers an unattributed call
+  // with the SHOWCASE feed, so a reverted route would serve every mobile reader somebody else's
+  // recommendations — with a 200, and cards claiming to bridge a diet that is not theirs.
   for (const file of ROUTES) {
     const source = code(file);
     for (const bypass of BYPASSES) {
@@ -154,7 +182,7 @@ test("every exported handler runs the check — not just the first method in the
   // body extractor cannot silently check nothing and pass — the same reason the file count is
   // pinned above. It is a floor, not an equality: adding a route should not fail this test, it
   // should be *caught* by the assertion inside the loop.
-  assert.ok(checked >= 16, `expected to have checked every handler, saw ${checked}`);
+  assert.ok(checked >= 20, `expected to have checked every handler, saw ${checked}`);
 });
 
 test("token management stays session-only — a token may not mint or revoke tokens", () => {

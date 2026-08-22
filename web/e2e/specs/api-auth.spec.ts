@@ -73,10 +73,17 @@ const ROUTES: Route[] = [
   { method: "GET", path: "/api/me/tokens", policy: "session-only" },
   { method: "POST", path: "/api/me/tokens", policy: "session-only", body: { label: "probe" } },
   { method: "DELETE", path: "/api/me/tokens/999999", policy: "session-only" },
+
+  // Phase 3a — the Recommendations path, outside /api/me/ and per-reader anyway. These are what the
+  // Expo app reads, and until they were generalised a valid token got the demo reader's feed.
+  { method: "GET", path: "/api/recommendations", policy: "optional" },
+  { method: "GET", path: "/api/recommendations/explain", policy: "optional" },
+  { method: "GET", path: "/api/settings", policy: "required" },
+  { method: "POST", path: "/api/settings", policy: "required", body: { readingGoalMinutes: 20 } },
 ];
 
-/** Every route file under app/api/me is represented. Pinned so the matrix cannot quietly shrink. */
-const EXPECTED_HANDLERS = 16;
+/** Every guarded handler is represented. Pinned so the matrix cannot quietly shrink. */
+const EXPECTED_HANDLERS = 20;
 
 type Credential = { cookie?: string; bearer?: string };
 
@@ -362,5 +369,139 @@ test.describe("the web path is unchanged", () => {
       history.find((h) => h.article?.url?.endsWith(suffix))?.readSource ?? null;
     expect(sourceOf(`/src/app/${uid}`)).toBe("app");
     expect(sourceOf(`/src/ext/${uid}`)).toBe("extension");
+  });
+});
+
+/**
+ * The article ids a feed offers, in order — the stable, meaningful shape of a recommendation feed.
+ *
+ * Not the raw body: it carries a per-request field that differs between two identical calls, so a
+ * byte comparison is noise. Which articles a reader is offered is what personalisation decides.
+ */
+async function feedIds(authorization?: string, cookie?: string): Promise<string[]> {
+  const headers: Record<string, string> = {};
+  if (authorization) headers.authorization = authorization;
+  if (cookie) headers.cookie = cookie;
+  const res = await fetch(`${WEB_URL}/api/recommendations`, { headers });
+  expect(res.status).toBe(200);
+  return ((await res.json()) as Array<{ article: { id: string } }>).map((r) => r.article.id);
+}
+
+test.describe("Phase 3a — the mobile client gets its OWN feed", () => {
+  test("a bearer token's recommendations DIFFER from the anonymous showcase feed", async ({ uid }) => {
+    // The exit criterion for Phase 3a, and the defect it closes.
+    //
+    // Before this, a valid token on /api/recommendations returned output byte-identical to a
+    // signed-out request: `engineAuthHeaders()` reads a cookie and nothing else, so the engine saw
+    // an unattributed call and served the showcase feed. Not a 401 — a 200, with cards claiming to
+    // bridge a reading diet that was not this reader's.
+    //
+    // Asserting "differs" rather than a specific payload because the feed is the recommender's to
+    // decide; what must be true is that it is a DIFFERENT reader's answer.
+    //
+    // Compared by ARTICLE SEQUENCE, not by raw body, and the distinction is the difference between
+    // a test that means something and one that passes by accident. The raw body carries a
+    // per-request field that varies between two identical anonymous calls, so "the bytes differ"
+    // is satisfied by calling the same endpoint twice — this assertion passed against a stale
+    // bundle where nothing had been fixed, which is how it came to be written this way. Which
+    // ARTICLES a reader is offered is both stable across calls and exactly what personalisation
+    // changes. The determinism check below proves the first half rather than assuming it.
+    await seedReads(uid, 8, "phase3a");
+    const { token } = await mintApiToken(uid);
+
+    const showcase = await feedIds();
+    expect(
+      await feedIds(),
+      "the anonymous feed is not stable, so 'differs from anonymous' would prove nothing",
+    ).toEqual(showcase);
+    expect(showcase.length, "the showcase feed should have cards to be distinguishable").toBeGreaterThan(0);
+
+    const mine = await feedIds(`Bearer ${token}`);
+    expect(mine).not.toEqual(showcase);
+
+    // This reader's own feed is EMPTY, and that is the right answer rather than a broken one. They
+    // are past the measured threshold (12 reads, threshold 5, `sufficient: true` from /api/report),
+    // so the engine builds their feed from their own corpus — and every read the fixture seeded
+    // points at a synthetic `e2e.example` URL that is not in the recommendation catalog, so there is
+    // nothing of theirs to recommend from.
+    //
+    // Which makes it the sharpest possible demonstration of what Phase 3a fixed. Before it, this
+    // reader was handed 14 showcase cards, each captioned "this offers another political
+    // perspective" — a claim about a reading diet that was not theirs. After it, they are handed
+    // nothing, because the engine can finally tell they are signed in. An honest empty state in
+    // place of a confident wrong one is the whole point.
+    expect(mine).toEqual([]);
+  });
+
+  test("the feed a token gets is the same one that reader's session gets", async ({ uid }) => {
+    // The other half: "different from anonymous" would also be satisfied by a feed for the WRONG
+    // reader. This pins that the token and the cookie resolve to the same person.
+    await seedReads(uid, 8, "phase3a-parity");
+    const { token } = await mintApiToken(uid);
+    const cookie = await mintSessionCookie(uid);
+
+    const viaToken = await feedIds(`Bearer ${token}`);
+    const viaCookie = await feedIds(undefined, `${cookie.name}=${cookie.value}`);
+    expect(viaToken).toEqual(viaCookie);
+
+    // And neither is the showcase. Without this, "the two agree" would also be satisfied by both
+    // falling back to the anonymous feed — which is precisely the bug, passing as a green test.
+    expect(viaToken).not.toEqual(await feedIds());
+  });
+
+  test("Interest Intensity and the country preference are readable and writable with a token", async ({
+    uid,
+  }) => {
+    // Three of the four things the mobile Recommendations screen has to honour live in Settings:
+    // `interests` (Interest Intensity), `recommendationCountry` (For You country), and
+    // `politicalOpenness` (which maps to the RWE-B epsilon behind Political Viewpoint Diversity).
+    // Until Phase 3a, /api/settings answered 401 to a token and a native client could honour none.
+    const { token } = await mintApiToken(uid);
+    const bearer = { authorization: `Bearer ${token}`, "content-type": "application/json" };
+
+    const before = await fetch(`${WEB_URL}/api/settings`, { headers: bearer });
+    expect(before.status).toBe(200);
+    const settings = (await before.json()) as {
+      interests?: Record<string, number>;
+      politicalOpenness?: number;
+    };
+    expect(settings.interests, "Interest Intensity must be present").toBeTruthy();
+    expect(typeof settings.politicalOpenness).toBe("number");
+
+    const saved = await fetch(`${WEB_URL}/api/settings`, {
+      method: "POST",
+      headers: bearer,
+      body: JSON.stringify({
+        interests: { ...settings.interests, technology: 9 },
+        recommendationCountry: "IN",
+      }),
+    });
+    expect(saved.status).toBe(200);
+
+    // Read it back through the ENGINE, so the assertion does not depend on the same route.
+    const stored = await engineGet<{
+      interests?: Record<string, number>;
+      recommendationCountry?: string | null;
+    }>(uid, "/api/me/settings");
+    expect(stored.interests?.technology).toBe(9);
+    expect(stored.recommendationCountry).toBe("IN");
+  });
+
+  test("a revoked token cannot read settings or the feed", async ({ uid }) => {
+    const { id, token } = await mintApiToken(uid, "phase3a-revoke");
+    await revokeApiToken(uid, id);
+    for (const path of ["/api/settings", "/api/recommendations", "/api/recommendations/explain"]) {
+      const res = await fetch(`${WEB_URL}${path}`, { headers: { authorization: `Bearer ${token}` } });
+      expect(res.status, `${path} accepted a revoked token`).toBe(401);
+    }
+  });
+
+  test("the signed-out landing feed is unchanged", async () => {
+    // The regression that would matter to the WEB: /api/recommendations serves the showcase feed to
+    // anonymous callers on purpose — that is what a visitor browsing the landing experience sees.
+    // `optionalUser` had to leave it exactly as it was.
+    const res = await fetch(`${WEB_URL}/api/recommendations`);
+    expect(res.status).toBe(200);
+    expect(Array.isArray(await res.json())).toBe(true);
   });
 });
