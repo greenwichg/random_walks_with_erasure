@@ -72,6 +72,13 @@ jobs:
         run: npm test --workspace @ih/core
       - name: Shared core — typecheck (no DOM lib)
         run: npm run typecheck --workspace @ih/core
+      - name: Mobile — boundary guard + design tokens
+        # Before the web build, for the same reason the core guard runs first: everything after this
+        # can pass with a `next/server` import sitting in mobile/, because tsc resolves it happily
+        # and only Metro would object — on a device, later.
+        run: npm test --workspace @ih/mobile
+      - name: Mobile — typecheck
+        run: npm run typecheck --workspace @ih/mobile
       - name: Typecheck
         run: npm run typecheck --workspace web
       - name: Lint

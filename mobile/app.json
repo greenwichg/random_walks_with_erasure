@@ -1,0 +1,30 @@
+{
+  "expo": {
+    "name": "Hidden View",
+    "slug": "hidden-view",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "hiddenview",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.hiddenview.app"
+    },
+    "android": {
+      "package": "com.hiddenview.app",
+      "edgeToEdgeEnabled": true
+    },
+    "plugins": ["expo-router", "expo-secure-store", "expo-web-browser"],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "extra": {
+      "//": "Public configuration only. OAuth CLIENT IDs are public identifiers — the secret half of a native OAuth client does not exist, which is why this shape is the standard one rather than a workaround. The bearer token itself never appears here: it is minted by POST /api/auth/mobile and lives in the platform keystore.",
+      "apiBaseUrl": "http://localhost:3000",
+      "googleIosClientId": "",
+      "googleAndroidClientId": "",
+      "googleWebClientId": ""
+    }
+  }
+}

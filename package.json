@@ -8,8 +8,8 @@
     "mobile"
   ],
   "scripts": {
-    "typecheck": "npm run typecheck --workspace @ih/core && npm run typecheck --workspace web",
-    "test": "npm test --workspace @ih/core && npm test --workspace web",
+    "typecheck": "npm run typecheck --workspace @ih/core && npm run typecheck --workspace web && npm run typecheck --workspace @ih/mobile",
+    "test": "npm test --workspace @ih/core && npm test --workspace web && npm test --workspace @ih/mobile",
     "build": "npm run build --workspace web",
     "lint": "npm run lint --workspace web"
   }
