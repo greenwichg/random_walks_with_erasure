@@ -1,6 +1,7 @@
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { backendPost } from "@/lib/backend";
+import { backendPostResult } from "@/lib/backend";
+import { bearerFromHeader, type TokenResolution } from "@/lib/auth-decision";
 
 /** The shared-secret header the engine trusts for internal calls, when configured. */
 function internalSecretHeaders(): Record<string, string> {
@@ -43,18 +44,38 @@ export function engineHeadersForUserId(userId: number): Record<string, string> {
  * `null` for an unknown/invalid token (or an unreachable engine).
  */
 export async function resolveApiToken(token: string): Promise<number | null> {
-  if (!token) return null;
-  const res = await backendPost<{ userId: number }>(
+  const resolved = await resolveApiTokenResult(token);
+  return resolved.status === "ok" ? resolved.userId : null;
+}
+
+/**
+ * The same exchange, keeping the engine's answer intact — the resolver `requireUser` uses.
+ *
+ * `resolveApiToken`'s `null` cannot distinguish "the engine refused this token" from "the engine did
+ * not answer", and the difference is the whole story for a non-browser client: a 401 tells a mobile
+ * app its credential is dead and to sign the reader out, while the truth during a deploy is 503,
+ * try again. So each engine status is mapped deliberately:
+ *
+ *   401 / 403   the engine looked and refused → the token is unknown, revoked, or expired
+ *   2xx + id    resolved
+ *   0           we never reached the engine → no statement about the token exists
+ *   anything else (5xx, a 2xx that does not carry a numeric id) is ALSO "unavailable": a broken or
+ *   sick engine has not said the token is bad, and inventing that refusal is the failure mode this
+ *   function exists to prevent.
+ */
+export async function resolveApiTokenResult(token: string): Promise<TokenResolution> {
+  if (!token) return { status: "rejected" };
+  const { status, data } = await backendPostResult<{ userId: number }>(
     "/api/internal/resolve-token",
     { token },
     internalSecretHeaders(),
   );
-  return res && typeof res.userId === "number" ? res.userId : null;
+  if (data && typeof data.userId === "number") return { status: "ok", userId: data.userId };
+  if (status === 401 || status === 403) return { status: "rejected" };
+  return { status: "unavailable" };
 }
 
 /** Extract a bearer token from an `Authorization: Bearer <token>` header, or `null`. */
 export function bearerToken(request: Request): string | null {
-  const auth = request.headers.get("authorization") ?? "";
-  const token = /^Bearer\s+(.+)$/i.exec(auth.trim())?.[1]?.trim();
-  return token ? token : null;
+  return bearerFromHeader(request.headers.get("authorization"));
 }

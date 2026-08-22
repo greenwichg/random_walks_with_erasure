@@ -1,17 +1,12 @@
 import { NextResponse } from "next/server";
 import { backendGet, backendPost, backendDelete, engineUnavailable } from "@/lib/backend";
-import { engineAuthHeaders } from "@/lib/engine-auth";
+import { requireUser } from "@/lib/require-user";
 import type { SavedArticle, SaveResult } from "@/types/domain";
 
 export const dynamic = "force-dynamic";
 
-/** Typed 401 for an unauthenticated caller (no signed-in session). */
-function unauthorized() {
-  return NextResponse.json(
-    { error: { code: "unauthorized", message: "Sign in to save articles." } },
-    { status: 401 },
-  );
-}
+/** The human half of the refusal; the shape and status come from the shared check. */
+const SIGN_IN = "Sign in to save articles.";
 
 /** Typed 400 for a missing article id. */
 function badRequest() {
@@ -22,24 +17,24 @@ function badRequest() {
 }
 
 /** List the signed-in reader's saved articles (newest first). */
-export async function GET() {
-  const headers = await engineAuthHeaders();
-  if (!headers["X-IH-User-Id"]) return unauthorized();
-  const saved = await backendGet<SavedArticle[]>("/api/me/saved", headers);
+export async function GET(request: Request) {
+  const auth = await requireUser(request, SIGN_IN);
+  if (!auth.ok) return auth.response;
+  const saved = await backendGet<SavedArticle[]>("/api/me/saved", auth.headers);
   if (saved) return NextResponse.json(saved);
   return engineUnavailable();
 }
 
 /** Save an article for the signed-in reader. Idempotent — duplicate saves are ignored by the engine. */
 export async function POST(request: Request) {
-  const headers = await engineAuthHeaders();
-  if (!headers["X-IH-User-Id"]) return unauthorized();
+  const auth = await requireUser(request, SIGN_IN);
+  if (!auth.ok) return auth.response;
   const body = (await request.json().catch(() => ({}))) as { articleId?: string; article?: unknown };
   if (!body.articleId) return badRequest();
   const result = await backendPost<SaveResult>(
     "/api/me/saved",
     { articleId: body.articleId, article: body.article ?? {} },
-    headers,
+    auth.headers,
   );
   if (result) return NextResponse.json(result);
   return engineUnavailable();
@@ -47,13 +42,13 @@ export async function POST(request: Request) {
 
 /** Remove a saved article. `articleId` is an encoded query param (ids are URLs — never a path segment). */
 export async function DELETE(request: Request) {
-  const headers = await engineAuthHeaders();
-  if (!headers["X-IH-User-Id"]) return unauthorized();
+  const auth = await requireUser(request, SIGN_IN);
+  if (!auth.ok) return auth.response;
   const articleId = new URL(request.url).searchParams.get("articleId");
   if (!articleId) return badRequest();
   const result = await backendDelete<SaveResult>(
     `/api/me/saved?articleId=${encodeURIComponent(articleId)}`,
-    headers,
+    auth.headers,
   );
   if (result) return NextResponse.json(result);
   return engineUnavailable();

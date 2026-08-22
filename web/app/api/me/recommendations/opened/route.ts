@@ -1,16 +1,8 @@
 import { NextResponse } from "next/server";
 import { backendPost, engineUnavailable } from "@/lib/backend";
-import { engineAuthHeaders } from "@/lib/engine-auth";
+import { requireUser } from "@/lib/require-user";
 
 export const dynamic = "force-dynamic";
-
-/** Typed 401 matching the engine's error envelope (web/lib/backend.ts shape). */
-function unauthorized() {
-  return NextResponse.json(
-    { error: { code: "unauthorized", message: "Sign in to record recommendation opens." } },
-    { status: 401 },
-  );
-}
 
 /**
  * Record that the signed-in user opened a recommended article — the reception signal behind
@@ -32,13 +24,13 @@ export async function POST(request: Request) {
     );
   }
 
-  const headers = await engineAuthHeaders();
-  if (!headers["X-IH-User-Id"]) return unauthorized();
+  const auth = await requireUser(request, "Sign in to record recommendation opens.");
+  if (!auth.ok) return auth.response;
 
   const result = await backendPost(
     "/api/me/recommendations/opened",
     { articleId: body.articleId, crossCutting: body.crossCutting ?? null },
-    headers,
+    auth.headers,
   );
   if (result) return NextResponse.json(result);
   return engineUnavailable();

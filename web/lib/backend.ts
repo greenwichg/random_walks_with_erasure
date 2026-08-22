@@ -103,6 +103,33 @@ export async function backendGetResult<T>(
   }
 }
 
+/** POST that preserves the HTTP status, the sibling of {@link backendGetResult}.
+ *
+ *  Exists for exactly one caller today — token resolution (`lib/engine-auth.ts`) — and for a reason
+ *  worth stating: `backendPost` collapses "the engine says this token is invalid" (401) and "the
+ *  engine did not answer" (transport failure) into the same `null`. A browser never noticed, because
+ *  a browser has a cookie. A mobile client would: every engine restart would look like a revoked
+ *  credential, and a client that signs itself out on 401 would sign itself out on a deploy.
+ *  `status: 0` means we never got an answer — the caller must say 503, not 401. */
+export async function backendPostResult<T>(
+  path: string,
+  body: unknown,
+  headers?: Record<string, string>,
+): Promise<{ status: number; data: T | null }> {
+  const res = await withTimeout(`${BASE}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(headers ?? {}) },
+    body: JSON.stringify(body ?? {}),
+  });
+  if (!res) return { status: 0, data: null };
+  if (!res.ok) return { status: res.status, data: null };
+  try {
+    return { status: res.status, data: (await res.json()) as T };
+  } catch {
+    return { status: res.status, data: null };
+  }
+}
+
 /** POST `<BASE><path>` with a JSON body → parsed JSON, or `null` on any failure.
  *  Optional `headers` attribute the call to a signed-in user (see `engineAuthHeaders`). */
 export async function backendPost<T>(

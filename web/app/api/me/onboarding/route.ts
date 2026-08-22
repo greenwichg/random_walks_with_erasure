@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import type { EstimateHealthReport } from "@/types/domain";
 import { backendPost, engineUnavailable } from "@/lib/backend";
-import { engineAuthHeaders } from "@/lib/engine-auth";
+import { optionalUser } from "@/lib/require-user";
 
 export const dynamic = "force-dynamic";
 
@@ -14,10 +14,14 @@ export const dynamic = "force-dynamic";
 export async function POST(request: Request) {
   const body = (await request.json().catch(() => ({ outlets: [] }))) as { outlets?: string[] };
   const outlets = Array.isArray(body.outlets) ? body.outlets : [];
+  // `optionalUser`: an anonymous POST already gets the 503 below (the engine refuses to write for
+  // nobody), and `/signin/complete` reads that status. See `app/api/me/route.ts`.
+  const auth = await optionalUser(request);
+  if (!auth.ok) return auth.response;
   const saved = await backendPost<EstimateHealthReport>(
     "/api/me/onboarding",
     { outlets },
-    await engineAuthHeaders(),
+    auth.headers,
   );
   if (saved) return NextResponse.json(saved);
   return engineUnavailable();

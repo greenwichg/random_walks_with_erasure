@@ -140,6 +140,28 @@ export async function enginePost<T = unknown>(uid: number, path: string, body: u
   return (await res.json()) as T;
 }
 
+/** Attributed engine DELETE (dev trust). Throws on any non-2xx. */
+export async function engineDelete<T = unknown>(uid: number, path: string): Promise<T> {
+  const res = await fetch(`${ENGINE_URL}${path}`, { method: "DELETE", headers: engineHeaders(uid) });
+  if (!res.ok) throw new Error(`engineDelete ${path} → ${res.status} ${await res.text()}`);
+  return (await res.json()) as T;
+}
+
+/**
+ * Mint a REAL per-user API token — the credential the browser extension holds today and the mobile
+ * apps will hold next. Straight from the engine, so the test authenticates against the same hashed
+ * row a production token lives in; a fabricated string would prove nothing about resolution.
+ */
+export async function mintApiToken(uid: number, label = "e2e"): Promise<{ id: number; token: string }> {
+  const minted = await enginePost<{ id: number; token: string }>(uid, "/api/me/tokens", { label });
+  return { id: minted.id, token: minted.token };
+}
+
+/** Revoke a token (the engine deletes the row — revocation IS deletion). */
+export async function revokeApiToken(uid: number, tokenId: number): Promise<void> {
+  await engineDelete(uid, `/api/me/tokens/${tokenId}`);
+}
+
 /** Record `count` distinct reads through the canonical `/api/me/reads` pipeline (5 crosses Measured). */
 export async function seedReads(uid: number, count: number, prefix = "seed"): Promise<void> {
   const reads = Array.from({ length: count }, (_, i) => ({

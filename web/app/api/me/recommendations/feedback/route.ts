@@ -1,19 +1,14 @@
 import { NextResponse } from "next/server";
 import { backendGet, backendPost, engineUnavailable } from "@/lib/backend";
-import { engineAuthHeaders } from "@/lib/engine-auth";
+import { requireUser } from "@/lib/require-user";
 
 export const dynamic = "force-dynamic";
 
 /** The four canonical feedback signals the engine records (mirrors the backend Literal). */
 const FEEDBACK_TYPES = ["like", "dislike", "ignore", "read_later"] as const;
 
-/** Typed 401 matching the engine's error envelope (web/lib/backend.ts shape). */
-function unauthorized() {
-  return NextResponse.json(
-    { error: { code: "unauthorized", message: "Sign in to record recommendation feedback." } },
-    { status: 401 },
-  );
-}
+/** The human half of the refusal; the shape and status come from the shared check. */
+const SIGN_IN = "Sign in to record recommendation feedback.";
 
 /**
  * Record the signed-in reader's explicit feedback on a recommendation (like / dislike / ignore /
@@ -31,13 +26,13 @@ export async function POST(request: Request) {
     );
   }
 
-  const headers = await engineAuthHeaders();
-  if (!headers["X-IH-User-Id"]) return unauthorized();
+  const auth = await requireUser(request, SIGN_IN);
+  if (!auth.ok) return auth.response;
 
   const result = await backendPost(
     "/api/me/recommendations/feedback",
     { articleId: body.articleId, feedback: body.feedback },
-    headers,
+    auth.headers,
   );
   if (result) return NextResponse.json(result);
   return engineUnavailable();
@@ -48,10 +43,10 @@ export async function POST(request: Request) {
  * Recommendations page uses to keep an *ignored* card dismissed across a reload. Auth required
  * (anonymous readers record nothing); no mock fallback.
  */
-export async function GET() {
-  const headers = await engineAuthHeaders();
-  if (!headers["X-IH-User-Id"]) return unauthorized();
+export async function GET(request: Request) {
+  const auth = await requireUser(request, SIGN_IN);
+  if (!auth.ok) return auth.response;
 
-  const items = await backendGet("/api/me/recommendations/feedback", headers);
+  const items = await backendGet("/api/me/recommendations/feedback", auth.headers);
   return items ? NextResponse.json(items) : engineUnavailable();
 }

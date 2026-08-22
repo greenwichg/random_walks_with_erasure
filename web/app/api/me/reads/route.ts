@@ -1,29 +1,25 @@
 import { NextResponse } from "next/server";
 import { backendPost, engineUnavailable } from "@/lib/backend";
-import { engineAuthHeaders, engineHeadersForUserId, resolveApiToken, bearerToken } from "@/lib/engine-auth";
+import { requireUser } from "@/lib/require-user";
 import { rejectIfTooLarge } from "@/lib/body-limit";
 
 export const dynamic = "force-dynamic";
-
-/** Typed 401 matching the engine's error envelope (web/lib/backend.ts shape). */
-function unauthorized() {
-  return NextResponse.json(
-    { error: { code: "unauthorized", message: "Sign in or provide a valid extension token." } },
-    { status: 401 },
-  );
-}
 
 /**
  * Record reading events for a user — the single ingestion API. Two authenticated callers,
  * one pipeline:
  *
  *  1. The web app (signed-in session) — the paste-URL flow; attributed via the session.
- *  2. The browser extension — sends its per-user `Authorization: Bearer` token; we resolve it to
- *     the engine user id through the internal resolver and forward with that id.
+ *  2. Non-browser clients — the browser extension today, the mobile apps next — sending a per-user
+ *     `Authorization: Bearer` token, resolved server-side to the engine user id.
  *
  * Either way the read is forwarded to the *existing* backend `/api/me/reads`, which scores and
  * dedups it — the engine stays private and there is no second ingestion path. No mock fallback
  * (this writes real account state).
+ *
+ * The session-then-bearer ladder used to be written out here, and this was the only route that had
+ * it. It now lives in `lib/require-user.ts` and every `/api/me/*` route runs it, which is the whole
+ * of Phase 1: the behaviour below is unchanged, it just stopped being unique to one file.
  */
 export async function POST(request: Request) {
   const tooLarge = rejectIfTooLarge(request, "ingest");
@@ -31,30 +27,24 @@ export async function POST(request: Request) {
   const body = (await request.json().catch(() => ({ reads: [] }))) as { reads?: unknown };
   const reads = Array.isArray(body.reads) ? body.reads : [];
 
-  // 1) Signed-in web session (in-app read tracking + the paste-URL flow).
-  const sessionHeaders = await engineAuthHeaders();
-  let headers: Record<string, string> | null = sessionHeaders["X-IH-User-Id"] ? sessionHeaders : null;
-  let defaultSource = "app";
-
-  // 2) Otherwise a browser-extension bearer token, resolved server-side to a user id.
-  if (!headers) {
-    const token = bearerToken(request);
-    if (!token) return unauthorized();
-    const userId = await resolveApiToken(token);
-    if (userId == null) return unauthorized();
-    headers = engineHeadersForUserId(userId);
-    defaultSource = "extension";
-  }
+  const auth = await requireUser(request, "Sign in or provide a valid extension token.");
+  if (!auth.ok) return auth.response;
 
   // Stamp the read source by auth path (a client may override — e.g. a future import via session).
   // Metadata only: the engine never branches on it; it just attributes the one shared read pipeline.
+  //
+  // "extension" for every bearer caller keeps the stamp exactly what it was; the mobile apps will
+  // send an explicit `readSource` of their own rather than have this guess for them, because the
+  // default names how the request AUTHENTICATED, which stopped being the same thing as which client
+  // sent it the moment a second bearer client existed.
+  const defaultSource = auth.via === "session" ? "app" : "extension";
   const tagged = reads.map((r) =>
     r && typeof r === "object"
       ? { ...(r as Record<string, unknown>), readSource: (r as { readSource?: string }).readSource ?? defaultSource }
       : r,
   );
 
-  const result = await backendPost("/api/me/reads", { reads: tagged }, headers);
+  const result = await backendPost("/api/me/reads", { reads: tagged }, auth.headers);
   if (result) return NextResponse.json(result);
   return engineUnavailable();
 }
