@@ -4,33 +4,24 @@
     "appVersionSource": "remote"
   },
   "build": {
-    "//": "Three profiles. `development` is what you iterate in; `preview` is the internal-test build that goes to TestFlight and Play internal testing; `production` is the store build, which nothing in Phase 3 submits.",
-
-    "//env": "Only EXPO_PUBLIC_BUILD_PROFILE is set here. The client ids and the API base URL are NOT, and deliberately: they are gitignored (mobile/.env), so a cloud build cannot see them and putting them here would put them back in git — the thing keeping them out of it was for. Register them once as EAS environment variables instead: `npx eas-cli env:create --name EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID --value <id> --visibility plaintext --environment preview` (and the same for the Android id and EXPO_PUBLIC_API_BASE_URL). Skip this and the build succeeds and installs, and the app shows NOT CONFIGURED on the sign-in screen — a twenty-minute round trip for a missing variable.",
-
     "development": {
       "developmentClient": true,
       "distribution": "internal",
-      "//": "A DEVELOPMENT BUILD, not Expo Go. Expo Go cannot host expo-secure-store's keystore access or a native Google sign-in bound to this app's bundle id — testing items 2, 3 and 4 in Expo Go would prove nothing about the real app.",
       "ios": { "simulator": false },
       "android": { "buildType": "apk" },
       "env": {
         "EXPO_PUBLIC_BUILD_PROFILE": "development"
       }
     },
-
     "preview": {
       "distribution": "internal",
-      "//": "The real-device test build. iOS goes to TestFlight, Android to Play internal testing or a direct APK install. Signed with the same EAS-managed keystore as production on Android, which is why the SHA-1 registered in Google Cloud Console covers both. No `channel` here: channels route OTA updates and need expo-updates, which is not installed — declaring one would fail the build with a message about update channels rather than about the missing package.",
       "ios": { "simulator": false },
       "android": { "buildType": "apk" },
       "env": {
         "EXPO_PUBLIC_BUILD_PROFILE": "preview"
       }
     },
-
     "production": {
-      "//": "Store builds. Nothing in Phase 3 submits, and `eas submit` is deliberately not configured below. No `channel` — see the preview profile.",
       "autoIncrement": true,
       "android": { "buildType": "app-bundle" },
       "env": {

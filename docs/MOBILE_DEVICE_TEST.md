@@ -157,7 +157,29 @@ app goes into EAS** — the bearer token is minted at runtime, and no secret exi
 `eas init` prints a project id; put it in `mobile/.env` as `EXPO_PUBLIC_EAS_PROJECT_ID` (a `.ts`
 config cannot be written to automatically the way `app.json` could).
 
-### 3b. Build
+### 3b. About the build profiles
+
+`mobile/eas.json` carries no explanatory comments, because it cannot: JSON has no comment syntax, and
+EAS validates the file against a strict schema that rejects `"//"` keys outright — an attempt to
+document it inline failed `eas init` with *"build.// must be of type object"*. So the reasoning lives
+here instead.
+
+| Profile | What it is for |
+|---|---|
+| `development` | needs the Metro bundler attached; for iterating, not for a device test |
+| `preview` | **the one to use.** A standalone binary — TestFlight on iOS, a directly installable APK on Android |
+| `production` | store builds. Nothing in Phase 3 submits, and `eas submit` is deliberately not configured |
+
+Two things deliberately absent from that file:
+
+- **No `channel` on any profile.** Channels route over-the-air updates and require `expo-updates`,
+  which is not installed. Declaring one fails the build with a message about update channels rather
+  than about the missing package.
+- **No client ids or API URL in the `env` blocks** — only `EXPO_PUBLIC_BUILD_PROFILE`. Those values
+  are gitignored, and putting them in `eas.json` would put them straight back into git. They are
+  registered with EAS in step 3a instead.
+
+### 3c. Build
 
 ```bash
 npx eas-cli build --profile preview --platform ios
