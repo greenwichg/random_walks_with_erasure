@@ -1,0 +1,10 @@
+{
+  "name": "@ih/mobile",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Hidden View for Android and iOS (Expo / React Native). Boundary only — no screens yet.",
+  "main": "expo-router/entry",
+  "scripts": {
+    "//": "Deliberately no start/build/test yet. Adding them before there is an app to run would put a red X in CI for a directory that is, correctly, empty."
+  }
+}

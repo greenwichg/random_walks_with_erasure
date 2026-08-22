@@ -1,0 +1,16 @@
+{
+  "name": "hidden-view",
+  "private": true,
+  "description": "Hidden View — a health check for your news diet. npm workspaces: the Python engine is at examples/, the shared client core at packages/core, the web app at web/, the Expo app at mobile/.",
+  "workspaces": [
+    "packages/*",
+    "web",
+    "mobile"
+  ],
+  "scripts": {
+    "typecheck": "npm run typecheck --workspace @ih/core && npm run typecheck --workspace web",
+    "test": "npm test --workspace @ih/core && npm test --workspace web",
+    "build": "npm run build --workspace web",
+    "lint": "npm run lint --workspace web"
+  }
+}

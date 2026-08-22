@@ -14,11 +14,11 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
-import { presentRecommendation, hoursAfter } from "./rec-presentation.ts";
+import { presentRecommendation, hoursAfter } from "@ih/core/logic/rec-presentation";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const EN = JSON.parse(
-  readFileSync(join(HERE, "..", "messages", "en.json"), "utf8"),
+  readFileSync(join(HERE, "..", "..", "packages", "core", "i18n", "messages", "en.json"), "utf8"),
 ) as Record<string, string>;
 
 const STORY_EV = {

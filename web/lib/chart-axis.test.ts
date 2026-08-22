@@ -16,7 +16,7 @@ import {
   tickCapacity,
   tickLabels,
   yAxis,
-} from "./chart-axis.ts";
+} from "@ih/core/logic/chart-axis";
 
 /* ── ranges ─────────────────────────────────────────────────────────────────────────────────── */
 
@@ -227,7 +227,14 @@ test("no analytics chart lets recharts choose its y range", () => {
 test("every y-axis takes its domain, ticks and formatter from this module", () => {
   for (const file of CHARTS) {
     const src = chartSrc(file);
-    assert.ok(src.includes('from "@/lib/chart-axis"'), `${file} must use the shared axis spec`);
+    // Either specifier: `@/lib/chart-axis` is the compatibility shim that re-exports the module
+    // from @ih/core, and call sites move to the direct import incrementally. What this guard is
+    // actually about is that the chart does not roll its own axis — not which of two paths it took
+    // to the shared one, which would make the rule fail on a migration it should not care about.
+    assert.ok(
+      src.includes('from "@/lib/chart-axis"') || src.includes('from "@ih/core/logic/chart-axis"'),
+      `${file} must use the shared axis spec`,
+    );
     assert.ok(/domain=\{axis\.domain\}|domain=\{dom\}/.test(src), `${file}: domain must come from the spec`);
     assert.ok(/ticks=\{axis\.ticks\}|ticks=\{ticks\}/.test(src), `${file}: ticks must come from the spec`);
     assert.ok(/tickFormatter=\{axis\.format\}/.test(src), `${file}: tick text must come from the spec`);

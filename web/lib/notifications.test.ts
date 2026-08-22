@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { notificationPresentation, notificationHref, badgeLabel } from "./notifications.ts";
 import { interpolate } from "./i18n-core.ts";
 
-const MSG = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "messages");
+const MSG = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "packages", "core", "i18n", "messages");
 const LANGS = ["en", "es", "fr", "de", "pt"] as const;
 const catalog = (lang: string): Record<string, string> =>
   JSON.parse(fs.readFileSync(path.join(MSG, `${lang}.json`), "utf8"));

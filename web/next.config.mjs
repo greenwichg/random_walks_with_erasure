@@ -6,6 +6,12 @@ const { page: pageHeaders, api: apiHeaders } = securityHeaders(process.env);
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  // @ih/core is a workspace package that ships TypeScript source with no build step. Webpack already
+  // compiles it — the symlink resolves to real source outside node_modules, so the default
+  // "don't transpile dependencies" rule never matches it — but that is an accident of how npm
+  // workspaces link, not a contract. Saying it here makes it a contract, and it is also what makes
+  // the production image work, where the package is copied rather than symlinked.
+  transpilePackages: ["@ih/core"],
   // Run instrumentation.ts's register() at server boot — used for fail-fast env validation.
   experimental: { instrumentationHook: true },
   // Images from arbitrary publishers/CDNs; loosen when the real backend fixes a set.

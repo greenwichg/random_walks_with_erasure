@@ -1,7 +1,11 @@
 # The `packages/core` migration map
 
 The audit behind splitting Hidden View into `packages/core` (shared product logic), `web/`
-(Next.js/PWA) and `mobile/` (Expo). **No code has been moved yet — this is the map.**
+(Next.js/PWA) and `mobile/` (Expo).
+
+**The map was written first, then executed. Everything above the `What actually happened` heading at
+the bottom is the audit as it stood before the move — including the four things it got wrong, which
+are corrected there rather than quietly edited here.**
 
 Every classification below comes from parsing the import graph and scanning for platform globals,
 not from reading file names. The script's rules are stated where they matter, because two of them
@@ -271,3 +275,93 @@ Each step leaves the web app green and is revertible on its own.
 
 Steps 1–5 are mechanical. Step 6 is the only one that changes behaviour-carrying code, and it changes
 where an icon comes from, not what a metric is.
+
+---
+
+# What actually happened
+
+Steps 1–5 and 7 are done. Step 6 (the `metrics.ts` / `i18n-core.ts` adaptations) and step 8 (retiring
+the shims) are not. The web app builds and behaves as before: **422 web unit tests, 161 core unit
+tests, 26 `.mjs` tests, lint, i18n and the production build all green**, and e2e is 104 passed with
+the same 4 pre-existing failures as the pre-migration baseline (this container has no ingested
+article corpus, so the recommendations feed renders no cards).
+
+**Final shape: 28 modules / 4,105 lines in `packages/core`**, plus the five message catalogs. That is
+one fewer module than the map projected, and the difference is a correction, below.
+
+## Four things the map got wrong, and what caught each
+
+**1. `lib/engine-timeout.ts` is not shared client code.** The map put it in `core/api/`. It reads
+`process.env.RWE_BACKEND_TIMEOUT_MS` and throws a `DOMException` — it is the *web tier's* transport to
+the Python engine, a hop the mobile app never makes (mobile talks to the public API, not the engine).
+Moved back to `web/lib/`.
+
+Caught by the DOM-free `tsconfig`, on its first run, exactly as the map predicted that tsconfig would
+earn its place. The regex-based audit had missed it because `process` and `DOMException` were not in
+the forbidden list — and they were not in the list because nothing in the sample suggested them.
+
+**2. `services/api.ts` had a Next.js dependency the audit did not see.** Its base URL came from
+`process.env.NEXT_PUBLIC_API_BASE_URL` — a build-time substitution that means nothing on React
+Native. Adapted rather than blocked: `configureApi({ baseUrl, getToken })` is now called by the host,
+the web supplies the same value at the same moment from its shim, and the browser's requests are
+byte-identical. The `getToken` half is the seam the Expo app needs, and it replaces the placeholder
+comment the map quoted.
+
+**3. Six "unit tests" were architecture guards over the web tree.** `bar-items.test.ts`,
+`chart-axis.test.ts`, `countries.test.ts`, `analysis-presentation.test.ts`, `coach-presentation.test.ts`
+and `rec-presentation.test.ts` read `web/components/**` and `web/app/**` to assert call-site
+properties ("no analytics chart lets recharts choose its y range"). They are *about* core modules and
+*structurally* about the web app, so they stayed in `web/` and now import from `@ih/core`. A test
+moves with its module only when it tests the module.
+
+**4. `web/package.json` has to declare `@ih/core` as a dependency.** Living in the same workspace is
+not enough: `npm ci --workspace web` links only what a package asks for, so the first Docker
+simulation produced a `node_modules` with no `@ih/core` in it — the production failure the map warned
+about, reproduced for real. One line in `dependencies` fixes it.
+
+## Verifying the deploy image without a daemon
+
+The map's central risk was that `deploy/Dockerfile.web` copied only `web/`. It now copies the root
+manifests, `packages/` and `web/`, installs at the workspace root, and builds and starts with
+`--workspace web`.
+
+No Docker daemon is available in the development container, so the image was verified by
+**replicating the Dockerfile's `COPY` set into a clean directory** — root manifests, then
+`npm ci --workspace web --include-workspace-root`, then the sources, then
+`npm run build --workspace web` — with no symlink to the source tree. That is the same test for the
+same failure: a missing file, or a workspace that does not resolve when copied rather than linked. It
+passed, and it is what found defect 4 above.
+
+**Still worth one real `docker build` before the next deploy.** The simulation covers file layout and
+workspace resolution; it does not cover the base image (`node:20-slim`, npm 10) or the `CMD`.
+
+## Wiring that had to move with the files
+
+Four places referenced the moved paths and would have failed silently or late:
+
+| File | Why |
+|---|---|
+| `web/scripts/build-sw-data.mjs` | transpiles `notification-kinds.ts` into a temp dir and imports it; a shim's `@ih/core` specifier cannot resolve from `/tmp`, so it reads the real source now |
+| `web/scripts/check-i18n.mjs` | scans for key usage — with the catalogs and a third of their consumers in `packages/core`, scanning only `web/` reported **64 live keys as unused** |
+| six `lib/*.test.ts` | read `web/messages/*.json` off disk by relative path |
+| `web/lib/chart-axis.test.ts` | asserts which specifier the charts import; now accepts the shim *or* the direct path, so it does not fail on the migration it should not care about |
+
+## The guard, proved by mutation
+
+Seven probes, each added to `packages/core` and then deleted: `react`, `react-native`, `next/server`,
+`node:fs`, a `document` reference, an import escaping the package, and a `.tsx` file. All seven fail
+the guard, each with the rule in the message. Separately, `document` also fails `tsc -p tsconfig.json`
+with `TS2584`, which is the compiler layer doing its half.
+
+`globals.d.ts` is the written contract of what a shared module may assume exists — timers, `console`,
+`fetch`, `AbortController`, `URL`. Everything else is undeclared, so adding to that file is the moment
+someone has to check the React Native side.
+
+## What is still open
+
+- **Step 6.** `lib/metrics.ts` (9 icon lines blocking 857 lines), `lib/i18n-core.ts` (3 lines),
+  `lib/notifications.ts`, `lib/nav.ts`, `lib/record-read.ts`, `lib/onboarding.ts`.
+- **Step 8.** 26 shims live in `web/`. Every existing `@/lib/…` import still resolves through them;
+  new code should import `@ih/core` directly.
+- **`packages/core/i18n/` holds the catalogs but not the resolver** — `lib/i18n-core.ts` is step 6.
+- **One real `docker build`**, per above.

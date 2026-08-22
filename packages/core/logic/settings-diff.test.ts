@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { diffSettings, hasChanges } from "./settings-diff.ts";
-import type { Settings } from "../types/domain.ts";
+import type { Settings } from "../domain/types.ts";
 
 /** A complete baseline Settings object (the S1.2 contract — no `privacy` group). */
 function base(): Settings {

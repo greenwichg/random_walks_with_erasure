@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { framingComparison } from "./framing.ts";
-import type { StoryCoverage } from "../types/domain.ts";
+import type { StoryCoverage } from "../domain/types.ts";
 
 function row(over: Partial<StoryCoverage>): StoryCoverage {
   return {

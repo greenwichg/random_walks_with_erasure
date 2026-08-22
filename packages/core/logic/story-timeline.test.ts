@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { condenseTimeline } from "./story-timeline.ts";
-import type { StoryTimelineEvent } from "../types/domain.ts";
+import type { StoryTimelineEvent } from "../domain/types.ts";
 
 const ev = (over: Partial<StoryTimelineEvent>): StoryTimelineEvent => ({
   date: "2026-07-25T10:00:00Z",

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { countryFlag, countryFlagSrc, countryName, countryShortName, languageName, sortByCountryName } from "./countries.ts";
+import { countryFlag, countryFlagSrc, countryName, countryShortName, languageName, sortByCountryName } from "@ih/core/logic/countries";
 
 test("countryFlag: regional-indicator pair for a valid alpha-2 code, case-insensitive", () => {
   assert.equal(countryFlag("US"), "🇺🇸");

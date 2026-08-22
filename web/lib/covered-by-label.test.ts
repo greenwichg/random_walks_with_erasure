@@ -22,7 +22,7 @@ import { join } from "node:path";
  */
 
 const ROOT = join(import.meta.dirname, "..");
-const MESSAGES = join(ROOT, "messages");
+const MESSAGES = join(ROOT, "..", "packages", "core", "i18n", "messages");
 const LANGS = readdirSync(MESSAGES).filter((f) => f.endsWith(".json")).map((f) => f.slice(0, -5));
 
 const catalog = (lang: string): Record<string, string> =>

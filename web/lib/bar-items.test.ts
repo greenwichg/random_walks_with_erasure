@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { isLabelled, labelledItems } from "./bar-items.ts";
+import { isLabelled, labelledItems } from "@ih/core/logic/bar-items";
 
 /**
  * The defect: the report's Reading distribution drew a nameless row — a bar, "10%", and 18 reads,

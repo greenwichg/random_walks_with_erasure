@@ -20,7 +20,9 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WEB = path.resolve(__dirname, "..");
-const MSG = path.join(WEB, "messages");
+// The catalogs are shared data — @ih/core owns them, because mobile needs the same strings.
+const CORE = path.resolve(WEB, "..", "packages", "core");
+const MSG = path.join(CORE, "i18n", "messages");
 const LANGS = ["en", "es", "fr", "de", "pt"];
 
 /**
@@ -186,7 +188,13 @@ for (const k of REQUIRED_PART_KEYS) {
 }
 
 // ---- 5. unused keys (scan source) ----
-const SRC_DIRS = ["app", "components", "lib", "hooks", "services", "types"];
+//
+// Both packages. The catalogs live here, but roughly a third of the keys are named by @ih/core —
+// the notification table, the recommendation-explanation resolver, the analyse presentation — all
+// of which moved there so the Expo app can share them. Scanning only web/ reported 64 perfectly
+// live keys as unused, which is the failure mode this check exists to prevent, inverted.
+const SRC_ROOTS = [WEB, path.resolve(WEB, "..", "packages", "core")];
+const SRC_DIRS = ["app", "components", "lib", "hooks", "services", "types", "domain", "logic", "api", "i18n"];
 const sources = [];
 const walk = (dir) => {
   for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -199,9 +207,11 @@ const walk = (dir) => {
     }
   }
 };
-for (const d of SRC_DIRS) {
-  const p = path.join(WEB, d);
-  if (fs.existsSync(p)) walk(p);
+for (const root of SRC_ROOTS) {
+  for (const d of SRC_DIRS) {
+    const p = path.join(root, d);
+    if (fs.existsSync(p)) walk(p);
+  }
 }
 const blob = sources.map((f) => fs.readFileSync(f, "utf8")).join("\n");
 

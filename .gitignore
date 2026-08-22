@@ -99,3 +99,15 @@ terraform.rc
 # stray test-results/ once turned up untracked at the top level.
 /test-results/
 /playwright-report/
+
+# npm workspaces. The install is hoisted to the repo root now (web/.gitignore's `/node_modules` was
+# rooted to web/ and stopped covering it), and npm may still create nested trees for a package whose
+# dependency cannot hoist.
+/node_modules
+packages/*/node_modules
+mobile/node_modules
+
+# The Expo app's build output, for when there is one.
+/mobile/.expo/
+/mobile/android/
+/mobile/ios/

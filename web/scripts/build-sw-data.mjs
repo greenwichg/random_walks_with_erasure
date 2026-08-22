@@ -25,6 +25,7 @@ import ts from "typescript";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WEB = path.resolve(__dirname, "..");
+const CORE = path.resolve(WEB, "..", "packages", "core");
 
 /**
  * Load the metadata table from its TypeScript source.
@@ -38,9 +39,14 @@ const WEB = path.resolve(__dirname, "..");
  * Transpiling with the `typescript` already in devDependencies is version-proof: it works on every
  * Node the app could plausibly run on, and it keeps the table in the typed file the app itself
  * imports rather than splitting it into a second source of truth to satisfy a build script.
+ *
+ * The source is @ih/core's, not `web/lib/notification-kinds.ts` — that path is now a one-line
+ * re-export shim, and transpiling a re-export into a temp directory produces a file whose
+ * `@ih/core` specifier cannot resolve from /tmp. Reading the real module keeps this doing what it
+ * always did: transpiling a self-contained table with no imports at all.
  */
 async function loadKinds() {
-  const source = path.join(WEB, "lib", "notification-kinds.ts");
+  const source = path.join(CORE, "logic", "notification-kinds.ts");
   const js = ts.transpileModule(fs.readFileSync(source, "utf8"), {
     compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
     fileName: source,
@@ -63,7 +69,7 @@ const OUT = path.join(WEB, "public", "sw-data.js");
 
 const messages = {};
 for (const lang of LANGS) {
-  const catalog = JSON.parse(fs.readFileSync(path.join(WEB, "messages", `${lang}.json`), "utf8"));
+  const catalog = JSON.parse(fs.readFileSync(path.join(CORE, "i18n", "messages", `${lang}.json`), "utf8"));
   messages[lang] = Object.fromEntries(
     Object.entries(catalog).filter(([key]) => key.startsWith(PREFIX)),
   );

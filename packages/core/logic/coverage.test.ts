@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { coverageStatus, METRIC_UNLOCK } from "./coverage.ts";
-import type { MetricKey } from "../types/domain.ts";
+import type { MetricKey } from "../domain/types.ts";
 
 test("estimate: prefers backend mode, computes remaining + pct", () => {
   const s = coverageStatus("estimate", { reads: 2, threshold: 5, sufficient: false });

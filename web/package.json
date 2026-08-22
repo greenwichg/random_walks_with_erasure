@@ -2,7 +2,7 @@
   "name": "information-health",
   "version": "0.1.0",
   "private": true,
-  "description": "Information Health — a reading-diet intelligence product. Frontend for the RWE recommender + Information Health Report backend.",
+  "description": "Information Health \u2014 a reading-diet intelligence product. Frontend for the RWE recommender + Information Health Report backend.",
   "scripts": {
     "dev": "next dev",
     "check:i18n": "node scripts/check-i18n.mjs",
@@ -11,7 +11,7 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "test": "node --test lib/env-validation.test.mjs lib/i18n-core.test.ts lib/political.test.ts lib/rec-presentation.test.ts lib/history-insights.test.ts lib/hero-copy.test.ts lib/coach-presentation.test.ts lib/notifications.test.ts lib/analysis-presentation.test.ts lib/settings-diff.test.ts lib/engine-fallback.test.ts lib/coverage.test.ts lib/framing.test.ts lib/auth-callbacks.test.ts lib/session-recovery.test.ts lib/beta-access.test.ts lib/engine-identity.test.ts lib/engine-timeout.test.ts lib/onboarding.test.ts lib/home.test.ts lib/story-timeline.test.ts lib/countries.test.ts lib/request-params.test.ts lib/discover-params.test.ts lib/discover-order.test.ts lib/push.test.ts lib/sw-render.test.ts lib/rum.test.ts lib/continuation.test.ts lib/publisher-logo.test.ts lib/visibility-return.test.ts lib/calendar-grid.test.ts lib/theme-tokens.test.ts lib/country-partition.test.ts lib/chart-axis.test.ts lib/guide-scroll.test.ts lib/bar-items.test.ts lib/unsubscribe-public.test.ts lib/covered-by-label.test.ts lib/rec-badge-label.test.ts lib/sw-fetch-policy.test.ts lib/manifest.test.ts lib/install-prompt.test.ts lib/auth-decision.test.ts lib/api-auth-guard.test.ts",
+    "test": "node --test lib/env-validation.test.mjs lib/i18n-core.test.ts lib/political.test.ts lib/rec-presentation.test.ts lib/coach-presentation.test.ts lib/notifications.test.ts lib/analysis-presentation.test.ts lib/auth-callbacks.test.ts lib/session-recovery.test.ts lib/beta-access.test.ts lib/engine-identity.test.ts lib/engine-timeout.test.ts lib/onboarding.test.ts lib/countries.test.ts lib/push.test.ts lib/sw-render.test.ts lib/rum.test.ts lib/continuation.test.ts lib/visibility-return.test.ts lib/theme-tokens.test.ts lib/chart-axis.test.ts lib/guide-scroll.test.ts lib/bar-items.test.ts lib/unsubscribe-public.test.ts lib/covered-by-label.test.ts lib/rec-badge-label.test.ts lib/sw-fetch-policy.test.ts lib/manifest.test.ts lib/install-prompt.test.ts lib/api-auth-guard.test.ts",
     "build:e2e": "npm run build:sw && npm run build:flags && NEXT_PUBLIC_DEV_LOGIN=1 next build",
     "e2e": "npm run build:e2e && playwright test",
     "e2e:run": "playwright test",
@@ -19,6 +19,7 @@
     "build:flags": "node scripts/build-flags.mjs"
   },
   "dependencies": {
+    "@ih/core": "*",
     "@radix-ui/react-avatar": "^1.1.1",
     "@radix-ui/react-dialog": "^1.1.2",
     "@radix-ui/react-dropdown-menu": "^2.1.2",

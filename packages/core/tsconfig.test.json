@@ -1,0 +1,16 @@
+{
+  // The tests, with Node's types — they run on Node, so Node's globals are the truth for them.
+  //
+  // `globals.d.ts` is deliberately NOT included here. It hand-declares `URL`, `fetch` and friends
+  // for the shipped modules, and alongside @types/node those two declarations of the same name
+  // collide: a test constructing a Node `URL` could not pass it to a module typed against ours.
+  // Excluding it means the modules are type-checked a second time against Node's real globals,
+  // which is a stricter check than either config alone, not a looser one.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "lib": ["ES2022"]
+  },
+  "include": ["**/*.test.ts"],
+  "exclude": ["node_modules", "globals.d.ts"]
+}

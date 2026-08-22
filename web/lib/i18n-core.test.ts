@@ -27,7 +27,7 @@ import {
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const load = (lang: string) =>
-  JSON.parse(readFileSync(join(HERE, "..", "messages", `${lang}.json`), "utf8")) as Record<string, string>;
+  JSON.parse(readFileSync(join(HERE, "..", "..", "packages", "core", "i18n", "messages", `${lang}.json`), "utf8")) as Record<string, string>;
 
 test("normalizeLang allows the five supported languages and falls back to English", () => {
   for (const l of SUPPORTED) assert.equal(normalizeLang(l), l);

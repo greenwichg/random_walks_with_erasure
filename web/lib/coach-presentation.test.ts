@@ -21,12 +21,12 @@ import {
   trendLabelKey,
   weeklyTrendDelta,
   weeklyInsights,
-} from "./coach-presentation.ts";
-import type { CoachMessage } from "@/types/domain";
+} from "@ih/core/logic/coach-presentation";
+import type { CoachMessage } from "@ih/core/domain/types";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const EN = JSON.parse(
-  readFileSync(join(HERE, "..", "messages", "en.json"), "utf8"),
+  readFileSync(join(HERE, "..", "..", "packages", "core", "i18n", "messages", "en.json"), "utf8"),
 ) as Record<string, string>;
 
 const msg = (over: Partial<CoachMessage>): CoachMessage => ({

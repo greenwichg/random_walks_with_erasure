@@ -1,8 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { analysisPresentation } from "./analysis-presentation.ts";
-import type { AnalysisResult } from "../types/domain.ts";
+import { analysisPresentation } from "@ih/core/logic/analysis-presentation";
+import type { AnalysisResult } from "@ih/core/domain/types";
 
 /**
  * The canonical cases are the SHARED golden fixtures produced by the real analyzer

@@ -4,14 +4,34 @@ FROM node:20-slim
 
 WORKDIR /app
 
-# Install deps against the lockfile first (better layer caching).
-COPY web/package.json web/package-lock.json ./
-RUN npm ci
+# npm WORKSPACES. This used to copy web/package.json + web/package-lock.json and then `COPY web ./`,
+# which was correct for as long as web/ was a standalone package. It stopped being correct the moment
+# web/ imported @ih/core: the build context is already the repo root (docker-compose sets
+# `context: ..`), so packages/ was available the whole time and simply never copied — the image would
+# have failed on a missing module at DEPLOY time, with CI green, having passed typecheck, lint, unit
+# tests, e2e and `next build` on a developer machine where the workspace symlink exists.
+#
+# The manifests come first, alone, so `npm ci` re-runs only when a dependency actually changes rather
+# than on every source edit. Every workspace's package.json is needed for that: npm resolves the whole
+# tree from the root lockfile and refuses to install with one missing.
+COPY package.json package-lock.json ./
+COPY packages/core/package.json ./packages/core/
+COPY web/package.json ./web/
+COPY mobile/package.json ./mobile/
+
+# `--workspace web` installs what the web app needs and links @ih/core, without pulling the Expo
+# toolchain into a server image that will never run it.
+RUN npm ci --workspace web --include-workspace-root
 
 # Build the production bundle. RWE_BACKEND_URL is read per-request at runtime,
 # not at build time, so no backend needs to be reachable to build.
-COPY web ./
-RUN npm run build
+#
+# @ih/core ships as TypeScript source with no build step (packages/core/package.json maps its
+# subpath exports straight at the .ts files), so it is copied, not built — next.config.mjs lists it
+# in `transpilePackages` and webpack compiles it as part of the app.
+COPY packages ./packages
+COPY web ./web
+RUN npm run build --workspace web
 
 EXPOSE 3000
 # NODE_ENV=production turns OFF the mock fallback: if the engine is unreachable the
@@ -19,4 +39,5 @@ EXPOSE 3000
 ENV NODE_ENV=production \
     RWE_BACKEND_URL=http://api:8000
 
-CMD ["npm", "start", "--", "-H", "0.0.0.0", "-p", "3000"]
+# `-w web` rather than a bare `npm start`, because the working directory is now the workspace root.
+CMD ["npm", "start", "--workspace", "web", "--", "-H", "0.0.0.0", "-p", "3000"]

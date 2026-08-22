@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { requestParams } from "./request-params.ts";
-import type { SearchParams, StoryQuery } from "../types/domain.ts";
+import type { SearchParams, StoryQuery } from "../domain/types.ts";
 
 test("drops the unfiltered spellings, keeps real values (incl. 0), stringifies numbers", () => {
   assert.deepEqual(

@@ -9,7 +9,7 @@ import {
   publisherStats,
   trendingTopics,
 } from "./home.ts";
-import type { Story } from "../types/domain.ts";
+import type { Story } from "../domain/types.ts";
 
 /** A minimal but type-complete Story, so the derivations are exercised against the real contract. */
 function story(over: Partial<Story> & { id: string }): Story {

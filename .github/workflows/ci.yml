@@ -50,9 +50,9 @@ jobs:
   web:
     name: Web typecheck + tests + build
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: web
+    # npm workspaces: the install and the lockfile are at the repo ROOT, and each step names the
+    # workspace it runs in. `working-directory: web` at the job level would break `npm ci`, which
+    # must see the root lockfile.
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -61,23 +61,32 @@ jobs:
           # (the .test.ts files) is gated in CI, not just the two .mjs files it ran before.
           node-version: "22"
           cache: npm # cache ~/.npm keyed on the lockfile
-          cache-dependency-path: web/package-lock.json
-      - name: Install (clean, from lockfile)
+          cache-dependency-path: package-lock.json
+      - name: Install (clean, from lockfile — the whole workspace)
         run: npm ci
+      - name: Shared core — platform-independence guard
+        # FIRST, and deliberately so. Everything below can pass with a React import sitting in
+        # @ih/core: tsc resolves it, webpack bundles it, the web tests exercise it. The only thing
+        # that catches it is this, and it is worthless if it runs after a green build convinces
+        # somebody the change is fine.
+        run: npm test --workspace @ih/core
+      - name: Shared core — typecheck (no DOM lib)
+        run: npm run typecheck --workspace @ih/core
       - name: Typecheck
-        run: npm run typecheck
+        run: npm run typecheck --workspace web
       - name: Lint
-        run: npm run lint
+        run: npm run lint --workspace web
       - name: i18n catalog parity
-        run: npm run check:i18n
+        run: npm run check:i18n --workspace web
       - name: Frontend unit tests (logic suite)
-        run: npm test
+        run: npm test --workspace web
       - name: Frontend unit tests (env validation + security headers)
+        working-directory: web
         run: node --test lib/*.test.mjs
       - name: Production build
-        run: npm run build 2>&1 | tee ../web-build.log
+        run: npm run build --workspace web 2>&1 | tee web-build.log
       - name: Verify build artifact
-        run: test -f .next/BUILD_ID && echo "web build artifact present ($(cat .next/BUILD_ID))"
+        run: test -f web/.next/BUILD_ID && echo "web build artifact present ($(cat web/.next/BUILD_ID))"
       - name: Upload build log on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -115,9 +124,8 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: web/package-lock.json
-      - name: Install web deps
-        working-directory: web
+          cache-dependency-path: package-lock.json
+      - name: Install web deps (workspace root)
         run: npm ci
       - name: Install Playwright Chromium
         working-directory: web

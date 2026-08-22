@@ -25,11 +25,11 @@ import {
   type TFunction,
 } from "@/lib/i18n-core";
 
-import en from "@/messages/en.json";
-import es from "@/messages/es.json";
-import fr from "@/messages/fr.json";
-import de from "@/messages/de.json";
-import pt from "@/messages/pt.json";
+import en from "@ih/core/i18n/messages/en.json";
+import es from "@ih/core/i18n/messages/es.json";
+import fr from "@ih/core/i18n/messages/fr.json";
+import de from "@ih/core/i18n/messages/de.json";
+import pt from "@ih/core/i18n/messages/pt.json";
 
 const CATALOGS: Record<Lang, Record<string, string>> = { en, es, fr, de, pt };
 
