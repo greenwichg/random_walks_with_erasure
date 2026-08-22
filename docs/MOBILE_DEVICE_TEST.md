@@ -142,20 +142,32 @@ sign-in screen. That is a twenty-minute round trip for a missing variable, so do
 
 ```bash
 cd mobile
-npx eas-cli env:create --name EXPO_PUBLIC_API_BASE_URL \
-  --value https://hidden-view.com --visibility plaintext --environment preview
-npx eas-cli env:create --name EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID \
-  --value <the iOS client id> --visibility plaintext --environment preview
-npx eas-cli env:create --name EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID \
-  --value <the Android client id> --visibility plaintext --environment preview
+npx eas-cli@latest env:set --name EXPO_PUBLIC_API_BASE_URL \
+  --value https://hidden-view.com --environment preview \
+  --visibility plaintext --scope project --non-interactive
+npx eas-cli@latest env:set --name EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID \
+  --value <the iOS client id> --environment preview \
+  --visibility plaintext --scope project --non-interactive
+npx eas-cli@latest env:set --name EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID \
+  --value <the Android client id> --environment preview \
+  --visibility plaintext --scope project --non-interactive
 ```
+
+`env:set`, not `env:create` — the latter still runs but prints a deprecation notice.
 
 `--visibility plaintext` is correct here and only here: these are public identifiers, and marking
 them secret would hide them from the build logs you need to debug with. **Nothing else about this
 app goes into EAS** — the bearer token is minted at runtime, and no secret exists to register.
 
-`eas init` prints a project id; put it in `mobile/.env` as `EXPO_PUBLIC_EAS_PROJECT_ID` (a `.ts`
-config cannot be written to automatically the way `app.json` could).
+`--environment preview` names an *EAS environment*, which is a different thing from a *build
+profile* that happens to share the name. A build gets an environment's variables only because its
+profile says `"environment": "preview"` — see below. Registering variables in `preview` and then
+building `--profile production` gives you a binary with no configuration in it.
+
+The EAS **project id** is hardcoded in `app.config.ts`, not read from `.env`. EAS evaluates that
+config without loading `.env`, so a project id set only there is invisible to every `eas` command —
+which fails as *"Cannot automatically write to dynamic config at: app.config.ts"*, EAS trying to
+write in an id that was already present but unreachable.
 
 ### 3b. About the build profiles
 
@@ -170,6 +182,15 @@ here instead.
 | `preview` | **the one to use.** A standalone binary — TestFlight on iOS, a directly installable APK on Android |
 | `production` | store builds. Nothing in Phase 3 submits, and `eas submit` is deliberately not configured |
 
+Every profile carries `"environment"`, naming the EAS environment whose variables the build reads.
+It is spelled out on all three rather than left to a default, because the failure mode is silent:
+the build succeeds, installs, and shows **NOT CONFIGURED** on the sign-in screen, with nothing in
+the log saying a variable was looked for and not found.
+
+`cli.version` is `>= 22.0.0` — the version the `environment` field was verified against. An older
+CLI validates `eas.json` against an older schema, and an unrecognised key there is a parse error
+about the file rather than a message about the CLI.
+
 Two things deliberately absent from that file:
 
 - **No `channel` on any profile.** Channels route over-the-air updates and require `expo-updates`,
@@ -177,7 +198,8 @@ Two things deliberately absent from that file:
   than about the missing package.
 - **No client ids or API URL in the `env` blocks** — only `EXPO_PUBLIC_BUILD_PROFILE`. Those values
   are gitignored, and putting them in `eas.json` would put them straight back into git. They are
-  registered with EAS in step 3a instead.
+  registered with EAS in step 3a instead. (A profile's `env` block wins over the EAS environment for
+  the same key, so the two are kept to disjoint sets of names.)
 
 ### 3c. Build
 
