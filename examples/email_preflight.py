@@ -45,7 +45,14 @@ def _report_config() -> "list[str]":
     # for teaches an operator to ignore the FAIL column.
     for name, fallback in (("RWE_SMTP_HOST", None), ("RWE_SMTP_PORT", "587 (default)"),
                            ("RWE_SMTP_USER", "(none — an open relay wants no login)"),
-                           ("RWE_EMAIL_FROM", None), ("RWE_PUBLIC_URL", None)):
+                           ("RWE_EMAIL_FROM", None),
+                           # Optional by design — a From that IS a mailbox wants no Reply-To. Shown
+                           # anyway, because "not configured" and "configured but not reaching the
+                           # container" look identical from outside, and the second is what happened:
+                           # it was written to deploy/.env and missing from the compose environment
+                           # block, so the header silently never appeared.
+                           ("RWE_EMAIL_REPLY_TO", "(none — replies follow From)"),
+                           ("RWE_PUBLIC_URL", None)):
         value = _set(name)
         mark = TICK if value else (DASH if fallback else CROSS)
         print(f"{mark} {name:<21} {value or fallback or '(unset)'}")

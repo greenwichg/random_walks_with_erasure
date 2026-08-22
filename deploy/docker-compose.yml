@@ -503,6 +503,9 @@ services:
       RWE_SMTP_USER: ${RWE_SMTP_USER:-}
       RWE_SMTP_PASSWORD: ${RWE_SMTP_PASSWORD:-}
       RWE_EMAIL_FROM: ${RWE_EMAIL_FROM:-}
+      # Where a reply should go when the From address is not a mailbox — `digest@hidden-view.com`
+      # is verified with SES for SENDING and has no inbox behind it. Empty ⇒ no header at all.
+      RWE_EMAIL_REPLY_TO: ${RWE_EMAIL_REPLY_TO:-}
       RWE_EMAIL_SECRET: ${RWE_EMAIL_SECRET:-}
       RWE_EMAIL_ALLOWLIST: ${RWE_EMAIL_ALLOWLIST:-}
       RWE_PUBLIC_URL: ${RWE_PUBLIC_URL:-}

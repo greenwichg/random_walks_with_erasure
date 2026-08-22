@@ -274,6 +274,43 @@ def _oneliners():
                 yield path.relative_to(ROOT), n, line       # heredoc/continuation bodies
 
 
+def test_every_email_env_var_the_code_reads_is_passed_into_the_container():
+    """A variable in `deploy/.env` that compose does not forward is INVISIBLE to the process.
+
+    This is not hypothetical. `RWE_EMAIL_REPLY_TO` shipped with the env reader, the CLI flag, the
+    header wiring and four tests -- and no line in docker-compose.yml. It was written to .env,
+    reported as written, and never reached the container, so `reply_to()` read an unset variable
+    and the header silently never appeared. Every test passed, because they all tested one side of
+    a boundary that has two.
+
+    So the check is the boundary itself: every RWE_EMAIL_*/RWE_SMTP_* name the email modules read
+    from the environment must appear in the api service's environment block. Derived from the
+    source rather than listed here, because a hand-maintained list is the same failure again."""
+    import ast
+    read: set[str] = set()
+    for mod in ("email_sender.py", "email_delivery.py", "email_preflight.py"):
+        tree = ast.parse((ROOT / "examples" / mod).read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            # os.environ.get("NAME") and os.environ["NAME"]
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
+               and node.func.attr == "get" and node.args \
+               and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
+                read.add(node.args[0].value)
+            if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant) \
+               and isinstance(node.slice.value, str):
+                read.add(node.slice.value)
+    wanted = {n for n in read if n.startswith(("RWE_EMAIL_", "RWE_SMTP_"))}
+    assert wanted, "found no email env vars in the source — the AST walk is broken, not the config"
+
+    compose = (ROOT / "deploy" / "docker-compose.yml").read_text(encoding="utf-8")
+    missing = sorted(n for n in wanted if f"\n      {n}:" not in compose)
+    assert not missing, (
+        "read from the environment by examples/email_*.py but never forwarded by "
+        f"deploy/docker-compose.yml: {missing}\n"
+        "Add `NAME: ${NAME:-}` to the api service's environment block. Without it the value sits "
+        "in deploy/.env looking correct and the process never sees it.")
+
+
 def test_a_documented_one_liner_can_actually_import_the_engine():
     """`dc exec api python -c "import store, json; ..."` — published in the runbook, and it fails
     with ModuleNotFoundError every time.
