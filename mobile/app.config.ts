@@ -19,6 +19,22 @@ import type { ExpoConfig } from "expo/config";
 
 const APP_ID = "com.hiddenview.app";
 
+/**
+ * The EAS project this app builds under. Hardcoded, unlike everything else in `extra`.
+ *
+ * It has to be: `eas` commands read it out of the resolved config to know which project they are
+ * talking to, and they evaluate `app.config.ts` WITHOUT loading `mobile/.env`, so a value read from
+ * the environment is simply absent when EAS looks for it. The first version read it from
+ * `EXPO_PUBLIC_EAS_PROJECT_ID` and every EAS command failed with "Cannot automatically write to
+ * dynamic config" — EAS trying to link a project it could not see was already linked.
+ *
+ * Safe to commit, and different in kind from the other values here: it is not a per-deployment
+ * setting, it identifies one Expo project, and it is already public — it appears in the project's
+ * own URL, expo.dev/accounts/saierram/projects/hidden-view. The environment can still override it
+ * for a fork that builds under its own EAS account.
+ */
+const EAS_PROJECT_ID = "93fea076-950c-4f98-9029-0210219a6a36";
+
 /** Empty string rather than `undefined`, so a missing value is reported by `verify-config`, not by a crash. */
 const env = (name: string): string => (process.env[name] ?? "").trim();
 
@@ -47,7 +63,7 @@ const config: ExpoConfig = {
     googleWebClientId: env("EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID"),
     /** Which build profile produced this binary — shown on the diagnostics row so a tester can say. */
     buildProfile: env("EXPO_PUBLIC_BUILD_PROFILE") || "local",
-    eas: { projectId: env("EXPO_PUBLIC_EAS_PROJECT_ID") || undefined },
+    eas: { projectId: env("EXPO_PUBLIC_EAS_PROJECT_ID") || EAS_PROJECT_ID },
   },
 };
 
