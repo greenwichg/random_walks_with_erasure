@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { backendGet, backendPost, backendDelete, engineUnavailable } from "@/lib/backend";
 import { requireUser } from "@/lib/require-user";
-import type { SavedArticle, SaveResult } from "@/types/domain";
+import type { SavedArticle, SaveResult } from "@ih/core/domain/types";
 
 export const dynamic = "force-dynamic";
 

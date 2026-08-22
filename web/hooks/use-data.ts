@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSession } from "next-auth/react";
-import { queryKeys, services } from "@/services";
+import { queryKeys, services } from "@ih/core/api/services";
 import { recordRead, type RecordReadInput } from "@/lib/record-read";
 import { retireIfSiblingRead, shouldDeferFeedRefetch } from "@/lib/continuation";
 import type {
@@ -16,7 +16,7 @@ import type {
   SearchParams,
   Settings,
   StoryQuery,
-} from "@/types/domain";
+} from "@ih/core/domain/types";
 
 /**
  * React Query hooks — the only way components read/write server state. Thin
@@ -27,7 +27,7 @@ export const useDashboard = () => useQuery({ queryKey: queryKeys.dashboard, quer
 export const useReport = () => useQuery({ queryKey: queryKeys.report, queryFn: services.report });
 export const useHistory = () => useQuery({ queryKey: queryKeys.history, queryFn: services.history });
 export const useTopics = () => useQuery({ queryKey: queryKeys.topics, queryFn: services.topics });
-export const useDiscover = (filters?: import("@/lib/discover-params").DiscoverFilters) =>
+export const useDiscover = (filters?: import("@ih/core/logic/discover-params").DiscoverFilters) =>
   useQuery({ queryKey: queryKeys.discover(filters), queryFn: () => services.discover(filters) });
 export const useStories = (query?: StoryQuery, opts?: { enabled?: boolean }) =>
   useQuery({
@@ -355,7 +355,7 @@ export function useCoachSend() {
     mutationFn: ({ message, echo }: { message: string; echo?: Record<string, unknown> }) =>
       services.coachSend(message, echo),
     onSuccess: (reply) => {
-      qc.setQueryData<import("@/types/domain").CoachMessage[]>(queryKeys.coach, (prev) => [
+      qc.setQueryData<import("@ih/core/domain/types").CoachMessage[]>(queryKeys.coach, (prev) => [
         ...(prev ?? []),
         reply,
       ]);

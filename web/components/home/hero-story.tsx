@@ -2,11 +2,11 @@
 
 import Link from "next/link";
 import { ArrowRight, EyeOff, Newspaper } from "lucide-react";
-import type { Story } from "@/types/domain";
+import type { Story } from "@ih/core/domain/types";
 import { ArticleImage } from "@/components/shared/article-image";
 import { SpectrumBar } from "@/components/shared/spectrum-bar";
 import { FreshnessBadge } from "@/components/stories/freshness-badge";
-import { LEAN_META } from "@/lib/metrics";
+import { LEAN_META } from "@ih/core/logic/metrics";
 import { useTranslation } from "@/lib/i18n";
 
 /**

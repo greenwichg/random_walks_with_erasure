@@ -3,7 +3,7 @@
 import { CalendarRange, Layers, Clock } from "lucide-react";
 import { StatCard } from "@/components/dashboard/stat-card";
 import { useTranslation } from "@/lib/i18n";
-import type { ReadingPattern } from "@/lib/history-insights";
+import type { ReadingPattern } from "@ih/core/logic/history-insights";
 
 /**
  * Reading Pattern (Phase 3) — a lightweight behavioural strip: how much you read this week, your

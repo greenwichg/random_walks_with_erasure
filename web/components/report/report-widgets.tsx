@@ -3,15 +3,24 @@
 import * as React from "react";
 import { motion } from "framer-motion";
 import { Eye, TrendingUp, Plus, Check } from "lucide-react";
-import type { BlindSpot, Improvement } from "@/types/domain";
-import { METRICS } from "@/lib/metrics";
+import type { BlindSpot, Improvement } from "@ih/core/domain/types";
+import type { MetricKey } from "@ih/core/domain/types";
+import { METRIC_ICONS } from "@/lib/metric-icons";
+import { METRICS } from "@ih/core/logic/metrics";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { isLabelled } from "@/lib/bar-items";
+import { isLabelled } from "@ih/core/logic/bar-items";
 
 /** Blind spots — under-consumed topics/sides. */
 import { useTranslation } from "@/lib/i18n";
+
+/** The lucide icon for a metric. The metric table itself is shared (@ih/core) and carries no icon. */
+function MetricIcon({ metric, className }: { metric: MetricKey; className?: string }) {
+  const Icon = METRIC_ICONS[metric];
+  return <Icon className={className} />;
+}
+
 
 export function BlindSpots({ items }: { items: BlindSpot[] }) {
   // A blind spot that cannot name its topic is not actionable, and its engine-composed note reads
@@ -109,7 +118,7 @@ export function Improvements({ items: allItems }: { items: Improvement[] }) {
             </div>
             <div className="mt-3 flex items-center justify-between">
               <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-                <meta.icon className="h-3.5 w-3.5" /> {t("rec.helps", { metric: t(`metric.${meta.key}.label`) })}
+                <MetricIcon metric={meta.key} className="h-3.5 w-3.5" /> {t("rec.helps", { metric: t(`metric.${meta.key}.label`) })}
               </span>
               <Button
                 size="sm"

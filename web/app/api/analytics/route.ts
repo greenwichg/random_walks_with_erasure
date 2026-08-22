@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
-import type { AnalyticsSeries } from "@/types/domain";
+import type { AnalyticsSeries } from "@ih/core/domain/types";
 import { backendGetResult, MOCK_FALLBACK_ENABLED, engineUnavailable } from "@/lib/backend";
 import { engineAuthHeaders } from "@/lib/engine-auth";
-import { resolveEngineFallback } from "@/lib/engine-fallback";
-import { ANALYTICS } from "@/mock/data";
+import { resolveEngineFallback } from "@ih/core/logic/engine-fallback";
+import { ANALYTICS } from "@ih/core/logic/mock-data";
 
 // Reflect the reader's live history at request time, never a build-time snapshot.
 export const dynamic = "force-dynamic";

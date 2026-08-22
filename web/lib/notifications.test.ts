@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { notificationPresentation, notificationHref, badgeLabel } from "./notifications.ts";
-import { interpolate } from "./i18n-core.ts";
+import { interpolate } from "@ih/core/i18n/core";
 
 const MSG = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "packages", "core", "i18n", "messages");
 const LANGS = ["en", "es", "fr", "de", "pt"] as const;

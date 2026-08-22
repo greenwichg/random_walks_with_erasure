@@ -3,7 +3,7 @@
 import * as React from "react";
 import { ArrowLeftRight, ArrowRight, X } from "lucide-react";
 import Link from "next/link";
-import type { Continuation } from "@/types/domain";
+import type { Continuation } from "@ih/core/domain/types";
 import {
   clearArmed,
   dismissStory,

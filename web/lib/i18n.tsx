@@ -14,16 +14,7 @@
 import * as React from "react";
 import { useSettings } from "@/hooks/use-data";
 import { publishLanguage } from "@/lib/push-client";
-import {
-  makeT,
-  normalizeLang,
-  localizeExplanation as coreLocalizeExplanation,
-  formatDate as coreFormatDate,
-  formatCompact as coreFormatCompact,
-  timeAgo as coreTimeAgo,
-  type Lang,
-  type TFunction,
-} from "@/lib/i18n-core";
+import { makeT, normalizeLang, localizeExplanation as coreLocalizeExplanation, formatDate as coreFormatDate, formatCompact as coreFormatCompact, timeAgo as coreTimeAgo, type Lang, type TFunction } from "@ih/core/i18n/core";
 
 import en from "@ih/core/i18n/messages/en.json";
 import es from "@ih/core/i18n/messages/es.json";

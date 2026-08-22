@@ -1,5 +1,5 @@
 /**
- * In-app read recorder — the primary reading source (Commit 14).
+ * In-app read recorder — the primary reading source (Commit 14). **The web's transport half.**
  *
  * When a reader clicks Read anywhere in the app, we record the read into the ONE canonical pipeline
  * (`POST /api/me/reads`, session-authenticated) *before* opening the publisher. Because the publisher
@@ -9,17 +9,21 @@
  * `readSource: "app"` and `openedFrom` are additive metadata; the engine never branches on them — it
  * just attributes the same reads table the browser extension writes to. Requires a signed-in session
  * (cookies are sent same-origin); anonymous browsing simply records nothing.
+ *
+ * What the request SAYS is `@ih/core/logic/record-read`; what sends it is here. `sendBeacon` has no
+ * React Native equivalent and cannot be replaced by a plain fetch on the web — surviving the
+ * navigation is the entire point — so the transport is the half that could not be shared. The
+ * payload could, and the field that most needed sharing is `timeZone`: a client that quietly stopped
+ * sending it would break streaks rather than fail.
  */
-export interface RecordReadInput {
-  url: string;
-  title?: string;
-  description?: string;
-  /** The in-app surface: recommendations | discover | stories | search | saved | ai-coach. */
-  openedFrom?: string;
-  device?: string;
-}
+import {
+  READS_ENDPOINT,
+  isRecordableUrl,
+  readsPayload,
+  type RecordReadInput,
+} from "@ih/core/logic/record-read";
 
-const READS_ENDPOINT = "/api/me/reads";
+export type { RecordReadInput };
 
 /** The browser's IANA zone (e.g. "Asia/Kolkata"), or undefined where Intl cannot answer. */
 function browserTimeZone(): string | undefined {
@@ -30,26 +34,19 @@ function browserTimeZone(): string | undefined {
   }
 }
 
+/** A coarse, privacy-light device hint (mobile vs desktop) — additive metadata only. */
+function deviceHint(): string | undefined {
+  if (typeof navigator === "undefined") return undefined;
+  return /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent) ? "mobile" : "desktop";
+}
+
 /** Fire a single read into the canonical pipeline. Returns true if it was dispatched. */
 export function recordRead(input: RecordReadInput): boolean {
-  if (!input.url || !/^https?:\/\//i.test(input.url)) return false;
-  const payload = JSON.stringify({
-    reads: [
-      {
-        url: input.url,
-        title: input.title ?? "",
-        description: input.description ?? "",
-        readSource: "app",
-        openedFrom: input.openedFrom,
-        device: input.device ?? deviceHint(),
-        // The reader's IANA zone. A streak counts DAYS, and a day is local — without this the
-        // engine files a 02:00 read under the UTC day that ended two hours earlier and breaks a
-        // streak that never broke. Sent here because it needs no extra round trip and no settings
-        // screen: the engine stores it only when it changes. Undefined on a browser with no Intl
-        // (the engine then buckets by UTC, exactly as before).
-        timeZone: browserTimeZone(),
-      },
-    ],
+  if (!isRecordableUrl(input.url)) return false;
+  const payload = readsPayload({
+    ...input,
+    device: input.device ?? deviceHint(),
+    timeZone: input.timeZone ?? browserTimeZone(),
   });
 
   // Preferred: sendBeacon (non-blocking, survives navigation). A JSON Blob keeps the content-type so
@@ -77,10 +74,4 @@ export function recordRead(input: RecordReadInput): boolean {
   } catch {
     return false;
   }
-}
-
-/** A coarse, privacy-light device hint (mobile vs desktop) — additive metadata only. */
-function deviceHint(): string | undefined {
-  if (typeof navigator === "undefined") return undefined;
-  return /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent) ? "mobile" : "desktop";
 }

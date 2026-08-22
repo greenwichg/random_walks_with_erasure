@@ -1,9 +1,9 @@
 /**
  * i18n core (Commit 20) — the pure, dependency-free half of the localization system.
  *
- * No React, no imports: everything here is a pure function of its arguments, so it is trivially
- * unit-testable (`node --test web/lib/i18n-core.test.ts`) and shared by the React `LanguageProvider`
- * (web/lib/i18n.tsx). Business logic never lives in translations — catalogs are strings only; this
+ * No React, no DOM, no imports: everything here is a pure function of its arguments, so it is trivially
+ * unit-testable (`node --test packages/core/i18n/core.test.ts`) and shared by the React `LanguageProvider`
+ * (web/lib/i18n.tsx) and, later, the Expo app. Business logic never lives in translations — catalogs are strings only; this
  * module just looks them up, interpolates `{params}`, and maps the recommendation resolver's
  * structured explanation `type` to a localized sentence.
  */
@@ -19,15 +19,15 @@ export function normalizeLang(value: unknown): Lang {
   return (SUPPORTED as readonly string[]).includes(value as string) ? (value as Lang) : DEFAULT_LANG;
 }
 
-/**
- * The active language read from `<html lang>` — the authoritative value the LanguageProvider keeps
- * in sync. For **module-level** formatters that can't call the `useTranslation` hook (they aren't
- * React components); component code should prefer the hook. Falls back to English on the server.
+/*
+ * `activeLang()` used to live here, reading `<html lang>`. It was the ONLY thing in this file that
+ * touched a platform — the module header has always described it as "the pure, dependency-free half
+ * of the localization system", and it was three lines away from being true.
+ *
+ * It moved to `web/lib/active-lang.ts`, because "the active language" is a question each platform
+ * answers differently: the web reads the attribute its LanguageProvider keeps in sync, and a native
+ * app will read its own store. Everything below takes `lang` as an argument and always did.
  */
-export function activeLang(): Lang {
-  if (typeof document === "undefined") return DEFAULT_LANG;
-  return normalizeLang(document.documentElement.lang);
-}
 
 /** Replace `{name}` placeholders from `params` (missing params are left as-is, never blanked). */
 export function interpolate(template: string, params?: Record<string, unknown>): string {

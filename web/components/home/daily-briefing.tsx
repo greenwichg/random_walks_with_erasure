@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { EyeOff, Newspaper, ScanSearch } from "lucide-react";
-import type { BriefingFacts } from "@/lib/home";
+import type { BriefingFacts } from "@ih/core/logic/home";
 import { useTranslation } from "@/lib/i18n";
 
 /**

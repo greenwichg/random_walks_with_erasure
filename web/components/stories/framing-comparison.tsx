@@ -2,11 +2,11 @@
 
 import Link from "next/link";
 import { Quote } from "lucide-react";
-import type { StoryCoverage } from "@/types/domain";
-import { framingComparison } from "@/lib/framing";
+import type { StoryCoverage } from "@ih/core/domain/types";
+import { framingComparison } from "@ih/core/logic/framing";
 import { SectionHeader } from "@/components/shared/section-header";
 import { ReadArticleButton } from "@/components/shared/read-article-button";
-import { LEAN_META } from "@/lib/metrics";
+import { LEAN_META } from "@ih/core/logic/metrics";
 import { useTranslation } from "@/lib/i18n";
 
 /**

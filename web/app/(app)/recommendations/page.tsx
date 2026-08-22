@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { AnimatePresence } from "framer-motion";
 import { Sparkles, Route, Compass, Wand2 } from "lucide-react";
-import type { FeedbackAction, Recommendation } from "@/types/domain";
+import type { FeedbackAction, Recommendation } from "@ih/core/domain/types";
 import {
   useRecommendations,
   useFeedback,
@@ -13,13 +13,13 @@ import {
   useSettings,
 } from "@/hooks/use-data";
 import { useTranslation } from "@/lib/i18n";
-import { countryName } from "@/lib/countries";
-import { partitionByCountryMatch } from "@/lib/country-partition";
+import { countryName } from "@ih/core/logic/countries";
+import { partitionByCountryMatch } from "@ih/core/logic/country-partition";
 import { track } from "@/lib/analytics";
 import { PageContainer } from "@/components/layout/page-container";
 import { RecommendationCard } from "@/components/recommendations/recommendation-card";
 import { ContinuationStrip } from "@/components/shared/continuation-strip";
-import { presentRecommendation } from "@/lib/rec-presentation";
+import { presentRecommendation } from "@ih/core/logic/rec-presentation";
 import { ErrorState, EmptyState } from "@/components/shared/states";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";

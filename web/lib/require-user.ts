@@ -27,7 +27,7 @@ import {
   codeForFailure,
   type AuthPolicy,
   type AuthVia,
-} from "@/lib/auth-decision";
+} from "@ih/core/logic/auth-decision";
 import { engineHeadersForUserId, resolveApiTokenResult } from "@/lib/engine-auth";
 
 /** A request with an identity. `headers` goes straight to `backendGet` / `backendPost`. */

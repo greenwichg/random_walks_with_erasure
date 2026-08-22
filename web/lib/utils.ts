@@ -16,6 +16,6 @@ export function formatScore(n: number) {
   return Math.round(clamp(n)).toString();
 }
 
-// Locale-aware `formatCompact` / `timeAgo` / `formatDate` now live in lib/i18n-core.ts and are
+// Locale-aware `formatCompact` / `timeAgo` / `formatDate` now live in @ih/core/i18n/core and are
 // exposed through the `useTranslation()` hook. The old hardcoded-"en" helpers were removed in
 // Commit 20.1 so no UI path formats in a fixed locale.

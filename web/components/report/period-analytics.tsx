@@ -16,7 +16,7 @@ import { EmptyState, ErrorState } from "@/components/shared/states";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { EMOTION_META } from "@/lib/metrics";
+import { EMOTION_META } from "@ih/core/logic/metrics";
 
 /**
  * The landing page for the two report notifications — "Weekly report ready" and "Monthly deep dive

@@ -1,7 +1,7 @@
 "use client";
 
 import { Flame, TrendingUp, Radio, Snowflake, Archive, type LucideIcon } from "lucide-react";
-import type { FreshnessBand } from "@/types/domain";
+import type { FreshnessBand } from "@ih/core/domain/types";
 import { useTranslation } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 

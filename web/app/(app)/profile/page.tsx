@@ -16,7 +16,7 @@ import {
   Lock,
   type LucideIcon,
 } from "lucide-react";
-import type { Achievement, Profile } from "@/types/domain";
+import type { Achievement, Profile } from "@ih/core/domain/types";
 import { useProfile } from "@/hooks/use-data";
 import { PageContainer } from "@/components/layout/page-container";
 import { SectionCard } from "@/components/shared/section-card";
@@ -28,7 +28,8 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/lib/i18n";
-import { activeLang, formatDate } from "@/lib/i18n-core";
+import { formatDate } from "@ih/core/i18n/core";
+import { activeLang } from "@/lib/active-lang";
 
 const ACHIEVEMENT_ICONS: Record<string, LucideIcon> = {
   sparkles: Sparkles,

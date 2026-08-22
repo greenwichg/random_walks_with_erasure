@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import type { DashboardSummary, NotificationItem, Settings } from "@/types/domain";
+import type { DashboardSummary, NotificationItem, Settings } from "@ih/core/domain/types";
 import { backendGet } from "@/lib/backend";
 import { engineAuthHeaders } from "@/lib/engine-auth";
 

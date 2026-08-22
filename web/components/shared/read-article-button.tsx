@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { BookOpen, Check, ExternalLink } from "lucide-react";
-import type { Article } from "@/types/domain";
+import type { Article } from "@ih/core/domain/types";
 import { useRecordRead } from "@/hooks/use-data";
 import { useTranslation } from "@/lib/i18n";
 import { track } from "@/lib/analytics";

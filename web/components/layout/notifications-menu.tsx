@@ -16,9 +16,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useNotifications, useMarkNotificationSeen } from "@/hooks/use-data";
 import { notificationPresentation, notificationHref, badgeLabel } from "@/lib/notifications";
 import { useTranslation } from "@/lib/i18n";
-import { timeAgo } from "@/lib/i18n-core";
+import { timeAgo } from "@ih/core/i18n/core";
 import { cn } from "@/lib/utils";
-import type { NotificationItem } from "@/types/domain";
+import type { NotificationItem } from "@ih/core/domain/types";
 
 /**
  * Header bell + unread badge + a dropdown panel of the reader's notifications (N3). Data comes from

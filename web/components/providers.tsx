@@ -11,6 +11,23 @@ import { AnalyticsListener } from "@/components/analytics-listener";
 import { RumListener } from "@/components/rum-listener";
 import { ServiceWorkerRegistrar } from "@/components/pwa/service-worker-registrar";
 import { ShellPrefetch } from "@/components/shell-prefetch";
+import { configureApi } from "@ih/core/api/client";
+
+/**
+ * Point the shared API client at this deployment.
+ *
+ * `@ih/core` cannot read `process.env.NEXT_PUBLIC_API_BASE_URL` itself — `process` does not exist on
+ * React Native and `NEXT_PUBLIC_*` is a Next build-time substitution — so the base URL is injected by
+ * whichever app is hosting the client. This is the web's injection point, and the value is exactly
+ * what `services/api.ts` used to read at module load: unset means same-origin `/api/*`.
+ *
+ * At module scope rather than inside the component, so it runs once when the client bundle loads
+ * rather than on every mount, and before any hook can fire a request.
+ *
+ * No `getToken`: the browser has a session cookie and the API resolves a session before it looks at
+ * any bearer token (docs/API_AUTH_MATRIX.md). The Expo app supplies one here instead.
+ */
+configureApi({ baseUrl: process.env.NEXT_PUBLIC_API_BASE_URL ?? "" });
 
 /**
  * App-wide client providers: theme (light/dark/system), React Query, and the

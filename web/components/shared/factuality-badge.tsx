@@ -3,7 +3,7 @@
 import { ExternalLink } from "lucide-react";
 import { useTranslation } from "@/lib/i18n";
 import { Badge } from "@/components/ui/badge";
-import type { PublisherProfile } from "@/types/domain";
+import type { PublisherProfile } from "@ih/core/domain/types";
 
 /**
  * A rater's factuality verdict, shown with its attribution rather than as our own claim.

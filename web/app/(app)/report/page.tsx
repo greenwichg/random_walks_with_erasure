@@ -21,10 +21,10 @@ import { ReportSkeleton } from "@/components/report/report-skeleton";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { resolveBand, LEAN_META } from "@/lib/metrics";
+import { resolveBand, LEAN_META } from "@ih/core/logic/metrics";
 import { useTranslation } from "@/lib/i18n";
-import { leanBucket } from "@/lib/political";
-import { isLabelled } from "@/lib/bar-items";
+import { leanBucket } from "@ih/core/logic/political";
+import { isLabelled } from "@ih/core/logic/bar-items";
 
 export default function ReportPage() {
   const { data: report, isLoading, isError, refetch } = useReport();

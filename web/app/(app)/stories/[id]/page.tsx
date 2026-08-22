@@ -22,10 +22,11 @@ import { StoryCoveragePanel } from "@/components/stories/story-coverage-panel";
 import { StoryListItem } from "@/components/home/story-list-item";
 import { RecommendationPanel } from "@/components/home/recommendation-panel";
 import { PublisherSpotlight } from "@/components/home/publisher-spotlight";
-import { LEAN_META } from "@/lib/metrics";
+import { LEAN_META } from "@ih/core/logic/metrics";
 import { track, urlHost } from "@/lib/analytics";
 import { useTranslation } from "@/lib/i18n";
-import { activeLang, formatDate } from "@/lib/i18n-core";
+import { formatDate } from "@ih/core/i18n/core";
+import { activeLang } from "@/lib/active-lang";
 
 const fmtDate = (iso?: string) =>
   iso ? formatDate(iso, activeLang(), { month: "short", day: "numeric", year: "numeric" }) : "";

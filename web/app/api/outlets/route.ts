@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import type { Outlet } from "@/types/domain";
+import type { Outlet } from "@ih/core/domain/types";
 import { backendGet, MOCK_FALLBACK_ENABLED, engineUnavailable } from "@/lib/backend";
-import { MOCK_OUTLETS } from "@/mock/onboarding";
+import { MOCK_OUTLETS } from "@ih/core/logic/mock-onboarding";
 
 // Reflect the live corpus at request time (public — used before sign-in during onboarding).
 export const dynamic = "force-dynamic";

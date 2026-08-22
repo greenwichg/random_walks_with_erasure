@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
-import type { StoriesResponse } from "@/types/domain";
+import type { StoriesResponse } from "@ih/core/domain/types";
 import { backendGet, engineUnavailable } from "@/lib/backend";
 import { engineAuthHeaders } from "@/lib/engine-auth";
-import { STORY_WIRE_KEYS } from "@/lib/story-wire-keys";
+import { STORY_WIRE_KEYS } from "@ih/core/logic/story-wire-keys";
 
 // News events clustered from the live FeedArticle catalog by the engine's Story Service
 // (examples/story_service.py). Deterministic clustering — no LLM, no fabrication. Passes the

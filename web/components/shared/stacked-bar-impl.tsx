@@ -3,7 +3,7 @@
 import { Bar, BarChart, Tooltip, XAxis, YAxis } from "recharts";
 import { useMeasure } from "@/hooks/use-measure";
 import { useTranslation } from "@/lib/i18n";
-import { exactFormat, seriesMax, tickCapacity, tickLabels, yAxis } from "@/lib/chart-axis";
+import { exactFormat, seriesMax, tickCapacity, tickLabels, yAxis } from "@ih/core/logic/chart-axis";
 
 export interface BarSeries {
   key: string;

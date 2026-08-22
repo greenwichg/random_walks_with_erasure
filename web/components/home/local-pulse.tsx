@@ -7,8 +7,8 @@ import { SectionHeader } from "@/components/shared/section-header";
 import { ArticleRow } from "@/components/shared/article-row";
 import { Button } from "@/components/ui/button";
 import { useTranslation } from "@/lib/i18n";
-import { activeLang } from "@/lib/i18n-core";
-import { countryName } from "@/lib/countries";
+import { activeLang } from "@/lib/active-lang";
+import { countryName } from "@ih/core/logic/countries";
 
 /**
  * "From your places" — the home rail's location module (Location Intelligence 1.5).

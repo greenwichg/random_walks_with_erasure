@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import type { Continuation } from "@/types/domain";
+import type { Continuation } from "@ih/core/domain/types";
 import { backendGetResult } from "@/lib/backend";
 import { optionalUser } from "@/lib/require-user";
 

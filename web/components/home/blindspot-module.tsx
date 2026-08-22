@@ -2,10 +2,10 @@
 
 import Link from "next/link";
 import { EyeOff } from "lucide-react";
-import type { Story } from "@/types/domain";
+import type { Story } from "@ih/core/domain/types";
 import { SectionHeader } from "@/components/shared/section-header";
 import { SpectrumBar } from "@/components/shared/spectrum-bar";
-import { LEAN_META } from "@/lib/metrics";
+import { LEAN_META } from "@ih/core/logic/metrics";
 import { useTranslation } from "@/lib/i18n";
 
 /**

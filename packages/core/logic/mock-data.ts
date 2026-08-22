@@ -11,9 +11,9 @@ import type {
   Settings,
   Story,
   TrendPoint,
-} from "@/types/domain";
-import { dominantEmotion, leanBucket } from "@/lib/political";
-import { PUBLISHERS, publisherLean } from "@/mock/publishers";
+} from "../domain/types.ts";
+import { dominantEmotion, leanBucket } from "./political.ts";
+import { PUBLISHERS, publisherLean } from "./mock-publishers.ts";
 
 /* ------------------------------------------------------------------ *
  * Deterministic PRNG so the mock dataset is stable across requests.

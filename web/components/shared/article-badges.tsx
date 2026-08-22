@@ -3,12 +3,12 @@
 import * as React from "react";
 import Link from "next/link";
 import { FileText, MessageSquareQuote, Gauge } from "lucide-react";
-import type { Article, EmotionShare, Lean, LeanBucket, Register } from "@/types/domain";
+import type { Article, EmotionShare, Lean, LeanBucket, Register } from "@ih/core/domain/types";
 import { PublisherLogo } from "@/components/shared/publisher-logo";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { EMOTION_META } from "@/lib/metrics";
-import { leanBucket, leanLabelKey } from "@/lib/political";
+import { EMOTION_META } from "@ih/core/logic/metrics";
+import { leanBucket, leanLabelKey } from "@ih/core/logic/political";
 import { useTranslation } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 

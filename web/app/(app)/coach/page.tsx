@@ -2,11 +2,11 @@
 
 import * as React from "react";
 import { Send, Sparkles } from "lucide-react";
-import type { CoachMessage } from "@/types/domain";
-import { services } from "@/services";
+import type { CoachMessage } from "@ih/core/domain/types";
+import { services } from "@ih/core/api/services";
 import { useTranslation } from "@/lib/i18n";
 import { useCoachHistory, useFeedback, useOpenRecommendation } from "@/hooks/use-data";
-import { lastEcho, activeFollowUps } from "@/lib/coach-presentation";
+import { lastEcho, activeFollowUps } from "@ih/core/logic/coach-presentation";
 import { CoachMessageBubble, CoachTyping } from "@/components/coach/coach-message";
 import { Button } from "@/components/ui/button";
 

@@ -3,7 +3,7 @@
 import * as React from "react";
 import { useSession } from "next-auth/react";
 import { Puzzle, Copy, Check, Trash2, KeyRound, ShieldCheck, Loader2 } from "lucide-react";
-import type { ApiTokenMint } from "@/types/domain";
+import type { ApiTokenMint } from "@ih/core/domain/types";
 import { useApiTokens, useCreateApiToken, useRevokeApiToken } from "@/hooks/use-data";
 import { SectionCard } from "@/components/shared/section-card";
 import { Button } from "@/components/ui/button";
@@ -11,7 +11,8 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useTranslation } from "@/lib/i18n";
-import { activeLang, formatDate } from "@/lib/i18n-core";
+import { formatDate } from "@ih/core/i18n/core";
+import { activeLang } from "@/lib/active-lang";
 
 function fmtDate(iso: string | null): string {
   if (!iso) return "—";

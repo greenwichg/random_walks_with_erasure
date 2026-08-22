@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
-import type { DashboardSummary } from "@/types/domain";
+import type { DashboardSummary } from "@ih/core/domain/types";
 import { backendGet, MOCK_FALLBACK_ENABLED, engineUnavailable } from "@/lib/backend";
 import { engineAuthHeaders } from "@/lib/engine-auth";
-import { DASHBOARD } from "@/mock/data";
+import { DASHBOARD } from "@ih/core/logic/mock-data";
 
 // Reflect the reader's live report + reads at request time, never a build-time snapshot.
 export const dynamic = "force-dynamic";

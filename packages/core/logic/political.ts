@@ -1,4 +1,4 @@
-import type { EmotionShare, Lean, LeanBucket, ViewpointDistribution } from "@/types/domain";
+import type { EmotionShare, Lean, LeanBucket, ViewpointDistribution } from "../domain/types.ts";
 import { EMOTION_META } from "./metrics.ts";
 
 /**

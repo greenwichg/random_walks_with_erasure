@@ -4,9 +4,9 @@ import type { ReactNode } from "react";
 import { SectionCard } from "@/components/shared/section-card";
 import { TopicChip } from "@/components/shared/topic-chip";
 import { DistributionBar, type Segment } from "@/components/history/distribution-bar";
-import { LEAN_META, EMOTION_META } from "@/lib/metrics";
+import { LEAN_META, EMOTION_META } from "@ih/core/logic/metrics";
 import { useTranslation } from "@/lib/i18n";
-import type { HistoryInsights } from "@/lib/history-insights";
+import type { HistoryInsights } from "@ih/core/logic/history-insights";
 
 /**
  * Daily Summary (Phase 2) — the reflection panel for a selected day: political and emotional

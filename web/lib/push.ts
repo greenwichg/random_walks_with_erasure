@@ -9,7 +9,7 @@
  *
  * Contract: `docs/BROWSER_PUSH_ARCHITECTURE.md`.
  */
-import { SUPPORTED, DEFAULT_LANG, type Lang } from "./i18n-core.ts";
+import { SUPPORTED, DEFAULT_LANG, type Lang } from "@ih/core/i18n/core";
 
 /** Cache name + synthetic key holding the reader's language for the service worker (§4). */
 export const LANG_CACHE = "ih-prefs-v1";

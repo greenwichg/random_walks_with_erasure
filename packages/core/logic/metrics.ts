@@ -1,15 +1,4 @@
-import type { LucideIcon } from "lucide-react";
-import {
-  Layers,
-  Newspaper,
-  FileText,
-  HeartPulse,
-  RadioTower,
-  Scale,
-  Brain,
-  Gauge,
-} from "lucide-react";
-import type { LeanBucket, MetricKey } from "@/types/domain";
+import type { LeanBucket, MetricKey } from "../domain/types.ts";
 
 export interface MetricMeta {
   key: MetricKey;
@@ -19,7 +8,8 @@ export interface MetricMeta {
   tooltip: string;
   /** Longer explanation for the report page. */
   description: string;
-  icon: LucideIcon;
+  // No `icon`. Icons are per-platform (lucide SVG on web, a native set on mobile) and live in
+  // web/lib/metric-icons.ts, keyed by the same MetricKey.
   /** Tailwind hue token used for accents/rings/charts. */
   hue: "primary" | "left" | "center" | "right" | "positive" | "caution";
   /** CSS color for charts (reads a theme variable). */
@@ -38,7 +28,6 @@ export const METRICS: Record<MetricKey, MetricMeta> = {
     tooltip: "How many different subjects you read across.",
     description:
       "How evenly your reading spreads across subjects. A high score means a broad diet; a low score means you circle the same few topics.",
-    icon: Layers,
     hue: "primary",
     color: "hsl(var(--primary))",
   },
@@ -49,7 +38,6 @@ export const METRICS: Record<MetricKey, MetricMeta> = {
     tooltip: "How many distinct publishers you read.",
     description:
       "The effective number of publishers you rely on. Reading widely across outlets reduces the influence of any single newsroom's framing.",
-    icon: Newspaper,
     hue: "left",
     color: "hsl(var(--left))",
   },
@@ -60,7 +48,6 @@ export const METRICS: Record<MetricKey, MetricMeta> = {
     tooltip: "How much of your reading is reporting vs. opinion.",
     description:
       "The share of your reading that is factual reporting rather than opinion or commentary. Balance matters — both have a place.",
-    icon: FileText,
     hue: "positive",
     color: "hsl(var(--positive))",
   },
@@ -71,7 +58,6 @@ export const METRICS: Record<MetricKey, MetricMeta> = {
     tooltip: "How calm vs. charged the tone of your reading is.",
     description:
       "How much of your reading leans on fear and outrage versus calm analysis. A charged diet can distort perception over time.",
-    icon: HeartPulse,
     hue: "caution",
     color: "hsl(var(--caution))",
   },
@@ -82,7 +68,6 @@ export const METRICS: Record<MetricKey, MetricMeta> = {
     tooltip: "How one-sided your political reading is.",
     description:
       "How balanced your left/right reading is. A higher score means you're less one-sided — you hear more than one side of contested topics.",
-    icon: RadioTower,
     hue: "center",
     color: "hsl(var(--center))",
   },
@@ -93,7 +78,6 @@ export const METRICS: Record<MetricKey, MetricMeta> = {
     tooltip: "How much you read across the centre.",
     description:
       "How much of your reading sits across the political centre from your own position — the reads that expose you to genuinely different views.",
-    icon: Scale,
     hue: "right",
     color: "hsl(var(--right))",
   },
@@ -104,7 +88,6 @@ export const METRICS: Record<MetricKey, MetricMeta> = {
     tooltip: "How often you click the other side when it's shown.",
     description:
       "When we show you opposing-viewpoint articles, how often you actually engage. It measures receptiveness, not just exposure.",
-    icon: Brain,
     hue: "primary",
     color: "hsl(var(--primary))",
   },
@@ -115,7 +98,6 @@ export const METRICS: Record<MetricKey, MetricMeta> = {
     tooltip: "How reliable these estimates are for your reading.",
     description:
       "How confident the model is in the political-lean estimates behind your scores. Lower confidence means we weight ambiguous articles less.",
-    icon: Gauge,
     hue: "center",
     color: "hsl(var(--center))",
   },
@@ -175,7 +157,7 @@ export const LEAN_META: Record<LeanBucket, { label: string; color: string; token
 };
 
 export const EMOTION_META: Record<
-  keyof import("@/types/domain").EmotionShare,
+  keyof import("../domain/types.ts").EmotionShare,
   { label: string; color: string }
 > = {
   fear: { label: "Fear", color: "hsl(var(--right))" },

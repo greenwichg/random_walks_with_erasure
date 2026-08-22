@@ -365,3 +365,78 @@ someone has to check the React Native side.
   new code should import `@ih/core` directly.
 - **`packages/core/i18n/` holds the catalogs but not the resolver** — `lib/i18n-core.ts` is step 6.
 - **One real `docker build`**, per above.
+
+---
+
+# Steps 6 and 8
+
+Both done. `packages/core` is now **35 modules / 5,278 lines** and 18 test files; `web/` has **no
+shims left**. Green: 176 core tests, 412 web tests, 26 `.mjs` tests, both typechecks, lint, i18n, the
+production build, the deploy-image simulation, and e2e at 104 passed with the same 4 pre-existing
+failures as the baseline.
+
+## Step 6 — the six adaptations
+
+Each is the same shape: the product rule is shared, the platform half stays where the platform is.
+
+| Module | What moved | What stayed, and where |
+|---|---|---|
+| `metrics.ts` | the 8-metric table, bands, lean and emotion meta | `web/lib/metric-icons.ts` — 8 lucide icons keyed by `MetricKey` |
+| `nav.ts` | routes, labels, i18n keys, sections | `web/lib/nav-icons.ts` — 12 lucide icons keyed by `href` |
+| `i18n-core.ts` → `i18n/core.ts` | the whole resolver | `web/lib/active-lang.ts` — reads `<html lang>` |
+| `notifications.ts` | `badgeLabel` (joined the shared kind table) | `web/lib/notifications.ts` — the icon map and presentation |
+| `record-read.ts` | payload, URL validation, endpoint | `web/lib/record-read.ts` — `sendBeacon` + keepalive fetch |
+| `onboarding.ts` | `needsOnboarding` and the account shape | `web/lib/onboarding.ts` — the `localStorage` stash |
+
+And what those unlocked: **`political.ts`** (Political Viewpoint Diversity, blocked only by
+`metrics`) and **`mock-data.ts`** (604 lines, blocked only by `political`).
+
+Two icon maps are keyed differently on purpose. `METRIC_ICONS` is `Record<MetricKey, LucideIcon>`, so
+a ninth metric added to the shared table fails to compile until the web supplies an icon — a missing
+icon is the failure worth forcing. `NAV_ICONS` is keyed by `href` rather than an invented `iconKey`,
+because `href` is already the item's identity: one vocabulary, not two.
+
+### `push.ts` compiles now, and stayed in `web/` anyway
+
+The `i18n-core` split cleared its last blocker. It did not move, because portability is not the
+test — `urlBase64ToUint8Array`, `serializeSubscription` and `PushPermission` are Web Push and VAPID,
+concepts that do not exist on APNs or FCM. Same reasoning that kept `sw-fetch-policy.ts` and `rum.ts`
+in `web/` while they were perfectly portable.
+
+## Step 8 — 30 shims retired
+
+175 import lines across 105 files rewritten to `@ih/core`, then all 30 shims deleted. `web/services/`
+and `web/mock/` no longer exist.
+
+**Two defects the rewrite introduced, and how each surfaced:**
+
+The relative-path alias was ambiguous. `./onboarding.ts` meant `lib/onboarding.ts` from inside
+`lib/`, but the table also mapped it from `mock/onboarding.ts` — so `lib/onboarding.test.ts` was
+rewritten to import the *mock* module. It resolved, and it type-checked, and it failed at runtime on
+a missing export. Resolution is not correctness: a bulk specifier rewrite needs the importing
+directory in the key, not just the specifier.
+
+`configureApi` stopped being called. `web/services/api.ts` invoked it as a module side effect, and
+once every call site imported `@ih/core/api/services` directly, nothing imported that file at all —
+so the base URL would have silently reverted to same-origin on any deployment that sets
+`NEXT_PUBLIC_API_BASE_URL`. It now lives at module scope in `components/providers.tsx`, the client
+root, where it runs once per bundle load and before any hook can fire a request.
+
+## What replaces the shims
+
+`web/lib/core-import-guard.test.ts` asserts the absence: the 33 moved paths must not reappear under
+`web/`, nothing may import a retired specifier, the six split halves must still exist, and
+`web/package.json` must declare `@ih/core`. Proved by three mutations — recreating `lib/coverage.ts`,
+importing `@/lib/coverage`, and deleting `lib/metric-icons.ts` — each of which fails it.
+
+The inverse assertion matters as much as the forward one. A recreated `web/lib/coverage.ts` would not
+error anywhere: it would be a *second copy* of a shared rule, and web and mobile would drift apart
+with nothing to report it.
+
+## Still open
+
+- **`continuation.ts` (391), `analytics.ts` (189), `observability.ts` (82)** — real DOM coupling
+  (`sessionStorage`, impression counting, visibility). Each has a decision core worth extracting; none
+  blocks the Expo app.
+- **One real `docker build`.** The simulation covers file layout and workspace resolution, not the
+  `node:20-slim` base or the `CMD`.

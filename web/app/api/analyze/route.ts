@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import type { AnalysisResult } from "@/types/domain";
+import type { AnalysisResult } from "@ih/core/domain/types";
 import { backendPost, engineUnavailable } from "@/lib/backend";
 import { engineAuthHeaders } from "@/lib/engine-auth";
 import { rejectIfTooLarge } from "@/lib/body-limit";

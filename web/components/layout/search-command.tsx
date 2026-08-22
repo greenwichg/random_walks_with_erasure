@@ -7,7 +7,7 @@ import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Input } from "@/components/ui/input";
 import { LeanBadge } from "@/components/shared/article-badges";
 import { useSearch } from "@/hooks/use-data";
-import type { Article } from "@/types/domain";
+import type { Article } from "@ih/core/domain/types";
 import { useTranslation } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 

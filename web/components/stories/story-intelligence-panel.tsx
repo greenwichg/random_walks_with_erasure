@@ -19,13 +19,14 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useStoryIntelligence } from "@/hooks/use-data";
-import { condenseTimeline } from "@/lib/story-timeline";
+import { condenseTimeline } from "@ih/core/logic/story-timeline";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { StoryLifecycle, StoryMomentum, StoryTimelineEventType } from "@/types/domain";
-import { LEAN_META } from "@/lib/metrics";
+import type { StoryLifecycle, StoryMomentum, StoryTimelineEventType } from "@ih/core/domain/types";
+import { LEAN_META } from "@ih/core/logic/metrics";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/lib/i18n";
-import { activeLang, formatDate } from "@/lib/i18n-core";
+import { formatDate } from "@ih/core/i18n/core";
+import { activeLang } from "@/lib/active-lang";
 
 const LIFECYCLE_STYLE: Record<StoryLifecycle, string> = {
   Breaking: "bg-red-500/12 text-red-600 dark:text-red-400 ring-1 ring-red-500/20",

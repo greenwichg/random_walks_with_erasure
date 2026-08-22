@@ -4,7 +4,7 @@ import { useAnalytics } from "@/hooks/use-data";
 import { useTranslation } from "@/lib/i18n";
 import { PageContainer } from "@/components/layout/page-container";
 import { useQuery } from "@tanstack/react-query";
-import { services, queryKeys } from "@/services";
+import { services, queryKeys } from "@ih/core/api/services";
 import { BarList } from "@/components/shared/bar-list";
 import { SectionCard } from "@/components/shared/section-card";
 import { TrendChart } from "@/components/shared/trend-chart";
@@ -13,9 +13,9 @@ import { MultiLineChart } from "@/components/shared/multi-line-chart";
 import { ProfileProgress } from "@/components/shared/profile-progress";
 import { ErrorState } from "@/components/shared/states";
 import { Skeleton } from "@/components/ui/skeleton";
-import { EMOTION_META } from "@/lib/metrics";
-import { activeLang } from "@/lib/i18n-core";
-import { countryName, languageName } from "@/lib/countries";
+import { EMOTION_META } from "@ih/core/logic/metrics";
+import { activeLang } from "@/lib/active-lang";
+import { countryName, languageName } from "@ih/core/logic/countries";
 
 export default function AnalyticsPage() {
   const { data, isLoading, isError, refetch } = useAnalytics();

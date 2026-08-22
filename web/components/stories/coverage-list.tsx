@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import type { LeanBucket, Register, StoryCoverage } from "@/types/domain";
+import type { LeanBucket, Register, StoryCoverage } from "@ih/core/domain/types";
 import { SectionHeader } from "@/components/shared/section-header";
 import { LeanBadge, RegisterBadge } from "@/components/shared/article-badges";
 import { ContinuationStrip } from "@/components/shared/continuation-strip";

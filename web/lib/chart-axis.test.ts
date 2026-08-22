@@ -232,7 +232,7 @@ test("every y-axis takes its domain, ticks and formatter from this module", () =
     // actually about is that the chart does not roll its own axis — not which of two paths it took
     // to the shared one, which would make the rule fail on a migration it should not care about.
     assert.ok(
-      src.includes('from "@/lib/chart-axis"') || src.includes('from "@ih/core/logic/chart-axis"'),
+      src.includes('from "@ih/core/logic/chart-axis"') || src.includes('from "@ih/core/logic/chart-axis"'),
       `${file} must use the shared axis spec`,
     );
     assert.ok(/domain=\{axis\.domain\}|domain=\{dom\}/.test(src), `${file}: domain must come from the spec`);

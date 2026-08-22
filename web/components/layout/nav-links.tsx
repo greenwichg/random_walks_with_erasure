@@ -3,9 +3,17 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion } from "framer-motion";
-import { NAV } from "@/lib/nav";
+import { NAV } from "@ih/core/logic/nav";
+import { NAV_ICONS } from "@/lib/nav-icons";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/lib/i18n";
+
+/** The icon for a nav destination. The nav table itself is shared (@ih/core) and carries no icon. */
+function NavIcon({ href, className }: { href: string; className?: string }) {
+  const Icon = NAV_ICONS[href];
+  return Icon ? <Icon className={className} /> : null;
+}
+
 
 function isActive(pathname: string, href: string) {
   return href === "/" ? pathname === "/" : pathname.startsWith(href);
@@ -46,7 +54,7 @@ export function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
                     transition={{ type: "spring", stiffness: 400, damping: 32 }}
                   />
                 )}
-                <item.icon className="relative z-10 h-[1.15rem] w-[1.15rem]" />
+                <NavIcon href={item.href} className="relative z-10 h-[1.15rem] w-[1.15rem]" />
                 <span className="relative z-10">{t(item.labelKey)}</span>
               </Link>
             );

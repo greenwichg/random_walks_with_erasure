@@ -12,7 +12,10 @@
  */
 import type { LucideIcon } from "lucide-react";
 import { Activity, CalendarDays, Sparkles, BarChart3, Flame, Eye, Zap, Bell } from "lucide-react";
-import { kindMeta, hrefFor } from "./notification-kinds.ts";
+import { kindMeta, hrefFor } from "@ih/core/logic/notification-kinds";
+
+// Re-exported so the one existing consumer keeps a single import; the rule itself is shared.
+export { badgeLabel } from "@ih/core/logic/notification-kinds";
 
 export interface NotificationPresentation {
   icon: LucideIcon;
@@ -66,8 +69,3 @@ export function notificationPresentation(kind: string): NotificationPresentation
   };
 }
 
-/** Display label for the unread badge: 0 ⇒ "" (hidden), 1–9 ⇒ the number, >9 ⇒ "9+". */
-export function badgeLabel(unread: number): string {
-  if (!Number.isFinite(unread) || unread <= 0) return "";
-  return unread > 9 ? "9+" : String(Math.floor(unread));
-}

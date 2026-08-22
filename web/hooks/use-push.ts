@@ -15,7 +15,7 @@
  */
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
-import { queryKeys, services } from "@/services";
+import { queryKeys, services } from "@ih/core/api/services";
 import {
   currentPermission,
   currentSubscription,

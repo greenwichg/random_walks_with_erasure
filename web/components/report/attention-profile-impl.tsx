@@ -1,8 +1,8 @@
 "use client";
 
 import { Cell, Pie, PieChart, Tooltip } from "recharts";
-import type { EmotionShare } from "@/types/domain";
-import { EMOTION_META } from "@/lib/metrics";
+import type { EmotionShare } from "@ih/core/domain/types";
+import { EMOTION_META } from "@ih/core/logic/metrics";
 import { useTranslation } from "@/lib/i18n";
 import { useMeasure } from "@/hooks/use-measure";
 

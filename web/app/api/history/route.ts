@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import type { HistoryEntry } from "@/types/domain";
+import type { HistoryEntry } from "@ih/core/domain/types";
 import { backendGetResult, engineUnavailable } from "@/lib/backend";
 import { engineAuthHeaders } from "@/lib/engine-auth";
 

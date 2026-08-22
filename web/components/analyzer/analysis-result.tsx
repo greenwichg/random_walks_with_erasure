@@ -3,9 +3,9 @@
 import * as React from "react";
 import { AlertCircle, BarChart3, Building2, Check, ExternalLink, History, Info, Layers, Globe,
          Sparkles, type LucideIcon } from "lucide-react";
-import type { AnalysisResult, CoverageFinding, LeanBucket } from "@/types/domain";
-import { analysisPresentation } from "@/lib/analysis-presentation";
-import { presentRecommendation } from "@/lib/rec-presentation";
+import type { AnalysisResult, CoverageFinding, LeanBucket } from "@ih/core/domain/types";
+import { analysisPresentation } from "@ih/core/logic/analysis-presentation";
+import { presentRecommendation } from "@ih/core/logic/rec-presentation";
 import { Badge } from "@/components/ui/badge";
 import { SectionCard } from "@/components/shared/section-card";
 import { SpectrumBar } from "@/components/shared/spectrum-bar";

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { ArrowLeftRight, Sparkles } from "lucide-react";
-import type { Recommendation } from "@/types/domain";
+import type { Recommendation } from "@ih/core/domain/types";
 import { SectionHeader } from "@/components/shared/section-header";
 import { useTranslation } from "@/lib/i18n";
 

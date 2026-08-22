@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { motion } from "framer-motion";
-import type { Article } from "@/types/domain";
+import type { Article } from "@ih/core/domain/types";
 import { PublisherBadge, LeanBadge } from "@/components/shared/article-badges";
 import { ArticleImage } from "@/components/shared/article-image";
 import { ContinuationStrip } from "@/components/shared/continuation-strip";

@@ -2,8 +2,8 @@
 
 import Link from "next/link";
 import { Sparkles, CircleCheck, Compass } from "lucide-react";
-import type { Coverage, ReportMode } from "@/types/domain";
-import { coverageStatus } from "@/lib/coverage";
+import type { Coverage, ReportMode } from "@ih/core/domain/types";
+import { coverageStatus } from "@ih/core/logic/coverage";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/lib/i18n";

@@ -3,7 +3,7 @@
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { ChartEmpty } from "./states";
-import { labelledItems } from "@/lib/bar-items";
+import { labelledItems } from "@ih/core/logic/bar-items";
 
 export interface BarItem {
   label: string;

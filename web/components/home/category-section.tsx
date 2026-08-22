@@ -1,6 +1,6 @@
 "use client";
 
-import { briefingFacts, coverageMix, type TopicGroup } from "@/lib/home";
+import { briefingFacts, coverageMix, type TopicGroup } from "@ih/core/logic/home";
 import { SectionHeader } from "@/components/shared/section-header";
 import { SpectrumBar } from "@/components/shared/spectrum-bar";
 import { StoryFeatureCard } from "@/components/home/story-feature-card";

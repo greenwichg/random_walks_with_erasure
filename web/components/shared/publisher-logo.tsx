@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { Building2 } from "lucide-react";
-import { logoCandidates, isTooLowRes, nextCandidate } from "@/lib/publisher-logo";
+import { logoCandidates, isTooLowRes, nextCandidate } from "@ih/core/logic/publisher-logo";
 import { cn } from "@/lib/utils";
 
 /**

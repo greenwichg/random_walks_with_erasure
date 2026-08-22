@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
-import type { Recommendation } from "@/types/domain";
+import type { Recommendation } from "@ih/core/domain/types";
 import { backendGet, MOCK_FALLBACK_ENABLED, engineUnavailable } from "@/lib/backend";
 import { engineAuthHeaders } from "@/lib/engine-auth";
-import { RECOMMENDATIONS } from "@/mock/data";
+import { RECOMMENDATIONS } from "@ih/core/logic/mock-data";
 
 // Reflect the live recommender at request time, not a build-time snapshot.
 export const dynamic = "force-dynamic";

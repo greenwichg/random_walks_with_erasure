@@ -28,7 +28,7 @@ import {
   latestStories,
   publisherStats,
   trendingTopics,
-} from "@/lib/home";
+} from "@ih/core/logic/home";
 import { useTranslation } from "@/lib/i18n";
 
 /** How many clustered events back the whole page (hero + top stories + every category module). */

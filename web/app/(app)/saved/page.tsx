@@ -11,7 +11,7 @@ import { MasonryColumns } from "@/components/shared/masonry-columns";
 import { EmptyState, ErrorState } from "@/components/shared/states";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { Article, SavedArticle } from "@/types/domain";
+import type { Article, SavedArticle } from "@ih/core/domain/types";
 
 // Saved Articles — the persisted "read later" surface (Commit 14). Reuses the SAME DiscoverCard
 // (Read + Save/Unsave) as Discover/Search, so there is one card and one Save/Read implementation.

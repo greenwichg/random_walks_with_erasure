@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
-import type { Profile } from "@/types/domain";
+import type { Profile } from "@ih/core/domain/types";
 import { backendGetResult, MOCK_FALLBACK_ENABLED, engineUnavailable } from "@/lib/backend";
 import { engineAuthHeaders } from "@/lib/engine-auth";
-import { resolveEngineFallback } from "@/lib/engine-fallback";
-import { PROFILE } from "@/mock/data";
+import { resolveEngineFallback } from "@ih/core/logic/engine-fallback";
+import { PROFILE } from "@ih/core/logic/mock-data";
 
 // Reflect the reader's live account + activity at request time, never a build-time snapshot.
 export const dynamic = "force-dynamic";

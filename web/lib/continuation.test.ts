@@ -41,7 +41,7 @@ const OFFER = {
   },
   distance: 3,
   candidateCount: 5,
-} as unknown as import("../types/domain.ts").Continuation;
+} as unknown as import("@ih/core/domain/types").Continuation;
 
 /** A minimal window with both storages, matching lib/onboarding.test.ts's approach. */
 function withStorage(

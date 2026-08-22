@@ -1,8 +1,8 @@
 "use client";
 
 import * as React from "react";
-import { activeLang } from "@/lib/i18n-core";
-import { countryFlagSrc, countryName, countryShortName } from "@/lib/countries";
+import { activeLang } from "@/lib/active-lang";
+import { countryFlagSrc, countryName, countryShortName } from "@ih/core/logic/countries";
 
 /**
  * A country rendered for humans (Location Intelligence UX): decorative flag + the localized

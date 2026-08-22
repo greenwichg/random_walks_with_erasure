@@ -2,7 +2,7 @@
 
 import { useMemo } from "react";
 import { useTranslation } from "@/lib/i18n";
-import { buildCalendarGrid, firstDayOfWeek } from "@/lib/calendar-grid";
+import { buildCalendarGrid, firstDayOfWeek } from "@ih/core/logic/calendar-grid";
 import { cn } from "@/lib/utils";
 
 /**

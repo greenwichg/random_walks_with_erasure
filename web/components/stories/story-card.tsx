@@ -4,14 +4,14 @@ import * as React from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { Newspaper, ArrowRight, EyeOff } from "lucide-react";
-import type { Story } from "@/types/domain";
+import type { Story } from "@ih/core/domain/types";
 import { track, urlHost } from "@/lib/analytics";
 import { useTranslation } from "@/lib/i18n";
 import { SpectrumBar } from "@/components/shared/spectrum-bar";
 import { ArticleImage } from "@/components/shared/article-image";
 import { FreshnessBadge } from "@/components/stories/freshness-badge";
 import { CoveragePlate } from "@/components/stories/coverage-plate";
-import { LEAN_META } from "@/lib/metrics";
+import { LEAN_META } from "@ih/core/logic/metrics";
 import { cn } from "@/lib/utils";
 
 /** A clustered-story preview card — one event, coverage across the spectrum.

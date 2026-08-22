@@ -12,7 +12,7 @@ import { EmptyState, ErrorState } from "@/components/shared/states";
 import { AnalysisResult } from "@/components/analyzer/analysis-result";
 import { useAnalyzeUrl } from "@/hooks/use-data";
 import { useTranslation } from "@/lib/i18n";
-import type { AnalyzeMetadata } from "@/types/domain";
+import type { AnalyzeMetadata } from "@ih/core/domain/types";
 import { cn } from "@/lib/utils";
 
 /**

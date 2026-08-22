@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { queryKeys, services } from "@/services";
+import { queryKeys, services } from "@ih/core/api/services";
 
 /**
  * R1a — fire the app shell's data queries at the earliest client moment, in parallel, un-gated.

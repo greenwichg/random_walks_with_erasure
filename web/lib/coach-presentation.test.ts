@@ -1,5 +1,5 @@
 /**
- * M5 — coach presentation selection (node --test, type-stripped like i18n-core.test.ts).
+ * M5 — coach presentation selection (node --test, type-stripped like @ih/core's i18n tests).
  *
  * Proves the progressive-enhancement contract of the coach page: every helper returns its
  * v1-neutral value for a v1 payload (no echo, no chips, metric-key labels unchanged), and

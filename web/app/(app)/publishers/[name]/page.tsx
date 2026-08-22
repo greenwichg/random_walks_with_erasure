@@ -6,8 +6,8 @@ import { useParams } from "next/navigation";
 import { Building2, ExternalLink, Newspaper, Search } from "lucide-react";
 import { usePublisher } from "@/hooks/use-data";
 import { useTranslation } from "@/lib/i18n";
-import { countryName } from "@/lib/countries";
-import type { PublisherAbout, PublisherProfile } from "@/types/domain";
+import { countryName } from "@ih/core/logic/countries";
+import type { PublisherAbout, PublisherProfile } from "@ih/core/domain/types";
 import { PageContainer } from "@/components/layout/page-container";
 import { SectionCard } from "@/components/shared/section-card";
 import { BarList, type BarItem } from "@/components/shared/bar-list";
@@ -19,7 +19,7 @@ import { FactualityBadge } from "@/components/shared/factuality-badge";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState, ErrorState } from "@/components/shared/states";
 import { Skeleton } from "@/components/ui/skeleton";
-import { EMOTION_META } from "@/lib/metrics";
+import { EMOTION_META } from "@ih/core/logic/metrics";
 
 // Publisher Intelligence — the profile of ONE publisher: curated registry facts (identity, lean,
 // locality) + counted catalog facts (volume, topics, event geography, tone-with-n) + its recent

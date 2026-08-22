@@ -2,7 +2,7 @@
 
 import { motion } from "framer-motion";
 import { Clock } from "lucide-react";
-import type { Article } from "@/types/domain";
+import type { Article } from "@ih/core/domain/types";
 import { LeanBadge, EmotionBadge, RegisterBadge } from "@/components/shared/article-badges";
 import { ReadArticleButton } from "@/components/shared/read-article-button";
 import { useTranslation } from "@/lib/i18n";

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import type { PublisherProfile } from "@/types/domain";
+import type { PublisherProfile } from "@ih/core/domain/types";
 import { backendGetResult, engineUnavailable } from "@/lib/backend";
 import { engineAuthHeaders } from "@/lib/engine-auth";
 

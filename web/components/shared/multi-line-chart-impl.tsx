@@ -4,7 +4,7 @@ import { Line, LineChart, Tooltip, XAxis, YAxis } from "recharts";
 import { useMeasure } from "@/hooks/use-measure";
 import { useTranslation } from "@/lib/i18n";
 import type { BarSeries } from "@/components/shared/stacked-bar";
-import { exactFormat, seriesMax, tickCapacity, tickLabels, yAxis } from "@/lib/chart-axis";
+import { exactFormat, seriesMax, tickCapacity, tickLabels, yAxis } from "@ih/core/logic/chart-axis";
 
 /**
  * A themed multi-series line chart for share-over-time data (the Emotional Tone card).

@@ -21,7 +21,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { NAV_FLAT } from "@/lib/nav";
+import { NAV_FLAT } from "@ih/core/logic/nav";
 import { useTranslation } from "@/lib/i18n";
 
 /** Sticky top bar: mobile nav trigger, page title, search (⌘K), theme, profile. */

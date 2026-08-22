@@ -1,7 +1,7 @@
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { backendPostResult } from "@/lib/backend";
-import { bearerFromHeader, type TokenResolution } from "@/lib/auth-decision";
+import { bearerFromHeader, type TokenResolution } from "@ih/core/logic/auth-decision";
 
 /** The shared-secret header the engine trusts for internal calls, when configured. */
 function internalSecretHeaders(): Record<string, string> {

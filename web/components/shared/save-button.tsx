@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { Bookmark, BookmarkCheck } from "lucide-react";
-import type { SavableArticle } from "@/types/domain";
+import type { SavableArticle } from "@ih/core/domain/types";
 import { useSaved, useSaveArticle, useUnsaveArticle } from "@/hooks/use-data";
 import { useTranslation } from "@/lib/i18n";
 import { cn } from "@/lib/utils";

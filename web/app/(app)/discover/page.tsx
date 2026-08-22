@@ -8,7 +8,7 @@ import { PageContainer } from "@/components/layout/page-container";
 import { CountryBadge } from "@/components/shared/country-badge";
 import { DiscoverCard } from "@/components/discover/discover-card";
 import { FilterSelect, type FilterOption } from "@/components/shared/filter-select";
-import { interleavePublishers } from "@/lib/discover-order";
+import { interleavePublishers } from "@ih/core/logic/discover-order";
 import { EmptyState, ErrorState } from "@/components/shared/states";
 import { Skeleton } from "@/components/ui/skeleton";
 

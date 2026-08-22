@@ -20,7 +20,7 @@
  * browser all degrade to "no strip" — which is the same thing an ineligible read produces, so the
  * failure mode is a feature that quietly does not appear rather than a page that breaks.
  */
-import type { Continuation } from "@/types/domain";
+import type { Continuation } from "@ih/core/domain/types";
 import { track } from "./analytics.ts";
 
 /** sessionStorage: the candidate armed by the most recent Read click, awaiting a return. */

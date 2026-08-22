@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
-import type { EmotionShare, Recommendation, RecommendationEvidence, RecommendationExplain } from "@/types/domain";
+import type { EmotionShare, Recommendation, RecommendationEvidence, RecommendationExplain } from "@ih/core/domain/types";
 import { useRecommendationExplain } from "@/hooks/use-data";
 import { useTranslation } from "@/lib/i18n";
 import { Skeleton } from "@/components/ui/skeleton";

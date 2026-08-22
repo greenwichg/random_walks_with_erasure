@@ -2,10 +2,10 @@
 
 import * as React from "react";
 import { EyeOff } from "lucide-react";
-import type { LeanBucket, Story } from "@/types/domain";
+import type { LeanBucket, Story } from "@ih/core/domain/types";
 import { PublisherLogo } from "@/components/shared/publisher-logo";
-import { hostIconCandidates } from "@/lib/publisher-logo";
-import { LEAN_META } from "@/lib/metrics";
+import { hostIconCandidates } from "@ih/core/logic/publisher-logo";
+import { LEAN_META } from "@ih/core/logic/metrics";
 import { useTranslation } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 

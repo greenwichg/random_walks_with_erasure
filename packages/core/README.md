@@ -49,14 +49,25 @@ and no `dist/`. All three toolchains resolve it: `tsc` (via `moduleResolution: "
 `next build` (webpack follows the workspace symlink to real source outside `node_modules`, and
 `transpilePackages` makes that explicit), and `node --test` (Node 22 strips types natively).
 
-## Compatibility shims in `web/`
+## Split modules
 
-Most modules moved here still have a one-line re-export at their old path:
+Six modules exist in both packages, and the seam is always the same: the product rule is here, the
+platform half is in `web/` (and later `mobile/`).
 
-```ts
-// web/lib/coverage.ts
-export * from "@ih/core/logic/coverage";
-```
+| Here | In `web/` | Why the split |
+|---|---|---|
+| `logic/metrics` | `lib/metric-icons.ts` | lucide icons per `MetricKey` |
+| `logic/nav` | `lib/nav-icons.ts` | lucide icons per `href` |
+| `i18n/core` | `lib/active-lang.ts` | reads `<html lang>` |
+| `logic/notification-kinds` | `lib/notifications.ts` | a presentation carries a `LucideIcon` |
+| `logic/record-read` | `lib/record-read.ts` | `sendBeacon`, which React Native has no equivalent for |
+| `logic/onboarding` | `lib/onboarding.ts` | the `localStorage` stash |
 
-Existing `@/lib/…` imports keep working untouched. Call sites move to `@ih/core` incrementally; the
-shims are deleted when the last one does. New code should import from `@ih/core` directly.
+`METRIC_ICONS` is typed `Record<MetricKey, LucideIcon>` deliberately: add a ninth metric to the table
+here and the web fails to compile until it supplies an icon. A missing icon is exactly the failure
+worth forcing.
+
+The compatibility shims that made the migration incremental are gone —
+`web/lib/core-import-guard.test.ts` now asserts those paths stay gone, because a recreated
+`web/lib/coverage.ts` would not error anywhere: it would be a second copy of a shared rule, and the
+two clients would drift apart silently.

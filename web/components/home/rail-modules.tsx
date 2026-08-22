@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import type { ViewpointDistribution } from "@/types/domain";
-import type { TopicCount } from "@/lib/home";
+import type { ViewpointDistribution } from "@ih/core/domain/types";
+import type { TopicCount } from "@ih/core/logic/home";
 import { SectionHeader } from "@/components/shared/section-header";
 import { SpectrumBar } from "@/components/shared/spectrum-bar";
 import { useTranslation } from "@/lib/i18n";

@@ -2,17 +2,17 @@
 
 import Link from "next/link";
 import { BookOpen, Flame } from "lucide-react";
-import type { DashboardSummary } from "@/types/domain";
+import type { DashboardSummary } from "@ih/core/domain/types";
 import { SectionHeader } from "@/components/shared/section-header";
 import { ScoreRing } from "@/components/shared/score-ring";
 import { DeltaBadge } from "@/components/shared/delta-badge";
 import { TrendChart } from "@/components/shared/trend-chart";
 import { ProfileProgress } from "@/components/shared/profile-progress";
 import { Badge } from "@/components/ui/badge";
-import { resolveBand } from "@/lib/metrics";
-import { heroCopyKeys } from "@/lib/hero-copy";
+import { resolveBand } from "@ih/core/logic/metrics";
+import { heroCopyKeys } from "@ih/core/logic/hero-copy";
 import { useTranslation } from "@/lib/i18n";
-import type { MetricKey } from "@/types/domain";
+import type { MetricKey } from "@ih/core/domain/types";
 
 /**
  * The reader's Information Health, as the home page's companion rail.

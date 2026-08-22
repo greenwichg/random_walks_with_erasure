@@ -1,44 +1,20 @@
 /**
- * The onboarding handoff — the one thing that has to survive a sign-in round trip.
+ * The pre-sign-in onboarding stash — the web's half.
  *
- * An anonymous visitor picks outlets BEFORE an account exists, so the selection is stashed here and
- * landed once a session appears. That stash is client-only, which matters because the app shell gates
- * on server-side onboarding state (`app/(app)/layout.tsx`): a reader who has just finished the funnel
- * and signed in would arrive at `/` with the selection still in the browser and no row in the store.
+ * A reader can pick outlets before signing in; the selection has to survive an OAuth round trip
+ * through Google and back. `localStorage` is how the web does that, and it is the only reason this
+ * file is not in @ih/core: a native client has no sign-in redirect to survive, and would reach for
+ * `expo-secure-store` if it did.
  *
- * The fix is ordering, not extra state: sign-in returns to `/signin/complete`, which lands the stash
- * BEFORE anyone reaches a gated page. The gate therefore needs no exception, no grace window, and
- * nothing to take on trust — by the time it runs, the store is the only source of truth again.
- *
- * These helpers are the whole contract: one key, one shape, one parser. Both the funnel (writer) and
- * the landing page (reader) go through them so the shape can't drift.
+ * The shape and the "never initialized" predicate are shared — see `@ih/core/logic/onboarding`,
+ * re-exported below so callers keep a single import.
  */
+export { needsOnboarding, type OnboardingState } from "@ih/core/logic/onboarding";
 
 /** localStorage key holding an onboarding selection made before the sign-in redirect. */
 export const PENDING_ONBOARDING_KEY = "ih:pendingOnboarding";
 
 /** The two facts `GET /api/me` carries about initialization. */
-export interface OnboardingState {
-  onboarding?: { outlets: string[] } | null;
-  reads?: number | null;
-}
-
-/**
- * "This account has never been initialized" — the ONE definition of it.
- *
- * Read by the app-shell gate (to decide whether to redirect) and by the sign-in landing step (to
- * decide whether a stashed selection is still wanted). Sharing the predicate is what makes the two
- * unable to disagree: a landing step that thought an account was fresh while the gate thought
- * otherwise is exactly the shape a redirect loop would take.
- *
- * `reads` matters because reading is onboarding in substance — an extension-first reader, or an
- * account created before the gate existed, has no row but is plainly established.
- */
-export function needsOnboarding(me: OnboardingState): boolean {
-  return !me.onboarding && (me.reads ?? 0) === 0;
-}
-
-/** Stash a selection for the landing page to persist after sign-in. Never throws. */
 export function stashPendingOnboarding(outlets: string[]): void {
   try {
     window.localStorage.setItem(PENDING_ONBOARDING_KEY, JSON.stringify({ outlets }));

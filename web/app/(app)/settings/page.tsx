@@ -30,11 +30,11 @@ import {
   Clapperboard,
   Palette,
 } from "lucide-react";
-import type { Settings, NotificationChannelPrefs } from "@/types/domain";
+import type { Settings, NotificationChannelPrefs } from "@ih/core/domain/types";
 import { useQuery } from "@tanstack/react-query";
 import { useSettings, useUpdateSettings } from "@/hooks/use-data";
-import { services, queryKeys } from "@/services";
-import { diffSettings, hasChanges } from "@/lib/settings-diff";
+import { services, queryKeys } from "@ih/core/api/services";
+import { diffSettings, hasChanges } from "@ih/core/logic/settings-diff";
 import { useTranslation } from "@/lib/i18n";
 import { PageContainer } from "@/components/layout/page-container";
 import { SectionCard } from "@/components/shared/section-card";
@@ -43,7 +43,7 @@ import { ExtensionConnect } from "@/components/settings/extension-connect";
 import { PushToggle } from "@/components/settings/push-toggle";
 import { usePushConfig } from "@/hooks/use-push";
 import { CountryBadge } from "@/components/shared/country-badge";
-import { countryName } from "@/lib/countries";
+import { countryName } from "@ih/core/logic/countries";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";

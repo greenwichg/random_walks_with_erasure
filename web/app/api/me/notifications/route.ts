@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import type { NotificationItem } from "@/types/domain";
+import type { NotificationItem } from "@ih/core/domain/types";
 import { backendGet, engineUnavailable } from "@/lib/backend";
 import { optionalUser } from "@/lib/require-user";
 

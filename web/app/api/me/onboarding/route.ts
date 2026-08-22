@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import type { EstimateHealthReport } from "@/types/domain";
+import type { EstimateHealthReport } from "@ih/core/domain/types";
 import { backendPost, engineUnavailable } from "@/lib/backend";
 import { optionalUser } from "@/lib/require-user";
 

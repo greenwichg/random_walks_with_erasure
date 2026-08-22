@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
-import type { CoachMessage } from "@/types/domain";
+import type { CoachMessage } from "@ih/core/domain/types";
 import { backendGet, backendPost, MOCK_FALLBACK_ENABLED, engineUnavailable } from "@/lib/backend";
 import { engineAuthHeaders } from "@/lib/engine-auth";
 import { rejectIfTooLarge } from "@/lib/body-limit";
-import { COACH_GREETING, coachReply } from "@/mock/data";
+import { COACH_GREETING, coachReply } from "@ih/core/logic/mock-data";
 
 // The coach grounds on the live report, so always run at request time.
 export const dynamic = "force-dynamic";

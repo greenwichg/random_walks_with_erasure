@@ -7,11 +7,11 @@ import { Layers, Newspaper, FileText, ArrowRight } from "lucide-react";
 import { StatCard } from "@/components/dashboard/stat-card";
 import { DistributionBar } from "@/components/history/distribution-bar";
 import { Skeleton } from "@/components/ui/skeleton";
-import { LEAN_META } from "@/lib/metrics";
-import { personalBlindspotSide } from "@/lib/political";
+import { LEAN_META } from "@ih/core/logic/metrics";
+import { personalBlindspotSide } from "@ih/core/logic/political";
 import { useReport } from "@/hooks/use-data";
 import { useTranslation } from "@/lib/i18n";
-import type { HistoryInsights } from "@/lib/history-insights";
+import type { HistoryInsights } from "@ih/core/logic/history-insights";
 
 /**
  * The Information Health strip (Phase 1) — four descriptive tiles over the reads currently in view

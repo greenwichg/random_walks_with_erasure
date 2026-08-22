@@ -31,7 +31,7 @@ const LANGS = ["en", "es", "fr", "de", "pt"];
  * annotated with where it is built so the allowlist stays auditable.
  */
 const DYNAMIC_PREFIXES = [
-  "explanation.",          // explanationKey() in lib/i18n-core.ts
+  "explanation.",          // explanationKey() in packages/core/i18n/core.ts
   "emotion.",              // t(`emotion.${key}`) — badges, analytics, attention profile, history
   "filter.",              // t(`filter.${leanBucket}`) — lean labels in badges/why-drawer/stories
   "metric.",               // t(`metric.${key}.label|short|tooltip|description`)
@@ -58,7 +58,7 @@ DYNAMIC_PREFIXES.push(
 );
 
 /**
- * Required resolver explanation templates — mirrors the switch in explanationKey() (lib/i18n-core.ts).
+ * Required resolver explanation templates — mirrors the switch in explanationKey() (packages/core/i18n/core.ts).
  * Every supported (type, variant) MUST have a catalog template, or a recommendation would fall back
  * to raw English server prose.
  */

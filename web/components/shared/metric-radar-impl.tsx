@@ -1,8 +1,8 @@
 "use client";
 
 import { PolarAngleAxis, PolarGrid, PolarRadiusAxis, Radar, RadarChart, Tooltip } from "recharts";
-import type { Metric } from "@/types/domain";
-import { METRICS, RADAR_METRICS } from "@/lib/metrics";
+import type { Metric } from "@ih/core/domain/types";
+import { METRICS, RADAR_METRICS } from "@ih/core/logic/metrics";
 import { useMeasure } from "@/hooks/use-measure";
 
 /** Interactive radar of the six scored health metrics. */

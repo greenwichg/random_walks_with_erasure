@@ -2,8 +2,8 @@
 
 import Link from "next/link";
 import { Compass } from "lucide-react";
-import type { Coverage, MetricKey } from "@/types/domain";
-import { METRIC_UNLOCK, coverageStatus } from "@/lib/coverage";
+import type { Coverage, MetricKey } from "@ih/core/domain/types";
+import { METRIC_UNLOCK, coverageStatus } from "@ih/core/logic/coverage";
 import { Button } from "@/components/ui/button";
 import { useTranslation } from "@/lib/i18n";
 

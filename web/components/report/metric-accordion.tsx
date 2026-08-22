@@ -3,8 +3,9 @@
 import * as React from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { ChevronDown } from "lucide-react";
-import type { Coverage, Metric } from "@/types/domain";
-import { METRIC_ORDER, METRICS } from "@/lib/metrics";
+import type { Coverage, Metric } from "@ih/core/domain/types";
+import { METRIC_ORDER, METRICS } from "@ih/core/logic/metrics";
+import { METRIC_ICONS } from "@/lib/metric-icons";
 import { DeltaBadge } from "@/components/shared/delta-badge";
 import { MetricEmptyState } from "@/components/shared/metric-empty-state";
 import { cn } from "@/lib/utils";
@@ -41,7 +42,7 @@ export function MetricAccordion({ metrics, coverage }: { metrics: Metric[]; cove
           metrics.find((m) => m.key === key) ??
           ({ key, score: 0, delta: 0, available: false as const, reason: "insufficient_data" } as Metric);
         const meta = METRICS[key];
-        const Icon = meta.icon;
+        const Icon = METRIC_ICONS[key];
         const isOpen = open === key;
         // Explicit backend signal — never inferred from score === 0.
         const isEmpty = metric.available === false;

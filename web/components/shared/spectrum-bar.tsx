@@ -1,7 +1,7 @@
 "use client";
 
 import { motion } from "framer-motion";
-import type { ViewpointDistribution } from "@/types/domain";
+import type { ViewpointDistribution } from "@ih/core/domain/types";
 import { cn } from "@/lib/utils";
 
 /**

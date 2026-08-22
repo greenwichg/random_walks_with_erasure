@@ -10,7 +10,7 @@ import {
   Search,
   Sparkles,
 } from "lucide-react";
-import type { EstimateHealthReport, LeanBucket, Outlet } from "@/types/domain";
+import type { EstimateHealthReport, LeanBucket, Outlet } from "@ih/core/domain/types";
 import { Button } from "@/components/ui/button";
 import { Logo } from "@/components/layout/logo";
 import { OnboardingHero } from "@/components/onboarding/onboarding-hero";

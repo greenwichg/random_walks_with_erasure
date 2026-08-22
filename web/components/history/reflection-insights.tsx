@@ -3,7 +3,7 @@
 import { Scale, Newspaper, Layers, FileText } from "lucide-react";
 import { SectionCard } from "@/components/shared/section-card";
 import { useTranslation } from "@/lib/i18n";
-import type { HistoryInsights } from "@/lib/history-insights";
+import type { HistoryInsights } from "@ih/core/logic/history-insights";
 
 /**
  * Reflection / Insights (Phase 1) — a compact, plain-language read of the notable patterns in the

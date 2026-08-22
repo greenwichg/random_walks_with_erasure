@@ -13,9 +13,9 @@ import {
   Sparkles,
   Route,
 } from "lucide-react";
-import type { FeedbackAction, Recommendation } from "@/types/domain";
+import type { FeedbackAction, Recommendation } from "@ih/core/domain/types";
 import { useTranslation } from "@/lib/i18n";
-import { presentRecommendation } from "@/lib/rec-presentation";
+import { presentRecommendation } from "@ih/core/logic/rec-presentation";
 import { PublisherBadge, LeanBadge } from "@/components/shared/article-badges";
 import { ContinuationStrip } from "@/components/shared/continuation-strip";
 import { ReadArticleButton } from "@/components/shared/read-article-button";

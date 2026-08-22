@@ -118,3 +118,15 @@ export function hrefFor(kind: string, payload?: unknown): string | null {
   }
   return meta.href;
 }
+
+/**
+ * Display label for the unread badge: 0 ⇒ `""` (hidden), 1–9 ⇒ the number, >9 ⇒ `"9+"`.
+ *
+ * Here rather than beside the web's icon map because the rule — where the count stops being a count
+ * — is a product decision, and a mobile tab badge that said "12" while the web said "9+" would be
+ * two answers to one question.
+ */
+export function badgeLabel(unread: number): string {
+  if (!Number.isFinite(unread) || unread <= 0) return "";
+  return unread > 9 ? "9+" : String(Math.floor(unread));
+}

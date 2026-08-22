@@ -1,10 +1,10 @@
 "use client";
 
 import { Area, AreaChart, Tooltip, XAxis, YAxis } from "recharts";
-import type { TrendPoint } from "@/types/domain";
+import type { TrendPoint } from "@ih/core/domain/types";
 import { useTranslation } from "@/lib/i18n";
 import { useMeasure } from "@/hooks/use-measure";
-import { tickCapacity, tickLabels, yAxis } from "@/lib/chart-axis";
+import { tickCapacity, tickLabels, yAxis } from "@ih/core/logic/chart-axis";
 
 /**
  * A themed area chart for the overall-score trend + analytics.

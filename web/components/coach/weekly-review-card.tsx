@@ -2,9 +2,9 @@
 
 import * as React from "react";
 import { CalendarRange, Minus, Sparkles, Target, TrendingDown, TrendingUp } from "lucide-react";
-import type { WeeklyReview, WeeklyTrend } from "@/types/domain";
+import type { WeeklyReview, WeeklyTrend } from "@ih/core/domain/types";
 import { Badge } from "@/components/ui/badge";
-import { trendLabelKey, weeklyInsights, weeklyTrendDelta } from "@/lib/coach-presentation";
+import { trendLabelKey, weeklyInsights, weeklyTrendDelta } from "@ih/core/logic/coach-presentation";
 import { useTranslation } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 

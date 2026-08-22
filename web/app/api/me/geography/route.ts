@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import type { ReaderGeography } from "@/types/domain";
+import type { ReaderGeography } from "@ih/core/domain/types";
 import { backendGet, engineUnavailable } from "@/lib/backend";
 import { optionalUser } from "@/lib/require-user";
 

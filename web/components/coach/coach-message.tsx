@@ -3,13 +3,13 @@
 import * as React from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Bot } from "lucide-react";
-import type { CoachMessage as TMessage, FeedbackAction, Recommendation } from "@/types/domain";
+import type { CoachMessage as TMessage, FeedbackAction, Recommendation } from "@ih/core/domain/types";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { LeanBadge } from "@/components/shared/article-badges";
 import { RecommendationCard } from "@/components/recommendations/recommendation-card";
 import { WeeklyReviewCard } from "@/components/coach/weekly-review-card";
-import { citationLabelKey } from "@/lib/coach-presentation";
+import { citationLabelKey } from "@ih/core/logic/coach-presentation";
 import { useTranslation } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 

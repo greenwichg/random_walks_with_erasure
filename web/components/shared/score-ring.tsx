@@ -1,7 +1,7 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { resolveBand } from "@/lib/metrics";
+import { resolveBand } from "@ih/core/logic/metrics";
 import { cn } from "@/lib/utils";
 
 const HUE: Record<string, string> = {

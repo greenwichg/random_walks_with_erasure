@@ -1,6 +1,6 @@
 "use client";
 
-import type { PublisherCount } from "@/lib/home";
+import type { PublisherCount } from "@ih/core/logic/home";
 import { SectionHeader } from "@/components/shared/section-header";
 import { useTranslation } from "@/lib/i18n";
 

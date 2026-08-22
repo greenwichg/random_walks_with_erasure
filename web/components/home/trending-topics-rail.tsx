@@ -1,6 +1,6 @@
 "use client";
 
-import type { TopicCount } from "@/lib/home";
+import type { TopicCount } from "@ih/core/logic/home";
 import { FilterChip } from "@/components/ui/filter-chip";
 import { useTranslation } from "@/lib/i18n";
 
