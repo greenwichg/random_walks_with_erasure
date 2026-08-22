@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link } from "expo-router";
+import { router } from "expo-router";
 import { useMemo } from "react";
 import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View, useColorScheme } from "react-native";
 
@@ -195,6 +195,19 @@ function EmptyFeed({ palette, t }: { palette: typeof light; t: (k: string) => st
   );
 }
 
+/**
+ * Navigated imperatively rather than with `<Link asChild>`, which silently ate this button's style.
+ *
+ * `asChild` renders through expo-router's `Slot`, which is Radix's, whose `mergeProps` merges style
+ * as `{ ...slotStyle, ...childStyle }`. React Native styles are usually ARRAYS, and spreading an
+ * array into an object literal produces `{ "0": …, "1": … }` — numeric keys, not style properties.
+ * Every rule is dropped. On a device that was a white label on a white screen: the `<Text>` kept its
+ * own style, so the button was invisible but still there and still tappable.
+ *
+ * expo-router's shim flattens the Slot's style before the merge but not the child's, so an object
+ * style survives and an array style does not. `StyleSheet.flatten([...])` at the call site would
+ * also work; `router.push` avoids the question, and `app/sign-in.tsx` already navigates this way.
+ */
 function SignedOut({ palette }: { palette: typeof light }) {
   return (
     <View style={[styles.centre, { backgroundColor: palette.background, gap: space.lg }]}>
@@ -202,11 +215,13 @@ function SignedOut({ palette }: { palette: typeof light }) {
       <Text style={[typeScale.body, { color: palette.mutedForeground, textAlign: "center" }]}>
         A health check for your news diet.
       </Text>
-      <Link href="/sign-in" asChild>
-        <Pressable style={[styles.cta, { backgroundColor: palette.primary }]}>
-          <Text style={[typeScale.headline, { color: palette.primaryForeground }]}>Sign in</Text>
-        </Pressable>
-      </Link>
+      <Pressable
+        accessibilityRole="button"
+        onPress={() => router.push("/sign-in")}
+        style={[styles.cta, { backgroundColor: palette.primary }]}
+      >
+        <Text style={[typeScale.headline, { color: palette.primaryForeground }]}>Sign in</Text>
+      </Pressable>
     </View>
   );
 }
