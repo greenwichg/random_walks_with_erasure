@@ -29,20 +29,47 @@ const OK = "OK  ";
 const FAIL = "FAIL";
 const WARN = "--  ";
 
-/** Load `mobile/.env` the way Expo does, without adding a dependency for six lines. */
+/**
+ * Load `mobile/.env` the way Expo does, without adding a dependency for six lines.
+ *
+ * Split on `\r?\n`, not `\n`. Git for Windows checks files out with CRLF by default, so a `.env`
+ * created there ends every line with `\r` — and in JavaScript `\r` is a line terminator, which `.`
+ * does not match and `$` does not sit after. The first version split on `\n` alone and matched
+ * NOTHING in a perfectly good file, reporting every variable as unset. The user's configuration was
+ * right and the tool was wrong, which is the worst way for a verifier to fail.
+ */
 function loadEnv() {
   const path = join(MOBILE, ".env");
-  if (!existsSync(path)) return {};
+  if (!existsSync(path)) return { __missing: true };
   const out = {};
-  for (const line of readFileSync(path, "utf8").split("\n")) {
+  for (const line of readFileSync(path, "utf8").split(/\r?\n/)) {
+    if (/^\s*#/.test(line)) continue;
     const m = /^\s*([A-Z0-9_]+)\s*=\s*(.*)$/.exec(line);
     if (m) out[m[1]] = m[2].trim().replace(/^["']|["']$/g, "");
   }
   return out;
 }
 
-const env = { ...loadEnv(), ...process.env };
+const fileEnv = loadEnv();
+const fileMissing = fileEnv.__missing === true;
+delete fileEnv.__missing;
+const env = { ...fileEnv, ...process.env };
 const problems = [];
+
+// Tell the two states apart. "No .env at all" and "a .env this tool could not read" look identical
+// in the report below — every variable reads as unset — and they need completely different fixes.
+if (fileMissing) {
+  console.log(`${WARN} mobile/.env                            not found — copy .env.example to .env\n`);
+} else if (Object.keys(fileEnv).length === 0) {
+  console.log(
+    `${FAIL} mobile/.env                            found, but NO variables parsed out of it\n` +
+      `     Check the file is really named .env and not .env.txt — Windows hides known\n` +
+      `     extensions, so a file saved from Notepad's "Save as" can look right and not be.\n`,
+  );
+  problems.push("mobile/.env exists but no variables could be read from it.");
+} else {
+  console.log(`${OK}   mobile/.env                            read, ${Object.keys(fileEnv).length} variables\n`);
+}
 
 function report(mark, name, note) {
   console.log(`${mark} ${name.padEnd(38)} ${note}`);
