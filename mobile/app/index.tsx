@@ -8,6 +8,7 @@ import { services } from "@ih/core/api/services";
 import { partitionByCountryMatch } from "@ih/core/logic/country-partition";
 import { countryName } from "@ih/core/logic/countries";
 
+import { AccountRow } from "@/components/account-row";
 import { RecommendationCard } from "@/components/recommendation-card";
 import { dark, light, radius, space, type as typeScale } from "@/design/tokens";
 import { deviceLang, translatorFor } from "@/lib/i18n";
@@ -94,7 +95,10 @@ export default function RecommendationsScreen() {
       data={rows}
       keyExtractor={(row, i) => (row.kind === "card" ? row.rec.article.id : `divider-${i}`)}
       ListHeaderComponent={
-        <Header palette={palette} country={country} settings={settings.data} lang={lang} />
+        <>
+          <AccountRow palette={palette} />
+          <Header palette={palette} country={country} settings={settings.data} lang={lang} />
+        </>
       }
       ListEmptyComponent={<EmptyFeed palette={palette} t={t} />}
       ItemSeparatorComponent={() => <View style={{ height: space.md }} />}

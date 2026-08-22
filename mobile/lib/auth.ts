@@ -3,7 +3,7 @@ import * as Google from "expo-auth-session/providers/google";
 import * as WebBrowser from "expo-web-browser";
 
 import { config } from "./config.ts";
-import { clearSession, saveSession, type StoredSession } from "./session.ts";
+import { clearSession, hasStoredToken, saveSession, type StoredSession } from "./session.ts";
 
 /**
  * Native Google sign-in, and the exchange that turns it into a Hidden View session.
@@ -107,4 +107,4 @@ export async function signOut(): Promise<void> {
   await clearSession();
 }
 
-export { AuthSession, Google };
+export { AuthSession, Google, hasStoredToken };

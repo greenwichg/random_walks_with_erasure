@@ -81,3 +81,19 @@ export async function clearSession(): Promise<void> {
 export function currentToken(): string | null {
   return cached;
 }
+
+/**
+ * Whether the keystore holds a token — the ANSWER, never the token.
+ *
+ * For the account row, which has to make "the bearer token is stored securely" and "sign-out removed
+ * it" observable on a device where there is no devtools panel. It reads the keystore rather than the
+ * in-memory cache on purpose: the cache would say yes for a process that had simply not written
+ * anything down, which is exactly the failure the check exists to rule out.
+ */
+export async function hasStoredToken(): Promise<boolean> {
+  try {
+    return (await SecureStore.getItemAsync(TOKEN_KEY)) !== null;
+  } catch {
+    return false;
+  }
+}

@@ -18,6 +18,8 @@ interface Extra {
   googleIosClientId?: string;
   googleAndroidClientId?: string;
   googleWebClientId?: string;
+  /** Which EAS profile produced this binary — `development`, `preview`, `production`, or `local`. */
+  buildProfile?: string;
 }
 
 const extra = (Constants.expoConfig?.extra ?? {}) as Extra;
@@ -28,6 +30,9 @@ export const config = {
   googleIosClientId: extra.googleIosClientId ?? "",
   googleAndroidClientId: extra.googleAndroidClientId ?? "",
   googleWebClientId: extra.googleWebClientId ?? "",
+  // Shown on the account row so a tester reporting a result can say WHICH binary produced it. Three
+  // builds of the same app pointed at different hosts look identical on a home screen.
+  buildProfile: extra.buildProfile ?? "local",
 } as const;
 
 /**

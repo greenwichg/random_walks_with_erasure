@@ -64,25 +64,32 @@ revoke tokens, which is what stops a stolen one locking its owner out. Revoke fr
 
 ## Configuration
 
-`app.json` → `expo.extra`. Everything there is a public identifier; the bearer token is minted at
-runtime and lives in the keystore.
+`mobile/.env` — gitignored; copy `mobile/.env.example`. `app.config.ts` reads it at build time and
+puts the values in `expo.extra`. Everything there is a public identifier (a native OAuth client has
+no confidential half); they are kept out of git because they differ per deployment, not because they
+are credentials. The one credential this app holds is the bearer token, minted at runtime into the
+platform keystore.
 
-| Key | What it is |
+```bash
+cp mobile/.env.example mobile/.env
+npm run verify:config --workspace @ih/mobile     # prints no values
+```
+
+| Variable | What it is |
 |---|---|
-| `apiBaseUrl` | the deployment. **`localhost` resolves to the phone on a real device** — use the LAN address or a tunnel |
-| `googleIosClientId` | Google Cloud Console → OAuth client → iOS, needs the bundle identifier |
-| `googleAndroidClientId` | → Android, needs the package name **and the SHA-1 of the signing certificate** |
-| `googleWebClientId` | the existing web client, which Expo's dev proxy uses |
+| `EXPO_PUBLIC_API_BASE_URL` | the deployment. **`localhost` resolves to the phone on a real device** |
+| `EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID` | Google Console → OAuth client → iOS, needs the bundle identifier |
+| `EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID` | → Android, needs the package name **and the SHA-1 of the signing certificate** |
+| `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` | the existing web client, which Expo's dev proxy uses |
 
 The server needs the matching `GOOGLE_IOS_CLIENT_ID` / `GOOGLE_ANDROID_CLIENT_ID` (see
 `web/.env.example`), or `/api/auth/mobile` answers `500 not-configured` and mints nothing.
 
-**The Android SHA-1 is the step that stalls this work.** Register both the debug keystore and the
-EAS release keystore (`eas credentials`); a missing fingerprint fails sign-in on the device with a
-bare `DEVELOPER_ERROR` that never mentions certificates.
-
-**While the OAuth consent screen is in Testing**, only listed test users can sign in (max 100) —
-a second gate, independent of `BETA_ALLOWLIST`. A tester missing from either is refused.
+**`docs/MOBILE_DEVICE_TEST.md` is the full walkthrough** — the console steps, the EAS build profiles
+and the seven device checks. Two things from it worth knowing before you start: the Android SHA-1
+comes from `eas credentials` and a missing one fails sign-in with a bare `DEVELOPER_ERROR` that never
+mentions certificates; and the Google consent screen in Testing status is a second gate on top of
+`BETA_ALLOWLIST`, so a tester must be on both lists.
 
 ## What is verified, and what is not
 

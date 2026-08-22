@@ -120,7 +120,7 @@ client used by NextAuth and cannot be used by a native app.
 | Client | Needs | Notes |
 |---|---|---|
 | **Web** (exists) | — | keep; NextAuth uses it |
-| **iOS** (new) | the bundle identifier, e.g. `com.hiddenview.app` | no client secret; Google returns a reversed-client-ID URL scheme that goes in `app.json` |
+| **iOS** (new) | the bundle identifier, e.g. `com.hiddenview.app` | no client secret; Google returns a reversed-client-ID URL scheme that goes in the Expo config |
 | **Android** (new) | the package name **and the SHA-1 fingerprint of the signing certificate** | register **two**: the debug keystore for local development builds, and the EAS-managed release keystore (`eas credentials`) |
 
 The Android SHA-1 is the step that most often stalls this work: sign-in fails with a bare
@@ -184,7 +184,7 @@ from the anonymous one for a reader with reads.
 
 ### 3b — Expo shell
 
-4. `mobile/` scaffold: `app.json`, `metro.config.js` (monorepo `watchFolders` + `nodeModulesPaths`),
+4. `mobile/` scaffold: the Expo config, `metro.config.js` (monorepo `watchFolders` + `nodeModulesPaths`),
    `babel.config.js`, expo-router `app/_layout.tsx`, a tab layout with one real tab and placeholders.
 5. `@ih/core` as a declared dependency (the Phase 2 lesson — npm links only what a package asks for).
 6. `mobile/design/`: tokens ported from `web/app/globals.css`'s real palette, not invented.

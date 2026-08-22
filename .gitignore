@@ -107,7 +107,12 @@ terraform.rc
 packages/*/node_modules
 mobile/node_modules
 
-# The Expo app's build output, for when there is one.
+# The Expo app's build output.
 /mobile/.expo/
 /mobile/android/
 /mobile/ios/
+
+# Mobile build-time configuration. Public identifiers, but per-deployment: see mobile/.env.example.
+# The bearer token is never here — it is minted at runtime into the platform keystore.
+/mobile/.env
+/mobile/.env.local
