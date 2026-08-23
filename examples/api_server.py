@@ -628,7 +628,8 @@ _BLINDSPOT_BOOST = 4.0
 REC_OVERFETCH = 3
 
 
-def record_feed_composition(recs: list, *, user_side: float, kind: str) -> None:
+def record_feed_composition(recs: list, *, user_side: float, kind: str,
+                            story_of=None, already_shown=(), blindspot_topics=()) -> None:
     """Record what a served feed was MADE OF, as ``/api/metrics`` counters.
 
     Written because verifying the publisher cap in production required reconstructing, by hand and
@@ -656,6 +657,23 @@ def record_feed_composition(recs: list, *, user_side: float, kind: str) -> None:
     "less traffic" instead of "the feed broke". ``feed_served_total + feed_empty_total`` is the
     honest request count; the ratio between them is the health signal.
 
+    **Feed-quality extension (Tier 1, docs/X_ALGORITHM_AUDIT_AND_PROPOSAL.md)** — the audit's
+    evaluation framework, computed where the feed is assembled so eval and dashboards read one
+    code path. All sums over non-empty feeds, same-``kind`` means as above:
+
+    * ``feed_hhi_bp_total``       publisher-concentration HHI in basis points (Σ share² × 10⁴) —
+      the metric ``PUBLISHER_CONCENTRATION_EVALUATION.md`` computed by hand, recorded per serve
+    * ``feed_topics_total``       distinct topics — the spread the topic quota bounds
+    * ``feed_story_dup_total``    cards beyond a story's first (``story_of``: article id → story
+      id; the story quota's target, measurable before AND after enabling it)
+    * ``feed_repeat_total``       cards this reader was already shown (``already_shown``: the
+      repetition ids the request ranked with) — the repetition decay's target, same logic
+    * ``feed_blindspot_total``    cards on the reader's measured blind-spot topics
+
+    Median card age is deliberately absent: a card's real ``publishedAt`` is joined AFTER this
+    point (``_enrich_rec_media``), and recording a fabricated age here would be the exact
+    dishonesty Commit C4 removed from the serializer.
+
     ``kind`` separates the blended feed from single-strategy requests, whose plan totals differ;
     mixing them would corrupt every mean. Bounded by construction (a handful of kinds x a feed's
     length) and never raises — recording is purely observational."""
@@ -664,10 +682,27 @@ def record_feed_composition(recs: list, *, user_side: float, kind: str) -> None:
             obs_metrics.incr(f"feed_empty_total|{kind}")
             return
         pubs: dict = {}
-        cross = 0
+        topics: set = set()
+        stories: dict = {}
+        cross = repeat = blind = 0
+        shown = set(already_shown or ())
+        gaps = {str(t).strip().lower() for t in (blindspot_topics or ()) if str(t).strip()}
         for r in recs:
-            p = ((r.get("article") or {}).get("publisher")) or "?"
+            art = r.get("article") or {}
+            p = art.get("publisher") or "?"
             pubs[p] = pubs.get(p, 0) + 1
+            t = str(art.get("topic") or "").strip().lower()
+            if t:
+                topics.add(t)
+            if t and t in gaps:
+                blind += 1
+            aid = str(art.get("id") or "")
+            if aid and aid in shown:
+                repeat += 1
+            if story_of is not None and aid:
+                sid = story_of(aid)
+                if sid is not None:
+                    stories[sid] = stories.get(sid, 0) + 1
             if r.get("crossCutting"):
                 cross += 1
         obs_metrics.incr(f"feed_served_total|{kind}")
@@ -677,6 +712,14 @@ def record_feed_composition(recs: list, *, user_side: float, kind: str) -> None:
         if user_side:
             obs_metrics.incr(f"feed_sided_reader_total|{kind}")
         obs_metrics.incr(f"feed_top_outlet|{kind}|{max(pubs.values())}")
+        n = len(recs)
+        obs_metrics.incr(f"feed_hhi_bp_total|{kind}",
+                         int(round(10000 * sum((c / n) ** 2 for c in pubs.values()))))
+        obs_metrics.incr(f"feed_topics_total|{kind}", len(topics))
+        obs_metrics.incr(f"feed_story_dup_total|{kind}",
+                         sum(c - 1 for c in stories.values() if c > 1))
+        obs_metrics.incr(f"feed_repeat_total|{kind}", repeat)
+        obs_metrics.incr(f"feed_blindspot_total|{kind}", blind)
     except Exception:
         pass                                   # observation must never break a served feed
 
@@ -2575,10 +2618,18 @@ class Backend:
             for r in recs:
                 r["countryMatch"] = str((r.get("article") or {}).get("id")) in matched
         # One funnel: the demo path and the signed-in Measured path (personalize.py) both land
-        # here, so every served feed is counted exactly once.
-        record_feed_composition(recs, user_side=float(user_side),
-                                kind=strategy if strategy in ("rwe-b", "rwe-d", "adaptive")
-                                else "blend")
+        # here, so every served feed is counted exactly once. The quality inputs mirror the
+        # ranking inputs above — same story maps, same repetition ids, same blind-spot topics —
+        # so the metrics measure exactly what the mechanisms they observe consumed.
+        rep_ids = (params or {}).get("repetition") or {}
+        record_feed_composition(
+            recs, user_side=float(user_side),
+            kind=strategy if strategy in ("rwe-b", "rwe-d", "adaptive") else "blend",
+            story_of=lambda aid: (self.story_by_id.get(aid)
+                                  or (self.story_by_url.get(aid)
+                                      if aid.startswith(("http://", "https://")) else None)),
+            already_shown=set(rep_ids.get("unopened") or ()) | set(rep_ids.get("opened") or ()),
+            blindspot_topics=bs_topics)
         return recs
 
     def recommendations(self, u: int, strategy: str | None = None,
