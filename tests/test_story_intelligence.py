@@ -124,11 +124,53 @@ def test_future_dated_timestamps_never_fabricate_freshness():
     assert si.compute_freshness(all_future, now=NOW, th=TH)["band"] == "Archived"
 
 
-def test_breaking_rule_is_unchanged_by_the_recalibration():
-    """Scope pin: Breaking was deliberately left for its own audit. Same fixture as the original
-    Breaking test, same result — and an old cluster re-igniting with a real burst still Breaks."""
-    reignite = _story([_cov("A", 0.5), _cov("B", 1.0), _cov("C", 100), _cov("D", 120)])
-    assert si.compute_freshness(reignite, now=NOW, th=TH)["band"] == "Breaking"
+# --------------------------------------------------------------------------- #
+# Breaking's own audit — the V4 recalibration, pinned against its production evidence
+# --------------------------------------------------------------------------- #
+def test_breaking_requires_distinct_publishers_in_the_burst():
+    """One outlet republishing itself carried 2 of 8 live Breaking badges — one of them a
+    14-publisher story whose whole "burst" was a single outlet's double copy. Confirmation
+    means a SECOND outlet, not a second copy."""
+    same_pub = _story([_cov("AP", 0.5), _cov("AP", 1.0), _cov("NPR", 100), _cov("BBC", 120)])
+    f = si.compute_freshness(same_pub, now=NOW, th=TH)
+    assert f["band"] != "Breaking", "a single outlet's copies must never confirm a break"
+    assert f["band"] == "Active"     # old cluster + a real fresh article = receiving coverage
+    two_pubs = _story([_cov("AP", 0.5), _cov("NPR", 1.0), _cov("BBC", 100), _cov("Fox", 120)])
+    assert si.compute_freshness(two_pubs, now=NOW, th=TH)["band"] == "Breaking", \
+        "an old cluster re-igniting with a genuine multi-outlet wave breaks again"
+
+
+def test_breaking_adopts_the_notifiers_publisher_floor():
+    """The notifier always required >=3 publishers ("a single-source breaking story is a
+    rumour") while the badge did not — 62% of live badges failed the product's own recorded
+    bar, and all 146 notifications ever sent had >=9 publishers at detection. One standard now."""
+    micro = _story([_cov("AP", 0.5), _cov("NPR", 1.0)])          # 2 pubs, both fresh
+    assert si.compute_freshness(micro, now=NOW, th=TH)["band"] == "Developing"
+    third = _story([_cov("AP", 0.5), _cov("NPR", 1.0), _cov("BBC", 2.0)])
+    assert si.compute_freshness(third, now=NOW, th=TH)["band"] == "Breaking"
+
+
+def test_breaking_window_covers_confirmation_latency():
+    """The audit's missed class: textbook breaking stories (a sinking bulk carrier at 7 outlets,
+    a fatal collision at 6) whose second outlet landed 3–6h after the first — inside the new 6h
+    window, outside the old 3h one."""
+    latent = _story([_cov("AP", 5.5), _cov("NPR", 4.5), _cov("BBC", 4.0)])
+    assert si.compute_freshness(latent, now=NOW, th=TH)["band"] == "Breaking"
+    # …but a story whose newest article is already past the window is not breaking NOW
+    stale = _story([_cov("AP", 8.0), _cov("NPR", 6.5), _cov("BBC", 6.2)])
+    assert si.compute_freshness(stale, now=NOW, th=TH)["band"] == "Developing"
+
+
+def test_breaking_floor_reads_the_notifiers_own_knob(monkeypatch):
+    """The badge floor and the notifier floor are ONE env var (RWE_BREAKING_MIN_PUBLISHERS) with
+    equal defaults — moving the knob moves both surfaces, which is the alignment the audit asked
+    for. story_events is imported here, at test level, precisely because the modules themselves
+    must not import each other."""
+    import story_events
+    monkeypatch.delenv("RWE_BREAKING_MIN_PUBLISHERS", raising=False)
+    assert si.thresholds_from_env()["breakingMinPublishers"] == story_events.min_publishers() == 3
+    monkeypatch.setenv("RWE_BREAKING_MIN_PUBLISHERS", "5")
+    assert si.thresholds_from_env()["breakingMinPublishers"] == story_events.min_publishers() == 5
 
 
 def test_freshness_single_recent_article_is_not_breaking():

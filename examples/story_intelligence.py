@@ -47,7 +47,10 @@ def _milestones_env(name: str, default) -> tuple:
 def thresholds_from_env() -> dict:
     """Configurable freshness / lifecycle / momentum thresholds (hours) + milestone article counts."""
     return {
-        "breakingHours": _int_env("RWE_STORY_BREAKING_HOURS", 3),
+        # Default 6 (was 3): the Breaking audit measured cross-outlet confirmation latency at
+        # 3–6h on this catalog's cadence — textbook breaking stories (a sinking bulk carrier at
+        # 7 outlets, a fatal collision at 6) missed the badge because outlet #2 landed after 3h.
+        "breakingHours": _int_env("RWE_STORY_BREAKING_HOURS", 6),
         "developingHours": _int_env("RWE_STORY_DEVELOPING_HOURS", 12),
         "activeHours": _int_env("RWE_STORY_ACTIVE_HOURS", 48),
         "coolingHours": _int_env("RWE_STORY_COOLING_HOURS", 168),
@@ -58,6 +61,11 @@ def thresholds_from_env() -> dict:
         # badges in the audited window sat on 3-day-plus clusters).
         "developingMaxStoryAgeHours": _int_env("RWE_STORY_DEVELOPING_MAX_AGE_HOURS", 72),
         "developingMinRecent": _int_env("RWE_STORY_DEVELOPING_MIN_RECENT", 3),
+        # Breaking's own audit (same day, the V4 recalibration): the badge's cluster floor reads
+        # the NOTIFIER's env var deliberately — `story_events.min_publishers` wrote down why a
+        # single-source "breaking" is a rumour, and one knob moving both surfaces is the point.
+        # No import in either direction; the shared name is the coupling.
+        "breakingMinPublishers": _int_env("RWE_BREAKING_MIN_PUBLISHERS", 3),
         "milestones": _milestones_env("RWE_STORY_MILESTONES", (2, 5, 10, 20)),
     }
 
@@ -105,8 +113,19 @@ def compute_freshness(story: dict, *, now: datetime, th: dict) -> dict:
     latest publication's age, recent velocity, and a burst check.
 
     Recalibrated against the 2026-08-23 production audit (1,582 stories; 377 badges contradicted
-    by their own coverage — docs figure lives with the band audit). Three evidence-backed rules,
-    Breaking deliberately untouched pending its own audit:
+    by their own coverage — docs figure lives with the band audit), and, same day, Breaking's own
+    audit (the V4 recalibration):
+
+    * **Breaking = confirmed, multi-outlet, now.** Three conditions: newest article within
+      ``breakingHours`` (default 6 — cross-outlet confirmation latency measured at 3–6h, which
+      the old 3h window sat inside: real stories at 6–7 outlets missed the badge while sports
+      micro-clusters wore it); at least two DISTINCT PUBLISHERS in that window (an outlet
+      republishing itself carried 2 of 8 live badges, one of them a 14-publisher story whose
+      "burst" was one outlet's double copy); and the cluster at ``breakingMinPublishers`` — the
+      NOTIFIER's own floor and rationale ("a single-source breaking story is a rumour"), which
+      the badge contradicted: 62% of live badges failed the product's recorded bar, while all
+      146 notifications ever sent had ≥9 publishers at detection. Re-ignition is deliberately
+      preserved: an old cluster with a fresh multi-outlet wave breaks again.
 
     * **Future-dated timestamps are metadata, not news.** Member ages < 0 are ignored everywhere
       here — a stale cluster with one future-stamped copy was measured pinning itself
@@ -123,11 +142,16 @@ def compute_freshness(story: dict, *, now: datetime, th: dict) -> dict:
       in the 24h window (a real second wave, e.g. a re-ignited trade story); otherwise it falls
       through to the Active/Cooling rules like any other ongoing story."""
     cov = _coverage_sorted(story)
-    ages = [h for c in cov
+    aged = [(h, c.get("publisher") or "")
+            for c in cov
             if (h := _hours_since(c.get("publishedAt"), now)) is not None and h >= 0.0]
+    ages = [h for h, _ in aged]
     recent = sum(1 for h in ages if h <= th["momentumWindowHours"])
-    burst = sum(1 for h in ages if h <= th["breakingHours"])
+    burst_pubs = len({p for h, p in aged if h <= th["breakingHours"] and p})
     oldest = max(ages) if ages else None
+    pubs_total = story.get("publisherCount")
+    if pubs_total is None:                     # lightweight dicts: derive from the coverage itself
+        pubs_total = len({p for _, p in aged if p})
     age = _hours_since(story.get("latest") or story.get("updatedAt"), now)
     if age is None or age < 0.0:
         age = min(ages) if ages else None      # future/absent `latest` → newest real member
@@ -136,7 +160,8 @@ def compute_freshness(story: dict, *, now: datetime, th: dict) -> dict:
     recency = 100.0 * (0.5 ** (age / max(1.0, th["activeHours"])))
     score = int(round(min(100.0, recency + min(20, recent * 5))))
     young = oldest is None or oldest <= th["developingMaxStoryAgeHours"]
-    if age <= th["breakingHours"] and burst >= 2:
+    if (age <= th["breakingHours"] and burst_pubs >= 2
+            and int(pubs_total) >= th["breakingMinPublishers"]):
         band = "Breaking"
     elif age <= th["developingHours"] and (young or recent >= th["developingMinRecent"]):
         band = "Developing"
