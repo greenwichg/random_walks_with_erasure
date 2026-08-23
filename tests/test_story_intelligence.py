@@ -62,7 +62,9 @@ def test_freshness_breaking_needs_recent_burst():
 
 def test_freshness_bands_by_age():
     assert si.compute_freshness(_story([_cov("A", 6)]), now=NOW, th=TH)["band"] == "Developing"
-    assert si.compute_freshness(_story([_cov("A", 30)]), now=NOW, th=TH)["band"] == "Active"
+    # Active needs an article inside the 24h window (the 2026-08-23 recalibration), so the
+    # age-band example carries one: newest 20h is in the (12, 48] window AND recently covered.
+    assert si.compute_freshness(_story([_cov("A", 20)]), now=NOW, th=TH)["band"] == "Active"
     assert si.compute_freshness(_story([_cov("A", 100)]), now=NOW, th=TH)["band"] == "Cooling"
     assert si.compute_freshness(_story([_cov("A", 200)]), now=NOW, th=TH)["band"] == "Archived"
 
@@ -70,6 +72,63 @@ def test_freshness_bands_by_age():
 def test_freshness_no_age_is_archived():
     f = si.compute_freshness(_story([], latest=None, updatedAt=None), now=NOW, th=TH)
     assert f["band"] == "Archived" and f["score"] == 0 and f["latestAgeHours"] is None
+
+
+# --------------------------------------------------------------------------- #
+# The 2026-08-23 recalibration — pinned against the production audit's findings
+# --------------------------------------------------------------------------- #
+def test_active_requires_an_article_in_the_last_day():
+    """65.5% of production Active badges sat on stories with ZERO articles in 24h. A story inside
+    the Active age window but quiet for a full day is Cooling — the badge promises activity."""
+    quiet = _story([_cov("A", 30), _cov("B", 44)])           # newest 30h → nothing in 24h
+    assert si.compute_freshness(quiet, now=NOW, th=TH)["band"] == "Cooling"
+    covered = _story([_cov("A", 20), _cov("B", 44)])         # newest 20h → one in the window
+    assert si.compute_freshness(covered, now=NOW, th=TH)["band"] == "Active"
+
+
+def test_active_can_never_read_as_two_days_old():
+    """The boundary contradiction: timeAgo rounds ≥36h to "2 days", and production showed 199
+    Active badges beside "Updated 2d ago". Active now implies an article within 24h, so every
+    age in the rounding zone lands in Cooling — pinned across the zone."""
+    for h in (36, 40, 44, 47.9):
+        band = si.compute_freshness(_story([_cov("A", h)]), now=NOW, th=TH)["band"]
+        assert band == "Cooling", f"newest {h}h must not badge Active"
+
+
+def test_developing_requires_youth_or_a_genuine_burst():
+    """35 production Developing/Breaking badges sat on 3-day-plus clusters kept "unfolding" by a
+    syndicated drip. Old cluster + trickle → Active (it IS receiving coverage — just not
+    developing); old cluster + real second wave → Developing stays."""
+    young = _story([_cov("A", 6), _cov("B", 40)])            # cluster span well under 72h
+    assert si.compute_freshness(young, now=NOW, th=TH)["band"] == "Developing"
+    drip = _story([_cov("A", 6), _cov("B", 100), _cov("C", 120)])   # old cluster, 1 in 24h
+    assert si.compute_freshness(drip, now=NOW, th=TH)["band"] == "Active"
+    wave = _story([_cov("A", 5), _cov("B", 7), _cov("C", 9),        # old cluster, 3 in 24h
+                   _cov("D", 100), _cov("E", 120)])
+    assert si.compute_freshness(wave, now=NOW, th=TH)["band"] == "Developing"
+
+
+def test_future_dated_timestamps_never_fabricate_freshness():
+    """Measured in the pre-fix audit probe: a 5-day-old story with one future-dated copy scored
+    ``Developing, 100, age −6h`` and its momentum read Growing. Future stamps are metadata errors,
+    not news: they are ignored for age, windows, and momentum's new-publisher check."""
+    fut = dict(_cov("C", -6.0))                              # 6h in the FUTURE
+    stale = _story([_cov("A", 120), _cov("B", 130), fut])
+    f = si.compute_freshness(stale, now=NOW, th=TH)
+    assert f["band"] == "Cooling", "the stale story's real coverage decides the band"
+    assert f["latestAgeHours"] == 120.0 and f["recentArticles"] == 0
+    m = si.compute_momentum(stale, now=NOW, th=TH)
+    assert m["state"] == "Declining" and m["newPublishers"] == 0
+    # a story with NO non-future timestamp has no honest age at all
+    all_future = _story([dict(_cov("A", -2.0)), dict(_cov("B", -4.0))])
+    assert si.compute_freshness(all_future, now=NOW, th=TH)["band"] == "Archived"
+
+
+def test_breaking_rule_is_unchanged_by_the_recalibration():
+    """Scope pin: Breaking was deliberately left for its own audit. Same fixture as the original
+    Breaking test, same result — and an old cluster re-igniting with a real burst still Breaks."""
+    reignite = _story([_cov("A", 0.5), _cov("B", 1.0), _cov("C", 100), _cov("D", 120)])
+    assert si.compute_freshness(reignite, now=NOW, th=TH)["band"] == "Breaking"
 
 
 def test_freshness_single_recent_article_is_not_breaking():

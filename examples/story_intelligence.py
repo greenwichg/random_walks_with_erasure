@@ -52,6 +52,12 @@ def thresholds_from_env() -> dict:
         "activeHours": _int_env("RWE_STORY_ACTIVE_HOURS", 48),
         "coolingHours": _int_env("RWE_STORY_COOLING_HOURS", 168),
         "momentumWindowHours": _int_env("RWE_STORY_MOMENTUM_WINDOW_HOURS", 24),
+        # Recalibration (2026-08-23 production audit): "Developing" additionally requires the
+        # CLUSTER to be young, or a genuine recent burst — otherwise a week-old story kept
+        # "Developing" forever by one syndicated drip per day (35 of 114 Developing/Breaking
+        # badges in the audited window sat on 3-day-plus clusters).
+        "developingMaxStoryAgeHours": _int_env("RWE_STORY_DEVELOPING_MAX_AGE_HOURS", 72),
+        "developingMinRecent": _int_env("RWE_STORY_DEVELOPING_MIN_RECENT", 3),
         "milestones": _milestones_env("RWE_STORY_MILESTONES", (2, 5, 10, 20)),
     }
 
@@ -96,20 +102,47 @@ def _count_between(cov: list, now: datetime, lo_h: float, hi_h: float) -> int:
 # --------------------------------------------------------------------------- #
 def compute_freshness(story: dict, *, now: datetime, th: dict) -> dict:
     """A freshness band (Breaking / Developing / Active / Cooling / Archived) + a 0–100 score, from the
-    latest publication's age, recent velocity, and a burst check."""
+    latest publication's age, recent velocity, and a burst check.
+
+    Recalibrated against the 2026-08-23 production audit (1,582 stories; 377 badges contradicted
+    by their own coverage — docs figure lives with the band audit). Three evidence-backed rules,
+    Breaking deliberately untouched pending its own audit:
+
+    * **Future-dated timestamps are metadata, not news.** Member ages < 0 are ignored everywhere
+      here — a stale cluster with one future-stamped copy was measured pinning itself
+      ``Developing, score 100, age −6h``. A ``latest`` that is itself future falls back to the
+      newest REAL member; a story with no non-future timestamp is Archived, never "fresh".
+    * **Active requires activity.** 342 of 522 Active badges (65.5%) sat on stories with zero
+      articles in 24h; every one was momentum-Declining. A story inside the Active age window
+      with an empty 24h window is Cooling. This also removes the "Active + Updated 2d ago"
+      contradiction structurally: Active now implies an article within ``momentumWindowHours``,
+      and the card's rounded timestamp cannot reach "2 days" from there.
+    * **Developing requires youth or a genuine burst.** 35 Developing/Breaking badges sat on
+      3-day-plus clusters kept "unfolding" by one syndicated drip per day. A cluster older than
+      ``developingMaxStoryAgeHours`` keeps Developing only with ``developingMinRecent``+ articles
+      in the 24h window (a real second wave, e.g. a re-ignited trade story); otherwise it falls
+      through to the Active/Cooling rules like any other ongoing story."""
     cov = _coverage_sorted(story)
+    ages = [h for c in cov
+            if (h := _hours_since(c.get("publishedAt"), now)) is not None and h >= 0.0]
+    recent = sum(1 for h in ages if h <= th["momentumWindowHours"])
+    burst = sum(1 for h in ages if h <= th["breakingHours"])
+    oldest = max(ages) if ages else None
     age = _hours_since(story.get("latest") or story.get("updatedAt"), now)
-    recent = _count_between(cov, now, -1e9, th["momentumWindowHours"])
-    burst = _count_between(cov, now, -1e9, th["breakingHours"])
+    if age is None or age < 0.0:
+        age = min(ages) if ages else None      # future/absent `latest` → newest real member
     if age is None:
         return {"band": "Archived", "score": 0, "latestAgeHours": None, "recentArticles": recent}
     recency = 100.0 * (0.5 ** (age / max(1.0, th["activeHours"])))
     score = int(round(min(100.0, recency + min(20, recent * 5))))
+    young = oldest is None or oldest <= th["developingMaxStoryAgeHours"]
     if age <= th["breakingHours"] and burst >= 2:
         band = "Breaking"
-    elif age <= th["developingHours"]:
+    elif age <= th["developingHours"] and (young or recent >= th["developingMinRecent"]):
         band = "Developing"
-    elif age <= th["activeHours"]:
+    elif age <= th["activeHours"] and (recent > 0 or not cov):
+        # `not cov`: a lightweight story dict with no coverage list cannot prove OR disprove
+        # activity — degrade to the age-only rule rather than silently demoting on missing data.
         band = "Active"
     elif age <= th["coolingHours"]:
         band = "Cooling"
@@ -123,7 +156,9 @@ def compute_momentum(story: dict, *, now: datetime, th: dict) -> dict:
     plus whether new publishers joined recently. Deterministic — no AI."""
     cov = _coverage_sorted(story)
     w = th["momentumWindowHours"]
-    recent = _count_between(cov, now, -1e9, w)
+    # Future-dated timestamps are ignored here for the same reason as in compute_freshness: a
+    # future-stamped copy was measured making a stale story "Growing" (and its publisher "new").
+    recent = _count_between(cov, now, 0.0, w)
     prior = _count_between(cov, now, w, 2 * w)
     first_seen: dict = {}
     for c in cov:
@@ -131,7 +166,7 @@ def compute_momentum(story: dict, *, now: datetime, th: dict) -> dict:
         if p and p not in first_seen:
             first_seen[p] = c.get("publishedAt")
     new_pubs = sum(1 for d in first_seen.values()
-                   if (h := _hours_since(d, now)) is not None and h <= w)
+                   if (h := _hours_since(d, now)) is not None and 0.0 <= h <= w)
     if recent > prior or new_pubs > 0:
         state = "Growing"
     elif recent < prior or recent == 0:
