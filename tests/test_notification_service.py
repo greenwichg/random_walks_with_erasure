@@ -676,7 +676,7 @@ def test_no_notification_setting_promises_a_channel_that_does_not_exist():
     promises_mail = re.compile(r"\be-?mails?\b|\bcorreos?\b|\bcourriels?\b", re.IGNORECASE)
     promising_keys, offenders = set(), []
     for lang in ("en", "es", "fr", "de", "pt"):
-        cat = json.loads((ROOT / "web" / "messages" / f"{lang}.json").read_text(encoding="utf-8"))
+        cat = json.loads((ROOT / "packages" / "core" / "i18n" / "messages" / f"{lang}.json").read_text(encoding="utf-8"))
         for key, value in cat.items():
             if key.startswith("settings.notif.") and promises_mail.search(value):
                 promising_keys.add(key)

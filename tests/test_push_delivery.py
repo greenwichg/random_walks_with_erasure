@@ -157,7 +157,7 @@ def test_the_size_check_counts_bytes_not_characters():
 def test_the_engines_deep_link_matches_the_web_metadata_table():
     """The two must agree or a push sends readers somewhere the inbox would not. Read from the web
     module rather than restated, so a change on either side fails here."""
-    source = (ROOT / "web" / "lib" / "notification-kinds.ts").read_text(encoding="utf-8")
+    source = (ROOT / "packages" / "core" / "logic" / "notification-kinds.ts").read_text(encoding="utf-8")
     assert 'deepLinkField: "storyId"' in source
     assert '"/stories/"' in source or "/stories/${" in source
 
@@ -171,7 +171,7 @@ def test_every_static_href_matches_the_web_metadata_table():
     onto their own period pages, and nothing here would have noticed the engine still pointing at
     the old one. Parsed out of the web table rather than restated, so either side moving alone
     fails."""
-    source = (ROOT / "web" / "lib" / "notification-kinds.ts").read_text(encoding="utf-8")
+    source = (ROOT / "packages" / "core" / "logic" / "notification-kinds.ts").read_text(encoding="utf-8")
     # kind: { … href: "…" } — the table is a flat object literal, one block per kind.
     web = dict(re.findall(r'^\s{2}(\w+):\s*\{.*?^\s{4}href:\s*"([^"]+)"',
                           source, re.DOTALL | re.MULTILINE))

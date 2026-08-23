@@ -38,8 +38,16 @@ export const useStories = (query?: StoryQuery, opts?: { enabled?: boolean }) =>
     // topic-scoped related query needs the story's topic first) without a conditional hook call.
     enabled: opts?.enabled ?? true,
   });
+/** One Story. A 404 is a real, permanent answer — the event dissolved when the catalog window
+ *  moved past it (stale notification deep-links land here) — so it is surfaced immediately, never
+ *  retried: the page renders its "story not found" state instead of a retry spinner-to-nowhere. */
 export const useStory = (id: string) =>
-  useQuery({ queryKey: queryKeys.story(id), queryFn: () => services.story(id), enabled: !!id });
+  useQuery({
+    queryKey: queryKeys.story(id),
+    queryFn: () => services.story(id),
+    enabled: !!id,
+    retry: (count, error) => (error as { status?: number })?.status !== 404 && count < 3,
+  });
 /** Publisher Intelligence profile; a 404 (unknown publisher) is surfaced, not retried. */
 export const usePublisher = (name: string) =>
   useQuery({

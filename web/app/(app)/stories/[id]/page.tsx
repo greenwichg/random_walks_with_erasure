@@ -48,7 +48,7 @@ export default function StoryDetailPage() {
   const { t, timeAgo } = useTranslation();
   const params = useParams<{ id: string }>();
   const id = params?.id ?? "";
-  const { data: story, isLoading, isError, refetch } = useStory(id);
+  const { data: story, isLoading, isError, error, refetch } = useStory(id);
   // Related coverage, same editorial rule as before — same topic first, then the day's top events,
   // never this story itself — served by two bounded queries whose limits are worst-case sized: the
   // topic query needs 4 after excluding self (5 covers it), and the top-6 fill still yields 4 when
@@ -121,6 +121,22 @@ export default function StoryDetailPage() {
     );
   }
   if (isError) {
+    // A 404 is not "something went wrong" — the event dissolved when the catalog window moved
+    // past it, which is exactly where a days-old breaking-news notification's deep link lands.
+    // Retrying can never load it, so that path gets the page's own "story not found" state
+    // (the same one the null branch below renders) instead of a retry button to nowhere.
+    if ((error as { status?: number } | null)?.status === 404) {
+      return (
+        <PageContainer>
+          <div className="mb-5">{back}</div>
+          <EmptyState
+            icon={Newspaper}
+            title={t("stories.notFound.title")}
+            description={t("stories.notFound.body")}
+          />
+        </PageContainer>
+      );
+    }
     return (
       <PageContainer>
         <div className="mb-5">{back}</div>
