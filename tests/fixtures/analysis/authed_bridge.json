@@ -20,6 +20,7 @@
     "imageHeight": null,
     "imageMimeType": null,
     "imageSource": null,
+    "imageSuspect": false,
     "imageWidth": null,
     "language": null,
     "lean": -1.0,
@@ -36,6 +37,7 @@
     "publisherLogoSource": "site-icon",
     "readingMinutes": 2,
     "register": "reporting",
+    "sourceType": null,
     "topic": "Politics",
     "url": "https://theguardian.com/story/an-cluster-0"
   },
@@ -177,6 +179,7 @@
         "imageHeight": null,
         "imageMimeType": null,
         "imageSource": null,
+        "imageSuspect": false,
         "imageWidth": null,
         "language": null,
         "lean": 0.0,
@@ -193,6 +196,7 @@
         "publisherLogoSource": "site-icon",
         "readingMinutes": 2,
         "register": "reporting",
+        "sourceType": null,
         "topic": "Politics",
         "url": "https://apnews.com/story/an-cluster-1"
       },
