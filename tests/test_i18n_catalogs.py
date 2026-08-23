@@ -9,10 +9,10 @@ import re
 
 import pytest
 
-MESSAGES = pathlib.Path(__file__).resolve().parent.parent / "web" / "messages"
+MESSAGES = pathlib.Path(__file__).resolve().parent.parent / "packages" / "core" / "i18n" / "messages"
 LANGS = ("en", "es", "fr", "de", "pt")
 
-# Mirrors explanationKey() in web/lib/i18n-core.ts — every supported (type, variant) needs a template.
+# Mirrors explanationKey() in packages/core/i18n/core.ts — every supported (type, variant) needs a template.
 REQUIRED_EXPLANATION_KEYS = (
     "explanation.story_match.same_event",
     "explanation.story_match.follow_up",
