@@ -354,6 +354,24 @@ parity-tested) → land Tier 1 units each behind an env flag default-off → sha
 beta cohort → default-on with kill switch. The current blend remains the fallback at every step;
 nothing replaces RWE-D/RWE-B — every proposal here *feeds* them or *selects after* them.
 
+### Tier-1 production enablement — 2026-08-23, VERIFIED
+
+Deployed to production at `f80aaa9` and **enabled**: `RWE_REC_FEEDBACK=1`, `RWE_REC_REPETITION=1`,
+`RWE_REC_MAX_PER_STORY=1`, `RWE_REC_MAX_PER_TOPIC=6`, `RWE_REC_BLINDSPOT=1`. Execution verified
+end-to-end on the live system (`deploy/ops/verify-recs.sh`, four runs + a 30-minute soak, restart
+count 0 throughout): repetition state reached ranking (`feed_repeat_total|blend` 0 → 23 across the
+operator's serves), a live dislike was recorded (`rec_feedback` 9 → 10), consumed without error,
+**and confirmed gone from the reloaded feed by the operator**; the operator also confirmed the
+second load's ordering visibly changed under repetition decay. Zero story duplicates in 19 served
+feeds under the story cap; blind-spot cards ~3 per signed-in feed; publisher HHI ≈ 870 bp; the
+anonymous showcase unchanged in shape. Baseline database backup
+`ih_beta-20260823T063741Z.db.gz` (integrity-checked); rollback ref `2fa8369`.
+
+One deployment defect was found by this verification and fixed in `f80aaa9`: the flags were
+structurally undeployable — absent from compose's `environment:` allowlist, the second documented
+occurrence of the RWE_STORY_SLOT failure mode; `tests/test_rec_flags_deployable.py` now makes a
+third occurrence a CI failure.
+
 ### Tier-1 implementation status (updated as steps land)
 
 | Step | Status | Where |
