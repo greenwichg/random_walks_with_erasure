@@ -1103,7 +1103,14 @@ def _blank_args(**overrides):
     return argparse.Namespace(**base)
 
 
-def test_profile_defaults_to_synthetic():
+def test_profile_defaults_to_synthetic(monkeypatch):
+    """No CLI args AND no environment → synthetic. The absence is stated explicitly because it is
+    not a given in a full-suite run: live-feed activation deliberately writes RWE_PROFILE=qbias
+    into os.environ ("the profile is now authoritative" — asserted behavior in
+    test_api_fastapi), so any earlier test that booted the app's lifespan leaves it behind
+    process-wide and this test was the suite's one order-dependent failure."""
+    monkeypatch.delenv("RWE_PROFILE", raising=False)
+    monkeypatch.delenv("RWE_LEAN_TAU", raising=False)
     p = api_server.resolve_profile(_blank_args())
     assert p.name == "synthetic" and p.kind == "synthetic" and p.domain == "news"
     assert p.lean_tau == api_server.hr.LEAN_TAU  # sourced from the engine, not hard-coded
