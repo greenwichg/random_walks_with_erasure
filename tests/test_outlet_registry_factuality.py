@@ -75,7 +75,9 @@ def test_the_backfill_changed_no_credibility_value():
             .read_text(encoding="utf-8").splitlines() if not ln.lstrip().startswith("#")]
     rows = [r for r in csv.DictReader(body) if (r.get("canonical") or "").strip()]
     cred = [r for r in rows if (r.get("credibility") or "").strip()]
-    assert len(cred) == 70, f"credibility row count moved: {len(cred)} (was 70)"
+    # 70 → 71 on 2026-08-23: the sixth tranche added NewsBusters with MBFC's own MIXED verdict,
+    # carried as credibility=medium — a new row, not a changed cell in an existing one.
+    assert len(cred) == 71, f"credibility row count moved: {len(cred)} (was 71)"
     # The gate's own view of the file agrees.
     assert sum(1 for o in reg.default_registry().outlets() if o.credibility == "low") == 17
 

@@ -562,6 +562,33 @@ def test_the_unrated_set_is_exactly_the_documented_one(reg):
         # categorical label this file maps from. A rating out of reach is not a rating that does not
         # exist, and the difference is what tells a future curator this row is retrievable.
         "Aberdeen Press and Journal",
+        # The sixth tranche's identity-only rows (2026-08-23, the unlocks pass + international
+        # majors). Each exists because a high-volume identity was resolving to a bare domain;
+        # none has a usable rating at a rater this file accepts. The tranche comment in the CSV
+        # carries the per-row provenance; the reasons here are the categorical ones.
+        "NBC Sports",          # sports desk; NBC News's rating belongs to NBC News (the O Globo rule)
+        "Sky Sports",          # sports desk; Sky News's rating likewise stays where it is
+        "Sporting News",       # sports desk, no rater page
+        "Field Gulls",         # single-team SB Nation fan site, no rater page
+        "BBC Sky at Night Magazine",  # hobbyist astronomy magazine, no rater page
+        "WVTM 13",             # Birmingham NBC affiliate, no rater page; locality is the fact
+        "Temple Daily Telegram",  # Temple, TX daily, no rater page; locality is the fact
+        "MyJoyOnline",         # Ghanaian portal (Joy FM), no rater page
+        "NL Times",            # English-language Dutch site, no rater page
+        "Thai Rath",           # Thailand's largest daily, no rater page
+        "Dinamalar",           # Tamil daily; tranche five recorded "no MBFC page", now identity-only
+        "PerthNow",            # no rater page; locality is the fact
+        "BioBioChile",         # Chilean radio network's portal, no rater page
+        "ETtoday",             # Taiwanese portal, no rater page
+        "Obozrevatel",         # Ukrainian portal, no rater page
+        "Index.hu",            # Hungarian portal, no rater page
+        "G1",                  # only Globo, the parent group, is rated — the O Globo refusal again
+        "CafeF",               # Vietnamese business portal, no rater page
+        "CafeBiz",             # Vietnamese business portal, no rater page
+        "Soha",                # Vietnamese portal, no rater page
+        # The Billboard/Saturday Paper rule, third occurrence: AllSides rates Hankyoreh Left but
+        # marks its own confidence LOW (initial, May 2026), and there is no confidence column here.
+        "The Hankyoreh",
     }
 
 
@@ -2103,6 +2130,13 @@ def test_9gag_is_forum_not_wire_and_carries_no_lean(reg):
 
 def test_globo_group_rating_was_not_taken_for_g1(reg):
     """This file already refused reading O Globo's lean off GLOBO the parent group. G1 is that
-    group's portal, which makes the same inference tempting and no more valid."""
-    for absent in ("g1.globo.com", "G1", "globo.com"):
+    group's portal, which makes the same inference tempting and no more valid. The sixth tranche
+    moved the refusal from "no row" to "a row with no lean" — identity and locality are curated
+    facts, the group's rating still is not — so G1 now resolves, blank, exactly like O Globo."""
+    o = reg.resolve("g1.globo.com")
+    assert o is not None and o.canonical == "G1" and math.isnan(o.lean), "G1 is identity-only"
+    assert reg.resolve("G1").canonical == "G1"
+    # The parent group itself still resolves to nothing: globo.com is not G1's host, and "Globo"
+    # is not a masthead this file lists — taking either would be the group-rating inference.
+    for absent in ("globo.com", "Globo"):
         assert reg.resolve(absent) is None, absent

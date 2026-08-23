@@ -991,7 +991,7 @@ The Asahi Shimbun,-1,asahi.com,JP,,Tokyo,national
 Mainichi Shimbun,-1,mainichi.jp|Mainichi,JP,,Tokyo,national
 Japan Today,-1,japantoday.com,JP,,Tokyo,national
 The Yomiuri Shimbun,1,yomiuri.co.jp,JP,,Tokyo,national
-The Chosun Ilbo,1,chosun.com|english.chosun.com,KR,,Seoul,national
+The Chosun Ilbo,1,chosun.com|english.chosun.com|Chosun,KR,,Seoul,national
 Al-Monitor,-1,al-monitor.com,US,District of Columbia,Washington,international,,high
 Middle East Monitor,-2,middleeastmonitor.com,GB,,London,international,,medium
 TimesLIVE,1,timeslive.co.za,ZA,,Johannesburg,national,,high
@@ -1606,7 +1606,7 @@ Le Droit,0,ledroit.com,CA,Ontario,Ottawa,regional
 Le Journal de Montréal,2,journaldemontreal.com|Journal de Montreal,CA,Quebec,Montreal,national,,medium
 TVA Nouvelles,-1,tvanouvelles.ca|TVA,CA,Quebec,Montreal,national,,medium
 The Canadian Press,0,thecanadianpress.com|Canadian Press|La Presse Canadienne,CA,Ontario,Toronto,international
-CityNews,0,citynews.ca|680news.com|CityNews Toronto,CA,,,national
+CityNews,0,citynews.ca|680news.com|CityNews Toronto|Citynews Ottawa|Citynews Winnipeg,CA,,,national
 CP24,0,cp24.com,CA,Ontario,Toronto,regional
 Hamilton Spectator,-1,thespec.com,CA,Ontario,Hamilton,regional
 Times Colonist,-1,timescolonist.com,CA,British Columbia,Victoria,regional
@@ -1912,3 +1912,65 @@ ABP Live,1,abplive.com,IN,,Noida,national,,,mostly_factual,mbfc,2026-08-10
 #         carries -- `Cbnc` (2 unlocks, while CNBC sits rated at -1), Spectrum Bay News 9,
 #         yoursun.com. This is the best remaining ROI in the file and it needs no rater at all.
 #   Plus one page-read: Union Leader (1 unlock), blocked on MBFC's self-contradictory summary.
+
+#
+# Sixth tranche, 2026-08-23 — the "22-row unlocks pass + international majors" requested after the
+# audit_registry_coverage run of this date (29,041-article window; 3,751 untracked identities).
+# Every identity below was settled FROM THE URL HOST the catalog carries (the line-495 rule), via a
+# read-only production query; every lean is a public rater's, reached through web search of the
+# rater's own page (mediabiasfactcheck.com is egress-blocked from the workbench; the search
+# snippets quote the pages named per row). Hankyoreh: MBFC still has no page, and AllSides rates
+# it Left at LOW CONFIDENCE (initial, May 2026) — this file already refused exactly that import
+# twice ("Same rule as Billboard and Hankyoreh": there is no confidence column, so importing the
+# number would present a hedge as settled). The row below is identity-only; a future pass
+# re-checks AllSides first.
+#
+# Cbnc, the previous pass's "best remaining ROI, decidable only from the URL host": the host is
+# cbnc.com, an anonymous portal republishing Engadget/Reuters/Daily Caller/etc. — an aggregator,
+# not CNBC and not a newsroom. Registered as kind=aggregator, no rating to take.
+#
+# Identity-only rows (blank lean — a public rater covers none of them; the row fixes IDENTITY and
+# nothing else): the sports/science/local set from the unlocks list, and the international majors.
+# Dinamalar and Haberler.com, which tranche five left unregistered with "no MBFC page", are now
+# registered identity-only — same facts, different call: an unrated row that stops 170+ articles
+# resolving to a bare domain is worth having, and it invents nothing. G1 stays lean-blank per this
+# file's own O Globo refusal (a group rating is not a portal rating). Haberler.com is the DOMAIN
+# only: the bare Turkish word "Haberler" arrives on unrelated hosts (bursahakimiyet.com.tr) and is
+# not an alias of anything.
+#
+# SKIPPED, deliberately: "The Star" (ambiguous bare name; both editions already sit rated at
+# thestar.com / thestar.com.my — needs resolution-order work, not a row); Mor Tv (mor-tv.com,
+# unidentifiable); Scenenewspaper.com (Google-News-proxied, unidentifiable); Halifax Today (no
+# URL-host evidence in this catalog); bare "Cafe"/"Index" names (contested across domains).
+NewsBusters,2,newsbusters.org,US,,,national,,medium,mixed,mbfc,2026-08-23
+The Free Press,1,thefp.com,US,,,national,,,mixed,mbfc,2026-08-23
+Mashable,-2,mashable.com,US,,,national,,,mostly_factual,mbfc,2026-08-23
+Lifehacker,-1,lifehacker.com,US,,,national,,,mostly_factual,mbfc,2026-08-23
+The Post-Standard,0,syracuse.com|Syracuse Ny Local News,US,New York,Syracuse,local,,,high,mbfc,2026-08-23
+The Hankyoreh,,hani.co.kr|Hani,KR,,,national
+Index.hr,-1,index.hr,HR,,,national,,,high,mbfc,2026-08-23
+Space.com,,space.com,US,,,national,research,,high,mbfc,2026-08-23
+NBC Sports,,nbcsports.com|NBCSports.com,US,,,national
+Sky Sports,,skysports.com,GB,,,national
+Sporting News,,sportingnews.com,US,,,national
+Field Gulls,,fieldgulls.com,US,,,national
+BBC Sky at Night Magazine,,skyatnightmagazine.com|Skyatnightmagazine.com,GB,,,national
+WVTM 13,,wvtm13.com|Wvtm13,US,Alabama,Birmingham,local
+Temple Daily Telegram,,tdtnews.com|Tdtnews.com,US,Texas,Temple,local
+MyJoyOnline,,myjoyonline.com|Myjoyonline,GH,,,national
+CBNC,,cbnc.com,,,,,aggregator
+SAPO,,sapo.pt|Sapo,PT,,,national,aggregator
+NL Times,,nltimes.nl,NL,,,national
+Thai Rath,,thairath.co.th|Thairath,TH,,,national
+Dinamalar,,dinamalar.com,IN,,,national
+PerthNow,,perthnow.com.au,AU,Western Australia,Perth,local
+BioBioChile,,biobiochile.cl,CL,,,national
+ETtoday,,ettoday.net|Ettoday,TW,,,national
+Obozrevatel,,obozrevatel.com,UA,,,national
+Index.hu,,index.hu,HU,,,national
+Haberler.com,,haberler.com,TR,,,national,aggregator
+G1,,g1.globo.com,BR,,,national
+CafeF,,cafef.vn,VN,,,national
+CafeBiz,,cafebiz.vn,VN,,,national
+Soha,,soha.vn,VN,,,national
+Yahoo! Japan News,,news.yahoo.co.jp,JP,,,national,aggregator
