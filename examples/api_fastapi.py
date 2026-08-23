@@ -46,6 +46,7 @@ import enrich                 # headline enrichment (register + emotion) behind 
 import personalize            # per-user augmented Measured report / recs / coach
 import evidence_resolver      # ONE human explanation per rec, chosen from evidence (21a.3)
 import improvement_ledger     # improvement-recommendation lifecycle state machine (leaf, RC2.3)
+import rec_context            # reader-state (feedback/repetition) params, flag-gated (X-audit Tier 1)
 import improvement_ranking    # feedback-aware ranking/filtering of improvements (leaf, RC2.4)
 import recommendation_eval     # deterministic evaluation + attribution of improvements (leaf, RC2.5)
 import obs_metrics             # OBS1: in-process request/latency metrics (dependency-free, observational)
@@ -3469,6 +3470,32 @@ def _attach_explanations(recs: list, active: "corpus_refresh.Active", kind: str,
         _log(logging.WARNING, "explanation_resolver_failed")
 
 
+def _rec_request_params(uid: "int | None") -> "dict | None":
+    """The per-request recommender params for a signed-in reader — ONE builder, shared by the
+    serving endpoint and the explain observer, so an explanation can never be produced from
+    different inputs than the feed it explains (the 21a parity rule, extended to reader state).
+
+    Two layers, both best-effort (a store failure serves the layer below, never an error):
+
+    * **Sliders** — ``rec_params_from_settings``: Political openness → RWE-B epsilon / bridge
+      budget, Recommendation strength → RWE-D beta, Interest Intensity, the For You country.
+      Untouched sliders ship no key, so the no-preference feed is byte-identical.
+    * **Reader state** (X-audit Tier 1; ``RWE_REC_FEEDBACK`` / ``RWE_REC_REPETITION``, both
+      default OFF) — ``rec_context.attach_reader_state``: the reader's explicit card feedback
+      and recently-surfaced cards, consumed by the engine as bounded rank multipliers."""
+    if uid is None or state.store is None:
+        return None
+    try:
+        params = engine.rec_params_from_settings(state.store.get_settings(uid))
+    except Exception:
+        params = None
+    try:
+        params = rec_context.attach_reader_state(params, state.store, uid)
+    except Exception:                     # reader state is additive — degrade to sliders-only
+        _log(logging.WARNING, "rec_reader_state_failed", userId=uid)
+    return params
+
+
 @app.get("/api/recommendations", response_model=list[RecommendationModel],
          response_model_exclude_none=True, tags=["recommendations"],
          summary="RWE recommendations (blended, or a single strategy)", responses=_ERR_RESPONSES)
@@ -3490,18 +3517,8 @@ def recommendations(
     # told these are theirs.
     if is_sample and _real_uid(request) is not None:
         return []
-    # A signed-in reader's preference sliders map to per-request recommender hyperparameters
-    # (Political openness → RWE-B epsilon, Recommendation strength → RWE-D beta). Untouched
-    # sliders map to None — the shared default stack — so demo/anonymous requests and readers
-    # who never moved a slider get exactly the pre-slider feed. Best-effort: a settings read
-    # failure serves defaults, never an error.
     uid = _real_uid(request)
-    params = None
-    if uid is not None and state.store is not None:
-        try:
-            params = engine.rec_params_from_settings(state.store.get_settings(uid))
-        except Exception:
-            params = None
+    params = _rec_request_params(uid)
     # Stage timers (observational only): the handler's own post-passes are on the critical path of
     # every feed, so a breakdown that stopped at `recommendations()` would attribute their cost to
     # the recommender. Each is recorded through obs_metrics, which swallows its own failures.
@@ -3795,12 +3812,7 @@ def explain_recommendations_internal(
     active = _active()
     kind, val, _is_sample = _serve(active, request, user)
     uid = _real_uid(request)
-    params = None
-    if uid is not None and state.store is not None:
-        try:
-            params = engine.rec_params_from_settings(state.store.get_settings(uid))
-        except Exception:
-            params = None
+    params = _rec_request_params(uid)     # the serving endpoint's own builder — parity by construction
     out = (active.personalizer.explain(val, strategy, params, article) if kind == "personal"
            else active.backend.explain_recommendations(val, strategy, params, article))
     # 21a.3: the SAME resolved explanation the card shows, attached per evidence entry — the

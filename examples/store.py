@@ -2426,6 +2426,21 @@ class Store:
             return [{"shownAt": r.shown_at, "openedAt": r.opened_at,
                      "crossCutting": bool(r.cross_cutting)} for r in rows]
 
+    def rec_events_state(self, user_id: int, since: "str | None" = None) -> list:
+        """Per-article reception state for the reader's OWN next feed request —
+        ``{articleId, opened}`` rows, optionally only those last surfaced at/after ``since`` (an ISO
+        string; ``shown_at`` is refreshed on re-surface, so the filter reads "still recently on
+        screen"). The read half of the repetition-decay loop (``rec_context.py``, Tier 1 of the
+        X-audit roadmap): the serve path has always *written* these rows; this projection is what
+        lets the next serve stop re-surfacing a card the reader has already scrolled past.
+        Read-only; invokes no recommender."""
+        with self.session() as s:
+            q = select(RecEvent).where(RecEvent.user_id == user_id)
+            if since is not None:
+                q = q.where(RecEvent.shown_at >= since)
+            rows = s.scalars(q.order_by(RecEvent.id)).all()
+            return [{"articleId": r.article_id, "opened": r.opened_at is not None} for r in rows]
+
     def count_unopened_recommendations(self, user_id: int, since: "str | None" = None) -> int:
         """How many recommendations were **surfaced but not opened** — ``RecEvent`` rows with no
         ``opened_at`` (optionally restricted to those surfaced at/after ``since``, an ISO string). A

@@ -953,6 +953,85 @@ def _piecewise(v: float, lo: float, mid: float, hi: float) -> float:
     return lo + (mid - lo) * (v / 50.0) if v <= 50.0 else mid + (hi - mid) * ((v - 50.0) / 50.0)
 
 
+# ── Reader-state anchors — Tier 1, docs/X_ALGORITHM_AUDIT_AND_PROPOSAL.md ─────────────────────
+# X's production objective puts its largest magnitudes on explicit negative feedback (report −234
+# vs favorite +0.5, home-mixer/params/param.rs): a reader saying "no" is the most informative
+# signal a feed receives. Here the same lesson lands as BOUNDED RANK MULTIPLIERS over the admitted
+# pool — never a score term, never a slice budget. The values are anchors in the same currency as
+# _INTEREST_ANCHORS (a weight-10 slider divides an item's effective rank by 8) and deliberately
+# sit BELOW it: an explicit slider the reader set always outbids anything inferred from their card
+# behavior. The composed reader-state factor is clamped to [_READER_STATE_FLOOR, _READER_STATE_CAP]
+# so no accumulation of feedback can make a topic unreachable (the anti-filter-bubble floor) or
+# compound into a rich-get-richer loop (the cap). Dislike is the one exclusion: the reader named a
+# specific article; re-serving it to honor a "nudge only" principle would be malicious compliance.
+_FEEDBACK_IGNORE_DECAY = 0.35      # "ignore" on the card ≈ triples the effective rank, once
+_REPEAT_UNOPENED_DECAY = 0.35      # surfaced in-window, never opened: reads as an implicit ignore
+_REPEAT_OPENED_DECAY = 0.25        # surfaced AND opened: they followed it once; strongest decay
+_DISLIKE_PUBLISHER_DECAY = 0.6     # per disliked article, on that article's publisher…
+_DISLIKE_PUBLISHER_FLOOR = 0.35    # …never below — a publisher is dimmed, not disappeared
+_DISLIKE_TOPIC_DECAY = 0.8         # gentler on the topic: a dislike is usually about the article
+_DISLIKE_TOPIC_FLOOR = 0.5         # or the outlet, and only weakly about the whole topic
+_LIKE_TOPIC_BOOST = 1.5            # per liked/saved article, on its topic…
+_LIKE_TOPIC_CAP = 3.0              # …capped well under weight-10 interest (8x)
+_READER_STATE_FLOOR = 0.1
+_READER_STATE_CAP = 8.0
+
+
+def _reader_state_factors(mind, fb: dict, rep: dict):
+    """Resolve reader-state article ids (``params["feedback"]`` / ``params["repetition"]``,
+    built by :mod:`rec_context`) against THIS corpus.
+
+    Returns ``(drop, art_by_col, topic_mult, pub_mult)``: the columns dislike excludes, a
+    per-column decay for ignored / recently-surfaced articles, and the topic / publisher
+    multipliers derived from likes and dislikes. Ids are the served ``article.id`` — the corpus
+    item id — so an article that has rotated out of the current corpus simply matches nothing;
+    topic/publisher effects are therefore derived only from feedback whose subject is still
+    resolvable, which keeps every claim about "this publisher" grounded in the catalog being
+    ranked rather than in a remembered string."""
+    referenced: set = set()
+    for key in ("dislike", "like", "ignore"):
+        referenced.update(fb.get(key) or ())
+    for key in ("unopened", "opened"):
+        referenced.update(rep.get(key) or ())
+    if not referenced:
+        return set(), {}, {}, {}
+    ids = np.asarray(mind.dataset.item_ids)
+    col_of = {aid: c for c, aid in enumerate(ids.astype(str)) if aid in referenced}
+    cats = np.asarray(mind.categories)
+    outlets = np.asarray(mind.outlets)
+
+    def _bucket(aid):
+        c = col_of.get(aid)
+        if c is None:
+            return None, None
+        return str(cats[c]).strip().lower(), str(outlets[c])
+
+    topic_mult: dict = {}
+    pub_mult: dict = {}
+    for aid in set(fb.get("dislike") or ()):
+        t, p = _bucket(aid)
+        if t:
+            topic_mult[t] = max(topic_mult.get(t, 1.0) * _DISLIKE_TOPIC_DECAY,
+                                _DISLIKE_TOPIC_FLOOR)
+        if p:
+            pub_mult[p] = max(pub_mult.get(p, 1.0) * _DISLIKE_PUBLISHER_DECAY,
+                              _DISLIKE_PUBLISHER_FLOOR)
+    for aid in set(fb.get("like") or ()):
+        t, _ = _bucket(aid)
+        if t:
+            topic_mult[t] = min(topic_mult.get(t, 1.0) * _LIKE_TOPIC_BOOST, _LIKE_TOPIC_CAP)
+    art_decay: dict = {}
+    for aid in set(fb.get("ignore") or ()):
+        art_decay[aid] = min(art_decay.get(aid, 1.0), _FEEDBACK_IGNORE_DECAY)
+    for aid in set(rep.get("unopened") or ()):
+        art_decay[aid] = min(art_decay.get(aid, 1.0), _REPEAT_UNOPENED_DECAY)
+    for aid in set(rep.get("opened") or ()):
+        art_decay[aid] = min(art_decay.get(aid, 1.0), _REPEAT_OPENED_DECAY)
+    drop = {col_of[aid] for aid in set(fb.get("dislike") or ()) if aid in col_of}
+    art_by_col = {col_of[aid]: m for aid, m in art_decay.items() if aid in col_of}
+    return drop, art_by_col, topic_mult, pub_mult
+
+
 def rec_params_from_settings(settings: "dict | None") -> "dict | None":
     """Per-request recommender parameters from a reader's stored preferences, or ``None``.
 
@@ -2059,15 +2138,34 @@ class Backend:
         Runs BEFORE :meth:`_slice_select`, so the rwe-b cross-cutting-first partition (Commit
         R1.5) and the W1 bridge budget keep their guarantees over the nudged order. Shared by
         the serving path and the explain observer — the 21a parity rule: one implementation,
-        or drift."""
+        or drift.
+
+        **Reader state (Tier 1, docs/X_ALGORITHM_AUDIT_AND_PROPOSAL.md).** ``params["feedback"]``
+        and ``params["repetition"]`` — built by :mod:`rec_context` only when their flags are on —
+        add bounded per-article / per-topic / per-publisher multipliers into the SAME sort key
+        (anchors and floors above :func:`_reader_state_factors`). One exception to "never an
+        exclusion": an article the reader explicitly **disliked** is dropped from the pool — the
+        reader named that specific article, and re-serving it to honor a nudge-only principle
+        would be malicious compliance. Everything else remains a nudge, floored so no topic or
+        publisher becomes unreachable. Params without these keys → the historical feed, exactly."""
         weights = (params or {}).get("interests")
         want_country = (params or {}).get("country")
-        if (not weights and not want_country) or not cols:
+        fb = (params or {}).get("feedback") or {}
+        rep = (params or {}).get("repetition") or {}
+        if (not weights and not want_country and not fb and not rep) or not cols:
             return cols
         cats = np.asarray(mind.categories)
         by_col = country_by_col or {}
         mode = (params or {}).get("countryMode") or country_mode()
         strict = bool(want_country) and mode == "first"
+        if fb or rep:
+            drop, art_by_col, topic_mult, pub_mult = _reader_state_factors(mind, fb, rep)
+            outlets = np.asarray(mind.outlets) if pub_mult else None
+            cols = [c for c in cols if int(c) not in drop]
+            if not cols:
+                return cols
+        else:
+            art_by_col, topic_mult, pub_mult, outlets = {}, {}, {}, None
         keys = []
         for i, col in enumerate(cols):
             mult = 1.0
@@ -2079,6 +2177,16 @@ class Backend:
             if want_country and not strict:
                 mult *= _country_multiplier(by_col.get(int(col), ()), want_country,
                                             (params or {}).get("countryBoost"))
+            if art_by_col or topic_mult or pub_mult:
+                f = art_by_col.get(int(col), 1.0)
+                if topic_mult:
+                    f *= topic_mult.get(str(cats[col]).strip().lower(), 1.0)
+                if pub_mult and outlets is not None:
+                    f *= pub_mult.get(str(outlets[col]), 1.0)
+                # One clamp over the COMPOSED reader-state factor: feedback can dim or lift, but
+                # it can neither bury (floor) nor dominate the reader's own sliders (cap ≤ the
+                # weight-10 interest divisor).
+                mult *= min(max(f, _READER_STATE_FLOOR), _READER_STATE_CAP)
             # In ``first`` the country is a PARTITION rank, kept out of the multiplier so the
             # interest nudge still orders items WITHIN each group — collapsing both into one
             # divisor (an "infinite boost") would drive every country item's key to zero and
@@ -2113,7 +2221,12 @@ class Backend:
             # plain slices stop at k
             need_all = ((strategy == "rwe-b" and bool(user_side))
                         or bool((params or {}).get("interests"))
-                        or bool((params or {}).get("country")))
+                        or bool((params or {}).get("country"))
+                        # Reader state also reorders (and dislike shrinks) the whole admitted
+                        # pool, so an early stop at k would decay items into — not out of — the
+                        # served slice.
+                        or bool((params or {}).get("feedback"))
+                        or bool((params or {}).get("repetition")))
             admitted = []
             for j in ranked:
                 if int(j) < 0:
