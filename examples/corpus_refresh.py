@@ -258,6 +258,12 @@ class RefreshManager:
                 be.attach_country_resolver(feed_source.load_country_map(csv_path))
             except Exception as e:                       # noqa: BLE001 — enrichment, never fatal
                 self._log(logging.WARNING, "country_map_unavailable", error=repr(e))
+            # Story membership: the per-story quota's input, rebuilt WITH the backend so the two
+            # can never describe different catalogs. Same fail-soft posture as the country map.
+            try:
+                be.attach_story_resolver(*feed_source.load_story_maps(store_, csv_path))
+            except Exception as e:                       # noqa: BLE001 — enrichment, never fatal
+                self._log(logging.WARNING, "story_map_unavailable", error=repr(e))
             self.last_build_ms = round((time.perf_counter() - t0) * 1000.0, 2)
         except Exception as e:
             return None, result, f"backend_build_failed:{type(e).__name__}"

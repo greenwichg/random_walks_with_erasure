@@ -576,6 +576,35 @@ def max_cards_per_publisher() -> int:
         return MAX_CARDS_PER_PUBLISHER
     return v if v >= 0 else MAX_CARDS_PER_PUBLISHER
 
+
+def _env_cap(name: str) -> int:
+    """A feed-quota cap read from the environment per call (kill-switch semantics, like
+    :func:`max_cards_per_publisher`). ``0`` / unset / junk / negative → 0 = quota off — the
+    Tier-1 quotas (docs/X_ALGORITHM_AUDIT_AND_PROPOSAL.md) ship dark and are turned on by an
+    operator, not by a deploy."""
+    raw = os.environ.get(name, "").strip()
+    try:
+        v = int(raw) if raw else 0
+    except (TypeError, ValueError):
+        return 0
+    return v if v > 0 else 0
+
+
+def max_cards_per_story() -> int:
+    """Per-story feed cap (``RWE_REC_MAX_PER_STORY``; 0 = off). Five outlets' takes on one event
+    are near-duplicates a reader experiences as one story served five times — X dedups whole
+    conversations for the same reason (DedupConversationFilter). ``1`` is the intended setting:
+    each story appears once, and which *take* fills that one slot is still the ranker's choice."""
+    return _env_cap("RWE_REC_MAX_PER_STORY")
+
+
+def max_cards_per_topic() -> int:
+    """Per-topic feed cap (``RWE_REC_MAX_PER_TOPIC``; 0 = off). A monoculture guard, not a
+    ranking signal: it bounds how much of one feed a single topic can occupy, the way the
+    publisher cap bounds one outlet. Set it ABOVE what a maxed Interest slider should legitimately
+    concentrate (the slider is the reader's explicit ask; ~6 of 14 leaves it meaningful)."""
+    return _env_cap("RWE_REC_MAX_PER_TOPIC")
+
 #: Extra columns each strategy ranks so the cap has something to backfill FROM. Without it a
 #: declined slot would shrink the feed instead of moving to the next-ranked admissible item —
 #: the same backfill principle ``_rec_cols_of`` already applies to admission.
@@ -1223,6 +1252,11 @@ class Backend:
         # live feed catalog is attached → the country nudge is simply never consulted).
         self.country_by_id: dict = {}
         self._country_col_cache: dict = {}
+        # story membership (item id / canonical URL -> story id), attached beside the two above;
+        # empty until a live catalog with stories is attached → the story quota has no input.
+        self.story_by_id: dict = {}
+        self.story_by_url: dict = {}
+        self._story_col_cache: dict = {}
 
         if profile.kind == "npz":
             if not profile.npz:
@@ -1474,6 +1508,43 @@ class Backend:
             ids = np.asarray(mind.dataset.item_ids)
             hit = {i: cs for i, cs in ((i, self.country_by_id.get(str(iid)))
                                        for i, iid in enumerate(ids)) if cs}
+            cache[key] = hit
+        return hit
+
+    def attach_story_resolver(self, by_id: dict, by_url: "dict | None" = None) -> None:
+        """Attach story membership (``feed_source.load_story_maps``): corpus item id → story id,
+        plus canonical URL → story id for the augmented corpus's novel columns (a real reader's
+        own reads, whose item id IS their URL). The input to the per-story feed quota
+        (:func:`max_cards_per_story` / :meth:`_select_diverse`). An ENRICHMENT like the country
+        map: inert until the quota is enabled, fail-soft at every attach site — losing it costs
+        the story quota its input and nothing else."""
+        self.story_by_id = dict(by_id or {})
+        self.story_by_url = dict(by_url or {})
+        self._story_col_cache = {}
+
+    def _story_by_col(self, mind) -> dict:
+        """Column index → story id for one corpus, memoized per ``mind`` exactly as
+        :meth:`_country_by_col` is (same rebuild triggers, same augmented-corpus reasoning). A
+        column with no known story is simply absent — uncapped, never grouped by guess."""
+        if not (getattr(self, "story_by_id", None) or getattr(self, "story_by_url", None)):
+            return {}
+        cache = getattr(self, "_story_col_cache", None)
+        if cache is None:
+            cache = self._story_col_cache = {}
+        key = id(mind)
+        hit = cache.get(key)
+        if hit is None:
+            by_id = getattr(self, "story_by_id", {})
+            by_url = getattr(self, "story_by_url", {})
+            ids = np.asarray(mind.dataset.item_ids)
+            hit = {}
+            for i, iid in enumerate(ids):
+                s = str(iid)
+                sid = by_id.get(s)
+                if sid is None and s.startswith(("http://", "https://")):
+                    sid = by_url.get(s)
+                if sid is not None:
+                    hit[i] = sid
             cache[key] = hit
         return hit
 
@@ -2295,9 +2366,16 @@ class Backend:
         }
 
     @staticmethod
-    def _select_diverse(cols_by_strategy, plan, publisher_of, cap: "int | None" = None) -> list:
+    def _select_diverse(cols_by_strategy, plan, publisher_of, cap: "int | None" = None,
+                        *, story_of=None, topic_of=None,
+                        story_cap: "int | None" = None, topic_cap: "int | None" = None) -> list:
         """Choose the final ``[(col, strategy)]`` feed: first-seen article dedup, plus a
-        per-publisher cap applied ACROSS the whole feed.
+        per-publisher cap applied ACROSS the whole feed — and, when enabled, per-story and
+        per-topic quotas of exactly the same shape (Tier 1,
+        docs/X_ALGORITHM_AUDIT_AND_PROPOSAL.md). ``story_of`` / ``topic_of`` are optional
+        callables (col → story id / topic, ``None``/"" = ungrouped and uncapped); the caps read
+        :func:`max_cards_per_story` / :func:`max_cards_per_topic` per call, default **off**, so
+        the historical feed is untouched until an operator enables them.
 
         Shared by the serving path and the ``rec_explain`` observer so the two can never drift
         into disagreeing about which cards were served — the same reason ``_slice_admits`` and
@@ -2321,7 +2399,39 @@ class Backend:
         Deterministic: same inputs → same feed."""
         if cap is None:
             cap = max_cards_per_publisher()
-        chosen, seen, per_pub = [], set(), {}
+        if story_cap is None:
+            story_cap = max_cards_per_story()
+        if topic_cap is None:
+            topic_cap = max_cards_per_topic()
+        chosen, seen, per_pub, per_story, per_topic = [], set(), {}, {}, {}
+
+        def _declined(col) -> bool:
+            """Any quota full for this candidate? One decision so a card is spilled once, for
+            whichever quota it hits first — the spill path does not care which."""
+            if cap > 0 and per_pub.get(publisher_of(col), 0) >= cap:
+                return True
+            if story_cap > 0 and story_of is not None:
+                sid = story_of(col)
+                if sid is not None and per_story.get(sid, 0) >= story_cap:
+                    return True
+            if topic_cap > 0 and topic_of is not None:
+                t = topic_of(col)
+                if t and per_topic.get(t, 0) >= topic_cap:
+                    return True
+            return False
+
+        def _count(col) -> None:
+            pub = publisher_of(col)
+            per_pub[pub] = per_pub.get(pub, 0) + 1
+            if story_of is not None:
+                sid = story_of(col)
+                if sid is not None:
+                    per_story[sid] = per_story.get(sid, 0) + 1
+            if topic_of is not None:
+                t = topic_of(col)
+                if t:
+                    per_topic[t] = per_topic.get(t, 0) + 1
+
         budgets = [k for _, k in plan]
         for (strat, cols), k in zip(cols_by_strategy, budgets):
             taken, spill = 0, []
@@ -2330,12 +2440,11 @@ class Backend:
                     break
                 if col in seen:
                     continue
-                pub = publisher_of(col)
-                if cap > 0 and per_pub.get(pub, 0) >= cap:
-                    spill.append(col)          # declined by the cap, not by any evidence gate
+                if _declined(col):
+                    spill.append(col)          # declined by a quota, not by any evidence gate
                     continue
                 seen.add(col)
-                per_pub[pub] = per_pub.get(pub, 0) + 1
+                _count(col)
                 chosen.append((col, strat))
                 taken += 1
             for col in spill:                  # top up rather than serve a short feed
@@ -2344,8 +2453,7 @@ class Backend:
                 if col in seen:
                     continue
                 seen.add(col)
-                pub = publisher_of(col)
-                per_pub[pub] = per_pub.get(pub, 0) + 1
+                _count(col)
                 chosen.append((col, strat))
                 taken += 1
         return chosen
@@ -2362,7 +2470,13 @@ class Backend:
         outlets = np.asarray(corpus.mind.outlets)
         if plan is None:
             plan = [(strat, len(cols)) for strat, cols in cols_by_strategy]
-        picks = self._select_diverse(cols_by_strategy, plan, lambda c: str(outlets[c]))
+        # Story / topic quota inputs (Tier 1) — cheap to build and inert while the caps are off:
+        # _select_diverse consults the callables only when its per-call cap is > 0.
+        story_by_col = self._story_by_col(corpus.mind)
+        cats = np.asarray(corpus.mind.categories)
+        picks = self._select_diverse(cols_by_strategy, plan, lambda c: str(outlets[c]),
+                                     story_of=story_by_col.get,
+                                     topic_of=lambda c: str(cats[c]).strip().lower())
         return [self._serialize_rec(corpus, col, strat, user_side, familiarity)
                 for col, strat in picks]
 

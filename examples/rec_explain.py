@@ -242,7 +242,14 @@ def explain(backend, corpus, rec, u: int, strategy: Optional[str] = None,
                                                   kk * engine.REC_OVERFETCH, user_side)
         cols_by_strategy.append((s, slice_cols))
     outlets = np.asarray(mind.outlets)
-    picks = engine.Backend._select_diverse(cols_by_strategy, plan, lambda c: str(outlets[c]))
+    # The same story/topic quota inputs the serving selector builds (_serialize_recs) — the 21a
+    # parity rule: replicate the plan exactly, including the quotas, or the explained feed drifts
+    # from the served one the moment an operator enables a cap.
+    story_by_col = backend._story_by_col(mind)
+    cats_q = np.asarray(mind.categories)
+    picks = engine.Backend._select_diverse(cols_by_strategy, plan, lambda c: str(outlets[c]),
+                                           story_of=story_by_col.get,
+                                           topic_of=lambda c: str(cats_q[c]).strip().lower())
     chosen = [(col, j_of_col[col], s) for col, s in picks]
     chosen_cols = {col for col, _ in picks}
     for s, slice_cols in cols_by_strategy:

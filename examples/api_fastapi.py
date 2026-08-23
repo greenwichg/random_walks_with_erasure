@@ -285,6 +285,12 @@ async def lifespan(app: FastAPI):
         be.attach_url_resolver(feed_source.load_url_map(feed_csv))
         # Same CSV, same row indexing → the For You country preference's input.
         be.attach_country_resolver(feed_source.load_country_map(feed_csv))
+        # Story membership → the per-story feed quota's input (Tier 1). Enrichment like the
+        # country map: fail-soft, inert until RWE_REC_MAX_PER_STORY is set.
+        try:
+            be.attach_story_resolver(*feed_source.load_story_maps(st, feed_csv))
+        except Exception as exc:                     # noqa: BLE001 — enrichment, never fatal
+            _log(logging.WARNING, "story_map_unavailable", error=repr(exc))
     # The personalization layer: builds a real user's Measured report / recs / coach from an
     # augmented corpus once they've stored enough reads (cached per user + reading version).
     personalizer = personalize.Personalizer(be, st)

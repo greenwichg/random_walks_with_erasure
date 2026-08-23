@@ -379,6 +379,31 @@ def load_url_map(csv_path: str) -> dict:
     return out
 
 
+def load_story_maps(store_, csv_path: str) -> "tuple[dict, dict]":
+    """Story-membership inputs for the per-story feed quota (Tier 1,
+    docs/X_ALGORITHM_AUDIT_AND_PROPOSAL.md): ``(item_id → story_id, canonical_url → story_id)``.
+
+    The first map joins :func:`load_url_map`'s row-indexed ids to the Story Service's own
+    clusters (``store.story_member_ids``, canonical-URL-keyed) through ``ingest.canonical_url``
+    — the SAME canonicalisation the media join uses, because a raw feed URL (``www.``, tracking
+    params) never equals its canonical form and an uncanonicalised join silently maps nothing.
+    The second map covers the augmented corpus's novel columns, whose item id IS the reader's
+    read URL. An article in no current story is simply absent from both — uncapped, never
+    grouped by guess. Empty store / old catalog → empty maps → the quota has no input, which
+    disables it rather than mis-grouping."""
+    if store_ is None:
+        return {}, {}
+    import ingest
+    by_url = {str(u): sid for u, sid in (store_.story_member_ids() or {}).items()}
+    by_id: dict = {}
+    if by_url:
+        for item_id, url in load_url_map(csv_path).items():
+            sid = by_url.get(ingest.canonical_url(url))
+            if sid is not None:
+                by_id[item_id] = sid
+    return by_id, by_url
+
+
 def load_country_map(csv_path: str) -> dict:
     """The corpus item-id -> ISO country SET implied by the exported catalog.
 
