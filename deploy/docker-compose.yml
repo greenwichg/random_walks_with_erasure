@@ -251,6 +251,19 @@ services:
       # exists because the compose environment is an allowlist — without it the flag could never
       # reach the container, and the built, tested feature was structurally undeployable.
       RWE_STORY_SLOT: ${RWE_STORY_SLOT:-0}
+      # Tier-1 recommendation mechanisms (docs/X_ALGORITHM_AUDIT_AND_PROPOSAL.md): reader feedback
+      # into ranking, repetition decay, per-story/per-topic feed quotas, blind-spot lift. All
+      # default OFF — enabling is an explicit deploy/.env decision + restart api. Same allowlist
+      # reason as RWE_STORY_SLOT above, learned the same way twice now: the first enablement
+      # attempt set these in deploy/.env and the container never saw them — compose detected no
+      # config change and did not even recreate. Without these lines the flags are structurally
+      # undeployable, and tests/test_rec_flags_deployable.py now fails if one goes missing.
+      RWE_REC_FEEDBACK: ${RWE_REC_FEEDBACK:-0}
+      RWE_REC_REPETITION: ${RWE_REC_REPETITION:-0}
+      RWE_REC_REPEAT_WINDOW_DAYS: ${RWE_REC_REPEAT_WINDOW_DAYS:-14}
+      RWE_REC_MAX_PER_STORY: ${RWE_REC_MAX_PER_STORY:-0}
+      RWE_REC_MAX_PER_TOPIC: ${RWE_REC_MAX_PER_TOPIC:-0}
+      RWE_REC_BLINDSPOT: ${RWE_REC_BLINDSPOT:-0}
       # Story Continuation (docs/STORY_CONTINUATION_DESIGN.md): the post-read "compare this story"
       # offer — GET /api/me/continuation, read-only, no table and no worker. Default 0 = OFF, and
       # while off the route exists and always answers `null`, so the client contract ships and can
