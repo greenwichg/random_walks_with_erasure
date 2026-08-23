@@ -119,7 +119,10 @@ def render(payload: dict, *, lang: str = "en", base_url: str = "",
     reads = _n((payload or {}).get("reads"))
     streak = _n((payload or {}).get("streakDays"))
     overall = (payload or {}).get("overall")
-    report_url = f"{base_url.rstrip('/')}/report" if base_url else ""
+    # The WEEKLY period page, matching the in-app weekly_digest card's destination (the shared
+    # kinds table) — this pointed at /report, the CURRENT 30-day report, which says nothing about
+    # the week the mail just summarized: the same generic-landing defect the in-app kinds escaped.
+    report_url = f"{base_url.rstrip('/')}/report/weekly" if base_url else ""
 
     subject = s["subject"].format(reads=reads) if reads else s["subject_none"]
 

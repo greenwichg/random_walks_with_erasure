@@ -385,6 +385,24 @@ def test_a_week_with_no_reads_still_renders_a_sane_subject():
     assert "{" not in out["subject"]
 
 
+def test_the_cta_opens_the_weekly_report_the_mail_describes():
+    """The reported click: "Open your report" in a mail summarizing ONE WEEK (8 reads, streak,
+    weekly health) landed on /report — the CURRENT 30-day Health Report, which says nothing
+    about that week. The CTA now points at the weekly period page, matching the in-app
+    weekly_digest card's destination in the shared kinds table — the same "the mail states
+    exactly what the in-app card states" contract this module's docstring already claims,
+    extended to where the click lands."""
+    out = email_digest.render({"reads": 8, "streakDays": 0, "overall": 66}, lang="en",
+                              base_url="https://hidden-view.com")
+    assert "https://hidden-view.com/report/weekly" in out["html"]
+    assert "https://hidden-view.com/report/weekly" in out["text"]
+    # …and never the bare 30-day report as the CTA (substring check must not false-match the
+    # weekly URL, so pin the exact quoted href the button carries)
+    assert 'href="https://hidden-view.com/report"' not in out["html"]
+    # no base_url (previews, tests) still renders a mail with no dangling link
+    assert "/report/weekly" not in email_digest.render({"reads": 1}, lang="en")["text"]
+
+
 def test_payload_values_are_escaped_into_the_html():
     """Integers today — but a template that is only accidentally safe becomes an injection the
     first time someone adds a topic name to the payload."""
