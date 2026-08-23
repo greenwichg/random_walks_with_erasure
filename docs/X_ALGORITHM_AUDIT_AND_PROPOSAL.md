@@ -420,6 +420,18 @@ shadow-kind metrics) and `tests/test_rec_feedback_vocabulary.py` (storage/remova
 anchor mapping table, wire + undo); explain parity asserted with sources enabled on both the
 demo and measured paths. `deploy/ops/verify-recs.sh` §2 now checks all ten flags.
 
+**First shadow run (production, 2026-08-23) — and the leak it caught.** Deployed dark at
+`9604205`, then shadowed the story source for the operator's account (`RWE_REC_STORY_SOURCE=2`,
+`RWE_REC_EXPERIMENT=story_source:0`, `RWE_REC_SHADOW=story_source`): 5 shadowed serves, 4 story
+cards built and placed, HHI/cross-cutting/story-dup/outlets/topics all equal to the served arm —
+but `feed_repeat_total` ran 8.6/feed shadowed vs 5.2 served, because extra-source columns
+bypassed the reader-state pass entirely: a disliked article could return as a story card, and
+undecayed siblings would front every serve. Fixed before any reader saw it — every source's
+columns now flow through the same `_preference_rerank` the RWE slices use (dislike drop is
+source-agnostic law; shown cards decay; sliders shape source slices too), mirrored in
+`rec_explain`, pinned by `test_reader_policy_governs_the_story_source_too`. This is the
+shadow-first discipline doing precisely what Phase 13.9 bought it for.
+
 ---
 
 ## What we have → what X does → adopt → improve beyond → build first

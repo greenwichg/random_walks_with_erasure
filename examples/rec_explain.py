@@ -272,6 +272,12 @@ def explain(backend, corpus, rec, u: int, strategy: Optional[str] = None,
         if bs_cols:
             extras.append(("blindspot", bs_k, bs_cols))
     if extras:
+        # The SAME reader-policy pass the engine applies to every source's columns (dislike drop,
+        # shown-card decay, sliders) — applied at the same point, so parity holds byte-exactly.
+        extras = [(n, k, engine.Backend._preference_rerank(mind, cols, params, country_by_col))
+                  for n, k, cols in extras]
+        extras = [(n, k, cols) for n, k, cols in extras if cols]
+    if extras:
         order = {n: i for i, n in enumerate(engine.EXTRA_SOURCE_ORDER)}
         extras.sort(key=lambda e: order.get(e[0], len(order)))
         plan = engine._plan_with_extras(plan, [(n, k) for n, k, _ in extras])

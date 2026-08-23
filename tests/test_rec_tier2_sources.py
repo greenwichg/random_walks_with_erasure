@@ -269,6 +269,51 @@ def test_story_source_explain_parity(stack, monkeypatch):
     assert exp["storySlot"]["reason"].startswith("superseded")
 
 
+def test_reader_policy_governs_the_story_source_too(stack, monkeypatch):
+    """The first production shadow run measured the leak this pins shut: extra-source cards
+    bypassed the reader-state pass (shadow repeat 8.6/feed vs 5.2 served). Exclusion is law for
+    EVERY source — a disliked article stays gone no matter which source re-finds it — and
+    recently-shown cards decay behind fresh ones instead of fronting every serve."""
+    import rec_context
+    st, pers, uid = stack
+    monkeypatch.setenv("RWE_REC_STORY_SOURCE", "2")
+    # the serving path's wiring: reader state reaches ranking via attach_reader_state under
+    # RWE_REC_FEEDBACK (enabled in production) — the same params the api layer builds per request
+    monkeypatch.setenv("RWE_REC_FEEDBACK", "1")
+    feed = pers.recommendations(uid, None, rec_context.attach_reader_state(None, st, uid))
+    stories = [r for r in feed if r["strategy"] == "story"]
+    assert stories, "fixture must serve story cards before the policy is exercised"
+    # dislike the top story card: it must never come back through the source
+    victim = stories[0]["article"]["id"]
+    st.record_recommendation_feedback(uid, str(victim), "dislike")
+    feed2 = pers.recommendations(uid, None, rec_context.attach_reader_state(None, st, uid))
+    assert victim not in [r["article"]["id"] for r in feed2], \
+        "a disliked article returned via the story source — exclusion must be source-agnostic"
+    # feed length is still preserved: the dropped candidate's slot backfills, never dies
+    assert len(feed2) == len(feed)
+
+
+def test_shown_story_siblings_decay_behind_fresh_ones(stack, monkeypatch):
+    import rec_context
+    st, pers, uid = stack
+    monkeypatch.setenv("RWE_REC_STORY_SOURCE", "2")
+    monkeypatch.setenv("RWE_REC_REPETITION", "1")
+    base = pers.recommendations(uid, None, rec_context.attach_reader_state(None, st, uid))
+    head = [r["article"]["id"] for r in base if r["strategy"] == "story"]
+    assert head, "fixture must serve story cards"
+    # record the first story card as surfaced-but-unopened; under repetition decay it must not
+    # keep outranking an equally-eligible fresh sibling on the next serve
+    st.record_recommendations_shown(uid, [(str(head[0]), False)])
+    feed2 = pers.recommendations(uid, None, rec_context.attach_reader_state(None, st, uid))
+    head2 = [r["article"]["id"] for r in feed2 if r["strategy"] == "story"]
+    if len(head) > 1 and len(head2) > 1:
+        assert head2[0] != head[0], "the shown sibling should yield the front slot"
+    else:
+        # only one eligible sibling exists — decay may not change membership, but the floor
+        # guarantees it stays reachable rather than vanishing
+        assert head2, "decay must dim, never empty, a thin source"
+
+
 def test_emerging_source_serves_recent_unread_multipublisher_stories(stack, monkeypatch):
     st, pers, uid = stack
     monkeypatch.setenv("RWE_REC_EMERGING", "1")

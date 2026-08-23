@@ -2827,6 +2827,17 @@ class Backend:
             if bs_cols:
                 extras.append(("blindspot", bs_k, bs_cols))
         if extras:
+            # Reader policy applies to EVERY source, not only the RWE slices: each extra's
+            # columns pass through the same shared rerank — so a disliked article stays dropped
+            # (exclusion is law regardless of which source re-found it), recently-shown cards
+            # decay instead of fronting every serve (the first shadow run measured exactly that
+            # leak: repeat 8.6/feed shadowed vs 5.2 served), and the reader's sliders shape a
+            # source slice like any other. Identity when params carry no state — the builders'
+            # own ordering (opposite-lean first, round-robin, emergence rank) is preserved then.
+            extras = [(n, k, Backend._preference_rerank(corpus.mind, cols, params, by_col))
+                      for n, k, cols in extras]
+            extras = [(n, k, cols) for n, k, cols in extras if cols]
+        if extras:
             order = {n: i for i, n in enumerate(EXTRA_SOURCE_ORDER)}
             extras.sort(key=lambda e: order.get(e[0], len(order)))
             plan = _plan_with_extras(plan, [(n, k) for n, k, _ in extras])
