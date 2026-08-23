@@ -55,6 +55,22 @@ test("an expired breaking deep link degrades to the live Stories page", () => {
   assert.equal(hrefFor("weekly_report", { occurredAt: "2026-08-01T00:00:00Z" }, now), "/report/weekly");
 });
 
+test("the week-in-review digest opens the weekly period page, not Home", () => {
+  // The reported click path: "Your week in review — 8 reads this week · 0-day streak" landed on
+  // "/", which says nothing about the week the notification just summarized — the same generic-
+  // landing defect the two report kinds already escaped (their table comment records it). The
+  // weekly period page IS the digest's substance: reading-over-time and the health score
+  // windowed to the same seven days as the payload's {reads, streakDays, overall}.
+  assert.equal(hrefFor("weekly_digest", { reads: 8, streakDays: 0, overall: 66 }), "/report/weekly");
+  assert.notEqual(hrefFor("weekly_digest", {}), "/", "the digest must never regress to Home");
+  // …while the streak reminder KEEPS Home deliberately: its ask is "go read something now",
+  // and the feed is where that happens — the two kinds' destinations must stay distinct.
+  assert.equal(hrefFor("streak_reminder", { streakDays: 4 }), "/");
+  // and the digest does not collide with the weekly report's own deep-link semantics: both point
+  // at the same period page because they announce the same period, with no payload dependence.
+  assert.equal(hrefFor("weekly_report", {}), "/report/weekly");
+});
+
 test("the story proxy passes the engine's 404 through instead of flattening it to 503", () => {
   // The hop the first fix missed (verified by the reporter's second screenshot): the Next route
   // used `backendGet`, which collapses "story dissolved" (404) and "engine down" (transport)

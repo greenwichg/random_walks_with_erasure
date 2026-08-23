@@ -69,10 +69,16 @@ export const NOTIFICATION_KINDS: Record<string, NotificationKindMeta> = {
     deepLinkField: null,
     deepLinkPath: null,
   },
+  // The digest ("Your week in review — {reads} reads · {streakDays}-day streak") pointed at "/",
+  // the same generic landing the two report kinds above escaped: Home says nothing about the week
+  // the notification just summarized. The weekly period page IS that week — reading-over-time and
+  // the health score windowed to the same seven days the digest's payload (reads, streakDays,
+  // overall) describes. streak_reminder keeps "/" deliberately: its ask is "go read something
+  // now", and the feed is where that happens.
   weekly_digest: {
     titleKey: "notifications.weekly_digest.title",
     bodyKey: "notifications.weekly_digest.body",
-    href: "/",
+    href: "/report/weekly",
     deepLinkField: null,
     deepLinkPath: null,
   },

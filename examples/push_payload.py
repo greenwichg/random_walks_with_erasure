@@ -48,7 +48,7 @@ _STATIC_HREFS = {
     "weekly_report": "/report/weekly",
     "monthly_deep_dive": "/report/monthly",
     "recommendations_waiting": "/recommendations",
-    "weekly_digest": "/",
+    "weekly_digest": "/report/weekly",   # the week the digest summarizes, not the generic Home
     "streak_reminder": "/",
     "blind_spot_alert": "/report",
     "breaking_story": "/stories",
