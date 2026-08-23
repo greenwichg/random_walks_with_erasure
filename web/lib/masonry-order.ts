@@ -22,9 +22,35 @@ export const MASONRY_BREAKPOINTS = [
 /** Below the smallest breakpoint: a single column (phones). */
 export const MASONRY_DEFAULT_COUNT = 1;
 
-/** Distribute item indexes 0..n-1 round-robin into `count` columns. */
+/** Distribute item indexes 0..n-1 round-robin into `count` columns. Count-based: even ITEM
+ *  counts per column, but column HEIGHTS drift without bound when heights cluster (measured on
+ *  Discover, 2026-08-23: image cards ~2.3× text cards, and a text-heavy column ended ~4 cards
+ *  early). Streams with height-clustered cards should use {@link distributeByHeight}. */
 export function distributeIndexes(n: number, count: number): number[][] {
   const columns: number[][] = Array.from({ length: Math.max(1, count) }, () => []);
   for (let i = 0; i < n; i += 1) columns[i % columns.length]!.push(i);
+  return columns;
+}
+
+/** Distribute item indexes 0..n-1 into `count` columns by ESTIMATED height: each item joins the
+ *  currently-shortest column (ties → leftmost). Deterministic, and placement of item i depends
+ *  only on items 0..i-1, so it keeps the append-stability law: a longer list never moves an
+ *  earlier item. Each column stays chronological top-to-bottom, and the bottom skew is bounded
+ *  by ONE item's height — the guarantee count-based round-robin cannot give. The estimate only
+ *  needs fair RATIOS between cards, not pixel truth; its error is absorbed by that same bound. */
+export function distributeByHeight(
+  n: number,
+  count: number,
+  heightOf: (i: number) => number,
+): number[][] {
+  const cols = Math.max(1, count);
+  const columns: number[][] = Array.from({ length: cols }, () => []);
+  const heights: number[] = new Array(cols).fill(0);
+  for (let i = 0; i < n; i += 1) {
+    let c = 0;
+    for (let k = 1; k < cols; k += 1) if (heights[k]! < heights[c]!) c = k;
+    columns[c]!.push(i);
+    heights[c] = heights[c]! + Math.max(1, heightOf(i));
+  }
   return columns;
 }

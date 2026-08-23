@@ -9,6 +9,7 @@ import { CountryBadge } from "@/components/shared/country-badge";
 import { DiscoverCard } from "@/components/discover/discover-card";
 import { FilterSelect, type FilterOption } from "@/components/shared/filter-select";
 import { MasonryColumns } from "@/components/shared/masonry-columns";
+import { estimateDiscoverCardHeight } from "@/lib/discover-card-height";
 import { interleavePublishers } from "@ih/core/logic/discover-order";
 import { EmptyState, ErrorState } from "@/components/shared/states";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -126,8 +127,12 @@ export default function DiscoverPage() {
           product direction): the uniform grid stretched every card in a row to the tallest and
           the card's internal slack rendered the difference as dead space; MasonryColumns — the
           SAME component Search and Saved already use — lets each card end where its content ends
-          while keeping row-major reading order and append-only Load More (cards the reader has
-          seen never move; see its docstring). This is a layout change only. Unchanged, exactly
+          while keeping append-only Load More (cards the reader has seen never move; see its
+          docstring). Placement is height-aware (estimateHeight): Discover's cards are bimodal —
+          image cards run ~2.3× the height of text-first cards — and count-based round-robin let
+          a text-heavy column end thousands of px before its neighbor (observed in production,
+          2026-08-23). Shortest-column placement bounds that skew at one card, trading exact
+          row-major reading order for approximate. This is a layout change only. Unchanged, exactly
           as through the earlier revert: the imageSuspect/branding guard and text-first fallback
           (in DiscoverCard), display-title hygiene (engine), publisher interleave (above), the
           visible lean-pill tint (Badge variants), lean-said-once (leanDot={false} here), and the
@@ -135,6 +140,7 @@ export default function DiscoverPage() {
       <MasonryColumns
         items={shown}
         itemKey={(a) => a.id}
+        estimateHeight={estimateDiscoverCardHeight}
         render={(article, i) => (
           <DiscoverCard article={article} index={i % PAGE} priority={i < 2} leanDot={false} />
         )}

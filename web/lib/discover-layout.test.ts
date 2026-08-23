@@ -19,8 +19,17 @@ import { join } from "node:path";
 import {
   MASONRY_BREAKPOINTS,
   MASONRY_DEFAULT_COUNT,
+  distributeByHeight,
   distributeIndexes,
 } from "./masonry-order.ts";
+import { estimateDiscoverCardHeight } from "./discover-card-height.ts";
+
+// Discover's real mix, abstracted: image cards and text-first cards differ ~2.3× in height, and
+// bursts cluster. This is the shape that made count-based round-robin fail in production
+// (2026-08-23: one column ended thousands of px before its neighbor).
+const BIMODAL = Array.from({ length: 48 }, (_, i) =>
+  i % 5 === 0 || i < 10 ? 240 : 560,
+);
 
 const WEB = join(import.meta.dirname, "..");
 const read = (p: string) => readFileSync(join(WEB, p), "utf8");
@@ -48,6 +57,62 @@ test("Load More is append-only: a longer list never moves an earlier card", () =
   }
 });
 
+test("height-aware placement keeps the append law: a longer list never moves an earlier card", () => {
+  for (const count of [MASONRY_DEFAULT_COUNT, ...MASONRY_BREAKPOINTS.map((b) => b.count)]) {
+    const before = distributeByHeight(24, count, (i) => BIMODAL[i]!);
+    const after = distributeByHeight(48, count, (i) => BIMODAL[i]!);
+    before.forEach((col, c) => {
+      assert.deepEqual(after[c]!.slice(0, col.length), col, `count=${count} col=${c}`);
+    });
+  }
+});
+
+test("height-aware placement bounds the column skew at one card — the production failure", () => {
+  // The void in the 2026-08-23 screenshot: round-robin's skew on a bimodal stream exceeds a
+  // whole card, and nothing bounds it. Shortest-column placement is bounded by construction.
+  for (const count of [2, 3]) {
+    const fill = (columns: number[][]) =>
+      columns.map((col) => col.reduce((h, i) => h + BIMODAL[i]!, 0));
+    const greedy = fill(distributeByHeight(48, count, (i) => BIMODAL[i]!));
+    const maxItem = Math.max(...BIMODAL);
+    assert.ok(
+      Math.max(...greedy) - Math.min(...greedy) <= maxItem,
+      `count=${count}: skew ${Math.max(...greedy) - Math.min(...greedy)} exceeds one card`,
+    );
+  }
+});
+
+test("height-aware columns stay chronological top to bottom", () => {
+  for (const count of [1, 2, 3]) {
+    for (const col of distributeByHeight(48, count, (i) => BIMODAL[i]!)) {
+      const sorted = [...col].sort((a, b) => a - b);
+      assert.deepEqual(col, sorted, `count=${count}`);
+    }
+  }
+});
+
+test("the card-height estimate mirrors the card's own rules", () => {
+  const text = {
+    headline: "A headline of ordinary length for a card",
+    description: "A summary long enough to wrap over a few lines when the card renders it.",
+  };
+  const image = { ...text, image: "https://example.com/a.jpg" };
+  assert.ok(
+    estimateDiscoverCardHeight(image) > estimateDiscoverCardHeight(text),
+    "an image card is estimated taller than the same card without its image",
+  );
+  assert.equal(
+    estimateDiscoverCardHeight({ ...image, imageSuspect: true }),
+    estimateDiscoverCardHeight(text),
+    "an engine-flagged branding image renders text-first, so it estimates text-first",
+  );
+  const longer = { ...text, description: `${text.description} ${text.description}` };
+  assert.ok(
+    estimateDiscoverCardHeight(longer) >= estimateDiscoverCardHeight(text),
+    "more summary never shrinks the estimate",
+  );
+});
+
 test("the responsive scale mirrors the app's grid: 1 column, md 2, xl 3", () => {
   assert.equal(MASONRY_DEFAULT_COUNT, 1);
   assert.deepEqual(
@@ -63,6 +128,10 @@ test("Discover renders the stream through MasonryColumns, not a stretch grid", (
   const page = read("app/(app)/discover/page.tsx");
   assert.ok(page.includes("<MasonryColumns"), "the stream must render through MasonryColumns");
   assert.ok(page.includes("<DiscoverCard"), "MasonryColumns must render DiscoverCard");
+  assert.ok(
+    page.includes("estimateHeight={estimateDiscoverCardHeight}"),
+    "Discover's bimodal cards need height-aware placement, not count-based round-robin",
+  );
   // The only grid left on the page is the loading skeleton; the card stream itself must never
   // regain a row-stretching wrapper.
   const grids = page.match(/grid-cols-1/g) ?? [];
