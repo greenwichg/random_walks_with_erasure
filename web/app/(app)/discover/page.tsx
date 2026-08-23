@@ -104,10 +104,11 @@ export default function DiscoverPage() {
       </div>
 
       {isLoading && (
-        /* Skeletons at varied heights, top-aligned — an honest preview of the natural-height
-           stream, not of a uniform grid the page no longer renders. */
+        /* Skeletons at slightly varied heights, top-aligned — an honest preview of the stream:
+           every card carries the occupied image slot, so heights cluster tall and differ only
+           by text lines. */
         <div className="grid grid-cols-1 items-start gap-5 md:grid-cols-2 xl:grid-cols-3">
-          {[224, 288, 208, 256, 320, 232].map((h, i) => (
+          {[464, 496, 440, 480, 512, 456].map((h, i) => (
             <Skeleton key={i} className="rounded-lg" style={{ height: h }} />
           ))}
         </div>
@@ -128,11 +129,12 @@ export default function DiscoverPage() {
           the card's internal slack rendered the difference as dead space; MasonryColumns — the
           SAME component Search and Saved already use — lets each card end where its content ends
           while keeping append-only Load More (cards the reader has seen never move; see its
-          docstring). Placement is height-aware (estimateHeight): Discover's cards are bimodal —
-          image cards run ~2.3× the height of text-first cards — and count-based round-robin let
-          a text-heavy column end thousands of px before its neighbor (observed in production,
-          2026-08-23). Shortest-column placement bounds that skew at one card, trading exact
-          row-major reading order for approximate. This is a layout change only. Unchanged, exactly
+          docstring). Two mechanisms share the rhythm work: the card's always-occupied image slot
+          (publisher placeholder when art is absent/suspect/broken — DiscoverCard) removes the
+          image/text height bimodality that let a text-heavy column end thousands of px early
+          (observed in production, 2026-08-23), and height-aware placement (estimateHeight)
+          bounds the residual text-length skew at one card, trading exact row-major reading order
+          for approximate. This is a layout change only. Unchanged, exactly
           as through the earlier revert: the imageSuspect/branding guard and text-first fallback
           (in DiscoverCard), display-title hygiene (engine), publisher interleave (above), the
           visible lean-pill tint (Badge variants), lean-said-once (leanDot={false} here), and the

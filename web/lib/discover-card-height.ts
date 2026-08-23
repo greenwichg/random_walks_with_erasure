@@ -3,28 +3,22 @@
  * height-aware masonry placement needs (lib/masonry-order.ts, distributeByHeight).
  *
  * The estimate mirrors the card's own rendering rules (components/discover/discover-card.tsx):
- * an image card leads with an aspect-video image and clamps the summary at 3 lines; an imageless
- * card gets senior type — larger headline, summary clamped at 6 lines — and an engine-flagged
- * branding image (imageSuspect) renders text-first, so it estimates as imageless too.
+ * every card leads with an OCCUPIED image slot — article art, or the publisher placeholder when
+ * the art is absent, engine-flagged branding, or broken — one type scale, and a 3-line summary
+ * clamp. Height therefore varies only by text lines, so image fields are deliberately not
+ * consulted: art and placeholder fill the same slot.
  *
- * Constants are deliberately coarse: placement needs the ORDER of heights and a fair ratio
- * between an image card and a text card, not pixel truth. The residual error is exactly what the
- * placement's one-item skew bound absorbs. Client-only image load failures cannot be estimated
- * (they happen after placement) and are rare enough to live inside the same bound.
+ * Constants are deliberately coarse: placement needs the ORDER of heights and fair ratios, not
+ * pixel truth. The residual error is exactly what the placement's one-item skew bound absorbs.
  */
 export function estimateDiscoverCardHeight(article: {
-  image?: string | null;
-  imageSuspect?: boolean;
   headline: string;
   description?: string | null;
 }): number {
-  const hasImage = Boolean(article.image) && !article.imageSuspect;
   const chrome = 150; // card padding, metadata row, lean badge, actions row
-  const image = hasImage ? 209 : 0; // aspect-video at ~350px column + its bottom margin
-  const headlineLines = Math.min(4, Math.max(1, Math.ceil(article.headline.length / (hasImage ? 34 : 30))));
-  const headline = headlineLines * (hasImage ? 24 : 27);
+  const slot = 209; // the always-occupied 16:9 slot at ~350px column + its bottom margin
+  const headlineLines = Math.min(4, Math.max(1, Math.ceil(article.headline.length / 34)));
   const descLen = (article.description ?? "").trim().length;
-  const descLines = descLen ? Math.min(hasImage ? 3 : 6, Math.ceil(descLen / 48)) : 0;
-  const description = descLines * 20 + (descLines ? 8 : 0);
-  return chrome + image + headline + description;
+  const descLines = descLen ? Math.min(3, Math.ceil(descLen / 48)) : 0;
+  return chrome + slot + headlineLines * 24 + descLines * 20 + (descLines ? 8 : 0);
 }

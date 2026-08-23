@@ -24,9 +24,10 @@ import {
 } from "./masonry-order.ts";
 import { estimateDiscoverCardHeight } from "./discover-card-height.ts";
 
-// Discover's real mix, abstracted: image cards and text-first cards differ ~2.3× in height, and
-// bursts cluster. This is the shape that made count-based round-robin fail in production
-// (2026-08-23: one column ended thousands of px before its neighbor).
+// The height shape that broke count-based round-robin in production (2026-08-23: one column
+// ended thousands of px before its neighbor). The card's always-occupied image slot has since
+// removed this bimodality from Discover itself, but the placement algorithm must bound ANY
+// input — this stays as its stress case.
 const BIMODAL = Array.from({ length: 48 }, (_, i) =>
   i % 5 === 0 || i < 10 ? 240 : 560,
 );
@@ -91,25 +92,47 @@ test("height-aware columns stay chronological top to bottom", () => {
   }
 });
 
-test("the card-height estimate mirrors the card's own rules", () => {
-  const text = {
-    headline: "A headline of ordinary length for a card",
-    description: "A summary long enough to wrap over a few lines when the card renders it.",
+test("the card-height estimate mirrors the card's own rules: one rhythm, text-only variance", () => {
+  const short = { headline: "Brief headline", description: "" };
+  const long = {
+    headline:
+      "A very long headline that will wrap over several rendered lines on a desktop column width",
+    description:
+      "A summary long enough to exhaust the three-line clamp when the card renders it at the " +
+      "typical column width, with room to spare beyond the clamp boundary for good measure.",
   };
-  const image = { ...text, image: "https://example.com/a.jpg" };
+  // The slot is ALWAYS occupied (art or publisher placeholder), so image fields must be
+  // irrelevant to the estimate — art and placeholder fill the same slot.
+  const withImage: { headline: string; description?: string | null } = {
+    ...long,
+    ...( { image: "https://example.com/a.jpg", imageSuspect: false } as object),
+  };
+  assert.equal(estimateDiscoverCardHeight(withImage), estimateDiscoverCardHeight(long));
+  const longer = { ...long, description: `${long.description} ${long.description}` };
   assert.ok(
-    estimateDiscoverCardHeight(image) > estimateDiscoverCardHeight(text),
-    "an image card is estimated taller than the same card without its image",
-  );
-  assert.equal(
-    estimateDiscoverCardHeight({ ...image, imageSuspect: true }),
-    estimateDiscoverCardHeight(text),
-    "an engine-flagged branding image renders text-first, so it estimates text-first",
-  );
-  const longer = { ...text, description: `${text.description} ${text.description}` };
-  assert.ok(
-    estimateDiscoverCardHeight(longer) >= estimateDiscoverCardHeight(text),
+    estimateDiscoverCardHeight(longer) >= estimateDiscoverCardHeight(long),
     "more summary never shrinks the estimate",
+  );
+  // Uniform rhythm: with the slot constant and the clamps bounded, the tallest and shortest
+  // possible cards differ by at most the text band (3 extra headline lines + 3 summary lines).
+  const band = estimateDiscoverCardHeight(long) - estimateDiscoverCardHeight(short);
+  assert.ok(band > 0 && band <= 3 * 24 + 3 * 20 + 8, `band=${band}`);
+});
+
+test("every card leads with an occupied image slot — art or the publisher placeholder", () => {
+  const card = read("components/discover/discover-card.tsx");
+  const h3 = card.lastIndexOf("<h3");
+  const art = card.lastIndexOf("<ArticleImage");
+  const placeholder = card.lastIndexOf("<PublisherLogo");
+  assert.ok(art >= 0 && art < h3, "article art leads when present");
+  assert.ok(placeholder >= 0 && placeholder < h3, "the publisher placeholder fills the slot otherwise");
+  assert.ok(
+    card.includes('aria-hidden="true"'),
+    "the placeholder is decorative — the metadata row names the publisher",
+  );
+  assert.ok(
+    !card.includes("line-clamp-6") && !card.includes("text-lg"),
+    "senior-type compensation is retired: the occupied slot carries the rhythm, one type scale",
   );
 });
 

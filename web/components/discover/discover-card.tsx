@@ -6,10 +6,10 @@ import type { Article } from "@ih/core/domain/types";
 import { PublisherBadge, LeanBadge } from "@/components/shared/article-badges";
 import { ArticleImage } from "@/components/shared/article-image";
 import { ContinuationStrip } from "@/components/shared/continuation-strip";
+import { PublisherLogo } from "@/components/shared/publisher-logo";
 import { ReadArticleButton } from "@/components/shared/read-article-button";
 import { SaveButton } from "@/components/shared/save-button";
 import { useTranslation } from "@/lib/i18n";
-import { cn } from "@/lib/utils";
 
 /**
  * A Discover article card — one live FeedArticle: publisher, title, description, real publication
@@ -33,11 +33,12 @@ export function DiscoverCard({
   leanDot?: boolean;
 }) {
   const { timeAgo } = useTranslation();
-  // Three ways an image doesn't lead this card, one text-first outcome: absent, engine-flagged
-  // branding (`imageSuspect` — furniture never fronts a card, the story-hero rule applied to
+  // Three ways an image doesn't lead this card, one outcome: absent, engine-flagged branding
+  // (`imageSuspect` — furniture never masquerades as article art, the story-hero rule applied to
   // article surfaces), or failed to load in THIS browser (only observable here; the engine never
-  // downloads images). The senior-type treatment below keys on the same state, so a demoted
-  // image also hands its space to content.
+  // downloads images). All three render the publisher PLACEHOLDER below — visibly structure on a
+  // muted ground, so the slot stays occupied and every card shares one rhythm, while the
+  // anti-deception rule holds: a suspect image is still never shown as art.
   const [imgFailed, setImgFailed] = React.useState(false);
   React.useEffect(() => setImgFailed(false), [article.image]);
   const hasImage = Boolean(article.image) && !article.imageSuspect && !imgFailed;
@@ -55,7 +56,7 @@ export function DiscoverCard({
       transition={{ delay: Math.min(index * 0.04, 0.4), duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
       className="flex flex-col rounded-lg border bg-card p-5 shadow-soft transition-shadow hover:shadow-card"
     >
-      {hasImage && (
+      {hasImage ? (
         <ArticleImage
           src={article.image}
           alt={article.headline}
@@ -63,20 +64,34 @@ export function DiscoverCard({
           className="mb-3"
           onHidden={() => setImgFailed(true)}
         />
+      ) : (
+        /* The publisher placeholder (2026-08-23): the same slot ArticleImage draws — aspect,
+           rounding, muted ground — holding the outlet's dimmed mark, glyph when the chain runs
+           out. Decorative (aria-hidden): the metadata row below already NAMES the publisher.
+           Replaces the retired senior-type compensation: with the slot always occupied, uniform
+           rhythm comes from structure, not from inflating the text. */
+        <div
+          className="mb-3 flex aspect-[16/9] items-center justify-center rounded-lg bg-muted"
+          aria-hidden="true"
+        >
+          <div className="opacity-35 grayscale">
+            <PublisherLogo
+              logo={article.publisherLogo}
+              fallbacks={article.publisherLogoFallbacks}
+              sizePx={40}
+              className="h-10 w-10 object-contain"
+              glyphClassName="h-9 w-9 text-muted-foreground"
+            />
+          </div>
+        </div>
       )}
 
-      {/* Content flow (2026-08-23): image → headline → metadata → summary → actions. The headline
-          leads the text block so the card reads like a front page, and there is deliberately no
-          internal stretcher — inside natural-height masonry columns the card ends where its
-          content ends, so a short card is a short card instead of a void. Imageless: the type
-          gets senior (newspaper rule) — a larger headline and a deeper description clamp give
-          the text-first card the presence the image would have carried. */}
-      <h3
-        className={cn(
-          "font-semibold leading-snug tracking-tight",
-          hasImage ? "text-[1.05rem]" : "text-lg",
-        )}
-      >
+      {/* Content flow (2026-08-23): image slot → headline → metadata → summary → actions. The
+          headline leads the text block so the card reads like a front page, and there is
+          deliberately no internal stretcher — inside natural-height masonry columns the card
+          ends where its content ends. One type scale for every card: the slot above is always
+          occupied, so no card needs compensating typography. */}
+      <h3 className="text-[1.05rem] font-semibold leading-snug tracking-tight">
         {article.headline}
       </h3>
 
@@ -97,14 +112,7 @@ export function DiscoverCard({
       </div>
 
       {article.description && (
-        <p
-          className={cn(
-            "mt-2 text-sm text-muted-foreground",
-            hasImage ? "line-clamp-3" : "line-clamp-6 leading-relaxed",
-          )}
-        >
-          {article.description}
-        </p>
+        <p className="mt-2 line-clamp-3 text-sm text-muted-foreground">{article.description}</p>
       )}
 
       <div className="mt-3 flex flex-wrap items-center gap-1.5">
