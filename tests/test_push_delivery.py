@@ -180,6 +180,21 @@ def test_every_static_href_matches_the_web_metadata_table():
         f"engine vs web href drift:\n  engine={push_payload._STATIC_HREFS}\n  web={web}")
 
 
+def test_the_deep_link_freshness_horizon_matches_the_engine_ttl(monkeypatch):
+    """The web table's `deepLinkFreshHours` is the LEGACY judgement — rows materialised before the
+    fan-out carried `expiresAt` are judged by `occurredAt` plus these hours — so it must equal the
+    engine default that stamped those very rows' events (`story_events.ttl_hours`, 6h). New rows
+    carry the event's own `expiresAt` verbatim and never consult the horizon; only the two DEFAULTS
+    have to agree, which is why the env override is cleared before reading the engine's."""
+    import story_events
+    monkeypatch.delenv("RWE_BREAKING_TTL_HOURS", raising=False)
+    source = (ROOT / "packages" / "core" / "logic" / "notification-kinds.ts").read_text(encoding="utf-8")
+    m = re.search(r"deepLinkFreshHours:\s*(\d+)", source)
+    assert m, "breaking_story no longer declares deepLinkFreshHours — the expiry fallback is gone"
+    assert int(m.group(1)) == story_events.ttl_hours(), (
+        "the web's legacy freshness horizon drifted from the engine's breaking-event TTL")
+
+
 # --------------------------------------------------------------------------------------------- #
 # Failure classification — the judgement that makes the platform operable.
 # --------------------------------------------------------------------------------------------- #

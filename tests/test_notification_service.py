@@ -398,9 +398,18 @@ def test_each_breaking_event_becomes_one_notification():
 
 
 def test_the_payload_carries_what_the_inbox_needs_to_deep_link():
-    out = _breaking(ns.evaluate(_breaking_ctx([_breaking_event(7, story_id="st_xyz")])))
+    """…including the event's own staleness cutoff: the materialised row outlives the story (a
+    breaking story ages out of the catalog window), and `expiresAt` is what lets the inbox stop
+    deep-linking into "Story not found" and fall back to the kind's static /stories."""
+    out = _breaking(ns.evaluate(_breaking_ctx(
+        [_breaking_event(7, story_id="st_xyz", expires_at="2026-07-15T17:00:00+00:00")])))
     assert out[0].payload == {"storyId": "st_xyz", "title": "Court issues major ruling",
-                              "publisherCount": 4, "occurredAt": "2026-07-15T11:00:00+00:00"}
+                              "publisherCount": 4, "occurredAt": "2026-07-15T11:00:00+00:00",
+                              "expiresAt": "2026-07-15T17:00:00+00:00"}
+    # an event recorded without a cutoff still materialises; the field is carried as None and the
+    # web side then judges freshness from occurredAt + the kind's own horizon
+    out = _breaking(ns.evaluate(_breaking_ctx([_breaking_event(8)])))
+    assert out[0].payload["expiresAt"] is None
 
 
 def test_the_dedupe_key_is_the_event_not_the_story():

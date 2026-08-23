@@ -30,6 +30,17 @@ export interface NotificationKindMeta {
   deepLinkField: string | null;
   /** Path template for `deepLinkField`; `{}` is the escaped value. */
   deepLinkPath: string | null;
+  /**
+   * How long the deep link stays usable, for kinds whose destination dissolves (a breaking story
+   * ages out of the catalog window; its `/stories/st_…` then answers only "Story not found").
+   * Freshness is judged from the payload: `expiresAt` (the engine event's own cutoff, carried by
+   * the fan-out) when present, else `occurredAt` + these hours (rows materialised before
+   * `expiresAt` was carried). Past either cutoff `hrefFor` falls back to the kind's static
+   * `href` — the row stays clickable into something alive instead of a dead end. `null`/absent ⇒
+   * the deep link never expires. Mirrors the engine's `story_events.ttl_hours` default; a parity
+   * test compares the two.
+   */
+  deepLinkFreshHours?: number | null;
 }
 
 export const NOTIFICATION_KINDS: Record<string, NotificationKindMeta> = {
@@ -85,6 +96,7 @@ export const NOTIFICATION_KINDS: Record<string, NotificationKindMeta> = {
     href: "/stories",
     deepLinkField: "storyId",
     deepLinkPath: "/stories/",
+    deepLinkFreshHours: 6,
   },
 };
 
@@ -108,15 +120,34 @@ export function kindMeta(kind: string): NotificationKindMeta {
  * supplies: the inbox passes through `href: null` as "no navigation", while the worker substitutes
  * the server-computed `href` from the payload so a push is always tappable (§6).
  */
-export function hrefFor(kind: string, payload?: unknown): string | null {
+export function hrefFor(kind: string, payload?: unknown, now?: Date): string | null {
   const meta = kindMeta(kind);
   if (meta.deepLinkField && meta.deepLinkPath) {
     const value = (payload as Record<string, unknown> | undefined)?.[meta.deepLinkField];
-    if (typeof value === "string" && value.trim()) {
+    if (typeof value === "string" && value.trim() && deepLinkFresh(meta, payload, now)) {
       return meta.deepLinkPath + encodeURIComponent(value.trim());
     }
   }
   return meta.href;
+}
+
+/**
+ * Whether a kind's deep link is still worth following (see `deepLinkFreshHours`). The payload's
+ * own `expiresAt` — the engine event's authoritative cutoff — wins when present and parseable;
+ * rows materialised before it was carried are judged by `occurredAt` + the kind's hours. A kind
+ * without `deepLinkFreshHours`, or a payload with neither timestamp, never expires — exactly the
+ * pre-expiry behaviour, so no other kind changes.
+ */
+function deepLinkFresh(meta: NotificationKindMeta, payload: unknown, now?: Date): boolean {
+  const hours = meta.deepLinkFreshHours;
+  if (hours == null) return true;
+  const p = payload as Record<string, unknown> | undefined;
+  const at = (now ?? new Date()).getTime();
+  const expires = typeof p?.expiresAt === "string" ? Date.parse(p.expiresAt) : NaN;
+  if (!Number.isNaN(expires)) return at < expires;
+  const occurred = typeof p?.occurredAt === "string" ? Date.parse(p.occurredAt) : NaN;
+  if (!Number.isNaN(occurred)) return at - occurred < hours * 3_600_000;
+  return true;
 }
 
 /**

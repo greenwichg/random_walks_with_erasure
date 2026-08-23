@@ -242,7 +242,12 @@ def _breaking_fanout(ctx: "NotificationContext") -> list:
                     {"storyId": payload.get("storyId") or ev.get("sourceId"),
                      "title": title,
                      "publisherCount": payload.get("publisherCount"),
-                     "occurredAt": ev.get("occurredAt")}))
+                     "occurredAt": ev.get("occurredAt"),
+                     # The event's own staleness cutoff, carried into the materialised row so the
+                     # inbox can stop deep-linking once the story has dissolved: past it, the web's
+                     # `hrefFor` degrades the row to the kind's static /stories instead of a
+                     # /stories/st_… that can only answer "Story not found".
+                     "expiresAt": ev.get("expiresAt")}))
     return out
 
 

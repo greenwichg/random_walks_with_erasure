@@ -31,6 +31,30 @@ test("a breaking_story notification deep-links to its story page", () => {
   assert.equal(hrefFor("breaking_story", {}), "/stories");
 });
 
+test("an expired breaking deep link degrades to the live Stories page", () => {
+  // The story a breaking notification points at dissolves when the catalog window moves past it;
+  // its deep link then only answers "Story not found". Past the cutoff the row keeps working —
+  // it just goes to the kind's static /stories (current events) instead of the dead id.
+  const now = new Date("2026-08-23T12:00:00Z");
+  // the fan-out's own cutoff wins when present…
+  assert.equal(
+    hrefFor("breaking_story", { storyId: "st_x", expiresAt: "2026-08-23T13:00:00Z" }, now),
+    "/stories/st_x", "before the event's cutoff the deep link stands");
+  assert.equal(
+    hrefFor("breaking_story", { storyId: "st_x", expiresAt: "2026-08-23T11:00:00Z" }, now),
+    "/stories", "past the event's cutoff the row degrades to the static href");
+  // …legacy rows (materialised before expiresAt was carried) are judged by occurredAt + 6h
+  assert.equal(
+    hrefFor("breaking_story", { storyId: "st_x", occurredAt: "2026-08-23T08:00:00Z" }, now),
+    "/stories/st_x", "a 4h-old legacy row still deep-links");
+  assert.equal(
+    hrefFor("breaking_story", { storyId: "st_x", occurredAt: "2026-08-15T08:00:00Z" }, now),
+    "/stories", "the week-old legacy rows from the bug report stop dead-ending");
+  // a payload with neither timestamp keeps the pre-expiry behaviour, and no other kind changes
+  assert.equal(hrefFor("breaking_story", { storyId: "st_x" }, now), "/stories/st_x");
+  assert.equal(hrefFor("weekly_report", { occurredAt: "2026-08-01T00:00:00Z" }, now), "/report/weekly");
+});
+
 test("the story proxy passes the engine's 404 through instead of flattening it to 503", () => {
   // The hop the first fix missed (verified by the reporter's second screenshot): the Next route
   // used `backendGet`, which collapses "story dissolved" (404) and "engine down" (transport)
