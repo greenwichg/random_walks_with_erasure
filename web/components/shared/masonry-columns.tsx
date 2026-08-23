@@ -1,6 +1,11 @@
 "use client";
 
 import * as React from "react";
+import {
+  MASONRY_BREAKPOINTS,
+  MASONRY_DEFAULT_COUNT,
+  distributeIndexes,
+} from "@/lib/masonry-order";
 
 /**
  * Masonry for card streams — deterministic round-robin columns, not CSS multicol.
@@ -14,8 +19,10 @@ import * as React from "react";
  * disappear. The trade-off, accepted: distribution ignores heights, so column bottoms drift by
  * natural variance (typically under one card) instead of being height-balanced.
  *
- * Column count mirrors the grid breakpoints (1 / md:2 / xl:3) via matchMedia. These streams
- * render client-side after data arrives, so the count is settled before cards first paint.
+ * The distribution law and the breakpoints live in lib/masonry-order.ts (pure, pinned by
+ * lib/discover-layout.test.ts); this component adds only the matchMedia wiring and the DOM.
+ * Column count mirrors the grid breakpoints (1 / md:2 / xl:3). These streams render
+ * client-side after data arrives, so the count is settled before cards first paint.
  */
 export function MasonryColumns<T>({
   items,
@@ -27,19 +34,13 @@ export function MasonryColumns<T>({
   render: (item: T, index: number) => React.ReactNode;
 }) {
   const count = useColumnCount();
-  const columns: { key: string; node: React.ReactNode }[][] = Array.from(
-    { length: count },
-    () => [],
-  );
-  items.forEach((item, i) => {
-    columns[i % count]!.push({ key: itemKey(item), node: render(item, i) });
-  });
+  const columns = distributeIndexes(items.length, count);
   return (
     <div className="flex items-start gap-5">
       {columns.map((column, c) => (
         <div key={c} className="flex min-w-0 flex-1 flex-col gap-5">
-          {column.map((entry) => (
-            <div key={entry.key}>{entry.node}</div>
+          {column.map((i) => (
+            <div key={itemKey(items[i]!)}>{render(items[i]!, i)}</div>
           ))}
         </div>
       ))}
@@ -47,24 +48,19 @@ export function MasonryColumns<T>({
   );
 }
 
-const QUERIES = [
-  { query: "(min-width: 1280px)", count: 3 }, // xl
-  { query: "(min-width: 768px)", count: 2 },  // md
-];
-
 function currentCount(): number {
   if (typeof window === "undefined") return 3;
-  for (const { query, count } of QUERIES) {
+  for (const { query, count } of MASONRY_BREAKPOINTS) {
     if (window.matchMedia(query).matches) return count;
   }
-  return 1;
+  return MASONRY_DEFAULT_COUNT;
 }
 
 function useColumnCount(): number {
   const [count, setCount] = React.useState(currentCount);
   React.useEffect(() => {
     const update = () => setCount(currentCount());
-    const lists = QUERIES.map(({ query }) => window.matchMedia(query));
+    const lists = MASONRY_BREAKPOINTS.map(({ query }) => window.matchMedia(query));
     lists.forEach((l) => l.addEventListener("change", update));
     update();
     return () => lists.forEach((l) => l.removeEventListener("change", update));

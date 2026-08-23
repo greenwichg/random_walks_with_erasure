@@ -65,7 +65,22 @@ export function DiscoverCard({
         />
       )}
 
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+      {/* Content flow (2026-08-23): image → headline → metadata → summary → actions. The headline
+          leads the text block so the card reads like a front page, and there is deliberately no
+          internal stretcher — inside natural-height masonry columns the card ends where its
+          content ends, so a short card is a short card instead of a void. Imageless: the type
+          gets senior (newspaper rule) — a larger headline and a deeper description clamp give
+          the text-first card the presence the image would have carried. */}
+      <h3
+        className={cn(
+          "font-semibold leading-snug tracking-tight",
+          hasImage ? "text-[1.05rem]" : "text-lg",
+        )}
+      >
+        {article.headline}
+      </h3>
+
+      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
         <PublisherBadge name={article.publisher} lean={leanDot ? article.publisherLean : null} logo={article.publisherLogo} logoFallbacks={article.publisherLogoFallbacks} />
         {article.topic && (
           <>
@@ -81,30 +96,16 @@ export function DiscoverCard({
         )}
       </div>
 
-      {/* Imageless: the type gets senior (newspaper rule) — a larger headline and a deeper
-          description clamp fill the grid-stretched height with content, not dead space. */}
-      <h3
-        className={cn(
-          "mt-2 font-semibold leading-snug tracking-tight",
-          hasImage ? "text-[1.05rem]" : "text-lg",
-        )}
-      >
-        {article.headline}
-      </h3>
       {article.description && (
         <p
           className={cn(
-            "mt-1.5 text-sm text-muted-foreground",
+            "mt-2 text-sm text-muted-foreground",
             hasImage ? "line-clamp-3" : "line-clamp-6 leading-relaxed",
           )}
         >
           {article.description}
         </p>
       )}
-
-      {/* The one structural slack point (see StoryCard): grouped text above, anchored footer
-          below — never a void between the description and the badges. */}
-      <div className="flex-1" />
 
       <div className="mt-3 flex flex-wrap items-center gap-1.5">
         <LeanBadge lean={article.lean} bucket={article.leanBucket} />
