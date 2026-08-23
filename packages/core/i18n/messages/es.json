@@ -944,5 +944,16 @@
   "settings.fb.alreadyKnow": "Ya conocido",
   "settings.fb.tooRepetitive": "Demasiado repetitivo",
   "settings.fb.fewerFromSource": "Menos de la fuente",
-  "settings.fb.moreTopic": "Más del tema"
+  "settings.fb.moreTopic": "Más del tema",
+  "settings.fx.lessFrom": "Menos contenido de",
+  "settings.fx.topics": "Preferencias de temas",
+  "settings.fx.more": "Más",
+  "settings.fx.less": "Menos",
+  "settings.fx.dismissed": "Artículos descartados",
+  "settings.fx.dismissedSummary": "{n} descartados: ninguno vuelve a tus recomendaciones.",
+  "settings.fx.clearAll": "Borrar todo",
+  "settings.fx.showList": "Ver lista",
+  "settings.fx.hideList": "Ocultar lista",
+  "settings.fx.expired": "Ya no está en el catálogo",
+  "settings.fx.removeEffect": "Quitar {name}"
 }

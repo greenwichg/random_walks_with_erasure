@@ -555,6 +555,41 @@ export interface RecFeedbackRemoveAck {
   removed: number;
 }
 
+/** One recorded signal inside an effect group (the settings ledger's human-scale view). */
+export interface FeedbackSignal {
+  articleId: string;
+  feedback: RecFeedbackType;
+  createdAt: string;
+}
+
+/** A publisher or topic the reader's feedback currently moves, with the signals behind it. */
+export interface FeedbackEffectGroup {
+  name: string;
+  direction: "more" | "less";
+  signals: FeedbackSignal[];
+}
+
+/** One dismissed/decayed article row — humanized where the catalog still knows it. */
+export interface FeedbackArticle {
+  articleId: string;
+  feedback: RecFeedbackType;
+  createdAt: string;
+  headline?: string | null;
+  publisher?: string | null;
+  url?: string | null;
+  /** False = an expired catalog reference; render "no longer in the catalog", never a raw id. */
+  inCatalog: boolean;
+}
+
+/** `GET /api/me/recommendations/feedback/effects` — grouped engine-side from the SAME
+ *  dimensions table the rerank consumes, so this view cannot claim an effect the feed
+ *  does not apply. */
+export interface RecFeedbackEffects {
+  publishers: FeedbackEffectGroup[];
+  topics: FeedbackEffectGroup[];
+  articles: FeedbackArticle[];
+}
+
 /* ------------------------------------------------------------------ *
  * Recommendation explainability (21a.2) — the payload behind the card's
  * "Why?" drawer, proxied from the engine's internal explain endpoint.

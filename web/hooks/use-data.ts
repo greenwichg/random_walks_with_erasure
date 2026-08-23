@@ -173,7 +173,10 @@ export function useFeedback() {
   return useMutation({
     mutationFn: ({ articleId, action }: { articleId: string; action: FeedbackAction }) =>
       services.sendFeedback(articleId, action),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.recommendationFeedback }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.recommendationFeedback });
+      qc.invalidateQueries({ queryKey: queryKeys.feedbackEffects });
+    },
   });
 }
 
@@ -184,9 +187,25 @@ export function useRemoveFeedback() {
   return useMutation({
     mutationFn: ({ articleId, feedback }: { articleId: string; feedback?: RecFeedbackType }) =>
       services.removeFeedback(articleId, feedback),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.recommendationFeedback }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.recommendationFeedback });
+      qc.invalidateQueries({ queryKey: queryKeys.feedbackEffects });
+    },
   });
 }
+
+/** The settings ledger's human-scale view — publisher/topic chips + the dismissed list, grouped
+ *  engine-side from the same dimensions table the rerank consumes. Authenticated only. */
+export const useFeedbackEffects = () => {
+  const { status } = useSession();
+  return useQuery({
+    queryKey: queryKeys.feedbackEffects,
+    queryFn: services.feedbackEffects,
+    enabled: status === "authenticated",
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+  });
+};
 
 /** The signed-in reader's recorded recommendation feedback — the persisted set the Recommendations
  *  page reads to keep an *ignored* card dismissed across a reload. Authenticated only (anonymous /

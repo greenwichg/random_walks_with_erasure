@@ -66,22 +66,21 @@ def repeat_window_days() -> float:
 _VOCABULARY = ("another_viewpoint", "already_know", "too_repetitive",
                "fewer_from_source", "more_topic")
 
+#: Recorded (store) type → the ranking bucket the engine consumes. The one collapse is
+#: ``read_later`` → ``like`` (both say "more of this was welcome"); everything else is itself.
+#: Exported because the settings ledger's effects endpoint must bucket rows exactly as ranking
+#: does — one map, or the display and the feed drift apart.
+RAW_TO_BUCKET = {"like": "like", "read_later": "like", "dislike": "dislike", "ignore": "ignore",
+                 **{t: t for t in _VOCABULARY}}
+
 
 def _feedback_state(store, uid: int) -> "dict | None":
     fb: dict = {"dislike": [], "like": [], "ignore": [], **{t: [] for t in _VOCABULARY}}
     for row in store.list_recommendation_feedback(uid):
-        kind = row.get("feedback")
+        bucket = RAW_TO_BUCKET.get(row.get("feedback"))
         aid = str(row.get("articleId") or "")
-        if not aid:
-            continue
-        if kind == "dislike":
-            fb["dislike"].append(aid)
-        elif kind in ("like", "read_later"):
-            fb["like"].append(aid)
-        elif kind == "ignore":
-            fb["ignore"].append(aid)
-        elif kind in _VOCABULARY:
-            fb[kind].append(aid)
+        if bucket and aid:
+            fb[bucket].append(aid)
     return fb if any(fb.values()) else None
 
 

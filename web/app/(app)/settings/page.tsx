@@ -29,11 +29,17 @@ import {
   Trophy,
   Clapperboard,
   Palette,
+  X,
 } from "lucide-react";
-import type { RecFeedbackType, Settings, NotificationChannelPrefs } from "@ih/core/domain/types";
+import type {
+  FeedbackEffectGroup,
+  RecFeedbackType,
+  Settings,
+  NotificationChannelPrefs,
+} from "@ih/core/domain/types";
 import { useQuery } from "@tanstack/react-query";
 import {
-  useRecommendationFeedback,
+  useFeedbackEffects,
   useRemoveFeedback,
   useSettings,
   useUpdateSettings,
@@ -68,6 +74,14 @@ const LANGUAGES = [
  *  A reader searching a country list types the letters on their keyboard, not the accents. */
 function fold(s: string): string {
   return s.trim().toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "");
+}
+
+/** Locale short date for a stored ISO timestamp; empty string when the value doesn't parse. */
+function fmtDate(iso: string, lang: string): string {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime())
+    ? ""
+    : new Intl.DateTimeFormat(lang, { dateStyle: "medium" }).format(d);
 }
 
 /** Catalog key for the political-openness slider (maps to per-request RWE-B epsilon; 50 = default). */
@@ -136,9 +150,18 @@ export default function SettingsPage() {
   // no business triggering, and answers to a question it is not asking.
   const pushConfig = usePushConfig();
 
-  // The feedback ledger (Tier 2): what the feed currently holds, and its removal path.
-  const { data: feedbackLog } = useRecommendationFeedback();
+  // The feedback ledger (Tier 2): the ENGINE's grouped view of what the feed currently holds —
+  // publisher/topic effects plus per-article dismissals — and its removal path. The grouping comes
+  // from the same dimensions table the rerank consumes, so this card can never disagree with the
+  // feed about what a signal does.
+  const { data: feedbackFx } = useFeedbackEffects();
   const removeFeedback = useRemoveFeedback();
+  const [showDismissed, setShowDismissed] = React.useState(false);
+  // Removing a chip removes every signal that feeds it — the chip IS those signals, aggregated.
+  const removeEffectGroup = (g: FeedbackEffectGroup) =>
+    g.signals.forEach((s) =>
+      removeFeedback.mutate({ articleId: s.articleId, feedback: s.feedback }),
+    );
 
   // `base` is the server snapshot the draft was seeded from; `draft` is the reader's working copy.
   // Both are local (no new global state). Diffing the draft against `base` — not the live `data` —
@@ -514,38 +537,133 @@ export default function SettingsPage() {
             )}
           </SectionCard>
 
-          {/* Recommendation-feedback ledger (Tier 2) — every signal the feed currently holds
-              against the reader's name, each removable. The visible half of the feedback loop:
-              an effect the reader can see but not retract would be surveillance. Renders only
-              when something is recorded — an empty ledger is not a setting to configure. */}
-          {(feedbackLog ?? []).length > 0 && (
+          {/* Recommendation-feedback effects (Tier 2) — the reader's recorded signals shown the
+              way ranking actually consumes them: aggregated publisher effects, topic effects, and
+              per-article dismissals, each removable. The visible half of the feedback loop: an
+              effect the reader can see but not retract would be surveillance. Renders only when
+              something is recorded — an empty ledger is not a setting to configure. */}
+          {feedbackFx &&
+            feedbackFx.publishers.length + feedbackFx.topics.length + feedbackFx.articles.length >
+              0 && (
             <SectionCard title={t("settings.feedback")} info={t("settings.feedbackInfo")}>
-              <p className="mb-3 text-xs text-muted-foreground">{t("settings.feedbackHint")}</p>
-              <ul className="divide-y">
-                {(feedbackLog ?? []).map((f) => (
-                  <li
-                    key={`${f.articleId}:${f.feedback}`}
-                    className="flex items-center gap-3 py-2 text-sm"
-                  >
-                    <span className="shrink-0 rounded-full border px-2 py-0.5 text-xs font-medium">
-                      {t(FEEDBACK_TYPE_LABEL[f.feedback] ?? f.feedback)}
-                    </span>
-                    <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">
-                      {f.articleId}
-                    </span>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="shrink-0 text-muted-foreground"
-                      onClick={() =>
-                        removeFeedback.mutate({ articleId: f.articleId, feedback: f.feedback })
-                      }
-                    >
-                      {t("settings.feedbackRemove")}
-                    </Button>
-                  </li>
-                ))}
-              </ul>
+              <p className="mb-4 text-xs text-muted-foreground">{t("settings.feedbackHint")}</p>
+              <div className="space-y-5">
+                {feedbackFx.publishers.length > 0 && (
+                  <div>
+                    <h4 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      {t("settings.fx.lessFrom")}
+                    </h4>
+                    <div className="flex flex-wrap gap-1.5">
+                      {feedbackFx.publishers.map((g) => (
+                        <EffectChip
+                          key={g.name}
+                          label={g.name}
+                          count={g.signals.length}
+                          removeLabel={t("settings.fx.removeEffect", { name: g.name })}
+                          onRemove={() => removeEffectGroup(g)}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {feedbackFx.topics.length > 0 && (
+                  <div>
+                    <h4 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      {t("settings.fx.topics")}
+                    </h4>
+                    <div className="flex flex-wrap gap-1.5">
+                      {feedbackFx.topics.map((g) => (
+                        <EffectChip
+                          key={`${g.direction}:${g.name}`}
+                          label={g.name}
+                          direction={t(g.direction === "more" ? "settings.fx.more" : "settings.fx.less")}
+                          count={g.signals.length}
+                          removeLabel={t("settings.fx.removeEffect", { name: g.name })}
+                          onRemove={() => removeEffectGroup(g)}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {feedbackFx.articles.length > 0 && (
+                  <div>
+                    <h4 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      {t("settings.fx.dismissed")}
+                    </h4>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="min-w-40 flex-1 text-sm text-muted-foreground">
+                        {t("settings.fx.dismissedSummary", { n: feedbackFx.articles.length })}
+                      </p>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setShowDismissed((v) => !v)}
+                      >
+                        {showDismissed ? t("settings.fx.hideList") : t("settings.fx.showList")}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-muted-foreground"
+                        onClick={() =>
+                          feedbackFx.articles.forEach((a) =>
+                            removeFeedback.mutate({ articleId: a.articleId, feedback: a.feedback }),
+                          )
+                        }
+                      >
+                        {t("settings.fx.clearAll")}
+                      </Button>
+                    </div>
+                    {showDismissed && (
+                      <ul className="mt-1 divide-y">
+                        {feedbackFx.articles.map((a) => (
+                          <li
+                            key={`${a.articleId}:${a.feedback}`}
+                            className="flex items-center gap-3 py-2 text-sm"
+                          >
+                            <span className="shrink-0 rounded-full border px-2 py-0.5 text-xs font-medium">
+                              {t(FEEDBACK_TYPE_LABEL[a.feedback] ?? a.feedback)}
+                            </span>
+                            <div className="min-w-0 flex-1">
+                              {a.headline ? (
+                                <p className="truncate">{a.headline}</p>
+                              ) : a.inCatalog ? (
+                                <p className="truncate font-mono text-xs text-muted-foreground">
+                                  {a.url ?? a.articleId}
+                                </p>
+                              ) : (
+                                <p className="italic text-muted-foreground">
+                                  {t("settings.fx.expired")}
+                                </p>
+                              )}
+                              {(a.publisher || fmtDate(a.createdAt, lang)) && (
+                                <p className="truncate text-xs text-muted-foreground">
+                                  {[a.publisher, fmtDate(a.createdAt, lang)]
+                                    .filter(Boolean)
+                                    .join(" · ")}
+                                </p>
+                              )}
+                            </div>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="shrink-0 text-muted-foreground"
+                              onClick={() =>
+                                removeFeedback.mutate({
+                                  articleId: a.articleId,
+                                  feedback: a.feedback,
+                                })
+                              }
+                            >
+                              {t("settings.feedbackRemove")}
+                            </Button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                )}
+              </div>
             </SectionCard>
           )}
 
@@ -908,6 +1026,40 @@ function ToggleRow({
       </div>
       <Switch checked={checked} onCheckedChange={onChange} aria-label={title} />
     </div>
+  );
+}
+
+/** One aggregated feedback effect — a publisher or topic the feed currently treats differently,
+ *  with the number of signals feeding it and its own remove affordance. Removing the chip removes
+ *  all of them: the chip IS the aggregate, so a partial removal would misdescribe what remains. */
+function EffectChip({
+  label,
+  direction,
+  count,
+  removeLabel,
+  onRemove,
+}: {
+  label: string;
+  direction?: string;
+  count: number;
+  removeLabel: string;
+  onRemove: () => void;
+}) {
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full border py-0.5 pl-2.5 pr-1 text-xs">
+      {direction && <span className="font-medium text-muted-foreground">{direction}</span>}
+      <span className="font-medium">{label}</span>
+      {count > 1 && <span className="text-muted-foreground">×{count}</span>}
+      <button
+        type="button"
+        aria-label={removeLabel}
+        title={removeLabel}
+        onClick={onRemove}
+        className="rounded-full p-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <X className="h-3 w-3" />
+      </button>
+    </span>
   );
 }
 

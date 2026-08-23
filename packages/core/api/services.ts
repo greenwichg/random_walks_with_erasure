@@ -24,6 +24,7 @@ import type {
   RecFeedbackAck,
   RecFeedbackEntry,
   RecFeedbackRemoveAck,
+  RecFeedbackEffects,
   RecFeedbackType,
   SavableArticle,
   SavedArticle,
@@ -84,6 +85,9 @@ export const services = {
   // a page reload and to render Settings' "active feedback effects" list. Authenticated; anonymous
   // readers have recorded nothing.
   recommendationFeedback: () => getJson<RecFeedbackEntry[]>("/me/recommendations/feedback"),
+  // The settings ledger's human-scale view: publisher/topic chips + the dismissed list, grouped
+  // engine-side from the same dimensions table the rerank consumes (parity by construction).
+  feedbackEffects: () => getJson<RecFeedbackEffects>("/me/recommendations/feedback/effects"),
   // The undo behind the visible-consequence UI: remove one recorded signal (or, with `feedback`
   // omitted, every signal the reader gave the article). A consequence the reader can see but not
   // retract would be surveillance, so removal is as first-class as recording.
@@ -189,6 +193,7 @@ export const queryKeys = {
   // Distinct top-level key (NOT under ["recommendations"]) so a slider-save invalidation of the feed
   // never churns the persisted-feedback cache the page reads to keep ignored cards dismissed.
   recommendationFeedback: ["recommendation-feedback"] as const,
+  feedbackEffects: ["feedback-effects"] as const,
   placeCountries: ["place-countries"] as const,
   geography: ["geography"] as const,
 };

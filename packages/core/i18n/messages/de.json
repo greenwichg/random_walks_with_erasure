@@ -944,5 +944,16 @@
   "settings.fb.alreadyKnow": "Bereits bekannt",
   "settings.fb.tooRepetitive": "Zu repetitiv",
   "settings.fb.fewerFromSource": "Weniger von der Quelle",
-  "settings.fb.moreTopic": "Mehr vom Thema"
+  "settings.fb.moreTopic": "Mehr vom Thema",
+  "settings.fx.lessFrom": "Weniger Inhalte von",
+  "settings.fx.topics": "Themen-Präferenzen",
+  "settings.fx.more": "Mehr",
+  "settings.fx.less": "Weniger",
+  "settings.fx.dismissed": "Ausgeblendete Artikel",
+  "settings.fx.dismissedSummary": "{n} ausgeblendet — keiner kehrt in Ihre Empfehlungen zurück.",
+  "settings.fx.clearAll": "Alle entfernen",
+  "settings.fx.showList": "Liste anzeigen",
+  "settings.fx.hideList": "Liste ausblenden",
+  "settings.fx.expired": "Nicht mehr im Katalog",
+  "settings.fx.removeEffect": "{name} entfernen"
 }

@@ -1158,19 +1158,38 @@ _READER_STATE_CAP = 8.0
 # (docs/X_ALGORITHM_AUDIT_AND_PROPOSAL.md, Phase 13.6). No new magnitudes: each type reuses a
 # Tier-1 anchor, differing only in WHICH dimensions it touches — the whole point of the finer
 # vocabulary is that "fewer from this source" can dim the publisher without smearing the topic,
-# and "more of this topic" can lift the topic without privileging one outlet.
-#
-#   type                article   topic                       publisher
-#   another_viewpoint   drop      —                           —        (the story source also
-#                                                                       ranks the asked story first)
-#   already_know        drop      —                           —
-#   too_repetitive      drop      ×0.8, floor 0.5             —
-#   fewer_from_source   drop      —                           ×0.6, floor 0.35
-#   more_topic          —         ×1.5, cap 3.0               —
-#
-# All four negative types drop the named article for the same reason dislike does: the reader
-# acted on THAT card expecting it gone, and re-serving it to honor a nudge-only principle would
-# be malicious compliance.
+# and "more of this topic" can lift the topic without privileging one outlet. All the negative
+# types drop the named article for the same reason dislike does: the reader acted on THAT card
+# expecting it gone, and re-serving it to honor a nudge-only principle would be malicious
+# compliance. (another_viewpoint additionally ranks the asked story first in the story source.)
+
+#: The single declarative statement of which dimensions each feedback BUCKET touches — consumed
+#: by :func:`_reader_state_factors` (ranking) and by the settings ledger's effects endpoint
+#: (``/api/me/recommendations/feedback/effects``), so the page that says "seeing less from X"
+#: and the rerank that dims X read one table and cannot drift apart. Keys are rec_context's
+#: buckets (``read_later`` arrives as ``like`` — :data:`rec_context.RAW_TO_BUCKET`). ``article``
+#: is ``"drop"`` (exclusion), ``"decay"`` (the bounded ignore nudge), or ``None``; topic /
+#: publisher effects are ``(direction, anchor, bound)`` — direction ``"more"`` multiplies up to
+#: a cap, ``"less"`` down to a floor. Bucket order is the composition order for mixed signals on
+#: one topic, pinned by the vocabulary tests.
+FEEDBACK_DIMENSIONS = {
+    "dislike": {"article": "drop",
+                "topic": ("less", _DISLIKE_TOPIC_DECAY, _DISLIKE_TOPIC_FLOOR),
+                "publisher": ("less", _DISLIKE_PUBLISHER_DECAY, _DISLIKE_PUBLISHER_FLOOR)},
+    "like": {"article": None,
+             "topic": ("more", _LIKE_TOPIC_BOOST, _LIKE_TOPIC_CAP), "publisher": None},
+    "ignore": {"article": "decay", "topic": None, "publisher": None},
+    "another_viewpoint": {"article": "drop", "topic": None, "publisher": None},
+    "already_know": {"article": "drop", "topic": None, "publisher": None},
+    "too_repetitive": {"article": "drop",
+                       "topic": ("less", _DISLIKE_TOPIC_DECAY, _DISLIKE_TOPIC_FLOOR),
+                       "publisher": None},
+    "fewer_from_source": {"article": "drop", "topic": None,
+                          "publisher": ("less", _DISLIKE_PUBLISHER_DECAY,
+                                        _DISLIKE_PUBLISHER_FLOOR)},
+    "more_topic": {"article": None,
+                   "topic": ("more", _LIKE_TOPIC_BOOST, _LIKE_TOPIC_CAP), "publisher": None},
+}
 
 
 def _reader_state_factors(mind, fb: dict, rep: dict):
@@ -1185,8 +1204,7 @@ def _reader_state_factors(mind, fb: dict, rep: dict):
     resolvable, which keeps every claim about "this publisher" grounded in the catalog being
     ranked rather than in a remembered string."""
     referenced: set = set()
-    for key in ("dislike", "like", "ignore", "another_viewpoint", "already_know",
-                "too_repetitive", "fewer_from_source", "more_topic"):
+    for key in FEEDBACK_DIMENSIONS:
         referenced.update(fb.get(key) or ())
     for key in ("unopened", "opened"):
         referenced.update(rep.get(key) or ())
@@ -1203,46 +1221,34 @@ def _reader_state_factors(mind, fb: dict, rep: dict):
             return None, None
         return str(cats[c]).strip().lower(), str(outlets[c])
 
+    # One pass over FEEDBACK_DIMENSIONS — the effects applied here are, by construction, exactly
+    # the effects the settings ledger displays, because both read the same table.
     topic_mult: dict = {}
     pub_mult: dict = {}
-    for aid in set(fb.get("dislike") or ()):
-        t, p = _bucket(aid)
-        if t:
-            topic_mult[t] = max(topic_mult.get(t, 1.0) * _DISLIKE_TOPIC_DECAY,
-                                _DISLIKE_TOPIC_FLOOR)
-        if p:
-            pub_mult[p] = max(pub_mult.get(p, 1.0) * _DISLIKE_PUBLISHER_DECAY,
-                              _DISLIKE_PUBLISHER_FLOOR)
-    for aid in set(fb.get("like") or ()):
-        t, _ = _bucket(aid)
-        if t:
-            topic_mult[t] = min(topic_mult.get(t, 1.0) * _LIKE_TOPIC_BOOST, _LIKE_TOPIC_CAP)
-    # Tier-2 vocabulary — the mapping table above the anchors: scoped reuse, no new magnitudes.
-    for aid in set(fb.get("too_repetitive") or ()):
-        t, _ = _bucket(aid)
-        if t:
-            topic_mult[t] = max(topic_mult.get(t, 1.0) * _DISLIKE_TOPIC_DECAY,
-                                _DISLIKE_TOPIC_FLOOR)
-    for aid in set(fb.get("fewer_from_source") or ()):
-        _, p = _bucket(aid)
-        if p:
-            pub_mult[p] = max(pub_mult.get(p, 1.0) * _DISLIKE_PUBLISHER_DECAY,
-                              _DISLIKE_PUBLISHER_FLOOR)
-    for aid in set(fb.get("more_topic") or ()):
-        t, _ = _bucket(aid)
-        if t:
-            topic_mult[t] = min(topic_mult.get(t, 1.0) * _LIKE_TOPIC_BOOST, _LIKE_TOPIC_CAP)
     art_decay: dict = {}
-    for aid in set(fb.get("ignore") or ()):
-        art_decay[aid] = min(art_decay.get(aid, 1.0), _FEEDBACK_IGNORE_DECAY)
+    drop: set = set()
+    for bucket, dims in FEEDBACK_DIMENSIONS.items():
+        for aid in set(fb.get(bucket) or ()):
+            t, p = _bucket(aid)
+            te = dims["topic"]
+            if te and t:
+                direction, anchor, bound = te
+                topic_mult[t] = (min(topic_mult.get(t, 1.0) * anchor, bound)
+                                 if direction == "more"
+                                 else max(topic_mult.get(t, 1.0) * anchor, bound))
+            pe = dims["publisher"]
+            if pe and p:
+                _direction, anchor, bound = pe
+                pub_mult[p] = max(pub_mult.get(p, 1.0) * anchor, bound)
+            if dims["article"] == "drop":
+                if aid in col_of:
+                    drop.add(col_of[aid])
+            elif dims["article"] == "decay":
+                art_decay[aid] = min(art_decay.get(aid, 1.0), _FEEDBACK_IGNORE_DECAY)
     for aid in set(rep.get("unopened") or ()):
         art_decay[aid] = min(art_decay.get(aid, 1.0), _REPEAT_UNOPENED_DECAY)
     for aid in set(rep.get("opened") or ()):
         art_decay[aid] = min(art_decay.get(aid, 1.0), _REPEAT_OPENED_DECAY)
-    dropped_types = ("dislike", "another_viewpoint", "already_know",
-                     "too_repetitive", "fewer_from_source")
-    drop = {col_of[aid] for key in dropped_types
-            for aid in set(fb.get(key) or ()) if aid in col_of}
     art_by_col = {col_of[aid]: m for aid, m in art_decay.items() if aid in col_of}
     return drop, art_by_col, topic_mult, pub_mult
 
@@ -2876,6 +2882,63 @@ class Backend:
         """Base reference-corpus recommendations (demo / ``?user=`` path). ``params`` carries a
         signed-in reader's slider-mapped hyperparameters (None → the shared default stack)."""
         return self._serialize_recommendations(self.base_corpus, self.rec, u, strategy, params)
+
+    def feedback_effects(self, rows: list, article_meta) -> dict:
+        """Group a reader's recorded feedback rows into the HUMAN-scale effects the settings
+        ledger displays — ``{publishers, topics, articles}``.
+
+        Parity by construction, not restatement: which dimension a signal touches comes from
+        :data:`FEEDBACK_DIMENSIONS` and raw types bucket through ``rec_context.RAW_TO_BUCKET`` —
+        the exact pair :func:`_reader_state_factors` consumes — and a signal contributes a
+        publisher/topic chip only when its article still resolves against the SAME corpus the
+        rerank resolves against, because a rotated-out id "matches nothing" in ranking and must
+        therefore claim no effect on the page either. ``article_meta`` (canonical url → stored
+        feed row or None, injected by the API layer) humanizes the article list; a row it cannot
+        resolve renders as an expired reference (``inCatalog: false``) rather than an internal
+        id presented as meaning something."""
+        import rec_context
+        mind = self.base_corpus.mind
+        ids = np.asarray(mind.dataset.item_ids).astype(str)
+        col_of = {aid: c for c, aid in enumerate(ids)}
+        cats = np.asarray(mind.categories)
+        outlets = np.asarray(mind.outlets)
+        pubs: dict = {}
+        topics: dict = {}
+        articles: list = []
+        for row in rows:
+            raw = str(row.get("feedback") or "")
+            bucket = rec_context.RAW_TO_BUCKET.get(raw)
+            dims = FEEDBACK_DIMENSIONS.get(bucket or "")
+            if dims is None:
+                continue
+            aid = str(row.get("articleId") or "")
+            col = col_of.get(aid)
+            signal = {"articleId": aid, "feedback": raw,
+                      "createdAt": str(row.get("createdAt") or "")}
+            if col is not None:
+                topic_raw = str(cats[col]).strip()
+                pub = str(outlets[col])
+                if dims["publisher"] and pub:
+                    g = pubs.setdefault(pub, {"name": pub, "direction": dims["publisher"][0],
+                                              "signals": []})
+                    g["signals"].append(signal)
+                if dims["topic"] and topic_raw:
+                    key = (topic_raw.lower(), dims["topic"][0])
+                    g = topics.setdefault(key, {"name": _prettify(topic_raw),
+                                                "direction": dims["topic"][0], "signals": []})
+                    g["signals"].append(signal)
+            if dims["article"] in ("drop", "decay"):
+                url = (self.url_by_id or {}).get(aid) if getattr(self, "url_by_id", None) else None
+                meta = article_meta(url) if (url and article_meta is not None) else None
+                articles.append({**signal,
+                                 "headline": (meta or {}).get("title") or None,
+                                 "publisher": (meta or {}).get("publisher") or None,
+                                 "url": url,
+                                 "inCatalog": meta is not None})
+        articles.sort(key=lambda a: a["createdAt"], reverse=True)
+        return {"publishers": sorted(pubs.values(), key=lambda g: g["name"]),
+                "topics": sorted(topics.values(), key=lambda g: (g["name"], g["direction"])),
+                "articles": articles}
 
     def explain_recommendations(self, u: int, strategy: str | None = None,
                                 params: "dict | None" = None,

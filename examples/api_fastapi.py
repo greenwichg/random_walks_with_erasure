@@ -1780,6 +1780,36 @@ class RecFeedbackRemoveAckModel(BaseModel):
     removed: int            # rows deleted (0 = nothing was recorded for this article/type)
 
 
+# The settings ledger's human-scale view (the effects redesign): signals grouped by the dimension
+# they touch, derived engine-side from the SAME table ranking consumes (FEEDBACK_DIMENSIONS).
+class FeedbackSignalModel(BaseModel):
+    articleId: str
+    feedback: RecFeedbackType
+    createdAt: str
+
+
+class FeedbackEffectGroupModel(BaseModel):
+    name: str                       # publisher name / prettified topic
+    direction: Literal["more", "less"]
+    signals: list[FeedbackSignalModel]
+
+
+class FeedbackArticleModel(BaseModel):
+    articleId: str
+    feedback: RecFeedbackType
+    createdAt: str
+    headline: Optional[str] = None  # humanized from the catalog; None once the article rotated out
+    publisher: Optional[str] = None
+    url: Optional[str] = None
+    inCatalog: bool                 # False = an expired reference; the UI must say so, not show ids
+
+
+class FeedbackEffectsModel(BaseModel):
+    publishers: list[FeedbackEffectGroupModel]
+    topics: list[FeedbackEffectGroupModel]
+    articles: list[FeedbackArticleModel]
+
+
 class RecFeedbackEntryModel(BaseModel):
     articleId: str
     feedback: RecFeedbackType
@@ -3377,6 +3407,25 @@ def remove_recommendation_feedback(request: Request, req: RecFeedbackRemoveReque
     uid = _require_real_user(request)
     removed = _require_store().remove_recommendation_feedback(uid, req.articleId, req.feedback)
     return {"ok": True, "removed": int(removed)}
+
+
+@app.get("/api/me/recommendations/feedback/effects", response_model=FeedbackEffectsModel,
+         tags=["recommendations"],
+         summary="The signed-in user's feedback grouped as the effects it has on their feed",
+         responses=_ERR_RESPONSES)
+def my_feedback_effects(request: Request) -> dict:
+    """The settings ledger's view: publisher and topic chips a reader can understand ("seeing
+    less from X", "more of Y") plus the dismissed-article list, humanized where the catalog still
+    knows the article and honestly marked expired where it does not. Read-only; the grouping is
+    computed by the engine from the same FEEDBACK_DIMENSIONS table the rerank consumes, so this
+    endpoint cannot claim an effect the feed does not apply."""
+    uid = _require_real_user(request)
+    st = _require_store()
+    rows = st.list_recommendation_feedback(uid)
+    import evidence_resolver
+    meta = (lambda u: st.get_feed_article(evidence_resolver._canon(str(u)))
+            or st.get_feed_article(str(u)))
+    return _require_backend().feedback_effects(rows, meta)
 
 
 @app.post("/api/me/recommendations/improvements/{rec_key}/{event}",
