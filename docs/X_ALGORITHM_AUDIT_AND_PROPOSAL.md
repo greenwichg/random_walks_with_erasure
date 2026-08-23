@@ -420,6 +420,23 @@ shadow-kind metrics) and `tests/test_rec_feedback_vocabulary.py` (storage/remova
 anchor mapping table, wire + undo); explain parity asserted with sources enabled on both the
 demo and measured paths. `deploy/ops/verify-recs.sh` §2 now checks all ten flags.
 
+### Tier-2 production enablement — 2026-08-23, VERIFIED
+
+Enabled at `703c993` in the Phase-13.10 order — shadow first, then serve: `RWE_REC_STORY_SOURCE=2`
+(shadowed, leak found and fixed, then served), then `RWE_REC_EMERGING=1` +
+`RWE_REC_BLINDSPOT_SLOTS=2` together. Verified on the box (`verify-recs`, 23 PASS, restart count
+0 throughout, zero failure signatures): all three sources placed cards in the same serving
+window — `feed_source_cards_total|blend`: story 4, emerging 2, blindspot 8 over 4 serves — with
+the quality envelope at baseline (HHI ≈ 841 bp/feed, cross-cutting 5.5/feed — the bridge floor
+untouched by the rebalance, measured; story-dups 0; repeat 2.25/feed under the source-wide
+reader-policy pass; feed length invariant at 14). The plan rebalance is visible in the served
+shape: `{rwe-b: 6, rwe-d: 3, adaptive: 3, +sources}`. Noted deliberately: blind-spot v2 is
+engine-level, so the anonymous showcase also carries 2 gap cards for the demo persona — kept as
+a live demonstration of the product's thesis; scope it to signed-in readers if the landing
+experience should stay pure-RWE. The cohort/shadow harness returned to dormant
+(`RWE_REC_EXPERIMENT`/`RWE_REC_SHADOW` unset) — it exists for the next change, which is the
+point.
+
 **First shadow run (production, 2026-08-23) — and the leak it caught.** Deployed dark at
 `9604205`, then shadowed the story source for the operator's account (`RWE_REC_STORY_SOURCE=2`,
 `RWE_REC_EXPERIMENT=story_source:0`, `RWE_REC_SHADOW=story_source`): 5 shadowed serves, 4 story
