@@ -223,6 +223,7 @@ def explain(backend, corpus, rec, u: int, strategy: Optional[str] = None,
     # The same column -> country map the serving path keys on, from the same Backend — the 21a
     # parity rule: if the observer resolved country differently it would explain a feed nobody got.
     country_by_col = (backend._country_by_col(mind) if (params or {}).get("country") else None)
+    bs_topics = engine.Backend._blindspot_topics(rep)   # () unless RWE_REC_BLINDSPOT is on
     slice_js: dict = {s: set() for s in STRATEGIES}
     j_of_col: dict = {}
     # Over-fetch exactly as the serving path does, then hand the slices to the SAME selector —
@@ -238,6 +239,10 @@ def explain(backend, corpus, rec, u: int, strategy: Optional[str] = None,
             admitted.append(col)
             j_of_col.setdefault(col, int(j))
         admitted = engine.Backend._preference_rerank(mind, admitted, params, country_by_col)
+        if s == "rwe-d" and bs_topics:
+            # The SAME blind-spot lift the serving path applies to the discovery slice — from
+            # the same report, through the same shared static (21a parity).
+            admitted = engine.Backend._blindspot_rerank(mind, admitted, bs_topics)
         slice_cols = engine.Backend._slice_select(mind, s, admitted,
                                                   kk * engine.REC_OVERFETCH, user_side)
         cols_by_strategy.append((s, slice_cols))

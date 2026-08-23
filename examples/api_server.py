@@ -605,6 +605,23 @@ def max_cards_per_topic() -> int:
     concentrate (the slider is the reader's explicit ask; ~6 of 14 leaves it meaningful)."""
     return _env_cap("RWE_REC_MAX_PER_TOPIC")
 
+
+def blindspot_boost_enabled() -> bool:
+    """``RWE_REC_BLINDSPOT`` — the Tier-1 blind-spot slice, v1
+    (docs/X_ALGORITHM_AUDIT_AND_PROPOSAL.md). The report has always *named* the reader's
+    under-read topics (``health_report.blind_spot_gaps``) while no candidate source acted on
+    them; with this on, the discovery slice starts closing the gaps it names. Default off."""
+    return os.environ.get("RWE_REC_BLINDSPOT", "0").strip() == "1"
+
+
+#: The blind-spot rank divisor inside the RWE-D slice. In the interest-anchor currency
+#: (weight-10 slider = 8): strong enough to pull a measured gap topic into the served slice from
+#: ~4x the cutoff, deliberately below the sliders — a reader who explicitly demotes a topic
+#: outbids the report's suggestion that they read more of it. RWE-D only, by design: it is the
+#: "widens your sources" slice, so a boosted card's rationale stays true word for word, and the
+#: bridge slice's political-only admits and cross-first ordering are never touched.
+_BLINDSPOT_BOOST = 4.0
+
 #: Extra columns each strategy ranks so the cap has something to backfill FROM. Without it a
 #: declined slot would shrink the feed instead of moving to the next-ranked admissible item —
 #: the same backfill principle ``_rec_cols_of`` already applies to admission.
@@ -2270,7 +2287,7 @@ class Backend:
     @staticmethod
     def _rec_cols_of(mind, rec: "_Recommenders", u: int, strategy: str, k: int = 12,
                      params: "dict | None" = None, user_side: float = 0.0,
-                     country_by_col: "dict | None" = None) -> list:
+                     country_by_col: "dict | None" = None, blindspot=()) -> list:
         """Top-k *admitted* item columns (in ``mind`` space) recommender ``strategy`` surfaces for
         row ``u``, so we can serialise full articles. Ranks the full list, keeps the columns that
         pass :meth:`_slice_admits` (rwe-b: political only) — so a filtered slot is backfilled by
@@ -2297,7 +2314,10 @@ class Backend:
                         # pool, so an early stop at k would decay items into — not out of — the
                         # served slice.
                         or bool((params or {}).get("feedback"))
-                        or bool((params or {}).get("repetition")))
+                        or bool((params or {}).get("repetition"))
+                        # The blind-spot boost lifts items from ~4x past the cutoff, so the
+                        # discovery slice must rank its whole pool too.
+                        or (strategy == "rwe-d" and bool(blindspot)))
             admitted = []
             for j in ranked:
                 if int(j) < 0:
@@ -2308,6 +2328,10 @@ class Backend:
                     if not need_all and len(admitted) >= k:
                         break
             admitted = Backend._preference_rerank(mind, admitted, params, country_by_col)
+            if strategy == "rwe-d" and blindspot:
+                # After the reader's own preferences, before slice ordering: the report's gap
+                # topics lift within the DISCOVERY slice only (see _BLINDSPOT_BOOST).
+                admitted = Backend._blindspot_rerank(mind, admitted, blindspot)
             return Backend._slice_select(mind, strategy, admitted, k, user_side)
         except Exception:
             return []
@@ -2364,6 +2388,35 @@ class Backend:
             "helpsMetric": "viewpointBalance" if cross else helps,
             "crossCutting": bool(cross),
         }
+
+    @staticmethod
+    def _blindspot_topics(rep) -> tuple:
+        """The reader's measured blind-spot topics, lower-cased for the catalog-topic
+        comparison — or ``()`` when the flag is off or none are measured. Reads the SAME
+        ``rep["blind_spots"]`` the Health Report renders (``(topic, reader_share,
+        corpus_share)`` tuples), so the feed can never chase a gap the report does not show."""
+        if not blindspot_boost_enabled():
+            return ()
+        gaps = (rep or {}).get("blind_spots") or ()
+        return tuple(t for t in (str(cat).strip().lower() for cat, *_ in gaps) if t)
+
+    @staticmethod
+    def _blindspot_rerank(mind, cols: list, topics, boost: "float | None" = None) -> list:
+        """Stable, bounded rank nudge lifting blind-spot-topic items in an admitted pool —
+        the same construction as :meth:`_preference_rerank` (identity without topics, a nudge
+        never an exclusion, within-topic model order intact, deterministic), kept as its OWN
+        pass because its input is server-measured (the reader's report) rather than
+        reader-chosen (params), and the two must stay separately auditable. Shared by the
+        serving path and the explain observer — the 21a parity rule."""
+        if not topics or not cols:
+            return cols
+        b = _BLINDSPOT_BOOST if boost is None else float(boost)
+        cats = np.asarray(mind.categories)
+        want = set(topics)
+        keys = [(i + 1) / b if str(cats[col]).strip().lower() in want else float(i + 1)
+                for i, col in enumerate(cols)]
+        order = sorted(range(len(cols)), key=lambda i: (keys[i], i))
+        return [cols[i] for i in order]
 
     @staticmethod
     def _select_diverse(cols_by_strategy, plan, publisher_of, cap: "int | None" = None,
@@ -2502,10 +2555,12 @@ class Backend:
         # Over-fetch so the publisher cap has lower-ranked admissible items to backfill FROM;
         # the plan still decides how many cards each strategy contributes (_select_diverse).
         by_col = self._country_by_col(corpus.mind) if (params or {}).get("country") else None
+        bs_topics = self._blindspot_topics(rep)      # () unless RWE_REC_BLINDSPOT is on
         cols_by_strategy = [(strat, self._rec_cols_of(corpus.mind, rec, u, strat,
                                                       k * REC_OVERFETCH, params,
                                                       user_side=float(user_side),
-                                                      country_by_col=by_col))
+                                                      country_by_col=by_col,
+                                                      blindspot=bs_topics))
                             for strat, k in plan]
         recs = self._serialize_recs(corpus, cols_by_strategy, user_side, familiarity, plan=plan)
         # Mark which cards actually matched the reader's country. A country with thin coverage
