@@ -614,6 +614,85 @@ def blindspot_boost_enabled() -> bool:
     return os.environ.get("RWE_REC_BLINDSPOT", "0").strip() == "1"
 
 
+# ── Tier-2 candidate sources (docs/X_ALGORITHM_AUDIT_AND_PROPOSAL.md) ─────────────────────────
+# Three sources beyond the RWE family, each claiming a small budget of feed slots. They are the
+# Source seam the Tier-1 status table consciously deferred ("belongs with the Tier-2 story
+# source, the first change that genuinely needs a new Source seam"): a source contributes an
+# ordered, already-admitted column list plus a slot budget, and everything downstream — first-seen
+# dedup, the publisher/story/topic quotas, serialisation, the explain observer — is the SAME
+# funnel the RWE slices flow through. No source replaces RWE-D/RWE-B; each *selects after* them
+# by taking its budget out of the discovery/adaptive slices (never the rwe-b bridge floor, W5).
+
+
+def story_source_slots() -> int:
+    """``RWE_REC_STORY_SOURCE`` — feed slots the story source may claim (0 = off). The Tier-2
+    "story source proper": takes on stories the reader has READ INTO, from publishers they have
+    not read, opposite-lean takes first. Replaces the one-card ``RWE_STORY_SLOT`` post-pass when
+    enabled (the source supersedes the slot; both firing would double-serve story cards)."""
+    return _env_cap("RWE_REC_STORY_SOURCE")
+
+
+def emerging_slots() -> int:
+    """``RWE_REC_EMERGING`` — feed slots the emerging-story source may claim (0 = off). Stories
+    gaining multi-publisher coverage NOW that the reader has not read into: early enough that the
+    takes are still forming, validated by the same Story Service clusters the Stories page shows."""
+    return _env_cap("RWE_REC_EMERGING")
+
+
+def blindspot_slots() -> int:
+    """``RWE_REC_BLINDSPOT_SLOTS`` — the Tier-2 blind-spot slice v2: its OWN slot budget (0 = off)
+    rather than v1's rank nudge inside the discovery slice. Candidates are the reader's rwe-d
+    ranking filtered to their measured gap topics, so the cards stay personalized and the claim
+    ("a measured gap in your diet") stays the report's own. When v2 slots are set, the v1 boost
+    is suppressed — one mechanism at a time, or the effect is unmeasurable."""
+    return _env_cap("RWE_REC_BLINDSPOT_SLOTS")
+
+
+#: The extra sources' fixed plan order (after the RWE slices, deterministic), and where their
+#: budget comes from: non-bridge slices, taken round-robin from the END of the plan (adaptive
+#: first, then rwe-d), each floored at 1 slot — the rwe-b budget is the cross-cutting floor (W5)
+#: and is never touched. If the floors bind, the EXTRAS shrink, never the RWE slices below 1.
+EXTRA_SOURCE_ORDER = ("story", "emerging", "blindspot")
+
+#: Emerging-story gates: a story is "gaining coverage" only when at least this many distinct
+#: publishers already cover it (the Story Service's own multi-publisher validation threshold),
+#: and its newest member is at most this old. Both are claims the card's copy makes.
+EMERGING_MIN_PUBLISHERS = 3
+EMERGING_MAX_AGE_HOURS = 48.0
+
+
+def _plan_with_extras(plan, extras) -> tuple:
+    """Rebalance a blend plan to make room for extra-source budgets, preserving the feed's total
+    length and the rwe-b bridge floor exactly.
+
+    ``extras`` is ``[(name, k), …]`` in :data:`EXTRA_SOURCE_ORDER`. Slots are taken one at a
+    time from the FULLEST non-``rwe-b`` plan entry (ties resolved toward the end of the plan:
+    adaptive before rwe-d), so the tax spreads evenly instead of draining one slice; each donor
+    is floored at 1 slot, and when no slice can give another slot the remaining extra budget is
+    DROPPED — the feed never grows past the plan total, and no RWE slice ever reaches 0 (a slice
+    at 0 would silently remove a strategy from the blend, which is a product change, not a
+    rebalance). Extras with a resulting budget of 0 are omitted. Deterministic; ``extras`` empty
+    → ``plan`` unchanged (the exact tuple, so the no-source path is provably the historical
+    plan)."""
+    extras = [(n, int(k)) for n, k in (extras or ()) if int(k) > 0]
+    if not extras:
+        return tuple(plan)
+    counts = [[name, int(k)] for name, k in plan]
+    donors = [e for e in counts if e[0] != "rwe-b"]
+    granted = []
+    for name, want in extras:
+        got = 0
+        for _ in range(want):
+            donor = max(donors, key=lambda d: (d[1], donors.index(d)), default=None)
+            if donor is None or donor[1] <= 1:
+                break
+            donor[1] -= 1
+            got += 1
+        if got:
+            granted.append((name, got))
+    return tuple((n, k) for n, k in counts) + tuple(granted)
+
+
 #: The blind-spot rank divisor inside the RWE-D slice. In the interest-anchor currency
 #: (weight-10 slider = 8): strong enough to pull a measured gap topic into the served slice from
 #: ~4x the cutoff, deliberately below the sliders — a reader who explicitly demotes a topic
@@ -720,6 +799,16 @@ def record_feed_composition(recs: list, *, user_side: float, kind: str,
                          sum(c - 1 for c in stories.values() if c > 1))
         obs_metrics.incr(f"feed_repeat_total|{kind}", repeat)
         obs_metrics.incr(f"feed_blindspot_total|{kind}", blind)
+        # Tier-2 sources: how many cards each non-RWE source actually placed (the experiment
+        # denominators for "story source vs one-slot status quo" and friends). Bounded: the
+        # strategy vocabulary is a fixed handful, and only non-RWE strategies emit a counter.
+        by_strat: dict = {}
+        for r in recs:
+            s = str(r.get("strategy") or "?")
+            if s not in ("rwe-b", "rwe-d", "adaptive"):
+                by_strat[s] = by_strat.get(s, 0) + 1
+        for s, n in by_strat.items():
+            obs_metrics.incr(f"feed_source_cards_total|{kind}|{s}", n)
     except Exception:
         pass                                   # observation must never break a served feed
 
@@ -1065,6 +1154,24 @@ _LIKE_TOPIC_CAP = 3.0              # …capped well under weight-10 interest (8x
 _READER_STATE_FLOOR = 0.1
 _READER_STATE_CAP = 8.0
 
+# Tier-2 feedback vocabulary → the SAME anchors, scoped to what the reader actually said
+# (docs/X_ALGORITHM_AUDIT_AND_PROPOSAL.md, Phase 13.6). No new magnitudes: each type reuses a
+# Tier-1 anchor, differing only in WHICH dimensions it touches — the whole point of the finer
+# vocabulary is that "fewer from this source" can dim the publisher without smearing the topic,
+# and "more of this topic" can lift the topic without privileging one outlet.
+#
+#   type                article   topic                       publisher
+#   another_viewpoint   drop      —                           —        (the story source also
+#                                                                       ranks the asked story first)
+#   already_know        drop      —                           —
+#   too_repetitive      drop      ×0.8, floor 0.5             —
+#   fewer_from_source   drop      —                           ×0.6, floor 0.35
+#   more_topic          —         ×1.5, cap 3.0               —
+#
+# All four negative types drop the named article for the same reason dislike does: the reader
+# acted on THAT card expecting it gone, and re-serving it to honor a nudge-only principle would
+# be malicious compliance.
+
 
 def _reader_state_factors(mind, fb: dict, rep: dict):
     """Resolve reader-state article ids (``params["feedback"]`` / ``params["repetition"]``,
@@ -1078,7 +1185,8 @@ def _reader_state_factors(mind, fb: dict, rep: dict):
     resolvable, which keeps every claim about "this publisher" grounded in the catalog being
     ranked rather than in a remembered string."""
     referenced: set = set()
-    for key in ("dislike", "like", "ignore"):
+    for key in ("dislike", "like", "ignore", "another_viewpoint", "already_know",
+                "too_repetitive", "fewer_from_source", "more_topic"):
         referenced.update(fb.get(key) or ())
     for key in ("unopened", "opened"):
         referenced.update(rep.get(key) or ())
@@ -1109,6 +1217,21 @@ def _reader_state_factors(mind, fb: dict, rep: dict):
         t, _ = _bucket(aid)
         if t:
             topic_mult[t] = min(topic_mult.get(t, 1.0) * _LIKE_TOPIC_BOOST, _LIKE_TOPIC_CAP)
+    # Tier-2 vocabulary — the mapping table above the anchors: scoped reuse, no new magnitudes.
+    for aid in set(fb.get("too_repetitive") or ()):
+        t, _ = _bucket(aid)
+        if t:
+            topic_mult[t] = max(topic_mult.get(t, 1.0) * _DISLIKE_TOPIC_DECAY,
+                                _DISLIKE_TOPIC_FLOOR)
+    for aid in set(fb.get("fewer_from_source") or ()):
+        _, p = _bucket(aid)
+        if p:
+            pub_mult[p] = max(pub_mult.get(p, 1.0) * _DISLIKE_PUBLISHER_DECAY,
+                              _DISLIKE_PUBLISHER_FLOOR)
+    for aid in set(fb.get("more_topic") or ()):
+        t, _ = _bucket(aid)
+        if t:
+            topic_mult[t] = min(topic_mult.get(t, 1.0) * _LIKE_TOPIC_BOOST, _LIKE_TOPIC_CAP)
     art_decay: dict = {}
     for aid in set(fb.get("ignore") or ()):
         art_decay[aid] = min(art_decay.get(aid, 1.0), _FEEDBACK_IGNORE_DECAY)
@@ -1116,7 +1239,10 @@ def _reader_state_factors(mind, fb: dict, rep: dict):
         art_decay[aid] = min(art_decay.get(aid, 1.0), _REPEAT_UNOPENED_DECAY)
     for aid in set(rep.get("opened") or ()):
         art_decay[aid] = min(art_decay.get(aid, 1.0), _REPEAT_OPENED_DECAY)
-    drop = {col_of[aid] for aid in set(fb.get("dislike") or ()) if aid in col_of}
+    dropped_types = ("dislike", "another_viewpoint", "already_know",
+                     "too_repetitive", "fewer_from_source")
+    drop = {col_of[aid] for key in dropped_types
+            for aid in set(fb.get(key) or ()) if aid in col_of}
     art_by_col = {col_of[aid]: m for aid, m in art_decay.items() if aid in col_of}
     return drop, art_by_col, topic_mult, pub_mult
 
@@ -2399,12 +2525,26 @@ class Backend:
         novelty = {"never": "an outlet you've never read",
                    "rarely": "an outlet you rarely read"}.get(band)
         if strategy == "story":
-            # The conditional Story-Match slot (RWE_STORY_SLOT). Every claim is guaranteed by the
-            # slot's own gates (personalize._apply_story_slot): the reader read an article of the
+            # The story sources (the RWE_STORY_SLOT post-pass, or the Tier-2 RWE_REC_STORY_SOURCE
+            # slice). Every claim is guaranteed by the source's own gates (personalize
+            # ``_apply_story_slot`` / ``_story_source_cols``): the reader read an article of the
             # same validated story cluster, and this sibling is from a different publisher.
             reason = (f"Another outlet's coverage of a story you read — {novelty}."
                       if novelty else "Another outlet's coverage of a story you read.")
             helps = "sourceDiversity"
+        elif strategy == "emerging":
+            # Tier-2 emerging-story source: multi-publisher validation (EMERGING_MIN_PUBLISHERS)
+            # and the recency window are the source's admission gates, so "gaining coverage" is
+            # licensed by construction — never inferred at serialisation time.
+            reason = ("A story gaining coverage across outlets right now — early enough to "
+                      "see every side form.")
+            helps = "sourceDiversity"
+        elif strategy == "blindspot":
+            # Tier-2 blind-spot slice v2: the topic IS one of the reader's measured gap topics —
+            # the source admits nothing else — and the same report the copy cites renders the gap.
+            reason = (f"You rarely read {topic} — a measured gap in your diet this widens."
+                      if topic else "Widens a measured gap in your reading diet.")
+            helps = "topicDiversity"
         elif strategy == "rwe-d":
             reason = (f"A long-tail read on {topic} from {novelty} — RWE-D widens your sources."
                       if novelty else
@@ -2444,6 +2584,26 @@ class Backend:
         return tuple(t for t in (str(cat).strip().lower() for cat, *_ in gaps) if t)
 
     @staticmethod
+    def _blindspot_source_cols(mind, rec: "_Recommenders", u: int, params: "dict | None",
+                               user_side: float, topics, k: int,
+                               country_by_col: "dict | None" = None) -> list:
+        """Blind-spot v2 candidate columns: the reader's OWN rwe-d ranking, filtered to their
+        measured gap topics, cut to ``k``. Built on :meth:`_rec_cols_of` with the full pool
+        (so the topic filter has everything the discovery model admits to draw from) and NO v1
+        boost — the filter replaces the nudge; both at once would double-count the same signal.
+        Personalized by construction (it is the same model that ranks the rwe-d slice), and every
+        candidate's topic is in ``topics``, so the card copy's claim is the admission rule.
+        Shared by the serving path and the explain observer (the 21a parity rule)."""
+        if not topics or k <= 0:
+            return []
+        pool = Backend._rec_cols_of(mind, rec, u, "rwe-d", int(len(rec.rec_ids)), params,
+                                    user_side=user_side, country_by_col=country_by_col,
+                                    blindspot=())
+        cats = np.asarray(mind.categories)
+        want = {str(t).strip().lower() for t in topics}
+        return [c for c in pool if str(cats[c]).strip().lower() in want][:k]
+
+    @staticmethod
     def _blindspot_rerank(mind, cols: list, topics, boost: "float | None" = None) -> list:
         """Stable, bounded rank nudge lifting blind-spot-topic items in an admitted pool —
         the same construction as :meth:`_preference_rerank` (identity without topics, a nudge
@@ -2479,9 +2639,11 @@ class Backend:
 
         Three invariants, each of which a naive cap would break:
 
-        * **Per-strategy budgets are preserved exactly.** Each strategy still contributes its
-          planned ``k``, so the openness slider's rwe-b budget — the cross-cutting floor — means
-          the same thing after this change as before it.
+        * **Per-strategy budgets are preserved exactly** whenever each slice's pool can fill
+          them. Each strategy contributes its planned ``k``, so the openness slider's rwe-b
+          budget — the cross-cutting floor — means the same thing after this change as before
+          it. The one exception is the Tier-2 cross-slice backfill below: a thin EXTRA source
+          hands its unfillable slots back to the other slices rather than shrinking the feed.
         * **The feed never shrinks.** Columns the cap declines are held in ``spill`` and top the
           slice back up to ``k`` if the over-fetched pool cannot fill it under the cap. A reader
           in a thin catalog gets the old feed, not a short one.
@@ -2552,7 +2714,40 @@ class Backend:
                 _count(col)
                 chosen.append((col, strat))
                 taken += 1
+        # Cross-slice backfill (Tier 2): an extra source's pool is inherently thin (real story
+        # siblings, current gap topics), so after dedup against earlier slices it can under-fill
+        # the budget the plan granted it — and those slots came OUT of the RWE slices, so dying
+        # unfilled would shrink the feed. Hand them back instead: in plan order, still-unchosen
+        # candidates that respect the quotas first, then quota-declined ones (the same concession
+        # the per-slice spill already makes). A no-op whenever every slice filled its budget —
+        # the pre-Tier-2 feed is byte-identical by construction, and rank order is still never
+        # violated within any slice.
+        want_total = sum(budgets)
+        for pass_declined in (False, True):
+            if len(chosen) >= want_total:
+                break
+            for (strat, cols), _k in zip(cols_by_strategy, budgets):
+                for col in cols:
+                    if len(chosen) >= want_total:
+                        break
+                    if col in seen or (not pass_declined and _declined(col)):
+                        continue
+                    seen.add(col)
+                    _count(col)
+                    chosen.append((col, strat))
         return chosen
+
+    @staticmethod
+    def _present_order(picks: list) -> list:
+        """Presentation order over selected ``(col, strategy)`` picks: story-source cards move to
+        the FRONT of the feed (the one-card slot's precedent — "continue the story you read" is
+        the above-the-fold hook), everything else keeps selection order. A pure, stable reorder
+        AFTER selection, so dedup priority (plan order: RWE slices first) and quota accounting are
+        untouched. Shared by the serving path and the explain observer (21a parity)."""
+        if not any(s == "story" for _, s in picks):
+            return picks
+        return ([p for p in picks if p[1] == "story"]
+                + [p for p in picks if p[1] != "story"])
 
     def _serialize_recs(self, corpus: _Corpus, cols_by_strategy, user_side: float,
                         familiarity=None, plan=None) -> list:
@@ -2574,17 +2769,32 @@ class Backend:
                                      story_of=story_by_col.get,
                                      topic_of=lambda c: str(cats[c]).strip().lower())
         return [self._serialize_rec(corpus, col, strat, user_side, familiarity)
-                for col, strat in picks]
+                for col, strat in self._present_order(picks)]
 
     def _serialize_recommendations(self, corpus: _Corpus, rec: "_Recommenders", u: int,
                                    strategy: str | None = None,
-                                   params: "dict | None" = None) -> list:
+                                   params: "dict | None" = None,
+                                   extra_cols=None, extra_off: tuple = (),
+                                   metrics_kind: "str | None" = None) -> list:
         """Full recommendation pipeline over a corpus + its recommender stack: derive the
         reader's side, pick the plan (one strategy, or the default blend), select columns, and
         serialise. Shared verbatim by the base path and the augmented (Measured) path, so a real
         user's recs use the same blend and reason logic — only the corpus + recommender differ.
         ``params`` (the reader's slider-mapped hyperparameters) applies per strategy inside the
-        blend too, so a moved slider shapes its slice of the default feed as well."""
+        blend too, so a moved slider shapes its slice of the default feed as well.
+
+        **Tier-2 sources.** ``extra_cols`` — ``[(name, k, cols), …]`` — lets a caller with store
+        access (the measured path) contribute non-RWE candidate sources (the story and emerging
+        sources) into the SAME selection funnel: :func:`_plan_with_extras` takes their budget out
+        of the discovery/adaptive slices, and dedup/quotas/serialisation treat them exactly like
+        an RWE slice. The blind-spot v2 source needs no store, so it is built HERE
+        (:meth:`_blindspot_source_cols`) whenever its slots are configured — and v1's rank nudge
+        is then suppressed, one mechanism at a time. Extras apply to the blended feed only; a
+        single-strategy request stays a faithful single-model view. ``extra_off`` names internal
+        sources the caller suppresses for THIS request — the cohort harness's control arm for a
+        source the engine would otherwise build itself. ``metrics_kind`` overrides the
+        composition-metrics kind (the shadow harness records a would-be feed under ``shadow:*``
+        without contaminating the serving means)."""
         rep = hr.user_report(corpus.pop, corpus.mind, u)
         user_side = np.sign(rep.get("mean_lean") or 0.0)
         try:
@@ -2593,18 +2803,35 @@ class Backend:
             familiarity = None                             # best-effort: claims are then omitted
         # a single strategy, or a blend across the family for the default "all" view. The blend's
         # slot budget follows the reader's openness slider (W1); absent/50 → DEFAULT_BLEND_PLAN.
-        plan = ([(strategy, 12)] if strategy in ("rwe-b", "rwe-d", "adaptive")
-                else blend_plan_for(params))
+        single = strategy in ("rwe-b", "rwe-d", "adaptive")
+        plan = [(strategy, 12)] if single else blend_plan_for(params)
         # Over-fetch so the publisher cap has lower-ranked admissible items to backfill FROM;
         # the plan still decides how many cards each strategy contributes (_select_diverse).
         by_col = self._country_by_col(corpus.mind) if (params or {}).get("country") else None
         bs_topics = self._blindspot_topics(rep)      # () unless RWE_REC_BLINDSPOT is on
+        bs_k = blindspot_slots() if (not single and "blindspot" not in extra_off) else 0
+        # v2 replaces v1: with a slot budget configured, the discovery slice ranks WITHOUT the
+        # nudge and the gap topics get their own slice instead.
+        bs_nudge = () if bs_k > 0 else bs_topics
         cols_by_strategy = [(strat, self._rec_cols_of(corpus.mind, rec, u, strat,
                                                       k * REC_OVERFETCH, params,
                                                       user_side=float(user_side),
                                                       country_by_col=by_col,
-                                                      blindspot=bs_topics))
+                                                      blindspot=bs_nudge))
                             for strat, k in plan]
+        extras = [(n, int(k), cols) for n, k, cols in (extra_cols or ()) if cols and int(k) > 0]
+        if bs_k > 0 and bs_topics:
+            bs_cols = self._blindspot_source_cols(corpus.mind, rec, u, params,
+                                                  float(user_side), bs_topics,
+                                                  bs_k * REC_OVERFETCH, country_by_col=by_col)
+            if bs_cols:
+                extras.append(("blindspot", bs_k, bs_cols))
+        if extras:
+            order = {n: i for i, n in enumerate(EXTRA_SOURCE_ORDER)}
+            extras.sort(key=lambda e: order.get(e[0], len(order)))
+            plan = _plan_with_extras(plan, [(n, k) for n, k, _ in extras])
+            granted = {n: k for n, k in plan}
+            cols_by_strategy += [(n, cols) for n, k, cols in extras if granted.get(n)]
         recs = self._serialize_recs(corpus, cols_by_strategy, user_side, familiarity, plan=plan)
         # Mark which cards actually matched the reader's country. A country with thin coverage
         # cannot fill the feed, and the remaining slots are BACKFILL — ordinary recommendations,
@@ -2624,7 +2851,8 @@ class Backend:
         rep_ids = (params or {}).get("repetition") or {}
         record_feed_composition(
             recs, user_side=float(user_side),
-            kind=strategy if strategy in ("rwe-b", "rwe-d", "adaptive") else "blend",
+            kind=metrics_kind or (strategy if strategy in ("rwe-b", "rwe-d", "adaptive")
+                                  else "blend"),
             story_of=lambda aid: (self.story_by_id.get(aid)
                                   or (self.story_by_url.get(aid)
                                       if aid.startswith(("http://", "https://")) else None)),

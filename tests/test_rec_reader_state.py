@@ -94,8 +94,19 @@ def test_feedback_state_maps_types_and_read_later_counts_as_like(store, uid, mon
     store.record_recommendation_feedback(uid, "L1", "like")
     store.record_recommendation_feedback(uid, "L2", "read_later")
     store.record_recommendation_feedback(uid, "I1", "ignore")
+    # The Tier-2 vocabulary passes through under its own names (recorded type = bucket name):
+    # the finer types must never be collapsed into like/dislike, or the scoped consequences
+    # ("fewer from this SOURCE", "more of this TOPIC") would smear back into the blunt ones.
+    store.record_recommendation_feedback(uid, "V1", "another_viewpoint")
+    store.record_recommendation_feedback(uid, "K1", "already_know")
+    store.record_recommendation_feedback(uid, "R1", "too_repetitive")
+    store.record_recommendation_feedback(uid, "F1", "fewer_from_source")
+    store.record_recommendation_feedback(uid, "T1", "more_topic")
     out = rec_context.attach_reader_state(None, store, uid)
-    assert out["feedback"] == {"dislike": ["D1"], "like": ["L1", "L2"], "ignore": ["I1"]}
+    assert out["feedback"] == {"dislike": ["D1"], "like": ["L1", "L2"], "ignore": ["I1"],
+                               "another_viewpoint": ["V1"], "already_know": ["K1"],
+                               "too_repetitive": ["R1"], "fewer_from_source": ["F1"],
+                               "more_topic": ["T1"]}
 
 
 def test_repetition_state_windows_and_splits_on_opened(store, uid, monkeypatch):

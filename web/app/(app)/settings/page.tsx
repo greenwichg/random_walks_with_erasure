@@ -30,9 +30,14 @@ import {
   Clapperboard,
   Palette,
 } from "lucide-react";
-import type { Settings, NotificationChannelPrefs } from "@ih/core/domain/types";
+import type { RecFeedbackType, Settings, NotificationChannelPrefs } from "@ih/core/domain/types";
 import { useQuery } from "@tanstack/react-query";
-import { useSettings, useUpdateSettings } from "@/hooks/use-data";
+import {
+  useRecommendationFeedback,
+  useRemoveFeedback,
+  useSettings,
+  useUpdateSettings,
+} from "@/hooks/use-data";
 import { services, queryKeys } from "@ih/core/api/services";
 import { diffSettings, hasChanges } from "@ih/core/logic/settings-diff";
 import { useTranslation } from "@/lib/i18n";
@@ -106,6 +111,20 @@ const DEFAULT_INTERESTS: Settings["interests"] = {
   artsCulture: INTEREST_DEFAULT,
 };
 
+/** Ledger chip labels — plain names for every recordable signal (the card's own tooltips for the
+ *  four originals; short forms for the Tier-2 vocabulary, whose menu labels carry placeholders). */
+const FEEDBACK_TYPE_LABEL: Record<RecFeedbackType, string> = {
+  like: "rec.like",
+  dislike: "rec.dislike",
+  ignore: "rec.ignore",
+  read_later: "rec.readLater",
+  another_viewpoint: "settings.fb.anotherViewpoint",
+  already_know: "settings.fb.alreadyKnow",
+  too_repetitive: "settings.fb.tooRepetitive",
+  fewer_from_source: "settings.fb.fewerFromSource",
+  more_topic: "settings.fb.moreTopic",
+};
+
 export default function SettingsPage() {
   const { data, isLoading, isError, refetch } = useSettings();
   const updateSettings = useUpdateSettings();
@@ -116,6 +135,10 @@ export default function SettingsPage() {
   // registers the worker and reads this browser's subscription — side effects a preference row has
   // no business triggering, and answers to a question it is not asking.
   const pushConfig = usePushConfig();
+
+  // The feedback ledger (Tier 2): what the feed currently holds, and its removal path.
+  const { data: feedbackLog } = useRecommendationFeedback();
+  const removeFeedback = useRemoveFeedback();
 
   // `base` is the server snapshot the draft was seeded from; `draft` is the reader's working copy.
   // Both are local (no new global state). Diffing the draft against `base` — not the live `data` —
@@ -490,6 +513,41 @@ export default function SettingsPage() {
               </p>
             )}
           </SectionCard>
+
+          {/* Recommendation-feedback ledger (Tier 2) — every signal the feed currently holds
+              against the reader's name, each removable. The visible half of the feedback loop:
+              an effect the reader can see but not retract would be surveillance. Renders only
+              when something is recorded — an empty ledger is not a setting to configure. */}
+          {(feedbackLog ?? []).length > 0 && (
+            <SectionCard title={t("settings.feedback")} info={t("settings.feedbackInfo")}>
+              <p className="mb-3 text-xs text-muted-foreground">{t("settings.feedbackHint")}</p>
+              <ul className="divide-y">
+                {(feedbackLog ?? []).map((f) => (
+                  <li
+                    key={`${f.articleId}:${f.feedback}`}
+                    className="flex items-center gap-3 py-2 text-sm"
+                  >
+                    <span className="shrink-0 rounded-full border px-2 py-0.5 text-xs font-medium">
+                      {t(FEEDBACK_TYPE_LABEL[f.feedback] ?? f.feedback)}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">
+                      {f.articleId}
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="shrink-0 text-muted-foreground"
+                      onClick={() =>
+                        removeFeedback.mutate({ articleId: f.articleId, feedback: f.feedback })
+                      }
+                    >
+                      {t("settings.feedbackRemove")}
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            </SectionCard>
+          )}
 
           {/* Interest Intensity — eight per-topic sliders over the recommendation feed's order.
               A separate card from the political controls above, which it never touches. */}

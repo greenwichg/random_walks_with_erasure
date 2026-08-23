@@ -23,6 +23,7 @@ import type {
   RecommendationReception,
   RecFeedbackAck,
   RecFeedbackEntry,
+  RecFeedbackRemoveAck,
   RecFeedbackType,
   SavableArticle,
   SavedArticle,
@@ -42,14 +43,24 @@ import type {
  * directly — so the transport is centralised and the return types are enforced.
  * Each function maps 1:1 to a backend endpoint (mock today, Python tomorrow).
  */
-/** Card FeedbackAction → the backend's canonical feedback type. Only the four recorded signals are
- *  mapped; "save" is intentionally absent (the Saved pipeline handles it) so it records nothing. */
+/** Card FeedbackAction → the backend's canonical feedback type. Only recorded signals are mapped;
+ *  "save" is intentionally absent (the Saved pipeline handles it) so it records nothing. */
 const FEEDBACK_WIRE: Partial<Record<FeedbackAction, RecFeedbackType>> = {
   like: "like",
   dislike: "dislike",
   ignore: "ignore",
   "read-later": "read_later",
+  "another-viewpoint": "another_viewpoint",
+  "already-know": "already_know",
+  "too-repetitive": "too_repetitive",
+  "fewer-from-source": "fewer_from_source",
+  "more-topic": "more_topic",
 };
+
+/** A card action's canonical wire type — exported for the undo path (removal names the type). */
+export function feedbackWire(action: FeedbackAction): RecFeedbackType | undefined {
+  return FEEDBACK_WIRE[action];
+}
 
 export const services = {
   dashboard: () => getJson<DashboardSummary>("/dashboard"),
@@ -70,8 +81,15 @@ export const services = {
     return postJson<RecFeedbackAck>("/me/recommendations/feedback", { articleId, feedback });
   },
   // The reader's recorded feedback (oldest first) — used to keep an *ignored* card dismissed across
-  // a page reload. Authenticated; anonymous readers have recorded nothing.
+  // a page reload and to render Settings' "active feedback effects" list. Authenticated; anonymous
+  // readers have recorded nothing.
   recommendationFeedback: () => getJson<RecFeedbackEntry[]>("/me/recommendations/feedback"),
+  // The undo behind the visible-consequence UI: remove one recorded signal (or, with `feedback`
+  // omitted, every signal the reader gave the article). A consequence the reader can see but not
+  // retract would be surveillance, so removal is as first-class as recording.
+  removeFeedback: (articleId: string, feedback?: RecFeedbackType) =>
+    deleteJson<RecFeedbackRemoveAck>("/me/recommendations/feedback",
+      feedback ? { articleId, feedback } : { articleId }),
   // Record that the reader opened a recommended article — the Open-Mindedness reception signal.
   openRecommendation: (articleId: string, crossCutting: boolean) =>
     postJson<RecommendationReception>("/me/recommendations/opened", { articleId, crossCutting }),

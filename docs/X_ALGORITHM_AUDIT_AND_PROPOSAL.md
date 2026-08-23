@@ -393,6 +393,33 @@ third occurrence a CI failure.
 | **2 — after foundation** | story source proper · MMR pass (if metrics demand) · W3 article lean · cohorts/shadow harness · emerging-story source · blind-spot slice v2 (own source) · new feedback vocabulary end-to-end |
 | **3 — research / at-scale** | embeddings & two-tower · engagement prediction (bounded input only) · W8B real-graph clusters · DPP |
 
+### Tier-2 implementation status — 2026-08-23
+
+Every unit shipped dark (compose-declared with the feature — the allowlist lesson applied up
+front this time, `tests/test_rec_flags_deployable.py` extended to pin it) and flows through the
+same funnel as the RWE slices: `_plan_with_extras` taxes the discovery/adaptive budgets (never
+the rwe-b bridge floor, and the feed total is invariant — a thin source hands unfillable slots
+back via the selector's cross-slice backfill), dedup/quotas/serialisation are the Tier-1 shared
+helpers, and `rec_explain` replicates the sources byte-exactly (a source card's `match` is
+`"source"`; it never fabricates a model rank).
+
+| Unit | Status | Where |
+|---|---|---|
+| Story source proper | **shipped, dark** (`RWE_REC_STORY_SOURCE` = slot budget) | `personalize._story_source_cols` (the slot's gates, budgeted + round-robin across stories; `another_viewpoint`-asked stories first), engine merge in `_serialize_recommendations`; supersedes the one-card `RWE_STORY_SLOT` when it contributes |
+| Source seam (deferred from Tier 1) | **shipped with the story source**, as planned | `extra_cols`/`extra_off` on `_serialize_recommendations` + `_plan_with_extras` + `EXTRA_SOURCE_ORDER` — a source is (name, budget, admitted cols), everything downstream shared |
+| MMR pass | **deferred — its own condition is unmet** | the tier gated it on "quota metrics show residual sameness"; the Tier-1 production soak measured HHI ≈ 870 bp and zero story duplicates in 19 served feeds under the quotas. Revisit only if `feed_hhi_bp_total`/`feed_story_dup_total` drift upward |
+| W3 article lean | **deferred — the R1 evidence stands** | the W3 audit measured the classifier at κ = 0.14 (0.27 vs human) and production serving uses 0 multi-lean outlets; wiring that into leans would put a coin-flip's labels into the product. The W3-adjacent action taken instead: registry curation (sixth tranche, `42f5df1`) + `backfill_lean` — 336 stored articles gained curated leans the same day |
+| Cohorts/shadow harness | **shipped, dark** (`RWE_REC_EXPERIMENT` = `feature:pct`, `RWE_REC_SHADOW` = feature list) | `rec_experiments` (deterministic feature-salted sha256 arms), `store.ExperimentAssignment` (write-once audit rows), gating in `personalize._tier2_sources`; shadow feeds record composition under `kind="shadow:<feature>"`, serving untouched. Pure shadow recipe: flag on + `feature:0` + shadow list |
+| Emerging-story source | **shipped, dark** (`RWE_REC_EMERGING` = slot budget) | `personalize._emerging_source_cols` — ≥ `EMERGING_MIN_PUBLISHERS` (3) publishers, newest member within `EMERGING_MAX_AGE_HOURS` (48), reader-unread, one card per story |
+| Blind-spot slice v2 | **shipped, dark** (`RWE_REC_BLINDSPOT_SLOTS`) | `Backend._blindspot_source_cols` — the reader's own rwe-d ranking filtered to their measured gap topics, its own slice; v1's nudge suppressed while v2 holds slots (one mechanism at a time) |
+| Feedback vocabulary end-to-end | **shipped, live on the existing flag** | five types (`another_viewpoint` / `already_know` / `too_repetitive` / `fewer_from_source` / `more_topic`) through store (+ removal), the wire (POST + DELETE undo), `rec_context`, scoped anchor reuse in `_reader_state_factors` (consumption rides `RWE_REC_FEEDBACK`), the web card menu, the visible-consequence strip with undo, and Settings' removable feedback ledger; catalogs +25 keys × 5 locales |
+
+Verification: `tests/test_rec_tier2_sources.py` (plan arithmetic, source gates, slot
+supersession, cohort determinism + immutable recorded arms, control = status quo byte-identical,
+shadow-kind metrics) and `tests/test_rec_feedback_vocabulary.py` (storage/removal scoping, the
+anchor mapping table, wire + undo); explain parity asserted with sources enabled on both the
+demo and measured paths. `deploy/ops/verify-recs.sh` §2 now checks all ten flags.
+
 ---
 
 ## What we have → what X does → adopt → improve beyond → build first

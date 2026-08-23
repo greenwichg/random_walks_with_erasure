@@ -29,11 +29,21 @@ TIER1_FLAGS = (
     "RWE_REC_BLINDSPOT",
 )
 
+# The Tier-2 sources + experiment harness — declared with the feature this time, so the third
+# occurrence of the failure mode never ships at all.
+TIER2_FLAGS = (
+    "RWE_REC_STORY_SOURCE",
+    "RWE_REC_EMERGING",
+    "RWE_REC_BLINDSPOT_SLOTS",
+    "RWE_REC_EXPERIMENT",
+    "RWE_REC_SHADOW",
+)
+
 
 def test_every_tier1_flag_is_declared_in_the_compose_allowlist():
     compose = (ROOT / "deploy" / "docker-compose.yml").read_text(encoding="utf-8")
     declared = set(re.findall(r"^\s+(RWE_[A-Z0-9_]+):", compose, re.M))
-    missing = [f for f in TIER1_FLAGS if f not in declared]
+    missing = [f for f in TIER1_FLAGS + TIER2_FLAGS if f not in declared]
     assert not missing, (
         f"{missing} read by the engine but absent from docker-compose.yml's api environment "
         f"allowlist — the flag can never reach the container, so the feature is structurally "
@@ -53,3 +63,17 @@ def test_every_tier1_flag_defaults_off_or_neutral_in_compose():
             f"{flag} compose default is {defaults.get(flag)!r} — must be '0' (dark by default)")
     assert defaults.get("RWE_REC_REPEAT_WINDOW_DAYS") == "14", (
         "the repeat window's compose default must match rec_context.repeat_window_days()")
+
+
+def test_every_tier2_flag_defaults_dark_in_compose():
+    # Same dark-by-default contract: source slot budgets default to 0 slots, and the experiment /
+    # shadow specs default to empty (no experiment declared, nothing shadow-logged).
+    compose = (ROOT / "deploy" / "docker-compose.yml").read_text(encoding="utf-8")
+    defaults = dict(re.findall(r"^\s+(RWE_REC_[A-Z0-9_]+):\s*\$\{RWE_REC_[A-Z0-9_]+:-([^}]*)\}",
+                               compose, re.M))
+    for flag in ("RWE_REC_STORY_SOURCE", "RWE_REC_EMERGING", "RWE_REC_BLINDSPOT_SLOTS"):
+        assert defaults.get(flag) == "0", (
+            f"{flag} compose default is {defaults.get(flag)!r} — must be '0' (no slots, dark)")
+    for flag in ("RWE_REC_EXPERIMENT", "RWE_REC_SHADOW"):
+        assert defaults.get(flag) == "", (
+            f"{flag} compose default is {defaults.get(flag)!r} — must be empty (nothing declared)")

@@ -5,8 +5,13 @@ import Link from "next/link";
 import { motion } from "framer-motion";
 import {
   ArrowLeftRight,
+  CheckCheck,
   Clock,
   HelpCircle,
+  MinusCircle,
+  MoreHorizontal,
+  PlusCircle,
+  Repeat2,
   ThumbsUp,
   ThumbsDown,
   X,
@@ -23,6 +28,12 @@ import { SaveButton } from "@/components/shared/save-button";
 import { ArticleImage } from "@/components/shared/article-image";
 import { WhyDrawer } from "@/components/recommendations/why-drawer";
 import { Badge } from "@/components/ui/badge";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
@@ -31,7 +42,20 @@ const STRATEGY_LABEL_KEY: Record<Recommendation["strategy"], string> = {
   "rwe-d": "rec.strategy.rwe-d",
   adaptive: "rec.strategy.adaptive",
   story: "rec.strategy.story",
+  emerging: "rec.strategy.emerging",
+  blindspot: "rec.strategy.blindspot",
 };
+
+/** The Tier-2 feedback vocabulary, surfaced as a compact "more options" menu beside the vote
+ *  buttons. Each action's ranking consequence is scoped to what it names (source / topic /
+ *  article) and is shown back to the reader with an undo by the page — never a silent effect. */
+const VOCAB_MENU: { action: FeedbackAction; icon: React.ElementType; labelKey: string }[] = [
+  { action: "another-viewpoint", icon: ArrowLeftRight, labelKey: "rec.fb.anotherViewpoint" },
+  { action: "already-know", icon: CheckCheck, labelKey: "rec.fb.alreadyKnow" },
+  { action: "too-repetitive", icon: Repeat2, labelKey: "rec.fb.tooRepetitive" },
+  { action: "fewer-from-source", icon: MinusCircle, labelKey: "rec.fb.fewerFromSource" },
+  { action: "more-topic", icon: PlusCircle, labelKey: "rec.fb.moreTopic" },
+];
 
 /** A single recommendation with full transparency + the five feedback actions. */
 export function RecommendationCard({
@@ -278,6 +302,35 @@ export function RecommendationCard({
               onDismiss?.();
             }}
           />
+          {/* The Tier-2 vocabulary: finer-grained signals than a bare thumbs-down, each with a
+              visible, undoable consequence rendered by the page (never a silent ranking effect). */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                aria-label={t("rec.fb.more")}
+                className="touch-target grid h-8 w-8 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-muted"
+              >
+                <MoreHorizontal className="h-[1.05rem] w-[1.05rem]" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {VOCAB_MENU.map(({ action, icon: Icon, labelKey }) => (
+                <DropdownMenuItem
+                  key={action}
+                  onSelect={() => {
+                    act(action);
+                    if (action !== "more-topic") onDismiss?.(); // positive signals keep the card
+                  }}
+                >
+                  <Icon className="mr-2 h-4 w-4" />
+                  {t(labelKey, {
+                    publisher: article.publisher,
+                    topic: article.topic || t("rec.fb.thisTopic"),
+                  })}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
 

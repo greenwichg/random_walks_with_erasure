@@ -356,18 +356,26 @@ class RecEvent(Base):
 
 
 # The explicit feedback a reader can give a recommendation card. Canonical (snake_case) wire values;
-# the web tier maps its own "read-later" hyphen form onto "read_later" before calling.
-RECOMMENDATION_FEEDBACK_TYPES = ("like", "dislike", "ignore", "read_later")
+# the web tier maps its own hyphen forms ("read-later", "fewer-from-source", …) onto these before
+# calling. The last five are the Tier-2 vocabulary (docs/X_ALGORITHM_AUDIT_AND_PROPOSAL.md,
+# Phase 13.6): finer-grained than like/dislike so the ranking consequence can match the reader's
+# actual complaint — "fewer from this SOURCE" dims the publisher without smearing the topic,
+# "more of this TOPIC" lifts the topic without boosting one outlet, and the three article-scoped
+# ones (another_viewpoint / already_know / too_repetitive) say why a card was unwanted.
+RECOMMENDATION_FEEDBACK_TYPES = ("like", "dislike", "ignore", "read_later",
+                                 "another_viewpoint", "already_know", "too_repetitive",
+                                 "fewer_from_source", "more_topic")
 
 
 class RecFeedback(Base):
-    """A reader's explicit feedback on a recommendation the engine already produced — ``like`` /
-    ``dislike`` / ``ignore`` / ``read_later``. One row per ``(user_id, article_id, feedback)``:
+    """A reader's explicit feedback on a recommendation the engine already produced — one of
+    :data:`RECOMMENDATION_FEEDBACK_TYPES`. One row per ``(user_id, article_id, feedback)``:
     repeating the same signal is idempotent (refreshes ``updated_at``), while distinct feedback types
     on one article are distinct rows, so a reader's full set of signals is preserved without collapsing
-    contradictory ones. **Recorded only** (B1): no recommender, ranking, report, or personalization
-    path reads this table — it is a truthful capture of an interaction the card already exposes, kept
-    for a future consumer to decide how (if at all) to weigh it."""
+    contradictory ones. Originally **recorded only** (B1); since Tier 1 the flag-gated
+    ``rec_context`` reads it into ranking as bounded multipliers, and removal
+    (:meth:`Store.remove_recommendation_feedback`) is the "undo" behind the visible-consequence UI —
+    a reader can always see and retract what the feed holds against their name."""
 
     __tablename__ = "rec_feedback"
     __table_args__ = (UniqueConstraint("user_id", "article_id", "feedback",
@@ -376,9 +384,32 @@ class RecFeedback(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     article_id: Mapped[str] = mapped_column(String(2048))
-    feedback: Mapped[str] = mapped_column(String(16))       # one of RECOMMENDATION_FEEDBACK_TYPES
+    # one of RECOMMENDATION_FEEDBACK_TYPES. Declared width fits the longest ("another_viewpoint",
+    # 17 chars); SQLite stores TEXT regardless, so widening from the original 16 needs no migration.
+    feedback: Mapped[str] = mapped_column(String(24))
     created_at: Mapped[str] = mapped_column(String(64))     # ISO — first time this signal was given
     updated_at: Mapped[str] = mapped_column(String(64))     # ISO — last time it was (re)submitted
+
+
+class ExperimentAssignment(Base):
+    """A reader's recorded arm in one recommendation experiment (Tier 2, Phase 13.4/13.9).
+
+    The arm itself is DERIVED — ``rec_experiments.cohort_of`` is a pure hash, and this table is
+    never consulted to decide anything — but analysis must not have to re-derive membership from
+    a hash it hopes still matches the code that served the feeds. Write-once per
+    ``(user_id, experiment)``: the first serve under a declared experiment records the arm, and
+    re-serves are no-ops, so ``assigned_at`` is honestly "when this reader first entered the
+    experiment"."""
+
+    __tablename__ = "experiment_assignments"
+    __table_args__ = (UniqueConstraint("user_id", "experiment",
+                                       name="uq_experiment_user"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    experiment: Mapped[str] = mapped_column(String(64))
+    cohort: Mapped[str] = mapped_column(String(16))         # treatment | control
+    assigned_at: Mapped[str] = mapped_column(String(64))    # ISO
 
 
 class ImprovementLifecycle(Base):
@@ -2487,6 +2518,24 @@ class Store:
             return [{"articleId": r.article_id, "feedback": r.feedback,
                      "createdAt": r.created_at, "updatedAt": r.updated_at} for r in rows]
 
+    def remove_recommendation_feedback(self, user_id: int, article_id: str,
+                                       feedback: "str | None" = None) -> int:
+        """Delete the reader's feedback on one article — one type, or (``feedback=None``) every
+        type they gave it. Returns the number of rows removed (0 = nothing was recorded, which is
+        a fine answer, not an error). This is the "undo" the Tier-2 visible-consequence UI
+        promises: a consequence a reader can see but not retract is surveillance, so removal is
+        as first-class as recording. Scoped strictly to ``user_id`` — one reader can never clear
+        another's signals."""
+        with self.session() as s:
+            q = select(RecFeedback).where(RecFeedback.user_id == user_id,
+                                          RecFeedback.article_id == str(article_id))
+            if feedback is not None:
+                q = q.where(RecFeedback.feedback == feedback)
+            rows = s.scalars(q).all()
+            for row in rows:
+                s.delete(row)
+            return len(rows)
+
     def recommendation_feedback_counts(self, user_id: int) -> dict:
         """The reader's article-recommendation feedback tallied by type — ``{like, dislike, ignore,
         read_later}`` (one grouped count query, missing types default to 0). The improvement ranker
@@ -2501,6 +2550,35 @@ class Store:
             if feedback in counts:
                 counts[feedback] = int(n)
         return counts
+
+    # -- experiment assignments (Tier 2 cohort harness) -------------------
+    def record_experiment_assignment(self, user_id: int, experiment: str, cohort: str) -> bool:
+        """Record a reader's arm in one experiment, write-once: the first call creates the row
+        and returns ``True``; every later call — same or different cohort — is a no-op returning
+        ``False``, because an assignment that could drift after the fact would be worthless for
+        audit (the hash is deterministic, so a "different" cohort here could only mean the env
+        spec changed mid-experiment — the ORIGINAL arm is the one the reader actually lived)."""
+        with self.session() as s:
+            row = s.scalar(select(ExperimentAssignment).where(
+                ExperimentAssignment.user_id == user_id,
+                ExperimentAssignment.experiment == str(experiment)))
+            if row is not None:
+                return False
+            s.add(ExperimentAssignment(user_id=user_id, experiment=str(experiment),
+                                       cohort=str(cohort),
+                                       assigned_at=_utcnow().isoformat()))
+            return True
+
+    def experiment_assignments(self, experiment: "str | None" = None) -> list:
+        """The recorded assignments — all of them, or one experiment's — as ``{userId,
+        experiment, cohort, assignedAt}``, oldest first. Read-only, for analysis/audit."""
+        with self.session() as s:
+            q = select(ExperimentAssignment)
+            if experiment is not None:
+                q = q.where(ExperimentAssignment.experiment == str(experiment))
+            rows = s.scalars(q.order_by(ExperimentAssignment.id)).all()
+            return [{"userId": r.user_id, "experiment": r.experiment, "cohort": r.cohort,
+                     "assignedAt": r.assigned_at} for r in rows]
 
     # -- product analytics events (PA1) ---------------------------------
     def record_analytics_events(self, events: "list[dict]") -> int:

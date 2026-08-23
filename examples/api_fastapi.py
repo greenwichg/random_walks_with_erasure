@@ -1747,8 +1747,11 @@ class RecReceptionModel(BaseModel):
     active: bool            # whether the reader now has enough reception for Open-Mindedness
 
 
-# The four canonical (snake_case) feedback signals — mirrors store.RECOMMENDATION_FEEDBACK_TYPES.
-RecFeedbackType = Literal["like", "dislike", "ignore", "read_later"]
+# The canonical (snake_case) feedback signals — mirrors store.RECOMMENDATION_FEEDBACK_TYPES.
+# The last five are the Tier-2 vocabulary (docs/X_ALGORITHM_AUDIT_AND_PROPOSAL.md, Phase 13.6).
+RecFeedbackType = Literal["like", "dislike", "ignore", "read_later",
+                          "another_viewpoint", "already_know", "too_repetitive",
+                          "fewer_from_source", "more_topic"]
 
 
 class RecFeedbackRequest(BaseModel):
@@ -1762,6 +1765,19 @@ class RecFeedbackAckModel(BaseModel):
     ok: bool
     feedback: RecFeedbackType
     changed: bool           # True when newly recorded; False for an idempotent repeat of the same signal
+
+
+class RecFeedbackRemoveRequest(BaseModel):
+    # the undo behind the visible-consequence UI: one recorded signal, or (feedback omitted) every
+    # signal the reader gave this article. Removing what was never recorded is ok:false-free — the
+    # ack's `removed` count is the honest answer and 0 is a fine value.
+    articleId: str
+    feedback: Optional[RecFeedbackType] = None
+
+
+class RecFeedbackRemoveAckModel(BaseModel):
+    ok: bool
+    removed: int            # rows deleted (0 = nothing was recorded for this article/type)
 
 
 class RecFeedbackEntryModel(BaseModel):
@@ -3341,10 +3357,26 @@ def recommendation_feedback(request: Request, req: RecFeedbackRequest) -> dict:
          responses=_ERR_RESPONSES)
 def my_recommendation_feedback(request: Request) -> list:
     """The reader's own recorded feedback, oldest-first — a read-only projection the web tier uses to
-    keep an *ignored* card dismissed across a reload. Per-user (``_require_real_user`` → 401 anon); it
-    reads only the ``rec_feedback`` table and drives no ranking or recommender."""
+    keep an *ignored* card dismissed across a reload and to render the settings page's "active
+    feedback effects" list. Per-user (``_require_real_user`` → 401 anon); it reads only the
+    ``rec_feedback`` table and drives no ranking or recommender."""
     uid = _require_real_user(request)
     return _require_store().list_recommendation_feedback(uid)
+
+
+@app.delete("/api/me/recommendations/feedback", response_model=RecFeedbackRemoveAckModel,
+            tags=["recommendations"],
+            summary="Remove the signed-in user's feedback on one article (the undo)",
+            responses=_ERR_RESPONSES)
+def remove_recommendation_feedback(request: Request, req: RecFeedbackRemoveRequest) -> dict:
+    """Delete one recorded signal — or, with ``feedback`` omitted, every signal the reader gave
+    this article. The undo behind the Tier-2 visible-consequence UI: a ranking consequence the
+    reader can see but not retract would be surveillance, so removal is as first-class as
+    recording. With ``RWE_REC_FEEDBACK`` on, the next feed simply no longer carries the signal —
+    there is no tombstone, because absence IS the intended state."""
+    uid = _require_real_user(request)
+    removed = _require_store().remove_recommendation_feedback(uid, req.articleId, req.feedback)
+    return {"ok": True, "removed": int(removed)}
 
 
 @app.post("/api/me/recommendations/improvements/{rec_key}/{event}",

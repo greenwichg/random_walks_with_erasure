@@ -172,7 +172,8 @@ def _params_used(model, strategy: str, params: Optional[dict]) -> dict:
 def explain(backend, corpus, rec, u: int, strategy: Optional[str] = None,
             params: Optional[dict] = None, article: Optional[str] = None,
             reads_meta: Optional[dict] = None, url_to_id: Optional[dict] = None,
-            story_index: Optional[dict] = None, read_urls: Optional[set] = None) -> dict:
+            story_index: Optional[dict] = None, read_urls: Optional[set] = None,
+            extra_cols=None, extra_off: tuple = ()) -> dict:
     """Explain the exact feed ``(corpus, rec, u, strategy, params)`` would serve.
 
     Read-only: reuses ``Backend._model_for`` (the serving models) and replicates the serving
@@ -184,6 +185,13 @@ def explain(backend, corpus, rec, u: int, strategy: Optional[str] = None,
     same Story Service clusters the Evidence Resolver consumes (story id, the reader's matched
     reads, or the exact gate that failed). Absent on the base/demo path, which has no reader
     history for story matching to reason over.
+
+    ``extra_cols`` / ``extra_off`` (Tier 2) are the SAME source contributions and suppressions
+    the serving path used — the caller passes what ``Personalizer._tier2_sources`` decided, and
+    this observer replicates the engine's merge (``_plan_with_extras``, the internal blind-spot
+    v2 source, the presentation order) byte-exactly. A source card's evidence carries no model
+    rank: its ``match`` is ``"source"`` and the truthful ranking evidence is the per-strategy
+    table beside it.
     """
     mind = corpus.mind
     uid = np.asarray(mind.dataset.user_ids)[u]
@@ -224,6 +232,11 @@ def explain(backend, corpus, rec, u: int, strategy: Optional[str] = None,
     # parity rule: if the observer resolved country differently it would explain a feed nobody got.
     country_by_col = (backend._country_by_col(mind) if (params or {}).get("country") else None)
     bs_topics = engine.Backend._blindspot_topics(rep)   # () unless RWE_REC_BLINDSPOT is on
+    # Tier-2 blind-spot v2 mirrors the engine: with a slot budget (and no caller suppression),
+    # the discovery slice ranks WITHOUT the v1 nudge and the gap topics get their own source.
+    single = strategy in STRATEGIES
+    bs_k = engine.blindspot_slots() if (not single and "blindspot" not in (extra_off or ())) else 0
+    bs_nudge = () if bs_k > 0 else bs_topics
     slice_js: dict = {s: set() for s in STRATEGIES}
     j_of_col: dict = {}
     # Over-fetch exactly as the serving path does, then hand the slices to the SAME selector —
@@ -239,13 +252,38 @@ def explain(backend, corpus, rec, u: int, strategy: Optional[str] = None,
             admitted.append(col)
             j_of_col.setdefault(col, int(j))
         admitted = engine.Backend._preference_rerank(mind, admitted, params, country_by_col)
-        if s == "rwe-d" and bs_topics:
+        if s == "rwe-d" and bs_nudge:
             # The SAME blind-spot lift the serving path applies to the discovery slice — from
-            # the same report, through the same shared static (21a parity).
-            admitted = engine.Backend._blindspot_rerank(mind, admitted, bs_topics)
+            # the same report, through the same shared static (21a parity). Suppressed exactly
+            # when the serving path suppresses it (v2 slots configured).
+            admitted = engine.Backend._blindspot_rerank(mind, admitted, bs_nudge)
         slice_cols = engine.Backend._slice_select(mind, s, admitted,
                                                   kk * engine.REC_OVERFETCH, user_side)
         cols_by_strategy.append((s, slice_cols))
+    # Tier-2 sources — replicate the engine's merge exactly: caller-provided story/emerging
+    # contributions, the internally-built blind-spot v2 source, EXTRA_SOURCE_ORDER, and the
+    # budget rebalance. A source col's evidence needs its item index j like any other card.
+    col2j = {rec.id2col.get(str(rec.rec_ids[j])): j for j in range(len(rec.rec_ids))}
+    extras = [(n, int(k), cols) for n, k, cols in (extra_cols or ()) if cols and int(k) > 0]
+    if bs_k > 0 and bs_topics:
+        bs_cols = engine.Backend._blindspot_source_cols(mind, rec, u, params, user_side,
+                                                        bs_topics, bs_k * engine.REC_OVERFETCH,
+                                                        country_by_col=country_by_col)
+        if bs_cols:
+            extras.append(("blindspot", bs_k, bs_cols))
+    if extras:
+        order = {n: i for i, n in enumerate(engine.EXTRA_SOURCE_ORDER)}
+        extras.sort(key=lambda e: order.get(e[0], len(order)))
+        plan = engine._plan_with_extras(plan, [(n, k) for n, k, _ in extras])
+        granted = {n for n, _ in plan}
+        for n, _k, cols in extras:
+            if n not in granted:
+                continue
+            cols_by_strategy.append((n, cols))
+            for col in cols:
+                j = col2j.get(col)
+                if j is not None:
+                    j_of_col.setdefault(col, int(j))
     outlets = np.asarray(mind.outlets)
     # The same story/topic quota inputs the serving selector builds (_serialize_recs) — the 21a
     # parity rule: replicate the plan exactly, including the quotas, or the explained feed drifts
@@ -255,11 +293,13 @@ def explain(backend, corpus, rec, u: int, strategy: Optional[str] = None,
     picks = engine.Backend._select_diverse(cols_by_strategy, plan, lambda c: str(outlets[c]),
                                            story_of=story_by_col.get,
                                            topic_of=lambda c: str(cats_q[c]).strip().lower())
+    # The SAME presentation reorder the serving path applies (story-source cards front).
+    picks = engine.Backend._present_order(picks)
     chosen = [(col, j_of_col[col], s) for col, s in picks]
     chosen_cols = {col for col, _ in picks}
     for s, slice_cols in cols_by_strategy:
         for col in slice_cols:               # an admitted slot, even if selection then drops it
-            slice_js[s].add(j_of_col[col])
+            slice_js.setdefault(s, set()).add(j_of_col[col])
     seen_cols = chosen_cols
     dedup_dropped = sum(len(c) for _, c in cols_by_strategy) - len(chosen)
 
@@ -278,8 +318,15 @@ def explain(backend, corpus, rec, u: int, strategy: Optional[str] = None,
                 # slice size — membership, not rank arithmetic, is the truthful signal).
                 "inSlice": int(j) in slice_js[s],
             }
-        r0 = per[chosen_by]["rank_of"].get(j, 0)
-        candidates = len(per[chosen_by]["ranking"])
+        if chosen_by in per:
+            r0 = per[chosen_by]["rank_of"].get(j, 0)
+            candidates = len(per[chosen_by]["ranking"])
+            rank_1, pct, band = r0 + 1, rank_percentile(r0, candidates), match_band(r0, candidates)
+        else:
+            # A Tier-2 source (story / emerging / blindspot): its cards are admitted by the
+            # source's own gates, not a model rank — claiming one would fabricate evidence.
+            # The per-strategy table below still shows every model's honest view of the item.
+            rank_1, pct, band = None, None, "source"
         co_readers = fg.A[:, j]
         co_items = np.asarray((fg.A.T @ co_readers).todense()).ravel()
         within2 = int(sum(1 for i in seen if i != j and co_items[i] > 0))
@@ -288,9 +335,9 @@ def explain(backend, corpus, rec, u: int, strategy: Optional[str] = None,
             "publisher": art["publisher"], "lean": art["lean"],
             "topic": art.get("topic"), "publishedAt": art.get("publishedAt"),
             "chosenBy": chosen_by,
-            "rank": r0 + 1,
-            "scorePercentile": rank_percentile(r0, candidates),
-            "match": match_band(r0, candidates),
+            "rank": rank_1,
+            "scorePercentile": pct,
+            "match": band,
             "byStrategy": by_strategy,
             "crossCutting": {
                 "value": engine._cross_of(user_side, art["lean"], bool(art.get("political"))),

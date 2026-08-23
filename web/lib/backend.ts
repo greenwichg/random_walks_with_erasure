@@ -150,9 +150,22 @@ export async function backendPost<T>(
   }
 }
 
-/** DELETE `<BASE><path>` → parsed JSON, or `null` on any failure (caller maps to a status). */
-export async function backendDelete<T>(path: string, headers?: Record<string, string>): Promise<T | null> {
-  const res = await withTimeout(`${BASE}${path}`, { method: "DELETE", ...(headers ? { headers } : {}) });
+/** DELETE `<BASE><path>` → parsed JSON, or `null` on any failure (caller maps to a status).
+ *  `body` (optional) is sent as JSON — the engine's feedback-removal DELETE takes one. */
+export async function backendDelete<T>(
+  path: string,
+  headers?: Record<string, string>,
+  body?: unknown,
+): Promise<T | null> {
+  const res = await withTimeout(`${BASE}${path}`, {
+    method: "DELETE",
+    ...(body === undefined
+      ? { ...(headers ? { headers } : {}) }
+      : {
+          headers: { "content-type": "application/json", ...(headers ?? {}) },
+          body: JSON.stringify(body),
+        }),
+  });
   if (!res || !res.ok) return null;
   try {
     return (await res.json()) as T;

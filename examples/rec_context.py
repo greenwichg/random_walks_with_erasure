@@ -12,9 +12,13 @@ the interest/country anchors, where the explain observer shares it verbatim (the
 Two families, two flags, both **default OFF** so production serves byte-identical feeds until an
 operator opts in (the strangler discipline: land dark, enable per cohort):
 
-``RWE_REC_FEEDBACK=1`` → ``params["feedback"] = {"dislike": [...], "like": [...], "ignore": [...]}``
+``RWE_REC_FEEDBACK=1`` → ``params["feedback"] = {"dislike": [...], "like": [...], "ignore": [...],
+    "another_viewpoint": [...], "already_know": [...], "too_repetitive": [...],
+    "fewer_from_source": [...], "more_topic": [...]}``
     The reader's explicit card feedback (``rec_feedback``). ``read_later`` counts as ``like`` —
-    both say "more of this was welcome". Ids are article ids exactly as served
+    both say "more of this was welcome". The last five buckets are the Tier-2 vocabulary,
+    passed through as recorded (data, not policy — their weights live beside the Tier-1 anchors
+    in ``api_server._reader_state_factors``). Ids are article ids exactly as served
     (``article.id`` = the corpus item id), so the engine resolves them against the corpus it is
     currently ranking; an id that has rotated out simply matches nothing.
 
@@ -58,8 +62,13 @@ def repeat_window_days() -> float:
         return 14.0
 
 
+#: Tier-2 vocabulary types passed through under their own names (recorded type = bucket name).
+_VOCABULARY = ("another_viewpoint", "already_know", "too_repetitive",
+               "fewer_from_source", "more_topic")
+
+
 def _feedback_state(store, uid: int) -> "dict | None":
-    fb: dict = {"dislike": [], "like": [], "ignore": []}
+    fb: dict = {"dislike": [], "like": [], "ignore": [], **{t: [] for t in _VOCABULARY}}
     for row in store.list_recommendation_feedback(uid):
         kind = row.get("feedback")
         aid = str(row.get("articleId") or "")
@@ -71,6 +80,8 @@ def _feedback_state(store, uid: int) -> "dict | None":
             fb["like"].append(aid)
         elif kind == "ignore":
             fb["ignore"].append(aid)
+        elif kind in _VOCABULARY:
+            fb[kind].append(aid)
     return fb if any(fb.values()) else None
 
 

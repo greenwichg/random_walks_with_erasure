@@ -65,8 +65,8 @@ for svc in api web caddy; do
   fi
 done
 
-echo "-- 2. Tier-1 flags: deploy/.env intent vs running container --"
-FLAGS="RWE_REC_FEEDBACK RWE_REC_REPETITION RWE_REC_MAX_PER_STORY RWE_REC_MAX_PER_TOPIC RWE_REC_BLINDSPOT"
+echo "-- 2. Tier-1 + Tier-2 flags: deploy/.env intent vs running container --"
+FLAGS="RWE_REC_FEEDBACK RWE_REC_REPETITION RWE_REC_MAX_PER_STORY RWE_REC_MAX_PER_TOPIC RWE_REC_BLINDSPOT RWE_REC_STORY_SOURCE RWE_REC_EMERGING RWE_REC_BLINDSPOT_SLOTS RWE_REC_EXPERIMENT RWE_REC_SHADOW"
 container_env="$(dc exec -T api sh -lc 'env' 2>/dev/null || true)"
 for f in $FLAGS; do
   want="$(env_val "$f")"; want="${want:-unset}"

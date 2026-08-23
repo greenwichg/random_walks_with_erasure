@@ -264,6 +264,15 @@ services:
       RWE_REC_MAX_PER_STORY: ${RWE_REC_MAX_PER_STORY:-0}
       RWE_REC_MAX_PER_TOPIC: ${RWE_REC_MAX_PER_TOPIC:-0}
       RWE_REC_BLINDSPOT: ${RWE_REC_BLINDSPOT:-0}
+      # Tier-2 candidate sources + experiment harness (same doc, same allowlist reason, declared
+      # WITH the feature this time rather than after the third undeployable-flag incident):
+      # slot budgets for the story / emerging / blind-spot-v2 sources (0 = off), the cohort spec
+      # ("feature:pct", e.g. story_source:50), and the shadow-log feature list.
+      RWE_REC_STORY_SOURCE: ${RWE_REC_STORY_SOURCE:-0}
+      RWE_REC_EMERGING: ${RWE_REC_EMERGING:-0}
+      RWE_REC_BLINDSPOT_SLOTS: ${RWE_REC_BLINDSPOT_SLOTS:-0}
+      RWE_REC_EXPERIMENT: ${RWE_REC_EXPERIMENT:-}
+      RWE_REC_SHADOW: ${RWE_REC_SHADOW:-}
       # Story Continuation (docs/STORY_CONTINUATION_DESIGN.md): the post-read "compare this story"
       # offer — GET /api/me/continuation, read-only, no table and no worker. Default 0 = OFF, and
       # while off the route exists and always answers `null`, so the client contract ships and can

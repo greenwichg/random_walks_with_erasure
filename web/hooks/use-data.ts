@@ -10,6 +10,7 @@ import type {
   FeedbackAction,
   NotificationItem,
   Profile,
+  RecFeedbackType,
   Recommendation,
   SavableArticle,
   SavedArticle,
@@ -164,6 +165,17 @@ export function useFeedback() {
   return useMutation({
     mutationFn: ({ articleId, action }: { articleId: string; action: FeedbackAction }) =>
       services.sendFeedback(articleId, action),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.recommendationFeedback }),
+  });
+}
+
+/** The undo: remove one recorded feedback signal (or, with `feedback` omitted, every signal on
+ *  the article). Backs the visible-consequence strip and Settings' active-effects list. */
+export function useRemoveFeedback() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ articleId, feedback }: { articleId: string; feedback?: RecFeedbackType }) =>
+      services.removeFeedback(articleId, feedback),
     onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.recommendationFeedback }),
   });
 }

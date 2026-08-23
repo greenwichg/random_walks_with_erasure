@@ -494,7 +494,7 @@ export interface Recommendation {
   /** Mirrors `explanation.message` (kept for back-compat with older payloads). */
   reason: string;
   /** Which extension produced it ("story" = the conditional Story-Match slot, RWE_STORY_SLOT). */
-  strategy: "rwe-b" | "rwe-d" | "adaptive" | "story";
+  strategy: "rwe-b" | "rwe-d" | "adaptive" | "story" | "emerging" | "blindspot";
   /** Which metric it most helps. */
   helpsMetric: MetricKey;
   /** Whether it bridges the reader across the centre. */
@@ -505,12 +505,33 @@ export interface Recommendation {
   explanation?: RecommendationExplanation;
 }
 
-export type FeedbackAction = "save" | "ignore" | "read-later" | "like" | "dislike";
+export type FeedbackAction =
+  | "save"
+  | "ignore"
+  | "read-later"
+  | "like"
+  | "dislike"
+  // The Tier-2 vocabulary — finer-grained than like/dislike, so the ranking consequence can
+  // match the reader's actual complaint (and be shown back to them as a visible, undoable effect).
+  | "another-viewpoint"
+  | "already-know"
+  | "too-repetitive"
+  | "fewer-from-source"
+  | "more-topic";
 
 /** The canonical (snake_case) recommendation-feedback signals the backend records. The card's
- *  `FeedbackAction` "read-later" maps to "read_later" at the service boundary; "save" is a separate
+ *  `FeedbackAction` hyphen forms map to these at the service boundary; "save" is a separate
  *  concept (the Saved pipeline) and is never sent here. */
-export type RecFeedbackType = "like" | "dislike" | "ignore" | "read_later";
+export type RecFeedbackType =
+  | "like"
+  | "dislike"
+  | "ignore"
+  | "read_later"
+  | "another_viewpoint"
+  | "already_know"
+  | "too_repetitive"
+  | "fewer_from_source"
+  | "more_topic";
 
 /** One recorded feedback signal from `GET /api/me/recommendations/feedback`. */
 export interface RecFeedbackEntry {
@@ -525,6 +546,13 @@ export interface RecFeedbackAck {
   ok: boolean;
   feedback: RecFeedbackType;
   changed: boolean;
+}
+
+/** Ack from `DELETE /api/me/recommendations/feedback` — the undo. `removed` = rows deleted
+ *  (0 = nothing was recorded, a fine answer rather than an error). */
+export interface RecFeedbackRemoveAck {
+  ok: boolean;
+  removed: number;
 }
 
 /* ------------------------------------------------------------------ *

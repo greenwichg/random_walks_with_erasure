@@ -5,11 +5,13 @@ import Link from "next/link";
 import { AnimatePresence } from "framer-motion";
 import { Sparkles, Route, Compass, Wand2 } from "lucide-react";
 import type { FeedbackAction, Recommendation } from "@ih/core/domain/types";
+import { feedbackWire } from "@ih/core/api/services";
 import {
   useRecommendations,
   useFeedback,
   useOpenRecommendation,
   useRecommendationFeedback,
+  useRemoveFeedback,
   useSettings,
 } from "@/hooks/use-data";
 import { useTranslation } from "@/lib/i18n";
@@ -34,6 +36,19 @@ const FILTERS: { value: Filter; icon: React.ElementType }[] = [
   { value: "adaptive", icon: Wand2 },
   { value: "rwe-d", icon: Compass },
 ];
+
+/** The Tier-2 vocabulary actions and the consequence line each one earns. The consequence is the
+ *  contract: an invisible feedback loop reads as surveillance, a visible one is a control — so
+ *  every one of these renders a strip the reader can undo, and Settings lists the active set. */
+const VOCAB_CONSEQUENCE: Partial<Record<FeedbackAction, string>> = {
+  "another-viewpoint": "rec.consequence.anotherViewpoint",
+  "already-know": "rec.consequence.alreadyKnow",
+  "too-repetitive": "rec.consequence.tooRepetitive",
+  "fewer-from-source": "rec.consequence.fewerFromSource",
+  "more-topic": "rec.consequence.moreTopic",
+};
+
+type Consequence = { articleId: string; action: FeedbackAction; publisher: string; topic: string };
 
 export default function RecommendationsPage() {
   const { data, isLoading, isError, refetch } = useRecommendations();
@@ -89,9 +104,31 @@ export default function RecommendationsPage() {
     if (data && data.length) track("recommendations_viewed", { count: data.length });
   }, [data]);
 
-  const handleAction = (articleId: string, action: FeedbackAction) => {
+  const removeFeedback = useRemoveFeedback();
+  const [consequences, setConsequences] = React.useState<Consequence[]>([]);
+
+  const handleAction = (rec: Recommendation, action: FeedbackAction) => {
     track("recommendation_feedback", { action }); // PA1 (best-effort)
-    feedback.mutate({ articleId, action });
+    feedback.mutate({ articleId: rec.article.id, action });
+    if (VOCAB_CONSEQUENCE[action]) {
+      // visible consequence: one strip per (article, action), newest first, each with an undo
+      setConsequences((prev) => [
+        { articleId: rec.article.id, action, publisher: rec.article.publisher, topic: rec.article.topic },
+        ...prev.filter((c) => !(c.articleId === rec.article.id && c.action === action)),
+      ]);
+    }
+  };
+
+  const undoConsequence = (c: Consequence) => {
+    const wire = feedbackWire(c.action);
+    if (wire) removeFeedback.mutate({ articleId: c.articleId, feedback: wire });
+    setConsequences((prev) => prev.filter((x) => !(x.articleId === c.articleId && x.action === c.action)));
+    // the card returns to the feed — the effect and its undo are both immediate and visible
+    setDismissed((prev) => {
+      const next = new Set(prev);
+      next.delete(c.articleId);
+      return next;
+    });
   };
 
   const handleOpen = (rec: Recommendation) => {
@@ -135,6 +172,34 @@ export default function RecommendationsPage() {
         card the reader opened is gone from the very next feed.
       */}
       <ContinuationStrip surface="feed" onOfferChange={setContinuationStory} />
+
+      {/* Visible consequences (Tier 2): what the reader's finer-grained feedback just changed
+          about their feed, each with an undo. Session-scoped by design — the durable ledger with
+          removal lives in Settings → Recommendation feedback. */}
+      {consequences.length > 0 && (
+        <div className="mb-4 flex flex-col gap-2">
+          {consequences.map((c) => (
+            <div
+              key={`${c.articleId}:${c.action}`}
+              role="status"
+              className="flex items-center justify-between gap-3 rounded-lg border border-primary/25 bg-primary/[0.04] px-3 py-2 text-sm"
+            >
+              <span className="min-w-0 truncate">
+                {t(VOCAB_CONSEQUENCE[c.action]!, {
+                  publisher: c.publisher,
+                  topic: c.topic || t("rec.fb.thisTopic"),
+                })}
+              </span>
+              <button
+                onClick={() => undoConsequence(c)}
+                className="shrink-0 font-medium text-primary hover:underline"
+              >
+                {t("rec.consequence.undo")}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
 
       {isLoading && (
         <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
@@ -202,7 +267,7 @@ export default function RecommendationsPage() {
               <RecommendationCard
                 rec={rec}
                 index={i}
-                onAction={(action) => handleAction(rec.article.id, action)}
+                onAction={(action) => handleAction(rec, action)}
                 onOpen={() => handleOpen(rec)}
                 onDismiss={() => setDismissed((prev) => new Set(prev).add(rec.article.id))}
               />

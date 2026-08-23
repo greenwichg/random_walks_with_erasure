@@ -13,6 +13,8 @@ const STRATEGY_LABEL_KEY: Record<Recommendation["strategy"], string> = {
   "rwe-d": "rec.strategy.rwe-d",
   adaptive: "rec.strategy.adaptive",
   story: "rec.strategy.story",
+  emerging: "rec.strategy.emerging",
+  blindspot: "rec.strategy.blindspot",
 };
 
 /**

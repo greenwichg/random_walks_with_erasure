@@ -1,11 +1,16 @@
 import { NextResponse } from "next/server";
-import { backendGet, backendPost, engineUnavailable } from "@/lib/backend";
+import { backendDelete, backendGet, backendPost, engineUnavailable } from "@/lib/backend";
 import { requireUser } from "@/lib/require-user";
 
 export const dynamic = "force-dynamic";
 
-/** The four canonical feedback signals the engine records (mirrors the backend Literal). */
-const FEEDBACK_TYPES = ["like", "dislike", "ignore", "read_later"] as const;
+/** The canonical feedback signals the engine records (mirrors the backend Literal). The last five
+ *  are the Tier-2 vocabulary (another viewpoint / already know / too repetitive / fewer from
+ *  source / more of this topic). */
+const FEEDBACK_TYPES = [
+  "like", "dislike", "ignore", "read_later",
+  "another_viewpoint", "already_know", "too_repetitive", "fewer_from_source", "more_topic",
+] as const;
 
 /** The human half of the refusal; the shape and status come from the shared check. */
 const SIGN_IN = "Sign in to record recommendation feedback.";
@@ -49,4 +54,30 @@ export async function GET(request: Request) {
 
   const items = await backendGet("/api/me/recommendations/feedback", auth.headers);
   return items ? NextResponse.json(items) : engineUnavailable();
+}
+
+/**
+ * Remove the reader's feedback on one article — one type, or (feedback omitted) every type they
+ * gave it. The undo behind the visible-consequence UI: a ranking effect the reader can see but
+ * not retract would be surveillance, so removal is as first-class as recording.
+ */
+export async function DELETE(request: Request) {
+  const body = (await request.json().catch(() => ({}))) as { articleId?: string; feedback?: string };
+  if (!body.articleId || (body.feedback !== undefined && !FEEDBACK_TYPES.includes(body.feedback as never))) {
+    return NextResponse.json(
+      { error: { code: "bad_request", message: "articleId (and, if given, a valid feedback type) required." } },
+      { status: 400 },
+    );
+  }
+
+  const auth = await requireUser(request, SIGN_IN);
+  if (!auth.ok) return auth.response;
+
+  const result = await backendDelete(
+    "/api/me/recommendations/feedback",
+    auth.headers,
+    body.feedback ? { articleId: body.articleId, feedback: body.feedback } : { articleId: body.articleId },
+  );
+  if (result) return NextResponse.json(result);
+  return engineUnavailable();
 }

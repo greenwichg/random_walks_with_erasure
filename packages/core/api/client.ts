@@ -104,7 +104,8 @@ export async function postJson<T>(url: string, body?: unknown): Promise<T> {
   return data;
 }
 
-export async function deleteJson<T>(url: string): Promise<T> {
-  const { data } = await api.delete<T>(url);
+export async function deleteJson<T>(url: string, body?: unknown): Promise<T> {
+  // axios carries a DELETE body via `data` — used by feedback removal (articleId + type).
+  const { data } = await api.delete<T>(url, body === undefined ? undefined : { data: body });
   return data;
 }
