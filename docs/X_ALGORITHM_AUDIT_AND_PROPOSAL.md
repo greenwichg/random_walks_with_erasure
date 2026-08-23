@@ -354,11 +354,24 @@ parity-tested) → land Tier 1 units each behind an env flag default-off → sha
 beta cohort → default-on with kill switch. The current blend remains the fallback at every step;
 nothing replaces RWE-D/RWE-B — every proposal here *feeds* them or *selects after* them.
 
+### Tier-1 implementation status (updated as steps land)
+
+| Step | Status | Where |
+|---|---|---|
+| Feedback wiring | **shipped, flag off** (`RWE_REC_FEEDBACK`) | `rec_context.py`, `_preference_rerank` anchors, `_rec_request_params` |
+| Repetition decay | **shipped, flag off** (`RWE_REC_REPETITION`) | `store.rec_events_state`, same rerank pass |
+| Story + topic quotas | **shipped, caps off** (`RWE_REC_MAX_PER_STORY/_TOPIC`) | `_select_diverse`, `attach_story_resolver`, `feed_source.load_story_maps` |
+| Blind-spot slice v1 | **shipped, flag off** (`RWE_REC_BLINDSPOT`) | `_blindspot_topics`/`_blindspot_rerank` on the RWE-D slice |
+| Feed-quality metrics | **shipped, always on** (observational) | `record_feed_composition` — HHI, topics, story-dup, repeat, blind-spot |
+| Freshness parser gap | **already closed pre-audit** (C4.3) | `corpus_health._URL_YMON_D` |
+| QueryContext | **shipped in substance** | one shared params builder (`_rec_request_params`) + `rec_context` reader state |
+| Pipeline formalization | **deferred, consciously** | every mechanism above landed through the existing shared-helper seams (`_preference_rerank`, `_select_diverse`, the attach-resolver pattern), which already provide the parity and kill-switch properties the formalization was for; renaming the stages is organizational value only, and belongs with the Tier-2 story source, the first change that genuinely needs a new Source seam |
+
 ### Tiers (Phase 12)
 
 | Tier | Items |
 |---|---|
-| **1 — now** | pipeline formalization · QueryContext · feedback wiring · repetition decay · story+topic quotas in selector · blind-spot slice (v1: topic-targeted multiplier on RWE-D slice) · feed-quality metrics · freshness parser gap |
+| **1 — now** | pipeline formalization · QueryContext · feedback wiring · repetition decay · story+topic quotas in selector · blind-spot slice (v1: topic-targeted multiplier on RWE-D slice) · feed-quality metrics · ~~freshness parser gap~~ *(already closed: `corpus_health._URL_YMON_D`, C4.3, handles the Guardian/Washington Times month-name URLs — `FRESHNESS_SOURCE_AUDIT.md`'s "open gap" predates it; verified against live URL shapes, covered by `test_freshness_url_date.py`)* |
 | **2 — after foundation** | story source proper · MMR pass (if metrics demand) · W3 article lean · cohorts/shadow harness · emerging-story source · blind-spot slice v2 (own source) · new feedback vocabulary end-to-end |
 | **3 — research / at-scale** | embeddings & two-tower · engagement prediction (bounded input only) · W8B real-graph clusters · DPP |
 
