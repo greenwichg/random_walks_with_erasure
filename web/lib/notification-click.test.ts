@@ -31,6 +31,20 @@ test("a breaking_story notification deep-links to its story page", () => {
   assert.equal(hrefFor("breaking_story", {}), "/stories");
 });
 
+test("the story proxy passes the engine's 404 through instead of flattening it to 503", () => {
+  // The hop the first fix missed (verified by the reporter's second screenshot): the Next route
+  // used `backendGet`, which collapses "story dissolved" (404) and "engine down" (transport)
+  // into one null, so the browser saw engineUnavailable's 503 and the page's 404 branch could
+  // never fire. The publisher route's status-preserving pattern is the contract here.
+  const src = fs.readFileSync(
+    path.join(WEB, "app", "api", "stories", "[id]", "route.ts"), "utf8");
+  assert.match(src, /backendGetResult</, "the route must use the status-preserving fetch");
+  assert.match(src, /status === 404/, "the route must branch on the engine's 404");
+  assert.match(src, /\{ status: 404 \}/, "…and answer the browser with a real 404");
+  assert.ok(!/backendGet</.test(src.replace(/backendGetResult</g, "")),
+    "the status-collapsing backendGet must not creep back into this route");
+});
+
 test("useStory surfaces a 404 immediately instead of retrying a dissolved story", () => {
   const src = fs.readFileSync(path.join(WEB, "hooks", "use-data.ts"), "utf8");
   const hook = src.slice(src.indexOf("export const useStory"), src.indexOf("export const usePublisher"));
