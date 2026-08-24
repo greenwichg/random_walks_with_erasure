@@ -68,16 +68,32 @@ best top since things
 """.split())
 
 
-def title_tokens(title: str) -> frozenset:
+def title_tokens(title: str, hyphen_compounds: bool = False) -> frozenset:
     """Content word tokens of a headline (lowercased, length > 2, stop-words removed).
 
     Pure numbers are dropped: in a headline a bare number is nearly always a count, a date or a
     listicle rank ("6 Best… Since 2010"), not the thing the story is about. It is a real trade —
     "737" in an aircraft story is lost — but a shared year linking two unrelated listicles is the
-    commoner case by far."""
-    toks = re.findall(r"[a-z0-9]+", (title or "").lower())
-    return frozenset(t for t in toks
-                     if len(t) > 2 and not t.isdigit() and t not in _STOPWORDS)
+    commoner case by far.
+
+    ``hyphen_compounds`` (candidate, default OFF — measured by
+    ``examples/audit_clustering_change.py --hyphen-compounds`` before any adoption) ALSO emits
+    each hyphenated compound joined: "X-Men" contributes "xmen" alongside whatever its fragments
+    contribute. The defect it targets is real and exhibit-backed: ``[a-z0-9]+`` splits "x-men"
+    into ("x", "men"), the length floor drops "x", and the franchise name the two X-Men
+    announcement headlines actually share survives only as the generic token "men" — the
+    xmen-pair false split. Additive only: fragments keep their existing treatment, so every
+    current token survives and edges can only gain shared evidence, never lose it."""
+    lower = (title or "").lower()
+    toks = re.findall(r"[a-z0-9]+", lower)
+    out = set(t for t in toks
+              if len(t) > 2 and not t.isdigit() and t not in _STOPWORDS)
+    if hyphen_compounds:
+        for compound in re.findall(r"[a-z0-9]+(?:-[a-z0-9]+)+", lower):
+            joined = compound.replace("-", "")
+            if len(joined) > 2 and not joined.isdigit() and joined not in _STOPWORDS:
+                out.add(joined)
+    return frozenset(out)
 
 
 #: Description tokens admitted per article when the dek joins the clustering signal. A cap, not a

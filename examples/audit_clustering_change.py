@@ -80,7 +80,7 @@ def deploy_env_present() -> bool:
 
 def build(rows: list, *, min_shared: int, min_tokens: int, idf: bool = False,
           quorum=None, repair=None, merge=None, desc=None, veto=None, veto_stats=None,
-          entity_merge=None, entities=None) -> list:
+          entity_merge=None, entities=None, lexicons=None, hyphen=None) -> list:
     """``None`` means "whatever production is configured with" — ``build_stories`` resolves it.
 
     These defaulted to 0.0, which silently made the BEFORE side something production is not. It is
@@ -91,7 +91,43 @@ def build(rows: list, *, min_shared: int, min_tokens: int, idf: bool = False,
     return story_service.build_stories(rows, min_shared=min_shared, min_tokens=min_tokens, idf=idf,
                                        quorum=quorum, repair=repair, merge=merge, desc=desc,
                                        veto=veto, veto_stats=veto_stats,
-                                       entity_merge=entity_merge, entities=entities)
+                                       entity_merge=entity_merge, entities=entities,
+                                       lexicons=lexicons, hyphen=hyphen)
+
+
+def _exhibit_outcomes(rows: list, a_member: dict, b_member: dict) -> list:
+    """The rubric's ratified exhibit pairs, resolved against THIS window and both builds.
+
+    Each row: (label, truth, before_same_story, after_same_story) — the booleans None when a
+    side's article is no longer in the window (aged out; reported, never fabricated). "Same
+    story" is membership in one admitted story; a pair split across stories and a pair where a
+    side made no story at all both read as separated, which is the direction that matters for a
+    different_event exhibit and is marked distinctly in the printout for a same_event one."""
+    try:
+        import audit_verifier_band as band
+    except Exception:
+        return []
+    out = []
+    for label, ta, tb, truth, _rule in band.V1_EXHIBITS:
+        ua = ub = None
+        for r in rows:
+            t = r.get("title") or r.get("headline") or ""
+            u = r.get("canonicalUrl") or r.get("url") or ""
+            if not u:
+                continue
+            if ua is None and band._sig_match(t, ta):
+                ua = u
+            elif ub is None and band._sig_match(t, tb):
+                ub = u
+            if ua and ub:
+                break
+        if not (ua and ub):
+            out.append((label, truth, None, None))
+            continue
+        before_same = a_member.get(ua) is not None and a_member.get(ua) == a_member.get(ub)
+        after_same = b_member.get(ua) is not None and b_member.get(ua) == b_member.get(ub)
+        out.append((label, truth, before_same, after_same))
+    return out
 
 
 def index_by_member(stories: list) -> dict:
@@ -192,7 +228,8 @@ def compare(store_, *, before: tuple, after: tuple, show: int = 10,
             before_idf: bool = False, after_idf: bool = False,
             before_quorum=None, after_quorum=None,
             after_repair=None, after_merge=None, after_desc=None,
-            after_veto=None, after_entity_merge=None) -> dict:
+            after_veto=None, after_entity_merge=None,
+            after_lexicons=None, after_hyphen=None) -> dict:
     rows = story_service._fetch(store_)
     # The entity mapping is fetched when EITHER a flag asks for the X5b pass OR production is
     # configured with it (adopted 2026-08-16) — and it is handed to BOTH sides, because the
@@ -211,12 +248,14 @@ def compare(store_, *, before: tuple, after: tuple, show: int = 10,
     b = build(rows, min_shared=after[0], min_tokens=after[1], idf=after_idf, quorum=after_quorum,
               repair=after_repair, merge=after_merge, desc=after_desc,
               veto=after_veto, veto_stats=veto_stats,
-              entity_merge=after_entity_merge, entities=entities)
+              entity_merge=after_entity_merge, entities=entities,
+              lexicons=after_lexicons, hyphen=after_hyphen)
 
     a_by_id = {s["id"]: s for s in a}
     b_by_id = {s["id"]: s for s in b}
     a_member = index_by_member(a)
     b_member = index_by_member(b)
+    exhibits = _exhibit_outcomes(rows, a_member, b_member)
 
     # A "merge" = a new story whose members came from more than one old story. The split table
     # cannot show this: under a pure merge every old story's members land in exactly ONE new story,
@@ -276,6 +315,7 @@ def compare(store_, *, before: tuple, after: tuple, show: int = 10,
         # attributed. Both sides here are built from one row set, which makes the attribution exact.
         "beforeClaims": len([s for s in a if s.get("blindspotSide")]),
         "afterClaims": len([s for s in b if s.get("blindspotSide")]),
+        "exhibits": exhibits,
         # Coverage retention: a change that "improves" the numbers by quietly dropping articles out
         # of stories is not an improvement. droppedOut counts articles that were in a story and now
         # are in none.
@@ -355,6 +395,17 @@ def main(argv=None) -> int:
                          "X4 geo-consensus veto, the coherence guard, size cap and gap window "
                          "all apply. Requires backfilled article_entities; a MERGE-direction "
                          "change, judged by the merge bars")
+    ap.add_argument("--template-lexicons", default=None, metavar="NAMES",
+                    help="AFTER-side sole-boilerplate lexicons, comma-separated from "
+                         f"{sorted(story_service.TEMPLATE_LEXICONS)} — e.g. "
+                         "'announce,tracker,preview'. Same rule and hook as the adopted "
+                         "announce gate; an edge must share >= 1 token outside the UNION. "
+                         "Registered candidates: tracker (box-office/OTT day-counter chains), "
+                         "preview (recurring fixture previews)")
+    ap.add_argument("--hyphen-compounds", action="store_true",
+                    help="AFTER side: hyphenated compounds also contribute their joined token "
+                         "('X-Men' carries 'xmen', not just the generic fragment 'men') — the "
+                         "xmen-pair false-split defect. Additive only at the token level")
     ap.add_argument("--pieces", type=int, default=0,
                     help="print the resulting pieces for the N biggest split clusters — the read "
                          "that decides whether a split separated events or shredded a story")
@@ -381,11 +432,21 @@ def main(argv=None) -> int:
              args.min_tokens if args.min_tokens is not None else configured[1])
     before = (args.before_min_shared if args.before_min_shared is not None else configured[0],
               args.before_min_tokens if args.before_min_tokens is not None else configured[1])
+    lex_names = None
+    if args.template_lexicons is not None:
+        lex_names = tuple(n.strip().lower() for n in args.template_lexicons.split(",") if n.strip())
+        unknown = [n for n in lex_names if n not in story_service.TEMPLATE_LEXICONS]
+        if unknown:
+            print(f"unknown lexicon(s): {', '.join(unknown)} — "
+                  f"known: {', '.join(sorted(story_service.TEMPLATE_LEXICONS))}")
+            return 2
     res = compare(store_mod.Store(args.db), before=before,
                   after=after, show=args.show, after_idf=args.idf,
                   after_quorum=args.link_quorum, after_repair=args.repair_quorum,
                   after_merge=args.merge_sim, after_desc=cap, after_veto=args.geo_veto,
-                  after_entity_merge=args.entity_merge)
+                  after_entity_merge=args.entity_merge,
+                  after_lexicons=lex_names,
+                  after_hyphen=True if args.hyphen_compounds else None)
 
     def _tag(name, v):
         return f", {name} {v:g}" if v else ""
@@ -402,7 +463,9 @@ def main(argv=None) -> int:
            + (f", veto {args.geo_veto or story_service.geo_veto()}"
               if (args.geo_veto or story_service.geo_veto()) else "")
            + (f", entity-merge {args.entity_merge or story_service.entity_merge_min()}"
-              if (args.entity_merge or story_service.entity_merge_min()) else ""))
+              if (args.entity_merge or story_service.entity_merge_min()) else "")
+           + (f", lexicons {'+'.join(lex_names)}" if lex_names else "")
+           + (", hyphen-compounds" if args.hyphen_compounds else ""))
     base_tag = (_tag("quorum", story_service.link_quorum())
                 + _tag("repair", story_service.repair_quorum())
                 + _tag("merge", story_service.merge_similarity())
@@ -436,6 +499,22 @@ def main(argv=None) -> int:
     print(f"clusters merged    : {res['mergedCount']:,}")
     print(f"articles in a story: {res['beforeCovered']:,} -> {res['afterCovered']:,} "
           f"(dropped out {res['droppedOut']:,}, newly covered {res['newlyCovered']:,})")
+
+    if res.get("exhibits"):
+        print("\nknown exhibits (truth from the ratified rubric; 'together' = one admitted story)")
+        for label, truth, b_same, a_same in res["exhibits"]:
+            if b_same is None:
+                print(f"  {label:<22} {truth:<16} not in this window")
+                continue
+            want_together = truth == "same_event"
+            word = lambda s: "together" if s else "separated"
+            before_ok = b_same == want_together
+            after_ok = a_same == want_together
+            note = ("ok" if (before_ok and after_ok)
+                    else "FIXED" if (not before_ok and after_ok)
+                    else "REGRESSED" if (before_ok and not after_ok)
+                    else "still wrong")
+            print(f"  {label:<22} {truth:<16} {word(b_same):<10} -> {word(a_same):<10} [{note}]")
 
     print(f"blindspot claims   : {res['beforeClaims']:,} -> {res['afterClaims']:,} "
           f"(same rows, so this delta IS the change's doing)")

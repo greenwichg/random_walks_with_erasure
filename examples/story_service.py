@@ -571,13 +571,14 @@ def _geo_coherence(members: list, votes: dict) -> "tuple[Optional[float], int]":
     return round(max(votes.values()) / located, 3), located
 
 
-def article_tokens(a: dict, cap: int = 0) -> frozenset:
+def article_tokens(a: dict, cap: int = 0, hyphen: bool = False) -> frozenset:
     """The clustering signal for one article: its headline, plus ``cap`` dek tokens when > 0.
 
     One function so the primary build, the repair re-split and the audit cannot drift into scoring
     different things — a repair that saw a different signal from the build that produced the
-    cluster would re-split on a disagreement rather than on a defect."""
-    toks = clustering.title_tokens(a.get("headline") or "")
+    cluster would re-split on a disagreement rather than on a defect. ``hyphen`` threads the
+    hyphen-compound candidate (see :func:`hyphen_compounds`) for the same reason."""
+    toks = clustering.title_tokens(a.get("headline") or "", hyphen_compounds=hyphen)
     if cap > 0:
         toks = toks | clustering.description_tokens(a.get("description") or "", cap)
     return toks
@@ -737,6 +738,62 @@ def link_quorum() -> float:
 TEMPLATE_TOKENS = frozenset(("cast", "date", "episode", "everything", "know", "premiere",
                              "release", "revealed", "season", "specs", "teaser", "trailer"))
 
+#: CANDIDATE lexicons (registered 2026-08-24, BEFORE measurement — the Phase A discipline).
+#: Same rule, same hook, new vocabularies: tokens naming the SHAPE of a headline, never its
+#: subject, so a shared work title or venue always counts as distinctive evidence and only
+#: pure-boilerplate edges can be vetoed. Neither ships until
+#: ``examples/audit_clustering_change.py --template-lexicons …`` measures it against the live
+#: catalog under the split bars.
+#:
+#: ``tracker`` — box-office / OTT day-counter chains. The exhibits: "Batwara box office
+#: collection day 2" welded to "Vishwanath box office collection day 2" (different films,
+#: rubric rules 5+6) and the comparative "Vishwanath trails Jana Nayagan…" chain (rule 1) —
+#: while "Batwara day 3" vs "Batwara day 2" (same film, rule 2) shares its title token OUTSIDE
+#: this set and must survive.
+TRACKER_TOKENS = frozenset((
+    "box", "office", "collection", "collections", "day", "days", "worldwide", "gross",
+    "grosses", "crore", "crores", "earns", "earned", "earnings", "weekend", "occupancy",
+    "advance", "booking", "bookings", "ott", "streaming", "online", "debut", "opening"))
+
+#: ``preview`` — recurring-fixture previews. The exhibit: two tennis matches, different days,
+#: different players, welded on "preview, head-to-head, odds" (rules 3b+5). A genuine
+#: same-match pair shares its player names outside this set.
+PREVIEW_TOKENS = frozenset((
+    "preview", "previews", "prediction", "predictions", "odds", "pick", "picks", "head",
+    "live", "stream", "streams", "channel", "lineup", "lineups", "injury", "betting",
+    "tips", "start", "time", "times", "watch", "kickoff", "fixture", "fixtures",
+    "schedule", "highlights"))
+
+#: Name -> vocabulary. ``announce`` is the adopted Phase B set; the others are candidates.
+TEMPLATE_LEXICONS = {"announce": TEMPLATE_TOKENS, "tracker": TRACKER_TOKENS,
+                     "preview": PREVIEW_TOKENS}
+
+
+def template_lexicons() -> "tuple[str, ...]":
+    """Which lexicons the sole-template-evidence rule consults — ``("announce",)`` unless
+    ``RWE_CLUSTER_TEMPLATE_LEXICONS`` names a comma-separated set. Unknown names are dropped;
+    an empty survivor list falls back to the default, never to "no lexicon" — junk must not
+    silently widen or disable an adopted gate."""
+    raw = os.environ.get("RWE_CLUSTER_TEMPLATE_LEXICONS", "").strip().lower()
+    names = tuple(n for n in (p.strip() for p in raw.split(",")) if n in TEMPLATE_LEXICONS)
+    return names or ("announce",)
+
+
+def _lexicon_union(names: "tuple[str, ...]") -> frozenset:
+    out: frozenset = frozenset()
+    for n in names:
+        out = out | TEMPLATE_LEXICONS.get(n, frozenset())
+    return out or TEMPLATE_TOKENS
+
+
+def hyphen_compounds() -> bool:
+    """Candidate tokenizer extension (default OFF; ``RWE_CLUSTER_HYPHEN_COMPOUNDS=1`` enables
+    without a deploy — measured by ``audit_clustering_change.py --hyphen-compounds`` first).
+    See ``clustering.title_tokens``: hyphenated compounds also contribute their joined form,
+    so "X-Men" carries "xmen" instead of surviving only as the generic fragment "men"."""
+    v = os.environ.get("RWE_CLUSTER_HYPHEN_COMPOUNDS", "").strip().lower()
+    return v in {"1", "true", "yes", "on"}
+
 
 def template_gate() -> bool:
     """The sole-template-evidence rule — **OFF by default** (Phase B: measured, not yet
@@ -749,14 +806,16 @@ def template_gate() -> bool:
     return v in {"1", "true", "yes", "on"}
 
 
-def _template_closure(arts: list, cap: int, stats: Optional[dict] = None):
-    """``evidence(x, y)`` for the template gate: True iff the pair shares >= 1 non-template
-    token. Token sets are the build's own (:func:`article_tokens` at the build's dek cap), so
-    the gate judges exactly the signal that admitted the pair. Pure and deterministic."""
-    toks = [article_tokens(a, cap) for a in arts]
+def _template_closure(arts: list, cap: int, stats: Optional[dict] = None,
+                      lexicon: frozenset = TEMPLATE_TOKENS, hyphen: bool = False):
+    """``evidence(x, y)`` for the template gate: True iff the pair shares >= 1 token outside
+    ``lexicon`` (the union of the active lexicons — announce alone in production). Token sets
+    are the build's own (:func:`article_tokens` at the build's dek cap and hyphen mode), so the
+    gate judges exactly the signal that admitted the pair. Pure and deterministic."""
+    toks = [article_tokens(a, cap, hyphen) for a in arts]
 
     def ok(x: int, y: int) -> bool:
-        if (toks[x] & toks[y]) - TEMPLATE_TOKENS:
+        if (toks[x] & toks[y]) - lexicon:
             return True
         if stats is not None:
             stats["templateEdgeVetoed"] = stats.get("templateEdgeVetoed", 0) + 1
@@ -1159,7 +1218,8 @@ def _admit(groups: list, arts: list, *, min_articles: int, min_publishers: int) 
 def _repair(members: list, *, quorum: float, sim: float, window_days: float, min_shared: int,
             min_tokens: int, idf: bool, min_articles: int, min_publishers: int,
             desc: int = 0, veto: str = "", veto_stats: Optional[dict] = None,
-            template: bool = False) -> Optional[list]:
+            template: bool = False, lexicon: frozenset = TEMPLATE_TOKENS,
+            hyphen: bool = False) -> Optional[list]:
     """Re-cluster ONE condemned cluster's members under a stricter linkage rule.
 
     Why targeted rather than global: measured on the live catalog, a global quorum splits the
@@ -1179,9 +1239,11 @@ def _repair(members: list, *, quorum: float, sim: float, window_days: float, min
     # re-splits on a disagreement rather than a defect — the article_tokens discipline).
     r_evidence, r_merge_ok = _geo_closures(members, veto, veto_stats)
     if template:
-        r_evidence = _and_evidence(_template_closure(members, desc, veto_stats), r_evidence)
+        r_evidence = _and_evidence(
+            _template_closure(members, desc, veto_stats, lexicon=lexicon, hyphen=hyphen),
+            r_evidence)
     pieces = _admit(
-        clustering.cluster(members, tokens=lambda a: article_tokens(a, desc),
+        clustering.cluster(members, tokens=lambda a: article_tokens(a, desc, hyphen),
                            time=lambda a: clustering.parse_time(a["publishedAt"]),
                            sim=sim, window_days=window_days, min_shared=min_shared,
                            min_tokens=min_tokens, idf=idf, link_quorum=quorum,
@@ -1630,7 +1692,9 @@ def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
                   veto_stats: Optional[dict] = None,
                   entity_merge: Optional[int] = None,
                   entities: Optional[dict] = None,
-                  template: Optional[bool] = None) -> list:
+                  template: Optional[bool] = None,
+                  lexicons: "Optional[tuple[str, ...]]" = None,
+                  hyphen: Optional[bool] = None) -> list:
     """Cluster FeedArticle rows into Story objects (the pure builder). Keeps clusters with
     ≥ ``min_articles`` from ≥ ``min_publishers`` distinct outlets; sorted biggest+freshest first,
     with independently-suspect clusters demoted (see ``_size_rank``).
@@ -1704,10 +1768,14 @@ def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
     # non-template token. Composed through the SAME evidence hook as the geo veto, so admission,
     # quorum scoring and repair consult one rule; None/off is byte-identical by construction.
     t_gate = template_gate() if template is None else bool(template)
+    # Candidate knobs, resolved like every other: None = whatever production is configured with.
+    lex_union = _lexicon_union(template_lexicons() if lexicons is None else tuple(lexicons))
+    hyph = hyphen_compounds() if hyphen is None else bool(hyphen)
     if t_gate:
-        g_evidence = _and_evidence(_template_closure(arts, cap, veto_stats), g_evidence)
+        g_evidence = _and_evidence(
+            _template_closure(arts, cap, veto_stats, lexicon=lex_union, hyphen=hyph), g_evidence)
     groups = clustering.cluster(
-        arts, tokens=lambda a: article_tokens(a, cap),
+        arts, tokens=lambda a: article_tokens(a, cap, hyph),
         time=lambda a: clustering.parse_time(a["publishedAt"]), sim=sim, window_days=window_days,
         min_shared=shared, min_tokens=tokens_floor, idf=weighting,
         link_quorum=link_quorum() if quorum is None else quorum,
@@ -1719,7 +1787,8 @@ def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
             pieces = _repair(members, quorum=mend, sim=sim, window_days=window_days,
                              min_shared=shared, min_tokens=tokens_floor, idf=weighting,
                              min_articles=min_articles, min_publishers=min_publishers, desc=cap,
-                             veto=veto_mode, veto_stats=veto_stats, template=t_gate)
+                             veto=veto_mode, veto_stats=veto_stats, template=t_gate,
+                             lexicon=lex_union, hyphen=hyph)
             if pieces is not None:
                 admitted.extend(pieces)
                 continue
