@@ -20,6 +20,14 @@ export interface NotificationKindMeta {
   titleKey: string;
   /** Catalog key for the body, interpolated from the notification's payload; null ⇒ title only. */
   bodyKey: string | null;
+  /**
+   * Optional richer body used when the payload carries a real `overall` score — selection rule in
+   * `bodyKeyFor`, applied identically by the inbox and the service worker (data, not code, so the
+   * generated worker table carries it too). The engine includes `overall` only when a measured
+   * report exists, so the plain `bodyKey` remains the honest copy for readers below the
+   * measurement threshold.
+   */
+  bodyScoredKey?: string;
   /** The kind's static destination; null ⇒ informational, no navigation. */
   href: string | null;
   /**
@@ -48,6 +56,11 @@ export const NOTIFICATION_KINDS: Record<string, NotificationKindMeta> = {
   // weekly nor monthly and is the same page the sidebar already offers. Clicking either
   // notification therefore landed the reader somewhere generic that said nothing about the period
   // it had just announced, and the two kinds were indistinguishable once you followed them.
+  // LEGACY RENDER ONLY (2026-08-24): the engine no longer generates weekly_report — it was a
+  // functional duplicate of weekly_digest (same week, same batch, same destination, its one
+  // display fact a subset of the digest's payload) and the two were merged into the digest,
+  // which now carries the score. The row stays so the notifications already sitting in readers'
+  // inboxes keep their title, body, and click-through instead of degrading to the generic row.
   weekly_report: {
     titleKey: "notifications.weekly_report.title",
     bodyKey: "notifications.weekly_report.body",
@@ -78,6 +91,9 @@ export const NOTIFICATION_KINDS: Record<string, NotificationKindMeta> = {
   weekly_digest: {
     titleKey: "notifications.weekly_digest.title",
     bodyKey: "notifications.weekly_digest.body",
+    // The merged weekly notification (2026-08-24): when the engine's payload carries a measured
+    // score, the body says so — the fact the retired weekly_report kind existed to announce.
+    bodyScoredKey: "notifications.weekly_digest.bodyScored",
     href: "/report/weekly",
     deepLinkField: null,
     deepLinkPath: null,
@@ -117,6 +133,19 @@ export const GENERIC_KIND: NotificationKindMeta = {
 
 export function kindMeta(kind: string): NotificationKindMeta {
   return NOTIFICATION_KINDS[kind] ?? GENERIC_KIND;
+}
+
+/**
+ * Which body key one notification renders, from its metadata and payload: the scored variant when
+ * the kind declares one AND the payload carries a real `overall`, else the plain body. The ONE
+ * selection rule — the inbox applies it here and the service worker applies the same two-line rule
+ * over the generated table (`public/sw.js`), so a push and its inbox row can never disagree about
+ * what the week said.
+ */
+export function bodyKeyFor(meta: NotificationKindMeta, payload?: unknown): string | null {
+  const p = payload as Record<string, unknown> | null | undefined;
+  if (meta.bodyScoredKey && p && p["overall"] != null) return meta.bodyScoredKey;
+  return meta.bodyKey;
 }
 
 /**

@@ -47,7 +47,8 @@ def _seed(uid, *, topics=("Economy",)):
                 "read_at": datetime.now(timezone.utc).isoformat()})
 
 
-LIVE = {"weekly_report", "monthly_deep_dive", "weekly_digest", "blind_spot_alert"}
+# weekly_report retired 2026-08-24 (merged into weekly_digest — the registry comment has the story).
+LIVE = {"monthly_deep_dive", "weekly_digest", "blind_spot_alert"}
 # Not expected from the base _seed: recommendations_waiting needs unopened rec events (none seeded
 # here); streak_reminder needs a streak through yesterday with nothing read today (the seed reads today).
 ABSENT = {"recommendations_waiting", "streak_reminder"}
@@ -90,7 +91,7 @@ def test_unseen_only_and_limit(client):
     uid, hdr = _user(client, "napi-filter")
     _seed(uid)
     alln = client.get("/api/me/notifications", headers=hdr).json()
-    assert len(alln) >= 4
+    assert len(alln) >= 3
     assert len(client.get("/api/me/notifications?limit=2", headers=hdr).json()) == 2
     nid = alln[0]["id"]
     assert client.post(f"/api/me/notifications/{nid}/seen", headers=hdr).json()["changed"] is True

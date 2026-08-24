@@ -63,16 +63,16 @@ def _dicts(ctx):
 def test_record_and_roundtrip():
     st, uid = _store_user()
     dicts = _dicts(_ctx())
-    assert len(dicts) == 6
-    assert st.record_notifications(uid, dicts) == 6
+    assert len(dicts) == 5
+    assert st.record_notifications(uid, dicts) == 5
 
     listed = st.list_notifications(uid, limit=100)
-    assert len(listed) == 6
+    assert len(listed) == 5
     by_kind = {d["kind"]: d for d in listed}
     assert set(by_kind) == {n["kind"] for n in dicts}
 
-    src = next(d for d in dicts if d["kind"] == "weekly_report")
-    got = by_kind["weekly_report"]
+    src = next(d for d in dicts if d["kind"] == "weekly_digest")
+    got = by_kind["weekly_digest"]
     assert got["dedupe_key"] == src["dedupe_key"]
     assert got["payload"] == src["payload"]           # nested dict survives verbatim
     assert got["title_key"] == src["title_key"]
@@ -87,16 +87,16 @@ def test_record_and_roundtrip():
 # --------------------------------------------------------------------------- #
 def test_idempotent_across_batch_and_reevaluation():
     st, uid = _store_user()
-    assert st.record_notifications(uid, _dicts(_ctx())) == 6
+    assert st.record_notifications(uid, _dicts(_ctx())) == 5
     assert st.record_notifications(uid, _dicts(_ctx())) == 0     # same keys again -> nothing new
-    assert len(st.list_notifications(uid, limit=100)) == 6       # still exactly six rows
+    assert len(st.list_notifications(uid, limit=100)) == 5       # still exactly five rows
 
 
 def test_in_batch_duplicate_recorded_once():
     st, uid = _store_user()
     dicts = _dicts(_ctx())
-    assert st.record_notifications(uid, dicts + [dicts[0]]) == 6   # duplicate not double-counted
-    assert len(st.list_notifications(uid, limit=100)) == 6
+    assert st.record_notifications(uid, dicts + [dicts[0]]) == 5   # duplicate not double-counted
+    assert len(st.list_notifications(uid, limit=100)) == 5
 
 
 def test_db_level_uniqueness_enforced():
@@ -121,8 +121,8 @@ def test_per_user_isolation():
     st.record_notifications(uid, dicts)
     st.record_notifications(uid2, dicts)                 # identical dedupe keys, different user
 
-    assert len(st.list_notifications(uid, limit=100)) == 6
-    assert len(st.list_notifications(uid2, limit=100)) == 6
+    assert len(st.list_notifications(uid, limit=100)) == 5
+    assert len(st.list_notifications(uid2, limit=100)) == 5
     assert st.delivered_notification_keys(uid) == st.delivered_notification_keys(uid2)
     a_ids = {d["id"] for d in st.list_notifications(uid, limit=100)}
     b_ids = {d["id"] for d in st.list_notifications(uid2, limit=100)}
@@ -175,15 +175,15 @@ def test_unseen_only_filter():
     st, uid = _store_user()
     st.record_notifications(uid, _dicts(_ctx()))
     all_ids = [d["id"] for d in st.list_notifications(uid, limit=100)]
-    assert len(all_ids) == 6
-    assert len(st.list_notifications(uid, unseen_only=True, limit=100)) == 6   # all unseen initially
+    assert len(all_ids) == 5
+    assert len(st.list_notifications(uid, unseen_only=True, limit=100)) == 5   # all unseen initially
 
     with st.session() as s:                              # set read-state directly (no N2 method yet)
         s.get(store_mod.Notification, all_ids[0]).seen_at = NOW.isoformat()
 
     unseen = st.list_notifications(uid, unseen_only=True, limit=100)
-    assert len(unseen) == 5 and all_ids[0] not in {d["id"] for d in unseen}
-    assert len(st.list_notifications(uid, limit=100)) == 6    # unfiltered still returns all six
+    assert len(unseen) == 4 and all_ids[0] not in {d["id"] for d in unseen}
+    assert len(st.list_notifications(uid, limit=100)) == 5    # unfiltered still returns all five
 
 
 # --------------------------------------------------------------------------- #
@@ -201,7 +201,7 @@ def test_concurrent_duplicate_insertion_is_idempotent(tmp_path):
     st = store_mod.Store(url)
     uid = st.upsert_user_by_identity("dev", "race").id
     dicts = _dicts(_ctx())
-    assert len(dicts) == 6
+    assert len(dicts) == 5
 
     barrier = threading.Barrier(2)
     results: dict = {}
@@ -220,10 +220,10 @@ def test_concurrent_duplicate_insertion_is_idempotent(tmp_path):
     t1.start(); t2.start(); t1.join(); t2.join()
 
     assert errors == {}                                  # neither request failed
-    assert results["a"] + results["b"] == 6              # each key created exactly once, total
+    assert results["a"] + results["b"] == 5              # each key created exactly once, total
     listed = st.list_notifications(uid, limit=100)
-    assert len(listed) == 6                              # exactly six rows — no duplicates
-    assert len({d["dedupe_key"] for d in listed}) == 6
+    assert len(listed) == 5                              # exactly six rows — no duplicates
+    assert len({d["dedupe_key"] for d in listed}) == 5
 
 
 def test_batch_survives_a_racing_duplicate(tmp_path, monkeypatch):
@@ -253,10 +253,10 @@ def test_batch_survives_a_racing_duplicate(tmp_path, monkeypatch):
 
     created = st.record_notifications(uid, dicts)        # must not raise
     assert fired["done"] is True                          # the race window really was exercised
-    assert created == 5                                   # the target lost the race -> skipped
+    assert created == 4                                   # the target lost the race -> skipped
     listed = st.list_notifications(uid, limit=100)
-    assert len(listed) == 6                               # 5 from this batch + the racing winner
-    assert len({d["dedupe_key"] for d in listed}) == 6    # every kind present exactly once
+    assert len(listed) == 5                               # 5 from this batch + the racing winner
+    assert len({d["dedupe_key"] for d in listed}) == 5    # every kind present exactly once
 
 
 def test_batch_skips_an_existing_duplicate_and_persists_the_rest():
@@ -265,8 +265,8 @@ def test_batch_skips_an_existing_duplicate_and_persists_the_rest():
     st, uid = _store_user("notif-batch")
     dicts = _dicts(_ctx())
     assert st.record_notifications(uid, [dicts[2]]) == 1     # one already delivered earlier
-    assert st.record_notifications(uid, dicts) == 5          # the rest of the batch still persists
-    assert len(st.list_notifications(uid, limit=100)) == 6
+    assert st.record_notifications(uid, dicts) == 4          # the rest of the batch still persists
+    assert len(st.list_notifications(uid, limit=100)) == 5
 
 
 # --------------------------------------------------------------------------- #

@@ -14,7 +14,12 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useNotifications, useMarkNotificationSeen } from "@/hooks/use-data";
-import { notificationPresentation, notificationHref, badgeLabel } from "@/lib/notifications";
+import {
+  notificationPresentation,
+  notificationHref,
+  notificationBodyKey,
+  badgeLabel,
+} from "@/lib/notifications";
 import { useTranslation } from "@/lib/i18n";
 import { timeAgo } from "@ih/core/i18n/core";
 import { cn } from "@/lib/utils";
@@ -128,7 +133,8 @@ export function NotificationsMenu() {
               const pres = notificationPresentation(item.kind);
               const Icon = pres.icon;
               const title = t(pres.titleKey);
-              const body = pres.bodyKey ? t(pres.bodyKey, item.payload) : null;
+              const bodyKey = notificationBodyKey(item.kind, item.payload);
+              const body = bodyKey ? t(bodyKey, item.payload) : null;
               const when = timeAgo(item.createdAt, lang, t);
               const unseen = !item.seenAt;
               return (

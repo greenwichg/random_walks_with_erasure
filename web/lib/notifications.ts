@@ -12,7 +12,7 @@
  */
 import type { LucideIcon } from "lucide-react";
 import { Activity, CalendarDays, Sparkles, BarChart3, Flame, Eye, Zap, Bell } from "lucide-react";
-import { kindMeta, hrefFor } from "@ih/core/logic/notification-kinds";
+import { kindMeta, hrefFor, bodyKeyFor } from "@ih/core/logic/notification-kinds";
 
 // Re-exported so the one existing consumer keeps a single import; the rule itself is shared.
 export { badgeLabel } from "@ih/core/logic/notification-kinds";
@@ -56,6 +56,13 @@ const ICONS: Record<string, LucideIcon> = {
  */
 export function notificationHref(kind: string, payload?: unknown): string | null {
   return hrefFor(kind, payload);
+}
+
+/** The body key one notification renders — payload-aware (the weekly digest gains its scored
+ *  variant when the engine's payload carries a measured `overall`). One rule, shared with the
+ *  service worker via the kinds table; see `bodyKeyFor`. */
+export function notificationBodyKey(kind: string, payload?: unknown): string | null {
+  return bodyKeyFor(kindMeta(kind), payload);
 }
 
 /** Resolve a notification kind to its presentation; an unknown kind gets the safe generic row. */

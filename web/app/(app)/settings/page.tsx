@@ -775,16 +775,12 @@ export default function SettingsPage() {
             </div>
           </SectionCard>
 
-          {/* Reports */}
+          {/* Reports. The Weekly report toggle was removed with the weekly_report notification
+              (2026-08-24, merged into the weekly digest): one weekly event should not need two
+              opt-outs in two cards. The digest toggle in Notifications below governs it; the
+              stored weeklyReport preference remains valid data with nothing left to switch. */}
           <SectionCard title={t("settings.reports")} info={t("settings.reportsInfo")}>
             <div className="divide-y">
-              <ToggleRow
-                icon={FileText}
-                title={t("settings.weeklyReport")}
-                description={t("settings.weeklyReportDesc")}
-                checked={draft.weeklyReport}
-                onChange={(v) => set("weeklyReport", v)}
-              />
               <ToggleRow
                 icon={FileText}
                 title={t("settings.monthlyReport")}

@@ -121,13 +121,15 @@ def test_materialize_is_idempotent():
 
 def test_settings_gate_suppresses_only_that_kind():
     st, uid = _store_user()
-    st.save_settings(uid, {"weeklyReport": False, "monthlyReport": True,
+    st.save_settings(uid, {"weeklyReport": True, "monthlyReport": False,
                            "notifications": {"recommendations": True, "weeklyDigest": True,
                                              "streakReminders": True, "blindSpotAlerts": True}})
     _report(st, uid); _read(st, uid, "u", 0)
     nd.materialize_notifications(st, uid)
     kinds = _kinds(st, uid)
-    assert "weekly_report" not in kinds and "monthly_deep_dive" in kinds
+    # monthlyReport off suppresses exactly its kind; the merged weekly digest still arrives —
+    # and note the stored weeklyReport preference gates nothing since the weekly merge.
+    assert "monthly_deep_dive" not in kinds and "weekly_digest" in kinds
 
 
 def test_materialize_generates_no_reports_or_rec_events():
@@ -422,7 +424,9 @@ def test_an_unreadable_event_store_costs_only_the_breaking_notifications(monkeyp
     st, uid = _store_user("nd-ev-6")
     _all_on(st, uid)
     _breaking_on(st, uid)
-    _report(st, uid)                             # so a NON-breaking kind has something to deliver
+    # A read this week gives a NON-breaking kind something to deliver — the weekly digest, since
+    # the weekly merge (weekly_report retired); the report alone would only arm the monthly kind.
+    _report(st, uid); _read(st, uid, "u", 0)
     _emit(st, 1)
 
     def boom(*a, **k):
@@ -431,7 +435,7 @@ def test_an_unreadable_event_store_costs_only_the_breaking_notifications(monkeyp
     monkeypatch.setattr(st, "recent_notification_events", boom)
     created = nd.materialize_notifications(st, uid, now=EV_NOW)   # must not raise
     assert _breaking_rows(st, uid) == [], "no breaking notifications"
-    assert created > 0 and "weekly_report" in _kinds(st, uid), "the rest of the inbox still arrived"
+    assert created > 0 and "weekly_digest" in _kinds(st, uid), "the rest of the inbox still arrived"
 
 
 def test_an_unreadable_count_fails_CLOSED_not_open(monkeypatch):

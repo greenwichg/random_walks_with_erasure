@@ -352,12 +352,14 @@ def gate_path(k: NotificationKind, channel: str = IN_APP) -> str:
 
 
 NOTIFICATION_KINDS = (
-    NotificationKind(
-        kind="weekly_report", setting_path="weeklyReport", mode="cadence",
-        title_key="notifications.weekly_report.title",
-        predicate=lambda c: c.report.has_report,
-        dedupe_key=lambda c: f"weekly_report:{_iso_week(c.now)}",
-        payload=lambda c: {"overall": c.report.overall, "period": _iso_week(c.now)}),
+    # weekly_report was RETIRED here (2026-08-24), merged into weekly_digest below: both were
+    # weekly-cadence kinds deduped to the same ISO week, fired in the same materialisation batch,
+    # landed on the same /report/weekly page, and the report's one display fact (the overall
+    # score) was already a subset of the digest's payload — two doors into the same room,
+    # announced in the same breath. Worse, its predicate (has_report — the 30-DAY report) could
+    # announce a "weekly report" whose weekly page was empty. The digest now carries the score
+    # when a measured report exists; the web keeps rendering already-materialised weekly_report
+    # rows (kinds table marks it LEGACY RENDER ONLY). monthly_deep_dive stays — it has no twin.
     NotificationKind(
         kind="monthly_deep_dive", setting_path="monthlyReport", mode="cadence",
         title_key="notifications.monthly_deep_dive.title",
@@ -384,8 +386,12 @@ NOTIFICATION_KINDS = (
         title_key="notifications.weekly_digest.title",
         predicate=lambda c: c.reading.reads_this_week > 0,
         dedupe_key=lambda c: f"weekly_digest:{_iso_week(c.now)}",
+        # `overall` only when a MEASURED report exists — its presence is what switches the body to
+        # the scored variant (bodyScoredKey, one rule in the web table and the worker), so a reader
+        # below the measurement threshold keeps the honest reads-and-streak copy, never "None/100".
         payload=lambda c: {"reads": c.reading.reads_this_week, "streakDays": c.reading.streak_days,
-                           "overall": c.report.overall}),
+                           **({"overall": c.report.overall}
+                              if (c.report.has_report and c.report.overall is not None) else {})}),
     NotificationKind(
         kind="streak_reminder", setting_path="notifications.streakReminders", mode="event",
         title_key="notifications.streak_reminder.title",

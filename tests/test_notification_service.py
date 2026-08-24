@@ -22,7 +22,9 @@ import settings_service as ss       # noqa: E402
 
 
 NOW = datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc)
-ALL_KINDS = {"weekly_report", "monthly_deep_dive", "recommendations_waiting",
+# weekly_report is deliberately absent: retired 2026-08-24, merged into weekly_digest (same week,
+# same batch, same destination — the registry comment carries the full rationale).
+ALL_KINDS = {"monthly_deep_dive", "recommendations_waiting",
              "weekly_digest", "streak_reminder", "blind_spot_alert"}
 
 
@@ -94,7 +96,6 @@ def test_output_is_in_registry_order():
 
 
 @pytest.mark.parametrize("kind,setting_path", [
-    ("weekly_report", "weeklyReport"),
     ("monthly_deep_dive", "monthlyReport"),
     ("recommendations_waiting", "notifications.recommendations"),
     ("weekly_digest", "notifications.weeklyDigest"),
@@ -112,7 +113,6 @@ def test_each_kind_records_its_gate_and_a_json_safe_payload(kind, setting_path):
 # Settings gating — an off toggle suppresses exactly its own kind; all-off => nothing.
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize("flag,kind", [
-    ("weekly", "weekly_report"),
     ("monthly", "monthly_deep_dive"),
     ("recs", "recommendations_waiting"),
     ("digest", "weekly_digest"),
@@ -161,7 +161,6 @@ def test_blind_spot_dedupe_is_keyed_on_the_set():
 # Predicate negatives — nothing fires when the underlying producer fact is absent.
 # --------------------------------------------------------------------------- #
 def test_predicate_negatives():
-    assert "weekly_report" not in _kinds(ns.evaluate(_ctx(has_report=False)))
     assert "monthly_deep_dive" not in _kinds(ns.evaluate(_ctx(has_report=False)))
     assert "recommendations_waiting" not in _kinds(ns.evaluate(_ctx(unopened_count=0)))
     assert "weekly_digest" not in _kinds(ns.evaluate(_ctx(reads_this_week=0)))
@@ -170,6 +169,27 @@ def test_predicate_negatives():
     assert "streak_reminder" not in _kinds(ns.evaluate(_ctx(streak_through_yesterday=0)))
     assert "streak_reminder" not in _kinds(ns.evaluate(_ctx(read_today=True)))
     assert "streak_reminder" in _kinds(ns.evaluate(_ctx(streak_through_yesterday=1, read_today=False)))
+
+
+# --------------------------------------------------------------------------- #
+# The weekly merge (2026-08-24): ONE weekly notification, scored when measurable.
+# --------------------------------------------------------------------------- #
+def test_the_week_gets_exactly_one_notification():
+    """weekly_report was a functional duplicate of weekly_digest — same ISO week, same batch,
+    same /report/weekly destination, its one display fact a subset of the digest's payload —
+    so the registry must never again produce two weekly announcements for one week."""
+    assert "weekly_report" not in {k.kind for k in ns.NOTIFICATION_KINDS}
+    weekly = [k for k in _kinds(ns.evaluate(_ctx())) if k in ("weekly_digest", "weekly_report")]
+    assert weekly == ["weekly_digest"]
+
+
+def test_the_digest_carries_the_score_only_when_a_report_exists():
+    """`overall`'s presence is the body switch (bodyScoredKey): a measured reader's digest says
+    the score, an unmeasured reader's digest never says "None/100"."""
+    measured = next(n for n in ns.evaluate(_ctx()) if n.kind == "weekly_digest")
+    assert isinstance(measured.payload.get("overall"), int)
+    unmeasured = next(n for n in ns.evaluate(_ctx(has_report=False)) if n.kind == "weekly_digest")
+    assert "overall" not in unmeasured.payload
 
 
 # --------------------------------------------------------------------------- #
@@ -194,7 +214,6 @@ def test_batch_is_json_safe_and_channel_renders():
 def test_dedupe_keys_have_expected_periods():
     by = {n.kind: n.dedupe_key for n in ns.evaluate(_ctx())}
     wk = f"{NOW.isocalendar()[0]}-W{NOW.isocalendar()[1]:02d}"
-    assert by["weekly_report"] == f"weekly_report:{wk}"
     assert by["weekly_digest"] == f"weekly_digest:{wk}"
     assert by["monthly_deep_dive"] == "monthly_deep_dive:2026-07"
     assert by["recommendations_waiting"] == "recommendations_waiting:2026-07-15"
@@ -533,7 +552,7 @@ def test_a_legacy_kind_gates_in_app_only_and_fails_closed_elsewhere():
     as having asked for mail. The empty path denies instead, and a transport that wants a legacy
     kind must carry its own opt-in. `push_delivery` had already worked around the old contract by
     filtering `evaluate` to fan-out kinds — same hazard, now fixed at the source."""
-    for kind in ("weekly_report", "weekly_digest", "streak_reminder"):
+    for kind in ("monthly_deep_dive", "weekly_digest", "streak_reminder"):
         k = next(k for k in ns.NOTIFICATION_KINDS if k.kind == kind)
         assert ns.gate_path(k) == k.setting_path, "in-app: the channel the preference was written for"
         assert ns.gate_path(k, ns.IN_APP) == k.setting_path
@@ -599,7 +618,7 @@ def test_the_default_channel_leaves_every_shipped_kind_byte_identical():
     ctx = dataclasses.replace(_ctx(), events=ns.EventInputs(events=(_breaking_event(1),)))
     assert ns.evaluate(ctx) == ns.evaluate(ctx, "in_app")
     assert [n.gated_by for n in ns.evaluate(ctx)] == [
-        "weeklyReport", "monthlyReport", "notifications.recommendations",
+        "monthlyReport", "notifications.recommendations",
         "notifications.weeklyDigest", "notifications.streakReminders",
         "notifications.blindSpotAlerts", "notifications.categories.breaking.inApp"]
 

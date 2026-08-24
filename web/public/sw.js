@@ -112,7 +112,11 @@ function renderOptions(data, lang) {
   const payload = (data && data.payload) || {};
 
   const title = translate(lang, meta.titleKey, payload) || "Hidden View";
-  const body = translate(lang, meta.bodyKey, payload);
+  // Mirror of `bodyKeyFor` (notification-kinds.ts): the scored body variant when the kind
+  // declares one and the payload carries a real `overall` — one rule on both surfaces.
+  const bodyKey =
+    meta.bodyScoredKey && payload.overall != null ? meta.bodyScoredKey : meta.bodyKey;
+  const body = translate(lang, bodyKey, payload);
 
   let href = (data && data.href) || "/";
   if (known) {

@@ -82,6 +82,7 @@ const referenced = new Set();
 for (const meta of [...Object.values(NOTIFICATION_KINDS), GENERIC_KIND]) {
   referenced.add(meta.titleKey);
   if (meta.bodyKey) referenced.add(meta.bodyKey);
+  if (meta.bodyScoredKey) referenced.add(meta.bodyScoredKey);
 }
 const missing = [];
 for (const key of referenced) {

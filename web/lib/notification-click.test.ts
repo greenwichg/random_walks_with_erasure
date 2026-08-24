@@ -21,7 +21,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { hrefFor } from "@ih/core/logic/notification-kinds";
+import { hrefFor, bodyKeyFor, kindMeta } from "@ih/core/logic/notification-kinds";
 
 const WEB = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -63,6 +63,26 @@ test("the week-in-review digest opens the weekly period page, not Home", () => {
   // windowed to the same seven days as the payload's {reads, streakDays, overall}.
   assert.equal(hrefFor("weekly_digest", { reads: 8, streakDays: 0, overall: 66 }), "/report/weekly");
   assert.notEqual(hrefFor("weekly_digest", {}), "/", "the digest must never regress to Home");
+});
+
+test("the weekly merge: one weekly kind generates, the retired one still renders", () => {
+  // The digest gained the retired weekly_report's one display fact — the score — as a body
+  // VARIANT switched by the payload: a measured reader's digest says {overall}/100, an
+  // unmeasured reader's digest keeps the plain reads-and-streak copy (the engine omits
+  // `overall` when no report exists, so "None/100" is unrepresentable).
+  const digest = kindMeta("weekly_digest");
+  assert.equal(
+    bodyKeyFor(digest, { reads: 3, streakDays: 0, overall: 65 }),
+    "notifications.weekly_digest.bodyScored",
+  );
+  assert.equal(bodyKeyFor(digest, { reads: 3, streakDays: 0 }), "notifications.weekly_digest.body");
+  // Already-materialised weekly_report rows in readers' inboxes must keep rendering and
+  // navigating — the kind is retired from GENERATION, not from history.
+  const legacy = kindMeta("weekly_report");
+  assert.equal(legacy.titleKey, "notifications.weekly_report.title");
+  assert.equal(hrefFor("weekly_report", { overall: 65 }), "/report/weekly");
+  assert.equal(bodyKeyFor(legacy, { overall: 65 }), "notifications.weekly_report.body",
+    "legacy rows keep their own body — no scored variant is declared for them");
   // …while the streak reminder KEEPS Home deliberately: its ask is "go read something now",
   // and the feed is where that happens — the two kinds' destinations must stay distinct.
   assert.equal(hrefFor("streak_reminder", { streakDays: 4 }), "/");
