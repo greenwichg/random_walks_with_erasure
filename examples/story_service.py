@@ -773,7 +773,17 @@ def template_lexicons() -> "tuple[str, ...]":
     """Which lexicons the sole-template-evidence rule consults — ``("announce",)`` unless
     ``RWE_CLUSTER_TEMPLATE_LEXICONS`` names a comma-separated set. Unknown names are dropped;
     an empty survivor list falls back to the default, never to "no lexicon" — junk must not
-    silently widen or disable an adopted gate."""
+    silently widen or disable an adopted gate.
+
+    **Measured 2026-08-24, ADOPT** (``audit_clustering_change.py --template-lexicons
+    announce,tracker,preview``, twice against the live catalog at ~27,990 articles, stable
+    across both windows): stories +1 (1,517 → 1,518), largest cluster unchanged at 60,
+    covered articles NET +3 (2 dropped, 5 newly covered — 0.0% against the 5% bar), the
+    independent signal untouched (0/68 bad, mean 0.958), blindspot claims unchanged. The one
+    split is the failure class the candidates were registered against: a 10-article/3-publisher
+    "picks, odds: MLB best bets, predictions" betting-preview chain (a/p 3.3) dissolved, its
+    genuine members re-covered elsewhere. The tennis-previews exhibit stayed separated.
+    Awaiting the compose default to ship it (the template-gate adoption path)."""
     raw = os.environ.get("RWE_CLUSTER_TEMPLATE_LEXICONS", "").strip().lower()
     names = tuple(n for n in (p.strip() for p in raw.split(",")) if n in TEMPLATE_LEXICONS)
     return names or ("announce",)
@@ -787,10 +797,20 @@ def _lexicon_union(names: "tuple[str, ...]") -> frozenset:
 
 
 def hyphen_compounds() -> bool:
-    """Candidate tokenizer extension (default OFF; ``RWE_CLUSTER_HYPHEN_COMPOUNDS=1`` enables
-    without a deploy — measured by ``audit_clustering_change.py --hyphen-compounds`` first).
-    See ``clustering.title_tokens``: hyphenated compounds also contribute their joined form,
-    so "X-Men" carries "xmen" instead of surviving only as the generic fragment "men"."""
+    """Candidate tokenizer extension — **measured 2026-08-24 and REJECTED. Do not turn this
+    on.** (``RWE_CLUSTER_HYPHEN_COMPOUNDS`` survives as the audit's instrument only.)
+
+    The idea: hyphenated compounds also contribute their joined form, so "X-Men" carries
+    "xmen" instead of surviving only as the generic fragment "men" (the xmen-pair false
+    split). The measurement (``audit_clustering_change.py --hyphen-compounds``, 27,995 live
+    articles): 121 clusters split, 28 merged, 162 articles dropped (2.6% of covered), story
+    count FELL 1,516 → 1,511 — the min_publishers cliff — with collateral far from any
+    hyphen exhibit ("Eagles vs Patriots Postgame" −6, Kuril Islands −4, Russian drone strike
+    −4). The mechanism, worth keeping so the next tokenizer idea meets it: adding a token to
+    BOTH sets grows the UNION even when the compound is not shared, so every pair that shared
+    fragments but not compounds saw its Jaccard fall — a global token-set change has diffuse
+    blast radius, exactly like the IDF revert (``use_idf``). Evidence RULES (the lexicon
+    gate) stay targeted; representation changes do not."""
     v = os.environ.get("RWE_CLUSTER_HYPHEN_COMPOUNDS", "").strip().lower()
     return v in {"1", "true", "yes", "on"}
 

@@ -76,14 +76,16 @@ def title_tokens(title: str, hyphen_compounds: bool = False) -> frozenset:
     "737" in an aircraft story is lost — but a shared year linking two unrelated listicles is the
     commoner case by far.
 
-    ``hyphen_compounds`` (candidate, default OFF — measured by
-    ``examples/audit_clustering_change.py --hyphen-compounds`` before any adoption) ALSO emits
+    ``hyphen_compounds`` (**measured 2026-08-24 and REJECTED — the record lives on
+    ``story_service.hyphen_compounds``; retained as the audit's instrument only**) ALSO emits
     each hyphenated compound joined: "X-Men" contributes "xmen" alongside whatever its fragments
-    contribute. The defect it targets is real and exhibit-backed: ``[a-z0-9]+`` splits "x-men"
-    into ("x", "men"), the length floor drops "x", and the franchise name the two X-Men
-    announcement headlines actually share survives only as the generic token "men" — the
-    xmen-pair false split. Additive only: fragments keep their existing treatment, so every
-    current token survives and edges can only gain shared evidence, never lose it."""
+    contribute. The defect it targeted is real ("x-men" survives only as the generic "men"),
+    but the cure measured worse than the disease: adding a token to both sets grows the UNION
+    even when the compound is not shared, so pairs sharing fragments but not compounds lose
+    Jaccard — 121 clusters split on the live catalog, 2.6% of covered articles dropped, and
+    the story count fell. An earlier revision of this docstring claimed the change was
+    "additive only" because tokens are only added; the union growth is what that reasoning
+    missed, and it is kept here so the next tokenizer candidate meets it."""
     lower = (title or "").lower()
     toks = re.findall(r"[a-z0-9]+", lower)
     out = set(t for t in toks
