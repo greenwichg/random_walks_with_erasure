@@ -8,8 +8,6 @@ import { PageContainer } from "@/components/layout/page-container";
 import { CountryBadge } from "@/components/shared/country-badge";
 import { DiscoverCard } from "@/components/discover/discover-card";
 import { FilterSelect, type FilterOption } from "@/components/shared/filter-select";
-import { MasonryColumns } from "@/components/shared/masonry-columns";
-import { estimateDiscoverCardHeight } from "@/lib/discover-card-height";
 import { interleavePublishers } from "@ih/core/logic/discover-order";
 import { EmptyState, ErrorState } from "@/components/shared/states";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -104,12 +102,11 @@ export default function DiscoverPage() {
       </div>
 
       {isLoading && (
-        /* Skeletons at slightly varied heights, top-aligned — an honest preview of the stream:
-           every card carries the occupied image slot, so heights cluster tall and differ only
-           by text lines. */
-        <div className="grid grid-cols-1 items-start gap-5 md:grid-cols-2 xl:grid-cols-3">
-          {[464, 496, 440, 480, 512, 456].map((h, i) => (
-            <Skeleton key={i} className="rounded-lg" style={{ height: h }} />
+        /* Uniform tall skeletons — an honest preview: every card carries the occupied image
+           slot, so real cards land at near-identical heights in a stretch grid. */
+        <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <Skeleton key={i} className="h-[480px] rounded-lg" />
           ))}
         </div>
       )}
@@ -124,29 +121,24 @@ export default function DiscoverPage() {
         />
       )}
 
-      {/* Natural-height masonry (2026-08-23, superseding the 2026-08-16 uniform-grid revert by
-          product direction): the uniform grid stretched every card in a row to the tallest and
-          the card's internal slack rendered the difference as dead space; MasonryColumns — the
-          SAME component Search and Saved already use — lets each card end where its content ends
-          while keeping append-only Load More (cards the reader has seen never move; see its
-          docstring). Two mechanisms share the rhythm work: the card's always-occupied image slot
-          (publisher placeholder when art is absent/suspect/broken — DiscoverCard) removes the
-          image/text height bimodality that let a text-heavy column end thousands of px early
-          (observed in production, 2026-08-23), and height-aware placement (estimateHeight)
-          bounds the residual text-length skew at one card, trading exact row-major reading order
-          for approximate. This is a layout change only. Unchanged, exactly
-          as through the earlier revert: the imageSuspect/branding guard and text-first fallback
-          (in DiscoverCard), display-title hygiene (engine), publisher interleave (above), the
-          visible lean-pill tint (Badge variants), lean-said-once (leanDot={false} here), and the
-          shared read/save flows. */}
-      <MasonryColumns
-        items={shown}
-        itemKey={(a) => a.id}
-        estimateHeight={estimateDiscoverCardHeight}
-        render={(article, i) => (
-          <DiscoverCard article={article} index={i % PAGE} priority={i < 2} leanDot={false} />
-        )}
-      />
+      {/* Uniform grid over uniform cards (2026-08-23). The 2026-08-16 uniform grid was right for
+          near-uniform cards and failed only because the cards feeding it were bimodal — image
+          cards ran ~2.3× text-first cards, and the stretch rendered the difference as dead
+          space. A masonry interlude compensated in placement; the real fix landed in the CARD:
+          the always-occupied image slot (publisher placeholder when art is absent, suspect, or
+          broken — see DiscoverCard) removes the bimodality at the source, so the masonry
+          machinery was retired and the grid returned. Rows stretch a few px at most now, the
+          card's single slack point absorbs it invisibly, and the grid keeps what masonry traded
+          away: exact row-major reading order, and DOM order matching visual order for keyboard
+          and screen readers. Unchanged throughout: the imageSuspect/branding guard (DiscoverCard),
+          display-title hygiene (engine), publisher interleave (above), the visible lean-pill
+          tint (Badge variants), lean-said-once (leanDot={false} here), and the shared read/save
+          flows. */}
+      <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
+        {shown.map((article, i) => (
+          <DiscoverCard key={article.id} article={article} index={i % PAGE} priority={i < 2} leanDot={false} />
+        ))}
+      </div>
 
       {hasMore && (
         <div className="mt-4 flex justify-center">

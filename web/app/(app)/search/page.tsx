@@ -12,7 +12,6 @@ import { PageContainer } from "@/components/layout/page-container";
 import { DiscoverCard } from "@/components/discover/discover-card";
 import { FilterSelect, type FilterOption } from "@/components/shared/filter-select";
 import { CountryBadge } from "@/components/shared/country-badge";
-import { MasonryColumns } from "@/components/shared/masonry-columns";
 import { EmptyState, ErrorState } from "@/components/shared/states";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -132,11 +131,11 @@ function SearchInner() {
         />
       )}
 
-      <MasonryColumns
-        items={results}
-        itemKey={(a) => a.id}
-        render={(article, i) => <DiscoverCard article={article} index={i} openedFrom="search" />}
-      />
+      <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
+        {results.map((article, i) => (
+          <DiscoverCard key={article.id} article={article} index={i} openedFrom="search" />
+        ))}
+      </div>
 
       {(page > 1 || hasMore) && (
         <div className="mt-8 flex items-center justify-center gap-3">

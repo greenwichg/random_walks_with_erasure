@@ -87,10 +87,9 @@ export function DiscoverCard({
       )}
 
       {/* Content flow (2026-08-23): image slot → headline → metadata → summary → actions. The
-          headline leads the text block so the card reads like a front page, and there is
-          deliberately no internal stretcher — inside natural-height masonry columns the card
-          ends where its content ends. One type scale for every card: the slot above is always
-          occupied, so no card needs compensating typography. */}
+          headline leads the text block so the card reads like a front page. One type scale for
+          every card: the slot above is always occupied, so no card needs compensating
+          typography. */}
       <h3 className="text-[1.05rem] font-semibold leading-snug tracking-tight">
         {article.headline}
       </h3>
@@ -114,6 +113,12 @@ export function DiscoverCard({
       {article.description && (
         <p className="mt-2 line-clamp-3 text-sm text-muted-foreground">{article.description}</p>
       )}
+
+      {/* The one structural slack point: grid rows stretch every card in a row to the tallest,
+          and with the image slot always occupied that difference is a few text lines at most —
+          it vanishes here, between the summary and the badges, so footers and action rows sit
+          flush across the row instead of ragged. */}
+      <div className="flex-1" />
 
       <div className="mt-3 flex flex-wrap items-center gap-1.5">
         <LeanBadge lean={article.lean} bucket={article.leanBucket} />

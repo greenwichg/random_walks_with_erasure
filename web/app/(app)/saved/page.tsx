@@ -7,7 +7,6 @@ import { useSaved } from "@/hooks/use-data";
 import { useTranslation } from "@/lib/i18n";
 import { PageContainer } from "@/components/layout/page-container";
 import { DiscoverCard } from "@/components/discover/discover-card";
-import { MasonryColumns } from "@/components/shared/masonry-columns";
 import { EmptyState, ErrorState } from "@/components/shared/states";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -78,11 +77,11 @@ export default function SavedPage() {
         />
       )}
 
-      <MasonryColumns
-        items={saved}
-        itemKey={(s) => s.articleId}
-        render={(s, i) => <DiscoverCard article={toArticle(s)} index={i} openedFrom="saved" />}
-      />
+      <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
+        {saved.map((s, i) => (
+          <DiscoverCard key={s.articleId} article={toArticle(s)} index={i} openedFrom="saved" />
+        ))}
+      </div>
     </PageContainer>
   );
 }
