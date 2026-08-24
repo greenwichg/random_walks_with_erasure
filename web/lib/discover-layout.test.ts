@@ -51,20 +51,40 @@ test("the masonry machinery stays retired", () => {
 });
 
 test("every card leads with an occupied image slot — art or the publisher placeholder", () => {
-  const card = read("components/discover/discover-card.tsx");
-  const h3 = card.lastIndexOf("<h3");
-  const art = card.lastIndexOf("<ArticleImage");
-  const placeholder = card.lastIndexOf("<PublisherLogo");
-  assert.ok(art >= 0 && art < h3, "article art leads when present");
-  assert.ok(placeholder >= 0 && placeholder < h3, "the publisher placeholder fills the slot otherwise");
+  const slot = read("components/shared/article-image-slot.tsx");
+  assert.ok(slot.includes("<ArticleImage"), "the slot renders article art when usable");
+  assert.ok(slot.includes("<PublisherLogo"), "and the publisher's dimmed mark otherwise");
+  assert.ok(slot.includes("article.imageSuspect"), "engine-flagged branding never fronts as art");
   assert.ok(
-    card.includes('aria-hidden="true"'),
+    slot.includes('aria-hidden="true"'),
     "the placeholder is decorative — the metadata row names the publisher",
   );
+  const card = read("components/discover/discover-card.tsx");
+  const h3 = card.lastIndexOf("<h3");
+  const use = card.lastIndexOf("<ArticleImageSlot");
+  assert.ok(use >= 0 && use < h3, "DiscoverCard leads with the shared slot");
   assert.ok(
     !card.includes("line-clamp-6") && !card.includes("text-lg"),
     "senior-type compensation stays retired: the occupied slot carries the rhythm, one type scale",
   );
+});
+
+test("the recommendation card reuses the SAME slot — one fallback implementation, no copies", () => {
+  const rec = read("components/recommendations/recommendation-card.tsx");
+  assert.ok(
+    rec.includes("<ArticleImageSlot article={article}"),
+    "recommendation cards front the shared slot instead of voiding when art is missing",
+  );
+  for (const consumer of [
+    "components/discover/discover-card.tsx",
+    "components/recommendations/recommendation-card.tsx",
+  ]) {
+    const src = read(consumer);
+    assert.ok(
+      !src.includes("<PublisherLogo") && !src.includes("<ArticleImage "),
+      `${consumer} must not carry its own copy of the slot's internals`,
+    );
+  }
 });
 
 test("the card flows image slot → headline → metadata → summary → slack → actions", () => {
@@ -74,7 +94,7 @@ test("the card flows image slot → headline → metadata → summary → slack 
     assert.ok(i >= 0, `card must contain ${needle}`);
     return i;
   };
-  const slot = at("<ArticleImage");
+  const slot = at("<ArticleImageSlot");
   const headline = at("<h3");
   const metadata = at("<PublisherBadge");
   const summary = at("article.description");

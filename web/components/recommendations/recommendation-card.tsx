@@ -25,7 +25,7 @@ import { PublisherBadge, LeanBadge } from "@/components/shared/article-badges";
 import { ContinuationStrip } from "@/components/shared/continuation-strip";
 import { ReadArticleButton } from "@/components/shared/read-article-button";
 import { SaveButton } from "@/components/shared/save-button";
-import { ArticleImage } from "@/components/shared/article-image";
+import { ArticleImageSlot } from "@/components/shared/article-image-slot";
 import { WhyDrawer } from "@/components/recommendations/why-drawer";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -122,11 +122,12 @@ export function RecommendationCard({
         </button>
       </div>
 
-      {/* Furniture never fronts a card (imageSuspect — the story-hero suspect tier as data);
-          this denser card simply reflows text-first, no reserved slot to void. */}
-      {!article.imageSuspect && (
-        <ArticleImage src={article.image} alt={article.headline} className="mb-3" />
-      )}
+      {/* The always-occupied image slot, shared with DiscoverCard (ArticleImageSlot): art when
+          usable; the dimmed publisher placeholder when it is absent, engine-flagged branding
+          (imageSuspect — furniture still never shown AS art), or broken in this browser. The
+          previous text-first reflow left these denser cards with a visible void beside their
+          imaged neighbours. */}
+      <ArticleImageSlot article={article} />
 
       {/* headline + publisher + topic */}
       <div className="min-w-0 flex-1">
