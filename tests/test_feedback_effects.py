@@ -90,6 +90,69 @@ def test_articles_humanize_through_the_catalog_lookup(backend, monkeypatch):
     assert art["publisher"] == "AP" and art["url"] == f"https://example.com/{a}"
 
 
+def test_the_translator_is_the_durable_identity_seam(backend):
+    """URL-keyed ids resolve to THIS generation's corpus id; everything else passes through —
+    bare ids (synthetic corpora, same-generation legacy rows) and unknown URLs (a
+    history-augmented column's item id IS the reader's URL and must reach col_of untouched)."""
+    a = _ids(backend, 1)[0]
+    url = f"https://news.example.com/story/{a}"
+    backend.attach_url_resolver({a: url})
+    try:
+        import ingest
+        tr = backend.feedback_id_translator()
+        assert tr(url) == a
+        assert tr(ingest.canonical_url(url)) == a, "the canonical form resolves too"
+        assert tr(a) == a
+        other = "https://elsewhere.example.com/x"
+        assert tr(other) == other
+    finally:
+        backend.attach_url_resolver({})
+
+
+def test_url_keyed_rows_claim_the_same_effects_as_id_keyed_rows(backend):
+    """The display half of the seam: a signal stored under the durable URL produces exactly the
+    chips its bare-id twin produces, and its article row carries the URL as its own url."""
+    a = _ids(backend, 1)[0]
+    url = f"https://news.example.com/story/{a}"
+    backend.attach_url_resolver({a: url})
+    try:
+        by_url = backend.feedback_effects([_row(url, "dislike")], article_meta=None)
+        by_id = backend.feedback_effects([_row(a, "dislike")], article_meta=None)
+        chips = lambda out: ([(g["name"], g["direction"]) for g in out["publishers"]]
+                             + [(g["name"], g["direction"]) for g in out["topics"]])
+        assert chips(by_url) == chips(by_id) and chips(by_url), "same chips either way"
+        (art,) = by_url["articles"]
+        assert art["url"] == url, "a URL-keyed row IS its own url"
+    finally:
+        backend.attach_url_resolver({})
+
+
+def test_ranking_receives_translated_ids_at_the_attach_seam(backend, monkeypatch):
+    """The ranking half: attach_reader_state hands the engine corpus ids, never storage
+    identities — the downstream (_reader_state_factors, _preference_rerank) needs no knowledge
+    of how feedback is keyed at rest."""
+    import rec_context as rc
+    a = _ids(backend, 1)[0]
+    url = f"https://news.example.com/story/{a}"
+    backend.attach_url_resolver({a: url})
+
+    class St:
+        def list_recommendation_feedback(self, uid):
+            return [_row(url, "dislike")]
+
+        def rec_events_state(self, uid, since=None):
+            return []
+
+    monkeypatch.setenv("RWE_REC_FEEDBACK", "1")
+    monkeypatch.delenv("RWE_REC_REPETITION", raising=False)
+    try:
+        params = rc.attach_reader_state(None, St(), 7,
+                                        translate=backend.feedback_id_translator())
+        assert params["feedback"]["dislike"] == [a]
+    finally:
+        backend.attach_url_resolver({})
+
+
 def test_grouping_aggregates_and_orders_deterministically(backend):
     """Two dislikes from one outlet = ONE chip with two signals; article rows newest first."""
     mind = backend.base_corpus.mind

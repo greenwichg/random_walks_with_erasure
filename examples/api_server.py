@@ -1745,6 +1745,45 @@ class Backend:
         serialized articles carry the real openable URL. Purely additive — the recommender, ranking,
         scoring, report, and personalization are untouched; this only enriches the article payload."""
         self.url_by_id = dict(mapping or {})
+        self._id_by_url = None   # inverse rebuilt lazily for THIS generation's ids
+
+    def feedback_id_translator(self):
+        """A callable mapping a stored feedback ``articleId`` to THIS corpus generation's item id.
+
+        The durable feedback identity is the article's canonical URL: positional ``Q{i}`` ids are
+        re-minted every catalog export (``feed_source.load_url_map`` labels the i-th CSV row), so a
+        stored ``Q{i}`` stops meaning its article at the next corpus refresh — or comes to mean a
+        DIFFERENT one. URL-keyed ids survive: this translator resolves them through the inverse of
+        ``url_by_id`` (verbatim first, then canonicalised) into whatever id the CURRENT generation
+        gives that article. Everything else passes through verbatim — bare ids so synthetic/demo
+        corpora and same-generation rows keep resolving, and unknown URLs because a history-augmented
+        corpus column's item id IS the reader's URL and must reach ``col_of`` untouched."""
+        inv = getattr(self, "_id_by_url", None)
+        if inv is None:
+            from ingest import canonical_url
+            inv = {}
+            for qid, url in (self.url_by_id or {}).items():
+                inv.setdefault(str(url), str(qid))
+                try:
+                    inv.setdefault(canonical_url(str(url)), str(qid))
+                except Exception:
+                    pass
+            self._id_by_url = inv
+
+        def translate(aid) -> str:
+            s = str(aid)
+            if not s.startswith(("http://", "https://")):
+                return s
+            hit = inv.get(s)
+            if hit is None:
+                try:
+                    from ingest import canonical_url
+                    hit = inv.get(canonical_url(s))
+                except Exception:
+                    hit = None
+            return hit if hit is not None else s
+
+        return translate
 
     def _resolve_url(self, item_id) -> "str | None":
         """The verified canonical publisher URL for an article id, or ``None``. Two honest sources,
@@ -2902,6 +2941,10 @@ class Backend:
         col_of = {aid: c for c, aid in enumerate(ids)}
         cats = np.asarray(mind.categories)
         outlets = np.asarray(mind.outlets)
+        # The SAME translation ranking gets (attach_reader_state passes this translator too):
+        # a URL-keyed row resolves to the current generation's id, so its chips survive corpus
+        # refreshes exactly as far as its ranking effect does — parity across representations.
+        translate = self.feedback_id_translator()
         pubs: dict = {}
         topics: dict = {}
         articles: list = []
@@ -2912,7 +2955,7 @@ class Backend:
             if dims is None:
                 continue
             aid = str(row.get("articleId") or "")
-            col = col_of.get(aid)
+            col = col_of.get(translate(aid))
             signal = {"articleId": aid, "feedback": raw,
                       "createdAt": str(row.get("createdAt") or "")}
             if col is not None:
@@ -2928,7 +2971,12 @@ class Backend:
                                                 "direction": dims["topic"][0], "signals": []})
                     g["signals"].append(signal)
             if dims["article"] in ("drop", "decay"):
-                url = (self.url_by_id or {}).get(aid) if getattr(self, "url_by_id", None) else None
+                # A URL-keyed row IS its own URL (the durable identity); legacy bare ids still go
+                # through this generation's forward map and lose their URL when it rotates.
+                if aid.startswith(("http://", "https://")):
+                    url = aid
+                else:
+                    url = (self.url_by_id or {}).get(aid) if getattr(self, "url_by_id", None) else None
                 meta = article_meta(url) if (url and article_meta is not None) else None
                 articles.append({**signal,
                                  "headline": (meta or {}).get("title") or None,

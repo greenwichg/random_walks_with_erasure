@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { LeanBadge } from "@/components/shared/article-badges";
 import { RecommendationCard } from "@/components/recommendations/recommendation-card";
 import { WeeklyReviewCard } from "@/components/coach/weekly-review-card";
+import { feedbackArticleId } from "@ih/core/api/services";
 import { citationLabelKey } from "@ih/core/logic/coach-presentation";
 import { useTranslation } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
@@ -94,7 +95,8 @@ export function CoachMessageBubble({
                   key={rec.article.id}
                   rec={rec}
                   index={i}
-                  onAction={(action) => onCardAction?.(rec.article.id, action)}
+                  // record under the durable wire identity — see feedbackArticleId
+                  onAction={(action) => onCardAction?.(feedbackArticleId(rec.article), action)}
                   onOpen={() => onCardOpen?.(rec)}
                   onDismiss={() => setDismissed((prev) => new Set(prev).add(rec.article.id))}
                 />

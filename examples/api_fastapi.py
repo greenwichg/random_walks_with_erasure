@@ -3577,7 +3577,12 @@ def _rec_request_params(uid: "int | None") -> "dict | None":
     except Exception:
         params = None
     try:
-        params = rec_context.attach_reader_state(params, state.store, uid)
+        # The durable-identity seam: stored feedback keys articles by canonical URL (positional
+        # ids die at every corpus refresh); the active backend's translator resolves them to the
+        # generation actually serving this request. Inside the same try — reader state stays
+        # additive, and a translator failure degrades to sliders-only, never to an error.
+        params = rec_context.attach_reader_state(
+            params, state.store, uid, translate=_require_backend().feedback_id_translator())
     except Exception:                     # reader state is additive — degrade to sliders-only
         _log(logging.WARNING, "rec_reader_state_failed", userId=uid)
     return params

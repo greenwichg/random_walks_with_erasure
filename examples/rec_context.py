@@ -96,22 +96,33 @@ def _repetition_state(store, uid: int) -> "dict | None":
             if (unopened or opened) else None)
 
 
-def attach_reader_state(params: "dict | None", store, uid: int) -> "dict | None":
+def attach_reader_state(params: "dict | None", store, uid: int,
+                        translate=None) -> "dict | None":
     """Return ``params`` extended with whatever reader state the flags admit.
 
     Contract, pinned by tests: with both flags off — or with no recorded state — the input is
     returned **unchanged** (the very same object, ``None`` stays ``None``), so the engine's
     "params without these keys is the historical feed" identity holds by construction. The input
-    dict is never mutated; extension copies."""
+    dict is never mutated; extension copies.
+
+    ``translate`` (optional; ``Backend.feedback_id_translator``) maps each stored article id to
+    the id the SERVING corpus generation uses — the durable-identity seam: rows are stored under
+    the article's canonical URL precisely because positional ids die at every corpus refresh, and
+    this is the one place stored ids cross into ranking, so the engine downstream keeps seeing
+    corpus ids and needs no knowledge of the storage identity."""
     if store is None:
         return params
     add: dict = {}
     if feedback_enabled():
         fb = _feedback_state(store, uid)
+        if fb and translate is not None:
+            fb = {k: [translate(a) for a in v] for k, v in fb.items()}
         if fb:
             add["feedback"] = fb
     if repetition_enabled():
         rep = _repetition_state(store, uid)
+        if rep and translate is not None:
+            rep = {k: [translate(a) for a in v] for k, v in rep.items()}
         if rep:
             add["repetition"] = rep
     if not add:

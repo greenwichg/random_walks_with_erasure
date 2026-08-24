@@ -63,6 +63,16 @@ export function feedbackWire(action: FeedbackAction): RecFeedbackType | undefine
   return FEEDBACK_WIRE[action];
 }
 
+/** The DURABLE feedback identity for an article: its canonical URL when the card carries one,
+ *  else the raw id. Corpus item ids are positional (`Q{i}` = a catalog-export row index,
+ *  re-minted every corpus refresh), so a signal recorded under one stops meaning — or comes to
+ *  mean a different — article at the next refresh; the URL survives generations, and the engine
+ *  resolves it back to whatever id the serving corpus gives that article. Every surface that
+ *  records or removes feedback must key it through this helper. */
+export function feedbackArticleId(a: { id: string; url?: string | null }): string {
+  return a.url || a.id;
+}
+
 export const services = {
   dashboard: () => getJson<DashboardSummary>("/dashboard"),
   // The honest union: a signed-in reader below the read threshold receives an ESTIMATE (no

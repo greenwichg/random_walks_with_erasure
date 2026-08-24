@@ -5,7 +5,7 @@ import Link from "next/link";
 import { AnimatePresence } from "framer-motion";
 import { Sparkles, Route, Compass, Wand2 } from "lucide-react";
 import type { FeedbackAction, Recommendation } from "@ih/core/domain/types";
-import { feedbackWire } from "@ih/core/api/services";
+import { feedbackWire, feedbackArticleId } from "@ih/core/api/services";
 import {
   useRecommendations,
   useFeedback,
@@ -48,7 +48,17 @@ const VOCAB_CONSEQUENCE: Partial<Record<FeedbackAction, string>> = {
   "more-topic": "rec.consequence.moreTopic",
 };
 
-type Consequence = { articleId: string; action: FeedbackAction; publisher: string; topic: string };
+/** `articleId` is the WIRE identity the signal was recorded under (feedbackArticleId — the
+ *  durable canonical URL where the card has one); `cardId` is the served card's corpus id, which
+ *  the session `dismissed` set is keyed by. Undo needs both: remove the signal by the former,
+ *  put the card back by the latter. */
+type Consequence = {
+  articleId: string;
+  cardId: string;
+  action: FeedbackAction;
+  publisher: string;
+  topic: string;
+};
 
 export default function RecommendationsPage() {
   const { data, isLoading, isError, refetch } = useRecommendations();
@@ -77,7 +87,15 @@ export default function RecommendationsPage() {
 
   const visible = (data ?? [])
     .filter((r) => (filter === "all" ? true : r.strategy === filter))
-    .filter((r) => !dismissed.has(r.article.id) && !persistedIgnored.has(r.article.id))
+    // Persisted rows are keyed by the durable wire identity (URL where the card has one); rows
+    // recorded before that change carry the bare corpus id — match both so neither generation
+    // of stored ignores resurfaces its card.
+    .filter(
+      (r) =>
+        !dismissed.has(r.article.id) &&
+        !persistedIgnored.has(r.article.id) &&
+        !persistedIgnored.has(feedbackArticleId(r.article)),
+    )
     .filter(
       (r) =>
         continuationStory === null ||
@@ -109,12 +127,22 @@ export default function RecommendationsPage() {
 
   const handleAction = (rec: Recommendation, action: FeedbackAction) => {
     track("recommendation_feedback", { action }); // PA1 (best-effort)
-    feedback.mutate({ articleId: rec.article.id, action });
+    // Record under the DURABLE identity (canonical URL where the card has one): positional
+    // corpus ids are re-minted every catalog refresh, so a signal keyed by one would silently
+    // stop applying — or mis-apply — after the next refresh.
+    const wireId = feedbackArticleId(rec.article);
+    feedback.mutate({ articleId: wireId, action });
     if (VOCAB_CONSEQUENCE[action]) {
       // visible consequence: one strip per (article, action), newest first, each with an undo
       setConsequences((prev) => [
-        { articleId: rec.article.id, action, publisher: rec.article.publisher, topic: rec.article.topic },
-        ...prev.filter((c) => !(c.articleId === rec.article.id && c.action === action)),
+        {
+          articleId: wireId,
+          cardId: rec.article.id,
+          action,
+          publisher: rec.article.publisher,
+          topic: rec.article.topic,
+        },
+        ...prev.filter((c) => !(c.articleId === wireId && c.action === action)),
       ]);
     }
   };
@@ -126,7 +154,7 @@ export default function RecommendationsPage() {
     // the card returns to the feed — the effect and its undo are both immediate and visible
     setDismissed((prev) => {
       const next = new Set(prev);
-      next.delete(c.articleId);
+      next.delete(c.cardId);
       return next;
     });
   };
