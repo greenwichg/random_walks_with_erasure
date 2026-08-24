@@ -372,6 +372,16 @@ services:
       # quorum/veto knobs above: the verified configuration must not live one lost env-file
       # line away from silently reverting. 0 is the kill switch.
       RWE_CLUSTER_TEMPLATE_GATE: ${RWE_CLUSTER_TEMPLATE_GATE:-1}
+      # Which lexicons that gate consults (adopted 2026-08-24; measurement record on
+      # story_service.template_lexicons). Two shape-vocabularies join the announcement set:
+      # `tracker` (box-office/OTT day-counters — the Batwara/Vishwanath collection-day welds)
+      # and `preview` (recurring fixture previews — the tennis "preview, head-to-head, odds"
+      # weld). Measured twice against the live catalog at ~27,990 articles, stable both times:
+      # stories +1, largest unchanged, covered NET +3 (0.0% dropped against the 5% bar),
+      # independent signal untouched — the one split being a 10-article/3-publisher
+      # betting-preview chain, the registered failure class itself. Defaulted HERE like the
+      # gate above, and for the same reason. `announce` alone is the revert.
+      RWE_CLUSTER_TEMPLATE_LEXICONS: ${RWE_CLUSTER_TEMPLATE_LEXICONS:-announce,tracker,preview}
       # How a selected For You country orders the feed. `first` (default) puts every article
       # from that country ahead of the rest — the "show me India news" reading — and `boost`
       # reverts to the gentler 8x rank nudge this feature first shipped with. Neither removes

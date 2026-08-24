@@ -1,5 +1,17 @@
 # The sole-template-evidence gate — why announcement headlines welded, and the measured fix
 
+**Extended 2026-08-24:** the gate now consults a SET of lexicons —
+`RWE_CLUSTER_TEMPLATE_LEXICONS=announce,tracker,preview` is a compose default (`announce` alone
+is the revert). `tracker` covers box-office/OTT day-counter chains (the Batwara/Vishwanath
+"collection day 2" welds, rubric rules 5+6) and `preview` covers recurring fixture previews (the
+tennis "preview, head-to-head, odds" weld, rules 3b+5) — the same rule, the same evidence hook,
+two more shape-vocabularies. Measured twice against the live catalog (~27,990 articles, both
+windows agreeing): stories +1, largest unchanged, covered net +3 (0.0% dropped), independent
+signal untouched, and the single split was a 10-article/3-publisher betting-preview chain — the
+registered failure class itself. Full record on `story_service.template_lexicons`. The same
+measurement cycle REJECTED hyphen-compound tokenization (121 splits, 2.6% dropped, story count
+fell); that record lives on `story_service.hyphen_compounds`.
+
 **Status: adopted 2026-08-17.** `RWE_CLUSTER_TEMPLATE_GATE=1` is a compose default
 (`deploy/docker-compose.yml`, the same lost-env-file discipline as the quorum/veto knobs; `0` is
 the kill switch). The rule lives in `examples/story_service.py` (`TEMPLATE_TOKENS`,

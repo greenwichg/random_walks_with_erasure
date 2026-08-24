@@ -783,7 +783,8 @@ def template_lexicons() -> "tuple[str, ...]":
     split is the failure class the candidates were registered against: a 10-article/3-publisher
     "picks, odds: MLB best bets, predictions" betting-preview chain (a/p 3.3) dissolved, its
     genuine members re-covered elsewhere. The tennis-previews exhibit stayed separated.
-    Awaiting the compose default to ship it (the template-gate adoption path)."""
+    Adopted 2026-08-24: ``deploy/docker-compose.yml`` defaults the full set (the template-gate
+    adoption path); ``announce`` alone is the revert."""
     raw = os.environ.get("RWE_CLUSTER_TEMPLATE_LEXICONS", "").strip().lower()
     names = tuple(n for n in (p.strip() for p in raw.split(",")) if n in TEMPLATE_LEXICONS)
     return names or ("announce",)
