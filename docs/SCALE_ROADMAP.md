@@ -1,9 +1,9 @@
 # Scaling to a 50,000-source universe — the dependency-ordered path
 
-**Status:** design only, nothing implemented · **Companions:** `CRAWLER_ARCHITECTURE_AUDIT.md` (how we
-fetch), `SOURCE_COVERAGE_AUDIT.md` (which publishers we carry and what they do inside),
-`CORPUS_ARCHITECTURE.md` (the three-dataset contract this roadmap extends), `PERFORMANCE.md` (every
-cost constant quoted below).
+**Status:** design, with **M1 built and shipped off** (see [Part 7](#part-7--m1-as-built)) ·
+**Companions:** `CRAWLER_ARCHITECTURE_AUDIT.md` (how we fetch), `SOURCE_COVERAGE_AUDIT.md` (which
+publishers we carry and what they do inside), `CORPUS_ARCHITECTURE.md` (the corpus contract this
+roadmap extends — now amended to four datasets), `PERFORMANCE.md` (every cost constant quoted below).
 
 The strategic goal is explicit: ingest a Ground News–scale source universe, ~50,000 outlets. This
 document works out what actually breaks on the way there, in what order the fixes depend on each
@@ -434,6 +434,75 @@ system's measurement discipline can actually adjudicate. And it closes a live la
 than building speculative infrastructure: `max_scan=60000` will re-create the documented
 "more sources → fewer stories" regression the moment ingestion rate rises, which is to say during
 shadow ingest, before anyone is watching for it.
+
+---
+
+# Part 7 — M1 as built
+
+Shipped **off**, byte-identical, on `claude/sleepy-gates-oecof1`. 3,494 engine tests pass.
+
+## What landed
+
+| | |
+|---|---|
+| `examples/corpus.py` | the boundary: the tier policy, the selector, and the budget report |
+| `story_service._fetch` | routes its rows through `corpus.select` and **keeps the `total` it used to discard** |
+| `story_service.max_scan_default` | docstring corrected — see the retraction below |
+| `examples/audit_corpus_boundary.py` | the production instrument: what binds today, plus the containment bars **and their control arm** |
+| `tests/test_corpus_tiers.py` | 17 tests on the policy and the report |
+| `tests/test_corpus_boundaries.py` | the ①/②′ invariant, its control arm, and the structural seam check |
+| `tests/test_env_hygiene.py` | the compose allowlist pin |
+| `docs/CORPUS_ARCHITECTURE.md` | amended: three datasets → four |
+
+## One design decision changed during implementation
+
+**The roadmap called for "a `tier` column on the article row". It was built as a property of the
+OUTLET instead, derived at selection time, and that is the better design.**
+
+"Does this publisher form stories" is a fact about a publisher, not about one of its articles.
+Deriving the tier means no migration and no backfill; two articles from one outlet cannot disagree;
+and a demotion (A→B when an outlet turns out to be a syndicator) takes effect over that outlet's
+whole history on the next build, which is what a demotion should mean. A stored column would have
+frozen the answer at ingest and required a rewrite to change it.
+
+The cost is real and is recorded rather than hidden: **the tier predicate cannot be pushed into SQL
+yet**, so once Tier B has members their rows still count against the row cap before `select` ever
+sees them. `report["capBoundBeforeTier"]` states this at runtime rather than leaving it to be
+inferred. Pushing the predicate down is M2's, and the seam (`corpus.tier_of`) means moving the
+source of truth to a registry column or its own table changes no caller.
+
+## A correction to what `max_scan_default` claimed
+
+Its docstring said the 60,000-row cap "sits far above a normal window so it only ever engages if
+ingestion volume spikes far beyond projections." Two things are wrong with that and both are now in
+the docstring:
+
+* "far above" is a statement about *today's ingestion rate*, not about the cap — the same 60,000
+  covers 12.9 days now, 9.6 hours at 150k/day and 2.9 hours at 500k/day;
+* it sits **below** the Tier A CPU budget (83,000), so the "memory backstop" is in fact the binding
+  constraint rather than the safety net it is described as. `report["binding"]` prints which one
+  binds so nobody has to work it out from two docstrings.
+
+## The bars, and which of them production still owes
+
+| bar | where | status |
+|---|---|---|
+| off returns the **same list object**, and resolves no outlet at all (proven by making `default_registry` raise) | unit | ✅ |
+| a Tier B article is searchable (①) but absent from ②′, story set byte-identical | unit | ✅ |
+| **control arm** — that same article DOES move the story set with tiering off | unit | ✅ |
+| `_fetch` routes through `corpus.select` and keeps `total` | structural | ✅ |
+| `total == cap` is **not** a breach (the off-by-one that would cry wolf on a full window) | unit | ✅ |
+| compose ships all three vars, all empty | env hygiene | ✅ |
+| the same three bars **on the live catalog**, with 40k injected Tier B rows | `audit_corpus_boundary.py` | **owed** |
+| what actually binds the live clustering corpus — is the window we cluster the window we asked for? | `audit_corpus_boundary.py` | **owed, and never once measured** |
+
+The last row is the one worth running first. The row cap has been silent since it existed, and
+`search_feed_articles` has always handed `_fetch` the number that would have revealed it.
+
+```bash
+cd /opt/ih && source deploy/ops/_compose.sh
+dc run --rm -T api python examples/audit_corpus_boundary.py --db "$RWE_DB_URL"
+```
 
 ---
 

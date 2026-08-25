@@ -30,6 +30,7 @@ from concurrent.futures import ProcessPoolExecutor
 from typing import Optional
 
 import clustering                 # the deterministic union-find Jaccard primitive (algorithm only)
+import corpus                     # the clustering-corpus boundary (Tier A) + the budget report
 import discover                   # feed_article_to_article — the shared Article serializer (Read flow)
 import location                   # normalize_country — the entity noise filter's geo test (X5b)
 import media                      # centralised hero-image selection (additive; no clustering change)
@@ -2385,8 +2386,20 @@ def scan_days() -> float:
 
 def max_scan_default() -> int:
     """Backstop on candidate-set SIZE. This is a memory guard, NOT the relevance rule — the window
-    above decides what is in scope. It sits far above a normal window so it only ever engages if
-    ingestion volume spikes far beyond projections."""
+    above decides what is in scope.
+
+    It was described here as sitting "far above a normal window so it only ever engages if ingestion
+    volume spikes far beyond projections". Two corrections, both from `docs/SCALE_ROADMAP.md`:
+
+    * 60,000 covers 12.9 days at today's ~4,650 articles/day, **9.6 hours at 150k/day and 2.9 hours
+      at 500k/day** — so "far above" is a statement about the current ingestion rate, not about the
+      cap;
+    * it sits BELOW ``corpus.tier_a_budget()`` (83,000, the size at which the build stops fitting
+      its poll cycle), so the "backstop" is in fact the binding constraint, not the safety net.
+
+    Engaging it is no longer silent. ``corpus.select`` reports the window actually achieved against
+    the one asked for — see its docstring for why a truncation here reads as a clustering
+    regression rather than as a bound being hit."""
     return _env_int("RWE_STORIES_MAX_SCAN", 60000)
 
 
@@ -2406,13 +2419,24 @@ def _fetch(store_, *, topic=None, date_from=None, date_to=None, max_scan=None) -
     the hours those 2000 rows covered, so integrating more sources produced FEWER stories (measured:
     a 12.5-hour effective window against a 6-day clustering threshold, 89 stories from a
     12,790-article catalog). A caller-supplied ``date_from`` still wins — an explicit request for a
-    date range is never silently narrowed."""
+    date range is never silently narrowed.
+
+    **The result is a SELECTED corpus, not merely a fetched one.** ``corpus.select`` applies the
+    Tier A boundary and reports what bound — the row cap truncating the window, or Tier A exceeding
+    the size at which the build fits its poll cycle. Both were silent before; the ``total`` this
+    function used to discard as ``_total`` is what makes the first one detectable, and it was
+    always right here. See `docs/SCALE_ROADMAP.md` (M1) and ``examples/corpus.py``.
+
+    Tier selection runs BEFORE the event-countries lookup, so an excluded row costs no side-table
+    read. With no tier configured — the shipped state — ``select`` returns the list it was handed
+    and this function is byte-identical to what it was."""
     if date_from is None:
         date_from = _window_start()
     cap = max_scan or max_scan_default()
-    rows, _total = store_.search_feed_articles(
+    rows, total = store_.search_feed_articles(
         topic=topic, date_from=date_from, date_to=date_to, sort="newest",
         pagination=OffsetPagination.from_params(cap, 0, max_limit=cap))
+    rows = corpus.select(rows, total=total, cap=cap, window_start=date_from)
     events = store_.event_countries_for_urls([r.get("canonicalUrl") for r in rows])
     for r in rows:
         r["eventCountries"] = events.get(r.get("canonicalUrl"), [])

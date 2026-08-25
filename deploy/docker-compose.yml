@@ -244,6 +244,29 @@ services:
       # not the relevance rule. CACHE_TTL bounds staleness; catalog writes invalidate immediately.
       RWE_STORIES_SCAN_DAYS: ${RWE_STORIES_SCAN_DAYS:-6}
       RWE_STORIES_MAX_SCAN: ${RWE_STORIES_MAX_SCAN:-60000}
+      # The clustering-corpus boundary (examples/corpus.py, M1 of docs/SCALE_ROADMAP.md). The
+      # clustering corpus is now SELECTED rather than "whatever the fetch returned", so there is a
+      # place to stand to say "this outlet is searchable but does not form stories" — which is what
+      # shadow ingest, promotion and retirement all need.
+      #
+      # BOTH LISTS EMPTY IS THE SHIPPED STATE and is byte-identical: every outlet defaults to Tier A
+      # (grandfathered), select() does no registry resolution and no per-row work, and the story set
+      # is what it was. Moving an outlet across the boundary is a measured decision with its own
+      # counterfactual, exactly like every clustering knob above — examples/audit_corpus_boundary.py
+      # runs the bars. Entries are resolved through the registry first, so a value moves the
+      # outlet's IDENTITY (every alias, every domain); an unknown entry is treated as a domain.
+      #
+      # These MUST be listed here even while empty. `environment:` is an explicit allowlist and this
+      # stack has no `env_file:`, so a variable absent from this block never reaches the container
+      # whatever deploy/.env says — the RWE_FEED_MIN_INTERVAL lesson, which shipped a switch that
+      # could be turned on but not tuned or rolled back.
+      RWE_CORPUS_TIER_B: ${RWE_CORPUS_TIER_B:-}
+      RWE_CORPUS_SHADOW: ${RWE_CORPUS_SHADOW:-}
+      # Articles allowed in the 6-day Tier A window before the build stops fitting its poll cycle
+      # (derived in docs/SCALE_ROADMAP.md from the live pipeline profile). A WARNING threshold, not
+      # a gate: nothing is dropped, the operator is told. Note MAX_SCAN above (60,000) currently
+      # sits BELOW it, so the "memory backstop" is the binding constraint and this cannot fire yet.
+      RWE_CORPUS_TIER_A_BUDGET: ${RWE_CORPUS_TIER_A_BUDGET:-}
       # 600, matching RWE_POLL_INTERVAL, and the reason is measured (examples/perf_profile.py).
       # A cold story build is QUADRATIC in catalog size — 0.4 s of clustering at 5k articles, 1.6 s
       # at 10k, 7.4 s at 20k, 32 s at 40k — while a warm hit is 0.65 ms. Correctness never depended

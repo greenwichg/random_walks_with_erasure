@@ -454,3 +454,32 @@ def test_compose_keeps_the_rejected_min_support_off():
     )
     s = re.search(r"RWE_CLUSTER_SUPPORT_SCOPE:\s*\$\{RWE_CLUSTER_SUPPORT_SCOPE:-([^}]*)\}", compose)
     assert s and s.group(1).strip() == "any", "the scope default must stay what was measured"
+
+
+def test_compose_ships_the_corpus_boundary_switched_off_and_tunable():
+    """M1's tier lists must reach the container even while EMPTY, and must default to empty.
+
+    Both halves matter and they fail in opposite directions.
+
+    **Empty by default** is the byte-identical state: every outlet is Tier A (grandfathered), so
+    installing the boundary moves nobody across it. A non-empty default would be a clustering change
+    shipped inside an architecture change — the thing `docs/PERFORMANCE.md` calls "a product
+    regression wearing a speed-up's clothes".
+
+    **Present in the allowlist** is the RWE_FEED_MIN_INTERVAL lesson, learned on this stack this
+    month: `environment:` is an explicit allowlist and there is no `env_file:`, so a variable absent
+    from that block never reaches the container whatever `deploy/.env` says. Shipping the switch
+    without its settings gave an operator a feature they could turn on but not tune or roll back.
+    Here it would be worse — the lists ARE the feature, so omitting them ships a boundary that can
+    never be used.
+    """
+    import pathlib
+    import re
+    compose = (pathlib.Path(__file__).resolve().parent.parent
+               / "deploy" / "docker-compose.yml").read_text(encoding="utf-8")
+    for var in ("RWE_CORPUS_TIER_B", "RWE_CORPUS_SHADOW", "RWE_CORPUS_TIER_A_BUDGET"):
+        m = re.search(rf"{var}:\s*\$\{{{var}:-([^}}]*)\}}", compose)
+        assert m, f"{var} is not in the compose environment allowlist — it can never reach the container"
+        assert m.group(1).strip() == "", (
+            f"compose defaults {var} to {m.group(1)!r}; M1 ships the boundary OFF, which is the only "
+            f"state proven byte-identical (tests/test_corpus_boundaries.py)")
