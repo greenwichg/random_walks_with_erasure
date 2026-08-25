@@ -382,6 +382,20 @@ services:
       # betting-preview chain, the registered failure class itself. Defaulted HERE like the
       # gate above, and for the same reason. `announce` alone is the revert.
       RWE_CLUSTER_TEMPLATE_LEXICONS: ${RWE_CLUSTER_TEMPLATE_LEXICONS:-announce,tracker,preview}
+      # Banded semantic event-identity (event_identity.py) — OFF until the pre-registered V1
+      # bars (docs/EVENT_IDENTITY_RUBRIC.md) and the clustering counterfactual say the judge
+      # earns edges. The build never waits on it: verdicts persist in the store, unjudged
+      # in-band pairs behave exactly as production, and only a confident different_event
+      # verdict vetoes an edge. The worker also needs ANTHROPIC_API_KEY (set in deploy/.env —
+      # already the coach narrative's convention; never a compose literal).
+      RWE_EVENT_JUDGE: ${RWE_EVENT_JUDGE:-0}
+      RWE_EVENT_JUDGE_MODEL: ${RWE_EVENT_JUDGE_MODEL:-claude-haiku-4-5}
+      RWE_EVENT_JUDGE_BUDGET: ${RWE_EVENT_JUDGE_BUDGET:-120}
+      RWE_EVENT_JUDGE_INTERVAL: ${RWE_EVENT_JUDGE_INTERVAL:-300}
+      RWE_EVENT_BAND_HI: ${RWE_EVENT_BAND_HI:-0.5}
+      # Pass-through (value lives in deploy/.env only): shared by the AI-coach narrative and the
+      # event judge. Empty means both features are simply inactive.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       # How a selected For You country orders the feed. `first` (default) puts every article
       # from that country ahead of the rest — the "show me India news" reading — and `boost`
       # reverts to the gentler 8x rank nudge this feature first shipped with. Neither removes

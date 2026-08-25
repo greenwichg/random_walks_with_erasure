@@ -200,6 +200,7 @@ class _State:
     limiter: "ratelimit.RateLimiter | None" = None
     poller: "feed_service.FeedPoller | None" = None
     refresh: "corpus_refresh.RefreshManager | None" = None
+    event_judge: "object | None" = None   # event_identity.EventJudge (lazy import)
     # The designated read-only exhibit account (RWE_DEMO_ACCOUNT, "provider:accountId").
     # None = feature off; everything behaves exactly as before the demo account existed.
     demo_uid: "int | None" = None
@@ -325,6 +326,15 @@ async def lifespan(app: FastAPI):
                                                  dirty_check=state.refresh.is_catalog_dirty)
         state.poller.start()
 
+    # Banded event-identity judge (event_identity): the out-of-band worker that drains the story
+    # build's ambiguity-band queue through the Claude adapter and persists verdicts. Flag-gated
+    # (RWE_EVENT_JUDGE, default off) and key-gated (ANTHROPIC_API_KEY — the coach narrative's
+    # existing convention); without either, .start() is a no-op and clustering is byte-identical
+    # to production. The build itself never waits on this thread.
+    import event_identity
+    state.event_judge = event_identity.EventJudge(st, log=_log)
+    state.event_judge.start()
+
     # Push delivery (Phase B4). Registers the metric series so a counter that has never fired is a
     # visible zero rather than an absent one, and reports what the PREVIOUS process left behind — a
     # restart mid-fan-out leaves claimed-but-unresolved rows that the lease recovers silently fifteen
@@ -347,6 +357,11 @@ async def lifespan(app: FastAPI):
         pass
     if state.poller is not None:
         state.poller.stop()          # graceful: signal + join the current cycle
+    if state.event_judge is not None:
+        try:
+            state.event_judge.stop()  # daemon thread; join is bounded
+        except Exception:            # shutdown must never raise out of the lifespan
+            pass
     # The coalescing story warmer outlives any single poll cycle by design, so it is stopped here
     # rather than by the poller. Ordered AFTER poller.stop() so a cycle finishing during shutdown
     # cannot queue a warm against a warmer that has already gone.

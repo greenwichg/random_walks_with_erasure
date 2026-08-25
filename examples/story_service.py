@@ -875,6 +875,60 @@ def derived_boilerplate(arts: list, cap: int = 0, hyphen: bool = False, *,
                      if n >= min_df and len(days.get(t, ())) >= min_days)
 
 
+def event_band_hi() -> float:
+    """The ambiguity band's upper edge (``RWE_EVENT_BAND_HI``, default 0.5): an admitted edge
+    with Jaccard below this is IN BAND and may consult a persisted semantic verdict; at or above
+    it the lexical evidence decides alone (S4: the high-overlap region auto-decides with zero
+    measured errors, so the judge is never asked what tokens already answer)."""
+    v = os.environ.get("RWE_EVENT_BAND_HI", "").strip()
+    try:
+        q = float(v)
+    except (TypeError, ValueError):
+        return 0.5
+    return q if 0.0 < q <= 1.0 else 0.5
+
+
+#: Band pairs one build may emit to the judge queue — a cost bound, not a correctness one:
+#: unjudged pairs behave exactly as production regardless, and the next build re-emits.
+EVENT_BAND_OUT_CAP = 2000
+
+
+def _event_identity_closure(arts: list, cap: int, hyphen: bool, verdicts: dict,
+                            band_hi: float, stats: Optional[dict] = None,
+                            band_out: Optional[dict] = None):
+    """``evidence(x, y)`` for the banded semantic judge (``event_identity``): consult a persisted
+    verdict ONLY for in-band edges, veto ONLY on a confident ``different_event``, and note every
+    in-band edge that has no verdict yet so the out-of-band worker can earn one. Everything else
+    — high-overlap edges, unjudged pairs, ``same_event``, ``uncertain`` — is byte-identical to
+    production. Deterministic: a pure function of the build's rows and the verdict dict."""
+    import event_identity
+    toks = [article_tokens(a, cap, hyphen) for a in arts]
+
+    def _url(i: int) -> str:
+        return str(arts[i].get("url") or arts[i].get("id") or arts[i].get("headline") or "")
+
+    def ok(x: int, y: int) -> bool:
+        if clustering.jaccard(toks[x], toks[y]) >= band_hi:
+            return True                                   # decided lexically, judge never asked
+        key = event_identity.pair_key(_url(x), _url(y))
+        v = verdicts.get(key)
+        if v == "different_event":
+            if stats is not None:
+                stats["eventEdgeVetoed"] = stats.get("eventEdgeVetoed", 0) + 1
+            return False
+        if v is None and band_out is not None and key not in band_out \
+                and len(band_out) < EVENT_BAND_OUT_CAP:
+            a, b = arts[x], arts[y]
+            band_out[key] = {
+                "pair_key": key, "url_a": _url(x), "url_b": _url(y),
+                "title_a": a.get("headline") or "", "dek_a": a.get("description") or "",
+                "published_a": a.get("publishedAt") or "",
+                "title_b": b.get("headline") or "", "dek_b": b.get("description") or "",
+                "published_b": b.get("publishedAt") or ""}
+        return True
+    return ok
+
+
 def hyphen_compounds() -> bool:
     """Candidate tokenizer extension — **measured 2026-08-24 and REJECTED. Do not turn this
     on.** (``RWE_CLUSTER_HYPHEN_COMPOUNDS`` survives as the audit's instrument only.)
@@ -1318,7 +1372,8 @@ def _repair(members: list, *, quorum: float, sim: float, window_days: float, min
             min_tokens: int, idf: bool, min_articles: int, min_publishers: int,
             desc: int = 0, veto: str = "", veto_stats: Optional[dict] = None,
             template: bool = False, lexicon: frozenset = TEMPLATE_TOKENS,
-            hyphen: bool = False) -> Optional[list]:
+            hyphen: bool = False, event_verdicts: "Optional[dict]" = None,
+            band_out: "Optional[dict]" = None) -> Optional[list]:
     """Re-cluster ONE condemned cluster's members under a stricter linkage rule.
 
     Why targeted rather than global: measured on the live catalog, a global quorum splits the
@@ -1341,6 +1396,10 @@ def _repair(members: list, *, quorum: float, sim: float, window_days: float, min
         r_evidence = _and_evidence(
             _template_closure(members, desc, veto_stats, lexicon=lexicon, hyphen=hyphen),
             r_evidence)
+    if event_verdicts is not None:
+        r_evidence = _and_evidence(
+            _event_identity_closure(members, desc, hyphen, event_verdicts, event_band_hi(),
+                                    veto_stats, band_out), r_evidence)
     pieces = _admit(
         clustering.cluster(members, tokens=lambda a: article_tokens(a, desc, hyphen),
                            time=lambda a: clustering.parse_time(a["publishedAt"]),
@@ -1796,7 +1855,9 @@ def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
                   hyphen: Optional[bool] = None,
                   derived: Optional[bool] = None,
                   derived_df: Optional[int] = None,
-                  derived_days: Optional[int] = None) -> list:
+                  derived_days: Optional[int] = None,
+                  event_verdicts: "Optional[dict]" = None,
+                  band_out: "Optional[dict]" = None) -> list:
     """Cluster FeedArticle rows into Story objects (the pure builder). Keeps clusters with
     ≥ ``min_articles`` from ≥ ``min_publishers`` distinct outlets; sorted biggest+freshest first,
     with independently-suspect clusters demoted (see ``_size_rank``).
@@ -1891,6 +1952,14 @@ def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
     if use_gate:
         g_evidence = _and_evidence(
             _template_closure(arts, cap, veto_stats, lexicon=lex_union, hyphen=hyph), g_evidence)
+    # The banded semantic judge (event_identity): verdicts are an INPUT — the build never calls a
+    # network — and ``event_verdicts is None`` means the judge is off for this build, byte-identical
+    # to production. Composed through the same evidence hook as every gate, so admission, quorum
+    # cross-pair scoring and the repair re-cluster consult one rule.
+    if event_verdicts is not None:
+        g_evidence = _and_evidence(
+            _event_identity_closure(arts, cap, hyph, event_verdicts, event_band_hi(),
+                                    veto_stats, band_out), g_evidence)
     groups = clustering.cluster(
         arts, tokens=lambda a: article_tokens(a, cap, hyph),
         time=lambda a: clustering.parse_time(a["publishedAt"]), sim=sim, window_days=window_days,
@@ -1905,7 +1974,8 @@ def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
                              min_shared=shared, min_tokens=tokens_floor, idf=weighting,
                              min_articles=min_articles, min_publishers=min_publishers, desc=cap,
                              veto=veto_mode, veto_stats=veto_stats, template=use_gate,
-                             lexicon=lex_union, hyphen=hyph)
+                             lexicon=lex_union, hyphen=hyph,
+                             event_verdicts=event_verdicts, band_out=band_out)
             if pieces is not None:
                 admitted.extend(pieces)
                 continue
@@ -2112,6 +2182,29 @@ def _subprocess_eligible(store_) -> bool:
     return url.startswith("sqlite:///") and ":memory:" not in url
 
 
+def _event_inputs(store_) -> "tuple[dict | None, dict | None]":
+    """``(event_verdicts, band_out)`` for a store-backed build — ``(None, None)`` when the judge
+    is off, which makes the build byte-identical to production by construction. Fail-open: any
+    store trouble reads as "judge off" rather than as a failed build."""
+    import event_identity
+    if not event_identity.judge_on():
+        return None, None
+    try:
+        return store_.event_verdicts(), {}
+    except Exception:                                # noqa: BLE001 — the judge must never fail a build
+        return None, None
+
+
+def _event_flush(store_, band_out: "dict | None") -> None:
+    """Queue the band pairs a build emitted (best-effort; the next build re-emits on failure)."""
+    if not band_out:
+        return
+    try:
+        store_.enqueue_event_pairs(list(band_out.values()))
+    except Exception:                                # noqa: BLE001 — same fail-open posture
+        pass
+
+
 def _entities_for(store_, rows: list) -> "dict | None":
     """The X5b entity mapping for a build — fetched ONLY when the pass is enabled (adopted
     2026-08-16), one batched side-table query per build, ``None`` (free) when the env is off.
@@ -2133,8 +2226,12 @@ def _subprocess_build(db_url: str, topic, date_from, date_to, max_scan,
     st = _store_mod.Store(db_url)
     try:
         rows = _fetch(st, topic=topic, date_from=date_from, date_to=date_to, max_scan=max_scan)
-        return build_stories(rows, min_articles=min_articles, min_publishers=min_publishers,
-                             entities=_entities_for(st, rows))
+        ev, band = _event_inputs(st)     # the child reads/queues symmetrically with the parent
+        stories = build_stories(rows, min_articles=min_articles, min_publishers=min_publishers,
+                                entities=_entities_for(st, rows),
+                                event_verdicts=ev, band_out=band)
+        _event_flush(st, band)
+        return stories
     finally:
         try:
             st.engine.dispose()
@@ -2583,9 +2680,12 @@ def _cached_build(store_, *, topic, date_from, date_to, max_scan, min_articles, 
         if stories is None:
             rows = _fetch(store_, topic=topic, date_from=date_from,
                           date_to=date_to, max_scan=max_scan)
+            ev, band = _event_inputs(store_)
             stories = build_stories(rows, min_articles=min_articles,
                                     min_publishers=min_publishers,
-                                    entities=_entities_for(store_, rows))
+                                    entities=_entities_for(store_, rows),
+                                    event_verdicts=ev, band_out=band)
+            _event_flush(store_, band)
         # Identity is applied HERE — in the parent, never the child — and not inside build_stories,
         # which stays a pure function of its rows. Only the unfiltered build WRITES identity: a
         # topic- or date-filtered view sees a subset of each cluster, so letting it write the map
@@ -2808,9 +2908,13 @@ def cluster_from_store(store_, *, min_articles: int = 2, min_publishers: int = 2
     and one of them took every publisher page down when the catalog outgrew the web deadline.
     Operator diagnostics and parameterised audits are what this function is for."""
     rows = _fetch(store_, max_scan=max_scan)
-    return build_stories(rows, min_articles=min_articles,
-                         min_publishers=min_publishers, sim=sim, window_days=window_days,
-                         entities=_entities_for(store_, rows))
+    ev, band = _event_inputs(store_)
+    stories = build_stories(rows, min_articles=min_articles,
+                            min_publishers=min_publishers, sim=sim, window_days=window_days,
+                            event_verdicts=ev, band_out=band,
+                            entities=_entities_for(store_, rows))
+    _event_flush(store_, band)
+    return stories
 
 
 def list_stories(store_, *, topic=None, publisher=None, lean=None, country=None, blindspot=None,

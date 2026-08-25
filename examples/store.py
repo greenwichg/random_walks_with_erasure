@@ -412,6 +412,36 @@ class ExperimentAssignment(Base):
     assigned_at: Mapped[str] = mapped_column(String(64))    # ISO
 
 
+class EventVerdict(Base):
+    """One judged (or queued) article pair for the banded event-identity mechanism
+    (``event_identity``): the ambiguity-band pairs a story build wanted a semantic opinion on.
+
+    A row is created PENDING (``verdict`` NULL) by the build's band emission, carrying SNAPSHOTS
+    of both sides' headline/summary/date — so the judge decides exactly what the clusterer saw,
+    even after the catalog rows rotate. The out-of-band worker fills ``verdict``. Keyed by
+    ``event_identity.pair_key`` (order-independent, rubric-versioned): a rubric change mints new
+    keys and old verdicts simply stop matching. ``source`` records how the verdict was reached —
+    ``model`` rows are the only ones a build consults; ``api-error`` rows are retried by the
+    worker after a cooldown and never influence clustering."""
+
+    __tablename__ = "event_verdicts"
+
+    pair_key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    url_a: Mapped[str] = mapped_column(Text)
+    url_b: Mapped[str] = mapped_column(Text)
+    title_a: Mapped[str] = mapped_column(Text, default="")
+    dek_a: Mapped[str] = mapped_column(Text, default="")
+    published_a: Mapped[str] = mapped_column(String(64), default="")
+    title_b: Mapped[str] = mapped_column(Text, default="")
+    dek_b: Mapped[str] = mapped_column(Text, default="")
+    published_b: Mapped[str] = mapped_column(String(64), default="")
+    verdict: Mapped["str | None"] = mapped_column(String(24), nullable=True)  # NULL = pending
+    source: Mapped[str] = mapped_column(String(24), default="")   # model | api-error
+    model: Mapped[str] = mapped_column(String(64), default="")
+    first_seen: Mapped[str] = mapped_column(String(64))           # ISO
+    judged_at: Mapped["str | None"] = mapped_column(String(64), nullable=True)
+
+
 class ImprovementLifecycle(Base):
     """The lifecycle ledger for one improvement recommendation for one reader (RC2.3).
 
@@ -2517,6 +2547,70 @@ class Store:
                              .order_by(RecFeedback.id)).all()
             return [{"articleId": r.article_id, "feedback": r.feedback,
                      "createdAt": r.created_at, "updatedAt": r.updated_at} for r in rows]
+
+    # ------------------------------------------------------------------ #
+    # Event-identity verdicts (event_identity) — the banded judge's memory.
+    # ------------------------------------------------------------------ #
+    def event_verdicts(self) -> dict:
+        """``pair_key -> verdict`` for every MODEL-judged pair — the build's input dict. Only
+        ``source == "model"`` rows count: api-error rows are retried, never trusted."""
+        with self.session() as s:
+            rows = s.execute(select(EventVerdict.pair_key, EventVerdict.verdict)
+                             .where(EventVerdict.source == "model",
+                                    EventVerdict.verdict.is_not(None))).all()
+            return {k: v for k, v in rows}
+
+    def enqueue_event_pairs(self, pairs: "list[dict]") -> int:
+        """Insert PENDING rows for band pairs a build emitted. Existing keys are left alone —
+        the FIRST asking build's snapshot is what gets judged, and a judged row is never
+        re-opened by a later build asking the same question."""
+        if not pairs:
+            return 0
+        now = _utcnow().isoformat()
+        created = 0
+        with self.session() as s:
+            for p in pairs:
+                if s.get(EventVerdict, p["pair_key"]) is not None:
+                    continue
+                s.add(EventVerdict(
+                    pair_key=p["pair_key"], url_a=str(p.get("url_a") or ""),
+                    url_b=str(p.get("url_b") or ""),
+                    title_a=str(p.get("title_a") or ""), dek_a=str(p.get("dek_a") or ""),
+                    published_a=str(p.get("published_a") or ""),
+                    title_b=str(p.get("title_b") or ""), dek_b=str(p.get("dek_b") or ""),
+                    published_b=str(p.get("published_b") or ""),
+                    verdict=None, source="", first_seen=now))
+                created += 1
+        return created
+
+    def pending_event_pairs(self, limit: int = 120,
+                            retry_after_hours: float = 1.0) -> "list[dict]":
+        """The worker's queue: never-judged rows first (oldest first), then api-error rows whose
+        last attempt is older than the cooldown — transport trouble is retried, not trusted."""
+        cutoff = (_utcnow() - timedelta(hours=retry_after_hours)).isoformat()
+        with self.session() as s:
+            rows = s.scalars(
+                select(EventVerdict)
+                .where(or_(EventVerdict.verdict.is_(None),
+                           and_(EventVerdict.source == "api-error",
+                                EventVerdict.judged_at < cutoff)))
+                .order_by(EventVerdict.first_seen).limit(limit)).all()
+            return [{"pair_key": r.pair_key, "url_a": r.url_a, "url_b": r.url_b,
+                     "title_a": r.title_a, "dek_a": r.dek_a, "published_a": r.published_a,
+                     "title_b": r.title_b, "dek_b": r.dek_b, "published_b": r.published_b}
+                    for r in rows]
+
+    def record_event_verdict(self, pair_key: str, verdict: str, *, source: str,
+                             model: str = "") -> bool:
+        """Persist one judgment onto its queued row. Unknown key -> False (the queue is the only
+        writer of rows; a verdict without a question is not recorded)."""
+        with self.session() as s:
+            row = s.get(EventVerdict, pair_key)
+            if row is None:
+                return False
+            row.verdict, row.source, row.model = verdict, source, model
+            row.judged_at = _utcnow().isoformat()
+            return True
 
     def remove_recommendation_feedback(self, user_id: int, article_id: str,
                                        feedback: "str | None" = None) -> int:
