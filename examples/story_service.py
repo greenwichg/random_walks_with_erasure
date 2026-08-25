@@ -1343,6 +1343,30 @@ def support_scope() -> str:
     corroboration is demanded when two bodies of coverage claim to be one event, not when one
     article claims to belong.
 
+    **MEASURED 2026-08-25 at ``--min-support 2 --support-scope groups``: 1.8% dropped, and NOT
+    adopted.** Live catalog, 27,885 articles, baseline already carrying the adopted X5c veto:
+    106 clusters split (vs 371 under ``any``), covered 6,135 → 6,044, droppedOut 113 = **1.8%**,
+    stories 1,508 → 1,553, blindspot claims 200 → 192, independent signal 0/63 at 0.953 → 0/59
+    at 0.956. The scope does what it was designed to do — it buys back four-fifths of the ``any``
+    variant's cost.
+
+    Adoption is held anyway, on the criterion as registered rather than on the harness's printed
+    verdict. That verdict line is a COST check; the bar on ``link_quorum`` reads "largest cluster
+    well down, droppedOut ≤ 5%, no story-count fall", and largest cluster here is 60 → 60 —
+    unchanged. The ``odyssey-spiderman`` exhibit again read ``separated → separated`` on both
+    sides, so the weld was not in the window and the benefit is unobserved for a second run. That
+    is 113 articles and 8 blindspot claims spent on something no instrument in the run can see.
+    The precedent is X6, recorded in ``docs/STORY_TEMPLATE_GATE.md``: a printed PASS overruled by
+    the criterion as registered.
+
+    What would settle it is the split READ, not another aggregate: ``--pieces N`` prints the
+    pieces of the biggest split clusters. The dropped list divides visibly — "The Shards"
+    next-episode (6 of 6, a/p 3.0), "First Alert Weather", "Fantasy football rankings" look like
+    one outlet's template being correctly separated, while "US hits Canadian goods with 50%
+    tariffs" (−2 of 11 across 10 publishers) and "At least five killed in Russian missile strikes
+    on Kyiv" (−2 of 8 across 7) look like real coverage being shed. Which of those dominates the
+    106 is the adoption decision.
+
     **Known weaker, stated plainly.** Under ``any`` the rule refuses the Odyssey/Spider-Man weld
     in BOTH merge orders. Under ``groups`` it refuses it in the order production actually takes
     (the bridge's strongest edge is to the Odyssey article at j=0.312 vs 0.286 to Spider-Man, and

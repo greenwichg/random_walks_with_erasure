@@ -173,7 +173,46 @@ depends on where its strongest edge points, and merges are consumed best-first:
 * **Order B** (bridge's strongest edge points at the large side) — it joins as an unGated
   singleton and the foreign article follows as one too. `any` refuses; `groups` does not.
 
-Unmeasured. Whether that trade is worth taking is a counterfactual, not an argument.
+**Measured 2026-08-25 — 1.8% dropped, adoption HELD.** 27,885 articles, baseline already
+carrying the adopted X5c veto:
+
+| | before | after (support 2 / groups) |
+|---|---|---|
+| stories | 1,508 | 1,553 |
+| largest cluster | 60 | **60 — unchanged** |
+| covered articles | 6,135 | 6,044 |
+| **droppedOut** | — | **113 = 1.8%** (bar 5%) |
+| clusters split | — | 106 (vs 371 under `any`) |
+| blindspot claims | 200 | 192 |
+| independent signal | 0/63 bad, mean 0.953 | 0/59 bad, mean 0.956 |
+
+The scope does what it was designed to do — four-fifths of the `any` variant's cost, gone. The
+harness printed ADOPT and the decision is still held, because **that verdict line is a cost check
+and the criterion is not**. The bar registered on `link_quorum` reads "largest cluster well down,
+droppedOut ≤ 5%, no story-count fall", and the largest cluster did not move. The
+`odyssey-spiderman` exhibit read `separated → separated` on both sides for a second run, so the
+weld was again absent from the window and the benefit is unobserved. That is 113 articles and 8
+blindspot claims spent on something no instrument in the run can see. The precedent is X6, in
+`STORY_TEMPLATE_GATE.md`: *a printed PASS overruled by the criterion as registered.*
+
+What settles it is the split READ rather than another aggregate — `--pieces N` prints the pieces
+of the biggest split clusters, which is the read that tells a separated event from a shredded
+story. The dropped list divides visibly:
+
+* **plausibly correct** — one outlet repeating a template: "The Shards" next-episode (6 of 6,
+  a/p 3.0), "First Alert Weather", "Fantasy football rankings" (both a/p 2.0);
+* **plausibly damage** — "US hits Canadian goods with 50% tariffs" (−2 of 11 across 10
+  publishers, a/p 1.1), "At least five killed in Russian missile strikes on Kyiv" (−2 of 8
+  across 7).
+
+Which of those dominates the 106 is the adoption decision.
+
+One number worth explaining rather than glossing: the run reports **12 clusters merged** under a
+rule that can only refuse merges. Both are true. Refusal is subtractive inside `cluster()` — the
+subset property is pinned by test at that layer — but the aggregate `_merge_duplicates` and the
+repair pass then receive *different inputs*, and a merge those passes previously declined on a
+size cap or a profile can now succeed. End-to-end containment was never claimed; only linkage
+containment is.
 
 ## Measuring it
 
