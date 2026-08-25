@@ -197,9 +197,11 @@ vs Crystal Palace" to "Isak returns to Newcastle with Liverpool", and "Rory McIl
 Championship" to "Wyndham Clark's girlfriend reveals huge relationship step". A rule that
 fragments real events and manufactures new welds is not paying for its 1.9% however the bar reads.
 
-**Both scopes are now spent, and the deterministic structural line on comparative bridges is
-closed.** What remains for that failure class is the banded semantic judge (`event_identity`),
-implemented and dark for want of an API key.
+**Both scopes are now spent, and the structural LINKAGE line on comparative bridges is closed.**
+Two things still reach that class: X5c catches the subset where both sides carry distinct
+corroborated entity consensuses (its production split was exactly such a case — see Part 2), and
+the banded semantic judge (`event_identity`) is the general answer, implemented and dark for want
+of an API key.
 
 One number worth explaining rather than glossing: the run reports **12 clusters merged** under a
 rule that can only refuse merges. Both are true. Refusal is subtractive inside `cluster()` — the
@@ -319,16 +321,53 @@ and **no article left a story**, so both halves cleared `min_articles`/`min_publ
 the shape a veto should have at this coverage — quiet where extraction is absent, decisive where
 two clusters genuinely name different people. Nothing else in the catalog noticed.
 
+## The split, read
+
+Verified 2026-08-25 with the baseline forced off, so the comparison stayed meaningful after
+adoption:
+
+```
+--- Trump announces 'most crushing economic operation ever' against Iran
+    15 articles / 11 publishers -> 2 pieces holding 15 articles (0 dropped)
+    0 of those pieces are 2 articles or fewer
+       11     8  Trump announces 'most crushing economic operation ever' against
+        4     3  Trump declares economic warfare on Iran. And, SCOTUS to rule on
+```
+
+Zero dropped and no ≤2-article fragment is the shape that distinguishes a separation from a
+shredding. But *what* the 4-article piece is matters more than the arithmetic: four **two-topic
+daily briefings** from three publishers — "…on Iran. **And, SCOTUS to rule on** …".
+
+That is the **round-up bridge** class, the same shape as the Odyssey/Spider-Man weld: an article
+genuinely about two events, welded to one of them by vocabulary it honestly shares. The entity
+channel reached it because the briefings' corroborated consensus and the single-event story's do
+not intersect — and it did so at zero measured cost, which is exactly what support breadth tried
+and could not afford.
+
+This is a *fraction* of that class, not a solution to it: both sides must clear extraction, and
+the telemetry says only ~6% of merges do. The judge remains the general answer.
+
+**Deliberately not registered as a rubric exhibit.** The two sides are "an article about the Iran
+announcement" and "a briefing reporting that announcement alongside a SCOTUS case", and whether
+the rubric calls that pair `different_event` is a real judgement rather than an obvious one.
+`V1_EXHIBITS` is ratified ground truth and does not take contestable labels.
+
 ## Measuring it
+
+Once a rule is a compose default, a flag that sets only the AFTER side compares it against itself
+and honestly reports 0/0/0. Force the baseline off for that container:
 
 ```bash
 cd /opt/ih && source deploy/ops/_compose.sh
-dc run --rm -T api python examples/audit_clustering_change.py --entity-veto --show 20
+dc run --rm -T -e RWE_STORY_ENTITY_VETO=0 api python \
+    examples/audit_clustering_change.py --entity-veto --pieces 5
 ```
 
-The run now prints an `X5c telemetry` line — merges checked, how many had consensus on both
-sides, how many were vetoed, and the dup-merge count separately — so the two decision points can
-be read apart from the geo veto's numbers on the line above.
+The run prints an `X5c telemetry` line — merges checked, how many had consensus on both sides,
+how many were vetoed, and the dup-merge count separately — so the two decision points read apart
+from the geo veto's numbers on the line above. Two production builds agree on its shape: **7,466
+merges / 461 eligible / 24 vetoed** and **7,511 / 448 / 31** — around 6% of merge decisions are
+ones this rule can speak to at all.
 
 Same bars as everything else in this file. The run reports `entityMergeVetoed` /
 `dupMergeEntityVetoed` telemetry so the two decision points can be read separately. It requires a

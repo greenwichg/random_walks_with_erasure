@@ -1322,6 +1322,32 @@ def entity_veto() -> bool:
     fourteen merges in fifteen and decisive on the rest is the shape a 24%-extraction signal
     should have.
 
+    **The split, read 2026-08-25** (baseline forced off with ``-e RWE_STORY_ENTITY_VETO=0``, so
+    the comparison was meaningful after adoption). One cluster moved and it came apart cleanly:
+    "Trump announces 'most crushing economic operation ever' against Iran", 15 articles from 11
+    publishers, into 11/8 + 4/3 — **zero articles dropped, and no piece of two articles or
+    fewer**, which is the shape that distinguishes a separation from a shredding.
+
+    What the 4-article piece IS matters more than the arithmetic: "Trump declares economic warfare
+    on Iran. **And, SCOTUS to rule on** …" — four two-topic daily briefings from three
+    publishers. That is the ROUND-UP BRIDGE class, the same shape as the Odyssey/Spider-Man weld:
+    an article genuinely about two events, welded to one of them by the vocabulary it honestly
+    shares. The entity channel reached it because the briefings' corroborated consensus and the
+    single-event story's do not intersect.
+
+    So the conclusion recorded on ``support_scope`` — that the deterministic line on comparative
+    bridges is closed — needs one qualification. It is closed for the DETERMINISTIC-LEXICAL
+    approaches; the entity channel reaches the subset of round-up bridges where both sides happen
+    to carry distinct corroborated consensuses, for free, at zero measured cost. That is a
+    fraction of the class (both sides must clear extraction), not a solution to it. The banded
+    judge remains the answer for the 94% of merges where this rule is silent.
+
+    Deliberately NOT registered in ``audit_verifier_band.V1_EXHIBITS``: the two sides here are
+    "an article about the Iran announcement" and "a briefing that reports the Iran announcement
+    alongside a SCOTUS case", and whether the rubric calls that pair ``different_event`` is a
+    genuine judgement rather than an obvious one. The exhibit table is ratified ground truth and
+    does not take contestable labels.
+
     A veto is the only direction offered. Entity evidence proposing merges is X5b's job and is
     measured separately; this knob cannot create a cluster, only decline one.
 
@@ -1399,9 +1425,12 @@ def support_scope() -> str:
     huge relationship step". A rule that fragments real events and manufactures new welds is not
     paying for its 1.9% however the cost bar reads.
 
-    With both scopes measured and rejected, the deterministic structural line on comparative
-    bridges is closed. What remains for that failure class is the banded semantic judge
-    (``event_identity``), which is implemented and dark for want of an API key.
+    With both scopes measured and rejected, the structural LINKAGE line on comparative bridges is
+    closed. Two things still reach that class. X5c (``entity_veto``) catches the subset where both
+    sides carry distinct corroborated entity consensuses — its production split was exactly such a
+    case, a two-topic daily briefing separated from a single-event Iran story at zero cost. And
+    the banded semantic judge (``event_identity``) is the general answer, implemented and dark for
+    want of an API key.
 
     **Known weaker, stated plainly.** Under ``any`` the rule refuses the Odyssey/Spider-Man weld
     in BOTH merge orders. Under ``groups`` it refuses it in the order production actually takes
