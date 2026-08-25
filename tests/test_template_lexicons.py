@@ -36,6 +36,33 @@ def test_hyphen_compound_filters_still_apply():
     assert "64" not in on, "joined pure digits stay dropped"
 
 
+# --------------------------------------------------------------------------- #
+# The recall lexicon (production exhibit 2026-08-25: fruit-bars welded into eye-drops).
+# --------------------------------------------------------------------------- #
+def test_the_recall_bridge_is_vetoed_and_the_genuine_pairs_survive():
+    """The weld could never happen directly (one shared token) — it rode a boilerplate BRIDGE.
+    Under the recall lexicon that bridge's entire shared set is shape vocabulary, so the gate
+    vetoes it; the genuine eye-drop pair keeps {eye, drops} and the genuine fruit-bar chain
+    keeps {frozen, fruit, bars} as distinctive evidence."""
+    fruit = {"headline": "Frozen fruit bars recalled nationwide over possible glass contamination"}
+    eye = {"headline": "Nearly 40,000 bottles of eye drops recalled. See the affected product"}
+    bridge = {"headline": "Eye drops recalled nationwide over possible contamination, FDA warns"}
+    fruit2 = {"headline": "Frozen fruit bars sold in 30 states recalled over glass fears"}
+    arts = [fruit, eye, bridge, fruit2]
+    union = story_service._lexicon_union(("announce", "tracker", "preview", "recall"))
+    ok = story_service._template_closure(arts, 0, lexicon=union)
+    assert not ok(0, 2), "the bridge shares ONLY recall-shape tokens — vetoed"
+    assert ok(1, 2), "the genuine eye-drop pair survives on {eye, drops}"
+    assert ok(0, 3), "the genuine fruit-bar chain survives on {frozen, fruit, bars/glass}"
+
+
+def test_recall_tokens_name_shape_never_subject():
+    """Hazards and packaging are the SUBJECT half of a recall headline and must stay out of the
+    lexicon, or genuine same-recall coverage loses its evidence."""
+    for subject in ("glass", "listeria", "salmonella", "bottles", "bars", "eye", "drops"):
+        assert subject not in story_service.RECALL_TOKENS
+
+
 def test_hyphen_default_is_off_everywhere(monkeypatch):
     monkeypatch.delenv("RWE_CLUSTER_HYPHEN_COMPOUNDS", raising=False)
     assert story_service.hyphen_compounds() is False

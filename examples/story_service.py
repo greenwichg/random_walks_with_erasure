@@ -764,9 +764,25 @@ PREVIEW_TOKENS = frozenset((
     "tips", "start", "time", "times", "watch", "kickoff", "fixture", "fixtures",
     "schedule", "highlights"))
 
-#: Name -> vocabulary. ``announce`` is the adopted Phase B set; the others are candidates.
+#: ``recall`` — consumer-safety recall coverage (registered 2026-08-25, BEFORE measurement).
+#: The production exhibit that named the genre: "Frozen fruit bars recalled nationwide over
+#: possible glass contamination" (Fox Business) welded into the Prestige eye-drops recall
+#: story. The two could never edge DIRECTLY (one shared token, j 0.067) — the weld is a
+#: boilerplate BRIDGE: against an in-cluster headline of the shape "Eye drops recalled
+#: nationwide over possible contamination", the fruit-bar headline shares
+#: {contamination, nationwide, possible, recalled} — four tokens, all recall-shape, zero
+#: distinctive, clearing both the shared floor and Jaccard (0.333). Shape only, never
+#: subject: hazards (glass, listeria) and packaging (bottles, bars) stay OUT, so genuine
+#: same-recall pairs keep their product tokens as evidence ({eye, drops} survives the gate).
+RECALL_TOKENS = frozenset((
+    "recall", "recalled", "recalls", "recalling", "contamination", "contaminated",
+    "nationwide", "possible", "potential", "affected", "product", "products",
+    "warning", "warns", "sold", "stores", "urged", "consumers"))
+
+#: Name -> vocabulary. ``announce`` is the adopted Phase B set; ``tracker``/``preview``
+#: adopted 2026-08-24; ``recall`` is the current candidate.
 TEMPLATE_LEXICONS = {"announce": TEMPLATE_TOKENS, "tracker": TRACKER_TOKENS,
-                     "preview": PREVIEW_TOKENS}
+                     "preview": PREVIEW_TOKENS, "recall": RECALL_TOKENS}
 
 
 def template_lexicons() -> "tuple[str, ...]":

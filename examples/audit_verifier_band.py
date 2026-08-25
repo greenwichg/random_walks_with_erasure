@@ -86,6 +86,11 @@ V1_EXHIBITS = (
      ("preview", "head-to-head", "odds"), "different_event", "3b,5"),
     ("uk-alert-family", ("alert", "domestic abuse"), ("alert", "burnham"),
      "same_event", "4-family,5"),
+    # Production 2026-08-25: the recall-genre weld (see story_service.RECALL_TOKENS) — a
+    # frozen-fruit-bars recall bridged into the Prestige eye-drops recall story on pure
+    # recall-shape vocabulary.
+    ("recall-fruitbar", ("frozen fruit", "recalled"), ("eye drops", "recalled"),
+     "different_event", "5"),
 )
 
 
