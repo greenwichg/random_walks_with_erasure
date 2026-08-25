@@ -814,25 +814,33 @@ def _lexicon_union(names: "tuple[str, ...]") -> frozenset:
 
 
 def derived_boilerplate_on() -> bool:
-    """Corpus-derived boilerplate gate — CANDIDATE, default OFF
-    (``RWE_CLUSTER_DERIVED_BOILERPLATE=1`` enables without a deploy; measured by
-    ``audit_clustering_change.py --derived-boilerplate`` before any adoption).
+    """Corpus-derived boilerplate gate — **measured 2026-08-25 and REJECTED. Do not turn this
+    on.** (The flag survives as the audit's instrument only.)
 
-    The generalisation the manual lexicons were approximating one exhibit at a time: instead of
-    enumerating shape vocabularies (announce, tracker, preview, recall — each discovered from a
-    weld after the fact), derive the set from the build's own articles. Boilerplate has a
-    domain-free signature event names lack: it is frequent across the window AND present on
-    essentially every day of it ("recalled", "odds", "collection" appear daily in every genre),
-    while event tokens BURST — high df during their story's days, absent otherwise ("hickerson",
-    "batwara", "eye"+"drops"). Two registered conditions, both required:
-    ``df >= boilerplate_df()`` and ``days-present >= boilerplate_days()``.
+    The idea was the generalisation the manual lexicons approximate one exhibit at a time:
+    derive the shape vocabulary from the build's own articles — boilerplate is frequent across
+    the window AND present on essentially every day of it, while event tokens BURST in their
+    story's own days. Two registered conditions: ``df >= boilerplate_df()`` and days-present
+    ``>= boilerplate_days()``.
 
-    Same GATE semantics as the adopted rule — an edge's shared set must contain >= 1 token
-    outside the (manual ∪ derived) set; veto-only, never a re-weighting — because the family
-    that re-weighted every pair (``use_idf``) measured a 10.5% coverage loss, and the family
-    that gates sole-boilerplate edges has measured 0.0–0.05% three times running. Self-check
-    built in: the derived set should REDISCOVER the manual lexicons on a live window; the audit
-    prints the overlap so that claim is inspected, not assumed."""
+    The measurement (``audit_clustering_change.py --derived-boilerplate``, 27,817 live
+    articles): 1,601 derived tokens, 335 clusters split, **1,036 articles dropped — 17.0% of
+    covered against the 5% bar** — story count fell, and the damage list is every genuine
+    running story: Harry/Meghan (60 articles, 36 publishers) shattered into 7 fragments,
+    Hickerson −21, the week's Trump stories −20/−18/−17. The subsumption self-check PASSED
+    (with only ``announce`` beside it the numbers were identical — the derivation swallowed the
+    manual lexicons whole), which is exactly what makes the rejection informative:
+
+    **The mechanism, kept so this avenue is not re-walked:** day-spread separates *burst*
+    events from boilerplate, but a WEEK-LONG RUNNING STORY is present every day by definition —
+    "harry", "tariffs", "canada" meet both conditions just as "recalled" and "odds" do. No
+    distributional statistic over tokens distinguishes "frequent because template" from
+    "frequent because important"; the manual lexicons work precisely because they encode the
+    human judgment the corpus cannot make. With ``use_idf`` (re-weighting form, −10.5%) and
+    this (gate form, −17.0%), the corpus-statistical family is now closed in both its forms.
+    What separates "recalled nationwide" from "harry meghan" is MEANING, not distribution —
+    the registered next lever is the banded semantic verifier
+    (docs/EVENT_IDENTITY_RUBRIC.md; V0 sized the band at ~451 pairs/day)."""
     v = os.environ.get("RWE_CLUSTER_DERIVED_BOILERPLATE", "").strip().lower()
     return v in {"1", "true", "yes", "on"}
 
