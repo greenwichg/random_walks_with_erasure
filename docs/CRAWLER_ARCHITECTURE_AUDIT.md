@@ -4,6 +4,11 @@ Audit of the path that actually runs in production, the comparison against publi
 the one architectural change taken from it. Same discipline as the clustering work: audit the real
 code, register a candidate, measure it on the live catalog, adopt only on the numbers.
 
+> **Companion:** `SOURCE_COVERAGE_AUDIT.md` covers the other half — *which* publishers we carry and
+> what they do once inside. It records two measured rejections: source expansion and curation (the
+> untracked backlog is worth 13 blindspot claims across 1,528 stories), and excluding research/forum
+> outlets from clustering (removal costs 24 news articles their coverage to fix 1 false merge).
+
 ## What actually runs
 
 The first finding is a naming trap worth stating before anything else.
