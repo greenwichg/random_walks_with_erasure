@@ -54,6 +54,7 @@ from collections import Counter, defaultdict
 
 import audit_clustering_change as ach
 import clustering
+import discover
 import outlet_registry
 import story_service
 import store as store_mod
@@ -94,6 +95,26 @@ def _host(row) -> str:
     return outlet_registry._host_of(row.get("canonicalUrl") or row.get("url") or "")
 
 
+def member_key(row) -> str:
+    """The key a story's coverage entry carries for this row.
+
+    **This is the bug that invalidated the first two production runs of this script, and it is
+    worth the docstring.** ``audit_clustering_change.index_by_member`` indexes on ``c["url"]``, and
+    ``_coverage`` fills that from the article's DISPLAY url — ``_absolute_url(row["url"] or
+    row["canonicalUrl"])``. This script looked up ``canonicalUrl``, which ``ingest.canonical_url``
+    has already lower-cased, stripped of ``www.``, of the query string and of the trailing slash.
+
+    For any article whose feed URL carries any of those — which is most of them — the two strings
+    differ and the lookup MISSES. Measured on a three-row fixture: **0 of 3 hits**. On production it
+    reported 292 in-story articles against a window that actually had 6,121 covered, so every
+    participation figure was low by roughly 20x, and the outlets it appeared to separate were
+    separated by URL formatting rather than by clustering.
+
+    The expression below is the one ``discover.feed_article_to_article`` uses, called on the same
+    module, so the two cannot drift apart without the import failing."""
+    return discover._absolute_url(row.get("url") or row.get("canonicalUrl"))
+
+
 def outlet_table(rows: list, stories: list, reg) -> dict:
     """Per outlet identity, every measurement except the counterfactual."""
     by_id = defaultdict(list)
@@ -114,8 +135,8 @@ def outlet_table(rows: list, stories: list, reg) -> dict:
     out = {}
     for key, arts in by_id.items():
         o = reg.resolve(key)
-        urls = [a.get("canonicalUrl") or a.get("url") for a in arts]
-        in_story = [u for u in urls if u in member]
+        urls = [member_key(a) for a in arts]
+        in_story = [u for u in urls if u and u in member]
         hosts = Counter(_host(a) for a in arts if _host(a))
         langs = Counter((a.get("language") or "").strip().lower() for a in arts
                         if (a.get("language") or "").strip())
@@ -205,8 +226,26 @@ def main(argv=None) -> int:
     base = story_service.build_stories(rows, entities=ents, event_verdicts=verdicts_in)
     table = outlet_table(rows, base, reg)
 
+    # ---------------------------------------------------------------- reconciliation
+    #
+    # Every participation figure below depends on ONE dictionary lookup landing, and the first two
+    # production runs of this script were invalid because it did not (see `member_key`). So the
+    # totals are reconciled against the build's own covered count BEFORE anything is reported: the
+    # per-outlet in-story counts must sum to the number of coverage entries, because every covered
+    # article belongs to exactly one outlet. A mismatch means the key is wrong again, and the run
+    # says so instead of printing 20x-low numbers with a straight face.
+    covered = sum(len(s["coverage"]) for s in base)
+    summed = sum(v["inStory"] for v in table.values())
+    if summed != covered:
+        print(f"*** LOOKUP BROKEN: per-outlet in-story sums to {summed:,}, but the build covered "
+              f"{covered:,} articles.")
+        print("    Every participation figure would be wrong. See member_key() — this is the exact")
+        print("    failure that invalidated the runs of 2026-08-25. Refusing to report.")
+        return 1
+
     tracked = {k: v for k, v in table.items() if v["tracked"]}
-    print(f"window            : {len(rows):,} articles, {len(base):,} stories")
+    print(f"window            : {len(rows):,} articles, {len(base):,} stories, "
+          f"{covered:,} covered   [membership reconciled]")
     print(f"outlet identities : {len(table):,}   tracked {len(tracked):,}   "
           f"untracked {len(table) - len(tracked):,}")
     print(f"  above the {args.floor}-article floor: "
@@ -290,8 +329,7 @@ def main(argv=None) -> int:
     mb, ma = ach.index_by_member(base), ach.index_by_member(after)
     cov_b = sum(len(s["coverage"]) for s in base)
     cov_a = sum(len(s["coverage"]) for s in after)
-    moved_urls = {r.get("canonicalUrl") or r.get("url") for r in rows
-                  if _identity(reg, r) in demote}
+    moved_urls = {member_key(r) for r in rows if _identity(reg, r) in demote}
 
     print(f"  rows removed       : {len(rows) - len(keep):,}")
     print(f"  stories            : {len(base):,} -> {len(after):,}")
