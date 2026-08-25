@@ -374,6 +374,18 @@ services:
       # lexical profile reaches) at zero dropped articles, largest 71. Requires article_entities
       # (the GKG entity cycle below keeps it current). 0 is the kill switch.
       RWE_STORY_ENTITY_MERGE: ${RWE_STORY_ENTITY_MERGE:-2}
+      # X5c entity-disagreement veto (story_service.entity_veto) — the SAME entity channel spent
+      # in the other direction. X5b above can only ever propose a merge; until this existed,
+      # nothing could use entities to refuse one, so a text-similar merge with no geography
+      # behind it (entertainment, business, sport) had no second opinion at all. Veto iff both
+      # clusters carry a corroborated entity consensus and those consensuses share no name;
+      # every other state fails open. Applied at both cluster-level decision points: the
+      # build-time merge gate and the aggregate dup-merge.
+      #
+      # 0 = off and byte-identical. Stays 0 until audit_clustering_change.py --entity-veto
+      # clears the bars registered on story_service.link_quorum; flip in the commit that records
+      # the numbers. Reads the same article_entities table X5b already requires.
+      RWE_STORY_ENTITY_VETO: ${RWE_STORY_ENTITY_VETO:-0}
       # Sole-template-evidence gate (adopted 2026-08-17, docs/STORY_TEMPLATE_GATE.md): a pairwise
       # edge must share >= 1 token outside the announcement-template lexicon — the entertainment
       # template chain's fix ("X-Men cast/release-date" welded to The Paper/Mirzapur/DJI over

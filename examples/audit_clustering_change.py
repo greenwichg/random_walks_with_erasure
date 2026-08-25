@@ -18,6 +18,7 @@ coverage that way, most of it not the quorum's doing. Pass ``--before-min-shared
     python examples/audit_clustering_change.py --show 20             # list the biggest splits
     python examples/audit_clustering_change.py --link-quorum 0.3     # cluster-aware linkage
     python examples/audit_clustering_change.py --min-support 2       # merge support breadth
+    python examples/audit_clustering_change.py --entity-veto         # X5c entity disagreement
     python examples/audit_clustering_change.py --desc-tokens 12      # cluster on title + dek
 
 It prints a VERDICT against bars fixed in advance (``--max-dropped``), because the previous
@@ -68,6 +69,7 @@ _DEPLOY_CLUSTER_ENV = (
     "RWE_CLUSTER_GEO_VETO", "RWE_STORY_ENTITY_MERGE",     # X4 + X5b, adopted 2026-08-16
     "RWE_CLUSTER_TEMPLATE_LEXICONS",                      # lexicon set, adopted 2026-08-24
     "RWE_CLUSTER_MIN_SUPPORT",                            # merge support breadth
+    "RWE_STORY_ENTITY_VETO",                              # X5c entity disagreement
 )
 
 
@@ -84,7 +86,7 @@ def deploy_env_present() -> bool:
 def build(rows: list, *, min_shared: int, min_tokens: int, idf: bool = False,
           quorum=None, support=None, repair=None, merge=None, desc=None, veto=None,
           veto_stats=None,
-          entity_merge=None, entities=None, lexicons=None, hyphen=None,
+          entity_merge=None, ent_veto=None, entities=None, lexicons=None, hyphen=None,
           derived=None, derived_df=None, derived_days=None) -> list:
     """``None`` means "whatever production is configured with" — ``build_stories`` resolves it.
 
@@ -97,7 +99,8 @@ def build(rows: list, *, min_shared: int, min_tokens: int, idf: bool = False,
                                        quorum=quorum, support=support,
                                        repair=repair, merge=merge, desc=desc,
                                        veto=veto, veto_stats=veto_stats,
-                                       entity_merge=entity_merge, entities=entities,
+                                       entity_merge=entity_merge, ent_veto=ent_veto,
+                                       entities=entities,
                                        lexicons=lexicons, hyphen=hyphen,
                                        derived=derived, derived_df=derived_df,
                                        derived_days=derived_days)
@@ -236,7 +239,7 @@ def compare(store_, *, before: tuple, after: tuple, show: int = 10,
             before_idf: bool = False, after_idf: bool = False,
             before_quorum=None, after_quorum=None, after_support=None,
             after_repair=None, after_merge=None, after_desc=None,
-            after_veto=None, after_entity_merge=None,
+            after_veto=None, after_entity_merge=None, after_ent_veto=None,
             after_lexicons=None, after_hyphen=None,
             after_derived=None, after_derived_df=None, after_derived_days=None) -> dict:
     rows = story_service._fetch(store_)
@@ -246,18 +249,20 @@ def compare(store_, *, before: tuple, after: tuple, show: int = 10,
     # entity_merge_min() to 2 while silently withholding the data it needs would make the
     # baseline something production is not, the exact defect this docstring's history keeps
     # re-finding one knob at a time.
-    need_entities = bool(after_entity_merge) or story_service.entity_merge_min() > 0
+    need_entities = (bool(after_entity_merge) or story_service.entity_merge_min() > 0
+                     or bool(after_ent_veto) or story_service.entity_veto())
     entities = (store_.entities_for_urls([r.get("canonicalUrl") for r in rows])
                 if need_entities else None)
     a = build(rows, min_shared=before[0], min_tokens=before[1], idf=before_idf,
               quorum=before_quorum, entities=entities)
     # Telemetry only when a veto/pass is explicitly under test — a None passthrough must stay
     # byte-identical to production, counting included.
-    veto_stats = {} if (after_veto or after_entity_merge or after_derived) else None
+    veto_stats = ({} if (after_veto or after_entity_merge or after_derived or after_ent_veto)
+                  else None)
     b = build(rows, min_shared=after[0], min_tokens=after[1], idf=after_idf, quorum=after_quorum,
               support=after_support, repair=after_repair, merge=after_merge, desc=after_desc,
               veto=after_veto, veto_stats=veto_stats,
-              entity_merge=after_entity_merge, entities=entities,
+              entity_merge=after_entity_merge, ent_veto=after_ent_veto, entities=entities,
               lexicons=after_lexicons, hyphen=after_hyphen,
               derived=after_derived, derived_df=after_derived_df,
               derived_days=after_derived_days)
@@ -384,6 +389,9 @@ def main(argv=None) -> int:
     ap.add_argument("--link-quorum", type=float, default=None,
                     help="cluster-aware linkage on the AFTER side: fraction of cross-pairs that "
                          "must agree before two clusters merge (0 = single linkage)")
+    ap.add_argument("--entity-veto", action="store_true",
+                    help="X5c on the AFTER side: refuse a cluster merge when both sides carry a "
+                         "corroborated entity consensus and those consensuses share no name")
     ap.add_argument("--min-support", type=int, default=None,
                     help="merge support BREADTH on the AFTER side: distinct members each side "
                          "must contribute to the passing cross-pairs (1 = off). Orthogonal to "
@@ -470,6 +478,7 @@ def main(argv=None) -> int:
     res = compare(store_mod.Store(args.db), before=before,
                   after=after, show=args.show, after_idf=args.idf,
                   after_quorum=args.link_quorum, after_support=args.min_support,
+                  after_ent_veto=True if args.entity_veto else None,
                   after_repair=args.repair_quorum,
                   after_merge=args.merge_sim, after_desc=cap, after_veto=args.geo_veto,
                   after_entity_merge=args.entity_merge,
@@ -497,6 +506,7 @@ def main(argv=None) -> int:
               if (args.geo_veto or story_service.geo_veto()) else "")
            + (f", entity-merge {args.entity_merge or story_service.entity_merge_min()}"
               if (args.entity_merge or story_service.entity_merge_min()) else "")
+           + (", entity-veto" if (args.entity_veto or story_service.entity_veto()) else "")
            + (f", lexicons {'+'.join(lex_names)}" if lex_names else "")
            + (", hyphen-compounds" if args.hyphen_compounds else "")
            + ((", derived-boilerplate"
@@ -510,7 +520,8 @@ def main(argv=None) -> int:
                 + _tag("dek", story_service.desc_tokens())
                 + (f", veto {story_service.geo_veto()}" if story_service.geo_veto() else "")
                 + (f", entity-merge {story_service.entity_merge_min()}"
-                   if story_service.entity_merge_min() else ""))
+                   if story_service.entity_merge_min() else "")
+                + (", entity-veto" if story_service.entity_veto() else ""))
     # "[PRODUCTION BASELINE]" is a claim about the ENVIRONMENT, not just about before == configured.
     # Every environment is self-consistent with its own defaults, so without this check the label
     # certifies any container as production — which is exactly how a backup-profile container's

@@ -1040,6 +1040,23 @@ def _and_evidence(*fns):
     return ok
 
 
+def _and_merge_ok(*fns):
+    """AND-compose optional CLUSTER-level ``merge_ok`` gates (None entries drop; empty -> None).
+
+    Structurally the same fold as :func:`_and_evidence`, kept separate because the callables have
+    a different contract — member index LISTS rather than a pair of indices — and one composer
+    silently accepting both is how a pairwise closure ends up wired into a cluster-level hook."""
+    live = [f for f in fns if f is not None]
+    if not live:
+        return None
+    if len(live) == 1:
+        return live[0]
+
+    def ok(a: list, b: list) -> bool:
+        return all(f(a, b) for f in live)
+    return ok
+
+
 _GEO_VETO_MODES = ("pair", "growth")
 
 #: Votes the WINNING country of a cluster side's located consensus needs before that side's
@@ -1238,6 +1255,72 @@ def _geo_closures(arts: list, mode: str, stats: Optional[dict] = None) -> tuple:
     return None, merge_ok
 
 
+def entity_veto() -> bool:
+    """X5c — whether a corroborated ENTITY disagreement can refuse a cluster merge.
+    ``RWE_STORY_ENTITY_VETO=1`` enables it; unset/0 is off and byte-identical.
+
+    **The asymmetry this closes.** The clustering stack has always had two independent evidence
+    channels, and has only ever spent one of them in both directions. Geography can *refuse* a
+    merge (``_geo_closures``' growth veto at build time, the located-consensus block inside
+    ``_merge_duplicates`` at the aggregate stage). Entities could only ever *propose* one — X5b
+    (``_merge_by_entities``) adds merges the text missed and has no way to say a text-similar
+    merge is wrong. So a text signal with no geography behind it (entertainment, business,
+    sport — precisely the domains where the recorded welds live) had no second opinion at all.
+
+    This is the same rule as the geo veto, over the other channel: veto iff BOTH sides carry a
+    corroborated entity consensus and those consensuses share NO name. Everything else fails
+    open — one side unextracted, one side uncorroborated, any overlap at all.
+
+    **Why the coverage objection does not apply here.** X6 Phase 0 killed entities as an edge
+    *admission* channel on coverage: 24% of articles carry extracted entities, so a pairwise
+    entity test is blind most of the time. Two things make the cluster-level veto a different
+    proposition. Coverage AGGREGATES — ``_story_entity_consensus`` asks for a name carried by
+    ≥ 2 members, so the question is whether a CLUSTER has extraction, not whether an article
+    does, and that odds improve with exactly the cluster size where a weld does damage. And the
+    direction is safe: absence of evidence fails open, so the uncovered majority is untouched
+    rather than mis-served. The same Phase 0 run is also the receipt that the signal works where
+    it exists — in the Mirzapur weld the two articles that carried entities shared ZERO names,
+    discriminating perfectly on the pair the lexical gate needed a whole lexicon to reach.
+
+    A veto is the only direction offered. Entity evidence proposing merges is X5b's job and is
+    measured separately; this knob cannot create a cluster, only decline one."""
+    v = os.environ.get("RWE_STORY_ENTITY_VETO", "").strip().lower()
+    return v in {"1", "true", "yes", "on"}
+
+
+def _entity_closures(arts: list, entities: "Optional[dict]", on: bool,
+                     stats: Optional[dict] = None) -> tuple:
+    """``(evidence, merge_ok)`` for :func:`clustering.cluster` — ``(None, None)`` when off or
+    when no entity mapping was fetched, so the clusterer's fast path survives byte-identical.
+
+    ``evidence`` is always ``None``, and that is a statement about the rule rather than an
+    omission: a consensus needs ≥ 2 corroborating members, so this test has nothing to say about
+    a single pair. It is a cluster-level judgement by construction — which is precisely the
+    patent's shape, an independent evidence source consulted when two *clusters* are proposed for
+    merging, not when two documents are compared."""
+    if not on or not entities:
+        return None, None
+
+    def bump(key: str) -> None:
+        if stats is not None:
+            stats[key] = stats.get(key, 0) + 1
+
+    def consensus(idxs: list) -> frozenset:
+        return _story_entity_consensus([arts[i] for i in idxs], entities)
+
+    def merge_ok(a: list, b: list) -> bool:
+        bump("entityMergeChecked")
+        ca, cb = consensus(a), consensus(b)
+        if not ca or not cb:
+            return True                     # fail-open: no corroborated testimony on one side
+        bump("entityMergeGated")
+        if ca & cb:
+            return True
+        bump("entityMergeVetoed")
+        return False
+    return None, merge_ok
+
+
 def publisher_identity_enabled() -> bool:
     """Whether publisher counts collapse the name forms of one outlet. ON —
     ``RWE_STORY_PUBLISHER_IDENTITY=0`` counts raw strings again.
@@ -1424,7 +1507,8 @@ def _repair(members: list, *, quorum: float, sim: float, window_days: float, min
             support: int = clustering.DEFAULT_MIN_SUPPORT,
             desc: int = 0, veto: str = "", veto_stats: Optional[dict] = None,
             template: bool = False, lexicon: frozenset = TEMPLATE_TOKENS,
-            hyphen: bool = False, event_verdicts: "Optional[dict]" = None,
+            hyphen: bool = False, ent_veto: bool = False,
+            entities: "Optional[dict]" = None, event_verdicts: "Optional[dict]" = None,
             band_out: "Optional[dict]" = None) -> Optional[list]:
     """Re-cluster ONE condemned cluster's members under a stricter linkage rule.
 
@@ -1444,6 +1528,11 @@ def _repair(members: list, *, quorum: float, sim: float, window_days: float, min
     # template gate composes here exactly as in the primary build (one rule, or the repair
     # re-splits on a disagreement rather than a defect — the article_tokens discipline).
     r_evidence, r_merge_ok = _geo_closures(members, veto, veto_stats)
+    # Same discipline as the lexicon and the support breadth: the repair re-clusters under a
+    # stricter quorum, so it must consult the SAME evidence channels or it re-splits on a
+    # disagreement between the passes rather than on a defect in the cluster.
+    _, r_ent_ok = _entity_closures(members, entities, ent_veto, veto_stats)
+    r_merge_ok = _and_merge_ok(r_merge_ok, r_ent_ok)
     if template:
         r_evidence = _and_evidence(
             _template_closure(members, desc, veto_stats, lexicon=lexicon, hyphen=hyphen),
@@ -1592,7 +1681,9 @@ def _gap_hours(a: list, b: list) -> float:
 
 
 def _merge_duplicates(groups: list, *, min_sim: float, max_gap_hours: float, max_size: int,
-                      veto: str = "", veto_stats: Optional[dict] = None) -> list:
+                      veto: str = "", veto_stats: Optional[dict] = None,
+                      ent_veto: bool = False,
+                      entities: "Optional[dict]" = None) -> list:
     """Join clusters that are the same event described in different words.
 
     The recall failure the repair exposed: "Mass shooting reported at Seattle Center" and "…gunfire
@@ -1700,6 +1791,19 @@ def _merge_duplicates(groups: list, *, min_sim: float, max_gap_hours: float, max
                     and (ta >= GEO_MIN_CONSENSUS or tb >= GEO_MIN_CONSENSUS)):
                 if veto_stats is not None:
                     veto_stats["dupMergeVetoed"] = veto_stats.get("dupMergeVetoed", 0) + 1
+                continue
+        if ent_veto and entities:
+            # X5c at the AGGREGATE stage. The geo block above is the same rule over the other
+            # channel, and it is silent for any story family without located consensus — which is
+            # most of entertainment, business and sport. Profile similarity is a text signal
+            # scored over a token UNION, so one member's vocabulary can carry a whole cluster's
+            # profile; this is the independent second opinion on that decision.
+            ea = _story_entity_consensus([m for x in gi for m in groups[x]], entities)
+            eb = _story_entity_consensus([m for x in gj for m in groups[x]], entities)
+            if ea and eb and not (ea & eb):
+                if veto_stats is not None:
+                    veto_stats["dupMergeEntityVetoed"] = (
+                        veto_stats.get("dupMergeEntityVetoed", 0) + 1)
                 continue
         combined = tuple(sorted(gi + gj))
         for x in combined:
@@ -1903,6 +2007,7 @@ def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
                   veto: Optional[str] = None,
                   veto_stats: Optional[dict] = None,
                   entity_merge: Optional[int] = None,
+                  ent_veto: Optional[bool] = None,
                   entities: Optional[dict] = None,
                   template: Optional[bool] = None,
                   lexicons: "Optional[tuple[str, ...]]" = None,
@@ -1981,6 +2086,13 @@ def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
     # built over the post-exclusion `arts`, the exact list the clusterer indexes into.
     veto_mode = geo_veto() if veto is None else (veto if veto in _GEO_VETO_MODES else "")
     g_evidence, g_merge_ok = _geo_closures(arts, veto_mode, veto_stats)
+    # X5c: the SECOND independent evidence source, spent in the veto direction. Composed onto the
+    # same cluster-level hook as the geo gate, so a merge must satisfy both channels; each fails
+    # open on its own absence, so a domain with neither (no geography, no extracted entities)
+    # behaves exactly as it does today.
+    ent_on = entity_veto() if ent_veto is None else bool(ent_veto)
+    _, e_merge_ok = _entity_closures(arts, entities, ent_on, veto_stats)
+    g_merge_ok = _and_merge_ok(g_merge_ok, e_merge_ok)
     # The sole-template-evidence rule (Phase B; template_gate) — an edge must share >= 1
     # non-template token. Composed through the SAME evidence hook as the geo veto, so admission,
     # quorum scoring and repair consult one rule; None/off is byte-identical by construction.
@@ -2033,6 +2145,7 @@ def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
                              min_articles=min_articles, min_publishers=min_publishers, desc=cap,
                              veto=veto_mode, veto_stats=veto_stats, template=use_gate,
                              lexicon=lex_union, hyphen=hyph,
+                             ent_veto=ent_on, entities=entities,
                              event_verdicts=event_verdicts, band_out=band_out)
             if pieces is not None:
                 admitted.extend(pieces)
@@ -2044,7 +2157,8 @@ def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
         admitted = _merge_duplicates(
             admitted, min_sim=join,
             max_gap_hours=merge_max_gap_hours() if merge_gap is None else merge_gap,
-            max_size=merge_max_size(), veto=veto_mode, veto_stats=veto_stats)
+            max_size=merge_max_size(), veto=veto_mode, veto_stats=veto_stats,
+            ent_veto=ent_on, entities=entities)
     # X5b entity-corroborated merge recall — dormant twice over: the env default is 0 AND the
     # entity mapping must be injected by the caller (the audit does; _fetch never queries it,
     # so a production build costs nothing whatever the env says).
@@ -2264,11 +2378,15 @@ def _event_flush(store_, band_out: "dict | None") -> None:
 
 
 def _entities_for(store_, rows: list) -> "dict | None":
-    """The X5b entity mapping for a build — fetched ONLY when the pass is enabled (adopted
-    2026-08-16), one batched side-table query per build, ``None`` (free) when the env is off.
-    Every serving-path call site goes through here so none can silently diverge from what the
-    audit measured."""
-    if entity_merge_min() <= 0:
+    """The entity mapping for a build — fetched only when a pass that CONSUMES it is enabled,
+    one batched side-table query per build, ``None`` (free) when both are off. Every serving-path
+    call site goes through here so none can silently diverge from what the audit measured.
+
+    Two consumers now, in opposite directions: X5b (``entity_merge_min``) proposes merges from
+    entity corroboration, X5c (``entity_veto``) refuses them on entity disagreement. Either one
+    alone is reason enough to pay for the query; neither on means the build never touches the
+    side table."""
+    if entity_merge_min() <= 0 and not entity_veto():
         return None
     return store_.entities_for_urls([r.get("canonicalUrl") for r in rows])
 

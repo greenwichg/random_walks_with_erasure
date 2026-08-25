@@ -1,4 +1,11 @@
-# Merge support breadth — the comparative-bridge weld, and the cluster-level fix
+# Adapting the seeded-clustering architecture: support breadth + the entity veto
+
+Two changes, one lineage. Both come from US11663254B2 (*System and engine for seeded clustering
+of news events*, Conrad and Bender, Thomson Reuters), and both are cluster-level merge rules that
+cannot be expressed as a pairwise test. The mapping of the patent's four ideas onto this codebase,
+and what each one turned out to need, is in **Lineage** below.
+
+## Part 1 — merge support breadth
 
 **Status: implemented, registered, NOT yet adopted.** `RWE_CLUSTER_MIN_SUPPORT` defaults to `1`
 (off, byte-identical) in `deploy/docker-compose.yml`. It becomes a compose default only when
@@ -80,9 +87,30 @@ Bender, Thomson Reuters). Four ideas were taken; the patent-specific components 
 | Patent idea | What we already had | What this change adds |
 |---|---|---|
 | Candidate data set → **initial clusters** → **aggregate clusters** as separate stages | `clustering.cluster` forms groups; `_merge_duplicates` / `_merge_by_entities` are the aggregate stage; `_repair` re-splits between them | unchanged — the staging was already ours |
-| Merge on evidence from **two independent sources** (text signature + named-entity tags) | the `evidence` / `merge_ok` hooks: geo veto (X4), entity merge (X5b), template gate, banded judge | unchanged — the hook architecture was already ours |
+| Merge on evidence from **two independent sources** (text signature + named-entity tags) | the hook architecture — but see Part 2: only the GEO channel could ever refuse a merge | **X5c**, the entity channel spent in the veto direction |
 | **Avoid single weak pairwise links** joining unrelated material | `link_quorum` — but it measures a fraction, which a bridge satisfies | **support breadth**, the rule that actually names the bridge |
 | Merge decisions at the **cluster level**, not the article-pair level | `merge_ok`, `link_quorum`, `_merge_duplicates` cluster profiles | breadth is a property of the *merge*, not of any pair — it cannot be expressed pairwise at all |
+
+### The aggregate stage, audited rather than assumed
+
+The patent's third stage merges *initial clusters* into *aggregate clusters* agglomeratively.
+`_merge_duplicates` is our equivalent and it is stronger than agglomerative: it requires
+**complete linkage** — `all(score(a, b) >= min_sim for a in gi for b in gj)` — so no chain can
+form there at all, which is the same defect support breadth addresses in `cluster()`. Guards
+present on that pass, verified rather than asserted:
+
+| guard | present |
+|---|---|
+| complete linkage (no chains) | yes |
+| size cap | yes |
+| time-gap cap | yes |
+| coherence-floor veto | yes |
+| geo-disagreement veto | yes |
+| entity-disagreement veto | **added by X5c** |
+| best-first determinism | yes |
+
+Six of seven were already there. The seventh is Part 2, and its absence was the same asymmetry
+described below — the aggregate stage could hear geography's objection and not entities'.
 
 **Deliberately not taken:** the patent's editorially-supplied "seed" documents and topical labels
 (that is curation, and the seeded/sub-topic hierarchy is a product model we do not have); its
@@ -90,9 +118,11 @@ digital-signature duplicate detection (our `_merge_duplicates` already occupies 
 the Calais entity tagger (X6 Phase 0 measured our entity coverage at 24% — the channel is an
 extraction problem here, not a design one).
 
-**Not applied to `_merge_duplicates` / X5b**, on the same reasoning as the template gate: those
-passes compare cluster profiles rather than pairwise edges, so they are a different mechanism with
-their own evidence rules.
+**Support breadth is not applied to `_merge_duplicates` / X5b**, on the same reasoning as the
+template gate: those passes compare cluster profiles rather than pairwise edges, so breadth over
+cross-pairs has nothing to measure there — and complete linkage already forbids the chain it would
+be guarding against. X5c *is* applied there, because an entity disagreement is a statement about
+two clusters and reads identically at either decision point.
 
 ## Measuring it
 
@@ -116,3 +146,85 @@ that check.
 
 `RWE_CLUSTER_MIN_SUPPORT=1` in `deploy/.env` (or removing the compose default) restores pre-rule
 clustering exactly. No data was migrated and no stored row changed.
+
+
+---
+
+# Part 2 — X5c, the entity-disagreement veto
+
+**Status: implemented, registered, NOT yet adopted.** `RWE_STORY_ENTITY_VETO` defaults to `0`.
+
+## The asymmetry
+
+The patent's central merge claim is that decisions come from **two distinct evidence sources** —
+a digital signature over unstructured text, and named-entity tags from a separate tagger. We had
+two channels and were spending only one of them in both directions:
+
+| channel | can PROPOSE a merge | can REFUSE a merge |
+|---|---|---|
+| text (tokens, profiles) | yes — it is the primary signal | n/a |
+| geography | no | **yes** — `_geo_closures` growth veto, and the located-consensus block in `_merge_duplicates` |
+| entities | yes — X5b `_merge_by_entities` | **no — nothing existed** |
+
+So a text-similarity merge in any domain without event geography had no independent second
+opinion at all. That is not a marginal set: entertainment, business and sport are exactly where
+every weld in this repo's record lives, and `clusterTrust` is honestly *unknown* for them because
+located consensus never exists — which is also why the repair pass can never trigger there.
+
+## The rule
+
+> Refuse a cluster merge iff **both** sides carry a corroborated entity consensus and those
+> consensuses share **no** name.
+
+Deliberately the geo veto's rule over the other channel, including its corroboration standard: a
+consensus is a non-noise name carried by ≥ 2 members (`_story_entity_consensus`, already written
+and measured for X5b), because one member's testimony is a sample of one. Every other state fails
+open — one side unextracted, one side uncorroborated, any overlap at all.
+
+Applied at **both** cluster-level decision points: the build-time merge gate (composed onto the
+same `merge_ok` hook as the geo veto, via `_and_merge_ok`) and the aggregate dup-merge. The repair
+re-cluster receives the mapping too, for the `article_tokens` reason — a pass that links on a
+different rule than the primary build re-splits on the disagreement rather than on a defect.
+
+`evidence` is always `None` for this closure, and that is a statement about the rule rather than
+an omission: a consensus needs two corroborating members, so the test has nothing to say about a
+single pair. **It is cluster-level by construction** — which is precisely the patent's shape.
+
+## Why the coverage objection does not carry over
+
+X6 Phase 0 killed entities as an edge-*admission* channel on coverage: 24% of articles carry
+extracted entities, so a pairwise entity test is blind most of the time. Two things make the
+cluster-level veto a different proposition.
+
+* **Coverage aggregates.** The question is whether a *cluster* has extraction, not whether an
+  article does — and the odds improve with exactly the cluster size where a weld does damage.
+* **The direction is safe.** Absence of evidence fails open, so the uncovered majority is left
+  untouched rather than mis-served. A recall rule with 24% coverage is crippled; a veto with 24%
+  coverage is simply quiet.
+
+And the same Phase 0 run is the receipt that the signal works where it exists: in the Mirzapur
+weld, the two articles that carried entities shared **zero** names — discriminating perfectly on
+the pair the lexical route needed a whole lexicon to reach.
+
+## What it cannot do
+
+Only a veto is offered. Entity evidence *proposing* merges is X5b's job, is measured separately,
+and stays where it is. This knob cannot create a cluster, only decline one — so, like support
+breadth, every story under it is a subset of some story without it, and the reachable outcomes are
+a split or no change. Pinned by test.
+
+## Measuring it
+
+```bash
+cd /opt/ih && source deploy/ops/_compose.sh
+dc run --rm -T api python examples/audit_clustering_change.py --entity-veto --show 20
+```
+
+Same bars as everything else in this file. The run reports `entityMergeVetoed` /
+`dupMergeEntityVetoed` telemetry so the two decision points can be read separately. It requires a
+backfilled `article_entities` table — the same one X5b already depends on, kept current by the
+GKG entity cycle — and `_entities_for` now pays for the query when *either* consumer is enabled.
+
+## Rollback
+
+`RWE_STORY_ENTITY_VETO=0`. No data was migrated and no stored row changed.
