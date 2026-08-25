@@ -60,6 +60,34 @@ def _variant_key(canonical: str) -> str:
     return f"{host}{path}"
 
 
+def observed_state(store_) -> dict:
+    """What the scheduler has ACTUALLY done, read from the state it persists.
+
+    The counterfactual section below is a model. This one is an observation, and it answers the
+    question the whole cadence argument rests on: **do our feeds serve validators at all?** A feed
+    with a stored ``etag`` or ``last_modified`` can answer 304 and its unchanged polls are nearly
+    free; a feed with neither downloads a full body every time whatever the cadence, so for that
+    feed a faster interval is a straight cost increase.
+
+    This exists because the obvious way to ask — grepping the poller log for the ``notModified``
+    counter — cannot work: the cycle aggregate carries the count but nothing ever logs it. Reading
+    the persisted columns needs no new logging and is true of the whole history, not of whichever
+    window happens to still be in the log buffer."""
+    try:
+        rows = [r for r in store_.list_feed_health() if is_rss_feed(r.get("feedUrl"))]
+    except Exception:
+        return {"tracked": 0, "rows": []}
+    out = []
+    for r in rows:
+        st = store_.feed_schedule_state(r.get("feedUrl"))
+        out.append({"name": r.get("name") or r.get("feedUrl"),
+                    "etag": bool(st.get("etag")), "lastmod": bool(st.get("last_modified")),
+                    "interval": st.get("interval_s"), "due": st.get("next_due_at")})
+    return {"tracked": len(out), "rows": out,
+            "withValidators": sum(1 for r in out if r["etag"] or r["lastmod"]),
+            "scheduled": sum(1 for r in out if r["interval"])}
+
+
 def is_rss_feed(feed_url: str) -> bool:
     """Whether this health row is an RSS FEED rather than a keyed-JSON/API adapter.
 
@@ -206,6 +234,27 @@ def main(argv=None) -> int:
 
     d = duplicate_report(st, limit=args.show)
     s = scheduler_report(st, d["ratePerDay"])
+
+    o = observed_state(st)
+    print(f"\n=== observed scheduler state (what has actually happened) ===")
+    if not o["scheduled"]:
+        print("  the scheduler has not run yet on any feed — RWE_FEED_SCHEDULER off, or no poll")
+        print("  cycle has completed since it was enabled. Everything below is still a MODEL.")
+    else:
+        print(f"  feeds carrying a validator : {o['withValidators']}/{o['tracked']}  "
+              f"<- decides whether unchanged polls are free")
+        print(f"  feeds the law has settled  : {o['scheduled']}/{o['tracked']}")
+        print(f"\n  {'etag':>5} {'lastmod':>8} {'interval':>9}  feed")
+        for r in sorted(o["rows"], key=lambda r: (r["interval"] or 0)):
+            iv = "" if not r["interval"] else (f"{r['interval'] / 3600:.1f}h"
+                                               if r["interval"] >= 3600
+                                               else f"{r['interval'] / 60:.0f}m")
+            print(f"  {'yes' if r['etag'] else '-':>5} {'yes' if r['lastmod'] else '-':>8} "
+                  f"{iv:>9}  {str(r['name'])[:56]}")
+        if o["withValidators"] == 0:
+            print("\n  NO feed serves a validator. Every poll downloads a full body whatever the")
+            print("  cadence, so the FULL BODIES estimate above is wrong and a faster floor is a")
+            print("  straight cost increase. Turn RWE_FEED_SCHEDULER off or raise the floor.")
     print(f"\n=== per-feed scheduler counterfactual "
           f"(sweep {s['sweep']:.0f}s, floor {s['floor']:.0f}s, ceiling {s['ceiling']:.0f}s) ===")
     print(f"RSS feeds in scope : {s['feeds']}   "

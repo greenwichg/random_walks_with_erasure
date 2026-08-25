@@ -255,3 +255,59 @@ figures it prints are a model of the law's steady state, not an observation of i
 way to get that is to run the scheduler on and read the `notModified` counter — which is why
 `RWE_FEED_SCHEDULER` stays off pending a shadow window, and why the breaker (which needs no such
 evidence) is the part worth enabling first.
+
+
+---
+
+# Second production read, 2026-08-25 (corrected instrument, scheduler ON at a 300 s floor)
+
+```
+RSS feeds in scope : 9   (+10 API adapters the scheduler does NOT touch)
+requests/day        now    1,296   ->  after    1,354
+FULL BODIES/day     now    1,296   ->  after    1,066
+
+   polls    ok  arts/d fail   settled  vs sweep  feed
+    4780  4780    17.3    0       31m      3.1x  Washington Times
+    4781  4781    18.8    0       28m      2.8x  CNN
+    4782  4782    19.5    0       27m      2.7x  NPR
+    4780  4780    43.7    0       12m      1.2x  Fox News
+    4781  4780       ?    0       10m      1.0x  BBC News
+    4781  4778       ?    0       10m      1.0x  The New York Times
+    4780  4780    81.5    0        7m      0.7x  The Hill
+    4780  4779   274.7    0        5m      0.5x  New York Post
+    4782  4782   195.0    0        5m      0.5x  The Guardian
+```
+
+A coherent picture at last, and a different one from either earlier read: requests +4.5%, modelled
+bodies −17.7%, the two busiest feeds (NY Post 275/day, Guardian 195/day) moving from a 10-minute
+sweep to a 5-minute cadence, and the three quietest drifting out to ~30 minutes. **Zero RSS feeds
+failing** — so the per-feed breaker, the part with no downside, currently has nothing to act on.
+
+## Two things this read does not settle
+
+**The 304 rate is still unmeasured, and the bodies line depends entirely on it.** If a feed serves
+no `ETag`/`Last-Modified`, its unchanged polls download a full body regardless of cadence — and
+then the real figure is 1,354 bodies/day, a 4.5% *increase*, not a 17.7% saving. The estimate and
+its opposite differ only by a fact nobody had checked.
+
+The obvious way to check it does not work: the cycle aggregate carries a `notModified` counter and
+**nothing ever logs it**, so `grep notModified` over the poller log returns empty however long you
+wait. `observed_state()` reads the persisted `etag`/`last_modified`/`interval_s` columns instead —
+an observation, needing no new logging, true of the whole history rather than of whatever is still
+in the log buffer. It prints an explicit warning when no feed carries a validator, because that is
+the state in which the cadence half should be turned off rather than tuned.
+
+**Two of nine feeds contribute no attributable articles.** BBC News and The New York Times both
+show 4,78x successful polls and `arts/d ?` — no catalog article in the scan window carries that
+publisher name. Either a naming mismatch between `feed_health.name` and the registry-resolved
+`publisher` (likely: "BBC News" vs "BBC"), or those feeds genuinely add nothing because every
+article arrives first from another provider. The first is an instrument artifact; the second is
+~288 requests a day for zero coverage. Worth one query to tell them apart before assuming either.
+
+## Shipping bug found in the same session
+
+`RWE_FEED_MIN_INTERVAL=300` was set in `deploy/.env` and never reached the container: compose
+`environment:` is an explicit allowlist and only `RWE_FEED_SCHEDULER` had been listed. The
+scheduler could be turned on but not slowed down or tuned. `printenv RWE_FEED_SCHEDULER
+RWE_FEED_MIN_INTERVAL` printing ONE line is the check that caught it — for an allowlisted stack,
+verifying an env change means verifying every variable, not the one that happened to work.
