@@ -328,35 +328,84 @@ def main(argv=None) -> int:
               f"{verdict(cand[key], peers.get(cand[key]['language'], 0))[1]}")
 
     # ---------------------------------------------------------------- counterfactual
+    # ---------------------------------------------------------------- the benefit side
+    #
+    # Every previous version of this script measured COST precisely and BENEFIT not at all, which
+    # is why the five-outlet cohort could not be adjudicated: 29 collateral losses against an
+    # unquantified good is not a trade, it is half a trade.
+    #
+    # For a syndicator the benefit IS countable. `SOURCE_COVERAGE_AUDIT` states the rationale
+    # already used for aggregators: "an aggregator's articles ARE other outlets' articles, so
+    # counting one as a publisher double-counts coverage the cluster already holds." So: how many
+    # of a demoted outlet's in-story articles carried the SAME title-token set as another member of
+    # that same story? Each one is a publisher-count inflation the story should never have had.
+    story_members = defaultdict(list)
+    for s in base:
+        for c in s["coverage"]:
+            story_members[s["id"]].append(c)
+    tok_of = {member_key(r): clustering.title_tokens(r.get("title") or "") for r in rows}
+    mb = ach.index_by_member(base)
+    double = 0
+    for r in rows:
+        if _identity(reg, r) not in demote:
+            continue
+        k = member_key(r)
+        sid = mb.get(k)
+        if not sid:
+            continue
+        mine = tok_of.get(k)
+        if mine and any(c["url"] != k and tok_of.get(c["url"]) == mine
+                        for c in story_members[sid]):
+            double += 1
+    print(f"\n=== the benefit side: publisher counts these outlets inflated ===")
+    print(f"  in-story articles carrying a title IDENTICAL to another member of the SAME story:"
+          f" {double:,}")
+    print("    Each is a story counting one event's coverage twice. That is the rationale")
+    print("    EXCLUDED_KINDS already applies to aggregators, measured here rather than assumed.")
+
     print(f"\n=== clustering impact: move those {len(demote)} outlets to Tier B ===")
     print("    Filtering the rows directly rather than through the SQL prefilter: the cap is not")
     print("    binding, so the two are equivalent for the BUILD, and this keeps the audit off the")
     print("    query path entirely.")
-    keep = [r for r in rows if _identity(reg, r) not in demote]
-    after = story_service.build_stories(keep, entities=ents, event_verdicts=verdicts_in)
-    mb, ma = ach.index_by_member(base), ach.index_by_member(after)
-    cov_b = sum(len(s["coverage"]) for s in base)
-    cov_a = sum(len(s["coverage"]) for s in after)
-    moved_urls = {member_key(r) for r in rows if _identity(reg, r) in demote}
+    print("    Reported PER CRITERION as well as together, because syndication and host")
+    print("    instability are different defects: one says 'this is someone else's copy', the")
+    print("    other says 'we cannot tell who this is'. If the cost lands on one of them, the")
+    print("    other can ship alone.")
 
-    print(f"  rows removed       : {len(rows) - len(keep):,}")
-    print(f"  stories            : {len(base):,} -> {len(after):,}")
-    print(f"  largest cluster    : {max((len(s['coverage']) for s in base), default=0)} -> "
-          f"{max((len(s['coverage']) for s in after), default=0)}")
-    print(f"  covered articles   : {cov_b:,} -> {cov_a:,}")
-    lost = [u for u in mb if u not in ma and u not in moved_urls]
-    print(f"  OTHER articles that LOST their story: {len(lost):,}"
-          f"   <- the bar; the removed rows themselves do not count")
-    print(f"  other articles that changed story   : "
-          f"{sum(1 for u, s in mb.items() if u not in moved_urls and ma.get(u) and ma[u] != s):,}")
-    bb, ab = ach._coherence_stats(base), ach._coherence_stats(after)
-    print(f"  independent signal : {bb['bad']}/{bb['scored']} bad (mean {bb['mean']}) -> "
-          f"{ab['bad']}/{ab['scored']} bad (mean {ab['mean']})")
-    cb = sum(1 for s in base if s.get("blindspotSide"))
-    ca = sum(1 for s in after if s.get("blindspotSide"))
-    print(f"  BLINDSPOT CLAIMS   : {cb:,} -> {ca:,}")
+    def counterfactual(label: str, drop: set):
+        if not drop:
+            print(f"\n  --- {label}: no outlets")
+            return
+        keep = [r for r in rows if _identity(reg, r) not in drop]
+        after = story_service.build_stories(keep, entities=ents,
+                                            event_verdicts=verdicts_in)
+        ma = ach.index_by_member(after)
+        moved = {member_key(r) for r in rows if _identity(reg, r) in drop}
+        lost = [u for u in mb if u not in ma and u not in moved]
+        cb = sum(1 for s in base if s.get("blindspotSide"))
+        ca = sum(1 for s in after if s.get("blindspotSide"))
+        bb, ab = ach._coherence_stats(base), ach._coherence_stats(after)
+        print(f"\n  --- {label}: {len(drop)} outlets, {len(rows) - len(keep):,} rows")
+        print(f"      stories            : {len(base):,} -> {len(after):,}")
+        print(f"      largest cluster    : {max((len(s['coverage']) for s in base), default=0)} -> "
+              f"{max((len(s['coverage']) for s in after), default=0)}")
+        print(f"      covered articles   : {sum(len(s['coverage']) for s in base):,} -> "
+              f"{sum(len(s['coverage']) for s in after):,}")
+        print(f"      OTHER articles that LOST their story: {len(lost):,}   <- the bar")
+        print(f"      other articles that changed story   : "
+              f"{sum(1 for u, s in mb.items() if u not in moved and ma.get(u) and ma[u] != s):,}")
+        print(f"      independent signal : {bb['bad']}/{bb['scored']} (mean {bb['mean']}) -> "
+              f"{ab['bad']}/{ab['scored']} (mean {ab['mean']})")
+        print(f"      BLINDSPOT CLAIMS   : {cb:,} -> {ca:,}")
+        return ma
 
-    print("\n=== ratified exhibits ===")
+    synd = {k for k in demote if cand[k]["syndication"] > SYNDICATION_CEILING}
+    host = demote - synd
+    counterfactual("SYNDICATION only", synd)
+    counterfactual("HOST INSTABILITY only", host)
+    ma = counterfactual("ALL of them together", demote)
+
+    print("\n=== ratified exhibits (all of them together) ===")
     for label, truth, b, a in ach._exhibit_outcomes(rows, mb, ma):
         def fmt(v):
             return "not in window" if v is None else ("together" if v else "separated")
