@@ -440,3 +440,45 @@ def test_the_counterfactual_totals_exclude_adapters(tmp_path):
     rep = ach.scheduler_report(st, {"a": 100.0, "gdelt": 100.0})
     assert rep["feeds"] == 1 and rep["adapters"] == 1
     assert rep["perDayNow"] == 86400.0 / rep["sweep"], "one RSS feed's worth, not two rows'"
+
+
+# --------------------------------------------------------------------------- #
+# The publisher join, and honest body accounting.
+#
+# feed_health.name is the FEED LIST's label; FeedArticle.publisher is what the registry resolved
+# at ingest. On production they disagreed for two of nine feeds ("BBC News"/"BBC", "The New York
+# Times"/"New York Times") and those feeds — carrying 664 and 490 articles — reported as
+# contributing nothing, which nearly cost them their fast cadence.
+# --------------------------------------------------------------------------- #
+def test_publisher_names_join_across_the_regular_mismatches():
+    import audit_crawler_health as ach
+    assert ach.norm_publisher("BBC News") == ach.norm_publisher("BBC")
+    assert ach.norm_publisher("The New York Times") == ach.norm_publisher("New York Times")
+    assert ach.norm_publisher("  The   Guardian ") == ach.norm_publisher("The Guardian")
+
+
+def test_the_join_stays_conservative_about_distinct_outlets():
+    """Normalisation must not merge outlets that genuinely differ, or a busy paper's rate would be
+    credited to a quiet one and the cadence estimate would be wrong in both directions."""
+    import audit_crawler_health as ach
+    assert ach.norm_publisher("The Korea Times") != ach.norm_publisher("Washington Times")
+    assert ach.norm_publisher("New York Post") != ach.norm_publisher("New York Times")
+    assert ach.norm_publisher("News") == "news", "too short to strip to nothing"
+
+
+def test_a_feed_without_a_validator_is_costed_as_full_bodies(tmp_path):
+    """The last thing in this instrument taking conditional GET on faith. A feed serving no
+    ETag/Last-Modified downloads a full body on EVERY poll however the cadence moves, so for it a
+    faster interval is a straight cost increase — and an unobserved feed is assumed to have none,
+    the pessimistic direction a cost estimate should take."""
+    import audit_crawler_health as ach
+    st = store_mod.Store(f"sqlite:///{tmp_path}/t.db")
+    st.record_feed_health("https://a.com/rss.xml", ok=True, name="A", stats={})
+    rate = {"a": 200.0}                                   # busy -> settles at the floor
+    with_val = ach.scheduler_report(st, rate, {"https://a.com/rss.xml": True})
+    without = ach.scheduler_report(st, rate, {"https://a.com/rss.xml": False})
+    assert without["bodiesNext"] > with_val["bodiesNext"], \
+        "no validator must cost strictly more bodies than the same feed with one"
+    assert without["bodiesNext"] == without["perDayNext"], "every poll is a full body"
+    unobserved = ach.scheduler_report(st, rate, {})
+    assert unobserved["bodiesNext"] == without["bodiesNext"], "unobserved is costed pessimistically"

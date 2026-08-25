@@ -60,6 +60,29 @@ def _variant_key(canonical: str) -> str:
     return f"{host}{path}"
 
 
+def norm_publisher(name) -> str:
+    """A publisher name reduced to a joinable key.
+
+    ``feed_health.name`` is the FEED LIST's label; ``FeedArticle.publisher`` is what the outlet
+    registry resolved at ingest, and the two disagree in a small, regular way: "BBC News" vs
+    "BBC", "The New York Times" vs "New York Times". Measured on production, that mismatch made
+    two of nine feeds — carrying 664 and 490 articles in the window — report as contributing
+    NOTHING, which nearly cost them their fast cadence.
+
+    Generic normalisation only: case, a leading article, a trailing "news", collapsed whitespace.
+    No publisher is named here. It is deliberately conservative — "The Korea Times" and
+    "Washington Times" stay distinct — and any pair it fails to join is reported as unknown rather
+    than guessed."""
+    n = " ".join(str(name or "").strip().lower().split())
+    for lead in ("the ",):
+        if n.startswith(lead):
+            n = n[len(lead):]
+    for tail in (" news",):
+        if n.endswith(tail) and len(n) > len(tail) + 2:
+            n = n[: -len(tail)]
+    return n.strip()
+
+
 def observed_state(store_) -> dict:
     """What the scheduler has ACTUALLY done, read from the state it persists.
 
@@ -80,7 +103,7 @@ def observed_state(store_) -> dict:
     out = []
     for r in rows:
         st = store_.feed_schedule_state(r.get("feedUrl"))
-        out.append({"name": r.get("name") or r.get("feedUrl"),
+        out.append({"name": r.get("name") or r.get("feedUrl"), "feed": r.get("feedUrl"),
                     "etag": bool(st.get("etag")), "lastmod": bool(st.get("last_modified")),
                     "interval": st.get("interval_s"), "due": st.get("next_due_at")})
     return {"tracked": len(out), "rows": out,
@@ -123,7 +146,8 @@ def equilibrium_interval(rate_per_day: float, *, lo: float, hi: float) -> float:
     return max(lo, min(p_star * 86400.0 / max(rate_per_day, 1e-9), hi))
 
 
-def scheduler_report(store_, rate_per_day: "dict | None" = None) -> dict:
+def scheduler_report(store_, rate_per_day: "dict | None" = None,
+                     has_validator: "dict | None" = None) -> dict:
     """Per-feed request volume under the uniform sweep vs the adaptive law.
 
     **The publish rate comes from the CATALOG, not from ``feed_health.imported``.** That column is
@@ -153,7 +177,7 @@ def scheduler_report(store_, rate_per_day: "dict | None" = None) -> dict:
         ok = int(r.get("totalOk") or 0)
         fails = int(r.get("consecutiveFailures") or 0)
         name = r.get("name") or ""
-        rate = rate_per_day.get(name.strip().lower())
+        rate = rate_per_day.get(norm_publisher(name))
         imported = int(round(rate)) if rate is not None else -1
         if fails > 0:
             settled = hi                     # broken: the breaker walks it out regardless
@@ -177,8 +201,25 @@ def scheduler_report(store_, rate_per_day: "dict | None" = None) -> dict:
     # The cost that actually matters. Today every request downloads a full document. Under the
     # scheduler only a CHANGED feed does; the rest answer 304 with no body. A feed that changes
     # is assumed to do so on most polls (it is at the floor precisely because it does).
+    # A feed WITHOUT a validator downloads a full body on every poll however the cadence moves —
+    # for that feed a faster interval is a straight cost increase, and counting it as free was the
+    # last thing in this instrument still taking conditional GET on faith. Observed support is
+    # passed in; a feed we have not yet observed is assumed to have NO validator, which is the
+    # pessimistic direction and the right one for a cost estimate.
+    validators = has_validator or {}
     bodies_now = per_day_now
-    bodies_next = sum((86400.0 / r["settled"]) for r in scoped if r["changes"]) if scoped else 0.0
+    bodies_next = 0.0
+    for r in scoped:
+        polls = 86400.0 / r["settled"]
+        if validators.get(r["feed"]):
+            # Only the polls that actually find a change cost a body; the rest are 304s. At the
+            # settled interval a feed publishing N/day changes on N*T/86400 of its polls — which
+            # equals the law's p* where the interval is free to settle, and rises toward 1 for a
+            # feed clamped at the floor. Costing it as all-or-nothing hid the whole saving.
+            rate = r["rate"] or 0.0
+            bodies_next += polls * min(1.0, rate * r["settled"] / 86400.0)
+        else:
+            bodies_next += polls
     return {"sweep": sweep, "floor": lo, "ceiling": hi,
             "feeds": len(scoped), "adapters": len(out) - len(scoped),
             "perDayNow": per_day_now, "perDayNext": per_day_next,
@@ -197,10 +238,10 @@ def duplicate_report(store_, *, limit: int = 10) -> dict:
     span_days = max(1.0, float(os.environ.get("RWE_STORIES_SCAN_DAYS", "6") or 6))
     per_pub: dict = defaultdict(int)
     for r in rows:
-        pub = (r.get("publisher") or "").strip().lower()
+        pub = (r.get("publisher") or "").strip()
         if pub:
             per_pub[pub] += 1
-    rate_per_day = {k: v / span_days for k, v in per_pub.items()}
+    rate_per_day = {norm_publisher(k): v / span_days for k, v in per_pub.items()}
     groups = defaultdict(set)
     for u in urls:
         if not u:
@@ -233,9 +274,10 @@ def main(argv=None) -> int:
     st = store_mod.Store(args.db)
 
     d = duplicate_report(st, limit=args.show)
-    s = scheduler_report(st, d["ratePerDay"])
-
     o = observed_state(st)
+    s = scheduler_report(st, d["ratePerDay"],
+                         {r["feed"]: (r["etag"] or r["lastmod"]) for r in o["rows"]})
+
     print(f"\n=== observed scheduler state (what has actually happened) ===")
     if not o["scheduled"]:
         print("  the scheduler has not run yet on any feed — RWE_FEED_SCHEDULER off, or no poll")
