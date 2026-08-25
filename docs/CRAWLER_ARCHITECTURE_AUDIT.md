@@ -5,9 +5,16 @@ the one architectural change taken from it. Same discipline as the clustering wo
 code, register a candidate, measure it on the live catalog, adopt only on the numbers.
 
 > **Companion:** `SOURCE_COVERAGE_AUDIT.md` covers the other half — *which* publishers we carry and
-> what they do once inside. It records two measured rejections: source expansion and curation (the
-> untracked backlog is worth 13 blindspot claims across 1,528 stories), and excluding research/forum
-> outlets from clustering (removal costs 24 news articles their coverage to fix 1 false merge).
+> what they do once inside. It records three measured rejections: source expansion and curation (the
+> untracked backlog is worth 13 blindspot claims across 1,528 stories), excluding research/forum
+> outlets from clustering (removal costs 24 news articles their coverage to fix 1 false merge), and
+> a URL fallback in outlet resolution (+1 blindspot claim for 473 articles losing their story).
+>
+> **Forward reference:** `SCALE_ROADMAP.md` takes the scheduler's equilibrium law from this document
+> and derives the crawl budget for a 50,000-source universe — `2.71 × items/day`, i.e. **crawl cost
+> is proportional to content, not to source count**. It also identifies the two places this design
+> stops scaling: the 6-hour interval ceiling binds for any feed under 1.48 items/day (which is most
+> of a 50k universe), and `poll_adapter_once`'s global lock serializes the whole fleet.
 
 ## What actually runs
 

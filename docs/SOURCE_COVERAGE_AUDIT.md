@@ -1,10 +1,16 @@
-# Source coverage and corpus composition — two audits, two rejections
+# Source coverage and corpus composition — three audits, three rejections
 
 Companion to `CRAWLER_ARCHITECTURE_AUDIT.md`, which covers how we *fetch*. This one covers **which
-publishers we carry and what they do once inside**. Both audits were commissioned as research-only
-and both ended in a rejection; the numbers are recorded here because a measurement that closes a
-line of work is worth as much as one that opens it, and because each of these overturned a
-recommendation I had already made in writing.
+publishers we carry and what they do once inside**. All three audits were commissioned as
+research-only and all three ended in a rejection; the numbers are recorded here because a
+measurement that closes a line of work is worth as much as one that opens it, and because each of
+these overturned a recommendation I had already made in writing.
+
+**Forward reference:** `SCALE_ROADMAP.md` designs the architecture for a deliberately different
+strategic goal — a ~50,000-source universe. Part 2's verdict below priced **blindspot claims only**
+and said so; the roadmap is the case where that stated blind spot is the whole point. Part 4's
+`news.google.com` finding is why the roadmap's validation stage carries an explicit
+aggregator/proxy-host gate.
 
 Same discipline as the clustering arc: register the question, measure on the live catalog, let the
 bars decide, keep the retractions visible.
@@ -240,13 +246,82 @@ exists.
 
 ---
 
-# Re-running either audit
+# Part 4 — A URL fallback in outlet resolution: measured, rejected
+
+## The candidate
+
+`ingest.Scorer._resolve_outlet` resolves `self.registry.resolve(raw.outlet or raw.url)` — the URL is
+consulted only when the outlet name is **absent**, never when it is present and *fails*. Every
+adapter supplies a name, so in practice the URL is never tried: a name the registry does not know
+falls straight through to unrated, even when its host is already in the registry's domain index.
+Measured: **431 identities carrying 1,615 articles sit on a host a tracked outlet already owns.**
+
+The candidate was one line, with name-first ordering preserved:
+
+```python
+out = self.registry.resolve(raw.outlet) or self.registry.resolve(raw.url)
+```
+
+## The measurement (`audit_outlet_resolution.py`, 2026-08-25)
+
+```
+window                    : 27,855 articles
+articles gaining an outlet: 1,246 (4.5%)   RATED 164 · locality-only 1,082
+     996  Google News   <- 10tv.com @ news.google.com
+                           12news.com @ news.google.com
+                           13abc.com @ news.google.com
+stories                : 1,528 -> 1,410        (-118)
+covered articles       : 6,132 -> 5,668        (-464)
+articles that LOST their story: 473
+rated story members    : 4,409 -> 4,363        <- went DOWN
+BLINDSPOT CLAIMS       : 214 -> 215            <- +1
+```
+
+**+1 blindspot claim for 473 articles losing their story and 118 stories destroyed.**
+
+The dominant effect is mass **mis-attribution**, not the `min_publishers` collapse the probe was
+built to catch. 996 of 1,246 newly-attributed articles — 80% — are real local broadcasters proxied
+through `news.google.com`, which resolves to a registry `kind=aggregator`. Since
+`EXCLUDED_KINDS = ("wire", "aggregator")`, attributing them to Google News plausibly evicts them from
+the clustering corpus outright; the magnitudes line up with that, though the exclusion-vs-quorum
+split was not isolated. The decisive tell needs no mechanism at all: 164 articles gained a *rated*
+outlet and rated story members still **fell**.
+
+## Retraction
+
+**I wrote that name-first ordering "is what makes it safe rather than clever".** Ordering is
+genuinely preserved and genuinely does protect the AP-on-cnn.com case. It protects nothing when the
+failing name is `10tv.com` and the host belongs to an aggregator.
+
+The probe also named the wrong cost mechanism in its own docstring — it argued `min_publishers`
+double-counting. It still worked, because the line it printed for a different reason —
+*"READ THIS: a host shared by many publishers is where mis-attribution would happen"* — put
+`news.google.com` on screen in one glance.
+
+## Verdict
+
+**Do not ship the URL fallback.** `_resolve_outlet` stays as written.
+
+What survives is narrower and needs no code: strip the Google News block and ~250 articles remain
+(`Express @ express.co.uk`, `Index @ index.hr`, `Telegraaf @ telegraaf.nl`) — real publishers already
+in the registry under a longer canonical, failing only because the feed's short name-form is not in
+their alias list. **Three CSV alias rows, strictly additive, zero clustering risk.** A kind-gated
+fallback (fall back to the host only when it resolves to a non-aggregator, non-wire outlet) would
+recover the same ~250 through a conditional inside resolution; the alias rows are cheaper and carry
+no new code path.
+
+---
+
+# Re-running these audits
 
 ```bash
 cd /opt/ih && source deploy/ops/_compose.sh
 
 # Part 2 — registry census, buckets, and the unlocks worklist
 dc run --rm -T api python examples/audit_registry_coverage.py
+
+# Part 4 — the outlet-resolution counterfactual, both sides
+dc run --rm -T api python examples/audit_outlet_resolution.py --db "$RWE_DB_URL"
 ```
 
 Part 3 has no committed instrument — it was a one-off in-process probe, deliberately, because the
@@ -259,7 +334,15 @@ coherence bar is near-blind to this particular question.
 
 ## Instrument lesson
 
-Both audits were answered by instruments that **already existed** (`audit_registry_coverage.py`) or
-by fifty lines composing functions that already existed. Neither needed new production code, and
-both overturned a written recommendation. The cost of checking was an order of magnitude below the
-cost of building what was recommended.
+All three audits were answered by instruments that **already existed**
+(`audit_registry_coverage.py`) or by a hundred lines composing functions that already existed —
+`story_service.build_stories`, `audit_clustering_change.index_by_member`, `_coherence_stats`,
+`_exhibit_outcomes`. None needed new production code, and all three overturned a written
+recommendation. The cost of checking was an order of magnitude below the cost of building what was
+recommended.
+
+Two of the three instruments also carried a defect that would have inverted their verdict, and both
+were caught by reading the tool rather than by reasoning about it: Part 3's coherence bar is
+structurally near-blind to research/forum members, and Part 4's first draft keyed on a
+plausible-looking `blindspot` field when the story dict's field is `blindspotSide` — which would
+have returned 0 on both sides and reported a real effect as no effect.
