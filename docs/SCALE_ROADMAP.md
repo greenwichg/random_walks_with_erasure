@@ -501,7 +501,7 @@ cd /opt/ih && source deploy/ops/_compose.sh
 dc run --rm -T api python examples/audit_corpus_boundary.py --db "$RWE_DB_URL"
 ```
 
-## Measured on production, 2026-08-25 (`f272901`)
+## Measured on production, 2026-08-25 (`f272901`, then `b4be703`)
 
 ```
 window matched      : 27,809 articles     row cap: 60,000   Tier A budget: 83,000
@@ -512,6 +512,9 @@ headroom to budget  : 55,191 articles (33.5% used)
 BAR 1  rows in 27,809 -> out 27,809, SAME LIST OBJECT, 1,503 stories       PASS
 BAR 2  40,000 synthetic Tier B rows -> corpus 27,808, story set BYTE-IDENTICAL   PASS
 BAR 3  same 40,000 admitted -> 18,661 stories, all 1,503 baseline entries differ  PASS
+
+build_stories, best of 5 at 27,823 articles (b4be703): 8,494 ms
+  samples: 11,587 · 11,972 · 9,178 · 8,494 · 11,451     spread 41% of min
 ```
 
 **The boundary holds on the live catalog**, and the control arm is emphatic: admitting those rows
@@ -522,37 +525,53 @@ is measuring something real.
 places, so the six days we ask for are the six days we cluster. Break #1 is a future event, not a
 present one — which is exactly the state in which it is worth having an alarm.
 
-### The finding this run produced that nobody was looking for
+### A budget concern, raised and then withdrawn by the follow-up measurement
 
-`build_stories` took **12,607 ms** on 27,809 articles. `PERFORMANCE.md` records **5,069 ms on
-22,493** — so 2.5× the time for 1.24× the rows. That is not a scaling exponent; it is the pass set
-having grown (X5c entity veto, the template gate, banded event identity, entity merge all landed
-after that profile), plus a cold `dc run` container competing with the live API.
+The first run reported `build_stories` at **12,607 ms** on 27,809 articles, against
+`PERFORMANCE.md`'s **5,069 ms on 22,493** — 2.5× the time for 1.24× the rows. Since the 83,000 Tier
+A budget was derived from the 5,069 ms anchor, that looked like it moved the ceiling to ~60,000,
+i.e. onto the row cap. **The constant was not changed on the strength of it, and the follow-up says
+that call was right.**
 
-**The Tier A budget of 83,000 was derived from the 5,069 ms anchor, and that anchor is stale.**
-Re-anchoring on 12,607 ms at the documented exponent puts the ceiling near **60,000** — which is the
-row cap. If that holds, the two bounds have converged and `binding: cap` is right for a reason the
-roadmap did not anticipate.
+Best-of-5 on the same box, 27,823 articles (`--repeat 5`):
 
-**The constant has NOT been changed, and that is deliberate.** One cold-container sample under
-contention is weather, not a measurement — `profile_merge.py` exists in this repo because a 243 ms
-gap between two arms running the *same algorithm* turned out to be load moving between them. The
-local re-run makes the point sharper still: `--repeat 3` on a warm process prints `25, 5, 5` ms, a
-**5× cold/warm ratio**, and production's 12,607 ms is a first-and-only build. The poller never pays
-that price — it builds warm, in a long-lived process.
-
-What settles it is one command:
-
-```bash
-dc run --rm -T api python examples/audit_corpus_boundary.py --db "$RWE_DB_URL" \
-    --repeat 5 --no-control
+```
+best of 5: 11,587, 11,972, 9,178, 8,494, 11,451   ->  8,494 ms
+spread 41% of the minimum
 ```
 
-`--repeat 5` reports the best of five and prints every sample, so drift is visible in the data
-rather than inferred afterwards; `--no-control` skips the expensive arm, which has already passed
-and has nothing to add to a timing question. **Re-deriving the budget from that number is the entry
-point to M2**, and until then 83,000 stands with this caveat attached rather than being replaced by
-a guess.
+Re-anchoring the roadmap's own envelope (`3.44k + 1.94k^2.05 + 1.45k²`, `k = n/22,493`) on 8,494 ms:
+it predicts 9.47 s at that point, so it runs **11.5% conservative** — and the 60 s target still
+lands at `k ≈ 3.7`, i.e. **~83,000 articles**. The budget stands where it was. At 8.5 s per build
+that is 1.4% of a 600 s poll cycle and 3.5% of the cycle's 240 sustainable vCPU-seconds.
+
+### The mechanism I predicted was wrong, while the caution was right
+
+I expected the five samples to show a cold-start signature — sample 1 slowest, the rest warm, on the
+strength of a local `--repeat 3` that printed `25, 5, 5`. **That is not the shape.** The first
+sample is *mid-range* and the second is the slowest; there is no monotone warm-up anywhere in the
+series.
+
+The local pattern did not reproduce because it was an artifact of a 60-row corpus, where the
+registry memo dominated the first build. At 27,823 rows, `_fetch` and `_entities_for` run **before**
+the first timed build and warm everything — so by the time build #1 starts there is no cold cost
+left to pay. What the spread actually shows is **contention**: the box is serving traffic, and the
+load moves between rounds.
+
+So 12,607 ms was never a cold-start artifact. It was an ordinary draw from a distribution whose
+spread is 41% — which is why one sample could not settle the question, and why the answer to "is
+this number real?" was best-of-N rather than a story about why it might be inflated.
+
+**The 41% spread is itself the finding worth keeping:** any single build timing on this box carries
+roughly ±20%, so a delta smaller than that is weather. The script now prints the spread beside the
+best, so the error bar arrives with the number instead of having to be remembered.
+
+### Instrument note
+
+`--no-control` used to print `VERDICT: FAIL`, which is wrong: a bar deliberately skipped is not a
+bar that failed, and conflating the two is how a FAIL line becomes something an operator learns to
+ignore — the same cries-wolf argument that keeps `total == cap` out of the truncation detector. A
+timing-only run now reports **`VERDICT: INCOMPLETE`** and names the bar that did not run.
 
 ### Two instrument corrections from the same run
 

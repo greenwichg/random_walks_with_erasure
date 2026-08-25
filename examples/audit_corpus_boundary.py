@@ -112,7 +112,7 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
 
     st = store_mod.Store(args.db)
-    failures = []
+    failures, skipped = [], []
 
     # ---------------------------------------------------------------- 1. what binds today
     #
@@ -175,6 +175,14 @@ def main(argv=None) -> int:
     print(f"  stories  : {len(base):,}   build {base_ms:,.0f} ms"
           + (f"   (best of {len(timings)}: {', '.join(f'{t:,.0f}' for t in timings)})"
              if len(timings) > 1 else "   (ONE sample — pass --repeat 5 for a usable number)"))
+    if len(timings) > 1:
+        # The spread IS the error bar, and printing it is the difference between a number and a
+        # number you can act on. Measured on production 2026-08-25: 41% of the minimum across five
+        # rounds, with the FIRST round mid-range rather than slowest — so this is contention, not
+        # warm-up, and any single build timing on this box carries roughly that much noise.
+        spread = (max(timings) - base_ms) / max(1.0, base_ms) * 100.0
+        print(f"  spread   : {spread:.0f}% of the minimum. That is the error bar on ANY single")
+        print(f"             build timing here — treat a delta smaller than it as weather.")
     if selected is not rows:
         print("  *** FAIL: select() returned a new list while tiering is off. Off must cost nothing.")
         failures.append("select() copied the row list while switched off")
@@ -210,7 +218,7 @@ def main(argv=None) -> int:
     if args.no_control:
         print("  SKIPPED (--no-control). Bar 2 is UNINTERPRETED without this: rows that would")
         print("  never have clustered prove nothing about containment.")
-        failures.append("the control arm did not run, so bar 2 is uninterpreted")
+        skipped.append("the control arm did not run, so bar 2 is uninterpreted")
     else:
         n_all = len(rows) + args.inject
         print(f"  clustering {n_all:,} articles with tiering OFF — the expensive arm, and the build")
@@ -236,12 +244,24 @@ def main(argv=None) -> int:
             print("  *** FAIL: admitting the injected rows changed nothing, so bar 2 is vacuous.")
             failures.append("the injected rows do not cluster; bar 2 proves nothing")
 
+    # A bar deliberately skipped is NOT a bar that failed, and conflating them is how a FAIL line
+    # becomes something an operator learns to ignore — the same cries-wolf argument that keeps
+    # `total == cap` out of the truncation detector. INCOMPLETE says "nothing broke, but you did
+    # not run everything", which is the honest report for a timing-only invocation.
     print("\n" + "=" * 70)
     if failures:
         print("VERDICT: FAIL")
         for f in failures:
             print(f"  - {f}")
+        for s in skipped:
+            print(f"  - (not run) {s}")
         return 1
+    if skipped:
+        print("VERDICT: INCOMPLETE — nothing failed, but a bar did not run:")
+        for s in skipped:
+            print(f"  - {s}")
+        print("Everything that DID run passed. Re-run without --no-control for a full verdict.")
+        return 0
     print("VERDICT: PASS — the clustering corpus is a selected projection, the boundary contains")
     print("Tier B, and the control arm confirms the bar was not vacuous.")
     return 0
