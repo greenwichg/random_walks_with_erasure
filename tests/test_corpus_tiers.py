@@ -22,6 +22,7 @@ sys.path.insert(0, str(ROOT / "examples"))
 
 import corpus                       # noqa: E402
 import obs_metrics                  # noqa: E402
+from pagination import OffsetPagination   # noqa: E402
 
 
 def _row(url, publisher, published="2026-08-25T12:00:00+00:00"):
@@ -235,3 +236,114 @@ def test_an_empty_window_reports_without_raising():
     assert corpus.select([], total=0, cap=100, window_start="2026-08-19T12:00:00+00:00",
                          report_out=report) == []
     assert report["kept"] == 0 and report["capBound"] is False
+
+
+# --------------------------------------------------------------------------- #
+# M2 — the SQL prefilter: the row cap must bound TIER A, not the mixture
+# --------------------------------------------------------------------------- #
+import story_service                                                     # noqa: E402
+import store as store_mod                                                # noqa: E402
+from datetime import datetime, timedelta, timezone                       # noqa: E402
+
+
+def _seed(st, *, tier_a: int, tier_b: int):
+    """Tier B rows are all NEWER than every Tier A row. That ordering is the test: `_fetch` sorts
+    newest-first and truncates at the cap, so without a prefilter a cap smaller than `tier_b`
+    cannot reach a single Tier A article."""
+    now = datetime.now(timezone.utc)
+
+    def add(i, host, pub, minutes):
+        cu = f"https://{host}/{i}"
+        st.upsert_feed_article(
+            canonical_url=cu, url=cu, publisher=pub, source_publisher=pub,
+            title=f"Some headline number {i} about a thing", description="ctx", body=None,
+            published_at=(now - timedelta(minutes=minutes)).isoformat(), source_feed="feed://x",
+            scored={"article_id": cu, "outlet": pub, "category": "Politics", "lean": 0.0})
+
+    for i in range(tier_b):
+        add(i, "tierb.example", "tierb.example", 1)          # newest
+    for i in range(tier_a):
+        add(1000 + i, "npr.org", "NPR", 60)                  # older
+
+
+def test_the_row_cap_bounds_tier_a_not_the_mixture(monkeypatch):
+    """The M2 behaviour, stated as starkly as the data allows.
+
+    Fifty Tier B articles sit newer than five Tier A ones, under a cap of ten. Without the SQL
+    prefilter the cap fills entirely with Tier B and the clustering corpus is EMPTY — the tier
+    filter dutifully removes them all and reports that it did, having already lost the window. With
+    the prefilter the excluded rows never consume cap and all five Tier A articles survive.
+
+    At 50,000 sources, where Tier B is most of the corpus, that difference is the whole milestone."""
+    st = store_mod.Store("sqlite://")
+    _seed(st, tier_a=5, tier_b=50)
+    monkeypatch.setenv("RWE_CORPUS_TIER_B", "tierb.example")
+
+    # WITHOUT the prefilter: the Python pass is correct and useless — the window is already gone.
+    raw, _total = st.search_feed_articles(
+        sort="newest", pagination=OffsetPagination.from_params(10, 0, max_limit=10))
+    assert len(corpus.select(raw, total=55, cap=10, log=lambda *a, **k: None)) == 0
+
+    # WITH it: the cap sees only Tier A.
+    report = {}
+    kept = story_service._fetch(st, max_scan=10, report_out=report)
+    assert len(kept) == 5, "every Tier A article must survive a cap that Tier B would have eaten"
+    assert {r["publisher"] for r in kept} == {"NPR"}
+    assert report["tierResidue"] == 0, "the prefilter expressed the whole tier; nothing fell through"
+    assert report["capBound"] is False, "the cap no longer binds once it counts Tier A only"
+
+
+def test_the_prefilter_is_a_subset_of_what_select_would_drop(monkeypatch):
+    """The invariant that keeps SQL an optimization rather than a second policy: the prefilter may
+    MISS rows (they fall through to the Python pass), and must never remove one that pass keeps.
+
+    Checked by building the corpus both ways at a cap large enough that neither truncates, and
+    demanding the same kept set."""
+    st = store_mod.Store("sqlite://")
+    _seed(st, tier_a=5, tier_b=50)
+    monkeypatch.setenv("RWE_CORPUS_TIER_B", "tierb.example")
+
+    with_prefilter = {r["canonicalUrl"] for r in story_service._fetch(st, max_scan=1000)}
+    raw, total = st.search_feed_articles(
+        sort="newest", pagination=OffsetPagination.from_params(1000, 0, max_limit=1000))
+    without = {r["canonicalUrl"]
+               for r in corpus.select(raw, total=total, cap=1000, log=lambda *a, **k: None)}
+    assert with_prefilter == without
+
+
+def test_a_null_publisher_survives_the_exclusion(monkeypatch):
+    """`lower(NULL) NOT IN (...)` evaluates to NULL, not TRUE, so a bare NOT IN silently drops every
+    row that has no publisher — a filter removing rows it was never asked about. The explicit
+    IS NULL arm keeps them, and this is the test that fails without it."""
+    st = store_mod.Store("sqlite://")
+    cu = "https://unknown.example/x"
+    st.upsert_feed_article(canonical_url=cu, url=cu, publisher=None, source_publisher=None,
+                           title="A headline with no publisher at all", description="ctx",
+                           body=None, published_at=datetime.now(timezone.utc).isoformat(),
+                           source_feed="feed://x", scored={"article_id": cu})
+    monkeypatch.setenv("RWE_CORPUS_TIER_B", "tierb.example")
+    assert [r["canonicalUrl"] for r in story_service._fetch(st)] == [cu]
+
+
+def test_off_adds_no_sql_term_at_all():
+    """Byte-identical off, at the SQL layer too: an empty exclusion set must produce the same query,
+    not a `NOT IN ()` that a database is free to interpret however it likes."""
+    assert corpus.sql_exclusions() == frozenset()
+    st = store_mod.Store("sqlite://")
+    _seed(st, tier_a=3, tier_b=3)
+    plain, t1 = st.search_feed_articles(sort="newest")
+    empty, t2 = st.search_feed_articles(sort="newest", exclude_publishers=frozenset())
+    assert t1 == t2 == 6
+    assert [r["canonicalUrl"] for r in plain] == [r["canonicalUrl"] for r in empty]
+
+
+def test_a_host_configured_tier_matches_a_publisher_stored_as_that_host(monkeypatch):
+    """`ingest.Scorer._resolve_outlet` falls back to `raw.outlet or _domain_of(raw.url)`, so an
+    outlet the registry does not know is routinely STORED under its bare domain. Matching the host
+    set against the publisher string is what lets those rows reach the SQL prefilter — and it is
+    what makes `sql_exclusions` a provable subset."""
+    monkeypatch.setenv("RWE_CORPUS_TIER_B", "tierb.example")
+    assert corpus.tier_of("tierb.example", "https://somewhere-else.test/a") == "B"
+    assert "tierb.example" in corpus.sql_exclusions()
+    # A display name that merely contains a dot still routes to the NAME path, not the host path.
+    assert corpus.tier_of("Some Outlet Ltd.", "https://somewhere-else.test/a") == "A"

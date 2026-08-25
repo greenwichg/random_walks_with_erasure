@@ -483,3 +483,25 @@ def test_compose_ships_the_corpus_boundary_switched_off_and_tunable():
         assert m.group(1).strip() == "", (
             f"compose defaults {var} to {m.group(1)!r}; M1 ships the boundary OFF, which is the only "
             f"state proven byte-identical (tests/test_corpus_boundaries.py)")
+
+
+def test_compose_ships_the_per_tier_retention_ages_off():
+    """M2's per-tier catalog ages default to 0 = off, and 0 must mean "this tier uses the global
+    rule", never "delete everything".
+
+    Weighted more heavily than the other allowlist pins because retention is the one path in this
+    system that DESTROYS data. `retention_policy` states the rule as a design principle — "an
+    unparseable or negative value falls back to the default rather than to 'delete everything' —
+    the failure mode of a bad config must be *keeping too much*, never losing data" — and a compose
+    default is a config like any other.
+    """
+    import pathlib
+    import re
+    compose = (pathlib.Path(__file__).resolve().parent.parent
+               / "deploy" / "docker-compose.yml").read_text(encoding="utf-8")
+    for var in ("RWE_RETENTION_MAX_AGE_DAYS_TIER_B", "RWE_RETENTION_MAX_AGE_DAYS_SHADOW"):
+        m = re.search(rf"{var}:\s*\$\{{{var}:-([^}}]*)\}}", compose)
+        assert m, f"{var} is not in the compose environment allowlist"
+        assert m.group(1).strip() == "0", (
+            f"compose defaults {var} to {m.group(1)!r}; the shipped state is 0 (off), and a "
+            f"non-zero default would delete catalog rows on the next deploy without anyone asking")

@@ -1942,18 +1942,32 @@ class Store:
 
     def search_feed_articles(self, *, q=None, publisher=None, lean=None, topic=None,
                              date_from=None, date_to=None, source=None, country=None,
-                             sort="newest", pagination=None, include_provisional: bool = True):
+                             sort="newest", pagination=None, include_provisional: bool = True,
+                             exclude_publishers=None):
         """Search the catalog directly, in SQL. Returns ``(rows, total)`` — ``rows`` are paginated
         FeedArticle-row dicts, ``total`` the match count before pagination. All filtering / sorting /
         paging happen in the database (index-backed); it never touches the recommendation engine.
         ``pagination`` is a :class:`pagination.Pagination` (defaults to offset paging).
         ``include_provisional=False`` (the Discover surface only) hides extension-created articles that
-        haven't been promoted yet; Search/Stories/export keep the default and see everything."""
+        haven't been promoted yet; Search/Stories/export keep the default and see everything.
+
+        ``exclude_publishers`` is a set of LOWER-CASED publisher strings to leave out — the clustering
+        corpus's tier prefilter (``corpus.sql_exclusions``), and nothing else passes it. It exists so
+        the row cap bounds **Tier A** rather than the mixture: applied here it runs before ``LIMIT``,
+        so an excluded row never consumes cap. Empty or ``None`` adds no term at all, which is what
+        keeps every other caller — Search, Discover, export — byte-identical."""
         from pagination import OffsetPagination
         pg = pagination or OffsetPagination()
         conds = self._search_conditions(q=q, publisher=publisher, lean=lean, topic=topic,
                                          date_from=date_from, date_to=date_to, source=source,
                                          country=country)
+        if exclude_publishers:
+            # NULL-safe by construction. `lower(NULL) NOT IN (...)` evaluates to NULL, not TRUE, so
+            # a bare NOT IN silently drops every row with no publisher — a filter that removes rows
+            # it was never asked about. The explicit IS NULL arm is what keeps them.
+            conds = list(conds) + [or_(
+                FeedArticle.publisher.is_(None),
+                func.lower(FeedArticle.publisher).notin_(sorted(exclude_publishers)))]
         if not include_provisional:
             conds = list(conds) + [or_(FeedArticle.article_state.is_(None),
                                        FeedArticle.article_state != "provisional")]

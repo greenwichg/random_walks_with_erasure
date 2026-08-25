@@ -30,6 +30,10 @@ reference; the guardrail tests in `tests/test_corpus_boundaries.py` enforce the 
   surfaced nowhere). **Everything defaults to `A`**, so this boundary changes nothing until an
   outlet is deliberately moved. Added by M1 of `docs/SCALE_ROADMAP.md`; before it, Stories read ①
   directly and the clustering corpus was whatever the fetch happened to return.
+  The boundary is applied in two layers (M2): a SQL prefilter so excluded rows never consume the
+  row cap — the cap must bound **Tier A**, not the mixture — and `corpus.select`, which is the
+  contract and catches what SQL cannot express. The prefilter is provably a *subset* of what
+  `select` drops, so SQL stays an optimization and never becomes a second policy.
 - **② Recommendation Corpus** — be *safe to recommend*. It is rebuilt from ① each poll cycle
   (`corpus_refresh`) through the qbias serializer, which **drops rows with no resolvable lean**
   (`feed_source.py:47-64`, `_bias_label` → `""` → dropped by `catalog_from_qbias`), applies the

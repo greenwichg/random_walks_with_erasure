@@ -24,6 +24,8 @@ Env surface (all optional; defaults below are the shipped policy):
 
     RWE_RETENTION_MAX_AGE_DAYS      catalog articles older than this            (0 = off)
     RWE_RETENTION_MAX_COUNT         keep at most this many catalog articles     (0 = off)
+    RWE_RETENTION_MAX_AGE_DAYS_TIER_B    override, Tier B outlets only          (0 = use the above)
+    RWE_RETENTION_MAX_AGE_DAYS_SHADOW    override, shadow outlets only          (0 = use the above)
     RWE_RETENTION_SCORED_DAYS       scored-article cache entries                (default 30)
     RWE_RETENTION_ANALYTICS_DAYS    product-analytics events                    (default 180)
     RWE_RETENTION_REC_EVENT_DAYS    recommendation surface/open events          (default 365)
@@ -57,6 +59,19 @@ class RetentionPolicy:
     # --- catalog (validation-aware; floors in corpus_health still protect the serving corpus) ---
     article_max_age_days: int = 0
     article_max_count: int = 0
+    # Per-tier AGE overrides (M2, docs/SCALE_ROADMAP.md). 0 = this tier uses `article_max_age_days`.
+    #
+    # A COUNT cap is an age cap whose length nobody chose: `RWE_RETENTION_MAX_COUNT=150000` is
+    # ~32 days at today's ~4,650 articles/day, ONE day at 150k/day and SEVEN HOURS at 500k/day. The
+    # corpus contract makes ① responsible for being "complete and findable", so a count cap under a
+    # rising ingestion rate silently reduces the searchable archive to hours — break #2 in the
+    # roadmap, and the reason retention has to become age-shaped before source coverage grows.
+    #
+    # Per-tier because the tiers have different value per byte: a Tier B outlet is searchable and
+    # attributable but never forms a story, so its long tail is worth less than Tier A's and can be
+    # pruned harder without touching what the product is about.
+    article_max_age_days_tier_b: int = 0
+    article_max_age_days_shadow: int = 0
     # --- derived / operational -------------------------------------------------------------- #
     scored_cache_days: int = 30        # pure cache: re-scoring is deterministic and cheap
     analytics_event_days: int = 180    # product funnel needs a window, not history forever
@@ -67,7 +82,27 @@ class RetentionPolicy:
     batch_limit: int = 5000            # per table, per run — keeps write locks short
 
     def catalog_enabled(self) -> bool:
-        return bool(self.article_max_age_days or self.article_max_count)
+        return bool(self.article_max_age_days or self.article_max_count
+                    or self.any_age_policy())
+
+    def any_age_policy(self) -> bool:
+        """Whether ANY age rule is in force, per tier or global.
+
+        ``run_retention``'s cheap pre-gate for a count-only policy skips the whole planner when the
+        catalog is under the cap — correct for a count, wrong for an age, because an age policy can
+        have prunable rows at any catalog size. The existing comment there calls that guard "the
+        whole forward-compatibility contract"; this method is what keeps the contract once a
+        per-tier age exists that ``article_max_age_days`` alone would not reveal."""
+        return bool(self.article_max_age_days or self.article_max_age_days_tier_b
+                    or self.article_max_age_days_shadow)
+
+    def age_days_for_tier(self, tier: str) -> int:
+        """The age rule this tier is subject to. 0 means no age prune for it."""
+        if tier == "B" and self.article_max_age_days_tier_b:
+            return self.article_max_age_days_tier_b
+        if tier == "shadow" and self.article_max_age_days_shadow:
+            return self.article_max_age_days_shadow
+        return self.article_max_age_days
 
     def describe(self) -> dict:
         """JSON-safe view for logs, the ops probe, and the docs — one place to read the truth."""
@@ -80,6 +115,8 @@ def load() -> RetentionPolicy:
     return RetentionPolicy(
         article_max_age_days=_int_env("RWE_RETENTION_MAX_AGE_DAYS", 0),
         article_max_count=_int_env("RWE_RETENTION_MAX_COUNT", 0),
+        article_max_age_days_tier_b=_int_env("RWE_RETENTION_MAX_AGE_DAYS_TIER_B", 0),
+        article_max_age_days_shadow=_int_env("RWE_RETENTION_MAX_AGE_DAYS_SHADOW", 0),
         scored_cache_days=_int_env("RWE_RETENTION_SCORED_DAYS", 30),
         analytics_event_days=_int_env("RWE_RETENTION_ANALYTICS_DAYS", 180),
         rec_event_days=_int_env("RWE_RETENTION_REC_EVENT_DAYS", 365),

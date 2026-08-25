@@ -1,6 +1,6 @@
 # Scaling to a 50,000-source universe — the dependency-ordered path
 
-**Status:** design, with **M1 built and shipped off** (see [Part 7](#part-7--m1-as-built)) ·
+**Status:** design, with **M1 and M2 built and shipped off** (Parts 7 and 8) ·
 **Companions:** `CRAWLER_ARCHITECTURE_AUDIT.md` (how we fetch), `SOURCE_COVERAGE_AUDIT.md` (which
 publishers we carry and what they do inside), `CORPUS_ARCHITECTURE.md` (the corpus contract this
 roadmap extends — now amended to four datasets), `PERFORMANCE.md` (every cost constant quoted below).
@@ -465,11 +465,11 @@ and a demotion (A→B when an outlet turns out to be a syndicator) takes effect 
 whole history on the next build, which is what a demotion should mean. A stored column would have
 frozen the answer at ingest and required a rewrite to change it.
 
-The cost is real and is recorded rather than hidden: **the tier predicate cannot be pushed into SQL
-yet**, so once Tier B has members their rows still count against the row cap before `select` ever
-sees them. `report["capBoundBeforeTier"]` states this at runtime rather than leaving it to be
-inferred. Pushing the predicate down is M2's, and the seam (`corpus.tier_of`) means moving the
-source of truth to a registry column or its own table changes no caller.
+The cost was real and is recorded rather than hidden: **the tier predicate could not be pushed into
+SQL**, so once Tier B had members their rows would still count against the row cap before `select`
+ever saw them. `report["capBoundBeforeTier"]` stated this at runtime rather than leaving it to be
+inferred. **M2 closed it** — see Part 8. The seam (`corpus.tier_of`) means moving the source of
+truth to a registry column or its own table still changes no caller.
 
 ## A correction to what `max_scan_default` claimed
 
@@ -588,6 +588,129 @@ real one and its quadratic term is inflated. This is the calibration mistake `PE
 records twice — a synthetic corpus put the top-10 token share at 86.4% against production's 25.8%.
 The arm is built to cluster hard **on purpose**; that is what makes it a control and what
 disqualifies it as a benchmark. The script now says so in its own output, next to the number.
+
+---
+
+# Part 8 — M2 as built
+
+Shipped **off**, byte-identical, on `claude/sleepy-gates-oecof1`. M2 closes breaks #1 and #2 — the
+two *silent* ones.
+
+## A — the row cap now bounds Tier A, not the mixture
+
+`corpus.sql_exclusions()` feeds `store.search_feed_articles(exclude_publishers=...)`, so an excluded
+row never consumes cap. The behaviour, as starkly as the data allows (`test_corpus_tiers.py`):
+
+> Fifty Tier B articles newer than five Tier A ones, under a cap of ten. **Without** the prefilter
+> the cap fills entirely with Tier B and the clustering corpus is **empty** — the tier filter
+> removes them all and reports that it did, having already lost the window. **With** it, all five
+> Tier A articles survive.
+
+At 50,000 sources, where Tier B is most of the corpus, that difference is the whole milestone.
+
+**The invariant that keeps SQL an optimization rather than a second policy:**
+
+> Every row the prefilter excludes is a row `corpus.select` would have dropped anyway.
+
+One-directional on purpose. The prefilter may *miss* rows — they fall through to the Python pass,
+which is the contract — and must never remove one that pass keeps. It holds by construction: a
+canonical name resolves to itself, and `_matches` now tests the host set against the **publisher
+string** as well as the URL. That last part is not a convenience — `ingest.Scorer._resolve_outlet`
+falls back to `raw.outlet or _domain_of(raw.url)`, so an outlet the registry does not know is
+routinely *stored under its bare domain*, and a host-configured tier would otherwise miss exactly
+the rows most likely to carry it.
+
+What SQL cannot express is the **residue**: an alias the registry learned after ingest, or a Tier B
+host appearing only in the URL. Those still consume cap, `select` still drops them, and
+`report["tierResidue"]` counts them — so the fix (one registry alias row) is discoverable rather
+than silent. `capBoundBeforeTier` is now precise (`capBound and residue > 0`) instead of
+pessimistic.
+
+### One SQL trap worth naming
+
+`lower(NULL) NOT IN (...)` evaluates to **NULL, not TRUE**, so a bare `NOT IN` silently drops every
+row with no publisher — a filter removing rows it was never asked about. The explicit `IS NULL` arm
+keeps them, and `test_a_null_publisher_survives_the_exclusion` fails without it.
+
+## B — retention becomes age-shaped, and per tier
+
+`RWE_RETENTION_MAX_AGE_DAYS_TIER_B` / `_SHADOW`, both **0 = off**, both in the compose allowlist.
+`plan_retention` takes an optional `age_days_for` **callable** rather than a tier map, so a
+deletion policy stays unit-testable without the registry, the environment, or a store.
+
+**The floors are unchanged and still outrank everything.** The repair pass runs over the same flags
+whatever produced them, so a per-tier age inherits the guarantee rather than needing its own:
+retention cannot breach a floor, whatever shape the policy is.
+
+### The bug this could have shipped
+
+`run_retention` skips the whole planner when a **count-only** policy is under its cap — worth a
+measured 3,433–4,543 ms per run. That gate keyed on `not max_age_days`, and **a per-tier age is an
+age policy**: it can have prunable rows at any catalog size. Left alone, configuring a Tier B age
+under the count cap would have pruned nothing, silently, forever.
+
+The comment already at that gate calls it *"the whole forward-compatibility contract"*. This is the
+first time the contract was cashed in. `test_a_tier_age_is_not_swallowed_by_the_count_only_fast_path`
+fails against the old guard with `skipped: under_count_cap, pruned: 0` — verified by reverting the
+guard and re-running, not by reasoning about it.
+
+### `audit_retention_horizon.py`
+
+Read-only, deletes nothing, recommends nothing automatically. It answers the question the count cap
+hides: **a count cap is an age cap whose length nobody chose.** It prints the horizon at the
+measured ingestion rate (`capacity_report.ingestion_rate`, from `created_at` — never
+`published_at`) and at 2×/5×/10×/50×/100×, flagging the point where the archive becomes shallower
+than the 6-day clustering window, plus the age policy equivalent to today's cap.
+
+```bash
+dc run --rm -T api python examples/audit_retention_horizon.py --db "$RWE_DB_URL"
+```
+
+## C — the `readingMinutes` precompute: assessed, NOT built
+
+The roadmap bundled this into M2 as "precompute `readingMinutes` at ingest so `_fetch` can narrow
+(31% of the build)". Two findings from actually looking:
+
+**It is smaller than it sounds.** Exactly one serving-path call site reads `body`:
+`discover._reading_minutes` (`body or description`). Nothing else in the request path touches the
+column.
+
+**And more dangerous than it sounds.** `readingMinutes` does not only render a label — it feeds
+`study_metrics.reading_time`, an Information Health metric. Between precomputing and backfilling,
+any row without the stored value computes from `description` alone and silently shrinks, so the
+failure mode is a *quietly wrong metric*, not a cosmetic one.
+
+**Deferred, and the reason is scope discipline rather than difficulty.** It needs a stateful
+backfill on the live database, and it does not close either break. Every other thing in M1 and M2 is
+a no-op on deploy; bundling a production data migration into that would spend the property that
+makes these milestones safe to ship. The build is **8.5 s against a 600 s poll cycle — 1.4%**, so
+there is no pressure, and `PERFORMANCE.md` already says of this exact change: *"that needs a
+backfill, so it is a change to plan, not to slip into a performance pass."*
+
+## Bars
+
+| bar | where | status |
+|---|---|---|
+| the cap bounds Tier A — 5 of 5 survive a cap Tier B would have eaten, 0 without the prefilter | unit (own control arm) | ✅ |
+| the prefilter is a **subset** of what `select` drops (same kept set both ways) | unit | ✅ |
+| a NULL publisher survives the exclusion | unit | ✅ |
+| off adds no SQL term and `sql_exclusions()` is empty | unit | ✅ |
+| no per-tier age ⇒ resolver is `None` ⇒ the planner's scalar path, unchanged | unit | ✅ |
+| a Tier B age prunes only Tier B; a Tier A article is untouched | unit | ✅ |
+| a per-tier age is **not** swallowed by the count-only fast path | unit (fails on the old guard) | ✅ |
+| a count-only policy still takes the fast path | unit | ✅ |
+| the floors outrank a per-tier age | unit | ✅ |
+| compose ships all five vars, tiers empty and ages `0` | env hygiene | ✅ |
+| the live retention horizon | `audit_retention_horizon.py` | **owed** |
+
+```bash
+cd /opt/ih && source deploy/ops/_compose.sh
+sudo bash deploy/ops/update.sh claude/sleepy-gates-oecof1
+dc run --rm -T api python examples/audit_retention_horizon.py --db "$RWE_DB_URL"
+```
+
+Nothing else is owed: M2's boundary work is exercised entirely by unit tests with their own control
+arms, and the corpus-boundary bars from M1 still pass unchanged.
 
 ---
 

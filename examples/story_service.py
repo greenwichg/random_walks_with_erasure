@@ -2428,9 +2428,20 @@ def _fetch(store_, *, topic=None, date_from=None, date_to=None, max_scan=None,
     function used to discard as ``_total`` is what makes the first one detectable, and it was
     always right here. See `docs/SCALE_ROADMAP.md` (M1) and ``examples/corpus.py``.
 
-    Tier selection runs BEFORE the event-countries lookup, so an excluded row costs no side-table
-    read. With no tier configured — the shipped state — ``select`` returns the list it was handed
-    and this function is byte-identical to what it was.
+    The boundary is applied in TWO layers and the order is the point (M2):
+
+    1. ``corpus.sql_exclusions()`` goes into the query, so an excluded row never consumes the row
+       cap. Without it the cap fills with Tier B and Tier A gets whatever is left — at 50,000
+       sources, where Tier B is most of the corpus, that truncates the clustering window to a
+       sliver while the tier filter reports that it removed them.
+    2. ``corpus.select`` is the contract, catching what SQL cannot express (an alias the registry
+       learned after ingest, a Tier B host that appears only in the URL). Those are the residue;
+       the report counts them.
+
+    Tier selection also runs BEFORE the event-countries lookup, so an excluded row costs no
+    side-table read. With no tier configured — the shipped state — the exclusion set is empty (no
+    SQL term at all) and ``select`` returns the list it was handed, so this function is
+    byte-identical to what it was.
 
     ``report_out`` is the optional sink for that selection report (what bound, the window actually
     achieved, headroom). It exists so a caller can have the numbers WITHOUT running the query twice:
@@ -2443,7 +2454,8 @@ def _fetch(store_, *, topic=None, date_from=None, date_to=None, max_scan=None,
     cap = max_scan or max_scan_default()
     rows, total = store_.search_feed_articles(
         topic=topic, date_from=date_from, date_to=date_to, sort="newest",
-        pagination=OffsetPagination.from_params(cap, 0, max_limit=cap))
+        pagination=OffsetPagination.from_params(cap, 0, max_limit=cap),
+        exclude_publishers=corpus.sql_exclusions())
     rows = corpus.select(rows, total=total, cap=cap, window_start=date_from,
                          report_out=report_out)
     events = store_.event_countries_for_urls([r.get("canonicalUrl") for r in rows])

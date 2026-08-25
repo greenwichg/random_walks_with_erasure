@@ -52,6 +52,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 from urllib.parse import urlsplit
 
+import retention_policy          # the ONE typed description of how long anything is kept
+
 _BUCKETS = ("left", "center", "right")
 _EPOCH = datetime.min.replace(tzinfo=timezone.utc)   # undated articles sort oldest (pruned first)
 _logger = logging.getLogger("ih.corpus")
@@ -376,13 +378,22 @@ def corpus_metrics(articles: list, *, now: Optional[datetime] = None,
 # --------------------------------------------------------------------------- #
 def plan_retention(articles: list, *, max_age_days: Optional[float] = None,
                    max_count: Optional[int] = None, thresholds: Optional[dict] = None,
-                   now: Optional[datetime] = None) -> dict:
+                   now: Optional[datetime] = None, age_days_for=None) -> dict:
     """Decide which articles to prune. Returns ``keep`` / ``prune`` canonical-URL lists plus stats.
 
     Steps: (1) flag the raw age/count prune candidates (newest-first order), then (2) a repair pass
     pulls the *newest* pruned articles back until each floor is met — per-bucket, then publishers,
     then fresh, then total. Every pull-back only moves an article prune->keep, so the final prune set
-    is always a subset of the raw policy set: retention cannot breach a floor."""
+    is always a subset of the raw policy set: retention cannot breach a floor.
+
+    ``age_days_for`` is an optional ``article -> days`` resolver, so an age rule can differ per
+    article — today by corpus tier (M2). It is a CALLABLE rather than a tier map on purpose: this
+    function stays pure and knows nothing about tiers, the registry, or the environment, which is
+    what lets a deletion policy be unit-tested without any of them. ``None`` (the default) means
+    every article is subject to the scalar ``max_age_days``, which is the shipped behaviour.
+
+    The floors protect a per-tier age exactly as they protect a global one — the repair pass runs
+    over the same flags whatever produced them, so no age rule of any shape can breach a floor."""
     now = now or datetime.now(timezone.utc)
     th = thresholds or thresholds_from_env()
     fresh_days = th["freshMaxAgeDays"]
@@ -399,9 +410,10 @@ def plan_retention(articles: list, *, max_age_days: Optional[float] = None,
     for i, a in enumerate(ordered):
         if max_count and i >= max_count:
             keep[i] = False
-        if max_age_days:
+        age = age_days_for(a) if age_days_for is not None else max_age_days
+        if age:
             dt = _published(a)
-            if dt is None or (now - dt).total_seconds() > max_age_days * 86400:
+            if dt is None or (now - dt).total_seconds() > age * 86400:
                 keep[i] = False
     raw_pruned = sum(1 for k in keep if not k)
 
@@ -481,16 +493,34 @@ def retention_enabled() -> bool:
     return bool(_int_env("RWE_RETENTION_MAX_AGE_DAYS", 0) or _int_env("RWE_RETENTION_MAX_COUNT", 0))
 
 
+def _tier_age_resolver(policy):
+    """An ``article -> age days`` resolver when a PER-TIER age is configured, else ``None``.
+
+    ``None`` is the shipped state and means ``plan_retention`` applies the scalar to everything —
+    byte-identical to before this existed. The import is local because ``corpus`` reaches the
+    registry, and a retention pass that has no per-tier rule should not pay for loading it."""
+    if not (policy.article_max_age_days_tier_b or policy.article_max_age_days_shadow):
+        return None
+    import corpus
+
+    def age_for(a: dict) -> int:
+        return policy.age_days_for_tier(
+            corpus.tier_of(_outlet(a), a.get("canonicalUrl") or a.get("url")))
+    return age_for
+
+
 def run_retention(store_, *, max_age_days: Optional[float] = None, max_count: Optional[int] = None,
                   thresholds: Optional[dict] = None, log=None, now: Optional[datetime] = None) -> dict:
     """Load the catalog, plan a validation-aware prune, delete the (floor-respecting) prune set from
     ``feed_articles`` only, and log it. Returns the plan stats + post-prune metrics."""
     log = log or _default_log
+    policy = retention_policy.load()
+    age_days_for = _tier_age_resolver(policy)
     if max_age_days is None:
-        max_age_days = _int_env("RWE_RETENTION_MAX_AGE_DAYS", 0) or None
+        max_age_days = policy.article_max_age_days or None
     if max_count is None:
-        max_count = _int_env("RWE_RETENTION_MAX_COUNT", 0) or None
-    if not max_age_days and not max_count:
+        max_count = policy.article_max_count or None
+    if not max_age_days and not max_count and age_days_for is None:
         return {"pruned": 0, "kept": store_.count_feed_articles(), "skipped": "no_policy"}
 
     # Cheap pre-gate for a COUNT-ONLY policy. Loading and planning the entire catalog just to
@@ -515,7 +545,12 @@ def run_retention(store_, *, max_age_days: Optional[float] = None, max_count: Op
     # (publishers / perBucket / fresh): computing it requires the very catalog load this exists to
     # avoid. That is observability, not retention semantics — nothing about which rows get deleted
     # changes — and the metrics remain available on demand from this module's own entry points.
-    if not max_age_days and max_count:
+    #
+    # `age_days_for is None` extends that guard to the PER-TIER ages (M2). A Tier B age rule is an
+    # age rule: it can have prunable rows under the cap, so the fast path must not swallow it. The
+    # comment above calls this guard "the whole forward-compatibility contract" and this is the
+    # first time it is cashed in.
+    if not max_age_days and age_days_for is None and max_count:
         catalog = store_.count_feed_articles()
         if catalog <= max_count:
             log(logging.INFO, "feed_retention", pruned=0, kept=catalog, catalog=catalog,
@@ -524,7 +559,7 @@ def run_retention(store_, *, max_age_days: Optional[float] = None, max_count: Op
 
     articles = store_.list_feed_articles(limit=10_000_000)
     plan = plan_retention(articles, max_age_days=max_age_days, max_count=max_count,
-                          thresholds=thresholds, now=now)
+                          thresholds=thresholds, now=now, age_days_for=age_days_for)
     deleted = store_.delete_feed_articles(plan["prune"]) if plan["prune"] else 0
     # The set is built ONCE. It used to be constructed inside the comprehension's condition, where
     # Python re-evaluates it for every article — a 27,000-element set rebuilt 27,000 times, ~729

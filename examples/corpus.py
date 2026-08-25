@@ -164,12 +164,27 @@ def tier_index() -> dict:
     return {"B": _index(_setting(_TIER_B_ENV)), "shadow": _index(_setting(_SHADOW_ENV))}
 
 
+def _host_match(hosts: frozenset, text: "str | None") -> bool:
+    """Subdomain-tolerant host membership: ``example.com`` matches ``news.example.com`` and never
+    ``notexample.com``."""
+    host = outlet_registry._host_of(text or "")
+    return bool(host) and any(host == h or host.endswith("." + h) for h in hosts)
+
+
 def _matches(index: tuple, publisher: "str | None", url: "str | None") -> bool:
     """Two-sided identity match, the same rule ``ingest.is_blocked_from_catalog`` uses and for the
     same measured reason: 499 of 671 obituary articles arrive under the parent MASTHEAD's name with
     an ``obits.*`` URL, so resolving only the name lets them through under an identity that is not
     theirs. ``story_service`` has always tested wire membership two-sided
-    (``is_wire(publisher) or is_wire_url(url)``); this matches."""
+    (``is_wire(publisher) or is_wire_url(url)``); this matches.
+
+    The host set is tested against the PUBLISHER STRING too, not only the URL. An outlet the
+    registry does not know is stored under whatever the feed called it, and for broad providers
+    that is routinely the bare domain (``ingest.Scorer._resolve_outlet`` falls back to
+    ``raw.outlet or _domain_of(raw.url)``) — so a host-configured tier would otherwise miss the rows
+    most likely to carry it. It is gated on ``_looks_like_host`` so a display name containing a dot
+    still routes to the name path, and it is what makes :func:`sql_exclusions` provably a SUBSET of
+    what this function drops."""
     canonicals, hosts = index
     if canonicals:
         reg = default_registry()
@@ -180,8 +195,9 @@ def _matches(index: tuple, publisher: "str | None", url: "str | None") -> bool:
             if outlet is not None and outlet.canonical in canonicals:
                 return True
     if hosts:
-        host = outlet_registry._host_of(url or "")
-        if host and any(host == h or host.endswith("." + h) for h in hosts):
+        if _host_match(hosts, url):
+            return True
+        if publisher and outlet_registry._looks_like_host(publisher) and _host_match(hosts, publisher):
             return True
     return False
 
@@ -208,6 +224,48 @@ def tier_of(publisher: "str | None", url: "str | None" = None) -> str:
     if not enabled():
         return DEFAULT_TIER
     return _tier_with(tier_index(), publisher, url)
+
+
+def sql_exclusions() -> "frozenset[str]":
+    """Lower-cased ``publisher`` strings a SQL prefilter may safely exclude — **an optimization,
+    never the policy**.
+
+    ## Why a prefilter at all
+
+    The row cap is applied in SQL, upstream of :func:`select`. Without this, Tier B rows fill the
+    cap and Tier A gets whatever is left — which at 50,000 sources, where Tier B is most of the
+    corpus, would truncate the clustering window to a sliver while the tier filter dutifully
+    reported that it had removed them. The cap has to bound **Tier A**, not the mixture. That is
+    what "bound Tier A" means in M2.
+
+    ## The invariant, and why it holds by construction
+
+    > Every row this set excludes is a row :func:`select` would have dropped anyway.
+
+    One-directional on purpose. The prefilter may miss rows (they fall through to the Python pass,
+    which is the contract); it must never remove one the Python pass would keep, or SQL becomes a
+    second policy that can silently diverge from the first.
+
+    Both halves are safe:
+
+    * a **canonical** name resolves to itself, so a row stored under it matches ``_matches`` by the
+      name side;
+    * a **host** is matched by ``_matches`` against the publisher string as well as the URL (see
+      that function), so a row whose ``publisher`` IS the host matches there too.
+
+    ## What it cannot express
+
+    Rows whose stored publisher is neither — an alias the registry learned after ingest, or a Tier B
+    host appearing only in the URL while the name says something else. Those are the **residue**:
+    they still consume cap, ``select`` still drops them, and the report counts them so the fix
+    (a registry alias row) is discoverable rather than silent."""
+    if not enabled():
+        return frozenset()
+    out = set()
+    for canonicals, hosts in tier_index().values():
+        out.update(c.lower() for c in canonicals)
+        out.update(h.lower() for h in hosts)
+    return frozenset(out)
 
 
 # --------------------------------------------------------------------------- #
@@ -284,12 +342,20 @@ def select(rows: list, *, total: "int | None" = None, cap: "int | None" = None,
     # exactly `cap` rows and would report a breach that did not occur.
     cap_bound = bool(cap and total is not None and total > cap)
 
+    residue = dropped["B"] + dropped["shadow"]
     report = {
+        # `window` is the count the SQL WHERE matched, so once the tier prefilter is live it is
+        # already a TIER A count — which is the point of M2: the cap bounds Tier A, not the mixture.
         "window": total,                       # rows the time window matched, before the cap
         "scanned": len(rows),                  # rows the cap let through
         "kept": len(kept),                     # the clustering corpus
         "droppedTierB": dropped["B"],
         "droppedShadow": dropped["shadow"],
+        # Rows the SQL prefilter could NOT express — an alias the registry learned after ingest, or
+        # a Tier B host that appears only in the URL. They still consume cap, so this number is the
+        # actionable one: a registry alias row moves each of them onto the SQL path.
+        "tierResidue": residue,
+        "sqlExcludedTerms": len(sql_exclusions()),
         "tiering": enabled(),
         "cap": cap or None,
         "budget": budget,
@@ -299,7 +365,9 @@ def select(rows: list, *, total: "int | None" = None, cap: "int | None" = None,
         # BELOW the CPU budget (83,000), so the backstop is the binding constraint and the budget
         # warning cannot fire — worth printing rather than leaving to be discovered.
         "binding": ("cap" if cap and cap < budget else "budget"),
-        "capBoundBeforeTier": cap_bound and enabled(),
+        # Now precise rather than pessimistic: the cap is only made worse by tiering to the extent
+        # the prefilter missed rows. Before M2 this was true whenever tiering was on at all.
+        "capBoundBeforeTier": cap_bound and residue > 0,
         "requestedFrom": window_start,
         "effectiveFrom": oldest.isoformat() if oldest else None,
         "requestedWindowHours": _hours(newest, requested),

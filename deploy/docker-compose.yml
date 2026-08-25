@@ -640,6 +640,22 @@ services:
       # User data (reads, saves, settings, accounts) has NO policy and is never pruned.
       RWE_RETENTION_MAX_COUNT: ${RWE_RETENTION_MAX_COUNT:-0}
       RWE_RETENTION_MAX_AGE_DAYS: ${RWE_RETENTION_MAX_AGE_DAYS:-0}
+      # Per-tier AGE overrides (M2, docs/SCALE_ROADMAP.md). 0 = that tier uses MAX_AGE_DAYS above.
+      #
+      # A COUNT cap is an age cap whose length nobody chose: 150,000 rows is ~32 days at today's
+      # ~4,650 articles/day, ONE day at 150k/day and SEVEN HOURS at 500k/day. The corpus contract
+      # makes the Full/Searchable corpus responsible for being "complete and findable", so the same
+      # unchanged setting quietly turns the archive into hours as source coverage grows — and
+      # nothing about it looks different from the outside. Age is the shape that does not move when
+      # ingestion does.
+      #
+      # BOTH 0 IS THE SHIPPED STATE and changes nothing: with no per-tier rule the planner applies
+      # the scalar to every article exactly as before. Read the horizon BEFORE setting either:
+      #   dc run --rm -T api python examples/audit_retention_horizon.py --db "$RWE_DB_URL"
+      # Retention DELETES. The floors in corpus_health (per-bucket, publishers, fresh, total) hold
+      # whatever age policy is configured, per-tier or global, so a prune can never breach them.
+      RWE_RETENTION_MAX_AGE_DAYS_TIER_B: ${RWE_RETENTION_MAX_AGE_DAYS_TIER_B:-0}
+      RWE_RETENTION_MAX_AGE_DAYS_SHADOW: ${RWE_RETENTION_MAX_AGE_DAYS_SHADOW:-0}
       RWE_RETENTION_SCORED_DAYS: ${RWE_RETENTION_SCORED_DAYS:-30}
       RWE_RETENTION_ANALYTICS_DAYS: ${RWE_RETENTION_ANALYTICS_DAYS:-180}
       RWE_RETENTION_REC_EVENT_DAYS: ${RWE_RETENTION_REC_EVENT_DAYS:-365}
