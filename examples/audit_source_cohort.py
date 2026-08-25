@@ -69,19 +69,17 @@ VOLUME_FLOOR = 10
 #: happen on wire-fed stories — so a flagged outlet is a strong signal rather than a marginal one.
 SYNDICATION_CEILING = 0.35
 
-#: Share of an outlet's articles that must reach an admitted story for it to be carrying coverage.
-#: Below this it is a Search/Discover source, which is exactly what Tier B is for — but ONLY if the
-#: outlet had a fair chance to cluster. See :data:`PEER_FLOOR` and :func:`verdict`.
+#: Participation below which an outlet is REPORTED as a possible Search/Discover source. It does
+#: not demote — two justifications for acting on this number have now failed against the data. See
+#: :func:`verdict`.
 PARTICIPATION_FLOOR = 0.10
 
-#: Outlets publishing in the same language before participation is a meaningful measurement of an
-#: outlet rather than of the corpus around it.
+#: Same-language outlets, reported beside participation so the two can be read together.
 #:
-#: Clustering is title-token Jaccard, so an outlet can only join a story with a publisher writing in
-#: its OWN language. Below this many peers, "0% participation" says nothing about the outlet: it
-#: says the corpus has nobody for it to agree with. Three, because `min_publishers = 2` means a
-#: story needs two distinct publishers, and an outlet needs at least one peer besides itself plus
-#: margin for the peers not covering the same events on the same days.
+#: This was a GATE — below three peers, low participation was excused as "stranded". The measurement
+#: killed it: English at 214 peers participates at 27%, Vietnamese at SIX peers at 30%. Peer count
+#: does not predict participation, so the number is now context for a human reading the table and
+#: nothing decides on it.
 PEER_FLOOR = 3
 
 
@@ -174,19 +172,27 @@ def verdict(s: dict, peers: int = 99) -> "tuple[str, str]":
     is the WORST case, not a mixed one, because its participation is other publishers' coverage
     counted twice.
 
-    **The participation criterion is gated on peers, and the first production run is why.** It
-    demoted 178 outlets, and the reasons block named Index.hu, PerthNow, cooperativa.cl,
-    nettavisen.no, iltalehti.fi, digi24.ro — real newsrooms, every one at ``dated 100%``,
-    ``host 100%``, ``syndication 0%`` and participation 0%. Title-token Jaccard cannot match a
-    Hungarian headline to an English one, so a legitimate Hungarian newsroom scores zero **by
-    construction**. Six Vietnamese outlets in the same corpus score 20-46% because they cluster with
-    EACH OTHER.
+    **Participation is REPORTED AND NEVER ACTED ON, and three production runs are why.**
 
-    So participation measures *whether an outlet has linguistic peers in our corpus*, not whether it
-    is valuable. Ungated it was a language filter wearing a quality filter's clothes — the same
-    class of error as a coherence bar that is structurally blind to sources carrying no event
-    geography. It also contradicted a ratified decision: 9GAG and DEV Community were measured
-    individually in `SOURCE_COVERAGE_AUDIT.md` Part 3 and kept."""
+    It first demoted 178 outlets — Index.hu, PerthNow, cooperativa.cl, nettavisen.no — and the
+    proposed explanation was linguistic: title-token Jaccard cannot match a Hungarian headline to
+    an English one, so an outlet with no same-language peers scores zero by construction. That
+    reading was itself built on a broken membership lookup (see :func:`member_key`).
+
+    With the lookup fixed, the peer hypothesis is **refuted by its own measurement**: English with
+    214 peers participates at 27%, Vietnamese with SIX peers at 30%. Peer count does not predict
+    participation, so the gate that was built on it was unjustified too.
+
+    What remains true is that the criterion keeps flagging things that are not defects. Its list
+    contains real newsrooms (The Hankyoreh, cooperativa.cl, BelTA, dailymemphian.com) and outlets a
+    ratified decision already examined and KEPT — 9GAG and DEV Community were measured individually
+    in `SOURCE_COVERAGE_AUDIT.md` Part 3, and `Nature` / `Space.com` are the research kind that
+    audit decided stays. Two proposed justifications have now failed. Until a third survives
+    contact with the data, low participation is an observation, not a verdict.
+
+    **Only the two language-independent criteria demote**: syndication and host instability. Both
+    measure something the outlet is actually doing wrong — republishing another masthead's copy, or
+    having no stable identity — rather than something the corpus around it is not doing."""
     if s["kind"] in ("wire", "aggregator"):
         return "ALREADY EXCLUDED", f"registry kind={s['kind']} — never enters clustering"
     if s["syndication"] > SYNDICATION_CEILING:
@@ -195,12 +201,9 @@ def verdict(s: dict, peers: int = 99) -> "tuple[str, str]":
     if s["hostStability"] < 0.5 and s["hosts"] > 1:
         return "TIER B", f"only {s['hostStability']:.0%} of articles on its main host — unstable identity"
     if s["participation"] < PARTICIPATION_FLOOR:
-        if peers < PEER_FLOOR:
-            return "STRANDED", (f"{s['participation']:.0%} participation, but only {peers} outlet(s) "
-                                f"in the corpus publish in {s['language'] or 'its language'} — "
-                                f"participation cannot measure it. NOT a quality verdict.")
-        return "TIER B", (f"{s['participation']:.0%} of its articles reach a story despite {peers} "
-                          f"peers in {s['language'] or 'its language'} — a Search/Discover source")
+        return "LOW PARTICIPATION", (
+            f"{s['participation']:.0%} of its articles reach a story ({peers} peers in "
+            f"{s['language'] or 'unknown'}) — REPORTED, NOT ACTED ON. See the note on this verdict.")
     if s["rated"]:
         return "TIER A (keep)", "carries a lean, participates in stories — it can vote and it does"
     if s["tracked"]:
@@ -268,9 +271,10 @@ def main(argv=None) -> int:
             by_lang[v["language"] or "(none)"][0] += v["articles"]
             by_lang[v["language"] or "(none)"][1] += v["inStory"]
     print(f"\n=== does LANGUAGE explain participation? (outlets above the floor) ===")
-    print("    Prediction: participation tracks how many PEERS an outlet has, not its quality —")
-    print("    clustering is title-token Jaccard, so an outlet can only join a story with a")
-    print("    publisher writing in its own language.")
+    print("    The prediction was that participation tracks PEER COUNT. Measured 2026-08-25 with")
+    print("    a corrected membership lookup, it does NOT: en has 214 peers at 27%, vi has SIX at")
+    print("    30%. Kept because the table is still worth reading — every non-Latin-script")
+    print("    language sits at exactly 0%, which is a question about the tokenizer, not a finding.")
     # `language` comes from the feed entry, and plenty of feeds do not supply one. Say so BEFORE
     # the table: a breakdown dominated by "(none)" cannot test the hypothesis either way, and
     # reporting it as though it had is exactly the failure this audit series keeps finding in its
@@ -312,9 +316,13 @@ def main(argv=None) -> int:
                    if verdict(s, peers.get(s["language"], 0))[0] == name)
         print(f"  {n:>5} outlets  {arts:>7,} articles  {name}")
 
+    # ONLY the defect-based verdicts. Participation does not demote -- see verdict().
     demote = {k for k, s in cand.items()
               if verdict(s, peers.get(s["language"], 0))[0] == "TIER B"}
     print(f"\n=== the reasons, for the {len(demote)} Tier B verdicts (read these) ===")
+    if not demote:
+        print("  none — no outlet is republishing another masthead's copy or carrying an unstable")
+        print("  identity. Low participation is reported above and deliberately does not demote.")
     for key in sorted(demote, key=lambda k: -cand[k]["inStory"])[:args.show]:
         print(f"  {cand[key]['canonical'][:36]:<36} "
               f"{verdict(cand[key], peers.get(cand[key]['language'], 0))[1]}")
