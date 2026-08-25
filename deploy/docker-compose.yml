@@ -381,7 +381,10 @@ services:
       # independent signal untouched — the one split being a 10-article/3-publisher
       # betting-preview chain, the registered failure class itself. Defaulted HERE like the
       # gate above, and for the same reason. `announce` alone is the revert.
-      RWE_CLUSTER_TEMPLATE_LEXICONS: ${RWE_CLUSTER_TEMPLATE_LEXICONS:-announce,tracker,preview}
+      # `recall` joined 2026-08-25 (consumer-safety recall boilerplate — the fruit-bars/eye-drops
+      # weld): measured against the live catalog, the ONE split was that exact story shedding its
+      # one foreign article, at 0.0% dropped coverage and an untouched independent signal.
+      RWE_CLUSTER_TEMPLATE_LEXICONS: ${RWE_CLUSTER_TEMPLATE_LEXICONS:-announce,tracker,preview,recall}
       # Banded semantic event-identity (event_identity.py) — OFF until the pre-registered V1
       # bars (docs/EVENT_IDENTITY_RUBRIC.md) and the clustering counterfactual say the judge
       # earns edges. The build never waits on it: verdicts persist in the store, unjudged

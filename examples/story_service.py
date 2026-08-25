@@ -779,8 +779,9 @@ RECALL_TOKENS = frozenset((
     "nationwide", "possible", "potential", "affected", "product", "products",
     "warning", "warns", "sold", "stores", "urged", "consumers"))
 
-#: Name -> vocabulary. ``announce`` is the adopted Phase B set; ``tracker``/``preview``
-#: adopted 2026-08-24; ``recall`` is the current candidate.
+#: Name -> vocabulary. ``announce`` adopted Phase B (2026-08-17); ``tracker``/``preview``
+#: adopted 2026-08-24; ``recall`` adopted 2026-08-25 (measured: the one split was the
+#: fruit-bars/eye-drops weld itself resolving, 0.0% dropped, signal untouched).
 TEMPLATE_LEXICONS = {"announce": TEMPLATE_TOKENS, "tracker": TRACKER_TOKENS,
                      "preview": PREVIEW_TOKENS, "recall": RECALL_TOKENS}
 

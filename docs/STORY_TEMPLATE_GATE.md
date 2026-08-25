@@ -1,5 +1,11 @@
 # The sole-template-evidence gate — why announcement headlines welded, and the measured fix
 
+**Extended again 2026-08-25:** `recall` joined the set (consumer-safety recall boilerplate —
+the production fruit-bars/eye-drops weld, which could never edge directly and rode a
+bridge sharing only {contamination, nationwide, possible, recalled}). Measured on the live
+catalog: the single split was that exact story shedding its one foreign article, 0.0% dropped,
+independent signal untouched. The compose default is now `announce,tracker,preview,recall`.
+
 **Extended 2026-08-24:** the gate now consults a SET of lexicons —
 `RWE_CLUSTER_TEMPLATE_LEXICONS=announce,tracker,preview` is a compose default (`announce` alone
 is the revert). `tracker` covers box-office/OTT day-counter chains (the Batwara/Vishwanath
