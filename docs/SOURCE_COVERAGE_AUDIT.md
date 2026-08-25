@@ -1,9 +1,10 @@
-# Source coverage and corpus composition — three audits, three rejections
+# Source coverage and corpus composition — four audits, and the first adoption
 
 Companion to `CRAWLER_ARCHITECTURE_AUDIT.md`, which covers how we *fetch*. This one covers **which
-publishers we carry and what they do once inside**. All three audits were commissioned as
-research-only and all three ended in a rejection; the numbers are recorded here because a
-measurement that closes a line of work is worth as much as one that opens it, and because each of
+publishers we carry and what they do once inside**. Parts 2-4 were commissioned as research-only and
+all three ended in a rejection; Part 5 is the first cohort actually evaluated against the M1/M2 tier
+boundary, and the first to end in an adoption. The numbers are recorded here because a measurement
+that closes a line of work is worth as much as one that opens it, and because nearly every one of
 these overturned a recommendation I had already made in writing.
 
 **Forward reference:** `SCALE_ROADMAP.md` designs the architecture for a deliberately different
@@ -312,6 +313,112 @@ no new code path.
 
 ---
 
+# Part 5 — The first evaluated cohort: host instability adopt, syndication reject
+
+The first use of the M1/M2 tier boundary, and the first time the outlets we already ingest were
+measured. `examples/audit_source_cohort.py`, live catalog 2026-08-25.
+
+## The setup, and why the cohort was already inside
+
+`ingest_entries` has no admission gate, so **4,403 outlet identities are already in the catalog,
+3,988 untracked** — every one of them in Tier A by grandfathering. The first cohort was never a list
+of publishers to add. It was the ones we already carry, measured against the question the boundary
+was built to ask.
+
+Only two criteria survived to demote: **syndication** (share of headlines whose exact title-token
+set also runs under another publisher) and **host instability** (share of articles on the outlet's
+own main host). Both are language-independent. Five outlets, 137 articles.
+
+## The split is the whole result
+
+```
+                          rows   stories        covered   LOST   claims
+  SYNDICATION only          70   1,505->1,479   -67        26     208->207
+  HOST INSTABILITY only     67   1,505->1,502   -13         3     208->207
+  both                     137   1,505->1,476   -80        29     208->206
+```
+
+**Host instability costs 3 collateral articles. Syndication costs 26 — nearly all of the 29.**
+Largest cluster is *unchanged* (60) under host instability alone and falls to 58 under syndication.
+Coherence flat both ways (0.959 → 0.958). Exhibits unmoved.
+
+## Syndication: REJECTED, and the mechanism is why
+
+The benefit measured for all five together is **33 in-story articles carrying a title identical to
+another member of the same story** — publisher counts a story should never have had. Most of that
+is the two syndicators (Brisbane Times 42%, the brunswick news 50%); the split is inferred from
+their syndication rates rather than measured per-criterion.
+
+So syndication is roughly **30 inflated publisher counts fixed against 26 articles losing coverage
+entirely** — break-even at best. But the arithmetic is not the reason to refuse it. **The mechanism
+is wrong:**
+
+> Removing a syndicated copy from a 2-publisher story does not correct the publisher count. It
+> deletes the story — `min_publishers = 2` fails — and takes the *legitimate* article with it.
+
+That is exactly what 26 lost articles and 26 destroyed stories are. Tier B is the wrong instrument
+for a syndicator, and this repo already recorded the right one, in Part 3's second smaller finding:
+
+> "9GAG sits in a 12-member story alongside Reuters and the NYT. `totalCoverage` counts it;
+> `_distribution` and `_rated_publishers` do not… **the machinery to distinguish the two counts
+> already exists**."
+
+A syndicator should count as *coverage* and not as a *publisher*. That is a display-and-quorum
+change, not a corpus-membership one, and it costs nobody their article.
+
+## Host instability: ADOPT, marginally
+
+`iHeartRadio` 6%, `jpnn` 44%, `ETtoday` 42% — at 6% stability, 94% of an outlet's articles sit on
+domains that are not its own. These are not low-value outlets; they are **unattributable** ones, and
+they vote in stories under a name that is not theirs.
+
+That is the mirror image of the `news.google.com` finding in Part 4, where a change was refused
+precisely because it would attribute local broadcasters to an aggregator. Here the mis-attribution
+is already happening.
+
+**Cost: 3 articles, 3 stories, and one blindspot claim of 208.** The 3 is inside every bar this repo
+has used. **The 1 claim is the open question** — the entity veto was adopted at zero claims lost —
+and it is 0.5%, most likely recomposition rather than a genuine claim disappearing. Marginal, and
+recorded as marginal.
+
+## The more valuable output was not the demotions
+
+| verdict | outlets | articles | |
+|---|---:|---:|---|
+| LOW PARTICIPATION | 110 | 2,553 | reported, never acted on — see below |
+| **CURATE** | **71** | **2,369** | no registry row; the curation worklist |
+| **RATE** | 6 | 185 | has a row, needs a sourced lean |
+| ALREADY EXCLUDED | 5 | 731 | wire/aggregator; no action |
+| TIER B | 5 | 137 | the cohort above |
+
+`CURATE` surfaced US local TV at 25–59% participation with ~0% syndication — `kait8.com`,
+`kwch.com`, `abc7.com`, `6abc.com`, `abc7ny.com` — alongside `macrumors`, `engadget`, `9to5mac`.
+Real newsrooms, no registry row. Since Tier A promotion requires a lean, **curation is the only path
+to Tier A**, which makes this list the actual expansion work.
+
+## Two retractions from this audit
+
+**Participation does not demote, and two justifications for acting on it failed.** First "these are
+low-value sources" — the list held The Hankyoreh, cooperativa.cl, BelTA and dailymemphian.com, plus
+9GAG, DEV Community, `Nature` and `Space.com`, four of which Part 3 measured individually and KEPT.
+Then "these lack same-language peers" — refuted by its own measurement: English at 214 peers
+participates at 27%, Vietnamese at **six** peers at 30%.
+
+**A broken membership lookup invalidated two production runs before either was readable.**
+`index_by_member` keys on the article's DISPLAY url; the audit looked up `canonicalUrl`, which has
+already been lower-cased and stripped of `www.`, the query and the trailing slash. 0 of 3 hits on a
+fixture; on production it reported 292 in-story articles against a window that covered 6,121 —
+every participation figure low by ~20×. The script now reconciles per-outlet in-story counts against
+the build's own covered total and **refuses to report** on mismatch.
+
+## Open question, deliberately not promoted to a finding
+
+Every non-Latin-script language in the window sits at **exactly 0%** participation (ru, ko, ar, ja,
+zh, ta) while every Latin-script one is nonzero. That looks like a property of `title_tokens`, but
+two hypotheses have already died in this audit and it is recorded as a question.
+
+---
+
 # Re-running these audits
 
 ```bash
@@ -322,6 +429,9 @@ dc run --rm -T api python examples/audit_registry_coverage.py
 
 # Part 4 — the outlet-resolution counterfactual, both sides
 dc run --rm -T api python examples/audit_outlet_resolution.py --db "$RWE_DB_URL"
+
+# Part 5 — per-outlet cohort evaluation, per-criterion counterfactuals, curation worklist
+dc run --rm -T api python examples/audit_source_cohort.py --db "$RWE_DB_URL"
 ```
 
 Part 3 has no committed instrument — it was a one-off in-process probe, deliberately, because the
