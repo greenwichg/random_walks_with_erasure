@@ -726,6 +726,56 @@ def link_quorum() -> float:
     return q if 0.0 <= q <= 1.0 else clustering.DEFAULT_LINK_QUORUM
 
 
+def min_support() -> int:
+    """Merge SUPPORT BREADTH — distinct members each side must contribute to the passing
+    cross-pairs before two clusters join. ``RWE_CLUSTER_MIN_SUPPORT`` overrides; UNSET falls back
+    to ``clustering.DEFAULT_MIN_SUPPORT`` = 1 = off and byte-identical.
+
+    **The failure it targets** (production, 2026-08-25): a Guardian article about *The Odyssey*
+    becoming Nolan's highest-grossing film served inside the Spider-Man *Brand New Day* box-office
+    story. The probe, verbatim::
+
+        odyssey<->spider (direct): shared=[]                                        n=0 j=0.000
+        odyssey<->bridge:  shared=[becomes, film, grossing, highest, odyssey]        n=5 j=0.312
+        bridge<->spider:   shared=[box, fourth, man, office, spider, tops]           n=6 j=0.286
+
+    The bridge is a real comparative round-up — "'Spider-Man' tops box office in fourth weekend;
+    'The Odyssey' becomes Nolan's highest-grossing film" — and it is genuinely, correctly similar
+    to both sides. Every edge here is legitimate; the two events simply have no edge to each other.
+    So this is not a vocabulary defect and no lexicon can address it: there is nothing to
+    stop-list, and stop-listing the film names would break the real stories. It is a GRAPH defect —
+    two dense components joined through a single article — and the fix has to be structural.
+
+    **Why breadth and not a higher quorum.** Both existing linkage rules are blind here. The
+    quorum measures the passing FRACTION of cross-pairs, and the bridge wins several of them
+    honestly (it shares six real tokens with the Spider-Man side), so the fraction is satisfied
+    while every one of those passing pairs runs through the same single article. Raising the
+    fraction was already measured and spent: 0.3 cost 3.0% of covered articles and raised the
+    bad-cluster count, 0.4 cost 5.6% — over the bar — because a long-running story's coverage
+    legitimately diverges, so the fraction falls exactly where clusters are largest. Breadth has
+    no such size coupling: a 60-article story has many distinct members participating however low
+    the fraction runs, and a bridge weld has exactly one. That is why this knob can be spent where
+    the quorum could not.
+
+    **Why it does not disturb correct clustering.** The requirement is capped at each side's own
+    size, so a two-article story still forms from the one pair that founded it, and a cluster still
+    absorbs a matching new article — that article must simply resemble ``min_support`` distinct
+    members rather than one. It can only ever REFUSE a merge, never create one, so no existing
+    story can grow or change composition because of it; the reachable effects are a split or no
+    change. 1 = off. 2 = "two is corroboration", the same standard ``GEO_MIN_CONSENSUS`` already
+    applies to event geography.
+
+    Measure any candidate with ``examples/audit_clustering_change.py --min-support <n>`` from a
+    container carrying the deploy environment, against the bars registered on ``link_quorum``:
+    adopt on droppedOut ≤ 5% of covered articles with no story-count fall."""
+    v = os.environ.get("RWE_CLUSTER_MIN_SUPPORT", "").strip()
+    try:
+        n = int(v)
+    except (TypeError, ValueError):
+        return clustering.DEFAULT_MIN_SUPPORT
+    return n if n >= 1 else clustering.DEFAULT_MIN_SUPPORT
+
+
 #: The announcement-template lexicon (Phase A registration, 2026-08-17 — the twelve tokens,
 #: verbatim; ``audit_template_edges.py`` measures this exact set). Tokens that name the SHAPE of
 #: a reveal headline rather than its subject. They keep counting toward Jaccard — recall inside
@@ -1371,6 +1421,7 @@ def _admit(groups: list, arts: list, *, min_articles: int, min_publishers: int) 
 
 def _repair(members: list, *, quorum: float, sim: float, window_days: float, min_shared: int,
             min_tokens: int, idf: bool, min_articles: int, min_publishers: int,
+            support: int = clustering.DEFAULT_MIN_SUPPORT,
             desc: int = 0, veto: str = "", veto_stats: Optional[dict] = None,
             template: bool = False, lexicon: frozenset = TEMPLATE_TOKENS,
             hyphen: bool = False, event_verdicts: "Optional[dict]" = None,
@@ -1406,6 +1457,7 @@ def _repair(members: list, *, quorum: float, sim: float, window_days: float, min
                            time=lambda a: clustering.parse_time(a["publishedAt"]),
                            sim=sim, window_days=window_days, min_shared=min_shared,
                            min_tokens=min_tokens, idf=idf, link_quorum=quorum,
+                           min_support=support,
                            evidence=r_evidence, merge_ok=r_merge_ok),
         members, min_articles=min_articles, min_publishers=min_publishers)
     if len(pieces) < 2:
@@ -1843,6 +1895,7 @@ def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
                   min_tokens: Optional[int] = None,
                   idf: Optional[bool] = None,
                   quorum: Optional[float] = None,
+                  support: Optional[int] = None,
                   repair: Optional[float] = None,
                   merge: Optional[float] = None,
                   merge_gap: Optional[float] = None,
@@ -1961,17 +2014,21 @@ def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
         g_evidence = _and_evidence(
             _event_identity_closure(arts, cap, hyph, event_verdicts, event_band_hi(),
                                     veto_stats, band_out), g_evidence)
+    # Support breadth is resolved once and threaded to BOTH passes for the same reason the
+    # evidence lexicon is: the repair re-clusters under a stricter quorum, and if it linked on a
+    # different corroboration rule than the primary build it would re-split on the disagreement.
+    prop = min_support() if support is None else max(1, int(support))
     groups = clustering.cluster(
         arts, tokens=lambda a: article_tokens(a, cap, hyph),
         time=lambda a: clustering.parse_time(a["publishedAt"]), sim=sim, window_days=window_days,
         min_shared=shared, min_tokens=tokens_floor, idf=weighting,
-        link_quorum=link_quorum() if quorum is None else quorum,
+        link_quorum=link_quorum() if quorum is None else quorum, min_support=prop,
         evidence=g_evidence, merge_ok=g_merge_ok)
     mend = repair_quorum() if repair is None else repair
     admitted = []
     for members in _admit(groups, arts, min_articles=min_articles, min_publishers=min_publishers):
         if mend > 0.0 and _build_story(members)["clusterTrust"] == TRUST_LOW:
-            pieces = _repair(members, quorum=mend, sim=sim, window_days=window_days,
+            pieces = _repair(members, quorum=mend, support=prop, sim=sim, window_days=window_days,
                              min_shared=shared, min_tokens=tokens_floor, idf=weighting,
                              min_articles=min_articles, min_publishers=min_publishers, desc=cap,
                              veto=veto_mode, veto_stats=veto_stats, template=use_gate,

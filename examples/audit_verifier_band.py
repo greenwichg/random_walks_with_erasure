@@ -91,6 +91,14 @@ V1_EXHIBITS = (
     # recall-shape vocabulary.
     ("recall-fruitbar", ("frozen fruit", "recalled"), ("eye drops", "recalled"),
      "different_event", "5"),
+    # Production 2026-08-25: the comparative-bridge weld (see story_service.min_support) — a
+    # Guardian article on The Odyssey's box-office record served inside the Spider-Man Brand New
+    # Day story. Unlike every exhibit above it, this pair has NO lexical case to answer: the two
+    # articles share zero tokens (j=0.000). They were joined through a round-up headline covering
+    # both films, so the defect is in the linkage GRAPH, not in the vocabulary — registered here
+    # so the verifier band scores it alongside the rest.
+    ("odyssey-spiderman", ("odyssey", "nolan"), ("spider-man", "box office"),
+     "different_event", "7"),
 )
 
 

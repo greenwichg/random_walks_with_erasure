@@ -348,6 +348,18 @@ services:
       # TARGETED (REPAIR_QUORUM) is complementary, not an alternative: it re-splits only clusters
       # the independent signal already condemns, and stays on.
       RWE_CLUSTER_LINK_QUORUM: ${RWE_CLUSTER_LINK_QUORUM:-0.2}
+      # Merge SUPPORT BREADTH (story_service.min_support) — distinct members each side must
+      # contribute to the passing cross-pairs. Orthogonal to the quorum above: that one measures
+      # what FRACTION of cross-pairs pass, this one measures how many DISTINCT articles those
+      # passing pairs run through. A comparative round-up bridging two unrelated events wins
+      # several cross-pairs honestly but always through itself alone, so it is invisible to a
+      # fraction and obvious to a breadth. Unlike the quorum this does not degrade with cluster
+      # size, which is why it is spendable where 0.3/0.4 were not.
+      #
+      # 1 = off and byte-identical. Stays 1 until audit_clustering_change.py --min-support 2
+      # clears the bars registered on story_service.link_quorum (droppedOut <= 5%, no story-count
+      # fall); flip the default to 2 in the same commit that records the numbers.
+      RWE_CLUSTER_MIN_SUPPORT: ${RWE_CLUSTER_MIN_SUPPORT:-1}
       RWE_STORY_REPAIR_QUORUM: ${RWE_STORY_REPAIR_QUORUM:-0.5}
       # X4 V-growth-2 (adopted 2026-08-16, docs/STORY_ENTITY_EVIDENCE_PLAN.md): a cluster merge
       # is vetoed when the located consensuses disagree and either side's winning vote is

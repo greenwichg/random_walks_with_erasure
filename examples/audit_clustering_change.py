@@ -17,6 +17,7 @@ coverage that way, most of it not the quorum's doing. Pass ``--before-min-shared
     python examples/audit_clustering_change.py --min-shared 4        # try a candidate value
     python examples/audit_clustering_change.py --show 20             # list the biggest splits
     python examples/audit_clustering_change.py --link-quorum 0.3     # cluster-aware linkage
+    python examples/audit_clustering_change.py --min-support 2       # merge support breadth
     python examples/audit_clustering_change.py --desc-tokens 12      # cluster on title + dek
 
 It prints a VERDICT against bars fixed in advance (``--max-dropped``), because the previous
@@ -66,6 +67,7 @@ _DEPLOY_CLUSTER_ENV = (
     "RWE_STORY_EXCLUDE_WIRE", "RWE_STORY_EXCLUDE_AGGREGATOR",
     "RWE_CLUSTER_GEO_VETO", "RWE_STORY_ENTITY_MERGE",     # X4 + X5b, adopted 2026-08-16
     "RWE_CLUSTER_TEMPLATE_LEXICONS",                      # lexicon set, adopted 2026-08-24
+    "RWE_CLUSTER_MIN_SUPPORT",                            # merge support breadth
 )
 
 
@@ -80,7 +82,8 @@ def deploy_env_present() -> bool:
 
 
 def build(rows: list, *, min_shared: int, min_tokens: int, idf: bool = False,
-          quorum=None, repair=None, merge=None, desc=None, veto=None, veto_stats=None,
+          quorum=None, support=None, repair=None, merge=None, desc=None, veto=None,
+          veto_stats=None,
           entity_merge=None, entities=None, lexicons=None, hyphen=None,
           derived=None, derived_df=None, derived_days=None) -> list:
     """``None`` means "whatever production is configured with" — ``build_stories`` resolves it.
@@ -91,7 +94,8 @@ def build(rows: list, *, min_shared: int, min_tokens: int, idf: bool = False,
     *unrepaired + merge*, where the duplicate clusters the merge exists to join are still fused
     inside the mega-cluster and there is by construction nothing for it to do."""
     return story_service.build_stories(rows, min_shared=min_shared, min_tokens=min_tokens, idf=idf,
-                                       quorum=quorum, repair=repair, merge=merge, desc=desc,
+                                       quorum=quorum, support=support,
+                                       repair=repair, merge=merge, desc=desc,
                                        veto=veto, veto_stats=veto_stats,
                                        entity_merge=entity_merge, entities=entities,
                                        lexicons=lexicons, hyphen=hyphen,
@@ -230,7 +234,7 @@ def verdict(res: dict, *, max_dropped: float = MAX_DROPPED, merging: bool = Fals
 
 def compare(store_, *, before: tuple, after: tuple, show: int = 10,
             before_idf: bool = False, after_idf: bool = False,
-            before_quorum=None, after_quorum=None,
+            before_quorum=None, after_quorum=None, after_support=None,
             after_repair=None, after_merge=None, after_desc=None,
             after_veto=None, after_entity_merge=None,
             after_lexicons=None, after_hyphen=None,
@@ -251,7 +255,7 @@ def compare(store_, *, before: tuple, after: tuple, show: int = 10,
     # byte-identical to production, counting included.
     veto_stats = {} if (after_veto or after_entity_merge or after_derived) else None
     b = build(rows, min_shared=after[0], min_tokens=after[1], idf=after_idf, quorum=after_quorum,
-              repair=after_repair, merge=after_merge, desc=after_desc,
+              support=after_support, repair=after_repair, merge=after_merge, desc=after_desc,
               veto=after_veto, veto_stats=veto_stats,
               entity_merge=after_entity_merge, entities=entities,
               lexicons=after_lexicons, hyphen=after_hyphen,
@@ -380,6 +384,10 @@ def main(argv=None) -> int:
     ap.add_argument("--link-quorum", type=float, default=None,
                     help="cluster-aware linkage on the AFTER side: fraction of cross-pairs that "
                          "must agree before two clusters merge (0 = single linkage)")
+    ap.add_argument("--min-support", type=int, default=None,
+                    help="merge support BREADTH on the AFTER side: distinct members each side "
+                         "must contribute to the passing cross-pairs (1 = off). Orthogonal to "
+                         "--link-quorum, which measures the passing FRACTION instead")
     ap.add_argument("--repair-quorum", type=float, default=None,
                     help="TARGETED linkage: re-split only the clusters the independent signal "
                          "condemns, leaving every other story untouched")
@@ -461,7 +469,8 @@ def main(argv=None) -> int:
             return 2
     res = compare(store_mod.Store(args.db), before=before,
                   after=after, show=args.show, after_idf=args.idf,
-                  after_quorum=args.link_quorum, after_repair=args.repair_quorum,
+                  after_quorum=args.link_quorum, after_support=args.min_support,
+                  after_repair=args.repair_quorum,
                   after_merge=args.merge_sim, after_desc=cap, after_veto=args.geo_veto,
                   after_entity_merge=args.entity_merge,
                   after_lexicons=lex_names,
@@ -477,6 +486,8 @@ def main(argv=None) -> int:
     tag = ((", idf" if args.idf else "")
            + _tag("quorum", args.link_quorum if args.link_quorum is not None
                   else story_service.link_quorum())
+           + _tag("support", args.min_support if args.min_support is not None
+                  else story_service.min_support())
            + _tag("repair", args.repair_quorum if args.repair_quorum is not None
                   else story_service.repair_quorum())
            + _tag("merge", args.merge_sim if args.merge_sim is not None
@@ -493,6 +504,7 @@ def main(argv=None) -> int:
                + (f"(days>={args.boilerplate_days})" if args.boilerplate_days else ""))
               if args.derived_boilerplate else ""))
     base_tag = (_tag("quorum", story_service.link_quorum())
+                + _tag("support", story_service.min_support())
                 + _tag("repair", story_service.repair_quorum())
                 + _tag("merge", story_service.merge_similarity())
                 + _tag("dek", story_service.desc_tokens())

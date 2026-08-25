@@ -33,6 +33,27 @@ DEFAULT_LINK_QUORUM = 0.0
 #: exactly the clusters it is meant to stop forming.
 LINK_SAMPLE = 32
 
+#: Distinct members EACH SIDE must contribute to the passing cross-pairs before two clusters join —
+#: the merge's **support breadth**. ``1`` (the default) is off and byte-identical to the linkage
+#: rules above; ``2`` is the smallest value that means anything, and it says the thing
+#: ``GEO_MIN_CONSENSUS`` says about geography: one witness is an anecdote, two is corroboration.
+#:
+#: This is a DIFFERENT question from ``link_quorum``, and the difference is the whole point.
+#: The quorum asks *what fraction of cross-pairs pass*; breadth asks *how many distinct articles
+#: those passing pairs involve*. A comparative round-up — "'Spider-Man' tops box office in fourth
+#: weekend; 'The Odyssey' becomes Nolan's highest-grossing film" — is genuinely similar to BOTH of
+#: two unrelated stories, so it passes the pairwise gate on each side honestly, and no vocabulary
+#: rule can or should kill those edges. But every cross-pair supporting the resulting merge runs
+#: through that ONE article. Breadth 1 is the signature of a bridge weld, whatever the domain, and
+#: it is invisible to a fraction.
+#:
+#: It also explains why raising the quorum could not do this job. On a 60-article story most
+#: cross-pairs legitimately fail (coverage diverges as a story runs), so the passing FRACTION is
+#: low exactly where the cluster is largest — 0.3 and 0.4 were measured and rejected for that.
+#: Breadth does not degrade with size: a genuine story has many distinct members participating
+#: even when the fraction is small. The two rules are ANDed and neither subsumes the other.
+DEFAULT_MIN_SUPPORT = 1
+
 #: Minimum DISTINCTIVE tokens two headlines must share before similarity is even considered.
 #: The ratio alone cannot tell evidence from coincidence — measured on real merges:
 #:   "Berlin pride event canceled…" vs "Vehicle drives into crowd at Berlin pride event"
@@ -211,34 +232,60 @@ class DSU:
             self.p[max(ra, rb)] = min(ra, rb)   # attach to the lower index → deterministic roots
 
 
-def _quorum_ok(a: "list[int]", b: "list[int]", *, pair_ok: Callable[[int, int], bool],
-               quorum: float) -> bool:
-    """Whether enough CROSS-PAIRS between two clusters independently pass the pairwise gate.
+def _link_ok(a: "list[int]", b: "list[int]", *, pair_ok: Callable[[int, int], bool],
+             quorum: float, min_support: int = DEFAULT_MIN_SUPPORT) -> bool:
+    """Whether two clusters may join — the CLUSTER-level linkage test, in one cross-pair scan.
 
-    This is the whole difference between single linkage and cluster-aware linkage. Single linkage
-    asks "does the joining article match *any* member?"; this asks "does it match *enough* of
-    them?". A genuine new article about the same event resembles most of the cluster. A chaining
-    bridge resembles exactly one member — the one it shares boilerplate with — and fails here.
+    Two independent criteria over the same cross-pairs, ANDed:
 
-    Two singletons always pass (one cross-pair, and it is the pair that already passed the
-    similarity gate), so the quorum never blocks a story from FORMING. It only constrains growth,
-    which is where chaining lives."""
+    * **quorum** — what FRACTION of cross-pairs independently pass the pairwise gate. Single
+      linkage asks "does the joining article match *any* member?"; this asks "does it match
+      *enough* of them?"
+    * **support breadth** — how many DISTINCT members of each side those passing pairs involve
+      (``min_support``). A genuine new article about the same event resembles several members of
+      the cluster it joins. A bridging article resembles each side through itself alone, so one
+      side's breadth is 1 however many cross-pairs it wins.
+
+    The breadth requirement is capped at what a side can possibly supply (``min(min_support,
+    |side|)``), which is what keeps the rule off story FORMATION: two singletons have one member
+    each to offer, so their requirement is 1 and the pair that already passed the similarity gate
+    satisfies it. A story still forms from one pair and still grows one article at a time — but a
+    growing article must now match ``min_support`` distinct members of the cluster receiving it,
+    and a cluster of two or more can no longer be annexed through a single member.
+
+    ``min_support <= 1`` skips the breadth bookkeeping entirely rather than computing a requirement
+    it would always meet. That is not just an optimisation: participants are counted over the
+    SAMPLED sides, and the candidate pair that triggered this merge is not guaranteed to be inside
+    a 32-member sample, so a "trivially satisfied" breadth test could refuse a merge today's rule
+    admits. Skipping keeps the off state byte-identical by construction."""
     sa, sb = a[:LINK_SAMPLE], b[:LINK_SAMPLE]
     total = len(sa) * len(sb)
     if not total:
         return False
-    need = math.ceil(quorum * total - 1e-9)
+    need = math.ceil(quorum * total - 1e-9) if quorum > 0.0 else 0
+    breadth = min_support > 1
+    need_a = min(min_support, len(sa)) if breadth else 0
+    need_b = min(min_support, len(sb)) if breadth else 0
     hits, seen = 0, 0
-    for x in sa:
+    seen_a: set = set()
+    seen_b: set = set()
+    for k, x in enumerate(sa):
         for y in sb:
             seen += 1
             if pair_ok(x, y):
                 hits += 1
-                if hits >= need:
+                if breadth:
+                    seen_a.add(x)
+                    seen_b.add(y)
+                if hits >= need and len(seen_a) >= need_a and len(seen_b) >= need_b:
                     return True
             elif hits + (total - seen) < need:
                 return False                            # cannot reach the quorum any more
-    return hits >= need
+        # Same early abort for breadth: every remaining row can contribute at most one more
+        # distinct member to side A, so once that ceiling is below the requirement, stop.
+        if breadth and len(seen_a) + (len(sa) - 1 - k) < need_a:
+            return False
+    return hits >= need and len(seen_a) >= need_a and len(seen_b) >= need_b
 
 
 def cluster(items: Sequence, *, tokens: Callable[[object], frozenset],
@@ -248,6 +295,7 @@ def cluster(items: Sequence, *, tokens: Callable[[object], frozenset],
             min_tokens: int = MIN_TITLE_TOKENS,
             idf: bool = False,
             link_quorum: float = DEFAULT_LINK_QUORUM,
+            min_support: int = DEFAULT_MIN_SUPPORT,
             evidence: Optional[Callable[[int, int], bool]] = None,
             merge_ok: Optional[Callable[[list, list], bool]] = None) -> "list[list[int]]":
     """Group item **indices** into clusters. ``tokens(item) → frozenset`` and
@@ -269,8 +317,10 @@ def cluster(items: Sequence, *, tokens: Callable[[object], frozenset],
     ``link_quorum`` switches the LINKAGE RULE. At ``0.0`` (the default, and the measured production
     baseline) grouping is the transitive closure of the pairwise relation — pure single linkage.
     Above ``0.0`` a merge additionally requires that fraction of cross-pairs between the two
-    clusters to pass the same pairwise gate, which is what stops one bridging article from welding
-    two unrelated events together. See ``_quorum_ok``.
+    clusters to pass the same pairwise gate. ``min_support`` adds the orthogonal requirement that
+    the passing cross-pairs involve that many DISTINCT members on each side, which is what stops
+    one bridging article from welding two unrelated events together even when it wins enough
+    cross-pairs to satisfy a fraction. Both are evaluated in one scan — see ``_link_ok``.
 
     The two modes differ in a property worth stating plainly. Single linkage is **order-independent**:
     transitive closure is unique, so the answer does not depend on which merge is attempted first.
@@ -290,7 +340,7 @@ def cluster(items: Sequence, *, tokens: Callable[[object], frozenset],
       union (member index lists, cheapest test first — before any quorum scoring). Setting it
       forces the bookkeeping path even at ``link_quorum 0.0``, because a gate needs memberships;
       that path consumes merges best-first, so the result is deterministic for the same reason
-      the quorum's is.
+      the quorum's is. ``min_support > 1`` forces that path for the same reason.
 
     Both default to ``None``, and ``None`` is byte-identical to the previous behaviour — the same
     opt-in discipline as ``idf`` and ``link_quorum``.
@@ -355,7 +405,7 @@ def cluster(items: Sequence, *, tokens: Callable[[object], frozenset],
                     yield i, j, score
 
     dsu = DSU(n)
-    if link_quorum <= 0.0 and merge_ok is None:
+    if link_quorum <= 0.0 and merge_ok is None and min_support <= 1:
         # Single linkage — union on sight. Kept as its own path so the default cannot drift: no
         # sort, no membership bookkeeping, byte-identical grouping to the measured baseline.
         for i, j, _ in candidates():
@@ -370,8 +420,9 @@ def cluster(items: Sequence, *, tokens: Callable[[object], frozenset],
             # holds, the quorum is up to LINK_SAMPLE² weighted Jaccards.
             if merge_ok is not None and not merge_ok(members[ra], members[rb]):
                 continue
-            if link_quorum > 0.0 and not _quorum_ok(members[ra], members[rb], pair_ok=pair_ok,
-                                                    quorum=link_quorum):
+            if ((link_quorum > 0.0 or min_support > 1)
+                    and not _link_ok(members[ra], members[rb], pair_ok=pair_ok,
+                                     quorum=link_quorum, min_support=min_support)):
                 continue
             dsu.union(i, j)
             root, other = (ra, rb) if ra < rb else (rb, ra)   # DSU keeps the lower index as root
