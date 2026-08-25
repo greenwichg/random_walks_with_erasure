@@ -63,6 +63,74 @@ def test_recall_tokens_name_shape_never_subject():
         assert subject not in story_service.RECALL_TOKENS
 
 
+# --------------------------------------------------------------------------- #
+# The corpus-derived boilerplate set — the generalisation of the manual lexicons.
+# --------------------------------------------------------------------------- #
+def _recall_week():
+    """A six-day synthetic window with the recall genre's real shape: boilerplate vocabulary
+    every day across genres, event names bursting in their own days."""
+    arts = []
+    shapes = ("recalled nationwide over possible contamination",
+              "recall issued as warning to consumers nationwide",
+              "recalled after possible contamination found, consumers urged")
+    subjects = (("frozen fruit bars", "2026-08-19"), ("eye drops bottles", "2026-08-21"),
+                ("toy trucks", "2026-08-20"), ("ground beef", "2026-08-22"),
+                ("dog food", "2026-08-23"), ("lettuce salad kits", "2026-08-24"))
+    for subject, day in subjects:
+        for shape in shapes:
+            arts.append({"headline": f"{subject} {shape}",
+                         "publishedAt": f"{day}T09:00:00+00:00"})
+    return arts
+
+
+def test_the_derivation_finds_shape_and_spares_bursting_event_names():
+    arts = _recall_week()
+    der = story_service.derived_boilerplate(arts, min_df=6, min_days=4)
+    assert {"recalled", "nationwide", "possible", "contamination", "consumers"} <= der, \
+        "every-day, every-genre vocabulary is boilerplate"
+    for name in ("fruit", "eye", "drops", "beef", "lettuce"):
+        assert name not in der, "an event's name tokens burst in its own day and stay evidence"
+
+
+def test_the_recall_bridge_dies_with_no_manual_lexicon_at_all():
+    """The production weld, resolved by derivation alone: the bridge's entire shared set is
+    derived boilerplate, while the genuine pairs keep their bursting product tokens."""
+    arts = _recall_week()
+    fruit = {"headline": "Frozen fruit bars recalled nationwide over possible glass contamination"}
+    bridge = {"headline": "Eye drops recalled nationwide over possible contamination, FDA warns"}
+    eye = {"headline": "Nearly 40,000 bottles of eye drops recalled. See the affected product"}
+    der = story_service.derived_boilerplate(arts, min_df=6, min_days=4)
+    ok = story_service._template_closure([fruit, bridge, eye], 0, lexicon=der)
+    assert not ok(0, 1), "fruit<->bridge shares only derived boilerplate — vetoed"
+    assert ok(1, 2), "the genuine eye-drop pair survives on {eye, drops}"
+
+
+def test_the_derivation_is_deterministic_and_off_by_default(monkeypatch):
+    arts = _recall_week()
+    assert story_service.derived_boilerplate(arts, min_df=6, min_days=4) == \
+        story_service.derived_boilerplate(arts, min_df=6, min_days=4)
+    monkeypatch.delenv("RWE_CLUSTER_DERIVED_BOILERPLATE", raising=False)
+    assert story_service.derived_boilerplate_on() is False
+    # single-day corpora (every fixture) can never meet the day-spread floor: derived is empty
+    one_day = [{"headline": a["headline"], "publishedAt": "2026-08-19T09:00:00+00:00"}
+               for a in arts]
+    assert story_service.derived_boilerplate(one_day, min_df=6, min_days=4) == frozenset()
+
+
+def test_the_derivation_rediscovers_manual_lexicon_tokens():
+    """The self-check the audit prints, in miniature: vocabulary the manual lexicons enumerate
+    by hand falls out of the derivation when it behaves like boilerplate in the corpus."""
+    arts = []
+    for i, day in enumerate(("19", "20", "21", "22", "23")):
+        arts.append({"headline": f"Show {i} season cast revealed, release date and trailer",
+                     "publishedAt": f"2026-08-{day}T09:00:00+00:00"})
+        arts.append({"headline": f"Film {i} box office collection day {i} worldwide gross",
+                     "publishedAt": f"2026-08-{day}T09:00:00+00:00"})
+    der = story_service.derived_boilerplate(arts, min_df=5, min_days=5)
+    assert {"season", "cast", "release", "trailer"} <= der, "announce tokens rediscovered"
+    assert {"box", "office", "collection", "worldwide"} <= der, "tracker tokens rediscovered"
+
+
 def test_hyphen_default_is_off_everywhere(monkeypatch):
     monkeypatch.delenv("RWE_CLUSTER_HYPHEN_COMPOUNDS", raising=False)
     assert story_service.hyphen_compounds() is False

@@ -81,7 +81,8 @@ def deploy_env_present() -> bool:
 
 def build(rows: list, *, min_shared: int, min_tokens: int, idf: bool = False,
           quorum=None, repair=None, merge=None, desc=None, veto=None, veto_stats=None,
-          entity_merge=None, entities=None, lexicons=None, hyphen=None) -> list:
+          entity_merge=None, entities=None, lexicons=None, hyphen=None,
+          derived=None, derived_df=None, derived_days=None) -> list:
     """``None`` means "whatever production is configured with" — ``build_stories`` resolves it.
 
     These defaulted to 0.0, which silently made the BEFORE side something production is not. It is
@@ -93,7 +94,9 @@ def build(rows: list, *, min_shared: int, min_tokens: int, idf: bool = False,
                                        quorum=quorum, repair=repair, merge=merge, desc=desc,
                                        veto=veto, veto_stats=veto_stats,
                                        entity_merge=entity_merge, entities=entities,
-                                       lexicons=lexicons, hyphen=hyphen)
+                                       lexicons=lexicons, hyphen=hyphen,
+                                       derived=derived, derived_df=derived_df,
+                                       derived_days=derived_days)
 
 
 def _exhibit_outcomes(rows: list, a_member: dict, b_member: dict) -> list:
@@ -230,7 +233,8 @@ def compare(store_, *, before: tuple, after: tuple, show: int = 10,
             before_quorum=None, after_quorum=None,
             after_repair=None, after_merge=None, after_desc=None,
             after_veto=None, after_entity_merge=None,
-            after_lexicons=None, after_hyphen=None) -> dict:
+            after_lexicons=None, after_hyphen=None,
+            after_derived=None, after_derived_df=None, after_derived_days=None) -> dict:
     rows = story_service._fetch(store_)
     # The entity mapping is fetched when EITHER a flag asks for the X5b pass OR production is
     # configured with it (adopted 2026-08-16) — and it is handed to BOTH sides, because the
@@ -245,12 +249,18 @@ def compare(store_, *, before: tuple, after: tuple, show: int = 10,
               quorum=before_quorum, entities=entities)
     # Telemetry only when a veto/pass is explicitly under test — a None passthrough must stay
     # byte-identical to production, counting included.
-    veto_stats = {} if (after_veto or after_entity_merge) else None
+    veto_stats = {} if (after_veto or after_entity_merge or after_derived) else None
     b = build(rows, min_shared=after[0], min_tokens=after[1], idf=after_idf, quorum=after_quorum,
               repair=after_repair, merge=after_merge, desc=after_desc,
               veto=after_veto, veto_stats=veto_stats,
               entity_merge=after_entity_merge, entities=entities,
-              lexicons=after_lexicons, hyphen=after_hyphen)
+              lexicons=after_lexicons, hyphen=after_hyphen,
+              derived=after_derived, derived_df=after_derived_df,
+              derived_days=after_derived_days)
+    if veto_stats is not None and "derivedBoilerplate" in veto_stats:
+        print(f"derived boilerplate : {veto_stats['derivedBoilerplate']} tokens, "
+              f"{veto_stats['derivedManualOverlap']} shared with the manual lexicons "
+              f"(the self-check: the derivation should rediscover them)")
 
     a_by_id = {s["id"]: s for s in a}
     b_by_id = {s["id"]: s for s in b}
@@ -403,6 +413,14 @@ def main(argv=None) -> int:
                          "announce gate; an edge must share >= 1 token outside the UNION. "
                          "Registered candidates: tracker (box-office/OTT day-counter chains), "
                          "preview (recurring fixture previews)")
+    ap.add_argument("--derived-boilerplate", action="store_true",
+                    help="AFTER side: derive the sole-boilerplate vocabulary from the window "
+                         "itself (df + day-spread conditions; story_service.derived_boilerplate) "
+                         "instead of relying only on the manual lexicons")
+    ap.add_argument("--boilerplate-df", type=int, default=None, metavar="N",
+                    help="derived-boilerplate df floor (default: configured, 25)")
+    ap.add_argument("--boilerplate-days", type=int, default=None, metavar="N",
+                    help="derived-boilerplate distinct-days floor (default: configured, 5)")
     ap.add_argument("--hyphen-compounds", action="store_true",
                     help="AFTER side: hyphenated compounds also contribute their joined token "
                          "('X-Men' carries 'xmen', not just the generic fragment 'men') — the "
@@ -447,7 +465,10 @@ def main(argv=None) -> int:
                   after_merge=args.merge_sim, after_desc=cap, after_veto=args.geo_veto,
                   after_entity_merge=args.entity_merge,
                   after_lexicons=lex_names,
-                  after_hyphen=True if args.hyphen_compounds else None)
+                  after_hyphen=True if args.hyphen_compounds else None,
+                  after_derived=True if args.derived_boilerplate else None,
+                  after_derived_df=args.boilerplate_df,
+                  after_derived_days=args.boilerplate_days)
 
     def _tag(name, v):
         return f", {name} {v:g}" if v else ""
@@ -466,7 +487,11 @@ def main(argv=None) -> int:
            + (f", entity-merge {args.entity_merge or story_service.entity_merge_min()}"
               if (args.entity_merge or story_service.entity_merge_min()) else "")
            + (f", lexicons {'+'.join(lex_names)}" if lex_names else "")
-           + (", hyphen-compounds" if args.hyphen_compounds else ""))
+           + (", hyphen-compounds" if args.hyphen_compounds else "")
+           + ((", derived-boilerplate"
+               + (f"(df>={args.boilerplate_df})" if args.boilerplate_df else "")
+               + (f"(days>={args.boilerplate_days})" if args.boilerplate_days else ""))
+              if args.derived_boilerplate else ""))
     base_tag = (_tag("quorum", story_service.link_quorum())
                 + _tag("repair", story_service.repair_quorum())
                 + _tag("merge", story_service.merge_similarity())

@@ -813,6 +813,60 @@ def _lexicon_union(names: "tuple[str, ...]") -> frozenset:
     return out or TEMPLATE_TOKENS
 
 
+def derived_boilerplate_on() -> bool:
+    """Corpus-derived boilerplate gate — CANDIDATE, default OFF
+    (``RWE_CLUSTER_DERIVED_BOILERPLATE=1`` enables without a deploy; measured by
+    ``audit_clustering_change.py --derived-boilerplate`` before any adoption).
+
+    The generalisation the manual lexicons were approximating one exhibit at a time: instead of
+    enumerating shape vocabularies (announce, tracker, preview, recall — each discovered from a
+    weld after the fact), derive the set from the build's own articles. Boilerplate has a
+    domain-free signature event names lack: it is frequent across the window AND present on
+    essentially every day of it ("recalled", "odds", "collection" appear daily in every genre),
+    while event tokens BURST — high df during their story's days, absent otherwise ("hickerson",
+    "batwara", "eye"+"drops"). Two registered conditions, both required:
+    ``df >= boilerplate_df()`` and ``days-present >= boilerplate_days()``.
+
+    Same GATE semantics as the adopted rule — an edge's shared set must contain >= 1 token
+    outside the (manual ∪ derived) set; veto-only, never a re-weighting — because the family
+    that re-weighted every pair (``use_idf``) measured a 10.5% coverage loss, and the family
+    that gates sole-boilerplate edges has measured 0.0–0.05% three times running. Self-check
+    built in: the derived set should REDISCOVER the manual lexicons on a live window; the audit
+    prints the overlap so that claim is inspected, not assumed."""
+    v = os.environ.get("RWE_CLUSTER_DERIVED_BOILERPLATE", "").strip().lower()
+    return v in {"1", "true", "yes", "on"}
+
+
+def boilerplate_df() -> int:
+    """Distinct headlines a token must appear in before it can be boilerplate (window df)."""
+    return _env_int("RWE_CLUSTER_BOILERPLATE_DF", 25)
+
+
+def boilerplate_days() -> int:
+    """Distinct UTC days a token must appear on before it can be boilerplate — the burst
+    separator: an event's name tokens concentrate in its own days; shape tokens span the
+    window. 5 of the default 6-day window."""
+    return _env_int("RWE_CLUSTER_BOILERPLATE_DAYS", 5)
+
+
+def derived_boilerplate(arts: list, cap: int = 0, hyphen: bool = False, *,
+                        min_df: int = 25, min_days: int = 5) -> frozenset:
+    """The corpus-derived boilerplate set: tokens meeting BOTH registered conditions over the
+    build's own articles (the same token sets the clusterer scores — ``article_tokens`` at the
+    build's cap and hyphen mode). One deterministic pass, no external state, no curated list:
+    same articles → same set."""
+    df: dict = {}
+    days: dict = {}
+    for a in arts:
+        d = (a.get("publishedAt") or "")[:10]
+        for t in article_tokens(a, cap, hyphen):
+            df[t] = df.get(t, 0) + 1
+            if d:
+                days.setdefault(t, set()).add(d)
+    return frozenset(t for t, n in df.items()
+                     if n >= min_df and len(days.get(t, ())) >= min_days)
+
+
 def hyphen_compounds() -> bool:
     """Candidate tokenizer extension — **measured 2026-08-24 and REJECTED. Do not turn this
     on.** (``RWE_CLUSTER_HYPHEN_COMPOUNDS`` survives as the audit's instrument only.)
@@ -1731,7 +1785,10 @@ def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
                   entities: Optional[dict] = None,
                   template: Optional[bool] = None,
                   lexicons: "Optional[tuple[str, ...]]" = None,
-                  hyphen: Optional[bool] = None) -> list:
+                  hyphen: Optional[bool] = None,
+                  derived: Optional[bool] = None,
+                  derived_df: Optional[int] = None,
+                  derived_days: Optional[int] = None) -> list:
     """Cluster FeedArticle rows into Story objects (the pure builder). Keeps clusters with
     ≥ ``min_articles`` from ≥ ``min_publishers`` distinct outlets; sorted biggest+freshest first,
     with independently-suspect clusters demoted (see ``_size_rank``).
@@ -1808,7 +1865,22 @@ def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
     # Candidate knobs, resolved like every other: None = whatever production is configured with.
     lex_union = _lexicon_union(template_lexicons() if lexicons is None else tuple(lexicons))
     hyph = hyphen_compounds() if hyphen is None else bool(hyphen)
-    if t_gate:
+    # The corpus-derived boilerplate set joins the SAME gate as the manual lexicons — computed
+    # once over the full build's articles and threaded to the repair re-cluster unchanged, so
+    # both passes judge edges against one vocabulary.
+    der_on = derived_boilerplate_on() if derived is None else bool(derived)
+    if der_on:
+        der = derived_boilerplate(
+            arts, cap, hyph,
+            min_df=boilerplate_df() if derived_df is None else int(derived_df),
+            min_days=boilerplate_days() if derived_days is None else int(derived_days))
+        if veto_stats is not None:
+            manual = _lexicon_union(tuple(TEMPLATE_LEXICONS))
+            veto_stats["derivedBoilerplate"] = len(der)
+            veto_stats["derivedManualOverlap"] = len(der & manual)
+        lex_union = lex_union | der
+    use_gate = t_gate or der_on
+    if use_gate:
         g_evidence = _and_evidence(
             _template_closure(arts, cap, veto_stats, lexicon=lex_union, hyphen=hyph), g_evidence)
     groups = clustering.cluster(
@@ -1824,7 +1896,7 @@ def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
             pieces = _repair(members, quorum=mend, sim=sim, window_days=window_days,
                              min_shared=shared, min_tokens=tokens_floor, idf=weighting,
                              min_articles=min_articles, min_publishers=min_publishers, desc=cap,
-                             veto=veto_mode, veto_stats=veto_stats, template=t_gate,
+                             veto=veto_mode, veto_stats=veto_stats, template=use_gate,
                              lexicon=lex_union, hyphen=hyph)
             if pieces is not None:
                 admitted.extend(pieces)
