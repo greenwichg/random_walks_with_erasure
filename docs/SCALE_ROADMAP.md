@@ -493,16 +493,82 @@ the docstring:
 | `_fetch` routes through `corpus.select` and keeps `total` | structural | ✅ |
 | `total == cap` is **not** a breach (the off-by-one that would cry wolf on a full window) | unit | ✅ |
 | compose ships all three vars, all empty | env hygiene | ✅ |
-| the same three bars **on the live catalog**, with 40k injected Tier B rows | `audit_corpus_boundary.py` | **owed** |
-| what actually binds the live clustering corpus — is the window we cluster the window we asked for? | `audit_corpus_boundary.py` | **owed, and never once measured** |
-
-The last row is the one worth running first. The row cap has been silent since it existed, and
-`search_feed_articles` has always handed `_fetch` the number that would have revealed it.
+| the same three bars **on the live catalog**, with 40k injected Tier B rows | `audit_corpus_boundary.py` | ✅ |
+| what actually binds the live clustering corpus | `audit_corpus_boundary.py` | ✅ |
 
 ```bash
 cd /opt/ih && source deploy/ops/_compose.sh
 dc run --rm -T api python examples/audit_corpus_boundary.py --db "$RWE_DB_URL"
 ```
+
+## Measured on production, 2026-08-25 (`f272901`)
+
+```
+window matched      : 27,809 articles     row cap: 60,000   Tier A budget: 83,000
+requested window    : 143.96 h            binding constraint: cap
+effective window    : 143.96 h   <- the cap is NOT binding; the window is intact
+headroom to budget  : 55,191 articles (33.5% used)
+
+BAR 1  rows in 27,809 -> out 27,809, SAME LIST OBJECT, 1,503 stories       PASS
+BAR 2  40,000 synthetic Tier B rows -> corpus 27,808, story set BYTE-IDENTICAL   PASS
+BAR 3  same 40,000 admitted -> 18,661 stories, all 1,503 baseline entries differ  PASS
+```
+
+**The boundary holds on the live catalog**, and the control arm is emphatic: admitting those rows
+takes the catalog from 1,503 stories to 18,661 and changes every single baseline entry. Containment
+is measuring something real.
+
+**The cap is armed but has not fired.** Requested and effective windows are equal to two decimal
+places, so the six days we ask for are the six days we cluster. Break #1 is a future event, not a
+present one — which is exactly the state in which it is worth having an alarm.
+
+### The finding this run produced that nobody was looking for
+
+`build_stories` took **12,607 ms** on 27,809 articles. `PERFORMANCE.md` records **5,069 ms on
+22,493** — so 2.5× the time for 1.24× the rows. That is not a scaling exponent; it is the pass set
+having grown (X5c entity veto, the template gate, banded event identity, entity merge all landed
+after that profile), plus a cold `dc run` container competing with the live API.
+
+**The Tier A budget of 83,000 was derived from the 5,069 ms anchor, and that anchor is stale.**
+Re-anchoring on 12,607 ms at the documented exponent puts the ceiling near **60,000** — which is the
+row cap. If that holds, the two bounds have converged and `binding: cap` is right for a reason the
+roadmap did not anticipate.
+
+**The constant has NOT been changed, and that is deliberate.** One cold-container sample under
+contention is weather, not a measurement — `profile_merge.py` exists in this repo because a 243 ms
+gap between two arms running the *same algorithm* turned out to be load moving between them. The
+local re-run makes the point sharper still: `--repeat 3` on a warm process prints `25, 5, 5` ms, a
+**5× cold/warm ratio**, and production's 12,607 ms is a first-and-only build. The poller never pays
+that price — it builds warm, in a long-lived process.
+
+What settles it is one command:
+
+```bash
+dc run --rm -T api python examples/audit_corpus_boundary.py --db "$RWE_DB_URL" \
+    --repeat 5 --no-control
+```
+
+`--repeat 5` reports the best of five and prints every sample, so drift is visible in the data
+rather than inferred afterwards; `--no-control` skips the expensive arm, which has already passed
+and has nothing to add to a timing question. **Re-deriving the budget from that number is the entry
+point to M2**, and until then 83,000 stands with this caveat attached rather than being replaced by
+a guess.
+
+### Two instrument corrections from the same run
+
+**It queried the catalog twice.** Section 1 reported 27,809 rows and section 2 reported 27,808 — the
+6-day window start is recomputed per call and the catalog is written continuously, so two fetches
+seconds apart legitimately disagree. Harmless to the bars (every arm used the same rows), but a
+reader is entitled to read a one-row discrepancy as a bug in the boundary. `_fetch` now takes an
+optional `report_out`, so one fetch serves every section.
+
+**The control arm's timing invites exactly the wrong inference.** Its two points (27,809 → 12.6 s;
+67,808 → 169.8 s) imply an exponent of 2.92, and that number is worthless: the injected rows are
+*copies of real headlines*, so the corpus has a far more concentrated token distribution than the
+real one and its quadratic term is inflated. This is the calibration mistake `PERFORMANCE.md`
+records twice — a synthetic corpus put the top-10 token share at 86.4% against production's 25.8%.
+The arm is built to cluster hard **on purpose**; that is what makes it a control and what
+disqualifies it as a benchmark. The script now says so in its own output, next to the number.
 
 ---
 

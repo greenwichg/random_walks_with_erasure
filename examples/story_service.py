@@ -2409,7 +2409,8 @@ def _window_start(now=None) -> str:
     return (now - timedelta(days=scan_days())).isoformat()
 
 
-def _fetch(store_, *, topic=None, date_from=None, date_to=None, max_scan=None) -> list:
+def _fetch(store_, *, topic=None, date_from=None, date_to=None, max_scan=None,
+           report_out=None) -> list:
     """The clustering candidate set: a TIME-bounded, pre-filtered article slice (topic/date narrow
     it in SQL first). Each row is annotated with its EVENT countries (one batched side-table
     lookup) so story construction can locate members by best-known location.
@@ -2429,14 +2430,22 @@ def _fetch(store_, *, topic=None, date_from=None, date_to=None, max_scan=None) -
 
     Tier selection runs BEFORE the event-countries lookup, so an excluded row costs no side-table
     read. With no tier configured — the shipped state — ``select`` returns the list it was handed
-    and this function is byte-identical to what it was."""
+    and this function is byte-identical to what it was.
+
+    ``report_out`` is the optional sink for that selection report (what bound, the window actually
+    achieved, headroom). It exists so a caller can have the numbers WITHOUT running the query twice:
+    the window start is recomputed per call and the catalog is written continuously, so two fetches
+    a few seconds apart legitimately disagree — the first production run of
+    ``audit_corpus_boundary.py`` reported 27,809 rows in one section and 27,808 in the next for
+    exactly that reason."""
     if date_from is None:
         date_from = _window_start()
     cap = max_scan or max_scan_default()
     rows, total = store_.search_feed_articles(
         topic=topic, date_from=date_from, date_to=date_to, sort="newest",
         pagination=OffsetPagination.from_params(cap, 0, max_limit=cap))
-    rows = corpus.select(rows, total=total, cap=cap, window_start=date_from)
+    rows = corpus.select(rows, total=total, cap=cap, window_start=date_from,
+                         report_out=report_out)
     events = store_.event_countries_for_urls([r.get("canonicalUrl") for r in rows])
     for r in rows:
         r["eventCountries"] = events.get(r.get("canonicalUrl"), [])
