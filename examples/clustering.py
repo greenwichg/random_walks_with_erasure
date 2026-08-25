@@ -232,8 +232,13 @@ class DSU:
             self.p[max(ra, rb)] = min(ra, rb)   # attach to the lower index → deterministic roots
 
 
+#: Members a side must already have before ``groups`` scope asks it for breadth.
+SUPPORT_GROUP_MIN = 2
+
+
 def _link_ok(a: "list[int]", b: "list[int]", *, pair_ok: Callable[[int, int], bool],
-             quorum: float, min_support: int = DEFAULT_MIN_SUPPORT) -> bool:
+             quorum: float, min_support: int = DEFAULT_MIN_SUPPORT,
+             support_scope: str = "any") -> bool:
     """Whether two clusters may join — the CLUSTER-level linkage test, in one cross-pair scan.
 
     Two independent criteria over the same cross-pairs, ANDed:
@@ -264,6 +269,12 @@ def _link_ok(a: "list[int]", b: "list[int]", *, pair_ok: Callable[[int, int], bo
         return False
     need = math.ceil(quorum * total - 1e-9) if quorum > 0.0 else 0
     breadth = min_support > 1
+    if breadth and support_scope == "groups" and not (
+            len(sa) >= SUPPORT_GROUP_MIN and len(sb) >= SUPPORT_GROUP_MIN):
+        # ``groups``: corroboration is demanded when two bodies of coverage claim to be one
+        # event, not when a single article claims to belong to one. Measured 2026-08-25, the
+        # latter is where the ``any`` scope's whole 8.7% cost came from.
+        breadth = False
     need_a = min(min_support, len(sa)) if breadth else 0
     need_b = min(min_support, len(sb)) if breadth else 0
     hits, seen = 0, 0
@@ -296,6 +307,7 @@ def cluster(items: Sequence, *, tokens: Callable[[object], frozenset],
             idf: bool = False,
             link_quorum: float = DEFAULT_LINK_QUORUM,
             min_support: int = DEFAULT_MIN_SUPPORT,
+            support_scope: str = "any",
             evidence: Optional[Callable[[int, int], bool]] = None,
             merge_ok: Optional[Callable[[list, list], bool]] = None) -> "list[list[int]]":
     """Group item **indices** into clusters. ``tokens(item) → frozenset`` and
@@ -320,7 +332,9 @@ def cluster(items: Sequence, *, tokens: Callable[[object], frozenset],
     clusters to pass the same pairwise gate. ``min_support`` adds the orthogonal requirement that
     the passing cross-pairs involve that many DISTINCT members on each side, which is what stops
     one bridging article from welding two unrelated events together even when it wins enough
-    cross-pairs to satisfy a fraction. Both are evaluated in one scan — see ``_link_ok``.
+    cross-pairs to satisfy a fraction. ``support_scope`` narrows WHERE that requirement applies —
+    ``"any"`` asks it of every side with two or more members, ``"groups"`` only when both sides
+    are already groups. Both are evaluated in one scan — see ``_link_ok``.
 
     The two modes differ in a property worth stating plainly. Single linkage is **order-independent**:
     transitive closure is unique, so the answer does not depend on which merge is attempted first.
@@ -422,7 +436,8 @@ def cluster(items: Sequence, *, tokens: Callable[[object], frozenset],
                 continue
             if ((link_quorum > 0.0 or min_support > 1)
                     and not _link_ok(members[ra], members[rb], pair_ok=pair_ok,
-                                     quorum=link_quorum, min_support=min_support)):
+                                     quorum=link_quorum, min_support=min_support,
+                                     support_scope=support_scope)):
                 continue
             dsu.union(i, j)
             root, other = (ra, rb) if ra < rb else (rb, ra)   # DSU keeps the lower index as root

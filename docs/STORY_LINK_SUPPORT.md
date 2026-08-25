@@ -7,11 +7,9 @@ and what each one turned out to need, is in **Lineage** below.
 
 ## Part 1 — merge support breadth
 
-**Status: implemented, registered, NOT yet adopted.** `RWE_CLUSTER_MIN_SUPPORT` defaults to `1`
-(off, byte-identical) in `deploy/docker-compose.yml`. It becomes a compose default only when
-`audit_clustering_change.py --min-support 2` clears the bars registered on
-`story_service.link_quorum` — the same discipline that adopted the template gate and REJECTED
-hyphen compounds and derived boilerplate.
+**Status: MEASURED 2026-08-25 and REJECTED at 2.** `RWE_CLUSTER_MIN_SUPPORT` stays `1`. The rule,
+the harness flag and the exhibit remain; the default does not move without a passing
+counterfactual. Numbers and mechanism in *The measurement* below.
 
 ## The symptom
 
@@ -67,12 +65,17 @@ and the breadth in one cross-pair scan (both criteria ANDed, both early-aborting
 story has many distinct members participating however low the passing fraction runs; a bridge weld
 has exactly one, at any cluster size. The two rules are orthogonal and neither subsumes the other.
 
-**Why it cannot disturb correct clustering.** The cap keeps the rule off story *formation*: two
+**Why it cannot disturb correct clustering** — *the argument the measurement refuted; kept as
+written, because the correction is the point.* The cap keeps the rule off story *formation*: two
 singletons have one member each to offer, so their requirement is 1 and the founding pair
 satisfies it. Growth still works — a joining article must simply resemble `min_support` distinct
 members rather than one. And the rule can only ever *refuse* a merge, never create one, so every
 cluster under it is a **subset** of some cluster without it (pinned by test). The reachable
 outcomes are a split or no change, never a reshuffle.
+
+The last two sentences held. The first did not: "growth still works" quietly assumed a joining
+article resembles several members, and 8.7% of covered articles say otherwise. See *The
+measurement — REJECT*.
 
 Both merge orders are covered. Whether the round-up reaches the Odyssey article first or the
 Spider-Man story first, the side that has grown past one member cannot be annexed through a single
@@ -124,11 +127,61 @@ cross-pairs has nothing to measure there — and complete linkage already forbid
 be guarding against. X5c *is* applied there, because an entity disagreement is a statement about
 two clusters and reads identically at either decision point.
 
+## The measurement — REJECT
+
+Live catalog, 27,856 articles, full production stack:
+
+| | before | after (support 2) |
+|---|---|---|
+| stories | 1,499 | 1,550 |
+| largest cluster | 60 | 56 |
+| covered articles | 6,122 | **5,607** |
+| **droppedOut** | — | **534 = 8.7%** (bar 5%) |
+| clusters split | — | 371 |
+| blindspot claims | 203 | **149** |
+| independent signal | 0/63 bad, mean 0.953 | 0/51 bad, mean 0.967 |
+
+The direction was right — largest cluster down, story count up — and the cost was two-thirds over
+the bar. **The reasoning this refutes is the one that justified the rule.** Part 1 argued that "a
+genuine new article resembles several members of the cluster it joins." On the real catalog that
+is false often enough to matter: coverage of a running story diverges in vocabulary, so a
+legitimate late article routinely matches exactly ONE member — the one phrased like it. The
+dropped list is the receipt and it is not template chaff: Harry/Meghan lost 5 of 60, the England
+v Pakistan Test live blog 6, the Diamondbacks/Ketel Marte story 6 across 4 publishers. Requiring
+breadth of the RECEIVING side taxes precisely the growth that makes a story a story.
+
+Two further readings worth keeping. The improved independent signal (0/63 → 0/51 bad) is **cost
+presenting as quality** — the scored set shrank because clusters left it. And the
+`odyssey-spiderman` exhibit read `separated → separated` on both sides: the weld had aged out of
+the window, so this run priced the rule without ever exercising the defect it was built for. The
+8.7% is measured; the benefit is not.
+
+### The registered follow-up: `--support-scope groups`
+
+Every article in that 8.7% is a **singleton joining a cluster**. `groups` scope asks for breadth
+only when BOTH sides already have ≥ 2 members, exempting that case entirely and keeping the
+requirement for the merge of two established groups — which is the shape the bridge weld actually
+has. Corroboration is demanded when two bodies of coverage claim to be one event, not when one
+article claims to belong.
+
+It is **weaker on purpose, and the weakness is pinned by test**. Which merge order a bridge takes
+depends on where its strongest edge points, and merges are consumed best-first:
+
+* **Order A** (production's: bridge↔Odyssey 0.312 > bridge↔Spider-Man 0.286) — the bridge lands on
+  the foreign side first, so the remaining merge is group-to-group. `groups` refuses it, exactly
+  as `any` does.
+* **Order B** (bridge's strongest edge points at the large side) — it joins as an unGated
+  singleton and the foreign article follows as one too. `any` refuses; `groups` does not.
+
+Unmeasured. Whether that trade is worth taking is a counterfactual, not an argument.
+
 ## Measuring it
 
 ```bash
 cd /opt/ih && source deploy/ops/_compose.sh
 dc run --rm -T api python examples/audit_clustering_change.py --min-support 2 --show 20
+dc run --rm -T api python examples/audit_clustering_change.py \
+    --min-support 2 --support-scope groups --show 20
 ```
 
 Bars, registered in advance and unchanged from `link_quorum`:
@@ -152,7 +205,8 @@ clustering exactly. No data was migrated and no stored row changed.
 
 # Part 2 — X5c, the entity-disagreement veto
 
-**Status: implemented, registered, NOT yet adopted.** `RWE_STORY_ENTITY_VETO` defaults to `0`.
+**Status: MEASURED 2026-08-25 and ADOPTED.** `RWE_STORY_ENTITY_VETO` is a compose default of `1`
+(`0` is the kill switch). Numbers in *The measurement* below.
 
 ## The asymmetry
 
@@ -213,12 +267,35 @@ and stays where it is. This knob cannot create a cluster, only decline one — s
 breadth, every story under it is a subset of some story without it, and the reachable outcomes are
 a split or no change. Pinned by test.
 
+## The measurement — ADOPT
+
+Live catalog, 27,876 articles, full production stack:
+
+| | before | after (entity-veto) |
+|---|---|---|
+| stories | 1,501 | 1,502 |
+| largest cluster | 60 | 60 |
+| covered articles | 6,127 | 6,127 |
+| **droppedOut** | — | **0 = 0.0%** |
+| clusters split | — | 1 |
+| blindspot claims | 202 | 202 |
+| independent signal | 0/63 bad, mean 0.953 | 0/63 bad, mean 0.953 |
+
+One cluster moved: a 15-article/11-publisher Trump–Iran economic announcement resolved into two,
+and **no article left a story**, so both halves cleared `min_articles`/`min_publishers`. That is
+the shape a veto should have at this coverage — quiet where extraction is absent, decisive where
+two clusters genuinely name different people. Nothing else in the catalog noticed.
+
 ## Measuring it
 
 ```bash
 cd /opt/ih && source deploy/ops/_compose.sh
 dc run --rm -T api python examples/audit_clustering_change.py --entity-veto --show 20
 ```
+
+The run now prints an `X5c telemetry` line — merges checked, how many had consensus on both
+sides, how many were vetoed, and the dup-merge count separately — so the two decision points can
+be read apart from the geo veto's numbers on the line above.
 
 Same bars as everything else in this file. The run reports `entityMergeVetoed` /
 `dupMergeEntityVetoed` telemetry so the two decision points can be read separately. It requires a

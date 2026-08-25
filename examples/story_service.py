@@ -765,6 +765,30 @@ def min_support() -> int:
     change. 1 = off. 2 = "two is corroboration", the same standard ``GEO_MIN_CONSENSUS`` already
     applies to event geography.
 
+    **MEASURED 2026-08-25 AND REJECTED at 2.** Live catalog, 27,856 articles, full production
+    stack: 371 clusters split, covered articles 6,122 → 5,607, **droppedOut 534 = 8.7%** against
+    the 5% bar. Stories 1,499 → 1,550 and largest 60 → 56 (the intended direction), and the
+    independent signal improved (0/63 bad at mean 0.953 → 0/51 at 0.967) — but that scored set
+    shrank because clusters left it, which is cost presenting as quality. Blindspot claims
+    203 → 149 on the same rows: a third of the product feature, gone.
+
+    The mechanism, recorded because the reasoning that justified this rule is what it refutes.
+    The docstring above argued that "a genuine new article resembles several members of the
+    cluster it joins". On the catalog that is false often enough to matter: coverage of a real
+    story diverges in vocabulary as it runs, so a legitimate late article routinely matches
+    exactly ONE member — the one phrased like it. The dropped list is the receipt, and it is not
+    template chaff: the Harry/Meghan story lost 5 of 60, the England v Pakistan Test live blog
+    lost 6, the Diamondbacks/Ketel Marte story lost 6 across 4 publishers. Requiring breadth of
+    the RECEIVING side taxes exactly the growth that makes a story a story.
+
+    What the run could NOT show: the ``odyssey-spiderman`` exhibit read ``separated → separated``
+    on both sides, i.e. the weld had aged out of the window. So this measurement priced the rule
+    without ever exercising the defect it was built for. The 8.7% is real; the benefit is
+    unmeasured, which is the weaker half of a case that already fails its bar.
+
+    ``support_scope`` (below) is the registered follow-up: the same corroboration question asked
+    only where the measured cost is not — see its docstring.
+
     Measure any candidate with ``examples/audit_clustering_change.py --min-support <n>`` from a
     container carrying the deploy environment, against the bars registered on ``link_quorum``:
     adopt on droppedOut ≤ 5% of covered articles with no story-count fall."""
@@ -1282,10 +1306,56 @@ def entity_veto() -> bool:
     it exists — in the Mirzapur weld the two articles that carried entities shared ZERO names,
     discriminating perfectly on the pair the lexical gate needed a whole lexicon to reach.
 
+    **MEASURED 2026-08-25 AND ADOPTED.** Live catalog, 27,876 articles, full production stack:
+    **droppedOut 0 of 6,127 covered articles (0.0%)**, stories 1,501 → 1,502, largest cluster 60
+    unchanged, independent signal identical (0/63 bad at mean 0.953 both sides), blindspot claims
+    202 → 202. Exactly ONE cluster split — a 15-article/11-publisher Trump-Iran economic
+    announcement resolving into two — and no article left a story, so both halves cleared
+    ``min_articles``/``min_publishers``. A rule that costs nothing and moves one cluster is the
+    shape a veto should have at this coverage: quiet where extraction is absent, decisive where
+    two clusters genuinely name different people.
+
     A veto is the only direction offered. Entity evidence proposing merges is X5b's job and is
     measured separately; this knob cannot create a cluster, only decline one."""
     v = os.environ.get("RWE_STORY_ENTITY_VETO", "").strip().lower()
     return v in {"1", "true", "yes", "on"}
+
+
+#: Members a side must already have before ``groups`` scope asks it for breadth. Two, because
+#: "already a group" is the whole distinction the scope draws — one article is a claim, two is a
+#: body of coverage.
+SUPPORT_GROUP_MIN = 2
+
+
+def support_scope() -> str:
+    """WHERE the ``min_support`` breadth requirement applies. ``RWE_CLUSTER_SUPPORT_SCOPE``:
+
+    * ``any`` (default, and what was measured at 8.7%) — every side with ≥ 2 members must supply
+      breadth, including a cluster absorbing a single new article.
+    * ``groups`` — breadth is required only when BOTH sides already have ≥ 2 members, so a lone
+      article joining a story is never gated.
+
+    Registered 2026-08-25 as the follow-up to the ``min_support`` rejection, and aimed squarely
+    at where that cost came from. The measured loss was GROWTH: legitimate late coverage matching
+    exactly one member of the story it belongs to. Every one of those is a singleton joining a
+    cluster. ``groups`` exempts that case entirely and keeps the requirement for the merge of two
+    already-established groups, which is the shape the comparative-bridge weld actually has —
+    corroboration is demanded when two bodies of coverage claim to be one event, not when one
+    article claims to belong.
+
+    **Known weaker, stated plainly.** Under ``any`` the rule refuses the Odyssey/Spider-Man weld
+    in BOTH merge orders. Under ``groups`` it refuses it in the order production actually takes
+    (the bridge's strongest edge is to the Odyssey article at j=0.312 vs 0.286 to Spider-Man, and
+    merges are consumed best-first, so the bridge lands on the Odyssey side first and the
+    remaining merge is group-to-group) — but a bridge whose strongest edge points the other way
+    would join as a singleton, unGated, and the weld would stand. This trades generality for the
+    8.7%. Whether that trade is worth taking is a measurement, not an argument:
+    ``audit_clustering_change.py --min-support 2 --support-scope groups``."""
+    v = os.environ.get("RWE_CLUSTER_SUPPORT_SCOPE", "").strip().lower()
+    return v if v in _SUPPORT_SCOPES else "any"
+
+
+_SUPPORT_SCOPES = ("any", "groups")
 
 
 def _entity_closures(arts: list, entities: "Optional[dict]", on: bool,
@@ -1504,7 +1574,7 @@ def _admit(groups: list, arts: list, *, min_articles: int, min_publishers: int) 
 
 def _repair(members: list, *, quorum: float, sim: float, window_days: float, min_shared: int,
             min_tokens: int, idf: bool, min_articles: int, min_publishers: int,
-            support: int = clustering.DEFAULT_MIN_SUPPORT,
+            support: int = clustering.DEFAULT_MIN_SUPPORT, s_scope: str = "any",
             desc: int = 0, veto: str = "", veto_stats: Optional[dict] = None,
             template: bool = False, lexicon: frozenset = TEMPLATE_TOKENS,
             hyphen: bool = False, ent_veto: bool = False,
@@ -1546,7 +1616,7 @@ def _repair(members: list, *, quorum: float, sim: float, window_days: float, min
                            time=lambda a: clustering.parse_time(a["publishedAt"]),
                            sim=sim, window_days=window_days, min_shared=min_shared,
                            min_tokens=min_tokens, idf=idf, link_quorum=quorum,
-                           min_support=support,
+                           min_support=support, support_scope=s_scope,
                            evidence=r_evidence, merge_ok=r_merge_ok),
         members, min_articles=min_articles, min_publishers=min_publishers)
     if len(pieces) < 2:
@@ -2000,6 +2070,7 @@ def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
                   idf: Optional[bool] = None,
                   quorum: Optional[float] = None,
                   support: Optional[int] = None,
+                  s_scope: "Optional[str]" = None,
                   repair: Optional[float] = None,
                   merge: Optional[float] = None,
                   merge_gap: Optional[float] = None,
@@ -2130,17 +2201,19 @@ def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
     # evidence lexicon is: the repair re-clusters under a stricter quorum, and if it linked on a
     # different corroboration rule than the primary build it would re-split on the disagreement.
     prop = min_support() if support is None else max(1, int(support))
+    scope = support_scope() if s_scope is None else (s_scope if s_scope in _SUPPORT_SCOPES
+                                                     else "any")
     groups = clustering.cluster(
         arts, tokens=lambda a: article_tokens(a, cap, hyph),
         time=lambda a: clustering.parse_time(a["publishedAt"]), sim=sim, window_days=window_days,
         min_shared=shared, min_tokens=tokens_floor, idf=weighting,
         link_quorum=link_quorum() if quorum is None else quorum, min_support=prop,
-        evidence=g_evidence, merge_ok=g_merge_ok)
+        support_scope=scope, evidence=g_evidence, merge_ok=g_merge_ok)
     mend = repair_quorum() if repair is None else repair
     admitted = []
     for members in _admit(groups, arts, min_articles=min_articles, min_publishers=min_publishers):
         if mend > 0.0 and _build_story(members)["clusterTrust"] == TRUST_LOW:
-            pieces = _repair(members, quorum=mend, support=prop, sim=sim, window_days=window_days,
+            pieces = _repair(members, quorum=mend, support=prop, s_scope=scope, sim=sim, window_days=window_days,
                              min_shared=shared, min_tokens=tokens_floor, idf=weighting,
                              min_articles=min_articles, min_publishers=min_publishers, desc=cap,
                              veto=veto_mode, veto_stats=veto_stats, template=use_gate,

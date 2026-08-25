@@ -356,10 +356,15 @@ services:
       # fraction and obvious to a breadth. Unlike the quorum this does not degrade with cluster
       # size, which is why it is spendable where 0.3/0.4 were not.
       #
-      # 1 = off and byte-identical. Stays 1 until audit_clustering_change.py --min-support 2
-      # clears the bars registered on story_service.link_quorum (droppedOut <= 5%, no story-count
-      # fall); flip the default to 2 in the same commit that records the numbers.
+      # MEASURED 2026-08-25 AND REJECTED at 2: droppedOut 534/6,122 = 8.7% against the 5% bar,
+      # 371 clusters split, blindspot claims 203 -> 149. The cost is GROWTH -- a real story's
+      # coverage diverges as it runs, so legitimate late articles routinely match exactly one
+      # member. Stays 1; the record lives on story_service.min_support.
       RWE_CLUSTER_MIN_SUPPORT: ${RWE_CLUSTER_MIN_SUPPORT:-1}
+      # Registered follow-up (story_service.support_scope): "groups" asks for breadth only when
+      # BOTH sides are already >= 2 members, exempting the singleton-absorption case that was the
+      # whole measured cost. Unmeasured -- "any" is what the 8.7% describes.
+      RWE_CLUSTER_SUPPORT_SCOPE: ${RWE_CLUSTER_SUPPORT_SCOPE:-any}
       RWE_STORY_REPAIR_QUORUM: ${RWE_STORY_REPAIR_QUORUM:-0.5}
       # X4 V-growth-2 (adopted 2026-08-16, docs/STORY_ENTITY_EVIDENCE_PLAN.md): a cluster merge
       # is vetoed when the located consensuses disagree and either side's winning vote is
@@ -382,10 +387,11 @@ services:
       # every other state fails open. Applied at both cluster-level decision points: the
       # build-time merge gate and the aggregate dup-merge.
       #
-      # 0 = off and byte-identical. Stays 0 until audit_clustering_change.py --entity-veto
-      # clears the bars registered on story_service.link_quorum; flip in the commit that records
-      # the numbers. Reads the same article_entities table X5b already requires.
-      RWE_STORY_ENTITY_VETO: ${RWE_STORY_ENTITY_VETO:-0}
+      # MEASURED 2026-08-25 AND ADOPTED: droppedOut 0 of 6,127 covered articles (0.0%), stories
+      # 1,501 -> 1,502, largest 60 unchanged, independent signal identical (0/63 bad, mean 0.953
+      # both sides), blindspot claims 202 -> 202. One cluster split, no article left a story.
+      # 0 is the kill switch. Reads the same article_entities table X5b already requires.
+      RWE_STORY_ENTITY_VETO: ${RWE_STORY_ENTITY_VETO:-1}
       # Sole-template-evidence gate (adopted 2026-08-17, docs/STORY_TEMPLATE_GATE.md): a pairwise
       # edge must share >= 1 token outside the announcement-template lexicon — the entertainment
       # template chain's fix ("X-Men cast/release-date" welded to The Paper/Mirzapur/DJI over

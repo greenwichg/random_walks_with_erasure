@@ -402,3 +402,49 @@ def test_a_sender_change_does_not_silently_narrow_who_may_receive(tmp_path):
 
     widened = run_configure(f, "digest@hidden-view.com", "--replace", "--allowlist", "*")
     assert _values(widened and f)["RWE_EMAIL_ALLOWLIST"] == "*", "explicit still wins"
+
+
+def test_compose_defaults_the_measured_entity_veto_on():
+    """X5c must be the compose DEFAULT, for the reason the link-quorum test above records: an
+    adopted clustering rule that lives only in `deploy/.env` reverts on a lost env file.
+
+    Measured 2026-08-25 against 27,876 live articles: droppedOut 0 of 6,127 covered (0.0%),
+    stories 1,501 -> 1,502, largest cluster 60 unchanged, independent signal identical (0/63 bad
+    at mean 0.953 both sides), blindspot claims 202 -> 202, one cluster split. It closes the
+    asymmetry where geography could refuse a merge and entities could only ever propose one.
+
+    `story_service.entity_veto()` stays FALSE as a library fallback, same split as the quorum:
+    the research package has callers that are not this deployment, and the veto needs a
+    backfilled `article_entities` table those callers may not have.
+    """
+    import pathlib
+    import re
+    compose = (pathlib.Path(__file__).resolve().parent.parent
+               / "deploy" / "docker-compose.yml").read_text(encoding="utf-8")
+    m = re.search(r"RWE_STORY_ENTITY_VETO:\s*\$\{RWE_STORY_ENTITY_VETO:-([^}]*)\}", compose)
+    assert m, "RWE_STORY_ENTITY_VETO is not in the compose environment allowlist"
+    assert m.group(1).strip() == "1", (
+        f"compose defaults the entity veto to {m.group(1)!r}; the measured-and-adopted value is 1"
+    )
+
+
+def test_compose_keeps_the_rejected_min_support_off():
+    """`RWE_CLUSTER_MIN_SUPPORT` stays 1. Measured 2026-08-25 at 2 and REJECTED: 534 of 6,122
+    covered articles (8.7%) fell out of stories against the 5% bar, 371 clusters split, blindspot
+    claims 203 -> 149. The rule taxes GROWTH — a real story's coverage diverges as it runs, so
+    legitimate late articles routinely match exactly one member (Harry/Meghan -5 of 60, the
+    England v Pakistan Test live blog -6). The instrument stays; the default does not move
+    without a passing counterfactual. `RWE_CLUSTER_SUPPORT_SCOPE` likewise stays at the scope
+    that measurement describes.
+    """
+    import pathlib
+    import re
+    compose = (pathlib.Path(__file__).resolve().parent.parent
+               / "deploy" / "docker-compose.yml").read_text(encoding="utf-8")
+    m = re.search(r"RWE_CLUSTER_MIN_SUPPORT:\s*\$\{RWE_CLUSTER_MIN_SUPPORT:-([^}]*)\}", compose)
+    assert m, "RWE_CLUSTER_MIN_SUPPORT is not in the compose environment allowlist"
+    assert int(m.group(1)) == 1, (
+        f"compose defaults min-support to {m.group(1)!r}; the measured verdict at 2 was REJECT"
+    )
+    s = re.search(r"RWE_CLUSTER_SUPPORT_SCOPE:\s*\$\{RWE_CLUSTER_SUPPORT_SCOPE:-([^}]*)\}", compose)
+    assert s and s.group(1).strip() == "any", "the scope default must stay what was measured"

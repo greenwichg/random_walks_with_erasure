@@ -68,7 +68,7 @@ _DEPLOY_CLUSTER_ENV = (
     "RWE_STORY_EXCLUDE_WIRE", "RWE_STORY_EXCLUDE_AGGREGATOR",
     "RWE_CLUSTER_GEO_VETO", "RWE_STORY_ENTITY_MERGE",     # X4 + X5b, adopted 2026-08-16
     "RWE_CLUSTER_TEMPLATE_LEXICONS",                      # lexicon set, adopted 2026-08-24
-    "RWE_CLUSTER_MIN_SUPPORT",                            # merge support breadth
+    "RWE_CLUSTER_MIN_SUPPORT", "RWE_CLUSTER_SUPPORT_SCOPE",   # merge support breadth
     "RWE_STORY_ENTITY_VETO",                              # X5c entity disagreement
 )
 
@@ -87,6 +87,7 @@ def build(rows: list, *, min_shared: int, min_tokens: int, idf: bool = False,
           quorum=None, support=None, repair=None, merge=None, desc=None, veto=None,
           veto_stats=None,
           entity_merge=None, ent_veto=None, entities=None, lexicons=None, hyphen=None,
+          s_scope=None,
           derived=None, derived_df=None, derived_days=None) -> list:
     """``None`` means "whatever production is configured with" — ``build_stories`` resolves it.
 
@@ -96,7 +97,7 @@ def build(rows: list, *, min_shared: int, min_tokens: int, idf: bool = False,
     *unrepaired + merge*, where the duplicate clusters the merge exists to join are still fused
     inside the mega-cluster and there is by construction nothing for it to do."""
     return story_service.build_stories(rows, min_shared=min_shared, min_tokens=min_tokens, idf=idf,
-                                       quorum=quorum, support=support,
+                                       quorum=quorum, support=support, s_scope=s_scope,
                                        repair=repair, merge=merge, desc=desc,
                                        veto=veto, veto_stats=veto_stats,
                                        entity_merge=entity_merge, ent_veto=ent_veto,
@@ -237,7 +238,7 @@ def verdict(res: dict, *, max_dropped: float = MAX_DROPPED, merging: bool = Fals
 
 def compare(store_, *, before: tuple, after: tuple, show: int = 10,
             before_idf: bool = False, after_idf: bool = False,
-            before_quorum=None, after_quorum=None, after_support=None,
+            before_quorum=None, after_quorum=None, after_support=None, after_scope=None,
             after_repair=None, after_merge=None, after_desc=None,
             after_veto=None, after_entity_merge=None, after_ent_veto=None,
             after_lexicons=None, after_hyphen=None,
@@ -260,7 +261,7 @@ def compare(store_, *, before: tuple, after: tuple, show: int = 10,
     veto_stats = ({} if (after_veto or after_entity_merge or after_derived or after_ent_veto)
                   else None)
     b = build(rows, min_shared=after[0], min_tokens=after[1], idf=after_idf, quorum=after_quorum,
-              support=after_support, repair=after_repair, merge=after_merge, desc=after_desc,
+              support=after_support, s_scope=after_scope, repair=after_repair, merge=after_merge, desc=after_desc,
               veto=after_veto, veto_stats=veto_stats,
               entity_merge=after_entity_merge, ent_veto=after_ent_veto, entities=entities,
               lexicons=after_lexicons, hyphen=after_hyphen,
@@ -392,6 +393,10 @@ def main(argv=None) -> int:
     ap.add_argument("--entity-veto", action="store_true",
                     help="X5c on the AFTER side: refuse a cluster merge when both sides carry a "
                          "corroborated entity consensus and those consensuses share no name")
+    ap.add_argument("--support-scope", choices=("any", "groups"), default=None,
+                    help="where --min-support applies: 'any' (every side of 2+, the measured "
+                         "8.7%% variant) or 'groups' (only when BOTH sides are already 2+, "
+                         "exempting the singleton-absorption growth that cost the 8.7%%)")
     ap.add_argument("--min-support", type=int, default=None,
                     help="merge support BREADTH on the AFTER side: distinct members each side "
                          "must contribute to the passing cross-pairs (1 = off). Orthogonal to "
@@ -479,6 +484,7 @@ def main(argv=None) -> int:
                   after=after, show=args.show, after_idf=args.idf,
                   after_quorum=args.link_quorum, after_support=args.min_support,
                   after_ent_veto=True if args.entity_veto else None,
+                  after_scope=args.support_scope,
                   after_repair=args.repair_quorum,
                   after_merge=args.merge_sim, after_desc=cap, after_veto=args.geo_veto,
                   after_entity_merge=args.entity_merge,
@@ -497,6 +503,8 @@ def main(argv=None) -> int:
                   else story_service.link_quorum())
            + _tag("support", args.min_support if args.min_support is not None
                   else story_service.min_support())
+           + (f"/{args.support_scope or story_service.support_scope()}"
+              if (args.min_support or story_service.min_support() > 1) else "")
            + _tag("repair", args.repair_quorum if args.repair_quorum is not None
                   else story_service.repair_quorum())
            + _tag("merge", args.merge_sim if args.merge_sim is not None
@@ -582,6 +590,14 @@ def main(argv=None) -> int:
               f"merges checked {vs.get('mergeChecked', 0):,} "
               f"(gated {vs.get('mergeGated', 0):,}, vetoed {vs.get('mergeVetoed', 0):,}); "
               f"dup-merge vetoed {vs.get('dupMergeVetoed', 0):,}")
+        if args.entity_veto or story_service.entity_veto():
+            # X5c's own counters, printed separately from the geo line above: the two channels
+            # gate the same merges and a single combined number could not say which one bit.
+            print(f"X5c telemetry      : merges checked "
+                  f"{vs.get('entityMergeChecked', 0):,} "
+                  f"(both had consensus {vs.get('entityMergeGated', 0):,}, "
+                  f"vetoed {vs.get('entityMergeVetoed', 0):,}); "
+                  f"dup-merge vetoed {vs.get('dupMergeEntityVetoed', 0):,}")
         if args.entity_merge:
             print(f"entity-merge       : candidates {vs.get('entityMergeCandidates', 0):,}, "
                   f"joined {vs.get('entityMergeJoined', 0):,}, "

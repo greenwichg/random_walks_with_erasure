@@ -239,3 +239,87 @@ def test_repair_links_on_the_same_rule_as_the_build():
             heads = {m["headline"] for m in p}
             assert not (_ODYSSEY in heads and _SPIDER in heads), \
                 "the repair re-cluster must not restore the weld it was given"
+
+
+# --------------------------------------------------------------------------- #
+# support_scope — WHERE the breadth requirement applies.
+#
+# `any` (the variant production measured at 8.7% dropped) asks breadth of every side with 2+
+# members, including a story absorbing one new article. `groups` asks only when BOTH sides are
+# already groups, exempting exactly the singleton-absorption growth that was the whole measured
+# cost. The two merge ORDERS below are what separate them, and each fixture's edge ordering is
+# verified, not assumed.
+# --------------------------------------------------------------------------- #
+# ORDER A — the production shape. The bridge's strongest edge points at the FOREIGN article
+# (odyssey 0.583 vs spider 0.312 here; 0.312 vs 0.286 in production), so merges being consumed
+# best-first, the bridge lands on the Odyssey side and the remaining merge is group-to-group.
+# The Spider-Man side is six articles because that is what makes the quorum pass: at three, the
+# quorum alone already refuses and the weld never forms to be tested.
+_SPIDERS = ("Spider-Man Brand New Day tops box office fourth weekend",
+            "Spider-Man Brand New Day holds box office top spot fourth weekend",
+            "Box office Spider-Man Brand New Day leads fourth weekend charts",
+            "Spider-Man Brand New Day box office tops fourth weekend again",
+            "Spider-Man Brand New Day stays top of box office in fourth weekend",
+            "Spider-Man Brand New Day fourth weekend box office tops rivals")
+_BRIDGE_A = ("The Odyssey becomes Nolan highest grossing film ever as Spider-Man tops the "
+             "box office")
+
+
+def _order_a_items():
+    return _items(*[(t, 0) for t in _SPIDERS], (_BRIDGE_A, 0), (_ODYSSEY, 0))
+
+
+def test_order_a_welds_under_the_full_production_rule():
+    """Precondition, and the reason the fixture is six articles wide: the quorum passes here."""
+    assert _groups(_order_a_items(), link_quorum=0.2) == [[0, 1, 2, 3, 4, 5, 6, 7]]
+
+
+def test_both_scopes_refuse_the_production_order():
+    """Order A is group-to-group at the deciding merge, so `groups` gates it exactly as `any`
+    does. This is the case the rule was built for, and the cheaper scope still covers it."""
+    expected = [[0, 1, 2, 3, 4, 5], [6, 7]]
+    for scope in ("any", "groups"):
+        assert _groups(_order_a_items(), link_quorum=0.2,
+                       min_support=2, support_scope=scope) == expected, scope
+
+
+def test_groups_scope_exempts_singleton_absorption():
+    """The measured cost of `any` was growth: legitimate late coverage matching exactly one
+    member of the story it belongs to. Every such case is a singleton joining a cluster."""
+    thin = _items((_SPIDER, 0), (_SPIDER2, 0), (_SPIDER3, 0),
+                  ("Spider-Man Brand New Day box office fourth weekend total", 0))
+    assert any(len(g) >= 3 for g in
+               _groups(thin, link_quorum=0.2, min_support=2, support_scope="groups")), \
+        "a lone article joining is never gated under groups scope"
+
+
+def test_groups_scope_is_weaker_in_the_other_order_and_that_is_recorded():
+    """The honest limit, pinned so it is not rediscovered as a bug. In ORDER B the bridge's
+    strongest edge points at the LARGE side, so it joins as an unGated singleton and the foreign
+    article then follows as a singleton too. `any` still refuses; `groups` does not. That is the
+    trade `groups` makes to buy back the 8.7%."""
+    items = _weld_items()          # order B: bridge<->spider 0.467 > odyssey<->bridge 0.429
+    strict = _groups(items, link_quorum=0.2, min_support=2, support_scope="any")
+    loose = _groups(items, link_quorum=0.2, min_support=2, support_scope="groups")
+    assert [4] in strict, "any scope refuses the weld in this order"
+    assert [0, 1, 2, 3, 4] in loose, "groups scope does not — the recorded weakness"
+
+
+def test_scope_env_resolves_and_falls_back(monkeypatch):
+    monkeypatch.delenv("RWE_CLUSTER_SUPPORT_SCOPE", raising=False)
+    assert ss.support_scope() == "any"
+    monkeypatch.setenv("RWE_CLUSTER_SUPPORT_SCOPE", "groups")
+    assert ss.support_scope() == "groups"
+    monkeypatch.setenv("RWE_CLUSTER_SUPPORT_SCOPE", "banana")
+    assert ss.support_scope() == "any", "junk falls back to the measured meaning"
+
+
+def test_scope_is_inert_while_breadth_is_off():
+    """Scope narrows a requirement that only exists above min_support 1, so with breadth off it
+    must not perturb anything — including the fast path."""
+    rnd = random.Random(41)
+    vocab = [f"z{i}" for i in range(28)]
+    items = [{"t": " ".join(rnd.sample(vocab, 5)), "when": T0} for _ in range(70)]
+    base = _groups(items, link_quorum=0.2)
+    assert base == _groups(items, link_quorum=0.2, support_scope="groups")
+    assert base == _groups(items, link_quorum=0.2, min_support=1, support_scope="groups")
