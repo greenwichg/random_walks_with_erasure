@@ -37,7 +37,9 @@ from __future__ import annotations
 import argparse
 import json
 import math
+from collections import Counter
 
+import discover
 import outlet_registry
 import publisher_identity
 import story_service
@@ -109,6 +111,34 @@ def _classify(outlet, ambiguous_here: bool) -> "str | None":
     return None
 
 
+def identity_by_url(rows: list, keys: dict) -> dict:
+    """``coverage url -> outlet identity``, joined on the ARTICLE rather than on the name.
+
+    **The unlocks metric was blind to most of the backlog it exists to measure, and this is why.**
+    ``analyse`` used to key its per-story sets on ``keys.get(c["publisher"])``, but ``keys`` is
+    built from the RAW row publisher while ``discover.feed_article_to_article`` puts
+    ``engine._prettify(outlet)`` into the coverage. For a registry-resolved outlet those agree —
+    ``NPR`` prettifies to ``NPR`` — so the join looked fine. For an **untracked** outlet arriving as
+    a bare host it does not: ``gamma.example`` becomes ``Gamma.Example``, misses the map, falls back
+    to the prettified string, and never matches the ``d:gamma.example`` identity the buckets are
+    keyed on. Proven on a fixture: 3 of 3 untracked outlets MISS, 2 of 2 registry outlets hit.
+
+    So every untracked outlet whose name is a host form — ``sportskeeda.com``, ``decider.com``,
+    every local-TV call sign — scored zero unlocks by construction, and only the ones that happen to
+    be prettify-stable (``BelTA``, ``NL Times``, ``PerthNow``) were ever counted.
+
+    Joining on the URL removes the whole class: it is one key, taken from the rows the stories were
+    built from, and no display transformation touches it. Same fix, same reason, as
+    ``audit_source_cohort.member_key``."""
+    out = {}
+    for r in rows:
+        p = (r.get("publisher") or "").strip()
+        u = discover._absolute_url(r.get("url") or r.get("canonicalUrl"))
+        if p and u:
+            out[u] = keys.get(p, p)
+    return out
+
+
 def analyse(rows: list, stories: list, *, min_rated: int) -> dict:
     """Per-identity coverage, buckets, article volume and unlock estimates."""
     names: dict = {}
@@ -120,6 +150,7 @@ def analyse(rows: list, stories: list, *, min_rated: int) -> dict:
     # domain depends on how many domains carry that label, which is a property of the catalog.
     keys = publisher_identity.groups(sorted(names))
     contested = publisher_identity.ambiguous_labels(sorted(names))
+    by_url = identity_by_url(rows, keys)
 
     groups: dict = {}
     for name, n in names.items():
@@ -133,10 +164,12 @@ def analyse(rows: list, stories: list, *, min_rated: int) -> dict:
     # registry row can convert; two or three short need coordinated curation and are counted apart.
     unlocks: dict = {}
     assists: dict = {}
+    unmatched = 0
     for idx, s in enumerate(stories):
-        outlets = {keys.get(c["publisher"], c["publisher"]) for c in s["coverage"]}
-        rated = {keys.get(c["publisher"], c["publisher"])
-                 for c in s["coverage"] if _votes(c)}
+        outlets = {by_url[c["url"]] for c in s["coverage"] if c["url"] in by_url}
+        rated = {by_url[c["url"]] for c in s["coverage"]
+                 if c["url"] in by_url and _votes(c)}
+        unmatched += sum(1 for c in s["coverage"] if c["url"] not in by_url)
         if len(outlets) < min_rated or len(rated) >= min_rated:
             continue
         target = unlocks if (min_rated - len(rated)) == 1 else assists
@@ -175,7 +208,50 @@ def analyse(rows: list, stories: list, *, min_rated: int) -> dict:
         "ratedInWindow": len(groups) - len(out),
         "stories": len(stories), "articles": sum(names.values()),
         "buckets": by_bucket, "outlets": out,
+        # Every coverage row must join to an identity. A miss means the key convention drifted
+        # again -- the defect this instrument shipped with for its whole life -- so it is counted
+        # and `main` refuses to report on it rather than printing a silent undercount.
+        "unmatchedCoverage": unmatched,
+        # Kept so a caller can size a COHORT without re-deriving the join. `main` pops it before
+        # --json: nobody reading the report wants a per-URL map inlined.
+        "byUrl": by_url,
     }
+
+
+def cohort_unlocks(stories: list, by_url: dict, cohort: set, *, min_rated: int) -> dict:
+    """What a SET of registry rows buys when they land together.
+
+    ``unlocks`` in :func:`analyse` is measured per outlet **in isolation**: it counts only stories
+    exactly one rating short, because that is the only kind one row can convert alone. Summing it
+    over a cohort therefore UNDERSTATES the cohort — a story two short with two untracked members is
+    converted by rating both, and neither one is credited with it.
+
+    This measures the thing a curation batch actually delivers: how many stories reach
+    ``min_rated`` when every member of ``cohort`` is treated as rated at once.
+
+    ``shortfall`` is the other half, and it is the number that stops a batch being sized by hope:
+    for the stories the cohort touches and still cannot convert, how many MORE ratings each would
+    need. A large tail at 2+ means the batch is the wrong shape, not too small."""
+    gained, naive, shortfall = [], 0, Counter()
+    for idx, s in enumerate(stories):
+        outlets = {by_url[c["url"]] for c in s["coverage"] if c["url"] in by_url}
+        rated = {by_url[c["url"]] for c in s["coverage"]
+                 if c["url"] in by_url and _votes(c)}
+        if len(rated) >= min_rated:
+            continue                                  # already claims; nothing to buy
+        touching = outlets & cohort
+        if not touching:
+            continue
+        if (min_rated - len(rated)) == 1 and touching:
+            naive += 1                                # what sum(unlocks) would have counted
+        after = rated | touching
+        if len(after) >= min_rated:
+            gained.append((idx, s.get("title", ""), len(rated), len(touching)))
+        else:
+            shortfall[min_rated - len(after)] += 1
+    return {"cohort": len(cohort), "joint": len(gained), "naiveSum": naive,
+            "coordinationBonus": len(gained) - naive,
+            "shortfall": dict(sorted(shortfall.items())), "examples": gained[:10]}
 
 
 def _table(rows: list, key, top: int) -> str:
@@ -191,6 +267,10 @@ def main(argv=None) -> int:
     ap.add_argument("--db", default=None)
     ap.add_argument("--top", type=int, default=20)
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--cohort", default="",
+                    help="comma-separated outlet labels to size TOGETHER (joint unlocks)")
+    ap.add_argument("--cohort-top", type=int, default=20,
+                    help="also size the top N untracked outlets by curation value (default %(default)s)")
     args = ap.parse_args(argv)
 
     store_ = store_mod.Store(args.db)
@@ -198,6 +278,15 @@ def main(argv=None) -> int:
     stories = story_service.build_stories(rows)
     res = analyse(rows, stories, min_rated=story_service.min_rated_for_blindspot())
 
+    by_url = res.pop("byUrl")
+    # Every coverage row is an article from the same window, so every one must join to an identity.
+    # A miss means the key convention drifted -- which is the defect this instrument shipped with
+    # from the start, invisible because a partial join still prints plausible numbers.
+    if res["unmatchedCoverage"]:
+        print(f"*** JOIN BROKEN: {res['unmatchedCoverage']:,} coverage rows did not resolve to an "
+              f"outlet identity.")
+        print("    Every unlocks figure would understate. See identity_by_url(). Refusing to report.")
+        return 1
     if args.json:
         print(json.dumps(res, indent=2, sort_keys=True))
         return 0
@@ -237,6 +326,54 @@ def main(argv=None) -> int:
             continue
         print(f"\n=== {bucket.upper()} — {_REASON[bucket]} ===")
         print(_table(rows_b, lambda r: (-r["articles"], r["label"]), args.top))
+
+    # ------------------------------------------------------------------ cohort sizing
+    #
+    # Everything above prices ONE row at a time. A curation batch is not one row at a time, and the
+    # difference is not a rounding error: a story two ratings short with two untracked members is
+    # converted by rating both, and the per-outlet `unlocks` column credits that story to neither.
+    min_rated = story_service.min_rated_for_blindspot()
+    by_value = sorted(untracked,
+                      key=lambda r: (-r["unlocks"], -r["assists"], -r["articles"], r["label"]))
+
+    def report(title: str, labels: list):
+        ids = {r["identity"] for r in untracked if r["label"] in set(labels)}
+        missing = set(labels) - {r["label"] for r in untracked}
+        c = cohort_unlocks(stories, by_url, ids, min_rated=min_rated)
+        print(f"\n=== COHORT: {title} ===")
+        if missing:
+            print(f"  NOT FOUND as untracked outlets (ignored): {', '.join(sorted(missing))}")
+        print(f"  outlets in cohort        : {c['cohort']}")
+        print(f"  sum of per-outlet unlocks: {c['naiveSum']}   <- what the column above implies")
+        print(f"  JOINT unlocks            : {c['joint']}   <- what the batch actually buys")
+        print(f"  coordination bonus       : {c['coordinationBonus']:+d}"
+              f"   <- stories only a BATCH converts")
+        if c["shortfall"]:
+            tail = "  ".join(f"{n} stories still {k} short" for k, n in c["shortfall"].items())
+            print(f"  touched but not converted: {tail}")
+        for _idx, title_, was, add in c["examples"][:5]:
+            print(f"     +1  had {was} rated, cohort adds {add}   {title_[:56]}")
+
+    report(f"top {args.cohort_top} untracked by curation value",
+           [r["label"] for r in by_value[:args.cohort_top]])
+    if args.cohort:
+        report("explicit --cohort", [s.strip() for s in args.cohort.split(",") if s.strip()])
+
+    # The ceiling. If curating EVERY untracked outlet converts n stories, no subset converts more,
+    # and the whole programme is bounded by that one number. Part 2 priced the backlog at 13 by
+    # summing per-outlet unlocks; this is the same question asked without that understatement.
+    every = cohort_unlocks(stories, by_url, {r["identity"] for r in untracked},
+                           min_rated=min_rated)
+    print(f"\n=== THE CEILING: curate ALL {len(untracked):,} untracked outlets ===")
+    print(f"  JOINT unlocks : {every['joint']}   of {res['stories']:,} stories "
+          f"({every['joint'] / max(1, res['stories']) * 100:.1f}%)")
+    print(f"  vs summing per-outlet unlocks: {every['naiveSum']}"
+          f"   (understates by {every['coordinationBonus']:+d})")
+    if every["shortfall"]:
+        print("  stories the untracked tail touches and STILL cannot convert: "
+              + "  ".join(f"{n} at {k} short" for k, n in every["shortfall"].items()))
+    print("  No subset of the untracked backlog buys more than this. It is the budget for the")
+    print("  entire curation programme, and every batch is a fraction of it.")
 
     total_unlocks = sum(r["unlocks"] for r in untracked)
     print(f"\nWORKLIST: {len(untracked):,} untracked outlets, "
